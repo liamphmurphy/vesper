@@ -1096,7 +1096,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
         <InSlot slot={headerSlot}>
         <div data-testid="chat-header" className={cx(
           "@container flex min-w-0 items-center",
-          headerSlot ? "h-full flex-1 gap-1.5 pl-1" : cx("min-h-[44px] border-b border-border-subtle py-1.5", docked ? "gap-1.5 pl-3 pr-2" : "gap-2.5 pl-3 pr-6"),
+          headerSlot ? "h-full flex-1 gap-1 pl-0.5" : cx("min-h-[44px] border-b border-border-subtle py-1.5", docked ? "gap-1 pl-2.5 pr-2" : "gap-2.5 pl-3 pr-6"),
         )}>
           {/* Back and forward lead the page; a dock's chat sits beside a page that has its own. */}
           {!docked && <HistoryNav />}
@@ -1110,6 +1110,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
                 running={running}
                 commitEmail={c.repo_url && c.commit_email && myEmails.length > 1 ? c.commit_email : undefined}
                 onCommitEmail={() => setCommitPickerOpen((o) => !o)}
+                compact={docked}
               />
               {/* The space the chat is in, beside its title (LAZYAGENTS-213). In an app's dock the app is the page around it, so the header doesn't name it. */}
               {!docked && !compact && <ChatSpacePicker chat={c} disabled={running} />}
@@ -1122,8 +1123,8 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
           {!dockActivity && docked && (
             <button type="button" aria-pressed={tab === "activity"} aria-label="Activity" title={tab === "activity" ? "Back to the chat" : "Activity: this chat's tool calls and memory"}
               onClick={() => setTab(tab === "activity" ? "chat" : "activity")}
-              className={cx("grid size-7 flex-none place-items-center rounded-md", tab === "activity" ? "bg-selected text-fg" : "text-fg-tertiary hover:bg-hover hover:text-fg")}>
-              <Icon name="history" size={14} />
+              className={cx("grid size-6 flex-none place-items-center rounded-md", tab === "activity" ? "bg-selected text-fg" : "text-fg-tertiary hover:bg-hover hover:text-fg")}>
+              <Icon name="history" size={13} />
             </button>
           )}
           {!dockActivity && !docked && (
@@ -1144,7 +1145,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
         </div>
         </InSlot>
         )}
-        {dockActivity && view === "chat" && <LinkedRow items={linked} label={linkedLabel} onOpen={openLinked} />}
+        {dockActivity && view === "chat" && <LinkedRow items={linked} label={linkedLabel} onOpen={openLinked} dense={docked} />}
         {c.space && view === "chat" && <SpaceContextChips space={c.space} dense={docked} />}
         {/* Mounted while hidden so memory notices still refresh. On the chat page's desktop dock Activity is its own tab (ChatActivity). */}
         {!dockActivity && (

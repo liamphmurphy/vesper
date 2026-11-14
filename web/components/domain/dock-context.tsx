@@ -12,8 +12,8 @@ export const dockContextChip = cx(dockChip, "border-border bg-surface text-fg-se
  */
 export function DockContext({ persona, label, children }: { persona?: string; label: string; children: ReactNode }) {
   return (
-    <div className="flex flex-wrap items-center gap-1.5" aria-label={label} data-testid="dock-context">
-      <span className="text-12 text-fg-tertiary">To</span>
+    <div className="flex flex-wrap items-center gap-1" aria-label={label} data-testid="dock-context">
+      <span className="text-11 text-fg-tertiary">To</span>
       <span data-testid="dock-chat-to" className={cx(dockChip, "border-accent/35 bg-accent-soft font-medium text-accent")}>{persona ?? "your persona"}</span>
       {children}
     </div>

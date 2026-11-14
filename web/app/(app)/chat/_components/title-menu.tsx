@@ -25,7 +25,7 @@ const iconButton = "grid size-7 flex-none place-items-center rounded-md text-fg-
  * folder, secrets, commit email, who's in a group chat), and small icons beside it say what's not
  * the default (archived, temporary, a folder, a chosen address, secrets in use) without opening it.
  */
-export function ChatTitleMenu({ chat: c, participants, running, commitEmail, onCommitEmail }: {
+export function ChatTitleMenu({ chat: c, participants, running, commitEmail, onCommitEmail, compact = false }: {
   chat: Chat;
   /** Everyone in a group chat; one persona hides the Participants section. */
   participants: PersonaLook[];
@@ -34,6 +34,8 @@ export function ChatTitleMenu({ chat: c, participants, running, commitEmail, onC
   commitEmail?: string;
   /** Opens (or closes) the commit-email picker above the composer. */
   onCommitEmail: () => void;
+  /** Tighter spacing and 13px heading so the title stays readable in a 360px dock. */
+  compact?: boolean;
 }) {
   const update = useUpdateChat();
   const space = useChatSpace(c, running);
@@ -71,16 +73,16 @@ export function ChatTitleMenu({ chat: c, participants, running, commitEmail, onC
     <div className="flex min-w-0 max-w-full items-center gap-1.5">
       <DropdownMenu.Root>
         {/* The heading holds the button (not the other way round) so it stays a heading named by the title. */}
-        <h1 className="min-w-0 text-14 font-semibold">
+        <h1 className={cx("min-w-0 font-semibold", compact ? "text-13" : "text-14")}>
           <DropdownMenu.Trigger asChild>
             <button
               type="button"
               data-testid="chat-title-menu"
               title="Chat settings"
-              className="flex min-w-0 max-w-full items-center gap-1 rounded-md px-1.5 py-1 hover:bg-hover data-[state=open]:bg-hover"
+              className={cx("flex min-w-0 max-w-full items-center rounded-md hover:bg-hover data-[state=open]:bg-hover", compact ? "gap-0.5 px-1 py-0.5" : "gap-1 px-1.5 py-1")}
             >
               <span className="min-w-0 truncate">{label}</span>
-              <Icon name="chev" size={13} className="flex-none text-fg-tertiary" />
+              <Icon name="chev" size={12} className="flex-none text-fg-tertiary" />
             </button>
           </DropdownMenu.Trigger>
         </h1>

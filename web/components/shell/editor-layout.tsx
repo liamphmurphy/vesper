@@ -328,7 +328,7 @@ export function Dock({
             <span className="hidden min-w-0 flex-1 truncate px-2 text-13 font-semibold text-fg peer-empty:block">{active?.label}</span>
           </div>
           {tabs.length > 1 && (
-            <div role="tablist" aria-label="Panel tabs" className="flex flex-none items-center gap-0.5">
+            <div role="tablist" aria-label="Panel tabs" className="flex flex-none items-center gap-px">
               {tabs.map((t) => (
                 <button
                   key={t.id}
@@ -340,7 +340,7 @@ export function Dock({
                   title={t.id === active?.id ? `${t.label}: click to collapse` : t.label}
                   onClick={() => dispatch({ type: "select", tab: t.id })}
                   className={cx(
-                    "relative flex h-7 flex-none items-center gap-1 rounded-md px-1.5 text-12",
+                    "relative flex size-6 flex-none items-center justify-center rounded-md text-12",
                     t.id === active?.id ? "bg-selected text-fg" : "text-fg-tertiary hover:bg-hover hover:text-fg",
                   )}
                 >
@@ -357,7 +357,7 @@ export function Dock({
             aria-label="Collapse panel"
             title="Collapse panel (⌘\)"
             onClick={() => dispatch({ type: "collapse" })}
-            className="grid size-7 flex-none place-items-center rounded-md text-fg-tertiary hover:bg-hover hover:text-fg"
+            className="grid size-6 flex-none place-items-center rounded-md text-fg-tertiary hover:bg-hover hover:text-fg"
           >
             <span aria-hidden>⇥</span>
           </button>

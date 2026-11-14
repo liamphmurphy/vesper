@@ -57,16 +57,15 @@ export function DockChatSwitcher({ current, sections, newLabel, onSelect, onNew,
   );
   if (inline)
     return (
-      <span className="flex flex-none items-center gap-1" data-testid="dock-chat-switcher">
+      <span className="flex flex-none items-center gap-0.5" data-testid="dock-chat-switcher">
         <DropdownMenu.Root>
           <DropdownMenu.Trigger
-            className="flex h-7 items-center gap-1 rounded-md px-1.5 text-11 font-semibold text-fg-tertiary outline-none hover:bg-hover hover:text-fg focus-visible:ring-2 focus-visible:ring-accent"
+            className="flex h-6 items-center gap-1 rounded-md px-1 text-11 font-semibold text-fg-tertiary outline-none hover:bg-hover hover:text-fg focus-visible:ring-2 focus-visible:ring-accent"
             aria-label={label}
             title="Switch chat"
           >
-            <Icon name="msg" size={13} />
+            <Icon name="msg" size={12} />
             {count > 0 && count}
-            <Icon name="chev" size={11} />
           </DropdownMenu.Trigger>
           {menu}
         </DropdownMenu.Root>
@@ -74,7 +73,7 @@ export function DockChatSwitcher({ current, sections, newLabel, onSelect, onNew,
           type="button"
           onClick={onNew}
           disabled={creating}
-          className="grid size-7 place-items-center rounded-md text-accent hover:bg-hover disabled:opacity-50"
+          className="grid size-6 place-items-center rounded-md text-accent hover:bg-hover disabled:opacity-50"
           aria-label={newLabel}
           title={newLabel}
         >

@@ -122,10 +122,10 @@ export function ItemPanel({ item, onClose }: { item: LinkedItem; onClose: () => 
  * The row under the chat's header naming what the conversation links to (the tickets and pages its
  * messages carried, its runs); each opens beside the chat, and the dock's Open link goes to the page.
  */
-export function LinkedRow({ items, label, onOpen }: { items: LinkedItem[]; label: (item: LinkedItem) => string; onOpen: (item: LinkedItem) => void }) {
+export function LinkedRow({ items, label, onOpen, dense = false }: { items: LinkedItem[]; label: (item: LinkedItem) => string; onOpen: (item: LinkedItem) => void; dense?: boolean }) {
   if (items.length === 0) return null;
   return (
-    <nav aria-label="Linked items" data-testid="linked-row" className="flex flex-none items-center gap-1.5 overflow-x-auto border-b border-border-subtle px-6 py-1.5">
+    <nav aria-label="Linked items" data-testid="linked-row" className={cx("flex flex-none items-center gap-1.5 overflow-x-auto border-b border-border-subtle", dense ? "px-3 py-1" : "px-6 py-1.5")}>
       <span className="flex-none text-12 text-fg-tertiary">Linked</span>
       {items.map((item) => (
         <button key={itemKey(item)} type="button" onClick={() => onOpen(item)} title={`Open ${label(item)} beside the chat`}
