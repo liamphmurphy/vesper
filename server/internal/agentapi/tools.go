@@ -20,6 +20,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/apperr"
 	"github.com/liamphmurphy/vesper/server/internal/artifacts"
 	"github.com/liamphmurphy/vesper/server/internal/connectors"
+	"github.com/liamphmurphy/vesper/server/internal/customapps"
 	"github.com/liamphmurphy/vesper/server/internal/designs"
 	"github.com/liamphmurphy/vesper/server/internal/pageview"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
@@ -37,6 +38,7 @@ type Deps struct {
 	Tracker    *tracker.Service
 	Wiki       *wiki.Service
 	Designs    *designs.Service
+	CustomApps *customapps.Service
 	// Files keeps a file in the person's Library (save_file); nil where there is no object store.
 	Files FileKeeper
 }
@@ -1019,11 +1021,6 @@ var Tools = []Tool{
 	define("design_tokens", "A design's token sets (its own snapshot of tokens.css plus per-design sets), the set in use (tokens_ref), the tokens it uses, and whether tokens.css has changed since the person last synced. Use these $tokens for colours; propose set_token edits only on sets whose source is null.", designTokens),
 	define("design_inspect", "A node (usually a frame) as code to build from: target css, tailwind or react (default), with its box, spacing, type styles, the tokens it uses with their values, and its images. Components appear as React components with text overrides as props.", designInspect),
 	define("design_link_ticket", "Link a frame (or component) of a design to a ticket, or unlink it. Like design_patch it's a suggestion the person reviews unless they let you edit directly. Runs on a linked ticket receive the frame's PNG and Inspect output.", designLinkTicket),
-	define("finance_summary", "The person's finances from their imported bank statements: cash flow per month (money in and out, transfers between their accounts left out), net worth, savings rate, spending by category for a month against the months before, and their accounts. Only in the Finance app's Ask chat.", financeSummary),
-	define("finance_query", "Find the person's transactions by month or dates, category, words in the description, direction or account; returns up to 50, newest first, with the count and total of every match. Only in the Finance app's Ask chat.", financeQuery),
-	define("finance_recurring", "The person's monthly recurring charges (subscriptions, rent, memberships): the latest amount, price changes and which are new. Only in the Finance app's Ask chat.", financeRecurring),
-	define("finance_categorize", "Set a transaction's category when the person says what it is. By default it saves a rule that categorizes this merchant's past and future transactions too; tell them. Only in the Finance app's Ask chat.", financeCategorize),
-	define("finance_map_csv", "Map the columns of a CSV the person is importing in the Finance app, when Vesper asks you to. Vesper reads every row with your mapping and refuses it with the first row that doesn't read; fix it and call again. Only in the Finance app's Ask chat.", financeMapCSV),
 	define("list_saved_links", "List the pages and videos this person saved to their Library, newest first: what's still to read and what they've finished. Use it when it's useful to bring up something they saved.", listSavedLinks),
 	define("search_library", "Find things in the person's Library made with their personas: images, videos, diagrams and saved links, newest first. Shows what each is and where it came from, not its file; their documents aren't searched.", searchLibrary),
 	define("read_library_item", "One Library item in full: a saved link's note and summary, and the chat and persona it came from.", readLibraryItem),
@@ -1310,6 +1307,12 @@ var Tools = []Tool{
 			}
 			return map[string]any{"state": "rechecking", "message": "End your turn; you'll be resumed with the result."}, nil
 		}),
+	define("list_custom_apps", "List the person's user-built Custom Apps (/apps/<slug>): slug, name, description, version, capabilities, tool_scope, and URL.", listCustomApps),
+	define("get_custom_app", "Read one Custom App's manifest, capabilities, source files (app.tsx, styles.css, schema.sql), version history, and SQLite table schema.", getCustomApp),
+	define("create_custom_app", "Create a persistent user-built Custom App at /apps/<slug> with its own SQLite database and React TSX + @vesper/bridge bundle (from a blank/tracker/ledger template or custom source files).", createCustomApp),
+	define("update_custom_app", "Update a Custom App's source files, manifest, metadata, or restore an earlier version. Recompiles TSX with React + @vesper/bridge and applies new schema.sql definitions.", updateCustomApp),
+	define("delete_custom_app", "Delete a Custom App and its embedded SQLite database permanently. Only when the person asks.", deleteCustomApp),
+	define("custom_app_sql", "Run a parameterized SQLite query against a Custom App's private database. Respects the app's tool_scope (chats vs app_only).", customAppSQL),
 }
 
 // ByName indexes Tools.

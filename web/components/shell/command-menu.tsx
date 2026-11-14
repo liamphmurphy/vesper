@@ -10,6 +10,8 @@ import { Icon, type IconName } from "@/components/ui/icon";
 import { Kbd } from "@/components/ui/primitives";
 import { artifactTitle } from "@/components/domain/artifacts";
 import { usePersonas } from "@/lib/api/persona-hooks";
+import { useCustomApps } from "@/lib/api/custom-app-hooks";
+import { resolveAppIcon } from "@/lib/custom-app-bridge";
 import { cx } from "@/lib/cx";
 import { shortAgo } from "@/lib/format";
 import { approvalId, KIND as INBOX_KIND } from "@/lib/inbox";
@@ -264,6 +266,7 @@ export function CommandMenu() {
   const remembered = useRememberedProject();
   const personas = usePersonas();
   const [open, setOpen] = useState(false);
+  const customApps = useCustomApps(open);
   const [query, setQuery] = useState("");
   const [project, setProject] = useState<string>();
   const [scope, setScope] = useState(false);
@@ -424,7 +427,19 @@ export function CommandMenu() {
         mark: true,
       }))
     : [];
-  const appsMenu = [...APP_ITEMS.map((i) => ({ ...i, kind: "app" })), ...KIND_JUMPS.map((i) => ({ ...i, kind: "in Knowledge" })), ...TOOL_ITEMS.map((i) => ({ ...i, kind: "tool" }))];
+  const myApps = (customApps.data?.apps ?? []).map((a) => ({
+    href: `/apps/${a.slug}`,
+    label: a.name,
+    aliases: a.slug === a.name.toLowerCase() ? undefined : a.slug,
+    icon: resolveAppIcon(a.icon) as IconName,
+    kind: "custom app",
+  }));
+  const appsMenu = [
+    ...APP_ITEMS.map((i) => ({ ...i, kind: "app" })),
+    ...myApps,
+    ...KIND_JUMPS.map((i) => ({ ...i, kind: "in Knowledge" })),
+    ...TOOL_ITEMS.map((i) => ({ ...i, kind: "tool" })),
+  ];
   // is:app on its own lists every app.
   const appsWanted = filters.text ? appMatches(appsMenu, filters.text) : oneType === "app" ? appsMenu : [];
   const apps: Row[] = offers("app")
@@ -432,7 +447,7 @@ export function CommandMenu() {
         id: `app-${a.href}`,
         title: a.label,
         sub: a.kind,
-        icon: TYPE_ICON.app,
+        icon: a.kind === "custom app" && "icon" in a ? a.icon : TYPE_ICON.app,
         href: withProject(a.href, remembered),
         recent: { id: `app-${a.href}`, title: a.label, meta: a.kind, href: withProject(a.href, remembered), kind: "Apps" },
         local: true,

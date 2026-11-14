@@ -88,7 +88,7 @@ test("one column switches areas; a screen's own list takes the place of Chats", 
   await expect(apps).toHaveAttribute("aria-expanded", "false");
   await apps.click();
   const flyout = page.getByRole("dialog", { name: "Apps" });
-  await expect(flyout.getByRole("group", { name: "Apps" }).getByRole("link")).toHaveText([/Knowledge/, "Finance", "Library"]);
+  await expect(flyout.getByRole("group", { name: "Apps" }).getByRole("link")).toHaveText([/Knowledge/, "Custom Apps", "Library"]);
   await expect(flyout.getByRole("group", { name: "Tools" }).getByRole("link")).toHaveText(["Workflows", /Scheduled/, "Learn", "Reports"]);
   await expect(flyout.getByRole("button", { name: "New space" })).toBeVisible();
   const flyoutBox = await flyout.boundingBox();
@@ -97,8 +97,8 @@ test("one column switches areas; a screen's own list takes the place of Chats", 
   // Arrow keys move through the grid; Esc closes and returns to the row.
   await expect(flyout.getByRole("link", { name: /^Knowledge/ })).toBeFocused();
   await page.keyboard.press("ArrowRight");
-  await expect(flyout.getByRole("link", { name: "Finance" })).toBeFocused();
-  // Down keeps the column: Finance is second in Apps, Scheduled second in Tools.
+  await expect(flyout.getByRole("link", { name: "Custom Apps" })).toBeFocused();
+  // Down keeps the column: Custom Apps is second in Apps, Scheduled second in Tools.
   await page.keyboard.press("ArrowDown");
   await expect(flyout.getByRole("link", { name: /Scheduled/ })).toBeFocused();
   await page.keyboard.press("Escape");

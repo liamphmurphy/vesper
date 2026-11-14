@@ -11,7 +11,7 @@ test("one menu: Work, the Apps flyout's Apps and Tools, and the footer, with uni
   const labels = NAV_GROUPS.map((g) => [g.label, g.items.map((i) => i.label)]);
   assert.deepEqual(labels, [
     ["Work", ["Work"]],
-    ["Apps", ["Knowledge", "Finance", "Library"]],
+    ["Apps", ["Knowledge", "Custom Apps", "Library"]],
     ["Tools", ["Workflows", "Scheduled", "Learn", "Reports"]],
     ["You", ["Customization", "Settings"]],
   ]);
@@ -22,7 +22,7 @@ test("one menu: Work, the Apps flyout's Apps and Tools, and the footer, with uni
 });
 
 test("the Apps row is current on any page its flyout opens that has no rail entry of its own", () => {
-  for (const p of ["/apps/finance", "/library", "/workflows/1", "/scheduled", "/learn/2"]) assert.equal(inAppsMenu(p), true, p);
+  for (const p of ["/apps", "/apps/habit-tracker", "/library", "/workflows/1", "/scheduled", "/learn/2"]) assert.equal(inAppsMenu(p), true, p);
   for (const p of ["/", "/chat/1", "/inbox", "/tickets", "/customization"]) assert.equal(inAppsMenu(p), false, p);
   // Knowledge has its own rail entry, which reads as current instead, also for decks' and designs'
   // old addresses, which lead to their Knowledge pages (LAZYAGENTS-212).

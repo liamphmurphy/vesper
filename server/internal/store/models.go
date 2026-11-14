@@ -563,6 +563,43 @@ type Criterion struct {
 	UpdatedAt time.Time
 }
 
+type CustomApp struct {
+	ID           uuid.UUID
+	WorkspaceID  uuid.UUID
+	UserID       uuid.UUID
+	Slug         string
+	Name         string
+	Description  string
+	Icon         string
+	SpaceID      *uuid.UUID
+	CurrentSeq   int32
+	Manifest     json.RawMessage
+	Capabilities json.RawMessage
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+type CustomAppDatabase struct {
+	AppID       uuid.UUID
+	SqliteBytes []byte
+	SizeBytes   int32
+	UpdatedAt   time.Time
+}
+
+type CustomAppVersion struct {
+	ID         uuid.UUID
+	AppID      uuid.UUID
+	Seq        int32
+	Note       string
+	AuthorType string
+	AgentID    *uuid.UUID
+	Manifest   json.RawMessage
+	Files      json.RawMessage
+	BundleJs   string
+	BundleCss  string
+	CreatedAt  time.Time
+}
+
 type DeckAsset struct {
 	CanvasID    uuid.UUID
 	ID          string
@@ -685,82 +722,6 @@ type EpicCriterion struct {
 	CheckedAt     *time.Time
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
-}
-
-type FinanceAccount struct {
-	ID           uuid.UUID
-	WorkspaceID  uuid.UUID
-	UserID       uuid.UUID
-	Name         string
-	Kind         string
-	Mask         string
-	OfxAccountID *string
-	CreatedAt    time.Time
-}
-
-type FinanceBalance struct {
-	AccountID    uuid.UUID
-	AsOf         time.Time
-	BalanceCents int64
-}
-
-type FinanceCsvMapping struct {
-	WorkspaceID uuid.UUID
-	UserID      uuid.UUID
-	Fingerprint string
-	Mapping     json.RawMessage
-	UpdatedAt   time.Time
-}
-
-type FinanceImport struct {
-	ID          uuid.UUID
-	AccountID   uuid.UUID
-	Filename    string
-	Format      string
-	Parsed      int32
-	Inserted    int32
-	Duplicates  int32
-	Transfers   int32
-	Categorized int32
-	CreatedAt   time.Time
-}
-
-type FinancePendingImport struct {
-	ID          uuid.UUID
-	WorkspaceID uuid.UUID
-	UserID      uuid.UUID
-	AccountID   uuid.UUID
-	Filename    string
-	Data        []byte
-	Prefill     json.RawMessage
-	ChatID      *uuid.UUID
-	Mapping     []byte
-	MappingNote string
-	CreatedAt   time.Time
-}
-
-type FinanceRule struct {
-	ID          uuid.UUID
-	WorkspaceID uuid.UUID
-	UserID      uuid.UUID
-	Pattern     string
-	Category    string
-	CreatedAt   time.Time
-}
-
-type FinanceTransaction struct {
-	ID             uuid.UUID
-	AccountID      uuid.UUID
-	ImportID       *uuid.UUID
-	PostedOn       time.Time
-	AmountCents    int64
-	Description    string
-	Merchant       string
-	Category       *string
-	CategorySource *string
-	TransferID     *uuid.UUID
-	DedupeKey      string
-	CreatedAt      time.Time
 }
 
 type HarnessModelListing struct {

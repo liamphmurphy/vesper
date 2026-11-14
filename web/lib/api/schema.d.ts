@@ -3556,191 +3556,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/finance": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * The signed-in person's Finance dashboard
-         * @description Cash flow by month (oldest first, ending with this one), net worth
-         *     rolled from each account's newest balance, savings rate, spending by
-         *     category for the last full month against the months before, the
-         *     transactions waiting for a category, and monthly recurring charges.
-         *     Opening it makes the person's Finance space the first time: the
-         *     space the Ask drawer's chats live in.
-         */
-        get: operations["getFinanceOverview"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/finance/accounts": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Add an account by hand, for CSV imports
-         * @description OFX imports add their own accounts. 422 for an invalid field or a name already in use.
-         */
-        post: operations["createFinanceAccount"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/finance/accounts/{accountId}/balance": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                accountId: string;
-            };
-            cookie?: never;
-        };
-        get?: never;
-        /**
-         * Record an account's balance on a day
-         * @description Net worth rolls the newest balance of each account through its transactions. CSV exports rarely carry one, so the person enters it.
-         */
-        put: operations["setFinanceAccountBalance"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/finance/imports": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Import a bank's CSV or OFX/QFX export
-         * @description Transactions already imported are skipped, so overlapping exports
-         *     are safe. New ones are categorized by the person's rules, then
-         *     built-in keywords; card payments are paired with their other side
-         *     as transfers. An OFX file finds or creates its account; a CSV needs
-         *     account_id. Up to 5 MB and 20,000 transactions. 422 for a file that
-         *     can't be read, a CSV without an account, or an OFX for a different
-         *     account than the one picked.
-         */
-        post: operations["importFinanceStatement"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/finance/imports/pending/{importId}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                importId: string;
-            };
-            cookie?: never;
-        };
-        /**
-         * A CSV waiting for its columns to be mapped
-         * @description Poll it while assistant is asking; the assistant's mapping appears once it reads every row.
-         */
-        get: operations["getFinancePendingImport"];
-        put?: never;
-        post?: never;
-        /** Drop a pending import without importing it */
-        delete: operations["cancelFinancePendingImport"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/finance/imports/pending/{importId}/preview": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                importId: string;
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * What a mapping reads from the whole file, without importing
-         * @description 422 names the first row the mapping can't read.
-         */
-        post: operations["previewFinanceMapping"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/finance/imports/pending/{importId}/commit": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                importId: string;
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Import a pending CSV with a mapping, and remember the mapping
-         * @description The next file with the same delimiter and first line imports with it directly. 422 names the first row the mapping can't read.
-         */
-        post: operations["commitFinanceMapping"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/finance/transactions/{transactionId}/category": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                transactionId: string;
-            };
-            cookie?: never;
-        };
-        get?: never;
-        /**
-         * Set a transaction's category
-         * @description With save_rule (the default), the merchant's first words become a
-         *     rule: it recategorizes past matches (except ones set by hand or
-         *     matched transfers) and categorizes future imports. Moving a matched
-         *     transfer to another category sends its other side back to review.
-         */
-        put: operations["categorizeFinanceTransaction"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/chat-spaces": {
         parameters: {
             query?: never;
@@ -4956,6 +4771,84 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/custom-apps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List user-built custom apps */
+        get: operations["listCustomApps"];
+        put?: never;
+        /** Create a custom app from a starter template or source files */
+        post: operations["createCustomApp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/custom-apps/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        /** Get custom app details, current bundle, version history, and SQLite schema */
+        get: operations["getCustomApp"];
+        put?: never;
+        post?: never;
+        /** Delete a custom app and its embedded SQLite database */
+        delete: operations["deleteCustomApp"];
+        options?: never;
+        head?: never;
+        /** Update custom app code, metadata, capabilities, or restore a previous version */
+        patch: operations["updateCustomApp"];
+        trace?: never;
+    };
+    "/custom-apps/{slug}/versions/{seq}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                seq: number;
+            };
+            cookie?: never;
+        };
+        /** Fetch a specific historical version of a custom app */
+        get: operations["getCustomAppVersion"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/custom-apps/{slug}/invoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Execute a capability-gated SQL, Vesper REST API, or MCP connector action for a custom app */
+        post: operations["invokeCustomApp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -5283,259 +5176,6 @@ export interface components {
         MemoryType: string;
         /** @enum {string} */
         ChatSpaceColor: "green" | "amber" | "red" | "blue" | "violet" | "pink" | "teal" | "orange";
-        /** @description How to read one bank's CSV layout. Columns are 0-based; give either amount (optionally with direction and debit_values) or debit and credit. */
-        FinanceCSVMapping: {
-            /** @description One character: comma, semicolon, tab or pipe */
-            delimiter: string;
-            /** @description 1-based row with the column names (blank lines aren't rows); 0 for none */
-            header_row: number;
-            date: number;
-            /** @description One of the pending import's date_formats */
-            date_format: string;
-            description: number[];
-            /** @description Signed amount */
-            amount?: number;
-            /** @description Column saying which way the money went, e.g. DR/CR */
-            direction?: number;
-            /** @description direction values that mean money out */
-            debit_values?: string[];
-            /** @description Money out column */
-            debit?: number;
-            /** @description Money in column */
-            credit?: number;
-            /** @description Running balance column */
-            balance?: number;
-            /** @description Amounts are written 1.234,56 */
-            decimal_comma?: boolean;
-            /** @description Purchases show as positive amounts */
-            flip_sign?: boolean;
-        };
-        FinancePendingImport: {
-            /** Format: uuid */
-            id: string;
-            /** Format: uuid */
-            account_id: string;
-            filename: string;
-            /** @description The file's first rows as split by prefill's delimiter, header included */
-            rows: string[][];
-            columns: number;
-            prefill: components["schemas"]["FinanceCSVMapping"];
-            /**
-             * @description asking: a hidden chat is working on a mapping; unavailable: none could be started
-             * @enum {string}
-             */
-            assistant: "asking" | "mapped" | "unavailable";
-            mapping?: components["schemas"]["FinanceCSVMapping"];
-            /** @description How the assistant read the file */
-            mapping_note: string;
-            date_formats: string[];
-            /** Format: date-time */
-            created_at: string;
-        };
-        FinanceMappingRow: {
-            /** Format: date */
-            posted_on: string;
-            description: string;
-            /** Format: int64 */
-            amount_cents: number;
-        };
-        FinanceMappingPreview: {
-            count: number;
-            /** Format: date */
-            first_date: string;
-            /** Format: date */
-            last_date: string;
-            /** Format: int64 */
-            in_cents: number;
-            /** Format: int64 */
-            out_cents: number;
-            rows: components["schemas"]["FinanceMappingRow"][];
-            /** Format: int64 */
-            balance_cents?: number;
-            /** Format: date */
-            balance_as_of?: string;
-        };
-        /** @enum {string} */
-        FinanceAccountKind: "checking" | "savings" | "credit" | "brokerage" | "other";
-        FinanceAccount: {
-            /** Format: uuid */
-            id: string;
-            name: string;
-            kind: components["schemas"]["FinanceAccountKind"];
-            /** @description Last digits of the account number, e.g. 4417 */
-            mask: string;
-            transaction_count: number;
-            /** @description OFX imports find this account by itself */
-            from_ofx: boolean;
-            /**
-             * Format: int64
-             * @description Newest balance; negative for debt. Absent until one is known.
-             */
-            balance_cents?: number;
-            /** Format: date */
-            balance_as_of?: string;
-        };
-        NewFinanceAccount: {
-            name: string;
-            kind: components["schemas"]["FinanceAccountKind"];
-            mask?: string;
-        };
-        FinanceBalanceInput: {
-            /**
-             * Format: int64
-             * @description Negative for debt, e.g. a card's balance owed
-             */
-            balance_cents: number;
-            /** Format: date */
-            as_of: string;
-        };
-        FinanceMonth: {
-            /**
-             * Format: date
-             * @description The month's first day
-             */
-            month: string;
-            /**
-             * Format: int64
-             * @description Money in
-             */
-            inflow_cents: number;
-            /**
-             * Format: int64
-             * @description Money out
-             */
-            outflow_cents: number;
-            /**
-             * Format: int64
-             * @description Transfers out between the person's accounts: what counting card payments would add
-             */
-            transfer_out_cents: number;
-            /**
-             * Format: int64
-             * @description At the month's end (today for this month); absent until an account has a balance
-             */
-            net_worth_cents?: number;
-        };
-        FinanceCategorySpend: {
-            /** @description A category, or Uncategorized */
-            category: string;
-            /** Format: int64 */
-            spent_cents: number;
-            /**
-             * Format: int64
-             * @description Average over up to six months before, counting months with any spending
-             */
-            average_cents: number;
-        };
-        FinanceReviewItem: {
-            /** Format: uuid */
-            id: string;
-            /** Format: date */
-            posted_on: string;
-            description: string;
-            /** Format: int64 */
-            amount_cents: number;
-            account_name: string;
-            account_mask: string;
-            /** @description Up to three likely categories, best first */
-            suggestions: string[];
-        };
-        FinanceRecurring: {
-            label: string;
-            /**
-             * Format: int64
-             * @description The latest charge
-             */
-            amount_cents: number;
-            /**
-             * Format: int64
-             * @description The price before the latest change, if it changed
-             */
-            previous_cents?: number;
-            /** Format: date */
-            changed_on?: string;
-            day_of_month: number;
-            /** Format: date */
-            first_seen: string;
-            /** Format: date */
-            last_seen: string;
-            count: number;
-            /** @description First charged within the last two months */
-            new: boolean;
-        };
-        FinanceImportSummary: {
-            /** Format: uuid */
-            id: string;
-            /** Format: uuid */
-            account_id: string;
-            filename: string;
-            /** @enum {string} */
-            format: "csv" | "ofx";
-            parsed: number;
-            inserted: number;
-            duplicates: number;
-            /** @description Transfers matched with another account */
-            transfers: number;
-            categorized: number;
-            /** Format: date-time */
-            created_at: string;
-        };
-        FinanceImportResult: {
-            import: components["schemas"]["FinanceImportSummary"];
-            account: components["schemas"]["FinanceAccount"];
-            account_created: boolean;
-            needs_review: number;
-            /** Format: date */
-            first_date?: string;
-            /** Format: date */
-            last_date?: string;
-        };
-        FinanceCategorize: {
-            category: string;
-            /** @default true */
-            save_rule: boolean;
-        };
-        FinanceCategorizeResult: {
-            /** Format: uuid */
-            id: string;
-            category: string;
-            /** @description The rule saved */
-            pattern?: string;
-            /** @description Other transactions the rule recategorized */
-            updated: number;
-        };
-        FinanceOverview: {
-            /**
-             * Format: uuid
-             * @description The person's Finance space
-             */
-            space_id: string;
-            /** @description Every category */
-            categories_all: string[];
-            accounts: components["schemas"]["FinanceAccount"][];
-            months: components["schemas"]["FinanceMonth"][];
-            /** Format: int64 */
-            net_worth_cents?: number;
-            /**
-             * Format: int64
-             * @description Since the end of last month
-             */
-            net_worth_change_cents?: number;
-            /**
-             * Format: double
-             * @description (in − out) / in over the months shown; absent with no income
-             */
-            savings_rate?: number;
-            /** Format: date */
-            category_month: string;
-            categories: components["schemas"]["FinanceCategorySpend"][];
-            /** @description The newest 25 waiting for a category */
-            review: components["schemas"]["FinanceReviewItem"][];
-            review_count: number;
-            transaction_count: number;
-            recurring: components["schemas"]["FinanceRecurring"][];
-            last_import?: components["schemas"]["FinanceImportSummary"];
-        };
         ChatSpace: {
             /** Format: uuid */
             id: string;
@@ -9668,6 +9308,145 @@ export interface components {
             capabilities?: components["schemas"]["PersonaCapabilities"];
             /** @description Replaces the whole list; existing chats keep their repo */
             repos?: string[];
+        };
+        CustomAppNavItem: {
+            id: string;
+            label: string;
+            icon?: string;
+        };
+        /** @enum {string} */
+        CustomAppCapabilityMode: "allowed" | "requires_approval" | "denied";
+        CustomAppCapabilities: {
+            [key: string]: components["schemas"]["CustomAppCapabilityMode"];
+        };
+        CustomAppManifest: {
+            entry: string;
+            /** @enum {string} */
+            tool_scope: "chats" | "app_only";
+            instructions?: string;
+            nav?: components["schemas"]["CustomAppNavItem"][];
+            requested_capabilities?: components["schemas"]["CustomAppCapabilities"];
+        };
+        CustomAppSummary: {
+            /** Format: uuid */
+            id: string;
+            slug: string;
+            name: string;
+            description: string;
+            icon: string;
+            /** Format: uuid */
+            space_id?: string | null;
+            current_seq: number;
+            manifest: components["schemas"]["CustomAppManifest"];
+            capabilities: components["schemas"]["CustomAppCapabilities"];
+            db_size_bytes: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        CustomAppVersionSummary: {
+            seq: number;
+            note: string;
+            /** @enum {string} */
+            author_type: "user" | "persona";
+            /** Format: uuid */
+            agent_id?: string | null;
+            /** Format: date-time */
+            created_at: string;
+        };
+        CustomAppVersion: {
+            seq: number;
+            note: string;
+            /** @enum {string} */
+            author_type: "user" | "persona";
+            /** Format: uuid */
+            agent_id?: string | null;
+            /** Format: date-time */
+            created_at: string;
+            manifest: components["schemas"]["CustomAppManifest"];
+            files: {
+                [key: string]: string;
+            };
+            bundle_js: string;
+            bundle_css: string;
+        };
+        CustomAppSchemaObject: {
+            type: string;
+            name: string;
+            sql: string;
+        };
+        CustomAppDetail: {
+            /** Format: uuid */
+            id: string;
+            slug: string;
+            name: string;
+            description: string;
+            icon: string;
+            /** Format: uuid */
+            space_id?: string | null;
+            current_seq: number;
+            manifest: components["schemas"]["CustomAppManifest"];
+            capabilities: components["schemas"]["CustomAppCapabilities"];
+            db_size_bytes: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            current: components["schemas"]["CustomAppVersion"];
+            versions: components["schemas"]["CustomAppVersionSummary"][];
+            schema: components["schemas"]["CustomAppSchemaObject"][];
+        };
+        NewCustomApp: {
+            slug: string;
+            name: string;
+            description?: string;
+            icon?: string;
+            /** @enum {string} */
+            template?: "blank" | "tracker" | "ledger";
+            manifest?: components["schemas"]["CustomAppManifest"];
+            files?: {
+                [key: string]: string;
+            };
+            capabilities?: components["schemas"]["CustomAppCapabilities"];
+            note?: string;
+        };
+        UpdateCustomApp: {
+            name?: string;
+            description?: string;
+            icon?: string;
+            manifest?: components["schemas"]["CustomAppManifest"];
+            files?: {
+                [key: string]: string;
+            };
+            replace_files?: boolean;
+            remove_files?: string[];
+            capabilities?: components["schemas"]["CustomAppCapabilities"];
+            note?: string;
+            restore_seq?: number;
+        };
+        CustomAppInvokeRequest: {
+            /** @enum {string} */
+            kind: "sql" | "api" | "mcp";
+            query?: string;
+            params?: unknown[];
+            method?: string;
+            path?: string;
+            body?: unknown;
+            connector?: string;
+            tool?: string;
+            arguments?: {
+                [key: string]: unknown;
+            };
+            approved?: boolean;
+            always_allow?: boolean;
+        };
+        CustomAppInvokeResponse: {
+            /** @enum {string} */
+            status: "ok" | "approval_required";
+            capability: string;
+            summary?: string;
+            result?: unknown;
         };
     };
     responses: {
@@ -15514,264 +15293,6 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    getFinanceOverview: {
-        parameters: {
-            query?: {
-                /** @description Months of cash flow, 1–24 (default 12) */
-                months?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The dashboard */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FinanceOverview"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
-    createFinanceAccount: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["NewFinanceAccount"];
-            };
-        };
-        responses: {
-            /** @description The account */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FinanceAccount"];
-                };
-            };
-            422: components["responses"]["Error"];
-            default: components["responses"]["Error"];
-        };
-    };
-    setFinanceAccountBalance: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                accountId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FinanceBalanceInput"];
-            };
-        };
-        responses: {
-            /** @description The account with its balance */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FinanceAccount"];
-                };
-            };
-            404: components["responses"]["Error"];
-            422: components["responses"]["Error"];
-            default: components["responses"]["Error"];
-        };
-    };
-    importFinanceStatement: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "multipart/form-data": {
-                    /** Format: binary */
-                    file: string;
-                    /** Format: uuid */
-                    account_id?: string;
-                    /** @description The CSV shows purchases as positive amounts (some card exports do) */
-                    flip_sign?: boolean;
-                };
-            };
-        };
-        responses: {
-            /** @description What was imported */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FinanceImportResult"];
-                };
-            };
-            /**
-             * @description A CSV layout Vesper doesn't know yet: nothing was imported. The
-             *     file waits for its columns to be mapped, and the assistant is
-             *     asked for a mapping in a hidden chat. Confirm one with commit.
-             */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FinancePendingImport"];
-                };
-            };
-            422: components["responses"]["Error"];
-            default: components["responses"]["Error"];
-        };
-    };
-    getFinancePendingImport: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                importId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The pending import */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FinancePendingImport"];
-                };
-            };
-            404: components["responses"]["Error"];
-            default: components["responses"]["Error"];
-        };
-    };
-    cancelFinancePendingImport: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                importId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Dropped */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: components["responses"]["Error"];
-            default: components["responses"]["Error"];
-        };
-    };
-    previewFinanceMapping: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                importId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FinanceCSVMapping"];
-            };
-        };
-        responses: {
-            /** @description The preview */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FinanceMappingPreview"];
-                };
-            };
-            404: components["responses"]["Error"];
-            422: components["responses"]["Error"];
-            default: components["responses"]["Error"];
-        };
-    };
-    commitFinanceMapping: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                importId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FinanceCSVMapping"];
-            };
-        };
-        responses: {
-            /** @description What was imported */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FinanceImportResult"];
-                };
-            };
-            404: components["responses"]["Error"];
-            422: components["responses"]["Error"];
-            default: components["responses"]["Error"];
-        };
-    };
-    categorizeFinanceTransaction: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                transactionId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FinanceCategorize"];
-            };
-        };
-        responses: {
-            /** @description The result */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FinanceCategorizeResult"];
-                };
-            };
-            404: components["responses"]["Error"];
-            422: components["responses"]["Error"];
-            default: components["responses"]["Error"];
-        };
-    };
     listChatSpaces: {
         parameters: {
             query?: never;
@@ -17754,6 +17275,177 @@ export interface operations {
                     "application/json": components["schemas"]["ChatSession"];
                 };
             };
+            default: components["responses"]["Error"];
+        };
+    };
+    listCustomApps: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Custom apps owned by the caller */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        apps: components["schemas"]["CustomAppSummary"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createCustomApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewCustomApp"];
+            };
+        };
+        responses: {
+            /** @description Created custom app */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomAppDetail"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getCustomApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Custom app detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomAppDetail"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteCustomApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateCustomApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateCustomApp"];
+            };
+        };
+        responses: {
+            /** @description Updated custom app detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomAppDetail"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getCustomAppVersion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                seq: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Historical version */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomAppVersion"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    invokeCustomApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CustomAppInvokeRequest"];
+            };
+        };
+        responses: {
+            /** @description Action result or capability approval request */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomAppInvokeResponse"];
+                };
+            };
+            403: components["responses"]["Error"];
             default: components["responses"]["Error"];
         };
     };

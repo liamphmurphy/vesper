@@ -808,7 +808,7 @@ func agentsSection(ctx context.Context, q *store.Queries, c runCtx, paths []stri
 			return nil, "Could not load the conversation's persona.", fmt.Errorf("chat svg capability: %w", err)
 		}
 		spec := c.spec
-		spec.Instructions += agents.AssistantRecommendSection + agents.AssistantRichRepliesSection + agents.AssistantCanvasSection + agents.AssistantKnowledgeSection + agents.AssistantWorkflowSection
+		spec.Instructions += agents.AssistantRecommendSection + agents.AssistantRichRepliesSection + agents.AssistantCanvasSection + agents.AssistantKnowledgeSection + agents.AssistantWorkflowSection + agents.AssistantCustomAppsSection
 		buildWorkflows, err := runs.SpeakerCanCreateWorkflows(ctx, q, chat)
 		if err != nil {
 			return nil, "Could not load the conversation's persona.", fmt.Errorf("chat workflow capability: %w", err)

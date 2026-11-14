@@ -11,6 +11,7 @@ test("harness log lines and video and audio progress refetch only their own quer
   assert.deepEqual(invalidatedBy("run.events"), ["runs"]);
   assert.deepEqual(invalidatedBy("video.updated"), ["videos"]);
   assert.deepEqual(invalidatedBy("audio.updated"), ["audio"]);
+  assert.deepEqual(invalidatedBy("custom_app.updated"), ["custom-apps"]);
 });
 
 test("an unknown hint refetches only the overview counts", () => {

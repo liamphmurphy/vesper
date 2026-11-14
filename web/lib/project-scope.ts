@@ -26,10 +26,10 @@ export const WORK_ITEMS: NavItem[] = [
   { href: "/work", label: "Work", icon: "tickets", badge: "runs" },
 ];
 
-/** Apps: a full page of their own. Knowledge holds documents, decks and designs and the wiki in one store (LAZYAGENTS-212); Finance has an Ask drawer backed by one of the person's spaces. */
+/** Apps: a full page of their own. Knowledge holds documents, decks and designs and the wiki in one store (LAZYAGENTS-212); Custom Apps hosts user-built apps inside the workbench. */
 export const APP_ITEMS: NavItem[] = [
   { href: "/knowledge", label: "Knowledge", icon: "wiki", badge: "wiki" },
-  { href: "/apps/finance", label: "Finance", icon: "dollar" },
+  { href: "/apps", label: "Custom Apps", icon: "dashboard" },
   { href: "/library", label: "Library", icon: "library" },
 ];
 

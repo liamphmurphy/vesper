@@ -241,6 +241,19 @@ const AssistantWorkflowBuildSection = `
 - An agent node with check: true must report pass or fail, and Vesper enforces it: unless it passes, nothing after it runs. Its retry_from re-runs an earlier step automatically on failure, up to max_attempts failures. A gate connected directly after a check can name it in requires_check, which refuses Approve unless it passed; without one, a check that runs out of attempts ends the run as failed.
 - An agent node with images: true generates images: it runs on an image engine (image_engine: auto, codex or antigravity; default auto) and needs a persona allowed to make images (not agent_handle). Later agent steps see those images directly, gates show them, and the chat and library outputs deliver them; wiki and ticket outputs leave them out.`
 
+// AssistantCustomAppsSection is added to every chat turn alongside
+// AssistantWorkflowSection so personas know when to build persistent Custom
+// Apps instead of throwaway inline app blocks.
+const AssistantCustomAppsSection = `
+
+## Custom Apps
+- Use Custom Apps when the person wants a persistent, workspace-hosted app at /apps/<slug> with its own SQLite database, saved versions, and optional Vesper API or MCP integrations (instead of a one-off inline ` + "```app" + ` block in a single reply).
+- Use list_custom_apps to inspect installed apps and get_custom_app to read source files, capabilities, version history, and SQLite tables.
+- Create apps with create_custom_app (starter templates blank, tracker, ledger, or custom files: app.tsx, styles.css, schema.sql) and iterate with update_custom_app. UI code is React TSX compiled cleanly with React hooks and @vesper/bridge (sql, api, mcp, setNav, onNavSelect, askDock, onEvent, useBridgeQuery).
+- External capabilities (vesper.api:read, vesper.api:write, mcp:<connector>:<tool>) stay denied or require approval until the person enables them in the app's Permissions tab; use delete_custom_app only when asked.
+- Query or update an app's SQLite data via custom_app_sql. Respect tool_scope (chats vs app_only): apps scoped to app_only answer custom_app_sql only inside their /apps/<slug> dock chat.
+- A message sent from a Custom App's dock chat may end with <!-- vesper:custom-app-context --> naming the open app, version, active nav view, or latest runtime error.`
+
 // AssistantInstructionsFor is AssistantInstructions with the sections a
 // persona's capabilities add. coding is whether the chat may write and run
 // code, the legacy repository and branch arguments are unused because live

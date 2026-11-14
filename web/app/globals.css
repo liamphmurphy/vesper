@@ -1251,31 +1251,6 @@ details[open]::details-content { height: auto; }
   .video-sweep { display: none; }
 }
 
-/*
- * The Finance app (app/(app)/apps/finance). Bars grow from the axis, fills and sparklines draw in,
- * a categorized row slides out of the review queue, and the Ask drawer slides in from the right.
- * Replaying a chart re-keys it, so these only run on mount.
- */
-.fin-bar { transform-box: fill-box; transform-origin: 50% 100%; animation: fin-grow 650ms var(--motion-ease) both; }
-.fin-fill { transform-origin: 0 50%; animation: fin-fill 800ms var(--motion-ease) both; }
-.fin-spark { stroke-dasharray: 1; animation: fin-draw 1100ms var(--motion-ease) 250ms both; }
-.fin-spark-dot { animation: motion-fade-in 300ms ease-out 1200ms both; }
-.fin-row { display: grid; grid-template-rows: 1fr; transition: grid-template-rows 320ms var(--motion-ease), opacity 220ms ease-out, transform 320ms var(--motion-ease); }
-.fin-row > * { min-height: 0; overflow: hidden; }
-.fin-row[data-leaving="true"] { grid-template-rows: 0fr; opacity: 0; transform: translateX(24px); }
-.fin-step { animation: motion-rise 380ms var(--motion-ease) both; }
-.fin-progress { animation: fin-progress 1100ms ease-in-out infinite alternate; }
-@keyframes fin-grow { from { transform: scaleY(0); } }
-@keyframes fin-fill { from { transform: scaleX(0); } }
-@keyframes fin-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
-@keyframes fin-progress { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
-
-@media (prefers-reduced-motion: reduce) {
-  .fin-bar, .fin-fill, .fin-spark, .fin-spark-dot, .fin-step { animation-duration: 1ms !important; animation-delay: 0ms !important; }
-  .fin-row { transition-duration: 1ms !important; }
-  .fin-progress { animation: none; transform: none; width: 100%; opacity: 0.6; }
-}
-
 /* The Docs app's page: the editor's content, styled like a written document. */
 @layer components {
   .doc-page .ProseMirror { outline: none; color: var(--text-2); font-size: calc(15.5px * var(--type-scale)); line-height: 1.7; min-height: 50vh; }

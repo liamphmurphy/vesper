@@ -514,16 +514,6 @@ export function chatStatusOf(call: { tool: string; input: unknown }): ChatStatus
       return status("audio-render", "finishing the audio");
     case "fail_audio":
       return status("audio-render", "reporting a failed render");
-    case "finance_summary":
-      return status("finance", "summing up your finances");
-    case "finance_query":
-      return status("finance", "looking through your transactions");
-    case "finance_recurring":
-      return status("finance", "finding recurring charges");
-    case "finance_categorize":
-      return status("finance-sort", "sorting your transactions");
-    case "finance_map_csv":
-      return status("finance-sort", "reading your bank export");
     case "get_video_transcript":
       return status("video", "watching a video");
     case "canvas_list":
@@ -583,6 +573,17 @@ export function chatStatusOf(call: { tool: string; input: unknown }): ChatStatus
     case "list_workflows":
     case "read_workflow":
       return status("workflow", "looking over a workflow");
+    case "list_custom_apps":
+    case "get_custom_app":
+      return status("reading-code", "inspecting a custom app");
+    case "create_custom_app":
+      return status("writing-code", "creating a custom app");
+    case "update_custom_app":
+      return status("writing-code", "updating a custom app");
+    case "delete_custom_app":
+      return status("writing-code", "deleting a custom app");
+    case "custom_app_sql":
+      return status("playground", "querying app data");
     case "propose_workflow_edit":
       return status("workflow", "sketching a workflow");
     case "image_generation":
@@ -903,6 +904,18 @@ export function stepDetail(call: { tool: string; input: unknown }, names: Map<st
       return named("Sketching", o.name);
     case "create_space":
       return named("Setting up", o.name);
+    case "list_custom_apps":
+      return "Listing custom apps";
+    case "get_custom_app":
+      return named("Inspecting", o.slug);
+    case "create_custom_app":
+      return named("Creating app", o.name || o.slug);
+    case "update_custom_app":
+      return named("Updating app", o.slug, o.note);
+    case "delete_custom_app":
+      return named("Deleting app", o.slug);
+    case "custom_app_sql":
+      return o.slug ? `Querying ${clip(str(o.slug))}` : general;
     case "create_scheduled_task":
       return named("Scheduling", o.name);
     case "update_scheduled_task":

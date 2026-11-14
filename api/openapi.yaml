@@ -42,8 +42,8 @@ tags:
   - name: personas
   - name: library
   - name: spaces
-  - name: finance
   - name: docs
+  - name: custom-apps
   - name: slides
     description: Slide decks in the Slides app
   - name: designs
@@ -4247,202 +4247,6 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ScheduledTask" }
         default: { $ref: "#/components/responses/Error" }
-  /finance:
-    get:
-      operationId: getFinanceOverview
-      summary: The signed-in person's Finance dashboard
-      description: |
-        Cash flow by month (oldest first, ending with this one), net worth
-        rolled from each account's newest balance, savings rate, spending by
-        category for the last full month against the months before, the
-        transactions waiting for a category, and monthly recurring charges.
-        Opening it makes the person's Finance space the first time: the
-        space the Ask drawer's chats live in.
-      tags: [finance]
-      parameters:
-        - { name: months, in: query, description: "Months of cash flow, 1–24 (default 12)", schema: { type: integer, minimum: 1, maximum: 24 } }
-      responses:
-        "200":
-          description: The dashboard
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/FinanceOverview" }
-        default: { $ref: "#/components/responses/Error" }
-  /finance/accounts:
-    post:
-      operationId: createFinanceAccount
-      summary: Add an account by hand, for CSV imports
-      description: OFX imports add their own accounts. 422 for an invalid field or a name already in use.
-      tags: [finance]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/NewFinanceAccount" }
-      responses:
-        "201":
-          description: The account
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/FinanceAccount" }
-        "422": { $ref: "#/components/responses/Error" }
-        default: { $ref: "#/components/responses/Error" }
-  /finance/accounts/{accountId}/balance:
-    parameters:
-      - { name: accountId, in: path, required: true, schema: { type: string, format: uuid } }
-    put:
-      operationId: setFinanceAccountBalance
-      summary: Record an account's balance on a day
-      description: Net worth rolls the newest balance of each account through its transactions. CSV exports rarely carry one, so the person enters it.
-      tags: [finance]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/FinanceBalanceInput" }
-      responses:
-        "200":
-          description: The account with its balance
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/FinanceAccount" }
-        "404": { $ref: "#/components/responses/Error" }
-        "422": { $ref: "#/components/responses/Error" }
-        default: { $ref: "#/components/responses/Error" }
-  /finance/imports:
-    post:
-      operationId: importFinanceStatement
-      summary: Import a bank's CSV or OFX/QFX export
-      description: |
-        Transactions already imported are skipped, so overlapping exports
-        are safe. New ones are categorized by the person's rules, then
-        built-in keywords; card payments are paired with their other side
-        as transfers. An OFX file finds or creates its account; a CSV needs
-        account_id. Up to 5 MB and 20,000 transactions. 422 for a file that
-        can't be read, a CSV without an account, or an OFX for a different
-        account than the one picked.
-      tags: [finance]
-      requestBody:
-        required: true
-        content:
-          multipart/form-data:
-            schema:
-              type: object
-              required: [file]
-              properties:
-                file: { type: string, format: binary }
-                account_id: { type: string, format: uuid }
-                flip_sign: { type: boolean, description: "The CSV shows purchases as positive amounts (some card exports do)" }
-      responses:
-        "201":
-          description: What was imported
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/FinanceImportResult" }
-        "202":
-          description: |
-            A CSV layout Vesper doesn't know yet: nothing was imported. The
-            file waits for its columns to be mapped, and the assistant is
-            asked for a mapping in a hidden chat. Confirm one with commit.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/FinancePendingImport" }
-        "422": { $ref: "#/components/responses/Error" }
-        default: { $ref: "#/components/responses/Error" }
-  /finance/imports/pending/{importId}:
-    parameters:
-      - { name: importId, in: path, required: true, schema: { type: string, format: uuid } }
-    get:
-      operationId: getFinancePendingImport
-      summary: A CSV waiting for its columns to be mapped
-      description: Poll it while assistant is asking; the assistant's mapping appears once it reads every row.
-      tags: [finance]
-      responses:
-        "200":
-          description: The pending import
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/FinancePendingImport" }
-        "404": { $ref: "#/components/responses/Error" }
-        default: { $ref: "#/components/responses/Error" }
-    delete:
-      operationId: cancelFinancePendingImport
-      summary: Drop a pending import without importing it
-      tags: [finance]
-      responses:
-        "204": { description: Dropped }
-        "404": { $ref: "#/components/responses/Error" }
-        default: { $ref: "#/components/responses/Error" }
-  /finance/imports/pending/{importId}/preview:
-    parameters:
-      - { name: importId, in: path, required: true, schema: { type: string, format: uuid } }
-    post:
-      operationId: previewFinanceMapping
-      summary: What a mapping reads from the whole file, without importing
-      description: 422 names the first row the mapping can't read.
-      tags: [finance]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/FinanceCSVMapping" }
-      responses:
-        "200":
-          description: The preview
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/FinanceMappingPreview" }
-        "404": { $ref: "#/components/responses/Error" }
-        "422": { $ref: "#/components/responses/Error" }
-        default: { $ref: "#/components/responses/Error" }
-  /finance/imports/pending/{importId}/commit:
-    parameters:
-      - { name: importId, in: path, required: true, schema: { type: string, format: uuid } }
-    post:
-      operationId: commitFinanceMapping
-      summary: Import a pending CSV with a mapping, and remember the mapping
-      description: The next file with the same delimiter and first line imports with it directly. 422 names the first row the mapping can't read.
-      tags: [finance]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/FinanceCSVMapping" }
-      responses:
-        "201":
-          description: What was imported
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/FinanceImportResult" }
-        "404": { $ref: "#/components/responses/Error" }
-        "422": { $ref: "#/components/responses/Error" }
-        default: { $ref: "#/components/responses/Error" }
-  /finance/transactions/{transactionId}/category:
-    parameters:
-      - { name: transactionId, in: path, required: true, schema: { type: string, format: uuid } }
-    put:
-      operationId: categorizeFinanceTransaction
-      summary: Set a transaction's category
-      description: |
-        With save_rule (the default), the merchant's first words become a
-        rule: it recategorizes past matches (except ones set by hand or
-        matched transfers) and categorizes future imports. Moving a matched
-        transfer to another category sends its other side back to review.
-      tags: [finance]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/FinanceCategorize" }
-      responses:
-        "200":
-          description: The result
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/FinanceCategorizeResult" }
-        "404": { $ref: "#/components/responses/Error" }
-        "422": { $ref: "#/components/responses/Error" }
-        default: { $ref: "#/components/responses/Error" }
   /chat-spaces:
     get:
       operationId: listChatSpaces
@@ -5963,6 +5767,110 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ChatSession" }
         default: { $ref: "#/components/responses/Error" }
+  /custom-apps:
+    get:
+      tags: [custom-apps]
+      operationId: listCustomApps
+      summary: List user-built custom apps
+      responses:
+        "200":
+          description: Custom apps owned by the caller
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [apps]
+                properties:
+                  apps: { type: array, items: { $ref: "#/components/schemas/CustomAppSummary" } }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [custom-apps]
+      operationId: createCustomApp
+      summary: Create a custom app from a starter template or source files
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NewCustomApp" }
+      responses:
+        "201":
+          description: Created custom app
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomAppDetail" }
+        default: { $ref: "#/components/responses/Error" }
+  /custom-apps/{slug}:
+    parameters:
+      - { name: slug, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [custom-apps]
+      operationId: getCustomApp
+      summary: Get custom app details, current bundle, version history, and SQLite schema
+      responses:
+        "200":
+          description: Custom app detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomAppDetail" }
+        default: { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [custom-apps]
+      operationId: updateCustomApp
+      summary: Update custom app code, metadata, capabilities, or restore a previous version
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateCustomApp" }
+      responses:
+        "200":
+          description: Updated custom app detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomAppDetail" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [custom-apps]
+      operationId: deleteCustomApp
+      summary: Delete a custom app and its embedded SQLite database
+      responses:
+        "204": { description: Deleted }
+        default: { $ref: "#/components/responses/Error" }
+  /custom-apps/{slug}/versions/{seq}:
+    parameters:
+      - { name: slug, in: path, required: true, schema: { type: string } }
+      - { name: seq, in: path, required: true, schema: { type: integer } }
+    get:
+      tags: [custom-apps]
+      operationId: getCustomAppVersion
+      summary: Fetch a specific historical version of a custom app
+      responses:
+        "200":
+          description: Historical version
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomAppVersion" }
+        default: { $ref: "#/components/responses/Error" }
+  /custom-apps/{slug}/invoke:
+    parameters:
+      - { name: slug, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [custom-apps]
+      operationId: invokeCustomApp
+      summary: Execute a capability-gated SQL, Vesper REST API, or MCP connector action for a custom app
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CustomAppInvokeRequest" }
+      responses:
+        "200":
+          description: Action result or capability approval request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomAppInvokeResponse" }
+        "403": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
 
 components:
   parameters:
@@ -6371,186 +6279,6 @@ components:
       type: string
       enum: [green, amber, red, blue, violet, pink, teal, orange]
       x-enum-varnames: [SpaceGreen, SpaceAmber, SpaceRed, SpaceBlue, SpaceViolet, SpacePink, SpaceTeal, SpaceOrange]
-    FinanceCSVMapping:
-      type: object
-      description: How to read one bank's CSV layout. Columns are 0-based; give either amount (optionally with direction and debit_values) or debit and credit.
-      required: [delimiter, header_row, date, date_format, description]
-      properties:
-        delimiter: { type: string, description: "One character: comma, semicolon, tab or pipe" }
-        header_row: { type: integer, minimum: 0, maximum: 20, description: "1-based row with the column names (blank lines aren't rows); 0 for none" }
-        date: { type: integer, minimum: 0 }
-        date_format: { type: string, description: "One of the pending import's date_formats" }
-        description: { type: array, minItems: 1, maxItems: 3, items: { type: integer, minimum: 0 } }
-        amount: { type: integer, minimum: 0, description: Signed amount, or unsigned with direction }
-        direction: { type: integer, minimum: 0, description: "Column saying which way the money went, e.g. DR/CR" }
-        debit_values: { type: array, items: { type: string }, description: "direction values that mean money out" }
-        debit: { type: integer, minimum: 0, description: Money out column }
-        credit: { type: integer, minimum: 0, description: Money in column }
-        balance: { type: integer, minimum: 0, description: Running balance column }
-        decimal_comma: { type: boolean, description: "Amounts are written 1.234,56" }
-        flip_sign: { type: boolean, description: Purchases show as positive amounts }
-    FinancePendingImport:
-      type: object
-      required: [id, account_id, filename, rows, columns, prefill, assistant, mapping_note, date_formats, created_at]
-      properties:
-        id: { type: string, format: uuid }
-        account_id: { type: string, format: uuid }
-        filename: { type: string }
-        rows: { type: array, items: { type: array, items: { type: string } }, description: "The file's first rows as split by prefill's delimiter, header included" }
-        columns: { type: integer }
-        prefill: { $ref: "#/components/schemas/FinanceCSVMapping" }
-        assistant:
-          type: string
-          enum: [asking, mapped, unavailable]
-          x-enum-varnames: [FinanceAssistantAsking, FinanceAssistantMapped, FinanceAssistantUnavailable]
-          description: "asking: a hidden chat is working on a mapping; unavailable: none could be started"
-        mapping: { $ref: "#/components/schemas/FinanceCSVMapping" }
-        mapping_note: { type: string, description: How the assistant read the file }
-        date_formats: { type: array, items: { type: string } }
-        created_at: { type: string, format: date-time }
-    FinanceMappingRow:
-      type: object
-      required: [posted_on, description, amount_cents]
-      properties:
-        posted_on: { type: string, format: date }
-        description: { type: string }
-        amount_cents: { type: integer, format: int64 }
-    FinanceMappingPreview:
-      type: object
-      required: [count, first_date, last_date, in_cents, out_cents, rows]
-      properties:
-        count: { type: integer }
-        first_date: { type: string, format: date }
-        last_date: { type: string, format: date }
-        in_cents: { type: integer, format: int64 }
-        out_cents: { type: integer, format: int64 }
-        rows: { type: array, items: { $ref: "#/components/schemas/FinanceMappingRow" } }
-        balance_cents: { type: integer, format: int64 }
-        balance_as_of: { type: string, format: date }
-    FinanceAccountKind:
-      type: string
-      enum: [checking, savings, credit, brokerage, other]
-    FinanceAccount:
-      type: object
-      required: [id, name, kind, mask, transaction_count, from_ofx]
-      properties:
-        id: { type: string, format: uuid }
-        name: { type: string }
-        kind: { $ref: "#/components/schemas/FinanceAccountKind" }
-        mask: { type: string, description: "Last digits of the account number, e.g. 4417" }
-        transaction_count: { type: integer }
-        from_ofx: { type: boolean, description: "OFX imports find this account by itself" }
-        balance_cents: { type: integer, format: int64, description: "Newest balance; negative for debt. Absent until one is known." }
-        balance_as_of: { type: string, format: date }
-    NewFinanceAccount:
-      type: object
-      required: [name, kind]
-      properties:
-        name: { type: string, minLength: 1, maxLength: 80 }
-        kind: { $ref: "#/components/schemas/FinanceAccountKind" }
-        mask: { type: string, maxLength: 8 }
-    FinanceBalanceInput:
-      type: object
-      required: [balance_cents, as_of]
-      properties:
-        balance_cents: { type: integer, format: int64, description: "Negative for debt, e.g. a card's balance owed" }
-        as_of: { type: string, format: date }
-    FinanceMonth:
-      type: object
-      required: [month, inflow_cents, outflow_cents, transfer_out_cents]
-      properties:
-        month: { type: string, format: date, description: The month's first day }
-        inflow_cents: { type: integer, format: int64, description: Money in, transfers left out }
-        outflow_cents: { type: integer, format: int64, description: Money out, transfers left out }
-        transfer_out_cents: { type: integer, format: int64, description: "Transfers out between the person's accounts: what counting card payments would add" }
-        net_worth_cents: { type: integer, format: int64, description: "At the month's end (today for this month); absent until an account has a balance" }
-    FinanceCategorySpend:
-      type: object
-      required: [category, spent_cents, average_cents]
-      properties:
-        category: { type: string, description: "A category, or Uncategorized" }
-        spent_cents: { type: integer, format: int64 }
-        average_cents: { type: integer, format: int64, description: "Average over up to six months before, counting months with any spending" }
-    FinanceReviewItem:
-      type: object
-      required: [id, posted_on, description, amount_cents, account_name, account_mask, suggestions]
-      properties:
-        id: { type: string, format: uuid }
-        posted_on: { type: string, format: date }
-        description: { type: string }
-        amount_cents: { type: integer, format: int64 }
-        account_name: { type: string }
-        account_mask: { type: string }
-        suggestions: { type: array, items: { type: string }, description: "Up to three likely categories, best first" }
-    FinanceRecurring:
-      type: object
-      required: [label, amount_cents, day_of_month, first_seen, last_seen, count, new]
-      properties:
-        label: { type: string }
-        amount_cents: { type: integer, format: int64, description: The latest charge }
-        previous_cents: { type: integer, format: int64, description: "The price before the latest change, if it changed" }
-        changed_on: { type: string, format: date }
-        day_of_month: { type: integer }
-        first_seen: { type: string, format: date }
-        last_seen: { type: string, format: date }
-        count: { type: integer }
-        new: { type: boolean, description: First charged within the last two months }
-    FinanceImportSummary:
-      type: object
-      required: [id, account_id, filename, format, parsed, inserted, duplicates, transfers, categorized, created_at]
-      properties:
-        id: { type: string, format: uuid }
-        account_id: { type: string, format: uuid }
-        filename: { type: string }
-        format: { type: string, enum: [csv, ofx] }
-        parsed: { type: integer }
-        inserted: { type: integer }
-        duplicates: { type: integer }
-        transfers: { type: integer, description: Transfers matched with another account }
-        categorized: { type: integer }
-        created_at: { type: string, format: date-time }
-    FinanceImportResult:
-      type: object
-      required: [import, account, account_created, needs_review]
-      properties:
-        import: { $ref: "#/components/schemas/FinanceImportSummary" }
-        account: { $ref: "#/components/schemas/FinanceAccount" }
-        account_created: { type: boolean }
-        needs_review: { type: integer }
-        first_date: { type: string, format: date }
-        last_date: { type: string, format: date }
-    FinanceCategorize:
-      type: object
-      required: [category]
-      properties:
-        category: { type: string }
-        save_rule: { type: boolean, default: true }
-    FinanceCategorizeResult:
-      type: object
-      required: [id, category, updated]
-      properties:
-        id: { type: string, format: uuid }
-        category: { type: string }
-        pattern: { type: string, description: The rule saved, if any }
-        updated: { type: integer, description: Other transactions the rule recategorized }
-    FinanceOverview:
-      type: object
-      required: [space_id, categories_all, accounts, months, category_month, categories, review, review_count, transaction_count, recurring]
-      properties:
-        space_id: { type: string, format: uuid, description: The person's Finance space, where Ask chats start }
-        categories_all: { type: array, items: { type: string }, description: Every category, in picker order }
-        accounts: { type: array, items: { $ref: "#/components/schemas/FinanceAccount" } }
-        months: { type: array, items: { $ref: "#/components/schemas/FinanceMonth" } }
-        net_worth_cents: { type: integer, format: int64 }
-        net_worth_change_cents: { type: integer, format: int64, description: Since the end of last month }
-        savings_rate: { type: number, format: double, description: "(in − out) / in over the months shown; absent with no income" }
-        category_month: { type: string, format: date }
-        categories: { type: array, items: { $ref: "#/components/schemas/FinanceCategorySpend" } }
-        review: { type: array, items: { $ref: "#/components/schemas/FinanceReviewItem" }, description: The newest 25 waiting for a category }
-        review_count: { type: integer }
-        transaction_count: { type: integer }
-        recurring: { type: array, items: { $ref: "#/components/schemas/FinanceRecurring" } }
-        last_import: { $ref: "#/components/schemas/FinanceImportSummary" }
     ChatSpace:
       type: object
       required: [id, name, description, color, instructions, connector_ids, space_memory, chat_count, source_count, memory_count, inline_tokens, created_at, updated_at]
@@ -10219,3 +9947,138 @@ components:
         custom_instructions: { type: string, maxLength: 2000, description: Empty string clears them }
         capabilities: { $ref: "#/components/schemas/PersonaCapabilities" }
         repos: { type: array, maxItems: 10, items: { type: string, maxLength: 500 }, description: Replaces the whole list; existing chats keep their repo }
+    CustomAppNavItem:
+      type: object
+      required: [id, label]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        icon: { type: string }
+    CustomAppCapabilityMode:
+      type: string
+      enum: [allowed, requires_approval, denied]
+    CustomAppCapabilities:
+      type: object
+      additionalProperties: { $ref: "#/components/schemas/CustomAppCapabilityMode" }
+    CustomAppManifest:
+      type: object
+      required: [entry, tool_scope]
+      properties:
+        entry: { type: string }
+        tool_scope: { type: string, enum: [chats, app_only] }
+        instructions: { type: string }
+        nav: { type: array, items: { $ref: "#/components/schemas/CustomAppNavItem" } }
+        requested_capabilities: { $ref: "#/components/schemas/CustomAppCapabilities" }
+    CustomAppSummary:
+      type: object
+      required: [id, slug, name, description, icon, current_seq, manifest, capabilities, db_size_bytes, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        description: { type: string }
+        icon: { type: string }
+        space_id: { type: string, format: uuid, nullable: true }
+        current_seq: { type: integer }
+        manifest: { $ref: "#/components/schemas/CustomAppManifest" }
+        capabilities: { $ref: "#/components/schemas/CustomAppCapabilities" }
+        db_size_bytes: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CustomAppVersionSummary:
+      type: object
+      required: [seq, note, author_type, created_at]
+      properties:
+        seq: { type: integer }
+        note: { type: string }
+        author_type: { type: string, enum: [user, persona] }
+        agent_id: { type: string, format: uuid, nullable: true }
+        created_at: { type: string, format: date-time }
+    CustomAppVersion:
+      type: object
+      required: [seq, note, author_type, created_at, manifest, files, bundle_js, bundle_css]
+      properties:
+        seq: { type: integer }
+        note: { type: string }
+        author_type: { type: string, enum: [user, persona] }
+        agent_id: { type: string, format: uuid, nullable: true }
+        created_at: { type: string, format: date-time }
+        manifest: { $ref: "#/components/schemas/CustomAppManifest" }
+        files: { type: object, additionalProperties: { type: string } }
+        bundle_js: { type: string }
+        bundle_css: { type: string }
+    CustomAppSchemaObject:
+      type: object
+      required: [type, name, sql]
+      properties:
+        type: { type: string }
+        name: { type: string }
+        sql: { type: string }
+    CustomAppDetail:
+      type: object
+      required: [id, slug, name, description, icon, current_seq, manifest, capabilities, db_size_bytes, created_at, updated_at, current, versions, schema]
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        description: { type: string }
+        icon: { type: string }
+        space_id: { type: string, format: uuid, nullable: true }
+        current_seq: { type: integer }
+        manifest: { $ref: "#/components/schemas/CustomAppManifest" }
+        capabilities: { $ref: "#/components/schemas/CustomAppCapabilities" }
+        db_size_bytes: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        current: { $ref: "#/components/schemas/CustomAppVersion" }
+        versions: { type: array, items: { $ref: "#/components/schemas/CustomAppVersionSummary" } }
+        schema: { type: array, items: { $ref: "#/components/schemas/CustomAppSchemaObject" } }
+    NewCustomApp:
+      type: object
+      required: [slug, name]
+      properties:
+        slug: { type: string }
+        name: { type: string }
+        description: { type: string }
+        icon: { type: string }
+        template: { type: string, enum: [blank, tracker, ledger] }
+        manifest: { $ref: "#/components/schemas/CustomAppManifest" }
+        files: { type: object, additionalProperties: { type: string } }
+        capabilities: { $ref: "#/components/schemas/CustomAppCapabilities" }
+        note: { type: string }
+    UpdateCustomApp:
+      type: object
+      properties:
+        name: { type: string }
+        description: { type: string }
+        icon: { type: string }
+        manifest: { $ref: "#/components/schemas/CustomAppManifest" }
+        files: { type: object, additionalProperties: { type: string } }
+        replace_files: { type: boolean }
+        remove_files: { type: array, items: { type: string } }
+        capabilities: { $ref: "#/components/schemas/CustomAppCapabilities" }
+        note: { type: string }
+        restore_seq: { type: integer }
+    CustomAppInvokeRequest:
+      type: object
+      required: [kind]
+      properties:
+        kind: { type: string, enum: [sql, api, mcp] }
+        query: { type: string }
+        params: { type: array, items: {} }
+        method: { type: string }
+        path: { type: string }
+        body: {}
+        connector: { type: string }
+        tool: { type: string }
+        arguments: { type: object, additionalProperties: true }
+        approved: { type: boolean }
+        always_allow: { type: boolean }
+    CustomAppInvokeResponse:
+      type: object
+      required: [status, capability]
+      properties:
+        status: { type: string, enum: [ok, approval_required] }
+        capability: { type: string }
+        summary: { type: string }
+        result: {}

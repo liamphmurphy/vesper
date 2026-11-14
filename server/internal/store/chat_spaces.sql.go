@@ -141,8 +141,55 @@ func (q *Queries) CountChatSpaceSources(ctx context.Context, spaceID uuid.UUID) 
 	return column_1, err
 }
 
-const createChatSpace = `-- name: CreateChatSpace :one
+const createAppSpace = `-- name: CreateAppSpace :one
+INSERT INTO chat_spaces (workspace_id, user_id, name, description, color, instructions, connector_ids, space_memory, app)
+VALUES ($1, $2, $3, $4, $5, $6, '{}', true, $7::text)
+ON CONFLICT (workspace_id, user_id, app) WHERE app IS NOT NULL DO UPDATE SET updated_at = chat_spaces.updated_at
+RETURNING id, workspace_id, user_id, name, description, color, instructions, persona_id, project_id, connector_ids, space_memory, created_at, updated_at, app
+`
 
+type CreateAppSpaceParams struct {
+	WorkspaceID  uuid.UUID
+	UserID       uuid.UUID
+	Name         string
+	Description  string
+	Color        string
+	Instructions string
+	AppName      string
+}
+
+// ON CONFLICT: two tabs opening the app at once get the same space.
+func (q *Queries) CreateAppSpace(ctx context.Context, arg CreateAppSpaceParams) (ChatSpace, error) {
+	row := q.db.QueryRow(ctx, createAppSpace,
+		arg.WorkspaceID,
+		arg.UserID,
+		arg.Name,
+		arg.Description,
+		arg.Color,
+		arg.Instructions,
+		arg.AppName,
+	)
+	var i ChatSpace
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.Name,
+		&i.Description,
+		&i.Color,
+		&i.Instructions,
+		&i.PersonaID,
+		&i.ProjectID,
+		&i.ConnectorIds,
+		&i.SpaceMemory,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.App,
+	)
+	return i, err
+}
+
+const createChatSpace = `-- name: CreateChatSpace :one
 INSERT INTO chat_spaces (workspace_id, user_id, name, description, color, instructions, persona_id, project_id, connector_ids, space_memory)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::uuid[], $10)
 RETURNING id, workspace_id, user_id, name, description, color, instructions, persona_id, project_id, connector_ids, space_memory, created_at, updated_at, app
@@ -161,8 +208,6 @@ type CreateChatSpaceParams struct {
 	SpaceMemory  bool
 }
 
-// Chat spaces. Every query is scoped to one person: (workspace_id, user_id)
-// or a space id already checked to be theirs.
 func (q *Queries) CreateChatSpace(ctx context.Context, arg CreateChatSpaceParams) (ChatSpace, error) {
 	row := q.db.QueryRow(ctx, createChatSpace,
 		arg.WorkspaceID,
@@ -358,6 +403,41 @@ func (q *Queries) DeleteChatSpaceSource(ctx context.Context, arg DeleteChatSpace
 		&i.CreatedAt,
 		&i.ResearchJobID,
 		&i.ChatID,
+	)
+	return i, err
+}
+
+const getAppSpace = `-- name: GetAppSpace :one
+
+SELECT id, workspace_id, user_id, name, description, color, instructions, persona_id, project_id, connector_ids, space_memory, created_at, updated_at, app FROM chat_spaces WHERE workspace_id = $1 AND user_id = $2 AND app = $3::text
+`
+
+type GetAppSpaceParams struct {
+	WorkspaceID uuid.UUID
+	UserID      uuid.UUID
+	AppName     string
+}
+
+// Chat spaces. Every query is scoped to one person: (workspace_id, user_id)
+// or a space id already checked to be theirs.
+func (q *Queries) GetAppSpace(ctx context.Context, arg GetAppSpaceParams) (ChatSpace, error) {
+	row := q.db.QueryRow(ctx, getAppSpace, arg.WorkspaceID, arg.UserID, arg.AppName)
+	var i ChatSpace
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.Name,
+		&i.Description,
+		&i.Color,
+		&i.Instructions,
+		&i.PersonaID,
+		&i.ProjectID,
+		&i.ConnectorIds,
+		&i.SpaceMemory,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.App,
 	)
 	return i, err
 }
