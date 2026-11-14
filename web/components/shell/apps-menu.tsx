@@ -7,6 +7,8 @@ import { useState, type CSSProperties, type KeyboardEvent } from "react";
 import { cx } from "@/lib/cx";
 import { useMediaQuery } from "@/lib/viewport";
 import { APP_ITEMS, TOOL_ITEMS, inAppsMenu, isActive, type NavBadge, type NavItem } from "@/lib/project-scope";
+import { useCustomApps } from "@/lib/api/custom-app-hooks";
+import { resolveAppIcon } from "@/lib/custom-app-bridge";
 import { Icon } from "@/components/ui/icon";
 
 /**
@@ -32,11 +34,23 @@ function moveInGrid(e: KeyboardEvent<HTMLElement>) {
     tiles[Math.max(0, Math.min(tiles.length - 1, at + (e.key === "ArrowRight" ? 1 : -1)))]?.focus();
     return;
   }
-  const inTools = tiles[at].dataset.tile === "tool";
-  if ((e.key === "ArrowDown") === inTools) return; // already on the edge row
-  const column = inTools ? at - APP_ITEMS.length : at;
-  const target = inTools ? tiles.slice(0, APP_ITEMS.length) : tiles.slice(APP_ITEMS.length);
-  target[Math.min(column, target.length - 1)]?.focus();
+  const rows: HTMLElement[][] = [];
+  for (const group of e.currentTarget.querySelectorAll<HTMLElement>('[role="group"]')) {
+    const items = [...group.querySelectorAll<HTMLElement>("[data-tile]")];
+    if (!items.length) continue;
+    if (group.dataset.gridGroup === "apps" && items.length > 5) {
+      for (let i = 0; i < items.length; i += 5) rows.push(items.slice(i, i + 5));
+    } else {
+      rows.push(items);
+    }
+  }
+  const activeEl = tiles[at];
+  const rowIdx = rows.findIndex((r) => r.includes(activeEl));
+  if (rowIdx < 0) return;
+  const colIdx = rows[rowIdx].indexOf(activeEl);
+  const nextRow = rows[rowIdx + (e.key === "ArrowDown" ? 1 : -1)];
+  if (!nextRow) return;
+  nextRow[Math.min(colIdx, nextRow.length - 1)]?.focus();
 }
 
 function Badge({ count, className }: { count: number; className: string }) {
@@ -92,10 +106,16 @@ function ToolPill({ item, index, count, current, onPick }: TileArgs) {
 
 function Grid({ counts, onPick, onNewSpace }: { counts: Record<NavBadge, number>; onPick: () => void; onNewSpace: () => void }) {
   const pathname = usePathname();
+  const customApps = useCustomApps();
+  const customTiles: NavItem[] = (customApps.data?.apps ?? []).map((a) => ({
+    href: `/apps/${a.slug}`,
+    label: a.name,
+    icon: resolveAppIcon(a.icon),
+  }));
   const countOf = (item: NavItem) => (item.badge ? counts[item.badge] : 0);
   return (
     <div onKeyDown={moveInGrid} className="flex flex-col gap-3.5">
-      <div role="group" aria-label="Apps" className="flex flex-col gap-2">
+      <div role="group" aria-label="Apps" data-grid-group="apps" className="flex flex-col gap-2">
         <span aria-hidden className="text-11 font-semibold uppercase tracking-[0.04em] text-fg-tertiary">Apps</span>
         <div className="grid grid-cols-3 gap-2 min-[480px]:grid-cols-5">
           {APP_ITEMS.map((item, i) => (
@@ -103,11 +123,21 @@ function Grid({ counts, onPick, onNewSpace }: { counts: Record<NavBadge, number>
           ))}
         </div>
       </div>
+      {customTiles.length > 0 && (
+        <div role="group" aria-label="Your apps" data-grid-group="apps" className="flex flex-col gap-2">
+          <span aria-hidden className="text-11 font-semibold uppercase tracking-[0.04em] text-fg-tertiary">Your apps</span>
+          <div className="grid grid-cols-3 gap-2 min-[480px]:grid-cols-5">
+            {customTiles.map((item, i) => (
+              <AppTile key={item.href} item={item} index={APP_ITEMS.length + i} count={0} current={isActive(pathname, item.href)} onPick={onPick} />
+            ))}
+          </div>
+        </div>
+      )}
       <div role="group" aria-label="Tools" className="flex flex-col gap-2">
         <span aria-hidden className="text-11 font-semibold uppercase tracking-[0.04em] text-fg-tertiary">Tools</span>
         <div className="flex flex-wrap gap-2">
           {TOOL_ITEMS.map((item, i) => (
-            <ToolPill key={item.href} item={item} index={APP_ITEMS.length + i} count={countOf(item)} current={isActive(pathname, item.href)} onPick={onPick} />
+            <ToolPill key={item.href} item={item} index={APP_ITEMS.length + customTiles.length + i} count={countOf(item)} current={isActive(pathname, item.href)} onPick={onPick} />
           ))}
         </div>
       </div>

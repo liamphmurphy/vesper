@@ -21,12 +21,13 @@ export function LiveUpdates() {
     stream.onerror = () => setOffline(true);
     stream.onmessage = (e) => {
       try {
-        const { type } = JSON.parse(e.data) as { type: string };
-        if (type === "reset") {
+        const payload = JSON.parse(e.data) as { type: string; [k: string]: unknown };
+        if (payload.type === "reset") {
           void qc.invalidateQueries();
           return;
         }
-        for (const key of invalidatedBy(type)) pending.add(key);
+        window.dispatchEvent(new CustomEvent("vesper:sse", { detail: payload }));
+        for (const key of invalidatedBy(payload.type)) pending.add(key);
         if (!timer) timer = setTimeout(flush, 100);
       } catch {
         /* Ignore malformed hints; reconnect resets every cache. */

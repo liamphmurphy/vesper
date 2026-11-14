@@ -114,6 +114,7 @@ export async function installBoardApi(page: Page) {
     if (path === "/persona-dock") return json({ personas: [], harnesses: [] });
     // The companion's work chat, mounted beside every page with no panel of its own: no chats yet.
     if (path === "/dock-chats" && request.method() === "GET") return json({ chats: [] });
+    if (path === "/custom-apps" && request.method() === "GET") return json({ apps: [] });
     if (path === "/chat-models") return json([]);
     if (path === "/runner") return json(runner);
     // Sidebar settings dot (LAZYAGENTS-44): both harness keys set, so no dot.

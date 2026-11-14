@@ -1119,6 +1119,7 @@ export function installChatApi(page: Page, opts: MockOptions = {}) {
     if (run) {
       return json({ run: {}, turns: [], approvals: [], events: runEvents.get(run[1]) ?? [] });
     }
+    if (path === "/custom-apps" && method === "GET") return json({ apps: [] });
     unhandled.push(`${method} ${path}`);
     return fail(err(404, "not_found", `mock: no handler for ${method} ${path}`));
   }
