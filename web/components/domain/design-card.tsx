@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { useDesign, useDesignVersion } from "@/lib/api/designs-hooks";
-import { designCounts } from "@/lib/designs/home";
+import { designCounts } from "@/lib/designs/card";
 import { DesignSvg, designAssetHref, useDesignFonts } from "@/lib/designs/render";
 import { normalize } from "@/lib/designs/schema";
 import { useCanvasPanel } from "@/lib/use-canvas-panel";

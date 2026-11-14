@@ -7,14 +7,6 @@
  */
 export const OUTLINE_PROMPT = "Draft slides from this outline";
 
-export const MAX_OUTLINE = 4000;
-
 /** The chat message that asks the persona to draft slides from an outline. */
 export const outlinePrompt = (outline: string) =>
   `${OUTLINE_PROMPT}: one slide per top-level line, its indented lines as that slide's points, added after the slides already in the deck. Pick the deck's layouts that suit each slide and keep to its theme.\n\n${outline.trim()}`;
-
-/** The outline's first line, without a bullet or number, as the deck's title. */
-export function outlineTitle(outline: string): string {
-  const first = outline.split("\n").find((l) => l.trim()) ?? "";
-  return first.trim().replace(/^([-*•]|\d+[.)])\s+/, "").slice(0, 200);
-}

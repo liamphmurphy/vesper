@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { routeCanvasPage } from "./mock-canvas-pages";
 import { installChatApi } from "./mock-chat-api";
 
 // The Slides toolbar's shape grid picker (LAZYAGENTS-117): search, keyboard
@@ -33,6 +34,7 @@ async function install(page: Page) {
     if (p.endsWith("/reviewed")) return json({ reviewed_seq: head().seq });
     return json({ id: DECK, kind: "deck", title: "Shapes", seq: head().seq, viewing_seq: head().seq, created_at: at, updated_at: at, body: head().body, versions: [...versions].reverse().map((v) => ({ seq: v.seq, note: v.note, author_type: v.author_type, created_at: at })) });
   });
+  await routeCanvasPage(page, { id: DECK, kind: "deck", title: "Deck" });
   await page.goto(`/apps/slides/${DECK}`);
   return { saves };
 }

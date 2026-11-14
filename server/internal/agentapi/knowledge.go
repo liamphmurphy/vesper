@@ -116,6 +116,9 @@ func patchPage(ctx context.Context, d Deps, c agents.Caller, in PatchPageIn) (an
 	if err != nil {
 		return nil, err
 	}
+	if err := canvasPageBody(ctx, d, a); err != nil {
+		return nil, err
+	}
 	if in.BaseVersion != v.ID {
 		return nil, apperr.Conflict("this page changed; read it again before patching")
 	}
@@ -140,6 +143,22 @@ func patchPage(ctx context.Context, d Deps, c agents.Caller, in PatchPageIn) (an
 		return nil, err
 	}
 	return pageWriteSummary(result), nil
+}
+
+// canvasPageBody refuses to read or patch a deck's or design's page as text: its page body is
+// empty, and the deck or design itself is the canvas it links to (LAZYAGENTS-212).
+func canvasPageBody(ctx context.Context, d Deps, a store.Artifact) error {
+	if a.CanvasID == nil {
+		return nil
+	}
+	kind, err := d.Q.CanvasKind(ctx, *a.CanvasID)
+	if err != nil {
+		return err
+	}
+	if kind == "design" {
+		return apperr.Invalid("ref", "%s is a design, not text: it is design %s, which design_outline and design_read open from its own chat", a.Title, a.CanvasID)
+	}
+	return apperr.Invalid("ref", "%s is a slide deck, not text: it is canvas %s, which canvas_read opens from its own chat", a.Title, a.CanvasID)
 }
 
 // reviewOutsidePersonChat is whether an edit must wait as a suggestion

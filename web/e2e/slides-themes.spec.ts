@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { routeCanvasPage } from "./mock-canvas-pages";
 import { installChatApi } from "./mock-chat-api";
 
 // Slides themes (LAZYAGENTS-122): ten built-in themes, the Customise editor
@@ -75,6 +76,7 @@ async function install(page: Page) {
     themes.splice(i, 1);
     return route.fulfill({ status: 204 });
   });
+  await routeCanvasPage(page, { id: DECK, kind: "deck", title: "Deck" });
   await page.goto(`/apps/slides/${DECK}`);
   const saved = () => JSON.parse(head().body) as { slides: { elements: Record<string, unknown>[] }[] };
   const element = (id: string) => saved().slides[0].elements.find((e) => e.id === id)!;

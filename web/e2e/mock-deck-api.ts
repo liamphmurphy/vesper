@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { routeCanvasPage } from "./mock-canvas-pages";
 import { installChatApi } from "./mock-chat-api";
 
 // A mocked deck for the Slides editor specs (LAZYAGENTS-160): versions,
@@ -43,6 +44,7 @@ export async function installDeck(page: Page, versions: Version[]) {
       versions: [...s.versions].reverse().map((x) => ({ seq: x.seq, note: "Edited", author_type: x.author, created_at: at })),
     });
   });
+  await routeCanvasPage(page, { id: DECK, kind: "deck", title: "Layout" });
   await page.goto(`/apps/slides/${DECK}`);
   return s;
 }

@@ -111,7 +111,7 @@ func (q *Queries) CountPublishedVersions(ctx context.Context, artifactID uuid.UU
 const createArtifact = `-- name: CreateArtifact :one
 INSERT INTO artifacts (workspace_id, project_id, epic_id, type, title, number, summary, author_type, author_id, path, audience, owner_user_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-RETURNING id, workspace_id, project_id, epic_id, type, title, number, summary, author_type, author_id, current_version_id, search_text, search, created_at, updated_at, path, audience, owner_user_id, persona_direct, persona_paused, chat_session_id
+RETURNING id, workspace_id, project_id, epic_id, type, title, number, summary, author_type, author_id, current_version_id, search_text, search, created_at, updated_at, path, audience, owner_user_id, persona_direct, persona_paused, chat_session_id, canvas_id
 `
 
 type CreateArtifactParams struct {
@@ -167,6 +167,7 @@ func (q *Queries) CreateArtifact(ctx context.Context, arg CreateArtifactParams) 
 		&i.PersonaDirect,
 		&i.PersonaPaused,
 		&i.ChatSessionID,
+		&i.CanvasID,
 	)
 	return i, err
 }
@@ -260,7 +261,7 @@ func (q *Queries) DetachArtifact(ctx context.Context, arg DetachArtifactParams) 
 }
 
 const getADRByNumber = `-- name: GetADRByNumber :one
-SELECT id, workspace_id, project_id, epic_id, type, title, number, summary, author_type, author_id, current_version_id, search_text, search, created_at, updated_at, path, audience, owner_user_id, persona_direct, persona_paused, chat_session_id FROM artifacts WHERE artifact_visible(audience, owner_user_id, $3::uuid) AND workspace_id = $1 AND type = 'adr' AND number = $2
+SELECT id, workspace_id, project_id, epic_id, type, title, number, summary, author_type, author_id, current_version_id, search_text, search, created_at, updated_at, path, audience, owner_user_id, persona_direct, persona_paused, chat_session_id, canvas_id FROM artifacts WHERE artifact_visible(audience, owner_user_id, $3::uuid) AND workspace_id = $1 AND type = 'adr' AND number = $2
 `
 
 type GetADRByNumberParams struct {
@@ -294,12 +295,13 @@ func (q *Queries) GetADRByNumber(ctx context.Context, arg GetADRByNumberParams) 
 		&i.PersonaDirect,
 		&i.PersonaPaused,
 		&i.ChatSessionID,
+		&i.CanvasID,
 	)
 	return i, err
 }
 
 const getArtifact = `-- name: GetArtifact :one
-SELECT id, workspace_id, project_id, epic_id, type, title, number, summary, author_type, author_id, current_version_id, search_text, search, created_at, updated_at, path, audience, owner_user_id, persona_direct, persona_paused, chat_session_id FROM artifacts WHERE artifact_visible(audience, owner_user_id, $3::uuid) AND id = $1 AND workspace_id = $2
+SELECT id, workspace_id, project_id, epic_id, type, title, number, summary, author_type, author_id, current_version_id, search_text, search, created_at, updated_at, path, audience, owner_user_id, persona_direct, persona_paused, chat_session_id, canvas_id FROM artifacts WHERE artifact_visible(audience, owner_user_id, $3::uuid) AND id = $1 AND workspace_id = $2
 `
 
 type GetArtifactParams struct {
@@ -333,6 +335,7 @@ func (q *Queries) GetArtifact(ctx context.Context, arg GetArtifactParams) (Artif
 		&i.PersonaDirect,
 		&i.PersonaPaused,
 		&i.ChatSessionID,
+		&i.CanvasID,
 	)
 	return i, err
 }
@@ -890,7 +893,7 @@ func (q *Queries) ListTicketsGatedByMockup(ctx context.Context, arg ListTicketsG
 }
 
 const lockArtifact = `-- name: LockArtifact :one
-SELECT id, workspace_id, project_id, epic_id, type, title, number, summary, author_type, author_id, current_version_id, search_text, search, created_at, updated_at, path, audience, owner_user_id, persona_direct, persona_paused, chat_session_id FROM artifacts WHERE id = $1 AND workspace_id = $2 AND artifact_visible(audience, owner_user_id, $3::uuid) FOR UPDATE
+SELECT id, workspace_id, project_id, epic_id, type, title, number, summary, author_type, author_id, current_version_id, search_text, search, created_at, updated_at, path, audience, owner_user_id, persona_direct, persona_paused, chat_session_id, canvas_id FROM artifacts WHERE id = $1 AND workspace_id = $2 AND artifact_visible(audience, owner_user_id, $3::uuid) FOR UPDATE
 `
 
 type LockArtifactParams struct {
@@ -924,6 +927,7 @@ func (q *Queries) LockArtifact(ctx context.Context, arg LockArtifactParams) (Art
 		&i.PersonaDirect,
 		&i.PersonaPaused,
 		&i.ChatSessionID,
+		&i.CanvasID,
 	)
 	return i, err
 }
@@ -1138,7 +1142,7 @@ UPDATE artifacts SET audience=$1, owner_user_id=$2
 WHERE id=$3 AND workspace_id=$4
  AND $5::uuid IS NOT NULL AND audience <> 'agent'
  AND artifact_visible(audience, owner_user_id, $5::uuid)
-RETURNING id, workspace_id, project_id, epic_id, type, title, number, summary, author_type, author_id, current_version_id, search_text, search, created_at, updated_at, path, audience, owner_user_id, persona_direct, persona_paused, chat_session_id
+RETURNING id, workspace_id, project_id, epic_id, type, title, number, summary, author_type, author_id, current_version_id, search_text, search, created_at, updated_at, path, audience, owner_user_id, persona_direct, persona_paused, chat_session_id, canvas_id
 `
 
 type SetPageAudienceParams struct {
@@ -1181,12 +1185,13 @@ func (q *Queries) SetPageAudience(ctx context.Context, arg SetPageAudienceParams
 		&i.PersonaDirect,
 		&i.PersonaPaused,
 		&i.ChatSessionID,
+		&i.CanvasID,
 	)
 	return i, err
 }
 
 const updateArtifactMeta = `-- name: UpdateArtifactMeta :one
-UPDATE artifacts SET title = $2, summary = $3, epic_id = $4 WHERE id = $1 RETURNING id, workspace_id, project_id, epic_id, type, title, number, summary, author_type, author_id, current_version_id, search_text, search, created_at, updated_at, path, audience, owner_user_id, persona_direct, persona_paused, chat_session_id
+UPDATE artifacts SET title = $2, summary = $3, epic_id = $4 WHERE id = $1 RETURNING id, workspace_id, project_id, epic_id, type, title, number, summary, author_type, author_id, current_version_id, search_text, search, created_at, updated_at, path, audience, owner_user_id, persona_direct, persona_paused, chat_session_id, canvas_id
 `
 
 type UpdateArtifactMetaParams struct {
@@ -1226,6 +1231,7 @@ func (q *Queries) UpdateArtifactMeta(ctx context.Context, arg UpdateArtifactMeta
 		&i.PersonaDirect,
 		&i.PersonaPaused,
 		&i.ChatSessionID,
+		&i.CanvasID,
 	)
 	return i, err
 }

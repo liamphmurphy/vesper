@@ -1632,6 +1632,25 @@ paths:
               schema: { $ref: "#/components/schemas/Artifact" }
         default: { $ref: "#/components/responses/Error" }
 
+  /wiki/canvas-pages/{canvas_id}:
+    get:
+      operationId: getCanvasPage
+      summary: The Knowledge page a deck or design is
+      description: Every deck and design is a page (LAZYAGENTS-212); this finds it from the deck's or design's canvas id, for links made before they moved into Knowledge.
+      tags: [wiki]
+      parameters:
+        - name: canvas_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The page
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CanvasPageRef" }
+        default: { $ref: "#/components/responses/Error" }
+
   /wiki/page:
     get:
       operationId: getWikiPage
@@ -7170,6 +7189,8 @@ components:
         summary: { type: string }
         project: { $ref: "#/components/schemas/Project" }
         path: { type: string, description: "Notes: Payments/Ledger/Rollback runbook" }
+        kind: { $ref: "#/components/schemas/PageKind" }
+        canvas_id: { type: string, format: uuid, description: The deck or design this page is (kind deck or design) }
         suggestions: { type: integer, description: Pending agent suggestions (notes) }
         epic: { $ref: "#/components/schemas/EpicRef" }
         author: { $ref: "#/components/schemas/Actor" }
@@ -7861,6 +7882,19 @@ components:
         updated_at: { type: string, format: date-time }
         published: { type: boolean, description: False while the page only exists as an agent's suggestion }
         suggestions: { type: integer }
+        kind: { $ref: "#/components/schemas/PageKind" }
+        canvas_id: { type: string, format: uuid, description: The deck or design this page is (kind deck or design) }
+    PageKind:
+      type: string
+      enum: [document, deck, design]
+      description: What the page holds. A deck or design page's body is its canvas, edited in Slides' or Designs' editor inside Knowledge.
+    CanvasPageRef:
+      type: object
+      required: [id, path, title]
+      properties:
+        id: { type: string, format: uuid }
+        path: { type: string }
+        title: { type: string }
     WikiTree:
       type: object
       required: [pages, suggestions]

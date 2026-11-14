@@ -1,5 +1,6 @@
 "use client";
 
+import { useNewDeck } from "@/components/domain/use-new-deck";
 import { canvasFenceIds } from "@/lib/chat-canvas";
 import { DOC_DRAFT, designRequest, type CreateKind } from "@/lib/chat-commands";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -586,6 +587,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   const [confirming, setConfirming] = useState<Selection | null>(null);
   const router = useRouter();
   const search = useSearchParams();
+  const { start: startDeck } = useNewDeck();
   // "Start chat" links arrive with ?attach=kind:id; seed once, then drop it from the URL.
   const [chips, setChips] = useState<Chip[]>(() => parseAttach(search.getAll("attach"), search.get("attach_title")));
   const files = useAttachments();
@@ -1015,9 +1017,9 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
     const qs = q.toString();
     router.replace(qs ? `/chat/${id}?${qs}` : `/chat/${id}`);
   };
-  // The + menu's "Create with {persona}": Doc and Design start a draft for the person to finish; decks start in Slides.
+  // The + menu's "Create with {persona}": Doc and Design start a draft for the person to finish; a deck is made and opened.
   const createWith = (kind: CreateKind) => {
-    if (kind === "slides") return router.push("/apps/slides");
+    if (kind === "slides") return startDeck();
     setText((t) => (kind === "design" ? `/design ${t.trim()}` : `${DOC_DRAFT}${t.trim()}`));
     requestAnimationFrame(() => {
       const el = area.current;

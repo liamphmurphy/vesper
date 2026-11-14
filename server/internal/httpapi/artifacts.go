@@ -159,6 +159,17 @@ func (s *Server) artifactDetail(ctx context.Context, ws uuid.UUID, a store.Artif
 		CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt,
 		Outline: []api.OutlineSection{}, ReadBy: []api.ArtifactReader{}, Versions: []api.ArtifactVersion{}, Tickets: []api.LinkedTicket{},
 	}
+	if a.CanvasID != nil {
+		ck, err := s.Q.CanvasKind(ctx, *a.CanvasID)
+		if err != nil {
+			return api.Artifact{}, err
+		}
+		kind := pageKind(ck)
+		out.Kind, out.CanvasId = &kind, a.CanvasID
+	} else if a.Type == "note" {
+		kind := api.PageKindDocument
+		out.Kind = &kind
+	}
 	if a.ProjectID != nil {
 		proj, err := s.Q.GetProject(ctx, store.GetProjectParams{ID: *a.ProjectID, WorkspaceID: ws})
 		if err != nil {

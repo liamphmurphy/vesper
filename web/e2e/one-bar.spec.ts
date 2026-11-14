@@ -52,7 +52,7 @@ test("an editor's dock continues the top bar: the chat's header is the dock's fi
   const dock = page.getByRole("complementary", { name: "Panel", exact: true });
   const row = dock.getByTestId("dock-header");
   await expect(row.getByTestId("chat-header")).toBeVisible();
-  const editorBar = (await page.locator("[data-editor-layout] header").first().boundingBox())!;
+  const editorBar = (await page.locator("header").filter({ has: page.getByRole("group", { name: "History" }) }).first().boundingBox())!;
   const dockRow = (await row.boundingBox())!;
   expect(dockRow.y).toBe(editorBar.y);
   expect(dockRow.height).toBe(editorBar.height);

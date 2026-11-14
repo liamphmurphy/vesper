@@ -35,10 +35,6 @@ export const slideKeys = {
   starters: ["slide-starters"] as const,
 };
 
-export function useDecks() {
-  return useQuery({ queryKey: slideKeys.list, queryFn: () => unwrap(api.GET("/slides")), select: (d) => d.decks });
-}
-
 /** One deck with the chat it lives in (the same endpoint Docs uses). */
 export function useDeckRef(id: string) {
   return useQuery({ queryKey: slideKeys.one(id), queryFn: () => unwrap(api.GET("/canvases/{canvasId}", { params: { path: { canvasId: id } } })) });
@@ -48,33 +44,6 @@ export function useCreateDeck() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: { title: string; theme?: NonNullable<CreateDeckBody["theme"]>; starter?: StarterKey }) => unwrap(api.POST("/slides", { body })),
-    onSettled: () => void qc.invalidateQueries({ queryKey: slideKeys.list }),
-  });
-}
-
-export function useRenameDeck() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (v: { id: string; title: string }) => unwrap(api.PATCH("/slides/{canvasId}", { params: { path: { canvasId: v.id } }, body: { title: v.title } })),
-    onSettled: () => void qc.invalidateQueries({ queryKey: ["canvases"] }),
-  });
-}
-
-export function useDuplicateDeck() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => unwrap(api.POST("/slides/{canvasId}/duplicate", { params: { path: { canvasId: id } } })),
-    onSettled: () => void qc.invalidateQueries({ queryKey: slideKeys.list }),
-  });
-}
-
-export function useDeleteDeck() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (id: string) => {
-      const { error } = await api.DELETE("/slides/{canvasId}", { params: { path: { canvasId: id } } });
-      if (error) throw new Error(error.message);
-    },
     onSettled: () => void qc.invalidateQueries({ queryKey: slideKeys.list }),
   });
 }

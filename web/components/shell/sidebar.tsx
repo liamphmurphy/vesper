@@ -26,7 +26,6 @@ const AREAS: { area: Exclude<Area, "apps">; href: string; label: string; icon: I
   { area: "runs", href: "/runs", label: "Runs", icon: "play", badge: "runs" },
   { area: "tickets", href: "/tickets", label: "Tickets", icon: "tickets" },
   { area: "knowledge", href: "/knowledge", label: "Knowledge", icon: "wiki", badge: "wiki" },
-  { area: "designs", href: "/apps/designs", label: "Designs", icon: "designs" },
 ];
 
 const COLLAPSED_KEY = "lazyagents.column-collapsed";

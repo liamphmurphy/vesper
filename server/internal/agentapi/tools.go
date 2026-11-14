@@ -644,6 +644,9 @@ func readPage(ctx context.Context, d Deps, c agents.Caller, in PageIn) (any, err
 	if a.Type == "mockup" {
 		return nil, apperr.Invalid("ref", "%s is a UI mockup (SVG): use read_artifact", a.Title)
 	}
+	if err := canvasPageBody(ctx, d, a); err != nil {
+		return nil, err
+	}
 	body := *v.BodyMd
 	anchor := t.Anchor
 	if in.Section != "" {

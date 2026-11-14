@@ -1,7 +1,8 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ApiError, SIGN_IN_PAGE } from "./client";
+import { ApiError, SIGN_IN_PAGE, api, unwrap } from "./client";
+import type { PageKind } from "@/lib/knowledge";
 
 // ---- Knowledge: pages (Docs and the wiki in one store), reviews, capture,
 // daily notes, saved queries, the vault graph and Obsidian imports. These
@@ -25,6 +26,8 @@ export type PageRow = {
   version_id: string | null;
   pending: number;
   unresolved: number;
+  kind?: PageKind;
+  canvas_id?: string | null;
 };
 export type PageTable = { columns: string[]; rows: PageRow[]; has_more: boolean };
 
@@ -72,6 +75,9 @@ export type Page = {
   title: string;
   path: string | null;
   audience: Audience;
+  /** A deck or design page's body is its canvas (canvas_id), edited in its editor. */
+  kind?: PageKind;
+  canvas_id?: string | null;
   body_md: string | null;
   version_id: string;
   seq: number;
@@ -300,3 +306,6 @@ export const useConfirmImport = () => useImportWrite((v: { id: string; policy: "
 export const useCancelImport = () => useImportWrite((id: string) => call<ImportJob>("POST", `/imports/${id}/cancel`));
 export const useUndoImport = () => useImportWrite((id: string) => call<ImportJob>("POST", `/imports/${id}/undo`));
 export const useAttachChat = (id: string) => usePageWrite((chat_id: string) => call<Page>("PUT", `/pages/${id}/chat`, { chat_id }));
+
+/** The Knowledge page a deck or design is (LAZYAGENTS-212), from its canvas id: for old /apps links and new decks. */
+export const fetchCanvasPage = (canvasId: string) => unwrap(api.GET("/wiki/canvas-pages/{canvas_id}", { params: { path: { canvas_id: canvasId } } }));

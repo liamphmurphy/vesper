@@ -205,7 +205,7 @@ persona.
 **Column** (`components/shell/sidebar.tsx`, 248px, `NAVIGATOR_WIDTH` in `lib/navigator.ts`,
 `--bg-sidebar`, shown at `COMPACT` and wider). Its top never changes: the mark and "Vesper", the
 Search field (⌘K), the Needs you pill (`--pill-human` while anything waits, with its count), and the
-areas as an icon row spread across the full width (Chat, Runs with a live dot, Tickets, Knowledge with a suggestions dot, Designs)
+areas as an icon row spread across the full width (Chat, Runs with a live dot, Tickets, Knowledge with a suggestions dot)
 ending in the Apps flyout, which holds the other apps and the tools (Reports among them) and reads as
 current on any of them. Its foot never changes either: the harness characters in a row, each opening
 its usage bubble above it, then Customization and Settings.
@@ -214,7 +214,7 @@ its usage bubble above it, then Customization and Settings.
 for New chat, the persona filter chip, the history, spaces, setup progress); personas and spaces
 appear here and nowhere else in navigation. A screen with a list of its own puts it there instead with
 `NavigatorPortal` (`components/shell/navigator-slot.tsx`): Runs its run list, Knowledge its explorer,
-an app editor its structure (the way back to the app's index, the item's name, then pages and
+an app editor its structure (the way back to Knowledge, the item's name, then pages and
 layers), Learn its lessons, the wiki its tree. Each list's title row ends with its own +. Two lists
 never stack, and nothing draws a second column.
 
@@ -283,7 +283,18 @@ under another row); for other tabs, the tab's name. The tabs show as icons in th
 there is more than one (Designs: Chat, Design, Review), then ⇥. Nothing stacks between the row and
 the messages: the docked header doesn't name the app around it, what waits on the document sits
 on the editor's bar (Designs' "Review N" pill beside the save state), and a deck in chat is a
-one-line card that opens Slides, never a second copy of the deck beside it.
+one-line card that opens the deck, never a second copy of it beside it.
+
+**Decks and designs are Knowledge pages.** Knowledge is the one document store (LAZYAGENTS-212):
+every deck and design has a private page (`Slides/<title>`, `Designs/<title>` until moved), made with
+it, in the explorer with its own icon and in Knowledge's tabs. The page links to the canvas, which
+stays the body, so versions, review and the persona's canvas and design tools are unchanged. Opening
+one shows its editor inside Knowledge: its controls join Knowledge's one bar beside the tabs
+(`EditorEmbedContext`), its structure replaces the explorer in the left column under "‹ Knowledge",
+and its dock is the companion. Knowledge's New page (+) offers a Document, a Deck (blank or a
+starter) or a Design (by starter); there is no Slides or Designs index. Old `/apps/slides/<id>` and
+`/apps/designs/<id>` links find the page and open it there, keeping their query. Renaming either side
+renames the other; deleting the page deletes the deck or design.
 
 **Recent.** ⌘K's Recent list holds what you opened as well as what you picked there: chats with
 messages, runs, tickets, Knowledge pages and designs (`useRecordVisit`), six at most.
@@ -322,11 +333,11 @@ Tables and the ticket list sit in `overflow-x: auto` containers with a min-width
 
 ---
 
-**Index screen header.** Every index screen (Designs, Slides, Learn, Library, Reports, Scheduled, Workflows, Settings and its sub-screens, Setup, Wiki) opens with `PageHeader` from `components/ui/page-header.tsx`: `type-display` title, a 14px secondary description at most 720px wide, primary actions on the right, and an optional row of tabs, switches and pickers under it. Detail screens (a ticket, run, epic, agent or page) and the dense work toolbars (Runs, Tickets) keep their own headers.
+**Index screen header.** Every index screen (Learn, Library, Reports, Scheduled, Workflows, Settings and its sub-screens, Setup, Wiki) opens with `PageHeader` from `components/ui/page-header.tsx`: `type-display` title, a 14px secondary description at most 720px wide, primary actions on the right, and an optional row of tabs, switches and pickers under it. Detail screens (a ticket, run, epic, agent or page) and the dense work toolbars (Runs, Tickets) keep their own headers.
 
 **Empty states.** A screen or section with nothing in it uses `EmptyState` (`compact` in trays, cards and panel sections): icon, heading, one line on how things get here, and the action that adds the first one. A one-line hint inside a side panel ("No headings yet.") stays plain tertiary text.
 
-**Visual regression.** `web/e2e/visual.spec.ts` snapshots the shell's key screens (chat, a chat with personas, runs and a run, the Tickets layouts and a ticket, Settings, Library, Knowledge, Designs, a Slides editor) in Dusk light and Gruvbox dark, with a fixed clock, reduced motion, relative times masked and at most 100 pixels of difference. A layout change updates them on purpose (`--update-snapshots`), and the diff in review shows what moved.
+**Visual regression.** `web/e2e/visual.spec.ts` snapshots the shell's key screens (chat, a chat with personas, runs and a run, the Tickets layouts and a ticket, Settings, Library, Knowledge, a deck open in Knowledge) in Dusk light and Gruvbox dark, with a fixed clock, reduced motion, relative times masked and at most 100 pixels of difference. A layout change updates them on purpose (`--update-snapshots`), and the diff in review shows what moved.
 
 ## 4. Components
 

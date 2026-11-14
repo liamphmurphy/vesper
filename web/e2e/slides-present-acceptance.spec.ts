@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { routeCanvasPage } from "./mock-canvas-pages";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import type { Deck } from "../lib/slides/schema";
@@ -31,6 +32,7 @@ test("presents every acceptance slide in order, drawn as in the editor", async (
 
   const shown = deck.slides.filter((s) => !s.hidden);
   // The editor's drawing of each slide, from its thumbnail strip.
+  await routeCanvasPage(page, { id: DECK, kind: "deck", title: "Deck" });
   await page.goto(`/apps/slides/${DECK}`);
   const thumbs = page.locator("[data-thumb] svg");
   await expect(thumbs).toHaveCount(shown.length);

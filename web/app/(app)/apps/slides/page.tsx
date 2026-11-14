@@ -1,5 +1,6 @@
-import { DecksScreen } from "./_components/decks-screen";
+import { redirect } from "next/navigation";
 
+// Decks live in Knowledge now (LAZYAGENTS-212): New page makes one, the explorer lists them.
 export default function Page() {
-  return <DecksScreen />;
+  redirect("/knowledge");
 }

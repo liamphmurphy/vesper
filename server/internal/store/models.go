@@ -119,6 +119,7 @@ type Artifact struct {
 	PersonaDirect    bool
 	PersonaPaused    bool
 	ChatSessionID    *uuid.UUID
+	CanvasID         *uuid.UUID
 }
 
 type ArtifactAlias struct {

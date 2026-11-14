@@ -438,6 +438,11 @@ components:
         title: { type: string }
         path: { type: string }
         audience: { $ref: "#/components/schemas/Audience" }
+        kind:
+          type: string
+          enum: [document, deck, design]
+          description: What the page holds. A deck or design page's body is its canvas (canvas_id), edited in its editor inside Knowledge (LAZYAGENTS-212); query rows carry the same two fields.
+        canvas_id: { type: string, format: uuid, nullable: true }
         body_md: { type: string }
         version_id: { type: string, format: uuid }
         seq: { type: integer }

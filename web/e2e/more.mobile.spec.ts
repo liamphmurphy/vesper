@@ -13,7 +13,7 @@ test("More lists the apps, tools and your pages with the nav badges", async ({ p
   await page.goto("/more");
 
   const apps = main(page).getByRole("region", { name: "Apps" });
-  await expect(apps.getByRole("link")).toHaveText(["Knowledge2", "Slides", "Designs", "Finance", "Library"]);
+  await expect(apps.getByRole("link")).toHaveText(["Knowledge2", "Finance", "Library"]);
   await expect(apps.getByRole("link", { name: "Knowledge, 2 suggested edits to review" })).toBeVisible();
   const tools = main(page).getByRole("region", { name: "Tools" });
   await expect(tools.getByRole("link")).toHaveText(["Workflows", "Scheduled", "Learn", "Reports"]);

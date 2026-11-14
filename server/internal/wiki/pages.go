@@ -44,6 +44,19 @@ type PageRow struct {
 	Version    *uuid.UUID           `json:"version_id"`
 	Pending    int                  `json:"pending"`
 	Unresolved int                  `json:"unresolved"`
+	// Kind is what the page holds: document, or a deck or design whose body is CanvasID (LAZYAGENTS-212).
+	Kind     string     `json:"kind"`
+	CanvasID *uuid.UUID `json:"canvas_id,omitempty"`
+}
+
+// PageKind is what a page linked to a canvas of canvasKind holds: a deck, a design, else a document.
+func PageKind(canvasKind string) string {
+	switch canvasKind {
+	case "deck", "design":
+		return canvasKind
+	default:
+		return "document"
+	}
 }
 
 type PageTable struct {
@@ -84,7 +97,7 @@ func QueryPages(ctx context.Context, q *store.Queries, ws uuid.UUID, in PageQuer
 		rows = rows[:in.Limit]
 	}
 	for _, a := range rows {
-		out.Rows = append(out.Rows, PageRow{ID: a.ID, Title: a.Title, Path: deref(a.Path), Audience: a.Audience, Summary: a.Summary, Properties: artifacts.DecodeProperties(a.Properties), Updated: a.UpdatedAt, Version: a.CurrentVersionID, Pending: int(a.Pending), Unresolved: int(a.Unresolved)})
+		out.Rows = append(out.Rows, PageRow{ID: a.ID, Title: a.Title, Path: deref(a.Path), Audience: a.Audience, Summary: a.Summary, Properties: artifacts.DecodeProperties(a.Properties), Updated: a.UpdatedAt, Version: a.CurrentVersionID, Pending: int(a.Pending), Unresolved: int(a.Unresolved), Kind: PageKind(a.CanvasKind), CanvasID: a.CanvasID})
 	}
 	return out, nil
 }

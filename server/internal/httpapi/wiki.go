@@ -49,13 +49,40 @@ func (s *Server) ListWikiPages(ctx context.Context, req api.ListWikiPagesRequest
 	}
 	out := api.ListWikiPages200JSONResponse{Pages: make([]api.WikiPageSummary, 0, len(rows))}
 	for _, r := range rows {
+		kind := pageKind(r.CanvasKind)
 		out.Pages = append(out.Pages, api.WikiPageSummary{
 			Audience: &r.Audience, Id: r.ID, Path: deref(r.Path), Title: r.Title, Author: dir.actor(r.AuthorType, &r.AuthorID),
 			ProjectId: r.ProjectID, UpdatedAt: r.UpdatedAt, Published: r.Published, Suggestions: int(r.Suggestions),
+			Kind: &kind, CanvasId: r.CanvasID,
 		})
 		out.Suggestions += int(r.Suggestions)
 	}
 	return out, nil
+}
+
+// pageKind is what a page holds: a deck or design page's body is its canvas (LAZYAGENTS-212).
+func pageKind(canvasKind string) api.PageKind {
+	switch canvasKind {
+	case "deck":
+		return api.PageKindDeck
+	case "design":
+		return api.PageKindDesign
+	default:
+		return api.PageKindDocument
+	}
+}
+
+// GetCanvasPage finds the page a deck or design is, for links from before they moved into Knowledge.
+func (s *Server) GetCanvasPage(ctx context.Context, req api.GetCanvasPageRequestObject) (api.GetCanvasPageResponseObject, error) {
+	_, _, ws := me(ctx)
+	p, err := s.Q.GetCanvasPage(ctx, store.GetCanvasPageParams{CanvasID: &req.CanvasId, WorkspaceID: ws, Viewer: pageview.From(ctx).UserID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apperr.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return api.GetCanvasPage200JSONResponse{Id: p.ID, Path: deref(p.Path), Title: p.Title}, nil
 }
 
 func (s *Server) noteDetail(ctx context.Context, ws, id uuid.UUID) (api.Artifact, error) {

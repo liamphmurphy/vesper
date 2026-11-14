@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { routeCanvasPage } from "./mock-canvas-pages";
 import { join } from "node:path";
 import { expect, test, type Page, type Route } from "@playwright/test";
 import { installChatApi, composerOption } from "./mock-chat-api";
@@ -44,6 +45,7 @@ async function install(page: Page) {
     if (p === "") return json(route, { id: D, kind: "design", title: "Onboarding", chat_id: "x", chat_title: "x", updated_at: at, reviewed_seq: 0, seq: 1, settings: { direct_edit: false, persona_paused: s.paused }, pending_proposals: s.pending });
     return json(route, { code: "not_found", message: "not found" }, 404);
   });
+  await routeCanvasPage(page, { id: D, kind: "design", title: "Onboarding" });
   await page.goto("/chat?project=WEB");
   return s;
 }

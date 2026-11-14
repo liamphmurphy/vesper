@@ -1245,6 +1245,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/wiki/canvas-pages/{canvas_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The Knowledge page a deck or design is
+         * @description Every deck and design is a page (LAZYAGENTS-212); this finds it from the deck's or design's canvas id, for links made before they moved into Knowledge.
+         */
+        get: operations["getCanvasPage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/wiki/page": {
         parameters: {
             query?: never;
@@ -6221,6 +6241,12 @@ export interface components {
             project?: components["schemas"]["Project"];
             /** @description Notes: Payments/Ledger/Rollback runbook */
             path?: string;
+            kind?: components["schemas"]["PageKind"];
+            /**
+             * Format: uuid
+             * @description The deck or design this page is (kind deck or design)
+             */
+            canvas_id?: string;
             /** @description Pending agent suggestions (notes) */
             suggestions: number;
             epic?: components["schemas"]["EpicRef"];
@@ -7011,6 +7037,23 @@ export interface components {
             /** @description False while the page only exists as an agent's suggestion */
             published: boolean;
             suggestions: number;
+            kind?: components["schemas"]["PageKind"];
+            /**
+             * Format: uuid
+             * @description The deck or design this page is (kind deck or design)
+             */
+            canvas_id?: string;
+        };
+        /**
+         * @description What the page holds. A deck or design page's body is its canvas, edited in Slides' or Designs' editor inside Knowledge.
+         * @enum {string}
+         */
+        PageKind: "document" | "deck" | "design";
+        CanvasPageRef: {
+            /** Format: uuid */
+            id: string;
+            path: string;
+            title: string;
         };
         WikiTree: {
             pages: components["schemas"]["WikiPageSummary"][];
@@ -11426,6 +11469,29 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Artifact"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getCanvasPage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                canvas_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CanvasPageRef"];
                 };
             };
             default: components["responses"]["Error"];

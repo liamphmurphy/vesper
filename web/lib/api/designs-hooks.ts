@@ -22,10 +22,6 @@ export const designKeys = {
   version: (id: string, seq: number) => ["design-versions", id, seq] as const,
 };
 
-export function useDesigns() {
-  return useQuery({ queryKey: designKeys.list, queryFn: () => unwrap(api.GET("/designs")), select: (d) => d.designs });
-}
-
 /** One design: its chat, current seq, switches and pending suggestions. */
 export function useDesign(id: string) {
   return useQuery({ queryKey: designKeys.one(id), queryFn: () => unwrap(api.GET("/designs/{canvasId}", { params: { path: { canvasId: id } } })) });
@@ -76,17 +72,6 @@ export function useDuplicateDesign() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => unwrap(api.POST("/designs/{canvasId}/duplicate", { params: { path: { canvasId: id } } })),
-    onSettled: () => void qc.invalidateQueries({ queryKey: designKeys.list }),
-  });
-}
-
-export function useDeleteDesign() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (id: string) => {
-      const { error } = await api.DELETE("/designs/{canvasId}", { params: { path: { canvasId: id } } });
-      if (error) throw new Error(error.message);
-    },
     onSettled: () => void qc.invalidateQueries({ queryKey: designKeys.list }),
   });
 }

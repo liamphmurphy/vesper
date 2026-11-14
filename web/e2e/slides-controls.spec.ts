@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { routeCanvasPage } from "./mock-canvas-pages";
 import { installChatApi } from "./mock-chat-api";
 
 // Slides toolbar controls (LAZYAGENTS-114): custom colours with recent
@@ -51,6 +52,7 @@ async function install(page: Page) {
       versions: [...s.versions].reverse().map((v) => ({ seq: v.seq, note: "Edited", author_type: "user", created_at: at })),
     });
   });
+  await routeCanvasPage(page, { id: DECK, kind: "deck", title: "Deck" });
   await page.goto(`/apps/slides/${DECK}`);
   const saved = () => JSON.parse(head().body) as { slides: { elements: Record<string, unknown>[] }[] };
   const element = (id: string) => saved().slides[0].elements.find((e) => e.id === id)!;

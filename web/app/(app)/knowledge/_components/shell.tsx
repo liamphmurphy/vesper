@@ -4,14 +4,21 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { cx } from "@/lib/cx";
-import { ancestors, buildTree, closeTab, folderPaths, isoDay, joinPath, movedPath, nameOf, openTab, pageHref, parentOf, type Tab, type TreeFolder, type TreeRow } from "@/lib/knowledge";
+import { ancestors, buildTree, closeTab, folderPaths, isoDay, joinPath, movedPath, nameOf, openTab, pageHref, pageIcon, parentOf, type Tab, type TreeFolder, type TreeRow } from "@/lib/knowledge";
 import { useAllPages, useCreatePage, useDaily, useDeleteFolder, useDeletePage, useMoveFolder, useMovePage, usePage } from "@/lib/api/knowledge-hooks";
+import { DropdownMenu } from "radix-ui";
 import { Icon, type IconName } from "@/components/ui/icon";
+import { floatPanel } from "@/components/domain/pickers";
+import { useSlideStarters, type StarterKey } from "@/lib/api/slides-hooks";
+import { useNewDeck } from "@/components/domain/use-new-deck";
+import { toast } from "@/lib/toast";
+import { useCreateDesign, type DesignStarter } from "@/lib/api/designs-hooks";
 import { Kbd, Skeleton } from "@/components/ui/primitives";
 import { useToday } from "./kit";
 import { isTyping } from "@/components/shell/shortcuts";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { TopBar } from "@/components/shell/topbar";
+import { EditorEmbedContext, type EditorEmbed } from "@/components/shell/editor-layout";
 import { QuickSwitcher } from "./switcher";
 import { CaptureDialog } from "./capture";
 import { ImportDialog } from "./import-dialog";
@@ -135,6 +142,12 @@ export function KnowledgeShell({ children }: { children: ReactNode }) {
   const view = useStore(viewStore);
   const tabs = useStore(tabsStore);
   const active = activeTab(pathname);
+  // A deck or design page opens its editor here: its structure is the column's list, its own
+  // dock is the companion, and its actions sit in this bar (EditorEmbedContext).
+  const activeKind = tabs.find((t) => t.id === active)?.kind;
+  const editorOpen = activeKind === "deck" || activeKind === "design";
+  const [barActions, setBarActions] = useState<HTMLElement | null>(null);
+  const embed = useMemo<EditorEmbed>(() => ({ actions: barActions, back: { href: "/knowledge", label: "Knowledge" } }), [barActions]);
   const [switcher, setSwitcher] = useState(false);
   const [capture, setCapture] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -213,13 +226,15 @@ export function KnowledgeShell({ children }: { children: ReactNode }) {
       <KnowledgeChatProvider>
       {/* flex-none, as in EditorLayout: in the app shell's column a flex-1 child grows to its content and ignores h-dvh. */}
       <div className="relative flex h-[calc(100dvh-var(--tab-bar-h,0px))] min-h-0 min-w-0 flex-none bg-bg md:h-dvh">
-        <Explorer pathname={pathname} />
+        {!editorOpen && <Explorer pathname={pathname} />}
         <div className="flex min-w-0 flex-1 flex-col">
           {/* The shared top bar, with the open pages as its tabs: the same height and back button as every page. */}
-          <TopBar tabs={<TabStrip tabs={tabs} active={active} onClose={close} />} />
-          <div className="flex min-h-0 flex-1 flex-col">{children}</div>
+          <TopBar tabs={<TabStrip tabs={tabs} active={active} onClose={close} />} actions={<div ref={setBarActions} className="contents" />} />
+          <EditorEmbedContext.Provider value={embed}>
+            <div className="flex min-h-0 flex-1 flex-col">{children}</div>
+          </EditorEmbedContext.Provider>
         </div>
-        <KnowledgeDock pageId={pageIdOf(pathname)} />
+        {!editorOpen && <KnowledgeDock pageId={pageIdOf(pathname)} />}
       </div>
       <QuickSwitcher open={switcher} onOpenChange={setSwitcher} includeAgent={view === "agent"} />
       <CaptureDialog open={capture} onOpenChange={setCapture} />
@@ -230,7 +245,8 @@ export function KnowledgeShell({ children }: { children: ReactNode }) {
 }
 
 function TabStrip({ tabs, active, onClose }: { tabs: Tab[]; active?: string; onClose: (id: string) => void }) {
-  const icon = (t: Tab): IconName => (t.kind === "graph" ? "graph" : t.kind === "connect" ? "link" : t.kind === "home" ? "dashboard" : "artifacts");
+  const icon = (t: Tab): IconName =>
+    t.kind === "graph" ? "graph" : t.kind === "connect" ? "link" : t.kind === "home" ? "dashboard" : t.kind === "deck" ? "slides" : t.kind === "design" ? "designs" : "artifacts";
   return (
     <div role="tablist" aria-label="Open pages" className="flex min-w-0 flex-1 items-end gap-1 overflow-x-auto pl-1">
       {tabs.map((t) => {
@@ -486,7 +502,7 @@ function Explorer({ pathname }: { pathname: string }) {
         <ExplorerButton icon="link" label="Keep notes connected" href="/knowledge/connect" />
         <ExplorerButton icon="shrink" label="Collapse all folders" onClick={collapseAll} />
         {/* Last and in the accent, like Chats' New chat: every list in the column ends its title row with its own +. */}
-        <ExplorerButton icon="plus" label="New page" onClick={newPage} accent />
+        <NewPageMenu onDocument={newPage} />
       </div>
       <div role="radiogroup" aria-label="Which knowledge" className="mx-3 flex h-7 flex-none rounded-md border border-border-subtle bg-surface-sunken p-0.5">
         {(
@@ -600,6 +616,79 @@ type TreeActions = {
 // The row whose menu is open stays highlighted, as in Obsidian.
 const menuRow = "rounded-md data-[state=open]:bg-hover";
 
+const DESIGN_STARTERS: { key: DesignStarter; label: string }[] = [
+  { key: "blank", label: "Blank" },
+  { key: "mobile-flow", label: "Mobile flow" },
+  { key: "web-flow", label: "Web flow" },
+  { key: "diagram", label: "Diagram" },
+  { key: "wireframe", label: "Wireframe" },
+];
+const newItem = "flex h-8 cursor-default select-none items-center gap-2 rounded-md px-2 text-13 outline-none data-[highlighted]:bg-hover data-[disabled]:opacity-50";
+
+/**
+ * The explorer's +: a document, a deck or a design (LAZYAGENTS-212). A deck or design is made with
+ * its own chat and gets its page as it's made; its old address finds that page and opens it here.
+ */
+function NewPageMenu({ onDocument }: { onDocument: () => void }) {
+  const router = useRouter();
+  const deck = useNewDeck();
+  const design = useCreateDesign();
+  const starters = useSlideStarters();
+  const busy = deck.pending || design.isPending;
+  return (
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger asChild>
+        <button type="button" aria-label="New page" title="New page, deck or design" disabled={busy}
+          className="grid size-7 place-items-center rounded-md text-accent hover:bg-hover disabled:opacity-50">
+          <Icon name="plus" size={14} />
+        </button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content align="start" sideOffset={4} className={cx(floatPanel, "w-[200px]")}>
+          <DropdownMenu.Item className={newItem} onSelect={onDocument}>
+            <Icon name="artifacts" size={13} className="text-fg-tertiary" />Document
+          </DropdownMenu.Item>
+          <DropdownMenu.Sub>
+            <DropdownMenu.SubTrigger className={newItem}>
+              <Icon name="slides" size={13} className="text-fg-tertiary" />
+              <span className="flex-1">Deck</span>
+              <Icon name="chevr" size={12} className="text-fg-tertiary" />
+            </DropdownMenu.SubTrigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.SubContent sideOffset={4} className={cx(floatPanel, "w-[200px]")}>
+                <DropdownMenu.Item className={newItem} onSelect={() => deck.start()}>Blank</DropdownMenu.Item>
+                {(starters.data ?? []).map((st) => (
+                  <DropdownMenu.Item key={st.key} className={newItem} title={st.description} onSelect={() => deck.start(st.key as StarterKey)}>
+                    <span className="min-w-0 flex-1 truncate">{st.name}</span>
+                    <span className="flex-none font-mono text-11 text-fg-tertiary">{st.slide_count}</span>
+                  </DropdownMenu.Item>
+                ))}
+              </DropdownMenu.SubContent>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Sub>
+          <DropdownMenu.Sub>
+            <DropdownMenu.SubTrigger className={newItem}>
+              <Icon name="designs" size={13} className="text-fg-tertiary" />
+              <span className="flex-1">Design</span>
+              <Icon name="chevr" size={12} className="text-fg-tertiary" />
+            </DropdownMenu.SubTrigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.SubContent sideOffset={4} className={cx(floatPanel, "w-[160px]")}>
+                {DESIGN_STARTERS.map((st) => (
+                  <DropdownMenu.Item key={st.key} className={newItem}
+                    onSelect={() => design.mutate({ starter: st.key, title: "" }, { onSuccess: (d) => router.push(`/apps/designs/${d.id}`), onError: (e) => toast({ id: "new-design", tone: "error", title: "Couldn’t make the design", description: e.message }) })}>
+                    {st.label}
+                  </DropdownMenu.Item>
+                ))}
+              </DropdownMenu.SubContent>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Sub>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  );
+}
+
 function ExplorerButton({ icon, label, onClick, href, accent }: { icon: IconName; label: string; onClick?: () => void; href?: string; accent?: boolean }) {
   const cls = cx("grid size-7 place-items-center rounded-md hover:bg-hover", accent ? "text-accent" : "text-fg-tertiary hover:text-fg-secondary");
   return href ? (
@@ -648,12 +737,12 @@ function FolderItems({ folder, depth, open, toggle, activeId, actions }: { folde
       {cut.map((p) => (
         <li key={p.id} role="treeitem" aria-selected={p.id === activeId}>
           {actions.renaming === `p:${p.id}` ? (
-            <RenameField initial={p.title} icon="artifacts" indent={24 + depth * 16} error={actions.renameError} pending={actions.renamePending} onCommit={(name) => actions.renamePage(p, name)} onCancel={actions.cancelRename} />
+            <RenameField initial={p.title} icon={pageIcon(p)} indent={24 + depth * 16} error={actions.renameError} pending={actions.renamePending} onCommit={(name) => actions.renamePage(p, name)} onCancel={actions.cancelRename} />
           ) : (
             <ExplorerMenu entries={actions.pageMenu(p)} className={menuRow}>
               <TreeLink
                 href={pageHref(p.id, p.title)}
-                icon={p.properties?.query ? "board" : "artifacts"}
+                icon={pageIcon(p)}
                 label={p.title}
                 depth={depth}
                 active={p.id === activeId}

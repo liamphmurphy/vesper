@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { routeCanvasPage } from "./mock-canvas-pages";
 import { THEMES, type Deck, type Element, type GroupElement } from "../lib/slides/schema";
 import { installChatApi } from "./mock-chat-api";
 
@@ -43,6 +44,7 @@ async function install(page: Page) {
     const v = versions.find((x) => x.seq === want)!;
     return json({ id: DECK, kind: "deck", title: "Groups", seq: head().seq, viewing_seq: v.seq, created_at: at, updated_at: at, body: v.body, versions: [...versions].reverse().map((x) => ({ seq: x.seq, note: x.note, author_type: x.author_type, created_at: at })) });
   });
+  await routeCanvasPage(page, { id: DECK, kind: "deck", title: "Deck" });
   await page.goto(`/apps/slides/${DECK}`);
   await expect(page.locator('[data-element="e_c"]')).toBeVisible();
   /** The elements of the last saved version. */

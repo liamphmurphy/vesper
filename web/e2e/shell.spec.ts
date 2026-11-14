@@ -77,7 +77,7 @@ test("one column switches areas; a screen's own list takes the place of Chats", 
   // The areas, then Apps; Inbox left the menu: the Needs you button opens the tray instead.
   const areas = page.getByRole("list", { name: "Areas" });
   const names = await areas.getByRole("link").evaluateAll((els) => els.map((e) => e.getAttribute("aria-label")));
-  expect(names).toEqual(["Chat", "Runs", "Tickets", "Knowledge", "Designs"]);
+  expect(names).toEqual(["Chat", "Runs", "Tickets", "Knowledge"]);
   await expect(page.getByRole("button", { name: /^Needs you/ })).toBeVisible();
   await expect(menu.getByRole("link", { name: "Customization" })).toHaveAttribute("href", "/customization");
   await expect(menu.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
@@ -88,7 +88,7 @@ test("one column switches areas; a screen's own list takes the place of Chats", 
   await expect(apps).toHaveAttribute("aria-expanded", "false");
   await apps.click();
   const flyout = page.getByRole("dialog", { name: "Apps" });
-  await expect(flyout.getByRole("group", { name: "Apps" }).getByRole("link")).toHaveText([/Knowledge/, "Slides", "Designs", "Finance", "Library"]);
+  await expect(flyout.getByRole("group", { name: "Apps" }).getByRole("link")).toHaveText([/Knowledge/, "Finance", "Library"]);
   await expect(flyout.getByRole("group", { name: "Tools" }).getByRole("link")).toHaveText(["Workflows", /Scheduled/, "Learn", "Reports"]);
   await expect(flyout.getByRole("button", { name: "New space" })).toBeVisible();
   const flyoutBox = await flyout.boundingBox();
@@ -97,8 +97,8 @@ test("one column switches areas; a screen's own list takes the place of Chats", 
   // Arrow keys move through the grid; Esc closes and returns to the row.
   await expect(flyout.getByRole("link", { name: /^Knowledge/ })).toBeFocused();
   await page.keyboard.press("ArrowRight");
-  await expect(flyout.getByRole("link", { name: "Slides" })).toBeFocused();
-  // Down keeps the column: Slides is second in Apps, Scheduled second in Tools.
+  await expect(flyout.getByRole("link", { name: "Finance" })).toBeFocused();
+  // Down keeps the column: Finance is second in Apps, Scheduled second in Tools.
   await page.keyboard.press("ArrowDown");
   await expect(flyout.getByRole("link", { name: /Scheduled/ })).toBeFocused();
   await page.keyboard.press("Escape");
@@ -132,7 +132,7 @@ test("the Chat area brings back the Chats list, and the mark collapses the colum
   // The strip keeps the same fixed items wherever you go.
   await page.goto("/settings");
   await expect(menu).not.toHaveAttribute("data-expanded");
-  await expect(page.getByRole("list", { name: "Areas" }).getByRole("link")).toHaveCount(5);
+  await expect(page.getByRole("list", { name: "Areas" }).getByRole("link")).toHaveCount(4);
   await menu.getByRole("button", { name: "Expand sidebar" }).click();
   await expect(menu).toHaveAttribute("data-expanded");
   expect(await page.evaluate(() => localStorage.getItem("lazyagents.column-collapsed"))).toBeNull();

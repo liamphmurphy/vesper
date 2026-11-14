@@ -12,15 +12,15 @@ import { inAppsMenu, isActive } from "./project-scope.ts";
 export const NAVIGATOR_WIDTH = "w-[248px]";
 
 /** The areas on the column's icon row, in order. Apps is the flyout of the other apps and tools. */
-export type Area = "chat" | "runs" | "tickets" | "knowledge" | "designs" | "apps";
+export type Area = "chat" | "runs" | "tickets" | "knowledge" | "apps";
 
 /** The area a path belongs to, for the icon row's current mark; null on screens of no area (Settings, Customization). */
 export function currentArea(pathname: string): Area | null {
   if (pathname === "/" || isActive(pathname, "/chat") || isActive(pathname, "/spaces")) return "chat";
   if (isActive(pathname, "/runs")) return "runs";
   if (isActive(pathname, "/tickets") || isActive(pathname, "/epics")) return "tickets";
-  if (isActive(pathname, "/knowledge")) return "knowledge";
-  if (isActive(pathname, "/apps/designs")) return "designs";
+  // Decks and designs are Knowledge pages; their old addresses lead there.
+  if (isActive(pathname, "/knowledge") || isActive(pathname, "/apps/designs") || isActive(pathname, "/apps/slides")) return "knowledge";
   if (inAppsMenu(pathname)) return "apps";
   return null;
 }

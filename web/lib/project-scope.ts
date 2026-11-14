@@ -27,11 +27,9 @@ export const WORK_ITEMS: NavItem[] = [
   { href: "/tickets", label: "Tickets", icon: "tickets" },
 ];
 
-/** Apps: a full page of their own. Knowledge holds Docs and the wiki in one store; Slides, Designs and Finance have an Ask drawer, each backed by one of the person's spaces. */
+/** Apps: a full page of their own. Knowledge holds documents, decks and designs and the wiki in one store (LAZYAGENTS-212); Finance has an Ask drawer backed by one of the person's spaces. */
 export const APP_ITEMS: NavItem[] = [
   { href: "/knowledge", label: "Knowledge", icon: "wiki", badge: "wiki" },
-  { href: "/apps/slides", label: "Slides", icon: "slides" },
-  { href: "/apps/designs", label: "Designs", icon: "designs" },
   { href: "/apps/finance", label: "Finance", icon: "dollar" },
   { href: "/library", label: "Library", icon: "library" },
 ];
@@ -58,11 +56,13 @@ export const NAV_GROUPS: NavGroup[] = [
 ];
 
 /** Apps used often enough to have their own rail entry too; the flyout still lists them. */
-export const RAIL_APP_ITEMS: NavItem[] = APP_ITEMS.filter((i) => i.href === "/knowledge" || i.href === "/apps/designs");
+export const RAIL_APP_ITEMS: NavItem[] = APP_ITEMS.filter((i) => i.href === "/knowledge");
 
 /** The Apps row reads as current on any page its flyout opens, unless a rail entry of its own already does. */
 export function inAppsMenu(pathname: string): boolean {
   if (RAIL_APP_ITEMS.some((i) => isActive(pathname, i.href))) return false;
+  // Decks' and designs' old addresses lead to their Knowledge pages, so Knowledge reads as current.
+  if (isActive(pathname, "/apps/slides") || isActive(pathname, "/apps/designs")) return false;
   return [...APP_ITEMS, ...TOOL_ITEMS].some((i) => isActive(pathname, i.href));
 }
 

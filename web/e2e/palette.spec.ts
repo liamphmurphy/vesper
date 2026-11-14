@@ -156,14 +156,14 @@ test("an app's name jumps to the app, and apps lists them all", async ({ page })
   await openPalette(page);
   await input(page).fill("apps");
   await expect(results(page).getByRole("group", { name: "Top result" }).getByRole("option")).toHaveText([/Knowledge/]);
-  await expect(results(page).getByRole("group", { name: "Apps" }).getByRole("option")).toHaveText([/Slides/, /Designs/, /Finance/, /Library/, /Workflows/, /Scheduled/, /Learn/, /Reports/]);
+  await expect(results(page).getByRole("group", { name: "Apps" }).getByRole("option")).toHaveText([/Finance/, /Library/, /Workflows/, /Scheduled/, /Learn/, /Reports/]);
 
-  await input(page).fill("slides");
-  await expect(results(page).getByRole("group", { name: "Top result" }).getByRole("option")).toHaveText([/Slides.*app/]);
+  await input(page).fill("finance");
+  await expect(results(page).getByRole("group", { name: "Top result" }).getByRole("option")).toHaveText([/Finance.*app/]);
   // Offered once: not again under Go to.
-  await expect(results(page).getByRole("option", { name: /Go to Slides/ })).toHaveCount(0);
+  await expect(results(page).getByRole("option", { name: /Go to Finance/ })).toHaveCount(0);
   await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(/\/apps\/slides$/);
+  await expect(page).toHaveURL(/\/apps\/finance$/);
 });
 
 test("actions: new ticket, start planning, new chat and switch project", async ({ page }) => {

@@ -1,5 +1,6 @@
 "use client";
 
+import { useNewDeck } from "@/components/domain/use-new-deck";
 import { HistoryNav } from "@/components/shell/history-nav";
 import { ResearchToggle, TemporaryToggle } from "./reply-tools";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -221,9 +222,10 @@ function Welcome({ disabled, onNew, arrived }: { disabled: boolean; onNew: () =>
     // The persona starts it with design_create once the chat exists.
     free: { design: (brief) => submit(designRequest(brief)) },
   };
+  const { start: startDeck } = useNewDeck();
   // The + menu's "Create with {persona}", as in a conversation.
   const createWith = (kind: CreateKind) => {
-    if (kind === "slides") return router.push("/apps/slides");
+    if (kind === "slides") return startDeck();
     setText((t) => (kind === "design" ? `/design ${t.trim()}` : `${DOC_DRAFT}${t.trim()}`));
     requestAnimationFrame(() => {
       const el = area.current;

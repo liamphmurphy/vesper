@@ -733,7 +733,7 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
 
   const failed = fetchError || loadError ? (
     <div className="mx-auto w-full max-w-[720px] p-6">
-      <Banner tone="blocked" title="Couldn’t open this design" actions={<Button onClick={() => router.push("/apps/designs")}>Back to Designs</Button>}>
+      <Banner tone="blocked" title="Couldn’t open this design" actions={<Button onClick={() => router.push("/knowledge")}>Back to Knowledge</Button>}>
         {loadError ?? (fetchError instanceof ApiError && fetchError.status === 404 ? "It may have been deleted, or it belongs to someone else." : errorText(fetchError))}
       </Banner>
     </div>
@@ -927,7 +927,7 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
 
   const saveBad = saveState.s === "error" || saveState.s === "conflict";
   const header: EditorHeader = {
-    back: { href: "/apps/designs", label: "Designs" },
+    back: { href: "/knowledge", label: "Knowledge" },
     name: title,
     title: renaming ? (
       <input
@@ -1043,7 +1043,7 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
   );
   const chatPanel = (
     <div data-design-chat className="flex min-h-0 flex-1 flex-col">
-      {chatId && <Conversation key={chatId} id={chatId} docked actions={editMode} onNew={() => router.push("/apps/designs")} />}
+      {chatId && <Conversation key={chatId} id={chatId} docked actions={editMode} onNew={() => router.push("/knowledge")} />}
     </div>
   );
   const dockTabs: DockTab[] = [

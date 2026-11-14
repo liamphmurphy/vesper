@@ -164,29 +164,6 @@ test("resizing a frame applies its children's constraints; a path scales its poi
   assert.equal(big.d, "M0 0 L20 40");
 });
 
-// ---- Home ----
-import { filterDesigns, isBrief, briefTitle, kindOf, linksOf } from "./designs/home.ts";
-
-test("Home filters by author, review and search", () => {
-  const list = [
-    { id: "1", title: "Checkout flow", persona_edited: true, pending_proposals: 3, frames: 5, pages: 1 },
-    { id: "2", title: "Runner architecture", persona_edited: false, pending_proposals: 0, frames: 0, pages: 1 },
-  ];
-  assert.deepEqual(filterDesigns(list, "mine", "").map((d) => d.id), ["2"]);
-  assert.deepEqual(filterDesigns(list, "persona", "").map((d) => d.id), ["1"]);
-  assert.deepEqual(filterDesigns(list, "review", "").map((d) => d.id), ["1"]);
-  assert.deepEqual(filterDesigns(list, "all", "RUNNER").map((d) => d.id), ["2"]);
-});
-
-test("Home tells a brief from a title and reads cards from the body", () => {
-  assert.equal(isBrief("Checkout"), false);
-  assert.equal(isBrief("Turn LAZYAGENTS-150 into a flow"), true);
-  assert.equal(briefTitle("Turn LAZYAGENTS-150 into a flow"), "LAZYAGENTS-150");
-  const d = acceptance();
-  assert.ok(linksOf(d).includes("LAZYAGENTS-150"));
-  assert.equal(kindOf(d, 4), "4 frames");
-});
-
 // ---- hit testing ----
 import { hitPath, pick, dropTarget } from "./designs/hit.ts";
 import { makeLayout } from "./designs/layout.ts";
@@ -284,7 +261,7 @@ test("B1: a reflow on one side isn't an edit of the siblings it moved", () => {
 });
 
 test("the chat's Design card counts frames, links, stickies and names the page", async () => {
-  const { designCounts } = await import("./designs/home.ts");
+  const { designCounts } = await import("./designs/card.ts");
   const { design } = normalize(read("../../docs/design/fixtures/acceptance-design.json"));
   assert.equal(designCounts(design), "4 frames · 3 links · 3 pages");
   const one = { ...design, pages: [{ ...design.pages[0], children: [...design.pages[0].children, { id: "n_note", type: "sticky", x: 0, y: 0, w: 120, h: 80, text: "Open" }] }], links: design.links.slice(0, 1) };

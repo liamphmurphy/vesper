@@ -465,5 +465,13 @@ func (s *Server) knowledgePage(ctx context.Context, ws, id uuid.UUID) (any, erro
 			chatID = nil
 		}
 	}
-	return map[string]any{"id": a.ID, "title": a.Title, "path": a.Path, "audience": a.Audience, "body_md": v.BodyMd, "version_id": v.ID, "seq": v.Seq, "properties": artifacts.DecodeProperties(v.Properties), "direct": a.PersonaDirect, "paused": a.PersonaPaused, "chat_id": chatID, "embeds": embeds, "reviews": reviewRows, "versions": history, "url": wiki.PageURL(id, a.Title)}, nil
+	kind := "document"
+	if a.CanvasID != nil {
+		ck, err := s.Q.CanvasKind(ctx, *a.CanvasID)
+		if err != nil {
+			return nil, err
+		}
+		kind = wiki.PageKind(ck)
+	}
+	return map[string]any{"id": a.ID, "title": a.Title, "path": a.Path, "audience": a.Audience, "kind": kind, "canvas_id": a.CanvasID, "body_md": v.BodyMd, "version_id": v.ID, "seq": v.Seq, "properties": artifacts.DecodeProperties(v.Properties), "direct": a.PersonaDirect, "paused": a.PersonaPaused, "chat_id": chatID, "embeds": embeds, "reviews": reviewRows, "versions": history, "url": wiki.PageURL(id, a.Title)}, nil
 }

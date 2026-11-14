@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/base64"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -181,6 +182,19 @@ func TestPersonaKnowledgeTools(t *testing.T) {
 		}
 		if code, _ := call("confirm_import", map[string]any{"import_id": uuid.NewString(), "policy": "everything"}); code != 422 {
 			t.Fatalf("accepted an unknown policy: %d", code)
+		}
+	}
+	// A deck's page has no text of its own: read_page and patch_page say where the deck is.
+	{
+		deck := e.want("POST", "/slides", map[string]any{"title": "Board deck"}, http.StatusCreated)
+		ref := e.want("GET", "/wiki/canvas-pages/"+deck["id"].(string), nil, 200)
+		code, out := call("read_page", map[string]any{"ref": ref["id"]})
+		if code != 422 || !strings.Contains(fmt.Sprint(out["message"]), "slide deck") || !strings.Contains(fmt.Sprint(out["message"]), deck["id"].(string)) {
+			t.Fatalf("read_page on a deck's page: %d %v", code, out)
+		}
+		p := get(ref)
+		if code, out := call("patch_page", map[string]any{"ref": ref["id"], "base_version": p["version_id"], "changes": []any{map[string]any{"before": "x", "after": "y", "why": "z"}}}); code != 422 || !strings.Contains(fmt.Sprint(out["message"]), "canvas_read") {
+			t.Fatalf("patch_page on a deck's page: %d %v", code, out)
 		}
 	}
 }

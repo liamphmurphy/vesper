@@ -126,3 +126,11 @@ test("Move to… offers every folder except where it is, and never a folder insi
   assert.deepEqual(moveTargets(folders, "Campaign/NPCs", true), ["", "Campaign/Locations"]);
   assert.deepEqual(moveTargets(folders, "Campaign/NPCs", true, "loc"), ["Campaign/Locations"]);
 });
+
+test("a page's icon says what it holds", async () => {
+  const { pageIcon } = await import("./knowledge.ts");
+  assert.equal(pageIcon({ kind: "deck" }), "slides");
+  assert.equal(pageIcon({ kind: "design" }), "designs");
+  assert.equal(pageIcon({ kind: "document", properties: { query: "tag:x" } }), "board");
+  assert.equal(pageIcon({}), "artifacts");
+});

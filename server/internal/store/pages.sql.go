@@ -155,7 +155,7 @@ func (q *Queries) FinishedKnowledgeArchives(ctx context.Context) ([]FinishedKnow
 }
 
 const getDocPageRedirect = `-- name: GetDocPageRedirect :one
-SELECT a.id, a.workspace_id, a.project_id, a.epic_id, a.type, a.title, a.number, a.summary, a.author_type, a.author_id, a.current_version_id, a.search_text, a.search, a.created_at, a.updated_at, a.path, a.audience, a.owner_user_id, a.persona_direct, a.persona_paused, a.chat_session_id FROM doc_page_redirects d JOIN artifacts a ON a.id=d.artifact_id
+SELECT a.id, a.workspace_id, a.project_id, a.epic_id, a.type, a.title, a.number, a.summary, a.author_type, a.author_id, a.current_version_id, a.search_text, a.search, a.created_at, a.updated_at, a.path, a.audience, a.owner_user_id, a.persona_direct, a.persona_paused, a.chat_session_id, a.canvas_id FROM doc_page_redirects d JOIN artifacts a ON a.id=d.artifact_id
 WHERE d.canvas_id=$1 AND a.workspace_id=$2
 AND artifact_visible(a.audience,a.owner_user_id,$3::uuid)
 `
@@ -191,6 +191,7 @@ func (q *Queries) GetDocPageRedirect(ctx context.Context, arg GetDocPageRedirect
 		&i.PersonaDirect,
 		&i.PersonaPaused,
 		&i.ChatSessionID,
+		&i.CanvasID,
 	)
 	return i, err
 }
@@ -456,7 +457,7 @@ func (q *Queries) LockKnowledgeBlob(ctx context.Context, dollar_1 string) error 
 }
 
 const lockNotesInFolder = `-- name: LockNotesInFolder :many
-SELECT a.id, a.workspace_id, a.project_id, a.epic_id, a.type, a.title, a.number, a.summary, a.author_type, a.author_id, a.current_version_id, a.search_text, a.search, a.created_at, a.updated_at, a.path, a.audience, a.owner_user_id, a.persona_direct, a.persona_paused, a.chat_session_id FROM artifacts a
+SELECT a.id, a.workspace_id, a.project_id, a.epic_id, a.type, a.title, a.number, a.summary, a.author_type, a.author_id, a.current_version_id, a.search_text, a.search, a.created_at, a.updated_at, a.path, a.audience, a.owner_user_id, a.persona_direct, a.persona_paused, a.chat_session_id, a.canvas_id FROM artifacts a
 WHERE a.workspace_id = $1 AND a.type = 'note'
 AND starts_with(a.path, $2::text || '/')
 AND artifact_visible(a.audience, a.owner_user_id, $3::uuid)
@@ -510,6 +511,7 @@ func (q *Queries) LockNotesInFolder(ctx context.Context, arg LockNotesInFolderPa
 			&i.PersonaDirect,
 			&i.PersonaPaused,
 			&i.ChatSessionID,
+			&i.CanvasID,
 		); err != nil {
 			return nil, err
 		}
@@ -608,7 +610,8 @@ func (q *Queries) PutKnowledgeAsset(ctx context.Context, arg PutKnowledgeAssetPa
 }
 
 const queryPages = `-- name: QueryPages :many
-SELECT a.id, a.workspace_id, a.project_id, a.epic_id, a.type, a.title, a.number, a.summary, a.author_type, a.author_id, a.current_version_id, a.search_text, a.search, a.created_at, a.updated_at, a.path, a.audience, a.owner_user_id, a.persona_direct, a.persona_paused, a.chat_session_id, v.properties,
+SELECT a.id, a.workspace_id, a.project_id, a.epic_id, a.type, a.title, a.number, a.summary, a.author_type, a.author_id, a.current_version_id, a.search_text, a.search, a.created_at, a.updated_at, a.path, a.audience, a.owner_user_id, a.persona_direct, a.persona_paused, a.chat_session_id, a.canvas_id, v.properties,
+  coalesce((SELECT cv.kind FROM chat_canvases cv WHERE cv.id = a.canvas_id), '')::text AS canvas_kind,
   (SELECT count(*) FROM knowledge_links l WHERE l.source_kind = 'artifact' AND l.source_id = a.id AND l.target_kind = 'unresolved')::int AS unresolved,
   (SELECT count(*) FROM artifact_versions s WHERE s.artifact_id = a.id AND (s.state = 'suggested' OR (s.created_by_type = 'agent' AND s.review_state = 'pending')))::int AS pending
 FROM artifacts a JOIN artifact_versions v ON v.id = a.current_version_id
@@ -671,7 +674,9 @@ type QueryPagesRow struct {
 	PersonaDirect    bool
 	PersonaPaused    bool
 	ChatSessionID    *uuid.UUID
+	CanvasID         *uuid.UUID
 	Properties       json.RawMessage
+	CanvasKind       string
 	Unresolved       int32
 	Pending          int32
 }
@@ -723,7 +728,9 @@ func (q *Queries) QueryPages(ctx context.Context, arg QueryPagesParams) ([]Query
 			&i.PersonaDirect,
 			&i.PersonaPaused,
 			&i.ChatSessionID,
+			&i.CanvasID,
 			&i.Properties,
+			&i.CanvasKind,
 			&i.Unresolved,
 			&i.Pending,
 		); err != nil {
@@ -842,7 +849,7 @@ func (q *Queries) SetPageChat(ctx context.Context, arg SetPageChatParams) error 
 const setPageControls = `-- name: SetPageControls :one
 UPDATE artifacts SET persona_direct = $1, persona_paused = $2
 WHERE id = $3 AND workspace_id = $4
-AND artifact_visible(audience, owner_user_id, $5::uuid) RETURNING id, workspace_id, project_id, epic_id, type, title, number, summary, author_type, author_id, current_version_id, search_text, search, created_at, updated_at, path, audience, owner_user_id, persona_direct, persona_paused, chat_session_id
+AND artifact_visible(audience, owner_user_id, $5::uuid) RETURNING id, workspace_id, project_id, epic_id, type, title, number, summary, author_type, author_id, current_version_id, search_text, search, created_at, updated_at, path, audience, owner_user_id, persona_direct, persona_paused, chat_session_id, canvas_id
 `
 
 type SetPageControlsParams struct {
@@ -884,6 +891,7 @@ func (q *Queries) SetPageControls(ctx context.Context, arg SetPageControlsParams
 		&i.PersonaDirect,
 		&i.PersonaPaused,
 		&i.ChatSessionID,
+		&i.CanvasID,
 	)
 	return i, err
 }
@@ -908,7 +916,7 @@ func (q *Queries) StageOrphanKnowledgeAssets(ctx context.Context) error {
 }
 
 const unindexedDocPages = `-- name: UnindexedDocPages :many
-SELECT a.id, a.workspace_id, a.project_id, a.epic_id, a.type, a.title, a.number, a.summary, a.author_type, a.author_id, a.current_version_id, a.search_text, a.search, a.created_at, a.updated_at, a.path, a.audience, a.owner_user_id, a.persona_direct, a.persona_paused, a.chat_session_id FROM doc_page_redirects d JOIN artifacts a ON a.id=d.artifact_id WHERE NOT d.indexed
+SELECT a.id, a.workspace_id, a.project_id, a.epic_id, a.type, a.title, a.number, a.summary, a.author_type, a.author_id, a.current_version_id, a.search_text, a.search, a.created_at, a.updated_at, a.path, a.audience, a.owner_user_id, a.persona_direct, a.persona_paused, a.chat_session_id, a.canvas_id FROM doc_page_redirects d JOIN artifacts a ON a.id=d.artifact_id WHERE NOT d.indexed
 `
 
 // System backfill only; the migration's trusted mapping supplies the owner.
@@ -943,6 +951,7 @@ func (q *Queries) UnindexedDocPages(ctx context.Context) ([]Artifact, error) {
 			&i.PersonaDirect,
 			&i.PersonaPaused,
 			&i.ChatSessionID,
+			&i.CanvasID,
 		); err != nil {
 			return nil, err
 		}

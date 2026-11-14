@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { routeCanvasPage } from "./mock-canvas-pages";
 import { join } from "node:path";
 import { expect, test, type Page, type Route } from "@playwright/test";
 import { installChatApi } from "./mock-chat-api";
@@ -42,6 +43,8 @@ async function install(page: Page, designs: Record<string, object>) {
     library: [] as { name: string; head: string }[],
     libraryFull: false,
   };
+  // Each design is a Knowledge page: its /apps/designs/<id> address opens it there.
+  for (const d of s.designs) await routeCanvasPage(page, { id: d.id, kind: "design", title: d.title, chatId });
   const head = (d: Stored) => d.versions[d.versions.length - 1];
   const json = (route: Route, data: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(data) });
   const mine = (d: Stored) => ({ id: d.id, kind: "design", title: d.title, chat_id: d.chat_id, chat_title: d.title, updated_at: at, reviewed_seq: 0 });
@@ -114,7 +117,6 @@ async function install(page: Page, designs: Record<string, object>) {
 }
 
 const D1 = "11111111-1111-4111-8111-111111111111";
-const D2 = "22222222-2222-4222-8222-222222222222";
 const node = (body: { pages: { children: unknown[] }[] }, id: string): Record<string, unknown> | undefined => {
   let found: Record<string, unknown> | undefined;
   const walk = (list: Record<string, unknown>[]) => list.forEach((n) => (n.id === id ? (found = n) : Array.isArray(n.children) && walk(n.children as Record<string, unknown>[])));
@@ -131,45 +133,25 @@ async function openInspector(page: Page) {
   await expect(tab).toHaveAttribute("aria-selected", "true");
 }
 
-test("Designs is in Apps; Home has starters and recent designs to rename, duplicate and delete", async ({ page }) => {
-  const { s } = await install(page, { [D1]: acceptance, [D2]: simple() });
+test("designs live in Knowledge: the old index goes there, and New page makes a design that opens in it", async ({ page }) => {
+  const { s } = await install(page, { [D1]: acceptance });
   await page.goto("/apps/designs");
-  await expect(page.getByRole("heading", { name: "Designs", level: 1 })).toBeVisible();
+  await expect(page).toHaveURL(/\/knowledge$/);
+  // Designs is no longer an app of its own.
   await page.getByRole("button", { name: "Apps" }).click();
-  await expect(page.getByRole("dialog", { name: "Apps" }).getByRole("link", { name: "Designs" })).toHaveAttribute("href", "/apps/designs");
+  await expect(page.getByRole("dialog", { name: "Apps" }).getByRole("link", { name: "Designs" })).toHaveCount(0);
   await page.keyboard.press("Escape");
 
-  for (const name of ["Blank", "Mobile flow", "Web flow", "Diagram", "Wireframe", /From a ticket/]) await expect(page.getByRole("button", { name })).toBeVisible();
-  const cards = page.getByTestId("design-card");
-  await expect(cards).toHaveCount(2);
-  // The thumbnail is the first page drawn by the shared renderer.
-  await expect(cards.first().getByRole("img", { name: "First page of Checkout flow" }).locator("text").first()).toBeVisible();
-  await expect(cards.first()).toContainText("LAZYAGENTS-150");
-  await expect(cards.first()).toContainText("3 to review");
-  await page.getByRole("tab", { name: /Needs review/ }).click();
-  await expect(cards).toHaveCount(1);
-  await page.getByRole("tab", { name: "All" }).click();
-  await page.getByRole("searchbox", { name: "Search designs" }).fill("design 1");
-  await expect(cards).toHaveCount(1);
-  await page.getByRole("searchbox", { name: "Search designs" }).fill("");
-
-  await page.getByRole("button", { name: "More actions for Design 1" }).click();
-  await page.getByRole("menuitem", { name: "Rename" }).click();
-  await page.getByRole("textbox", { name: "Design title" }).fill("Runner architecture");
-  await page.keyboard.press("Enter");
-  await expect(cards.filter({ hasText: "Runner architecture" })).toHaveCount(1);
-  await page.getByRole("button", { name: "More actions for Runner architecture" }).click();
-  await page.getByRole("menuitem", { name: "Duplicate" }).click();
-  await expect(cards).toHaveCount(3);
-  await page.getByRole("button", { name: "More actions for Runner architecture (copy)" }).click();
-  await page.getByRole("menuitem", { name: "Delete…" }).click();
-  await page.getByRole("button", { name: "Delete design" }).click();
-  await expect(cards).toHaveCount(2);
-  expect(s.calls).toEqual(expect.arrayContaining([`PATCH /${D2}`, `POST /${D2}/duplicate`, expect.stringMatching(/^DELETE \//)]));
-
-  // A starter creates a design and opens it.
-  await page.getByRole("button", { name: "Mobile flow" }).click();
-  await expect(page).toHaveURL(/\/apps\/designs\/0000/);
+  // The next design the mock makes; its page is routed before it exists.
+  const made = "00000000-0000-4000-8000-000000000002";
+  await routeCanvasPage(page, { id: made, kind: "design", title: "Untitled design" });
+  await page.getByRole("button", { name: "New page" }).click();
+  for (const name of ["Document", "Deck"]) await expect(page.getByRole("menuitem", { name })).toBeVisible();
+  await page.getByRole("menuitem", { name: "Design" }).hover();
+  for (const name of ["Blank", "Mobile flow", "Web flow", "Diagram", "Wireframe"]) await expect(page.getByRole("menuitem", { name })).toBeVisible();
+  await page.getByRole("menuitem", { name: "Mobile flow" }).click();
+  expect(s.calls).toContain("POST /");
+  await expect(page).toHaveURL(/\/knowledge\/a0000000-0000-4000-8000-000000000002/);
   await expect(canvas(page)).toBeVisible();
 });
 
@@ -458,8 +440,9 @@ test("Present starts from a chosen frame, follows hotspots, and goes back, resta
   await expect(frame).toHaveAttribute("data-at", "n_pay");
   await page.keyboard.press("r");
   await expect(frame).toHaveAttribute("data-at", "n_ship");
+  // Back to the design, which is its page in Knowledge.
   await page.keyboard.press("Escape");
-  await expect(page).toHaveURL(new RegExp(`/apps/designs/${D1}$`));
+  await expect(page).toHaveURL(new RegExp(`/knowledge/${"a" + D1.slice(1)}`));
   expect(errors).toEqual([]);
 });
 
@@ -593,9 +576,9 @@ test("a design opens in the shared layout: slim header, Pages and layers, and a 
   const mod = process.platform === "darwin" ? "Meta" : "Control";
 
   // Header: back and forward, title, save state, Present and Share; no Hide chat or Export of its own.
-  // The way back to all designs heads the left column's Structure, above the pages and layers.
+  // The way back to Knowledge, where the design lives, heads the left column's Structure.
   await expect(header.getByRole("group", { name: "History" })).toBeVisible();
-  await expect(page.getByRole("complementary", { name: "Structure" }).getByRole("link", { name: /Designs/ })).toHaveAttribute("href", "/apps/designs");
+  await expect(page.getByRole("complementary", { name: "Structure" }).getByRole("link", { name: /Knowledge/ })).toHaveAttribute("href", "/knowledge");
   await expect(header.getByRole("heading", { name: "Checkout flow" })).toBeVisible();
   await expect(header.getByRole("button", { name: "▶ Present" })).toBeVisible();
   await expect(header.getByRole("button", { name: "Share" })).toBeVisible();

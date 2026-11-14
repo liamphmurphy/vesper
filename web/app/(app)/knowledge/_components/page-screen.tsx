@@ -16,6 +16,8 @@ import { Markdown } from "@/components/domain/markdown";
 import { Icon } from "@/components/ui/icon";
 import { Banner, Skeleton } from "@/components/ui/primitives";
 import { DocEditor, type DocEditorHandle, type SaveState } from "@/app/(app)/apps/docs/_components/doc-editor";
+import { DeckScreen } from "@/app/(app)/apps/slides/_components/deck-screen";
+import { DesignEditor } from "@/app/(app)/apps/designs/_components/design-editor";
 import { AUDIENCE, AudienceChip, StatusBar, Tag } from "./kit";
 import { ReviewBar, ReviewList, undecided } from "./page-review";
 import { QueryTable } from "./query-table";
@@ -29,7 +31,8 @@ const item = "flex cursor-default select-none items-start gap-2.5 rounded-md px-
 export function PageScreen({ id }: { id: string }) {
   const q = usePage(id);
   const p = q.data;
-  useKnowledgeTab(p ? { id: p.id, title: p.title, kind: "page" } : undefined);
+  // A deck or design page registers as one, so the shell gives its editor the column and the companion.
+  useKnowledgeTab(p ? { id: p.id, title: p.title, kind: p.kind === "deck" || p.kind === "design" ? p.kind : "page" } : undefined);
   useRecordVisit(p ? { id: `page-${p.id}`, title: p.title || "Untitled", meta: p.path ?? undefined, href: pageHref(p.id, p.title), kind: "Pages" } : undefined);
   if (q.error)
     return (
@@ -50,6 +53,9 @@ export function PageScreen({ id }: { id: string }) {
         <Skeleton className="h-4 w-5/6" />
       </div>
     );
+  // A deck or design page is its editor, opened here (LAZYAGENTS-212); the canvas is its body.
+  if (p.canvas_id && p.kind === "deck") return <DeckScreen key={p.id} id={p.canvas_id} />;
+  if (p.canvas_id && p.kind === "design") return <DesignEditor key={p.id} id={p.canvas_id} />;
   return <Loaded key={p.id} page={p} />;
 }
 

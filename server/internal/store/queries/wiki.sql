@@ -34,7 +34,8 @@ UPDATE artifacts SET path = $2, title = $3, audience = CASE WHEN lower($2::text)
 -- name: ListNotes :many
 SELECT ar.id, ar.path, ar.title, ar.audience, ar.author_type, ar.author_id, ar.updated_at, ar.project_id,
   (ar.current_version_id IS NOT NULL)::bool AS published,
-  (SELECT count(*) FROM artifact_versions v WHERE v.artifact_id = ar.id AND v.state = 'suggested')::int AS suggestions
+  (SELECT count(*) FROM artifact_versions v WHERE v.artifact_id = ar.id AND v.state = 'suggested')::int AS suggestions,
+  ar.canvas_id, coalesce((SELECT cv.kind FROM chat_canvases cv WHERE cv.id = ar.canvas_id), '')::text AS canvas_kind
 FROM artifacts ar
 WHERE artifact_visible(ar.audience, ar.owner_user_id, sqlc.narg(viewer)::uuid) AND (sqlc.arg(include_agent)::boolean OR ar.audience <> 'agent') AND ar.workspace_id = $1 AND ar.type = 'note'
   AND (sqlc.narg(tag)::text IS NULL OR EXISTS (SELECT 1 FROM page_tags pt WHERE pt.artifact_id = ar.id AND pt.tag = lower(sqlc.narg(tag))))
@@ -381,3 +382,11 @@ SELECT EXISTS (SELECT 1 FROM artifact_aliases al JOIN artifacts a ON a.id=al.art
 -- so [[Name]] shows as a page to create and reattaches if one is made.
 UPDATE knowledge_links SET target_kind = 'unresolved', target_id = NULL
 WHERE workspace_id = $1 AND target_id = $2 AND target_kind IN ('artifact', 'section');
+
+-- name: GetCanvasPage :one
+-- The Knowledge page a deck or design is (LAZYAGENTS-212), for the old /apps URLs and new decks.
+SELECT ar.id, ar.path, ar.title FROM artifacts ar
+WHERE ar.canvas_id = $1 AND ar.workspace_id = $2 AND artifact_visible(ar.audience, ar.owner_user_id, sqlc.narg(viewer)::uuid);
+
+-- name: CanvasKind :one
+SELECT kind FROM chat_canvases WHERE id = $1;

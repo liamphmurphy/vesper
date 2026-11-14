@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, type Page, type Route } from "@playwright/test";
+import { routeCanvasPage } from "./mock-canvas-pages";
 import { installChatApi } from "./mock-chat-api";
 
 // VESPER-13 (project "mobile", 390×844): a chat's panels open as one full-height sheet over the
@@ -132,6 +133,7 @@ test("a design with pending suggestions has an amber Review button in the sheet'
   const s = { created: false };
   const proposal = (id: string) => ({ id, agent_id: "a", base_seq: 1, summary: "Tighter header", ops: [], status: "pending", decisions: [], created_at: at });
   await installChatApi(page, { replyDelayMs: 10 });
+  await routeCanvasPage(page, { id: D, kind: "design", title: "Onboarding" });
   const json = (route: Route, data: unknown) => route.fulfill({ contentType: "application/json", body: JSON.stringify(data) });
   await page.route(/\/api\/v1\/chats\/[^/]+\/canvases(\/|\?|$)/, (route) => json(route, { canvases: s.created ? [{ id: D, kind: "design", title: "Onboarding", seq: 1, created_at: at, updated_at: at }] : [] }));
   await page.route(/\/api\/v1\/designs\//, (route) => {
@@ -164,7 +166,8 @@ test("a design with pending suggestions has an amber Review button in the sheet'
     return c;
   }));
   await review.click();
-  await expect(page).toHaveURL(new RegExp(`/apps/designs/${D}\\?review=1`));
+  // The design opens as its page in Knowledge, still on review.
+  await expect(page).toHaveURL(new RegExp(`/knowledge/[^?]+\\?review=1`));
   // The proposals are already cached from the sheet, yet the editor still opens on its Review tab (LAZYAGENTS-157).
   await expect(page.getByRole("dialog", { name: "Review" }).getByTestId("review-panel")).toBeVisible();
 });

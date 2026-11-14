@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { Sheet } from "@/components/ui/sheet";
 import { cx } from "@/lib/cx";
@@ -54,6 +55,14 @@ export type EditorHeader = {
   overflow?: ReactNode;
 };
 
+/**
+ * Set by a host that opens an editor inside its own screen (Knowledge, for deck and design pages):
+ * the element in the host's bar where the editor's actions go (save state, Present, Share…), and the
+ * way back that heads the editor's structure in the left column. The host's bar is then the only bar.
+ */
+export type EditorEmbed = { actions: HTMLElement | null; back: { href: string; label: string } };
+export const EditorEmbedContext = createContext<EditorEmbed | null>(null);
+
 /** True while the chat's ⌘. reading focus is on: the Vesper sidebar then hides. */
 export function useReadingFocus(): boolean {
   return useSyncExternalStore(subscribeReadingFocus, readingFocusActive, () => false);
@@ -95,6 +104,8 @@ export function EditorLayout({
 }) {
   const uid = useId();
   const compact = useCompact();
+  const embed = useContext(EditorEmbedContext);
+  const back = embed?.back ?? header.back;
   const tabIds = dock.map((t) => t.id).join("\n");
   const [state, setState] = useState<DockState>({ open: defaultOpen, tab: dock[0]?.id ?? "", hidden: false });
   const [loaded, setLoaded] = useState(false);
@@ -182,14 +193,14 @@ export function EditorLayout({
   const panels = dockPanels(uid, dock, active?.id, compact);
 
   return (
-    <div data-editor-layout={app} className="flex h-[calc(100dvh-var(--tab-bar-h,0px))] min-h-0 min-w-0 flex-none flex-col bg-bg md:h-dvh">
+    <div data-editor-layout={app} className={cx("flex min-h-0 min-w-0 flex-col bg-bg", embed ? "flex-1" : "h-[calc(100dvh-var(--tab-bar-h,0px))] flex-none md:h-dvh")}>
       <div className="relative flex min-h-0 flex-1">
         {/* The structure is the left column's list, under the way back to the app and the document's name. */}
         {showLeft && (
           <NavigatorPortal>
             <aside aria-label="Structure" className="flex min-h-0 flex-1 flex-col">
               <div className="flex flex-none flex-col gap-0.5 px-4 pb-2">
-                <Link href={header.back.href} className="text-11 text-fg-tertiary hover:text-fg-secondary">‹ {header.back.label}</Link>
+                <Link href={back.href} className="text-11 text-fg-tertiary hover:text-fg-secondary">‹ {back.label}</Link>
                 {header.name && <span className="truncate text-13 font-semibold text-fg">{header.name}</span>}
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto">{left}</div>
@@ -199,7 +210,7 @@ export function EditorLayout({
         {/* The editor's bar spans only the work; the dock is a full-height column whose own first row,
             the same height, continues the bar: its header (the chat's, for Chat) is the top of the dock. */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <Header {...header} backInColumn={!!left} />
+          {embed ? <EmbeddedBar {...header} slot={embed.actions} /> : <Header {...header} backInColumn={!!left} />}
           <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-auto bg-bg">{main}</div>
         </div>
         {/* The dock is the companion: in the shell's right-hand column on wide screens, here on phones.
@@ -394,6 +405,27 @@ function TabIcon({ tab, size = 14 }: { tab: DockTab; size?: number }) {
       {tab.unread && <span aria-hidden data-unread className="absolute -right-1.5 -top-1.5 size-2 rounded-full bg-state-human" />}
       {(tab.busy || tab.unread) && <span className="sr-only">{[tab.busy && "working", tab.unread && "unread"].filter(Boolean).join(", ")}</span>}
     </span>
+  );
+}
+
+/**
+ * The editor's bar inside a host's screen: its actions go into the host's bar (the title is the
+ * host's tab), so the page keeps one bar. The title stays as the page's heading for assistive tech.
+ */
+function EmbeddedBar({ title, titleMenu, saveState, status, presence, actions, overflow, slot }: EditorHeader & { slot: HTMLElement | null }) {
+  const heading = <h1 className="sr-only">{title}</h1>;
+  if (!slot) return heading;
+  return createPortal(
+    <div className="flex min-w-0 items-center gap-3">
+      {heading}
+      {titleMenu}
+      {saveState && <span className="flex-none text-12 text-fg-tertiary" aria-live="polite">{saveState}</span>}
+      {status}
+      {presence && <div className="flex flex-none items-center max-md:hidden">{presence}</div>}
+      {actions && <div className="flex flex-none items-center gap-2">{actions}</div>}
+      {overflow}
+    </div>,
+    slot,
   );
 }
 

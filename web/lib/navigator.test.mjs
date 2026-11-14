@@ -10,9 +10,11 @@ test("a path selects its area on the icon row", () => {
   assert.equal(currentArea("/tickets/WEB-1"), "tickets");
   assert.equal(currentArea("/epics/e1"), "tickets");
   assert.equal(currentArea("/knowledge/p1/notes"), "knowledge");
-  assert.equal(currentArea("/apps/designs/d1"), "designs");
+  // Decks and designs are Knowledge pages (LAZYAGENTS-212).
+  assert.equal(currentArea("/apps/designs/d1"), "knowledge");
+  assert.equal(currentArea("/apps/slides/s1"), "knowledge");
   // Apps and tools without an entry of their own are the Apps flyout's.
-  for (const p of ["/apps/slides/s1", "/apps/finance", "/library", "/workflows", "/reports"]) assert.equal(currentArea(p), "apps", p);
+  for (const p of ["/apps/finance", "/library", "/workflows", "/reports"]) assert.equal(currentArea(p), "apps", p);
   for (const p of ["/settings", "/customization", "/chatter"]) assert.equal(currentArea(p), null, p);
 });
 

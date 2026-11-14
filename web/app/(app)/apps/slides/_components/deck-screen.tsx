@@ -766,7 +766,7 @@ export function DeckScreen({ id }: { id: string }) {
 
   const saveBad = saveState.s === "error" || saveState.s === "conflict";
   const header: EditorHeader = {
-    back: { href: "/apps/slides", label: "Slides" },
+    back: { href: "/knowledge", label: "Knowledge" },
     name: title,
     title,
     saveState: ref.data && c && (
@@ -825,7 +825,7 @@ export function DeckScreen({ id }: { id: string }) {
 
   const main = loadError ? (
     <div className="mx-auto w-full max-w-[720px] p-6">
-      <Banner tone="blocked" title="Couldn’t open this deck" actions={<Button onClick={() => router.push("/apps/slides")}>Back to Slides</Button>}>
+      <Banner tone="blocked" title="Couldn’t open this deck" actions={<Button onClick={() => router.push("/knowledge")}>Back to Knowledge</Button>}>
         {loadError instanceof ApiError && loadError.status === 404 ? "It may have been deleted, or it belongs to someone else." : errorText(loadError)}
       </Banner>
     </div>
@@ -977,7 +977,7 @@ export function DeckScreen({ id }: { id: string }) {
       avatar: <PersonaAvatar persona={look} size={16} />,
       busy: live,
       unread,
-      content: <div data-deck-chat className="flex min-h-0 flex-1 flex-col">{chatId && <Conversation key={chatId} id={chatId} docked onNew={() => router.push("/apps/slides")} />}</div>,
+      content: <div data-deck-chat className="flex min-h-0 flex-1 flex-col">{chatId && <Conversation key={chatId} id={chatId} docked onNew={() => router.push("/knowledge")} />}</div>,
     },
   ];
   if (reviewing && c)

@@ -2,7 +2,17 @@
 // the daily-note calendar, open tabs and outlines. Unit-tested in
 // lib/knowledge.test.mjs.
 
-export type TreeRow = { id: string; title: string; path: string; audience?: string; properties?: Record<string, unknown>; pending?: number };
+/** What a page holds: a document, or a deck or design whose body is a canvas edited in its editor (LAZYAGENTS-212). */
+export type PageKind = "document" | "deck" | "design";
+
+export type TreeRow = { id: string; title: string; path: string; audience?: string; properties?: Record<string, unknown>; pending?: number; kind?: PageKind };
+
+/** A page's icon in the explorer and on its tab: a deck, a design, a saved query, else a document. */
+export function pageIcon(p: { kind?: PageKind; properties?: Record<string, unknown> }): "slides" | "designs" | "board" | "artifacts" {
+  if (p.kind === "deck") return "slides";
+  if (p.kind === "design") return "designs";
+  return p.properties?.query ? "board" : "artifacts";
+}
 
 export type TreeFolder = { kind: "folder"; name: string; path: string; folders: TreeFolder[]; pages: TreeRow[]; count: number };
 
@@ -67,7 +77,8 @@ export function isoDay(d: Date): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
-export type Tab = { id: string; title: string; kind?: "page" | "graph" | "connect" | "home" };
+/** An open tab: a page (a document, or a deck or design page, which opens its editor), or a Knowledge screen. */
+export type Tab = { id: string; title: string; kind?: "page" | "deck" | "design" | "graph" | "connect" | "home" };
 
 /** Opens a tab after the active one, or focuses it if it's already open; titles follow renames. */
 export function openTab(tabs: Tab[], tab: Tab, active?: string): Tab[] {
