@@ -65,6 +65,7 @@ type credential struct {
 	AccessToken  string    `json:"access_token"`
 	RefreshToken string    `json:"refresh_token,omitempty"`
 	ExpiresAt    time.Time `json:"expires_at,omitzero"`
+	ClientSecret string    `json:"client_secret,omitempty"`
 }
 
 // Service works on connectors. HTTP is overridable for tests.
@@ -243,6 +244,8 @@ func (s *Service) unseal(c store.Connector) (credential, error) {
 type CreateInput struct {
 	Name, URL, Auth, Token string
 	ProposalID             *uuid.UUID
+	ClientID, ClientSecret string
+	Scopes                 []string
 }
 
 // Create stores a connector and, unless it waits for OAuth, checks it. The
@@ -266,6 +269,21 @@ func (s *Service) Create(ctx context.Context, ws, user uuid.UUID, in CreateInput
 	}
 	if in.Auth != AuthNone && s.Box == nil {
 		return out, "", apperr.Conflict("set SECRETS_KEY on the server to store connector sign-ins")
+	}
+	var clientID, clientSecret string
+	var scopes []string
+	if in.Auth == AuthOAuth {
+		clientID = strings.TrimSpace(in.ClientID)
+		clientSecret = strings.TrimSpace(in.ClientSecret)
+		if clientID == "" && clientSecret != "" {
+			return out, "", apperr.Invalid("oauth_client_id", "enter the OAuth client ID")
+		}
+		scopes = NormalizeScopes(in.Scopes)
+		if len(scopes) == 0 {
+			if p, ok := PresetForURL(server); ok && len(p.DefaultScopes) > 0 {
+				scopes = slices.Clone(p.DefaultScopes)
+			}
+		}
 	}
 	slug, err := Slug(name)
 	if err != nil {
@@ -303,6 +321,28 @@ func (s *Service) Create(ctx context.Context, ws, user uuid.UUID, in CreateInput
 	}
 	switch in.Auth {
 	case AuthOAuth:
+		if clientID != "" || len(scopes) > 0 || clientSecret != "" {
+			stored, err := json.Marshal(oauthState{
+				ClientID:        clientID,
+				Scopes:          scopes,
+				CustomClient:    clientID != "",
+				HasClientSecret: clientSecret != "",
+			})
+			if err != nil {
+				return out, "", err
+			}
+			if err := s.Q.SetConnectorOAuth(ctx, store.SetConnectorOAuthParams{ID: out.ID, Oauth: stored}); err != nil {
+				return out, "", err
+			}
+			if clientSecret != "" {
+				if err := s.seal(ctx, out, credential{ClientSecret: clientSecret}); err != nil {
+					return out, "", err
+				}
+			}
+			if out, err = s.Q.GetConnector(ctx, store.GetConnectorParams{ID: out.ID, WorkspaceID: ws, UserID: user}); err != nil {
+				return out, "", err
+			}
+		}
 		link, err := s.BeginOAuth(ctx, out)
 		if err != nil {
 			out, _ = s.setHealth(ctx, out, StatusNeedsLogin, err.Error(), Tools(out))
@@ -319,6 +359,57 @@ func (s *Service) Create(ctx context.Context, ws, user uuid.UUID, in CreateInput
 	}
 	out, err = s.Refresh(ctx, out)
 	return out, "", err
+}
+
+// SetOAuthConfig updates a connector's pre-registered OAuth client and requested scopes.
+func (s *Service) SetOAuthConfig(ctx context.Context, c store.Connector, clientID, clientSecret *string, scopes *[]string) (store.Connector, error) {
+	if c.AuthKind != AuthOAuth {
+		return c, apperr.Conflict("this connector doesn't use OAuth")
+	}
+	var st oauthState
+	if len(c.Oauth) > 0 {
+		_ = json.Unmarshal(c.Oauth, &st)
+	}
+	cred, err := s.unseal(c)
+	if err != nil {
+		return c, err
+	}
+	prevSecret := cred.ClientSecret
+	if clientID != nil {
+		id := strings.TrimSpace(*clientID)
+		st.ClientID = id
+		st.CustomClient = id != ""
+		if id == "" {
+			cred.ClientSecret = ""
+			st.HasClientSecret = false
+		}
+	}
+	if clientSecret != nil {
+		sec := strings.TrimSpace(*clientSecret)
+		cred.ClientSecret = sec
+		st.HasClientSecret = sec != ""
+	}
+	if (st.CustomClient && st.ClientID == "") || (!st.CustomClient && st.HasClientSecret) {
+		return c, apperr.Invalid("oauth_client_id", "enter the OAuth client ID")
+	}
+	if scopes != nil {
+		st.Scopes = NormalizeScopes(*scopes)
+	}
+	needSeal := (clientSecret != nil && (strings.TrimSpace(*clientSecret) != "" || prevSecret != "")) ||
+		(clientID != nil && strings.TrimSpace(*clientID) == "" && prevSecret != "")
+	if needSeal {
+		if err := s.seal(ctx, c, cred); err != nil {
+			return c, err
+		}
+	}
+	raw, err := json.Marshal(st)
+	if err != nil {
+		return c, err
+	}
+	if err := s.Q.SetConnectorOAuth(ctx, store.SetConnectorOAuthParams{ID: c.ID, Oauth: raw, OauthState: c.OauthState}); err != nil {
+		return c, err
+	}
+	return s.Q.GetConnector(ctx, store.GetConnectorParams{ID: c.ID, WorkspaceID: c.WorkspaceID, UserID: c.UserID})
 }
 
 // SetToken replaces an API token and rechecks the connector.

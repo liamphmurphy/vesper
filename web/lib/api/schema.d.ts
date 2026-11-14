@@ -9025,6 +9025,18 @@ export interface components {
             /** @enum {string} */
             policy: "allow" | "ask" | "off";
         };
+        ConnectorPreset: {
+            id: string;
+            name: string;
+            url: string;
+            /** @enum {string} */
+            auth_kind: "oauth" | "token" | "none";
+            description: string;
+            setup_hint?: string;
+            /** @description True when the server's OAuth provider does not support dynamic client registration (RFC 7591) and needs a pre-registered OAuth client ID */
+            oauth_client_required: boolean;
+            default_scopes: string[];
+        };
         Connector: {
             /** Format: uuid */
             id: string;
@@ -9040,12 +9052,19 @@ export interface components {
             last_checked_at?: string;
             tools: components["schemas"]["ConnectorTool"][];
             persona_ids: string[];
+            /** @description Pre-registered OAuth client ID, when set */
+            oauth_client_id?: string;
+            /** @description True when a pre-registered OAuth client secret is stored */
+            has_oauth_client_secret?: boolean;
+            /** @description OAuth scopes requested during sign-in */
+            oauth_scopes?: string[];
             revision: number;
             /** Format: date-time */
             created_at: string;
         };
         ConnectorList: {
             connectors: components["schemas"]["Connector"][];
+            presets: components["schemas"]["ConnectorPreset"][];
         };
         ConnectorCreated: {
             connector: components["schemas"]["Connector"];
@@ -9064,6 +9083,12 @@ export interface components {
              * @description The persona proposal this completes; that persona gets access
              */
             proposal_id?: string;
+            /** @description Pre-registered OAuth client ID for servers without dynamic registration */
+            oauth_client_id?: string;
+            /** @description Pre-registered OAuth client secret; stored encrypted and never returned */
+            oauth_client_secret?: string;
+            /** @description OAuth scopes to request; defaults to the preset's scopes when the URL matches a preset */
+            oauth_scopes?: string[];
         };
         ConnectorProbeRequest: {
             url: string;
@@ -9085,6 +9110,12 @@ export interface components {
             policies?: {
                 [key: string]: "allow" | "ask" | "off";
             };
+            /** @description Set or clear a pre-registered OAuth client ID */
+            oauth_client_id?: string;
+            /** @description Replace the pre-registered OAuth client secret; stored encrypted */
+            oauth_client_secret?: string;
+            /** @description Replace the OAuth scopes requested on sign-in */
+            oauth_scopes?: string[];
         };
         ConnectorApproval: {
             /** Format: uuid */

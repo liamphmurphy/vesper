@@ -9686,6 +9686,18 @@ components:
         description: { type: string }
         write: { type: boolean, description: "False only when the server marks the tool read-only" }
         policy: { type: string, enum: [allow, ask, off] }
+    ConnectorPreset:
+      type: object
+      required: [id, name, url, auth_kind, description, oauth_client_required, default_scopes]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        url: { type: string }
+        auth_kind: { type: string, enum: [oauth, token, none] }
+        description: { type: string }
+        setup_hint: { type: string }
+        oauth_client_required: { type: boolean, description: "True when the server's OAuth provider does not support dynamic client registration (RFC 7591) and needs a pre-registered OAuth client ID" }
+        default_scopes: { type: array, items: { type: string } }
     Connector:
       type: object
       required: [id, name, slug, url, auth_kind, status, last_error, tools, persona_ids, revision, created_at]
@@ -9700,13 +9712,17 @@ components:
         last_checked_at: { type: string, format: date-time }
         tools: { type: array, items: { $ref: "#/components/schemas/ConnectorTool" } }
         persona_ids: { type: array, items: { type: string, format: uuid } }
+        oauth_client_id: { type: string, description: "Pre-registered OAuth client ID, when set" }
+        has_oauth_client_secret: { type: boolean, description: "True when a pre-registered OAuth client secret is stored" }
+        oauth_scopes: { type: array, items: { type: string }, description: "OAuth scopes requested during sign-in" }
         revision: { type: integer }
         created_at: { type: string, format: date-time }
     ConnectorList:
       type: object
-      required: [connectors]
+      required: [connectors, presets]
       properties:
         connectors: { type: array, items: { $ref: "#/components/schemas/Connector" } }
+        presets: { type: array, items: { $ref: "#/components/schemas/ConnectorPreset" } }
     ConnectorCreated:
       type: object
       required: [connector]
@@ -9722,6 +9738,9 @@ components:
         auth_kind: { type: string, enum: [oauth, token, none] }
         token: { type: string, description: "Stored encrypted and never returned" }
         proposal_id: { type: string, format: uuid, description: "The persona proposal this completes; that persona gets access" }
+        oauth_client_id: { type: string, description: "Pre-registered OAuth client ID for servers without dynamic registration" }
+        oauth_client_secret: { type: string, description: "Pre-registered OAuth client secret; stored encrypted and never returned" }
+        oauth_scopes: { type: array, items: { type: string }, description: "OAuth scopes to request; defaults to the preset's scopes when the URL matches a preset" }
     ConnectorProbeRequest:
       type: object
       required: [url]
@@ -9745,6 +9764,9 @@ components:
         persona_ids: { type: array, items: { type: string, format: uuid } }
         token: { type: string, description: "Replace an API token connector's token; stored encrypted" }
         policies: { type: object, additionalProperties: { type: string, enum: [allow, ask, off] }, description: "Tool name to permission; tools not named are unchanged" }
+        oauth_client_id: { type: string, description: "Set or clear a pre-registered OAuth client ID" }
+        oauth_client_secret: { type: string, description: "Replace the pre-registered OAuth client secret; stored encrypted" }
+        oauth_scopes: { type: array, items: { type: string }, description: "Replace the OAuth scopes requested on sign-in" }
     ConnectorApproval:
       type: object
       required: [id, connector_id, connector_name, tool, arguments, created_at]

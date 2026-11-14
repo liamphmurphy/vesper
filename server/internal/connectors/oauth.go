@@ -23,18 +23,35 @@ import (
 // oauthState is connectors.oauth: public registration details, plus the PKCE
 // verifier for the few minutes a sign-in is in progress.
 type oauthState struct {
-	TokenEndpoint string `json:"token_endpoint"`
-	ClientID      string `json:"client_id"`
-	ClientSecret  string `json:"client_secret,omitempty"`
-	Verifier      string `json:"verifier,omitempty"`
-	Redirect      string `json:"redirect,omitempty"`
+	TokenEndpoint   string   `json:"token_endpoint,omitempty"`
+	ClientID        string   `json:"client_id,omitempty"`
+	ClientSecret    string   `json:"client_secret,omitempty"`
+	Scopes          []string `json:"scopes,omitempty"`
+	CustomClient    bool     `json:"custom_client,omitempty"`
+	HasClientSecret bool     `json:"has_client_secret,omitempty"`
+	Verifier        string   `json:"verifier,omitempty"`
+	Redirect        string   `json:"redirect,omitempty"`
+}
+
+// OAuthConfig returns any pre-registered OAuth client ID, whether a client secret
+// is stored encrypted, and the configured OAuth scopes for a connector.
+func OAuthConfig(c store.Connector) (clientID string, hasSecret bool, scopes []string) {
+	var st oauthState
+	if len(c.Oauth) > 0 {
+		_ = json.Unmarshal(c.Oauth, &st)
+	}
+	if st.CustomClient {
+		return st.ClientID, st.HasClientSecret, st.Scopes
+	}
+	return "", false, st.Scopes
 }
 
 type authServer struct {
-	Issuer                string `json:"issuer"`
-	AuthorizationEndpoint string `json:"authorization_endpoint"`
-	TokenEndpoint         string `json:"token_endpoint"`
-	RegistrationEndpoint  string `json:"registration_endpoint"`
+	Issuer                string   `json:"issuer"`
+	AuthorizationEndpoint string   `json:"authorization_endpoint"`
+	TokenEndpoint         string   `json:"token_endpoint"`
+	RegistrationEndpoint  string   `json:"registration_endpoint"`
+	ScopesSupported       []string `json:"-"`
 }
 
 func (s *Service) client() *http.Client {
@@ -77,12 +94,15 @@ func (s *Service) discover(ctx context.Context, server string) (authServer, erro
 		return as, err
 	}
 	issuer := u.Scheme + "://" + u.Host
+	var protectedScopes []string
 	for _, link := range wellKnown(u, "oauth-protected-resource") {
 		var meta struct {
 			AuthorizationServers []string `json:"authorization_servers"`
+			ScopesSupported      []string `json:"scopes_supported"`
 		}
 		if s.getJSON(ctx, link, &meta) == nil && len(meta.AuthorizationServers) > 0 {
 			issuer = meta.AuthorizationServers[0]
+			protectedScopes = NormalizeScopes(meta.ScopesSupported)
 			break
 		}
 	}
@@ -91,13 +111,15 @@ func (s *Service) discover(ctx context.Context, server string) (authServer, erro
 		return as, errors.New("the server named an invalid sign-in provider")
 	}
 	for _, link := range append(wellKnown(iu, "oauth-authorization-server"), wellKnown(iu, "openid-configuration")...) {
-		if s.getJSON(ctx, link, &as) == nil && as.AuthorizationEndpoint != "" && as.TokenEndpoint != "" {
-			for _, e := range []string{as.AuthorizationEndpoint, as.TokenEndpoint} {
+		var candidate authServer
+		if s.getJSON(ctx, link, &candidate) == nil && candidate.AuthorizationEndpoint != "" && candidate.TokenEndpoint != "" {
+			for _, e := range []string{candidate.AuthorizationEndpoint, candidate.TokenEndpoint} {
 				if _, err := ValidateURL(e); err != nil {
 					return as, errors.New("the sign-in provider uses an insecure address")
 				}
 			}
-			return as, nil
+			candidate.ScopesSupported = protectedScopes
+			return candidate, nil
 		}
 	}
 	return as, errors.New("this server doesn't advertise OAuth sign-in; use an API token instead")
@@ -114,38 +136,51 @@ func randomString() (string, error) {
 // CallbackPath is where sign-in providers send the browser back.
 const CallbackPath = "/api/v1/connector-oauth/callback"
 
-// BeginOAuth registers Vesper with the server's sign-in provider (RFC 7591)
-// and returns the page where the person signs in, using PKCE.
+// BeginOAuth starts an OAuth sign-in with PKCE, using a pre-registered client
+// when present or dynamic registration (RFC 7591) otherwise, and returns the URL
+// where the person signs in.
 func (s *Service) BeginOAuth(ctx context.Context, c store.Connector) (string, error) {
 	if c.AuthKind != AuthOAuth {
 		return "", apperr.Conflict("this connector doesn't use OAuth")
+	}
+	var prev oauthState
+	if len(c.Oauth) > 0 {
+		_ = json.Unmarshal(c.Oauth, &prev)
 	}
 	as, err := s.discover(ctx, c.Url)
 	if err != nil {
 		return "", err
 	}
-	if as.RegistrationEndpoint == "" {
-		return "", errors.New("this server's sign-in needs a pre-registered app; use an API token instead")
-	}
 	redirect := strings.TrimRight(s.PublicURL, "/") + CallbackPath
-	raw, _ := json.Marshal(map[string]any{"client_name": "Vesper", "redirect_uris": []string{redirect}, "grant_types": []string{"authorization_code", "refresh_token"},
-		"response_types": []string{"code"}, "token_endpoint_auth_method": "none"})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, as.RegistrationEndpoint, strings.NewReader(string(raw)))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	res, err := s.client().Do(req)
-	if err != nil {
-		return "", errors.New("couldn't register with the server's sign-in provider")
-	}
-	defer res.Body.Close()
-	var reg struct {
-		ClientID     string `json:"client_id"`
-		ClientSecret string `json:"client_secret"`
-	}
-	if res.StatusCode >= 300 || json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&reg) != nil || reg.ClientID == "" {
-		return "", errors.New("the server's sign-in provider refused to register Vesper; use an API token instead")
+	var clientID, dcrSecret string
+	customClient := prev.CustomClient && prev.ClientID != ""
+	if customClient {
+		clientID = prev.ClientID
+	} else {
+		if as.RegistrationEndpoint == "" {
+			return "", errors.New("this server's sign-in needs an OAuth client ID; enter one in Sign-in or use an API token")
+		}
+		raw, _ := json.Marshal(map[string]any{"client_name": "Vesper", "redirect_uris": []string{redirect}, "grant_types": []string{"authorization_code", "refresh_token"},
+			"response_types": []string{"code"}, "token_endpoint_auth_method": "none"})
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, as.RegistrationEndpoint, strings.NewReader(string(raw)))
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		res, err := s.client().Do(req)
+		if err != nil {
+			return "", errors.New("couldn't register with the server's sign-in provider")
+		}
+		defer res.Body.Close()
+		var reg struct {
+			ClientID     string `json:"client_id"`
+			ClientSecret string `json:"client_secret"`
+		}
+		if res.StatusCode >= 300 || json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&reg) != nil || reg.ClientID == "" {
+			return "", errors.New("the server's sign-in provider refused to register Vesper; use an API token instead")
+		}
+		clientID = reg.ClientID
+		dcrSecret = reg.ClientSecret
 	}
 	verifier, err := randomString()
 	if err != nil {
@@ -155,13 +190,33 @@ func (s *Service) BeginOAuth(ctx context.Context, c store.Connector) (string, er
 	if err != nil {
 		return "", err
 	}
-	stored, _ := json.Marshal(oauthState{TokenEndpoint: as.TokenEndpoint, ClientID: reg.ClientID, ClientSecret: reg.ClientSecret, Verifier: verifier, Redirect: redirect})
+	stored, _ := json.Marshal(oauthState{
+		TokenEndpoint:   as.TokenEndpoint,
+		ClientID:        clientID,
+		ClientSecret:    dcrSecret,
+		Scopes:          prev.Scopes,
+		CustomClient:    customClient,
+		HasClientSecret: prev.HasClientSecret,
+		Verifier:        verifier,
+		Redirect:        redirect,
+	})
 	if err := s.Q.SetConnectorOAuth(ctx, store.SetConnectorOAuthParams{ID: c.ID, Oauth: stored, OauthState: &state}); err != nil {
 		return "", err
 	}
 	sum := sha256.Sum256([]byte(verifier))
-	q := url.Values{"response_type": {"code"}, "client_id": {reg.ClientID}, "redirect_uri": {redirect}, "state": {state}, "resource": {c.Url},
+	q := url.Values{"response_type": {"code"}, "client_id": {clientID}, "redirect_uri": {redirect}, "state": {state}, "resource": {c.Url},
 		"code_challenge": {base64.RawURLEncoding.EncodeToString(sum[:])}, "code_challenge_method": {"S256"}}
+	scopes := prev.Scopes
+	if len(scopes) == 0 && len(as.ScopesSupported) > 0 {
+		scopes = as.ScopesSupported
+	}
+	if len(scopes) > 0 {
+		q.Set("scope", strings.Join(scopes, " "))
+	}
+	if customClient || strings.Contains(as.AuthorizationEndpoint, "accounts.google.com") {
+		q.Set("access_type", "offline")
+		q.Set("prompt", "consent")
+	}
 	sep := "?"
 	if strings.Contains(as.AuthorizationEndpoint, "?") {
 		sep = "&"
@@ -214,9 +269,21 @@ func (s *Service) FinishOAuth(ctx context.Context, state, code string) (store.Co
 	if err := json.Unmarshal(c.Oauth, &st); err != nil {
 		return c, err
 	}
-	cred, err := s.tokenRequest(ctx, st, url.Values{"grant_type": {"authorization_code"}, "code": {code}, "redirect_uri": {st.Redirect}, "code_verifier": {st.Verifier}, "resource": {c.Url}})
+	prevCred, err := s.unseal(c)
 	if err != nil {
 		return c, err
+	}
+	reqState := st
+	if reqState.ClientSecret == "" && prevCred.ClientSecret != "" {
+		reqState.ClientSecret = prevCred.ClientSecret
+	}
+	cred, err := s.tokenRequest(ctx, reqState, url.Values{"grant_type": {"authorization_code"}, "code": {code}, "redirect_uri": {st.Redirect}, "code_verifier": {st.Verifier}, "resource": {c.Url}})
+	if err != nil {
+		return c, err
+	}
+	cred.ClientSecret = prevCred.ClientSecret
+	if cred.RefreshToken == "" && prevCred.RefreshToken != "" {
+		cred.RefreshToken = prevCred.RefreshToken
 	}
 	if err := s.seal(ctx, c, cred); err != nil {
 		return c, err
@@ -241,10 +308,14 @@ func (s *Service) refreshOAuth(ctx context.Context, c store.Connector, cred cred
 	if err := json.Unmarshal(c.Oauth, &st); err != nil {
 		return cred, err
 	}
+	if st.ClientSecret == "" && cred.ClientSecret != "" {
+		st.ClientSecret = cred.ClientSecret
+	}
 	next, err := s.tokenRequest(ctx, st, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {cred.RefreshToken}, "resource": {c.Url}})
 	if err != nil {
 		return cred, err
 	}
+	next.ClientSecret = cred.ClientSecret
 	if next.RefreshToken == "" {
 		next.RefreshToken = cred.RefreshToken
 	}
