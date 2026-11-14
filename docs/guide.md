@@ -650,8 +650,9 @@ including what still needs a real Gemini key to settle (image generation).
 Antigravity (`agy`) runs on a **Gemini API key**, stored as `harness:google`. Google's
 terms don't let a tool extract or store the OAuth login `agy` keeps, so Vesper never
 reads it: there is no plan login and no sign-in button, and the Welcome Wizard shows a
-key field only. The agent image installs `agy` at build time (unpinned: Google
-publishes no release pin; set `--build-arg INSTALL_ANTIGRAVITY=false` to leave it out).
+key field only. The agent image installs `agy` at build time from its pinned
+release tarball and SHA-512 checksum (`AGY_RELEASE`, `AGY_SHA512_AMD64`,
+`AGY_SHA512_ARM64`; set `--build-arg INSTALL_ANTIGRAVITY=false` to leave it out).
 It reports tokens but no cost and no plan allowance, so its runs show an unknown cost
 and the activity orb shows "Usage unknown". It is an image engine like Codex:
 **Settings → Image engine** picks Codex, Antigravity or Auto, a persona can override

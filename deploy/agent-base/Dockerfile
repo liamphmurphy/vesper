@@ -56,30 +56,38 @@ RUN groupadd --system nixbld \
 ENV NIX_REMOTE=daemon
 ENV PATH="/home/node/.nix-profile/bin:${PATH}:/nix/var/nix/profiles/default/bin"
 
-# Versions the adapters were checked against (server/internal/harness).
-ARG CLAUDE_CODE_VERSION=2.1.322
-ARG CODEX_VERSION=0.167.1
+# Harness CLI versions (adapters in server/internal/harness).
+ARG CLAUDE_CODE_VERSION=2.1.325
+ARG CODEX_VERSION=0.169.0
 RUN npm install -g --no-fund --no-audit \
       @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} @openai/codex@${CODEX_VERSION} \
  && npm cache clean --force
 
-# Antigravity (agy). Google publishes no npm package and no pinned release: the
-# install script fetches whatever is current, so a rebuild can change it (record
-# `agy --version` from the image when you verify the adapter). A failed install
-# fails the build: an image that builds without agy breaks every Antigravity turn
-# with a bare "No such file or directory", which is how a change to the script's
-# flags went unnoticed. Pass --build-arg INSTALL_ANTIGRAVITY=false to omit it.
+# Antigravity (agy). Google publishes no npm package, so pin the release slug
+# (`<version>-<build>`) and SHA-512 checksums from the installer's manifests:
+# https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_<arch>.json
+# A failed install fails the build: an image without agy breaks every Antigravity
+# turn. Pass --build-arg INSTALL_ANTIGRAVITY=false to omit it.
 ARG INSTALL_ANTIGRAVITY=true
+ARG AGY_RELEASE=1.5.9-4515810895593472
+ARG AGY_SHA512_AMD64=d01eb13ba7750eed18907f1ae8860864371e0ad9064415e8d033d22b4bd7b9b4e4c7f962058520b452d67db1c33163d9a889d55a7dffa159596ec6cd91a87b79
+ARG AGY_SHA512_ARM64=16c632a09b81f598f7652bc11180861f9d2ee4408ffa161dadc83b2010de7a9cd055e97b4b46cd01903e35c0e8bf21d8262462ba7c5f168cc6dada9ac3d522c0
 RUN if [ "$INSTALL_ANTIGRAVITY" = true ]; then \
-      set -e; \
-      mkdir -p /opt/agy-home; \
-      curl -fsSL https://antigravity.google/cli/install.sh -o /tmp/agy-install.sh; \
-      HOME=/opt/agy-home bash /tmp/agy-install.sh --dir /opt/agy-home/bin; \
-      ln -s /opt/agy-home/bin/agy /usr/local/bin/agy; \
-      chmod -R a+rX /opt/agy-home; \
-      rm -f /tmp/agy-install.sh; \
-      agy --version; \
+      set -eu; \
+      arch="$(dpkg --print-architecture)"; \
+      case "$arch" in \
+        amd64) path="linux-x64/cli_linux_x64.tar.gz"; want="$AGY_SHA512_AMD64" ;; \
+        arm64) path="linux-arm/cli_linux_arm64.tar.gz"; want="$AGY_SHA512_ARM64" ;; \
+        *) echo "no agy checksum pinned for $arch" >&2; exit 1 ;; \
+      esac; \
+      curl -fsSL -o /tmp/agy.tgz "https://storage.googleapis.com/antigravity-public/antigravity-cli/${AGY_RELEASE}/${path}"; \
+      echo "${want}  /tmp/agy.tgz" | sha512sum -c -; \
+      tar -xzf /tmp/agy.tgz -C /tmp antigravity; \
+      install -m 0755 /tmp/antigravity /usr/local/bin/agy; \
+      test "$(HOME=/tmp/agy-home agy --version)" = "${AGY_RELEASE%%-*}"; \
+      rm -rf /tmp/agy.tgz /tmp/antigravity /tmp/agy-home; \
     fi
+ENV AGY_CLI_DISABLE_AUTO_UPDATE=1
 
 # Browser system libraries are installed once in the image. Browser revisions
 # follow each project's Playwright lockfile and live in the persistent cache.

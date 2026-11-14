@@ -200,5 +200,6 @@ background; both failed harmlessly behind the dead proxy.
 `curl -fsSL https://antigravity.google/cli/install.sh | bash`. The script reads a
 platform manifest from Google's auto-updater, downloads a tarball from
 `storage.googleapis.com/antigravity-public/…`, checks its SHA-512 against the
-manifest, then runs `agy install` (shell setup). The agent image runs it at build
-time, unpinned and non-fatally (`deploy/agent-base/Dockerfile`, `INSTALL_ANTIGRAVITY`).
+manifest, then runs `agy install` (shell setup). The agent image downloads the
+pinned release tarball directly and verifies its SHA-512 checksum at build time
+(`deploy/agent-base/Dockerfile`, `AGY_RELEASE` / `INSTALL_ANTIGRAVITY`).
