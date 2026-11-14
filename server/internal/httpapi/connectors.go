@@ -47,8 +47,19 @@ func (s *Server) toConnectors(ctx context.Context, rows []store.Connector) ([]ap
 				personas = append(personas, a.PersonaID)
 			}
 		}
-		out[i] = api.Connector{Id: c.ID, Name: c.Name, Slug: c.Slug, Url: c.Url, AuthKind: api.ConnectorAuthKind(c.AuthKind), Status: api.ConnectorStatus(c.Status), LastError: c.LastError,
+		item := api.Connector{Id: c.ID, Name: c.Name, Slug: c.Slug, Url: c.Url, AuthKind: api.ConnectorAuthKind(c.AuthKind), Status: api.ConnectorStatus(c.Status), LastError: c.LastError,
 			LastCheckedAt: c.LastCheckedAt, Tools: tools, PersonaIds: personas, Revision: int(c.Revision), CreatedAt: c.CreatedAt}
+		clientID, hasSecret, scopes := connectors.OAuthConfig(c)
+		if clientID != "" {
+			item.OauthClientId = &clientID
+		}
+		if hasSecret {
+			item.HasOauthClientSecret = &hasSecret
+		}
+		if len(scopes) > 0 {
+			item.OauthScopes = &scopes
+		}
+		out[i] = item
 	}
 	return out, nil
 }
@@ -68,7 +79,28 @@ func (s *Server) ListConnectors(ctx context.Context, _ api.ListConnectorsRequest
 		return nil, err
 	}
 	out, err := s.toConnectors(ctx, rows)
-	return api.ListConnectors200JSONResponse{Connectors: out}, err
+	if err != nil {
+		return nil, err
+	}
+	rawPresets := connectors.Presets()
+	presets := make([]api.ConnectorPreset, len(rawPresets))
+	for i, p := range rawPresets {
+		item := api.ConnectorPreset{
+			Id:                  p.ID,
+			Name:                p.Name,
+			Url:                 p.URL,
+			AuthKind:            api.ConnectorPresetAuthKind(p.AuthKind),
+			Description:         p.Description,
+			OauthClientRequired: p.OAuthClientRequired,
+			DefaultScopes:       p.DefaultScopes,
+		}
+		if p.SetupHint != "" {
+			hint := p.SetupHint
+			item.SetupHint = &hint
+		}
+		presets[i] = item
+	}
+	return api.ListConnectors200JSONResponse{Connectors: out, Presets: presets}, nil
 }
 
 func (s *Server) CreateConnector(ctx context.Context, req api.CreateConnectorRequestObject) (api.CreateConnectorResponseObject, error) {
@@ -77,7 +109,16 @@ func (s *Server) CreateConnector(ctx context.Context, req api.CreateConnectorReq
 		return nil, apperr.Invalid("body", "required")
 	}
 	b := req.Body
-	c, link, err := s.connectors().Create(ctx, ws, u.ID, connectors.CreateInput{Name: b.Name, URL: b.Url, Auth: string(b.AuthKind), Token: deref(b.Token), ProposalID: b.ProposalId})
+	c, link, err := s.connectors().Create(ctx, ws, u.ID, connectors.CreateInput{
+		Name:         b.Name,
+		URL:          b.Url,
+		Auth:         string(b.AuthKind),
+		Token:        deref(b.Token),
+		ProposalID:   b.ProposalId,
+		ClientID:     deref(b.OauthClientId),
+		ClientSecret: deref(b.OauthClientSecret),
+		Scopes:       deref(b.OauthScopes),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -173,6 +214,11 @@ func (s *Server) UpdateConnector(ctx context.Context, req api.UpdateConnectorReq
 	}
 	if b.Token != nil {
 		if updated, err = s.connectors().SetToken(ctx, updated, *b.Token); err != nil {
+			return nil, err
+		}
+	}
+	if b.OauthClientId != nil || b.OauthClientSecret != nil || b.OauthScopes != nil {
+		if updated, err = s.connectors().SetOAuthConfig(ctx, updated, b.OauthClientId, b.OauthClientSecret, b.OauthScopes); err != nil {
 			return nil, err
 		}
 	}
