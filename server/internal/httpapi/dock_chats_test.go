@@ -32,7 +32,7 @@ func TestDockChats(t *testing.T) {
 	e.want("GET", "/dock-chats?scope=app:knowledge", nil, 200)
 	e.want("GET", "/dock-chats?scope=page:../../x", nil, 422)
 	e.want("POST", "/dock-chats", map[string]any{"scope": "app:knowledge", "chat_id": "01a1d6a1-5881-7270-9ed6-5b9d9c0b320e"}, 404)
-	if list := e.want("GET", "/dock-chats?scope=app:finance", nil, 200)["chats"].([]any); len(list) != 0 {
+	if list := e.want("GET", "/dock-chats?scope=app:library", nil, 200)["chats"].([]any); len(list) != 0 {
 		t.Fatalf("scopes leak into each other %v", list)
 	}
 }

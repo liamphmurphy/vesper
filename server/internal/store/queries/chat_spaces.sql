@@ -1,6 +1,16 @@
 -- Chat spaces. Every query is scoped to one person: (workspace_id, user_id)
 -- or a space id already checked to be theirs.
 
+-- name: GetAppSpace :one
+SELECT * FROM chat_spaces WHERE workspace_id = @workspace_id AND user_id = @user_id AND app = @app_name::text;
+
+-- name: CreateAppSpace :one
+-- ON CONFLICT: two tabs opening the app at once get the same space.
+INSERT INTO chat_spaces (workspace_id, user_id, name, description, color, instructions, connector_ids, space_memory, app)
+VALUES (@workspace_id, @user_id, @name, @description, @color, @instructions, '{}', true, @app_name::text)
+ON CONFLICT (workspace_id, user_id, app) WHERE app IS NOT NULL DO UPDATE SET updated_at = chat_spaces.updated_at
+RETURNING *;
+
 -- name: CreateChatSpace :one
 INSERT INTO chat_spaces (workspace_id, user_id, name, description, color, instructions, persona_id, project_id, connector_ids, space_memory)
 VALUES (@workspace_id, @user_id, @name, @description, @color, @instructions, sqlc.narg(persona_id), sqlc.narg(project_id), @connector_ids::uuid[], @space_memory)

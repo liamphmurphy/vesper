@@ -514,16 +514,6 @@ export function chatStatusOf(call: { tool: string; input: unknown }): ChatStatus
       return status("audio-render", "finishing the audio");
     case "fail_audio":
       return status("audio-render", "reporting a failed render");
-    case "finance_summary":
-      return status("finance", "summing up your finances");
-    case "finance_query":
-      return status("finance", "looking through your transactions");
-    case "finance_recurring":
-      return status("finance", "finding recurring charges");
-    case "finance_categorize":
-      return status("finance-sort", "sorting your transactions");
-    case "finance_map_csv":
-      return status("finance-sort", "reading your bank export");
     case "get_video_transcript":
       return status("video", "watching a video");
     case "canvas_list":

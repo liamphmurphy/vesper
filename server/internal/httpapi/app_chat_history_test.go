@@ -20,7 +20,7 @@ func TestAppChatsStayInTheirApps(t *testing.T) {
 	knowledge := e.newChat(map[string]any{"title": "apphistory knowledge", "hidden": true, "persona_id": persona})["id"].(string)
 	e.addReply(t, knowledge, "apphistory Knowledge reply")
 	e.want("GET", "/chats/"+knowledge+"/messages", nil, http.StatusOK)
-	for _, app := range []string{"docs", "slides", "designs", "finance"} {
+	for _, app := range []string{"docs", "slides", "designs"} {
 		space, err := e.q.CreateAppSpace(ctx, store.CreateAppSpaceParams{WorkspaceID: e.me.WorkspaceID, UserID: e.me.ID, Name: app, Color: "blue", AppName: app})
 		if err != nil {
 			t.Fatal(err)

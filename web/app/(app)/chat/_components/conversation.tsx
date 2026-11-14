@@ -494,7 +494,7 @@ function dropDraft(id: string) {
 /**
  * `activityInDock`: the chat page's dock (chat-panel-host) shows Activity beside the conversation
  * on desktop, so the header has no Chat/Activity switch there. Chats embedded in an app's dock
- * (Designs, Docs, Slides, Finance) leave it unset and keep the switch.
+ * (Designs, Docs, Slides, Custom Apps) leave it unset and keep the switch.
  */
 export type ConversationContext = {
   /** Replacement conversations keep the host's visibility. */

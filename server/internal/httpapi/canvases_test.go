@@ -50,6 +50,14 @@ func (e *chatEnv) tool(token, name string, args any) (int, map[string]any) {
 	return res.StatusCode, out
 }
 
+func (e *chatEnv) toolInvalid(token, name string, args any, field string) {
+	e.t.Helper()
+	code, out := e.tool(token, name, args)
+	if msg, _ := out["message"].(string); code != http.StatusUnprocessableEntity || !strings.HasPrefix(msg, field+":") {
+		e.t.Fatalf("%s(%v) = %d %v, want 422 on %s", name, args, code, out, field)
+	}
+}
+
 func TestTextCanvasToolsAndReadAPI(t *testing.T) {
 	e := newChatEnv(t)
 	chat := uuid.MustParse(e.newChat(nil)["id"].(string))
