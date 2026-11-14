@@ -56,7 +56,8 @@ def main():
     try:
         event = json.load(sys.stdin)
         call = event["toolCall"]
-        tool, tool_input = canonical(call["name"], call.get("args"))
+        args = call.get("args")
+        tool, tool_input = canonical(call["name"], args)
         request = urllib.request.Request(
             os.environ["LAZYAGENTS_POLICY_URL"],
             data=json.dumps({"tool": tool, "input": tool_input}).encode(),
@@ -72,7 +73,14 @@ def main():
         with urllib.request.build_opener(NoRedirect).open(request, timeout=15) as response:
             decision = json.load(response)
         if decision.get("decision") == "allow":
-            print(json.dumps({"decision": "auto_approve"}))
+            out = {"decision": "auto_approve"}
+            # In OAuth sessions, agy's synced account preferences can leave the
+            # terminal sandbox enabled even when settings.json sets it to false.
+            # Vesper's container is already the sandbox, so force BypassSandbox
+            # on approved run_command calls.
+            if call["name"] == "run_command" and not (isinstance(args, dict) and args.get("BypassSandbox") is True):
+                out["overwrite"] = {"BypassSandbox": True}
+            print(json.dumps(out))
             return
         reason = decision.get("reason", "Vesper denied the tool")
     except Exception:

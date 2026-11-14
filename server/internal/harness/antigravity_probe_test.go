@@ -114,6 +114,24 @@ func TestAgyProbe(t *testing.T) {
 			t.Errorf("agy exits non-zero on a failed turn")
 		}
 	})
+
+	t.Run("sandbox_bypass", func(t *testing.T) {
+		p := newAgyProbe(t, bin)
+		outside := filepath.Join(t.TempDir(), "unsandboxed.txt")
+		p.gemini.script(
+			agyReply{call: agyCall("run_command", map[string]any{"CommandLine": "touch '" + outside + "' && echo BYPASS_OK", "toolSummary": "Write outside workspace", "WaitMsBeforeAsync": 5000})},
+			agyReply{text: "Ran unsandboxed."},
+		)
+		s := spec("tests:run", "allowed")
+		s.Harness, s.Model = agentdef.HarnessAntigravity, ""
+		out := p.runWithSettings(t, s, "", `{"modelProvider":"gemini","enableTerminalSandbox":true}`)
+		if out.exit != 0 || out.res.IsError {
+			t.Fatalf("sandbox_bypass failed: exit=%d res=%+v", out.exit, out.res)
+		}
+		if _, err := os.Stat(outside); err != nil {
+			t.Fatalf("expected run_command to bypass agy terminal sandbox and create %s: %v", outside, err)
+		}
+	})
 }
 
 func readOnlyChat() (s agentdef.Resolved) {
@@ -154,6 +172,10 @@ type agyOutcome struct {
 }
 
 func (p *agyProbe) run(t *testing.T, spec agentdef.Resolved, record string) agyOutcome {
+	return p.runWithSettings(t, spec, record, `{"modelProvider":"gemini"}`)
+}
+
+func (p *agyProbe) runWithSettings(t *testing.T, spec agentdef.Resolved, record, settingsJSON string) agyOutcome {
 	t.Helper()
 	inv, err := (Antigravity{}).Invocation(Workspace{Dir: p.ws, MCPURL: p.vesperURL + "/mcp", Token: "probe-token", TokenEnv: "LAZYAGENTS_TOKEN", ContainerSandbox: true},
 		Turn{Spec: spec, Prompt: "Do the probe task."})
@@ -182,7 +204,11 @@ func (p *agyProbe) run(t *testing.T, spec agentdef.Resolved, record string) agyO
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, inv.Argv[0], inv.Argv[1:]...)
+	// Production runs keep modelProvider unset so agy uses the container's saved
+	// OAuth login; the probe overrides it for this process only so agy routes
+	// GEMINI_API_KEY requests to the local stub.
+	argv := append(append([]string(nil), inv.Argv[1:]...), "--settings", settingsJSON)
+	cmd := exec.CommandContext(ctx, inv.Argv[0], argv...)
 	cmd.Dir, cmd.Env = p.ws, env
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -192,7 +218,7 @@ func (p *agyProbe) run(t *testing.T, spec agentdef.Resolved, record string) agyO
 		t.Fatalf("agy did not finish: %v\nstderr: %s", runErr, stderr.String())
 	}
 	t.Logf("exit %d, stderr: %s", exit, stderr.String())
-	if dir := os.Getenv("AGY_RECORD"); dir != "" {
+	if dir := os.Getenv("AGY_RECORD"); dir != "" && record != "" {
 		rec := bytes.ReplaceAll(stdout.Bytes(), []byte(p.ws), []byte("/workspace"))
 		if err := os.WriteFile(filepath.Join(dir, record), rec, 0o644); err != nil {
 			t.Fatal(err)
