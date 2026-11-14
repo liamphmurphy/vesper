@@ -1219,7 +1219,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
             <OpenLinkedItem.Provider value={dockActivity ? openLinked : undefined}>
             <OpenTurnStep.Provider value={openTurnStep}>
             <MessageActionsContext.Provider value={c.archived ? null : messageActions}>
-            <ol ref={log} aria-label="Conversation" role="log" aria-live="polite" className="mx-auto flex max-w-[768px] flex-col gap-6">
+            <ol ref={log} aria-label="Conversation" role="log" aria-live="polite" className="mx-auto flex max-w-[720px] flex-col gap-6">
               {messages.data?.has_more && <Divider>Earlier messages are not shown</Divider>}
               <BubbleList unreadFrom={unreadFrom?.message ?? undefined} list={list} chat={c} persona={persona} speakerName={speaker.name} names={names} highlight={highlight} running={running} since={since}
                 locked={locked} archived={c.archived} editPending={edit.isPending} lastUser={lastUser} videosByMessage={videosByMessage} audioByMessage={audioByMessage} asideList={asideList}
@@ -1280,7 +1280,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
             </>
           )}
         </div>
-        <div className="mx-auto flex w-full max-w-[816px] flex-col gap-2 px-6 pb-3">
+        <div className="mx-auto flex w-full max-w-[768px] flex-col gap-2 px-6 pb-3">
           {(() => {
             // Everything above the composer goes through one slot, ranked by STATUS_PRIORITY (lib/chat-status-slot).
             // The trays stay mounted while empty (present: false) so they see their first item arrive.

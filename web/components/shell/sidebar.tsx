@@ -116,8 +116,8 @@ function Areas({ vertical, counts, onNewSpace }: { vertical: boolean; counts: Re
 function ChatsList({ viewed }: { viewed: string | null }) {
   const conversation = useNewConversation(viewed ?? undefined);
   return (
-    <div data-navigator="chats" className="flex min-h-0 flex-1 flex-col gap-3 px-2.5 pb-2">
-      <div className="flex flex-none items-center justify-between pl-1.5">
+    <div data-navigator="chats" className="flex min-h-0 flex-1 flex-col gap-3 px-3 pb-2">
+      <div className="flex flex-none items-center justify-between pl-1">
         <h2 className="text-13 font-semibold text-fg">Chats</h2>
         <button type="button" aria-label="New chat" title="New chat" disabled={conversation.disabled} onClick={conversation.start}
           className="grid size-7 place-items-center rounded-md text-accent hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50">
@@ -139,7 +139,7 @@ function FootLinks({ collapsed, settingsNeedYou }: { collapsed: boolean; setting
     isActive(pathname, href) ? "bg-selected text-fg" : "text-fg-tertiary hover:bg-hover hover:text-fg",
   );
   return (
-    <div className={cx("flex flex-none", collapsed ? "flex-col items-center gap-1 pb-3" : "items-center justify-between px-2.5 pb-2.5 pt-1")}>
+    <div className={cx("flex flex-none", collapsed ? "flex-col items-center gap-1 pb-3" : "items-center justify-between px-3 pb-2.5 pt-1")}>
       <Link href="/customization" aria-label="Customization" title="Customization: personas, agents, memory and your profile"
         aria-current={isActive(pathname, "/customization") ? "page" : undefined} className={link("/customization")}>
         <Icon name="sliders" size={15} />
@@ -178,17 +178,21 @@ export function Sidebar() {
 
   if (collapsed) {
     return (
-      <aside aria-label="Main menu" className="flex w-[52px] flex-none flex-col items-center border-r border-border-subtle bg-sidebar px-1.5 pt-3 min-[612px]:sticky min-[612px]:top-0 min-[612px]:h-dvh">
-        <nav aria-label="Primary" className="flex min-h-0 w-full flex-1 flex-col items-center gap-4">
-          <MarkButton collapsed onToggle={() => setCollapsed(false)} />
-          <div className="flex flex-col items-center gap-1">
-            <SearchIcon />
-            <NeedsYou variant="rail" count={counts.inbox} />
+      <aside aria-label="Main menu" className="flex w-[52px] flex-none flex-col items-center border-r border-border-subtle bg-sidebar min-[612px]:sticky min-[612px]:top-0 min-[612px]:h-dvh">
+        <nav aria-label="Primary" className="flex min-h-0 w-full flex-1 flex-col items-center">
+          <div className="flex h-[44px] w-full flex-none items-center justify-center border-b border-border-subtle px-1.5">
+            <MarkButton collapsed onToggle={() => setCollapsed(false)} />
           </div>
-          <Areas vertical counts={counts} onNewSpace={newSpace} />
-          <div className="mt-auto flex w-full flex-col items-center gap-2">
-            {harness && <HarnessFooter />}
-            <FootLinks collapsed settingsNeedYou={settingsNeedYou} />
+          <div className="flex min-h-0 w-full flex-1 flex-col items-center gap-4 px-1.5 pt-2.5">
+            <div className="flex flex-col items-center gap-1">
+              <SearchIcon />
+              <NeedsYou variant="rail" count={counts.inbox} />
+            </div>
+            <Areas vertical counts={counts} onNewSpace={newSpace} />
+            <div className="mt-auto flex w-full flex-col items-center gap-2">
+              {harness && <HarnessFooter />}
+              <FootLinks collapsed settingsNeedYou={settingsNeedYou} />
+            </div>
           </div>
         </nav>
         <NewSpaceDialog open={creatingSpace} onOpenChange={setCreatingSpace} />
@@ -198,11 +202,11 @@ export function Sidebar() {
   return (
     <aside aria-label="Main menu" data-expanded className={cx(NAVIGATOR_WIDTH, "flex flex-none flex-col border-r border-border-subtle bg-sidebar min-[612px]:sticky min-[612px]:top-0 min-[612px]:h-dvh")}>
       <nav aria-label="Primary" className="flex min-h-0 flex-1 flex-col">
-        <div className="flex flex-none flex-col gap-2 px-3 pt-3">
-          <div className="flex items-center gap-1.5">
-            <MarkButton collapsed={false} onToggle={() => setCollapsed(true)} />
-            <span className="text-14 font-semibold tracking-[-0.01em] text-fg">Vesper</span>
-          </div>
+        <div className="flex h-[44px] flex-none items-center gap-1.5 border-b border-border-subtle px-3">
+          <MarkButton collapsed={false} onToggle={() => setCollapsed(true)} />
+          <span className="text-14 font-semibold tracking-[-0.01em] text-fg">Vesper</span>
+        </div>
+        <div className="flex flex-none flex-col gap-2 px-3 pt-2.5">
           <SearchField />
           <NeedsYou variant="pill" count={counts.inbox} />
           <Areas vertical={false} counts={counts} onNewSpace={newSpace} />
@@ -213,7 +217,7 @@ export function Sidebar() {
           {!claimed && <ChatsList viewed={viewed} />}
         </div>
         {harness && (
-          <div className="flex-none px-2.5">
+          <div className="flex-none px-3">
             <HarnessFooter layout="row" />
           </div>
         )}
