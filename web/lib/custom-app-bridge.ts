@@ -24,26 +24,39 @@ export type CustomAppIcon = (typeof CUSTOM_APP_ICONS)[number];
 
 export type CustomAppNavSpec = { id: string; label: string; icon?: string };
 
-export const THEME_VAR_NAMES = [
-  "--bg",
-  "--surface",
-  "--surface-raised",
-  "--surface-sunken",
-  "--fg",
-  "--fg-2",
-  "--fg-secondary",
-  "--fg-tertiary",
-  "--border",
-  "--border-subtle",
-  "--border-strong",
-  "--accent",
-  "--accent-soft",
-  "--on-accent",
-  "--hover",
-  "--selected",
-  "--font-sans",
-  "--font-mono",
-] as const;
+// Theme variables apps can use (key), read from the Vesper token that supplies each (value).
+// Apps see the conventional --fg names; Vesper's tokens call text colors --text*. A key whose
+// token is missing would reach apps empty and silently fall back to the app's own default.
+export const THEME_VARS = {
+  "--bg": "--bg",
+  "--surface": "--surface",
+  "--surface-raised": "--surface-raised",
+  "--surface-sunken": "--surface-sunken",
+  "--fg": "--text",
+  "--fg-2": "--text-2",
+  "--fg-secondary": "--text-secondary",
+  "--fg-tertiary": "--text-tertiary",
+  "--border": "--border",
+  "--border-subtle": "--border-subtle",
+  "--border-strong": "--border-strong",
+  "--accent": "--accent",
+  "--accent-soft": "--accent-soft",
+  "--on-accent": "--text-on-accent",
+  "--hover": "--hover",
+  "--selected": "--selected",
+  "--font-sans": "--font-sans",
+  "--font-mono": "--font-mono",
+} as const satisfies Record<string, string>;
+
+// Resolves THEME_VARS against the host; getValue is getComputedStyle(...).getPropertyValue in the browser.
+export function readThemeVarsFrom(getValue: (hostVar: string) => string): Record<string, string> {
+  const vars: Record<string, string> = {};
+  for (const [appVar, hostVar] of Object.entries(THEME_VARS)) {
+    const val = getValue(hostVar).trim();
+    if (val) vars[appVar] = val;
+  }
+  return vars;
+}
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,47}$/;
 

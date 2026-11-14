@@ -28,9 +28,9 @@ import { useAddDockChat, useDockChats, type DockScope } from "@/lib/api/dock-hoo
 import { chatKeys, useChat, useCreateChat } from "@/lib/api/hooks";
 import { useSpaceChats } from "@/lib/api/space-hooks";
 import {
-  THEME_VAR_NAMES,
   buildCustomAppSrcDoc,
   parseBridgeMessage,
+  readThemeVarsFrom,
   resolveAppIcon,
   withCustomAppContext,
   type CustomAppNavSpec,
@@ -65,12 +65,7 @@ function formatBytes(bytes: number): string {
 function readThemeVars(): Record<string, string> {
   if (typeof window === "undefined") return {};
   const styles = getComputedStyle(document.documentElement);
-  const vars: Record<string, string> = {};
-  for (const name of THEME_VAR_NAMES) {
-    const val = styles.getPropertyValue(name).trim();
-    if (val) vars[name] = val;
-  }
-  return vars;
+  return readThemeVarsFrom((name) => styles.getPropertyValue(name));
 }
 
 type PendingApproval = {
