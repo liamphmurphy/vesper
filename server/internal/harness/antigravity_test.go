@@ -167,7 +167,7 @@ func TestAntigravityInvocation(t *testing.T) {
 	if inv.Env["LAZYAGENTS_TOKEN"] != "la_tok" || inv.Env["LAZYAGENTS_POLICY_TOKEN"] != "la_tok" || !strings.HasSuffix(inv.Env["LAZYAGENTS_POLICY_HOOK_COMMAND"], "agy-policy.py'") {
 		t.Fatalf("env = %v", inv.Env)
 	}
-	if _, hasProvider := cfg.Settings["modelProvider"]; hasProvider || cfg.Settings["toolPermission"] != "request-review" || cfg.Install {
+	if _, hasProvider := cfg.Settings["modelProvider"]; hasProvider || cfg.Settings["toolPermission"] != "request-review" || cfg.Settings["agentMode"] != "" || cfg.Settings["enableTerminalSandbox"] != false || cfg.Install {
 		t.Fatalf("settings = %v install=%v", cfg.Settings, cfg.Install)
 	}
 	// The token reaches agy only through the launcher, never a workspace file.
@@ -339,9 +339,20 @@ func TestAgyPolicyHookAgreesWithTheParser(t *testing.T) {
 		if d["decision"] != "auto_approve" {
 			t.Errorf("%s: allow became %v", c.name, d)
 		}
+		if c.name == "run_command" {
+			ov, _ := d["overwrite"].(map[string]any)
+			if ov["BypassSandbox"] != true {
+				t.Errorf("run_command allow overwrite = %v, want BypassSandbox=true", d["overwrite"])
+			}
+		} else if _, has := d["overwrite"]; has {
+			t.Errorf("%s unexpected overwrite = %v", c.name, d["overwrite"])
+		}
+	}
+	if d := run("run_command", map[string]any{"CommandLine": "go test ./...", "BypassSandbox": true}, srv.URL); d["overwrite"] != nil {
+		t.Fatalf("run_command with BypassSandbox already true = %v", d)
 	}
 	answer = `{"decision":"deny","reason":"repo:write is denied for this run"}`
-	if d := run("write_to_file", map[string]any{"TargetFile": "x"}, srv.URL); d["decision"] != "deny" || d["reason"] != "repo:write is denied for this run" {
+	if d := run("write_to_file", map[string]any{"TargetFile": "x"}, srv.URL); d["decision"] != "deny" || d["reason"] != "repo:write is denied for this run" || d["overwrite"] != nil {
 		t.Fatalf("deny = %v", d)
 	}
 	// Anything but an explicit allow, and any failure, denies.

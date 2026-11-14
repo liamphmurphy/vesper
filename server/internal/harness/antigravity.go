@@ -92,6 +92,7 @@ func (Antigravity) Invocation(ws Workspace, t Turn) (Invocation, error) {
 		Install: ws.ContainerSandbox, TokenEnv: ws.TokenEnv, HookCommand: env["LAZYAGENTS_POLICY_HOOK_COMMAND"], MCPServers: servers,
 		Settings: map[string]any{
 			"toolPermission":        "request-review",
+			"agentMode":             "",    // Default mode; agy 1.5.7+ otherwise defaults to "auto" (which forces terminal sandbox)
 			"enableTerminalSandbox": false, // the container is the boundary, as for Codex
 			"trustedWorkspaces":     []string{ws.Dir},
 			"permissions":           map[string]any{"allow": nonNil(allow), "ask": []string{}, "deny": agyDenyRules(spec)},
