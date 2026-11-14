@@ -87,3 +87,23 @@ test("withCustomAppContext appends context once and typedText hides it from user
   assert.equal(once, twice);
   assert.equal(typedText(once), "Add a recurring column");
 });
+
+test("every theme var forwarded to custom apps is defined by Vesper's tokens", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const tokens = await readFile(new URL("../styles/tokens.css", import.meta.url), "utf8");
+  const { THEME_VARS } = await import("./custom-app-bridge.ts");
+  for (const [appVar, hostVar] of Object.entries(THEME_VARS)) {
+    assert.ok(tokens.includes(`${hostVar}:`), `${appVar} reads ${hostVar}, which tokens.css doesn't define`);
+  }
+});
+
+test("readThemeVarsFrom exposes Vesper's text colors under the --fg names apps use", async () => {
+  const { readThemeVarsFrom } = await import("./custom-app-bridge.ts");
+  const host = { "--bg": "#0C0B12", "--text": "#EEEDF3", "--text-secondary": "#A4A1B3", "--text-on-accent": "#120F24" };
+  const vars = readThemeVarsFrom((name) => host[name] ?? "");
+  assert.equal(vars["--bg"], "#0C0B12");
+  assert.equal(vars["--fg"], "#EEEDF3");
+  assert.equal(vars["--fg-secondary"], "#A4A1B3");
+  assert.equal(vars["--on-accent"], "#120F24");
+  assert.ok(!("--fg-2" in vars), "unset host vars are omitted so the app's own fallback applies");
+});
