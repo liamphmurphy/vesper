@@ -512,10 +512,18 @@ func (d *Docker) Start(ctx context.Context, runID string, spec ExecSpec) (Proces
 		}
 		dir = path.Join(workspacePath, spec.Dir)
 	}
+	host := d.hostConfig(mounts)
+	controlHost, err := d.controlAPIHost(ctx, spec.ControlURL)
+	if err != nil {
+		return nil, err
+	}
+	if controlHost != "" {
+		host["ExtraHosts"] = append(host["ExtraHosts"].([]string), controlHost)
+	}
 	body := map[string]any{
 		"Image": d.Image, "Cmd": spec.Argv, "Env": env, "WorkingDir": dir,
 		"Labels":     d.labels(runID),
-		"HostConfig": d.hostConfig(mounts),
+		"HostConfig": host,
 	}
 	var created struct{ ID string }
 	name := url.QueryEscape(spec.Name)

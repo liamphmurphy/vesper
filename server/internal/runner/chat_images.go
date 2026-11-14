@@ -247,7 +247,7 @@ func (r *Runner) runChatImageJob(ctx context.Context, c runCtx, turn store.RunTu
 	}
 	proc, err := r.Backend.Start(ctx, wsID(c.run), ExecSpec{
 		Name: fmt.Sprintf("lazyagents-image-%s-%d-%s", c.run.ID, turn.Seq, job.ID.String()[:8]),
-		Argv: append(append([]string{}, TurnWrapper...), inv.Argv...), Env: env, Dir: dir, Files: files,
+		Argv: append(append([]string{}, TurnWrapper...), inv.Argv...), Env: env, Dir: dir, Files: files, ControlURL: r.Cfg.MCPURL,
 	})
 	if err != nil {
 		r.Log.Warn("start image step", "run", c.run.ID, "err", err)

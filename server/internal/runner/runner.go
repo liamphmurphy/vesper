@@ -1567,7 +1567,7 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 		turnEnv = withoutPushCredentials(env)
 	}
 	proc, err := r.Backend.Start(ctx, wsID(c.run), ExecSpec{
-		Name: fmt.Sprintf("lazyagents-turn-%s-%d", c.run.ID, turn.Seq), Argv: argv, Env: turnEnv, Dir: dir, Files: files, Networks: networks,
+		Name: fmt.Sprintf("lazyagents-turn-%s-%d", c.run.ID, turn.Seq), Argv: argv, Env: turnEnv, Dir: dir, Files: files, Networks: networks, ControlURL: r.Cfg.MCPURL,
 	})
 	if err != nil {
 		_ = q.FinishTurn(ctx, store.FinishTurnParams{ID: turn.ID, Usage: []byte("{}")})

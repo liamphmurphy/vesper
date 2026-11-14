@@ -406,6 +406,23 @@ Docker daemon never clean up each other's turns.
 
 ### Test environments
 
+Before starting a turn, the Docker runner pins the control API hostname from
+`RUNNER_MCP_URL` to its address on `RUNNER_NETWORK`. Playground and test services
+can still be named `api`; their DNS aliases cannot redirect MCP or policy calls.
+The address is resolved again each launch, so replacing the API container does
+not leave later turns using an old address. An ambiguous or missing control
+endpoint on a named network stops the launch. Custom deployments must put that
+hostname on the primary network, or use an explicit IP or `host.docker.internal`.
+
+When tools are unavailable, HTTP 401 means the control endpoint rejected the
+turn credential (check routing as well as credentials); HTTP 5xx indicates a
+backend failure, and an unreachable endpoint indicates a network failure.
+Policy checks continue to deny tools in all three cases. The November 14
+chat-wide failure was reproduced with duplicate `api` aliases and the real
+policy hook; its historical production network state was unavailable. Source
+files reported as changed between turns were not needed for the reproduction
+and remain a separate, unconfirmed observation.
+
 A repository needs no Vesper file for its tests to run in a turn. Three things
 make that work, and none of them gives an agent the host's Docker socket.
 

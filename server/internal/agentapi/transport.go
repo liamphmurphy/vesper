@@ -171,7 +171,11 @@ func verifier(d Deps) auth.TokenVerifier {
 	return func(ctx context.Context, token string, _ *http.Request) (*auth.TokenInfo, error) {
 		c, err := agents.ResolveToken(ctx, d.Q, token)
 		if err != nil {
-			return nil, auth.ErrInvalidToken
+			if errors.Is(err, agents.ErrBadToken) {
+				return nil, auth.ErrInvalidToken
+			}
+			logger.Error("agent authentication backend unavailable", "err", err)
+			return nil, errors.New("authentication service unavailable")
 		}
 		return &auth.TokenInfo{
 			UserID:     c.Agent.ID.String(), // binds MCP sessions to one agent
@@ -418,7 +422,12 @@ func requireAgent(d Deps, next http.Handler) http.Handler {
 		}
 		c, err := agents.ResolveToken(r.Context(), d.Q, strings.TrimSpace(tok))
 		if err != nil {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"code": "unauthenticated", "message": "invalid or revoked token"})
+			if errors.Is(err, agents.ErrBadToken) {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"code": "unauthenticated", "message": "invalid or revoked token"})
+			} else {
+				logger.Error("agent authentication backend unavailable", "err", err)
+				writeJSON(w, http.StatusServiceUnavailable, map[string]string{"code": "unavailable", "message": "authentication service unavailable"})
+			}
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), restCallerKey{}, c)))

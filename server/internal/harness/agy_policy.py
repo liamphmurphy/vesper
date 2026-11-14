@@ -10,6 +10,7 @@ import json
 import os
 import re
 import sys
+import urllib.error
 import urllib.request
 
 # Keep in sync with antigravityTool in antigravity.go (a test runs both).
@@ -75,8 +76,17 @@ def main():
             print(json.dumps({"decision": "auto_approve"}))
             return
         reason = decision.get("reason", "Vesper denied the tool")
+    except urllib.error.HTTPError as error:
+        if error.code == 401:
+            reason = "Vesper control API rejected this turn's credential (HTTP 401). Check runner control routing and turn credentials before retrying."
+        elif error.code >= 500:
+            reason = f"Vesper tool policy backend is unavailable (HTTP {error.code}). Retry after the service recovers."
+        else:
+            reason = f"Vesper tool policy request was rejected (HTTP {error.code}). Check the control API configuration before retrying."
+    except (urllib.error.URLError, TimeoutError):
+        reason = "Vesper control API is unreachable. Check runner networking before retrying."
     except Exception:
-        reason = "Vesper tool policy is unavailable. Do not run this tool; end the turn and ask for help."
+        reason = "Vesper tool policy could not be checked. Check the policy hook configuration and response before retrying."
     print(json.dumps({"decision": "deny", "reason": reason}))
 
 

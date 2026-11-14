@@ -28,6 +28,9 @@ type ExecSpec struct {
 	// Networks the process joins besides the backend's own: a turn's service
 	// network (ServiceBackend). Only the Docker backend has networks.
 	Networks []string
+	// ControlURL identifies Vesper's API, whose primary-network address must
+	// not be shadowed by a service on another attached network.
+	ControlURL string
 }
 
 // Process is a running ExecSpec.

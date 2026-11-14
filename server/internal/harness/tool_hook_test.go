@@ -13,13 +13,22 @@ import (
 )
 
 func TestPolicyHookFailsClosed(t *testing.T) {
-	for _, mode := range []string{"allow", "deny", "unavailable", "redirect"} {
+	for name, script := range map[string][]byte{"claude-codex": toolHook, "antigravity": agyPolicyHook} {
+		t.Run(name, func(t *testing.T) { testPolicyHookFailures(t, script) })
+	}
+}
+
+func testPolicyHookFailures(t *testing.T, script []byte) {
+	for _, mode := range []string{"allow", "deny", "unauthenticated", "unavailable", "network", "redirect"} {
 		t.Run(mode, func(t *testing.T) {
 			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("Authorization") != "Bearer fake-run-token" {
 					t.Error("missing run token")
 				}
 				switch mode {
+				case "unauthenticated":
+					w.WriteHeader(401)
+					_, _ = w.Write([]byte("fake-run-token")) // Never echo a server's error body.
 				case "unavailable":
 					w.WriteHeader(503)
 				case "redirect":
@@ -29,30 +38,43 @@ func TestPolicyHookFailsClosed(t *testing.T) {
 				}
 			}))
 			defer s.Close()
+			if mode == "network" {
+				s.Close()
+			}
 			file := filepath.Join(t.TempDir(), "hook.py")
-			if err := os.WriteFile(file, toolHook, 0600); err != nil {
+			if err := os.WriteFile(file, script, 0600); err != nil {
 				t.Fatal(err)
 			}
 			cmd := exec.Command("python3", file)
 			cmd.Env = append(os.Environ(), "LAZYAGENTS_POLICY_URL="+s.URL, "LAZYAGENTS_POLICY_TOKEN=fake-run-token")
-			cmd.Stdin = strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"go test ./..."}}`)
+			cmd.Stdin = strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"go test ./..."},"toolCall":{"name":"run_command","args":{"CommandLine":"go test ./..."}}}`)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("hook: %v %s", err, out)
 			}
 			var decision struct {
-				Hook struct {
+				Decision string `json:"decision"`
+				Reason   string `json:"reason"`
+				Hook     struct {
 					Decision string `json:"permissionDecision"`
+					Reason   string `json:"permissionDecisionReason"`
 				} `json:"hookSpecificOutput"`
 			}
 			if err := json.Unmarshal(out, &decision); err != nil {
 				t.Fatal(err)
+			}
+			if decision.Decision == "deny" {
+				decision.Hook.Decision, decision.Hook.Reason = decision.Decision, decision.Reason
 			}
 			if mode == "allow" && decision.Hook.Decision != "" || mode != "allow" && decision.Hook.Decision != "deny" {
 				t.Fatalf("mode=%s output=%s", mode, out)
 			}
 			if strings.Contains(string(out), "fake-run-token") {
 				t.Fatal("token leaked")
+			}
+			category := map[string]string{"unauthenticated": "HTTP 401", "unavailable": "HTTP 503", "network": "unreachable"}[mode]
+			if category != "" && !strings.Contains(decision.Hook.Reason, category) {
+				t.Fatalf("missing failure category %q: %s", category, out)
 			}
 		})
 	}
