@@ -1,13 +1,11 @@
 "use client";
 
-import { useId, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useCanvasActions, useCanvasComments } from "@/lib/api/canvas-hooks";
 import type { DesignProposal } from "@/lib/api/designs-hooks";
 import { cx } from "@/lib/cx";
 import { find, labelOf } from "@/lib/designs/edit";
-import type { LaidPage } from "@/lib/designs/layout";
-import { LaidNodeSvg } from "@/lib/designs/render";
-import { applyOps, classify, decide, decideRest, dependencies, newConnectorOps, preview, resolveBody, undecided, type Change, type ChangeKind, type Decisions, type DesignOp, type Ghosts } from "@/lib/designs/review";
+import { applyOps, classify, decide, decideRest, dependencies, preview, resolveBody, undecided, type Change, type ChangeKind, type Decisions, type DesignOp } from "@/lib/designs/review";
 import type { Design } from "@/lib/designs/schema";
 import { Button } from "@/components/ui/button";
 import type { Camera } from "./design-canvas";
@@ -29,8 +27,8 @@ export type Review = {
   setFocus: (i?: number) => void;
   accept: (i: number) => void;
   reject: (i: number, reason?: string) => void;
-  acceptRest: () => void;
-  rejectRest: () => void;
+  /** The resolve body with every undecided change decided one way: Accept all / Reject all in one step. */
+  restBody: (state: "accepted" | "rejected") => ReturnType<typeof resolveBody>;
   /** The design with the suggestion applied, minus what was rejected. */
   after: Design;
   body: ReturnType<typeof resolveBody>;
@@ -58,8 +56,7 @@ export function useReview(draft: Design | undefined, proposals: DesignProposal[]
     setFocus: (i) => setFocusBy((f) => ({ ...f, [proposal.id]: i })),
     accept: (i) => set((d) => decide(deps, d, i, "accepted")),
     reject: (i, reason) => set((d) => decide(deps, d, i, "rejected", reason)),
-    acceptRest: () => set((d) => decideRest(deps, d, ops.length, "accepted")),
-    rejectRest: () => set((d) => decideRest(deps, d, ops.length, "rejected")),
+    restBody: (state) => resolveBody(decideRest(deps, decisions, ops.length, state), ops.length),
     after,
     body: resolveBody(decisions, ops.length),
   };
@@ -146,53 +143,10 @@ export function ReviewOverlay({ review, mode, page, camera }: { review: Review; 
   );
 }
 
-/** How much of a ghost's surroundings its clip lets through, in page units: room for its stroke and shadow. */
-const GHOST_PAD = 4;
-
-/**
- * Pending suggestions on the live canvas, outside review: each layer they add
- * drawn faded from the design with every suggestion applied (clipped to that
- * layer, so nothing else is drawn twice), the connectors they add or reroute,
- * and dashed outlines in the review's colours. View only; Review is where
- * they're accepted. `now` is the working copy's page, `laid` the suggested one.
- */
-export function GhostLayer({ ghosts, now, laid, page, camera, assetUrl }: { ghosts: Ghosts; now: LaidPage; laid: LaidPage; page: string; camera: Camera; assetUrl: (a: string) => string }) {
-  const uid = `gh${useId().replace(/[^a-zA-Z0-9]/g, "")}`;
-  const wires = useMemo(() => newConnectorOps(now, laid), [now, laid]);
-  const added = ghosts.added.filter((a) => a.page === page);
-  const marked = ghosts.changes.filter((c) => c.kind !== "added" && c.page === page && c.box);
-  if (!added.length && !marked.length && !wires.length) return null;
-  const toScreen = (b: { x: number; y: number; w: number; h: number }) => ({ x: b.x * camera.z + camera.x, y: b.y * camera.z + camera.y, w: b.w * camera.z, h: b.h * camera.z });
-  const outline = (key: string, box: { x: number; y: number; w: number; h: number }, color: string, extra: Record<string, string>) => {
-    const b = toScreen(box);
-    return <rect key={key} {...extra} x={b.x - 2} y={b.y - 2} width={b.w + 4} height={b.h + 4} rx={3} fill="none" stroke={color} strokeWidth={1.5} strokeDasharray="4 3" />;
-  };
-  return (
-    <svg aria-hidden className="pointer-events-none absolute inset-0 z-[4] h-full w-full" data-testid="suggestion-ghosts">
-      <defs>
-        <clipPath id={`${uid}clip`}>
-          {added.map((a) => <rect key={a.target} x={a.box.x - GHOST_PAD} y={a.box.y - GHOST_PAD} width={a.box.w + 2 * GHOST_PAD} height={a.box.h + 2 * GHOST_PAD} />)}
-        </clipPath>
-      </defs>
-      <g transform={`translate(${camera.x} ${camera.y}) scale(${camera.z})`}>
-        <g opacity={0.55}>
-          {added.length > 0 && (
-            <g clipPath={`url(#${uid}clip)`}>
-              {laid.nodes.map((n) => <LaidNodeSvg key={n.id} ops={n.ops} uid={`${uid}${n.id}`} assetUrl={assetUrl} />)}
-            </g>
-          )}
-          {wires.length > 0 && <g data-ghost-wires={wires.length}><LaidNodeSvg ops={wires} uid={`${uid}conn`} assetUrl={assetUrl} /></g>}
-        </g>
-      </g>
-      {added.map((a) => outline(a.target, a.box, KIND_COLOR.added, { "data-ghost": a.target }))}
-      {marked.map((c) => outline(`m${c.i}`, c.box!, KIND_COLOR[c.kind], { "data-ghost-kind": c.kind }))}
-    </svg>
-  );
-}
-
 /** The side list: one card per change with its why, Accept / Reject / Discuss. */
-export function ReviewPanel({ review, design, chatId, canvasId, seq, persona, error, busy, onFocus, onDone }: { review: Review; design: Design; chatId: string; canvasId: string; seq: number; persona: string; error?: string; busy: boolean; onFocus: (c: Change) => void; onDone: () => void }) {
+export function ReviewPanel({ review, design, chatId, canvasId, seq, persona, error, busy, onFocus, onDone }: { review: Review; design: Design; chatId: string; canvasId: string; seq: number; persona: string; error?: string; busy: boolean; onFocus: (c: Change) => void; onDone: (body?: Review["body"]) => void }) {
   const [tab, setTab] = useState<"changes" | "comments">("changes");
+  const all = review.left === review.changes.length;
   const pages = design.pages.filter((p) => review.changes.some((c) => c.page === p.id)).map((p) => p.name);
   const comments = useCanvasComments(chatId, canvasId).data?.comments ?? [];
   const tabs = [
@@ -241,12 +195,16 @@ export function ReviewPanel({ review, design, chatId, canvasId, seq, persona, er
       </div>
       <div className="flex-none border-t border-border-subtle px-4 py-3" data-testid="review-actions">
         {error && <p role="alert" className="mb-2 text-12 text-pill-blocked-fg">{error}</p>}
-        <p className="mb-2 text-11 text-fg-tertiary">Done turns the accepted changes into one version. Rejected ones, with your reasons, go back to {persona}.</p>
-        <span className="flex flex-wrap items-center gap-1.5">
-          <Button variant="outline" disabled={!review.left || busy} onClick={review.rejectRest}>Reject rest</Button>
-          <Button variant="primary" disabled={!review.left || busy} onClick={review.acceptRest}>Accept rest</Button>
-          <Button variant="secondary" disabled={review.left > 0 || busy} onClick={onDone}>{busy ? "Applying…" : "Done"}</Button>
-        </span>
+        <p className="mb-2 text-11 text-fg-tertiary">The accepted changes become one version. Rejected ones, with your reasons, go back to {persona}.</p>
+        {review.left > 0 ? (
+          // One click settles everything still open and applies: deciding change by change is optional.
+          <span className="flex flex-wrap items-center gap-1.5">
+            <Button variant="primary" disabled={busy} onClick={() => onDone(review.restBody("accepted"))}>{busy ? "Applying…" : `${all ? "Accept all" : "Accept the rest"} (${review.left})`}</Button>
+            <Button variant="outline" disabled={busy} onClick={() => onDone(review.restBody("rejected"))}>{all ? "Reject all" : "Reject the rest"}</Button>
+          </span>
+        ) : (
+          <Button variant="primary" disabled={busy} onClick={() => onDone()}>{busy ? "Applying…" : "Done"}</Button>
+        )}
       </div>
     </div>
   );

@@ -122,6 +122,10 @@ func (s *Server) GetDesign(ctx context.Context, req api.GetDesignRequestObject) 
 	if err != nil {
 		return nil, err
 	}
+	// A persona turn that ended without publishing its draft hands it over now.
+	if err := s.designs().PublishSettled(ctx, &cv.ID, nil); err != nil {
+		return nil, err
+	}
 	cur, err := s.Q.LatestChatCanvasVersion(ctx, cv.ID)
 	if err != nil {
 		return nil, err
@@ -219,6 +223,9 @@ func (s *Server) UpdateDesignSettings(ctx context.Context, req api.UpdateDesignS
 func (s *Server) ListDesignProposals(ctx context.Context, req api.ListDesignProposalsRequestObject) (api.ListDesignProposalsResponseObject, error) {
 	cv, err := s.myDesign(ctx, req.CanvasId)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.designs().PublishSettled(ctx, &cv.ID, nil); err != nil {
 		return nil, err
 	}
 	var status *string

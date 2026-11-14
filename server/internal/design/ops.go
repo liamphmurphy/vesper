@@ -35,9 +35,9 @@ var opFields = map[string][]string{
 	"add_page":         {"!page", "after"},
 	"set_page":         {"!id", "name", "background"},
 	"remove_page":      {"!id"},
-	"add_node":         {"!parent", "after", "!node"},
+	"add_node":         {"!parent", "after", "before", "!node"},
 	"set_node":         {"!id", "!fields"},
-	"move_node":        {"!id", "parent", "after", "x", "y"},
+	"move_node":        {"!id", "parent", "after", "before", "x", "y"},
 	"remove_node":      {"!id"},
 	"set_text":         {"!id", "paragraphs", "text"},
 	"connect":          {"id", "!from", "!to", "label", "route", "stroke", "stroke_width", "dash", "start_arrow", "end_arrow", "from_anchor", "to_anchor"},
@@ -88,6 +88,9 @@ func CheckOp(i int, op Op, requireWhy bool) error {
 		if !known[k] {
 			return opErr(i, "%s doesn't take %s", name, k)
 		}
+	}
+	if field(op, "after") != "" && field(op, "before") != "" {
+		return opErr(i, "give after or before, not both")
 	}
 	why, hasWhy := op["why"].(string)
 	if _, set := op["why"]; set && !hasWhy {
@@ -202,7 +205,7 @@ func Touches(ops []Op) []string {
 // refs lists the ids an op points at (other than those it creates).
 func refs(op Op) []string {
 	var out []string
-	for _, k := range []string{"id", "parent", "after", "page", "from", "to", "component", "node"} {
+	for _, k := range []string{"id", "parent", "after", "before", "page", "from", "to", "component", "node"} {
 		if s, ok := op[k].(string); ok {
 			out = append(out, s)
 		}
@@ -382,16 +385,24 @@ func holderOf(d Doc, id string) (holder, page map[string]any, err error) {
 
 func field(op Op, k string) string { s, _ := op[k].(string); return s }
 
-// insert puts n into holder's children after the sibling id after, or on top.
-func insert(holder map[string]any, n any, after string) error {
+// insert puts n into holder's children after the sibling id after, before
+// the sibling id before, or on top when neither is given.
+func insert(holder map[string]any, n any, after, before string) error {
 	kids, _ := holder["children"].([]any)
 	at := len(kids)
-	if after != "" {
-		at = slices.IndexFunc(kids, func(c any) bool { m, _ := c.(map[string]any); return m["id"] == after })
-		if at < 0 {
+	index := func(id string) int {
+		return slices.IndexFunc(kids, func(c any) bool { m, _ := c.(map[string]any); return m["id"] == id })
+	}
+	switch {
+	case after != "":
+		if at = index(after); at < 0 {
 			return fmt.Errorf("after: %s isn't a child of %s", after, holder["id"])
 		}
 		at++
+	case before != "":
+		if at = index(before); at < 0 {
+			return fmt.Errorf("before: %s isn't a child of %s", before, holder["id"])
+		}
 	}
 	holder["children"] = slices.Insert(kids, at, n)
 	return nil
@@ -567,7 +578,7 @@ func applyOp(d Doc, op Op) error {
 		if err != nil {
 			return err
 		}
-		return insert(holder, n, field(op, "after"))
+		return insert(holder, n, field(op, "after"), field(op, "before"))
 	case "set_node":
 		l, ok := find(d, field(op, "id"))
 		if !ok {
@@ -599,16 +610,20 @@ func applyOp(d Doc, op Op) error {
 				l.n[k] = v
 			}
 		}
-		parent, after := field(op, "parent"), field(op, "after")
-		if parent == "" && after == "" {
+		parent, after, before := field(op, "parent"), field(op, "after"), field(op, "before")
+		if parent == "" && after == "" && before == "" {
 			return nil
 		}
 		if parent == "" {
-			al, ok := find(d, after)
-			if !ok {
-				return fmt.Errorf("after: %s doesn't exist", after)
+			sibling, which := after, "after"
+			if sibling == "" {
+				sibling, which = before, "before"
 			}
-			parent = al.holder["id"].(string)
+			sl, ok := find(d, sibling)
+			if !ok {
+				return fmt.Errorf("%s: %s doesn't exist", which, sibling)
+			}
+			parent = sl.holder["id"].(string)
 		}
 		inside := map[string]bool{}
 		subtreeIDs(l.n, inside)
@@ -619,11 +634,11 @@ func applyOp(d Doc, op Op) error {
 		if err != nil {
 			return err
 		}
-		if after == id {
+		if after == id || before == id {
 			return nil
 		}
 		detachAt(l)
-		return insert(holder, l.n, after)
+		return insert(holder, l.n, after, before)
 	case "remove_node":
 		l, ok := find(d, field(op, "id"))
 		if !ok {
@@ -661,7 +676,7 @@ func applyOp(d Doc, op Op) error {
 		if _, ok := n["end_arrow"]; !ok {
 			n["end_arrow"] = "arrow"
 		}
-		return insert(holder, n, "")
+		return insert(holder, n, "", "")
 	case "add_sticky":
 		_, p, ok := findPage(d, field(op, "page"))
 		if !ok {
@@ -673,7 +688,7 @@ func applyOp(d Doc, op Op) error {
 				n[k] = v
 			}
 		}
-		return insert(p, n, "")
+		return insert(p, n, "", "")
 	case "add_link":
 		l := map[string]any{"id": op["id"], "from": op["from"], "to": op["to"], "trigger": "click", "transition": "instant"}
 		for _, k := range []string{"trigger", "delay_ms", "transition", "duration_ms"} {
@@ -729,7 +744,7 @@ func applyOp(d Doc, op Op) error {
 		if ov, ok := op["overrides"]; ok {
 			n["overrides"] = ov
 		}
-		return insert(holder, n, field(op, "after"))
+		return insert(holder, n, field(op, "after"), "")
 	case "set_overrides":
 		l, ok := find(d, field(op, "id"))
 		if !ok || l.n["type"] != "instance" {

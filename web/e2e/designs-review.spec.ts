@@ -10,7 +10,7 @@ const API = process.env.E2E_STACK_API_URL;
 const ON = process.env.E2E_FAKE_HARNESS_MODE === "design-review" && !!API;
 
 type Node = { id: string; type: string; name?: string; paragraphs?: { runs: { text: string }[] }[]; x: number; opacity?: number; fill?: string; children?: Node[] };
-type Body = { pages: { children: Node[] }[] };
+type Body = { pages: { name?: string; children: Node[] }[] };
 const walk = (n: Node, f: (n: Node) => void) => (f(n), n.children?.forEach((c) => walk(c, f)));
 const nodes = (b: Body) => {
   const all: Node[] = [];
@@ -35,6 +35,10 @@ test.describe("@design-review", () => {
     const made = await request.post(`${API}/api/v1/designs`, { data: { title: "Review e2e", starter: "mobile-flow" } });
     expect(made.ok()).toBeTruthy();
     const { id } = await made.json();
+    // The person has worked on it: an untouched design takes the persona's first draft as is, unreviewed.
+    const started = await head(id);
+    started.body.pages[0].name = "Checkout";
+    expect((await request.post(`${API}/api/v1/designs/${id}/versions`, { data: { base_seq: started.seq, body: JSON.stringify(started.body) } })).ok()).toBeTruthy();
     const first = await head(id);
     const all = nodes(first.body);
     const frame = first.body.pages[0].children.find((n) => n.type === "frame")!;
@@ -104,29 +108,27 @@ test.describe("@design-review", () => {
     await pill.getByRole("button", { name: "Previous change" }).click();
     await expect(pill.getByTestId("review-step")).toHaveText("3 of 3");
     // The bulk actions live in the Review tab only.
-    await expect(page.getByRole("button", { name: "Accept rest" })).toHaveCount(1);
-    await expect(panel.getByRole("button", { name: "Accept rest" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Accept all (3)" })).toHaveCount(1);
+    await expect(panel.getByRole("button", { name: "Accept all (3)" })).toBeVisible();
 
-    // 3. Accept one, reject one with a reason, accept the rest.
+    // 3. Accept one, reject one with a reason; the rest waits.
     await panel.getByTestId("review-change-1").getByRole("button", { name: "Accept", exact: true }).click();
     await panel.getByTestId("review-change-3").getByRole("button", { name: "Reject", exact: true }).click();
     await page.getByLabel(/Why reject change 3/).fill("Keep the placeholder copy");
     await page.getByLabel(/Why reject change 3/).press("Enter");
     await expect(panel.getByTestId("review-change-3")).toContainText("Rejected: Keep the placeholder copy");
     const actions = panel.getByTestId("review-actions");
-    await expect(actions.getByRole("button", { name: "Done" })).toBeDisabled();
-    await actions.getByRole("button", { name: "Accept rest" }).click();
-    await expect(panel.getByTestId("review-change-2")).toContainText("Accepted");
-    await expect(panel.getByTestId("review-status")).toContainText("0 of 3 left");
+    await expect(panel.getByTestId("review-status")).toContainText("1 of 3 left");
 
-    // Nothing changed until Done (my own nudge may have saved by now, but not the suggestion).
+    // Nothing changed while changes are open (my own nudge may have saved by now, but not the suggestion).
     const before = nodes((await head(id)).body);
     expect(before.some((n) => n.name === "Promo code")).toBe(false);
     expect(before.find((n) => n.id === button.id)?.fill).toBe(button.fill);
     expect(before.some((n) => n.id === dropped.id)).toBe(true);
 
-    // 4. Done: one version with the accepted changes on top of my unsaved edit.
-    await actions.getByRole("button", { name: "Done" }).click();
+    // 4. Accept the rest: one click settles change 2 and applies one version with the accepted
+    // changes on top of my unsaved edit.
+    await actions.getByRole("button", { name: "Accept the rest (1)" }).click();
     await expect.poll(async () => nodes((await head(id)).body).some((n) => n.name === "Promo code"), { timeout: 30_000 }).toBe(true);
     const after = nodes((await head(id)).body);
     expect(after.find((n) => n.id === button.id)?.fill).toBe("#2F6BFF");

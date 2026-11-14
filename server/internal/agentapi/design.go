@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/liamphmurphy/vesper/server/internal/agents"
@@ -47,7 +48,9 @@ func (r *imageResult) mcpResult() (*mcp.CallToolResult, error) {
 }
 
 // designTarget checks that the canvas is a design in this chat and returns it
-// with its current version.
+// with its current version. During a turn the version's body is the working
+// copy: the version with the turn's draft applied, so the persona builds on
+// its own unpublished changes (designs/drafts.go).
 func designTarget(ctx context.Context, d Deps, c agents.Caller, tool string, id uuid.UUID) (*chatScope, store.ChatCanvas, store.ChatCanvasVersion, error) {
 	var v store.ChatCanvasVersion
 	s, err := canvasScope(ctx, d, c, tool)
@@ -61,8 +64,29 @@ func designTarget(ctx context.Context, d Deps, c agents.Caller, tool string, id 
 	if cv.Kind != canvas.KindDesign {
 		return nil, cv, v, apperr.Invalid("canvas_id", "this %s canvas isn't a design; %s only works on designs", cv.Kind, tool)
 	}
-	v, err = d.Q.LatestChatCanvasVersion(ctx, cv.ID)
+	if v, err = d.Q.LatestChatCanvasVersion(ctx, cv.ID); err != nil {
+		return nil, cv, v, err
+	}
+	turn, err := chatTurn(ctx, d, c)
+	if err != nil {
+		return nil, cv, v, err
+	}
+	v.Body, err = designs.Working(ctx, d.Q, cv.ID, turn, v.Body)
 	return s, cv, v, err
+}
+
+// chatTurn is the caller's running chat turn, or nil outside one.
+func chatTurn(ctx context.Context, d Deps, c agents.Caller) (*uuid.UUID, error) {
+	if c.RunID == nil {
+		return nil, nil
+	}
+	t, err := d.Q.RunningChatTurn(ctx, *c.RunID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	return &t.ID, nil
 }
 
 func requireDesigns(d Deps) error {
@@ -213,7 +237,7 @@ func designRender(ctx context.Context, d Deps, c agents.Caller, in DesignRenderI
 	return &imageResult{PNG: r.PNG, Meta: map[string]any{"w": r.W, "h": r.H, "version": v.Seq}}, nil
 }
 
-const patchOpsHelp = `Each op is {op, ...fields, why}. Ids you leave out are minted for you. Ops: add_page {page:{name}, after?}; set_page {id, name?, background?}; remove_page {id}; add_node {parent (page or container id), after?, node: a node or subtree}; set_node {id, fields: {...}} (a merge patch; not paragraphs or children); move_node {id, parent?, after?, x?, y?}; remove_node {id} (also removes its connectors and links); set_text {id, text | paragraphs}; connect {from, to, label?, route?, stroke?, end_arrow?}; add_sticky {page, x, y, text, color?}; add_link {from, to, trigger?, transition?}; set_link {id, ...}; remove_link {id}; create_component {id, name?}; instantiate {component, parent, x, y, overrides?}; set_overrides {id, overrides}; detach {id}; set_token {set, name, mode, value}; link_ticket / unlink_ticket {node, ticket}. Colours are "$token" or "#RRGGBB". why says in a few words what the change is for, and is what the person reads when they review it`
+const patchOpsHelp = `Each op is {op, ...fields, why}. Ids you leave out are minted for you. Ops: add_page {page:{name}, after?}; set_page {id, name?, background?}; remove_page {id}; add_node {parent (page or container id), after? or before? (a sibling id), node: a node or subtree}; set_node {id, fields: {...}} (a merge patch; not paragraphs or children); move_node {id, parent?, after? or before?, x?, y?}; remove_node {id} (also removes its connectors and links); set_text {id, text | paragraphs}; connect {from, to, label?, route?, stroke?, end_arrow?}; add_sticky {page, x, y, text, color?}; add_link {from, to, trigger?, transition?}; set_link {id, ...}; remove_link {id}; create_component {id, name?}; instantiate {component, parent, x, y, overrides?}; set_overrides {id, overrides}; detach {id}; set_token {set, name, mode, value}; link_ticket / unlink_ticket {node, ticket}. Colours are "$token" or "#RRGGBB". why says in a few words what the change is for, and is what the person reads when they review it`
 
 type DesignPatchIn struct {
 	CanvasID    uuid.UUID   `json:"canvas_id"`
@@ -223,6 +247,10 @@ type DesignPatchIn struct {
 }
 
 func proposeOut(cv uuid.UUID, p designs.Proposed, n int) map[string]any {
+	if p.Proposal.Status == designs.StatusDraft {
+		return map[string]any{"canvas_id": cv, "ops": n, "nodes": p.Nodes, "drafted": true,
+			"next": "Drafted. Keep going until the design is finished: design_read, design_outline and design_render show your draft, and the person sees only the result, once your reply ends. Then tell them in a sentence what you made."}
+	}
 	if p.Version != nil {
 		return map[string]any{"canvas_id": cv, "proposal_id": p.Proposal.ID, "version": p.Version.Seq, "applied": true, "ops": n, "nodes": p.Nodes}
 	}
@@ -234,7 +262,11 @@ func propose(ctx context.Context, d Deps, c agents.Caller, s *chatScope, id uuid
 	if err := requireDesigns(d); err != nil {
 		return nil, err
 	}
-	p, err := d.Designs.Propose(ctx, designs.Patch{CanvasID: id, ChatID: s.ChatID, RunID: c.RunID, AgentID: c.Agent.ID, Base: base, Summary: summary, Ops: ops})
+	turn, err := chatTurn(ctx, d, c)
+	if err != nil {
+		return nil, err
+	}
+	p, err := d.Designs.Propose(ctx, designs.Patch{CanvasID: id, ChatID: s.ChatID, RunID: c.RunID, TurnID: turn, AgentID: c.Agent.ID, Base: base, Summary: summary, Ops: ops})
 	if err != nil {
 		return nil, err
 	}
@@ -361,8 +393,12 @@ func designCreate(ctx context.Context, d Deps, c agents.Caller, in DesignCreateI
 	if err != nil {
 		return nil, err
 	}
+	turn, err := chatTurn(ctx, d, c)
+	if err != nil {
+		return nil, err
+	}
 	svc := designs.Service{Pool: d.Runs.Pool}
-	cv, v, err := svc.CreateInChat(ctx, c.Agent.WorkspaceID, chat, in.Title, in.Starter, in.Project, canvas.Actor{Type: "agent", ID: c.Agent.ID})
+	cv, v, err := svc.CreateInChat(ctx, c.Agent.WorkspaceID, chat, in.Title, in.Starter, in.Project, canvas.Actor{Type: "agent", ID: c.Agent.ID}, c.RunID, turn)
 	if err != nil {
 		return nil, err
 	}

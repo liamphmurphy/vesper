@@ -290,7 +290,8 @@ Asset      { mime: "image/png"|"image/jpeg", w, h, alt? }    // bytes in the blo
 
 ```
 design_proposals(id uuid PK, canvas_id → chat_canvases ON DELETE CASCADE, chat_id, run_id NULL, agent_id,
-                 base_seq int, summary text, ops jsonb, status 'pending'|'resolved'|'applied'|'withdrawn',
+                 turn_id uuid NULL, base_seq int, summary text, ops jsonb,
+                 status 'draft'|'pending'|'resolved'|'applied'|'withdrawn',
                  decisions jsonb DEFAULT '[]',   -- [{i, state: accepted|rejected|stale, reason?}]
                  result_seq int NULL, created_at, resolved_at NULL)
 ```
@@ -300,13 +301,19 @@ design_proposals(id uuid PK, canvas_id → chat_canvases ON DELETE CASCADE, chat
   - Every op must carry a `why` (≤ 280 chars), and the patch a `summary`.
   - The design body is untouched.
   - The tool returns `{proposal_id, ops: n, nodes, pending_review: true}`, and the space instructions tell the persona to wait for the person. `nodes` lists the node each op is about, in op order, with the ids minted for nodes the persona left unnamed.
+- **One turn, one result** (2026-11-14, superseding per-patch proposals and the live ghosts and cursor): the person sees what a persona made, not how.
+  - During a chat turn, every `design_patch` and `design_import` joins that turn's **draft** (`status='draft'`, keyed by `turn_id`). Only the persona sees it: `design_read`, `design_outline` and `design_render` show the version with the draft applied, so later patches build on earlier ones. Lists, counts and the editor never show drafts.
+  - When the turn ends, the runner publishes the draft (`designs.PublishSettled`); reading the design publishes any draft whose turn ended another way. Publishing applies the draft to the current version and stores the **net change** (`design.Diff`: a layer added then removed is nothing, one edited three times is one `set_node`, placement uses `after`/`before`). A change with no exact net form (a page reorder) keeps the steps that still apply.
+  - The result is one pending suggestion, or a version by the persona when direct edit is on, or when the design holds nothing of the person's yet (untouched since version 1, its blank or starter beginning, and no suggestion pending or reviewed): a first draft needs no review, whoever started the design.
+  - A persona's `design_create` in a turn makes version 1 blank and puts the starter in the draft, so placeholder frames (Start, Details, Done) are scaffolding only and never appear in a version or a review.
+  - Outside a turn (an unmanaged token), a patch is still its own proposal, as below.
 - **Dependencies:** op *j* depends on op *i* when it references an id that *i* creates (a child added to a new frame, or a link to a new frame). Review groups dependents under their parent. Accepting *j* accepts *i*. Rejecting *i* rejects *j*.
 - **Review** (`designs-review.svg`, `web/lib/designs/review.ts`):
   - Each op is a change, with a numbered pin on the canvas and its `why`. Added changes are outlined green, changed ones amber, and removed ones red and dashed.
   - **Before / After / Diff** toggles.
   - **Accept**, **Reject** (with an optional reason) or **Discuss** (opens a comment thread on the node), per change.
-  - **Accept rest** and **Reject rest**.
-  - **Done** is enabled once every change has a decision.
+  - **Accept all** / **Reject all** (the rest, once some are decided) settle every open change and apply in one click.
+  - **Done** applies once every change has a decision.
 - **Resolving** (`POST …/resolve` {decisions}) runs in one transaction:
   - The accepted ops are applied **on the current head**, not on `base_seq`. Ops are id-keyed, so they rebase.
   - An op whose target no longer exists is marked `stale` and skipped. The person's own later edits always win.
@@ -319,7 +326,7 @@ design_proposals(id uuid PK, canvas_id → chat_canvases ON DELETE CASCADE, chat
   - The editor receives the version over realtime and three-way merges it with unsaved local edits (§3.6). The person's unsaved edits are never overwritten.
   - **Undo** works on the persona's version as one step: the client inverts the per-node diff and saves a new version, as Slides undo does.
 - **Pause** (`persona_paused`) makes `design_patch` and `design_import` fail with "Liam paused persona edits on this design" until the person resumes.
-- **Presence** ("H is editing", named cursor, Follow/Pause) comes from the persona's in-flight tool calls on this canvas, the run's activity events, and the node ids of its last read and patch (a finished patch's `nodes`, so the cursor finds nodes it added). The cursor walks those nodes in order. No new transport.
+- **Presence** is a quiet "H is drafting changes…" chip with Pause while the persona's turn calls design tools on this canvas (from its in-flight tool calls; no new transport). Nothing is drawn on the canvas: the work is in the draft until the turn ends.
 - **Selection context:** chat messages sent from the editor carry `{design, page, selection: [ids], viewport: {x, y, w, h, zoom}}` through the existing chat context. The space instructions tell the persona to treat "this" as the selection.
 
 ### 3.8 Shared rendering module

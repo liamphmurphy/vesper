@@ -111,6 +111,14 @@ func TestFakeHarnessDesignReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The person has worked on it (an untouched design takes a first draft as is).
+	v1, err := e.q.LatestChatCanvasVersion(e.ctx, cv.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&canvas.Service{Pool: e.pool}).Save(e.ctx, chat.ID, cv.ID, v1.Seq, strings.Replace(v1.Body, `"name":"Flow"`, `"name":"Checkout"`, 1), "", canvas.Actor{Type: "user", ID: e.me.ID}); err != nil {
+		t.Fatal(err)
+	}
 	reply := func(body string, refs ...runs.ChatContextRef) string {
 		t.Helper()
 		if _, err := e.runs.PostChatMessage(e.ctx, e.ws, e.me.ID, chat.ID, runs.ChatMessageInput{Body: body, ContextRefs: refs}); err != nil {
@@ -137,7 +145,7 @@ func TestFakeHarnessDesignReview(t *testing.T) {
 		strings.Join(whys, "|") != "Add a promo code field|Make the button stand out|Remove the placeholder copy" {
 		t.Fatalf("ops: %v %v", names, whys)
 	}
-	if cur, _ := e.q.LatestChatCanvasVersion(e.ctx, cv.ID); cur.Seq != 1 {
+	if cur, _ := e.q.LatestChatCanvasVersion(e.ctx, cv.ID); cur.Seq != 2 {
 		t.Fatalf("the design changed: version %d", cur.Seq)
 	}
 

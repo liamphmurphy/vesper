@@ -2,8 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as doc from "./designs/doc.ts";
 import { find } from "./designs/edit.ts";
-import { makeLayout } from "./designs/layout.ts";
-import { adoptVersion, applyOps, classify, creates, decide, decideRest, dependencies, newConnectorOps, pendingGhosts, resolveBody, undecided } from "./designs/review.ts";
+import { adoptVersion, applyOps, classify, creates, decide, decideRest, dependencies, resolveBody, undecided } from "./designs/review.ts";
 import { normalize } from "./designs/schema.ts";
 
 const text = (id, y, s) => ({ id, type: "text", name: s, x: 0, y, w: 100, h: 20, paragraphs: [{ runs: [{ text: s, size: 16 }] }] });
@@ -159,26 +158,12 @@ test("presence follows the nodes a finished patch added, by the ids the server m
   assert.deepEqual(presenceOf(call("Error: this design is at version 5"), "c1", true)?.nodes, ["n_frame"]);
 });
 
-test("pending suggestions ghost what they add, across suggestions, without touching the working copy", () => {
+test("before places a layer ahead of a sibling, as the server's net changes do", () => {
   const d = base();
-  const first = { ops: [{ op: "add_node", parent: "p_1", node: { ...rect("n_g1", 400), name: "Decide" } }] };
-  // The second suggestion builds on the first: it connects to a layer only the first adds.
-  const second = { ops: [{ op: "add_node", parent: "p_1", node: rect("n_g2", 600) }, { op: "connect", id: "n_c", from: "n_g1", to: "n_g2" }, { op: "set_node", id: "n_b", fields: { fill: "#2F6BFF" } }] };
-  const g = pendingGhosts(d, [first, second]);
-  assert.ok(g);
-  assert.deepEqual(g.added.map((a) => a.target), ["n_g1", "n_g2"]);
-  assert.ok(g.added.every((a) => a.page === "p_1" && a.box.w > 0 && a.box.h > 0));
-  assert.deepEqual(g.changes.map((x) => x.kind), ["added", "added", "added", "changed"]);
-  assert.ok(find(g.after, "n_g1") && find(g.after, "n_c"));
-  assert.equal(find(d, "n_g1"), undefined);
-  // The connector has no box to clip a ghost to: it's drawn from the ops the suggested page adds, and only those.
-  const page = (x) => makeLayout(x).layoutPage(x.pages[0]);
-  const fresh = newConnectorOps(page(d), page(g.after));
-  assert.ok(fresh.length > 0);
-  assert.deepEqual(newConnectorOps(page(g.after), page(g.after)), []);
-});
-
-test("nothing pending, no ghosts", () => {
-  assert.equal(pendingGhosts(base(), []), undefined);
-  assert.equal(pendingGhosts(base(), [{ ops: [] }]), undefined);
+  const ids = (x) => find(x, "n_f").node.children.map((n) => n.id);
+  const added = applyOps(d, [{ op: "add_node", parent: "n_f", before: "n_t1", node: rect("n_top") }]);
+  assert.deepEqual(ids(added), ["n_top", "n_t1", "n_t2", "n_b"]);
+  const moved = applyOps(d, [{ op: "move_node", id: "n_b", before: "n_t1" }]);
+  assert.deepEqual(ids(moved), ["n_b", "n_t1", "n_t2"]);
+  assert.deepEqual(dependencies([{ op: "add_node", parent: "n_f", node: rect("n_x") }, { op: "move_node", id: "n_b", before: "n_x" }]), [[], [0]]);
 });

@@ -137,16 +137,17 @@ func (q *Queries) CreateDesignAsset(ctx context.Context, arg CreateDesignAssetPa
 }
 
 const createDesignProposal = `-- name: CreateDesignProposal :one
-INSERT INTO design_proposals (canvas_id, chat_id, run_id, agent_id, base_seq, summary, ops, status, result_seq, resolved_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
-  CASE WHEN $8::text = 'pending' THEN NULL ELSE now() END)
-RETURNING id, canvas_id, chat_id, run_id, agent_id, base_seq, summary, ops, status, decisions, result_seq, created_at, resolved_at
+INSERT INTO design_proposals (canvas_id, chat_id, run_id, turn_id, agent_id, base_seq, summary, ops, status, result_seq, resolved_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+  CASE WHEN $9::text IN ('pending', 'draft') THEN NULL ELSE now() END)
+RETURNING id, canvas_id, chat_id, run_id, agent_id, base_seq, summary, ops, status, decisions, result_seq, created_at, resolved_at, turn_id
 `
 
 type CreateDesignProposalParams struct {
 	CanvasID  uuid.UUID
 	ChatID    *uuid.UUID
 	RunID     *uuid.UUID
+	TurnID    *uuid.UUID
 	AgentID   uuid.UUID
 	BaseSeq   int32
 	Summary   string
@@ -160,6 +161,7 @@ func (q *Queries) CreateDesignProposal(ctx context.Context, arg CreateDesignProp
 		arg.CanvasID,
 		arg.ChatID,
 		arg.RunID,
+		arg.TurnID,
 		arg.AgentID,
 		arg.BaseSeq,
 		arg.Summary,
@@ -182,6 +184,7 @@ func (q *Queries) CreateDesignProposal(ctx context.Context, arg CreateDesignProp
 		&i.ResultSeq,
 		&i.CreatedAt,
 		&i.ResolvedAt,
+		&i.TurnID,
 	)
 	return i, err
 }
@@ -197,6 +200,15 @@ type DeleteDesignAssetParams struct {
 
 func (q *Queries) DeleteDesignAsset(ctx context.Context, arg DeleteDesignAssetParams) error {
 	_, err := q.db.Exec(ctx, deleteDesignAsset, arg.CanvasID, arg.ID)
+	return err
+}
+
+const deleteDesignDraft = `-- name: DeleteDesignDraft :exec
+DELETE FROM design_proposals WHERE id = $1 AND status = 'draft'
+`
+
+func (q *Queries) DeleteDesignDraft(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteDesignDraft, id)
 	return err
 }
 
@@ -270,6 +282,21 @@ func (q *Queries) DesignFeedbackBetween(ctx context.Context, arg DesignFeedbackB
 	return items, nil
 }
 
+const designHasOnlyPersonaWork = `-- name: DesignHasOnlyPersonaWork :one
+SELECT (NOT EXISTS (SELECT 1 FROM chat_canvas_versions v WHERE v.canvas_id = $1 AND v.author_type = 'user' AND v.seq > 1)
+   AND NOT EXISTS (SELECT 1 FROM design_proposals p WHERE p.canvas_id = $1 AND p.status IN ('pending', 'resolved')))::bool AS only_persona
+`
+
+// True while the person hasn't changed the design since it was made (version
+// 1, blank or a starter, is scaffolding) or reviewed a suggestion on it: a
+// persona's draft then has nothing of theirs to change.
+func (q *Queries) DesignHasOnlyPersonaWork(ctx context.Context, canvasID uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, designHasOnlyPersonaWork, canvasID)
+	var only_persona bool
+	err := row.Scan(&only_persona)
+	return only_persona, err
+}
+
 const getDesignAsset = `-- name: GetDesignAsset :one
 SELECT canvas_id, id, workspace_id, user_id, blob_key, mime, width, height, size_bytes, created_at FROM design_assets WHERE canvas_id = $1 AND id = $2
 `
@@ -293,6 +320,38 @@ func (q *Queries) GetDesignAsset(ctx context.Context, arg GetDesignAssetParams) 
 		&i.Height,
 		&i.SizeBytes,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getDesignDraft = `-- name: GetDesignDraft :one
+SELECT id, canvas_id, chat_id, run_id, agent_id, base_seq, summary, ops, status, decisions, result_seq, created_at, resolved_at, turn_id FROM design_proposals WHERE canvas_id = $1 AND turn_id = $2 AND status = 'draft'
+`
+
+type GetDesignDraftParams struct {
+	CanvasID uuid.UUID
+	TurnID   *uuid.UUID
+}
+
+// The draft a turn is building on a design.
+func (q *Queries) GetDesignDraft(ctx context.Context, arg GetDesignDraftParams) (DesignProposal, error) {
+	row := q.db.QueryRow(ctx, getDesignDraft, arg.CanvasID, arg.TurnID)
+	var i DesignProposal
+	err := row.Scan(
+		&i.ID,
+		&i.CanvasID,
+		&i.ChatID,
+		&i.RunID,
+		&i.AgentID,
+		&i.BaseSeq,
+		&i.Summary,
+		&i.Ops,
+		&i.Status,
+		&i.Decisions,
+		&i.ResultSeq,
+		&i.CreatedAt,
+		&i.ResolvedAt,
+		&i.TurnID,
 	)
 	return i, err
 }
@@ -357,8 +416,8 @@ func (q *Queries) ListDesignFrameLinks(ctx context.Context, canvasID uuid.UUID) 
 }
 
 const listDesignProposals = `-- name: ListDesignProposals :many
-SELECT id, canvas_id, chat_id, run_id, agent_id, base_seq, summary, ops, status, decisions, result_seq, created_at, resolved_at FROM design_proposals
-WHERE canvas_id = $1 AND ($2::text IS NULL OR status = $2::text)
+SELECT id, canvas_id, chat_id, run_id, agent_id, base_seq, summary, ops, status, decisions, result_seq, created_at, resolved_at, turn_id FROM design_proposals
+WHERE canvas_id = $1 AND status <> 'draft' AND ($2::text IS NULL OR status = $2::text)
 ORDER BY created_at, id
 LIMIT 200
 `
@@ -368,7 +427,8 @@ type ListDesignProposalsParams struct {
 	Status   *string
 }
 
-// Oldest first, as the review shows them.
+// Oldest first, as the review shows them. Drafts are the persona's work in
+// progress, never shown.
 func (q *Queries) ListDesignProposals(ctx context.Context, arg ListDesignProposalsParams) ([]DesignProposal, error) {
 	rows, err := q.db.Query(ctx, listDesignProposals, arg.CanvasID, arg.Status)
 	if err != nil {
@@ -392,6 +452,7 @@ func (q *Queries) ListDesignProposals(ctx context.Context, arg ListDesignProposa
 			&i.ResultSeq,
 			&i.CreatedAt,
 			&i.ResolvedAt,
+			&i.TurnID,
 		); err != nil {
 			return nil, err
 		}
@@ -517,8 +578,34 @@ func (q *Queries) ListUserDesigns(ctx context.Context, arg ListUserDesignsParams
 	return items, nil
 }
 
+const lockDesignDraft = `-- name: LockDesignDraft :one
+SELECT id, canvas_id, chat_id, run_id, agent_id, base_seq, summary, ops, status, decisions, result_seq, created_at, resolved_at, turn_id FROM design_proposals WHERE id = $1 AND status = 'draft' FOR UPDATE
+`
+
+func (q *Queries) LockDesignDraft(ctx context.Context, id uuid.UUID) (DesignProposal, error) {
+	row := q.db.QueryRow(ctx, lockDesignDraft, id)
+	var i DesignProposal
+	err := row.Scan(
+		&i.ID,
+		&i.CanvasID,
+		&i.ChatID,
+		&i.RunID,
+		&i.AgentID,
+		&i.BaseSeq,
+		&i.Summary,
+		&i.Ops,
+		&i.Status,
+		&i.Decisions,
+		&i.ResultSeq,
+		&i.CreatedAt,
+		&i.ResolvedAt,
+		&i.TurnID,
+	)
+	return i, err
+}
+
 const lockDesignProposal = `-- name: LockDesignProposal :one
-SELECT id, canvas_id, chat_id, run_id, agent_id, base_seq, summary, ops, status, decisions, result_seq, created_at, resolved_at FROM design_proposals WHERE id = $1 AND canvas_id = $2 FOR UPDATE
+SELECT id, canvas_id, chat_id, run_id, agent_id, base_seq, summary, ops, status, decisions, result_seq, created_at, resolved_at, turn_id FROM design_proposals WHERE id = $1 AND canvas_id = $2 FOR UPDATE
 `
 
 type LockDesignProposalParams struct {
@@ -543,13 +630,56 @@ func (q *Queries) LockDesignProposal(ctx context.Context, arg LockDesignProposal
 		&i.ResultSeq,
 		&i.CreatedAt,
 		&i.ResolvedAt,
+		&i.TurnID,
+	)
+	return i, err
+}
+
+const publishDesignDraft = `-- name: PublishDesignDraft :one
+UPDATE design_proposals SET status = $1, ops = $2, base_seq = $3, result_seq = $4,
+  resolved_at = CASE WHEN $1::text = 'applied' THEN now() ELSE NULL END
+WHERE id = $5 AND status = 'draft' RETURNING id, canvas_id, chat_id, run_id, agent_id, base_seq, summary, ops, status, decisions, result_seq, created_at, resolved_at, turn_id
+`
+
+type PublishDesignDraftParams struct {
+	Status    string
+	Ops       json.RawMessage
+	BaseSeq   int32
+	ResultSeq *int32
+	ID        uuid.UUID
+}
+
+func (q *Queries) PublishDesignDraft(ctx context.Context, arg PublishDesignDraftParams) (DesignProposal, error) {
+	row := q.db.QueryRow(ctx, publishDesignDraft,
+		arg.Status,
+		arg.Ops,
+		arg.BaseSeq,
+		arg.ResultSeq,
+		arg.ID,
+	)
+	var i DesignProposal
+	err := row.Scan(
+		&i.ID,
+		&i.CanvasID,
+		&i.ChatID,
+		&i.RunID,
+		&i.AgentID,
+		&i.BaseSeq,
+		&i.Summary,
+		&i.Ops,
+		&i.Status,
+		&i.Decisions,
+		&i.ResultSeq,
+		&i.CreatedAt,
+		&i.ResolvedAt,
+		&i.TurnID,
 	)
 	return i, err
 }
 
 const resolveDesignProposal = `-- name: ResolveDesignProposal :one
 UPDATE design_proposals SET status = 'resolved', decisions = $1, result_seq = $2, resolved_at = now()
-WHERE id = $3 RETURNING id, canvas_id, chat_id, run_id, agent_id, base_seq, summary, ops, status, decisions, result_seq, created_at, resolved_at
+WHERE id = $3 RETURNING id, canvas_id, chat_id, run_id, agent_id, base_seq, summary, ops, status, decisions, result_seq, created_at, resolved_at, turn_id
 `
 
 type ResolveDesignProposalParams struct {
@@ -575,6 +705,91 @@ func (q *Queries) ResolveDesignProposal(ctx context.Context, arg ResolveDesignPr
 		&i.ResultSeq,
 		&i.CreatedAt,
 		&i.ResolvedAt,
+		&i.TurnID,
+	)
+	return i, err
+}
+
+const settledDesignDrafts = `-- name: SettledDesignDrafts :many
+SELECT p.id, p.canvas_id, p.chat_id, p.run_id, p.agent_id, p.base_seq, p.summary, p.ops, p.status, p.decisions, p.result_seq, p.created_at, p.resolved_at, p.turn_id FROM design_proposals p
+LEFT JOIN run_turns t ON t.id = p.turn_id
+WHERE p.status = 'draft'
+  AND ($1::uuid IS NULL OR p.canvas_id = $1::uuid)
+  AND ($2::uuid IS NULL OR p.turn_id = $2::uuid)
+  AND (t.id IS NULL OR t.status <> 'running')
+ORDER BY p.created_at, p.id
+`
+
+type SettledDesignDraftsParams struct {
+	CanvasID *uuid.UUID
+	TurnID   *uuid.UUID
+}
+
+// Drafts whose turn has ended (or is gone), on one design or from one turn,
+// oldest first: they are ready to publish.
+func (q *Queries) SettledDesignDrafts(ctx context.Context, arg SettledDesignDraftsParams) ([]DesignProposal, error) {
+	rows, err := q.db.Query(ctx, settledDesignDrafts, arg.CanvasID, arg.TurnID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DesignProposal{}
+	for rows.Next() {
+		var i DesignProposal
+		if err := rows.Scan(
+			&i.ID,
+			&i.CanvasID,
+			&i.ChatID,
+			&i.RunID,
+			&i.AgentID,
+			&i.BaseSeq,
+			&i.Summary,
+			&i.Ops,
+			&i.Status,
+			&i.Decisions,
+			&i.ResultSeq,
+			&i.CreatedAt,
+			&i.ResolvedAt,
+			&i.TurnID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const updateDesignDraft = `-- name: UpdateDesignDraft :one
+UPDATE design_proposals SET ops = $1, summary = $2 WHERE id = $3 AND status = 'draft' RETURNING id, canvas_id, chat_id, run_id, agent_id, base_seq, summary, ops, status, decisions, result_seq, created_at, resolved_at, turn_id
+`
+
+type UpdateDesignDraftParams struct {
+	Ops     json.RawMessage
+	Summary string
+	ID      uuid.UUID
+}
+
+func (q *Queries) UpdateDesignDraft(ctx context.Context, arg UpdateDesignDraftParams) (DesignProposal, error) {
+	row := q.db.QueryRow(ctx, updateDesignDraft, arg.Ops, arg.Summary, arg.ID)
+	var i DesignProposal
+	err := row.Scan(
+		&i.ID,
+		&i.CanvasID,
+		&i.ChatID,
+		&i.RunID,
+		&i.AgentID,
+		&i.BaseSeq,
+		&i.Summary,
+		&i.Ops,
+		&i.Status,
+		&i.Decisions,
+		&i.ResultSeq,
+		&i.CreatedAt,
+		&i.ResolvedAt,
+		&i.TurnID,
 	)
 	return i, err
 }

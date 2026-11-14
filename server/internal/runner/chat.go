@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/liamphmurphy/vesper/server/internal/agentdef"
 	"github.com/liamphmurphy/vesper/server/internal/auth"
+	"github.com/liamphmurphy/vesper/server/internal/designs"
 	"github.com/liamphmurphy/vesper/server/internal/harness"
 	"github.com/liamphmurphy/vesper/server/internal/personas"
 	"github.com/liamphmurphy/vesper/server/internal/repositories"
@@ -482,6 +483,11 @@ func (r *Runner) finishChatTurn(ctx context.Context, c runCtx, turn store.RunTur
 	}
 	if err != nil && ctx.Err() == nil {
 		r.failChat(ctx, c, "The reply could not be saved. Send another message to retry.")
+	}
+	// What the turn drafted on designs becomes the person's to see now. Best
+	// effort: opening the design publishes whatever this misses.
+	if err := (&designs.Service{Pool: r.Pool}).PublishSettled(context.WithoutCancel(ctx), nil, &turn.ID); err != nil {
+		r.Log.Error("publish design drafts", "run", c.run.ID, "turn", turn.ID, "err", err)
 	}
 	switch {
 	case len(imgs) == 0:

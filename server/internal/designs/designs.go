@@ -38,12 +38,12 @@ const SpaceInstructions = `This chat belongs to one design in the person's Desig
 
 How to work on it:
 - Outline first: call design_outline to see the pages and nodes, then design_read the nodes you will change before you touch them. Never guess ids.
-- Change it with design_patch, against the version you read. Your changes arrive as suggestions the person accepts or rejects one by one, unless they let you edit directly; after a patch, say in a sentence what you suggested and wait for their review. Don't patch the same thing again while it is pending.
+- Change it with design_patch, against the version you read. While you answer, your patches build a draft only you see (design_read, design_outline and design_render show it), so finish the work before you reply. When your reply ends the person gets the result as one suggestion of the net changes, which they accept or reject, unless they let you edit directly. Say in a sentence what you changed. Don't patch the same thing again while a suggestion is pending.
 - Use the design's tokens ("$name"), not hex, for colours; design_read shows each token's value. Use auto layout (auto_layout, hug and fill sizing) for UI, not hand-placed coordinates.
 - Give every op a specific why, for example "Make the button stand out" rather than "Update button". The person reads it in the review.
 - Never paste the design's JSON into the chat. Refer to nodes by name.
 - For a diagram (a flow, states, an architecture), write it as a Mermaid flowchart and design_import it rather than placing shapes and connectors op by op; add notes with add_sticky.
-- After a large patch has been accepted, design_render the frame to check your work.
+- design_render a frame to check your work before you reply.
 - When the person says "this" or "these", they mean the nodes selected in their editor, which arrive with their message. If a message tells you what they rejected and why, take it on board and don't suggest it again.
 - Comments on nodes are in design_comments; answer them with design_reply (addressed once done), or flag something yourself with design_comment.
 Keep replies short.`
@@ -136,8 +136,11 @@ func (s *Service) Create(ctx context.Context, ws, user uuid.UUID, title, starter
 // CreateInChat starts a design from a starter in an existing chat: a persona's
 // design_create, so the design opens beside the conversation that asked for
 // it and the persona's design tools reach it there. project is a project key
-// ("" keeps the chat's own project).
-func (s *Service) CreateInChat(ctx context.Context, ws uuid.UUID, chat store.ChatSession, title, starter, project string, by canvas.Actor) (store.ChatCanvas, store.ChatCanvasVersion, error) {
+// ("" keeps the chat's own project). In a turn (turn non-nil) the design
+// starts blank and the starter goes into the turn's draft, so its placeholder
+// frames are only ever the persona's scaffolding: the person sees what the
+// persona made of them when the turn ends.
+func (s *Service) CreateInChat(ctx context.Context, ws uuid.UUID, chat store.ChatSession, title, starter, project string, by canvas.Actor, runID, turn *uuid.UUID) (store.ChatCanvas, store.ChatCanvasVersion, error) {
 	title, err := CleanTitle(title)
 	if err != nil {
 		return store.ChatCanvas{}, store.ChatCanvasVersion{}, err
@@ -145,6 +148,17 @@ func (s *Service) CreateInChat(ctx context.Context, ws uuid.UUID, chat store.Cha
 	body, err := design.Starter(starter)
 	if err != nil {
 		return store.ChatCanvas{}, store.ChatCanvasVersion{}, err
+	}
+	var seed []design.Op
+	if turn != nil && starter != "" && starter != "blank" {
+		blank, err := design.Starter("blank")
+		if err != nil {
+			return store.ChatCanvas{}, store.ChatCanvasVersion{}, err
+		}
+		why := func(string) string { return "Start from the " + starter + " starter" }
+		if seed, err = design.Diff(blank, body, why); err == nil {
+			body, starter = blank, ""
+		}
 	}
 	q := store.New(s.Pool)
 	projectID := chat.ProjectID
@@ -167,7 +181,18 @@ func (s *Service) CreateInChat(ctx context.Context, ws uuid.UUID, chat store.Cha
 		return cv, v, err
 	}
 	if projectID != nil {
-		err = q.UpsertDesignSettings(ctx, store.UpsertDesignSettingsParams{CanvasID: cv.ID, ProjectID: projectID})
+		if err = q.UpsertDesignSettings(ctx, store.UpsertDesignSettingsParams{CanvasID: cv.ID, ProjectID: projectID}); err != nil {
+			return cv, v, err
+		}
+	}
+	if len(seed) > 0 {
+		raw, err := json.Marshal(seed)
+		if err != nil {
+			return cv, v, err
+		}
+		_, err = q.CreateDesignProposal(ctx, store.CreateDesignProposalParams{CanvasID: cv.ID, ChatID: &chat.ID, RunID: runID, TurnID: turn,
+			AgentID: by.ID, BaseSeq: v.Seq, Summary: "Draft " + title, Ops: raw, Status: StatusDraft})
+		return cv, v, err
 	}
 	return cv, v, err
 }
@@ -289,10 +314,13 @@ const (
 type Patch struct {
 	CanvasID, ChatID uuid.UUID
 	RunID            *uuid.UUID
-	AgentID          uuid.UUID
-	Base             int32
-	Summary          string
-	Ops              []design.Op
+	// TurnID is the chat turn the patch is part of: its ops join that turn's
+	// draft (drafts.go). Nil outside a turn, where a patch stands alone.
+	TurnID  *uuid.UUID
+	AgentID uuid.UUID
+	Base    int32
+	Summary string
+	Ops     []design.Op
 }
 
 // Proposed is what a patch became: a pending proposal, or (direct edit on)
@@ -304,11 +332,13 @@ type Proposed struct {
 	Nodes    []string
 }
 
-// Propose takes a persona's patch on a design. With direct edit off (the
-// default) it dry-runs the ops and holds them as a pending proposal, leaving
-// the design untouched; with it on, it applies them as a version by the
-// persona and records the proposal as applied. Either way the patch must be
-// against the current version (409 otherwise), and a paused design refuses it.
+// Propose takes a persona's patch on a design. During a chat turn it joins
+// the turn's draft, published when the turn ends (drafts.go). Outside one,
+// with direct edit off (the default) it dry-runs the ops and holds them as a
+// pending proposal, leaving the design untouched; with it on, it applies them
+// as a version by the persona and records the proposal as applied. Either way
+// the patch must be against the current version (409 otherwise), and a
+// paused design refuses it.
 func (s *Service) Propose(ctx context.Context, p Patch) (Proposed, error) {
 	var out Proposed
 	summary := strings.TrimSpace(p.Summary)
@@ -327,6 +357,12 @@ func (s *Service) Propose(ctx context.Context, p Patch) (Proposed, error) {
 	out.Nodes = design.Touches(p.Ops)
 	raw, err := json.Marshal(p.Ops)
 	if err != nil {
+		return out, err
+	}
+	if p.TurnID != nil {
+		nodes := out.Nodes
+		out, err = s.draft(ctx, p, summary, raw)
+		out.Nodes = nodes
 		return out, err
 	}
 	err = s.canvases().Locked(ctx, p.ChatID, p.CanvasID, func(q *store.Queries, c store.ChatCanvas, cur store.ChatCanvasVersion) error {

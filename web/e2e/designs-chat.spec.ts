@@ -301,9 +301,9 @@ test("Review on the Design card reviews the suggestion in the dock, survives a r
   await expect(page).toHaveURL(/\/chat\//);
 });
 
-// Suggestions only change the design once reviewed, so outside review the canvas draws them as
-// ghosts: otherwise the persona's work is invisible while it builds and its cursor points at nothing.
-test("pending suggestions show as ghosts on the canvas until the review opens", async ({ page }) => {
+// The person sees a persona's finished result, not its work: outside review the canvas is the
+// design as it is, with no faded preview of the suggestion; the review is where it shows.
+test("a pending suggestion draws nothing on the canvas until the review opens", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const s = await install(page);
   s.pending = 1;
@@ -331,18 +331,15 @@ test("pending suggestions show as ghosts on the canvas until the review opens", 
   await box(page).press("Enter");
 
   const panel = page.getByTestId("design-panel");
-  const ghosts = panel.getByTestId("suggestion-ghosts");
-  await expect(ghosts).toBeAttached();
-  await expect(ghosts.locator('[data-ghost="n_receipt"]')).toHaveCount(1);
-  await expect(ghosts.locator("[data-ghost-wires]")).toHaveCount(1);
-  await expect(ghosts.locator('[data-ghost-kind="changed"]')).toHaveCount(1);
-  // The ghost is a picture, not a layer: the working copy's layers don't gain it.
+  await expect(panel.getByTestId("design-canvas")).toBeVisible();
+  await expect(panel.getByTestId("suggestion-ghosts")).toHaveCount(0);
+  await expect(panel.getByTestId("review-overlay")).toHaveCount(0);
   await expect(panel.getByRole("treeitem", { name: "Receipt", exact: true })).toHaveCount(0);
 
-  // Review takes over with its own diff; the ghosts step aside.
+  // The review shows it, pinned on the canvas.
   await page.getByTestId("design-chat-card").first().getByRole("button", { name: "Review", exact: true }).click();
-  await expect(panel.getByTestId("review-pill")).toBeVisible();
-  await expect(panel.getByTestId("suggestion-ghosts")).toHaveCount(0);
+  await expect(panel.getByTestId("review-pill")).toContainText("3 changes");
+  await expect(panel.getByTestId("review-overlay").locator('[data-pin="1"][data-kind="added"]')).toHaveCount(1);
 });
 
 // One bar: what waits on a design sits on the editor's bar beside its save state, not as a card

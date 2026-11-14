@@ -5,7 +5,7 @@
 // needs the op that creates what it points at). Pure: unit-tested in
 // lib/designs-review.test.mjs.
 import { find, insertNodes, kids, labelOf, mapNode, mapPage, plainText, removeNodes, withPlainText, type Box } from "./edit.ts";
-import { makeLayout, type LaidPage } from "./layout.ts";
+import { makeLayout } from "./layout.ts";
 import type { Design, DesignNode, Page } from "./schema.ts";
 import { normalize } from "./schema.ts";
 import { settle } from "./layout.ts";
@@ -65,7 +65,7 @@ export function creates(op: DesignOp): string[] {
   return out;
 }
 
-const REF_KEYS = ["id", "parent", "after", "page", "from", "to", "component", "node"];
+const REF_KEYS = ["id", "parent", "after", "before", "page", "from", "to", "component", "node"];
 
 /** For each op, the earlier ops that create something it points at: accepting it needs them. */
 export function dependencies(ops: DesignOp[]): number[][] {
@@ -135,10 +135,11 @@ function pageOf(d: Design, id: string): Page | undefined {
   return d.pages.find((p) => p.id === id);
 }
 
-function insertAt(d: Design, parent: string, node: DesignNode, after?: string): Design {
+/** Inserts node under parent after the sibling after, before the sibling before, or on top. */
+function insertAt(d: Design, parent: string, node: DesignNode, after?: string, before?: string): Design {
   const list = pageOf(d, parent)?.children ?? kids(find(d, parent)?.node ?? ({ children: [] } as unknown as DesignNode));
-  const at = after ? list.findIndex((n) => n.id === after) + 1 : undefined;
-  return insertNodes(d, parent, [node], at === 0 ? undefined : at);
+  const at = after ? list.findIndex((n) => n.id === after) + 1 : before ? list.findIndex((n) => n.id === before) : undefined;
+  return insertNodes(d, parent, [node], at === undefined || at < 0 || (after && at === 0) ? undefined : at);
 }
 
 /** One op on a design; undefined when it no longer applies (its target is gone, a field is unknown). */
@@ -167,7 +168,7 @@ export function applyOp(d: Design, op: DesignOp): Design | undefined {
       return pageOf(d, id) && d.pages.length > 1 ? { ...d, pages: d.pages.filter((p) => p.id !== id) } : undefined;
     case "add_node": {
       const node = obj(op.node);
-      return node && (pageOf(d, str(op.parent)) || find(d, str(op.parent))) ? insertAt(d, str(op.parent), node as unknown as DesignNode, str(op.after) || undefined) : undefined;
+      return node && (pageOf(d, str(op.parent)) || find(d, str(op.parent))) ? insertAt(d, str(op.parent), node as unknown as DesignNode, str(op.after) || undefined, str(op.before) || undefined) : undefined;
     }
     case "set_node": {
       const fields = obj(op.fields);
@@ -185,13 +186,15 @@ export function applyOp(d: Design, op: DesignOp): Design | undefined {
       const f = find(d, id);
       if (!f) return undefined;
       let out = mapNode(d, id, (n) => ({ ...n, ...("x" in op ? { x: op.x } : {}), ...("y" in op ? { y: op.y } : {}) }) as DesignNode);
-      const parent = str(op.parent), after = str(op.after);
-      if (parent || after) {
-        const target = parent || find(out, after)?.parent?.id || find(out, after)?.page.id;
+      const parent = str(op.parent), after = str(op.after), before = str(op.before);
+      const sibling = after || before;
+      if (parent || sibling) {
+        const target = parent || find(out, sibling)?.parent?.id || find(out, sibling)?.page.id;
         const node = find(out, id)!.node;
         if (!target) return undefined;
+        if (sibling === id) return out;
         out = removeNodes(out, new Set([id]));
-        out = insertAt(out, target, node, after || undefined);
+        out = insertAt(out, target, node, after || undefined, before || undefined);
       }
       return out;
     }
@@ -357,44 +360,6 @@ export function classify(before: Design, ops: DesignOp[], needs: number[][] = de
     const page = where?.page ?? (target ? (pageOf(before, target)?.id ?? find(before, target)?.page.id) : undefined) ?? (op.op === "add_sticky" ? str(op.page) : undefined);
     return { i, op, kind, title, why: str(op.why), target, page, box: where?.box, needs: needs[i] ?? [] };
   });
-}
-
-// ---- Pending suggestions as ghosts on the working copy ----
-
-/** One added layer of a pending suggestion: where it lands, in page coordinates. */
-export type GhostBox = { target: string; page: string; box: Box };
-
-export type Ghosts = {
-  /** The working copy with every pending suggestion applied, oldest first: what Accept all would make. */
-  after: Design;
-  /** Every op of every suggestion, classified against the working copy. */
-  changes: Change[];
-  /** The layers the suggestions add that have a box (connectors have none: see newConnectorOps). */
-  added: GhostBox[];
-};
-
-/**
- * What the persona has suggested so far, drawn on the canvas while the person
- * keeps editing: suggestions only change the design once reviewed, so without
- * this the canvas shows none of the persona's work until Review is opened.
- * Undefined with nothing pending.
- */
-export function pendingGhosts(draft: Design, proposals: { ops: unknown[] }[]): Ghosts | undefined {
-  const ops = proposals.flatMap((p) => p.ops as DesignOp[]);
-  if (!ops.length) return undefined;
-  const changes = classify(draft, ops);
-  const added = changes.flatMap((c) => (c.kind === "added" && c.target && c.box && c.page ? [{ target: c.target, page: c.page, box: c.box }] : []));
-  return { after: preview(applyOps(draft, ops)), changes, added };
-}
-
-/**
- * A page's connector drawing ops that the suggested page has and the current one
- * doesn't: new connectors, and existing ones the suggestion reroutes. A connector
- * has no box to clip the ghost to, so the ghost layer draws these on their own.
- */
-export function newConnectorOps(now: LaidPage, after: LaidPage): LaidPage["connectors"] {
-  const have = new Set(now.connectors.map((o) => JSON.stringify(o)));
-  return after.connectors.filter((o) => !have.has(JSON.stringify(o)));
 }
 
 // ---- A version that arrives from elsewhere (a persona's direct edit, an accepted suggestion) ----

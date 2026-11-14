@@ -3,7 +3,7 @@
 import { useRecordVisit } from "@/components/shell/use-record-visit";
 import { useRouter, useSearchParams } from "next/navigation";
 import { DropdownMenu, Popover } from "radix-ui";
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "@/lib/api/client";
 import { fetchDesign, fetchDesignVersion, uploadDesignAsset, useDesign, useDesignProposals, useDesignSettings, useDesignVersion, useDuplicateDesign, useRenameDesign, useResolveProposal, useSaveDesign } from "@/lib/api/designs-hooks";
 import { provideChatRefs, useChat, useChatRunEvents, useSendChatMessage } from "@/lib/api/hooks";
@@ -15,7 +15,7 @@ import { duplicateNodes, find, groupNodes, inAutoLayout, insertNodes, labelOf, m
 import { makeLayout, settle, type LaidNode, type LaidPage } from "@/lib/designs/layout";
 import { mergeDesigns } from "@/lib/designs/merge";
 import { presenceOf } from "@/lib/designs/presence";
-import { adoptVersion, pendingGhosts, type Change } from "@/lib/designs/review";
+import { adoptVersion, type Change } from "@/lib/designs/review";
 import { designAssetHref, useDesignFonts } from "@/lib/designs/render";
 import { DesignError, normalize, type Design, type DesignNode, type ImageNode } from "@/lib/designs/schema";
 import { Button } from "@/components/ui/button";
@@ -28,9 +28,8 @@ import { tokensChanged } from "@/lib/designs/tokens";
 import { PersonaAvatar, personaLook } from "@/app/(app)/chat/_components/persona";
 import { Conversation } from "@/app/(app)/chat/_components/conversation";
 import { DesignCanvas, fitCamera, zoomAt, type Camera, type Tool } from "./design-canvas";
-import { GhostLayer, ReviewOverlay, ReviewPanel, ReviewPill, stepChange, suggestionPages, useReview, type ReviewMode } from "./design-review";
+import { ReviewOverlay, ReviewPanel, ReviewPill, stepChange, suggestionPages, useReview, type ReviewMode } from "./design-review";
 import { ExportMenu } from "./export-menu";
-import { PresenceLayer } from "./presence-layer";
 import { Inspector } from "./inspector";
 import { PrototypePanel } from "./prototype-panel";
 import { InspectPanel, TokensSyncBadge } from "./library-panels";
@@ -374,11 +373,6 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
   const [editing, setEditing] = useState<string>();
   const [tool, setTool] = useState<Tool>("select");
   const { laid, lay } = useLaidPage(shown, page?.id);
-  // Outside review, what the persona has suggested so far is drawn faded over the working copy. Deferred: a drag
-  // re-lays the whole suggested design, which mustn't hold up the drag's own frames.
-  const ghostBase = useDeferredValue(design);
-  const ghosts = useMemo(() => (!reviewing && ghostBase && proposals?.length ? pendingGhosts(ghostBase, proposals) : undefined), [reviewing, ghostBase, proposals]);
-  const ghostLaid = useLaidPage(ghosts?.after, page?.id).laid;
   // Ids that left the page (undo, another page) drop out of the selection.
   const selected = useMemo(() => (laid ? selectedRaw.filter((s) => laid.boxes.has(s)) : []), [selectedRaw, laid]);
   const [camera, setCameraState] = useState<Camera | null>(null);
@@ -603,34 +597,12 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
     });
   }, [chatId, id]);
 
-  // ---- Presence: the persona's running turn names the canvas and nodes it is working on.
+  // ---- Presence: whether the persona's running turn is working on this design. Its work stays in its own
+  // draft until the turn ends (the server publishes the net result then), so there is nothing to draw meanwhile.
   const running = chat?.state === "running";
   const events = useChatRunEvents(chat?.current_run_id, running && !!ref.data).data;
   const presence = useMemo(() => (running ? presenceOf(toolCalls(events), id, true) : undefined), [events, running, id]);
-  // The nodes it touched once they reach this tab, as ghosts while they wait for review; until then, where its
-  // input says it is working (the parent it adds to).
-  const presenceNodes = useMemo(() => {
-    if (!presence || !laid) return [];
-    const laidOut = (ids: string[]) => ids.flatMap((id) => {
-      const box = laid.boxes.get(id) ?? ghostLaid?.boxes.get(id);
-      return box ? [{ id, box }] : [];
-    });
-    const touched = laidOut(presence.nodes);
-    return touched.length ? touched : laidOut(presence.around);
-  }, [presence, laid, ghostLaid]);
-  const presenceBoxes = useMemo(() => presenceNodes.map((n) => n.box), [presenceNodes]);
-  const [follow, setFollow] = useState(false);
   const paused = !!ref.data?.settings?.persona_paused;
-  const presenceKey = presenceBoxes.map((b) => `${b.x},${b.y}`).join(";");
-  useEffect(() => {
-    if (!follow || !presenceBoxes.length || !viewport.known) return;
-    const x0 = Math.min(...presenceBoxes.map((b) => b.x)), y0 = Math.min(...presenceBoxes.map((b) => b.y));
-    const x1 = Math.max(...presenceBoxes.map((b) => b.x + b.w)), y1 = Math.max(...presenceBoxes.map((b) => b.y + b.h));
-    // Following means the camera tracks an external thing (the persona's turn).
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setCamera((c) => ({ ...c, x: viewport.w / 2 - ((x0 + x1) / 2) * c.z, y: viewport.h / 2 - ((y0 + y1) / 2) * c.z }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- follows when the nodes it names move
-  }, [follow, presenceKey, viewport.known]);
 
   // A change picked in the review: its page, and the camera moves there when it is off screen.
   const focusChange = (c: Change) => {
@@ -642,15 +614,15 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
     if (c.page === page?.id && sx >= 0 && sy >= 0 && sx + b.w * camera.z <= viewport.w && sy + b.h * camera.z <= viewport.h) return;
     setCamera((cam) => ({ ...cam, x: viewport.w / 2 - (b.x + b.w / 2) * cam.z, y: viewport.h / 2 - (b.y + b.h / 2) * cam.z }));
   };
-  /** Done: saves what is unsaved first, so the accepted ops land on it; the version that comes back merges into anything typed meanwhile. */
-  const finishReview = async () => {
-    if (!review?.body) return;
+  /** Done (or Accept / Reject all, with their body): saves what is unsaved first, so the accepted ops land on it; the version that comes back merges into anything typed meanwhile. */
+  const finishReview = async (body = review?.body) => {
+    if (!review || !body) return;
     setResolving(true);
     setResolveError(undefined);
     try {
       await flush();
       if (conflicted.current) throw new Error("Choose between your version and the latest first.");
-      await resolve.mutateAsync({ proposalId: review.proposal.id, decisions: review.body.decisions });
+      await resolve.mutateAsync({ proposalId: review.proposal.id, decisions: body.decisions });
       // The last suggestion ends the review, so a later one waits behind its chat card instead of taking over the dock.
       if ((proposals?.length ?? 0) <= 1) setReviewing(false);
       setSelected([]);
@@ -793,10 +765,9 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
       <Button variant="ghost" className="h-[22px] px-1.5 text-12" aria-label="Dismiss" onClick={() => setArrival(undefined)}>✕</Button>
     </div>
   ) : presence ? (
-    <div role="status" data-testid="persona-chip" className="pointer-events-auto flex items-center gap-2 self-start rounded-full border border-[#3FC1B0] bg-surface-raised py-1 pl-1 pr-2 text-13 text-fg shadow-[var(--shadow-float)]">
-      <span aria-hidden className="grid size-5 place-items-center rounded-full bg-[#3FC1B024] text-10 font-bold text-[#3FC1B0]">{persona.slice(0, 1).toUpperCase()}</span>
-      {persona} is editing
-      <Button variant="ghost" className="h-[22px] px-1.5 text-12" aria-pressed={follow} onClick={() => setFollow((f) => !f)}>Follow</Button>
+    <div role="status" data-testid="persona-chip" className="pointer-events-auto flex items-center gap-2 self-start rounded-full border border-border-float bg-surface-raised py-1 pl-1 pr-2 text-13 text-fg shadow-[var(--shadow-float)]">
+      <PersonaAvatar persona={look} size={20} />
+      {persona} is drafting changes…
       <Button variant="ghost" className="h-[22px] px-1.5 text-12" disabled={settings.isPending} onClick={() => settings.mutate({ persona_paused: true })}>Pause</Button>
     </div>
   ) : null;
@@ -832,9 +803,7 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
         onViewport={(w, h) => setViewport({ w, h, known: true })}
         wires={tab === "Prototype"}
       />
-      {ghosts && ghostLaid && laid && <GhostLayer ghosts={ghosts} now={laid} laid={ghostLaid} page={page.id} camera={camera ?? HIDDEN_CAMERA} assetUrl={assetUrl} />}
       {reviewing && review && <ReviewOverlay review={review} mode={mode} page={page.id} camera={camera ?? HIDDEN_CAMERA} />}
-      {presence && <PresenceLayer name={persona} nodes={presenceNodes} camera={camera ?? HIDDEN_CAMERA} busy={presence.busy} />}
       {/* Tools centred, zoom on the right: on a narrow canvas the 1fr sides give way and the tools slide left of the zoom instead of under it. */}
       <div className="pointer-events-none absolute inset-x-4 bottom-4 z-10 grid grid-cols-[1fr_auto_1fr] items-end gap-2">
         <div role="toolbar" aria-label="Tools" className="pointer-events-auto col-start-2 flex items-center gap-0.5 rounded-xl border border-border-float bg-surface-raised p-1 shadow-[var(--shadow-float)]">
@@ -912,7 +881,7 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
             {/* The same review as in Designs (docs/design/designs-review.svg): the canvas with its pill, the changes beside it. */}
             {reviewing && review && shown && (
               <aside aria-label="Changes" data-testid="beside-review" className="flex min-h-0 flex-none flex-col border-border-subtle bg-surface max-md:max-h-[50%] max-md:border-t md:w-[304px] md:border-l">
-                <ReviewPanel review={review} design={shown} chatId={chatId} canvasId={id} seq={doc?.saved.seq ?? 0} persona={persona} error={resolveError} busy={resolving} onFocus={focusChange} onDone={() => void finishReview()} />
+                <ReviewPanel review={review} design={shown} chatId={chatId} canvasId={id} seq={doc?.saved.seq ?? 0} persona={persona} error={resolveError} busy={resolving} onFocus={focusChange} onDone={(body) => void finishReview(body)} />
               </aside>
             )}
           </div>
@@ -1057,7 +1026,7 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
       badge: <span className="rounded-full bg-pill-review-bg px-1.5 text-11 text-pill-review-fg">{proposalCount}</span>,
       content:
         reviewing && review && shown ? (
-          <ReviewPanel review={review} design={shown} chatId={chatId} canvasId={id} seq={doc?.saved.seq ?? 0} persona={persona} error={resolveError} busy={resolving} onFocus={focusChange} onDone={() => void finishReview()} />
+          <ReviewPanel review={review} design={shown} chatId={chatId} canvasId={id} seq={doc?.saved.seq ?? 0} persona={persona} error={resolveError} busy={resolving} onFocus={focusChange} onDone={(body) => void finishReview(body)} />
         ) : (
           <div className="flex flex-col items-start gap-3 p-4 text-13 text-fg-secondary">
             <p>{persona} suggested {suggestions}. Nothing changes until you accept.</p>

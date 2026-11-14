@@ -195,7 +195,7 @@ func TestDesignDeletePreservesSharedChat(t *testing.T) {
 			} else {
 				chat, err = e.runs.StartChat(ctx, e.me.WorkspaceID, e.me.ID, runs.ChatInput{Title: "Longstanding conversation"})
 				if err == nil {
-					first, _, err = e.svc().CreateInChat(ctx, e.me.WorkspaceID, chat, "First", "", "", canvas.Actor{Type: "user", ID: e.me.ID})
+					first, _, err = e.svc().CreateInChat(ctx, e.me.WorkspaceID, chat, "First", "", "", canvas.Actor{Type: "user", ID: e.me.ID}, nil, nil)
 				}
 			}
 			if err != nil {
@@ -204,7 +204,7 @@ func TestDesignDeletePreservesSharedChat(t *testing.T) {
 			if _, err := e.pool.Exec(ctx, `INSERT INTO chat_messages (session_id, seq, role, body_md) VALUES ($1, 1, 'user', 'Keep this conversation')`, chat.ID); err != nil {
 				t.Fatal(err)
 			}
-			second, _, err := e.svc().CreateInChat(ctx, e.me.WorkspaceID, chat, "Second", "", "", canvas.Actor{Type: "user", ID: e.me.ID})
+			second, _, err := e.svc().CreateInChat(ctx, e.me.WorkspaceID, chat, "Second", "", "", canvas.Actor{Type: "user", ID: e.me.ID}, nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

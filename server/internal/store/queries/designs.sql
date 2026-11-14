@@ -70,17 +70,54 @@ DELETE FROM design_assets WHERE canvas_id = $1 AND id = $2;
 SELECT EXISTS (SELECT 1 FROM design_assets WHERE workspace_id = $1 AND user_id = $2 AND blob_key = $3);
 
 -- name: CreateDesignProposal :one
-INSERT INTO design_proposals (canvas_id, chat_id, run_id, agent_id, base_seq, summary, ops, status, result_seq, resolved_at)
-VALUES (@canvas_id, @chat_id, @run_id, @agent_id, @base_seq, @summary, @ops, @status, sqlc.narg(result_seq),
-  CASE WHEN @status::text = 'pending' THEN NULL ELSE now() END)
+INSERT INTO design_proposals (canvas_id, chat_id, run_id, turn_id, agent_id, base_seq, summary, ops, status, result_seq, resolved_at)
+VALUES (@canvas_id, @chat_id, @run_id, sqlc.narg(turn_id), @agent_id, @base_seq, @summary, @ops, @status, sqlc.narg(result_seq),
+  CASE WHEN @status::text IN ('pending', 'draft') THEN NULL ELSE now() END)
 RETURNING *;
 
 -- name: ListDesignProposals :many
--- Oldest first, as the review shows them.
+-- Oldest first, as the review shows them. Drafts are the persona's work in
+-- progress, never shown.
 SELECT * FROM design_proposals
-WHERE canvas_id = @canvas_id AND (sqlc.narg(status)::text IS NULL OR status = sqlc.narg(status)::text)
+WHERE canvas_id = @canvas_id AND status <> 'draft' AND (sqlc.narg(status)::text IS NULL OR status = sqlc.narg(status)::text)
 ORDER BY created_at, id
 LIMIT 200;
+
+-- name: GetDesignDraft :one
+-- The draft a turn is building on a design.
+SELECT * FROM design_proposals WHERE canvas_id = @canvas_id AND turn_id = @turn_id AND status = 'draft';
+
+-- name: LockDesignDraft :one
+SELECT * FROM design_proposals WHERE id = @id AND status = 'draft' FOR UPDATE;
+
+-- name: UpdateDesignDraft :one
+UPDATE design_proposals SET ops = @ops, summary = @summary WHERE id = @id AND status = 'draft' RETURNING *;
+
+-- name: SettledDesignDrafts :many
+-- Drafts whose turn has ended (or is gone), on one design or from one turn,
+-- oldest first: they are ready to publish.
+SELECT p.* FROM design_proposals p
+LEFT JOIN run_turns t ON t.id = p.turn_id
+WHERE p.status = 'draft'
+  AND (sqlc.narg(canvas_id)::uuid IS NULL OR p.canvas_id = sqlc.narg(canvas_id)::uuid)
+  AND (sqlc.narg(turn_id)::uuid IS NULL OR p.turn_id = sqlc.narg(turn_id)::uuid)
+  AND (t.id IS NULL OR t.status <> 'running')
+ORDER BY p.created_at, p.id;
+
+-- name: PublishDesignDraft :one
+UPDATE design_proposals SET status = @status, ops = @ops, base_seq = @base_seq, result_seq = sqlc.narg(result_seq),
+  resolved_at = CASE WHEN @status::text = 'applied' THEN now() ELSE NULL END
+WHERE id = @id AND status = 'draft' RETURNING *;
+
+-- name: DeleteDesignDraft :exec
+DELETE FROM design_proposals WHERE id = @id AND status = 'draft';
+
+-- name: DesignHasOnlyPersonaWork :one
+-- True while the person hasn't changed the design since it was made (version
+-- 1, blank or a starter, is scaffolding) or reviewed a suggestion on it: a
+-- persona's draft then has nothing of theirs to change.
+SELECT (NOT EXISTS (SELECT 1 FROM chat_canvas_versions v WHERE v.canvas_id = @canvas_id AND v.author_type = 'user' AND v.seq > 1)
+   AND NOT EXISTS (SELECT 1 FROM design_proposals p WHERE p.canvas_id = @canvas_id AND p.status IN ('pending', 'resolved')))::bool AS only_persona;
 
 -- name: LockDesignProposal :one
 SELECT * FROM design_proposals WHERE id = @id AND canvas_id = @canvas_id FOR UPDATE;
