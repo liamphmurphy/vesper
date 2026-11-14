@@ -563,6 +563,43 @@ type Criterion struct {
 	UpdatedAt time.Time
 }
 
+type CustomApp struct {
+	ID           uuid.UUID
+	WorkspaceID  uuid.UUID
+	UserID       uuid.UUID
+	Slug         string
+	Name         string
+	Description  string
+	Icon         string
+	SpaceID      *uuid.UUID
+	CurrentSeq   int32
+	Manifest     json.RawMessage
+	Capabilities json.RawMessage
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+type CustomAppDatabase struct {
+	AppID       uuid.UUID
+	SqliteBytes []byte
+	SizeBytes   int32
+	UpdatedAt   time.Time
+}
+
+type CustomAppVersion struct {
+	ID         uuid.UUID
+	AppID      uuid.UUID
+	Seq        int32
+	Note       string
+	AuthorType string
+	AgentID    *uuid.UUID
+	Manifest   json.RawMessage
+	Files      json.RawMessage
+	BundleJs   string
+	BundleCss  string
+	CreatedAt  time.Time
+}
+
 type DeckAsset struct {
 	CanvasID    uuid.UUID
 	ID          string

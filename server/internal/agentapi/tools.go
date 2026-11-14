@@ -20,6 +20,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/apperr"
 	"github.com/liamphmurphy/vesper/server/internal/artifacts"
 	"github.com/liamphmurphy/vesper/server/internal/connectors"
+	"github.com/liamphmurphy/vesper/server/internal/customapps"
 	"github.com/liamphmurphy/vesper/server/internal/designs"
 	"github.com/liamphmurphy/vesper/server/internal/pageview"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
@@ -37,6 +38,7 @@ type Deps struct {
 	Tracker    *tracker.Service
 	Wiki       *wiki.Service
 	Designs    *designs.Service
+	CustomApps *customapps.Service
 	// Files keeps a file in the person's Library (save_file); nil where there is no object store.
 	Files FileKeeper
 }
@@ -1305,6 +1307,12 @@ var Tools = []Tool{
 			}
 			return map[string]any{"state": "rechecking", "message": "End your turn; you'll be resumed with the result."}, nil
 		}),
+	define("list_custom_apps", "List the person's user-built Custom Apps (/apps/<slug>): slug, name, description, version, capabilities, tool_scope, and URL.", listCustomApps),
+	define("get_custom_app", "Read one Custom App's manifest, capabilities, source files (app.tsx, styles.css, schema.sql), version history, and SQLite table schema.", getCustomApp),
+	define("create_custom_app", "Create a persistent user-built Custom App at /apps/<slug> with its own SQLite database and React TSX + @vesper/bridge bundle (from a blank/tracker/ledger template or custom source files).", createCustomApp),
+	define("update_custom_app", "Update a Custom App's source files, manifest, metadata, or restore an earlier version. Recompiles TSX with React + @vesper/bridge and applies new schema.sql definitions.", updateCustomApp),
+	define("delete_custom_app", "Delete a Custom App and its embedded SQLite database permanently. Only when the person asks.", deleteCustomApp),
+	define("custom_app_sql", "Run a parameterized SQLite query against a Custom App's private database. Respects the app's tool_scope (chats vs app_only).", customAppSQL),
 }
 
 // ByName indexes Tools.

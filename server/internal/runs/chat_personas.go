@@ -95,6 +95,7 @@ func isWordRune(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) 
 var contextMarkers = []string{
 	"\n\n<!-- vesper:knowledge-context -->\n",
 	"\n\n<!-- vesper:work-context -->\n",
+	"\n\n<!-- vesper:custom-app-context -->\n",
 }
 
 func chatRequestText(body string) string {

@@ -15,8 +15,8 @@ import (
 )
 
 // dockScope names the place an app dock keeps chats for: a Knowledge page
-// (page:<uuid>) or an app's screens that aren't an item (app:<name>).
-var dockScope = regexp.MustCompile(`^(page:[0-9a-f-]{36}|app:[a-z][a-z0-9_-]{0,31})$`)
+// (page:<uuid>) or an app's screens that aren't an item (app:<name> or app:custom:<slug>).
+var dockScope = regexp.MustCompile(`^(page:[0-9a-f-]{36}|app:[a-z0-9][a-z0-9_:-]{0,63})$`)
 
 func validDockScope(scope string) error {
 	if !dockScope.MatchString(scope) {

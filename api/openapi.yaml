@@ -43,6 +43,7 @@ tags:
   - name: library
   - name: spaces
   - name: docs
+  - name: custom-apps
   - name: slides
     description: Slide decks in the Slides app
   - name: designs
@@ -5766,6 +5767,110 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ChatSession" }
         default: { $ref: "#/components/responses/Error" }
+  /custom-apps:
+    get:
+      tags: [custom-apps]
+      operationId: listCustomApps
+      summary: List user-built custom apps
+      responses:
+        "200":
+          description: Custom apps owned by the caller
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [apps]
+                properties:
+                  apps: { type: array, items: { $ref: "#/components/schemas/CustomAppSummary" } }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [custom-apps]
+      operationId: createCustomApp
+      summary: Create a custom app from a starter template or source files
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NewCustomApp" }
+      responses:
+        "201":
+          description: Created custom app
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomAppDetail" }
+        default: { $ref: "#/components/responses/Error" }
+  /custom-apps/{slug}:
+    parameters:
+      - { name: slug, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [custom-apps]
+      operationId: getCustomApp
+      summary: Get custom app details, current bundle, version history, and SQLite schema
+      responses:
+        "200":
+          description: Custom app detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomAppDetail" }
+        default: { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [custom-apps]
+      operationId: updateCustomApp
+      summary: Update custom app code, metadata, capabilities, or restore a previous version
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateCustomApp" }
+      responses:
+        "200":
+          description: Updated custom app detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomAppDetail" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [custom-apps]
+      operationId: deleteCustomApp
+      summary: Delete a custom app and its embedded SQLite database
+      responses:
+        "204": { description: Deleted }
+        default: { $ref: "#/components/responses/Error" }
+  /custom-apps/{slug}/versions/{seq}:
+    parameters:
+      - { name: slug, in: path, required: true, schema: { type: string } }
+      - { name: seq, in: path, required: true, schema: { type: integer } }
+    get:
+      tags: [custom-apps]
+      operationId: getCustomAppVersion
+      summary: Fetch a specific historical version of a custom app
+      responses:
+        "200":
+          description: Historical version
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomAppVersion" }
+        default: { $ref: "#/components/responses/Error" }
+  /custom-apps/{slug}/invoke:
+    parameters:
+      - { name: slug, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [custom-apps]
+      operationId: invokeCustomApp
+      summary: Execute a capability-gated SQL, Vesper REST API, or MCP connector action for a custom app
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CustomAppInvokeRequest" }
+      responses:
+        "200":
+          description: Action result or capability approval request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomAppInvokeResponse" }
+        "403": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
 
 components:
   parameters:
@@ -9820,3 +9925,138 @@ components:
         custom_instructions: { type: string, maxLength: 2000, description: Empty string clears them }
         capabilities: { $ref: "#/components/schemas/PersonaCapabilities" }
         repos: { type: array, maxItems: 10, items: { type: string, maxLength: 500 }, description: Replaces the whole list; existing chats keep their repo }
+    CustomAppNavItem:
+      type: object
+      required: [id, label]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        icon: { type: string }
+    CustomAppCapabilityMode:
+      type: string
+      enum: [allowed, requires_approval, denied]
+    CustomAppCapabilities:
+      type: object
+      additionalProperties: { $ref: "#/components/schemas/CustomAppCapabilityMode" }
+    CustomAppManifest:
+      type: object
+      required: [entry, tool_scope]
+      properties:
+        entry: { type: string }
+        tool_scope: { type: string, enum: [chats, app_only] }
+        instructions: { type: string }
+        nav: { type: array, items: { $ref: "#/components/schemas/CustomAppNavItem" } }
+        requested_capabilities: { $ref: "#/components/schemas/CustomAppCapabilities" }
+    CustomAppSummary:
+      type: object
+      required: [id, slug, name, description, icon, current_seq, manifest, capabilities, db_size_bytes, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        description: { type: string }
+        icon: { type: string }
+        space_id: { type: string, format: uuid, nullable: true }
+        current_seq: { type: integer }
+        manifest: { $ref: "#/components/schemas/CustomAppManifest" }
+        capabilities: { $ref: "#/components/schemas/CustomAppCapabilities" }
+        db_size_bytes: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CustomAppVersionSummary:
+      type: object
+      required: [seq, note, author_type, created_at]
+      properties:
+        seq: { type: integer }
+        note: { type: string }
+        author_type: { type: string, enum: [user, persona] }
+        agent_id: { type: string, format: uuid, nullable: true }
+        created_at: { type: string, format: date-time }
+    CustomAppVersion:
+      type: object
+      required: [seq, note, author_type, created_at, manifest, files, bundle_js, bundle_css]
+      properties:
+        seq: { type: integer }
+        note: { type: string }
+        author_type: { type: string, enum: [user, persona] }
+        agent_id: { type: string, format: uuid, nullable: true }
+        created_at: { type: string, format: date-time }
+        manifest: { $ref: "#/components/schemas/CustomAppManifest" }
+        files: { type: object, additionalProperties: { type: string } }
+        bundle_js: { type: string }
+        bundle_css: { type: string }
+    CustomAppSchemaObject:
+      type: object
+      required: [type, name, sql]
+      properties:
+        type: { type: string }
+        name: { type: string }
+        sql: { type: string }
+    CustomAppDetail:
+      type: object
+      required: [id, slug, name, description, icon, current_seq, manifest, capabilities, db_size_bytes, created_at, updated_at, current, versions, schema]
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        description: { type: string }
+        icon: { type: string }
+        space_id: { type: string, format: uuid, nullable: true }
+        current_seq: { type: integer }
+        manifest: { $ref: "#/components/schemas/CustomAppManifest" }
+        capabilities: { $ref: "#/components/schemas/CustomAppCapabilities" }
+        db_size_bytes: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        current: { $ref: "#/components/schemas/CustomAppVersion" }
+        versions: { type: array, items: { $ref: "#/components/schemas/CustomAppVersionSummary" } }
+        schema: { type: array, items: { $ref: "#/components/schemas/CustomAppSchemaObject" } }
+    NewCustomApp:
+      type: object
+      required: [slug, name]
+      properties:
+        slug: { type: string }
+        name: { type: string }
+        description: { type: string }
+        icon: { type: string }
+        template: { type: string, enum: [blank, tracker, ledger] }
+        manifest: { $ref: "#/components/schemas/CustomAppManifest" }
+        files: { type: object, additionalProperties: { type: string } }
+        capabilities: { $ref: "#/components/schemas/CustomAppCapabilities" }
+        note: { type: string }
+    UpdateCustomApp:
+      type: object
+      properties:
+        name: { type: string }
+        description: { type: string }
+        icon: { type: string }
+        manifest: { $ref: "#/components/schemas/CustomAppManifest" }
+        files: { type: object, additionalProperties: { type: string } }
+        replace_files: { type: boolean }
+        remove_files: { type: array, items: { type: string } }
+        capabilities: { $ref: "#/components/schemas/CustomAppCapabilities" }
+        note: { type: string }
+        restore_seq: { type: integer }
+    CustomAppInvokeRequest:
+      type: object
+      required: [kind]
+      properties:
+        kind: { type: string, enum: [sql, api, mcp] }
+        query: { type: string }
+        params: { type: array, items: {} }
+        method: { type: string }
+        path: { type: string }
+        body: {}
+        connector: { type: string }
+        tool: { type: string }
+        arguments: { type: object, additionalProperties: true }
+        approved: { type: boolean }
+        always_allow: { type: boolean }
+    CustomAppInvokeResponse:
+      type: object
+      required: [status, capability]
+      properties:
+        status: { type: string, enum: [ok, approval_required] }
+        capability: { type: string }
+        summary: { type: string }
+        result: {}

@@ -74,22 +74,16 @@ type Server struct {
 	// api.github.com when empty (tests point elsewhere).
 	GitHubAPIURL string
 
-	logins loginLimiter
+	logins  loginLimiter
+	apiOnce sync.Once
+	apiMux  http.Handler
 }
 
 var _ api.StrictServerInterface = (*Server)(nil)
 
-// Handler returns the root HTTP handler.
-func (s *Server) Handler() http.Handler {
-	if s.Log == nil {
-		s.Log = slog.Default()
-	}
-	mux := http.NewServeMux()
+func (s *Server) mountAPIRoutes(mux *http.ServeMux) {
 	s.knowledgeRoutes(mux)
 	s.dockChatRoutes(mux)
-	if s.Events != nil {
-		mux.Handle("GET /events", s.Events)
-	}
 	strict := api.NewStrictHandlerWithOptions(s, nil, api.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
 			writeError(w, http.StatusBadRequest, api.Invalid, err.Error(), "")
@@ -103,6 +97,27 @@ func (s *Server) Handler() http.Handler {
 			writeError(w, http.StatusBadRequest, api.Invalid, err.Error(), "")
 		},
 	})
+}
+
+func (s *Server) internalAPIHandler() http.Handler {
+	s.apiOnce.Do(func() {
+		mux := http.NewServeMux()
+		s.mountAPIRoutes(mux)
+		s.apiMux = mux
+	})
+	return s.apiMux
+}
+
+// Handler returns the root HTTP handler.
+func (s *Server) Handler() http.Handler {
+	if s.Log == nil {
+		s.Log = slog.Default()
+	}
+	mux := http.NewServeMux()
+	s.mountAPIRoutes(mux)
+	if s.Events != nil {
+		mux.Handle("GET /events", s.Events)
+	}
 	// Agent API (docs/dev/plan.md §5.2): bearer agent tokens, not the local user.
 	deps := s.agentDeps()
 	mux.Handle("/mcp", agentapi.MCPHandler(deps, s.Version, s.Log))
@@ -211,10 +226,10 @@ func (s *Server) GetHealth(ctx context.Context, _ api.GetHealthRequestObject) (a
 	}
 	wg.Wait()
 
-	h := api.Health{Status: api.Ok, Version: s.Version, Checks: checks}
+	h := api.Health{Status: api.HealthStatusOk, Version: s.Version, Checks: checks}
 	for _, c := range checks {
 		if !c.Ok {
-			h.Status = api.Degraded
+			h.Status = api.HealthStatusDegraded
 			return api.GetHealth503JSONResponse(h), nil
 		}
 	}

@@ -573,6 +573,17 @@ export function chatStatusOf(call: { tool: string; input: unknown }): ChatStatus
     case "list_workflows":
     case "read_workflow":
       return status("workflow", "looking over a workflow");
+    case "list_custom_apps":
+    case "get_custom_app":
+      return status("reading-code", "inspecting a custom app");
+    case "create_custom_app":
+      return status("writing-code", "creating a custom app");
+    case "update_custom_app":
+      return status("writing-code", "updating a custom app");
+    case "delete_custom_app":
+      return status("writing-code", "deleting a custom app");
+    case "custom_app_sql":
+      return status("playground", "querying app data");
     case "propose_workflow_edit":
       return status("workflow", "sketching a workflow");
     case "image_generation":
@@ -893,6 +904,18 @@ export function stepDetail(call: { tool: string; input: unknown }, names: Map<st
       return named("Sketching", o.name);
     case "create_space":
       return named("Setting up", o.name);
+    case "list_custom_apps":
+      return "Listing custom apps";
+    case "get_custom_app":
+      return named("Inspecting", o.slug);
+    case "create_custom_app":
+      return named("Creating app", o.name || o.slug);
+    case "update_custom_app":
+      return named("Updating app", o.slug, o.note);
+    case "delete_custom_app":
+      return named("Deleting app", o.slug);
+    case "custom_app_sql":
+      return o.slug ? `Querying ${clip(str(o.slug))}` : general;
     case "create_scheduled_task":
       return named("Scheduling", o.name);
     case "update_scheduled_task":

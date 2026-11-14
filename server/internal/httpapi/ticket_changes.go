@@ -16,7 +16,7 @@ import (
 // agentDeps is what the Agent API, and applying a persona's approved ticket
 // edit, run with.
 func (s *Server) agentDeps() agentapi.Deps {
-	return agentapi.Deps{Q: s.Q, Runs: s.Runs, Tracker: s.Tracker, Wiki: s.Wiki, Connectors: s.connectors(), Secrets: s.userSecrets(), Designs: s.designs(), Files: s}
+	return agentapi.Deps{Q: s.Q, Runs: s.Runs, Tracker: s.Tracker, Wiki: s.Wiki, Connectors: s.connectors(), Secrets: s.userSecrets(), Designs: s.designs(), CustomApps: s.customApps(), Files: s}
 }
 
 // ListTicketChangeRequests is the ticket edits a persona proposed in this

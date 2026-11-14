@@ -4771,6 +4771,84 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/custom-apps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List user-built custom apps */
+        get: operations["listCustomApps"];
+        put?: never;
+        /** Create a custom app from a starter template or source files */
+        post: operations["createCustomApp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/custom-apps/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        /** Get custom app details, current bundle, version history, and SQLite schema */
+        get: operations["getCustomApp"];
+        put?: never;
+        post?: never;
+        /** Delete a custom app and its embedded SQLite database */
+        delete: operations["deleteCustomApp"];
+        options?: never;
+        head?: never;
+        /** Update custom app code, metadata, capabilities, or restore a previous version */
+        patch: operations["updateCustomApp"];
+        trace?: never;
+    };
+    "/custom-apps/{slug}/versions/{seq}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                seq: number;
+            };
+            cookie?: never;
+        };
+        /** Fetch a specific historical version of a custom app */
+        get: operations["getCustomAppVersion"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/custom-apps/{slug}/invoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Execute a capability-gated SQL, Vesper REST API, or MCP connector action for a custom app */
+        post: operations["invokeCustomApp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -9199,6 +9277,145 @@ export interface components {
             capabilities?: components["schemas"]["PersonaCapabilities"];
             /** @description Replaces the whole list; existing chats keep their repo */
             repos?: string[];
+        };
+        CustomAppNavItem: {
+            id: string;
+            label: string;
+            icon?: string;
+        };
+        /** @enum {string} */
+        CustomAppCapabilityMode: "allowed" | "requires_approval" | "denied";
+        CustomAppCapabilities: {
+            [key: string]: components["schemas"]["CustomAppCapabilityMode"];
+        };
+        CustomAppManifest: {
+            entry: string;
+            /** @enum {string} */
+            tool_scope: "chats" | "app_only";
+            instructions?: string;
+            nav?: components["schemas"]["CustomAppNavItem"][];
+            requested_capabilities?: components["schemas"]["CustomAppCapabilities"];
+        };
+        CustomAppSummary: {
+            /** Format: uuid */
+            id: string;
+            slug: string;
+            name: string;
+            description: string;
+            icon: string;
+            /** Format: uuid */
+            space_id?: string | null;
+            current_seq: number;
+            manifest: components["schemas"]["CustomAppManifest"];
+            capabilities: components["schemas"]["CustomAppCapabilities"];
+            db_size_bytes: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        CustomAppVersionSummary: {
+            seq: number;
+            note: string;
+            /** @enum {string} */
+            author_type: "user" | "persona";
+            /** Format: uuid */
+            agent_id?: string | null;
+            /** Format: date-time */
+            created_at: string;
+        };
+        CustomAppVersion: {
+            seq: number;
+            note: string;
+            /** @enum {string} */
+            author_type: "user" | "persona";
+            /** Format: uuid */
+            agent_id?: string | null;
+            /** Format: date-time */
+            created_at: string;
+            manifest: components["schemas"]["CustomAppManifest"];
+            files: {
+                [key: string]: string;
+            };
+            bundle_js: string;
+            bundle_css: string;
+        };
+        CustomAppSchemaObject: {
+            type: string;
+            name: string;
+            sql: string;
+        };
+        CustomAppDetail: {
+            /** Format: uuid */
+            id: string;
+            slug: string;
+            name: string;
+            description: string;
+            icon: string;
+            /** Format: uuid */
+            space_id?: string | null;
+            current_seq: number;
+            manifest: components["schemas"]["CustomAppManifest"];
+            capabilities: components["schemas"]["CustomAppCapabilities"];
+            db_size_bytes: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            current: components["schemas"]["CustomAppVersion"];
+            versions: components["schemas"]["CustomAppVersionSummary"][];
+            schema: components["schemas"]["CustomAppSchemaObject"][];
+        };
+        NewCustomApp: {
+            slug: string;
+            name: string;
+            description?: string;
+            icon?: string;
+            /** @enum {string} */
+            template?: "blank" | "tracker" | "ledger";
+            manifest?: components["schemas"]["CustomAppManifest"];
+            files?: {
+                [key: string]: string;
+            };
+            capabilities?: components["schemas"]["CustomAppCapabilities"];
+            note?: string;
+        };
+        UpdateCustomApp: {
+            name?: string;
+            description?: string;
+            icon?: string;
+            manifest?: components["schemas"]["CustomAppManifest"];
+            files?: {
+                [key: string]: string;
+            };
+            replace_files?: boolean;
+            remove_files?: string[];
+            capabilities?: components["schemas"]["CustomAppCapabilities"];
+            note?: string;
+            restore_seq?: number;
+        };
+        CustomAppInvokeRequest: {
+            /** @enum {string} */
+            kind: "sql" | "api" | "mcp";
+            query?: string;
+            params?: unknown[];
+            method?: string;
+            path?: string;
+            body?: unknown;
+            connector?: string;
+            tool?: string;
+            arguments?: {
+                [key: string]: unknown;
+            };
+            approved?: boolean;
+            always_allow?: boolean;
+        };
+        CustomAppInvokeResponse: {
+            /** @enum {string} */
+            status: "ok" | "approval_required";
+            capability: string;
+            summary?: string;
+            result?: unknown;
         };
     };
     responses: {
@@ -17027,6 +17244,177 @@ export interface operations {
                     "application/json": components["schemas"]["ChatSession"];
                 };
             };
+            default: components["responses"]["Error"];
+        };
+    };
+    listCustomApps: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Custom apps owned by the caller */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        apps: components["schemas"]["CustomAppSummary"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createCustomApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewCustomApp"];
+            };
+        };
+        responses: {
+            /** @description Created custom app */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomAppDetail"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getCustomApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Custom app detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomAppDetail"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteCustomApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateCustomApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateCustomApp"];
+            };
+        };
+        responses: {
+            /** @description Updated custom app detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomAppDetail"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getCustomAppVersion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                seq: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Historical version */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomAppVersion"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    invokeCustomApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CustomAppInvokeRequest"];
+            };
+        };
+        responses: {
+            /** @description Action result or capability approval request */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomAppInvokeResponse"];
+                };
+            };
+            403: components["responses"]["Error"];
             default: components["responses"]["Error"];
         };
     };

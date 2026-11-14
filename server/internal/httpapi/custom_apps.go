@@ -1,0 +1,510 @@
+package httpapi
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"maps"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"path"
+	"strings"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/liamphmurphy/vesper/server/internal/agentdef"
+	"github.com/liamphmurphy/vesper/server/internal/api"
+	"github.com/liamphmurphy/vesper/server/internal/apperr"
+	"github.com/liamphmurphy/vesper/server/internal/auth"
+	"github.com/liamphmurphy/vesper/server/internal/customapps"
+	"github.com/liamphmurphy/vesper/server/internal/store"
+)
+
+func (s *Server) customApps() *customapps.Service {
+	return &customapps.Service{Pool: s.Pool}
+}
+
+func customAppManifestOut(m customapps.Manifest) api.CustomAppManifest {
+	out := api.CustomAppManifest{
+		Entry:     m.Entry,
+		ToolScope: api.CustomAppManifestToolScope(m.ToolScope),
+	}
+	if m.Instructions != "" {
+		ins := m.Instructions
+		out.Instructions = &ins
+	}
+	if len(m.Nav) > 0 {
+		nav := make([]api.CustomAppNavItem, len(m.Nav))
+		for i, n := range m.Nav {
+			nav[i] = api.CustomAppNavItem{Id: n.ID, Label: n.Label}
+			if n.Icon != "" {
+				ic := n.Icon
+				nav[i].Icon = &ic
+			}
+		}
+		out.Nav = &nav
+	}
+	if len(m.RequestedCapabilities) > 0 {
+		caps := customAppCapsOut(m.RequestedCapabilities)
+		out.RequestedCapabilities = &caps
+	}
+	return out
+}
+
+func customAppManifestIn(in *api.CustomAppManifest) *customapps.Manifest {
+	if in == nil {
+		return nil
+	}
+	m := &customapps.Manifest{
+		Entry:     in.Entry,
+		ToolScope: string(in.ToolScope),
+	}
+	if in.Instructions != nil {
+		m.Instructions = *in.Instructions
+	}
+	if in.Nav != nil {
+		m.Nav = make([]customapps.NavItem, len(*in.Nav))
+		for i, n := range *in.Nav {
+			m.Nav[i] = customapps.NavItem{ID: n.Id, Label: n.Label}
+			if n.Icon != nil {
+				m.Nav[i].Icon = *n.Icon
+			}
+		}
+	}
+	if in.RequestedCapabilities != nil {
+		m.RequestedCapabilities = customAppCapsIn(in.RequestedCapabilities)
+	}
+	return m
+}
+
+func customAppCapsOut(c customapps.Capabilities) api.CustomAppCapabilities {
+	out := make(api.CustomAppCapabilities, len(c))
+	for k, v := range c {
+		out[k] = api.CustomAppCapabilityMode(v)
+	}
+	return out
+}
+
+func customAppCapsIn(in *api.CustomAppCapabilities) customapps.Capabilities {
+	if in == nil {
+		return nil
+	}
+	out := make(customapps.Capabilities, len(*in))
+	for k, v := range *in {
+		out[k] = agentdef.Mode(v)
+	}
+	return out
+}
+
+func customAppSummaryOut(a customapps.AppSummary) api.CustomAppSummary {
+	return api.CustomAppSummary{
+		Id:           a.ID,
+		Slug:         a.Slug,
+		Name:         a.Name,
+		Description:  a.Description,
+		Icon:         a.Icon,
+		SpaceId:      nullUUID(a.SpaceID),
+		CurrentSeq:   int(a.CurrentSeq),
+		Manifest:     customAppManifestOut(a.Manifest),
+		Capabilities: customAppCapsOut(a.Capabilities),
+		DbSizeBytes:  int(a.DBSizeBytes),
+		CreatedAt:    a.CreatedAt,
+		UpdatedAt:    a.UpdatedAt,
+	}
+}
+
+func customAppVersionOut(v customapps.Version) api.CustomAppVersion {
+	files := make(map[string]string, len(v.Files))
+	maps.Copy(files, v.Files)
+	return api.CustomAppVersion{
+		Seq:        int(v.Seq),
+		Note:       v.Note,
+		AuthorType: api.CustomAppVersionAuthorType(v.AuthorType),
+		AgentId:    nullUUID(v.AgentID),
+		CreatedAt:  v.CreatedAt,
+		Manifest:   customAppManifestOut(v.Manifest),
+		Files:      files,
+		BundleJs:   v.BundleJS,
+		BundleCss:  v.BundleCSS,
+	}
+}
+
+func customAppDetailOut(d customapps.AppDetail) api.CustomAppDetail {
+	versions := make([]api.CustomAppVersionSummary, len(d.Versions))
+	for i, v := range d.Versions {
+		versions[i] = api.CustomAppVersionSummary{
+			Seq:        int(v.Seq),
+			Note:       v.Note,
+			AuthorType: api.CustomAppVersionSummaryAuthorType(v.AuthorType),
+			AgentId:    nullUUID(v.AgentID),
+			CreatedAt:  v.CreatedAt,
+		}
+	}
+	schema := make([]api.CustomAppSchemaObject, len(d.Schema))
+	for i, obj := range d.Schema {
+		schema[i] = api.CustomAppSchemaObject{Type: obj.Type, Name: obj.Name, Sql: obj.SQL}
+	}
+	return api.CustomAppDetail{
+		Id:           d.ID,
+		Slug:         d.Slug,
+		Name:         d.Name,
+		Description:  d.Description,
+		Icon:         d.Icon,
+		SpaceId:      nullUUID(d.SpaceID),
+		CurrentSeq:   int(d.CurrentSeq),
+		Manifest:     customAppManifestOut(d.Manifest),
+		Capabilities: customAppCapsOut(d.Capabilities),
+		DbSizeBytes:  int(d.DBSizeBytes),
+		CreatedAt:    d.CreatedAt,
+		UpdatedAt:    d.UpdatedAt,
+		Current:      customAppVersionOut(d.Current),
+		Versions:     versions,
+		Schema:       schema,
+	}
+}
+
+func (s *Server) ListCustomApps(ctx context.Context, _ api.ListCustomAppsRequestObject) (api.ListCustomAppsResponseObject, error) {
+	u, _, ws := me(ctx)
+	apps, err := s.customApps().List(ctx, ws, u.ID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]api.CustomAppSummary, len(apps))
+	for i, a := range apps {
+		out[i] = customAppSummaryOut(a)
+	}
+	return api.ListCustomApps200JSONResponse{Apps: out}, nil
+}
+
+func (s *Server) CreateCustomApp(ctx context.Context, req api.CreateCustomAppRequestObject) (api.CreateCustomAppResponseObject, error) {
+	u, _, ws := me(ctx)
+	b := req.Body
+	in := customapps.CreateInput{
+		Slug:         b.Slug,
+		Name:         b.Name,
+		Manifest:     customAppManifestIn(b.Manifest),
+		Capabilities: customAppCapsIn(b.Capabilities),
+		AuthorType:   "user",
+	}
+	if b.Description != nil {
+		in.Description = *b.Description
+	}
+	if b.Icon != nil {
+		in.Icon = *b.Icon
+	}
+	if b.Template != nil {
+		in.Template = string(*b.Template)
+	}
+	if b.Files != nil {
+		in.Files = *b.Files
+	}
+	if b.Note != nil {
+		in.Note = *b.Note
+	}
+	d, err := s.customApps().Create(ctx, ws, u.ID, in)
+	if err != nil {
+		return nil, err
+	}
+	return api.CreateCustomApp201JSONResponse(customAppDetailOut(d)), nil
+}
+
+func (s *Server) GetCustomApp(ctx context.Context, req api.GetCustomAppRequestObject) (api.GetCustomAppResponseObject, error) {
+	u, _, ws := me(ctx)
+	d, err := s.customApps().Get(ctx, ws, u.ID, req.Slug)
+	if err != nil {
+		return nil, err
+	}
+	return api.GetCustomApp200JSONResponse(customAppDetailOut(d)), nil
+}
+
+func (s *Server) UpdateCustomApp(ctx context.Context, req api.UpdateCustomAppRequestObject) (api.UpdateCustomAppResponseObject, error) {
+	u, _, ws := me(ctx)
+	b := req.Body
+	in := customapps.UpdateInput{
+		Name:         b.Name,
+		Description:  b.Description,
+		Icon:         b.Icon,
+		Manifest:     customAppManifestIn(b.Manifest),
+		Capabilities: customAppCapsIn(b.Capabilities),
+		AuthorType:   "user",
+	}
+	if b.Files != nil {
+		in.Files = *b.Files
+	}
+	if b.ReplaceFiles != nil {
+		in.ReplaceFiles = *b.ReplaceFiles
+	}
+	if b.RemoveFiles != nil {
+		in.RemoveFiles = *b.RemoveFiles
+	}
+	if b.Note != nil {
+		in.Note = *b.Note
+	}
+	if b.RestoreSeq != nil {
+		seq := int32(*b.RestoreSeq)
+		in.RestoreSeq = &seq
+	}
+	d, err := s.customApps().Update(ctx, ws, u.ID, req.Slug, in)
+	if err != nil {
+		return nil, err
+	}
+	return api.UpdateCustomApp200JSONResponse(customAppDetailOut(d)), nil
+}
+
+func (s *Server) DeleteCustomApp(ctx context.Context, req api.DeleteCustomAppRequestObject) (api.DeleteCustomAppResponseObject, error) {
+	u, _, ws := me(ctx)
+	if err := s.customApps().Delete(ctx, ws, u.ID, req.Slug); err != nil {
+		return nil, err
+	}
+	return api.DeleteCustomApp204Response{}, nil
+}
+
+func (s *Server) GetCustomAppVersion(ctx context.Context, req api.GetCustomAppVersionRequestObject) (api.GetCustomAppVersionResponseObject, error) {
+	u, _, ws := me(ctx)
+	v, err := s.customApps().GetVersion(ctx, ws, u.ID, req.Slug, int32(req.Seq))
+	if err != nil {
+		return nil, err
+	}
+	return api.GetCustomAppVersion200JSONResponse(customAppVersionOut(v)), nil
+}
+
+func (s *Server) InvokeCustomApp(ctx context.Context, req api.InvokeCustomAppRequestObject) (api.InvokeCustomAppResponseObject, error) {
+	u, _, ws := me(ctx)
+	b := req.Body
+	app, err := s.customApps().Get(ctx, ws, u.ID, req.Slug)
+	if err != nil {
+		return nil, err
+	}
+
+	var capKey string
+	var summary string
+	var apiMethod, apiPath string
+
+	switch b.Kind {
+	case api.Sql:
+		if b.Query == nil || strings.TrimSpace(*b.Query) == "" {
+			return nil, apperr.Invalid("query", "SQL query is required")
+		}
+		ro, err := customapps.ClassifySQL(*b.Query)
+		if err != nil {
+			return nil, err
+		}
+		if ro {
+			capKey = "app.sql:read"
+			summary = fmt.Sprintf("Run read-only SQLite query in %s", app.Name)
+		} else {
+			capKey = "app.sql:write"
+			summary = fmt.Sprintf("Run SQLite write query in %s", app.Name)
+		}
+	case api.Api:
+		method := http.MethodGet
+		if b.Method != nil && strings.TrimSpace(*b.Method) != "" {
+			method = strings.ToUpper(strings.TrimSpace(*b.Method))
+		}
+		rawPath := ""
+		if b.Path != nil {
+			rawPath = strings.TrimSpace(*b.Path)
+		}
+		cleanedPath, isRead, err := validateCustomAppAPIRequest(method, rawPath)
+		if err != nil {
+			return nil, err
+		}
+		apiMethod, apiPath = method, cleanedPath
+		if isRead {
+			capKey = "vesper.api:read"
+		} else {
+			capKey = "vesper.api:write"
+		}
+		summary = fmt.Sprintf("%s %s", apiMethod, apiPath)
+	case api.Mcp:
+		connSlug := ""
+		if b.Connector != nil {
+			connSlug = strings.TrimSpace(*b.Connector)
+		}
+		tool := ""
+		if b.Tool != nil {
+			tool = strings.TrimSpace(*b.Tool)
+		}
+		if connSlug == "" || tool == "" {
+			return nil, apperr.Invalid("connector", "connector and tool are required")
+		}
+		capKey = "mcp:" + connSlug + ":" + tool
+		if err := customapps.ValidCapabilityKey(capKey); err != nil {
+			return nil, err
+		}
+		summary = fmt.Sprintf("Call MCP tool %s.%s", connSlug, tool)
+	default:
+		return nil, apperr.Invalid("kind", "must be sql, api, or mcp")
+	}
+
+	mode := customapps.ModeFor(app.Capabilities, capKey)
+	approved := b.Approved != nil && *b.Approved
+	alwaysAllow := b.AlwaysAllow != nil && *b.AlwaysAllow
+
+	switch mode {
+	case agentdef.Denied:
+		return api.InvokeCustomApp403JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{
+			Code:    api.Forbidden,
+			Message: fmt.Sprintf("capability %s is denied for custom app %q", capKey, app.Slug),
+		}}, nil
+	case agentdef.RequiresApproval:
+		if !approved {
+			return api.InvokeCustomApp200JSONResponse{
+				Status:     api.CustomAppInvokeResponseStatusApprovalRequired,
+				Capability: capKey,
+				Summary:    &summary,
+			}, nil
+		}
+		if alwaysAllow {
+			nextCaps := maps.Clone(app.Capabilities)
+			if nextCaps == nil {
+				nextCaps = customapps.Capabilities{}
+			}
+			nextCaps[capKey] = agentdef.Allowed
+			if _, err := s.customApps().SetCapabilities(ctx, ws, u.ID, app.Slug, nextCaps); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	switch b.Kind {
+	case api.Sql:
+		var params []any
+		if b.Params != nil {
+			params = *b.Params
+		}
+		res, err := s.customApps().QuerySQL(ctx, ws, u.ID, app.Slug, *b.Query, params)
+		if err != nil {
+			return nil, err
+		}
+		return api.InvokeCustomApp200JSONResponse{
+			Status:     api.CustomAppInvokeResponseStatusOk,
+			Capability: capKey,
+			Result:     res,
+		}, nil
+	case api.Api:
+		out, err := s.dispatchCustomAppAPI(ctx, u, apiMethod, apiPath, b.Body)
+		if err != nil {
+			return nil, err
+		}
+		return api.InvokeCustomApp200JSONResponse{
+			Status:     api.CustomAppInvokeResponseStatusOk,
+			Capability: capKey,
+			Result:     out,
+		}, nil
+	case api.Mcp:
+		conn, err := s.Q.GetConnectorBySlug(ctx, store.GetConnectorBySlugParams{
+			Slug:        strings.TrimSpace(*b.Connector),
+			WorkspaceID: ws,
+			UserID:      u.ID,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperr.ErrNotFound
+		}
+		if err != nil {
+			return nil, err
+		}
+		var argsJSON json.RawMessage = json.RawMessage(`{}`)
+		if b.Arguments != nil {
+			raw, err := json.Marshal(*b.Arguments)
+			if err != nil {
+				return nil, apperr.Invalid("arguments", "invalid JSON arguments")
+			}
+			argsJSON = raw
+		}
+		res, err := s.connectors().Call(ctx, conn, strings.TrimSpace(*b.Tool), argsJSON)
+		if err != nil {
+			return nil, apperr.Conflict("%v", err)
+		}
+		return api.InvokeCustomApp200JSONResponse{
+			Status:     api.CustomAppInvokeResponseStatusOk,
+			Capability: capKey,
+			Result:     res,
+		}, nil
+	}
+	return nil, apperr.Invalid("kind", "unsupported invoke kind")
+}
+
+func validateCustomAppAPIRequest(method, rawURL string) (cleaned string, isRead bool, err error) {
+	switch method {
+	case http.MethodGet, http.MethodHead:
+		isRead = true
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		isRead = false
+	default:
+		return "", false, apperr.Invalid("method", "unsupported HTTP method %q", method)
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Scheme != "" || u.Host != "" {
+		return "", false, apperr.Invalid("path", "must be a relative path under /api/v1/")
+	}
+	cleanPath := path.Clean(u.Path)
+	if !strings.HasPrefix(cleanPath, "/api/v1/") && cleanPath != "/api/v1" {
+		return "", false, apperr.Invalid("path", "path must start with /api/v1/")
+	}
+	for _, blocked := range []string{
+		"/api/v1/auth",
+		"/api/v1/signin",
+		"/api/v1/agent",
+		"/api/v1/user-secrets",
+		"/api/v1/api-secrets",
+		"/api/v1/custom-apps",
+		"/api/v1/harness",
+	} {
+		if cleanPath == blocked || strings.HasPrefix(cleanPath, blocked+"/") {
+			return "", false, apperr.Invalid("path", "access to %s from custom apps is restricted", blocked)
+		}
+	}
+	target := cleanPath
+	if u.RawQuery != "" {
+		target += "?" + u.RawQuery
+	}
+	return target, isRead, nil
+}
+
+func (s *Server) dispatchCustomAppAPI(ctx context.Context, u store.User, method, target string, body any) (any, error) {
+	var bodyReader io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			return nil, apperr.Invalid("body", "invalid JSON body")
+		}
+		bodyReader = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequestWithContext(auth.WithUser(ctx, u), method, target, bodyReader)
+	if err != nil {
+		return nil, apperr.Invalid("path", "invalid request: %v", err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	rec := httptest.NewRecorder()
+	s.internalAPIHandler().ServeHTTP(rec, req)
+	respBytes := rec.Body.Bytes()
+	var parsed any
+	if len(bytes.TrimSpace(respBytes)) > 0 {
+		if err := json.Unmarshal(respBytes, &parsed); err != nil {
+			parsed = string(respBytes)
+		}
+	}
+	if rec.Code >= 400 {
+		msg := fmt.Sprintf("Vesper API %s %s returned HTTP %d", method, target, rec.Code)
+		if m, ok := parsed.(map[string]any); ok {
+			if em, ok := m["message"].(string); ok && em != "" {
+				msg = em
+			}
+		}
+		if rec.Code == http.StatusNotFound {
+			return nil, apperr.ErrNotFound
+		}
+		if rec.Code == http.StatusUnprocessableEntity || rec.Code == http.StatusBadRequest {
+			return nil, apperr.Invalid("path", "%s", msg)
+		}
+		return nil, apperr.Conflict("%s", msg)
+	}
+	return parsed, nil
+}
