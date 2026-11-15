@@ -3,7 +3,7 @@
 import { useCompact } from "@/lib/viewport";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useBootstrap, useCosts, useEpicOverviews, useTickets } from "@/lib/api/hooks";
 import { dueDate } from "@/lib/format";
 import {
@@ -16,7 +16,6 @@ import { Button, ButtonLink } from "@/components/ui/button";
 import { DispatchDialog } from "@/components/domain/dispatch-dialog";
 import { Banner, Card, EmptyState, Skeleton } from "@/components/ui/primitives";
 import { Segmented } from "@/components/ui/controls";
-import { Icon } from "@/components/ui/icon";
 import { StatusGlyph } from "@/components/domain/glyphs";
 import { Content } from "@/components/shell/topbar";
 import { CompanionPortal } from "@/components/shell/companion";
@@ -232,6 +231,17 @@ const HEALTH_DOT: Record<Exclude<EpicHealthFilter, "any">, string> = {
   on_track: "bg-state-done", at_risk: "bg-state-human", off_track: "bg-state-blocked",
 };
 
+function groupEpicsBySpace(list: readonly EpicOverview[]) {
+  const groups = new Map<string, { label: string; epics: EpicOverview[] }>();
+  for (const e of list) {
+    const k = e.project.key;
+    const existing = groups.get(k);
+    if (existing) existing.epics.push(e);
+    else groups.set(k, { label: e.project.name, epics: [e] });
+  }
+  return [...groups.entries()];
+}
+
 export function EpicsScreen() {
   const boot = useBootstrap();
   const query = useEpicOverviews();
@@ -263,7 +273,10 @@ export function EpicsScreen() {
   const activeFeaturedEpic = selectedEpicId
     ? inProject.find((e) => e.epic.id === selectedEpicId)
     : shown[0];
-  const selectedEpic = companionDismissed ? undefined : activeFeaturedEpic;
+  const selectedEpic =
+    selectedEpicId && !companionDismissed
+      ? inProject.find((e) => e.epic.id === selectedEpicId)
+      : undefined;
   const featuredTicketsQuery = useTickets(
     { epic: activeFeaturedEpic?.epic.id, view: "all" },
     !!activeFeaturedEpic?.epic.id,
@@ -271,37 +284,17 @@ export function EpicsScreen() {
   const [now] = useState(() => new Date());
   const [range30d] = useState(() => presetRange(30, now));
   const costs = useCosts({ ...range30d, project: project || undefined }).data;
-  const featuredWaves = useMemo(
-    () =>
-      activeFeaturedEpic
-        ? computeEpicWaves(featuredTicketsQuery.data ?? activeFeaturedEpic.tickets)
-        : [],
-    [activeFeaturedEpic, featuredTicketsQuery.data],
+  const featuredWaves = activeFeaturedEpic
+    ? computeEpicWaves(featuredTicketsQuery.data ?? activeFeaturedEpic.tickets)
+    : [];
+  const featuredReadyKeys = featuredWaves.flatMap((w) => w.readyTickets.map((t) => t.key));
+  const portfolioStats = computeEpicPortfolioStats(
+    inProject,
+    activeFeaturedEpic
+      ? new Map([[activeFeaturedEpic.epic.id, featuredWaves]])
+      : new Map(),
   );
-  const featuredReadyKeys = useMemo(
-    () => featuredWaves.flatMap((w) => w.readyTickets.map((t) => t.key)),
-    [featuredWaves],
-  );
-  const portfolioStats = useMemo(
-    () =>
-      computeEpicPortfolioStats(
-        inProject,
-        activeFeaturedEpic
-          ? new Map([[activeFeaturedEpic.epic.id, featuredWaves]])
-          : new Map(),
-      ),
-    [inProject, activeFeaturedEpic, featuredWaves],
-  );
-  const epicsBySpace = useMemo(() => {
-    const groups = new Map<string, { label: string; epics: typeof shown }>();
-    for (const e of shown) {
-      const k = e.project.key;
-      const g = groups.get(k) ?? { label: e.project.name, epics: [] };
-      g.epics.push(e);
-      groups.set(k, g);
-    }
-    return [...groups.entries()];
-  }, [shown]);
+  const epicsBySpace = groupEpicsBySpace(shown);
   const atRiskCount = inProject.filter(
     (e) => e.epic.status === "open" && (e.epic.health === "at_risk" || e.epic.health === "off_track"),
   ).length;

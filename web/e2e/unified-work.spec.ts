@@ -170,7 +170,7 @@ test("legacy Runs links open Work, and Tickets and Epics open the full screens",
   await page.goto("/runs?project=WEB");
   await expect(page).toHaveURL(/\/work\?.*project=WEB/);
   const nav = page.getByRole("navigation", { name: "Work", exact: true });
-  await nav.getByRole("link", { name: "Tickets", exact: true }).click();
+  await nav.getByRole("link", { name: "Tasks", exact: true }).click();
   await expect(page).toHaveURL(/\/tickets\?project=WEB$/);
   await page.goto("/work?view=tickets&layout=board&project=WEB");
   await expect(page).toHaveURL(/\/tickets\?layout=board&project=WEB$/);
@@ -282,17 +282,17 @@ test("Work keeps a single harness footer in the sidebar, a compact Activity head
   await expect(page.getByRole("progressbar", { name: "Plan progress" })).toBeVisible();
   await expect(page.locator(".work-run [role='status']")).toHaveCount(0);
 
-  // Switching to Tickets (List, Board) and Epics preserves the Work left navigator.
+  // Switching to Tasks (List, Board) and Epics preserves the Work left navigator.
   const workNav = page.getByRole("navigation", { name: "Work", exact: true });
-  await workNav.getByRole("link", { name: "Tickets", exact: true }).click();
+  await workNav.getByRole("link", { name: "Tasks", exact: true }).click();
   await expect(page).toHaveURL(/\/tickets\?project=WEB$/);
   await expect(workNav).toBeVisible();
-  await expect(workNav.getByRole("link", { name: "Tickets", exact: true })).toHaveAttribute("aria-current", "true");
+  await expect(workNav.getByRole("link", { name: "Tasks", exact: true })).toHaveAttribute("aria-current", "true");
 
   await page.getByRole("navigation", { name: "Tickets layout" }).getByRole("link", { name: "Board" }).click();
   await expect(page).toHaveURL(/\/tickets\?layout=board&project=WEB$/);
   await expect(workNav).toBeVisible();
-  await expect(workNav.getByRole("link", { name: "Tickets", exact: true })).toHaveAttribute("aria-current", "true");
+  await expect(workNav.getByRole("link", { name: "Tasks", exact: true })).toHaveAttribute("aria-current", "true");
 
   await workNav.getByRole("link", { name: "Epics", exact: true }).click();
   await expect(page).toHaveURL(/\/tickets\?layout=epics&project=WEB$/);

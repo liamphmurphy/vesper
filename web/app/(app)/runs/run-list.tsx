@@ -355,8 +355,15 @@ export function RunList({ selected, fill, embedded = false, search: workSearch }
   }, [searchedRuns, activityFilter, needsRunIds, now]);
 
   const selectedNeeds = data.shownNeeds.find((i) => i.run_id === selected)?.id;
+  const nonRunNeeds = useMemo(
+    () =>
+      activityFilter === "all" || activityFilter === "needs_you"
+        ? data.shownNeeds.filter((i) => !i.run_id)
+        : [],
+    [activityFilter, data.shownNeeds],
+  );
   const empty = embedded
-    ? !data.loading && !data.error && embeddedGroups.length === 0 && (activityFilter !== "needs_you" || data.shownNeeds.length === 0)
+    ? !data.loading && !data.error && embeddedGroups.length === 0 && nonRunNeeds.length === 0
     : !data.loading && !data.error && data.shownNeeds.length === 0 && data.groups.length === 0;
 
   if (embedded) {
@@ -434,21 +441,32 @@ export function RunList({ selected, fill, embedded = false, search: workSearch }
                   </ul>
                 </section>
               ))}
-              {activityFilter === "needs_you" &&
-                data.shownNeeds.filter((i) => !i.run_id).length > 0 && (
-                  <section id="needs-you-items" aria-label="Other needs you" className="flex flex-col">
-                    <WorkSectionLabel count={data.shownNeeds.filter((i) => !i.run_id).length} tone="human">
-                      Other waiting
-                    </WorkSectionLabel>
-                    <ul className="flex flex-col gap-0.5">
-                      {data.shownNeeds
-                        .filter((i) => !i.run_id)
-                        .map((i) => (
-                          <NeedsRow key={i.id} item={i} active={i.id === selectedNeeds} query={query} />
-                        ))}
-                    </ul>
-                  </section>
-                )}
+              {nonRunNeeds.length > 0 && (
+                <section id="needs-you-items" aria-label="Other needs you" className="flex flex-col">
+                  <WorkSectionLabel count={nonRunNeeds.length} tone="human">
+                    Waiting
+                  </WorkSectionLabel>
+                  <ul className="flex flex-col gap-0.5">
+                    {nonRunNeeds.map((i) => (
+                      <li key={i.id}>
+                        <Link
+                          href={itemHref(i, query)}
+                          aria-current={i.id === selectedNeeds ? "page" : undefined}
+                          data-needs-row={i.id}
+                          className="flex h-[28px] items-center gap-2 rounded-md px-2 text-12 text-fg-secondary hover:bg-hover hover:text-fg"
+                        >
+                          <span aria-hidden className="grid size-5 flex-none place-items-center rounded bg-pill-human-bg text-pill-human-fg">
+                            <Icon name="inbox" size={11} />
+                          </span>
+                          <span aria-hidden className="size-1.5 flex-none rounded-full bg-state-human" />
+                          <span className="min-w-0 flex-1 truncate">{i.title}</span>
+                          <span className="flex-none font-mono text-10 text-pill-human-fg">{waited(i.created_at)}</span>
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
               {data.hasMore && activityFilter === "all" && (
                 <div className="px-2 pt-1">
                   <Button variant="ghost" disabled={data.loadingMore} onClick={data.loadMore}>

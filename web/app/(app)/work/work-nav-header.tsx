@@ -75,6 +75,7 @@ export function WorkSidebarFilterRow({
   return (
     <button
       type="button"
+      aria-label={`Filter: ${label}`}
       aria-pressed={active}
       onClick={onClick}
       className={cx(
