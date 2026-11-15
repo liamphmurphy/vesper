@@ -9,7 +9,7 @@ async function settings(page: Page) {
   await expect(page.getByRole("radio", { name: "Dusk", exact: true })).toBeVisible();
 }
 
-test("the Vesper logo follows presets, mode and custom colors without reloading", async ({ page }) => {
+test("the accent color follows presets, mode and custom colors without reloading", async ({ page }) => {
   await settings(page);
   // The controls are visible in server HTML before their handlers hydrate.
   await expect(async () => {
@@ -17,25 +17,26 @@ test("the Vesper logo follows presets, mode and custom colors without reloading"
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark", { timeout: 250 });
   }).toPass();
   await expect.poll(() => rootColor(page, "accent")).toBe("#9B8CFF");
-  const menu = page.getByRole("complementary", { name: "Main menu" });
-  const accent = menu.locator('svg linearGradient stop').nth(1);
-  await expect(accent).toHaveCSS("stop-color", "rgb(155, 140, 255)");
+  const accent = page.locator('input[name="color-palette"]:checked');
+  await expect(accent).toHaveCSS("accent-color", "rgb(155, 140, 255)");
   await page.getByRole("radio", { name: "Nord", exact: true }).check();
-  await expect(accent).toHaveCSS("stop-color", "rgb(136, 192, 208)");
+  await expect.poll(() => rootColor(page, "accent")).toBe("#88c0d0");
+  await expect(accent).toHaveCSS("accent-color", "rgb(136, 192, 208)");
   await page.getByRole("radio", { name: "Light", exact: true }).click();
-  await expect(accent).toHaveCSS("stop-color", "rgb(94, 129, 172)");
+  await expect.poll(() => rootColor(page, "accent")).toBe("#5e81ac");
+  await expect(accent).toHaveCSS("accent-color", "rgb(94, 129, 172)");
 
   await page.getByRole("button", { name: "Customize this palette" }).click();
   await page.getByRole("radio", { name: "Light colors", exact: true }).click();
   await page.getByRole("button", { name: "Accent", exact: true }).click();
   await page.getByRole("textbox", { name: "Hex color", exact: true }).fill("#cc4400");
-  await expect(accent).toHaveCSS("stop-color", "rgb(204, 68, 0)");
+  await expect(accent).toHaveCSS("accent-color", "rgb(204, 68, 0)");
   await page.reload();
   await expect(page.getByRole("radio", { name: "Custom", exact: true })).toBeChecked();
-  await expect(accent).toHaveCSS("stop-color", "rgb(204, 68, 0)");
+  await expect(accent).toHaveCSS("accent-color", "rgb(204, 68, 0)");
   await page.getByRole("button", { name: "Reset palette", exact: true }).click();
   await page.getByRole("radio", { name: "Dark", exact: true }).click();
-  await expect(accent).toHaveCSS("stop-color", "rgb(155, 140, 255)");
+  await expect(accent).toHaveCSS("accent-color", "rgb(155, 140, 255)");
 });
 
 test("ten palettes work independently of mode, persist, and remain usable on mobile", async ({ page }) => {

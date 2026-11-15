@@ -74,13 +74,18 @@ test("one column switches areas; a screen's own list takes the place of Chats", 
   await expect(page.getByRole("link", { name: "Projects & tickets" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Chats & personas" })).toHaveCount(0);
   const work = nav(page);
-  // The areas, then Apps; Inbox left the menu: the Needs you button opens the tray instead.
+  // The areas, then Apps; Needs you, Customization, Settings and harnesses live on the permanent right rail.
   const areas = page.getByRole("list", { name: "Areas" });
   const names = await areas.getByRole("link").evaluateAll((els) => els.map((e) => e.getAttribute("aria-label")));
   expect(names).toEqual(["Chat", "Work", "Knowledge", "Library"]);
-  await expect(page.getByRole("button", { name: /^Needs you/ })).toBeVisible();
-  await expect(menu.getByRole("link", { name: "Customization" })).toHaveAttribute("href", "/customization");
-  await expect(menu.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
+  await expect(menu.getByRole("button", { name: /^Needs you/ })).toHaveCount(0);
+  await expect(menu.getByRole("link", { name: "Customization" })).toHaveCount(0);
+  await expect(menu.getByRole("link", { name: "Settings" })).toHaveCount(0);
+  const rightRail = page.getByRole("complementary", { name: "Right rail" });
+  await expect(rightRail).toBeVisible();
+  await expect(rightRail.getByRole("button", { name: /^Needs you/ })).toBeVisible();
+  await expect(rightRail.getByRole("link", { name: "Customization" })).toHaveAttribute("href", "/customization");
+  await expect(rightRail.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
 
 
   // Apps opens a grid to the right: Tools, then New space (your own apps get a row above Tools once there are any).
@@ -279,4 +284,48 @@ test("a stale remembered project is replaced by the valid project in the URL", a
   await page.goto("/tickets?layout=board");
   await expect(page).toHaveURL(/\/tickets\?layout=board&project=WEB$/);
   expect(api.unhandled).toEqual([]);
+});
+
+test("the persistent right rail stays mounted across Chat, Work and Knowledge, including when a dock is open", async ({ page }) => {
+  await installChatApi(page);
+  await page.route("**/api/v1/knowledge/pages*", (route) => route.fulfill({ json: { pages: [], folders: [] } }));
+  const menu = page.getByRole("complementary", { name: "Main menu" });
+  const rightRail = page.getByRole("complementary", { name: "Right rail" });
+  const expectCleanShell = async () => {
+    await expect(menu.getByText("Vesper", { exact: true })).toHaveCount(0);
+    await expect(menu.getByRole("button", { name: /^Needs you/ })).toHaveCount(0);
+    await expect(menu.getByRole("link", { name: "Customization" })).toHaveCount(0);
+    await expect(menu.getByRole("link", { name: "Settings" })).toHaveCount(0);
+    await expect(rightRail).toBeVisible();
+    await expect(rightRail.getByRole("button", { name: /^Needs you/ })).toBeVisible();
+    await expect(rightRail.getByRole("link", { name: "Customization" })).toHaveAttribute("href", "/customization");
+    await expect(rightRail.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
+  };
+
+  // New Chat (welcome + persona selector) keeps the persistent right rail with no Work chat button.
+  await page.goto("/chat?new");
+  await expect(page.getByRole("combobox", { name: "Message" })).toBeVisible();
+  await expectCleanShell();
+  await expect(rightRail.getByRole("button", { name: "Open Chat" })).toHaveCount(0);
+
+  // Knowledge keeps the persistent right rail both folded and when its dock opens beside the page.
+  await page.goto("/knowledge");
+  await expectCleanShell();
+  await rightRail.getByRole("navigation", { name: "Panel rail" }).getByRole("button", { name: /^Open Chat/ }).click();
+  const panel = page.getByRole("complementary", { name: "Panel", exact: true });
+  await expect(panel).toBeVisible();
+  await expectCleanShell();
+  const panelBox = (await panel.boundingBox())!;
+  const railBox = (await rightRail.boundingBox())!;
+  expect(Math.round(panelBox.x + panelBox.width)).toBe(Math.round(railBox.x));
+  await panel.getByRole("button", { name: "Collapse panel" }).click();
+  await expect(panel).toHaveCount(0);
+
+  // Work Activity keeps the persistent right rail and opens its contextual WorkChat beside the run.
+  await installBoardApi(page);
+  await page.goto("/work?view=activity");
+  await expectCleanShell();
+  await rightRail.getByRole("navigation", { name: "Panel rail" }).getByRole("button", { name: "Open Chat" }).click();
+  await expect(panel.getByTestId("work-chat")).toBeVisible();
+  await expectCleanShell();
 });

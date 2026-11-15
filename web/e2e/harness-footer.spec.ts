@@ -43,7 +43,7 @@ async function refresh(page: Page) {
 const footer = (page: Page) => page.getByRole("region", { name: "Harness activity" });
 const bubble = (page: Page, label: string) => page.getByRole("dialog", { name: `${label} usage` });
 
-test("the column's foot holds the characters in a row above Customization and Settings, replacing the profile and floating orb", async ({ page }) => {
+test("the permanent right rail holds the characters stacked above Customization and Settings", async ({ page }) => {
   await installFooter(page, { dock: { personas: [], space_chats: [], harnesses: harnesses() } });
   await page.goto("/board?project=WEB");
   await expect(footer(page).getByRole("button", { name: /show usage/ })).toHaveCount(3);
@@ -53,16 +53,18 @@ test("the column's foot holds the characters in a row above Customization and Se
   await expect(page.locator(".orb-root")).toHaveCount(0);
   const menu = page.getByRole("complementary", { name: "Main menu" });
   await expect(menu.getByText("Liam", { exact: true })).toHaveCount(0);
-  const settings = (await menu.getByRole("link", { name: "Settings", exact: true }).boundingBox())!;
-  const customization = (await menu.getByRole("link", { name: "Customization", exact: true }).boundingBox())!;
-  const bounds = (await menu.boundingBox())!;
+  await expect(menu.getByRole("region", { name: "Harness activity" })).toHaveCount(0);
+  const rail = page.getByRole("complementary", { name: "Right rail" });
+  const settings = (await rail.getByRole("link", { name: "Settings", exact: true }).boundingBox())!;
+  const customization = (await rail.getByRole("link", { name: "Customization", exact: true }).boundingBox())!;
+  const bounds = (await rail.boundingBox())!;
   const bottom = (await footer(page).boundingBox())!;
-  // The characters sit in a row just above Customization · Settings, which close the column.
-  await expect(footer(page)).toHaveAttribute("data-rail", "false");
-  expect(Math.abs(customization.y - settings.y)).toBeLessThan(2);
-  expect(customization.x).toBeLessThan(settings.x);
-  expect(bottom.y + bottom.height).toBeLessThanOrEqual(settings.y);
-  expect(bounds.y + bounds.height - (settings.y + settings.height)).toBeLessThan(16);
+  // The characters stack in the right rail above Customization and Settings, which close the rail.
+  await expect(footer(page)).toHaveAttribute("data-rail", "true");
+  expect(Math.abs(customization.x - settings.x)).toBeLessThan(2);
+  expect(customization.y).toBeLessThan(settings.y);
+  expect(bottom.y + bottom.height).toBeLessThanOrEqual(customization.y);
+  expect(bounds.y + bounds.height - (settings.y + settings.height)).toBeLessThan(20);
   expect(await footer(page).evaluate((el) => getComputedStyle(el).borderRadius)).toBe("0px");
 });
 
@@ -89,7 +91,7 @@ test("only connected harnesses show, and the row fits however many there are", a
   await expect(footer(page)).toHaveCount(0);
 });
 
-test("a character opens a bubble with its own usage above it; Escape restores focus", async ({ page }) => {
+test("a character opens a bubble with its own usage to its left; Escape restores focus", async ({ page }) => {
   await installFooter(page, { dock: { personas: [], space_chats: [], harnesses: harnesses() } });
   await page.goto("/board?project=WEB");
   const trigger = footer(page).getByRole("button", { name: "Codex, working; show usage" });
@@ -101,14 +103,14 @@ test("a character opens a bubble with its own usage above it; Escape restores fo
   await expect(codex).toContainText(/5h · resets/);
   await expect(codex.getByRole("progressbar", { name: "Claude allowance used" })).toHaveCount(0);
   await expect(codex.getByRole("link", { name: "Usage settings →" })).toHaveAttribute("href", "/settings/runner");
-  // A bubble, not a panel: small, and sitting just above the character it belongs to, clear of the others in the row.
+  // A bubble, not a panel: small, and sitting beside the right-rail character to its left.
   await expect.poll(async () => (await codex.boundingBox())!.height).toBeLessThan(200);
   const at = (await trigger.boundingBox())!, box = (await codex.boundingBox())!;
   expect(box.width).toBeLessThan(260);
-  expect(box.y + box.height).toBeLessThanOrEqual(at.y);
-  expect(at.y - (box.y + box.height)).toBeLessThan(20);
-  expect(box.x).toBeLessThan(at.x + at.width);
-  expect(box.x + box.width).toBeGreaterThan(at.x);
+  expect(box.x + box.width).toBeLessThanOrEqual(at.x);
+  expect(at.x - (box.x + box.width)).toBeLessThan(20);
+  expect(box.y).toBeLessThan(at.y + at.height);
+  expect(box.y + box.height).toBeGreaterThan(at.y);
   await page.keyboard.press("Escape");
   await expect(codex).toBeHidden();
   await expect(trigger).toBeFocused();
@@ -167,7 +169,7 @@ test("zero, unavailable, checking, warning and limited readings stay distinct", 
   await expect(claude).toHaveAttribute("data-tone", "warn");
 });
 
-test("on a short window the bubble still opens to the right, inside the viewport", async ({ page }) => {
+test("on a short window the bubble still opens to the left, inside the viewport", async ({ page }) => {
   await page.setViewportSize({ width: 1100, height: 650 });
   await installFooter(page, { dock: { personas: [], space_chats: [], harnesses: harnesses({ claude: { running: 0 }, codex: { running: 0 } }) } }, false);
   await page.goto("/board?project=WEB");
@@ -180,9 +182,13 @@ test("on a short window the bubble still opens to the right, inside the viewport
   await expect(agy).toBeVisible();
   await expect(agy.getByRole("progressbar")).toHaveCount(0);
   const at = (await trigger.boundingBox())!;
-  await expect.poll(async () => (await agy.boundingBox())!.x).toBeGreaterThanOrEqual(at.x + at.width);
+  await expect.poll(async () => {
+    const b = await agy.boundingBox();
+    return b ? b.x + b.width : Infinity;
+  }).toBeLessThanOrEqual(at.x);
   const bounds = (await agy.boundingBox())!;
-  expect(bounds.x - (at.x + at.width)).toBeLessThan(20);
+  expect(at.x - (bounds.x + bounds.width)).toBeLessThan(20);
+  expect(bounds.x).toBeGreaterThanOrEqual(7);
   expect(bounds.y).toBeGreaterThanOrEqual(7);
   expect(bounds.y + bounds.height).toBeLessThanOrEqual(643);
   await page.keyboard.press("Escape");
