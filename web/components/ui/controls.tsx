@@ -80,11 +80,13 @@ export function Toggle({
   checked,
   onChange,
   label,
+  srOnlyLabel,
   disabled,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   label: ReactNode;
+  srOnlyLabel?: boolean;
   disabled?: boolean;
 }) {
   return (
@@ -94,7 +96,7 @@ export function Toggle({
       aria-checked={checked}
       disabled={disabled}
       onClick={() => onChange(!checked)}
-      className="inline-flex items-center gap-2 text-13 text-fg-secondary disabled:opacity-50"
+      className={cx("inline-flex items-center text-13 text-fg-secondary disabled:opacity-50", !srOnlyLabel && "gap-2")}
     >
       <span className={cx("relative h-4 w-7 flex-none rounded-[8px] transition-colors", checked ? "bg-accent" : "bg-border-float")}>
         <span
@@ -104,7 +106,7 @@ export function Toggle({
           )}
         />
       </span>
-      {label}
+      {srOnlyLabel ? <span className="sr-only">{label}</span> : label}
     </button>
   );
 }

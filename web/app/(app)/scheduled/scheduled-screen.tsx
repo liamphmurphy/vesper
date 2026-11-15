@@ -1,13 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useBootstrap } from "@/lib/api/hooks";
 import { useConnectors, useDeleteScheduledTask, useRunScheduledTask, useSaveScheduledTask, useScheduledTasks, type ScheduledTask, type ScheduledTaskInput } from "@/lib/api/connector-hooks";
 import { usePersonas } from "@/lib/api/persona-hooks";
 import { useWorkflows } from "@/lib/api/workflow-hooks";
 import { cx } from "@/lib/cx";
+import { hoverReveal } from "@/lib/reveal";
+import { useCompact } from "@/lib/viewport";
 import { describeSchedule, moneyLabel, RUN_LABEL } from "@/lib/schedule-ui";
+import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { Content, TopBar } from "@/components/shell/topbar";
 import { Button, IconButton } from "@/components/ui/button";
 import { Segmented, Toggle } from "@/components/ui/controls";
@@ -44,57 +47,137 @@ function toDraft(t: ScheduledTask): Draft {
   return { revision: t.revision, name: t.name, kind: t.kind, instructions: t.instructions, workflow_id: t.workflow_id, persona_id: t.persona_id, project: t.project, connector_ids: t.connector_ids, frequency: t.frequency, weekdays: t.weekdays, month_day: t.month_day, at_time: t.at_time, timezone: t.timezone, cron: t.cron, enabled: t.enabled, max_minutes: t.max_minutes, max_cost_micros: t.max_cost_micros };
 }
 
-/** Prompts and workflows that run on their own; their results arrive in the Inbox. */
+/** Prompts and workflows that run on their own; results and approvals show up in Needs you. */
 export function ScheduledScreen() {
+  const compact = useCompact();
   const tasks = useScheduledTasks();
   const personas = usePersonas();
   const save = useSaveScheduledTask();
+  const runNow = useRunScheduledTask();
   const [filter, setFilter] = useState<"all" | "active" | "paused">("all");
   const [open, setOpen] = useState<string | "new" | null>(null);
+  const localTz = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
   const all = tasks.data?.tasks ?? [];
   const rows = all.filter((t) => filter === "all" || t.enabled === (filter === "active"));
   const selected = all.find((t) => t.id === open);
   const count = (on: boolean) => all.filter((t) => t.enabled === on).length;
   const setEnabled = (t: ScheduledTask, enabled: boolean) => save.mutate({ id: t.id, body: { ...toDraft(t), enabled } });
+  const listError = save.error ?? runNow.error;
+  const filterOptions = [
+    { value: "all" as const, label: "All", n: all.length },
+    { value: "active" as const, label: "Active", n: count(true) },
+    { value: "paused" as const, label: "Paused", n: count(false) },
+  ];
   return (
     <section aria-label="Scheduled tasks">
+      {!compact && (
+        <NavigatorPortal>
+          <nav aria-label="Scheduled tasks" className="flex min-h-0 flex-1 flex-col gap-3 px-2.5 pt-4 pb-3">
+            <div className="flex items-center justify-between px-1.5">
+              <h2 className="text-16 font-semibold text-fg">Scheduled</h2>
+              <IconButton icon="plus" label="Create scheduled task" size={26} onClick={() => setOpen("new")} />
+            </div>
+            <div role="tablist" aria-label="Filter scheduled tasks" className="flex gap-0.5 rounded-md bg-surface-sunken p-0.5">
+              {filterOptions.map((o) => {
+                const on = filter === o.value;
+                return (
+                  <button
+                    key={o.value}
+                    type="button"
+                    role="tab"
+                    aria-selected={on}
+                    onClick={() => setFilter(o.value)}
+                    className={cx(
+                      "flex-1 rounded-[5px] px-2 py-1 text-12 transition-colors",
+                      on ? "bg-surface font-medium text-fg" : "text-fg-secondary hover:text-fg",
+                    )}
+                  >
+                    {o.label} <span className="text-11 text-fg-tertiary">{o.n}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
+              {rows.map((t) => {
+                const active = t.id === open;
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    aria-current={active ? "true" : undefined}
+                    onClick={() => setOpen(t.id)}
+                    className={cx(
+                      "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
+                      active ? "bg-selected text-fg" : "text-fg-secondary hover:bg-hover hover:text-fg",
+                    )}
+                  >
+                    <span className={cx("size-1.5 flex-none rounded-full", t.enabled ? "bg-state-done" : "bg-state-backlog")} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-13 font-medium">{t.name}</span>
+                      <span className="block truncate text-11 text-fg-tertiary">{describeSchedule(t)}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </nav>
+        </NavigatorPortal>
+      )}
       <TopBar crumbs={[{ label: "Scheduled" }]} />
       <Content>
         <div className="flex gap-6 max-xl:flex-col">
           <div className="flex min-w-0 flex-1 flex-col gap-6">
             <PageHeader
               title="Scheduled tasks"
-              description="Prompts and workflows that run on their own. Results arrive in your Inbox."
+              description="Prompts and workflows that run on their own. Results and approvals show up in Needs you."
               actions={<Button variant="primary" icon="plus" onClick={() => setOpen("new")}>New task</Button>}
             />
-            <Segmented label="Show tasks" value={filter} onChange={setFilter} small options={[{ value: "all", label: `All ${all.length}` }, { value: "active", label: `Active ${count(true)}` }, { value: "paused", label: `Paused ${count(false)}` }]} />
-            {save.isError && <p role="alert" className="text-13 text-pill-blocked-fg">{errorText(save.error)}</p>}
+            {compact && (
+              <Segmented label="Show tasks" value={filter} onChange={setFilter} small options={[{ value: "all", label: `All ${all.length}` }, { value: "active", label: `Active ${count(true)}` }, { value: "paused", label: `Paused ${count(false)}` }]} />
+            )}
+            {listError && <p role="alert" className="text-13 text-pill-blocked-fg">{errorText(listError)}</p>}
             {tasks.isError ? (
               <Banner tone="blocked" title="Couldn’t load tasks">{errorText(tasks.error)}</Banner>
             ) : !tasks.data ? (
               <Skeleton className="h-48" />
             ) : rows.length === 0 ? (
-              <EmptyState icon="clock" title={all.length ? "No tasks here" : "No scheduled tasks yet"}>{all.length ? "Nothing matches this filter." : "Create one to have a persona work on its own."}</EmptyState>
+              <EmptyState icon="clock" title={all.length ? "No tasks here" : "No scheduled tasks yet"}>{all.length ? "Nothing matches this filter." : "Run a prompt or workflow every morning, weekday, or week. Results and approvals show up in Needs you."}</EmptyState>
             ) : (
               <ul className="overflow-hidden rounded-xl border border-border bg-surface">
                 {rows.map((t) => {
                   const persona = personas.data?.personas.find((p) => p.id === t.persona_id);
                   const last = t.runs[0];
+                  const busy = runNow.isPending || last?.state === "running" || last?.state === "waiting";
                   return (
-                    <li key={t.id} data-testid="scheduled-row" className={cx("flex items-center gap-3 border-b border-border-row px-[18px] py-3.5 last:border-b-0", t.id === open && "bg-selected")}>
+                    <li key={t.id} data-testid="scheduled-row" className={cx("group flex items-center gap-3 border-b border-border-row px-[18px] py-3.5 last:border-b-0", t.id === open && "bg-selected")}>
                       <button type="button" onClick={() => setOpen(t.id)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
                         {t.kind === "workflow" ? <span className="grid size-8 flex-none place-items-center rounded-md border border-border-strong bg-selected text-fg-secondary"><Icon name="graph" size={14} /></span> : <PersonaAvatar persona={personaLook(persona)} size={32} />}
                         <span className="min-w-0 flex-1">
                           <span className={cx("block truncate text-14 font-semibold", t.enabled ? "text-fg" : "text-fg-secondary")}>{t.name}</span>
                           <span className="block truncate text-13 text-fg-secondary">{[t.kind === "workflow" ? "Workflow" : (persona?.name ?? "Default persona"), t.project, describeSchedule(t)].filter(Boolean).join(" · ")}</span>
                         </span>
-                        <span className="w-36 flex-none max-sm:hidden">
+                        <span className="w-52 flex-none text-right max-sm:hidden">
                           <span className="block text-12 text-fg-tertiary">Next run</span>
-                          <span className="block truncate text-13 text-fg-2">{t.enabled && t.next_run_at ? when(t.next_run_at) : "Paused"}</span>
+                          <span className="flex items-center justify-end gap-1.5 text-13 text-fg-2">
+                            <span className="whitespace-nowrap">{t.enabled && t.next_run_at ? when(t.next_run_at) : "Paused"}</span>
+                            {t.enabled && t.timezone && t.timezone !== localTz && (
+                              <span className="rounded bg-selected px-1.5 py-px font-mono text-10 text-fg-tertiary" title={`Schedule timezone: ${t.timezone}`}>
+                                {t.timezone}
+                              </span>
+                            )}
+                          </span>
                         </span>
                       </button>
                       <span className="w-20 flex-none text-right">{last && <RunPill state={last.state} />}</span>
-                      <Toggle label={`${t.name} is on`} checked={t.enabled} disabled={save.isPending} onChange={(v) => setEnabled(t, v)} />
+                      <IconButton
+                        icon="play"
+                        size={26}
+                        label={`Run ${t.name} now`}
+                        disabled={busy}
+                        onClick={() => runNow.mutate(t.id)}
+                        className={cx(hoverReveal(), "focus-visible:opacity-100")}
+                      />
+                      <Toggle label={`Enable ${t.name}`} srOnlyLabel checked={t.enabled} disabled={save.isPending} onChange={(v) => setEnabled(t, v)} />
                     </li>
                   );
                 })}
@@ -198,7 +281,7 @@ function Editor({ task, onClose, onCreated }: { task?: ScheduledTask; onClose: (
       <div className="flex flex-col gap-2 rounded-xl border border-border bg-surface px-[18px] py-3.5">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-13 text-fg-2">Results go to your Inbox. If a tool needs approval, the run waits there.</p>
+            <p className="text-13 text-fg-2">Approvals and attention items show up in Needs you.</p>
             <p className="text-12 text-fg-tertiary">Stops after {draft.max_minutes} minutes or {moneyLabel(draft.max_cost_micros)}, whichever comes first.</p>
           </div>
           <button type="button" className="flex-none text-12 text-accent hover:underline" aria-expanded={limits} onClick={() => setLimits((v) => !v)}>Edit limits</button>
