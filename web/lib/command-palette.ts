@@ -1,7 +1,7 @@
 // Pure logic for the ⌘K command palette (LAZYAGENTS-43). Kept free of React so
 // `npm run test:unit` covers it; the component is components/shell/command-menu.tsx.
 
-import { kindHref } from "./knowledge.ts";
+import { kindHref, type PageKind } from "./knowledge.ts";
 
 /**
  * A searchable type: a chip (or a row under More), an `is:` filter, and the
@@ -344,11 +344,23 @@ export function facets(values: (string | undefined)[]): { value: string; count: 
   return [...counts].map(([value, count]) => ({ value, count })).sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
 }
 
-/** The chip after (or, with `back`, before) `current`: All, then each chip type, wrapping. */
-export function stepChip(current: TypeKey | undefined, back = false): TypeKey | undefined {
-  const order: (TypeKey | undefined)[] = [undefined, ...CHIP_TYPES];
+/** Step forward or back through a ring of filter values. */
+function stepInOrder<T>(order: readonly T[], current: T, back = false): T {
   const i = Math.max(0, order.indexOf(current));
   return order[(i + (back ? order.length - 1 : 1)) % order.length];
+}
+
+/** The chip after (or, with `back`, before) `current`: All, then each chip type, wrapping. */
+export function stepChip(current: TypeKey | undefined, back = false): TypeKey | undefined {
+  return stepInOrder<TypeKey | undefined>([undefined, ...CHIP_TYPES], current, back);
+}
+
+/** Knowledge kind filter chips (All, Documents, Decks, Designs), cycled with Tab in Knowledge mode. */
+export const KNOWLEDGE_KINDS: (PageKind | undefined)[] = [undefined, "document", "deck", "design"];
+
+/** The Knowledge kind chip after (or, with `back`, before) `current`, wrapping. */
+export function stepKnowledgeKind(current: PageKind | undefined, back = false): PageKind | undefined {
+  return stepInOrder(KNOWLEDGE_KINDS, current, back);
 }
 
 /** Markdown as one plain line for a preview: code, links, images and markup dropped; cut at `max` characters. */
@@ -475,10 +487,71 @@ export function recordRecent(store: RecentStore, item: PaletteLink): void {
   }
 }
 
+/** localStorage key shared with KnowledgeShell for the Yours / Agent knowledge toggle. */
+export const KNOWLEDGE_VIEW_KEY = "vesper.knowledge.view";
+
+/** Page-scoped ⌘⇧K palette target derived from the current URL, or undefined for global fallback. */
+export type PageScope =
+  | { kind: "knowledge"; label: "Knowledge" }
+  | { kind: "type"; type: TypeKey; label: string };
+
+const KNOWLEDGE_PREFIXES = ["/knowledge", "/wiki", "/apps/docs", "/apps/slides", "/apps/designs"] as const;
+
+const TYPE_SCOPE_PREFIXES: readonly [string, TypeKey][] = [
+  ["/tickets", "ticket"],
+  ["/board", "ticket"],
+  ["/epics", "epic"],
+  ["/runs", "run"],
+  ["/chat", "chat"],
+  ["/agents", "people"],
+  ["/customization", "people"],
+  ["/workflows", "workflow"],
+  ["/library", "library"],
+  ["/scheduled", "scheduled"],
+  ["/learn", "course"],
+  ["/spaces", "space"],
+  ["/artifacts", "artifact"],
+  ["/apps", "app"],
+];
+
+const matchesPrefix = (pathname: string, prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);
+
+/** Which item scope ⌘⇧K should open for the current route, if the page has one. */
+export function pageScope(pathname: string, search?: string | URLSearchParams): PageScope | undefined {
+  const [path, rawQuery] = pathname.split("?");
+  if (KNOWLEDGE_PREFIXES.some((p) => matchesPrefix(path, p))) {
+    return { kind: "knowledge", label: "Knowledge" };
+  }
+  const query = new URLSearchParams(search ?? rawQuery);
+  if (matchesPrefix(path, "/tickets") && query.get("layout") === "epics") {
+    return { kind: "type", type: "epic", label: TYPE.epic.label };
+  }
+  if (matchesPrefix(path, "/work")) {
+    const view = query.get("view");
+    const type: TypeKey = view === "tickets" ? "ticket" : view === "epics" ? "epic" : "run";
+    return { kind: "type", type, label: TYPE[type].label };
+  }
+  const hit = TYPE_SCOPE_PREFIXES.find(([p]) => matchesPrefix(path, p));
+  return hit ? { kind: "type", type: hit[1], label: TYPE[hit[1]].label } : undefined;
+}
+
+/** Splits a Knowledge palette input into plain search text or a leading `#tag` query. */
+export function parseKnowledgeQuery(raw: string): { text: string; tag: string } {
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("#")) return { text: "", tag: trimmed.slice(1).trim() };
+  return { text: trimmed, tag: "" };
+}
+
+/** Display folder for a Knowledge page path ("Campaign/Sessions/Dawn" → "Campaign / Sessions"). */
+export function knowledgeFolder(path: string): string {
+  return path.split("/").slice(0, -1).join(" / ") || "Top level";
+}
+
 /** What the current page is about, for "New chat with … attached" and "Go to run". */
 export type PageContext =
   | { kind: "ticket"; key: string }
   | { kind: "artifact"; id: string }
+  | { kind: "knowledge"; id: string }
   | { kind: "wiki"; path: string }
   | undefined;
 
@@ -487,6 +560,8 @@ export function pageContext(pathname: string): PageContext {
   if (ticket) return { kind: "ticket", key: ticket[1] };
   const artifact = pathname.match(/^\/artifacts\/([0-9a-f-]{36})$/i);
   if (artifact) return { kind: "artifact", id: artifact[1] };
+  const knowledge = pathname.match(/^\/knowledge\/([0-9a-f-]{36})(?:\/|$)/i);
+  if (knowledge) return { kind: "knowledge", id: knowledge[1] };
   const wiki = pathname.match(/^\/wiki\/(.+)$/);
   if (wiki) {
     const path = wiki[1]
@@ -515,6 +590,7 @@ export const SHORTCUTS: { section: string; items: { label: string; keys: string[
     section: "Global",
     items: [
       { label: "Open command palette", keys: ["⌘/Ctrl", "K"] },
+      { label: "Open page-scoped command palette", keys: ["⌘/Ctrl", "⇧", "K"] },
       { label: "New ticket", keys: ["C"] },
       { label: "Show this reference", keys: ["?"] },
     ],
