@@ -39,7 +39,10 @@ def install(cfg):
     # stale allow rule can't outlive the policy this turn was given.
     settings_path = os.path.join(home, ".gemini", "antigravity-cli", "settings.json")
     settings = load(settings_path)
-    settings.pop("modelProvider", None)
+    if os.environ.get("GEMINI_API_KEY"):
+        settings["modelProvider"] = "gemini"
+    else:
+        settings.pop("modelProvider", None)
     settings.update(cfg["settings"])
     write(settings_path, settings)
     servers = json.loads(json.dumps(cfg["mcp_servers"]).replace("{{token}}", token))
@@ -56,6 +59,8 @@ def main():
         cfg = json.load(f)
     if cfg.get("install"):
         install(cfg)
+        settings_path = os.path.join(os.path.expanduser("~"), ".gemini", "antigravity-cli", "settings.json")
+        args = [*args, "--settings", settings_path]
     # execvp's own error for a missing program names no file, which reads as a
     # problem with the configuration above.
     if shutil.which(program) is None:

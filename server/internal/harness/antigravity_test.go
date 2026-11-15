@@ -422,3 +422,69 @@ func TestAgyLauncherNamesAMissingBinary(t *testing.T) {
 		t.Fatalf("result = %+v", line.Result)
 	}
 }
+
+func TestAgyLauncherPassesSessionSettingsAndModelProvider(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 is not installed")
+	}
+	run := func(t *testing.T, extraEnv ...string) (argv []string, settings map[string]any) {
+		t.Helper()
+		dir := t.TempDir()
+		home := t.TempDir()
+		binDir := t.TempDir()
+		// Pre-populate a stale modelProvider so we verify both set and pop paths.
+		settingsDir := filepath.Join(home, ".gemini", "antigravity-cli")
+		if err := os.MkdirAll(settingsDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(settingsDir, "settings.json"), []byte(`{"modelProvider":"gemini"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		stub := filepath.Join(binDir, "agy")
+		if err := os.WriteFile(stub, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		script := filepath.Join(dir, "agy-launch.py")
+		if err := os.WriteFile(script, agyLauncher, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cfg := `{"install":true,"token_env":"TOK","hook_command":"true","settings":{"enableTerminalSandbox":false},"mcp_servers":{}}`
+		if err := os.WriteFile(filepath.Join(dir, "agy-config.json"), []byte(cfg), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command(python, "-I", script, "agy", "-p", "hi")
+		cmd.Env = append([]string{"HOME=" + home, "PATH=" + binDir + ":/usr/bin:/bin", "TOK=secret"}, extraEnv...)
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("launch: %v", err)
+		}
+		argv = strings.Split(strings.TrimSpace(string(out)), "\n")
+		wantSettings := filepath.Join(settingsDir, "settings.json")
+		idx := slices.Index(argv, "--settings")
+		if idx < 0 || idx+1 >= len(argv) || argv[idx+1] != wantSettings {
+			t.Fatalf("argv = %v, want --settings %s", argv, wantSettings)
+		}
+		raw, err := os.ReadFile(wantSettings)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(raw, &settings); err != nil {
+			t.Fatal(err)
+		}
+		return argv, settings
+	}
+
+	_, oauthSettings := run(t)
+	if _, ok := oauthSettings["modelProvider"]; ok {
+		t.Fatalf("OAuth mode must pop stale modelProvider, got %v", oauthSettings)
+	}
+	if oauthSettings["enableTerminalSandbox"] != false {
+		t.Fatalf("enableTerminalSandbox = %v, want false", oauthSettings["enableTerminalSandbox"])
+	}
+
+	_, apiSettings := run(t, "GEMINI_API_KEY=AIzaStub")
+	if apiSettings["modelProvider"] != "gemini" {
+		t.Fatalf("GEMINI_API_KEY mode must set modelProvider=gemini, got %v", apiSettings)
+	}
+}
