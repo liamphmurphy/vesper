@@ -322,10 +322,11 @@ test("the persistent right rail stays mounted across Chat, Work and Knowledge, i
   const panel = page.getByRole("complementary", { name: "Panel", exact: true });
   await expect(panel).toBeVisible();
   await expectCleanShell();
+  await expect(panel.getByRole("button", { name: "Collapse panel" })).toHaveCount(0);
   const panelBox = (await panel.boundingBox())!;
   const railBox = (await rightRail.boundingBox())!;
   expect(Math.round(panelBox.x + panelBox.width)).toBe(Math.round(railBox.x));
-  await panel.getByRole("button", { name: "Collapse panel" }).click();
+  await rightRail.getByRole("navigation", { name: "Panel rail" }).getByRole("button", { name: "Collapse panel" }).click();
   await expect(panel).toHaveCount(0);
 
   // Work Activity keeps the persistent right rail and opens its contextual WorkChat beside the run.

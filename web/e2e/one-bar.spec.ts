@@ -57,8 +57,13 @@ test("an editor's dock continues the top bar: the chat's header is the dock's fi
   expect(dockRow.y).toBe(editorBar.y);
   expect(dockRow.height).toBe(editorBar.height);
   expect(dockRow.height).toBe(44);
-  // One tab, so no tab strip; and no other header between that row and the conversation.
+  // One tab, so no tab strip; its rail controls stay in the right rail rather than the dock header.
+  const rail = page.getByRole("navigation", { name: "Panel rail" });
   await expect(dock.getByRole("tablist", { name: "Panel tabs" })).toHaveCount(0);
+  await expect(rail.getByRole("tablist", { name: "Panel tabs" })).toHaveCount(0);
+  await expect(rail.getByRole("button", { name: "Collapse panel" })).toBeVisible();
+  await expect(rail.getByRole("button", { name: /^Collapse Chat/ })).toBeVisible();
+  await expect(dock.getByRole("button", { name: "Collapse panel" })).toHaveCount(0);
   await expect(dock.getByTestId("chat-header")).toHaveCount(1);
   const panel = (await dock.getByRole("tabpanel", { name: "Chat" }).first().boundingBox())!;
   expect(Math.round(panel.y)).toBe(Math.round(dockRow.y + dockRow.height));
@@ -80,11 +85,11 @@ test("the companion is one panel beside every page: the work chat where a page h
   const box = (await panel.boundingBox())!;
   expect(Math.round(box.x + box.width)).toBe(Math.round(railBox.x));
   expect(box.y).toBe(0);
-  // Open here, open on the next page; a page with its own panel shows its tabs in the same place.
+  // Open here, open on the next page; a page with its own panel shows its tabs in the right rail.
   await page.goto("/tickets/WEB-1");
-  await expect(panel.getByRole("tablist", { name: "Panel tabs" }).getByRole("tab", { name: "Properties" })).toBeVisible();
+  await expect(rail.getByRole("tablist", { name: "Panel tabs" }).getByRole("tab", { name: "Properties" })).toBeVisible();
   // Folded there, folded everywhere.
-  await panel.getByRole("button", { name: "Collapse panel" }).click();
+  await rail.getByRole("button", { name: "Collapse panel" }).click();
   await page.goto("/library");
   await expect(rail).toBeVisible();
   await expect(panel).toHaveCount(0);

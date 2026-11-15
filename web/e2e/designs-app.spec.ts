@@ -127,7 +127,7 @@ const savedState = (page: Page) => page.getByTestId("design-save-state");
 const canvas = (page: Page) => page.getByTestId("design-canvas");
 /** The inspector (Design / Prototype / Inspect) lives in the dock's Design tab; the dock opens on Chat. */
 async function openInspector(page: Page) {
-  const tab = page.getByRole("complementary", { name: "Panel", exact: true }).getByRole("tablist", { name: "Panel tabs" }).getByRole("tab", { name: /Design/ });
+  const tab = page.getByRole("navigation", { name: "Panel rail" }).getByRole("tablist", { name: "Panel tabs" }).getByRole("tab", { name: /Design/ });
   // Clicking the active dock tab collapses the dock, so only click it when it isn't active.
   if ((await tab.getAttribute("aria-selected")) !== "true") await tab.click();
   await expect(tab).toHaveAttribute("aria-selected", "true");
@@ -572,7 +572,7 @@ test("a design opens in the shared layout: slim header, Pages and layers, and a 
   const header = page.locator("header").filter({ has: savedState(page) });
   const dock = page.getByRole("complementary", { name: "Panel", exact: true });
   const rail = page.getByRole("navigation", { name: "Panel rail" });
-  const tab = (name: string) => dock.getByRole("tablist", { name: "Panel tabs" }).getByRole("tab", { name: new RegExp(name) });
+  const tab = (name: string) => rail.getByRole("tablist", { name: "Panel tabs" }).getByRole("tab", { name: new RegExp(name) });
   const mod = process.platform === "darwin" ? "Meta" : "Control";
 
   // Header: back and forward, title, save state, Present and Share; no Hide chat or Export of its own.
@@ -606,12 +606,13 @@ test("a design opens in the shared layout: slim header, Pages and layers, and a 
   await expect(dock.getByRole("tablist", { name: "Inspector" }).getByRole("tab", { name: "Prototype" })).toBeVisible();
 
   // Collapse with ⇥, reopen from the rail; clicking the active tab collapses too.
-  await dock.getByRole("button", { name: "Collapse panel" }).click();
+  await rail.getByRole("button", { name: "Collapse panel" }).click();
   await expect(dock).toHaveCount(0);
   await expect(rail).toBeVisible();
   await rail.getByRole("button", { name: "Open Design" }).click();
   await expect(tab("Design")).toHaveAttribute("aria-selected", "true");
   await tab("Design").click();
+  await expect(dock).toHaveCount(0);
   await expect(rail).toBeVisible();
   await rail.getByRole("button", { name: "Expand panel" }).click();
   await expect(dock).toBeVisible();
@@ -636,8 +637,10 @@ test("a design opens in the shared layout: slim header, Pages and layers, and a 
   // The dock is remembered across a reload.
   await canvas(page).click({ position: { x: 20, y: 20 } });
   await page.keyboard.press(`${mod}+Backslash`);
+  await expect(dock).toHaveCount(0);
   await expect(rail).toBeVisible();
   await page.reload();
   await expect(savedState(page)).toContainText("Saved");
+  await expect(dock).toHaveCount(0);
   await expect(rail).toBeVisible();
 });

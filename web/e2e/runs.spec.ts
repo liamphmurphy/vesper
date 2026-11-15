@@ -231,9 +231,9 @@ test("the side panel's Chat talks to your persona about the run; the run's compo
   await page.goto(`/runs/${RUNNING}`);
   // The main pane talks to what it shows.
   await expect(page.getByTestId("run-composer-to")).toHaveText(/^To.*Builder · WEB-9$/);
-  // The run's companion: Context and Chat tabs in the shell's right-hand panel.
+  // The run's companion: Context and Chat tabs in the shell's right-hand panel, switched from the rail.
   const panel = page.getByRole("complementary", { name: "Panel", exact: true });
-  const tabs = panel.getByRole("tablist", { name: "Panel tabs" });
+  const tabs = page.getByRole("navigation", { name: "Panel rail" }).getByRole("tablist", { name: "Panel tabs" });
   await tabs.getByRole("tab", { name: "Chat" }).click();
   await panel.getByRole("button", { name: "Start a chat" }).click();
   await expect.poll(() => api.created.length).toBe(1);
@@ -269,7 +269,7 @@ test("a pinned run stays attached to the side-panel chat as you move to another 
   const { api } = await installRuns(page);
   await page.goto(`/runs/${RUNNING}`);
   const panel = page.getByRole("complementary", { name: "Panel", exact: true });
-  await panel.getByRole("tablist", { name: "Panel tabs" }).getByRole("tab", { name: "Chat" }).click();
+  await page.getByRole("navigation", { name: "Panel rail" }).getByRole("tablist", { name: "Panel tabs" }).getByRole("tab", { name: "Chat" }).click();
   await panel.getByRole("button", { name: "Start a chat" }).click();
   await panel.getByRole("button", { name: "Pin WEB-9 · Search index" }).click();
   await expect(panel.getByTestId("work-chat-pinned")).toHaveText(/Pinned: WEB-9 · Search index/);
@@ -321,7 +321,7 @@ test("the Context panel shows the ticket, code and run, opens the views, and rem
   await expect(page).toHaveURL(new RegExp(`/runs/${APPROVING}$`));
 
   // Folding the companion is remembered: it reopens from its rail.
-  await page.getByRole("complementary", { name: "Panel", exact: true }).getByRole("button", { name: "Collapse panel" }).click();
+  await page.getByRole("navigation", { name: "Panel rail" }).getByRole("button", { name: "Collapse panel" }).click();
   await expect(ctx).toHaveCount(0);
   await page.reload();
   await expect(page.getByRole("heading", { name: "Partition ledger entries" })).toBeVisible();

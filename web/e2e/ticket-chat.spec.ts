@@ -8,7 +8,7 @@ test("the ticket's side panel switches to Chat, which names the ticket, and reme
   await page.route("**/api/v1/dock-chats?*", (route) => route.fulfill({ json: { chats: [] } }));
   await page.goto("/tickets/WEB-1");
   const panel = page.getByRole("complementary", { name: "Panel", exact: true });
-  const tabs = panel.getByRole("tablist", { name: "Panel tabs" });
+  const tabs = page.getByRole("navigation", { name: "Panel rail" }).getByRole("tablist", { name: "Panel tabs" });
   await expect(tabs.getByRole("tab", { name: "Properties" })).toHaveAttribute("aria-selected", "true");
   await tabs.getByRole("tab", { name: "Chat" }).click();
   await expect(panel.getByTestId("work-chat-subject")).toHaveText("Viewing: WEB-1 · Build ticket modal");

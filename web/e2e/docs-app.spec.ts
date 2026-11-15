@@ -97,7 +97,7 @@ async function install(page: Page, first = "# Trip plan\n\nFly to **Lisbon** on 
 const editor = (page: Page) => page.getByTestId("doc-editor");
 const dock = (page: Page) => page.getByRole("complementary", { name: "Panel", exact: true });
 const rail = (page: Page) => page.getByRole("navigation", { name: "Panel rail" });
-const dockTab = (page: Page, name: string) => dock(page).getByRole("tablist", { name: "Panel tabs" }).getByRole("tab", { name: new RegExp(`^${name}`) });
+const dockTab = (page: Page, name: string) => rail(page).getByRole("tablist", { name: "Panel tabs" }).getByRole("tab", { name: new RegExp(`^${name}`) });
 // Chat alone shows no tab strip: its panel, under the chat header in the dock\'s first row, is what shows.
 const chatShown = (page: Page) => dock(page).getByRole("tabpanel", { name: /^Chat/ }).first();
 const mod = process.platform === "darwin" ? "Meta" : "Control";
@@ -273,12 +273,13 @@ test("the dock collapses and reopens, with ⌘\\, ⌘J and ⌘., and the outline
   await expect(dock(page).getByTestId("doc-chat")).toBeVisible();
 
   // ⇥ collapses to the rail; the rail reopens it.
-  await dock(page).getByRole("button", { name: "Collapse panel" }).click();
+  await rail(page).getByRole("button", { name: "Collapse panel" }).click();
   await expect(dock(page)).toHaveCount(0);
   await expect(rail(page)).toBeVisible();
   await rail(page).getByRole("button", { name: "Open Chat" }).click();
   await expect(chatShown(page)).toBeVisible();
-  await dock(page).getByRole("button", { name: "Collapse panel" }).click();
+  await rail(page).getByRole("button", { name: "Collapse panel" }).click();
+  await expect(dock(page)).toHaveCount(0);
   await expect(rail(page)).toBeVisible();
 
   // ⌘\ reopens it; ⌘J brings Chat up with its composer focused.
@@ -287,6 +288,7 @@ test("the dock collapses and reopens, with ⌘\\, ⌘J and ⌘., and the outline
   await expect(dock(page)).toBeVisible();
   await page.locator("header").first().click({ position: { x: 600, y: 10 } });
   await page.keyboard.press(`${mod}+Backslash`);
+  await expect(dock(page)).toHaveCount(0);
   await expect(rail(page)).toBeVisible();
   await page.keyboard.press(`${mod}+j`);
   await expect(chatShown(page)).toBeVisible();
@@ -303,9 +305,11 @@ test("the dock collapses and reopens, with ⌘\\, ⌘J and ⌘., and the outline
   // The dock stays as it was left across a reload.
   await page.locator("header").first().click({ position: { x: 600, y: 10 } });
   await page.keyboard.press(`${mod}+Backslash`);
+  await expect(dock(page)).toHaveCount(0);
   await expect(rail(page)).toBeVisible();
   await page.reload();
   await expect(editor(page)).toContainText("Lisbon");
+  await expect(dock(page)).toHaveCount(0);
   await expect(rail(page)).toBeVisible();
 
   // The outline starts collapsed and lists the headings.

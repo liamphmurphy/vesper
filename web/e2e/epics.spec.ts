@@ -104,7 +104,7 @@ test("the epic page's Context panel stays closed across reloads, like the run pa
   // The epic's companion: its Context tab, folded and reopened from the rail like every page's.
   const context = page.getByRole("tabpanel", { name: "Context" });
   await expect(context.getByRole("region", { name: "Epic completion" })).toBeVisible();
-  await page.getByRole("complementary", { name: "Panel", exact: true }).getByRole("button", { name: "Collapse panel" }).click();
+  await page.getByRole("navigation", { name: "Panel rail" }).getByRole("button", { name: "Collapse panel" }).click();
   await expect(context).toHaveCount(0);
   await page.reload();
   await expect(page.getByRole("heading", { level: 1, name: "Kanban board" })).toBeVisible();

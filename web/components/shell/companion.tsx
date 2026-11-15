@@ -80,7 +80,7 @@ function DefaultCompanion() {
   return <Dock uid={uid} tabs={tabs} state={state} dispatch={dispatch} panels={state.open ? undefined : null} />;
 }
 
-/** Puts a Dock's collapsed rail buttons into the permanent right rail's top dynamic slot on wide screens. */
+/** Puts a Dock's rail controls into the permanent right rail's top dynamic slot on wide screens. */
 export function RightRailPortal({ children }: { children: ReactNode }) {
   const slot = useSyncExternalStore(subscribeCompanion, rightRailSlot, () => null);
   return slot ? createPortal(children, slot) : null;
