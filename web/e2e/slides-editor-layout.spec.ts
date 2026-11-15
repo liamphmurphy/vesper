@@ -5,8 +5,8 @@ import { DECK, deckWith, installDeck as install } from "./mock-deck-api";
 // the left, Chat and Review in the dock, Present and Share ▾ in the header.
 
 const dock = (page: Page) => page.getByRole("complementary", { name: "Panel", exact: true });
-const tabs = (page: Page) => dock(page).getByRole("tablist", { name: "Panel tabs" });
 const rail = (page: Page) => page.getByRole("navigation", { name: "Panel rail" });
+const tabs = (page: Page) => rail(page).getByRole("tablist", { name: "Panel tabs" });
 const mod = process.platform === "darwin" ? "Meta" : "Control";
 
 test.use({ viewport: { width: 1440, height: 900 } });
@@ -53,7 +53,7 @@ test("the deck renders in the editor layout and its dock collapses and reopens",
   await expect(page.getByRole("button", { name: /Hide chat/ })).toHaveCount(0);
   await expect(page.getByTestId("deck-save-state")).toHaveText(/Saved · v1/);
 
-  await dock(page).getByRole("button", { name: "Collapse panel" }).click();
+  await rail(page).getByRole("button", { name: "Collapse panel" }).click();
   await expect(dock(page)).toHaveCount(0);
   await expect(rail(page)).toBeVisible();
   await rail(page).getByRole("button", { name: "Expand panel" }).click();
@@ -61,16 +61,19 @@ test("the deck renders in the editor layout and its dock collapses and reopens",
 
   await page.locator("body").click();
   await page.keyboard.press(`${mod}+Backslash`);
+  await expect(dock(page)).toHaveCount(0);
   await expect(rail(page)).toBeVisible();
   await page.keyboard.press(`${mod}+j`);
   await expect(dock(page)).toBeVisible();
   await expect(dock(page).getByRole("combobox", { name: "Message" })).toBeFocused();
 
   // The collapsed state is remembered across a reload.
-  await dock(page).getByRole("button", { name: "Collapse panel" }).click();
+  await rail(page).getByRole("button", { name: "Collapse panel" }).click();
+  await expect(dock(page)).toHaveCount(0);
   await expect(rail(page)).toBeVisible();
   await page.reload();
   await expect(page.getByTestId("deck-save-state")).toBeVisible();
+  await expect(dock(page)).toHaveCount(0);
   await expect(rail(page)).toBeVisible();
 });
 

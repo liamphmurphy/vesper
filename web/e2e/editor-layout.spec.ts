@@ -22,23 +22,26 @@ test.beforeEach(async ({ page }) => {
 
 test("the dock collapses to a rail in place and reopens from it", async ({ page }) => {
   await page.goto("/dev/editor-layout");
-  await expect(dock(page).getByRole("tab", { name: /Chat/ })).toHaveAttribute("aria-selected", "true");
+  await expect(rail(page).getByRole("tab", { name: /Chat/ })).toHaveAttribute("aria-selected", "true");
+  await expect(dock(page).getByRole("tablist")).toHaveCount(0);
+  await expect(dock(page).getByRole("button", { name: "Collapse panel" })).toHaveCount(0);
 
-  await dock(page).getByRole("button", { name: "Collapse panel" }).click();
+  await rail(page).getByRole("button", { name: "Collapse panel" }).click();
   await expect(dock(page)).toHaveCount(0);
   await expect(rail(page)).toBeVisible();
 
   await rail(page).getByRole("button", { name: "Open Comments" }).click();
-  await expect(dock(page).getByRole("tab", { name: "Comments" })).toHaveAttribute("aria-selected", "true");
+  await expect(rail(page).getByRole("tab", { name: "Comments" })).toHaveAttribute("aria-selected", "true");
   await expect(dock(page).getByText("No comments")).toBeVisible();
 
   // Clicking the active tab collapses; another tab switches.
-  await dock(page).getByRole("tab", { name: "Inspect" }).click();
+  await rail(page).getByRole("tab", { name: "Inspect" }).click();
   await expect(dock(page).getByText("Nothing selected")).toBeVisible();
-  await dock(page).getByRole("tab", { name: "Inspect" }).click();
+  await rail(page).getByRole("tab", { name: "Inspect" }).click();
+  await expect(dock(page)).toHaveCount(0);
   await expect(rail(page)).toBeVisible();
   await rail(page).getByRole("button", { name: "Expand panel" }).click();
-  await expect(dock(page).getByRole("tab", { name: "Inspect" })).toHaveAttribute("aria-selected", "true");
+  await expect(rail(page).getByRole("tab", { name: "Inspect" })).toHaveAttribute("aria-selected", "true");
 });
 
 test("⌘\\ toggles the dock, ⌘J opens Chat and focuses it, ⌘. hides and restores both panels", async ({ page }) => {
@@ -47,13 +50,14 @@ test("⌘\\ toggles the dock, ⌘J opens Chat and focuses it, ⌘. hides and res
   await page.locator("body").click();
 
   await page.keyboard.press(`${mod}+Backslash`);
+  await expect(dock(page)).toHaveCount(0);
   await expect(rail(page)).toBeVisible();
   await page.keyboard.press(`${mod}+Backslash`);
   await expect(dock(page)).toBeVisible();
 
-  await dock(page).getByRole("tab", { name: "Comments" }).click();
+  await rail(page).getByRole("tab", { name: "Comments" }).click();
   await page.keyboard.press(`${mod}+j`);
-  await expect(dock(page).getByRole("tab", { name: /Chat/ })).toHaveAttribute("aria-selected", "true");
+  await expect(rail(page).getByRole("tab", { name: /Chat/ })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("textbox", { name: "Message" })).toBeFocused();
 
   // While typing only ⌘J applies.
@@ -78,15 +82,16 @@ test("the dock's state persists per app across a reload, and the structure is th
   await expect(menu.getByRole("complementary", { name: "Structure" })).toBeVisible();
   await expect(menu.getByRole("complementary", { name: "Chat history" })).toHaveCount(0);
 
-  await dock(page).getByRole("tab", { name: "Comments" }).click();
-  await dock(page).getByRole("tab", { name: "Comments" }).click();
+  await rail(page).getByRole("tab", { name: "Comments" }).click();
+  await rail(page).getByRole("tab", { name: "Comments" }).click();
+  await expect(dock(page)).toHaveCount(0);
   await expect(rail(page)).toBeVisible();
   await expect.poll(() => page.evaluate(() => localStorage.getItem("lazyagents.editor-dock.demo"))).toBe(JSON.stringify({ open: false, tab: "comments" }));
 
   await page.reload();
   await expect(rail(page)).toBeVisible();
   await rail(page).getByRole("button", { name: "Expand panel" }).click();
-  await expect(dock(page).getByRole("tab", { name: "Comments" })).toHaveAttribute("aria-selected", "true");
+  await expect(rail(page).getByRole("tab", { name: "Comments" })).toHaveAttribute("aria-selected", "true");
 
   // Leaving the editor gives the column back to Chats.
   await page.goto("/chat");
@@ -96,7 +101,7 @@ test("the dock's state persists per app across a reload, and the structure is th
 
 test("the busy and unread marks show on the Chat tab", async ({ page }) => {
   await page.goto("/dev/editor-layout");
-  const chat = dock(page).getByRole("tab", { name: /Chat/ });
+  const chat = rail(page).getByRole("tab", { name: /Chat/ });
   await expect(chat).toHaveAccessibleName(/unread/);
   await page.getByLabel("Persona busy").check();
   await expect(chat).toHaveAccessibleName(/working, unread/);

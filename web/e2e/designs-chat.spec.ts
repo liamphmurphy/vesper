@@ -116,7 +116,7 @@ test("a design the persona starts opens beside the chat and leaves a Design card
 // The chat's panels share the apps' dock (LAZYAGENTS-165): a tab per open panel plus Activity.
 const dock = (page: Page) => page.getByRole("complementary", { name: "Panel" });
 const rail = (page: Page) => page.getByRole("navigation", { name: "Panel rail" });
-const dockTab = (page: Page, name: string) => dock(page).getByRole("tablist", { name: "Panel tabs" }).getByRole("tab", { name: new RegExp(name) });
+const dockTab = (page: Page, name: string) => rail(page).getByRole("tablist", { name: "Panel tabs" }).getByRole("tab", { name: new RegExp(name) });
 const mod = process.platform === "darwin" ? "Meta" : "Control";
 
 async function openDesign(page: Page) {
@@ -140,10 +140,11 @@ test("with a design open, the dock collapses to its rail and reopens, and the UR
   await openDesign(page);
   await expect(dockTab(page, "Design")).toHaveAttribute("aria-selected", "true");
   await expect(dockTab(page, "Activity")).toBeVisible();
-  await expect(rail(page)).toHaveCount(0);
+  await expect(rail(page).getByRole("button", { name: "Collapse panel" })).toBeVisible();
+  await expect(dock(page).getByRole("button", { name: "Collapse panel" })).toHaveCount(0);
 
   // ⇥ collapses it in place; the rail's icon reopens that tab.
-  await dock(page).getByRole("button", { name: "Collapse panel" }).click();
+  await rail(page).getByRole("button", { name: "Collapse panel" }).click();
   await expect(dock(page)).toHaveCount(0);
   await expect(rail(page).getByRole("button", { name: "Open Design" })).toBeVisible();
   await rail(page).getByRole("button", { name: "Open Design" }).click();
@@ -151,6 +152,7 @@ test("with a design open, the dock collapses to its rail and reopens, and the UR
 
   // Clicking the active tab collapses it; ⌘\ reopens it.
   await dockTab(page, "Design").click();
+  await expect(dock(page)).toHaveCount(0);
   await expect(rail(page)).toBeVisible();
   await page.keyboard.press(`${mod}+Backslash`);
   await expect(dockTab(page, "Design")).toHaveAttribute("aria-selected", "true");
@@ -160,6 +162,7 @@ test("with a design open, the dock collapses to its rail and reopens, and the UR
   await expect(page.getByTestId("chat-activity")).toBeVisible();
   await expect(page.getByRole("log", { name: "Conversation" })).toBeVisible();
   await page.keyboard.press(`${mod}+Backslash`);
+  await expect(dock(page)).toHaveCount(0);
   await expect(rail(page)).toBeVisible();
   await page.reload();
   await expect(rail(page).getByRole("button", { name: "Open Design" })).toBeVisible();
@@ -219,6 +222,7 @@ test("a design out of sight in the dock doesn't take editing keys", async ({ pag
   await page.keyboard.press("ArrowRight");
   // Nor in the collapsed dock.
   await page.keyboard.press(`${mod}+Backslash`);
+  await expect(dock(page)).toHaveCount(0);
   await expect(rail(page)).toBeVisible();
   await page.keyboard.press("Backspace");
   await page.waitForTimeout(1500);

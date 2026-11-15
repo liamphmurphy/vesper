@@ -59,6 +59,7 @@ test("the chat starts folded to a rail on Home, opens from it, and a general cha
   // ⌘\ folds it again.
   await page.locator("body").click({ position: { x: 700, y: 400 } });
   await page.keyboard.press(`${mod}+Backslash`);
+  await expect(dock(page)).toHaveCount(0);
   await expect(rail(page)).toBeVisible();
 });
 
@@ -419,12 +420,12 @@ test("a page's Links, Outline, Calendar and History are dock tabs beside Chat, a
   await page.goto(`/knowledge/${P}`);
   for (const name of ["Links", "Outline", "Calendar and inbox", "History"]) await expect(rail(page).getByRole("button", { name: `Open ${name}` })).toBeVisible();
   await rail(page).getByRole("button", { name: "Open Links" }).click();
-  await expect(dock(page).getByRole("tab", { name: "Links" })).toHaveAttribute("aria-selected", "true");
-  await dock(page).getByRole("tab", { name: /Chat/ }).click();
+  await expect(rail(page).getByRole("tab", { name: "Links" })).toHaveAttribute("aria-selected", "true");
+  await rail(page).getByRole("tab", { name: /Chat/ }).click();
   await expect(dock(page).getByRole("tabpanel", { name: /^Chat/ }).first()).toBeVisible();
 
   await page.getByRole("button", { name: /suggests changes|edits directly|paused/ }).click();
-  await expect(dock(page).getByRole("tab", { name: "History" })).toHaveAttribute("aria-selected", "true");
+  await expect(rail(page).getByRole("tab", { name: "History" })).toHaveAttribute("aria-selected", "true");
 
   // Off a page there is only Chat.
   await page.goto("/knowledge");
