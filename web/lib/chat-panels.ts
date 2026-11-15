@@ -103,9 +103,10 @@ export function closePanel(q: URLSearchParams, panel: ChatPanel): URLSearchParam
   return next;
 }
 
-/** The tab the desktop dock shows: the one picked (Activity, or a panel still open), else the frontmost open panel, else Activity. */
-export function dockTab(q: Query, open: readonly ChatPanel[]): DockTabId {
+/** The tab the desktop dock shows: the one picked (Activity, persistent Code, or a panel still open), else the frontmost open panel, else Activity. */
+export function dockTab(q: Query, open: readonly ChatPanel[], opts: { hasCode?: boolean } = {}): DockTabId {
   if (q.get("panel") === "activity") return "activity";
+  if (q.get("panel") === "code" && (opts.hasCode || open.includes("code"))) return "code";
   if (q.get("panel") === "thread" && q.get("thread")) return "thread";
   if (q.get("panel") === "item" && itemOf(q)) return "item";
   return activePanel(q, open) ?? "activity";
@@ -113,13 +114,19 @@ export function dockTab(q: Query, open: readonly ChatPanel[]): DockTabId {
 
 /**
  * Whether the desktop dock is open or collapsed to its rail: `dock=1` / `dock=0` once the person
- * chose, else open while a panel (or Activity) is picked or open, so a chat with nothing open starts on the rail.
+ * chose, else open while a panel (or Activity / persistent Code) is picked or open, so a chat with nothing open starts on the rail.
  */
-export function dockOpen(q: Query, open: readonly ChatPanel[]): boolean {
+export function dockOpen(q: Query, open: readonly ChatPanel[], opts: { hasCode?: boolean } = {}): boolean {
   const d = q.get("dock");
   if (d === "0") return false;
   if (d === "1") return true;
-  return open.length > 0 || q.get("panel") === "activity" || (q.get("panel") === "thread" && !!q.get("thread")) || (q.get("panel") === "item" && !!itemOf(q));
+  return (
+    open.length > 0 ||
+    q.get("panel") === "activity" ||
+    (q.get("panel") === "code" && !!opts.hasCode) ||
+    (q.get("panel") === "thread" && !!q.get("thread")) ||
+    (q.get("panel") === "item" && !!itemOf(q))
+  );
 }
 
 /** The message whose thread the dock shows, if one is open. */
