@@ -76,6 +76,7 @@ const USAGE = { input_tokens: 48200, output_tokens: 1300, cached_input_tokens: 4
 export type Posted = { chat: string; body: Record<string, unknown> };
 export type MockPersona = {
   id: string; name: string; tone: string; color: string; avatar_url?: string; custom_instructions: string;
+  default_harness?: Harness; default_model?: string; default_effort?: Effort;
   capabilities: { code: boolean; images: boolean; personas?: boolean; svg?: boolean; workflows?: boolean }; repos: string[];
   is_default: boolean; chat_count: number; last_used_at?: string; revision: number; created_at: string; updated_at: string;
 };
@@ -807,10 +808,14 @@ export function installChatApi(page: Page, opts: MockOptions = {}) {
       if (!agent) return fail(err(422, "invalid", "unknown agent", "agent_id"));
       if (agent.kind === "sub") return fail(err(422, "invalid", "pick a main agent", "agent_id"));
       if (b.persona_id !== undefined && !personas.some((p) => p.id === b.persona_id)) return fail(err(422, "invalid", "unknown persona", "persona_id"));
+      const first = b.message as { body?: string; harness?: Harness; model?: string; effort?: Effort } | undefined;
+      const persona = personas.find((p) => p.id === ((b.persona_id as string | undefined) ?? defaultPersona()?.id));
       created.push(b);
       const c: Chat = {
         id: uuid(), project: b.project as string | undefined, title: String(b.title ?? ""), agent_id: agent.id,
-        harness: (b.harness as Harness) ?? "claude-code", model: String(b.model ?? "opus-5.5"), effort: b.effort as Effort | undefined,
+        harness: (b.harness as Harness) ?? first?.harness ?? persona?.default_harness ?? "claude-code",
+        model: String(b.model ?? (first?.model && first.model !== "auto" ? first.model : undefined) ?? persona?.default_model ?? "opus-5.5"),
+        effort: (b.effort as Effort | undefined) ?? first?.effort ?? persona?.default_effort,
         state: "idle", archived: false, revision: 1, message_count: 0, created_at: now(), updated_at: now(),
         persona_id: (b.persona_id as string | undefined) ?? defaultPersona()?.id,
         ...(b.temporary ? { temporary: true } : {}),
@@ -828,7 +833,6 @@ export function installChatApi(page: Page, opts: MockOptions = {}) {
       chats.unshift(c);
       messages.set(c.id, []);
       // `message` is posted as the first message, which starts a turn (the workflow editor's build chat).
-      const first = b.message as { body?: string } | undefined;
       if (first?.body) {
         if (!c.title) c.title = first.body.slice(0, 40);
         posted.push({ chat: c.id, body: first });
@@ -1097,6 +1101,19 @@ export function installChatApi(page: Page, opts: MockOptions = {}) {
         if (typeof b.color === "string") p.color = b.color.toLowerCase();
         if (b.capabilities) p.capabilities = b.capabilities as MockPersona["capabilities"];
         if (Array.isArray(b.repos)) p.repos = b.repos as string[];
+        if ("default_harness" in b || "default_model" in b) {
+          if (!b.default_harness || b.default_model === "" || b.default_model === "auto") {
+            delete p.default_harness;
+            delete p.default_model;
+          } else {
+            p.default_harness = b.default_harness as Harness;
+            p.default_model = String(b.default_model);
+          }
+        }
+        if ("default_effort" in b) {
+          if (!b.default_effort || b.default_effort === "default") delete p.default_effort;
+          else p.default_effort = b.default_effort as Effort;
+        }
         bump();
         return json(p);
       }

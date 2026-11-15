@@ -9,11 +9,11 @@ import { menuResponse } from "./mock-menu";
  * State is kept across page reloads. The model "rejected-model" gets a 422.
  */
 
-type Harness = "claude-code" | "codex";
+type Harness = "claude-code" | "codex" | "antigravity";
 type Spec = {
   harness: Harness; model: string; instructions: string; scopes: Record<string, string>;
   budget: Record<string, unknown>; max_concurrency: number; mcp_servers: unknown[];
-  harness_options: Record<string, Record<string, string>>; fallbacks?: Array<{ harness: Harness; model: string }>;
+  harness_options: Record<string, Record<string, string>>; fallbacks?: Array<{ harness: Harness; model: string; harness_options?: Record<string, string> }>;
   skills?: Array<{ name: string; description: string; body: string }>;
 };
 type Override = { harness?: Harness; model?: string; scopes?: Record<string, string>; [k: string]: unknown };
@@ -105,13 +105,52 @@ export async function installAgentApi(page: Page, opts: AgentApiOptions = {}) {
     scopes: [{ scope: "repo:read", mode: "allowed", enforcement: "credential", how: "" }],
   };
 
+  const CHAT_MODELS = [
+    {
+      harness: "claude-code",
+      label: "Claude Code",
+      available: true,
+      models: [
+        { id: "opus-5.5", label: "Opus 5.5", default: true, efforts: ["low", "medium", "high", "xhigh", "max"] },
+        { id: "sonnet-5.5", label: "Sonnet 5.5", default: false, efforts: ["low", "medium", "high", "xhigh", "max"] },
+      ],
+    },
+    {
+      harness: "codex",
+      label: "Codex",
+      available: true,
+      models: [
+        { id: "gpt-5-codex", label: "gpt-5-codex", default: true, efforts: ["low", "medium", "high"], default_effort: "medium" },
+        { id: "gpt-5", label: "gpt-5", default: false, efforts: ["low", "medium", "high"] },
+      ],
+    },
+    {
+      harness: "antigravity",
+      label: "Antigravity",
+      available: true,
+      models: [
+        { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro", default: true, efforts: [] },
+        { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", default: false, efforts: [] },
+      ],
+    },
+  ];
+
   const persona = (id: string, name: string, color: string, extra: Record<string, unknown>) => ({
     id, name, tone: "neutral", color, custom_instructions: "", capabilities: { code: false, images: false }, repos: [], is_default: false,
     chat_count: 0, in_chat_list: true, work: "none", revision: 1, created_at: now(), updated_at: now(), ...extra,
   });
-  const personas: Array<ReturnType<typeof persona> & { handle?: string; work_model?: string; work: string; in_chat_list: boolean; revision: number }> = [
-    persona(UUID(1), "Atlas", "#4547c9", { work: "tickets", handle: "atlas", work_model: "opus-5.5", work_status: "idle" }),
-    persona(UUID(9), "Scout", "#b42f48", { work: "helper", handle: "scout", work_model: "haiku-5.5", work_status: "idle", in_chat_list: false }),
+  const personas: Array<ReturnType<typeof persona> & {
+    handle?: string; work_model?: string; default_harness?: Harness; default_model?: string; default_effort?: string; work: string; in_chat_list: boolean; revision: number;
+  }> = [
+    persona(UUID(1), "Atlas", "#4547c9", {
+      work: "tickets", handle: "atlas", work_model: spec.model, work_status: "idle",
+      default_harness: spec.harness, default_model: spec.model,
+      ...(spec.harness_options[spec.harness]?.effort ? { default_effort: spec.harness_options[spec.harness].effort } : {}),
+    }),
+    persona(UUID(9), "Scout", "#b42f48", {
+      work: "helper", handle: "scout", work_model: "haiku-5.5", work_status: "idle", in_chat_list: false,
+      default_harness: "claude-code", default_model: "haiku-5.5",
+    }),
     persona(UUID(10), "Hackerman", "#9b8cff", { capabilities: { code: true, images: false }, is_default: true }),
   ];
 
@@ -132,7 +171,7 @@ export async function installAgentApi(page: Page, opts: AgentApiOptions = {}) {
       });
     }
     if (path === "/persona-dock") return json({ personas: [], harnesses: [] });
-    if (path === "/chat-models") return json([]);
+    if (path === "/chat-models") return json(CHAT_MODELS);
     // Settings → Sign-in: an install already set up with a password.
     if (path === "/auth/status") return json({ claimed: true, password_set: true, signed_in: true });
     if (path === "/runner") return json({ online: true, runners: [], slots: 1, busy: 0, live: 0, queued: 0 });
@@ -191,6 +230,41 @@ export async function installAgentApi(page: Page, opts: AgentApiOptions = {}) {
       const b = body();
       saved.personas.push({ id: p.id, body: b });
       Object.assign(p, b.work ? { work: b.work, handle: p.handle ?? p.name.toLowerCase(), work_model: p.work_model ?? "opus-5.5", work_status: "idle" } : {}, "in_chat_list" in b ? { in_chat_list: b.in_chat_list } : {});
+      if ("default_harness" in b || "default_model" in b) {
+        if (!b.default_harness || b.default_model === "" || b.default_model === "auto") {
+          delete p.default_harness;
+          delete p.default_model;
+        } else {
+          p.default_harness = b.default_harness as Harness;
+          p.default_model = String(b.default_model);
+        }
+      }
+      if ("default_effort" in b) {
+        if (!b.default_effort || b.default_effort === "default") delete p.default_effort;
+        else p.default_effort = String(b.default_effort);
+      }
+      if (p.id === agent.id && p.work !== "none") {
+        const nextHarness = p.default_harness ?? "claude-code";
+        const nextModel = p.default_model ?? "sonnet-5.5";
+        spec = {
+          ...spec,
+          harness: nextHarness,
+          model: nextModel,
+          harness_options: {
+            ...spec.harness_options,
+            ...(p.default_effort ? { [nextHarness]: { ...(spec.harness_options[nextHarness] ?? {}), effort: p.default_effort } } : {}),
+          },
+        };
+        if (!p.default_effort && spec.harness_options[nextHarness]) {
+          const rest = { ...spec.harness_options[nextHarness] };
+          delete rest.effort;
+          if (Object.keys(rest).length) spec.harness_options[nextHarness] = rest;
+          else delete spec.harness_options[nextHarness];
+        }
+        p.work_model = nextModel;
+        agent.model = nextModel;
+        version++;
+      }
       p.revision++;
       return json(p);
     }

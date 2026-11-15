@@ -21,6 +21,7 @@ export const effortLabel = (e: Effort | undefined) => (e ? EFFORT_LABELS[e] : "A
  * definition's alias) gets its harness default model's, as the server allows.
  */
 export function modelEfforts(groups: Group[] | undefined, s: Selection): { efforts: Effort[] } {
+  if (!s.model && !s.auto) return { efforts: [] };
   const g = groups?.find((x) => x.harness === s.harness);
   const m = g?.models.find((x) => x.id === s.model) ?? g?.models.find((x) => x.default);
   return { efforts: m?.efforts ?? [] };
@@ -135,6 +136,13 @@ export function ModelEffortPicker({
   effort,
   onEffort,
   disabled,
+  allowAuto = true,
+  side = "top",
+  align = "end",
+  showHarness = false,
+  placeholder,
+  ariaLabel,
+  triggerClassName,
 }: {
   groups?: Group[];
   value: Selection;
@@ -143,39 +151,53 @@ export function ModelEffortPicker({
   effort: Effort | undefined;
   onEffort: (e: Effort | undefined) => void;
   disabled?: boolean;
+  allowAuto?: boolean;
+  side?: "top" | "bottom";
+  align?: "start" | "end";
+  showHarness?: boolean;
+  placeholder?: string;
+  ariaLabel?: string;
+  triggerClassName?: string;
 }) {
   const l = modelLabel(groups, value);
   const options: (Effort | undefined)[] = efforts.length ? [undefined, ...efforts] : [];
+  const hasModel = !!value.auto || !!value.model;
   const summary = modelEffortSummary(groups, value, efforts.length > 0, effort);
+  const displayModel = !hasModel ? (placeholder ?? "Pick model") : value.auto || !showHarness ? summary.model : `${l.harness} · ${summary.model}`;
+  const defaultAriaLabel = `Model and effort for the next message: ${l.harness}, ${value.auto ? "automatic model" : l.model || (placeholder ?? "unset")}${options.length ? `, ${effortLabel(effort)} effort` : ""}`;
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
         <button
           type="button"
           disabled={disabled}
-          aria-label={`Model and effort for the next message: ${l.harness}, ${value.auto ? "automatic model" : l.model}${options.length ? `, ${effortLabel(effort)} effort` : ""}`}
-          title={`${l.harness} · ${value.auto ? `Auto (now ${l.model})` : l.model}${options.length ? ` · ${effortLabel(effort)} effort` : ""}`}
-          className={composerGhost}
+          aria-label={ariaLabel ?? defaultAriaLabel}
+          title={hasModel ? `${l.harness} · ${value.auto ? `Auto (now ${l.model})` : l.model}${options.length ? ` · ${effortLabel(effort)} effort` : ""}` : (placeholder ?? "Pick model")}
+          className={triggerClassName ?? composerGhost}
         >
-          <span className="truncate">
-            {summary.model}
-            {summary.effort && <span className="text-fg-tertiary"> · </span>}
-            {summary.effort}
+          <span className={cx("truncate", !hasModel && "text-fg-tertiary")}>
+            {displayModel}
+            {hasModel && summary.effort && <span className="text-fg-tertiary"> · </span>}
+            {hasModel && summary.effort}
           </span>
           <Icon name="chev" size={13} strokeWidth={1.6} className="flex-none text-fg-tertiary" />
         </button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
-        <DropdownMenu.Content align="end" side="top" sideOffset={6} collisionPadding={MENU_EDGE} className={options.length ? columnsPanel : menuPanel}>
+        <DropdownMenu.Content align={align} side={side} sideOffset={6} collisionPadding={MENU_EDGE} className={options.length ? columnsPanel : menuPanel}>
           <div className={options.length ? "min-w-0 flex-1 overflow-y-auto" : undefined}>
-            <DropdownMenu.Item aria-label="Automatic model" className={item} onSelect={() => onChange({ harness: value.harness, model: value.model, auto: true })}>
-              <span className="flex items-center gap-2">
-                Auto
-                <span className="ml-auto w-4 text-accent">{value.auto && <Icon name="check" size={14} strokeWidth={1.8} />}</span>
-              </span>
-              <span className="text-12 text-fg-tertiary">Picks the model for each message</span>
-            </DropdownMenu.Item>
-            <DropdownMenu.Separator className="my-1 h-px bg-border-subtle" />
+            {allowAuto && (
+              <>
+                <DropdownMenu.Item aria-label="Automatic model" className={item} onSelect={() => onChange({ harness: value.harness, model: value.model, auto: true })}>
+                  <span className="flex items-center gap-2">
+                    Auto
+                    <span className="ml-auto w-4 text-accent">{value.auto && <Icon name="check" size={14} strokeWidth={1.8} />}</span>
+                  </span>
+                  <span className="text-12 text-fg-tertiary">Picks the model for each message</span>
+                </DropdownMenu.Item>
+                <DropdownMenu.Separator className="my-1 h-px bg-border-subtle" />
+              </>
+            )}
             {(groups ?? []).map((g, i) => (
               <DropdownMenu.Group key={g.harness} aria-label={g.label}>
                 {i > 0 && <DropdownMenu.Separator className="my-1 h-px bg-border-subtle" />}

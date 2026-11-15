@@ -462,6 +462,8 @@ function useAgentMutation<V>(handle: string, fn: (v: V) => Promise<AgentDetail>)
     onSuccess: (d) => {
       qc.setQueryData(keys.agent(handle), d);
       qc.invalidateQueries({ queryKey: ["agents", handle, "resolved"] });
+      qc.invalidateQueries({ queryKey: ["agent-overviews"] });
+      qc.invalidateQueries({ queryKey: personaKeys.all });
       qc.invalidateQueries({ queryKey: keys.bootstrap });
     },
   });
