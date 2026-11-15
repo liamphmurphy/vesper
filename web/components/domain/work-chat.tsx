@@ -173,7 +173,7 @@ export function WorkChat({ subject }: { subject?: WorkSubject }) {
   if (id)
     return (
       <div className="flex min-h-0 flex-1 flex-col" data-testid="work-chat">
-        <Conversation key={id} id={id} docked onNew={start} onReplace={async (next) => select(next)} context={context} actions={switcher} />
+        <Conversation key={id} id={id} docked hideTitle onNew={start} onReplace={async (next) => select(next)} context={context} actions={switcher} />
       </div>
     );
   return (
