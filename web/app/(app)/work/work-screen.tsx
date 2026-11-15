@@ -15,10 +15,13 @@ import {
   workView,
   updateWorkUrl,
 } from "@/lib/work-navigation";
+import { runTitle } from "@/lib/run-list";
+import type { WorkSubject } from "@/lib/work-context";
 import { useCompact } from "@/lib/viewport";
 import { cx } from "@/lib/cx";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
-import { useClaimCompanion } from "@/components/shell/companion";
+import { CompanionDock } from "@/components/shell/companion";
+import { WorkChat } from "@/components/domain/work-chat";
 import { TopBar } from "@/components/shell/topbar";
 import { useProjectScope } from "@/components/shell/project-scope";
 import { STATUS_NAME } from "@/components/domain/meta";
@@ -40,7 +43,6 @@ import { ticketsHref } from "@/lib/tickets-layout";
 import "./work.css";
 
 export function WorkScreen() {
-  useClaimCompanion();
   const params = useSearchParams();
   const compact = useCompact();
   const boot = useBootstrap();
@@ -90,6 +92,19 @@ export function WorkScreen() {
       ? epics.data?.find((e) => !project || e.project.key === project)?.epic.id
       : undefined);
   const context = params.get("context");
+  const selectedTicket = ticketKey ? tickets.data?.find((t) => t.key === ticketKey) : undefined;
+  const workSubject: WorkSubject | undefined =
+    (view === "tickets" || context === "ticket") && selectedTicket
+      ? { kind: "ticket", key: selectedTicket.key, title: selectedTicket.title }
+      : selectedRun
+        ? {
+            kind: "run",
+            id: selectedRun.id,
+            title: runTitle(selectedRun),
+            agent: selectedRun.agent.name,
+            ticketKey: selectedRun.ticket_key ?? undefined,
+          }
+        : undefined;
   const companion = view !== "activity";
   const showRun = !!runId && (!companion || params.get("companion") !== "hide");
   const showBrief = companion || context === "ticket" || context === "epic";
@@ -414,6 +429,20 @@ export function WorkScreen() {
           </section>
         )}
       </div>
+      {!compact && (
+        <CompanionDock
+          app="work"
+          defaultOpen={false}
+          tabs={[
+            {
+              id: "chat",
+              label: "Chat",
+              icon: "msg",
+              content: <WorkChat subject={workSubject} />,
+            },
+          ]}
+        />
+      )}
     </div>
   );
 }

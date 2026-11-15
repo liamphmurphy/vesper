@@ -10,6 +10,7 @@ import { activePanel, closeItem, closePanel, closeThread, itemOf, itemParam, doc
 import { toolCalls } from "@/lib/chat-ui";
 import { presenceOf } from "@/lib/designs/presence";
 import { claimReadingFocus, dockReducer, dockShortcut, type DockAction, type DockState } from "@/lib/editor-layout";
+import { CompanionPortal } from "@/components/shell/companion";
 import { Dock, type DockTab } from "@/components/shell/editor-layout";
 import { ItemPanel } from "./item-panel";
 import { cx } from "@/lib/cx";
@@ -222,7 +223,9 @@ function ChatDock({ chatId, live, readOnly, agent, activity, panels }: { chatId:
 
   return (
     <>
-      <Dock uid={uid} tabs={tabs} state={state} dispatch={dispatch} overlay="lg" />
+      <CompanionPortal>
+        <Dock uid={uid} tabs={tabs} state={state} dispatch={dispatch} overlay="lg" />
+      </CompanionPortal>
       <PlaygroundFullscreen chatId={chatId} />
       {canvasPanel.maximized && open.includes("canvas") ? <CanvasFullscreen chatId={chatId} live={live} readOnly={readOnly} agent={agent} /> : null}
     </>

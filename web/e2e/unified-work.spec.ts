@@ -244,7 +244,7 @@ test("context errors are recoverable and deep links restore the pane", async ({
   ).toBeVisible();
 });
 
-test("Work keeps a single harness footer in the sidebar, a compact Activity header, and consistent tabs across Activity, Tickets and Epics", async ({
+test("Work keeps a single harness footer in the right rail, contextual Chat dock, a compact Activity header, and consistent tabs across Activity, Tickets and Epics", async ({
   page,
 }) => {
   await installWork(page);
@@ -266,11 +266,14 @@ test("Work keeps a single harness footer in the sidebar, a compact Activity head
     }),
   );
 
-  // Activity: harness usage stays only in the left sidebar (not duplicated in the TopBar).
+  // Activity: persistent right rail holds harness usage and contextual WorkChat (not duplicated in Left menu or TopBar).
   await page.goto("/work?run=work-run&project=WEB");
   const mainMenu = page.getByRole("complementary", { name: "Main menu" });
-  await expect(mainMenu.getByRole("region", { name: "Harness activity" })).toHaveCount(1);
+  const rightRail = page.getByRole("complementary", { name: "Right rail" });
+  await expect(mainMenu.getByRole("region", { name: "Harness activity" })).toHaveCount(0);
+  await expect(rightRail.getByRole("region", { name: "Harness activity" })).toHaveCount(1);
   await expect(page.getByRole("region", { name: "Harness activity" })).toHaveCount(1);
+  await expect(rightRail.getByRole("navigation", { name: "Panel rail" }).getByRole("button", { name: "Open Chat" })).toBeVisible();
 
   // Run-context links sit inside the compact TopBar on Activity.
   const headerLinks = page.locator("header .work-run-links");

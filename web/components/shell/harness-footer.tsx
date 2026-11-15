@@ -40,9 +40,8 @@ function UsageBubble({ h, all, onNavigate }: { h: HarnessActivity; all: HarnessA
 
 /**
  * The harnesses that can run here; each character opens its own usage bubble. A stack in the
- * collapsed strip (the bubble opens to the right); a row above the expanded column's foot links
- * and in the phone header (the bubble opens above, or below where there's no room, so it never
- * covers the characters beside it).
+ * persistent right rail (the bubble opens to the left); a row in the phone header/drawer (the
+ * bubble opens above, or below where there's no room, so it never covers the characters beside it).
  */
 export function HarnessFooter({ layout = "rail" }: { layout?: "rail" | "row" }) {
   const rail = layout === "rail";
@@ -65,7 +64,7 @@ export function HarnessFooter({ layout = "rail" }: { layout?: "rail" | "row" }) 
               </button>
             </Popover.Trigger>
             <Popover.Portal>
-              <Popover.Content side={rail ? "right" : "top"} sideOffset={6} collisionPadding={8} aria-label={`${h.label} usage`} className="harness-bubble">
+              <Popover.Content side={rail ? "left" : "top"} sideOffset={6} collisionPadding={8} aria-label={`${h.label} usage`} className="harness-bubble">
                 <UsageBubble h={h} all={harnesses} onNavigate={() => setOpen(null)} />
                 <Popover.Arrow className="harness-bubble-arrow" width={14} height={7} />
               </Popover.Content>

@@ -114,7 +114,8 @@ test("the profile is only under Customization, not in the menu or Settings", asy
   const menu = page.getByRole("complementary", { name: "Main menu" });
   await expect(menu.getByRole("button", { name: "New chat" })).toBeVisible();
   await expect(menu.getByRole("link", { name: /Liam/ })).toHaveCount(0);
-  await menu.getByRole("link", { name: "Customization", exact: true }).click();
+  await expect(menu.getByRole("link", { name: "Customization" })).toHaveCount(0);
+  await page.getByRole("complementary", { name: "Right rail" }).getByRole("link", { name: "Customization", exact: true }).click();
   await page.getByRole("button", { name: /^You/ }).click();
   await page.getByRole("button", { name: "Edit profile" }).click();
   await expect(profile(page).getByLabel("Display name")).toHaveValue("Liam");

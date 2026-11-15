@@ -50,12 +50,12 @@ function useShortcuts() {
 
 function SidebarSkeleton() {
   return (
-    // Matches the menu's collapsed default (an icon rail).
+    // Matches the menu's collapsed default (a slim icon strip).
     <aside
       aria-busy="true"
-      className="flex w-[52px] max-md:hidden flex-none flex-col items-center gap-4 border-r border-border-subtle bg-sidebar px-1.5 pb-3.5 pt-3"
+      className="flex w-[52px] max-md:hidden flex-none flex-col items-center gap-3 border-r border-border-subtle bg-sidebar px-1.5 pb-3.5 pt-3"
     >
-      {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+      {[0, 1, 2, 3, 4, 5].map((i) => (
         <Skeleton key={i} className="size-[26px]" />
       ))}
     </aside>
@@ -91,7 +91,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const compact = useCompact();
   useShortcuts();
   return (
-    <div className={compact ? "flex min-h-dvh flex-col bg-bg text-fg" : "flex min-h-dvh flex-wrap bg-bg text-fg"}>
+    <div className={compact ? "flex min-h-dvh flex-col bg-bg text-fg" : "flex min-h-dvh bg-bg text-fg"}>
       <LiveUpdates />
       {/* usePathname needs a Suspense boundary for prerendering. */}
       <Suspense fallback={null}>
@@ -109,7 +109,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       ) : (
         <SidebarSkeleton />
       )}
-      <main className={compact ? "flex min-w-0 flex-1 flex-col pb-[var(--tab-bar-h,0px)]" : "flex min-w-0 flex-[999_1_560px] flex-col"}>
+      <main className={compact ? "flex min-w-0 flex-1 flex-col pb-[var(--tab-bar-h,0px)]" : "flex min-w-0 flex-1 flex-col"}>
         {/* The segment needs a Suspense boundary for prerendering; the page still paints meanwhile. */}
         <Suspense fallback={<div className={PAGE}><SystemBanner />{children}</div>}>
           <SectionFade>{children}</SectionFade>

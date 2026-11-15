@@ -21,7 +21,7 @@ import { useCompact } from "@/lib/viewport";
 import { isTyping } from "./shortcuts";
 import { HistoryNav } from "./history-nav";
 import { NavigatorPortal } from "./navigator-slot";
-import { CompanionPortal } from "./companion";
+import { CompanionPortal, RightRailPortal } from "./companion";
 
 /** A tab in the right dock. `busy` pulses its ring, `unread` adds a dot (Chat uses both for the persona). */
 export type DockTab = {
@@ -303,6 +303,31 @@ export function Dock({
   if (!tabs.length) return null;
   // ⌘. hides the dock but keeps its panels mounted (the owner passes null panels to unmount them).
   const shown = state.open && !state.hidden;
+  const railButtons = (
+    <>
+      <button
+        type="button"
+        aria-label="Expand panel"
+        title="Expand panel (⌘\)"
+        onClick={() => dispatch({ type: "open", tab: active?.id ?? "" })}
+        className="grid size-7 place-items-center rounded-md border border-border text-fg-secondary hover:bg-hover hover:text-fg"
+      >
+        <span aria-hidden>⇤</span>
+      </button>
+      {tabs.map((t) => (
+        <button
+          key={t.id}
+          type="button"
+          aria-label={`Open ${t.label}${t.busy ? ", working" : ""}${t.unread ? ", unread" : ""}`}
+          title={t.label}
+          onClick={() => dispatch({ type: "open", tab: t.id })}
+          className="relative grid size-8 place-items-center rounded-full text-fg-secondary hover:bg-hover hover:text-fg"
+        >
+          <TabIcon tab={t} size={16} />
+        </button>
+      ))}
+    </>
+  );
   return (
     <>
       {!railOnly && <aside
@@ -310,10 +335,14 @@ export function Dock({
         hidden={!shown}
         className={cx(
           "flex flex-none flex-col border-l border-border-subtle bg-surface",
-          active?.wide === "max" ? "w-[984px] max-w-[calc(100%-400px)]" : active?.wide ? "w-[540px] max-w-[55%]" : "w-[360px]",
+          active?.wide === "max"
+            ? "w-[min(984px,calc(100vw-692px))] min-w-[360px] max-xl:w-[min(984px,calc(100vw-96px))]"
+            : active?.wide
+              ? "w-[min(540px,50vw)]"
+              : "w-[360px]",
           overlay === "xl"
-            ? "max-xl:absolute max-xl:inset-y-0 max-xl:right-0 max-xl:z-20 max-xl:shadow-[var(--shadow-float)]"
-            : "max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:z-20 max-lg:max-w-[calc(100%-44px)] max-lg:shadow-[var(--shadow-float)]",
+            ? "max-xl:absolute max-xl:inset-y-0 max-xl:right-0 max-xl:z-20 max-xl:max-w-[calc(100vw-96px)] max-xl:shadow-[var(--shadow-float)]"
+            : "max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:z-20 max-lg:max-w-[calc(100vw-96px)] max-lg:shadow-[var(--shadow-float)]",
           !shown && "hidden",
         )}
       >
@@ -367,29 +396,17 @@ export function Dock({
         </DockSlotsContext.Provider>
       </aside>}
       {!state.hidden && (railOnly || !state.open) && (
-        <nav aria-label="Panel rail" className="flex w-[44px] flex-none flex-col items-center gap-2 border-l border-border-subtle bg-sidebar py-2.5">
-          <button
-            type="button"
-            aria-label="Expand panel"
-            title="Expand panel (⌘\)"
-            onClick={() => dispatch({ type: "open", tab: active?.id ?? "" })}
-            className="grid size-7 place-items-center rounded-md border border-border text-fg-secondary hover:bg-hover hover:text-fg"
-          >
-            <span aria-hidden>⇤</span>
-          </button>
-          {tabs.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              aria-label={`Open ${t.label}${t.busy ? ", working" : ""}${t.unread ? ", unread" : ""}`}
-              title={t.label}
-              onClick={() => dispatch({ type: "open", tab: t.id })}
-              className="relative grid size-8 place-items-center rounded-full text-fg-secondary hover:bg-hover hover:text-fg"
-            >
-              <TabIcon tab={t} size={16} />
-            </button>
-          ))}
-        </nav>
+        railOnly ? (
+          <nav aria-label="Panel rail" className="flex w-[44px] flex-none flex-col items-center gap-2 border-l border-border-subtle bg-sidebar py-2.5">
+            {railButtons}
+          </nav>
+        ) : (
+          <RightRailPortal>
+            <nav aria-label="Panel rail" className="flex w-full flex-col items-center gap-2">
+              {railButtons}
+            </nav>
+          </RightRailPortal>
+        )
       )}
     </>
   );

@@ -1,13 +1,22 @@
 "use client";
 
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useId, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { WorkChat } from "@/components/domain/work-chat";
-import { claimCompanion, companionClaimed, companionSlot, setCompanionSlot, subscribeCompanion } from "@/lib/companion";
+import { Icon } from "@/components/ui/icon";
+import { useNavCounts } from "@/lib/use-nav-counts";
+import { claimCompanion, companionClaimed, companionSlot, rightRailSlot, setCompanionSlot, setRightRailSlot, subscribeCompanion } from "@/lib/companion";
+import { cx } from "@/lib/cx";
 import { actOnDock, dockShortcut, loadDock, saveDock, type DockAction, type DockState } from "@/lib/editor-layout";
+import { isActive } from "@/lib/project-scope";
 import { useCompact } from "@/lib/viewport";
-import { Dock, type DockTab } from "./editor-layout";
+import { Dock, useReadingFocus, type DockTab } from "./editor-layout";
+import { HarnessFooter } from "./harness-footer";
+import { NeedsYou } from "./needs-you";
 import { isTyping } from "./shortcuts";
+import { useAppearance } from "./theme";
 
 /**
  * Puts a page's own dock in the shell's right-hand column, in place of the default companion, so
@@ -71,16 +80,79 @@ function DefaultCompanion() {
   return <Dock uid={uid} tabs={tabs} state={state} dispatch={dispatch} panels={state.open ? undefined : null} />;
 }
 
+/** Puts a Dock's collapsed rail buttons into the permanent right rail's top dynamic slot on wide screens. */
+export function RightRailPortal({ children }: { children: ReactNode }) {
+  const slot = useSyncExternalStore(subscribeCompanion, rightRailSlot, () => null);
+  return slot ? createPortal(children, slot) : null;
+}
+
+function RailFootLinks({ settingsNeedYou }: { settingsNeedYou: boolean }) {
+  const pathname = usePathname();
+  const link = (href: string) => cx(
+    "relative grid size-[30px] place-items-center rounded-md text-12",
+    isActive(pathname, href) ? "bg-selected text-fg" : "text-fg-tertiary hover:bg-hover hover:text-fg",
+  );
+  return (
+    <div className="flex flex-none flex-col items-center gap-1 pb-1">
+      <Link href="/customization" aria-label="Customization" title="Customization: personas, agents, memory and your profile"
+        aria-current={isActive(pathname, "/customization") ? "page" : undefined} className={link("/customization")}>
+        <Icon name="sliders" size={15} />
+      </Link>
+      <Link href="/settings" title="Settings: credentials and runners" aria-current={isActive(pathname, "/settings") ? "page" : undefined} className={link("/settings")}>
+        <Icon name="gear" size={15} />
+        <span className="sr-only">Settings{settingsNeedYou && ": a setting runs need is missing"}</span>
+        {settingsNeedYou && <span aria-hidden className="absolute right-1 top-1 size-1.5 rounded-full bg-state-human" />}
+      </Link>
+    </div>
+  );
+}
+
+/**
+ * The permanent 44px right rail on every desktop screen: dynamic page controls (Dock rail) at the
+ * top, and persistent utilities (Needs you, harnesses, Customization, Settings) anchored at the bottom.
+ */
+function RightRail() {
+  const counts = useNavCounts();
+  const [appearance] = useAppearance();
+  const harness = appearance.showHarnessActivity !== false;
+  const settingsNeedYou = counts.settings > 0;
+  return (
+    <aside
+      aria-label="Right rail"
+      data-right-rail
+      className="flex w-[44px] flex-none flex-col items-center border-l border-border-subtle bg-sidebar py-2.5"
+    >
+      <div ref={setRightRailSlot} data-right-rail-top className="flex w-full flex-col items-center gap-2 empty:hidden" />
+      <div className="mt-auto flex w-full flex-col items-center gap-2 pt-2">
+        <NeedsYou variant="rail" count={counts.inbox} />
+        {harness && <HarnessFooter layout="rail" />}
+        <div aria-hidden className="h-px w-6 bg-border-subtle" />
+        <RailFootLinks settingsNeedYou={settingsNeedYou} />
+      </div>
+    </aside>
+  );
+}
+
 /**
  * The shell's right-hand column (wide screens): the page's own dock when it has one, else the
- * default companion. Sticky to the viewport like the left column, and the positioning context a
- * narrow window's overlaid dock floats from.
+ * default companion, alongside the permanent right rail. Sticky to the viewport like the left
+ * column, and the positioning context a narrow window's overlaid dock floats from.
  */
 export function CompanionColumn() {
   const claimed = useSyncExternalStore(subscribeCompanion, companionClaimed, () => false);
+  const readingFocus = useReadingFocus();
   return (
-    <div ref={setCompanionSlot} data-companion className="relative flex min-h-0 flex-none min-[612px]:sticky min-[612px]:top-0 min-[612px]:h-dvh">
-      {!claimed && <DefaultCompanion />}
+    <div
+      data-companion-column
+      className={cx(
+        "relative flex min-h-0 flex-none min-[612px]:sticky min-[612px]:top-0 min-[612px]:h-dvh",
+        readingFocus && "hidden",
+      )}
+    >
+      <div ref={setCompanionSlot} data-companion className="relative flex min-h-0 flex-none">
+        {!claimed && <DefaultCompanion />}
+      </div>
+      {!readingFocus && <RightRail />}
     </div>
   );
 }

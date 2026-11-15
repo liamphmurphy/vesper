@@ -6,19 +6,16 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { SetupProgress } from "@/components/domain/setup-progress";
 import { cx } from "@/lib/cx";
 import { useNavCounts } from "@/lib/use-nav-counts";
-import { isActive, type NavBadge } from "@/lib/project-scope";
+import { type NavBadge } from "@/lib/project-scope";
 import { currentArea, navigatorClaimed, setNavigatorSlot, subscribeNavigator, NAVIGATOR_WIDTH, type Area } from "@/lib/navigator";
 import { badgeLabel } from "@/lib/tab-bar";
 import { viewedChatId } from "@/lib/persona-dock";
-import { Icon, Mark, type IconName } from "@/components/ui/icon";
+import { Icon, type IconName } from "@/components/ui/icon";
 import { ChatHistory, useNewConversation } from "@/app/(app)/chat/_components/chat-history";
 import { SidebarSpaces } from "@/app/(app)/spaces/_components/spaces-nav";
 import { NewSpaceDialog } from "@/app/(app)/spaces/_components/new-space-dialog";
 import { AppsMenu } from "./apps-menu";
 import { useReadingFocus } from "./editor-layout";
-import { NeedsYou } from "./needs-you";
-import { HarnessFooter } from "./harness-footer";
-import { useAppearance } from "./theme";
 
 /** The areas on the icon row, in order; Apps (the flyout of Custom Apps and tools) follows them. */
 const AREAS: { area: Exclude<Area, "apps">; href: string; label: string; icon: IconName; badge?: NavBadge }[] = [
@@ -54,13 +51,12 @@ function useCollapsed(): [boolean, (v: boolean) => void] {
   return [collapsed, set];
 }
 
-/** The mark doubles as the collapse control: the column's top has nothing else to spare. */
-function MarkButton({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+function CollapseButton({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const label = collapsed ? "Expand sidebar" : "Collapse sidebar";
   return (
     <button type="button" aria-label={label} aria-expanded={!collapsed} title={label} onClick={onToggle}
-      className="grid size-[30px] flex-none place-items-center rounded-md hover:bg-hover">
-      <Mark />
+      className="grid size-[30px] flex-none place-items-center rounded-md text-fg-tertiary hover:bg-hover hover:text-fg">
+      <Icon name="sidebar" size={15} />
     </button>
   );
 }
@@ -70,10 +66,10 @@ const search = () => window.dispatchEvent(new Event("la:search"));
 function SearchField() {
   return (
     <button type="button" aria-label="Search" title="Search (⌘K)" onClick={search}
-      className="flex h-[30px] w-full items-center gap-2 rounded-[7px] border border-border bg-surface px-2.5 text-12 text-fg-tertiary hover:border-border-strong hover:text-fg-secondary">
+      className="flex h-[30px] min-w-0 flex-1 items-center gap-2 rounded-[7px] border border-border bg-surface px-2.5 text-12 text-fg-tertiary hover:border-border-strong hover:text-fg-secondary">
       <Icon name="search" size={14} strokeWidth={1.6} className="flex-none" />
-      <span aria-hidden className="flex-1 text-left">Search or jump to…</span>
-      <span aria-hidden className="text-10">⌘K</span>
+      <span aria-hidden className="min-w-0 flex-1 truncate text-left">Search or jump to…</span>
+      <span aria-hidden className="flex-none text-10">⌘K</span>
     </button>
   );
 }
@@ -132,65 +128,33 @@ function ChatsList({ viewed }: { viewed: string | null }) {
   );
 }
 
-function FootLinks({ collapsed, settingsNeedYou }: { collapsed: boolean; settingsNeedYou: boolean }) {
-  const pathname = usePathname();
-  const link = (href: string) => cx(
-    "relative flex items-center rounded-md text-12",
-    collapsed ? "size-[30px] justify-center" : "h-7 gap-2 px-1.5",
-    isActive(pathname, href) ? "bg-selected text-fg" : "text-fg-tertiary hover:bg-hover hover:text-fg",
-  );
-  return (
-    <div className={cx("flex flex-none", collapsed ? "flex-col items-center gap-1 pb-3" : "items-center justify-between px-2.5 pb-2.5 pt-1")}>
-      <Link href="/customization" aria-label="Customization" title="Customization: personas, agents, memory and your profile"
-        aria-current={isActive(pathname, "/customization") ? "page" : undefined} className={link("/customization")}>
-        <Icon name="sliders" size={15} />
-        {!collapsed && <span aria-hidden>Customization</span>}
-      </Link>
-      <Link href="/settings" title="Settings: credentials and runners" aria-current={isActive(pathname, "/settings") ? "page" : undefined} className={link("/settings")}>
-        {collapsed ? <Icon name="gear" size={15} /> : <span aria-hidden>Settings</span>}
-        <span className="sr-only">Settings{settingsNeedYou && ": a setting runs need is missing"}</span>
-        {settingsNeedYou && <span aria-hidden className={cx("size-1.5 rounded-full bg-state-human", collapsed && "absolute right-1 top-1")} />}
-      </Link>
-    </div>
-  );
-}
-
 /**
- * The one left column (DESIGN.md §3), the same on every screen. Its top (the mark, search, Needs
- * you, the areas) and its foot (the harness characters, Customization, Settings) never change;
- * between them sits the current area's own list: Chats by default, or what a screen puts there
- * (the Runs list, the Knowledge explorer, an editor's pages and layers). Collapsed, it is a strip
- * of the same fixed items, remembered for every screen. Personas and spaces appear only in Chats.
+ * The left navigation column (DESIGN.md §3), the same on every screen. Its top (search, collapse,
+ * and areas) never changes; all remaining height goes to the current area's own list: Chats by
+ * default, or what a screen puts there (the Runs list, the Knowledge explorer, an editor's pages
+ * and layers). Global utilities (Needs you, harnesses, Customization, Settings) live on the right
+ * rail instead so this column stays focused on navigation.
  */
 export function Sidebar() {
   const pathname = usePathname();
   const counts = useNavCounts();
-  const [appearance] = useAppearance();
   const [collapsed, setCollapsed] = useCollapsed();
   // The chat's ⌘. reading focus hides the column altogether, leaving the preference alone.
   const readingFocus = useReadingFocus();
   const claimed = useSyncExternalStore(subscribeNavigator, navigatorClaimed, () => false);
   const [creatingSpace, setCreatingSpace] = useState(false);
   const viewed = viewedChatId(pathname);
-  const settingsNeedYou = counts.settings > 0;
   const newSpace = () => setCreatingSpace(true);
   if (readingFocus) return null;
-  const harness = appearance.showHarnessActivity !== false;
 
   if (collapsed) {
     return (
       <aside aria-label="Main menu" className="flex w-[52px] flex-none flex-col items-center border-r border-border-subtle bg-sidebar px-1.5 pt-3 min-[612px]:sticky min-[612px]:top-0 min-[612px]:h-dvh">
-        <nav aria-label="Primary" className="flex min-h-0 w-full flex-1 flex-col items-center gap-4">
-          <MarkButton collapsed onToggle={() => setCollapsed(false)} />
-          <div className="flex flex-col items-center gap-1">
-            <SearchIcon />
-            <NeedsYou variant="rail" count={counts.inbox} />
-          </div>
+        <nav aria-label="Primary" className="flex min-h-0 w-full flex-1 flex-col items-center gap-3">
+          <CollapseButton collapsed onToggle={() => setCollapsed(false)} />
+          <SearchIcon />
+          <div aria-hidden className="h-px w-6 bg-border-subtle" />
           <Areas vertical counts={counts} onNewSpace={newSpace} />
-          <div className="mt-auto flex w-full flex-col items-center gap-2">
-            {harness && <HarnessFooter />}
-            <FootLinks collapsed settingsNeedYou={settingsNeedYou} />
-          </div>
         </nav>
         <NewSpaceDialog open={creatingSpace} onOpenChange={setCreatingSpace} />
       </aside>
@@ -201,11 +165,9 @@ export function Sidebar() {
       <nav aria-label="Primary" className="flex min-h-0 flex-1 flex-col">
         <div className="flex flex-none flex-col gap-2 px-3 pt-3">
           <div className="flex items-center gap-1.5">
-            <MarkButton collapsed={false} onToggle={() => setCollapsed(true)} />
-            <span className="text-14 font-semibold tracking-[-0.01em] text-fg">Vesper</span>
+            <SearchField />
+            <CollapseButton collapsed={false} onToggle={() => setCollapsed(true)} />
           </div>
-          <SearchField />
-          <NeedsYou variant="pill" count={counts.inbox} />
           <Areas vertical={false} counts={counts} onNewSpace={newSpace} />
         </div>
         <div aria-hidden className="mx-3 my-2 h-px flex-none bg-border-subtle" />
@@ -213,12 +175,6 @@ export function Sidebar() {
         <div ref={setNavigatorSlot} data-navigator-slot className="flex min-h-0 flex-1 flex-col">
           {!claimed && <ChatsList viewed={viewed} />}
         </div>
-        {harness && (
-          <div className="flex-none px-2.5">
-            <HarnessFooter layout="row" />
-          </div>
-        )}
-        <FootLinks collapsed={false} settingsNeedYou={settingsNeedYou} />
       </nav>
       <NewSpaceDialog open={creatingSpace} onOpenChange={setCreatingSpace} />
     </aside>

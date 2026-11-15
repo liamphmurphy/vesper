@@ -75,9 +75,10 @@ test("the companion is one panel beside every page: the work chat where a page h
   await expect(rail).toBeVisible();
   await rail.getByRole("button", { name: "Open Chat" }).click();
   await expect(panel.getByTestId("work-chat")).toBeVisible();
-  // It stands where every page's panel stands: the window's right edge, the full height.
+  // It stands right beside the persistent right rail, full height.
+  const railBox = (await page.getByRole("complementary", { name: "Right rail" }).boundingBox())!;
   const box = (await panel.boundingBox())!;
-  expect(Math.round(box.x + box.width)).toBe(1400);
+  expect(Math.round(box.x + box.width)).toBe(Math.round(railBox.x));
   expect(box.y).toBe(0);
   // Open here, open on the next page; a page with its own panel shows its tabs in the same place.
   await page.goto("/tickets/WEB-1");
@@ -89,10 +90,13 @@ test("the companion is one panel beside every page: the work chat where a page h
   await expect(panel).toHaveCount(0);
 });
 
-test("the chat page has no work chat beside it: the conversation is the page", async ({ page }) => {
+test("the chat page has no work chat beside it, while keeping the persistent right rail", async ({ page }) => {
   await installChatApi(page);
   await page.goto("/chat?new");
   await expect(page.getByRole("combobox", { name: "Message" })).toBeVisible();
   await expect(page.getByTestId("work-chat")).toHaveCount(0);
-  await expect(page.getByRole("navigation", { name: "Panel rail" }).getByRole("button", { name: "Open Chat" })).toHaveCount(0);
+  const rightRail = page.getByRole("complementary", { name: "Right rail" });
+  await expect(rightRail).toBeVisible();
+  await expect(rightRail.getByRole("button", { name: /^Needs you/ })).toBeVisible();
+  await expect(rightRail.getByRole("button", { name: "Open Chat" })).toHaveCount(0);
 });
