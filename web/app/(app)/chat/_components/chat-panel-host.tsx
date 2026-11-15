@@ -32,8 +32,10 @@ export function useChatPanels(chatId: string, live: boolean) {
   const search = useSearchParams();
   const canvases = useChatCanvases(chatId, live).data?.canvases ?? [];
   const designIds = canvases.filter((c) => c.kind === "design").map((c) => c.id);
+  const chat = useChat(chatId).data;
   const hasPlayground = !!useChatPlayground(chatId).data;
-  const hasCode = (useCodeReview(chatId).data?.repositories.length ?? 0) > 0;
+  const reviews = useCodeReview(chatId).data?.repositories;
+  const hasCode = !!chat?.repo_url || (reviews?.length ?? 0) > 0;
   const open = openPanels(search, designIds);
   const go = (q: URLSearchParams) => router.replace(`${pathname}?${q.toString()}`, { scroll: false });
   const q = () => new URLSearchParams(search.toString());
@@ -101,9 +103,10 @@ function ChatDock({ chatId, live, readOnly, agent, activity, panels }: { chatId:
   const pg = useChatPlayground(chatId).data;
   const chat = useChat(chatId).data;
   const code = useCodeReview(chatId).data?.repositories;
+  const hasCodeTab = !!chat?.repo_url || (code?.length ?? 0) > 0;
   const { open } = panels;
   const [hidden, setHidden] = useState(false);
-  const state: DockState = { open: dockOpen(search, open), tab: dockTab(search, open), hidden };
+  const state: DockState = { open: dockOpen(search, open, { hasCode: hasCodeTab }), tab: dockTab(search, open, { hasCode: hasCodeTab }), hidden };
   const go = (q: URLSearchParams) => router.replace(`${pathname}?${q.toString()}`, { scroll: false });
 
   // ⌘. hides the Vesper sidebar along with the dock, without writing its preference.
@@ -143,6 +146,19 @@ function ChatDock({ chatId, live, readOnly, agent, activity, panels }: { chatId:
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs when the set of open panels changes
   }, [key, ready]);
 
+  // Auto-open the Code tab when a live turn starts writing code changes (unless the person collapsed the dock).
+  const codeLive = !!code?.some((r) => r.live);
+  const prevCodeLive = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (code === undefined) return;
+    const wasLive = prevCodeLive.current;
+    prevCodeLive.current = codeLive;
+    if (wasLive === null || wasLive || !codeLive || !live) return;
+    if (search.get("dock") === "0") return;
+    go(setDock(new URLSearchParams(search.toString()), { tab: "code", open: true }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs when codeLive transitions false -> true during a live turn
+  }, [code, codeLive, live]);
+
   // ⌘\ collapses or reopens the dock and ⌘. hides or restores it with the sidebar. The composer
   // usually has focus in a chat, so they apply while typing too. ⌘J doesn't: the composer is always there.
   useEffect(() => {
@@ -174,7 +190,7 @@ function ChatDock({ chatId, live, readOnly, agent, activity, panels }: { chatId:
       design: open.includes("design") ? sigOf(designId) : undefined,
       canvas: open.includes("canvas") ? sigOf(canvasId) : undefined,
       playground: pg && open.includes("playground") ? `${pg.state}:${pg.action ?? ""}:${pg.data_reset_at ?? ""}` : undefined,
-      code: code && open.includes("code") ? code.map((r) => `${r.head_sha}:${r.updated_at}`).join(",") : undefined,
+      code: code && hasCodeTab ? code.map((r) => `${r.head_sha}:${r.updated_at}`).join(",") : undefined,
       activity: chat ? `${chat.state}:${chat.current_run_id ?? ""}` : undefined,
     },
     state.open && !hidden ? (state.tab as DockTabId) : undefined,
@@ -192,7 +208,7 @@ function ChatDock({ chatId, live, readOnly, agent, activity, panels }: { chatId:
     activity,
   };
   const busy: Partial<Record<DockTabId, boolean>> = { design: designBusy, playground: pgBusy, code: !!code?.some((r) => r.live), activity: live };
-  const tabs: DockTab[] = [...open, ...(thread ? ["thread" as const] : []), ...(item ? ["item" as const] : []), "activity" as const].map((id) => ({
+  const tabs: DockTab[] = [...open, ...(hasCodeTab && !open.includes("code") ? ["code" as const] : []), ...(thread ? ["thread" as const] : []), ...(item ? ["item" as const] : []), "activity" as const].map((id) => ({
     id,
     label: LABELS[id],
     icon: ICONS[id],

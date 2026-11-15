@@ -227,3 +227,38 @@ test("multi-repository switching isolates branch trees, file contents, revisions
   await expect(panel.getByTestId("code-review-bar")).toContainText("1 comment for the persona");
   await expect(panel.getByTestId("line-comment")).toContainText("Alpha note");
 });
+
+test("Code dock tab is persistently available on repository chats before any edits", async ({ page }) => {
+  await installChatApi(page, { replyDelayMs: 10 });
+  await page.goto("/chat?project=WEB");
+  const { repoChatId, plainChatId } = await page.evaluate(async () => {
+    const post = async (body: Record<string, unknown>) => {
+      const r = await fetch("/api/v1/chats", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      return (await r.json()) as { id: string };
+    };
+    const coder = (await (
+      await fetch("/api/v1/personas", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Coder", capabilities: { code: true, images: false }, repos: ["https://github.com/acme/alpha.git"] }),
+      })
+    ).json()) as { id: string };
+    const repo = await post({ project: "WEB", persona_id: coder.id, repo_url: "https://github.com/acme/alpha.git" });
+    const plain = await post({ project: "WEB" });
+    return { repoChatId: repo.id, plainChatId: plain.id };
+  });
+
+  await page.goto(`/chat/${repoChatId}`);
+  const codeRailBtn = page.getByRole("button", { name: "Open Code" });
+  await expect(codeRailBtn).toBeVisible();
+  await codeRailBtn.click();
+  await expect(page.getByTestId("code-panel-empty")).toBeVisible();
+
+  await page.goto(`/chat/${plainChatId}`);
+  await expect(page.getByRole("button", { name: "Open Activity" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open Code" })).toHaveCount(0);
+});

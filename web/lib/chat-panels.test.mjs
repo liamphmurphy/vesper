@@ -204,3 +204,13 @@ test("code=full opens fullscreen, preserves full on switchPanel, and restores do
   assert.equal(codeFullscreen(exited), false);
   assert.deepEqual(openPanels(exited, []), ["code"]);
 });
+
+test("persistent Code tab activates and opens the dock when hasCode is true", () => {
+  const q = new URLSearchParams("panel=code");
+  assert.equal(dockTab(q, []), "activity");
+  assert.equal(dockOpen(q, []), false);
+
+  assert.equal(dockTab(q, [], { hasCode: true }), "code");
+  assert.equal(dockOpen(q, [], { hasCode: true }), true);
+  assert.equal(dockOpen(new URLSearchParams("panel=code&dock=0"), [], { hasCode: true }), false);
+});
