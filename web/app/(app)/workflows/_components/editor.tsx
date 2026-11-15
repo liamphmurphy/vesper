@@ -9,7 +9,10 @@ import { useEffect, useRef, useState, type DragEvent } from "react";
 import { useChat, useChatMessages, useCreateChat, useSendChatMessage } from "@/lib/api/hooks";
 import { usePersonas } from "@/lib/api/persona-hooks";
 import { usePublishWorkflow, useResolveProposal, useSaveWorkflow, useWorkflow, type Workflow } from "@/lib/api/workflow-hooks";
+import { CompanionPortal } from "@/components/shell/companion";
+import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { TopBar } from "@/components/shell/topbar";
+import { useCompact } from "@/lib/viewport";
 import { Button } from "@/components/ui/button";
 import { Banner, Skeleton, TextArea, TextInput } from "@/components/ui/primitives";
 import { Markdown } from "@/components/domain/markdown";
@@ -45,19 +48,16 @@ function Inspector({ graph, node, onChange, onRemove }: { graph: Graph; node: Gr
       {node.type === "agent" && (
         <>
           <Labeled label="Run as persona">
-            <select aria-label="Persona" className={SELECT} value={c.persona_id ?? ""} disabled={!!c.agent_handle} onChange={(e) => config({ persona_id: e.target.value || undefined })}>
+            <select aria-label="Persona" className={SELECT} value={c.persona_id ?? ""} onChange={(e) => config({ persona_id: e.target.value || undefined, agent_handle: undefined })}>
               <option value="">The chat&apos;s persona</option>
               {personas.data?.personas.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
-          </Labeled>
-          <Labeled label="Or as agent (handle)">
-            <TextInput mono aria-label="Agent handle" placeholder="atlas" value={c.agent_handle ?? ""} onChange={(e) => config({ agent_handle: e.target.value.trim() || undefined, persona_id: undefined })} />
           </Labeled>
           <label className="flex items-center gap-2 text-13 text-fg-2">
             <input type="checkbox" checked={!!c.web} onChange={(e) => config({ web: e.target.checked || undefined })} /> Read the web (this step can&apos;t read the workspace)
           </label>
           <label className="flex items-center gap-2 text-13 text-fg-2">
-            <input type="checkbox" checked={!!c.images} disabled={!!c.agent_handle} onChange={(e) => config({ images: e.target.checked || undefined })} /> Generate images
+            <input type="checkbox" checked={!!c.images} onChange={(e) => config({ images: e.target.checked || undefined })} /> Generate images
           </label>
           {c.images && (
             <>
@@ -246,6 +246,7 @@ function BuildChat({ workflow, chatId, onChatId, personaId, onPersonaId, onChatt
 }
 
 function Canvas({ workflow, chatId, onChatId, personaId, onPersonaId, onApplied, onChatting }: { workflow: Workflow; chatId?: string; onChatId: (id?: string) => void; personaId?: string; onPersonaId: (id: string) => void; onApplied: () => void; onChatting: () => void }) {
+  const compact = useCompact();
   const [graph, setGraph] = useState(workflow.draft as Graph);
   const [selected, setSelected] = useState<string | null>(null);
   const flow = useReactFlow();
@@ -332,8 +333,57 @@ function Canvas({ workflow, chatId, onChatId, personaId, onPersonaId, onApplied,
 
   const issues = workflow.issues;
   const error = save.error ?? publish.error ?? resolve.error;
+  const nodePalette = (
+    <aside aria-label="Node types" className="min-h-0 flex-1 overflow-y-auto px-2.5 pt-4 pb-3">
+      {PALETTE.map((g) => (
+        <div key={g.group} className="mb-4">
+          <p className="mb-1.5 px-1 text-10 font-semibold uppercase tracking-wide text-fg-tertiary">{g.group}</p>
+          {g.items.map((i) => (
+            <button
+              key={i.type}
+              type="button"
+              draggable
+              disabled={!!preview}
+              onDragStart={(e) => e.dataTransfer.setData("application/vesper-node", `${i.type}|${i.label}`)}
+              onClick={() => addNode(i.type, i.label)}
+              className="mb-1.5 block w-full rounded-md border border-border-strong bg-surface px-2.5 py-1.5 text-left text-13 text-fg-2 hover:bg-hover disabled:opacity-50"
+            >
+              {i.label}
+            </button>
+          ))}
+        </div>
+      ))}
+    </aside>
+  );
+  const detailsAside = (
+    <aside
+      aria-label="Workflow details"
+      className={
+        compact
+          ? "flex w-full flex-none flex-col gap-3 overflow-y-auto border-t border-border-subtle bg-panel p-4"
+          : "flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto bg-panel p-4"
+      }
+    >
+      {error && <Banner tone="blocked" title={error.message} />}
+      {node ? (
+        <Inspector graph={graph} node={node} onChange={(patch) => update({ ...graph, nodes: graph.nodes.map((n) => (n.id === node.id ? { ...n, ...patch } : n)) })} onRemove={() => { update(removeNode(graph, node.id)); setSelected(null); }} />
+      ) : (
+        <WorkflowSettings workflow={workflow} />
+      )}
+      {issues.length > 0 && (
+        <div data-testid="workflow-issues" className="flex flex-col gap-1 border-t border-border-subtle pt-3">
+          <p className={LABEL}>Before you can publish</p>
+          {issues.map((i, n) => (
+            <button key={n} type="button" className="text-left text-13 text-pill-human-fg" onClick={() => i.node && setSelected(i.node)}>{i.message}</button>
+          ))}
+        </div>
+      )}
+    </aside>
+  );
   return (
     <>
+      {!compact && <NavigatorPortal>{nodePalette}</NavigatorPortal>}
+      {!compact && <CompanionPortal>{detailsAside}</CompanionPortal>}
       <TopBar
         crumbs={[{ label: "Workflows", href: "/workflows" }, { label: workflow.name }]}
         actions={
@@ -345,26 +395,6 @@ function Canvas({ workflow, chatId, onChatId, personaId, onPersonaId, onApplied,
         }
       />
       <div className="flex min-h-0 flex-1 max-md:flex-col">
-        <aside aria-label="Node types" className="w-[176px] flex-none overflow-y-auto border-r border-border-subtle bg-bg-sidebar p-3 max-md:hidden">
-          {PALETTE.map((g) => (
-            <div key={g.group} className="mb-4">
-              <p className="mb-1.5 text-10 font-semibold uppercase tracking-wide text-fg-tertiary">{g.group}</p>
-              {g.items.map((i) => (
-                <button
-                  key={i.type}
-                  type="button"
-                  draggable
-                  disabled={!!preview}
-                  onDragStart={(e) => e.dataTransfer.setData("application/vesper-node", `${i.type}|${i.label}`)}
-                  onClick={() => addNode(i.type, i.label)}
-                  className="mb-1.5 block w-full rounded-md border border-border-strong bg-surface px-2.5 py-1.5 text-left text-13 text-fg-2 hover:bg-hover disabled:opacity-50"
-                >
-                  {i.label}
-                </button>
-              ))}
-            </div>
-          ))}
-        </aside>
         <div ref={canvas} className="relative min-h-[320px] min-w-0 flex-1" onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>
           {proposal && (
             <div data-testid="workflow-proposal" className="absolute left-1/2 top-3 z-10 flex max-w-[90%] -translate-x-1/2 items-center gap-3 rounded-[10px] border border-accent bg-surface-raised px-3 py-2 shadow-lg">
@@ -393,22 +423,7 @@ function Canvas({ workflow, chatId, onChatId, personaId, onPersonaId, onApplied,
           </ReactFlow>
           <BuildChat workflow={workflow} chatId={chatId} onChatId={onChatId} personaId={personaId} onPersonaId={onPersonaId} onChatting={onChatting} />
         </div>
-        <aside aria-label="Workflow details" className="flex w-[320px] flex-none flex-col gap-3 overflow-y-auto border-l border-border-subtle bg-bg-panel p-4 max-md:w-full">
-          {error && <Banner tone="blocked" title={error.message} />}
-          {node ? (
-            <Inspector graph={graph} node={node} onChange={(patch) => update({ ...graph, nodes: graph.nodes.map((n) => (n.id === node.id ? { ...n, ...patch } : n)) })} onRemove={() => { update(removeNode(graph, node.id)); setSelected(null); }} />
-          ) : (
-            <WorkflowSettings workflow={workflow} />
-          )}
-          {issues.length > 0 && (
-            <div data-testid="workflow-issues" className="flex flex-col gap-1 border-t border-border-subtle pt-3">
-              <p className={LABEL}>Before you can publish</p>
-              {issues.map((i, n) => (
-                <button key={n} type="button" className="text-left text-13 text-pill-human-fg" onClick={() => i.node && setSelected(i.node)}>{i.message}</button>
-              ))}
-            </div>
-          )}
-        </aside>
+        {compact && detailsAside}
       </div>
     </>
   );

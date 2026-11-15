@@ -35,8 +35,8 @@ test("the Library lists generated images with their source and can remove one", 
     item("img-2", { title: "Old map" }),
   ]);
   await page.goto("/library");
-  // Library is in the menu's Apps flyout, so the Apps row reads as current.
-  await expect(page.getByRole("navigation", { name: "Primary" }).locator('[aria-current="page"]')).toHaveAccessibleName(/^Apps/);
+  // Library lives on the primary menu bar, so it reads as current.
+  await expect(page.getByRole("navigation", { name: "Primary" }).locator('[aria-current="page"]')).toHaveAccessibleName(/^Library/);
   const tiles = page.getByTestId("library-item");
   await expect(tiles).toHaveCount(2);
   await expect(tiles.nth(0)).toContainText("Gwen");

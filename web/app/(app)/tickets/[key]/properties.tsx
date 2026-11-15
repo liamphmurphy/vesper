@@ -6,7 +6,8 @@ import { cx } from "@/lib/cx";
 import { absoluteTime, ago, dueDate } from "@/lib/format";
 import { Toggle } from "@/components/ui/controls";
 import { Icon } from "@/components/ui/icon";
-import { AgentAvatar, HumanAvatar, UnassignedAvatar } from "@/components/domain/avatars";
+import { HumanAvatar, UnassignedAvatar } from "@/components/domain/avatars";
+import { AgentOrPersonaAvatar } from "../_components/ticket-row";
 import { PriorityGlyph, StatusGlyph } from "@/components/domain/glyphs";
 import { Flag, LabelChip } from "@/components/domain/labels";
 import { needsDispatch } from "./run-parts";
@@ -133,7 +134,7 @@ export function Properties({ t, boot, save, error }: { t: Ticket; boot: Bootstra
         <PropButton label="Persona">
           {t.assignee ? (
             <>
-              <AgentAvatar name={t.assignee.name} colorIndex={t.assignee.color_index} label={false} />
+              <AgentOrPersonaAvatar agent={t.assignee} />
               {t.assignee.name}
               {needsDispatch(t) ? (
                 <Flag tone="human">Not dispatched</Flag>
@@ -174,7 +175,7 @@ export function Properties({ t, boot, save, error }: { t: Ticket; boot: Bootstra
         </PropButton>
       </EpicMenu>
       <div className="flex min-h-[34px] items-center gap-2.5 px-2">
-        <span className="w-[88px] flex-none text-13 text-fg-tertiary">Project</span>
+        <span className="w-[88px] flex-none text-13 text-fg-tertiary">Space</span>
         <span className="flex items-center gap-2 text-13">
           <span aria-hidden className="size-2.5 rounded-[3px]" style={{ background: t.project.color }} />
           {t.project.name}

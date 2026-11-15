@@ -3,7 +3,7 @@
 import { Dialog } from "radix-ui";
 import { useState } from "react";
 import type { AgentDetail, AgentOverride, Harness, ScopeMode } from "@/lib/api/client";
-import { useSetOverride } from "@/lib/api/hooks";
+import { useChatModels, useSetOverride } from "@/lib/api/hooks";
 import { MODE_LABEL, MODE_RANK } from "@/lib/enforcement";
 import { Button, IconButton } from "@/components/ui/button";
 import { Segmented } from "@/components/ui/controls";
@@ -50,6 +50,9 @@ export function OverrideDialog({
   const spec = detail.spec;
 
   const [harness, setHarness] = useState<Harness | "inherit">(existing.harness ?? "inherit");
+  const models = useChatModels();
+  const activeHarness = harness === "inherit" ? spec.harness : harness;
+  const catalogModels = models.data?.find((g) => g.harness === activeHarness)?.models ?? [];
   const [model, setModel] = useState(existing.model ?? "");
   const [append, setAppend] = useState(existing.instructions_append ?? "");
   const [scopes, setScopes] = useState<Record<string, ScopeChoice>>(() => {
@@ -127,7 +130,12 @@ export function OverrideDialog({
             </Field>
             <div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-3">
               <Field label="Model" htmlFor="ov-model">
-                <TextInput id="ov-model" mono placeholder={spec.model} value={model} onChange={(e) => setModel(e.target.value)} />
+                <TextInput id="ov-model" mono list="ov-models" placeholder={spec.model} value={model} onChange={(e) => setModel(e.target.value)} />
+                <datalist id="ov-models">
+                  {catalogModels.map((m) => (
+                    <option key={m.id} value={m.id} label={m.label} />
+                  ))}
+                </datalist>
               </Field>
               <Field label="Max runtime" htmlFor="ov-rt" hint="Only lowers the definition's guard">
                 <TextInput id="ov-rt" mono placeholder={spec.budget.max_runtime ?? "none"} value={runtime} onChange={(e) => setRuntime(e.target.value)} />

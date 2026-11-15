@@ -1,8 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { installAgentApi } from "./mock-agent-api";
 
-const harness = (page: Page) => page.getByRole("radiogroup", { name: "Harness", exact: true });
-const model = (page: Page) => page.getByLabel("Model", { exact: true });
 const review = (page: Page) => page.getByRole("button", { name: /Review changes/ });
 const save = (page: Page) => page.getByRole("dialog").getByRole("button", { name: /Save as v/ });
 
@@ -12,75 +10,58 @@ async function saveDefinition(page: Page) {
   await save(page).click();
 }
 
-async function pickCodexByKeyboard(page: Page) {
-  await harness(page).getByRole("radio", { name: "Claude Code" }).focus();
-  await page.keyboard.press("ArrowRight"); // Codex
-  await expect(harness(page).getByRole("radio", { name: "Codex" })).toBeChecked();
-}
-
-test("editor: choose Codex by keyboard, save, reload keeps it", async ({ page }) => {
+test("default model on persona page uses chat-models catalog and updates work settings", async ({ page }) => {
   const mock = await installAgentApi(page);
   await page.goto("/agents/atlas?tab=settings");
-  await expect(harness(page).getByRole("radio", { name: "Codex" })).toBeVisible();
-  await expect(page.locator("#ag-models option[value='opus-5.5']")).toHaveCount(1);
+  await expect(page.getByLabel("Harness", { exact: true })).toHaveValue("Claude Code");
+  await expect(page.getByLabel("Model", { exact: true })).toHaveValue("Opus 5.5");
+  await page.getByRole("link", { name: "Change model on persona page" }).click();
+  await expect(page).toHaveURL(/\/customization\?who=00000000-0000-4000-8000-000000000001/);
 
-  await pickCodexByKeyboard(page);
-  await expect(harness(page).getByRole("radio", { name: "Codex" })).toHaveText("Codex");
-  await expect(page.locator("#ag-models option")).toHaveCount(2);
-  await expect(page.locator("#ag-models option[value='gpt-5-codex']")).toHaveCount(1);
-  await expect(page.locator("#ag-models option[value='opus-5.5']")).toHaveCount(0);
+  // Pick Codex · gpt-5-codex and High effort from the live /chat-models menu.
+  await page.getByRole("button", { name: "Default model and effort for Atlas" }).click();
+  await page.getByRole("menuitem", { name: "Codex gpt-5-codex" }).click();
+  await expect(mock.saved.personas.at(-1)?.body).toMatchObject({ default_harness: "codex", default_model: "gpt-5-codex" });
 
-  await model(page).fill("gpt-5-codex");
-  await saveDefinition(page);
-  await expect(page.getByRole("dialog")).toBeHidden();
-  await expect(review(page)).toBeDisabled();
-  const spec = (mock.saved.definition.at(-1) as { spec: { harness: string; model: string } }).spec;
-  expect(spec.harness).toBe("codex");
-  expect(spec.model).toBe("gpt-5-codex");
+  await page.getByRole("button", { name: "Default model and effort for Atlas" }).click();
+  await page.getByRole("menuitem", { name: "High", exact: true }).click();
+  await expect(mock.saved.personas.at(-1)?.body).toMatchObject({ default_effort: "high" });
 
-  await page.reload();
-  await expect(harness(page).getByRole("radio", { name: "Codex" })).toBeChecked();
-  await expect(model(page)).toHaveValue("gpt-5-codex");
+  // Work list chip and Work settings both reflect the updated model and effort.
+  await expect(page.getByTestId("persona-work")).toContainText("gpt-5-codex");
+  await page.getByRole("link", { name: "Work settings" }).click();
+  await expect(page).toHaveURL(/\/agents\/atlas\?tab=settings/);
+  await expect(page.getByLabel("Harness", { exact: true })).toHaveValue("Codex");
+  await expect(page.getByLabel("Model", { exact: true })).toHaveValue("gpt-5-codex");
+  await expect(page.getByLabel("Effort", { exact: true })).toHaveValue("High");
   expect(mock.unhandled).toEqual([]);
 });
 
-test("editor: codex suggests codex models", async ({ page }) => {
-  await installAgentApi(page);
-  await page.goto("/agents/atlas?tab=settings");
-  await harness(page).getByRole("radio", { name: "Codex" }).click();
-  await expect(page.locator("#ag-models option[value='gpt-5-codex']")).toHaveCount(1);
-  await expect(page.locator("#ag-models option[value='opus-5.5']")).toHaveCount(0);
-});
-
-test("editor: fallback's default harness is not hardcoded", async ({ page }) => {
-  await installAgentApi(page);
-  await page.goto("/agents/atlas?tab=settings");
-  await pickCodexByKeyboard(page);
-  await page.getByRole("button", { name: "Add fallback" }).click();
-  const fb = page.getByRole("radiogroup", { name: "Fallback 1 harness" });
-  // Defaults to the first harness other than the agent's own.
-  await expect(fb.getByRole("radio", { name: "Claude Code" })).toBeChecked();
-  await expect(page.getByLabel("Fallback 1 model")).toHaveAttribute("placeholder", "Model");
-  await expect(page.locator("#ag-fb-models-0 option[value='opus-5.5']")).toHaveCount(1);
-});
-
-test("editor: 422 shows the error and keeps the draft", async ({ page }) => {
+test("editor: usage fallbacks pick from live chat-models catalog and save", async ({ page }) => {
   const mock = await installAgentApi(page);
   await page.goto("/agents/atlas?tab=settings");
-  await pickCodexByKeyboard(page);
-  await model(page).fill("rejected-model");
+  await page.getByRole("button", { name: "Add fallback" }).click();
+  // Auto-initializes to Codex default model from /chat-models catalog.
+  const fbBtn = page.getByRole("button", { name: "Fallback 1 model and effort" });
+  await expect(fbBtn).toContainText("Codex · gpt-5-codex");
+
+  // Switch fallback to Antigravity Gemini 2.5 Pro (which has no effort column).
+  await fbBtn.click();
+  await expect(page.getByRole("group", { name: "Reasoning effort" })).toBeVisible();
+  await page.getByRole("menuitem", { name: "Antigravity Gemini 2.5 Pro" }).click();
+  await expect(fbBtn).toContainText("Antigravity · Gemini 2.5 Pro");
+  await fbBtn.click();
+  await expect(page.getByRole("group", { name: "Reasoning effort" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+
   await saveDefinition(page);
-  await expect(page.getByRole("dialog").getByRole("alert")).toContainText("is not available");
-  expect(mock.saved.definition).toHaveLength(1);
-  await expect(save(page)).toBeEnabled();
-  await page.getByRole("button", { name: "Back to editing" }).last().click();
-  await expect(model(page)).toHaveValue("rejected-model");
-  await expect(harness(page).getByRole("radio", { name: "Codex" })).toBeChecked();
-  await expect(page.getByText(/\d+ unsaved changes?/)).toBeVisible();
-  await expect(review(page)).toBeEnabled();
+  await expect(page.getByRole("dialog")).toBeHidden();
+  const spec = (mock.saved.definition.at(-1) as { spec: { fallbacks: Array<{ harness: string; model: string }> } }).spec;
+  expect(spec.fallbacks).toEqual([{ harness: "antigravity", model: "gemini-2.5-pro" }]);
+  expect(mock.unhandled).toEqual([]);
 });
 
-test("override dialog: offers another harness, saves it, reload shows it", async ({ page }) => {
+test("override dialog: offers another harness and live catalog models, saves it, reload shows it", async ({ page }) => {
   const mock = await installAgentApi(page);
   await page.goto("/agents/atlas?tab=settings");
   await page.getByRole("button", { name: "Add", exact: true }).click();
@@ -90,6 +71,7 @@ test("override dialog: offers another harness, saves it, reload shows it", async
   await expect(radio).toBeVisible();
   await radio.click();
   await expect(radio).toBeChecked();
+  await expect(dialog.locator("#ov-models option[value='gpt-5-codex']")).toHaveCount(1);
   await dialog.getByLabel("Model", { exact: true }).fill("gpt-5-codex");
   await dialog.getByRole("button", { name: "Save override" }).click();
   await expect(dialog).toBeHidden();
@@ -121,24 +103,4 @@ test("editor saves selective memory and an explicit independent-review policy", 
   await page.reload();
   await expect(page.getByRole("switch", { name: "Require independent review before Done" })).toBeChecked();
   await expect(page.getByRole("radio", { name: "Selective", exact: true })).toBeChecked();
-});
-
-// Antigravity shows what it can do from the server's capability list and, since its
-// models offer no effort setting, hides the effort control (for fallbacks too).
-test("editor: choose Antigravity, see its capabilities and no effort control", async ({ page }) => {
-  const mock = await installAgentApi(page);
-  await page.goto("/agents/atlas?tab=settings");
-  await expect(page.getByLabel("Effort", { exact: true })).toBeVisible();
-  await harness(page).getByRole("radio", { name: "Antigravity" }).click();
-  await expect(harness(page).getByRole("radio", { name: "Antigravity" })).toBeChecked();
-  await expect(page.getByText("On Antigravity, Vesper can")).toBeVisible();
-  await expect(page.getByLabel("Effort", { exact: true })).toHaveCount(0);
-  await expect(page.locator("#ag-models option[value='gemini-2.5-pro']")).toHaveCount(1);
-  await model(page).fill("gemini-2.5-pro");
-  await saveDefinition(page);
-  await expect(page.getByRole("dialog")).toBeHidden();
-  const spec = (mock.saved.definition.at(-1) as { spec: { harness: string; model: string } }).spec;
-  expect(spec.harness).toBe("antigravity");
-  expect(spec.model).toBe("gemini-2.5-pro");
-  expect(mock.unhandled).toEqual([]);
 });

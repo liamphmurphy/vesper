@@ -145,16 +145,22 @@ function Welcome({ disabled, onNew, arrived }: { disabled: boolean; onNew: () =>
   const locked = disabled || start.isPending || create.isPending;
   const drop = useFileDrop(files.add, !locked);
 
-  // The model and effort, as in a chat. A new chat routes its model automatically until the person
-  // picks one (null is Auto); the guess only says which harness and efforts Auto starts from.
+  // The model and effort, as in a chat. A new chat defaults to the selected persona's
+  // default model/effort when configured, or routes automatically ("auto") otherwise.
   const groups = models.data;
-  const [pickedModel, setPickedModel] = useState<Selection | null>(null);
-  const [pickedEffort, setPickedEffort] = useState<Effort | null>(null);
+  const [pickedModel, setPickedModel] = useState<Selection | "auto" | null>(null);
+  const [pickedEffort, setPickedEffort] = useState<Effort | "default" | null>(null);
+  const personaDefault: Selection | null =
+    fullPersona?.default_harness && fullPersona?.default_model
+      ? { harness: fullPersona.default_harness, model: fullPersona.default_model }
+      : null;
+  const effectiveModel = pickedModel === "auto" ? null : (pickedModel ?? personaDefault);
   const guess = newChatSelection(groups, boot.data?.agents ?? []);
-  const selection = pickedModel ?? (guess && { ...guess, auto: true });
-  const pickModel = (s: Selection) => setPickedModel(s.auto ? null : s);
+  const selection = effectiveModel ?? (guess && { ...guess, auto: true });
+  const pickModel = (s: Selection) => setPickedModel(s.auto ? "auto" : s);
   const offered = selection ? modelEfforts(groups, selection) : { efforts: [] };
-  const effort = pickedEffort && offered.efforts.includes(pickedEffort) ? pickedEffort : undefined;
+  const rawEffort = pickedEffort === "default" ? undefined : (pickedEffort ?? fullPersona?.default_effort);
+  const effort = rawEffort && offered.efforts.includes(rawEffort) ? rawEffort : undefined;
   const unavailable = selection && groups?.find((g) => g.harness === selection.harness && !g.available);
   const published = (workflows.data?.workflows ?? []).filter((w) => w.published_version > 0);
 
@@ -172,7 +178,7 @@ function Welcome({ disabled, onNew, arrived }: { disabled: boolean; onNew: () =>
         message: {
           body,
           ...(research ? { research: true } : {}),
-          ...(pickedModel ? { harness: pickedModel.harness, model: pickedModel.model } : { model: "auto" }),
+          ...(effectiveModel ? { harness: effectiveModel.harness, model: effectiveModel.model } : { model: "auto" }),
           ...(effort ? { effort } : {}),
           ...(context_refs ? { context_refs } : {}),
           ...(files.ids.length ? { attachment_ids: files.ids } : {}),
@@ -200,13 +206,13 @@ function Welcome({ disabled, onNew, arrived }: { disabled: boolean; onNew: () =>
           }));
         case "model":
           return [
-            { name: "Auto", run: () => setPickedModel(null) },
+            { name: "Auto", run: () => setPickedModel("auto") },
             ...(groups ?? [])
               .filter((g) => g.available)
               .flatMap((g) => g.models.map((m) => ({ name: `${g.label} ${m.label}`, run: () => setPickedModel({ harness: g.harness, model: m.id }) }))),
           ];
         case "effort":
-          return [undefined, ...offered.efforts].map((e) => ({ name: effortLabel(e).toLowerCase(), run: () => setPickedEffort(e ?? null) }));
+          return [undefined, ...offered.efforts].map((e) => ({ name: effortLabel(e).toLowerCase(), run: () => setPickedEffort(e ?? "default") }));
         case "persona":
           return (personas.data?.personas ?? []).map((p) => ({ name: p.name, run: () => (p.id === personaId ? `You’re already talking to ${p.name}.` : setPicked(p.id)) }));
         case "repo":

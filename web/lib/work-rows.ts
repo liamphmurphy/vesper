@@ -68,6 +68,24 @@ export const NEEDS_PREFIX: Record<NeedsKind, string> = {
   merged: "PR merged",
 };
 
+const ENDED_RUN_STATES = new Set(["completed", "failed", "cancelled"]);
+
+/**
+ * Filter a per-ticket needs-you indicator so stale dispatch prompts don't paint
+ * amber on tickets already in backlog/progress/review/done or with a live run.
+ */
+export function ticketNeedsYou<T>(
+  t: Pick<TicketSummary, "status"> & { run?: { state?: string } | null },
+  item: T | undefined,
+): T | undefined {
+  if (!item || t.status === "done" || t.status === "canceled") return undefined;
+  if (typeof item === "object" && item !== null && "kind" in item && (item as { kind?: unknown }).kind === "dispatch") {
+    const liveRun = !!t.run?.state && !ENDED_RUN_STATES.has(t.run.state);
+    return t.status === "todo" && !liveRun ? item : undefined;
+  }
+  return item;
+}
+
 /** A row's current-state text: what it waits on, what blocks it, or where it is. */
 export function stateText(t: Pick<TicketSummary, "status" | "unmet_dependencies" | "pr">, needs?: Pick<NeedsYou, "kind" | "summary">): { text: string; tone: "human" | "blocked" | "quiet" } {
   if (needs) return { text: needs.summary ? `${NEEDS_PREFIX[needs.kind] ?? "Needs you"}: ${needs.summary}` : NEEDS_PREFIX[needs.kind] ?? "Needs you", tone: "human" };
@@ -125,7 +143,7 @@ function bucket(id: string, by: GroupBy, title: string, tickets: TicketSummary[]
  * group-by keeps its own groups after Needs you.
  */
 export function workGroups(tickets: TicketSummary[], needs: ReadonlyMap<string, unknown>, by: GroupBy, now = new Date()): WorkGroup[] {
-  const waiting = tickets.filter((t) => needs.has(t.key) && t.status !== "done" && t.status !== "canceled");
+  const waiting = tickets.filter((t) => Boolean(ticketNeedsYou(t, needs.get(t.key))));
   const waitingKeys = new Set(waiting.map((t) => t.key));
   const rest = tickets.filter((t) => !waitingKeys.has(t.key));
   const out: WorkGroup[] = waiting.length ? [bucket("needs_you", by, "Needs you", waiting, true)] : [];
@@ -239,13 +257,13 @@ export function resolveFilter(text: string, look: FilterLookups): ResolvedFilter
 export type EpicProgress = { done: number; running: number; needs: number; open: number; total: number };
 
 /** Segments for an epic's bar: done, running, needs you, and the rest still open. Canceled tickets don't count. */
-export function epicProgress(tickets: readonly Pick<TicketSummary, "key" | "status">[], needs: ReadonlyMap<string, unknown>): EpicProgress {
+export function epicProgress(tickets: readonly (Pick<TicketSummary, "key" | "status"> & { run?: { state?: string } | null })[], needs: ReadonlyMap<string, unknown>): EpicProgress {
   const p: EpicProgress = { done: 0, running: 0, needs: 0, open: 0, total: 0 };
   for (const t of tickets) {
     if (t.status === "canceled") continue;
     p.total++;
     if (t.status === "done") p.done++;
-    else if (needs.has(t.key)) p.needs++;
+    else if (ticketNeedsYou(t, needs.get(t.key))) p.needs++;
     else if (t.status === "in_progress" || t.status === "in_review") p.running++;
     else p.open++;
   }

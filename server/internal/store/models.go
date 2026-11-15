@@ -1061,6 +1061,9 @@ type Persona struct {
 	ImageEngine         string
 	TicketEdits         string
 	InChatList          bool
+	DefaultHarness      string
+	DefaultModel        string
+	DefaultEffort       string
 }
 
 type PersonaProposal struct {

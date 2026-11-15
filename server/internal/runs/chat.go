@@ -499,11 +499,6 @@ func (s *Service) startChat(ctx context.Context, q *store.Queries, ws, user uuid
 		if err != nil {
 			return err
 		}
-		sel, err := s.ChatCatalog().Resolve(ctx, q, ws, chatmodels.Selection{Harness: spec.Harness, Model: spec.Model},
-			chatmodels.Selection{Harness: in.Harness, Model: in.Model, Effort: in.Effort})
-		if err != nil {
-			return err
-		}
 		var persona *store.Persona
 		if in.PersonaID != nil {
 			_, err := q.KeySharePersona(ctx, store.KeySharePersonaParams{ID: *in.PersonaID, WorkspaceID: ws, UserID: user})
@@ -519,9 +514,23 @@ func (s *Service) startChat(ctx context.Context, q *store.Queries, ws, user uuid
 			}
 			persona = &pp
 		} else if pp, err := q.DefaultPersona(ctx, store.DefaultPersonaParams{WorkspaceID: ws, UserID: user}); err == nil {
-			// The same default CreateChatSession would pick; resolved here to read its repos.
+			// The same default CreateChatSession would pick; resolved here to read its defaults and repos.
 			persona = &pp
 		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		base := chatmodels.Selection{Harness: spec.Harness, Model: spec.Model}
+		if persona != nil {
+			if persona.DefaultHarness != "" && persona.DefaultModel != "" {
+				base.Harness, base.Model = persona.DefaultHarness, persona.DefaultModel
+			}
+			if persona.DefaultEffort != "" {
+				base.Effort = persona.DefaultEffort
+			}
+		}
+		sel, err := s.ChatCatalog().Resolve(ctx, q, ws, base,
+			chatmodels.Selection{Harness: in.Harness, Model: in.Model, Effort: in.Effort})
+		if err != nil {
 			return err
 		}
 		// Passed explicitly so the default can't change between the lookup above

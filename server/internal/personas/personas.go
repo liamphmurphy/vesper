@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/liamphmurphy/vesper/server/internal/agentdef"
+	"github.com/liamphmurphy/vesper/server/internal/agents"
 	"github.com/liamphmurphy/vesper/server/internal/apperr"
 	"github.com/liamphmurphy/vesper/server/internal/memory"
 	"github.com/liamphmurphy/vesper/server/internal/store"
@@ -60,6 +61,9 @@ type NewInput struct {
 	// TicketEdits is "ask" (nil: the default) or "allow": whether its ticket
 	// edits from a chat wait for the person.
 	TicketEdits *string
+	// DefaultHarness/DefaultModel/DefaultEffort override Auto for new chats
+	// and set the primary model for work definitions.
+	DefaultHarness, DefaultModel, DefaultEffort *string
 }
 
 // Patch edits a persona at Revision; nil fields are unchanged.
@@ -78,6 +82,9 @@ type Patch struct {
 	TicketEdits *string
 	// InChatList changes whether it's offered in the chat switcher and the @ menu.
 	InChatList *bool
+	// DefaultHarness/DefaultModel/DefaultEffort update the persona's default
+	// harness, model, and reasoning effort (empty / "auto" clears back to Auto).
+	DefaultHarness, DefaultModel, DefaultEffort *string
 }
 
 // checkTicketEdits accepts "ask" or "allow".
@@ -86,6 +93,58 @@ func checkTicketEdits(v *string) error {
 		return apperr.Invalid("ticket_edits", "must be ask or allow")
 	}
 	return nil
+}
+
+func resolveDefaultModel(curHarness, curModel, curEffort string, inHarness, inModel, inEffort *string) (harness, model, effort string, changed bool, err error) {
+	harness, model, effort = curHarness, curModel, curEffort
+	if inHarness != nil || inModel != nil {
+		var h, m string
+		if inHarness != nil {
+			h = strings.TrimSpace(*inHarness)
+		}
+		if inModel != nil {
+			m = strings.TrimSpace(*inModel)
+		}
+		switch {
+		case m == "" && h == "":
+			if inModel != nil || inHarness != nil {
+				harness, model = "", ""
+			}
+		case m == "auto":
+			if h != "" {
+				return "", "", "", false, apperr.Invalid("default_model", "cannot combine auto with a specific default_harness")
+			}
+			harness, model = "", ""
+		case h == "" && m != "":
+			if curHarness == "" {
+				return "", "", "", false, apperr.Invalid("default_harness", "is required with default_model")
+			}
+			harness, model = curHarness, m
+		case h != "" && m == "":
+			return "", "", "", false, apperr.Invalid("default_model", "is required with default_harness")
+		default:
+			harness, model = h, m
+		}
+		if harness != "" && !slices.Contains(agentdef.Harnesses, harness) {
+			return "", "", "", false, apperr.Invalid("default_harness", "must be one of %s", strings.Join(agentdef.Harnesses, ", "))
+		}
+		if utf8.RuneCountInString(model) > 100 {
+			return "", "", "", false, apperr.Invalid("default_model", "must be at most 100 characters")
+		}
+	}
+	if inEffort != nil {
+		e := strings.TrimSpace(*inEffort)
+		switch {
+		case e == "", e == "default":
+			effort = ""
+		case slices.Contains(agentdef.Efforts, e):
+			effort = e
+		default:
+			return "", "", "", false, apperr.Invalid("default_effort", "must be default, %s", strings.Join(agentdef.Efforts, ", "))
+		}
+	}
+	changed = harness != curHarness || model != curModel || effort != curEffort
+	return harness, model, effort, changed, nil
 }
 
 // checkImageEngine accepts "" (inherit), "auto" or an image-capable harness.
@@ -210,6 +269,10 @@ func CreateLocked(ctx context.Context, q *store.Queries, o Owner, in NewInput) (
 	if err := checkTicketEdits(in.TicketEdits); err != nil {
 		return store.Persona{}, err
 	}
+	defHarness, defModel, defEffort, _, err := resolveDefaultModel("", "", "", in.DefaultHarness, in.DefaultModel, in.DefaultEffort)
+	if err != nil {
+		return store.Persona{}, err
+	}
 	var out store.Persona
 	name, err := normName(in.Name)
 	if err != nil {
@@ -259,6 +322,7 @@ func CreateLocked(ctx context.Context, q *store.Queries, o Owner, in NewInput) (
 		CanCode: in.Code != nil && *in.Code, CanGenerateImages: in.Images != nil && *in.Images, Repos: repos,
 		CanCreatePersonas: in.Personas != nil && *in.Personas, CanCreateSvgs: in.SVG != nil && *in.SVG, CanCreateWorkflows: in.Workflows != nil && *in.Workflows,
 		CanCreateConnectors: in.Connectors != nil && *in.Connectors,
+		DefaultHarness:      defHarness, DefaultModel: defModel, DefaultEffort: defEffort,
 	})
 	if err == nil {
 		for _, repo := range repos {
@@ -368,11 +432,39 @@ func (s *Service) Update(ctx context.Context, o Owner, id uuid.UUID, p Patch) (s
 				return err
 			}
 		}
+		defHarness, defModel, defEffort, modelChanged, err := resolveDefaultModel(
+			cur.DefaultHarness, cur.DefaultModel, cur.DefaultEffort,
+			p.DefaultHarness, p.DefaultModel, p.DefaultEffort,
+		)
+		if err != nil {
+			return err
+		}
+		// Lock any active work record before updating personas so lock order
+		// (agent, then persona) matches SaveDefinition and prevents deadlocks.
+		var lockedAgent *store.Agent
+		if modelChanged {
+			rec, err := WorkRecord(ctx, q, o.WorkspaceID, id)
+			if err != nil {
+				return err
+			}
+			if WorkOf(rec) != WorkNone {
+				locked, err := q.LockAgentByHandle(ctx, store.LockAgentByHandleParams{WorkspaceID: o.WorkspaceID, Handle: rec.Handle})
+				if err != nil {
+					return err
+				}
+				lockedAgent = &locked
+			}
+		}
+		var nextHarness, nextModel, nextEffort *string
+		if modelChanged {
+			nextHarness, nextModel, nextEffort = &defHarness, &defModel, &defEffort
+		}
 		out, err = q.UpdatePersona(ctx, store.UpdatePersonaParams{
 			ID: id, WorkspaceID: o.WorkspaceID, UserID: o.UserID, Revision: p.Revision,
 			Name: p.Name, Tone: p.Tone, Color: p.Color, CustomInstructions: p.Instructions,
 			CanCode: p.Code, CanGenerateImages: p.Images, CanCreatePersonas: p.Personas, CanCreateSvgs: p.SVG, CanCreateWorkflows: p.Workflows, CanCreateConnectors: p.Connectors, Repos: repos,
-			InChatList: p.InChatList,
+			InChatList:     p.InChatList,
+			DefaultHarness: nextHarness, DefaultModel: nextModel, DefaultEffort: nextEffort,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return apperr.Conflict("the persona changed since you loaded it")
@@ -390,7 +482,26 @@ func (s *Service) Update(ctx context.Context, o Owner, id uuid.UUID, p Patch) (s
 				return err
 			}
 		}
-		if out.Name != cur.Name {
+		if lockedAgent != nil {
+			spec, _, err := agents.CurrentSpec(ctx, q, *lockedAgent)
+			if err != nil {
+				return err
+			}
+			if defHarness != "" && defModel != "" {
+				spec.SetModel(defHarness, defModel, defEffort)
+			} else {
+				def := agents.DefaultSpec()
+				spec.SetModel(def.Harness, def.Model, defEffort)
+			}
+			if err := spec.Normalize(); err != nil {
+				return apperr.Invalid("default_model", "%s", err.Error())
+			}
+			if _, err := agents.WriteVersion(ctx, q, *lockedAgent, agents.Identity{
+				Name: out.Name, Role: lockedAgent.Role, Specialty: lockedAgent.Specialty, ColorIndex: int(lockedAgent.ColorIndex), Kind: lockedAgent.Kind,
+			}, spec, "Updated persona default model", &o.UserID, nil); err != nil {
+				return err
+			}
+		} else if out.Name != cur.Name {
 			// Its work record (if any) is named after it.
 			if err := q.RenameAgent(ctx, store.RenameAgentParams{ID: id, Name: out.Name}); err != nil {
 				return err

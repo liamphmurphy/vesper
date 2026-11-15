@@ -9955,6 +9955,9 @@ components:
         handle: { type: string, description: "Its @handle for tickets, runs and helpers; absent for a persona that has never worked" }
         work_model: { type: string, description: "The model its runs use; absent when it doesn't work" }
         work_status: { type: string, enum: [running, waiting, blocked, idle], description: "Its work record's status; absent when it doesn't work" }
+        default_harness: { $ref: "#/components/schemas/Harness", description: "Default harness for new chats and runs; absent means Auto" }
+        default_model: { type: string, maxLength: 100, description: "Default model for new chats and runs; absent means Auto" }
+        default_effort: { $ref: "#/components/schemas/ChatEffort", description: "Default reasoning effort for new chats and runs; absent means automatic" }
         tone: { $ref: "#/components/schemas/PersonaTone" }
         color: { type: string, pattern: "^#[0-9a-f]{6}$", description: Stored in lower case }
         avatar_url: { type: string, description: "GET /personas/{id}/avatar with a cache-busting ?v=<revision>; absent without an avatar" }
@@ -9993,6 +9996,9 @@ components:
         capabilities: { $ref: "#/components/schemas/PersonaCapabilities" }
         repos: { type: array, maxItems: 10, items: { type: string, maxLength: 500 }, description: "https://host/owner/repo(.git), ssh://git@host/owner/repo(.git) or git@host:owner/repo(.git); no credentials in the URL" }
         is_default: { type: boolean, default: false, description: Make it the default (replacing the current one) }
+        default_harness: { $ref: "#/components/schemas/Harness", description: "Must be paired with default_model" }
+        default_model: { type: string, maxLength: 100, description: "Default model for new chats and work; must be paired with default_harness unless auto/empty" }
+        default_effort: { $ref: "#/components/schemas/ChatEffort" }
     PersonaPatch:
       type: object
       required: [revision]
@@ -10006,6 +10012,9 @@ components:
         custom_instructions: { type: string, maxLength: 2000, description: Empty string clears them }
         capabilities: { $ref: "#/components/schemas/PersonaCapabilities" }
         repos: { type: array, maxItems: 10, items: { type: string, maxLength: 500 }, description: Replaces the whole list; existing chats keep their repo }
+        default_harness: { type: string, enum: ["", claude-code, codex, antigravity], description: "Empty string clears default_harness and default_model back to Auto" }
+        default_model: { type: string, maxLength: 100, description: "Empty string or 'auto' clears the default model back to Auto" }
+        default_effort: { type: string, enum: ["", default, low, medium, high, xhigh, max], description: "Empty string or 'default' clears reasoning effort back to automatic" }
     CustomAppNavItem:
       type: object
       required: [id, label]

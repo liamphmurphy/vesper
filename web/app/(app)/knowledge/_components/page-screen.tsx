@@ -24,6 +24,7 @@ import { DocEditor, type DocEditorHandle, type SaveState } from "@/app/(app)/app
 import { DeckScreen } from "@/app/(app)/apps/slides/_components/deck-screen";
 import { DesignEditor } from "@/app/(app)/apps/designs/_components/design-editor";
 import { AUDIENCE, AudienceChip, StatusBar, Tag } from "./kit";
+import { PersonaAvatar, personaLook } from "@/app/(app)/chat/_components/persona";
 import { ReviewBar, ReviewList, undecided } from "./page-review";
 import { QueryTable } from "./query-table";
 import { useKnowledgeTab } from "./shell";
@@ -188,7 +189,7 @@ function Loaded({ page: p }: { page: Page }) {
           </nav>
           <AudienceMenu audience={p.audience} onChange={(audience) => save.mutate({ audience })} />
           <button onClick={() => openPanel("history")} className="flex h-[26px] items-center gap-2 rounded-full border border-border bg-surface pl-1.5 pr-3 text-12 font-medium text-fg-secondary hover:border-border-strong">
-            <span className="grid size-4 place-items-center rounded-full bg-[#3FC1B033] text-10 font-bold text-[#3FC1B0]">{persona[0]}</span>
+            <PersonaAvatar persona={personaLook(chat?.speaker ?? chat?.persona)} size={16} />
             {modeLabel}
           </button>
           <button

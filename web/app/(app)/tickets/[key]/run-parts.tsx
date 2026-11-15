@@ -10,16 +10,16 @@ import { compact, duration } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Banner, TextInput } from "@/components/ui/primitives";
-import { AgentAvatar } from "@/components/domain/avatars";
+import { AgentOrPersonaAvatar } from "../_components/ticket-row";
 import { Stat } from "@/components/domain/data";
 import { MonoChip, SmallPill, type PillTone } from "@/components/domain/labels";
 import { DispatchDialog } from "@/components/domain/dispatch-dialog";
 
 const ENDED: Array<Run["state"]> = ["completed", "failed", "cancelled"];
 
-/** An assigned ticket with no live run waits for a person to dispatch it (§6.6). */
+/** An assigned Ready ticket with no live run waits for a person to dispatch it (§6.6). */
 export function needsDispatch(t: Ticket) {
-  return !!t.assignee && t.status !== "done" && (!t.run || ENDED.includes(t.run.state));
+  return !!t.assignee && t.status === "todo" && (!t.run || ENDED.includes(t.run.state));
 }
 
 /** "Pike is assigned and waiting for dispatch" (dispatch.html). Amber: a person acts. */
@@ -31,7 +31,7 @@ export function DispatchBanner({ t }: { t: Ticket }) {
   return (
     <>
       <Banner
-        lead={<AgentAvatar name={t.assignee.name} colorIndex={t.assignee.color_index} size="md" />}
+        lead={<AgentOrPersonaAvatar agent={t.assignee} size="md" />}
         title={blockers.length ? `Queues behind ${blockers.map(d => d.key).join(", ")}` : `${t.assignee.name} is assigned and waiting for dispatch`}
         actions={
           <Button variant="approve" disabled={t.project.archived} onClick={() => setOpen(true)}>
@@ -74,7 +74,7 @@ export function ApprovalBanner({ t, ap, expanded = false }: { t: Ticket; ap: App
   return (
     <div className="flex flex-col gap-2">
       <Banner
-        lead={<AgentAvatar name={ap.agent.name} colorIndex={ap.agent.color_index} size="md" />}
+        lead={<AgentOrPersonaAvatar agent={ap.agent} size="md" />}
         title={`${ap.agent.name} is waiting for your approval`}
         actions={
           <>
@@ -126,7 +126,7 @@ export function RunCard({ t, run }: { t: Ticket; run: Run }) {
   return (
     <section aria-label="Agent run" className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-3.5">
       <div className="flex items-center gap-2.5">
-        <AgentAvatar name={run.agent.name} colorIndex={run.agent.color_index} size="md" label={false} />
+        <AgentOrPersonaAvatar agent={run.agent} size="md" />
         <div className="flex min-w-0 flex-1 flex-col leading-tight">
           <span className="font-semibold">{run.agent.name}</span>
           <span className="truncate font-mono text-11 text-fg-tertiary">

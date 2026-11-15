@@ -296,7 +296,7 @@ function ChatBody({ chatId, page, screen, loadingPage, onGeneral }: { chatId?: s
   if (id) return (
     <div ref={host} className="flex min-h-0 flex-1 flex-col">
       {attach.error && <p role="alert" className="p-2 text-12 text-state-blocked">Couldn’t link this chat to the page. <button className="underline" onClick={() => attach.mutate(id)}>Retry</button></p>}
-      <Conversation key={id} id={id} docked onNew={start} onReplace={selectChat} context={context} actions={switcher} />
+      <Conversation key={id} id={id} docked hideTitle onNew={start} onReplace={selectChat} context={context} actions={switcher} />
     </div>
   );
   return (

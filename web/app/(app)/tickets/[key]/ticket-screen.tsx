@@ -33,7 +33,9 @@ import { RunsHistory } from "./runs-history";
 import { ConflictBanner, useTicketSave, type SaveTicket, type TicketSaver } from "./ticket-save";
 import { Composer, Timeline } from "./timeline";
 import { CompanionDock } from "@/components/shell/companion";
+import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { WorkChat, WorkChatSheet } from "@/components/domain/work-chat";
+import { WorkNavHeader } from "../../work/work-nav-header";
 
 function TitleEditor({ t, save }: { t: Ticket; save: SaveTicket }) {
   const [editing, setEditing] = useState(false);
@@ -124,9 +126,10 @@ function Description({ t, save: saveTicket }: { t: Ticket; save: SaveTicket }) {
 /** Position within the project's list, for the "3 / 15" pager. */
 function usePager(t: Ticket | undefined) {
   const list = useTickets({ project: t?.project.key, view: "all" });
-  const keys = list.data?.map((x) => x.key) ?? [];
+  const tickets = list.data ?? [];
+  const keys = tickets.map((x) => x.key);
   const i = t ? keys.indexOf(t.key) : -1;
-  return { index: i, total: keys.length, prev: i > 0 ? keys[i - 1] : undefined, next: i >= 0 && i < keys.length - 1 ? keys[i + 1] : undefined };
+  return { tickets, index: i, total: keys.length, prev: i > 0 ? keys[i - 1] : undefined, next: i >= 0 && i < keys.length - 1 ? keys[i + 1] : undefined };
 }
 
 function DetailSkeleton() {
@@ -381,6 +384,26 @@ export function TicketScreen({ ticketKey }: { ticketKey: string }) {
 
   return (
     <>
+      <NavigatorPortal>
+        <nav aria-label="Work" className="work-nav">
+          <WorkNavHeader active="tickets" project={t?.project.key} />
+          <div className="work-nav-list">
+            {pager.tickets.map((sib) => (
+              <Link
+                key={sib.key}
+                href={`/tickets/${encodeURIComponent(sib.key)}`}
+                aria-current={sib.key === ticketKey ? "true" : undefined}
+              >
+                <strong className="flex items-center gap-1.5 truncate">
+                  <StatusGlyph state={sib.status} label={false} />
+                  <span className="font-mono text-11 text-fg-tertiary">{sib.key}</span>
+                  <span className="truncate">{sib.title}</span>
+                </strong>
+              </Link>
+            ))}
+          </div>
+        </nav>
+      </NavigatorPortal>
       <TopBar
         crumbs={
           t

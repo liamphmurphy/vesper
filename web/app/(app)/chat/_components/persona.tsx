@@ -431,7 +431,7 @@ export function HeaderPersona({ persona, personaId, fresh, onSwitch, disabled, c
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
         <button type="button" disabled={disabled} aria-label={`Persona: ${persona.name}`} data-testid="header-persona"
-          className={cx("flex h-[30px] max-w-[200px] flex-none items-center gap-1.5 rounded-full border border-border bg-surface pl-1 text-13 font-medium text-fg hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50", compact ? "pr-1.5" : "pr-2")}>
+          className={cx("flex h-[30px] max-w-[180px] flex-none items-center gap-1.5 rounded-full border border-border bg-surface pl-1 text-13 font-medium text-fg hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50", compact ? "pr-1.5" : "pr-2")}>
           {avatar}
           {!compact && <span className="truncate">{persona.name}</span>}
           <Icon name="chev" size={12} strokeWidth={1.6} className="text-fg-tertiary" />

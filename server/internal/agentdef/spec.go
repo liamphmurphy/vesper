@@ -489,3 +489,43 @@ func (s Spec) MemoryOrDefault() Memory {
 	}
 	return *s.Memory
 }
+
+// Effort returns the primary harness's configured reasoning effort, or "".
+func (s Spec) Effort() string {
+	return s.HarnessOptions[s.Harness]["effort"]
+}
+
+// SetModel updates the primary harness, model, and effort, removing any matching
+// fallback target so Normalize won't reject duplicate harness/model targets.
+func (s *Spec) SetModel(harness, model, effort string) {
+	if harness != "" && strings.TrimSpace(model) != "" {
+		s.Harness = harness
+		s.Model = strings.TrimSpace(model)
+	}
+	if len(s.Fallbacks) > 0 {
+		kept := s.Fallbacks[:0]
+		for _, f := range s.Fallbacks {
+			if f.Harness == s.Harness && strings.TrimSpace(f.Model) == s.Model {
+				continue
+			}
+			kept = append(kept, f)
+		}
+		s.Fallbacks = kept
+	}
+	if effort == "" {
+		if opts := s.HarnessOptions[s.Harness]; len(opts) > 0 {
+			delete(opts, "effort")
+			if len(opts) == 0 {
+				delete(s.HarnessOptions, s.Harness)
+			}
+		}
+		return
+	}
+	if s.HarnessOptions == nil {
+		s.HarnessOptions = map[string]map[string]string{}
+	}
+	if s.HarnessOptions[s.Harness] == nil {
+		s.HarnessOptions[s.Harness] = map[string]string{}
+	}
+	s.HarnessOptions[s.Harness]["effort"] = effort
+}

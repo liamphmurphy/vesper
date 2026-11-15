@@ -103,6 +103,14 @@ func (s *Server) toPersonas(ctx context.Context, rows []store.Persona) ([]api.Pe
 			InChatList: p.InChatList, Work: api.PersonaWork(personas.WorkNone),
 			Revision: int(p.Revision), CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
 		}
+		if p.DefaultHarness != "" && p.DefaultModel != "" {
+			h, m := api.Harness(p.DefaultHarness), p.DefaultModel
+			item.DefaultHarness, item.DefaultModel = &h, &m
+		}
+		if p.DefaultEffort != "" {
+			e := api.ChatEffort(p.DefaultEffort)
+			item.DefaultEffort = &e
+		}
 		if a, ok := work[p.ID]; ok {
 			item.Handle = &a.Handle
 			if item.Work = api.PersonaWork(personas.WorkOf(&a)); item.Work != personas.WorkNone {
@@ -123,12 +131,12 @@ func (s *Server) toPersona(ctx context.Context, p store.Persona) (api.Persona, e
 	return out[0], nil
 }
 
-func toneArg(t *api.PersonaTone) *string {
-	if t == nil {
+func strEnumArg[T ~string](v *T) *string {
+	if v == nil {
 		return nil
 	}
-	v := string(*t)
-	return &v
+	s := string(*v)
+	return &s
 }
 
 func (s *Server) ListPersonas(ctx context.Context, _ api.ListPersonasRequestObject) (api.ListPersonasResponseObject, error) {
@@ -157,9 +165,10 @@ func (s *Server) CreatePersona(ctx context.Context, req api.CreatePersonaRequest
 	b := req.Body
 	code, images, makers, svg, workflows, connectors := capabilityArgs(b.Capabilities)
 	p, err := s.personas().Create(ctx, personaOwner(ctx), personas.NewInput{
-		Name: b.Name, Tone: toneArg(b.Tone), Color: b.Color, Instructions: b.CustomInstructions, IsDefault: deref(b.IsDefault),
+		Name: b.Name, Tone: strEnumArg(b.Tone), Color: b.Color, Instructions: b.CustomInstructions, IsDefault: deref(b.IsDefault),
 		Code: code, Images: images, Personas: makers, SVG: svg, Workflows: workflows, Connectors: connectors, Repos: b.Repos,
 		ImageEngine: imageEngineArg(b.Capabilities), TicketEdits: ticketEditsArg(b.Capabilities),
+		DefaultHarness: strEnumArg(b.DefaultHarness), DefaultModel: b.DefaultModel, DefaultEffort: strEnumArg(b.DefaultEffort),
 	})
 	if err != nil {
 		return nil, err
@@ -187,9 +196,10 @@ func (s *Server) UpdatePersona(ctx context.Context, req api.UpdatePersonaRequest
 	}
 	code, images, makers, svg, workflows, connectors := capabilityArgs(b.Capabilities)
 	p, err := s.personas().Update(ctx, personaOwner(ctx), req.Id, personas.Patch{
-		Revision: int32(b.Revision), Name: b.Name, Tone: toneArg(b.Tone), Color: b.Color, Instructions: b.CustomInstructions,
+		Revision: int32(b.Revision), Name: b.Name, Tone: strEnumArg(b.Tone), Color: b.Color, Instructions: b.CustomInstructions,
 		Code: code, Images: images, Personas: makers, SVG: svg, Workflows: workflows, Connectors: connectors, Repos: b.Repos,
 		ImageEngine: imageEngineArg(b.Capabilities), TicketEdits: ticketEditsArg(b.Capabilities), InChatList: b.InChatList,
+		DefaultHarness: strEnumArg(b.DefaultHarness), DefaultModel: b.DefaultModel, DefaultEffort: strEnumArg(b.DefaultEffort),
 	})
 	if err != nil {
 		return nil, err

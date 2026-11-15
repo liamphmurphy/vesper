@@ -43,8 +43,8 @@ SELECT EXISTS (
 )::bool;
 
 -- name: CreatePersona :one
-INSERT INTO personas (workspace_id, user_id, name, tone, color, custom_instructions, is_default, can_code, can_generate_images, repos, can_create_personas, can_create_svgs, can_create_workflows, can_create_connectors)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *;
+INSERT INTO personas (workspace_id, user_id, name, tone, color, custom_instructions, is_default, can_code, can_generate_images, repos, can_create_personas, can_create_svgs, can_create_workflows, can_create_connectors, default_harness, default_model, default_effort)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING *;
 
 -- name: UpdatePersona :one
 -- Returns no row when the persona isn't the caller's or the revision is stale.
@@ -61,6 +61,9 @@ UPDATE personas SET
   can_create_connectors = COALESCE(sqlc.narg(can_create_connectors)::boolean, can_create_connectors),
   repos = COALESCE(sqlc.narg(repos)::text[], repos),
   in_chat_list = COALESCE(sqlc.narg(in_chat_list)::boolean, in_chat_list),
+  default_harness = COALESCE(sqlc.narg(default_harness)::text, default_harness),
+  default_model = COALESCE(sqlc.narg(default_model)::text, default_model),
+  default_effort = COALESCE(sqlc.narg(default_effort)::text, default_effort),
   revision = revision + 1, updated_at = now()
 WHERE id = sqlc.arg(id) AND workspace_id = sqlc.arg(workspace_id) AND user_id = sqlc.arg(user_id) AND revision = sqlc.arg(revision)
 RETURNING *;
@@ -166,4 +169,15 @@ SELECT p.* FROM personas p WHERE p.id = $1 AND p.workspace_id = $2;
 -- name: CreatePersonaForAgent :one
 -- The persona of a work record made outside a persona (the seed, POST /agents): the
 -- record's own id, so the two stay one actor.
-INSERT INTO personas (id, workspace_id, user_id, name, color) VALUES ($1, $2, $3, $4, $5) RETURNING *;
+INSERT INTO personas (id, workspace_id, user_id, name, color, default_harness, default_model, default_effort)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *;
+
+-- name: SyncPersonaDefaultModel :one
+-- Keeps a working persona's default harness/model/effort mirrored with its agent definition.
+UPDATE personas SET
+  default_harness = sqlc.arg(default_harness),
+  default_model = sqlc.arg(default_model),
+  default_effort = sqlc.arg(default_effort),
+  revision = revision + 1, updated_at = now()
+WHERE id = sqlc.arg(id) AND workspace_id = sqlc.arg(workspace_id)
+RETURNING *;

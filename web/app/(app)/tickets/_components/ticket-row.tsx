@@ -3,11 +3,13 @@
 import Link from "next/link";
 import { ViewTransition, type MouseEvent } from "react";
 import type { TicketSummary } from "@/lib/api/client";
+import { usePersonas } from "@/lib/api/persona-hooks";
 import { cx } from "@/lib/cx";
 import { shortAgo } from "@/lib/format";
 import { stateText, type NeedsYou } from "@/lib/work-rows";
 import { Icon } from "@/components/ui/icon";
 import { AgentAvatar, UnassignedAvatar } from "@/components/domain/avatars";
+import { PersonaAvatar } from "@/components/domain/persona-avatar";
 import { PriorityGlyph, StatusGlyph } from "@/components/domain/glyphs";
 import { LabelChip } from "@/components/domain/labels";
 import { hoverReveal } from "@/lib/reveal";
@@ -57,11 +59,39 @@ export function EpicChip({ epic }: { epic?: TicketSummary["epic"] }) {
   );
 }
 
+/** Match a ticket/run assignee to its PersonaAvatar when available, falling back to AgentAvatar. */
+export function AgentOrPersonaAvatar({
+  agent,
+  size = "sm",
+}: {
+  agent: { id?: string; handle?: string; name: string; color_index: number };
+  size?: "sm" | "md";
+}) {
+  const personas = usePersonas();
+  const match = personas.data?.personas.find(
+    (p) =>
+      (agent.id && p.id === agent.id) ||
+      (agent.handle && p.id === agent.handle) ||
+      p.name.toLowerCase() === agent.name.toLowerCase(),
+  );
+  if (match) {
+    return (
+      <PersonaAvatar
+        name={match.name}
+        color={match.color}
+        src={match.avatar_url ?? undefined}
+        size={size === "md" ? 24 : 20}
+      />
+    );
+  }
+  return <AgentAvatar name={agent.name} colorIndex={agent.color_index} label={false} size={size} />;
+}
+
 /** The ticket's agent as an avatar, its name on hover and for screen readers. */
 export function AssigneeAvatar({ assignee, size }: { assignee?: TicketSummary["assignee"]; size?: "sm" | "md" }) {
   return assignee ? (
     <span title={assignee.name} className="flex flex-none items-center">
-      <AgentAvatar name={assignee.name} colorIndex={assignee.color_index} label={false} size={size} />
+      <AgentOrPersonaAvatar agent={assignee} size={size} />
       <span className="sr-only">{assignee.name}</span>
     </span>
   ) : (

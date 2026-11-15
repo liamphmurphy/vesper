@@ -189,8 +189,10 @@ func (s *Service) SaveDefinition(ctx context.Context, ws uuid.UUID, by uuid.UUID
 			return apperr.Conflict("the Personal Assistant's definition is managed by Vesper")
 		}
 		// The persona owns the name: its profile renames both.
+		var ownerPersona *store.Persona
 		if p, err := q.PersonaOwnerOf(ctx, store.PersonaOwnerOfParams{ID: cur.ID, WorkspaceID: ws}); err == nil {
 			id.Name = p.Name
+			ownerPersona = &p
 		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
@@ -205,7 +207,21 @@ func (s *Service) SaveDefinition(ctx context.Context, ws uuid.UUID, by uuid.UUID
 			}
 		}
 		a, err = WriteVersion(ctx, q, cur, id, spec, note, &by, nil)
-		return err
+		if err != nil {
+			return err
+		}
+		if ownerPersona != nil {
+			effort := spec.Effort()
+			if ownerPersona.DefaultHarness != spec.Harness || ownerPersona.DefaultModel != spec.Model || ownerPersona.DefaultEffort != effort {
+				if _, err := q.SyncPersonaDefaultModel(ctx, store.SyncPersonaDefaultModelParams{
+					ID: ownerPersona.ID, WorkspaceID: ws,
+					DefaultHarness: spec.Harness, DefaultModel: spec.Model, DefaultEffort: effort,
+				}); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
 	})
 	return a, err
 }

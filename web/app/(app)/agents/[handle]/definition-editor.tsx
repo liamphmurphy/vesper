@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import type { AgentDetail, AgentKind, AgentSpec, Harness } from "@/lib/api/client";
+import { useChatModels } from "@/lib/api/hooks";
 import { takesEffort } from "@/lib/harnesses";
 import { cx } from "@/lib/cx";
 import { MODE_LABEL } from "@/lib/enforcement";
@@ -12,6 +13,7 @@ import { Icon } from "@/components/ui/icon";
 import { Card, Field, TextInput } from "@/components/ui/primitives";
 import { AGENT_HUES, AgentAvatar } from "@/components/domain/avatars";
 import { MonoChip } from "@/components/domain/labels";
+import { effortLabel, ModelEffortPicker, modelEfforts, modelLabel, type Effort, type Selection } from "../../chat/_components/model-picker";
 
 export type Draft = { name: string; role: string; specialty: string; color_index: number; kind: AgentKind; spec: AgentSpec };
 
@@ -58,12 +60,6 @@ export function describeChanges(a: Draft, b: Draft): string {
   for (const n of sa.keys()) if (!sb.has(n)) out.push(`Removed skill ${n}`);
   return out.join("; ") || "No changes";
 }
-
-const MODEL_SUGGESTIONS: Record<Harness, string[]> = {
-  "claude-code": ["opus-5.5", "sonnet-5.5", "haiku-5.5", "fable-5.2", "fable-5.1"],
-  codex: ["gpt-5-codex", "gpt-5"],
-  antigravity: ["gemini-2.5-pro", "gemini-2.5-flash"],
-};
 
 const DEFAULT_MEMORY: NonNullable<AgentSpec["memory"]> = { enabled: true, inject: "selective", max_tokens: 1500 };
 const INJECT_HELP = {
@@ -141,11 +137,17 @@ const CAP_LABELS: Array<[keyof AgentDetail["harnesses"][number], string]> = [
   ["resume", "resume sessions"],
 ];
 
+const fallbackTrigger =
+  "flex h-[30px] max-w-full items-center gap-2 rounded-md border border-border-strong bg-surface px-2.5 text-13 text-fg hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50";
+
 /** Settings: identity, runtime, memory, MCP servers, fallbacks and harness options. Instructions, scopes and skills have their own tabs. */
 export function DefinitionEditor({ detail, draft, onChange }: { detail: AgentDetail; draft: Draft; onChange: (d: Draft) => void }) {
   const spec = draft.spec;
   const set = (patch: Partial<AgentSpec>) => onChange({ ...draft, spec: { ...spec, ...patch } });
+  const models = useChatModels();
   const harness = detail.harnesses.find((h) => h.name === spec.harness);
+  const currentEffort = spec.harness_options[spec.harness]?.effort as Effort | undefined;
+  const currentLabel = modelLabel(models.data, { harness: spec.harness, model: spec.model });
   const [newServer, setNewServer] = useState({ name: "", url: "" });
   const [newOption, setNewOption] = useState({ harness: spec.harness as Harness, key: "", value: "" });
 
@@ -203,18 +205,28 @@ export function DefinitionEditor({ detail, draft, onChange }: { detail: AgentDet
         </div>
       </SectionCard>
 
-      <SectionCard title="Runtime">
+      <SectionCard
+        title="Runtime"
+        action={
+          <Link href={`/customization?who=${encodeURIComponent(detail.agent.id)}`} className="text-12 text-accent hover:underline">
+            Change model on persona page
+          </Link>
+        }
+      >
         <Toggle checked={spec.review_required ?? false} onChange={(review_required) => set({ review_required })} label="Require independent review before Done" />
         <div className="flex flex-col gap-2">
-          <span className="text-13 font-medium text-fg-2">Harness</span>
-          <div className="flex flex-wrap items-center gap-3">
-            <Segmented
-              label="Harness"
-              value={spec.harness}
-              onChange={(h) => set({ harness: h })}
-              options={detail.harnesses.map((h) => ({ value: h.name, label: h.label }))}
-            />
-            <span className="text-12 text-fg-tertiary">Spaces can switch harness in an override</span>
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-4">
+            <Field label="Harness" htmlFor="ag-harness" hint="Spaces can switch harness in an override.">
+              <TextInput id="ag-harness" value={harness?.label ?? currentLabel.harness} readOnly className="text-fg-secondary" />
+            </Field>
+            <Field label="Model" htmlFor="ag-model" hint="Managed from the persona’s main page.">
+              <TextInput id="ag-model" value={currentLabel.model} readOnly className="text-fg-secondary" />
+            </Field>
+            {takesEffort(spec.harness) && (
+              <Field label="Effort" htmlFor="ag-effort" hint="Reasoning effort from the persona’s main page.">
+                <TextInput id="ag-effort" value={effortLabel(currentEffort)} readOnly className="text-fg-secondary" />
+              </Field>
+            )}
           </div>
           {harness && (
             <div className="rounded-lg border border-border bg-surface-sunken px-3 py-2.5 text-13">
@@ -231,37 +243,6 @@ export function DefinitionEditor({ detail, draft, onChange }: { detail: AgentDet
           )}
         </div>
         <div className="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-4">
-          <Field label="Model" htmlFor="ag-model">
-            <TextInput id="ag-model" mono list="ag-models" value={spec.model} onChange={(e) => set({ model: e.target.value })} />
-            <datalist id="ag-models">
-              {MODEL_SUGGESTIONS[spec.harness].map((m) => (
-                <option key={m} value={m} />
-              ))}
-            </datalist>
-          </Field>
-          {takesEffort(spec.harness) && (
-          <Field label="Effort" htmlFor="ag-effort" hint="Reasoning effort. Default uses the harness's own default.">
-            <select
-              id="ag-effort"
-              className="h-[30px] w-full rounded-md border border-border-strong bg-surface px-2 text-13 text-fg focus:border-accent focus:outline-none"
-              value={spec.harness_options[spec.harness]?.effort ?? ""}
-              onChange={(e) => {
-                const rest = { ...spec.harness_options[spec.harness] };
-                delete rest.effort;
-                const next = { ...spec.harness_options };
-                const opts = e.target.value ? { ...rest, effort: e.target.value } : rest;
-                if (Object.keys(opts).length) next[spec.harness] = opts;
-                else delete next[spec.harness];
-                set({ harness_options: next });
-              }}
-            >
-              <option value="">Default</option>
-              {["low", "medium", "high", "xhigh", "max"].map((v) => (
-                <option key={v} value={v}>{v}</option>
-              ))}
-            </select>
-          </Field>
-          )}
           <Field label="Concurrent runs" htmlFor="ag-conc">
             <TextInput id="ag-conc" type="number" min={1} max={16} value={spec.max_concurrency} onChange={(e) => set({ max_concurrency: Number(e.target.value) || 1 })} />
           </Field>
@@ -321,41 +302,70 @@ export function DefinitionEditor({ detail, draft, onChange }: { detail: AgentDet
 
       <SectionCard title="Usage fallbacks">
         <p className="text-12 text-fg-tertiary">When provider usage runs out, continue with the next harness and model in this order. The checkout is preserved; each switch starts a fresh session. Configure credentials for each harness.</p>
-        {(spec.fallbacks ?? []).map((f, i) => (
-          <div key={i} className="flex flex-wrap items-center gap-2">
-            <span className="text-12 text-fg-tertiary">{i + 1}.</span>
-            <Segmented label={`Fallback ${i + 1} harness`} value={f.harness} options={detail.harnesses.map((h) => ({ value: h.name, label: h.label }))}
-              onChange={(harness) => set({ fallbacks: spec.fallbacks!.map((v, j) => j === i ? { ...v, harness, harness_options: v.harness_options?.effort ? { effort: v.harness_options.effort } : {} } : v) })} />
-            <TextInput aria-label={`Fallback ${i + 1} model`} placeholder="Model" list={`ag-fb-models-${i}`} value={f.model}
-              onChange={(e) => set({ fallbacks: spec.fallbacks!.map((v, j) => j === i ? { ...v, model: e.target.value } : v) })} />
-            {takesEffort(f.harness) && <select
-              aria-label={`Fallback ${i + 1} effort`}
-              className="h-[30px] rounded-md border border-border-strong bg-surface px-2 text-13 text-fg focus:border-accent focus:outline-none"
-              value={f.harness_options?.effort ?? ""}
-              onChange={(e) => set({
-                fallbacks: spec.fallbacks!.map((v, j) => {
-                  if (j !== i) return v;
-                  const opts = { ...v.harness_options };
-                  delete opts.effort;
-                  return { ...v, harness_options: e.target.value ? { ...opts, effort: e.target.value } : opts };
-                }),
-              })}
-            >
-              <option value="">Default effort</option>
-              {["low", "medium", "high", "xhigh", "max"].map((v) => (
-                <option key={v} value={v}>{v}</option>
-              ))}
-            </select>}
-            <datalist id={`ag-fb-models-${i}`}>
-              {MODEL_SUGGESTIONS[f.harness].map((m) => (
-                <option key={m} value={m} />
-              ))}
-            </datalist>
-            <IconButton icon="trash" label={`Remove fallback ${i + 1}`} onClick={() => set({ fallbacks: spec.fallbacks!.filter((_, j) => j !== i) })} />
-          </div>
-        ))}
-        <Button type="button" variant="outline" disabled={(spec.fallbacks?.length ?? 0) >= 8}
-          onClick={() => set({ fallbacks: [...(spec.fallbacks ?? []), { harness: detail.harnesses.find((h) => h.name !== spec.harness)?.name ?? spec.harness, model: "" }] })}>Add fallback</Button>
+        {(spec.fallbacks ?? []).map((f, i) => {
+          const fbVal: Selection = { harness: f.harness, model: f.model };
+          const fbEfforts = f.model ? modelEfforts(models.data, fbVal).efforts : [];
+          const fbEffort = f.harness_options?.effort as Effort | undefined;
+          return (
+            <div key={i} className="flex flex-wrap items-center gap-2">
+              <span className="text-12 text-fg-tertiary">{i + 1}.</span>
+              <ModelEffortPicker
+                groups={models.data}
+                value={fbVal}
+                allowAuto={false}
+                showHarness
+                side="bottom"
+                align="start"
+                placeholder="Pick model"
+                ariaLabel={`Fallback ${i + 1} model and effort`}
+                triggerClassName={fallbackTrigger}
+                onChange={(s) => {
+                  const nextEfforts = modelEfforts(models.data, s).efforts;
+                  set({
+                    fallbacks: spec.fallbacks!.map((v, j) => {
+                      if (j !== i) return v;
+                      const opts = { ...v.harness_options };
+                      if (opts.effort && !nextEfforts.includes(opts.effort as Effort)) delete opts.effort;
+                      return { ...v, harness: s.harness, model: s.model, harness_options: Object.keys(opts).length ? opts : undefined };
+                    }),
+                  });
+                }}
+                efforts={fbEfforts}
+                effort={fbEffort}
+                onEffort={(e) =>
+                  set({
+                    fallbacks: spec.fallbacks!.map((v, j) => {
+                      if (j !== i) return v;
+                      const opts = { ...v.harness_options };
+                      delete opts.effort;
+                      const next = e ? { ...opts, effort: e } : opts;
+                      return { ...v, harness_options: Object.keys(next).length ? next : undefined };
+                    }),
+                  })
+                }
+              />
+              <IconButton icon="trash" label={`Remove fallback ${i + 1}`} onClick={() => set({ fallbacks: spec.fallbacks!.filter((_, j) => j !== i) })} />
+            </div>
+          );
+        })}
+        <Button
+          type="button"
+          variant="outline"
+          disabled={(spec.fallbacks?.length ?? 0) >= 8}
+          onClick={() => {
+            const other =
+              models.data?.find((g) => g.available && g.harness !== spec.harness && g.models.length > 0) ??
+              models.data?.find((g) => g.available && g.models.some((m) => m.id !== spec.model));
+            const h = other?.harness ?? detail.harnesses.find((x) => x.name !== spec.harness)?.name ?? spec.harness;
+            const m =
+              other?.models.find((x) => x.default && !(h === spec.harness && x.id === spec.model))?.id ??
+              other?.models.find((x) => !(h === spec.harness && x.id === spec.model))?.id ??
+              "";
+            set({ fallbacks: [...(spec.fallbacks ?? []), { harness: h, model: m }] });
+          }}
+        >
+          Add fallback
+        </Button>
       </SectionCard>
 
       <Card title="Harness options" bodyClassName="flex flex-col gap-2 px-[18px] py-4">

@@ -211,7 +211,7 @@ export const DocEditor = forwardRef<DocEditorHandle, {
 
   return (
     <div className="flex min-h-0 flex-col">
-      {editor && <Toolbar editor={editor} disabled={locked} />}
+      {editor && !locked && <Toolbar editor={editor} disabled={false} />}
       <div className="relative">
         <div className="doc-page mx-auto w-full max-w-[720px] px-8 pb-24 pt-10 max-sm:px-5">
           <EditorContent editor={editor} />

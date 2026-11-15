@@ -26,11 +26,17 @@ export function usePersonas() {
   });
 }
 
-/** A persona change also changes the summary embedded in chats. */
+/** A persona change also changes the summary embedded in chats and any linked work record. */
 function usePersonaInvalidate() {
   const qc = useQueryClient();
   return () =>
-    Promise.all([qc.invalidateQueries({ queryKey: personaKeys.all }), qc.invalidateQueries({ queryKey: ["chats"] })]);
+    Promise.all([
+      qc.invalidateQueries({ queryKey: personaKeys.all }),
+      qc.invalidateQueries({ queryKey: ["chats"] }),
+      qc.invalidateQueries({ queryKey: ["agents"] }),
+      qc.invalidateQueries({ queryKey: ["agent-overviews"] }),
+      qc.invalidateQueries({ queryKey: ["bootstrap"] }),
+    ]);
 }
 
 export function useCreatePersona() {

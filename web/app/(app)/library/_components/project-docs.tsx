@@ -1,11 +1,14 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import type { ArtifactSummary, ArtifactType } from "@/lib/api/client";
 import { useArtifacts } from "@/lib/api/hooks";
 import { cx } from "@/lib/cx";
 import { shortAgo } from "@/lib/format";
+import { useCompact } from "@/lib/viewport";
+import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { Button } from "@/components/ui/button";
 import { Tabs } from "@/components/ui/controls";
 import { Icon } from "@/components/ui/icon";
@@ -61,6 +64,7 @@ function TableSkeleton() {
 
 /** Library's "From projects": what agents read before they work and the reports they leave, from GET /artifacts. */
 export function ProjectDocs() {
+  const compact = useCompact();
   const params = useSearchParams();
   const router = useRouter();
   const type = (params.get("type") as ArtifactType | null) ?? undefined;
@@ -106,6 +110,47 @@ export function ProjectDocs() {
 
   return (
     <>
+      {!compact && (
+        <NavigatorPortal>
+          <nav aria-label="Library" className="flex min-h-0 flex-1 flex-col gap-3 px-2.5 pt-4 pb-3">
+            <div className="flex flex-col gap-2 px-1">
+              <LibrarySourceSwitch source="projects" />
+              <ProjectPicker />
+            </div>
+            <label className="flex h-[32px] items-center gap-2 rounded-md border border-border-strong bg-surface px-2.5 text-fg-tertiary focus-within:border-accent">
+              <Icon name="search" size={14} />
+              <span className="sr-only">Search artifacts</span>
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search titles and contents"
+                className="flex-1 bg-transparent text-13 text-fg outline-none placeholder:text-fg-tertiary"
+              />
+            </label>
+            <div role="tablist" aria-label="Artifact types" aria-orientation="vertical" className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
+              {TABS.map((t) => {
+                const active = (type ?? "all") === t.key;
+                const count = counts?.[t.key];
+                return (
+                  <Link
+                    key={t.key}
+                    href={tabHref(t.key)}
+                    role="tab"
+                    aria-selected={active}
+                    className={cx(
+                      "flex h-8 items-center justify-between gap-2 rounded-md px-2.5 text-13 transition-colors",
+                      active ? "bg-selected font-medium text-fg" : "text-fg-secondary hover:bg-hover hover:text-fg",
+                    )}
+                  >
+                    <span className="truncate">{t.label}</span>
+                    {count !== undefined && <span className="font-mono text-11 text-fg-tertiary">{count}</span>}
+                  </Link>
+                );
+              })}
+            </div>
+          </nav>
+        </NavigatorPortal>
+      )}
       <TopBar
         crumbs={[{ label: "Library", href: "/library" }, { label: "From spaces" }]}
         actions={
@@ -122,27 +167,29 @@ export function ProjectDocs() {
       <div className="flex flex-1 flex-wrap">
         <div className="flex min-w-0 flex-[999_1_560px] flex-col gap-5 px-7 py-8 max-sm:px-4">
           <PageHeader title="Library" description="Shared with the workspace: context agents read before they work, and the reports they leave behind.">
-            <LibrarySourceSwitch source="projects" />
-            <ProjectPicker />
+            {compact && <LibrarySourceSwitch source="projects" />}
+            {compact && <ProjectPicker />}
           </PageHeader>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="flex h-[34px] min-w-[220px] flex-1 items-center gap-2 rounded-md border border-border-strong bg-surface px-3 text-fg-tertiary focus-within:border-accent">
-              <Icon name="search" size={14} />
-              <span className="sr-only">Search artifacts</span>
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search titles and contents"
-                className="flex-1 bg-transparent text-13 text-fg outline-none placeholder:text-fg-tertiary"
+          {compact && (
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="flex h-[34px] min-w-[220px] flex-1 items-center gap-2 rounded-md border border-border-strong bg-surface px-3 text-fg-tertiary focus-within:border-accent">
+                <Icon name="search" size={14} />
+                <span className="sr-only">Search artifacts</span>
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search titles and contents"
+                  className="flex-1 bg-transparent text-13 text-fg outline-none placeholder:text-fg-tertiary"
+                />
+              </label>
+              <Tabs
+                label="Artifact types"
+                value={type ?? "all"}
+                items={TABS.map((t) => ({ key: t.key, label: t.label, count: counts?.[t.key], href: tabHref(t.key) }))}
               />
-            </label>
-            <Tabs
-              label="Artifact types"
-              value={type ?? "all"}
-              items={TABS.map((t) => ({ key: t.key, label: t.label, count: counts?.[t.key], href: tabHref(t.key) }))}
-            />
-          </div>
+            </div>
+          )}
 
           <button
             type="button"
