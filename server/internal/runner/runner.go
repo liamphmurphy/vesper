@@ -1718,7 +1718,7 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 		// copied while it works so the chat can follow along.
 		videos, stopVideos = r.startVideoSync(ctx, c, sensitive)
 	}
-	stopReview := r.watchCodeReview(ctx, c, sensitive)
+	reviewCache, stopReview := r.watchCodeReview(ctx, c, sensitive)
 	res, raw, code, waitErr := r.watch(ctx, c, proc, h.NewParser(c.spec.Model), sensitive, maxRuntime-used)
 	stopReview()
 	r.addTiming(c.run.ID, 0, time.Since(harnessStart), 0)
@@ -1769,7 +1769,7 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 			}
 			changes := r.chatRepositoryCodeChanges(ctx, c, repositoryBases, codeBase, sensitive, res, code, waitErr)
 			if allowedScope(c.spec, "repo:write") {
-				r.saveCodeReviews(ctx, c, sensitive, false)
+				r.saveCodeReviews(ctx, c, sensitive, false, reviewCache)
 				r.stagePushRequests(ctx, c)
 			}
 			r.finishChatTurn(ctx, c, turn, res, code, waitErr, logKey, chatTurnCode{changes: changes, repositoryBranches: r.chatRepositoryBranches(ctx, c)}, images)
