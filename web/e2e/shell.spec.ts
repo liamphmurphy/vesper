@@ -77,29 +77,29 @@ test("one column switches areas; a screen's own list takes the place of Chats", 
   // The areas, then Apps; Inbox left the menu: the Needs you button opens the tray instead.
   const areas = page.getByRole("list", { name: "Areas" });
   const names = await areas.getByRole("link").evaluateAll((els) => els.map((e) => e.getAttribute("aria-label")));
-  expect(names).toEqual(["Chat", "Work", "Knowledge"]);
+  expect(names).toEqual(["Chat", "Work", "Knowledge", "Library"]);
   await expect(page.getByRole("button", { name: /^Needs you/ })).toBeVisible();
   await expect(menu.getByRole("link", { name: "Customization" })).toHaveAttribute("href", "/customization");
   await expect(menu.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
 
 
-  // Apps opens a grid to the right: Apps, then Tools, then New space.
+  // Apps opens a grid to the right: Custom Apps (Knowledge and Library live on the main bar), then Tools, then New space.
   const apps = work.getByRole("button", { name: "Apps" });
   await expect(apps).toHaveAttribute("aria-expanded", "false");
   await apps.click();
   const flyout = page.getByRole("dialog", { name: "Apps" });
-  await expect(flyout.getByRole("group", { name: "Apps" }).getByRole("link")).toHaveText([/Knowledge/, "Custom Apps", "Library"]);
+  await expect(flyout.getByRole("group", { name: "Apps" }).getByRole("link")).toHaveText(["Custom Apps"]);
   await expect(flyout.getByRole("group", { name: "Tools" }).getByRole("link")).toHaveText(["Workflows", /Scheduled/, "Learn", "Reports"]);
   await expect(flyout.getByRole("button", { name: "New space" })).toBeVisible();
   const flyoutBox = await flyout.boundingBox();
   const appsBox = await apps.boundingBox();
   expect(flyoutBox!.x).toBeGreaterThan(appsBox!.x + appsBox!.width);
   // Arrow keys move through the grid; Esc closes and returns to the row.
-  await expect(flyout.getByRole("link", { name: /^Knowledge/ })).toBeFocused();
-  await page.keyboard.press("ArrowRight");
   await expect(flyout.getByRole("link", { name: "Custom Apps" })).toBeFocused();
-  // Down keeps the column: Custom Apps is second in Apps, Scheduled second in Tools.
+  // Down moves from Custom Apps (col 0) to Workflows (col 0 in Tools), Right to Scheduled.
   await page.keyboard.press("ArrowDown");
+  await expect(flyout.getByRole("link", { name: "Workflows" })).toBeFocused();
+  await page.keyboard.press("ArrowRight");
   await expect(flyout.getByRole("link", { name: /Scheduled/ })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(flyout).toHaveCount(0);
@@ -107,11 +107,17 @@ test("one column switches areas; a screen's own list takes the place of Chats", 
 
   // Picking a tile goes there and closes the flyout; the row reads as current.
   await apps.click();
-  await flyout.getByRole("link", { name: "Library" }).click();
-  await expect(page).toHaveURL(/\/library$/);
+  await flyout.getByRole("link", { name: "Workflows" }).click();
+  await expect(page).toHaveURL(/\/workflows$/);
   await expect(flyout).toHaveCount(0);
   await expect(apps).toHaveAttribute("aria-current", "page");
-  expect(api.unhandled.filter((r) => !r.includes("/library"))).toEqual([]);
+
+  // Library lives on the main bar now, so visiting it marks Library current instead of Apps.
+  await areas.getByRole("link", { name: "Library" }).click();
+  await expect(page).toHaveURL(/\/library$/);
+  await expect(areas.getByRole("link", { name: "Library" })).toHaveAttribute("aria-current", "page");
+  await expect(apps).not.toHaveAttribute("aria-current", "page");
+  expect(api.unhandled.filter((r) => !r.includes("/library") && !r.includes("/workflow"))).toEqual([]);
 });
 
 test("the Chat area brings back the Chats list, and the mark collapses the column to a strip on every screen", async ({ page }) => {
@@ -132,7 +138,7 @@ test("the Chat area brings back the Chats list, and the mark collapses the colum
   // The strip keeps the same fixed items wherever you go.
   await page.goto("/settings");
   await expect(menu).not.toHaveAttribute("data-expanded");
-  await expect(page.getByRole("list", { name: "Areas" }).getByRole("link")).toHaveCount(3);
+  await expect(page.getByRole("list", { name: "Areas" }).getByRole("link")).toHaveCount(4);
   await menu.getByRole("button", { name: "Expand sidebar" }).click();
   await expect(menu).toHaveAttribute("data-expanded");
   expect(await page.evaluate(() => localStorage.getItem("lazyagents.column-collapsed"))).toBeNull();
