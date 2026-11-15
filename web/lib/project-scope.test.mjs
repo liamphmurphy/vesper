@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { FLYOUT_APP_ITEMS, NAV_GROUPS, RAIL_APP_ITEMS, currentProject, hasFilters, inAppsMenu, isActive, pickerHref, projectSection, resolveProject, switchHref, withProject } from "./project-scope.ts";
+import { NAV_GROUPS, RAIL_APP_ITEMS, currentProject, hasFilters, inAppsMenu, isActive, pickerHref, projectSection, resolveProject, switchHref, withProject } from "./project-scope.ts";
 
 const web = { key: "WEB", name: "Web app", color: "#6e56cf", archived: false };
 const ops = { key: "OPS", name: "Operations", color: "#3e9bff", archived: false };
@@ -28,7 +28,6 @@ test("the Apps row is current on any page its flyout opens that has no rail entr
   // decks' and designs' old addresses, which lead to their Knowledge pages (LAZYAGENTS-212).
   for (const p of ["/knowledge/abc/the-old-harbour", "/library", "/library/item-1", "/apps/designs/d1", "/apps/slides/s1"]) assert.equal(inAppsMenu(p), false, p);
   assert.deepEqual(RAIL_APP_ITEMS.map((i) => i.label), ["Knowledge", "Library"]);
-  assert.deepEqual(FLYOUT_APP_ITEMS.map((i) => i.label), ["Custom Apps"]);
 });
 
 test("isActive matches the section, and / only itself", () => {

@@ -6,7 +6,7 @@ import { Popover } from "radix-ui";
 import { useState, type CSSProperties, type KeyboardEvent } from "react";
 import { cx } from "@/lib/cx";
 import { useMediaQuery } from "@/lib/viewport";
-import { FLYOUT_APP_ITEMS, TOOL_ITEMS, inAppsMenu, isActive, type NavBadge, type NavItem } from "@/lib/project-scope";
+import { TOOL_ITEMS, inAppsMenu, isActive, type NavBadge, type NavItem } from "@/lib/project-scope";
 import { useCustomApps } from "@/lib/api/custom-app-hooks";
 import { resolveAppIcon } from "@/lib/custom-app-bridge";
 import { Icon } from "@/components/ui/icon";
@@ -21,7 +21,7 @@ function useWide(): boolean {
 
 /**
  * Arrow keys move through the menu as it reads: left and right step along the
- * tiles, up and down jump between the Apps row and the Tools row, keeping the
+ * tiles, up and down jump between the Your apps row and the Tools row, keeping the
  * column (the Tools row is shorter, so it clamps to its last pill).
  */
 function moveInGrid(e: KeyboardEvent<HTMLElement>) {
@@ -115,20 +115,12 @@ function Grid({ counts, onPick, onNewSpace }: { counts: Record<NavBadge, number>
   const countOf = (item: NavItem) => (item.badge ? counts[item.badge] : 0);
   return (
     <div onKeyDown={moveInGrid} className="flex flex-col gap-3.5">
-      <div role="group" aria-label="Apps" data-grid-group="apps" className="flex flex-col gap-2">
-        <span aria-hidden className="text-11 font-semibold uppercase tracking-[0.04em] text-fg-tertiary">Apps</span>
-        <div className="grid grid-cols-3 gap-2 min-[480px]:grid-cols-5">
-          {FLYOUT_APP_ITEMS.map((item, i) => (
-            <AppTile key={item.href} item={item} index={i} count={countOf(item)} current={isActive(pathname, item.href)} onPick={onPick} />
-          ))}
-        </div>
-      </div>
       {customTiles.length > 0 && (
         <div role="group" aria-label="Your apps" data-grid-group="apps" className="flex flex-col gap-2">
           <span aria-hidden className="text-11 font-semibold uppercase tracking-[0.04em] text-fg-tertiary">Your apps</span>
           <div className="grid grid-cols-3 gap-2 min-[480px]:grid-cols-5">
             {customTiles.map((item, i) => (
-              <AppTile key={item.href} item={item} index={FLYOUT_APP_ITEMS.length + i} count={0} current={isActive(pathname, item.href)} onPick={onPick} />
+              <AppTile key={item.href} item={item} index={i} count={0} current={isActive(pathname, item.href)} onPick={onPick} />
             ))}
           </div>
         </div>
@@ -137,7 +129,7 @@ function Grid({ counts, onPick, onNewSpace }: { counts: Record<NavBadge, number>
         <span aria-hidden className="text-11 font-semibold uppercase tracking-[0.04em] text-fg-tertiary">Tools</span>
         <div className="flex flex-wrap gap-2">
           {TOOL_ITEMS.map((item, i) => (
-            <ToolPill key={item.href} item={item} index={FLYOUT_APP_ITEMS.length + customTiles.length + i} count={countOf(item)} current={isActive(pathname, item.href)} onPick={onPick} />
+            <ToolPill key={item.href} item={item} index={customTiles.length + i} count={countOf(item)} current={isActive(pathname, item.href)} onPick={onPick} />
           ))}
         </div>
       </div>
@@ -157,7 +149,7 @@ function Grid({ counts, onPick, onNewSpace }: { counts: Record<NavBadge, number>
 }
 
 /**
- * The menu's Apps row: apps as a row of five tiles, then the tools (Workflows,
+ * The menu's Apps row: your own apps as a row of tiles, then the tools (Workflows,
  * Scheduled, Learn, Wiki) as pills, in a card that opens to the right. Opens on click,
  * not hover: the row sits over Spaces, and a hover flyout would open on the way there.
  */

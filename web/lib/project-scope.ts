@@ -57,9 +57,6 @@ export const NAV_GROUPS: NavGroup[] = [
 /** Apps promoted to their own main-bar entries, so they no longer sit in the flyout. */
 export const RAIL_APP_ITEMS: NavItem[] = APP_ITEMS.filter((i) => i.href === "/knowledge" || i.href === "/library");
 
-/** Apps that remain inside the Apps flyout (Custom Apps; Knowledge and Library live on the main bar). */
-export const FLYOUT_APP_ITEMS: NavItem[] = APP_ITEMS.filter((i) => !RAIL_APP_ITEMS.includes(i));
-
 /** The Apps row reads as current on any page its flyout opens, unless a rail entry of its own already does. */
 export function inAppsMenu(pathname: string): boolean {
   if (RAIL_APP_ITEMS.some((i) => isActive(pathname, i.href))) return false;
