@@ -9,6 +9,9 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	// Zone data in the binary: the runtime image may have none, and then
+	// every zone but UTC would be "unknown".
+	_ "time/tzdata"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -177,8 +180,15 @@ func (s *Service) Save(ctx context.Context, ws, user uuid.UUID, in Config) (stor
 			return store.DriveBackup{}, err
 		}
 	}
+	prev, err := s.Get(ctx, ws)
+	if err != nil {
+		return store.DriveBackup{}, err
+	}
 	var next *time.Time
-	if in.Enabled {
+	if in.Enabled && prev.Enabled && prev.NextRunAt != nil && prev.AtTime == in.AtTime && prev.Timezone == in.Timezone {
+		// Same schedule: keep a run that is due but not yet claimed.
+		next = prev.NextRunAt
+	} else if in.Enabled {
 		n, err := NextRun(in.AtTime, in.Timezone, s.now())
 		if err != nil {
 			return store.DriveBackup{}, err

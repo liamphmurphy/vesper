@@ -268,33 +268,41 @@ func TestDueAndLock(t *testing.T) {
 	f := newFixture(t)
 	sec := f.oauthSecret(t, "Drive", true, ScopeFile)
 	f.svc.Now = func() time.Time { return time.Now().Add(-48 * time.Hour) } // so the next run is already due
-	if _, err := f.svc.Save(f.ctx, f.ws, f.user, Config{Enabled: true, SecretID: &sec.ID, FolderID: "f", AtTime: "03:00", Timezone: "UTC"}); err != nil {
+	b, err := f.svc.Save(f.ctx, f.ws, f.user, Config{Enabled: true, SecretID: &sec.ID, FolderID: "f", AtTime: "03:00", Timezone: "UTC"})
+	if err != nil {
 		t.Fatal(err)
+	}
+	// Saving the same schedule again keeps the run that is due; a new time
+	// reschedules it.
+	f.svc.Now = time.Now
+	again, err := f.svc.Save(f.ctx, f.ws, f.user, Config{Enabled: true, SecretID: &sec.ID, FolderID: "f", FolderName: "Renamed", AtTime: "03:00", Timezone: "UTC", Revision: b.Revision})
+	if err != nil || !again.NextRunAt.Equal(*b.NextRunAt) {
+		t.Fatalf("re-save moved the due run from %v to %v (%v)", b.NextRunAt, again.NextRunAt, err)
 	}
 	if due, err := f.q.NextDueDriveBackup(f.ctx); err != nil || due.WorkspaceID != f.ws {
 		t.Fatalf("due = %v, %v", due.WorkspaceID, err)
 	}
-	if _, err := f.q.AcquireDriveBackupLock(f.ctx, store.AcquireDriveBackupLockParams{WorkspaceID: f.ws, Holder: "a", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+	if _, err := f.q.AcquireDriveBackupLock(f.ctx, store.AcquireDriveBackupLockParams{WorkspaceID: f.ws, Holder: "a", TtlSeconds: 3600}); err != nil {
 		t.Fatal(err)
 	}
 	// While a backup runs, it isn't due again and a second run can't start.
 	if _, err := f.q.NextDueDriveBackup(f.ctx); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("due while locked: %v", err)
 	}
-	if _, err := f.q.AcquireDriveBackupLock(f.ctx, store.AcquireDriveBackupLockParams{WorkspaceID: f.ws, Holder: "b", ExpiresAt: time.Now().Add(time.Hour)}); !errors.Is(err, pgx.ErrNoRows) {
+	if _, err := f.q.AcquireDriveBackupLock(f.ctx, store.AcquireDriveBackupLockParams{WorkspaceID: f.ws, Holder: "b", TtlSeconds: 3600}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("second lock: %v", err)
 	}
-	if n, _ := f.q.ExtendDriveBackupLock(f.ctx, store.ExtendDriveBackupLockParams{WorkspaceID: f.ws, Holder: "b", ExpiresAt: time.Now()}); n != 0 {
+	if n, _ := f.q.ExtendDriveBackupLock(f.ctx, store.ExtendDriveBackupLockParams{WorkspaceID: f.ws, Holder: "b", TtlSeconds: 0}); n != 0 {
 		t.Fatal("another holder extended the lease")
 	}
 	// An expired lease is taken over.
-	if n, _ := f.q.ExtendDriveBackupLock(f.ctx, store.ExtendDriveBackupLockParams{WorkspaceID: f.ws, Holder: "a", ExpiresAt: time.Now().Add(-time.Second)}); n != 1 {
+	if n, _ := f.q.ExtendDriveBackupLock(f.ctx, store.ExtendDriveBackupLockParams{WorkspaceID: f.ws, Holder: "a", TtlSeconds: -1}); n != 1 {
 		t.Fatal("holder couldn't extend its lease")
 	}
 	if _, err := f.q.GetDriveBackupLock(f.ctx, f.ws); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("expired lease reported live: %v", err)
 	}
-	if l, err := f.q.AcquireDriveBackupLock(f.ctx, store.AcquireDriveBackupLockParams{WorkspaceID: f.ws, Holder: "b", ExpiresAt: time.Now().Add(time.Hour)}); err != nil || l.Holder != "b" {
+	if l, err := f.q.AcquireDriveBackupLock(f.ctx, store.AcquireDriveBackupLockParams{WorkspaceID: f.ws, Holder: "b", TtlSeconds: 3600}); err != nil || l.Holder != "b" {
 		t.Fatalf("take over expired lease: %v", err)
 	}
 	if err := f.q.FinishDriveBackup(f.ctx, store.FinishDriveBackupParams{WorkspaceID: f.ws, LastStatus: "failed", LastError: "boom"}); err != nil {
@@ -303,7 +311,7 @@ func TestDueAndLock(t *testing.T) {
 	if err := f.q.ReleaseDriveBackupLock(f.ctx, store.ReleaseDriveBackupLockParams{WorkspaceID: f.ws, Holder: "b"}); err != nil {
 		t.Fatal(err)
 	}
-	b, _ := f.q.GetDriveBackup(f.ctx, f.ws)
+	b, _ = f.q.GetDriveBackup(f.ctx, f.ws)
 	if b.LastStatus != "failed" || b.LastError != "boom" || b.LastRunAt == nil {
 		t.Fatalf("finished = %+v", b)
 	}

@@ -13,7 +13,8 @@ import (
 )
 
 const acquireDriveBackupLock = `-- name: AcquireDriveBackupLock :one
-INSERT INTO drive_backup_locks (workspace_id, holder, expires_at) VALUES ($1, $2, $3)
+INSERT INTO drive_backup_locks (workspace_id, holder, expires_at)
+VALUES ($1, $2, now() + make_interval(secs => $3::float8))
 ON CONFLICT (workspace_id) DO UPDATE SET holder = EXCLUDED.holder, started_at = now(), expires_at = EXCLUDED.expires_at
 WHERE drive_backup_locks.expires_at <= now()
 RETURNING workspace_id, holder, started_at, expires_at
@@ -22,13 +23,15 @@ RETURNING workspace_id, holder, started_at, expires_at
 type AcquireDriveBackupLockParams struct {
 	WorkspaceID uuid.UUID
 	Holder      string
-	ExpiresAt   time.Time
+	TtlSeconds  float64
 }
 
-// Takes the lease, or a lease that has expired. Returns no row while another
-// holder's lease is live, so a manual and a scheduled run never overlap.
+// Takes the lease, or a lease that has expired, for ttl_seconds. Returns no row
+// while another holder's lease is live, so a manual and a scheduled run never
+// overlap. Expiry is on the database's clock only, so app clock skew can't
+// stretch or shorten a lease.
 func (q *Queries) AcquireDriveBackupLock(ctx context.Context, arg AcquireDriveBackupLockParams) (DriveBackupLock, error) {
-	row := q.db.QueryRow(ctx, acquireDriveBackupLock, arg.WorkspaceID, arg.Holder, arg.ExpiresAt)
+	row := q.db.QueryRow(ctx, acquireDriveBackupLock, arg.WorkspaceID, arg.Holder, arg.TtlSeconds)
 	var i DriveBackupLock
 	err := row.Scan(
 		&i.WorkspaceID,
@@ -54,17 +57,18 @@ func (q *Queries) AdvanceDriveBackup(ctx context.Context, arg AdvanceDriveBackup
 }
 
 const extendDriveBackupLock = `-- name: ExtendDriveBackupLock :execrows
-UPDATE drive_backup_locks SET expires_at = $3 WHERE workspace_id = $1 AND holder = $2
+UPDATE drive_backup_locks SET expires_at = now() + make_interval(secs => $1::float8)
+WHERE workspace_id = $2 AND holder = $3
 `
 
 type ExtendDriveBackupLockParams struct {
+	TtlSeconds  float64
 	WorkspaceID uuid.UUID
 	Holder      string
-	ExpiresAt   time.Time
 }
 
 func (q *Queries) ExtendDriveBackupLock(ctx context.Context, arg ExtendDriveBackupLockParams) (int64, error) {
-	result, err := q.db.Exec(ctx, extendDriveBackupLock, arg.WorkspaceID, arg.Holder, arg.ExpiresAt)
+	result, err := q.db.Exec(ctx, extendDriveBackupLock, arg.TtlSeconds, arg.WorkspaceID, arg.Holder)
 	if err != nil {
 		return 0, err
 	}
@@ -138,11 +142,13 @@ const nextDueDriveBackup = `-- name: NextDueDriveBackup :one
 SELECT b.workspace_id, b.user_id, b.enabled, b.secret_id, b.folder_id, b.folder_name, b.at_time, b.timezone, b.retention, b.next_run_at, b.last_run_at, b.last_status, b.last_error, b.revision, b.created_at, b.updated_at FROM drive_backups b
 WHERE b.enabled AND b.next_run_at <= now()
   AND NOT EXISTS (SELECT 1 FROM drive_backup_locks l WHERE l.workspace_id = b.workspace_id AND l.expires_at > now())
-ORDER BY b.next_run_at LIMIT 1 FOR UPDATE OF b SKIP LOCKED
+ORDER BY b.next_run_at LIMIT 1 FOR NO KEY UPDATE OF b SKIP LOCKED
 `
 
 // However many times a backup came due while Vesper was off, it is claimed
-// once: the caller moves next_run_at past now in the same transaction.
+// once: the caller moves next_run_at past now in the same transaction. NO KEY
+// UPDATE, so taking a lease (whose foreign key locks this row FOR KEY SHARE)
+// doesn't wait on the claiming transaction.
 func (q *Queries) NextDueDriveBackup(ctx context.Context) (DriveBackup, error) {
 	row := q.db.QueryRow(ctx, nextDueDriveBackup)
 	var i DriveBackup

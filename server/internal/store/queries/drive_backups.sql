@@ -18,11 +18,13 @@ RETURNING *;
 
 -- name: NextDueDriveBackup :one
 -- However many times a backup came due while Vesper was off, it is claimed
--- once: the caller moves next_run_at past now in the same transaction.
+-- once: the caller moves next_run_at past now in the same transaction. NO KEY
+-- UPDATE, so taking a lease (whose foreign key locks this row FOR KEY SHARE)
+-- doesn't wait on the claiming transaction.
 SELECT b.* FROM drive_backups b
 WHERE b.enabled AND b.next_run_at <= now()
   AND NOT EXISTS (SELECT 1 FROM drive_backup_locks l WHERE l.workspace_id = b.workspace_id AND l.expires_at > now())
-ORDER BY b.next_run_at LIMIT 1 FOR UPDATE OF b SKIP LOCKED;
+ORDER BY b.next_run_at LIMIT 1 FOR NO KEY UPDATE OF b SKIP LOCKED;
 
 -- name: AdvanceDriveBackup :exec
 UPDATE drive_backups SET next_run_at = $2 WHERE workspace_id = $1;
@@ -31,15 +33,19 @@ UPDATE drive_backups SET next_run_at = $2 WHERE workspace_id = $1;
 UPDATE drive_backups SET last_run_at = now(), last_status = $2, last_error = $3 WHERE workspace_id = $1;
 
 -- name: AcquireDriveBackupLock :one
--- Takes the lease, or a lease that has expired. Returns no row while another
--- holder's lease is live, so a manual and a scheduled run never overlap.
-INSERT INTO drive_backup_locks (workspace_id, holder, expires_at) VALUES ($1, $2, $3)
+-- Takes the lease, or a lease that has expired, for ttl_seconds. Returns no row
+-- while another holder's lease is live, so a manual and a scheduled run never
+-- overlap. Expiry is on the database's clock only, so app clock skew can't
+-- stretch or shorten a lease.
+INSERT INTO drive_backup_locks (workspace_id, holder, expires_at)
+VALUES (sqlc.arg(workspace_id), sqlc.arg(holder), now() + make_interval(secs => sqlc.arg(ttl_seconds)::float8))
 ON CONFLICT (workspace_id) DO UPDATE SET holder = EXCLUDED.holder, started_at = now(), expires_at = EXCLUDED.expires_at
 WHERE drive_backup_locks.expires_at <= now()
 RETURNING *;
 
 -- name: ExtendDriveBackupLock :execrows
-UPDATE drive_backup_locks SET expires_at = $3 WHERE workspace_id = $1 AND holder = $2;
+UPDATE drive_backup_locks SET expires_at = now() + make_interval(secs => sqlc.arg(ttl_seconds)::float8)
+WHERE workspace_id = sqlc.arg(workspace_id) AND holder = sqlc.arg(holder);
 
 -- name: ReleaseDriveBackupLock :exec
 DELETE FROM drive_backup_locks WHERE workspace_id = $1 AND holder = $2;
