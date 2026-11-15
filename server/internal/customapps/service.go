@@ -13,27 +13,48 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/liamphmurphy/vesper/server/internal/agentdef"
 	"github.com/liamphmurphy/vesper/server/internal/apperr"
 	"github.com/liamphmurphy/vesper/server/internal/store"
+	"github.com/liamphmurphy/vesper/server/internal/usersecrets"
 )
 
 type Service struct {
-	Pool *pgxpool.Pool
+	Pool       *pgxpool.Pool
+	Secrets    *usersecrets.Service
+	NodeBinary string
 }
 
 type AppSummary struct {
-	ID           uuid.UUID    `json:"id"`
-	Slug         string       `json:"slug"`
-	Name         string       `json:"name"`
-	Description  string       `json:"description"`
-	Icon         string       `json:"icon"`
-	SpaceID      *uuid.UUID   `json:"space_id"`
-	CurrentSeq   int32        `json:"current_seq"`
-	Manifest     Manifest     `json:"manifest"`
-	Capabilities Capabilities `json:"capabilities"`
-	DBSizeBytes  int32        `json:"db_size_bytes"`
-	CreatedAt    time.Time    `json:"created_at"`
-	UpdatedAt    time.Time    `json:"updated_at"`
+	ID           uuid.UUID     `json:"id"`
+	Slug         string        `json:"slug"`
+	Name         string        `json:"name"`
+	Description  string        `json:"description"`
+	Icon         string        `json:"icon"`
+	SpaceID      *uuid.UUID    `json:"space_id"`
+	CurrentSeq   int32         `json:"current_seq"`
+	Manifest     Manifest      `json:"manifest"`
+	Capabilities Capabilities  `json:"capabilities"`
+	DBSizeBytes  int32         `json:"db_size_bytes"`
+	HasMCPServer bool          `json:"has_mcp_server"`
+	MCPTools     []MCPToolSpec `json:"mcp_tools,omitempty"`
+	CreatedAt    time.Time     `json:"created_at"`
+	UpdatedAt    time.Time     `json:"updated_at"`
+}
+
+// MCPServerApp holds a custom app's active compiled MCP server bundle and metadata.
+type MCPServerApp struct {
+	ID           uuid.UUID
+	WorkspaceID  uuid.UUID
+	UserID       uuid.UUID
+	Slug         string
+	Name         string
+	Description  string
+	Manifest     Manifest
+	Capabilities Capabilities
+	CurrentSeq   int32
+	BundleMCPJS  string
+	Tools        []MCPToolSpec
 }
 
 type VersionSummary struct {
@@ -110,6 +131,8 @@ func (s *Service) List(ctx context.Context, ws, userID uuid.UUID) ([]AppSummary,
 			Manifest:     decodeManifest(r.Manifest),
 			Capabilities: decodeCapabilities(r.Capabilities),
 			DBSizeBytes:  dbSize,
+			HasMCPServer: r.HasMcpServer,
+			MCPTools:     decodeMCPTools(r.McpTools),
 			CreatedAt:    r.CreatedAt,
 			UpdatedAt:    r.UpdatedAt,
 		})
@@ -176,6 +199,8 @@ func (s *Service) Get(ctx context.Context, ws, userID uuid.UUID, slug string) (A
 			Manifest:     decodeManifest(app.Manifest),
 			Capabilities: decodeCapabilities(app.Capabilities),
 			DBSizeBytes:  dbSize,
+			HasMCPServer: app.HasMcpServer,
+			MCPTools:     decodeMCPTools(app.McpTools),
 			CreatedAt:    app.CreatedAt,
 			UpdatedAt:    app.UpdatedAt,
 		},
@@ -320,6 +345,10 @@ func (s *Service) Create(ctx context.Context, ws, userID uuid.UUID, in CreateInp
 	if err != nil {
 		return AppDetail{}, err
 	}
+	bundleMCP, mcpToolsJSON, err := s.compileMCPServer(ctx, manifest, files)
+	if err != nil {
+		return AppDetail{}, err
+	}
 
 	manifestJSON, err := json.Marshal(manifest)
 	if err != nil {
@@ -368,15 +397,17 @@ func (s *Service) Create(ctx context.Context, ws, userID uuid.UUID, in CreateInp
 			return err
 		}
 		if _, err := q.InsertCustomAppVersion(ctx, store.InsertCustomAppVersionParams{
-			AppID:      app.ID,
-			Seq:        1,
-			Note:       note,
-			AuthorType: authorType,
-			AgentID:    in.AgentID,
-			Manifest:   manifestJSON,
-			Files:      filesJSON,
-			BundleJs:   bundleJS,
-			BundleCss:  bundleCSS,
+			AppID:       app.ID,
+			Seq:         1,
+			Note:        note,
+			AuthorType:  authorType,
+			AgentID:     in.AgentID,
+			Manifest:    manifestJSON,
+			Files:       filesJSON,
+			BundleJs:    bundleJS,
+			BundleCss:   bundleCSS,
+			BundleMcpJs: bundleMCP,
+			McpTools:    mcpToolsJSON,
 		}); err != nil {
 			return err
 		}
@@ -487,9 +518,17 @@ func (s *Service) Update(ctx context.Context, ws, userID uuid.UUID, slug string,
 					}
 					for _, rm := range in.RemoveFiles {
 						delete(nextFiles, rm)
+						if nextManifest.MCPEntry == rm && in.Manifest == nil {
+							nextManifest.MCPEntry = ""
+						}
 					}
 					for k, v := range in.Files {
 						nextFiles[k] = v
+					}
+				}
+				if in.ReplaceFiles && in.Manifest == nil {
+					if _, ok := nextFiles[nextManifest.MCPEntry]; !ok {
+						nextManifest.MCPEntry = ""
 					}
 				}
 				createVersion = true
@@ -516,6 +555,10 @@ func (s *Service) Update(ctx context.Context, ws, userID uuid.UUID, slug string,
 			if err != nil {
 				return err
 			}
+			bundleMCP, mcpToolsJSON, err := s.compileMCPServer(ctx, nextManifest, nextFiles)
+			if err != nil {
+				return err
+			}
 			nextSeq = app.CurrentSeq + 1
 			mJSON, err := json.Marshal(nextManifest)
 			if err != nil {
@@ -527,15 +570,17 @@ func (s *Service) Update(ctx context.Context, ws, userID uuid.UUID, slug string,
 			}
 			note := strings.TrimSpace(in.Note)
 			if _, err := q.InsertCustomAppVersion(ctx, store.InsertCustomAppVersionParams{
-				AppID:      app.ID,
-				Seq:        nextSeq,
-				Note:       note,
-				AuthorType: authorType,
-				AgentID:    in.AgentID,
-				Manifest:   mJSON,
-				Files:      fJSON,
-				BundleJs:   bundleJS,
-				BundleCss:  bundleCSS,
+				AppID:       app.ID,
+				Seq:         nextSeq,
+				Note:        note,
+				AuthorType:  authorType,
+				AgentID:     in.AgentID,
+				Manifest:    mJSON,
+				Files:       fJSON,
+				BundleJs:    bundleJS,
+				BundleCss:   bundleCSS,
+				BundleMcpJs: bundleMCP,
+				McpTools:    mcpToolsJSON,
 			}); err != nil {
 				return err
 			}
@@ -630,6 +675,124 @@ func (s *Service) Delete(ctx context.Context, ws, userID uuid.UUID, slug string)
 		}
 		return nil
 	})
+}
+
+func (s *Service) ListMCPServers(ctx context.Context, ws, userID uuid.UUID) ([]MCPServerApp, error) {
+	rows, err := store.New(s.Pool).ListCustomAppsWithMCP(ctx, store.ListCustomAppsWithMCPParams{WorkspaceID: ws, UserID: userID})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]MCPServerApp, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, MCPServerApp{
+			ID:           r.ID,
+			WorkspaceID:  ws,
+			UserID:       userID,
+			Slug:         r.Slug,
+			Name:         r.Name,
+			Description:  r.Description,
+			Manifest:     decodeManifest(r.Manifest),
+			Capabilities: decodeCapabilities(r.Capabilities),
+			CurrentSeq:   r.CurrentSeq,
+			BundleMCPJS:  r.BundleMcpJs,
+			Tools:        decodeMCPTools(r.McpTools),
+		})
+	}
+	return out, nil
+}
+
+func (s *Service) GetMCPServer(ctx context.Context, ws, userID uuid.UUID, slug string) (MCPServerApp, error) {
+	row, err := store.New(s.Pool).GetCustomAppWithMCPBySlug(ctx, store.GetCustomAppWithMCPBySlugParams{
+		WorkspaceID: ws,
+		UserID:      userID,
+		Slug:        slug,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return MCPServerApp{}, apperr.ErrNotFound
+	}
+	if err != nil {
+		return MCPServerApp{}, err
+	}
+	return MCPServerApp{
+		ID:           row.ID,
+		WorkspaceID:  row.WorkspaceID,
+		UserID:       row.UserID,
+		Slug:         row.Slug,
+		Name:         row.Name,
+		Description:  row.Description,
+		Manifest:     decodeManifest(row.Manifest),
+		Capabilities: decodeCapabilities(row.Capabilities),
+		CurrentSeq:   row.CurrentSeq,
+		BundleMCPJS:  row.BundleMcpJs,
+		Tools:        decodeMCPTools(row.McpTools),
+	}, nil
+}
+
+// CallMCPTool invokes one named tool in a custom app's MCP server using
+// the provided options (SQLite, Secrets, API bridge, interactivity flags).
+func (s *Service) CallMCPTool(ctx context.Context, app MCPServerApp, tool string, args map[string]any, opts MCPCallContext) (any, error) {
+	opts.WorkspaceID = app.WorkspaceID
+	opts.UserID = app.UserID
+	opts.Slug = app.Slug
+	opts.AppName = app.Name
+	opts.Capabilities = app.Capabilities
+	opts.BundleJS = app.BundleMCPJS
+	if opts.Q == nil && s.Pool != nil {
+		opts.Q = store.New(s.Pool)
+	}
+	if opts.Secrets == nil {
+		opts.Secrets = s.Secrets
+	}
+	if opts.NodeBinary == "" {
+		opts.NodeBinary = s.NodeBinary
+	}
+	if opts.SQLQuery == nil {
+		opts.SQLQuery = func(qctx context.Context, query string, params []any) (SQLResult, error) {
+			return s.QuerySQL(qctx, app.WorkspaceID, app.UserID, app.Slug, query, params)
+		}
+	}
+	if opts.OnGrantCapability == nil && opts.Interactive && opts.AlwaysAllow && s.Pool != nil {
+		opts.OnGrantCapability = func(gctx context.Context, capKey string) error {
+			nextCaps := make(Capabilities, len(app.Capabilities)+1)
+			for k, v := range app.Capabilities {
+				nextCaps[k] = v
+			}
+			nextCaps[capKey] = agentdef.Allowed
+			_, err := s.SetCapabilities(gctx, app.WorkspaceID, app.UserID, app.Slug, nextCaps)
+			return err
+		}
+	}
+	return CallMCPTool(ctx, opts, tool, args)
+}
+
+func (s *Service) compileMCPServer(ctx context.Context, m Manifest, files map[string]string) (string, []byte, error) {
+	if strings.TrimSpace(m.MCPEntry) == "" {
+		return "", []byte("[]"), nil
+	}
+	bundleMCP, err := BundleMCPServer(m.MCPEntry, files)
+	if err != nil {
+		return "", nil, err
+	}
+	tools, err := ExtractMCPTools(ctx, s.NodeBinary, bundleMCP)
+	if err != nil {
+		return "", nil, err
+	}
+	toolsJSON, err := json.Marshal(tools)
+	if err != nil {
+		return "", nil, err
+	}
+	return bundleMCP, toolsJSON, nil
+}
+
+func decodeMCPTools(raw []byte) []MCPToolSpec {
+	if len(raw) == 0 {
+		return nil
+	}
+	var out []MCPToolSpec
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil
+	}
+	return out
 }
 
 func hasSQLTokens(s string) bool {

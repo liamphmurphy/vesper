@@ -422,6 +422,41 @@ func (q *Queries) GetUserSecretApproval(ctx context.Context, id uuid.UUID) (User
 	return i, err
 }
 
+const getUserSecretByHandle = `-- name: GetUserSecretByHandle :one
+SELECT id, workspace_id, user_id, name, handle, placement, placement_key, allowed_hosts, read_policy, write_policy, nonce, ciphertext, expires_at, last_used_at, revision, created_at, updated_at FROM user_secrets WHERE workspace_id = $1 AND user_id = $2 AND handle = $3
+`
+
+type GetUserSecretByHandleParams struct {
+	WorkspaceID uuid.UUID
+	UserID      uuid.UUID
+	Handle      string
+}
+
+func (q *Queries) GetUserSecretByHandle(ctx context.Context, arg GetUserSecretByHandleParams) (UserSecret, error) {
+	row := q.db.QueryRow(ctx, getUserSecretByHandle, arg.WorkspaceID, arg.UserID, arg.Handle)
+	var i UserSecret
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.Name,
+		&i.Handle,
+		&i.Placement,
+		&i.PlacementKey,
+		&i.AllowedHosts,
+		&i.ReadPolicy,
+		&i.WritePolicy,
+		&i.Nonce,
+		&i.Ciphertext,
+		&i.ExpiresAt,
+		&i.LastUsedAt,
+		&i.Revision,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getUserSecretProposal = `-- name: GetUserSecretProposal :one
 SELECT p.id, p.chat_id, p.run_id, p.proposed_by, p.name, p.host, p.placement, p.placement_key, p.reason, p.state, p.secret_id, p.created_at, p.decided_at FROM user_secret_proposals p JOIN chat_sessions c ON c.id = p.chat_id
 WHERE p.id = $1 AND c.workspace_id = $2 AND c.created_by = $3

@@ -9319,8 +9319,16 @@ export interface components {
         CustomAppCapabilities: {
             [key: string]: components["schemas"]["CustomAppCapabilityMode"];
         };
+        CustomAppMCPTool: {
+            name: string;
+            description: string;
+            input_schema: {
+                [key: string]: unknown;
+            };
+        };
         CustomAppManifest: {
             entry: string;
+            mcp_entry?: string;
             /** @enum {string} */
             tool_scope: "chats" | "app_only";
             instructions?: string;
@@ -9340,6 +9348,8 @@ export interface components {
             manifest: components["schemas"]["CustomAppManifest"];
             capabilities: components["schemas"]["CustomAppCapabilities"];
             db_size_bytes: number;
+            has_mcp_server: boolean;
+            mcp_tools?: components["schemas"]["CustomAppMCPTool"][];
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -9389,6 +9399,8 @@ export interface components {
             manifest: components["schemas"]["CustomAppManifest"];
             capabilities: components["schemas"]["CustomAppCapabilities"];
             db_size_bytes: number;
+            has_mcp_server: boolean;
+            mcp_tools?: components["schemas"]["CustomAppMCPTool"][];
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */

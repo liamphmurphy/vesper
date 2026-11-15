@@ -10,6 +10,9 @@ SELECT * FROM user_secrets WHERE workspace_id = $1 AND user_id = $2 ORDER BY low
 -- name: GetUserSecret :one
 SELECT * FROM user_secrets WHERE id = $1 AND workspace_id = $2 AND user_id = $3;
 
+-- name: GetUserSecretByHandle :one
+SELECT * FROM user_secrets WHERE workspace_id = $1 AND user_id = $2 AND handle = $3;
+
 -- name: UserSecretHandleTaken :one
 SELECT EXISTS (SELECT 1 FROM user_secrets WHERE workspace_id = $1 AND user_id = $2 AND handle = $3)::bool;
 

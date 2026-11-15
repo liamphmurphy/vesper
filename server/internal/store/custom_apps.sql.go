@@ -84,9 +84,12 @@ func (q *Queries) EnsureCustomAppDatabase(ctx context.Context, appID uuid.UUID) 
 }
 
 const getCustomAppBySlug = `-- name: GetCustomAppBySlug :one
-SELECT a.id, a.workspace_id, a.user_id, a.slug, a.name, a.description, a.icon, a.space_id, a.current_seq, a.manifest, a.capabilities, a.created_at, a.updated_at, db.size_bytes
+SELECT a.id, a.workspace_id, a.user_id, a.slug, a.name, a.description, a.icon, a.space_id, a.current_seq, a.manifest, a.capabilities, a.created_at, a.updated_at, db.size_bytes,
+       (COALESCE(v.bundle_mcp_js, '') <> '')::bool AS has_mcp_server,
+       COALESCE(v.mcp_tools, '[]'::jsonb)::jsonb AS mcp_tools
 FROM custom_apps a
 LEFT JOIN custom_app_databases db ON db.app_id = a.id
+LEFT JOIN custom_app_versions v ON v.app_id = a.id AND v.seq = a.current_seq
 WHERE a.workspace_id = $1 AND a.user_id = $2 AND a.slug = $3
 `
 
@@ -111,6 +114,8 @@ type GetCustomAppBySlugRow struct {
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 	SizeBytes    *int32
+	HasMcpServer bool
+	McpTools     json.RawMessage
 }
 
 func (q *Queries) GetCustomAppBySlug(ctx context.Context, arg GetCustomAppBySlugParams) (GetCustomAppBySlugRow, error) {
@@ -131,6 +136,8 @@ func (q *Queries) GetCustomAppBySlug(ctx context.Context, arg GetCustomAppBySlug
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.SizeBytes,
+		&i.HasMcpServer,
+		&i.McpTools,
 	)
 	return i, err
 }
@@ -206,7 +213,7 @@ func (q *Queries) GetCustomAppForUpdate(ctx context.Context, arg GetCustomAppFor
 }
 
 const getCustomAppVersion = `-- name: GetCustomAppVersion :one
-SELECT id, app_id, seq, note, author_type, agent_id, manifest, files, bundle_js, bundle_css, created_at FROM custom_app_versions
+SELECT id, app_id, seq, note, author_type, agent_id, manifest, files, bundle_js, bundle_css, created_at, bundle_mcp_js, mcp_tools FROM custom_app_versions
 WHERE app_id = $1 AND seq = $2
 `
 
@@ -230,6 +237,54 @@ func (q *Queries) GetCustomAppVersion(ctx context.Context, arg GetCustomAppVersi
 		&i.BundleJs,
 		&i.BundleCss,
 		&i.CreatedAt,
+		&i.BundleMcpJs,
+		&i.McpTools,
+	)
+	return i, err
+}
+
+const getCustomAppWithMCPBySlug = `-- name: GetCustomAppWithMCPBySlug :one
+SELECT a.id, a.workspace_id, a.user_id, a.slug, a.name, a.description, a.manifest, a.capabilities, a.current_seq, v.bundle_mcp_js, v.mcp_tools
+FROM custom_apps a
+JOIN custom_app_versions v ON v.app_id = a.id AND v.seq = a.current_seq
+WHERE a.workspace_id = $1 AND a.user_id = $2 AND a.slug = $3
+`
+
+type GetCustomAppWithMCPBySlugParams struct {
+	WorkspaceID uuid.UUID
+	UserID      uuid.UUID
+	Slug        string
+}
+
+type GetCustomAppWithMCPBySlugRow struct {
+	ID           uuid.UUID
+	WorkspaceID  uuid.UUID
+	UserID       uuid.UUID
+	Slug         string
+	Name         string
+	Description  string
+	Manifest     json.RawMessage
+	Capabilities json.RawMessage
+	CurrentSeq   int32
+	BundleMcpJs  string
+	McpTools     json.RawMessage
+}
+
+func (q *Queries) GetCustomAppWithMCPBySlug(ctx context.Context, arg GetCustomAppWithMCPBySlugParams) (GetCustomAppWithMCPBySlugRow, error) {
+	row := q.db.QueryRow(ctx, getCustomAppWithMCPBySlug, arg.WorkspaceID, arg.UserID, arg.Slug)
+	var i GetCustomAppWithMCPBySlugRow
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.Slug,
+		&i.Name,
+		&i.Description,
+		&i.Manifest,
+		&i.Capabilities,
+		&i.CurrentSeq,
+		&i.BundleMcpJs,
+		&i.McpTools,
 	)
 	return i, err
 }
@@ -286,21 +341,23 @@ func (q *Queries) InsertCustomApp(ctx context.Context, arg InsertCustomAppParams
 }
 
 const insertCustomAppVersion = `-- name: InsertCustomAppVersion :one
-INSERT INTO custom_app_versions (app_id, seq, note, author_type, agent_id, manifest, files, bundle_js, bundle_css)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id, app_id, seq, note, author_type, agent_id, manifest, files, bundle_js, bundle_css, created_at
+INSERT INTO custom_app_versions (app_id, seq, note, author_type, agent_id, manifest, files, bundle_js, bundle_css, bundle_mcp_js, mcp_tools)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+RETURNING id, app_id, seq, note, author_type, agent_id, manifest, files, bundle_js, bundle_css, created_at, bundle_mcp_js, mcp_tools
 `
 
 type InsertCustomAppVersionParams struct {
-	AppID      uuid.UUID
-	Seq        int32
-	Note       string
-	AuthorType string
-	AgentID    *uuid.UUID
-	Manifest   json.RawMessage
-	Files      json.RawMessage
-	BundleJs   string
-	BundleCss  string
+	AppID       uuid.UUID
+	Seq         int32
+	Note        string
+	AuthorType  string
+	AgentID     *uuid.UUID
+	Manifest    json.RawMessage
+	Files       json.RawMessage
+	BundleJs    string
+	BundleCss   string
+	BundleMcpJs string
+	McpTools    json.RawMessage
 }
 
 func (q *Queries) InsertCustomAppVersion(ctx context.Context, arg InsertCustomAppVersionParams) (CustomAppVersion, error) {
@@ -314,6 +371,8 @@ func (q *Queries) InsertCustomAppVersion(ctx context.Context, arg InsertCustomAp
 		arg.Files,
 		arg.BundleJs,
 		arg.BundleCss,
+		arg.BundleMcpJs,
+		arg.McpTools,
 	)
 	var i CustomAppVersion
 	err := row.Scan(
@@ -328,6 +387,8 @@ func (q *Queries) InsertCustomAppVersion(ctx context.Context, arg InsertCustomAp
 		&i.BundleJs,
 		&i.BundleCss,
 		&i.CreatedAt,
+		&i.BundleMcpJs,
+		&i.McpTools,
 	)
 	return i, err
 }
@@ -379,9 +440,12 @@ func (q *Queries) ListCustomAppVersions(ctx context.Context, appID uuid.UUID) ([
 
 const listCustomApps = `-- name: ListCustomApps :many
 
-SELECT a.id, a.workspace_id, a.user_id, a.slug, a.name, a.description, a.icon, a.space_id, a.current_seq, a.manifest, a.capabilities, a.created_at, a.updated_at, db.size_bytes
+SELECT a.id, a.workspace_id, a.user_id, a.slug, a.name, a.description, a.icon, a.space_id, a.current_seq, a.manifest, a.capabilities, a.created_at, a.updated_at, db.size_bytes,
+       (COALESCE(v.bundle_mcp_js, '') <> '')::bool AS has_mcp_server,
+       COALESCE(v.mcp_tools, '[]'::jsonb)::jsonb AS mcp_tools
 FROM custom_apps a
 LEFT JOIN custom_app_databases db ON db.app_id = a.id
+LEFT JOIN custom_app_versions v ON v.app_id = a.id AND v.seq = a.current_seq
 WHERE a.workspace_id = $1 AND a.user_id = $2
 ORDER BY lower(a.name), a.id
 `
@@ -406,6 +470,8 @@ type ListCustomAppsRow struct {
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 	SizeBytes    *int32
+	HasMcpServer bool
+	McpTools     json.RawMessage
 }
 
 // User-built custom apps: one owner (workspace_id, user_id) per app.
@@ -433,6 +499,63 @@ func (q *Queries) ListCustomApps(ctx context.Context, arg ListCustomAppsParams) 
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.SizeBytes,
+			&i.HasMcpServer,
+			&i.McpTools,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCustomAppsWithMCP = `-- name: ListCustomAppsWithMCP :many
+SELECT a.id, a.slug, a.name, a.description, a.manifest, a.capabilities, a.current_seq, v.bundle_mcp_js, v.mcp_tools
+FROM custom_apps a
+JOIN custom_app_versions v ON v.app_id = a.id AND v.seq = a.current_seq
+WHERE a.workspace_id = $1 AND a.user_id = $2 AND v.bundle_mcp_js <> ''
+ORDER BY lower(a.name), a.id
+`
+
+type ListCustomAppsWithMCPParams struct {
+	WorkspaceID uuid.UUID
+	UserID      uuid.UUID
+}
+
+type ListCustomAppsWithMCPRow struct {
+	ID           uuid.UUID
+	Slug         string
+	Name         string
+	Description  string
+	Manifest     json.RawMessage
+	Capabilities json.RawMessage
+	CurrentSeq   int32
+	BundleMcpJs  string
+	McpTools     json.RawMessage
+}
+
+func (q *Queries) ListCustomAppsWithMCP(ctx context.Context, arg ListCustomAppsWithMCPParams) ([]ListCustomAppsWithMCPRow, error) {
+	rows, err := q.db.Query(ctx, listCustomAppsWithMCP, arg.WorkspaceID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCustomAppsWithMCPRow{}
+	for rows.Next() {
+		var i ListCustomAppsWithMCPRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Slug,
+			&i.Name,
+			&i.Description,
+			&i.Manifest,
+			&i.Capabilities,
+			&i.CurrentSeq,
+			&i.BundleMcpJs,
+			&i.McpTools,
 		); err != nil {
 			return nil, err
 		}
