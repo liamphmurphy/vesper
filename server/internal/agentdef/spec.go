@@ -164,11 +164,14 @@ const ReservedMCPName = "lazyagents"
 // through. It's served like a connector (at <MCP URL>/connectors/<name>, with
 // the run's token), and connector slugs can't contain "_", so no connector
 // can take it.
-const SecretsMCPName = "vesper_secrets"
+const (
+	SecretsMCPName     = "vesper_secrets"
+	CustomAppMCPPrefix = "app_"
+)
 
 var (
 	scopeRe = regexp.MustCompile(`^[a-z][a-z0-9-]*:([a-z0-9][a-z0-9-]*|\*)$`)
-	nameRe  = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,39}$`)
+	nameRe  = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 	skillRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 )
 

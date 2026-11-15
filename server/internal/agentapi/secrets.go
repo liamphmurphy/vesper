@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -155,17 +156,7 @@ func secretRequest(ctx context.Context, d Deps, c agents.Caller, in HTTPRequestI
 	persona := runs.ChatSpeakerID(chat)
 	logged := context.WithoutCancel(ctx)
 	log := func(ck usersecrets.Checked, decision string, status *int32, msg string, redactions int, took time.Duration) {
-		method, host, path := strings.ToUpper(in.Method), "", ""
-		if ck.URL != nil {
-			method, host, path = ck.Method, ck.URL.Hostname(), ck.URL.EscapedPath()
-		} else if u := parseLoose(in.URL); u != nil {
-			host, path = u.Hostname(), u.EscapedPath()
-		}
-		if method == "" {
-			method = http.MethodGet
-		}
-		_ = d.Q.LogUserSecretCall(logged, store.LogUserSecretCallParams{SecretID: sec.ID, ChatID: &chat.ID, PersonaID: persona, Method: method, Host: host, Path: path,
-			Decision: decision, Status: status, Error: msg, Redactions: int32(redactions), DurationMs: int32(took.Milliseconds())})
+		logSecretRequest(d, &chat.ID, persona, sec, ck, in.URL, decision, status, msg, redactions, took)
 	}
 
 	ck, err := d.Secrets.Check(sec, req)
@@ -175,26 +166,10 @@ func secretRequest(ctx context.Context, d Deps, c agents.Caller, in HTTPRequestI
 	}
 	decision := "auto"
 	if ck.Policy == usersecrets.PolicyAsk {
-		headers, _ := json.Marshal(req.Headers)
-		if req.Headers == nil {
-			headers = []byte("{}")
+		refusal, askErr := requestSecretApproval(ctx, d, chat.ID, persona, sec, ck, req)
+		if askErr != nil {
+			return toolFailure(askErr.Error())
 		}
-		if n, err := d.Q.CountPendingUserSecretApprovals(ctx, chat.ID); err != nil {
-			return toolFailure("Couldn't ask the person for approval.")
-		} else if n >= maxPendingApprovals {
-			log(ck, "blocked", nil, "too many requests waiting", 0, 0)
-			return toolFailure("Three requests are already waiting for the person in this chat. Wait for them before asking again.")
-		}
-		// The whole body, not a preview: the person approves exactly what's sent.
-		a, err := d.Q.CreateUserSecretApproval(logged, store.CreateUserSecretApprovalParams{WorkspaceID: sec.WorkspaceID, UserID: sec.UserID, SecretID: sec.ID, PersonaID: persona,
-			ChatID: chat.ID, Method: ck.Method, Url: ck.URL.String(), Headers: headers, Body: string(req.Body)})
-		if err != nil {
-			return toolFailure("Couldn't ask the person for approval.")
-		}
-		refusal := awaitDecision(ctx, func(ctx context.Context) (string, error) {
-			cur, err := d.Q.GetUserSecretApproval(ctx, a.ID)
-			return cur.State, err
-		}, func() { _ = d.Q.ExpireUserSecretApproval(logged, a.ID) })
 		if refusal != "" {
 			log(ck, "denied", nil, refusal, 0, 0)
 			return toolFailure(refusal)
@@ -233,6 +208,68 @@ func secretRequest(ctx context.Context, d Deps, c agents.Caller, in HTTPRequestI
 	log(ck, decision, &status, "", res.Redactions, took)
 	raw, _ := json.Marshal(res)
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(raw)}}}
+}
+
+func requestSecretApproval(ctx context.Context, d Deps, chatID uuid.UUID, persona *uuid.UUID, sec store.UserSecret, ck usersecrets.Checked, req usersecrets.Request) (string, error) {
+	logged := context.WithoutCancel(ctx)
+	headers, _ := json.Marshal(req.Headers)
+	if req.Headers == nil {
+		headers = []byte("{}")
+	}
+	if n, err := d.Q.CountPendingUserSecretApprovals(ctx, chatID); err != nil {
+		return "", errors.New("Couldn't ask the person for approval.")
+	} else if n >= maxPendingApprovals {
+		logSecretRequest(d, &chatID, persona, sec, ck, req.URL, "blocked", nil, "too many requests waiting", 0, 0)
+		return "", errors.New("Three requests are already waiting for the person in this chat. Wait for them before asking again.")
+	}
+	// The whole body, not a preview: the person approves exactly what's sent.
+	a, err := d.Q.CreateUserSecretApproval(logged, store.CreateUserSecretApprovalParams{
+		WorkspaceID: sec.WorkspaceID,
+		UserID:      sec.UserID,
+		SecretID:    sec.ID,
+		PersonaID:   persona,
+		ChatID:      chatID,
+		Method:      ck.Method,
+		Url:         ck.URL.String(),
+		Headers:     headers,
+		Body:        string(req.Body),
+	})
+	if err != nil {
+		return "", errors.New("Couldn't ask the person for approval.")
+	}
+	refusal := awaitDecision(ctx, func(ctx context.Context) (string, error) {
+		cur, err := d.Q.GetUserSecretApproval(ctx, a.ID)
+		return cur.State, err
+	}, func() { _ = d.Q.ExpireUserSecretApproval(logged, a.ID) })
+	return refusal, nil
+}
+
+func logSecretRequest(d Deps, chatID, persona *uuid.UUID, sec store.UserSecret, ck usersecrets.Checked, rawURL, decision string, status *int32, msg string, redactions int, took time.Duration) {
+	if d.Q == nil {
+		return
+	}
+	var method, host, path string
+	if ck.URL != nil {
+		method, host, path = ck.Method, ck.URL.Hostname(), ck.URL.EscapedPath()
+	} else if u := parseLoose(rawURL); u != nil {
+		host, path = u.Hostname(), u.EscapedPath()
+	}
+	if method == "" {
+		method = http.MethodGet
+	}
+	_ = d.Q.LogUserSecretCall(context.Background(), store.LogUserSecretCallParams{
+		SecretID:   sec.ID,
+		ChatID:     chatID,
+		PersonaID:  persona,
+		Method:     method,
+		Host:       host,
+		Path:       path,
+		Decision:   decision,
+		Status:     status,
+		Error:      msg,
+		Redactions: int32(redactions),
+		DurationMs: int32(took.Milliseconds()),
+	})
 }
 
 type ProposeSecretIn struct {

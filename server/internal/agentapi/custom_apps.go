@@ -37,15 +37,17 @@ func listCustomApps(ctx context.Context, d Deps, c agents.Caller, _ ListCustomAp
 	items := make([]map[string]any, len(apps))
 	for i, a := range apps {
 		items[i] = map[string]any{
-			"slug":          a.Slug,
-			"name":          a.Name,
-			"description":   a.Description,
-			"icon":          a.Icon,
-			"version":       a.CurrentSeq,
-			"tool_scope":    a.Manifest.ToolScope,
-			"capabilities":  a.Capabilities,
-			"db_size_bytes": a.DBSizeBytes,
-			"url":           "/apps/" + a.Slug,
+			"slug":           a.Slug,
+			"name":           a.Name,
+			"description":    a.Description,
+			"icon":           a.Icon,
+			"version":        a.CurrentSeq,
+			"tool_scope":     a.Manifest.ToolScope,
+			"has_mcp_server": a.HasMCPServer,
+			"mcp_tools":      a.MCPTools,
+			"capabilities":   a.Capabilities,
+			"db_size_bytes":  a.DBSizeBytes,
+			"url":            "/apps/" + a.Slug,
 		}
 	}
 	return map[string]any{"apps": items}, nil
@@ -73,18 +75,20 @@ func getCustomApp(ctx context.Context, d Deps, c agents.Caller, in GetCustomAppI
 		return nil, err
 	}
 	return map[string]any{
-		"slug":          app.Slug,
-		"name":          app.Name,
-		"description":   app.Description,
-		"icon":          app.Icon,
-		"version":       app.CurrentSeq,
-		"manifest":      app.Manifest,
-		"capabilities":  app.Capabilities,
-		"db_size_bytes": app.DBSizeBytes,
-		"files":         app.Current.Files,
-		"versions":      app.Versions,
-		"schema":        app.Schema,
-		"url":           "/apps/" + app.Slug,
+		"slug":           app.Slug,
+		"name":           app.Name,
+		"description":    app.Description,
+		"icon":           app.Icon,
+		"version":        app.CurrentSeq,
+		"manifest":       app.Manifest,
+		"capabilities":   app.Capabilities,
+		"has_mcp_server": app.HasMCPServer,
+		"mcp_tools":      app.MCPTools,
+		"db_size_bytes":  app.DBSizeBytes,
+		"files":          app.Current.Files,
+		"versions":       app.Versions,
+		"schema":         app.Schema,
+		"url":            "/apps/" + app.Slug,
 	}, nil
 }
 
@@ -94,8 +98,8 @@ type CreateCustomAppIn struct {
 	Description string               `json:"description,omitempty" jsonschema:"Short summary shown in Apps menu and launcher"`
 	Icon        string               `json:"icon,omitempty" jsonschema:"Vesper icon name (e.g. dashboard, chart, check, tickets, clock)"`
 	Template    string               `json:"template,omitempty" jsonschema:"Starter template when files are omitted: blank, tracker, or ledger"`
-	Manifest    *customapps.Manifest `json:"manifest,omitempty" jsonschema:"App manifest (entry, tool_scope chats|app_only, instructions, nav, requested_capabilities)"`
-	Files       map[string]string    `json:"files,omitempty" jsonschema:"Source files keyed by path (e.g. app.tsx, styles.css, schema.sql). JSX compiles with React 19 automatic runtime and @vesper/bridge."`
+	Manifest    *customapps.Manifest `json:"manifest,omitempty" jsonschema:"App manifest (entry, mcp_entry e.g. server.ts, tool_scope chats|app_only, instructions, nav, requested_capabilities)"`
+	Files       map[string]string    `json:"files,omitempty" jsonschema:"Source files keyed by path (e.g. app.tsx, server.ts, styles.css, schema.sql). UI compiles with React 19 + @vesper/bridge; optional server.ts compiles with @vesper/server (defineServer, sql, secretFetch, fetch, api) and runs as a sandboxed MCP server."`
 	Note        string               `json:"note,omitempty" jsonschema:"Short version note"`
 }
 
@@ -124,11 +128,13 @@ func createCustomApp(ctx context.Context, d Deps, c agents.Caller, in CreateCust
 		return nil, err
 	}
 	return map[string]any{
-		"slug":    app.Slug,
-		"name":    app.Name,
-		"version": app.CurrentSeq,
-		"schema":  app.Schema,
-		"url":     "/apps/" + app.Slug,
+		"slug":           app.Slug,
+		"name":           app.Name,
+		"version":        app.CurrentSeq,
+		"has_mcp_server": app.HasMCPServer,
+		"mcp_tools":      app.MCPTools,
+		"schema":         app.Schema,
+		"url":            "/apps/" + app.Slug,
 	}, nil
 }
 
@@ -175,11 +181,13 @@ func updateCustomApp(ctx context.Context, d Deps, c agents.Caller, in UpdateCust
 		return nil, err
 	}
 	return map[string]any{
-		"slug":    app.Slug,
-		"name":    app.Name,
-		"version": app.CurrentSeq,
-		"schema":  app.Schema,
-		"url":     "/apps/" + app.Slug,
+		"slug":           app.Slug,
+		"name":           app.Name,
+		"version":        app.CurrentSeq,
+		"has_mcp_server": app.HasMCPServer,
+		"mcp_tools":      app.MCPTools,
+		"schema":         app.Schema,
+		"url":            "/apps/" + app.Slug,
 	}, nil
 }
 

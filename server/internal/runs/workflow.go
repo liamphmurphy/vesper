@@ -983,6 +983,19 @@ func (e *WorkflowEngine) startAgent(ctx context.Context, q *store.Queries, chat 
 		}
 		spec = WorkflowSpec(base, harness, model, effort, web, images, extra)
 	}
+	mcpApps, err := q.ListCustomAppsWithMCP(ctx, store.ListCustomAppsWithMCPParams{WorkspaceID: run.WorkspaceID, UserID: run.UserID})
+	if err != nil {
+		return uuid.Nil, "", err
+	}
+	for _, a := range mcpApps {
+		var m struct {
+			ToolScope string `json:"tool_scope"`
+		}
+		_ = json.Unmarshal(a.Manifest, &m)
+		if m.ToolScope == "" || m.ToolScope == "chats" {
+			spec.MCPServers = append(spec.MCPServers, agentdef.MCPServer{Name: agentdef.CustomAppMCPPrefix + a.Slug, URL: "vesper", Connector: true})
+		}
+	}
 	allImages, err := q.ListWorkflowRunImages(ctx, run.ID)
 	if err != nil {
 		return uuid.Nil, "", err

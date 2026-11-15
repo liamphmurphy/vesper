@@ -25,13 +25,17 @@ import (
 )
 
 func (s *Server) customApps() *customapps.Service {
-	return &customapps.Service{Pool: s.Pool}
+	return &customapps.Service{Pool: s.Pool, Secrets: s.userSecrets()}
 }
 
 func customAppManifestOut(m customapps.Manifest) api.CustomAppManifest {
 	out := api.CustomAppManifest{
 		Entry:     m.Entry,
 		ToolScope: api.CustomAppManifestToolScope(m.ToolScope),
+	}
+	if m.MCPEntry != "" {
+		me := m.MCPEntry
+		out.McpEntry = &me
 	}
 	if m.Instructions != "" {
 		ins := m.Instructions
@@ -62,6 +66,9 @@ func customAppManifestIn(in *api.CustomAppManifest) *customapps.Manifest {
 	m := &customapps.Manifest{
 		Entry:     in.Entry,
 		ToolScope: string(in.ToolScope),
+	}
+	if in.McpEntry != nil {
+		m.MCPEntry = *in.McpEntry
 	}
 	if in.Instructions != nil {
 		m.Instructions = *in.Instructions
@@ -100,6 +107,25 @@ func customAppCapsIn(in *api.CustomAppCapabilities) customapps.Capabilities {
 	return out
 }
 
+func customAppMCPToolsOut(tools []customapps.MCPToolSpec) *[]api.CustomAppMCPTool {
+	if len(tools) == 0 {
+		return nil
+	}
+	out := make([]api.CustomAppMCPTool, len(tools))
+	for i, t := range tools {
+		schema := map[string]any{}
+		if t.InputSchema != nil {
+			schema = t.InputSchema
+		}
+		out[i] = api.CustomAppMCPTool{
+			Name:        t.Name,
+			Description: t.Description,
+			InputSchema: schema,
+		}
+	}
+	return &out
+}
+
 func customAppSummaryOut(a customapps.AppSummary) api.CustomAppSummary {
 	return api.CustomAppSummary{
 		Id:           a.ID,
@@ -112,6 +138,8 @@ func customAppSummaryOut(a customapps.AppSummary) api.CustomAppSummary {
 		Manifest:     customAppManifestOut(a.Manifest),
 		Capabilities: customAppCapsOut(a.Capabilities),
 		DbSizeBytes:  int(a.DBSizeBytes),
+		HasMcpServer: a.HasMCPServer,
+		McpTools:     customAppMCPToolsOut(a.MCPTools),
 		CreatedAt:    a.CreatedAt,
 		UpdatedAt:    a.UpdatedAt,
 	}
@@ -159,6 +187,8 @@ func customAppDetailOut(d customapps.AppDetail) api.CustomAppDetail {
 		Manifest:     customAppManifestOut(d.Manifest),
 		Capabilities: customAppCapsOut(d.Capabilities),
 		DbSizeBytes:  int(d.DBSizeBytes),
+		HasMcpServer: d.HasMCPServer,
+		McpTools:     customAppMCPToolsOut(d.MCPTools),
 		CreatedAt:    d.CreatedAt,
 		UpdatedAt:    d.UpdatedAt,
 		Current:      customAppVersionOut(d.Current),
@@ -283,6 +313,7 @@ func (s *Server) InvokeCustomApp(ctx context.Context, req api.InvokeCustomAppReq
 	var capKey string
 	var summary string
 	var apiMethod, apiPath string
+	var isOwnMCP bool
 
 	switch b.Kind {
 	case api.Sql:
@@ -332,7 +363,12 @@ func (s *Server) InvokeCustomApp(ctx context.Context, req api.InvokeCustomAppReq
 		if connSlug == "" || tool == "" {
 			return nil, apperr.Invalid("connector", "connector and tool are required")
 		}
-		capKey = "mcp:" + connSlug + ":" + tool
+		isOwnMCP = connSlug == "self" || connSlug == agentdef.CustomAppMCPPrefix+app.Slug
+		capSlug := connSlug
+		if isOwnMCP {
+			capSlug = "self"
+		}
+		capKey = "mcp:" + capSlug + ":" + tool
 		if err := customapps.ValidCapabilityKey(capKey); err != nil {
 			return nil, err
 		}
@@ -342,6 +378,13 @@ func (s *Server) InvokeCustomApp(ctx context.Context, req api.InvokeCustomAppReq
 	}
 
 	mode := customapps.ModeFor(app.Capabilities, capKey)
+	if isOwnMCP {
+		if explicit, ok := app.Capabilities[capKey]; ok {
+			mode = explicit
+		} else {
+			mode = agentdef.Allowed
+		}
+	}
 	approved := b.Approved != nil && *b.Approved
 	alwaysAllow := b.AlwaysAllow != nil && *b.AlwaysAllow
 
@@ -397,6 +440,44 @@ func (s *Server) InvokeCustomApp(ctx context.Context, req api.InvokeCustomAppReq
 			Result:     out,
 		}, nil
 	case api.Mcp:
+		if isOwnMCP {
+			mcpApp, err := s.customApps().GetMCPServer(ctx, ws, u.ID, app.Slug)
+			if err != nil {
+				return nil, err
+			}
+			argsMap := map[string]any{}
+			if b.Arguments != nil {
+				argsMap = *b.Arguments
+			}
+			res, err := s.customApps().CallMCPTool(ctx, mcpApp, strings.TrimSpace(*b.Tool), argsMap, customapps.MCPCallContext{
+				Interactive: true,
+				Approved:    approved,
+				AlwaysAllow: alwaysAllow,
+				APICall: func(actx context.Context, method, rawPath string, body any) (any, error) {
+					cleaned, _, err := validateCustomAppAPIRequest(method, rawPath)
+					if err != nil {
+						return nil, err
+					}
+					return s.dispatchCustomAppAPI(actx, u, method, cleaned, body)
+				},
+			})
+			if err != nil {
+				var appReq *customapps.ApprovalRequiredError
+				if errors.As(err, &appReq) {
+					return api.InvokeCustomApp200JSONResponse{
+						Status:     api.CustomAppInvokeResponseStatusApprovalRequired,
+						Capability: appReq.Capability,
+						Summary:    &appReq.Summary,
+					}, nil
+				}
+				return nil, apperr.Conflict("%v", err)
+			}
+			return api.InvokeCustomApp200JSONResponse{
+				Status:     api.CustomAppInvokeResponseStatusOk,
+				Capability: capKey,
+				Result:     res,
+			}, nil
+		}
 		conn, err := s.Q.GetConnectorBySlug(ctx, store.GetConnectorBySlugParams{
 			Slug:        strings.TrimSpace(*b.Connector),
 			WorkspaceID: ws,

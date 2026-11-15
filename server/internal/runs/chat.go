@@ -42,6 +42,8 @@ type ChatCaps struct {
 	// Secrets is whether the persona may use any of the person's API secrets
 	// here; their values stay in Vesper (agentapi.SecretsHandler).
 	Secrets bool
+	// CustomApps are the slugs of custom apps with bundled MCP servers that this chat may use.
+	CustomApps []string
 	// Aside is a chat answering a question about its parent's running reply:
 	// it reads, and changes nothing (see chat_asides.go).
 	Aside bool
@@ -106,6 +108,9 @@ func ChatSpec(r agentdef.Resolved, caps ChatCaps) agentdef.Resolved {
 	if caps.Secrets {
 		r.MCPServers = append(r.MCPServers, agentdef.MCPServer{Name: agentdef.SecretsMCPName, URL: "vesper", Connector: true})
 	}
+	for _, slug := range caps.CustomApps {
+		r.MCPServers = append(r.MCPServers, agentdef.MCPServer{Name: agentdef.CustomAppMCPPrefix + slug, URL: "vesper", Connector: true})
+	}
 	// web_search turns on the harness's own web search and page fetch tools
 	// (Claude Code WebSearch/WebFetch, Codex cached web search) for every chat,
 	// coding or not; WebFetch stays on the CheckTool allowlist. See
@@ -166,7 +171,41 @@ func chatCaps(ctx context.Context, q *store.Queries, chat store.ChatSession) (Ch
 	if err != nil {
 		return ChatCaps{}, err
 	}
-	return ChatCaps{Code: code, RepoURL: deref(chat.RepoUrl), WorkBranches: chat.WorkBranches, Images: p.CanGenerateImages, Connectors: slugs, Secrets: len(secrets) > 0}, nil
+	customApps, err := customAppMCPsForChat(ctx, q, chat)
+	if err != nil {
+		return ChatCaps{}, err
+	}
+	return ChatCaps{Code: code, RepoURL: deref(chat.RepoUrl), WorkBranches: chat.WorkBranches, Images: p.CanGenerateImages, Connectors: slugs, Secrets: len(secrets) > 0, CustomApps: customApps}, nil
+}
+
+func customAppMCPsForChat(ctx context.Context, q *store.Queries, chat store.ChatSession) ([]string, error) {
+	rows, err := q.ListCustomAppsWithMCP(ctx, store.ListCustomAppsWithMCPParams{WorkspaceID: chat.WorkspaceID, UserID: chat.CreatedBy})
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	var appSpaceSlug string
+	if chat.SpaceID != nil {
+		sp, serr := q.GetChatSpaceByID(ctx, *chat.SpaceID)
+		if serr == nil && sp.UserID == chat.CreatedBy && sp.App != nil && strings.HasPrefix(*sp.App, "custom:") {
+			appSpaceSlug = strings.TrimPrefix(*sp.App, "custom:")
+		} else if serr != nil && !errors.Is(serr, pgx.ErrNoRows) {
+			return nil, serr
+		}
+	}
+	var out []string
+	for _, r := range rows {
+		var m struct {
+			ToolScope string `json:"tool_scope"`
+		}
+		_ = json.Unmarshal(r.Manifest, &m)
+		if m.ToolScope == "" || m.ToolScope == "chats" || (m.ToolScope == "app_only" && appSpaceSlug == r.Slug) {
+			out = append(out, r.Slug)
+		}
+	}
+	return out, nil
 }
 
 // sameCapabilities reports whether two chat specs grant the same persona
