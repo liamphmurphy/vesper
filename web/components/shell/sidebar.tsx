@@ -20,11 +20,12 @@ import { NeedsYou } from "./needs-you";
 import { HarnessFooter } from "./harness-footer";
 import { useAppearance } from "./theme";
 
-/** The areas on the icon row, in order; Apps (the flyout of the other apps and tools) follows them. */
+/** The areas on the icon row, in order; Apps (the flyout of Custom Apps and tools) follows them. */
 const AREAS: { area: Exclude<Area, "apps">; href: string; label: string; icon: IconName; badge?: NavBadge }[] = [
   { area: "chat", href: "/chat", label: "Chat", icon: "msg" },
   { area: "work", href: "/work", label: "Work", icon: "tickets", badge: "runs" },
   { area: "knowledge", href: "/knowledge", label: "Knowledge", icon: "wiki", badge: "wiki" },
+  { area: "library", href: "/library", label: "Library", icon: "library" },
 ];
 
 const COLLAPSED_KEY = "lazyagents.column-collapsed";
@@ -105,8 +106,8 @@ function Areas({ vertical, counts, onNewSpace }: { vertical: boolean; counts: Re
           </div>
         );
       })}
-      <div role="listitem" className={vertical ? "w-full" : "w-9"}>
-        <AppsMenu rail counts={counts} onNewSpace={onNewSpace} />
+      <div role="listitem" className={vertical ? "w-full" : "w-10"}>
+        <AppsMenu rail vertical={vertical} counts={counts} onNewSpace={onNewSpace} />
       </div>
     </div>
   );

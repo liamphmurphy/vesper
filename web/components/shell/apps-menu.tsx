@@ -6,7 +6,7 @@ import { Popover } from "radix-ui";
 import { useState, type CSSProperties, type KeyboardEvent } from "react";
 import { cx } from "@/lib/cx";
 import { useMediaQuery } from "@/lib/viewport";
-import { APP_ITEMS, TOOL_ITEMS, inAppsMenu, isActive, type NavBadge, type NavItem } from "@/lib/project-scope";
+import { FLYOUT_APP_ITEMS, TOOL_ITEMS, inAppsMenu, isActive, type NavBadge, type NavItem } from "@/lib/project-scope";
 import { useCustomApps } from "@/lib/api/custom-app-hooks";
 import { resolveAppIcon } from "@/lib/custom-app-bridge";
 import { Icon } from "@/components/ui/icon";
@@ -118,7 +118,7 @@ function Grid({ counts, onPick, onNewSpace }: { counts: Record<NavBadge, number>
       <div role="group" aria-label="Apps" data-grid-group="apps" className="flex flex-col gap-2">
         <span aria-hidden className="text-11 font-semibold uppercase tracking-[0.04em] text-fg-tertiary">Apps</span>
         <div className="grid grid-cols-3 gap-2 min-[480px]:grid-cols-5">
-          {APP_ITEMS.map((item, i) => (
+          {FLYOUT_APP_ITEMS.map((item, i) => (
             <AppTile key={item.href} item={item} index={i} count={countOf(item)} current={isActive(pathname, item.href)} onPick={onPick} />
           ))}
         </div>
@@ -128,7 +128,7 @@ function Grid({ counts, onPick, onNewSpace }: { counts: Record<NavBadge, number>
           <span aria-hidden className="text-11 font-semibold uppercase tracking-[0.04em] text-fg-tertiary">Your apps</span>
           <div className="grid grid-cols-3 gap-2 min-[480px]:grid-cols-5">
             {customTiles.map((item, i) => (
-              <AppTile key={item.href} item={item} index={APP_ITEMS.length + i} count={0} current={isActive(pathname, item.href)} onPick={onPick} />
+              <AppTile key={item.href} item={item} index={FLYOUT_APP_ITEMS.length + i} count={0} current={isActive(pathname, item.href)} onPick={onPick} />
             ))}
           </div>
         </div>
@@ -137,7 +137,7 @@ function Grid({ counts, onPick, onNewSpace }: { counts: Record<NavBadge, number>
         <span aria-hidden className="text-11 font-semibold uppercase tracking-[0.04em] text-fg-tertiary">Tools</span>
         <div className="flex flex-wrap gap-2">
           {TOOL_ITEMS.map((item, i) => (
-            <ToolPill key={item.href} item={item} index={APP_ITEMS.length + customTiles.length + i} count={countOf(item)} current={isActive(pathname, item.href)} onPick={onPick} />
+            <ToolPill key={item.href} item={item} index={FLYOUT_APP_ITEMS.length + customTiles.length + i} count={countOf(item)} current={isActive(pathname, item.href)} onPick={onPick} />
           ))}
         </div>
       </div>
@@ -161,7 +161,7 @@ function Grid({ counts, onPick, onNewSpace }: { counts: Record<NavBadge, number>
  * Scheduled, Learn, Wiki) as pills, in a card that opens to the right. Opens on click,
  * not hover: the row sits over Spaces, and a hover flyout would open on the way there.
  */
-export function AppsMenu({ rail, counts, onNewSpace }: { rail?: boolean; counts: Record<NavBadge, number>; onNewSpace: () => void }) {
+export function AppsMenu({ rail, vertical, counts, onNewSpace }: { rail?: boolean; vertical?: boolean; counts: Record<NavBadge, number>; onNewSpace: () => void }) {
   const pathname = usePathname();
   const wide = useWide();
   const [open, setOpen] = useState(false);
@@ -179,16 +179,16 @@ export function AppsMenu({ rail, counts, onNewSpace }: { rail?: boolean; counts:
       aria-current={current && !open ? "page" : undefined}
       onClick={rail || wide ? undefined : () => setOpen(!open)}
       className={cx(
-        "relative flex h-[30px] w-full items-center gap-2.5 text-13 font-medium",
-        // On the column's area row it is one more area icon, styled like its neighbours.
-        rail ? "justify-center rounded-lg px-0" : "rounded-sm px-2",
+        "relative flex w-full items-center text-13 font-medium",
+        // On the column's area row it is one more area icon, styled like its neighbours, with a right chevron showing it pops out.
+        rail ? cx(vertical ? "h-[30px]" : "h-8", "justify-center rounded-lg px-0") : "h-[30px] gap-2.5 rounded-sm px-2",
         open || current ? cx("bg-selected", rail ? "text-accent" : "text-fg") : cx(rail ? "text-fg-tertiary" : "text-fg-secondary", "hover:bg-hover hover:text-fg"),
       )}
     >
       <Icon name="dashboard" />
       {!rail && <span className="flex-1 text-left">Apps</span>}
       {waiting && <span aria-hidden className={cx("size-1.5 rounded-full bg-state-human", rail && "absolute right-1 top-1")} />}
-      {!rail && <Icon name="chevr" size={12} className={cx("text-fg-tertiary", !wide && open && "rotate-90")} />}
+      <Icon name="chevr" size={12} className={cx(rail ? "-ml-0.5 opacity-75" : "text-fg-tertiary", !rail && !wide && open && "rotate-90")} />
     </button>
   );
 

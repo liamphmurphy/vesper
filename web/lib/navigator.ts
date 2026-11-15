@@ -11,8 +11,8 @@ import { inAppsMenu, isActive } from "./project-scope.ts";
  */
 export const NAVIGATOR_WIDTH = "w-[248px]";
 
-/** The areas on the column's icon row, in order. Apps is the flyout of the other apps and tools. */
-export type Area = "chat" | "work" | "runs" | "tickets" | "knowledge" | "apps";
+/** The areas on the column's icon row, in order. Apps is the flyout of Custom Apps and tools. */
+export type Area = "chat" | "work" | "runs" | "tickets" | "knowledge" | "library" | "apps";
 
 /** The area a path belongs to, for the icon row's current mark; null on screens of no area (Settings, Customization). */
 export function currentArea(pathname: string): Area | null {
@@ -21,6 +21,7 @@ export function currentArea(pathname: string): Area | null {
   if (isActive(pathname, "/tickets") || isActive(pathname, "/epics")) return "work";
   // Decks and designs are Knowledge pages; their old addresses lead there.
   if (isActive(pathname, "/knowledge") || isActive(pathname, "/apps/designs") || isActive(pathname, "/apps/slides")) return "knowledge";
+  if (isActive(pathname, "/library")) return "library";
   if (inAppsMenu(pathname)) return "apps";
   return null;
 }
