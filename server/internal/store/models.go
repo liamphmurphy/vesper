@@ -1232,6 +1232,8 @@ type PushRequest struct {
 	Error       *string
 	CreatedAt   time.Time
 	DecidedAt   *time.Time
+	TurnID      *uuid.UUID
+	MessageID   *uuid.UUID
 }
 
 type RepositoryPushPolicy struct {

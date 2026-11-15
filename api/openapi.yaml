@@ -9475,6 +9475,8 @@ components:
         pr_number: { type: integer }
         error: { type: string, description: Why it failed or was replaced }
         persona: { $ref: "#/components/schemas/PersonaSummary" }
+        run_id: { type: string, format: uuid }
+        message_id: { type: string, format: uuid, description: "The reply it belongs to, once that reply is stored; absent while the turn runs" }
         created_at: { type: string, format: date-time }
         decided_at: { type: string, format: date-time }
     PushRequestList:

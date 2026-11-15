@@ -8745,6 +8745,13 @@ export interface components {
             /** @description Why it failed or was replaced */
             error?: string;
             persona?: components["schemas"]["PersonaSummary"];
+            /** Format: uuid */
+            run_id?: string;
+            /**
+             * Format: uuid
+             * @description The reply it belongs to, once that reply is stored; absent while the turn runs
+             */
+            message_id?: string;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */

@@ -54,6 +54,9 @@ func TestChatRequestPushAndDecide(t *testing.T) {
 	if _, err = q.SetRunState(ctx, store.SetRunStateParams{ID: runID, State: "running"}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = pool.Exec(ctx, "UPDATE run_turns SET status = 'running' WHERE run_id = $1", runID); err != nil {
+		t.Fatal(err)
+	}
 	token, _, err := agents.IssueToken(ctx, q, chat.AgentID, "run", "chat", &runID, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -106,6 +109,38 @@ func TestChatRequestPushAndDecide(t *testing.T) {
 	}
 	if old := byID[first["request_id"].(string)]; old["state"] != "declined" || !strings.Contains(old["error"].(string), "Replaced") {
 		t.Fatalf("the newer request for the branch replaces the older: %v", old)
+	}
+	if gotRunID := byID[second["request_id"].(string)]["run_id"]; gotRunID != runID.String() {
+		t.Fatalf("run_id = %v, want %s", gotRunID, runID)
+	}
+	if _, hasMsg := byID[second["request_id"].(string)]["message_id"]; hasMsg {
+		t.Fatalf("message_id should be absent before the turn finishes: %v", byID[second["request_id"].(string)])
+	}
+	turn, err := q.RunningChatTurn(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := q.GetPushRequest(ctx, store.GetPushRequestParams{ID: uuid.MustParse(second["request_id"].(string)), WorkspaceID: ws, UserID: me.ID})
+	if err != nil || stored.TurnID == nil || *stored.TurnID != turn.ID {
+		t.Fatalf("stored.TurnID = %v (err %v), want %s", stored.TurnID, err, turn.ID)
+	}
+	reply, err := q.AppendChatMessage(ctx, store.AppendChatMessageParams{SessionID: chat.ID, Role: "assistant", BodyMd: "Ready to push.", RunID: &runID, RunTurnID: &turn.ID, ContextRefs: []byte("[]"), Citations: []byte("[]")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := q.LinkPushRequestsToMessage(ctx, store.LinkPushRequestsToMessageParams{MessageID: &reply.ID, RunID: &runID, TurnID: &turn.ID}); err != nil {
+		t.Fatal(err)
+	}
+	c, linkedList := do("GET", "/api/v1/chats/"+chat.ID.String()+"/push-requests", "", nil)
+	if c != 200 {
+		t.Fatalf("linked list = %d %v", c, linkedList)
+	}
+	linkedReqs := linkedList["requests"].([]any)
+	for _, raw := range linkedReqs {
+		m := raw.(map[string]any)
+		if m["id"] == second["request_id"] && m["message_id"] != reply.ID.String() {
+			t.Fatalf("linked message_id = %v, want %s", m["message_id"], reply.ID)
+		}
 	}
 
 	id := second["request_id"].(string)
