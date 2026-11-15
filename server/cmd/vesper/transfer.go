@@ -17,7 +17,11 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/blob"
 	"github.com/liamphmurphy/vesper/server/internal/config"
 	"github.com/liamphmurphy/vesper/server/internal/db"
+	"github.com/liamphmurphy/vesper/server/internal/drivebackup"
+	"github.com/liamphmurphy/vesper/server/internal/secrets"
+	"github.com/liamphmurphy/vesper/server/internal/store"
 	"github.com/liamphmurphy/vesper/server/internal/transfer"
+	"github.com/liamphmurphy/vesper/server/internal/usersecrets"
 )
 
 // exportData writes the whole instance (every table, every stored object) to
@@ -84,6 +88,13 @@ func exporter(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger) *transfer
 		Pool: pool, Blobs: blob.New(cfg.S3), AppVersion: cfg.Version,
 		SecretsKey: cfg.SecretsKey, KnownBuckets: cfg.S3.Buckets, Log: log,
 	}
+}
+
+// driveBackupRunner runs exports to Google Drive, by hand in the API and on
+// schedule in the runner; holder names the process in its leases.
+func driveBackupRunner(cfg config.Config, pool *pgxpool.Pool, box *secrets.Box, holder string, log *slog.Logger) *drivebackup.Runner {
+	return &drivebackup.Runner{Pool: pool, Secrets: &usersecrets.Service{Q: store.New(pool), Box: box},
+		Exporter: exporter(cfg, pool, log), Holder: holder, Log: log}
 }
 
 // openArchive opens an archive file, or spools stdin when path is "-": a zip

@@ -27,6 +27,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/agents"
 	"github.com/liamphmurphy/vesper/server/internal/artifacts"
 	"github.com/liamphmurphy/vesper/server/internal/blob"
+	"github.com/liamphmurphy/vesper/server/internal/drivebackup"
 	"github.com/liamphmurphy/vesper/server/internal/harness"
 	"github.com/liamphmurphy/vesper/server/internal/pageview"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
@@ -110,6 +111,10 @@ type Runner struct {
 	Workflows *runs.WorkflowEngine
 	// Scheduled starts and settles scheduled tasks; nil leaves them idle.
 	Scheduled *runs.Service
+	// DriveBackups runs scheduled exports to Google Drive; nil leaves them idle.
+	DriveBackups *drivebackup.Runner
+	// backingUp is set while tickDriveBackups' worker runs.
+	backingUp atomic.Bool
 	// Designs draws and inspects design frames linked to a ticket, which its
 	// runs receive as context; nil delivers only a note for each frame.
 	Designs DesignRenderer
@@ -162,6 +167,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	r.heartbeat(ctx)
 	// Before waiting on the ticker: anything missed while Vesper was off runs once now.
 	r.tickScheduled(ctx)
+	r.tickDriveBackups(ctx)
 	for {
 		select {
 		case <-ctx.Done():
@@ -187,6 +193,7 @@ func (r *Runner) Run(ctx context.Context) error {
 			r.Tick(ctx)
 		case <-schedule.C:
 			r.tickScheduled(ctx)
+			r.tickDriveBackups(ctx)
 		}
 	}
 }
@@ -245,6 +252,29 @@ func (r *Runner) tickScheduled(ctx context.Context) {
 	if err := r.Scheduled.SettleScheduled(ctx); err != nil && ctx.Err() == nil {
 		r.Log.Error("settle scheduled tasks", "err", err)
 	}
+}
+
+// tickDriveBackups runs the Drive backups that are due, one after another,
+// off the loop: an upload can take a long time. A tick while they run does
+// nothing; the lease in drivebackup keeps other runners off the same one.
+func (r *Runner) tickDriveBackups(ctx context.Context) {
+	if r.DriveBackups == nil || !r.backingUp.CompareAndSwap(false, true) {
+		return
+	}
+	r.wg.Add(1)
+	go func() {
+		defer r.wg.Done()
+		defer r.backingUp.Store(false)
+		for ctx.Err() == nil {
+			ran, err := r.DriveBackups.RunDue(ctx)
+			if err != nil && ctx.Err() == nil {
+				r.Log.Error("run drive backups", "err", err)
+			}
+			if !ran {
+				return
+			}
+		}
+	}()
 }
 
 func (r *Runner) heartbeat(ctx context.Context) {

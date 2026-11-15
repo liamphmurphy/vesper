@@ -191,6 +191,7 @@ func serve(ctx context.Context, log *slog.Logger) error {
 		Log:            log,
 		Usage:          &usage.Service{Q: q, Log: log},
 		Exporter:       exporter(cfg, pool, log),
+		DriveBackups:   driveBackupRunner(cfg, pool, box, apiHolder(), log),
 	}
 	go srv.Wiki.RunVaultWorker(ctx, log)
 	// In Docker the CLIs and logins live in agent containers, so the API
@@ -230,7 +231,15 @@ func serve(ctx context.Context, log *slog.Logger) error {
 	case <-ctx.Done():
 		sctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		return hs.Shutdown(sctx)
+		err := hs.Shutdown(sctx)
+		// A manual Drive backup outlives its request: stop it and let it
+		// record that Vesper stopped before the process exits.
+		bctx, bcancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer bcancel()
+		if berr := srv.DriveBackups.Shutdown(bctx); berr != nil {
+			log.Warn("drive backups still running at exit", "err", berr)
+		}
+		return err
 	}
 }
 
@@ -407,9 +416,10 @@ func runRunner(ctx context.Context, log *slog.Logger) error {
 		},
 		Pool: pool, Backend: backend, Secrets: secretStore,
 		Tracker: &tracker.Service{Pool: pool}, Blobs: blobs, Attachments: blobs, Log: log,
-		Workflows: workflows,
-		Designs:   &designs.Service{Pool: pool, Worker: &designs.Worker{URL: cfg.DesignWorkerURL, Token: cfg.DesignWorkerToken}, Blobs: blobs, Bucket: cfg.S3.ArtifactBucket},
-		Scheduled: &runs.Service{Pool: pool, Secrets: secretStore, Tracker: &tracker.Service{Pool: pool}, Artifacts: &artifacts.Service{Pool: pool, Blobs: blobs, Bucket: cfg.S3.ArtifactBucket}, RequireHarnessKey: rc.Backend == "docker", PlanModels: planModels(rc.Backend, pool), RolloverContextTokens: int64(cfg.RolloverContextTokens)},
+		Workflows:    workflows,
+		Designs:      &designs.Service{Pool: pool, Worker: &designs.Worker{URL: cfg.DesignWorkerURL, Token: cfg.DesignWorkerToken}, Blobs: blobs, Bucket: cfg.S3.ArtifactBucket},
+		Scheduled:    &runs.Service{Pool: pool, Secrets: secretStore, Tracker: &tracker.Service{Pool: pool}, Artifacts: &artifacts.Service{Pool: pool, Blobs: blobs, Bucket: cfg.S3.ArtifactBucket}, RequireHarnessKey: rc.Backend == "docker", PlanModels: planModels(rc.Backend, pool), RolloverContextTokens: int64(cfg.RolloverContextTokens)},
+		DriveBackups: driveBackupRunner(cfg, pool, box, fmt.Sprintf("%s-%d", host, os.Getpid()), log),
 		StoreSecret: func(ctx context.Context, ws, by uuid.UUID, name, value string) error {
 			_, err := secretStore.Set(ctx, ws, by, secrets.SetInput{Name: name, Value: value})
 			return err
@@ -417,6 +427,12 @@ func runRunner(ctx context.Context, log *slog.Logger) error {
 	}
 	log.Info("runner started", "backend", rc.Backend, "slots", rc.MaxConcurrent, "mcp", rc.MCPURL)
 	return r.Run(ctx)
+}
+
+// apiHolder names an API process in Drive backup leases.
+func apiHolder() string {
+	host, _ := os.Hostname()
+	return fmt.Sprintf("api-%s-%d", host, os.Getpid())
 }
 
 // origins are the browser origins of Vesper's own URLs, deduplicated.
