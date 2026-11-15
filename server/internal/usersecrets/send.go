@@ -42,6 +42,8 @@ type Response struct {
 	Status      int               `json:"status"`
 	Headers     map[string]string `json:"headers"`
 	Body        string            `json:"body"`
+	Binary      bool              `json:"binary,omitempty"`
+	BodyBase64  string            `json:"body_base64,omitempty"`
 	Truncated   bool              `json:"truncated,omitempty"`
 	Redactions  int               `json:"redactions,omitempty"`
 	ContentType string            `json:"content_type,omitempty"`
@@ -262,6 +264,12 @@ func SafeTransport(allowLocal bool, lookup func(ctx context.Context, host string
 // SendPublic makes a bounded outbound HTTPS request (no secret attached)
 // blocking private/loopback/reserved IPs via SafeTransport.
 func SendPublic(ctx context.Context, req Request, lookup func(ctx context.Context, host string) ([]net.IP, error)) (Response, error) {
+	t := SafeTransport(false, lookup)
+	defer t.CloseIdleConnections()
+	return sendPublic(ctx, req, t)
+}
+
+func sendPublic(ctx context.Context, req Request, transport http.RoundTripper) (Response, error) {
 	method := strings.ToUpper(strings.TrimSpace(req.Method))
 	if method == "" {
 		method = http.MethodGet
@@ -312,10 +320,8 @@ func SendPublic(ctx context.Context, req Request, lookup func(ctx context.Contex
 		out.Header.Set("Content-Type", req.ContentType)
 	}
 	out.Header.Set("User-Agent", "Vesper")
-	t := SafeTransport(false, lookup)
-	defer t.CloseIdleConnections()
 	client := &http.Client{
-		Transport: t,
+		Transport: transport,
 		CheckRedirect: func(next *http.Request, via []*http.Request) error {
 			if write || len(via) >= maxRedirects || next.URL.Scheme != "https" {
 				return http.ErrUseLastResponse
@@ -335,12 +341,16 @@ func SendPublic(ctx context.Context, req Request, lookup func(ctx context.Contex
 		return Response{}, err
 	}
 	defer res.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(res.Body, maxResponse))
+	raw, err := io.ReadAll(io.LimitReader(res.Body, maxResponse+1))
 	if err != nil {
 		return Response{}, fmt.Errorf("reading the response: %w", err)
 	}
+	truncated := len(raw) > maxResponse
+	if truncated {
+		raw = raw[:maxResponse]
+	}
 	contentType := res.Header.Get("Content-Type")
-	resp := Response{Status: res.StatusCode, Headers: map[string]string{}, ContentType: contentType}
+	resp := Response{Status: res.StatusCode, Headers: map[string]string{}, ContentType: contentType, Truncated: truncated}
 	for k, vs := range res.Header {
 		if strings.EqualFold(k, "Set-Cookie") {
 			continue
@@ -349,9 +359,12 @@ func SendPublic(ctx context.Context, req Request, lookup func(ctx context.Contex
 	}
 	if textual(contentType, raw) {
 		resp.Body = string(raw)
-		resp.Truncated = len(raw) >= maxResponse
 	} else {
+		resp.Binary = true
 		resp.Body = fmt.Sprintf("(%d bytes of %s, not shown)", len(raw), contentType)
+		if len(raw) > 0 {
+			resp.BodyBase64 = base64.StdEncoding.EncodeToString(raw)
+		}
 	}
 	return resp, nil
 }

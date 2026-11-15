@@ -2,6 +2,7 @@ package customapps
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"net"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/liamphmurphy/vesper/server/internal/agentdef"
+	"github.com/liamphmurphy/vesper/server/internal/usersecrets"
 )
 
 func TestBundleMCPServerRejectsExternalImports(t *testing.T) {
@@ -188,5 +190,129 @@ export default defineServer({
 	}, "call_outbound", map[string]any{"url": "https://private.internal/test"})
 	if err == nil || !strings.Contains(err.Error(), "private address") {
 		t.Fatalf("expected SSRF private address block, got %v", err)
+	}
+}
+
+func TestMCPWorkerFetchBinaryAndDataURL(t *testing.T) {
+	pngBytes := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0x00, 0x01, 0x02, 0xff}
+	pngB64 := base64.StdEncoding.EncodeToString(pngBytes)
+	svgBody := `<svg xmlns="http://www.w3.org/2000/svg"/>`
+
+	files := map[string]string{
+		"app.tsx": "export default function App() { return null; }",
+		"server.ts": `
+import { defineServer, fetch } from "@vesper/server";
+
+export default defineServer({
+  tools: {
+    fetch_asset: {
+      description: "Fetch image or text asset and inspect binary helpers",
+      handler: async ({ url, mime }: { url: string; mime?: string }) => {
+        const res = await fetch(url);
+        const ab = await res.arrayBuffer();
+        const bytes = await res.bytes();
+        return {
+          status: res.status,
+          contentType: res.contentType,
+          body: await res.text(),
+          bodyBase64: res.bodyBase64,
+          base64: await res.base64(),
+          dataUrl: await res.dataUrl(mime),
+          abLen: ab.byteLength,
+          bytesArray: Array.from(bytes),
+        };
+      },
+    },
+  },
+});`,
+	}
+
+	bundle, err := BundleMCPServer("server.ts", files)
+	if err != nil {
+		t.Fatalf("BundleMCPServer: %v", err)
+	}
+
+	mc := MCPCallContext{
+		Slug:         "news",
+		AppName:      "News",
+		BundleJS:     bundle,
+		Capabilities: Capabilities{"app.http:outbound": agentdef.Allowed},
+		PublicFetch: func(_ context.Context, req usersecrets.Request) (usersecrets.Response, error) {
+			switch req.URL {
+			case "https://cdn.example.test/thumb.png":
+				return usersecrets.Response{
+					Status:      200,
+					Headers:     map[string]string{"Content-Type": "image/png; charset=binary"},
+					ContentType: "image/png; charset=binary",
+					Body:        "(12 bytes of image/png; charset=binary, not shown)",
+					Binary:      true,
+					BodyBase64:  pngB64,
+				}, nil
+			case "https://cdn.example.test/empty.png":
+				return usersecrets.Response{
+					Status:      200,
+					Headers:     map[string]string{"Content-Type": "image/png"},
+					ContentType: "image/png",
+					Body:        "(0 bytes of image/png, not shown)",
+					Binary:      true,
+				}, nil
+			default:
+				return usersecrets.Response{
+					Status:      200,
+					Headers:     map[string]string{"Content-Type": "image/svg+xml"},
+					ContentType: "image/svg+xml",
+					Body:        svgBody,
+				}, nil
+			}
+		},
+	}
+
+	// 1. Binary PNG returns exact base64, dataUrl, ArrayBuffer, and Uint8Array.
+	res, err := CallMCPTool(context.Background(), mc, "fetch_asset", map[string]any{"url": "https://cdn.example.test/thumb.png"})
+	if err != nil {
+		t.Fatalf("thumb.png: %v", err)
+	}
+	m := res.(map[string]any)
+	if m["base64"] != pngB64 || m["bodyBase64"] != pngB64 {
+		t.Fatalf("unexpected base64 fields: %#v", m)
+	}
+	if m["dataUrl"] != "data:image/png;base64,"+pngB64 {
+		t.Fatalf("unexpected dataUrl: %v", m["dataUrl"])
+	}
+	if int(m["abLen"].(float64)) != len(pngBytes) {
+		t.Fatalf("abLen = %v, want %d", m["abLen"], len(pngBytes))
+	}
+	gotBytes := m["bytesArray"].([]any)
+	if len(gotBytes) != len(pngBytes) {
+		t.Fatalf("bytesArray len = %d, want %d", len(gotBytes), len(pngBytes))
+	}
+	for i, b := range pngBytes {
+		if byte(gotBytes[i].(float64)) != b {
+			t.Fatalf("byte[%d] = %v, want %d", i, gotBytes[i], b)
+		}
+	}
+
+	// 2. Empty binary response decodes to 0 bytes (never encodes the placeholder summary).
+	res, err = CallMCPTool(context.Background(), mc, "fetch_asset", map[string]any{"url": "https://cdn.example.test/empty.png"})
+	if err != nil {
+		t.Fatalf("empty.png: %v", err)
+	}
+	m = res.(map[string]any)
+	if m["base64"] != "" || int(m["abLen"].(float64)) != 0 || m["dataUrl"] != "data:image/png;base64," {
+		t.Fatalf("empty.png = %#v", m)
+	}
+
+	// 3. Textual SVG also supports base64() and dataUrl() with optional mime override.
+	res, err = CallMCPTool(context.Background(), mc, "fetch_asset", map[string]any{
+		"url":  "https://cdn.example.test/icon.svg",
+		"mime": "image/svg+xml;charset=utf-8",
+	})
+	if err != nil {
+		t.Fatalf("icon.svg: %v", err)
+	}
+	m = res.(map[string]any)
+	svgB64 := base64.StdEncoding.EncodeToString([]byte(svgBody))
+	if m["base64"] != svgB64 || m["dataUrl"] != "data:image/svg+xml;charset=utf-8;base64,"+svgB64 {
+		t.Fatalf("icon.svg = %#v", m)
 	}
 }

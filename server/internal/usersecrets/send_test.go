@@ -1,6 +1,7 @@
 package usersecrets
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/hex"
@@ -332,5 +333,87 @@ func TestBlockedAddrCoversTransitionAndReservedRanges(t *testing.T) {
 		if blockedAddr(net.ParseIP(ip)) {
 			t.Errorf("%s blocked", ip)
 		}
+	}
+}
+
+func TestSendPublicBinaryAndText(t *testing.T) {
+	pngBytes := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0x00, 0x01, 0x02, 0xff}
+	exactCap := bytes.Repeat([]byte{0xab}, maxResponse)
+	overCap := bytes.Repeat([]byte{0xcd}, maxResponse+32)
+
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/thumb.png":
+			w.Header().Set("Content-Type", "image/png; charset=binary")
+			w.Header().Set("Set-Cookie", "track=1")
+			_, _ = w.Write(pngBytes)
+		case "/empty.png":
+			w.Header().Set("Content-Type", "image/png")
+		case "/exact.bin":
+			w.Header().Set("Content-Type", "application/octet-stream")
+			_, _ = w.Write(exactCap)
+		case "/over.bin":
+			w.Header().Set("Content-Type", "application/octet-stream")
+			_, _ = w.Write(overCap)
+		case "/icon.svg":
+			w.Header().Set("Content-Type", "image/svg+xml")
+			_, _ = io.WriteString(w, `<svg xmlns="http://www.w3.org/2000/svg"/>`)
+		}
+	}))
+	defer srv.Close()
+
+	// Binary image populates Binary + BodyBase64 while keeping summary Body and stripping Set-Cookie.
+	res, err := sendPublic(context.Background(), Request{URL: srv.URL + "/thumb.png"}, srv.Client().Transport)
+	if err != nil {
+		t.Fatalf("thumb.png: %v", err)
+	}
+	if !res.Binary || res.Truncated {
+		t.Fatalf("unexpected flags: binary=%v truncated=%v", res.Binary, res.Truncated)
+	}
+	if _, hasCookie := res.Headers["Set-Cookie"]; hasCookie {
+		t.Fatal("Set-Cookie leaked")
+	}
+	if res.Body != fmt.Sprintf("(%d bytes of image/png; charset=binary, not shown)", len(pngBytes)) {
+		t.Fatalf("unexpected summary body: %q", res.Body)
+	}
+	got, err := base64.StdEncoding.DecodeString(res.BodyBase64)
+	if err != nil || !bytes.Equal(got, pngBytes) {
+		t.Fatalf("decoded BodyBase64 = %x (%v), want %x", got, err, pngBytes)
+	}
+
+	// Empty binary response marks Binary=true with empty BodyBase64.
+	res, err = sendPublic(context.Background(), Request{URL: srv.URL + "/empty.png"}, srv.Client().Transport)
+	if err != nil {
+		t.Fatalf("empty.png: %v", err)
+	}
+	if !res.Binary || res.BodyBase64 != "" || res.Truncated {
+		t.Fatalf("empty.png = %+v", res)
+	}
+
+	// Exact maxResponse bytes is not truncated; exceeding maxResponse sets Truncated=true and caps BodyBase64.
+	res, err = sendPublic(context.Background(), Request{URL: srv.URL + "/exact.bin"}, srv.Client().Transport)
+	if err != nil || res.Truncated {
+		t.Fatalf("exact.bin: truncated=%v err=%v", res.Truncated, err)
+	}
+	res, err = sendPublic(context.Background(), Request{URL: srv.URL + "/over.bin"}, srv.Client().Transport)
+	if err != nil || !res.Truncated {
+		t.Fatalf("over.bin: truncated=%v err=%v", res.Truncated, err)
+	}
+	if got, _ := base64.StdEncoding.DecodeString(res.BodyBase64); len(got) != maxResponse {
+		t.Fatalf("over.bin decoded len = %d, want %d", len(got), maxResponse)
+	}
+
+	// Textual image (SVG) stays in Body without BodyBase64.
+	res, err = sendPublic(context.Background(), Request{URL: srv.URL + "/icon.svg"}, srv.Client().Transport)
+	if err != nil {
+		t.Fatalf("icon.svg: %v", err)
+	}
+	if res.Binary || res.BodyBase64 != "" || !strings.Contains(res.Body, "<svg") {
+		t.Fatalf("icon.svg = %+v", res)
+	}
+
+	// Non-HTTPS and private IPs remain blocked on SendPublic.
+	if _, err := SendPublic(context.Background(), Request{URL: "http://example.com/a.png"}, nil); err == nil {
+		t.Fatal("expected http:// to be blocked")
 	}
 }
