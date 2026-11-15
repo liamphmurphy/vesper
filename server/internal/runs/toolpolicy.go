@@ -99,10 +99,6 @@ func (s *Service) CheckTool(ctx context.Context, c Caller, in ToolCheck) (ToolDe
 	if err != nil {
 		return ToolDecision{}, err
 	}
-	if in.Tool == "Agent" || in.Tool == "Task" { // Task: its name before Claude Code 2.1
-		// ToolScopes would send it to tests:run, which a lead has.
-		return subagentDecision(spec, run, in.Input), nil
-	}
 	if WebTool(in.Tool) && run.Purpose == PurposeLearning {
 		// Only a reviewer has the web, and only to open what the course cites.
 		url, _ := in.Input["url"].(string)
@@ -181,6 +177,10 @@ func (s *Service) CheckTool(ctx context.Context, c Caller, in ToolCheck) (ToolDe
 		if imageOutboxTool(in, sessions) {
 			return ToolDecision{Decision: "allow"}, nil
 		}
+	}
+	if in.Tool == "Agent" || in.Tool == "Task" { // Task: its name before Claude Code 2.1
+		// ToolScopes would send it to tests:run, which a lead has.
+		return subagentDecision(spec, run, in.Input), nil
 	}
 	scopes := ToolScopes(in.Tool, in.Input)
 	if (spec.HarnessOptions["readonly"] == "true" || stepRunning) && len(scopes) > 0 {

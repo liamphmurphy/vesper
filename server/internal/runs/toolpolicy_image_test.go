@@ -121,6 +121,12 @@ func TestToolPolicyImageJobs(t *testing.T) {
 	check("image_genimagegen", map[string]any{}, "allow")
 	check("Bash", cp("cx-own"), "allow")
 	check("Bash", cp("cx-1"), "deny")
+	check("Agent", map[string]any{"subagent_type": "image-generator", "description": "Image Generator"}, "allow")
+	check("Agent", map[string]any{"subagent_type": "general", "description": "helper"}, "deny")
+
+	// Without image generation enabled, image-generator is denied too.
+	setSpec(runs.ChatSpec(base, runs.ChatCaps{Images: false}))
+	check("Agent", map[string]any{"subagent_type": "image-generator", "description": "Image Generator"}, "deny")
 
 	// Planning runs keep their own wording.
 	if _, err := pool.Exec(ctx, "UPDATE runs SET purpose='planning', ticket_id=NULL WHERE id=$1", runID); err != nil {

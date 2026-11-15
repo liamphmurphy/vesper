@@ -407,6 +407,7 @@ func (p *agyParser) flush(index int) []Event {
 	}
 	p.sawText = true
 	p.res.Final = text
+	p.noteImages(text)
 	return []Event{{"message", map[string]any{"role": "assistant", "text": text}}}
 }
 
