@@ -103,6 +103,8 @@ export function isoDay(d: Date): string {
 /** An open tab: a page (a document, or a deck or design page, which opens its editor), or a Knowledge screen. */
 export type Tab = { id: string; title: string; kind?: "page" | "deck" | "design" | "graph" | "connect" | "home" | "start" };
 
+export const HOME_TAB: Tab = { id: "home", title: "New tab", kind: "home" };
+
 /** Opens a tab after the active one, or focuses it if it's already open; titles follow renames. */
 export function openTab(tabs: Tab[], tab: Tab, active?: string): Tab[] {
   const i = tabs.findIndex((t) => t.id === tab.id);
@@ -120,6 +122,22 @@ export function closeTab(tabs: Tab[], id: string, active?: string): { tabs: Tab[
   const left = tabs.filter((t) => t.id !== id);
   if (id !== active) return { tabs: left };
   return { tabs: left, next: left[Math.min(i, left.length - 1)] };
+}
+
+/** Closes every tab except `id`; focuses `id` when the active tab was among the closed ones. */
+export function closeOtherTabs(tabs: Tab[], id: string, active?: string): { tabs: Tab[]; next?: Tab } {
+  const target = tabs.find((t) => t.id === id);
+  if (!target) return { tabs };
+  return { tabs: [target], next: active && active !== id ? target : undefined };
+}
+
+/** Closes tabs after `id`; focuses `id` when the active tab was to its right. */
+export function closeTabsToRight(tabs: Tab[], id: string, active?: string): { tabs: Tab[]; next?: Tab } {
+  const i = tabs.findIndex((t) => t.id === id);
+  if (i < 0) return { tabs };
+  const left = tabs.slice(0, i + 1);
+  const activeIndex = active ? tabs.findIndex((t) => t.id === active) : -1;
+  return { tabs: left, next: activeIndex > i ? tabs[i] : undefined };
 }
 
 /** Headings in Markdown outside fenced code, with their level and the slug read_page uses. */

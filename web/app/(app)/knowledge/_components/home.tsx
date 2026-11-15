@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { KINDS, ago, kindHref, pageHref, pageIcon, type PageKind } from "@/lib/knowledge";
+import { HOME_TAB, KINDS, ago, kindHref, pageHref, pageIcon, type PageKind } from "@/lib/knowledge";
 import { useAllPages, useCreatePage, usePages, type PageRow } from "@/lib/api/knowledge-hooks";
 import { useCreateDesign } from "@/lib/api/designs-hooks";
 import { useNewDeck } from "@/components/domain/use-new-deck";
@@ -14,8 +14,6 @@ import { Kbd, Skeleton } from "@/components/ui/primitives";
 import { AUDIENCE, StatusBar, useToday } from "./kit";
 import { useKnowledge, useKnowledgeTab } from "./shell";
 import { useKnowledgeChat } from "./chat-context";
-
-const HOME_TAB = { id: "home", title: "New tab", kind: "home" as const };
 
 function greeting(d: Date | null) {
   if (!d) return "Welcome back";
@@ -137,7 +135,7 @@ export function KnowledgeHome() {
           </ul>
 
           <p className="mt-8 text-center text-12 text-fg-tertiary">
-            <Kbd>⌘D</Kbd> today · <Kbd>⌘O</Kbd> go to page · <Kbd>⌥⌘N</Kbd> capture · <Kbd>⌘J</Kbd> ask a persona
+            <Kbd>⌘D</Kbd> today · <Kbd>⌘O</Kbd> go to page · <Kbd>⌥⌘N</Kbd> capture · <Kbd>⌥W</Kbd> close tab · <Kbd>⌘J</Kbd> ask a persona
           </p>
         </div>
       </div>
