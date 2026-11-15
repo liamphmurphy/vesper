@@ -71,7 +71,7 @@ The light accent is darker than the dark-theme accent so white text on it still 
 
 ### Color palettes
 
-Mode and palette are independent. See [PALETTES.md](PALETTES.md) for the ten additional presets, custom radial controls, visualization colors, persistence, and export behavior.
+Mode (`dark` / `light` / `system`) and palette are independent. **Neutral** (`neutral`) is the default palette (`DEFAULT_APPEARANCE` in `lib/palettes.ts`), paired with **Dusk** (`dusk`) and 15 additional presets (17 total). See [PALETTES.md](PALETTES.md) for the presets, custom radial controls, visualization colors, persistence, and export behavior.
 
 ### Dusk (v0.4)
 
@@ -180,7 +180,7 @@ Apply `font-feature-settings: "cv11","ss01","ss03"` to Inter globally. Inline co
 
 * 4px base grid. Common gaps are 6, 8, 10, 12, 14, 16, 20, 24 and 28.
 * Radii: tags 4px, nav/small buttons 6px, buttons and inputs 7px, inner cards 10px, cards 12px, featured cards 14px.
-* Controls: buttons 30px tall, filter chips and segmented items 26px, list rows 44px, group headers 38px, top bar 52px, sidebar 232px.
+* Controls: buttons 30px tall, filter chips and segmented items 26px, list rows 44px, group headers 38px, top pane bar 44px (`TopBar`), left column 248px (`NAVIGATOR_WIDTH`, 52px collapsed), companion dock 360px, permanent right rail 44px.
 * Content max width is 1180px (dashboard, epics, agents). Ticket descriptions max out at 780px.
 * Safe areas: the viewport uses `viewport-fit=cover`, so on phones the page draws under the notch and home indicator. Anything fixed to a screen edge (tab bar, sheets, pinned action bars) pads itself with the safe-area utilities in `globals.css`: `pt-safe`, `pb-safe`, `pl-safe`, `pr-safe`, `px-safe`, `py-safe` and `p-safe`, each set to `env(safe-area-inset-*)`. Add them alongside the bar's own padding, e.g. a wrapper with `pb-safe` around a 52px bar, rather than folding them into its height. The insets are 0 on desktop, so nothing moves there.
 * Theme color: `<meta name="theme-color">` is the `--bg` token per scheme (`#0C0B12` dark, `#FCFBFE` light), set from the `viewport` export in `app/layout.tsx`.
@@ -190,53 +190,56 @@ Apply `font-feature-settings: "cv11","ss01","ss03"` to Inter globally. Inline co
 ## 3. App shell
 
 ```
-┌──────────────────┬────────────────────────────────────┬──────────────┐
-│ Column (248px)   │ Pane bar (44px): ‹ › crumb ·· acts │ Companion    │
-│ fixed top        ├────────────────────────────────────┤ (dock, 360px │
-│ the area's list  │ [optional view/filter bar]         │ or 44px rail)│
-│ fixed foot       │ Content (max 1180, padding 32/28)  │ facts · Chat │
-└──────────────────┴────────────────────────────────────┴──────────────┘
+┌──────────────────┬────────────────────────────────────┬──────────────┬───────────┐
+│ Column (248px)   │ Pane bar (44px): ‹ › crumb ·· acts │ Companion    │ Right     │
+│ search + areas   ├────────────────────────────────────┤ (dock, 360px │ rail      │
+│ the area's list  │ [optional view/filter bar]         │ when open)   │ (44px)    │
+│                  │ Content (max 1180, padding 32/28)  │ facts · Chat │ tabs+util │
+└──────────────────┴────────────────────────────────────┴──────────────┴───────────┘
 ```
 
-The shell is one left column, the same on every screen, then the main pane with the open item, then
-the companion: one right-hand panel beside every page, with the page's facts and a chat with your
-persona.
+The shell has four bands on desktop: one `248px` left navigation column, the main pane topped by a `44px` `TopBar`, a collapsible `360px` companion dock (`CompanionDock` / `EditorLayout`), and a permanent `44px` right utility rail (`RightRail`).
 
 **Column** (`components/shell/sidebar.tsx`, 248px, `NAVIGATOR_WIDTH` in `lib/navigator.ts`,
-`--bg-sidebar`, shown at `COMPACT` and wider). Its top never changes: the mark and "Vesper", the
-Search field (⌘K), the Needs you pill (`--pill-human` while anything waits, with its count), and the
-areas as an icon row spread across the full width (Chat, Runs with a live dot, Tickets, Knowledge with a suggestions dot)
-ending in the Apps flyout, which holds the other apps and the tools (Reports among them) and reads as
-current on any of them. Its foot never changes either: the harness characters in a row, each opening
-its usage bubble above it, then Customization and Settings.
+`--bg-sidebar`, shown at `COMPACT` and wider). Its top never changes: the Search field (⌘K) beside
+the Collapse sidebar toggle, and the areas as an icon row spread across the full width (**Chat**,
+**Work** with a live runs dot, **Knowledge** with a suggestions dot, **Library**) ending in the
+**Apps ▸** flyout, which holds custom apps, workflow/schedule/learn/report tools, and a footer with
+**New space** and **Custom Apps** (`/apps`). Global utilities (Needs you, harnesses, Customization,
+Settings) live in the right rail instead so the left column stays focused on navigation.
 
-**The area's list.** Between top and foot sits one list. By default it is Chats (title, an accent +
-for New chat, the persona filter chip, the history, spaces, setup progress); personas and spaces
-appear here and nowhere else in navigation. A screen with a list of its own puts it there instead with
-`NavigatorPortal` (`components/shell/navigator-slot.tsx`): Runs its run list, Knowledge its explorer,
-an app editor its structure (the way back to Knowledge, the item's name, then pages and
-layers), Learn its lessons, the wiki its tree. Each list's title row ends with its own +. Two lists
-never stack, and nothing draws a second column.
+**The area's list.** Below the area row, all remaining height goes to one list. By default it is
+Chats (title, an accent `+` for New chat, the persona filter chip, chat history, spaces, setup
+progress); personas and spaces appear here and nowhere else in navigation. A screen with a list or
+sections of its own puts it there instead with `NavigatorPortal` (`components/shell/navigator-slot.tsx`):
+Work its views (`Activity / Tasks / Epics`), filters and space switcher; Knowledge its explorer;
+Library its source and media-kind filters; an app editor its structure (the way back to Knowledge,
+the item's name, then pages and layers); Workflows its node palette; Settings and Customization
+their section lists. Two lists never stack, and nothing draws a second left sidebar.
 
-**Collapsed strip.** Clicking the mark folds the column to a 52px strip of the same fixed items
-(mark, Search, Needs you, the areas stacked, the harness characters stacked with bubbles to the
-right, Customization, Settings) and no list. It is one preference for the whole app
-(`lazyagents.column-collapsed`), not per screen; the column starts expanded. ⌘\ stays the dock's
-toggle. Reading focus (⌘.) hides the column without touching the preference.
+**Collapsed strip.** Clicking the collapse button folds the column to a 52px strip of the fixed
+navigation items (Expand toggle, Search icon, divider, and the areas stacked vertically) with no
+list. It is one preference for the whole app (`lazyagents.column-collapsed`), not per screen; the
+column starts expanded. `⌘\` toggles the companion dock. Reading focus (`⌘.`) hides both columns
+without touching the preference.
 
 **Back and forward** (`HistoryNav`, Go back and Go forward, disabled at either end where the browser
-has the Navigation API) lead the page content: they are the first thing in the content's top bar,
-whatever that bar is (a `TopBar` breadcrumb, the chat header, an editor header, Knowledge's tabs, the
-welcome screen's bar). Never in the column, and exactly once per screen
+has the Navigation API) lead the page content inside its 44px `TopBar`: they are the first thing in
+the content's top bar, whatever that bar is (a `TopBar` breadcrumb, the chat header, an editor
+header, Knowledge's tabs, the welcome screen's bar). Never in the column, and exactly once per screen
 (`e2e/history-everywhere.spec.ts` sweeps every route for it).
 
-**The companion.** The shell's right-hand column (`components/shell/companion.tsx`, `lib/companion.ts`)
-holds one panel beside every page on wide screens, filled like the left column's middle: a page with a
-panel of its own renders its `Dock` into the column through `CompanionPortal` (an editor's tabs,
-Knowledge's, a run's Context and Chat, a ticket's Properties and Chat, an epic's Context and Chat);
-any other page gets the default companion, the work chat, folded to its 44px rail until opened. It is
-always 360px wide (wider for a document or a review), sticky to the viewport, and below `xl` floats
-over the page from the right edge. One open state is shared by every dock
+**The companion and right rail.** The shell's right side (`components/shell/companion.tsx`, `lib/companion.ts`)
+pairs a permanent `44px` right rail (`aside[aria-label="Right rail"]`) with a `360px` companion dock
+slot (`CompanionPortal`). On the permanent right rail, `RightRailPortal` mounts the active dock's
+panel collapse (`⇥`/`⇤`) and tab switcher controls (`Panel rail`) at the top, while persistent
+utilities (**Needs you**, **Harnesses** activity indicators and popovers, **Customization**,
+**Settings**) stay anchored at the bottom. Pages with their own companion render `CompanionDock` or
+`EditorLayout`'s `Dock` into `CompanionPortal` (e.g. a run's Context and Chat, a ticket's Properties
+and Chat, an epic's Context and Chat, Workflows' Details and Chat, Knowledge's tabs and editors);
+any other page gets the default companion (`DefaultCompanion`: the `<WorkChat />` tab folded until
+opened). The dock is `360px` wide (wider for a document or a review), sticky to the viewport, and
+below `xl` floats over the page from the right edge. One open state is shared by every dock
 (`lazyagents.companion-open`) and changes only when you open or fold one (`actOnDock`), so the panel
 stays as you left it from page to page; each dock keeps its own tab. Knowledge is the exception that
 starts each new browser tab folded. The chat page claims the column (`useClaimCompanion`): the
@@ -618,8 +621,10 @@ Every screen uses these patterns rather than a blank page or a spinner. In code 
 * Use real elements: `<a href>` for navigation and rows that open something, `<button>` for actions, `<input>`/`<textarea>` with labels. Never put click handlers on divs.
 * Every icon-only button has an `aria-label`. Decorative SVGs get `aria-hidden="true"`. Meaningful charts get `role="img"` plus an `aria-label` that states the numbers.
 * Hover states: rows fill with `--hover`-ish `#131317`, card borders brighten to `#2C2C34`, nav items fill with `--hover`.
-* Keyboard shortcuts:
-  * `⌘K` command menu, `C` new ticket, `⌘↵` submit a composer, `⌘S` save a definition.
+* Keyboard shortcuts (`app-shell.tsx`, `shortcuts.tsx`, `command-palette.ts`):
+  * Global: `⌘K` command menu, `⌘\` toggle companion dock, `⌘.` reading focus, `?` shortcut reference.
+  * Work routes only (`currentArea === "work"`): `C` new ticket (suppressed inside fields, dialogs, menus, or listboxes via `shortcutBlocked`).
+  * Composers / editors: `⌘↵` submit a composer, `⌘S` save a definition.
   * In the Inbox: `A` approve, `D` deny, `J`/`K` next and previous.
   * Bulk selection is checkbox on hover, then shift-click.
 * Never the browser's `confirm()` or `alert()`. Something cheap to keep (a saved link, a moment) is removed at once with an **Undo** toast (`undoable()` in `lib/toast.ts`): it hides now and the delete runs when the toast goes. Something that can't be taken back (cancelling a run, deleting a secret, discarding unsaved edits, approving many requests) asks first with `await confirmAction({ title, body, confirmLabel })` from `components/ui/confirm.tsx`: a verb on the confirm button, red for destructive, focus on Cancel.

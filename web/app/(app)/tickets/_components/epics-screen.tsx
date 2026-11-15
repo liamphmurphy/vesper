@@ -4,6 +4,7 @@ import { useCompact } from "@/lib/viewport";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useBootstrap, useCosts, useEpicOverviews, useTickets } from "@/lib/api/hooks";
 import { dueDate } from "@/lib/format";
 import {
@@ -18,8 +19,10 @@ import { Banner, Card, EmptyState, Skeleton } from "@/components/ui/primitives";
 import { Segmented } from "@/components/ui/controls";
 import { StatusGlyph } from "@/components/domain/glyphs";
 import { Content } from "@/components/shell/topbar";
-import { CompanionPortal } from "@/components/shell/companion";
+import { CompanionDock } from "@/components/shell/companion";
+import { useDockHeaderSlot } from "@/components/shell/editor-layout";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
+import { WorkChat } from "@/components/domain/work-chat";
 import { rememberProject, ProjectScopeState, useProjectScope } from "@/components/shell/project-scope";
 import { HealthPill, type EpicOverview } from "@/components/domain/overview";
 import { HumanAvatar } from "@/components/domain/avatars";
@@ -242,6 +245,48 @@ function groupEpicsBySpace(list: readonly EpicOverview[]) {
   return [...groups.entries()];
 }
 
+function EpicContextPane({
+  epic,
+  onSelectEpic,
+  onOpenRun,
+  onOpenTicket,
+  onOpenEpicPage,
+}: {
+  epic: EpicOverview;
+  onSelectEpic: (id: string) => void;
+  onOpenRun: (runId: string) => void;
+  onOpenTicket: (key: string) => void;
+  onOpenEpicPage: (id: string) => void;
+}) {
+  const headerSlot = useDockHeaderSlot();
+  return (
+    <section aria-label="Work context" className="work-details h-full">
+      {headerSlot &&
+        createPortal(
+          <Link
+            className="block truncate px-2 text-13 font-semibold text-fg hover:text-accent"
+            href={`/epics/${encodeURIComponent(epic.epic.id)}`}
+          >
+            {epic.epic.name} →
+          </Link>,
+          headerSlot,
+        )}
+      <div className="work-detail-scroll">
+        <EpicBrief
+          epicId={epic.epic.id}
+          focused={false}
+          navigate={(patch) => {
+            if (patch.ticket) onOpenTicket(patch.ticket);
+            else if (patch.run) onOpenRun(patch.run);
+            else if (patch.view === "epics") onOpenEpicPage(epic.epic.id);
+            else if (patch.epic) onSelectEpic(patch.epic);
+          }}
+        />
+      </div>
+    </section>
+  );
+}
+
 export function EpicsScreen() {
   const boot = useBootstrap();
   const query = useEpicOverviews();
@@ -262,7 +307,11 @@ export function EpicsScreen() {
     router.replace(ticketsHref("epics", new URLSearchParams(epicFilterQuery({ ...filters, ...patch }, nextProject))), { scroll: false });
   const [search, setSearch] = useState("");
   const [selectedEpicId, setSelectedEpicId] = useState<string | null>(null);
-  const [companionDismissed, setCompanionDismissed] = useState(false);
+  const [openCount, setOpenCount] = useState(0);
+  const openEpic = (id: string) => {
+    setSelectedEpicId(id);
+    setOpenCount((n) => n + 1);
+  };
   const [dispatchKeys, setDispatchKeys] = useState<string[] | null>(null);
   const inProject = (query.data ?? []).filter((e) => !project || e.project.key === project);
   const counts = statusCounts(inProject);
@@ -273,10 +322,9 @@ export function EpicsScreen() {
   const activeFeaturedEpic = selectedEpicId
     ? inProject.find((e) => e.epic.id === selectedEpicId)
     : shown[0];
-  const selectedEpic =
-    selectedEpicId && !companionDismissed
-      ? inProject.find((e) => e.epic.id === selectedEpicId)
-      : undefined;
+  const selectedEpic = selectedEpicId
+    ? inProject.find((e) => e.epic.id === selectedEpicId)
+    : undefined;
   const featuredTicketsQuery = useTickets(
     { epic: activeFeaturedEpic?.epic.id, view: "all" },
     !!activeFeaturedEpic?.epic.id,
@@ -388,10 +436,7 @@ export function EpicsScreen() {
                         key={e.epic.id}
                         type="button"
                         aria-current={active ? "true" : undefined}
-                        onClick={() => {
-                          setCompanionDismissed(false);
-                          setSelectedEpicId(e.epic.id);
-                        }}
+                        onClick={() => openEpic(e.epic.id)}
                         className={cx(
                           "flex h-[26px] w-full items-center gap-2 rounded-md px-2 text-left text-12 transition-colors",
                           active
@@ -429,42 +474,27 @@ export function EpicsScreen() {
         </NavigatorPortal>
       )}
       {!compact && selectedEpic && (
-        <CompanionPortal>
-          <section aria-label="Work context" className="work-details h-full">
-            <div className="work-pane-header">
-              <Link
-                className="truncate font-medium text-fg hover:text-accent"
-                href={`/epics/${encodeURIComponent(selectedEpic.epic.id)}`}
-              >
-                {selectedEpic.epic.name} →
-              </Link>
-              <button
-                type="button"
-                aria-label="Close context"
-                onClick={() => setCompanionDismissed(true)}
-              >
-                ×
-              </button>
-            </div>
-            <div className="work-detail-scroll">
-              <EpicBrief
-                epicId={selectedEpic.epic.id}
-                focused={false}
-                navigate={(patch) => {
-                  if (patch.ticket) {
-                    router.push(`/tickets/${encodeURIComponent(patch.ticket)}`);
-                  } else if (patch.run) {
-                    router.push(`/work?run=${encodeURIComponent(patch.run)}&view=activity`);
-                  } else if (patch.view === "epics") {
-                    router.push(`/epics/${encodeURIComponent(selectedEpic.epic.id)}`);
-                  } else if (patch.epic) {
-                    setSelectedEpicId(patch.epic);
-                  }
-                }}
-              />
-            </div>
-          </section>
-        </CompanionPortal>
+        <CompanionDock
+          app="epics-list"
+          show={{ tab: "context", n: openCount }}
+          tabs={[
+            {
+              id: "context",
+              label: "Context",
+              icon: "sidebar",
+              content: (
+                <EpicContextPane
+                  epic={selectedEpic}
+                  onSelectEpic={openEpic}
+                  onOpenRun={(runId) => router.push(`/work?run=${encodeURIComponent(runId)}&view=activity`)}
+                  onOpenTicket={(key) => router.push(`/tickets/${encodeURIComponent(key)}`)}
+                  onOpenEpicPage={(id) => router.push(`/epics/${encodeURIComponent(id)}`)}
+                />
+              ),
+            },
+            { id: "chat", label: "Chat", icon: "msg", content: <WorkChat /> },
+          ]}
+        />
       )}
       {/* Compact: the layout bar is the header, with its own + button. */}
       {!compact && <TicketsTopBar

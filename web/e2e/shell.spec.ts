@@ -88,13 +88,13 @@ test("one column switches areas; a screen's own list takes the place of Chats", 
   await expect(rightRail.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
 
 
-  // Apps opens a grid to the right: Tools, then New space (your own apps get a row above Tools once there are any).
+  // Apps opens a grid to the right: Tools, then New space + Custom Apps (your own apps get a row above Tools once there are any).
   const apps = work.getByRole("button", { name: "Apps" });
   await expect(apps).toHaveAttribute("aria-expanded", "false");
   await apps.click();
   const flyout = page.getByRole("dialog", { name: "Apps" });
   await expect(flyout.getByRole("group", { name: "Apps" })).toHaveCount(0);
-  await expect(flyout.getByRole("link", { name: "Custom Apps" })).toHaveCount(0);
+  await expect(flyout.getByRole("link", { name: "Custom Apps" })).toHaveAttribute("href", "/apps");
   await expect(flyout.getByRole("group", { name: "Tools" }).getByRole("link")).toHaveText(["Workflows", /Scheduled/, "Learn", "Reports"]);
   await expect(flyout.getByRole("button", { name: "New space" })).toBeVisible();
   const flyoutBox = await flyout.boundingBox();
@@ -336,4 +336,24 @@ test("the persistent right rail stays mounted across Chat, Work and Knowledge, i
   await rightRail.getByRole("navigation", { name: "Panel rail" }).getByRole("button", { name: "Open Chat" }).click();
   await expect(panel.getByTestId("work-chat")).toBeVisible();
   await expectCleanShell();
+});
+
+test("C opens New ticket only in Work when no menu is open, and space filter lists All spaces", async ({ page }) => {
+  await installBoardApi(page);
+  await page.goto("/knowledge");
+  await page.locator("body").press("c");
+  await expect(page).toHaveURL(/\/knowledge$/);
+
+  await page.goto("/tickets?project=WEB");
+  const picker = page.getByRole("button", { name: /Space: Web app/ });
+  await picker.click();
+  const menu = page.getByRole("menu");
+  await expect(menu.getByRole("menuitemradio", { name: "All spaces" })).toBeVisible();
+  // Typing inside an open Radix menu does not trigger C -> New ticket.
+  await page.keyboard.press("c");
+  await expect(page).toHaveURL(/\/tickets\?project=WEB$/);
+  await page.keyboard.press("Escape");
+
+  await page.locator("body").press("c");
+  await expect(page).toHaveURL(/\/tickets\/new\?project=WEB$/);
 });

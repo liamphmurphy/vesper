@@ -3,36 +3,34 @@
 import { useRouter, useSelectedLayoutSegment } from "next/navigation";
 import { Suspense, useEffect, type ReactNode } from "react";
 import { useBootstrap } from "@/lib/api/hooks";
+import { currentArea } from "@/lib/navigator";
 import { useCompact } from "@/lib/viewport";
 import { Skeleton } from "@/components/ui/primitives";
 import { LiveUpdates } from "./live-updates";
 import { ViewedChatReader } from "./viewed-chat-reader";
 import { CommandMenu } from "./command-menu";
 import { CompanionColumn } from "./companion";
-import { isTyping, ShortcutsDialog } from "./shortcuts";
+import { shortcutBlocked, ShortcutsDialog } from "./shortcuts";
 import { Sidebar } from "./sidebar";
 import { SystemBanner } from "./system-banner";
 import { TabBar } from "./tab-bar";
 
-/** Global single-key shortcuts (DESIGN.md §6). */
+/** Global and area-scoped single-key shortcuts (DESIGN.md §6). */
 function useShortcuts() {
   const router = useRouter();
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (
-        e.metaKey ||
-        e.ctrlKey ||
-        e.altKey ||
-        isTyping(e.target) ||
-        document.querySelector('[role="dialog"]')
-      )
-        return;
+      if (e.defaultPrevented || shortcutBlocked(e)) return;
       if (e.key === "?") {
         e.preventDefault();
         window.dispatchEvent(new Event("la:shortcuts"));
         return;
       }
-      if (e.key === "c" || e.key === "C") {
+      if (
+        (e.key === "c" || e.key === "C") &&
+        currentArea(window.location.pathname) === "work" &&
+        window.location.pathname !== "/tickets/new"
+      ) {
         e.preventDefault();
         // Keep the project in view as the composer's default.
         const project = new URLSearchParams(window.location.search).get(

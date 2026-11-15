@@ -9,7 +9,7 @@ import { Icon } from "@/components/ui/icon";
 import { useNavCounts } from "@/lib/use-nav-counts";
 import { claimCompanion, companionClaimed, companionSlot, rightRailSlot, setCompanionSlot, setRightRailSlot, subscribeCompanion } from "@/lib/companion";
 import { cx } from "@/lib/cx";
-import { actOnDock, dockShortcut, loadDock, saveDock, type DockAction, type DockState } from "@/lib/editor-layout";
+import { actOnDock, dockReducer, dockShortcut, loadDock, saveDock, type DockAction, type DockState } from "@/lib/editor-layout";
 import { isActive } from "@/lib/project-scope";
 import { useCompact } from "@/lib/viewport";
 import { Dock, useReadingFocus, type DockTab } from "./editor-layout";
@@ -36,7 +36,12 @@ export function CompanionPortal({ children }: { children: ReactNode }) {
  * ⌘\ to fold or reopen it. For docks that aren't an EditorLayout's: a run's, a ticket's, an
  * epic's and the default companion.
  */
-export function useDockState(app: string, tabIds: string[], defaultOpen: boolean): [DockState, (a: DockAction) => void] {
+export function useDockState(
+  app: string,
+  tabIds: string[],
+  defaultOpen: boolean,
+  show?: { tab: string; n: number },
+): [DockState, (a: DockAction) => void] {
   const key = tabIds.join("\n");
   const [state, setState] = useState<DockState>({ open: defaultOpen, tab: tabIds[0] ?? "", hidden: false });
   const [loaded, setLoaded] = useState(false);
@@ -48,6 +53,12 @@ export function useDockState(app: string, tabIds: string[], defaultOpen: boolean
   useEffect(() => {
     if (loaded) saveDock(window.localStorage, app, state);
   }, [app, state, loaded]);
+  const showN = show?.n ?? 0;
+  const [shownN, setShownN] = useState(0);
+  if (loaded && showN !== shownN) {
+    setShownN(showN);
+    if (show?.tab) setState((s) => dockReducer(s, { type: "open", tab: show.tab }));
+  }
   const dispatch = useCallback((a: DockAction) => setState((s) => actOnDock(s, a)), []);
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -62,9 +73,19 @@ export function useDockState(app: string, tabIds: string[], defaultOpen: boolean
 }
 
 /** A page's own dock in the companion column: its tabs (its facts, then Chat), folding to a rail. */
-export function CompanionDock({ app, tabs, defaultOpen = true }: { app: string; tabs: DockTab[]; defaultOpen?: boolean }) {
+export function CompanionDock({
+  app,
+  tabs,
+  defaultOpen = true,
+  show,
+}: {
+  app: string;
+  tabs: DockTab[];
+  defaultOpen?: boolean;
+  show?: { tab: string; n: number };
+}) {
   const uid = useId();
-  const [state, dispatch] = useDockState(app, tabs.map((t) => t.id), defaultOpen);
+  const [state, dispatch] = useDockState(app, tabs.map((t) => t.id), defaultOpen, show);
   return (
     <CompanionPortal>
       <Dock uid={uid} tabs={tabs} state={state} dispatch={dispatch} />

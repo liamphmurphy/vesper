@@ -9,9 +9,10 @@ import { useEffect, useRef, useState, type DragEvent } from "react";
 import { useChat, useChatMessages, useCreateChat, useSendChatMessage } from "@/lib/api/hooks";
 import { usePersonas } from "@/lib/api/persona-hooks";
 import { usePublishWorkflow, useResolveProposal, useSaveWorkflow, useWorkflow, type Workflow } from "@/lib/api/workflow-hooks";
-import { CompanionPortal } from "@/components/shell/companion";
+import { CompanionDock } from "@/components/shell/companion";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { TopBar } from "@/components/shell/topbar";
+import { WorkChat } from "@/components/domain/work-chat";
 import { useCompact } from "@/lib/viewport";
 import { Button } from "@/components/ui/button";
 import { Banner, Skeleton, TextArea, TextInput } from "@/components/ui/primitives";
@@ -249,6 +250,11 @@ function Canvas({ workflow, chatId, onChatId, personaId, onPersonaId, onApplied,
   const compact = useCompact();
   const [graph, setGraph] = useState(workflow.draft as Graph);
   const [selected, setSelected] = useState<string | null>(null);
+  const [inspectN, setInspectN] = useState(0);
+  const inspectNode = (id: string) => {
+    setSelected(id);
+    setInspectN((n) => n + 1);
+  };
   const flow = useReactFlow();
   const save = useSaveWorkflow(workflow.id);
   const publish = usePublishWorkflow(workflow.id);
@@ -295,7 +301,7 @@ function Canvas({ workflow, chatId, onChatId, personaId, onPersonaId, onApplied,
     const middle = flow.screenToFlowPosition({ x: (box?.left ?? 0) + (box?.width ?? 0) / 2, y: (box?.top ?? 0) + (box?.height ?? 0) / 3 });
     const shift = (graph.nodes.length % 6) * 28;
     update({ ...graph, nodes: [...graph.nodes, { id, type, title: label, x: x ?? middle.x + shift, y: y ?? middle.y + shift, config: {} }] });
-    setSelected(id);
+    inspectNode(id);
   };
   const onNodesChange = (changes: NodeChange<FlowNode>[]) => {
     if (preview) return;
@@ -304,7 +310,7 @@ function Canvas({ workflow, chatId, onChatId, personaId, onPersonaId, onApplied,
       update({ ...graph, nodes: graph.nodes.map((n) => { const f = moved.find((m) => m.id === n.id); return f ? { ...n, x: f.position.x, y: f.position.y } : n; }) });
     }
     for (const c of changes) {
-      if (c.type === "select" && c.selected) setSelected(c.id);
+      if (c.type === "select" && c.selected) inspectNode(c.id);
       if (c.type === "remove" && graph.nodes.find((n) => n.id === c.id)?.type !== "trigger") update(removeNode(graph, c.id));
     }
   };
@@ -355,15 +361,8 @@ function Canvas({ workflow, chatId, onChatId, personaId, onPersonaId, onApplied,
       ))}
     </aside>
   );
-  const detailsAside = (
-    <aside
-      aria-label="Workflow details"
-      className={
-        compact
-          ? "flex w-full flex-none flex-col gap-3 overflow-y-auto border-t border-border-subtle bg-panel p-4"
-          : "flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto bg-panel p-4"
-      }
-    >
+  const detailsContent = (
+    <>
       {error && <Banner tone="blocked" title={error.message} />}
       {node ? (
         <Inspector graph={graph} node={node} onChange={(patch) => update({ ...graph, nodes: graph.nodes.map((n) => (n.id === node.id ? { ...n, ...patch } : n)) })} onRemove={() => { update(removeNode(graph, node.id)); setSelected(null); }} />
@@ -374,16 +373,39 @@ function Canvas({ workflow, chatId, onChatId, personaId, onPersonaId, onApplied,
         <div data-testid="workflow-issues" className="flex flex-col gap-1 border-t border-border-subtle pt-3">
           <p className={LABEL}>Before you can publish</p>
           {issues.map((i, n) => (
-            <button key={n} type="button" className="text-left text-13 text-pill-human-fg" onClick={() => i.node && setSelected(i.node)}>{i.message}</button>
+            <button key={n} type="button" className="text-left text-13 text-pill-human-fg" onClick={() => i.node && inspectNode(i.node)}>{i.message}</button>
           ))}
         </div>
       )}
+    </>
+  );
+  const detailsAside = (
+    <aside aria-label="Workflow details" className="flex w-full flex-none flex-col gap-3 overflow-y-auto border-t border-border-subtle bg-panel p-4">
+      {detailsContent}
     </aside>
   );
   return (
     <>
       {!compact && <NavigatorPortal>{nodePalette}</NavigatorPortal>}
-      {!compact && <CompanionPortal>{detailsAside}</CompanionPortal>}
+      {!compact && (
+        <CompanionDock
+          app="workflows"
+          show={{ tab: "details", n: inspectN }}
+          tabs={[
+            {
+              id: "details",
+              label: "Details",
+              icon: "sliders",
+              content: (
+                <div aria-label="Workflow details" className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto bg-panel p-4">
+                  {detailsContent}
+                </div>
+              ),
+            },
+            { id: "chat", label: "Chat", icon: "msg", content: <WorkChat /> },
+          ]}
+        />
+      )}
       <TopBar
         crumbs={[{ label: "Workflows", href: "/workflows" }, { label: workflow.name }]}
         actions={

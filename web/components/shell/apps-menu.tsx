@@ -133,16 +133,30 @@ function Grid({ counts, onPick, onNewSpace }: { counts: Record<NavBadge, number>
           ))}
         </div>
       </div>
-      <div className="flex items-center justify-between border-t border-border pt-2.5">
-        <button
-          type="button"
-          onClick={() => { onPick(); onNewSpace(); }}
-          className="flex h-7 items-center gap-1.5 rounded-md px-1.5 text-13 font-medium text-accent hover:bg-hover"
-        >
-          <Icon name="plus" size={13} />
-          New space
-        </button>
-        <span aria-hidden className="text-11 text-fg-tertiary">Arrow keys move · Esc closes</span>
+      <div className="flex items-center justify-between gap-2 border-t border-border pt-2.5">
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => { onPick(); onNewSpace(); }}
+            className="flex h-7 items-center gap-1.5 rounded-md px-1.5 text-13 font-medium text-accent hover:bg-hover"
+          >
+            <Icon name="plus" size={13} />
+            New space
+          </button>
+          <Link
+            href="/apps"
+            onClick={onPick}
+            aria-current={pathname === "/apps" ? "page" : undefined}
+            className={cx(
+              "flex h-7 items-center gap-1.5 rounded-md px-1.5 text-13 font-medium transition-colors hover:bg-hover",
+              pathname === "/apps" ? "bg-selected text-fg" : "text-fg-secondary hover:text-fg",
+            )}
+          >
+            <Icon name="dashboard" size={13} />
+            Custom Apps
+          </Link>
+        </div>
+        <span aria-hidden className="text-11 text-fg-tertiary">Arrows move · Esc closes</span>
       </div>
     </div>
   );
