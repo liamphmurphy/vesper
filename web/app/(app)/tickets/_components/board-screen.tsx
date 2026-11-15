@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { DropdownMenu } from "radix-ui";
 import { useBootstrap, useInbox } from "@/lib/api/hooks";
@@ -21,11 +21,14 @@ import { DependencyMap } from "@/components/domain/dependency-map";
 import { useMotionList } from "@/components/ui/motion";
 import { Toggle } from "@/components/ui/controls";
 import { ticketsHref } from "@/lib/tickets-layout";
+import { NavigatorPortal } from "@/components/shell/navigator-slot";
+import { WorkNavHeader, WorkSpacePersonaFilters } from "../../work/work-nav-header";
 import { ChipScroller, TicketsLayoutBar, TicketsTopBar } from "./layout-bar";
 import { AssigneeAvatar, EpicChip, StateText } from "./ticket-row";
 
 export function BoardScreen() {
   const bootstrap = useBootstrap();
+  const router = useRouter();
   const params = useSearchParams();
   // The layout bar's picker owns the project; ?project= wins, then the remembered one.
   const scope = useProjectScope("required");
@@ -69,6 +72,60 @@ export function BoardScreen() {
   );
   return (
     <div data-testid="board-screen" className="flex min-h-0 flex-1 flex-col">
+      {!compact && (
+        <NavigatorPortal>
+          <nav aria-label="Work" className="work-nav">
+            <WorkNavHeader active="tickets" project={project?.key} />
+            <WorkSpacePersonaFilters
+              projects={bootstrap.data?.projects}
+              agents={bootstrap.data?.agents}
+              project={project?.key ?? ""}
+              onProjectChange={(v) =>
+                router.push(ticketsHref("board", v ? { project: v } : undefined))
+              }
+              allowAllProjects={false}
+              agent={filters.assignee ?? ""}
+              onAgentChange={(v) => setParam("assignee", v)}
+            />
+            <div className="work-nav-list">
+              <div className="work-list-controls">
+                <Link href={ticketsHref("list", project ? { project: project.key } : undefined)}>List</Link>
+                <span>/</span>
+                <span aria-current="true">Board</span>
+              </div>
+              {project && (
+                <div role="group" aria-label="Board epics" className="flex flex-col gap-0.5 px-1">
+                  <button
+                    type="button"
+                    aria-current={!filters.epic ? "true" : undefined}
+                    onClick={() => setParam("epic", "")}
+                    className={cx(
+                      "flex h-7 items-center rounded-[5px] px-2 text-left text-12",
+                      !filters.epic ? "bg-surface font-medium text-fg" : "text-fg-secondary hover:bg-hover hover:text-fg",
+                    )}
+                  >
+                    All epics
+                  </button>
+                  {epics.map((e) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      aria-current={filters.epic === e.id ? "true" : undefined}
+                      onClick={() => setParam("epic", e.id)}
+                      className={cx(
+                        "flex h-7 items-center truncate rounded-[5px] px-2 text-left text-12",
+                        filters.epic === e.id ? "bg-surface font-medium text-fg" : "text-fg-secondary hover:bg-hover hover:text-fg",
+                      )}
+                    >
+                      {e.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </nav>
+        </NavigatorPortal>
+      )}
       {!compact && <TicketsTopBar layout="board" action={
         <ButtonLink href={project ? `/tickets/new?project=${encodeURIComponent(project.key)}` : "/tickets/new"} variant="primary" icon="plus" hint="C">New ticket</ButtonLink>
       } />}

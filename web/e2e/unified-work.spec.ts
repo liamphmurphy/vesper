@@ -243,3 +243,66 @@ test("context errors are recoverable and deep links restore the pane", async ({
     page.getByRole("textbox", { name: "Follow up with Builder" }),
   ).toBeVisible();
 });
+
+test("Work keeps a single harness footer in the sidebar, a compact Activity header, and consistent tabs across Activity, Tickets and Epics", async ({
+  page,
+}) => {
+  await installWork(page);
+  await page.route("**/api/v1/persona-dock", (route) =>
+    route.fulfill({
+      json: {
+        personas: [],
+        harnesses: [
+          {
+            harness: "claude-code",
+            label: "Claude Code",
+            connected: true,
+            running: 0,
+            usage_available: true,
+            windows: [{ id: "w1", kind: "session", label: "Session", used_percent: 25 }],
+          },
+        ],
+      },
+    }),
+  );
+
+  // Activity: harness usage stays only in the left sidebar (not duplicated in the TopBar).
+  await page.goto("/work?run=work-run&project=WEB");
+  const mainMenu = page.getByRole("complementary", { name: "Main menu" });
+  await expect(mainMenu.getByRole("region", { name: "Harness activity" })).toHaveCount(1);
+  await expect(page.getByRole("region", { name: "Harness activity" })).toHaveCount(1);
+
+  // Run-context links sit inside the compact TopBar on Activity.
+  const headerLinks = page.locator("header .work-run-links");
+  await expect(headerLinks.getByRole("button", { name: "WEB-1 ↗" })).toBeVisible();
+  await expect(headerLinks.getByRole("button", { name: "Details ◧" })).toBeVisible();
+
+  // Ended runs collapse the ActivityScene row and keep only the compact header + progress bar.
+  await page.goto("/work?run=previous-run&project=WEB");
+  await expect(page.getByRole("progressbar", { name: "Plan progress" })).toBeVisible();
+  await expect(page.locator(".work-run [role='status']")).toHaveCount(0);
+
+  // Switching to Tickets (List, Board) and Epics preserves the Work left navigator.
+  const workNav = page.getByRole("navigation", { name: "Work", exact: true });
+  await workNav.getByRole("link", { name: "Tickets", exact: true }).click();
+  await expect(page).toHaveURL(/\/tickets\?project=WEB$/);
+  await expect(workNav).toBeVisible();
+  await expect(workNav.getByRole("link", { name: "Tickets", exact: true })).toHaveAttribute("aria-current", "true");
+
+  await page.getByRole("navigation", { name: "Tickets layout" }).getByRole("link", { name: "Board" }).click();
+  await expect(page).toHaveURL(/\/tickets\?layout=board&project=WEB$/);
+  await expect(workNav).toBeVisible();
+  await expect(workNav.getByRole("link", { name: "Tickets", exact: true })).toHaveAttribute("aria-current", "true");
+
+  await workNav.getByRole("link", { name: "Epics", exact: true }).click();
+  await expect(page).toHaveURL(/\/tickets\?layout=epics&project=WEB$/);
+  await expect(workNav).toBeVisible();
+  await expect(workNav.getByRole("link", { name: "Epics", exact: true })).toHaveAttribute("aria-current", "true");
+
+  // Selecting an epic in the Work sidebar opens its details in the right companion.
+  await workNav.getByRole("button", { name: /Kanban board/ }).click();
+  const context = page.getByRole("region", { name: "Work context" });
+  await expect(context.getByRole("heading", { name: "Kanban board", exact: true })).toBeVisible();
+  await context.getByRole("button", { name: "Close context" }).click();
+  await expect(context).toHaveCount(0);
+});

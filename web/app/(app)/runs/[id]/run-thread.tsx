@@ -62,16 +62,18 @@ export function WorkLink({ run }: { run: Run }) {
 function NowLine({ d, unified }: { d: RunDetail; unified?: boolean }) {
   const run = d.run;
   const p = stepProgress(run);
+  const ended = RUN_ENDED.includes(run.state);
   // The step is shown on its own, so the Now text leaves it out.
-  const now = nowLine({ ...run, plan: [] }, d.events) ?? (RUN_ENDED.includes(run.state) ? null : p.current?.text ?? null);
+  const now = nowLine({ ...run, plan: [] }, d.events) ?? (ended ? null : p.current?.text ?? null);
   if (!now && !p.total) return null;
+  if (unified && ended && !p.total) return null;
   const pct = p.total ? Math.round((p.done / p.total) * 100) : 0;
   return (
-    <div className="flex flex-none flex-col gap-1.5 border-b border-border-subtle py-2.5">
-      {unified && (
-        <div className={cx(COLUMN, "flex items-center gap-4")}>
-          <ActivityScene current={chatStatus(toolCalls(d.events)).kind} stopping={RUN_ENDED.includes(run.state)} />
-          <span role="status" className="text-13">
+    <div className={cx("flex flex-none flex-col border-b border-border-subtle", unified ? (ended ? "py-1.5" : "gap-1 py-1.5") : "gap-1.5 py-2.5")}>
+      {unified && !ended && (
+        <div className={cx(COLUMN, "flex items-center gap-3")}>
+          <ActivityScene current={chatStatus(toolCalls(d.events)).kind} stopping={false} />
+          <span role="status" className="min-w-0 flex-1 truncate text-13">
             {p.current?.text ?? now}
             <small className="block text-11 text-fg-tertiary">
               {run.harness}{p.total > 0 && ` · step ${p.current?.position ?? p.done} of ${p.total}`}
@@ -93,7 +95,7 @@ function NowLine({ d, unified }: { d: RunDetail; unified?: boolean }) {
             aria-valuemax={p.total}
             aria-valuenow={p.done}
             aria-valuetext={`${p.done} of ${p.total} steps done`}
-            className="h-[3px] overflow-hidden rounded-full bg-surface-sunken"
+            className={cx("overflow-hidden rounded-full bg-surface-sunken", unified ? "h-0.5" : "h-[3px]")}
           >
             <div className={cx("h-full rounded-full", run.state === "waiting" ? "bg-state-human" : run.state === "running" ? "live-sheen bg-state-done" : "bg-state-done")} style={{ width: `${pct}%` }} />
           </div>
@@ -345,21 +347,41 @@ export function RunThread({ d, onOpenTurn, unified, workLinks }: { d: RunDetail;
   }, [follow, feed.length, run.state, next?.id]);
   const asking = waitsForReply(run);
   const canWrite = !ended && run.purpose === "ticket" && !!run.ticket_key;
+  const steps = stepProgress(run);
   return (
     <section aria-label="Run thread" className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div className={cx(COLUMN, "flex flex-none items-center gap-3 py-3")}>
-        <AgentAvatar name={run.agent.name} colorIndex={run.agent.color_index} label={false} size="md" />
-        <div className="flex min-w-0 flex-1 flex-col leading-tight">
-          <h1 className="truncate text-16 font-semibold text-fg">{runTitle(run)}</h1>
-          <span className="flex min-w-0 flex-wrap items-center gap-x-2 text-12 text-fg-tertiary">
-            {run.agent.name}
-            <span aria-hidden>·</span>
-            {unified ? <span>{run.state} · {duration(run.started_at, run.ended_at)} · {runCost(run.cost_usd, run.cost_source)}</span> : <WorkLink run={run} />}
-            {run.parent_run_id && <><span aria-hidden>·</span><Link href={`/runs/${run.parent_run_id}`} className="text-accent hover:underline">Delegated by ↗</Link></>}
-          </span>
+      {unified ? (
+        <div className="flex flex-none items-center gap-2.5 border-b border-border-subtle px-4 py-2 md:px-6">
+          <AgentAvatar name={run.agent.name} colorIndex={run.agent.color_index} label={false} size="sm" />
+          <h1 className="min-w-0 flex-1 truncate text-14 font-semibold leading-snug text-fg">{runTitle(run)}</h1>
+          <p data-run-inline-meta className="hidden shrink-0 truncate font-mono text-11 text-fg-tertiary sm:block">
+            {run.agent.name} · {run.harness} · {duration(run.started_at, run.ended_at)}
+            {run.cost_usd > 0 ? ` · ${runCost(run.cost_usd, run.cost_source)}` : ""}
+            {steps.total > 0 ? ` · step ${steps.done}/${steps.total}` : ""}
+            {run.parent_run_id && (
+              <>
+                {" · "}
+                <Link href={`/runs/${run.parent_run_id}`} className="text-accent hover:underline">Delegated by ↗</Link>
+              </>
+            )}
+          </p>
+          <StatusPill run={run} />
         </div>
-        <StatusPill run={run} />
-      </div>
+      ) : (
+        <div className={cx(COLUMN, "flex flex-none items-center gap-3 py-3")}>
+          <AgentAvatar name={run.agent.name} colorIndex={run.agent.color_index} label={false} size="md" />
+          <div className="flex min-w-0 flex-1 flex-col leading-tight">
+            <h1 className="truncate text-16 font-semibold text-fg">{runTitle(run)}</h1>
+            <span className="flex min-w-0 flex-wrap items-center gap-x-2 text-12 text-fg-tertiary">
+              {run.agent.name}
+              <span aria-hidden>·</span>
+              <WorkLink run={run} />
+              {run.parent_run_id && <><span aria-hidden>·</span><Link href={`/runs/${run.parent_run_id}`} className="text-accent hover:underline">Delegated by ↗</Link></>}
+            </span>
+          </div>
+          <StatusPill run={run} />
+        </div>
+      )}
       {workLinks}
       <NowLine d={d} unified={unified} />
       <div

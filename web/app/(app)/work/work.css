@@ -50,8 +50,10 @@
   color: var(--fg-secondary);
 }
 .work-tabs button[aria-current],
-.work-nav-list button[aria-current] {
-  background: var(--selected);
+.work-tabs a[aria-current],
+.work-nav-list button[aria-current],
+.work-nav-list a[aria-current] {
+  background: var(--surface);
   color: var(--fg);
 }
 .work-filters {
@@ -69,10 +71,10 @@
   width: 100%;
   text-align: left;
   flex-direction: column;
-  gap: 12px;
-  padding: 18px 12px;
+  gap: 3px;
+  padding: 8px 10px;
   border-radius: 5px;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 .work-nav-list strong {
   font-size: 13px;
@@ -97,14 +99,23 @@
   align-items: center;
   flex: none;
   flex-wrap: wrap;
-  gap: 12px;
-  padding: 16px 32px;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-subtle);
   font-size: 12px;
+}
+.work-run-links.work-run-links-topbar {
+  padding: 0;
+  border-bottom: 0;
 }
 .work-run-links button {
   border-radius: 5px;
-  padding: 5px 10px;
+  padding: 4px 8px;
   background: var(--surface);
+}
+.work-run-links button[aria-pressed="true"] {
+  background: var(--selected);
+  color: var(--fg);
 }
 .work-details {
   display: flex;
@@ -135,8 +146,9 @@
   background: var(--bg-sidebar);
 }
 .work-run-companion .work-run-links {
-  padding: 10px 18px;
+  padding: 8px 12px;
 }
+.work-run-companion [data-run-inline-meta],
 .work-run-companion [data-testid="run-composer-to"] {
   display: none;
 }
@@ -314,19 +326,10 @@
   font-size: 12px;
   color: var(--fg-secondary);
 }
-.work-list-controls [aria-pressed="true"] {
+.work-list-controls [aria-pressed="true"],
+.work-list-controls [aria-current] {
   color: var(--fg);
   font-weight: 600;
-}
-.work-run section[aria-label="Run thread"] > div:first-child h1 {
-  font-size: 22px;
-}
-.work-run-companion section[aria-label="Run thread"] > div:first-child h1 {
-  font-size: 18px;
-}
-.work-tabs button[aria-current],
-.work-nav-list button[aria-current] {
-  background: var(--surface);
 }
 .work-focused {
   padding-top: 22px;
@@ -345,9 +348,10 @@
   }
 }
 .work-nav [data-run-row] {
-  min-height: 86px;
+  min-height: 60px;
   border-radius: 5px;
-  padding-top: 12px;
+  padding-top: 8px;
+  padding-bottom: 8px;
 }
 .work-nav [data-run-row] > span:last-child {
   display: none;

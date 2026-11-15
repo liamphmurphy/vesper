@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import type { TicketStatus } from "@/lib/api/client";
@@ -20,12 +19,9 @@ import { useCompact } from "@/lib/viewport";
 import { cx } from "@/lib/cx";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { useClaimCompanion } from "@/components/shell/companion";
-import { HarnessFooter } from "@/components/shell/harness-footer";
-import { useAppearance } from "@/components/shell/theme";
 import { TopBar } from "@/components/shell/topbar";
 import { useProjectScope } from "@/components/shell/project-scope";
 import { STATUS_NAME } from "@/components/domain/meta";
-import { FilterMenu } from "@/components/domain/pickers";
 import { Button } from "@/components/ui/button";
 import { TextInput } from "@/components/ui/primitives";
 import { WorkSavedViews } from "./work-saved-views";
@@ -34,8 +30,10 @@ import {
   EpicBrief,
   LiveRun,
   LoadState,
+  WorkTopRunLinks,
   type Navigate,
 } from "./work-details";
+import { WorkNavHeader, WorkSpacePersonaFilters } from "./work-nav-header";
 import { BoardView } from "../tickets/_components/board-screen";
 import { RunList, useRunList } from "../runs/run-list";
 import { ticketsHref } from "@/lib/tickets-layout";
@@ -45,7 +43,6 @@ export function WorkScreen() {
   useClaimCompanion();
   const params = useSearchParams();
   const compact = useCompact();
-  const [appearance] = useAppearance();
   const boot = useBootstrap();
   const scope = useProjectScope("optional");
   const view = workView(params);
@@ -186,21 +183,19 @@ export function WorkScreen() {
   );
   const nav = (
     <nav aria-label="Work" className="work-nav">
-      <div className="work-nav-title">
-        <h1>Work</h1>
-        <Link
-          aria-label="New ticket"
-          href={`/tickets/new${project ? `?project=${encodeURIComponent(project)}` : ""}`}
-        >
-          +
-        </Link>
-      </div>
-      <div className="work-tabs">
-        <button aria-current="page">Activity</button>
-        {/* Tickets and Epics are the full Tickets screens (list, board, map, epics), kept whole. */}
-        <Link href={ticketsHref("list", project ? { project } : undefined)}>Tickets</Link>
-        <Link href={ticketsHref("epics", project ? { project } : undefined)}>Epics</Link>
-      </div>
+      <WorkNavHeader
+        active={view}
+        project={project}
+        onActivityClick={() =>
+          go({
+            view: "activity",
+            context: null,
+            companion: null,
+            list: null,
+            layout: null,
+          })
+        }
+      />
       <TextInput
         ref={searchRef}
         aria-label="Search work"
@@ -211,32 +206,14 @@ export function WorkScreen() {
           updateWorkUrl({ q: e.target.value || null }, true);
         }}
       />
-      <div className="work-filters">
-        <FilterMenu
-          label="Space"
-          value={project ?? ""}
-          onChange={(v) => go({ project: v, ticket: null, epic: null })}
-          options={[
-            { value: "", label: "All spaces" },
-            ...(boot.data?.projects ?? []).map((p) => ({
-              value: p.key,
-              label: p.name,
-            })),
-          ]}
-        />
-        <FilterMenu
-          label="Persona"
-          value={agent ?? ""}
-          onChange={(v) => go({ agent: v || null })}
-          options={[
-            { value: "", label: "All personas" },
-            ...(boot.data?.agents ?? []).map((a) => ({
-              value: a.handle,
-              label: a.name,
-            })),
-          ]}
-        />
-      </div>
+      <WorkSpacePersonaFilters
+        projects={boot.data?.projects}
+        agents={boot.data?.agents}
+        project={project ?? ""}
+        onProjectChange={(v) => go({ project: v, ticket: null, epic: null })}
+        agent={agent ?? ""}
+        onAgentChange={(v) => go({ agent: v || null })}
+      />
       {view === "activity" ? (
         <RunList selected={runId} embedded search={search} />
       ) : (
@@ -327,8 +304,8 @@ export function WorkScreen() {
             {compact && (
               <Button onClick={() => go({ list: "show" })}>Browse work</Button>
             )}
-            {appearance.showHarnessActivity !== false && (
-              <HarnessFooter layout="row" />
+            {!companion && !mobileList && runId && (
+              <WorkTopRunLinks id={runId} context={context} navigate={go} />
             )}
           </>
         }

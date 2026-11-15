@@ -416,6 +416,105 @@ export function EpicBrief({
   );
 }
 
+function WorkRunLinks({
+  id,
+  ticketKey,
+  epic,
+  companion,
+  context,
+  inTopBar,
+  navigate,
+}: {
+  id: string;
+  ticketKey?: string | null;
+  epic?: { id: string; name: string } | null;
+  companion: boolean;
+  context?: string | null;
+  inTopBar?: boolean;
+  navigate: Navigate;
+}) {
+  return (
+    <div className={cx("work-run-links", inTopBar && "work-run-links-topbar")}>
+      {ticketKey && (
+        <button
+          type="button"
+          onClick={() =>
+            navigate({
+              ticket: ticketKey,
+              context: companion ? null : "ticket",
+              ...(companion ? { view: "tickets" } : {}),
+            })
+          }
+        >
+          {ticketKey} ↗
+        </button>
+      )}
+      {epic && (
+        <button
+          type="button"
+          onClick={() =>
+            navigate({
+              epic: epic.id,
+              context: companion ? null : "epic",
+              ...(companion ? { view: "epics" } : {}),
+            })
+          }
+        >
+          {epic.name}
+        </button>
+      )}
+      {!companion && ticketKey && (
+        <button
+          type="button"
+          aria-pressed={context === "ticket"}
+          className={inTopBar ? undefined : "ml-auto"}
+          onClick={() =>
+            navigate({
+              ticket: ticketKey,
+              context: context === "ticket" ? null : "ticket",
+            })
+          }
+        >
+          Details ◧
+        </button>
+      )}
+      <Link
+        className="text-fg-tertiary hover:text-fg"
+        href={`/runs/${id}?view=details`}
+      >
+        Run details →
+      </Link>
+    </div>
+  );
+}
+
+/** TopBar run-context actions rendered when Activity is the primary pane. */
+export function WorkTopRunLinks({
+  id,
+  context,
+  navigate,
+}: {
+  id: string;
+  context: string | null;
+  navigate: Navigate;
+}) {
+  const query = useRunLog(id);
+  const ticketKey = query.data?.run.ticket_key ?? "";
+  const t = useTicket(ticketKey);
+  if (!query.data) return null;
+  return (
+    <WorkRunLinks
+      id={id}
+      ticketKey={query.data.run.ticket_key}
+      epic={t.data?.epic}
+      companion={false}
+      context={context}
+      inTopBar
+      navigate={navigate}
+    />
+  );
+}
+
 export function LiveRun({
   id,
   companion,
@@ -437,6 +536,7 @@ export function LiveRun({
             <div className="work-pane-header">
               <span>Current run</span>
               <button
+                type="button"
                 aria-label="Close run companion"
                 onClick={() => navigate({ companion: "hide" })}
               >
@@ -448,53 +548,15 @@ export function LiveRun({
             unified
             d={query.data}
             workLinks={
-              <div className="work-run-links">
-                {query.data.run.ticket_key && (
-                  <button
-                    onClick={() =>
-                      navigate({
-                        ticket: query.data!.run.ticket_key,
-                        context: companion ? null : "ticket",
-                        ...(companion ? { view: "tickets" } : {}),
-                      })
-                    }
-                  >
-                    {query.data.run.ticket_key} ↗
-                  </button>
-                )}
-                {t.data?.epic && (
-                  <button
-                    onClick={() =>
-                      navigate({
-                        epic: t.data!.epic!.id,
-                        context: companion ? null : "epic",
-                        ...(companion ? { view: "epics" } : {}),
-                      })
-                    }
-                  >
-                    {t.data.epic.name}
-                  </button>
-                )}
-                {!companion && query.data.run.ticket_key && (
-                  <button
-                    className="ml-auto"
-                    onClick={() =>
-                      navigate({
-                        ticket: query.data!.run.ticket_key,
-                        context: "ticket",
-                      })
-                    }
-                  >
-                    Details ◧
-                  </button>
-                )}
-                <Link
-                  className="text-fg-tertiary"
-                  href={`/runs/${id}?view=details`}
-                >
-                  Run details →
-                </Link>
-              </div>
+              companion ? (
+                <WorkRunLinks
+                  id={id}
+                  ticketKey={query.data.run.ticket_key}
+                  epic={t.data?.epic}
+                  companion
+                  navigate={navigate}
+                />
+              ) : undefined
             }
             onOpenTurn={(turn) => {
               router.push(`/runs/${id}?view=details#turn-${turn}`);
