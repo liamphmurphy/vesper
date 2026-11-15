@@ -5,8 +5,10 @@ import { createPortal } from "react-dom";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { codeFullscreen, exitCodeFullscreen, openCodeFullscreen, switchPanel } from "@/lib/chat-panels";
 import { useCodeReview, type CodeReview } from "@/lib/api/code-review-hooks";
-import { useChat, useChatMessages, useQueueFollowup, useSendChatMessage } from "@/lib/api/hooks";
+import { useChat, useChatAsides, useChatMessages, useChatModels, useQueueFollowup, useSendChatMessage, useStartSecondOpinion } from "@/lib/api/hooks";
 import type { Schemas } from "@/lib/api/client";
+import { SecondOpinions } from "./asides";
+import { SecondOpinionMenu } from "./second-opinion-menu";
 import { changeTotals, STATUS_BADGE } from "@/lib/code-diff";
 import {
   ancestorDirs,
@@ -49,6 +51,10 @@ export function CodePanel({ chatId }: { chatId: string }) {
   const reviews = useCodeReview(chatId).data?.repositories ?? [];
   const chat = useChat(chatId).data;
   const messages = useChatMessages(chatId).data?.messages;
+  const models = useChatModels();
+  const asideList = useChatAsides(chatId).data;
+  const secondOpinion = useStartSecondOpinion(chatId);
+  const [showSecondOpinions, setShowSecondOpinions] = useState(false);
   const [repo, setRepo] = useState<string>();
   const [mode, setMode] = useState<Mode>("branch");
   const [treeFilter, setTreeFilter] = useState<"all" | "changed">("all");
@@ -90,7 +96,7 @@ export function CodePanel({ chatId }: { chatId: string }) {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.defaultPrevented) return;
       const target = e.target;
-      if (target instanceof HTMLElement && target.closest("input, textarea, select, [contenteditable]")) return;
+      if (target instanceof HTMLElement && target.closest("input, textarea, select, [contenteditable], [role='menu'], [data-radix-menu-content]")) return;
       e.preventDefault();
       e.stopPropagation();
       exitFullscreen();
@@ -99,13 +105,16 @@ export function CodePanel({ chatId }: { chatId: string }) {
     return () => window.removeEventListener("keydown", onKey, true);
   }, [fullscreen, exitFullscreen]);
 
+  const lastCodeMessage = useMemo(() => messages?.findLast((x) => x.role === "assistant" && x.code_changes?.length), [messages]);
   const lastTurn = useMemo(() => {
-    const m = messages?.findLast((x) => x.role === "assistant" && x.code_changes?.length);
-    return (m?.code_changes ?? []).filter((c) => {
+    return (lastCodeMessage?.code_changes ?? []).filter((c) => {
       if (!review) return true;
       return c.repository ? c.repository === review.repository : review.repository === primaryRepo;
     });
-  }, [messages, review, primaryRepo]);
+  }, [lastCodeMessage, review, primaryRepo]);
+  const secondOpinions = useMemo(() => (asideList ?? []).filter((a) => a.second_opinion), [asideList]);
+  const hasRunningSecondOpinion = secondOpinions.some((a) => a.state === "running");
+  const secondOpinionsOpen = showSecondOpinions || hasRunningSecondOpinion;
 
   const branchFiles = review?.files;
   const files: Change[] = useMemo(() => (mode === "branch" ? (branchFiles ?? []) : lastTurn), [mode, branchFiles, lastTurn]);
@@ -331,6 +340,24 @@ export function CodePanel({ chatId }: { chatId: string }) {
           </span>
         )}
         <span className="ml-auto flex items-center gap-1.5">
+          <SecondOpinionMenu
+            variant="button"
+            testId="code-second-opinion"
+            groups={models.data}
+            currentHarness={chat?.harness}
+            currentModel={chat?.model}
+            disabled={chat?.archived || secondOpinion.isPending}
+            onSelect={(pick) => {
+              setShowSecondOpinions(true);
+              secondOpinion.mutate({
+                harness: pick.harness,
+                model: pick.model,
+                ...(pick.body ? { body: pick.body } : {}),
+                repository: review.repository,
+                ...(mode === "turn" && lastCodeMessage?.id ? { anchor_message_id: lastCodeMessage.id } : {}),
+              });
+            }}
+          />
           <span className="flex rounded-md bg-surface-sunken p-0.5 text-12" role="tablist" aria-label="Show">
             {(["branch", "turn"] as const).map((m) => (
               <button
@@ -370,6 +397,43 @@ export function CodePanel({ chatId }: { chatId: string }) {
           )}
         </span>
       </header>
+      {(secondOpinions.length > 0 || secondOpinion.error) && (
+        <section
+          aria-label="Second opinions"
+          data-testid="code-second-opinion-strip"
+          className="flex flex-none flex-col gap-2 border-b border-border-subtle bg-surface-sunken/50 px-3 py-2"
+        >
+          <div className="flex items-center gap-2 text-12">
+            <button
+              type="button"
+              aria-expanded={secondOpinionsOpen}
+              onClick={() => setShowSecondOpinions((o) => !o)}
+              className="inline-flex items-center gap-1.5 font-medium text-fg hover:text-accent"
+            >
+              <Icon name="compare" size={13} className="text-fg-secondary" />
+              <span>
+                {secondOpinions.length} second {secondOpinions.length === 1 ? "opinion" : "opinions"}
+              </span>
+              {hasRunningSecondOpinion && <span className="text-11 text-state-progress">running…</span>}
+              <Icon name="chev" size={11} className={cx("transition-transform", secondOpinionsOpen && "rotate-180")} />
+            </button>
+            {secondOpinion.error && (
+              <span role="alert" className="text-12 text-pill-blocked-fg">
+                {secondOpinion.error instanceof Error ? secondOpinion.error.message : "Could not start second opinion."}
+              </span>
+            )}
+          </div>
+          {secondOpinionsOpen && (
+            <div className="max-h-72 overflow-y-auto">
+              <SecondOpinions
+                compact
+                asides={secondOpinions}
+                speakerName={(chat?.speaker ?? chat?.persona)?.name ?? chat?.agent.name ?? "the assistant"}
+              />
+            </div>
+          )}
+        </section>
+      )}
       <div className="flex min-h-0 flex-1">
         <nav
           aria-label={showFullTree ? "Branch files" : "Changed files"}

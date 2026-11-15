@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CHAT_COMMANDS, CREATE_KINDS, commandMenu, designRequest, literalBody, parseCommand } from "./chat-commands.ts";
+import { CHAT_COMMANDS, CREATE_KINDS, commandMenu, designRequest, literalBody, parseCommand, resolveCompareTarget } from "./chat-commands.ts";
 
 test("parseCommand reads a one-line /command and its argument", () => {
   assert.deepEqual(parseCommand("/stop"), { name: "stop", arg: "" });
@@ -53,4 +53,42 @@ test("/design takes what to design as free text and asks the persona for a desig
   assert.equal(designRequest(" sketch onboarding "), "Create a design: sketch onboarding");
   assert.deepEqual(CREATE_KINDS.map((k) => k.label), ["Doc", "Slides", "Design"]);
   assert.equal(CREATE_KINDS.find((k) => k.kind === "design")?.command, "/design");
+});
+
+test("/compare offers model completion until a space separates an optional question", () => {
+  assert.deepEqual(commandMenu("/comp"), { stage: "command", query: "comp" });
+  assert.deepEqual(commandMenu("/compare "), { stage: "arg", name: "compare", query: "" });
+  assert.deepEqual(commandMenu("/compare cod"), { stage: "arg", name: "compare", query: "cod" });
+  assert.equal(commandMenu("/compare codex check for race conditions"), null);
+  assert.deepEqual(parseCommand("/compare codex check for race conditions"), {
+    name: "compare",
+    arg: "codex check for race conditions",
+  });
+});
+
+test("resolveCompareTarget matches harness names, model ids, labels, and optional focus prompts", () => {
+  const options = [
+    { name: "Codex · gpt-5-codex", harness: "codex", harnessLabel: "Codex", model: "gpt-5-codex", modelLabel: "gpt-5-codex", isDefault: true },
+    { name: "Codex · gpt-5-mini", harness: "codex", harnessLabel: "Codex", model: "gpt-5-mini", modelLabel: "gpt-5-mini", isDefault: false },
+    { name: "Claude Code · Sonnet 5.5", harness: "claude-code", harnessLabel: "Claude Code", model: "sonnet-5.5", modelLabel: "Sonnet 5.5", isDefault: false },
+  ];
+  assert.deepEqual(resolveCompareTarget(options, "codex"), { option: options[0], question: "" });
+  assert.deepEqual(resolveCompareTarget(options, "codex check race conditions"), {
+    option: options[0],
+    question: "check race conditions",
+  });
+  assert.deepEqual(resolveCompareTarget(options, "gpt-5-mini focus on perf"), {
+    option: options[1],
+    question: "focus on perf",
+  });
+  assert.deepEqual(resolveCompareTarget(options, "Sonnet 5.5 review the SQL"), {
+    option: options[2],
+    question: "review the SQL",
+  });
+  assert.deepEqual(resolveCompareTarget(options, ""), {
+    error: "Say which model: /compare <model> [question]",
+  });
+  assert.deepEqual(resolveCompareTarget(options, "unknown-model hi"), {
+    error: "No model matches “unknown-model”.",
+  });
 });

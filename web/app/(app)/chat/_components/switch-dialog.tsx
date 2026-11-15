@@ -16,6 +16,7 @@ export function HarnessSwitchDialog({
   to,
   agent,
   onConfirm,
+  onSecondOpinion,
   onCancel,
   onClosed,
 }: {
@@ -23,6 +24,7 @@ export function HarnessSwitchDialog({
   to: Label | null;
   agent: string;
   onConfirm: () => void;
+  onSecondOpinion?: () => void;
   onCancel: () => void;
   /** Where focus goes on close: the menu item that opened the dialog is gone by then. */
   onClosed: () => void;
@@ -75,10 +77,15 @@ export function HarnessSwitchDialog({
                 Changing model within {from.harness} keeps the session and doesn’t ask. The switch applies from your next
                 message; you can still pick again.
               </p>
-              <div className="flex justify-end gap-2">
+              <div className="flex flex-wrap justify-end gap-2">
                 <Dialog.Close asChild>
                   <Button variant="outline">Cancel</Button>
                 </Dialog.Close>
+                {onSecondOpinion && (
+                  <Button variant="outline" icon="compare" data-testid="switch-second-opinion" onClick={onSecondOpinion}>
+                    Second opinion instead
+                  </Button>
+                )}
                 <Button variant="primary" onClick={onConfirm}>
                   Switch harness
                 </Button>

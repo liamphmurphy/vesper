@@ -146,7 +146,7 @@ test("each message has one toolbar: Reply quotes it into the box, Copy and ⋯ f
   await reply.hover();
   const bar = reply.getByRole("toolbar", { name: "Message actions" });
   await expect(bar).toBeVisible();
-  await expect(bar.getByRole("button")).toHaveCount(4);
+  await expect(bar.getByRole("button")).toHaveCount(5);
   await bar.getByRole("button", { name: "Reply" }).click();
   await expect(box(page)).toBeFocused();
   await expect(box(page)).toHaveValue(/^> [\s\S]+\n\nmy draft$/);

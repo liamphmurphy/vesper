@@ -18,8 +18,8 @@ const excerpt = (s: string) => (s.length > 280 ? `${s.slice(0, 280).trimEnd()}â€
  */
 export function ThreadPanel({ chatId, messageId, onClose }: { chatId: string; messageId: string; onClose: () => void }) {
   const parent = useChatMessages(chatId).data?.messages.find((m) => m.id === messageId);
-  // The newest thread about this message, if one was started.
-  const thread = useChatAsides(chatId).data?.findLast((a) => a.anchor_message_id === messageId);
+  // The newest thread about this message, if one was started (second opinions render inline in the transcript).
+  const thread = useChatAsides(chatId).data?.findLast((a) => a.anchor_message_id === messageId && !a.second_opinion);
   const start = useStartThread(chatId);
   const [text, setText] = useState("");
   const box = useRef<HTMLTextAreaElement>(null);
