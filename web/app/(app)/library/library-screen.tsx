@@ -29,8 +29,10 @@ import { Waveform } from "@/components/domain/waveform";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Banner, EmptyState, Skeleton } from "@/components/ui/primitives";
+import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { Content, TopBar } from "@/components/shell/topbar";
 import { Tabs } from "@/components/ui/controls";
+import { useCompact } from "@/lib/viewport";
 import { Fridge } from "./fridge";
 import { Links } from "./links";
 import { ProjectDocs } from "./_components/project-docs";
@@ -582,27 +584,66 @@ export function LibraryScreen() {
   return useSearchParams().get("source") === "projects" ? <ProjectDocs /> : <Keepsakes />;
 }
 
+const KEEPSAKE_TABS = [
+  { key: "images", label: "Images" },
+  { key: "videos", label: "Videos" },
+  { key: "audio", label: "Audio" },
+  { key: "files", label: "Files" },
+  { key: "exports", label: "Exports" },
+  { key: "diagrams", label: "Diagrams" },
+  { key: "documents", label: "Documents" },
+  { key: "links", label: "Links" },
+  { key: "fridge", label: "Fridge" },
+] as const;
+
 function Keepsakes() {
   // A chat's "Open in Library" lands on the item: ?tab=videos&item=<id>.
+  const compact = useCompact();
   const params = useSearchParams();
   const [tab, setTab] = useState(() => params.get("tab") ?? "images");
   const openItem = params.get("item");
   return (
     <>
+      {!compact && (
+        <NavigatorPortal>
+          <nav aria-label="Library" className="flex min-h-0 flex-1 flex-col gap-3 px-2.5 pt-4 pb-3">
+            <div className="px-1">
+              <LibrarySourceSwitch source="yours" />
+            </div>
+            <div role="tablist" aria-label="Library" aria-orientation="vertical" className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
+              {KEEPSAKE_TABS.map((item) => {
+                const active = tab === item.key;
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => setTab(item.key)}
+                    className={cx(
+                      "flex h-8 items-center rounded-md px-2.5 text-left text-13 transition-colors",
+                      active ? "bg-selected font-medium text-fg" : "text-fg-secondary hover:bg-hover hover:text-fg",
+                    )}
+                  >
+                    {item.label}
+                  </button>
+                );
+              })}
+            </div>
+          </nav>
+        </NavigatorPortal>
+      )}
       <TopBar crumbs={[{ label: "Library" }]} />
       <Content>
         <div className="flex flex-col gap-5">
           <PageHeader
             title="Library"
-            description={<>
-              Keepsakes from your Assistant chats, private to you. Images your personas generate, and videos and audio they render, are saved here automatically; files they hand you and exports you save from Slides, Designs and Docs are kept too and stay after their chat is deleted.
-              Use an image as a persona&apos;s reference, or a photo as yours, and new images of them keep that likeness. SVG diagrams and recommended links are kept when you choose Save to Library on them.
-            </>}
+            description="Private keepsakes from your chats: generated media, saved files, exports, diagrams, references, and links."
             actions={<UploadButton />}
           >
-            <LibrarySourceSwitch source="yours" />
+            {compact && <LibrarySourceSwitch source="yours" />}
           </PageHeader>
-          <Tabs label="Library" value={tab} onChange={setTab} items={[{ key: "images", label: "Images" }, { key: "videos", label: "Videos" }, { key: "audio", label: "Audio" }, { key: "files", label: "Files" }, { key: "exports", label: "Exports" }, { key: "diagrams", label: "Diagrams" }, { key: "documents", label: "Documents" }, { key: "links", label: "Links" }, { key: "fridge", label: "Fridge" }]} />
+          {compact && <Tabs label="Library" value={tab} onChange={setTab} items={[...KEEPSAKE_TABS]} />}
           {tab === "fridge" ? <Fridge /> : tab === "links" ? <Links /> : <Items kind={KINDS[tab] ?? "image"} openItem={openItem} />}
         </div>
       </Content>

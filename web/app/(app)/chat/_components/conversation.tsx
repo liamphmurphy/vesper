@@ -520,7 +520,7 @@ function InSlot({ slot, children }: { slot: HTMLElement | null; children: ReactN
 }
 
 /** `docked`: the conversation sits in an app's or a side panel's dock, narrow beside the work, so a live reply's steps start folded. */
-export function Conversation({ id, onNew, actions, activityInDock = false, docked = false, context, onReplace }: { id: string; onNew: () => void; actions?: ReactNode; activityInDock?: boolean; docked?: boolean; context?: ConversationContext; onReplace?: (id: string) => void | Promise<void> }) {
+export function Conversation({ id, onNew, actions, activityInDock = false, docked = false, hideTitle = false, context, onReplace }: { id: string; onNew: () => void; actions?: ReactNode; activityInDock?: boolean; docked?: boolean; hideTitle?: boolean; context?: ConversationContext; onReplace?: (id: string) => void | Promise<void> }) {
   const chat = useChat(id);
   // In an app's dock the chat's header is the dock's first row, which continues the page's top bar.
   const headerSlot = useDockHeaderSlot();
@@ -1101,29 +1101,32 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
           {/* Back and forward lead the page; a dock's chat sits beside a page that has its own. */}
           {!docked && <HistoryNav />}
           {group ? <PersonaStack personas={participants} size={22} /> : <HeaderPersona persona={persona} personaId={c.persona?.id} fresh={fresh} onSwitch={switchPersona} disabled={locked || create.isPending} compact={docked} />}
-          {/* The title over a live line, as a messaging app shows who's typing; the line goes when the reply ends. */}
+          {/* The title over a live line, as a messaging app shows who's typing; the line goes when the reply ends.
+              Docks with an inline switcher already name and switch the conversation in Switch chat, avoiding 1-letter crushed title stubs. */}
           <div className="flex min-w-0 flex-1 flex-col items-start justify-center">
-            <div className="flex min-w-0 max-w-full items-center gap-1">
-              <ChatTitleMenu
-                chat={c}
-                participants={participants}
-                running={running}
-                commitEmail={c.repo_url && c.commit_email && myEmails.length > 1 ? c.commit_email : undefined}
-                onCommitEmail={() => setCommitPickerOpen((o) => !o)}
-              />
-              {/* The space the chat is in, beside its title (LAZYAGENTS-213). In an app's dock the app is the page around it, so the header doesn't name it. */}
-              {!docked && !compact && <ChatSpacePicker chat={c} disabled={running} />}
-            </div>
+            {!(docked && hideTitle) && (
+              <div className="flex min-w-0 max-w-full items-center gap-1">
+                <ChatTitleMenu
+                  chat={c}
+                  participants={participants}
+                  running={running}
+                  commitEmail={c.repo_url && c.commit_email && myEmails.length > 1 ? c.commit_email : undefined}
+                  onCommitEmail={() => setCommitPickerOpen((o) => !o)}
+                />
+                {/* The space the chat is in, beside its title (LAZYAGENTS-213). In an app's dock the app is the page around it, so the header doesn't name it. */}
+                {!docked && !compact && <ChatSpacePicker chat={c} disabled={running} />}
+              </div>
+            )}
             {running && <ChatPresence runId={c.current_run_id} since={since} persona={speaker} dotOnly={docked || statusInView} onOpen={openActivity} />}
           </div>
           {/* A dock has no room for the picker in its one header row: it moves to the composer's + menu. */}
-          {repoPicker && !docked && <span className="flex min-w-0 max-w-[40%] flex-shrink">{repoPicker}</span>}
+          {repoPicker && !docked && <span className="flex min-w-0 max-w-[32%] flex-shrink">{repoPicker}</span>}
           <ChatRunsPill chatId={c.id} />
           {!dockActivity && docked && (
             <button type="button" aria-pressed={tab === "activity"} aria-label="Activity" title={tab === "activity" ? "Back to the chat" : "Activity: this chat's tool calls and memory"}
               onClick={() => setTab(tab === "activity" ? "chat" : "activity")}
               className={cx("grid size-7 flex-none place-items-center rounded-md", tab === "activity" ? "bg-selected text-fg" : "text-fg-tertiary hover:bg-hover hover:text-fg")}>
-              <Icon name="history" size={14} />
+              <Icon name="activity" size={14} />
             </button>
           )}
           {!dockActivity && !docked && (

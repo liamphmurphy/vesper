@@ -7,7 +7,9 @@ import { usePersonas, type Persona } from "@/lib/api/persona-hooks";
 import { MAX_PERSONAS, sortPersonas } from "@/lib/persona-ui";
 import { cx } from "@/lib/cx";
 import { HumanAvatar } from "@/components/domain/avatars";
+import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { Content, TopBar } from "@/components/shell/topbar";
+import { useCompact } from "@/lib/viewport";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Banner, Skeleton } from "@/components/ui/primitives";
@@ -94,11 +96,66 @@ export function CustomizationScreen() {
     setEditingProfile(false);
     router.replace(`/customization?space=${encodeURIComponent(id)}`, { scroll: false });
   };
+  const compact = useCompact();
   const me = boot.data?.me;
   // The list of every persona; ?who=agents (the old Agents section) opens it on those that take tickets.
   const listing = who === "personas" || who === "agents";
+  const customizeNav = (
+    <nav aria-label="Customize" className={cx("flex flex-col gap-px", compact ? "w-full" : "min-h-0 flex-1 overflow-y-auto px-2.5 pt-4 pb-3")}>
+      <RailButton on={!whose && who !== "connectors" && who !== "secrets" && !listing} onClick={() => pick("")} lead={<Icon name="bookmark" size={16} />}>
+        Everything
+      </RailButton>
+      <RailButton on={whose === "person"} onClick={() => pick("person")} lead={<HumanAvatar name={me?.name ?? "You"} initials={me?.initials} src={me?.avatar_url} size={20} label={false} />}>
+        You
+      </RailButton>
+      <RailButton on={who === "connectors"} onClick={() => pick("connectors")} lead={<Icon name="plug" size={16} />}>
+        Connectors
+      </RailButton>
+      <RailButton on={who === "secrets"} onClick={() => pick("secrets")} lead={<Icon name="key" size={16} />}>
+        Secrets
+      </RailButton>
+      <RailGroup label="Personas" detail="Who you talk with and who works" />
+      <RailButton on={listing} testId="all-personas" onClick={() => pick("personas")} lead={<Icon name="agents" size={16} />}>
+        All personas
+      </RailButton>
+      {list.isError ? (
+        <Banner tone="blocked" title="Couldn’t load personas" actions={<Button variant="outline" onClick={() => list.refetch()}>Retry</Button>}>
+          {errorText(list.error)}
+        </Banner>
+      ) : !list.data ? (
+        <div aria-busy="true" className="flex flex-col gap-1">
+          <Skeleton className="h-8" />
+          <Skeleton className="h-8" />
+        </div>
+      ) : (
+        <>
+          {personas.map((p) => (
+            <RailButton key={p.id} testId="persona-row" on={whose === p.id} onClick={() => pick(p.id)} lead={<PersonaAvatar persona={p} size={20} />}>
+              <span className="min-w-0 flex-1 truncate">{p.name}</span>
+              {p.is_default && <DefaultBadge small />}
+            </RailButton>
+          ))}
+          {personas.length === 0 && <p className="px-2 py-1 text-12 text-fg-secondary">No personas yet. The built-in Assistant is your default.</p>}
+          {all.length < MAX_PERSONAS && (
+            <button type="button" onClick={() => setEditing("new")} className={cx(railItem, "text-accent hover:bg-hover")}>
+              <Icon name="plus" size={16} />
+              New persona
+            </button>
+          )}
+        </>
+      )}
+      {(spaces.data?.spaces.length ?? 0) > 0 && <span className="px-2 pb-1.5 pt-5 type-heading text-fg">Spaces</span>}
+      {spaces.data?.spaces.map((sp) => (
+        <RailButton key={sp.id} testId="space-memory-row" on={spaceParam === sp.id} onClick={() => pickSpace(sp.id)} lead={<SpaceTile name={sp.name} color={sp.color} size={20} />}>
+          <span className="min-w-0 flex-1 truncate">{sp.name}</span>
+          <span className="text-12 text-fg-tertiary">{sp.memory_count}</span>
+        </RailButton>
+      ))}
+    </nav>
+  );
   return (
     <section aria-label="Customization">
+      {!compact && <NavigatorPortal>{customizeNav}</NavigatorPortal>}
       <TopBar
         crumbs={[{ label: "Customization" }]}
         actions={
@@ -121,58 +178,8 @@ export function CustomizationScreen() {
         }
       />
       <Content>
-        <div className="flex gap-8 max-md:flex-col max-md:gap-4">
-          <nav aria-label="Customize" className="flex w-52 flex-none flex-col gap-px max-md:w-full">
-            <RailButton on={!whose && who !== "connectors" && who !== "secrets" && !listing} onClick={() => pick("")} lead={<Icon name="bookmark" size={16} />}>
-              Everything
-            </RailButton>
-            <RailButton on={whose === "person"} onClick={() => pick("person")} lead={<HumanAvatar name={me?.name ?? "You"} initials={me?.initials} src={me?.avatar_url} size={20} label={false} />}>
-              You
-            </RailButton>
-            <RailButton on={who === "connectors"} onClick={() => pick("connectors")} lead={<Icon name="plug" size={16} />}>
-              Connectors
-            </RailButton>
-            <RailButton on={who === "secrets"} onClick={() => pick("secrets")} lead={<Icon name="key" size={16} />}>
-              Secrets
-            </RailButton>
-            <RailGroup label="Personas" detail="Who you talk with and who works" />
-            <RailButton on={listing} testId="all-personas" onClick={() => pick("personas")} lead={<Icon name="agents" size={16} />}>
-              All personas
-            </RailButton>
-            {list.isError ? (
-              <Banner tone="blocked" title="Couldn’t load personas" actions={<Button variant="outline" onClick={() => list.refetch()}>Retry</Button>}>
-                {errorText(list.error)}
-              </Banner>
-            ) : !list.data ? (
-              <div aria-busy="true" className="flex flex-col gap-1">
-                <Skeleton className="h-8" />
-                <Skeleton className="h-8" />
-              </div>
-            ) : (
-              <>
-                {personas.map((p) => (
-                  <RailButton key={p.id} testId="persona-row" on={whose === p.id} onClick={() => pick(p.id)} lead={<PersonaAvatar persona={p} size={20} />}>
-                    <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                    {p.is_default && <DefaultBadge small />}
-                  </RailButton>
-                ))}
-                {personas.length === 0 && <p className="px-2 py-1 text-12 text-fg-secondary">No personas yet. The built-in Assistant is your default.</p>}
-                {all.length < MAX_PERSONAS && (
-                  <button type="button" onClick={() => setEditing("new")} className={cx(railItem, "text-accent hover:bg-hover")}>
-                    <Icon name="plus" size={16} />
-                    New persona
-                  </button>
-                )}
-              </>
-            )}
-            {(spaces.data?.spaces.length ?? 0) > 0 && <span className="px-2 pb-1.5 pt-5 type-heading text-fg">Spaces</span>}
-            {spaces.data?.spaces.map((sp) => (
-              <RailButton key={sp.id} testId="space-memory-row" on={spaceParam === sp.id} onClick={() => pickSpace(sp.id)} lead={<SpaceTile name={sp.name} color={sp.color} size={20} />}>
-                <span className="min-w-0 flex-1 truncate">{sp.name}</span>
-                <span className="text-12 text-fg-tertiary">{sp.memory_count}</span>
-              </RailButton>
-            ))}
-          </nav>
+        <div className="flex flex-col gap-5">
+          {compact && customizeNav}
           <div className="flex min-w-0 flex-1 flex-col gap-5">
             {listing && !importing ? (
               <PersonasList personas={all} filter={who === "agents" ? "tickets" : "all"} onOpen={pick} onNew={() => setEditing("new")} canAdd={all.length < MAX_PERSONAS} />
@@ -210,6 +217,19 @@ export function CustomizationScreen() {
                   </>
                 ) : (
                   <PlainHeader lead={<span className="grid size-[72px] place-items-center rounded-full bg-selected text-fg-secondary"><Icon name="bookmark" size={28} /></span>} title="Everything" detail="Every memory: about you, and each persona’s own." />
+                )}
+                {!compact && list.data && personas.length === 0 && !who && !whose && !spaceParam && !importing && (
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface p-4">
+                    <div className="min-w-0">
+                      <p className="text-14 font-medium text-fg">No personas yet</p>
+                      <p className="text-13 text-fg-secondary">The built-in Assistant is your default.</p>
+                    </div>
+                    {all.length < MAX_PERSONAS && (
+                      <Button variant="primary" icon="plus" onClick={() => setEditing("new")}>
+                        New persona
+                      </Button>
+                    )}
+                  </div>
                 )}
                 {selected && <PersonaModelSection p={selected} />}
                 {selected && <PersonaWorkSection p={selected} />}

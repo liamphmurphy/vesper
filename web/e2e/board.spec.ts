@@ -27,7 +27,7 @@ test("renders agreed columns, card anatomy, navigation and empty states", async 
   await expect(card(page)).toContainText("Builder");
   await expect(card(page)).toContainText("Blocked");
   await expect(card(page).getByLabel("1 of 1 criteria met")).toBeVisible();
-  await expect(card(page, "WEB-2")).toContainText("unestimated");
+  await expect(card(page, "WEB-2")).not.toContainText("unestimated");
   await expect(card(page, "WEB-2")).toContainText("Unassigned");
   await expect(card(page, "WEB-3")).not.toContainText("Blocked");
   await expect(card(page).getByRole("link", { name: "WEB-1" })).toHaveAttribute("href", "/tickets/WEB-1");
@@ -45,8 +45,8 @@ test("epic filter shows points, criteria and blockers, and assignee/canceled fil
   const api = await installBoardApi(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/board?project=WEB");
-  await screen(page).getByRole("button", { name: "Epic: All epics" }).click();
-  await page.getByRole("menuitemradio", { name: "Kanban board" }).click();
+  const workNav = page.getByRole("navigation", { name: "Work", exact: true });
+  await workNav.getByRole("group", { name: "Board epics" }).getByRole("button", { name: "Kanban board" }).click();
   const summary = screen(page).getByRole("region", { name: "Epic summary" });
   await expect(summary).toContainText("Kanban board");
   await expect(summary).toContainText("5 / 10 pts done");
@@ -57,12 +57,12 @@ test("epic filter shows points, criteria and blockers, and assignee/canceled fil
   await expect(summary.getByRole("button", { name: "Mark epic done" })).toBeDisabled();
   await expect(card(page, "WEB-4")).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("board.png"), fullPage: true });
-  await screen(page).getByRole("button", { name: "Assignee: All assignees" }).click();
-  await page.getByRole("menuitemradio", { name: "@builder" }).click();
+  await workNav.getByRole("button", { name: "Persona: All personas" }).click();
+  await page.getByRole("menuitemradio", { name: "Builder" }).click();
   await expect(card(page, "WEB-2")).toHaveCount(0);
   await expect(card(page)).toBeVisible();
-  await screen(page).getByRole("button", { name: "Assignee: @builder" }).click();
-  await page.getByRole("menuitemradio", { name: "All assignees" }).click();
+  await workNav.getByRole("button", { name: "Persona: Builder" }).click();
+  await page.getByRole("menuitemradio", { name: "All personas" }).click();
   await screen(page).getByRole("switch", { name: "Show canceled" }).click();
   await expect(screen(page).getByRole("switch", { name: "Show canceled" })).toBeChecked();
   await expect(column(page, "canceled").getByRole("article", { name: "Ticket WEB-6" })).toBeVisible();

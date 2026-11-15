@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { DropdownMenu } from "radix-ui";
 import { useBootstrap, useInbox } from "@/lib/api/hooks";
-import { needsYouByTicket, type NeedsYou } from "@/lib/work-rows";
+import { needsYouByTicket, ticketNeedsYou, type NeedsYou } from "@/lib/work-rows";
 import { useBoard, useBoardMoves, useTicketEditorDetail, type BoardFilters } from "@/lib/api/board-hooks";
 import { BOARD_STATUSES, onlyBlocked, withBoardMoves, type Board, type BoardCard, type BoardStatus } from "@/lib/board";
 import { cx } from "@/lib/cx";
@@ -60,14 +60,19 @@ export function BoardScreen() {
     window.history.replaceState(null, "", ticketsHref("board", next));
   }
   const compact = useCompact();
-  const boardFilters = project && (
+  const boardToggles = project && (
+    <>
+      <Toggle label="Show canceled" checked={filters.include_canceled} onChange={(on) => setParam("include_canceled", on ? "true" : "")} />
+      <Toggle label="Blocked only" checked={blockedOnly} onChange={(on) => setParam("blocked", on ? "true" : "")} />
+    </>
+  );
+  const compactBoardFilters = project && (
     <>
       <FilterMenu label="Epic" value={filters.epic ?? ""} onChange={(v) => setParam("epic", v)}
         options={[{ value: "", label: "All epics" }, ...epics.map((e) => ({ value: e.id, label: e.name }))]} />
       <FilterMenu label="Assignee" value={filters.assignee ?? ""} onChange={(v) => setParam("assignee", v)}
         options={[{ value: "", label: "All assignees" }, ...(bootstrap.data?.agents ?? []).map((a) => ({ value: a.handle, label: `@${a.handle}` }))]} />
-      <Toggle label="Show canceled" checked={filters.include_canceled} onChange={(on) => setParam("include_canceled", on ? "true" : "")} />
-      <Toggle label="Blocked only" checked={blockedOnly} onChange={(on) => setParam("blocked", on ? "true" : "")} />
+      {boardToggles}
     </>
   );
   return (
@@ -88,11 +93,6 @@ export function BoardScreen() {
               onAgentChange={(v) => setParam("assignee", v)}
             />
             <div className="work-nav-list">
-              <div className="work-list-controls">
-                <Link href={ticketsHref("list", project ? { project: project.key } : undefined)}>List</Link>
-                <span>/</span>
-                <span aria-current="true">Board</span>
-              </div>
               {project && (
                 <div role="group" aria-label="Board epics" className="flex flex-col gap-0.5 px-1">
                   <button
@@ -130,14 +130,14 @@ export function BoardScreen() {
         <ButtonLink href={project ? `/tickets/new?project=${encodeURIComponent(project.key)}` : "/tickets/new"} variant="primary" icon="plus" hint="C">New ticket</ButtonLink>
       } />}
       <TicketsLayoutBar layout="board" />
-      {compact && boardFilters && <ChipScroller label="Board filters">{boardFilters}</ChipScroller>}
+      {compact && compactBoardFilters && <ChipScroller label="Board filters">{compactBoardFilters}</ChipScroller>}
       {/* The board's views, with its filters at the row's end (the top bar holds only the header). */}
       {project && <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-border px-5 py-2 text-14">
         <nav aria-label="Board views" className="flex gap-5">
           <button aria-current={!map ? "page" : undefined} className={!map ? "font-semibold text-accent" : ""} onClick={() => setParam("tab", "")}>Board</button>
           <button aria-current={map ? "page" : undefined} className={map ? "font-semibold text-accent" : ""} onClick={() => setParam("tab", "map")}>Map</button>
         </nav>
-        {!compact && <div role="group" aria-label="Board filters" className="ml-auto flex flex-wrap items-center gap-2">{boardFilters}</div>}
+        {!compact && <div role="group" aria-label="Board filters" className="ml-auto flex flex-wrap items-center gap-3">{boardToggles}</div>}
       </div>}
       {!project ? <ProjectScopeState base="/tickets" scope={scope} />
         : map ? <div className="p-5"><DependencyMap key={JSON.stringify([project.key, filters])} project={project.key} epic={filters.epic} assignee={filters.assignee} includeCanceled={filters.include_canceled} onOpen={setTicket} /></div>
@@ -234,7 +234,7 @@ export function BoardView({ project, filters, blockedOnly, onOpen }: { project: 
               <span className="ml-auto whitespace-nowrap text-fg-tertiary">{column?.count ?? 0} · {column?.points ?? 0} pts</span>
             </header>
             <div className="space-y-2">
-              {column?.cards.map((card) => <TicketCard key={card.key} card={card} needs={needs.get(card.key)} showEpic={!filters.epic} statuses={statuses} pending={!!moves.pending[card.key]} onOpen={() => onOpen(card.key)}
+              {column?.cards.map((card) => <TicketCard key={card.key} card={card} needs={ticketNeedsYou(card, needs.get(card.key))} showEpic={!filters.epic} statuses={statuses} pending={!!moves.pending[card.key]} onOpen={() => onOpen(card.key)}
                 onMove={(target) => void moves.move(card, target)}
                 onDragStart={() => { dragging.current = card.key; }}
                 onDragEnd={() => { dragging.current = null; setOver(undefined); }} />)}
@@ -275,8 +275,8 @@ function TicketCard({ card, needs, showEpic, statuses, pending, onOpen, onMove, 
     <StateText t={card} needs={needs} className="mb-2 block text-12" />
     <div className="flex flex-wrap items-center gap-2 text-11 text-fg-secondary">
       {showEpic && <EpicChip epic={card.epic} />}
-      <span className={cx("font-mono", card.estimate_points == null && "text-fg-tertiary")}>{card.estimate_points == null ? "unestimated" : `${card.estimate_points} pt`}</span>
-      <span className="font-mono text-fg-tertiary" aria-label={`${card.criteria_done} of ${card.criteria_total} criteria met`}>{card.criteria_done}/{card.criteria_total}</span>
+      {card.estimate_points != null && <span className="font-mono">{card.estimate_points} pt</span>}
+      {card.criteria_total > 0 && <span className="font-mono text-fg-tertiary" aria-label={`${card.criteria_done} of ${card.criteria_total} criteria met`}>{card.criteria_done}/{card.criteria_total}</span>}
       {needs && <Link href={needs.href} className="inline-flex h-[24px] items-center rounded-md border border-pill-human-bg px-2 text-12 font-medium text-pill-human-fg hover:bg-pill-human-bg" aria-label={`Open what ${card.key} needs`}>Open</Link>}
       <DropdownMenu.Root open={menu} onOpenChange={setMenu}>
         <DropdownMenu.Trigger asChild><button type="button" disabled={pending} aria-label={`Move ${card.key} to…`} className="ml-auto rounded px-2 py-0.5 text-16 leading-none hover:bg-hover disabled:opacity-50">⋯</button></DropdownMenu.Trigger>

@@ -636,6 +636,7 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
           key={chatId}
           id={chatId}
           docked
+          hideTitle
           onNew={startChat}
           onReplace={selectChat}
           context={conversationContext}
