@@ -274,16 +274,18 @@ type ChatCanvasVersion struct {
 }
 
 type ChatCodeReview struct {
-	ChatID    uuid.UUID
-	RepoUrl   string
-	Branch    *string
-	BaseSha   *string
-	HeadSha   *string
-	Commits   json.RawMessage
-	Files     json.RawMessage
-	Dirty     bool
-	Live      bool
-	UpdatedAt time.Time
+	ChatID        uuid.UUID
+	RepoUrl       string
+	Branch        *string
+	BaseSha       *string
+	HeadSha       *string
+	Commits       json.RawMessage
+	Files         json.RawMessage
+	Dirty         bool
+	Live          bool
+	UpdatedAt     time.Time
+	Tree          json.RawMessage
+	TreeTruncated bool
 }
 
 type ChatFollowup struct {
