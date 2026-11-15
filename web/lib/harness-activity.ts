@@ -67,15 +67,23 @@ export function usageSub(h: HarnessActivity, all: HarnessActivity[], now: Date =
     const other = all.find((x) => x.harness !== h.harness && !x.limited_until);
     return `Limited until ${resetLabel(h.limited_until, now)}${other ? ` · falls back to ${other.label}` : ""}`;
   }
-  if (h.harness === ANTIGRAVITY && !h.usage_available) return "Usage unknown · Antigravity doesn’t report an allowance";
+  if (h.harness === ANTIGRAVITY && !h.usage_available) {
+    if (h.usage_checking) return "Checking usage…";
+    return "Usage unknown · Antigravity doesn’t report an allowance";
+  }
   if (!h.usage_available) {
     if (h.usage_checking) return "Checking usage…";
     return h.usage_checked_at ? "Usage unavailable · check Usage settings" : "Usage not checked yet";
   }
   const session = h.windows.find((w) => w.kind === "session");
   const weekly = weeklyWindow(h);
-  const parts = [session ? (session.resets_at ? `5h · resets ${resetLabel(session.resets_at, now)}` : "5h") : "", weekly ? `weekly ${Math.round(weekly.used_percent)}%` : ""];
-  return parts.filter(Boolean).join(" · ");
+  const parts = [session ? (session.resets_at ? `5h · resets ${resetLabel(session.resets_at, now)}` : "5h") : "", weekly ? `weekly ${Math.round(weekly.used_percent)}%` : ""].filter(Boolean);
+  if (parts.length) return parts.join(" · ");
+  const primary = h.windows[0];
+  if (!primary) return "";
+  const head = primary.resets_at ? `${primary.label} · resets ${resetLabel(primary.resets_at, now)}` : primary.label;
+  const extra = h.windows.slice(1).map((w) => `${w.label} ${Math.round(w.used_percent)}%`);
+  return [head, ...extra].join(" · ");
 }
 
 /** "checked 40s ago", from the newest reading, or "checking…" while a check is in flight. */

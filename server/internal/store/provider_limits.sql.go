@@ -74,6 +74,21 @@ func (q *Queries) ActiveProviderLimits(ctx context.Context, workspaceID uuid.UUI
 	return items, nil
 }
 
+const clearProviderLimit = `-- name: ClearProviderLimit :exec
+DELETE FROM provider_limits
+WHERE workspace_id = $1 AND harness = $2
+`
+
+type ClearProviderLimitParams struct {
+	WorkspaceID uuid.UUID
+	Harness     string
+}
+
+func (q *Queries) ClearProviderLimit(ctx context.Context, arg ClearProviderLimitParams) error {
+	_, err := q.db.Exec(ctx, clearProviderLimit, arg.WorkspaceID, arg.Harness)
+	return err
+}
+
 const markProviderLimited = `-- name: MarkProviderLimited :exec
 
 INSERT INTO provider_limits (workspace_id, harness, until, reason)

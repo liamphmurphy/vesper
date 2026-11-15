@@ -380,15 +380,19 @@ func runRunner(ctx context.Context, log *slog.Logger) error {
 	blobs := blob.New(cfg.S3)
 	secretStore := &secrets.Service{Q: store.New(pool), Box: box}
 	if d, ok := backend.(*runner.Docker); ok {
-		d.SaveCodexAuth = func(ctx context.Context, scope, auth string) error {
-			ws, project, err := runner.ParseCodexAuthScope(scope)
-			if err != nil {
-				return err
+		saveScoped := func(secret string, valid func(current, next string) bool) func(context.Context, string, string) error {
+			return func(ctx context.Context, scope, auth string) error {
+				ws, project, err := runner.ParseCodexAuthScope(scope)
+				if err != nil {
+					return err
+				}
+				return secretStore.Replace(ctx, ws, project, secret, func(current string) (string, bool) {
+					return auth, valid(current, auth)
+				})
 			}
-			return secretStore.Replace(ctx, ws, project, chatmodels.KeySecret[agentdef.HarnessCodex], func(current string) (string, bool) {
-				return auth, chatmodels.CodexAuthRefreshed(current, auth)
-			})
 		}
+		d.SaveClaudeAuth = saveScoped(chatmodels.KeySecret[agentdef.HarnessClaudeCode], chatmodels.ClaudeAuthRefreshed)
+		d.SaveCodexAuth = saveScoped(chatmodels.KeySecret[agentdef.HarnessCodex], chatmodels.CodexAuthRefreshed)
 	}
 	workflows := runs.NewWorkflowEngine(pool, &artifacts.Service{Pool: pool, Blobs: blobs, Bucket: cfg.S3.ArtifactBucket}, &tracker.Service{Pool: pool})
 	workflows.Catalog = chatmodels.Catalog{RequireKey: rc.Backend == "docker", Secrets: secretStore, PlanModels: planModels(rc.Backend, pool)}

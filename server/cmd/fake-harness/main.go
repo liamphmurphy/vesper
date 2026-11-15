@@ -215,6 +215,20 @@ func main() {
 		agyModels()
 		return
 	}
+	if agy && slices.Contains(args, "/usage") {
+		resets := time.Now().Add(3 * time.Hour).UTC().Format(time.RFC3339)
+		cmd := map[string]any{"name": "usage", "data": map[string]any{
+			"plan_name": "Antigravity (fake)",
+			"groups": []any{
+				map[string]any{"display_name": "Gemini", "refresh_window_label": "5h", "remaining_fraction": 0.72, "reset_time": resets},
+			},
+		}}
+		b, _ := json.Marshal(map[string]any{"event": "command_result", "command": cmd})
+		fmt.Println(string(b))
+		b, _ = json.Marshal(map[string]any{"event": "result", "result": map[string]any{"status": "OK", "num_turns": 0, "command": cmd}})
+		fmt.Println(string(b))
+		return
+	}
 	// Chat model discovery for `claude` (chatmodels.DiscoverLocal) and the
 	// usage check (usage.Probe): answer control requests, then wait for EOF.
 	// Real turns persist their session, control-only checks don't.

@@ -77,11 +77,7 @@ type signInProvider struct {
 }
 
 var (
-	claudeURLRe = regexp.MustCompile(`https://claude\.(?:com|ai)/[^\s"'<>]+`)
-	// Complete only once something follows the token, so a token split
-	// across two reads isn't taken half-printed.
-	claudeTokenRe    = regexp.MustCompile(`(sk-ant-oat[0-9]*-[A-Za-z0-9_-]{20,})[^A-Za-z0-9_-]`)
-	claudeTokenEndRe = regexp.MustCompile(`(sk-ant-oat[0-9]*-[A-Za-z0-9_-]{20,})(?:[^A-Za-z0-9_-]|$)`)
+	claudeURLRe      = regexp.MustCompile(`https://claude\.(?:com|ai)/[^\s"'<>]+`)
 	codexURLRe       = regexp.MustCompile(`https://auth\.openai\.com/[^\s"'<>]+`)
 	codexCodeRe      = regexp.MustCompile(`one-time code[^\n]*\n\s*([A-Z0-9]{4,5}-[A-Z0-9]{4,5})\b`)
 	githubURLRe      = regexp.MustCompile(`https://github\.com/login/device[^\s"'<>]*`)
@@ -157,27 +153,37 @@ func buildAntigravityAuthBundle(files map[string][]byte) (string, error) {
 	return string(raw), nil
 }
 
-// codexAuthFile is where `codex login` writes its login in the container.
-const codexAuthFile = homePath + "/" + codexAuthPath
+const (
+	// claudeAuthFile is where `claude auth login` writes its login in the container.
+	claudeAuthFile = homePath + "/" + claudeAuthPath
+	// codexAuthFile is where `codex login` writes its login in the container.
+	codexAuthFile = homePath + "/" + codexAuthPath
+)
 
 var signInProviders = map[string]signInProvider{
 	"claude": {
 		secret: chatmodels.KeySecret[agentdef.HarnessClaudeCode],
-		// A wide terminal keeps the long sign-in URL on one line.
-		argv: []string{"sh", "-c", "stty cols 2000; exec claude setup-token"},
+		// A wide terminal keeps the long sign-in URL on one line. --claudeai
+		// requests user:profile alongside user:inference so usage probes work.
+		argv: []string{"sh", "-c", "stty cols 2000; exec claude auth login --claudeai"},
 		tty:  true,
 		prompt: func(out string) (string, string, bool) {
 			link := claudeURLRe.FindString(out)
 			return link, "", link != ""
 		},
-		pastes:   true,
-		complete: func(out string) bool { return claudeTokenRe.MatchString(out) },
-		login: func(_ context.Context, _ LoginProcess, out string, _ int) (string, error) {
-			m := claudeTokenEndRe.FindAllStringSubmatch(out, -1)
-			if len(m) == 0 {
-				return "", errors.New("Claude didn't print a login token")
+		pastes: true,
+		login: func(ctx context.Context, p LoginProcess, _ string, exit int) (string, error) {
+			if exit != 0 {
+				return "", fmt.Errorf("claude auth login exited with %d", exit)
 			}
-			return m[len(m)-1][1], nil
+			b, err := p.ReadFile(ctx, claudeAuthFile)
+			if err != nil {
+				return "", fmt.Errorf("read the Claude login: %w", err)
+			}
+			if _, ok := chatmodels.ParseClaudeAuth(string(b)); !ok {
+				return "", errors.New("Claude didn't save a subscription login")
+			}
+			return string(b), nil
 		},
 	},
 	"codex": {

@@ -17,7 +17,7 @@ import (
 )
 
 // Harnesses are the ones with plan allowances, in display order.
-var Harnesses = []string{agentdef.HarnessClaudeCode, agentdef.HarnessCodex}
+var Harnesses = []string{agentdef.HarnessClaudeCode, agentdef.HarnessCodex, agentdef.HarnessAntigravity}
 
 const (
 	// Fresh is how long a reading stands before a check asks again.

@@ -37,6 +37,8 @@ func Argv(harness string) ([]string, error) {
 		return append([]string{"claude"}, claudeArgs...), nil
 	case agentdef.HarnessCodex:
 		return []string{"codex", "app-server", "-c", "features.plugins=false"}, nil
+	case agentdef.HarnessAntigravity:
+		return []string{"agy", "-p", "/usage", "--output-format", "stream-json"}, nil
 	}
 	return nil, fmt.Errorf("unsupported harness")
 }
@@ -44,22 +46,30 @@ func Argv(harness string) ([]string, error) {
 // Converse asks a running Argv process for its allowance over its stdin and
 // stdout.
 func Converse(harness string, in io.Writer, out io.Reader) (Snapshot, error) {
-	if harness == agentdef.HarnessClaudeCode {
+	switch harness {
+	case agentdef.HarnessClaudeCode:
 		return converseClaude(in, out, time.Now)
+	case agentdef.HarnessAntigravity:
+		return converseAntigravity(out, time.Now)
+	default:
+		return converseCodex(in, out, time.Now)
 	}
-	return converseCodex(in, out, time.Now)
 }
 
 // Probe reads a harness's allowance through the fake backend's stand-in
-// binary (RUNNER_CLAUDE_BIN, RUNNER_CODEX_BIN), over the CLI's control
-// protocol. Without one it refuses: the API never runs a real CLI on the
-// host. It never sends a prompt, starts inference, or reads credentials.
+// binary (RUNNER_CLAUDE_BIN, RUNNER_CODEX_BIN, RUNNER_ANTIGRAVITY_BIN), over
+// the CLI's control protocol. Without one it refuses: the API never runs a real
+// CLI on the host. It never sends a prompt, starts inference, or reads credentials.
 func Probe(ctx context.Context, harness string) (Snapshot, error) {
 	argv, err := Argv(harness)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	override := map[string]string{agentdef.HarnessClaudeCode: "RUNNER_CLAUDE_BIN", agentdef.HarnessCodex: "RUNNER_CODEX_BIN"}[harness]
+	override := map[string]string{
+		agentdef.HarnessClaudeCode:  "RUNNER_CLAUDE_BIN",
+		agentdef.HarnessCodex:       "RUNNER_CODEX_BIN",
+		agentdef.HarnessAntigravity: "RUNNER_ANTIGRAVITY_BIN",
+	}[harness]
 	bin := os.Getenv(override)
 	if bin == "" {
 		return Snapshot{}, fmt.Errorf("usage: %s is not set; only a fake harness is checked on the host", override)
@@ -72,20 +82,34 @@ func Probe(ctx context.Context, harness string) (Snapshot, error) {
 	cmd.Dir = os.TempDir()
 	cmd.Stderr = io.Discard
 	cmd.Env = probeEnv(os.Environ())
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return Snapshot{}, err
+	var stdin io.WriteCloser
+	if harness != agentdef.HarnessAntigravity {
+		var err error
+		stdin, err = cmd.StdinPipe()
+		if err != nil {
+			return Snapshot{}, err
+		}
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		stdin.Close()
+		if stdin != nil {
+			stdin.Close()
+		}
 		return Snapshot{}, err
 	}
 	if err := cmd.Start(); err != nil {
-		stdin.Close()
+		if stdin != nil {
+			stdin.Close()
+		}
 		return Snapshot{}, fmt.Errorf("harness CLI could not start")
 	}
-	defer func() { stdin.Close(); cmd.Process.Kill(); cmd.Wait() }()
+	defer func() {
+		if stdin != nil {
+			stdin.Close()
+		}
+		cmd.Process.Kill()
+		cmd.Wait()
+	}()
 	return Converse(harness, stdin, stdout)
 }
 
@@ -194,4 +218,47 @@ func converseCodex(in io.Writer, out io.Reader, now func() time.Time) (Snapshot,
 		}
 	}
 	return Snapshot{}, fmt.Errorf("codex ended before reporting usage")
+}
+
+func converseAntigravity(out io.Reader, now func() time.Time) (Snapshot, error) {
+	s := scanner(out)
+	for s.Scan() {
+		line := s.Bytes()
+		var msg struct {
+			Event   string `json:"event"`
+			Command *struct {
+				Name string `json:"name"`
+			} `json:"command"`
+			Result *struct {
+				Status  string `json:"status"`
+				Error   string `json:"error"`
+				Command *struct {
+					Name string `json:"name"`
+				} `json:"command"`
+			} `json:"result"`
+		}
+		if json.Unmarshal(line, &msg) != nil {
+			continue
+		}
+		if msg.Event == "command_result" && msg.Command != nil && msg.Command.Name == "usage" {
+			return ParseAntigravityUsage(line, now()), nil
+		}
+		if msg.Event == "result" && msg.Result != nil {
+			if strings.EqualFold(msg.Result.Status, "ERROR") {
+				e := strings.ToLower(msg.Result.Error)
+				switch {
+				case strings.Contains(e, "auth") || strings.Contains(e, "login") || strings.Contains(e, "logged in") || strings.Contains(e, "sign in") || strings.Contains(e, "unauthorized") || strings.Contains(e, "credential"):
+					return Snapshot{Harness: agentdef.HarnessAntigravity, ObservedAt: now(), Windows: []Window{}}, ErrSignedOut
+				case strings.Contains(e, "unknown command") || strings.Contains(e, "unsupported"):
+					return Snapshot{}, ErrOutdated
+				}
+				return Snapshot{}, fmt.Errorf("antigravity usage request failed")
+			}
+			if msg.Result.Command != nil && msg.Result.Command.Name == "usage" {
+				return ParseAntigravityUsage(line, now()), nil
+			}
+			return Snapshot{Harness: agentdef.HarnessAntigravity, ObservedAt: now(), Windows: []Window{}}, nil
+		}
+	}
+	return Snapshot{}, fmt.Errorf("antigravity ended before reporting usage")
 }

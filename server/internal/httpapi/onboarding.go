@@ -53,12 +53,13 @@ func checkHarnessCredential(harness string, kind api.HarnessVerifyRequestKind, v
 	if v == "" {
 		return apperr.Invalid("credential", "paste a credential first")
 	}
+	claudeSub := chatmodels.ClaudePlanLogin(v)
 	_, codexLogin := chatmodels.ParseCodexAuth(v)
 	_, agyLogin := chatmodels.ParseAntigravityAuth(v)
 	switch {
-	case harness == agentdef.HarnessClaudeCode && kind == api.Subscription && !chatmodels.ClaudeOAuthToken(v):
-		return apperr.Invalid("credential", "a Claude subscription token starts with sk-ant-oat; run `claude setup-token` to get one")
-	case harness == agentdef.HarnessClaudeCode && kind == api.ApiKey && (chatmodels.ClaudeOAuthToken(v) || !strings.HasPrefix(v, "sk-ant-")):
+	case harness == agentdef.HarnessClaudeCode && kind == api.Subscription && !claudeSub:
+		return apperr.Invalid("credential", "a Claude subscription login is ~/.claude/.credentials.json from `claude auth login --claudeai` or a `sk-ant-oat` setup-token")
+	case harness == agentdef.HarnessClaudeCode && kind == api.ApiKey && (claudeSub || !strings.HasPrefix(v, "sk-ant-")):
 		return apperr.Invalid("credential", "an Anthropic API key starts with sk-ant-")
 	case harness == agentdef.HarnessCodex && kind == api.Subscription && !codexLogin:
 		return apperr.Invalid("credential", "paste the whole ~/.codex/auth.json from `codex login` (a ChatGPT sign-in)")

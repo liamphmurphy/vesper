@@ -235,7 +235,7 @@ func TestProbeRefusesWithoutFakeBinary(t *testing.T) {
 	t.Setenv("PATH", dir)
 	t.Setenv("RUNNER_CLAUDE_BIN", "")
 	t.Setenv("RUNNER_CODEX_BIN", "")
-	for _, h := range []string{agentdef.HarnessClaudeCode, agentdef.HarnessCodex} {
+	for _, h := range []string{agentdef.HarnessClaudeCode, agentdef.HarnessCodex, agentdef.HarnessAntigravity} {
 		if _, err := Probe(context.Background(), h); err == nil {
 			t.Errorf("%s: probed without a fake binary", h)
 		}
@@ -244,5 +244,38 @@ func TestProbeRefusesWithoutFakeBinary(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dir, name+".ran")); err == nil {
 			t.Errorf("%s on PATH ran", name)
 		}
+	}
+}
+
+func TestParseAntigravityUsage(t *testing.T) {
+	line := `{"event":"command_result","command":{"name":"usage","data":{"plan_name":"Pro","groups":[` +
+		`{"display_name":"Gemini","refresh_window_label":"5h","remaining_fraction":0.62,"reset_time":"2026-11-09T21:20:00Z"},` +
+		`{"display_name":"Claude / GPT","buckets":[{"label":"Weekly","remaining_percentage":25,"reset_time":"2026-11-12T08:00:00Z"}]}` +
+		`]}}}`
+	s := ParseAntigravityUsage(json.RawMessage(line), now)
+	if !s.Available || s.Harness != agentdef.HarnessAntigravity || s.Plan != "Pro" || len(s.Windows) != 2 {
+		t.Fatalf("snapshot = %+v", s)
+	}
+	if s.Windows[0].Kind != Session || s.Windows[0].Label != "Gemini" || int(s.Windows[0].UsedPercent+0.5) != 38 {
+		t.Fatalf("session window = %+v", s.Windows[0])
+	}
+	if s.Windows[1].Kind != Weekly || s.Windows[1].Label != "Claude / GPT · Weekly" || s.Windows[1].UsedPercent != 75 {
+		t.Fatalf("weekly window = %+v", s.Windows[1])
+	}
+	empty := ParseAntigravityUsage(json.RawMessage(`{"event":"command_result","command":{"name":"usage","data":{"groups":[]}}}`), now)
+	if empty.Available || len(empty.Windows) != 0 {
+		t.Fatalf("empty groups must not be available: %+v", empty)
+	}
+}
+
+func TestConverseAntigravity(t *testing.T) {
+	out := strings.NewReader(`{"event":"command_result","command":{"name":"usage","data":{"groups":[{"display_name":"Gemini","window":"5h","used_percentage":28,"reset_time":"2026-11-09T21:20:00Z"}]}}}` + "\n")
+	s, err := converseAntigravity(out, func() time.Time { return now })
+	if err != nil || !s.Available || len(s.Windows) != 1 || s.Windows[0].UsedPercent != 28 {
+		t.Fatalf("snapshot = %+v, err = %v", s, err)
+	}
+	errOut := strings.NewReader(`{"event":"result","result":{"status":"ERROR","error":"authentication failed or timed out"}}` + "\n")
+	if _, err := converseAntigravity(errOut, func() time.Time { return now }); err != ErrSignedOut {
+		t.Fatalf("err = %v, want ErrSignedOut", err)
 	}
 }

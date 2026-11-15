@@ -632,25 +632,62 @@ var (
 	// retryDelayRE is a Gemini google.rpc.RetryInfo as agy prints it:
 	// "Details: [map[@type:…RetryInfo retryDelay:41s]]".
 	retryDelayRE = regexp.MustCompile(`retryDelay["':=\s]+(\d+(?:\.\d+)?)s\b`)
+	// resetInRE matches relative cooldowns such as Antigravity's
+	// "quota will reset after 3h12m05s" or "retry in 45s".
+	resetInRE  = regexp.MustCompile(`(?i)(?:resets?(?:\s+(?:in|after))?|try\s+again\s+in|retry(?:\s+(?:in|after))?)\s+((?:\d+(?:\.\d+)?\s*(?:hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\s*)+)\b`)
+	resetDurRE = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?)\s*(hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)`)
+	resetISORE = regexp.MustCompile(`(?i)(?:resets?(?:\s+at)?|reset_time|resets_at)["':=\s]+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))`)
 )
+
+func parseLimitDuration(raw string) (time.Duration, bool) {
+	matches := resetDurRE.FindAllStringSubmatch(raw, -1)
+	if len(matches) == 0 {
+		return 0, false
+	}
+	var total time.Duration
+	for _, m := range matches {
+		n, err := strconv.ParseFloat(m[1], 64)
+		if err != nil || n < 0 {
+			return 0, false
+		}
+		var unit time.Duration
+		switch strings.ToLower(m[2])[0] {
+		case 'h':
+			unit = time.Hour
+		case 'm':
+			unit = time.Minute
+		case 's':
+			unit = time.Second
+		}
+		total += time.Duration(n * float64(unit))
+	}
+	return total, total > 0
+}
 
 // LimitReset reads when a usage limit lifts from the CLI's message, e.g.
 // Claude's "resets 9:20pm (America/Los_Angeles)", Codex's "try again at
-// 11:32 PM" or Gemini's "retryDelay:41s" (via Antigravity). It returns the
-// next such clock time strictly after now; a zone that is missing or unknown
-// falls back to now's location.
+// 11:32 PM", or Gemini/Antigravity's "retryDelay:41s", "reset after 3h12m",
+// or ISO timestamp. It returns the next such clock time strictly after now; a
+// zone that is missing or unknown falls back to now's location.
 func LimitReset(msg string, now time.Time) (time.Time, bool) {
+	if m := resetISORE.FindStringSubmatch(msg); m != nil {
+		if t, err := time.Parse(time.RFC3339Nano, m[1]); err == nil && t.After(now) {
+			return t, true
+		}
+	}
+	if d := retryDelayRE.FindStringSubmatch(msg); d != nil {
+		if secs, err := strconv.ParseFloat(d[1], 64); err == nil && secs > 0 {
+			return now.Add(time.Duration(secs * float64(time.Second))), true
+		}
+	}
+	if d := resetInRE.FindStringSubmatch(msg); d != nil {
+		if dur, ok := parseLimitDuration(d[1]); ok {
+			return now.Add(dur), true
+		}
+	}
 	m := limitResetRE.FindStringSubmatch(msg)
 	if m == nil {
-		d := retryDelayRE.FindStringSubmatch(msg)
-		if d == nil {
-			return time.Time{}, false
-		}
-		secs, err := strconv.ParseFloat(d[1], 64)
-		if err != nil || secs <= 0 {
-			return time.Time{}, false
-		}
-		return now.Add(time.Duration(secs * float64(time.Second))), true
+		return time.Time{}, false
 	}
 	hour, _ := strconv.Atoi(m[1])
 	min := 0

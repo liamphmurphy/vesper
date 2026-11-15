@@ -137,6 +137,17 @@ func TestSecretEnvDeliversPlanLogins(t *testing.T) {
 	if got := redact("leaked tok-refresh here", sensitiveEnv(env)); got != "leaked [redacted] here" {
 		t.Fatalf("redact = %q", got)
 	}
+	const claudeAuth = `{"claudeAiOauth":{"accessToken":"sk-ant-oat01-claude-access","refreshToken":"sk-ant-ort01-claude-refresh","expiresAt":4070908800000}}`
+	claudeFileEnv, err := SecretEnv(context.Background(), fakeRevealer{"harness:anthropic": claudeAuth}, ws, &project, plan[:1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claudeFileEnv[ClaudeAuthEnv] != claudeAuth || claudeFileEnv[ClaudeOAuthEnv] != "" || claudeFileEnv["ANTHROPIC_API_KEY"] != "" {
+		t.Fatalf("claude auth env %v", claudeFileEnv)
+	}
+	if got := redact("leaked sk-ant-oat01-claude-access and sk-ant-ort01-claude-refresh", sensitiveEnv(claudeFileEnv)); got != "leaked [redacted] and [redacted]" {
+		t.Fatalf("claude redact = %q", got)
+	}
 	keys, err := SecretEnv(context.Background(), fakeRevealer{"harness:anthropic": "sk-ant-api03-x", "harness:openai": "sk-proj-x"}, ws, nil, plan)
 	if err != nil || keys["ANTHROPIC_API_KEY"] != "sk-ant-api03-x" || keys["OPENAI_API_KEY"] != "sk-proj-x" || keys[ClaudeOAuthEnv] != "" {
 		t.Fatalf("api keys %v %v", keys, err)
