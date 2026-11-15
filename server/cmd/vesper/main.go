@@ -408,9 +408,9 @@ func runRunner(ctx context.Context, log *slog.Logger) error {
 		},
 		Pool: pool, Backend: backend, Secrets: secretStore,
 		Tracker: &tracker.Service{Pool: pool}, Blobs: blobs, Attachments: blobs, Log: log,
-		Workflows: workflows,
-		Designs:   &designs.Service{Pool: pool, Worker: &designs.Worker{URL: cfg.DesignWorkerURL, Token: cfg.DesignWorkerToken}, Blobs: blobs, Bucket: cfg.S3.ArtifactBucket},
-		Scheduled: &runs.Service{Pool: pool, Secrets: secretStore, Tracker: &tracker.Service{Pool: pool}, Artifacts: &artifacts.Service{Pool: pool, Blobs: blobs, Bucket: cfg.S3.ArtifactBucket}, RequireHarnessKey: rc.Backend == "docker", PlanModels: planModels(rc.Backend, pool), RolloverContextTokens: int64(cfg.RolloverContextTokens)},
+		Workflows:    workflows,
+		Designs:      &designs.Service{Pool: pool, Worker: &designs.Worker{URL: cfg.DesignWorkerURL, Token: cfg.DesignWorkerToken}, Blobs: blobs, Bucket: cfg.S3.ArtifactBucket},
+		Scheduled:    &runs.Service{Pool: pool, Secrets: secretStore, Tracker: &tracker.Service{Pool: pool}, Artifacts: &artifacts.Service{Pool: pool, Blobs: blobs, Bucket: cfg.S3.ArtifactBucket}, RequireHarnessKey: rc.Backend == "docker", PlanModels: planModels(rc.Backend, pool), RolloverContextTokens: int64(cfg.RolloverContextTokens)},
 		DriveBackups: driveBackupRunner(cfg, pool, box, fmt.Sprintf("%s-%d", host, os.Getpid()), log),
 		StoreSecret: func(ctx context.Context, ws, by uuid.UUID, name, value string) error {
 			_, err := secretStore.Set(ctx, ws, by, secrets.SetInput{Name: name, Value: value})
