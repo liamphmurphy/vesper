@@ -24,6 +24,8 @@ import { useProjectScope } from "@/components/shell/project-scope";
 import { STATUS_NAME } from "@/components/domain/meta";
 import { Button } from "@/components/ui/button";
 import { WorkSavedViews } from "./work-saved-views";
+import { ActivityOverview } from "./activity-overview";
+import { parseActivityFilter } from "@/lib/work-overview";
 import {
   TicketBrief,
   EpicBrief,
@@ -278,6 +280,8 @@ export function WorkScreen() {
     compact &&
     (params.get("list") === "show" || (!runId && !ticketKey && !epicId));
   const mobileBrief = compact && (showBrief || mobileList);
+  const activityFilter = parseActivityFilter(params.get("filter"), params.get("done"));
+  const showActivityOverview = view === "activity" && !compact && !showBrief;
   return (
     <div className="work-page" onClickCapture={intercept}>
       {!compact && <NavigatorPortal>{nav}</NavigatorPortal>}
@@ -290,6 +294,16 @@ export function WorkScreen() {
           <>
             {compact && (
               <Button onClick={() => go({ list: "show" })}>Browse work</Button>
+            )}
+            {!companion && !mobileList && runs.needs.length > 0 && (
+              <button
+                type="button"
+                onClick={() => go({ filter: "needs_you", context: null })}
+                className="hidden items-center gap-1.5 rounded-md border border-pill-human-bg/80 bg-pill-human-bg px-2 py-1 text-11 font-medium text-pill-human-fg hover:brightness-105 md:inline-flex"
+              >
+                <span aria-hidden className="size-1.5 rounded-full bg-state-human" />
+                Needs you · {runs.needs.length}
+              </button>
             )}
             {!companion && !mobileList && runId && (
               <WorkTopRunLinks id={runId} context={context} navigate={go} />
@@ -305,10 +319,23 @@ export function WorkScreen() {
           mobileList && "work-hidden",
         )}
       >
+        {view === "activity" && (
+          <div className={cx(!showActivityOverview ? "work-hidden" : "flex min-w-0 flex-1")}>
+            <ActivityOverview
+              project={project}
+              runs={runs.runs}
+              needs={runs.needs}
+              selectedRunId={runId}
+              filter={activityFilter}
+              onSelectRun={(id) => go({ run: id })}
+            />
+          </div>
+        )}
         <div
           className={cx(
             "work-run",
             companion && "work-run-companion",
+            showActivityOverview && "work-run-panel",
             (!showRun || mobileBrief) && "work-hidden",
           )}
         >
