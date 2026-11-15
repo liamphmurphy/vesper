@@ -218,11 +218,19 @@ func TestSaveChecksTheSecret(t *testing.T) {
 	if _, err := f.svc.Save(f.ctx, f.ws, f.user, cfg); err == nil || !strings.Contains(err.Error(), "changed since") {
 		t.Fatalf("stale save: %v", err)
 	}
-	// The full drive scope works too, and disabling clears the schedule.
+	// The full drive scope works too.
 	c := cfg
 	c.SecretID, c.Revision = &full.ID, b.Revision
 	if b, err = f.svc.Save(f.ctx, f.ws, f.user, c); err != nil || *b.SecretID != full.ID {
 		t.Fatalf("drive scope: %v", err)
+	}
+	// The person can still delete the secret an enabled backup uses; the
+	// backup then has none, and a run reports that.
+	if _, err := f.q.DeleteUserSecret(f.ctx, store.DeleteUserSecretParams{ID: full.ID, WorkspaceID: f.ws, UserID: f.user}); err != nil {
+		t.Fatalf("delete the secret an enabled backup uses: %v", err)
+	}
+	if b, err = f.svc.Get(f.ctx, f.ws); err != nil || !b.Enabled || b.SecretID != nil {
+		t.Fatalf("after deleting the enabled backup's secret: %+v, %v", b, err)
 	}
 	// A disabled backup may keep an OAuth secret that isn't signed in yet,
 	// but not one that isn't OAuth.

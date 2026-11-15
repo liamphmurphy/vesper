@@ -1,8 +1,10 @@
 -- +goose Up
 -- Scheduled export to Google Drive: one configuration per workspace. The
 -- archive is uploaded with a person's OAuth secret, so the row names its owner
--- and the secret; deleting either turns the backup off rather than losing the
--- rest of the settings.
+-- and the secret; deleting either leaves the backup without one rather than
+-- losing the rest of the settings. Saving an enabled backup requires a secret and a
+-- folder (internal/drivebackup); there is no CHECK for it, because it would
+-- stop a person deleting the secret. A run without one reports that instead.
 CREATE TABLE drive_backups (
   workspace_id uuid PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
   user_id      uuid REFERENCES users(id) ON DELETE SET NULL,
@@ -23,8 +25,7 @@ CREATE TABLE drive_backups (
   last_error   text NOT NULL DEFAULT '',
   revision     integer NOT NULL DEFAULT 1,
   created_at   timestamptz NOT NULL DEFAULT now(),
-  updated_at   timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT drive_backups_enabled_complete CHECK (NOT enabled OR (secret_id IS NOT NULL AND user_id IS NOT NULL AND folder_id <> ''))
+  updated_at   timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX drive_backups_due ON drive_backups (next_run_at) WHERE enabled;
 
