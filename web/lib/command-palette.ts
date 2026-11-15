@@ -573,4 +573,14 @@ export const SHORTCUTS: { section: string; items: { label: string; keys: string[
       { label: "Leave the text box, back to the list", keys: ["Esc"] },
     ],
   },
+  {
+    section: "Knowledge",
+    items: [
+      { label: "Go to page", keys: ["⌘/Ctrl", "O"] },
+      { label: "Quick capture", keys: ["⌘/Ctrl", "⌥", "N"] },
+      { label: "Today’s daily note", keys: ["⌘/Ctrl", "D"] },
+      { label: "Close active tab", keys: ["⌥", "W"] },
+      { label: "Close all tabs", keys: ["⌥", "⇧", "W"] },
+    ],
+  },
 ];
