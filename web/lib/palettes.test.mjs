@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { COLOR_KEYS, DEFAULT_APPEARANCE, PALETTES, contrast, paletteTokens, parseAppearance, resolvePalette } from "./palettes.ts";
 
-test("Dusk plus ten named palettes cover the complete token contract in both modes", () => {
-  assert.equal(PALETTES.length, 11);
-  assert.equal(new Set(PALETTES.map((p) => p.id)).size, 11);
+test("Neutral default, Dusk, and fifteen named palettes cover the complete token contract in both modes", () => {
+  assert.equal(PALETTES[0].id, "neutral");
+  assert.equal(DEFAULT_APPEARANCE.palette, "neutral");
+  assert.equal(PALETTES.length, 17);
+  assert.equal(new Set(PALETTES.map((p) => p.id)).size, 17);
   const keys = Object.keys(PALETTES[0].dark).sort();
   for (const p of PALETTES) for (const mode of ["light", "dark"]) {
     const t = paletteTokens({ ...DEFAULT_APPEARANCE, palette: p.id }, mode);
@@ -17,7 +19,7 @@ test("Dusk plus ten named palettes cover the complete token contract in both mod
 });
 
 test("preset text and buttons meet small text contrast on their surfaces", () => {
-  for (const p of PALETTES.slice(1)) for (const mode of ["light", "dark"]) {
+  for (const p of PALETTES.filter((p) => p.id !== "dusk")) for (const mode of ["light", "dark"]) {
     const t = p[mode];
     for (const fg of ["text", "text-2", "text-secondary", "text-tertiary", "state-human", "state-blocked", "state-done"])
       for (const bg of ["bg", "surface", "surface-raised"])
@@ -30,10 +32,10 @@ test("preset text and buttons meet small text contrast on their surfaces", () =>
 test("corrupt, oversized, unknown and CSS injection preferences fall back safely", () => {
   for (const raw of [null, "{", "null", "false", '{"version":2}', "a".repeat(40001)]) assert.deepEqual(parseAppearance(raw), DEFAULT_APPEARANCE);
   const settings = parseAppearance(JSON.stringify({ version: 1, palette: "custom", custom: { base: "unknown", dark: { bg: "red; display:none", text: "#ABCDEF", "unknown-token": "#123456", accent: "url(evil)" }, light: null } }));
-  assert.equal(settings.custom.base, "dusk");
+  assert.equal(settings.custom.base, DEFAULT_APPEARANCE.palette);
   assert.deepEqual(settings.custom.dark, { text: "#abcdef" });
   assert.deepEqual(settings.custom.light, {});
-  assert.equal(parseAppearance('{"version":1,"palette":"unknown"}').palette, "dusk");
+  assert.equal(parseAppearance('{"version":1,"palette":"unknown"}').palette, DEFAULT_APPEARANCE.palette);
 });
 
 test("harness activity is on for existing preferences and off only for an explicit false", () => {

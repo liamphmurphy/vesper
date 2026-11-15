@@ -89,7 +89,7 @@ export function AppearanceSection() {
         {!custom && <Button onClick={() => update({ ...settings, palette: "custom", custom: { base: settings.palette, dark: {}, light: {} } })}>Customize this palette</Button>}
         <Button variant="outline" onClick={exportSettings}>Export palette</Button>
         <Button variant="outline" onClick={() => upload.current?.click()}>Import palette</Button>
-        <Button variant="ghost" onClick={() => { update({ ...DEFAULT_APPEARANCE, showHarnessActivity: settings.showHarnessActivity, textSize: settings.textSize }); setMessage("Palette reset to Dusk."); }}>Reset palette</Button>
+        <Button variant="ghost" onClick={() => { update({ ...DEFAULT_APPEARANCE, showHarnessActivity: settings.showHarnessActivity, textSize: settings.textSize }); setMessage("Palette reset to Neutral."); }}>Reset palette</Button>
         <input ref={upload} aria-label="Palette JSON file" type="file" accept=".json,application/json" className="sr-only" onChange={async (e) => {
           const file = e.target.files?.[0];
           e.target.value = "";

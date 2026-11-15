@@ -92,12 +92,15 @@ function tokens(seed: Seed, mode: ColorMode): Tokens {
   return t;
 }
 
-function preset(id: string, name: string, description: string, source: string, dark: Seed, light: Seed): Palette {
-  return { id, name, description, source, dark: tokens(dark, "dark"), light: tokens(light, "light") };
+function preset(id: string, name: string, description: string, source: string | undefined, dark: Seed, light: Seed): Palette {
+  return { id, name, description, ...(source ? { source } : {}), dark: tokens(dark, "dark"), light: tokens(light, "light") };
 }
 
 // Adaptations for Vesper: secondary surfaces and contrast are derived, not exact editor ports.
 export const PALETTES: readonly Palette[] = [
+  preset("neutral", "Neutral", "Balanced grays · Vesper default", undefined,
+    ["#18181b", "#222226", "#f4f4f5", "#9b8cff", "#60a5fa", "#fb923c", "#4ade80", "#facc15", "#f472b6", "#22d3ee", "#a78bfa", "#f87171"],
+    ["#f5f5f7", "#ffffff", "#18181b", "#5b4bd6", "#2563eb", "#ea580c", "#16a34a", "#ca8a04", "#db2777", "#0891b2", "#7c3aed", "#dc2626"]),
   { id: "dusk", name: "Dusk", description: "Vesper’s original violet", ...DUSK },
   preset("catppuccin", "Catppuccin", "Soft pastel · Mocha / Latte", "https://catppuccin.com/palette/?flavor=latte",
     ["#1e1e2e", "#313244", "#cdd6f4", "#cba6f7", "#89b4fa", "#fab387", "#a6e3a1", "#f9e2af", "#f5c2e7", "#94e2d5", "#cba6f7", "#f38ba8"],
@@ -129,6 +132,21 @@ export const PALETTES: readonly Palette[] = [
   preset("flexoki", "Flexoki", "Printing inks on warm paper", "https://github.com/kepano/flexoki",
     ["#100f0f", "#1c1b1a", "#cecdc3", "#da702c", "#4385be", "#da702c", "#879a39", "#d0a215", "#ce5d97", "#3aa99f", "#8b7ec8", "#d14d41"],
     ["#fffcf0", "#f2f0e5", "#100f0f", "#bc5215", "#205ea6", "#bc5215", "#66800b", "#ad8301", "#a02f6f", "#24837b", "#5e409d", "#af3029"]),
+  preset("github", "GitHub", "Crisp neutral · Dark / Light Default", "https://primer.style/primitives",
+    ["#0d1117", "#161b22", "#e6edf3", "#58a6ff", "#58a6ff", "#f0883e", "#3fb950", "#d29922", "#f778ba", "#39c5cf", "#bc8cff", "#f85149"],
+    ["#f6f8fa", "#ffffff", "#1f2328", "#0969da", "#0969da", "#bc4c00", "#1a7f37", "#9a6700", "#bf3989", "#1b7c83", "#8250df", "#cf222e"]),
+  preset("one", "One", "Balanced slate · One Dark / Light", "https://github.com/atom/one-dark-ui",
+    ["#21252b", "#282c34", "#abb2bf", "#61afef", "#61afef", "#d19a66", "#98c379", "#e5c07b", "#c678dd", "#56b6c2", "#c678dd", "#e06c75"],
+    ["#f0f0f3", "#ffffff", "#383a42", "#4078f2", "#4078f2", "#c18401", "#50a14f", "#986801", "#a626a4", "#0184bc", "#a626a4", "#e45649"]),
+  preset("kanagawa", "Kanagawa", "Ink and parchment · Wave / Lotus", "https://github.com/rebelot/kanagawa.nvim",
+    ["#1f1f28", "#2a2a37", "#dcd7ba", "#7e9cd8", "#7e9cd8", "#ffa066", "#76946a", "#dca561", "#d27e99", "#7aa89f", "#957fb8", "#e46876"],
+    ["#f2ecbc", "#f7f3d4", "#545464", "#4d699b", "#4d699b", "#cc6d00", "#6f894e", "#77713f", "#b35b79", "#597b75", "#624c83", "#c84053"]),
+  preset("monokai-pro", "Monokai Pro", "Warm charcoal and vivid accents", "https://monokai.pro/",
+    ["#2d2a2e", "#383539", "#fcfcfa", "#ffd866", "#78dce8", "#fc9867", "#a9dc76", "#ffd866", "#ff6188", "#78dce8", "#ab9df2", "#ff6188"],
+    ["#faf4f2", "#ffffff", "#29242a", "#e16032", "#1c8ca8", "#e16032", "#569c31", "#b58900", "#d6336c", "#1c8ca8", "#7a5af5", "#d6336c"]),
+  preset("high-contrast", "High Contrast", "Maximum contrast · Dark / Light", undefined,
+    ["#000000", "#141416", "#ffffff", "#6cb6ff", "#6cb6ff", "#ffb757", "#56d364", "#f2cc60", "#ff9bce", "#76e3ea", "#d2a8ff", "#ff7b72"],
+    ["#f2f2f5", "#ffffff", "#000000", "#0055cc", "#0055cc", "#b34700", "#116329", "#7a5200", "#9e1c64", "#006875", "#5e2ca5", "#b91c1c"]),
 ];
 
 export const COLOR_KEYS = Object.keys(DUSK.dark).filter((key) => /^#[\da-f]{6}(?:[\da-f]{2})?$/i.test((DUSK.dark as Tokens)[key]));
@@ -136,7 +154,7 @@ export const COLOR_KEYS = Object.keys(DUSK.dark).filter((key) => /^#[\da-f]{6}(?
 export const TEXT_SIZES = ["small", "default", "large", "larger"] as const;
 export type TextSize = (typeof TEXT_SIZES)[number];
 export type Appearance = { version: 1; palette: string; custom: { base: string; dark: Tokens; light: Tokens }; showHarnessActivity?: boolean; textSize?: TextSize };
-export const DEFAULT_APPEARANCE: Appearance = { version: 1, palette: "dusk", custom: { base: "dusk", dark: {}, light: {} }, showHarnessActivity: true, textSize: "default" };
+export const DEFAULT_APPEARANCE: Appearance = { version: 1, palette: "neutral", custom: { base: "neutral", dark: {}, light: {} }, showHarnessActivity: true, textSize: "default" };
 export const textSizeOf = (value: unknown): TextSize => TEXT_SIZES.includes(value as TextSize) ? value as TextSize : "default";
 
 /** Only known color tokens and opaque hex enter inline CSS, including imported JSON. */
@@ -150,7 +168,7 @@ export function parseAppearance(raw: string | null): Appearance {
       const value = input && typeof input === "object" ? (input as Tokens)[key] : undefined;
       return typeof value === "string" && /^#[\da-f]{6}$/i.test(value) ? [[key, value.toLowerCase()]] : [];
     }));
-    return { version: 1, palette: data.palette === "custom" || known(data.palette) ? data.palette : "dusk", custom: { base: known(data.custom?.base) ? data.custom.base : "dusk", dark: clean(data.custom?.dark), light: clean(data.custom?.light) }, showHarnessActivity: data.showHarnessActivity !== false, textSize: textSizeOf(data.textSize) };
+    return { version: 1, palette: data.palette === "custom" || known(data.palette) ? data.palette : DEFAULT_APPEARANCE.palette, custom: { base: known(data.custom?.base) ? data.custom.base : DEFAULT_APPEARANCE.palette, dark: clean(data.custom?.dark), light: clean(data.custom?.light) }, showHarnessActivity: data.showHarnessActivity !== false, textSize: textSizeOf(data.textSize) };
   } catch { return DEFAULT_APPEARANCE; }
 }
 
