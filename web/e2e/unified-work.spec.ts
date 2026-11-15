@@ -302,10 +302,12 @@ test("Work keeps a single harness footer in the right rail, contextual Chat dock
   await expect(workNav).toBeVisible();
   await expect(workNav.getByRole("link", { name: "Epics", exact: true })).toHaveAttribute("aria-current", "true");
 
-  // Selecting an epic in the Work sidebar opens its details in the right companion.
+  // Selecting an epic in the Work sidebar opens its details in the right companion dock (alongside Chat).
   await workNav.getByRole("button", { name: /Kanban board/ }).click();
   const context = page.getByRole("region", { name: "Work context" });
   await expect(context.getByRole("heading", { name: "Kanban board", exact: true })).toBeVisible();
-  await context.getByRole("button", { name: "Close context" }).click();
+  const rail = page.getByRole("navigation", { name: "Panel rail" });
+  await expect(rail.getByRole("tab", { name: "Chat" })).toBeVisible();
+  await rail.getByRole("button", { name: "Collapse panel" }).click();
   await expect(context).toHaveCount(0);
 });
