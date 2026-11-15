@@ -29,7 +29,7 @@ WITH items AS (
  SELECT 'blocked:'||r.id,'blocked',t.title,coalesce(r.outcome,'Run needs a person'),'/runs/'||r.id,p.key,t.key,r.updated_at,false,r.agent_id,r.id,NULL
  FROM runs r JOIN tickets t ON t.id=r.ticket_id JOIN projects p ON p.id=t.project_id
  -- Ticket runs only: a delegated child's result goes to its parent, and Retry refuses children.
- WHERE r.workspace_id=sqlc.arg(workspace_id) AND t.status NOT IN ('done', 'canceled') AND r.state IN ('blocked','failed') AND r.parent_run_id IS NULL
+ WHERE r.workspace_id=sqlc.arg(workspace_id) AND t.status NOT IN ('done', 'canceled') AND r.state IN ('blocked','failed') AND r.parent_run_id IS NULL AND r.ticket_id IS NOT NULL
  AND NOT EXISTS (SELECT 1 FROM runs newer WHERE newer.ticket_id=r.ticket_id AND newer.parent_run_id IS NULL AND newer.started_at>r.started_at)
  UNION ALL
  -- await_human: the summary is the agent's question.
@@ -37,22 +37,24 @@ WITH items AS (
  coalesce((SELECT nullif(trim(e.payload->>'reason'),'') FROM activity_events e WHERE e.ticket_id=t.id AND e.verb='waiting_for_human' AND e.payload->>'run_id'=r.id::text ORDER BY e.created_at DESC LIMIT 1),'The agent is waiting for a reply'),
  '/runs/'||r.id,p.key,t.key,r.updated_at,false,r.agent_id,r.id,NULL
  FROM runs r JOIN tickets t ON t.id=r.ticket_id JOIN projects p ON p.id=t.project_id
- WHERE r.workspace_id=sqlc.arg(workspace_id) AND t.status NOT IN ('done', 'canceled') AND r.state='waiting' AND r.wait_reason='human_reply'
+ WHERE r.workspace_id=sqlc.arg(workspace_id) AND t.status NOT IN ('done', 'canceled') AND r.state='waiting' AND r.wait_reason='human_reply' AND r.ticket_id IS NOT NULL
  UNION ALL
  -- Stalled: running with no event for 30 minutes. created_at is the last activity.
  SELECT 'stalled:'||r.id,'stalled',t.title,'Running, no activity since the last event','/runs/'||r.id,p.key,t.key,
- coalesce((SELECT e.at FROM run_events e WHERE e.run_id=r.id ORDER BY e.seq DESC LIMIT 1),r.started_at),false,r.agent_id,r.id,NULL
+ coalesce(le.at,r.started_at),false,r.agent_id,r.id,NULL
  FROM runs r JOIN tickets t ON t.id=r.ticket_id JOIN projects p ON p.id=t.project_id
- WHERE r.workspace_id=sqlc.arg(workspace_id) AND r.state='running'
- AND coalesce((SELECT e.at FROM run_events e WHERE e.run_id=r.id ORDER BY e.seq DESC LIMIT 1),r.started_at) < now()-interval '30 minutes'
+ LEFT JOIN LATERAL (SELECT e.at FROM run_events e WHERE e.run_id=r.id ORDER BY e.seq DESC LIMIT 1) le ON true
+ WHERE r.workspace_id=sqlc.arg(workspace_id) AND r.state='running' AND r.ticket_id IS NOT NULL
+ AND coalesce(le.at,r.started_at) < now()-interval '30 minutes'
  UNION ALL
  -- Up to 4000 characters: ListInbox reads them for a question, then shortens the summary.
  SELECT 'mention:'||c.id,'mention',t.title,left(c.body_md,4000),'/tickets/'||t.key,p.key,t.key,c.created_at,false,
  CASE WHEN c.author_type='agent' THEN c.author_id END,NULL,NULL
  FROM comments c JOIN tickets t ON t.id=c.ticket_id JOIN projects p ON p.id=t.project_id JOIN users u ON u.id=sqlc.arg(user_id)
  WHERE c.workspace_id=sqlc.arg(workspace_id) AND NOT (c.author_type='user' AND c.author_id=u.id)
+ AND strpos(c.body_md, '@') > 0
  AND (lower(c.body_md) ~ ('@'||regexp_replace(lower(split_part(u.email,'@',1)), '([^a-z0-9_])', '\\\1','g')||'\y')
- OR strpos(lower(c.body_md),'@'||lower(u.name))>0)
+ OR lower(c.body_md) LIKE CASE WHEN u.name = '' THEN 'A' ELSE '%@'||regexp_replace(lower(u.name), '([%_\\])', '\\\1', 'g')||'%' END ESCAPE '\')
  UNION ALL
  -- A pull request merged in the last two weeks: news for the Updates tab, nothing to act on.
  SELECT 'merged:'||e.id,'merged',t.title,'Pull request '||coalesce('#'||(e.payload->>'number')||' ','')||'merged','/tickets/'||t.key,p.key,t.key,e.created_at,false,

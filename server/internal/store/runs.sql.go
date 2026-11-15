@@ -445,10 +445,10 @@ func (q *Queries) CacheUsageForRuns(ctx context.Context, runIds []uuid.UUID) ([]
 }
 
 const chatSessionOfRun = `-- name: ChatSessionOfRun :one
-SELECT id, workspace_id, project_id, title, created_by, agent_id, harness, model, current_run_id, state, archived, revision, created_at, updated_at, last_message_at, persona_id, repo_url, effort, speaker_persona_id, queued_persona_ids, relay_turns, relay_limit, interrupt_message_id, last_read_seq, hidden, connector_ids, space_id, work_branches, commit_email, secret_ids, temporary, pending_repo_url, parent_chat_id, auto_model, anchor_message_id, second_opinion FROM (
-  SELECT id, workspace_id, project_id, title, created_by, agent_id, harness, model, current_run_id, state, archived, revision, created_at, updated_at, last_message_at, persona_id, repo_url, effort, speaker_persona_id, queued_persona_ids, relay_turns, relay_limit, interrupt_message_id, last_read_seq, hidden, connector_ids, space_id, work_branches, commit_email, secret_ids, temporary, pending_repo_url, parent_chat_id, auto_model, anchor_message_id, second_opinion FROM chat_sessions WHERE current_run_id = $1::uuid
+SELECT id, workspace_id, project_id, title, created_by, agent_id, harness, model, current_run_id, state, archived, revision, created_at, updated_at, last_message_at, persona_id, repo_url, effort, speaker_persona_id, queued_persona_ids, relay_turns, relay_limit, interrupt_message_id, last_read_seq, hidden, connector_ids, space_id, work_branches, commit_email, secret_ids, temporary, pending_repo_url, parent_chat_id, auto_model, anchor_message_id, second_opinion, last_assistant_seq FROM (
+  SELECT id, workspace_id, project_id, title, created_by, agent_id, harness, model, current_run_id, state, archived, revision, created_at, updated_at, last_message_at, persona_id, repo_url, effort, speaker_persona_id, queued_persona_ids, relay_turns, relay_limit, interrupt_message_id, last_read_seq, hidden, connector_ids, space_id, work_branches, commit_email, secret_ids, temporary, pending_repo_url, parent_chat_id, auto_model, anchor_message_id, second_opinion, last_assistant_seq FROM chat_sessions WHERE current_run_id = $1::uuid
   UNION ALL
-  SELECT s.id, s.workspace_id, s.project_id, s.title, s.created_by, s.agent_id, s.harness, s.model, s.current_run_id, s.state, s.archived, s.revision, s.created_at, s.updated_at, s.last_message_at, s.persona_id, s.repo_url, s.effort, s.speaker_persona_id, s.queued_persona_ids, s.relay_turns, s.relay_limit, s.interrupt_message_id, s.last_read_seq, s.hidden, s.connector_ids, s.space_id, s.work_branches, s.commit_email, s.secret_ids, s.temporary, s.pending_repo_url, s.parent_chat_id, s.auto_model, s.anchor_message_id, s.second_opinion FROM chat_messages m JOIN chat_sessions s ON s.id = m.session_id WHERE m.run_id = $1::uuid
+  SELECT s.id, s.workspace_id, s.project_id, s.title, s.created_by, s.agent_id, s.harness, s.model, s.current_run_id, s.state, s.archived, s.revision, s.created_at, s.updated_at, s.last_message_at, s.persona_id, s.repo_url, s.effort, s.speaker_persona_id, s.queued_persona_ids, s.relay_turns, s.relay_limit, s.interrupt_message_id, s.last_read_seq, s.hidden, s.connector_ids, s.space_id, s.work_branches, s.commit_email, s.secret_ids, s.temporary, s.pending_repo_url, s.parent_chat_id, s.auto_model, s.anchor_message_id, s.second_opinion, s.last_assistant_seq FROM chat_messages m JOIN chat_sessions s ON s.id = m.session_id WHERE m.run_id = $1::uuid
 ) matched
 LIMIT 1
 `
@@ -494,6 +494,7 @@ func (q *Queries) ChatSessionOfRun(ctx context.Context, runID uuid.UUID) (ChatSe
 		&i.AutoModel,
 		&i.AnchorMessageID,
 		&i.SecondOpinion,
+		&i.LastAssistantSeq,
 	)
 	return i, err
 }

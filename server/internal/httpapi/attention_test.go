@@ -375,3 +375,101 @@ func TestInboxQuestionsAndStalledRuns(t *testing.T) {
 		t.Fatalf("parent failure hidden by its child: %+v", failed)
 	}
 }
+
+func TestInboxMentionsEscapedNameAndCommentIndexes(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	if _, err := seed.Run(ctx, pool, seed.Options{Demo: true, Artifacts: &artifacts.Service{Pool: pool}}); err != nil {
+		t.Fatal(err)
+	}
+	q := store.New(pool)
+	u, err := q.GetLocalUser(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Give the user a display name containing SQL LIKE wildcards (% and _) to verify
+	// LIKE pattern escaping matches only literal mentions.
+	if _, err := pool.Exec(ctx, `UPDATE users SET name = 'Sam_100% Real' WHERE id = $1`, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	ticket, err := q.GetTicketByKey(ctx, store.GetTicketByKeyParams{WorkspaceID: u.WorkspaceID, Key: "PAY-214"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	atlas, err := q.GetAgentByHandle(ctx, store.GetAgentByHandleParams{WorkspaceID: u.WorkspaceID, Handle: "atlas"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var exactID, wildcardFalseID, noAtID string
+	if err := pool.QueryRow(ctx, `INSERT INTO comments(workspace_id,ticket_id,author_type,author_id,body_md) VALUES($1,$2,'agent',$3,'Hey @Sam_100% Real, check this?') RETURNING 'mention:'||id`,
+		u.WorkspaceID, ticket.ID, atlas.ID).Scan(&exactID); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `INSERT INTO comments(workspace_id,ticket_id,author_type,author_id,body_md) VALUES($1,$2,'agent',$3,'Hey @SamX100anything Real, ignore') RETURNING 'mention:'||id`,
+		u.WorkspaceID, ticket.ID, atlas.ID).Scan(&wildcardFalseID); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `INSERT INTO comments(workspace_id,ticket_id,author_type,author_id,body_md) VALUES($1,$2,'agent',$3,'Sam_100% Real without at-sign') RETURNING 'mention:'||id`,
+		u.WorkspaceID, ticket.ID, atlas.ID).Scan(&noAtID); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := &Server{AnonymousAPI: true, Pool: pool, Q: q, Tracker: &tracker.Service{Pool: pool}, Runs: &runs.Service{Pool: pool}}
+	res, err := srv.ListInbox(auth.WithUser(ctx, u), api.ListInboxRequestObject{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]api.InboxItem{}
+	for _, item := range res.(api.ListInbox200JSONResponse).Items {
+		byID[item.Id] = item
+	}
+	if _, ok := byID[exactID]; !ok {
+		t.Fatalf("literal mention %s missing from ListInbox", exactID)
+	}
+	if _, ok := byID[wildcardFalseID]; ok {
+		t.Fatalf("wildcard-like comment %s falsely matched escaped name", wildcardFalseID)
+	}
+	if _, ok := byID[noAtID]; ok {
+		t.Fatalf("comment without @ %s falsely matched as mention", noAtID)
+	}
+
+	// Verify Postgres query planner uses comments_workspace_at_idx or comments_at_trgm_idx
+	// on the mention filter when seqscan is disabled.
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SET LOCAL enable_seqscan = off`); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := tx.Query(ctx, `
+		EXPLAIN (FORMAT TEXT)
+		SELECT 'mention:'||c.id
+		FROM comments c JOIN tickets t ON t.id=c.ticket_id JOIN projects p ON p.id=t.project_id JOIN users u ON u.id=$1
+		WHERE c.workspace_id=$2 AND NOT (c.author_type='user' AND c.author_id=u.id)
+		AND strpos(c.body_md, '@') > 0
+		AND (lower(c.body_md) ~ ('@'||regexp_replace(lower(split_part(u.email,'@',1)), '([^a-z0-9_])', '\\\1','g')||'\y')
+		OR lower(c.body_md) LIKE CASE WHEN u.name = '' THEN 'A' ELSE '%@'||regexp_replace(lower(u.name), '([%_\\])', '\\\1', 'g')||'%' END ESCAPE '\')`,
+		u.ID, u.WorkspaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var planLines []string
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			t.Fatal(err)
+		}
+		planLines = append(planLines, line)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	plan := strings.Join(planLines, "\n")
+	if !strings.Contains(plan, "comments_workspace_at_idx") && !strings.Contains(plan, "comments_at_trgm_idx") {
+		t.Fatalf("expected comments_workspace_at_idx or comments_at_trgm_idx in EXPLAIN plan, got:\n%s", plan)
+	}
+}

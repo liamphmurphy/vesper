@@ -385,6 +385,7 @@ type ChatSession struct {
 	AutoModel          bool
 	AnchorMessageID    *uuid.UUID
 	SecondOpinion      bool
+	LastAssistantSeq   int64
 }
 
 type ChatSpace struct {

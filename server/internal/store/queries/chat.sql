@@ -388,6 +388,21 @@ WHERE c.id = sqlc.arg(id) AND c.last_read_seq < least(sqlc.arg(seq)::bigint, m.t
 
 -- name: PersonaDockChats :many
 -- A person's chats with live or unread activity, newest first.
+WITH candidates AS (
+  SELECT c.id FROM chat_sessions c
+  WHERE c.workspace_id = $1 AND c.created_by = $2 AND NOT c.archived AND NOT c.hidden
+    AND (c.state = 'running' OR c.last_assistant_seq > c.last_read_seq)
+  UNION
+  SELECT pp.chat_id AS id FROM persona_proposals pp
+  WHERE pp.state = 'pending'
+  UNION
+  SELECT tc.chat_id AS id FROM ticket_change_requests tc
+  WHERE tc.state = 'pending'
+  UNION
+  SELECT ctr.chat_id AS id FROM runs r
+  JOIN chat_ticket_runs ctr ON ctr.run_id = r.id
+  WHERE r.workspace_id = $1 AND r.state = 'waiting' AND r.wait_reason IN ('human_reply', 'approval')
+)
 SELECT c.id, c.title, c.state, c.persona_id, c.speaker_persona_id, c.space_id,
   coalesce(c.last_message_at, c.created_at)::timestamptz AS last_activity_at,
   -- When the running turn began; a turn with no recorded start counts as started when the chat last moved.
@@ -395,7 +410,8 @@ SELECT c.id, c.title, c.state, c.persona_id, c.speaker_persona_id, c.space_id,
     c.last_message_at, c.created_at)::timestamptz AS turn_started_at,
   coalesce((SELECT r.harness FROM runs r WHERE r.id = c.current_run_id), c.harness)::text AS harness,
   u.unread, p.waiting_approval, l.persona_id AS last_persona_id, coalesce(l.body_md, '')::text AS last_body, coalesce(l.seq, 0)::bigint AS last_seq
-FROM chat_sessions c
+FROM candidates cand
+JOIN chat_sessions c ON c.id = cand.id
 CROSS JOIN LATERAL (SELECT count(*)::int AS unread FROM chat_messages m WHERE m.session_id = c.id AND m.role = 'assistant' AND m.seq > c.last_read_seq) u
 -- waiting_approval: a persona or ticket change proposal to decide, or a run this chat started waiting on the person.
 CROSS JOIN LATERAL (SELECT coalesce(EXISTS(SELECT 1 FROM persona_proposals pp WHERE pp.chat_id = c.id AND pp.state = 'pending')
