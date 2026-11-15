@@ -72,6 +72,10 @@ type credential struct {
 	AccessToken  string    `json:"access_token,omitempty"`
 	RefreshToken string    `json:"refresh_token,omitempty"`
 	ExpiresAt    time.Time `json:"expires_at,omitzero"`
+	// Granted is the scope the provider says it granted, when it says. A
+	// person may untick scopes on the consent screen, so it can be narrower
+	// than the scopes asked for.
+	Granted []string `json:"granted,omitempty"`
 }
 
 // endpointURL accepts https anywhere and plain http only on this machine, as
@@ -245,6 +249,7 @@ func (s *Service) tokenRequest(ctx context.Context, st OAuthSettings, clientSecr
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 		ExpiresIn    int64  `json:"expires_in"`
+		Scope        string `json:"scope"`
 		Error        string `json:"error"`
 	}
 	decodeErr := json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&body)
@@ -255,6 +260,9 @@ func (s *Service) tokenRequest(ctx context.Context, st OAuthSettings, clientSecr
 		return c, errors.New("the sign-in provider didn't issue a token")
 	}
 	c = credential{AccessToken: body.AccessToken, RefreshToken: body.RefreshToken}
+	if body.Scope != "" {
+		c.Granted = NormalizeScopes([]string{body.Scope})
+	}
 	if body.ExpiresIn > 0 {
 		c.ExpiresAt = s.now().Add(time.Duration(body.ExpiresIn) * time.Second)
 	}
@@ -364,6 +372,10 @@ func (s *Service) Value(ctx context.Context, sec store.UserSecret) (string, erro
 	if next.RefreshToken == "" {
 		next.RefreshToken = c.RefreshToken
 	}
+	if len(next.Granted) == 0 {
+		// A refresh that doesn't name its scope keeps the grant's.
+		next.Granted = c.Granted
+	}
 	nonce, ct, err := s.seal(sec, next)
 	if err != nil {
 		return "", err
@@ -383,4 +395,38 @@ func (s *Service) signInLapsed(ctx context.Context, sec store.UserSecret, why st
 
 func notSignedIn(sec store.UserSecret) error {
 	return blocked("%s isn't signed in yet. Ask the person to sign in from Customization › Secrets.", sec.Handle)
+}
+
+// RequireScope reports, in words the person can act on, why an OAuth secret
+// can't be used for something that needs one of anyOf: it isn't an OAuth
+// secret, it isn't signed in, its grant lapsed, or it wasn't granted any of
+// those scopes. It checks the scope the provider granted when it said, and
+// otherwise the scopes the secret asks for. It sends nothing.
+func (s *Service) RequireScope(sec store.UserSecret, anyOf ...string) error {
+	if sec.Kind != KindOAuth {
+		return apperr.Conflict("%s isn't an OAuth secret. Add one that signs in with OAuth in Customization › Secrets.", sec.Handle)
+	}
+	if sec.SignedInAt == nil {
+		return apperr.Conflict("%s isn't signed in yet. Sign in from Customization › Secrets.", sec.Handle)
+	}
+	if sec.OauthError != "" {
+		return apperr.Conflict("%s needs signing in again (%s). Sign in from Customization › Secrets.", sec.Handle, sec.OauthError)
+	}
+	scopes := Settings(sec).Scopes
+	c, err := s.unseal(sec)
+	if err != nil {
+		return err
+	}
+	if len(c.Granted) > 0 {
+		scopes = c.Granted
+	}
+	if slices.ContainsFunc(anyOf, func(want string) bool { return slices.Contains(scopes, want) }) {
+		return nil
+	}
+	has := "no scopes"
+	if len(scopes) > 0 {
+		has = strings.Join(scopes, " ")
+	}
+	return apperr.Conflict("%s doesn't have the access this needs: it has %s. Add %s to its scopes in Customization › Secrets and sign in again.",
+		sec.Handle, has, strings.Join(anyOf, " or "))
 }

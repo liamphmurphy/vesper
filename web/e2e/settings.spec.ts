@@ -215,6 +215,80 @@ test("Backup & move exports everything as a download", async ({ page }) => {
   expect(hits).toBe(1);
 });
 
+test("Backup & move schedules a Google Drive backup and exports now", async ({ page }) => {
+  await installSettingsApi(page);
+  const oauth = (scopes: string[]) => ({ authorize_url: "https://accounts.google.com/o/oauth2/v2/auth", token_url: "https://oauth2.googleapis.com/token", client_id: "c", scopes, has_client_secret: true, signed_in_at: at, error: "" });
+  const apiSecret = (id: string, name: string, kind: "oauth" | "static", scopes: string[] = []) => ({
+    id, name, handle: name, kind, ...(kind === "oauth" ? { oauth: oauth(scopes) } : {}), placement: "bearer", placement_key: "", allowed_hosts: ["www.googleapis.com"],
+    read_policy: "allow", write_policy: "allow", persona_ids: [], revision: 1, created_at: at, updated_at: at,
+  });
+  await page.route("**/api/v1/api-secrets", (route) =>
+    route.fulfill({ json: { key_configured: true, oauth_redirect_uri: "https://vesper.example/cb", secrets: [
+      apiSecret("11111111-1111-4111-8111-111111111111", "google-drive", "oauth", ["https://www.googleapis.com/auth/drive.file"]),
+      apiSecret("22222222-2222-4222-8222-222222222222", "gmail", "oauth", ["https://www.googleapis.com/auth/gmail.readonly"]),
+      apiSecret("33333333-3333-4333-8333-333333333333", "stripe", "static"),
+    ] } }),
+  );
+  let backup: Record<string, unknown> = { enabled: false, secret_id: null, folder_id: "", folder_name: "", at_time: "03:00", timezone: "", retention: 7, revision: 0, running: false, last_status: "", last_error: "" };
+  const puts: Record<string, unknown>[] = [];
+  let runs = 0;
+  let polls = 0;
+  await page.route("**/api/v1/backups/drive", async (route) => {
+    if (route.request().method() === "PUT") {
+      const body = route.request().postDataJSON() as Record<string, unknown>;
+      puts.push(body);
+      backup = { ...backup, ...body, revision: (body.revision as number) + 1, next_run_at: "2026-11-16T03:00:00Z" };
+      return route.fulfill({ json: backup });
+    }
+    // The run finishes (and fails) on the second poll after it started.
+    if (backup.running && ++polls >= 2) {
+      backup = { ...backup, running: false, running_since: null, last_run_at: new Date().toISOString(), last_status: "failed", last_error: "Google refused the upload: the folder doesn't exist or this sign-in can't write to it." };
+    }
+    return route.fulfill({ json: backup });
+  });
+  await page.route("**/api/v1/backups/drive/run", (route) => {
+    runs++;
+    backup = { ...backup, running: true, running_since: new Date().toISOString() };
+    return route.fulfill({ status: 202, json: backup });
+  });
+
+  await page.goto("/settings#backup");
+  const section = page.locator("#backup");
+  await expect(section.getByRole("heading", { name: "Back up to Google Drive" })).toBeVisible();
+  await expect(section.getByRole("status", { name: "Drive backup status" })).toContainText("No backup yet");
+  const exportNow = section.getByRole("button", { name: "Export to Google Drive now" });
+  await expect(exportNow).toBeDisabled();
+
+  // Only OAuth secrets are offered, and one without Drive scope says why.
+  const picker = section.getByLabel("Google sign-in");
+  await expect(picker.locator("option")).toHaveText(["Choose a secret…", "google-drive", "gmail (needs drive.file scope)"]);
+
+  await section.getByRole("switch", { name: "Daily backup" }).click();
+  const save = section.getByRole("button", { name: "Save" });
+  await expect(save).toBeDisabled();
+  await expect(section).toContainText("Choose a Google sign-in to upload with.");
+  await picker.selectOption({ label: "google-drive" });
+  await section.getByLabel("Drive folder ID").fill("https://drive.google.com/drive/folders/1AbC_folder?usp=sharing");
+  await section.getByLabel("Every day at").fill("04:30");
+  await section.getByLabel("Time zone").fill("Europe/London");
+  await section.getByLabel("Backups to keep").fill("14");
+  await save.click();
+  await expect(save).toBeDisabled();
+  expect(puts).toHaveLength(1);
+  expect(puts[0]).toMatchObject({ enabled: true, secret_id: "11111111-1111-4111-8111-111111111111", folder_id: "1AbC_folder", at_time: "04:30", timezone: "Europe/London", retention: 14, revision: 0 });
+  await expect(section).toContainText("Next backup");
+
+  await exportNow.click();
+  expect(runs).toBe(1);
+  const status = section.getByRole("status", { name: "Drive backup status" });
+  await expect(section.getByRole("button", { name: "Exporting…" })).toBeDisabled();
+  await expect(status).toContainText("Exporting to Google Drive");
+  await expect(status).toContainText("Last backup failed", { timeout: 10_000 });
+  await expect(status).toContainText("the folder doesn't exist");
+  await expect(status).toContainText("Last run just now");
+  await expect(exportNow).toBeEnabled();
+});
+
 test("runner backends show current values and what they control", async ({ page }) => {
   await installSettingsApi(page);
   await page.goto("/settings#runners");

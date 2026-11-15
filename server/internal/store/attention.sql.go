@@ -109,6 +109,13 @@ WITH items AS (
  FROM user_secrets us
  WHERE us.workspace_id=$3 AND us.user_id=$1 AND us.expires_at<now()+interval '1 day'
  UNION ALL
+ -- The last export to Google Drive failed: private to the person who set it up. Each
+ -- failure is a new item; a run that succeeds clears it.
+ SELECT 'drive_backup:'||b.workspace_id||':'||(extract(epoch FROM b.last_run_at)*1000000)::bigint,'drive_backup','Google Drive backup',
+ 'Failed: '||b.last_error,'/settings#backup','','',b.last_run_at,false,NULL,NULL,NULL
+ FROM drive_backups b
+ WHERE b.workspace_id=$3 AND b.user_id=$1 AND b.last_status='failed' AND b.last_run_at IS NOT NULL
+ UNION ALL
  SELECT 'workflow_gate:'||s.id,'workflow_gate',wr.name,'A workflow step is waiting for your approval','/workflows/runs/'||wr.id,coalesce(p.key,''),'',s.created_at,s.state<>'waiting',NULL,NULL,NULL
  FROM workflow_steps s JOIN workflow_runs wr ON wr.id=s.run_id LEFT JOIN projects p ON p.id=wr.project_id
  WHERE wr.workspace_id=$3 AND wr.user_id=$1 AND (s.state='waiting' OR s.decision<>'')

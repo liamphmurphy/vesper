@@ -856,6 +856,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/backups/drive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The scheduled export to Google Drive, and how its last run went
+         * @description Defaults (revision 0) before anyone saved settings. running is true
+         *     while a backup holds the workspace's lease, scheduled or by hand.
+         */
+        get: operations["getDriveBackup"];
+        /**
+         * Save the scheduled export to Google Drive
+         * @description The secret must be one of the caller's OAuth secrets. While enabled
+         *     it must be signed in with drive.file or drive scope, and a folder is
+         *     required; a disabled backup may be incomplete. Saving reschedules the
+         *     next run, keeping a due one when the time and zone are unchanged.
+         *     422 names the invalid field; 409 when revision is stale or the
+         *     secret can't upload (field secret_id).
+         */
+        put: operations["updateDriveBackup"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/backups/drive/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Export to Google Drive now
+         * @description Starts a backup in the background, enabled or not, and returns once
+         *     it holds the lease; poll GET /backups/drive for the outcome. 409 when
+         *     a backup is already running or no secret or folder is set.
+         */
+        post: operations["runDriveBackup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/secrets": {
         parameters: {
             query?: never;
@@ -6967,6 +7019,48 @@ export interface components {
             /** @description Where this runner keeps host-folder workspaces (RUNNER_HOST_WORKSPACES_DIR); absent when it has none */
             host_workspaces_dir?: string;
         };
+        DriveBackupInput: {
+            enabled: boolean;
+            /**
+             * Format: uuid
+             * @description One of the caller's OAuth API secrets
+             */
+            secret_id?: string | null;
+            /** @description Google Drive folder ID */
+            folder_id: string;
+            /** @description Shown in Settings only */
+            folder_name?: string;
+            /**
+             * @description Daily, at this 24-hour local time (HH:MM)
+             * @example 03:00
+             */
+            at_time: string;
+            /**
+             * @description IANA time zone
+             * @example Europe/London
+             */
+            timezone: string;
+            /** @description Backups to keep in the folder; 0 keeps them all */
+            retention: number;
+            /** @description The revision read; 0 when there was none */
+            revision: number;
+        };
+        DriveBackup: components["schemas"]["DriveBackupInput"] & {
+            /**
+             * Format: date-time
+             * @description Absent while disabled
+             */
+            next_run_at?: string | null;
+            /** Format: date-time */
+            last_run_at?: string | null;
+            /** @description succeeded, failed, or empty before the first run */
+            last_status: string;
+            /** @description Why the last run failed, in words the person can act on */
+            last_error: string;
+            running: boolean;
+            /** Format: date-time */
+            running_since?: string | null;
+        };
         ImageEngineSettings: {
             /** @enum {string} */
             engine: "auto" | "codex" | "antigravity";
@@ -7090,10 +7184,10 @@ export interface components {
         InboxItem: {
             id: string;
             /**
-             * @description question is a run waiting on await_human (summary is the question); blocked is a failed or blocked run; stalled is a running run with no event for 30 minutes; merged is a pull request merged in the last 14 days
+             * @description question is a run waiting on await_human (summary is the question); blocked is a failed or blocked run; stalled is a running run with no event for 30 minutes; merged is a pull request merged in the last 14 days; drive_backup is a failed scheduled or manual export to Google Drive (summary is the reason)
              * @enum {string}
              */
-            kind: "approval" | "question" | "blocked" | "stalled" | "mockup" | "planning" | "review" | "dispatch" | "mention" | "suggestion" | "workflow_gate" | "scheduled" | "connector_approval" | "secret_approval" | "secret_expiring" | "merged";
+            kind: "approval" | "question" | "blocked" | "stalled" | "mockup" | "planning" | "review" | "dispatch" | "mention" | "suggestion" | "workflow_gate" | "scheduled" | "connector_approval" | "secret_approval" | "secret_expiring" | "merged" | "drive_backup";
             title: string;
             summary: string;
             href: string;
@@ -10978,6 +11072,73 @@ export interface operations {
                 };
                 content: {
                     "application/zip": string;
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getDriveBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Settings and status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DriveBackup"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateDriveBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DriveBackupInput"];
+            };
+        };
+        responses: {
+            /** @description The saved settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DriveBackup"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    runDriveBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Started; the settings with running true */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DriveBackup"];
                 };
             };
             default: components["responses"]["Error"];
