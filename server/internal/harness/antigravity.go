@@ -533,8 +533,14 @@ func antigravityTool(name string, args map[string]any) (string, map[string]any) 
 		return "mcp__" + server + "__" + tool, input
 	case "invoke_subagent", "define_subagent", "manage_subagents", "swarm", "send_message":
 		// Other agents, which Vesper's policy refuses as it does Claude Code's
-		// (only its explorer, which agy doesn't have).
-		return "Agent", map[string]any{"description": str("Role", "Name", "TypeName", "action")}
+		// (only its explorer, which agy doesn't have), except image-generator in image steps.
+		out := map[string]any{"description": str("Role", "Name", "TypeName", "action")}
+		if name == "invoke_subagent" {
+			if st := str("TypeName"); st != "" {
+				out["subagent_type"] = st
+			}
+		}
+		return "Agent", out
 	case "replace_file_content", "multi_replace_file_content", "edit_file":
 		return "Edit", map[string]any{"file_path": str(pathKeys...)}
 	case "list_dir":
