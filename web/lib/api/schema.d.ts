@@ -3369,6 +3369,25 @@ export interface paths {
         patch: operations["updateApiSecret"];
         trace?: never;
     };
+    "/api-secrets/{id}/sign-in": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start (or redo) an OAuth secret's sign-in; open authorize_url to finish it */
+        post: operations["signInApiSecret"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api-secrets/{id}/calls": {
         parameters: {
             query?: never;
@@ -8847,12 +8866,47 @@ export interface components {
         ApiSecretPlacement: "bearer" | "header" | "query" | "basic";
         /** @enum {string} */
         ApiSecretPolicy: "allow" | "ask" | "off";
+        /**
+         * @description static: a value the person pasted. oauth: the person signs in and Vesper keeps the access token fresh
+         * @enum {string}
+         */
+        ApiSecretKind: "static" | "oauth";
+        ApiSecretOAuth: {
+            authorize_url: string;
+            token_url: string;
+            client_id: string;
+            scopes: string[];
+            /** @description The client secret is stored encrypted and never returned */
+            has_client_secret: boolean;
+            /**
+             * Format: date-time
+             * @description Unset until the first sign-in finishes; requests are refused until then
+             */
+            signed_in_at?: string;
+            /** @description Why the last refresh failed; non-empty means sign in again */
+            error: string;
+        };
+        NewApiSecretOAuth: {
+            authorize_url: string;
+            token_url: string;
+            client_id: string;
+            /** @description Stored encrypted and never returned */
+            client_secret?: string;
+            scopes?: string[];
+        };
+        ApiSecretSignIn: {
+            secret: components["schemas"]["ApiSecret"];
+            /** @description Open this to sign in; the provider returns to Vesper's OAuth callback */
+            authorize_url: string;
+        };
         ApiSecret: {
             /** Format: uuid */
             id: string;
             name: string;
             /** @description The only name personas see */
             handle: string;
+            kind: components["schemas"]["ApiSecretKind"];
+            oauth?: components["schemas"]["ApiSecretOAuth"];
             placement: components["schemas"]["ApiSecretPlacement"];
             /** @description Header or query parameter name; empty for bearer and basic */
             placement_key: string;
@@ -8877,11 +8931,14 @@ export interface components {
             secrets: components["schemas"]["ApiSecret"][];
             /** @description False until SECRETS_KEY is set; nothing can be stored until then */
             key_configured: boolean;
+            /** @description Register this on an OAuth client to sign in to OAuth secrets (connectors use the same one) */
+            oauth_redirect_uri: string;
         };
         NewApiSecret: {
             name: string;
-            /** @description Stored encrypted and never returned */
-            value: string;
+            /** @description Stored encrypted and never returned. Required unless oauth is set */
+            value?: string;
+            oauth?: components["schemas"]["NewApiSecretOAuth"];
             placement: components["schemas"]["ApiSecretPlacement"];
             placement_key?: string;
             allowed_hosts: string[];
@@ -8897,7 +8954,7 @@ export interface components {
         ApiSecretPatch: {
             revision: number;
             name?: string;
-            /** @description Replace the value; stored encrypted */
+            /** @description Replace the value; stored encrypted. Not for OAuth secrets: sign in again instead */
             value?: string;
             placement?: components["schemas"]["ApiSecretPlacement"];
             placement_key?: string;
@@ -15034,6 +15091,29 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiSecret"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    signInApiSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiSecretSignIn"];
                 };
             };
             default: components["responses"]["Error"];

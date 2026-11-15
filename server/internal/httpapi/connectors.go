@@ -16,6 +16,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/connectors"
 	"github.com/liamphmurphy/vesper/server/internal/secrets"
 	"github.com/liamphmurphy/vesper/server/internal/store"
+	"github.com/liamphmurphy/vesper/server/internal/usersecrets"
 )
 
 func (s *Server) connectors() *connectors.Service {
@@ -263,14 +264,19 @@ func (s *Server) AuthorizeConnector(ctx context.Context, req api.AuthorizeConnec
 	return api.AuthorizeConnector200JSONResponse{Connector: out, AuthorizeUrl: &link}, err
 }
 
-// connectorCallback is where a sign-in provider returns the browser. The page
-// opened in its own window, so it closes itself; Connectors polls for the result.
+// connectorCallback is where a sign-in provider returns the browser, for a
+// connector or an OAuth API secret: the one-time state says which. The page
+// opened in its own window, so it closes itself; the settings page polls for the result.
 func (s *Server) connectorCallback(w http.ResponseWriter, r *http.Request) {
 	msg := "Connected. You can close this window."
 	script := "<script>window.close()</script>"
 	code, state := r.URL.Query().Get("code"), r.URL.Query().Get("state")
 	if code == "" || state == "" {
 		msg, script = "Sign-in was cancelled.", ""
+	} else if _, err := s.userSecrets().FinishOAuth(r.Context(), state, code); err == nil {
+		msg = "Signed in. You can close this window."
+	} else if !errors.Is(err, usersecrets.ErrUnknownState) {
+		msg, script = "Sign-in didn't finish: "+err.Error(), ""
 	} else if _, err := s.connectors().FinishOAuth(r.Context(), state, code); err != nil {
 		msg, script = "Sign-in didn't finish: "+err.Error(), ""
 	}

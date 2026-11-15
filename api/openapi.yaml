@@ -4091,6 +4091,20 @@ paths:
       responses:
         "204": { description: Removed }
         default: { $ref: "#/components/responses/Error" }
+  /api-secrets/{id}/sign-in:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: signInApiSecret
+      summary: Start (or redo) an OAuth secret's sign-in; open authorize_url to finish it
+      tags: [api-secrets]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiSecretSignIn" }
+        default: { $ref: "#/components/responses/Error" }
   /api-secrets/{id}/calls:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -9582,13 +9596,45 @@ components:
     ApiSecretPolicy:
       type: string
       enum: [allow, ask, off]
+    ApiSecretKind:
+      type: string
+      enum: [static, oauth]
+      description: "static: a value the person pasted. oauth: the person signs in and Vesper keeps the access token fresh"
+    ApiSecretOAuth:
+      type: object
+      required: [authorize_url, token_url, client_id, scopes, has_client_secret, error]
+      properties:
+        authorize_url: { type: string }
+        token_url: { type: string }
+        client_id: { type: string }
+        scopes: { type: array, items: { type: string } }
+        has_client_secret: { type: boolean, description: "The client secret is stored encrypted and never returned" }
+        signed_in_at: { type: string, format: date-time, description: "Unset until the first sign-in finishes; requests are refused until then" }
+        error: { type: string, description: "Why the last refresh failed; non-empty means sign in again" }
+    NewApiSecretOAuth:
+      type: object
+      required: [authorize_url, token_url, client_id]
+      properties:
+        authorize_url: { type: string }
+        token_url: { type: string }
+        client_id: { type: string }
+        client_secret: { type: string, description: "Stored encrypted and never returned" }
+        scopes: { type: array, items: { type: string } }
+    ApiSecretSignIn:
+      type: object
+      required: [secret, authorize_url]
+      properties:
+        secret: { $ref: "#/components/schemas/ApiSecret" }
+        authorize_url: { type: string, description: "Open this to sign in; the provider returns to Vesper's OAuth callback" }
     ApiSecret:
       type: object
-      required: [id, name, handle, placement, placement_key, allowed_hosts, read_policy, write_policy, persona_ids, revision, created_at, updated_at]
+      required: [id, name, handle, kind, placement, placement_key, allowed_hosts, read_policy, write_policy, persona_ids, revision, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
         handle: { type: string, description: "The only name personas see" }
+        kind: { $ref: "#/components/schemas/ApiSecretKind" }
+        oauth: { $ref: "#/components/schemas/ApiSecretOAuth" }
         placement: { $ref: "#/components/schemas/ApiSecretPlacement" }
         placement_key: { type: string, description: "Header or query parameter name; empty for bearer and basic" }
         allowed_hosts: { type: array, items: { type: string } }
@@ -9602,16 +9648,18 @@ components:
         updated_at: { type: string, format: date-time }
     ApiSecretList:
       type: object
-      required: [secrets, key_configured]
+      required: [secrets, key_configured, oauth_redirect_uri]
       properties:
         secrets: { type: array, items: { $ref: "#/components/schemas/ApiSecret" } }
         key_configured: { type: boolean, description: "False until SECRETS_KEY is set; nothing can be stored until then" }
+        oauth_redirect_uri: { type: string, description: "Register this on an OAuth client to sign in to OAuth secrets (connectors use the same one)" }
     NewApiSecret:
       type: object
-      required: [name, value, placement, allowed_hosts]
+      required: [name, placement, allowed_hosts]
       properties:
         name: { type: string, minLength: 1, maxLength: 60 }
-        value: { type: string, description: "Stored encrypted and never returned" }
+        value: { type: string, description: "Stored encrypted and never returned. Required unless oauth is set" }
+        oauth: { $ref: "#/components/schemas/NewApiSecretOAuth" }
         placement: { $ref: "#/components/schemas/ApiSecretPlacement" }
         placement_key: { type: string }
         allowed_hosts: { type: array, items: { type: string } }
@@ -9625,7 +9673,7 @@ components:
       properties:
         revision: { type: integer }
         name: { type: string, minLength: 1, maxLength: 60 }
-        value: { type: string, description: "Replace the value; stored encrypted" }
+        value: { type: string, description: "Replace the value; stored encrypted. Not for OAuth secrets: sign in again instead" }
         placement: { $ref: "#/components/schemas/ApiSecretPlacement" }
         placement_key: { type: string }
         allowed_hosts: { type: array, items: { type: string } }
