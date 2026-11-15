@@ -27,8 +27,12 @@ RETURNING *;
 SELECT * FROM repository_push_policies WHERE workspace_id = $1 AND user_id = $2 AND auto_push ORDER BY repo_url;
 
 -- name: CreatePushRequest :one
-INSERT INTO push_requests (workspace_id, user_id, chat_id, run_id, persona_id, agent_id, repo_url, branch, title, body, draft)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *;
+INSERT INTO push_requests (workspace_id, user_id, chat_id, run_id, turn_id, persona_id, agent_id, repo_url, branch, title, body, draft)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *;
+
+-- name: LinkPushRequestsToMessage :exec
+UPDATE push_requests SET message_id = sqlc.arg(message_id)
+WHERE run_id = sqlc.arg(run_id) AND (turn_id = sqlc.arg(turn_id) OR turn_id IS NULL) AND message_id IS NULL;
 
 -- name: CountOpenPushRequests :one
 SELECT count(*)::int FROM push_requests WHERE chat_id = $1 AND state IN ('staging', 'pending');

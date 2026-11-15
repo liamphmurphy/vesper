@@ -86,8 +86,12 @@ func requestPush(ctx context.Context, d Deps, c agents.Caller, in RequestPushIn)
 	if n >= maxOpenPushRequests {
 		return nil, apperr.Conflict("%d push requests already wait in this chat; ask the person to decide those first", n)
 	}
+	turn, err := chatTurn(ctx, d, c)
+	if err != nil {
+		return nil, err
+	}
 	r, err := d.Q.CreatePushRequest(ctx, store.CreatePushRequestParams{
-		WorkspaceID: ws, UserID: s.UserID, ChatID: s.ChatID, RunID: c.RunID, PersonaID: s.PersonaID, AgentID: c.Agent.ID,
+		WorkspaceID: ws, UserID: s.UserID, ChatID: s.ChatID, RunID: c.RunID, TurnID: turn, PersonaID: s.PersonaID, AgentID: c.Agent.ID,
 		RepoUrl: repo.RepoUrl, Branch: in.Branch, Title: in.Title, Body: in.Body, Draft: in.Draft,
 	})
 	if err != nil {

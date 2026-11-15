@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { ApiError } from "@/lib/api/client";
-import { useDecidePush, usePushPolicies, usePushRequests, useSetPushPolicy, type PushRequest } from "@/lib/api/code-review-hooks";
+import { useDecidePush, usePushPolicies, useSetPushPolicy, type PushRequest } from "@/lib/api/code-review-hooks";
 import { pushStateLabel, repoName } from "@/lib/code-review";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
@@ -17,28 +17,23 @@ const message = (e: unknown) => (e instanceof ApiError || e instanceof Error ? e
  * a pull request until the person pushes it here (or always allows the repository). The staged
  * commit is on GitHub already, so a card can be approved after the chat's workspace is gone.
  */
-export function PushRequests({ chatId, disabled }: { chatId: string; disabled?: boolean }) {
-  const requests = usePushRequests(chatId).data?.requests ?? [];
-  const decide = useDecidePush(chatId);
-  const error = message(decide.error);
-  // Decided cards stay as a record only when they say something: a pull request, or why not.
-  const shown = requests.filter((r) => r.state !== "declined" || !!r.error);
-  if (!shown.length && !error) return null;
+export function PushRequests({ chatId, requests, disabled }: { chatId: string; requests: PushRequest[]; disabled?: boolean }) {
+  if (!requests.length) return null;
   return (
-    <li className="flex flex-col gap-2" data-testid="push-requests">
-      {shown.map((r) => (
-        <PushCard key={r.id} r={r} busy={decide.isPending || !!disabled} onDecide={(d) => decide.mutate({ id: r.id, ...d })} />
+    <div className="flex w-full flex-col gap-2" data-testid="push-requests">
+      {requests.map((r) => (
+        <PushCard key={r.id} chatId={chatId} r={r} disabled={!!disabled} />
       ))}
-      {error && (
-        <p role="alert" className="max-w-[min(720px,100%)] text-13 text-pill-blocked-fg">
-          Not pushed: {error}
-        </p>
-      )}
-    </li>
+    </div>
   );
 }
 
-function PushCard({ r, busy, onDecide }: { r: PushRequest; busy: boolean; onDecide: (d: { decision: "push" | "always" | "deny"; title?: string; body?: string; draft?: boolean }) => void }) {
+function PushCard({ chatId, r, disabled }: { chatId: string; r: PushRequest; disabled: boolean }) {
+  const decide = useDecidePush(chatId);
+  const error = message(decide.error);
+  const busy = decide.isPending || disabled;
+  const onDecide = (d: { decision: "push" | "always" | "deny"; title?: string; body?: string; draft?: boolean }) =>
+    decide.mutate({ id: r.id, ...d });
   const by = personaLook(r.persona);
   const name = r.persona?.name ?? "The assistant";
   const [title, setTitle] = useState(r.title);
@@ -93,6 +88,11 @@ function PushCard({ r, busy, onDecide }: { r: PushRequest; busy: boolean; onDeci
         <p className="text-14 font-medium text-fg">{r.title}</p>
       )}
       {r.error && <p className="text-13 text-pill-blocked-fg">{r.error}</p>}
+      {error && (
+        <p role="alert" className="text-13 text-pill-blocked-fg">
+          Not pushed: {error}
+        </p>
+      )}
       {r.pr_url && (
         <a href={r.pr_url} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-13 text-accent hover:underline">
           <Icon name="pr" size={14} />

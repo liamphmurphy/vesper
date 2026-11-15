@@ -170,7 +170,7 @@ func (s *Server) SetRepositoryPushPolicy(ctx context.Context, req api.SetReposit
 func (s *Server) toPushRequest(ctx context.Context, r store.PushRequest) api.PushRequest {
 	out := api.PushRequest{Id: r.ID, Repository: r.RepoUrl, Branch: r.Branch, BaseBranch: r.BaseBranch, BaseSha: r.BaseSha, HeadSha: r.HeadSha,
 		Title: r.Title, Body: r.Body, Draft: r.Draft, State: api.PushRequestState(r.State), Auto: r.Auto, PrUrl: r.PrUrl, Error: r.Error,
-		CreatedAt: r.CreatedAt, DecidedAt: r.DecidedAt, Commits: []api.CodeCommit{}, Files: []api.ChatCodeChange{}}
+		RunId: r.RunID, MessageId: r.MessageID, CreatedAt: r.CreatedAt, DecidedAt: r.DecidedAt, Commits: []api.CodeCommit{}, Files: []api.ChatCodeChange{}}
 	if r.PrNumber != nil {
 		n := int(*r.PrNumber)
 		out.PrNumber = &n

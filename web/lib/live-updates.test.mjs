@@ -3,7 +3,7 @@ import test from "node:test";
 import { invalidatedBy, invalidatedKeys } from "./live-updates.ts";
 
 test("a change hint invalidates its entity's queries and the overview counts", () => {
-  assert.deepEqual(invalidatedBy("chat.updated"), ["chats", "canvases", "videos", "audio", "dock", "dashboard", "epics", "agent-overviews"]);
+  assert.deepEqual(invalidatedBy("chat.updated"), ["chats", "canvases", "videos", "audio", "push-requests", "dock", "dashboard", "epics", "agent-overviews"]);
   assert.deepEqual(invalidatedBy("ticket.updated").slice(0, 2), ["planning", "tickets"]);
 });
 

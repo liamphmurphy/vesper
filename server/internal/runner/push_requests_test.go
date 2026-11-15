@@ -152,8 +152,13 @@ func TestChatPushRequestIsStagedThenShipped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	msgsAfterTurn2 := e.messages(chat.ID)
+	turn2Reply := msgsAfterTurn2[len(msgsAfterTurn2)-1]
 	if staged.State != "pending" || staged.BaseBranch == nil || *staged.BaseBranch != "main" || staged.HeadSha == nil {
 		t.Fatalf("staged = %+v (error %v)", staged, staged.Error)
+	}
+	if staged.MessageID == nil || *staged.MessageID != turn2Reply.ID {
+		t.Fatalf("staged.MessageID = %v, want turn 2 reply %s", staged.MessageID, turn2Reply.ID)
 	}
 	var commits []pushreq.Commit
 	_ = json.Unmarshal(staged.Commits, &commits)
@@ -213,6 +218,15 @@ func TestChatPushRequestIsStagedThenShipped(t *testing.T) {
 	auto, _ := e.q.GetPushRequest(e.ctx, store.GetPushRequestParams{ID: again.ID, WorkspaceID: e.ws, UserID: e.me.ID})
 	if auto.State != "pushed" || !auto.Auto {
 		t.Fatalf("auto = %+v (error %v)", auto, auto.Error)
+	}
+	msgsAfterTurn3 := e.messages(chat.ID)
+	turn3Reply := msgsAfterTurn3[len(msgsAfterTurn3)-1]
+	if auto.MessageID == nil || *auto.MessageID != turn3Reply.ID {
+		t.Fatalf("auto.MessageID = %v, want turn 3 reply %s", auto.MessageID, turn3Reply.ID)
+	}
+	firstAfterTurn3, _ := e.q.GetPushRequest(e.ctx, store.GetPushRequestParams{ID: req.ID, WorkspaceID: e.ws, UserID: e.me.ID})
+	if firstAfterTurn3.MessageID == nil || *firstAfterTurn3.MessageID != turn2Reply.ID {
+		t.Fatalf("first push request should stay anchored to turn 2 reply %s, got %v", turn2Reply.ID, firstAfterTurn3.MessageID)
 	}
 	if sha, _ := gh.git("rev-parse", "refs/heads/feat/push-me"); sha != *auto.HeadSha {
 		t.Fatalf("branch at %s, want the fast-forward to %s", sha, *auto.HeadSha)
