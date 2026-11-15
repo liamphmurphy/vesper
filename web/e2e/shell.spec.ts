@@ -242,12 +242,13 @@ test("Work lists live runs and marks the nav item current", async ({ page }) => 
   // /runs opens Work's Activity with the first live run beside the list.
   await expect(page).toHaveURL(/\/work\?view=activity$/);
   await expect(page.getByRole("list", { name: "Areas" }).locator('[aria-current="page"]')).toHaveAccessibleName(/^Work/);
+  const telemetry = page.getByRole("region", { name: "Activity telemetry" });
+  await expect(telemetry).toContainText("1 / 3");
+  await expect(telemetry).toContainText("0 queued");
   const list = page.getByRole("complementary", { name: "Runs" });
-  await expect(list.getByRole("status")).toContainText("1 busy · 0 queued · 3 slots");
-  const running = list.getByRole("region", { name: "Running" });
-  await expect(running.getByRole("listitem")).toHaveCount(1);
-  await expect(running).toContainText("WEB-1 · Builder");
-  await expect(running.getByRole("link", { name: /Build ticket modal/ })).toHaveAttribute("href", "/runs/11111111-1111-4111-8111-111111111111");
+  const active = list.getByRole("region", { name: "Active" });
+  await expect(active.getByRole("listitem")).toHaveCount(1);
+  await expect(active.getByRole("link", { name: /Build ticket modal/ })).toHaveAttribute("href", "/runs/11111111-1111-4111-8111-111111111111");
   expect(api.unhandled).toEqual([]);
 });
 

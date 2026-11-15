@@ -22,7 +22,7 @@ import { useMotionList } from "@/components/ui/motion";
 import { Toggle } from "@/components/ui/controls";
 import { ticketsHref } from "@/lib/tickets-layout";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
-import { WorkNavHeader, WorkSpacePersonaFilters } from "../../work/work-nav-header";
+import { WorkNavHeader, WorkSectionLabel, WorkSpacePersonaFilters } from "../../work/work-nav-header";
 import { ChipScroller, TicketsLayoutBar, TicketsTopBar } from "./layout-bar";
 import { AssigneeAvatar, EpicChip, StateText } from "./ticket-row";
 
@@ -94,14 +94,15 @@ export function BoardScreen() {
             />
             <div className="work-nav-list">
               {project && (
-                <div role="group" aria-label="Board epics" className="flex flex-col gap-0.5 px-1">
+                <div role="group" aria-label="Board epics" className="flex flex-col gap-0.5">
+                  <WorkSectionLabel count={epics.length}>By epic</WorkSectionLabel>
                   <button
                     type="button"
                     aria-current={!filters.epic ? "true" : undefined}
                     onClick={() => setParam("epic", "")}
                     className={cx(
-                      "flex h-7 items-center rounded-[5px] px-2 text-left text-12",
-                      !filters.epic ? "bg-surface font-medium text-fg" : "text-fg-secondary hover:bg-hover hover:text-fg",
+                      "flex h-[26px] items-center rounded-md px-2 text-left text-12",
+                      !filters.epic ? "bg-selected font-medium text-fg" : "text-fg-secondary hover:bg-hover hover:text-fg",
                     )}
                   >
                     All epics
@@ -113,8 +114,8 @@ export function BoardScreen() {
                       aria-current={filters.epic === e.id ? "true" : undefined}
                       onClick={() => setParam("epic", e.id)}
                       className={cx(
-                        "flex h-7 items-center truncate rounded-[5px] px-2 text-left text-12",
-                        filters.epic === e.id ? "bg-surface font-medium text-fg" : "text-fg-secondary hover:bg-hover hover:text-fg",
+                        "flex h-[26px] items-center truncate rounded-md px-2 text-left text-12",
+                        filters.epic === e.id ? "bg-selected font-medium text-fg" : "text-fg-secondary hover:bg-hover hover:text-fg",
                       )}
                     >
                       {e.name}

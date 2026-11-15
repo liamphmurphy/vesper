@@ -423,7 +423,7 @@ export function EstimatePicker({
  * Its name says what it filters and what it's set to ("Epic: All epics"). quiet: text only, for a
  * sort that sits beside other controls.
  */
-export function FilterMenu({ label, value, options, onChange, quiet }: { label: string; value: string; options: { value: string; label: string }[]; onChange: (v: string) => void; quiet?: boolean }) {
+export function FilterMenu({ label, value, options, onChange, quiet, className }: { label: string; value: string; options: { value: string; label: string }[]; onChange: (v: string) => void; quiet?: boolean; className?: string }) {
   const current = options.find((o) => o.value === value) ?? options[0];
   return (
     <DropdownMenu.Root>
@@ -432,6 +432,7 @@ export function FilterMenu({ label, value, options, onChange, quiet }: { label: 
           className={cx(
             "flex h-8 max-w-56 items-center gap-1.5 rounded-md px-2.5 text-12 hover:bg-hover data-[state=open]:border-accent",
             quiet ? "text-fg-secondary hover:text-fg" : "border border-border-strong bg-surface text-fg",
+            className,
           )}>
           <span className="truncate">{current?.label}</span>
           <Icon name="chev" size={12} strokeWidth={1.6} className="flex-none text-fg-tertiary" />

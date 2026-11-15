@@ -29,7 +29,7 @@ import { ContextSection } from "@/components/shell/context-panel";
 import { CompanionDock } from "@/components/shell/companion";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { WorkChat } from "@/components/domain/work-chat";
-import { WorkNavHeader } from "../../work/work-nav-header";
+import { WorkNavHeader, WorkSectionLabel } from "../../work/work-nav-header";
 
 type TicketSummary = Schemas["TicketSummary"];
 
@@ -52,16 +52,42 @@ export function EpicDetailScreen({ epicId }: { epicId: string }) {
           <nav aria-label="Work" className="work-nav">
             <WorkNavHeader active="epics" project={e?.project.key} />
             <div className="work-nav-list">
-              {siblingEpics.map((item) => (
-                <Link
-                  key={item.epic.id}
-                  href={`/epics/${encodeURIComponent(item.epic.id)}`}
-                  aria-current={item.epic.id === epicId ? "true" : undefined}
-                >
-                  <strong className="truncate">{item.epic.name}</strong>
-                  <small>{item.epic.tickets_total - item.epic.tickets_open}/{item.epic.tickets_total} done</small>
-                </Link>
-              ))}
+              <WorkSectionLabel count={siblingEpics.length}>
+                {e?.project.name ?? "Epics"}
+              </WorkSectionLabel>
+              {siblingEpics.map((item) => {
+                const done = item.epic.tickets_total - item.epic.tickets_open;
+                const total = item.epic.tickets_total;
+                const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+                const active = item.epic.id === epicId;
+                return (
+                  <Link
+                    key={item.epic.id}
+                    href={`/epics/${encodeURIComponent(item.epic.id)}`}
+                    aria-current={active ? "true" : undefined}
+                    className={cx(
+                      "flex h-[26px] items-center gap-2 rounded-md px-2 text-12 transition-colors",
+                      active
+                        ? "bg-selected font-medium text-fg"
+                        : "text-fg-secondary hover:bg-hover hover:text-fg",
+                    )}
+                  >
+                    <span className="min-w-0 flex-1 truncate">{item.epic.name}</span>
+                    <span
+                      aria-hidden
+                      className="h-1 w-6 flex-none overflow-hidden rounded-full bg-surface-sunken"
+                    >
+                      <span
+                        className="block h-full rounded-full bg-accent"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </span>
+                    <span className="flex-none font-mono text-10 text-fg-tertiary">
+                      {done}/{total}
+                    </span>
+                  </Link>
+                );
+              })}
             </div>
           </nav>
         </NavigatorPortal>

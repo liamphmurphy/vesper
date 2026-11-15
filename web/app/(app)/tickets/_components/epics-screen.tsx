@@ -4,15 +4,19 @@ import { useCompact } from "@/lib/viewport";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { useBootstrap, useEpicOverviews } from "@/lib/api/hooks";
+import { useBootstrap, useCosts, useEpicOverviews, useTickets } from "@/lib/api/hooks";
 import { dueDate } from "@/lib/format";
 import {
   EPIC_SORTS, HEALTH_LABEL, epicFilterQuery, filterEpics, isOverdue, parseEpicFilters, ratio, sortEpics, statusCounts, ymd,
   type EpicFilters, type EpicHealthFilter, type EpicSort, type EpicStatusFilter,
 } from "@/lib/epics";
+import { presetRange, spendLabel } from "@/lib/costs";
+import { computeEpicPortfolioStats, computeEpicWaves } from "@/lib/work-overview";
 import { Button, ButtonLink } from "@/components/ui/button";
-import { Banner, Card, EmptyState, Skeleton, TextInput } from "@/components/ui/primitives";
+import { DispatchDialog } from "@/components/domain/dispatch-dialog";
+import { Banner, Card, EmptyState, Skeleton } from "@/components/ui/primitives";
 import { Segmented } from "@/components/ui/controls";
+import { StatusGlyph } from "@/components/domain/glyphs";
 import { Content } from "@/components/shell/topbar";
 import { CompanionPortal } from "@/components/shell/companion";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
@@ -25,7 +29,7 @@ import { cx } from "@/lib/cx";
 import { FilterMenu } from "@/components/domain/pickers";
 import { ticketsHref } from "@/lib/tickets-layout";
 import { EpicBrief } from "../../work/work-details";
-import { WorkNavHeader, WorkSpaceFilter } from "../../work/work-nav-header";
+import { WorkNavHeader, WorkSectionLabel, WorkSpaceFilter } from "../../work/work-nav-header";
 import { TicketsLayoutBar, TicketsTopBar } from "./layout-bar";
 
 function Timeline({
@@ -227,6 +231,17 @@ const HEALTH_DOT: Record<Exclude<EpicHealthFilter, "any">, string> = {
   on_track: "bg-state-done", at_risk: "bg-state-human", off_track: "bg-state-blocked",
 };
 
+function groupEpicsBySpace(list: readonly EpicOverview[]) {
+  const groups = new Map<string, { label: string; epics: EpicOverview[] }>();
+  for (const e of list) {
+    const k = e.project.key;
+    const existing = groups.get(k);
+    if (existing) existing.epics.push(e);
+    else groups.set(k, { label: e.project.name, epics: [e] });
+  }
+  return [...groups.entries()];
+}
+
 export function EpicsScreen() {
   const boot = useBootstrap();
   const query = useEpicOverviews();
@@ -247,27 +262,55 @@ export function EpicsScreen() {
     router.replace(ticketsHref("epics", new URLSearchParams(epicFilterQuery({ ...filters, ...patch }, nextProject))), { scroll: false });
   const [search, setSearch] = useState("");
   const [selectedEpicId, setSelectedEpicId] = useState<string | null>(null);
+  const [companionDismissed, setCompanionDismissed] = useState(false);
+  const [dispatchKeys, setDispatchKeys] = useState<string[] | null>(null);
   const inProject = (query.data ?? []).filter((e) => !project || e.project.key === project);
   const counts = statusCounts(inProject);
   const filtered = sortEpics(filterEpics(inProject, filters), filters.sort);
   const shown = search
     ? filtered.filter((e) => e.epic.name.toLowerCase().includes(search.toLowerCase()))
     : filtered;
-  const selectedEpic = selectedEpicId
+  const activeFeaturedEpic = selectedEpicId
     ? inProject.find((e) => e.epic.id === selectedEpicId)
-    : undefined;
+    : shown[0];
+  const selectedEpic =
+    selectedEpicId && !companionDismissed
+      ? inProject.find((e) => e.epic.id === selectedEpicId)
+      : undefined;
+  const featuredTicketsQuery = useTickets(
+    { epic: activeFeaturedEpic?.epic.id, view: "all" },
+    !!activeFeaturedEpic?.epic.id,
+  );
+  const [now] = useState(() => new Date());
+  const [range30d] = useState(() => presetRange(30, now));
+  const costs = useCosts({ ...range30d, project: project || undefined }).data;
+  const featuredWaves = activeFeaturedEpic
+    ? computeEpicWaves(featuredTicketsQuery.data ?? activeFeaturedEpic.tickets)
+    : [];
+  const featuredReadyKeys = featuredWaves.flatMap((w) => w.readyTickets.map((t) => t.key));
+  const portfolioStats = computeEpicPortfolioStats(
+    inProject,
+    activeFeaturedEpic
+      ? new Map([[activeFeaturedEpic.epic.id, featuredWaves]])
+      : new Map(),
+  );
+  const epicsBySpace = groupEpicsBySpace(shown);
+  const atRiskCount = inProject.filter(
+    (e) => e.epic.status === "open" && (e.epic.health === "at_risk" || e.epic.health === "off_track"),
+  ).length;
   const today = ymd(new Date());
   return (
     <>
       {!compact && (
         <NavigatorPortal>
           <nav aria-label="Work" className="work-nav">
-            <WorkNavHeader active="epics" project={project || undefined} />
-            <TextInput
-              aria-label="Search work"
-              placeholder="/  Search work…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
+            <WorkNavHeader
+              active="epics"
+              project={project || undefined}
+              search={search}
+              onSearchChange={setSearch}
+              searchPlaceholder="Filter epics…"
+              counts={{ epics: counts.open || undefined }}
             />
             <div className="work-filters">
               <WorkSpaceFilter
@@ -279,18 +322,37 @@ export function EpicsScreen() {
                 }}
               />
             </div>
-            <div className="flex flex-col gap-2">
-              <Segmented<EpicStatusFilter>
-                label="Epic status"
-                small
-                value={filters.status}
-                onChange={(status) => setFilters({ status })}
-                options={(["open", "done", "all"] as const).map((s) => ({
-                  value: s,
-                  label: <>{s === "open" ? "Open" : s === "done" ? "Done" : "All"} <span className="font-mono text-fg-tertiary">{counts[s]}</span></>,
-                }))}
-              />
-              <div role="radiogroup" aria-label="Health" className="flex flex-wrap items-center gap-1">
+            <div className="flex flex-col gap-1">
+              <WorkSectionLabel>Views</WorkSectionLabel>
+              <div role="radiogroup" aria-label="Epic status" className="flex flex-col gap-0.5">
+                {([
+                  { key: "open", label: "Active epics", alt: "Open", dot: "bg-state-done", count: counts.open },
+                  { key: "done", label: "Done", alt: "Done", dot: "bg-fg-tertiary/60", count: counts.done },
+                  { key: "all", label: "All epics", alt: "All", dot: "bg-accent", count: counts.all },
+                ] as const).map((opt) => {
+                  const active = filters.status === opt.key;
+                  return (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      onClick={() => setFilters({ status: opt.key })}
+                      className={cx(
+                        "flex h-[26px] w-full items-center gap-2 rounded-md px-2 text-left text-12 transition-colors",
+                        active
+                          ? "bg-selected font-medium text-fg"
+                          : "text-fg-secondary hover:bg-hover hover:text-fg",
+                      )}
+                    >
+                      <span aria-hidden className={cx("size-1.5 flex-none rounded-full", opt.dot)} />
+                      <span className="min-w-0 flex-1 truncate">{opt.label}</span>
+                      <span className="font-mono text-11 text-fg-tertiary">{opt.count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div role="radiogroup" aria-label="Health" className="mt-1 flex flex-wrap items-center gap-1 px-1">
                 {HEALTH_OPTIONS.map((h) => (
                   <button
                     key={h}
@@ -299,37 +361,65 @@ export function EpicsScreen() {
                     aria-checked={filters.health === h}
                     onClick={() => setFilters({ health: h })}
                     className={cx(
-                      "flex h-6 items-center gap-1 rounded-full border px-2 text-11",
-                      filters.health === h ? "border-border-strong bg-selected text-fg" : "border-border text-fg-secondary hover:text-fg",
+                      "flex h-6 items-center gap-1 rounded-full border px-2 text-11 transition-colors",
+                      filters.health === h
+                        ? "border-border-strong bg-selected font-medium text-fg"
+                        : "border-border text-fg-secondary hover:text-fg",
                     )}
                   >
                     {h !== "any" && <span aria-hidden className={cx("size-1.5 rounded-full", HEALTH_DOT[h])} />}
-                    {h === "any" ? "Any" : HEALTH_LABEL[h]}
+                    <span>{h === "any" ? "Any" : HEALTH_LABEL[h]}</span>
+                    {h === "at_risk" && atRiskCount > 0 && (
+                      <span aria-hidden className="font-mono text-10 text-pill-human-fg">{atRiskCount}</span>
+                    )}
                   </button>
                 ))}
               </div>
             </div>
             <div className="work-nav-list">
-              {shown.map((e) => (
-                <button
-                  key={e.epic.id}
-                  type="button"
-                  aria-current={selectedEpicId === e.epic.id ? "true" : undefined}
-                  onClick={() =>
-                    setSelectedEpicId((cur) => (cur === e.epic.id ? null : e.epic.id))
-                  }
-                >
-                  <strong className="flex items-center gap-2 truncate">
-                    <span
-                      aria-hidden
-                      className={cx("size-2 flex-none rounded-full", HEALTH_DOT[e.epic.health])}
-                    />
-                    <span className="truncate">{e.epic.name}</span>
-                  </strong>
-                  <small>
-                    {e.counts.done}/{e.counts.total} tickets · {HEALTH_LABEL[e.epic.health]}
-                  </small>
-                </button>
+              {epicsBySpace.map(([spaceKey, group]) => (
+                <div key={spaceKey} className="flex flex-col gap-0.5">
+                  <WorkSectionLabel count={group.epics.length}>{group.label}</WorkSectionLabel>
+                  {group.epics.map((e) => {
+                    const active = activeFeaturedEpic?.epic.id === e.epic.id;
+                    const pct = e.counts.total > 0 ? Math.round((e.counts.done / e.counts.total) * 100) : 0;
+                    return (
+                      <button
+                        key={e.epic.id}
+                        type="button"
+                        aria-current={active ? "true" : undefined}
+                        onClick={() => {
+                          setCompanionDismissed(false);
+                          setSelectedEpicId(e.epic.id);
+                        }}
+                        className={cx(
+                          "flex h-[26px] w-full items-center gap-2 rounded-md px-2 text-left text-12 transition-colors",
+                          active
+                            ? "bg-selected font-medium text-fg"
+                            : "text-fg-secondary hover:bg-hover hover:text-fg",
+                        )}
+                      >
+                        <span
+                          aria-hidden
+                          className={cx("size-1.5 flex-none rounded-full", HEALTH_DOT[e.epic.health])}
+                        />
+                        <span className="min-w-0 flex-1 truncate">{e.epic.name}</span>
+                        <span
+                          aria-hidden
+                          className="h-1 w-6 flex-none overflow-hidden rounded-full bg-surface-sunken"
+                        >
+                          <span
+                            className="block h-full rounded-full bg-accent"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </span>
+                        <span className="flex-none font-mono text-10 text-fg-tertiary">
+                          {e.counts.done}/{e.counts.total}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               ))}
               {!query.isLoading && !shown.length && (
                 <p className="p-3 text-12 text-fg-tertiary">No epics match.</p>
@@ -351,7 +441,7 @@ export function EpicsScreen() {
               <button
                 type="button"
                 aria-label="Close context"
-                onClick={() => setSelectedEpicId(null)}
+                onClick={() => setCompanionDismissed(true)}
               >
                 ×
               </button>
@@ -440,6 +530,140 @@ export function EpicsScreen() {
                     options={(Object.keys(EPIC_SORTS) as EpicSort[]).map((s) => ({ value: s, label: EPIC_SORTS[s] }))} />
                 </span>
               </div>
+              {shown.length > 0 && (
+                <div className="work-kpi-grid" role="region" aria-label="Epics portfolio">
+                  <div className="work-kpi-card">
+                    <span className="text-11 text-fg-tertiary">Open epics</span>
+                    <span className="font-mono text-20 font-semibold text-fg tabular-nums">
+                      {portfolioStats.openCount}
+                    </span>
+                    <span className="text-11 text-fg-tertiary">
+                      {atRiskCount > 0 ? `${atRiskCount} need attention` : "All on track"}
+                    </span>
+                  </div>
+                  <div className="work-kpi-card">
+                    <span className="text-11 text-fg-tertiary">Portfolio progress</span>
+                    <span className="font-mono text-20 font-semibold text-fg tabular-nums">
+                      {portfolioStats.progressPct}%
+                    </span>
+                    <span className="text-11 text-fg-tertiary">
+                      {portfolioStats.pointsDone} / {portfolioStats.pointsTotal} pts done
+                    </span>
+                  </div>
+                  <div className="work-kpi-card">
+                    <span className="text-11 text-fg-tertiary">Execution waves</span>
+                    <span className="font-mono text-20 font-semibold text-fg tabular-nums">
+                      {featuredWaves.length}
+                    </span>
+                    <span className="text-11 text-fg-tertiary">
+                      {featuredReadyKeys.length} ready to start
+                    </span>
+                  </div>
+                  <div className="work-kpi-card">
+                    <span className="text-11 text-fg-tertiary">30-day spend</span>
+                    <span className="font-mono text-20 font-semibold text-fg tabular-nums">
+                      {costs ? spendLabel(costs.total.cost_micros, costs.unpriced_runs) : "–"}
+                    </span>
+                    <span className="text-11 text-fg-tertiary">
+                      {costs ? `${costs.total.runs} runs in window` : "Active workspace"}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {activeFeaturedEpic && featuredWaves.length > 0 && (
+                <section
+                  aria-label="Epic execution waves"
+                  className="flex flex-col gap-3 rounded-xl border border-border-subtle bg-surface p-4"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <span className="text-10 font-semibold uppercase tracking-[0.06em] text-fg-tertiary">
+                        Execution plan
+                      </span>
+                      <Link
+                        href={`/epics/${encodeURIComponent(activeFeaturedEpic.epic.id)}`}
+                        className="truncate text-14 font-semibold text-fg hover:text-accent"
+                      >
+                        {activeFeaturedEpic.epic.name}
+                      </Link>
+                      <HealthPill health={activeFeaturedEpic.epic.health} />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {featuredReadyKeys.length > 0 && (
+                        <Button
+                          variant="primary"
+                          icon="play"
+                          className="h-7 px-2.5 text-12"
+                          onClick={() => setDispatchKeys(featuredReadyKeys)}
+                        >
+                          Start {featuredReadyKeys.length} ready
+                        </Button>
+                      )}
+                      <ButtonLink
+                        href={`/tickets?layout=board&project=${encodeURIComponent(activeFeaturedEpic.project.key)}&epic=${encodeURIComponent(activeFeaturedEpic.epic.id)}`}
+                        variant="outline"
+                        className="h-7 px-2.5 text-12"
+                      >
+                        Board →
+                      </ButtonLink>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-3">
+                    {featuredWaves.map((w) => (
+                      <div
+                        key={w.wave}
+                        className={cx(
+                          "flex flex-col gap-1.5 rounded-lg border p-2.5",
+                          w.status === "current"
+                            ? "border-accent/40 bg-surface-raised"
+                            : "border-border-subtle bg-surface-sunken/60",
+                        )}
+                      >
+                        <div className="flex items-center justify-between gap-2 text-11">
+                          <span className="font-semibold text-fg">Wave {w.wave}</span>
+                          <span
+                            className={cx(
+                              "rounded px-1.5 py-[1px] font-mono text-10 uppercase",
+                              w.status === "done"
+                                ? "bg-state-done/15 text-state-done"
+                                : w.status === "current"
+                                  ? "bg-accent-soft text-accent"
+                                  : "text-fg-tertiary",
+                            )}
+                          >
+                            {w.status}
+                          </span>
+                        </div>
+                        <ul className="flex flex-col gap-1">
+                          {w.tickets.map((t) => (
+                            <li key={t.id}>
+                              <Link
+                                href={`/tickets/${t.key}`}
+                                className="flex items-center gap-1.5 rounded px-1.5 py-1 text-12 hover:bg-hover"
+                              >
+                                <StatusGlyph state={t.status} />
+                                <span className="flex-none font-mono text-11 text-fg-tertiary">
+                                  {t.key}
+                                </span>
+                                <span className="min-w-0 flex-1 truncate text-fg">
+                                  {t.title}
+                                </span>
+                                {t.estimate_points != null && (
+                                  <span className="flex-none font-mono text-10 text-fg-tertiary">
+                                    {t.estimate_points}p
+                                  </span>
+                                )}
+                              </Link>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
               {shown.length ? (
                 <section aria-label={`Epics, ${shown.length}`}>
                   <h2 className="flex h-8 items-center gap-2 px-3 text-11 font-medium uppercase tracking-[0.06em] text-fg-tertiary">
@@ -454,6 +678,15 @@ export function EpicsScreen() {
                 </EmptyState>
               )}
               <Timeline epics={shown} onSelect={(id) => router.push(`/epics/${id}`)} />
+              {dispatchKeys && dispatchKeys.length > 0 && (
+                <DispatchDialog
+                  keys={dispatchKeys}
+                  open
+                  onOpenChange={(open) => {
+                    if (!open) setDispatchKeys(null);
+                  }}
+                />
+              )}
             </>
           )}
         </div>
