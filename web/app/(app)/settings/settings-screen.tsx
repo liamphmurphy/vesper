@@ -11,6 +11,8 @@ import { Button, ButtonLink } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Toggle } from "@/components/ui/controls";
 import { Banner, Card, EmptyState, Skeleton } from "@/components/ui/primitives";
+import { NavigatorPortal } from "@/components/shell/navigator-slot";
+import { useCompact } from "@/lib/viewport";
 import { AppearanceSection } from "./appearance-section";
 import { BackupSection } from "./backup-section";
 import { ImageEngineSection } from "./image-engine-section";
@@ -30,6 +32,7 @@ const noSubscribe = () => () => {};
  * leaves the others usable, and each says what breaks when something is missing.
  */
 export function SettingsScreen() {
+  const compact = useCompact();
   const secrets = useSecrets();
   const runner = useRunnerStatus();
   const auth = useAuthStatus();
@@ -61,8 +64,37 @@ export function SettingsScreen() {
       </div>
     );
   }
+  const sectionNav = (
+    <nav
+      aria-label="Settings sections"
+      className={cx(
+        compact
+          ? "flex gap-1.5 overflow-x-auto pb-1"
+          : "flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2.5 pt-4 pb-3",
+      )}
+    >
+      {!compact && <h2 className="px-2 pb-1.5 text-11 font-semibold uppercase tracking-[0.06em] text-fg-tertiary">Settings</h2>}
+      {nav.map((n) => (
+        <a
+          key={n.id}
+          href={`#${n.id}`}
+          className={cx(
+            "flex min-h-8 flex-none items-center gap-2.5 rounded-md px-2.5 text-13 transition-colors",
+            compact
+              ? "border border-border bg-surface hover:bg-hover"
+              : "text-fg-secondary hover:bg-hover hover:text-fg",
+          )}
+        >
+          <HealthDot health={n.health} />
+          <span className="flex-1 whitespace-nowrap">{n.label}</span>
+          {n.badge && <span className="rounded-full bg-pill-human-bg px-1.5 text-11 text-pill-human-fg">{n.badge}</span>}
+        </a>
+      ))}
+    </nav>
+  );
   return (
     <div className="flex flex-col gap-6">
+      {!compact && <NavigatorPortal>{sectionNav}</NavigatorPortal>}
       <PageHeader title="Settings" description="Everything runs depend on. Each section says what breaks when something is missing.">
         <span className="flex gap-4 text-14">
           <Link href="/chat?new&setup" className="text-accent hover:underline">Run setup again →</Link>
@@ -70,17 +102,8 @@ export function SettingsScreen() {
         </span>
       </PageHeader>
       <SetupChecklist className="max-w-[1020px]" />
-      <div className="grid items-start gap-8 lg:grid-cols-[minmax(180px,max-content)_minmax(0,1fr)]">
-        <nav aria-label="Settings sections" className="flex gap-1.5 overflow-x-auto lg:sticky lg:top-4 lg:flex-col">
-          {nav.map((n) => (
-            <a key={n.id} href={`#${n.id}`} className="flex min-h-8 flex-none items-center gap-2.5 rounded-md border border-border bg-surface px-3 text-13 hover:bg-hover">
-              <HealthDot health={n.health} />
-              <span className="flex-1 whitespace-nowrap">{n.label}</span>
-              {n.badge && <span className="rounded-full bg-pill-human-bg px-1.5 text-11 text-pill-human-fg">{n.badge}</span>}
-            </a>
-          ))}
-        </nav>
-        <div className="flex min-w-0 max-w-[820px] flex-col gap-10">
+      {compact && sectionNav}
+      <div className="flex min-w-0 max-w-[820px] flex-col gap-10">
           <Section id="workspace" title="Workspace" lead="Shared by every space. Secret encryption is configured on the API server.">
             <WorkspaceSection />
           </Section>
@@ -114,7 +137,6 @@ export function SettingsScreen() {
           <Section id="appearance" title="Appearance">
             <AppearanceSection />
           </Section>
-        </div>
       </div>
     </div>
   );

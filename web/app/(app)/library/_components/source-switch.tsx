@@ -21,7 +21,7 @@ export function LibrarySourceSwitch({ source }: { source: LibrarySource }) {
         <Link
           key={i.key}
           href={i.href}
-          aria-current={i.key === source ? "page" : undefined}
+          aria-current={i.key === source ? "true" : undefined}
           className={cx(
             "flex h-[26px] items-center rounded-md px-3 text-13",
             i.key === source ? "bg-selected font-medium text-fg shadow-[inset_0_0_0_1px_var(--border-strong)]" : "text-fg-secondary hover:text-fg",
