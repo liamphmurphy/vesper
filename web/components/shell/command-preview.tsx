@@ -1,6 +1,7 @@
 "use client";
 
 import { useBacklinks, useChatMessages, useTicket, useWikiPage } from "@/lib/api/hooks";
+import { usePage, type PageRow } from "@/lib/api/knowledge-hooks";
 import type { Schemas } from "@/lib/api/client";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { STATUS_LABEL } from "@/components/domain/glyphs";
@@ -12,7 +13,7 @@ import { matchParts, plainExcerpt, type ChatMatch, type MessageMatch } from "@/l
 export type Preview =
   | { kind: "inbox"; item: Schemas["InboxItem"] }
   | { kind: "ticket"; key: string; title: string }
-  | { kind: "page"; id: string; path: string; title: string }
+  | { kind: "page"; id: string; path: string; title: string; source?: "knowledge" | "wiki"; row?: PageRow }
   | { kind: "chat"; chat: ChatMatch }
   | { kind: "message"; chat: ChatMatch; message: MessageMatch }
   | { kind: "item"; label: string; title: string; detail?: string; at?: string };
@@ -107,7 +108,7 @@ function Body({ preview, query }: { preview: Preview; query: string }) {
     case "ticket":
       return <TicketPreview ticketKey={preview.key} title={preview.title} query={query} />;
     case "page":
-      return <PagePreview id={preview.id} path={preview.path} title={preview.title} query={query} />;
+      return <PagePreview preview={preview} query={query} />;
     case "chat":
       return <ChatPreview chat={preview.chat} />;
     case "message":
@@ -179,19 +180,33 @@ function TicketPreview({ ticketKey, title, query }: { ticketKey: string; title: 
 
 const KIND_ICON: Partial<Record<string, IconName>> = { ticket: "tickets", artifact: "wiki", comment: "msg" };
 
-function PagePreview({ id, path, title, query }: { id: string; path: string; title: string; query: string }) {
-  const page = useWikiPage(path).data;
-  const links = useBacklinks("artifact", id).data?.linked ?? [];
-  const folder = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
-  const facts = page
-    ? [page.audience === "private" ? "Private" : page.audience === "shared" ? "Shared" : undefined, `edited ${ago(page.updated_at)}`, ...(page.tags ?? []).slice(0, 3).map((t) => `#${t}`)]
-    : [];
-  const excerpt = page?.body_md ? plainExcerpt(page.body_md, 360) : "";
+const PAGE_KIND_LABEL: Record<string, string> = { deck: "Deck", design: "Design", document: "Page" };
+const AUDIENCE_LABEL: Record<string, string> = { private: "Private", shared: "Shared", agent: "Agent" };
+
+function PagePreview({ preview, query }: { preview: Extract<Preview, { kind: "page" }>; query: string }) {
+  const isKnowledge = preview.source === "knowledge";
+  const wiki = useWikiPage(isKnowledge ? "" : preview.path).data;
+  const kpage = usePage(isKnowledge ? preview.id : undefined).data;
+  const links = useBacklinks("artifact", preview.id).data?.linked ?? [];
+  const folder = preview.path.includes("/") ? preview.path.slice(0, preview.path.lastIndexOf("/")) : "";
+  const kind = kpage?.kind ?? preview.row?.kind;
+  const kindLabel = (kind && PAGE_KIND_LABEL[kind]) ?? "Page";
+  const audience = kpage?.audience ?? wiki?.audience ?? preview.row?.audience;
+  const updatedAt = wiki?.updated_at ?? preview.row?.updated_at;
+  const rawTags = wiki?.tags ?? (Array.isArray(kpage?.properties?.tags) ? kpage.properties.tags : Array.isArray(preview.row?.properties?.tags) ? preview.row.properties.tags : []);
+  const tags = rawTags.filter((t): t is string => typeof t === "string");
+  const facts = [
+    audience ? AUDIENCE_LABEL[audience] : undefined,
+    updatedAt ? `edited ${ago(updatedAt)}` : undefined,
+    ...tags.slice(0, 3).map((t) => `#${t}`),
+  ].filter(Boolean);
+  const body = kpage?.body_md ?? wiki?.body_md ?? preview.row?.summary ?? "";
+  const excerpt = body ? plainExcerpt(body, 360) : "";
   return (
     <>
-      <Kind>{folder ? `Page · ${folder}` : "Page"}</Kind>
-      <Title>{page?.title ?? title}</Title>
-      {facts.length > 0 && <p className="mt-1.5 text-12 text-fg-secondary">{facts.filter(Boolean).join(" · ")}</p>}
+      <Kind>{folder ? `${kindLabel} · ${folder}` : kindLabel}</Kind>
+      <Title>{kpage?.title ?? wiki?.title ?? preview.title}</Title>
+      {facts.length > 0 && <p className="mt-1.5 text-12 text-fg-secondary">{facts.join(" · ")}</p>}
       {excerpt && (
         <p className="mt-4 line-clamp-6 text-13 leading-relaxed text-fg-secondary">
           <Highlighted text={excerpt} query={query} />

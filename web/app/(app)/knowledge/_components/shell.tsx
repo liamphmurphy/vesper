@@ -19,7 +19,7 @@ import { isTyping } from "@/components/shell/shortcuts";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { TopBar } from "@/components/shell/topbar";
 import { EditorEmbedContext, type EditorEmbed } from "@/components/shell/editor-layout";
-import { QuickSwitcher } from "./switcher";
+import { openCommandPalette } from "@/components/shell/command-menu";
 import { CaptureDialog } from "./capture";
 import { ImportDialog } from "./import-dialog";
 import { KnowledgeDock } from "./knowledge-dock";
@@ -162,12 +162,15 @@ export function KnowledgeShell({ children }: { children: ReactNode }) {
   const editorOpen = activeKind === "deck" || activeKind === "design";
   const [barActions, setBarActions] = useState<HTMLElement | null>(null);
   const embed = useMemo<EditorEmbed>(() => ({ actions: barActions, back: { href: "/knowledge", label: "Knowledge" } }), [barActions]);
-  const [switcher, setSwitcher] = useState(false);
   const [capture, setCapture] = useState(false);
   const [importing, setImporting] = useState(false);
   const daily = useDaily();
 
   const setView = useCallback((v: View) => viewStore.set(v), []);
+
+  const openSwitcher = useCallback(() => {
+    openCommandPalette({ scope: { kind: "knowledge", label: "Knowledge" }, includeAgent: view === "agent" });
+  }, [view]);
 
   const openToday = useCallback(() => {
     daily.mutate({ date: isoDay(new Date()) }, { onSuccess: (p) => router.push(pageHref(p.id, p.title)) });
@@ -215,7 +218,7 @@ export function KnowledgeShell({ children }: { children: ReactNode }) {
       const isW = e.code === "KeyW" || e.key.toLowerCase() === "w";
       if (mod && !e.altKey && e.key.toLowerCase() === "o") {
         e.preventDefault();
-        setSwitcher(true);
+        openSwitcher();
       } else if (mod && e.altKey && (e.key.toLowerCase() === "n" || e.code === "KeyN")) {
         e.preventDefault();
         setCapture(true);
@@ -233,7 +236,7 @@ export function KnowledgeShell({ children }: { children: ReactNode }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, close, closeAll, openToday]);
+  }, [active, close, closeAll, openSwitcher, openToday]);
 
   const registerTab = useCallback((tab: Tab) => {
     const cur = tabsStore.get();
@@ -264,7 +267,7 @@ export function KnowledgeShell({ children }: { children: ReactNode }) {
   const shell: Shell = {
     view,
     setView,
-    openSwitcher: () => setSwitcher(true),
+    openSwitcher,
     openCapture: () => setCapture(true),
     openImport: () => setImporting(true),
     openToday,
@@ -300,7 +303,6 @@ export function KnowledgeShell({ children }: { children: ReactNode }) {
         </div>
         {!editorOpen && <KnowledgeDock pageId={pageIdOf(pathname)} />}
       </div>
-      <QuickSwitcher open={switcher} onOpenChange={setSwitcher} includeAgent={view === "agent"} />
       <CaptureDialog open={capture} onOpenChange={setCapture} />
       <ImportDialog open={importing} onOpenChange={setImporting} />
       </KnowledgeChatProvider>
@@ -643,7 +645,7 @@ function Explorer({ pathname }: { pathname: string }) {
       >
         <Icon name="search" size={13} />
         <span className="flex-1 truncate">Search pages and #tags</span>
-        <Kbd>⌘O</Kbd>
+        <Kbd>⌘⇧K</Kbd>
       </button>
       <nav aria-label="Pages" className="mt-3 min-h-0 flex-1 overflow-y-auto px-2 pb-3">
         {pages.isPending ? (

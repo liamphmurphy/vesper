@@ -393,7 +393,7 @@ function Gallery({ kind }: { kind: PageKind }) {
         </div>
       ) : rows.length === 0 ? (
         <EmptyState icon={pageIcon({ kind })} title={query.trim() ? `No ${label.plural.toLowerCase()} match “${query.trim()}”` : `No ${label.plural.toLowerCase()} yet`}>
-          {query.trim() ? "Try another word, or search everything with ⌘O." : "Start one above: every one you make shows up here, whatever folder it's in."}
+          {query.trim() ? "Try another word, or search everything with ⌘⇧K." : "Start one above: every one you make shows up here, whatever folder it's in."}
         </EmptyState>
       ) : kind === "document" ? (
         <DocumentList rows={rows} />

@@ -6,14 +6,17 @@ import {
   bestOf,
   facets,
   groupChats,
+  knowledgeFolder,
   linkFromTarget,
   matchParts,
   matchesWords,
   pageContext,
-  plainExcerpt,
+  pageScope,
   parseFilters,
+  parseKnowledgeQuery,
   parseRecent,
   personaMatches,
+  plainExcerpt,
   projectOfKey,
   pushRecent,
   rankGroups,
@@ -23,6 +26,7 @@ import {
   searchKind,
   snippetParts,
   stepChip,
+  stepKnowledgeKind,
   ticketKeyFrom,
   typeCounts,
   typeOf,
@@ -131,9 +135,50 @@ test("page context comes from the route", () => {
   assert.deepEqual(pageContext("/tickets/LAZYAGENTS-39"), { kind: "ticket", key: "LAZYAGENTS-39" });
   assert.equal(pageContext("/tickets/new"), undefined);
   assert.deepEqual(pageContext("/artifacts/01a1b654-610b-7c95-ada1-9120068a5400"), { kind: "artifact", id: "01a1b654-610b-7c95-ada1-9120068a5400" });
+  assert.deepEqual(pageContext("/knowledge/01a1b654-610b-7c95-ada1-9120068a5400/my-note"), { kind: "knowledge", id: "01a1b654-610b-7c95-ada1-9120068a5400" });
   assert.deepEqual(pageContext("/wiki/Payments/Rollback%20runbook"), { kind: "wiki", path: "Payments/Rollback runbook" });
   assert.equal(pageContext("/board"), undefined);
   assert.equal(projectOfKey("LAZYAGENTS-39"), "LAZYAGENTS");
+});
+
+test("pageScope maps Knowledge, Work views, and app routes to their scoped palette", () => {
+  assert.deepEqual(pageScope("/knowledge"), { kind: "knowledge", label: "Knowledge" });
+  assert.deepEqual(pageScope("/knowledge/01a1b654-610b-7c95-ada1-9120068a5400"), { kind: "knowledge", label: "Knowledge" });
+  assert.deepEqual(pageScope("/knowledge?kind=design"), { kind: "knowledge", label: "Knowledge" });
+  assert.deepEqual(pageScope("/wiki/Homelab"), { kind: "knowledge", label: "Knowledge" });
+  assert.deepEqual(pageScope("/apps/designs/123"), { kind: "knowledge", label: "Knowledge" });
+  assert.deepEqual(pageScope("/apps"), { kind: "type", type: "app", label: "Apps" });
+  assert.deepEqual(pageScope("/apps/finance"), { kind: "type", type: "app", label: "Apps" });
+  assert.deepEqual(pageScope("/tickets/WEB-1"), { kind: "type", type: "ticket", label: "Tickets" });
+  assert.deepEqual(pageScope("/tickets?layout=epics&project=WEB"), { kind: "type", type: "epic", label: "Epics" });
+  assert.deepEqual(pageScope("/tickets", "?layout=board&project=WEB"), { kind: "type", type: "ticket", label: "Tickets" });
+  assert.deepEqual(pageScope("/board"), { kind: "type", type: "ticket", label: "Tickets" });
+  assert.deepEqual(pageScope("/work"), { kind: "type", type: "run", label: "Runs" });
+  assert.deepEqual(pageScope("/work", "?view=tickets"), { kind: "type", type: "ticket", label: "Tickets" });
+  assert.deepEqual(pageScope("/work", "?view=epics"), { kind: "type", type: "epic", label: "Epics" });
+  assert.deepEqual(pageScope("/chat/c1"), { kind: "type", type: "chat", label: "Chats" });
+  assert.deepEqual(pageScope("/runs/r1"), { kind: "type", type: "run", label: "Runs" });
+  assert.deepEqual(pageScope("/customization"), { kind: "type", type: "people", label: "People" });
+  assert.deepEqual(pageScope("/workflows/w1"), { kind: "type", type: "workflow", label: "Workflows" });
+  assert.deepEqual(pageScope("/library"), { kind: "type", type: "library", label: "Library" });
+  assert.deepEqual(pageScope("/scheduled"), { kind: "type", type: "scheduled", label: "Scheduled" });
+  assert.deepEqual(pageScope("/learn/c1"), { kind: "type", type: "course", label: "Courses" });
+  assert.deepEqual(pageScope("/spaces/s1"), { kind: "type", type: "space", label: "Spaces" });
+  assert.deepEqual(pageScope("/artifacts/a1"), { kind: "type", type: "artifact", label: "Artifacts" });
+  assert.equal(pageScope("/settings"), undefined);
+});
+
+test("Knowledge helpers parse #tag queries, format folders and step kinds", () => {
+  assert.deepEqual(parseKnowledgeQuery("  combat notes "), { text: "combat notes", tag: "" });
+  assert.deepEqual(parseKnowledgeQuery("  #dnd "), { text: "", tag: "dnd" });
+  assert.deepEqual(parseKnowledgeQuery("#"), { text: "", tag: "" });
+  assert.equal(knowledgeFolder("Campaign/Sessions/Dawn"), "Campaign / Sessions");
+  assert.equal(knowledgeFolder("Readme"), "Top level");
+  assert.equal(stepKnowledgeKind(undefined), "document");
+  assert.equal(stepKnowledgeKind("document"), "deck");
+  assert.equal(stepKnowledgeKind("deck"), "design");
+  assert.equal(stepKnowledgeKind("design"), undefined);
+  assert.equal(stepKnowledgeKind(undefined, true), "design");
 });
 
 test("a bare number is a ticket in the current project", () => {
