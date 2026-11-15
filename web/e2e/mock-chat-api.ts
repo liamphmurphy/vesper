@@ -178,6 +178,7 @@ export function installChatApi(page: Page, opts: MockOptions = {}) {
   const videos = new Map<string, Record<string, unknown>[]>();
   // Chat audio the same way: "audio: <state>" and "audio-live: <stage>".
   const audio = new Map<string, Record<string, unknown>[]>();
+  const codeReviews = new Map<string, components["schemas"]["CodeReview"][]>();
   // The persona_id each GET /chats asked for ("" when omitted, i.e. the default).
   const chatPersonaFilters: string[] = [];
   let n = 0;
@@ -305,6 +306,42 @@ export function installChatApi(page: Page, opts: MockOptions = {}) {
           { path: "assets/logo.png", status: "modified", additions: 0, deletions: 0, binary: true, truncated: false },
         ],
       });
+      if (!codeReviews.has(c.id)) {
+        codeReviews.set(c.id, [
+          {
+            repository: c.repo_url ?? "https://github.com/acme/alpha.git",
+            branch: "feat/code-review",
+            base_sha: "1111111111111111111111111111111111111111",
+            head_sha: "abcdef1234567890abcdef1234567890abcdef12",
+            commits: [{ sha: "abcdef1234567890abcdef1234567890abcdef12", subject: "Update app and add main" }],
+            files: [
+              {
+                path: "src/app.ts", status: "modified", additions: 2, deletions: 1, binary: false, truncated: false,
+                patch: "@@ -1,3 +1,4 @@\n import a from \"a\";\n-const x = 1;\n+const x = 2;\n+const y = 3;\n export {};\n@@ -20,2 +21,2 @@\n function f() {\n-  return 1;\n+  return 2;\n }\n",
+              },
+              { path: "cmd/main.go", status: "added", additions: 3, deletions: 0, binary: false, truncated: false, patch: "@@ -0,0 +1,3 @@\n+package main\n+\n+func main() {}\n" },
+              { path: "assets/logo.png", status: "modified", additions: 0, deletions: 0, binary: true, truncated: false },
+              { path: "docs/new-guide.md", old_path: "docs/old-guide.md", status: "renamed", additions: 0, deletions: 0, binary: false, truncated: false },
+              { path: "legacy/drop.ts", status: "deleted", additions: 0, deletions: 1, binary: false, truncated: false, patch: "@@ -1 +0,0 @@\n-export const old = true;\n" },
+            ],
+            dirty: false,
+            live: false,
+            tree: [
+              { path: "README.md", size: 28, binary: false, content: "# Alpha\n\nTracked readme body.\n", truncated: false },
+              { path: "src/config.ts", size: 35, binary: false, content: "export const API_URL = '/api/v1';\n", truncated: false },
+              { path: "src/app.ts", size: 120, binary: false, content: "import a from \"a\";\nconst x = 2;\n", truncated: false },
+              { path: "cmd/main.go", size: 32, binary: false, content: "package main\n\nfunc main() {}\n", truncated: false },
+              { path: "docs/new-guide.md", size: 22, binary: false, content: "# Renamed Guide\n", truncated: false },
+              { path: "assets/logo.png", size: 128, binary: true, truncated: false },
+              { path: "assets/unchanged.bin", size: 256, binary: true, truncated: false },
+              { path: "data/huge.sql", size: 512000, binary: false, truncated: true },
+              { path: "docs/notes.txt", size: 50000, binary: false, content: "First part of truncated notes\n", truncated: true },
+            ],
+            tree_truncated: false,
+            updated_at: now(),
+          },
+        ]);
+      }
       void emit(c);
       return;
     }
@@ -499,6 +536,10 @@ export function installChatApi(page: Page, opts: MockOptions = {}) {
       const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
       return route.fulfill({ status: 200, contentType: "image/png", body: png });
     }
+    const cr = /^\/chats\/([^/]+)\/code-review$/.exec(path);
+    if (cr && method === "GET") return json({ repositories: codeReviews.get(cr[1]) ?? [] });
+    const pr = /^\/chats\/([^/]+)\/push-requests$/.exec(path);
+    if (pr && method === "GET") return json({ requests: [] });
     if (/^\/chats\/[^/]+\/research$/.test(path) && method === "GET") return json({ jobs: [] });
     if (/^\/chats\/[^/]+\/runs$/.test(path) && method === "GET") return json({ runs: [] });
     if (/^\/chats\/[^/]+\/followups$/.test(path) && method === "GET") return json({ followups: [] });
@@ -1148,7 +1189,7 @@ export function installChatApi(page: Page, opts: MockOptions = {}) {
       (window as unknown as { EventSource: unknown }).EventSource = FakeEventSource;
     });
     await page.route("**/api/v1/**", handle);
-    return { spaces, workRequests, asides, inbox, dock, apiSecrets, apiSecretPosts, secretApprovals, secretDecisions, secretProposals, chatSecrets, connectors, connectorApprovals, connectorDecisions, ticketChanges, ticketChangeDecisions, scheduledTasks, proposals, decisions, chats, unhandled, posted, created, wikiPages, artifactForms, memories, memoryRequests, memoryPatches, memoryImports, personas, personaRequests, chatPersonaFilters, updatePersona, profileRequests, commitEmailRequests };
+    return { spaces, workRequests, asides, inbox, dock, apiSecrets, apiSecretPosts, secretApprovals, secretDecisions, secretProposals, chatSecrets, connectors, connectorApprovals, connectorDecisions, ticketChanges, ticketChangeDecisions, scheduledTasks, proposals, decisions, chats, unhandled, posted, created, wikiPages, artifactForms, memories, memoryRequests, memoryPatches, memoryImports, personas, personaRequests, chatPersonaFilters, updatePersona, profileRequests, commitEmailRequests, codeReviews };
   })();
 }
 

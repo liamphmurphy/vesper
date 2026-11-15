@@ -30,7 +30,7 @@ func (q *Queries) AddChatWorkBranch(ctx context.Context, arg AddChatWorkBranchPa
 }
 
 const chatCodeReviews = `-- name: ChatCodeReviews :many
-SELECT chat_id, repo_url, branch, base_sha, head_sha, commits, files, dirty, live, updated_at FROM chat_code_reviews WHERE chat_id = $1 ORDER BY repo_url
+SELECT chat_id, repo_url, branch, base_sha, head_sha, commits, files, dirty, live, updated_at, tree, tree_truncated FROM chat_code_reviews WHERE chat_id = $1 ORDER BY repo_url
 `
 
 func (q *Queries) ChatCodeReviews(ctx context.Context, chatID uuid.UUID) ([]ChatCodeReview, error) {
@@ -53,6 +53,8 @@ func (q *Queries) ChatCodeReviews(ctx context.Context, chatID uuid.UUID) ([]Chat
 			&i.Dirty,
 			&i.Live,
 			&i.UpdatedAt,
+			&i.Tree,
+			&i.TreeTruncated,
 		); err != nil {
 			return nil, err
 		}
@@ -701,24 +703,26 @@ func (q *Queries) SupersedePushRequests(ctx context.Context, arg SupersedePushRe
 }
 
 const upsertChatCodeReview = `-- name: UpsertChatCodeReview :exec
-INSERT INTO chat_code_reviews (chat_id, repo_url, branch, base_sha, head_sha, commits, files, dirty, live, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+INSERT INTO chat_code_reviews (chat_id, repo_url, branch, base_sha, head_sha, commits, files, dirty, live, tree, tree_truncated, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now())
 ON CONFLICT (chat_id, repo_url) DO UPDATE SET
   branch = EXCLUDED.branch, base_sha = EXCLUDED.base_sha, head_sha = EXCLUDED.head_sha,
   commits = EXCLUDED.commits, files = EXCLUDED.files, dirty = EXCLUDED.dirty,
-  live = EXCLUDED.live, updated_at = now()
+  live = EXCLUDED.live, tree = EXCLUDED.tree, tree_truncated = EXCLUDED.tree_truncated, updated_at = now()
 `
 
 type UpsertChatCodeReviewParams struct {
-	ChatID  uuid.UUID
-	RepoUrl string
-	Branch  *string
-	BaseSha *string
-	HeadSha *string
-	Commits json.RawMessage
-	Files   json.RawMessage
-	Dirty   bool
-	Live    bool
+	ChatID        uuid.UUID
+	RepoUrl       string
+	Branch        *string
+	BaseSha       *string
+	HeadSha       *string
+	Commits       json.RawMessage
+	Files         json.RawMessage
+	Dirty         bool
+	Live          bool
+	Tree          json.RawMessage
+	TreeTruncated bool
 }
 
 func (q *Queries) UpsertChatCodeReview(ctx context.Context, arg UpsertChatCodeReviewParams) error {
@@ -732,6 +736,8 @@ func (q *Queries) UpsertChatCodeReview(ctx context.Context, arg UpsertChatCodeRe
 		arg.Files,
 		arg.Dirty,
 		arg.Live,
+		arg.Tree,
+		arg.TreeTruncated,
 	)
 	return err
 }

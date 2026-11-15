@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // Limits on what a coding chat turn reports about its changes (the contract's
@@ -14,6 +15,23 @@ const (
 	CodeChangeMaxPatchBytes = 40 << 10
 	CodeChangeMaxTotalBytes = 200 << 10
 )
+
+// Limits on the reviewed branch file tree snapshot (CodeReviewFile).
+const (
+	CodeReviewMaxTreeFiles      = 1000
+	CodeReviewMaxFileBytes      = 40 << 10
+	CodeReviewOversizeFileBytes = 128 << 10
+	CodeReviewMaxTreeTotalBytes = 256 << 10
+)
+
+// CodeReviewFile is one file in the reviewed branch tree snapshot.
+type CodeReviewFile struct {
+	Path      string  `json:"path"`
+	Size      int     `json:"size"`
+	Binary    bool    `json:"binary"`
+	Content   *string `json:"content,omitempty"`
+	Truncated bool    `json:"truncated"`
+}
 
 // CodeChange is one file a coding chat turn changed. Its JSON is the
 // contract's ChatCodeChange, stored on the assistant message as is.
@@ -239,4 +257,70 @@ func ApplyCodeChangeBudget(in []CodeChange) []CodeChange {
 		in[i].Patch = &p
 	}
 	return in
+}
+
+// ApplyCodeTreeBudget bounds a branch tree snapshot without changed-file prioritization.
+func ApplyCodeTreeBudget(in []CodeReviewFile) ([]CodeReviewFile, bool) {
+	return ApplyCodeTreeBudgetWithChanged(in, nil)
+}
+
+// ApplyCodeTreeBudgetWithChanged enforces tree count, per-file, oversize, binary
+// and total text-content limits, prioritizing unchanged files in the budget since
+// changed files already carry their diffs.
+func ApplyCodeTreeBudgetWithChanged(in []CodeReviewFile, changedPaths map[string]bool) ([]CodeReviewFile, bool) {
+	treeTruncated := false
+	if len(in) > CodeReviewMaxTreeFiles {
+		in = in[:CodeReviewMaxTreeFiles]
+		treeTruncated = true
+	}
+	out := make([]CodeReviewFile, len(in))
+	copy(out, in)
+	total := 0
+	applyOne := func(i int) {
+		out[i].Path = strings.ToValidUTF8(out[i].Path, "")
+		if out[i].Binary || (out[i].Content != nil && strings.IndexByte(*out[i].Content, 0) >= 0) {
+			out[i].Binary = true
+			out[i].Content = nil
+			out[i].Truncated = false
+			return
+		}
+		if out[i].Size > CodeReviewOversizeFileBytes {
+			out[i].Binary = false
+			out[i].Content = nil
+			out[i].Truncated = true
+			return
+		}
+		if out[i].Content == nil {
+			return
+		}
+		s := strings.ToValidUTF8(*out[i].Content, "")
+		if out[i].Size == 0 && len(s) > 0 {
+			out[i].Size = len(s)
+		}
+		if len(s) > CodeReviewMaxFileBytes {
+			s = s[:CodeReviewMaxFileBytes]
+			for len(s) > 0 && !utf8.ValidString(s) {
+				s = s[:len(s)-1]
+			}
+			out[i].Truncated = true
+		}
+		if total+len(s) > CodeReviewMaxTreeTotalBytes {
+			out[i].Content = nil
+			out[i].Truncated = true
+			return
+		}
+		total += len(s)
+		out[i].Content = &s
+	}
+	for i := range out {
+		if !changedPaths[out[i].Path] {
+			applyOne(i)
+		}
+	}
+	for i := range out {
+		if changedPaths[out[i].Path] {
+			applyOne(i)
+		}
+	}
+	return out, treeTruncated
 }

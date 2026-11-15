@@ -145,3 +145,51 @@ func TestApplyCodeChangeBudget(t *testing.T) {
 		t.Error("invalid UTF-8 kept")
 	}
 }
+
+func TestApplyCodeTreeBudgetWithChanged(t *testing.T) {
+	mk := func(s string) *string { return &s }
+	files := []CodeReviewFile{
+		{Path: "ok.txt", Size: 5, Content: mk("hello")},
+		{Path: "bin.dat", Size: 4, Content: mk("a\x00bc")},
+		{Path: "huge.bin", Size: CodeReviewOversizeFileBytes + 1, Content: mk("big")},
+		{Path: "slice.txt", Size: CodeReviewMaxFileBytes + 10, Content: mk(strings.Repeat("a", CodeReviewMaxFileBytes+10))},
+		{Path: "changed.txt", Size: 20 << 10, Content: mk(strings.Repeat("c", 20<<10))},
+	}
+	// Fill budget with unchanged files to verify changed files yield cleanly.
+	for i := 0; i < 6; i++ {
+		body := strings.Repeat("b", CodeReviewMaxFileBytes)
+		files = append(files, CodeReviewFile{Path: "pad" + string(rune('0'+i)) + ".txt", Size: len(body), Content: &body})
+	}
+	changed := map[string]bool{"changed.txt": true}
+	got, treeTrunc := ApplyCodeTreeBudgetWithChanged(files, changed)
+	if treeTrunc {
+		t.Error("did not expect treeTrunc for 12 files")
+	}
+	byPath := map[string]CodeReviewFile{}
+	for _, f := range got {
+		byPath[f.Path] = f
+	}
+	if !byPath["bin.dat"].Binary || byPath["bin.dat"].Content != nil || byPath["bin.dat"].Truncated {
+		t.Errorf("bin.dat = %+v", byPath["bin.dat"])
+	}
+	if byPath["huge.bin"].Binary || byPath["huge.bin"].Content != nil || !byPath["huge.bin"].Truncated {
+		t.Errorf("huge.bin = %+v", byPath["huge.bin"])
+	}
+	if byPath["slice.txt"].Content == nil || len(*byPath["slice.txt"].Content) != CodeReviewMaxFileBytes || !byPath["slice.txt"].Truncated {
+		t.Errorf("slice.txt = %+v", byPath["slice.txt"])
+	}
+	if byPath["ok.txt"].Content == nil || *byPath["ok.txt"].Content != "hello" || byPath["ok.txt"].Truncated {
+		t.Errorf("ok.txt = %+v", byPath["ok.txt"])
+	}
+	if byPath["changed.txt"].Content != nil || !byPath["changed.txt"].Truncated {
+		t.Errorf("changed.txt should yield to unchanged budget: %+v", byPath["changed.txt"])
+	}
+	many := make([]CodeReviewFile, CodeReviewMaxTreeFiles+5)
+	for i := range many {
+		many[i] = CodeReviewFile{Path: "f"}
+	}
+	trimmed, trunc := ApplyCodeTreeBudget(many)
+	if len(trimmed) != CodeReviewMaxTreeFiles || !trunc {
+		t.Errorf("trimmed=%d trunc=%v", len(trimmed), trunc)
+	}
+}

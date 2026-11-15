@@ -21,12 +21,34 @@ export function openPanels(q: Query, designIds: readonly string[]): ChatPanel[] 
   // "full" shows the canvas as a panel (the dock, or the compact sheet); "max" takes it over the window.
   const full = q.get("canvas_view") === "full" || q.get("canvas_view") === "max";
   const pg = q.get("playground");
+  const code = q.get("code");
   const open: ChatPanel[] = [];
   if (!full && focus && focus !== "none" && designIds.includes(focus)) open.push("design");
   if (full) open.push("canvas");
   if (pg === "open" || pg === "full") open.push("playground");
-  if (q.get("code") === "open") open.push("code");
+  if (code === "open" || code === "full") open.push("code");
   return open;
+}
+
+/** Whether the Code panel is expanded to fullscreen (`code=full`). */
+export function codeFullscreen(q: Query): boolean {
+  return q.get("code") === "full";
+}
+
+/** Query with Code open in fullscreen. */
+export function openCodeFullscreen(q: URLSearchParams): URLSearchParams {
+  const next = new URLSearchParams(q.toString());
+  next.set("code", "full");
+  next.set("panel", "code");
+  next.delete("sheet");
+  return next;
+}
+
+/** Query exiting Code fullscreen back to the docked/sheet panel. */
+export function exitCodeFullscreen(q: URLSearchParams): URLSearchParams {
+  const next = new URLSearchParams(q.toString());
+  next.set("code", "open");
+  return next;
 }
 
 /** The one panel a sheet shows: the one switched to, if it's still open, else the frontmost (a fullscreen canvas, then the playground, then the code, then a design). */
@@ -46,7 +68,7 @@ export function switchPanel(q: URLSearchParams, panel: ChatPanel, opts: { design
   } else if (panel === "canvas") {
     next.set("canvas_view", "full");
   } else if (panel === "code") {
-    next.set("code", "open");
+    next.set("code", next.get("code") === "full" ? "full" : "open");
   } else if (next.get("playground") !== "open" && next.get("playground") !== "full") {
     next.set("playground", "open");
   }

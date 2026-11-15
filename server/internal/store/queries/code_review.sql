@@ -1,10 +1,10 @@
 -- name: UpsertChatCodeReview :exec
-INSERT INTO chat_code_reviews (chat_id, repo_url, branch, base_sha, head_sha, commits, files, dirty, live, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+INSERT INTO chat_code_reviews (chat_id, repo_url, branch, base_sha, head_sha, commits, files, dirty, live, tree, tree_truncated, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now())
 ON CONFLICT (chat_id, repo_url) DO UPDATE SET
   branch = EXCLUDED.branch, base_sha = EXCLUDED.base_sha, head_sha = EXCLUDED.head_sha,
   commits = EXCLUDED.commits, files = EXCLUDED.files, dirty = EXCLUDED.dirty,
-  live = EXCLUDED.live, updated_at = now();
+  live = EXCLUDED.live, tree = EXCLUDED.tree, tree_truncated = EXCLUDED.tree_truncated, updated_at = now();
 
 -- name: SetChatCodeReviewsSettled :exec
 -- A turn ended: nothing is changing the workspace any more.

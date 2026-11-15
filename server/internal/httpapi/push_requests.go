@@ -28,8 +28,11 @@ func (s *Server) GetChatCodeReview(ctx context.Context, req api.GetChatCodeRevie
 	}
 	out := make([]api.CodeReview, 0, len(rows))
 	for _, r := range rows {
+		tree := []api.CodeReviewFile{}
+		_ = json.Unmarshal(r.Tree, &tree)
+		treeTruncated := r.TreeTruncated
 		cr := api.CodeReview{Repository: r.RepoUrl, Branch: r.Branch, BaseSha: r.BaseSha, HeadSha: r.HeadSha, Dirty: r.Dirty, Live: r.Live,
-			UpdatedAt: r.UpdatedAt, Commits: []api.CodeCommit{}, Files: []api.ChatCodeChange{}}
+			UpdatedAt: r.UpdatedAt, Commits: []api.CodeCommit{}, Files: []api.ChatCodeChange{}, Tree: &tree, TreeTruncated: &treeTruncated}
 		_ = json.Unmarshal(r.Commits, &cr.Commits)
 		_ = json.Unmarshal(r.Files, &cr.Files)
 		out = append(out, cr)

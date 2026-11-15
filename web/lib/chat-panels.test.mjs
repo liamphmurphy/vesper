@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { activePanel, closePanel, closeThread, dockOpen, dockTab, dragCloses, hideSheet, openPanels, openThread, openThreads, setDock, sheetHidden, switchPanel, threadOf, closeItem, itemOf, linkedItems, openItem } from "./chat-panels.ts";
+import { activePanel, closePanel, closeThread, codeFullscreen, dockOpen, dockTab, dragCloses, exitCodeFullscreen, hideSheet, openCodeFullscreen, openPanels, openThread, openThreads, setDock, sheetHidden, switchPanel, threadOf, closeItem, itemOf, linkedItems, openItem } from "./chat-panels.ts";
 
 const D = "01a1bbdd-4937-7baa-af62-b3726025d331";
 const C = "01a1bbdd-4937-7baa-af62-b3726025d332";
@@ -186,4 +186,21 @@ test("the Code panel opens and closes with its own param", () => {
   const closed = closePanel(q, "code");
   assert.equal(closed.get("code"), null);
   assert.deepEqual(openPanels(closed, []), []);
+});
+
+test("code=full opens fullscreen, preserves full on switchPanel, and restores docked open on exit", () => {
+  const open = new URLSearchParams("code=open&panel=code&dock=1");
+  assert.equal(codeFullscreen(open), false);
+
+  const full = openCodeFullscreen(open);
+  assert.equal(full.get("code"), "full");
+  assert.equal(full.get("panel"), "code");
+  assert.equal(codeFullscreen(full), true);
+  assert.deepEqual(openPanels(full, []), ["code"]);
+  assert.equal(switchPanel(full, "code").get("code"), "full");
+
+  const exited = exitCodeFullscreen(full);
+  assert.equal(exited.get("code"), "open");
+  assert.equal(codeFullscreen(exited), false);
+  assert.deepEqual(openPanels(exited, []), ["code"]);
 });

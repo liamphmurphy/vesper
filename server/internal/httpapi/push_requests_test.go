@@ -129,3 +129,93 @@ func TestChatRequestPushAndDecide(t *testing.T) {
 }
 
 func jsonText(v any) string { b, _ := json.Marshal(v); return string(b) }
+
+func TestGetChatCodeReviewTreeIsolationAndAccess(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	q := store.New(pool)
+	arts := &artifacts.Service{Pool: pool}
+	if _, err := seed.Run(ctx, pool, seed.Options{Demo: true, Artifacts: arts}); err != nil {
+		t.Fatal(err)
+	}
+	me, _ := q.GetLocalUser(ctx)
+	ws := me.WorkspaceID
+	tr := &tracker.Service{Pool: pool}
+	rs := &runs.Service{Pool: pool, Tracker: tr, Artifacts: arts}
+	handler := (&Server{AnonymousAPI: true, Pool: pool, Q: q, Tracker: tr, Runs: rs, Artifacts: arts}).Handler()
+
+	code := true
+	p, err := (&personas.Service{Pool: pool}).Create(ctx, personas.Owner{WorkspaceID: ws, UserID: me.ID}, personas.NewInput{Name: "Coder", Code: &code})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chat, err := rs.StartChat(ctx, ws, me.ID, runs.ChatInput{PersonaID: &p.ID, Message: &runs.ChatMessageInput{Body: "hi"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	b1, sha1 := "feat/alpha", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	b2, sha2 := "feat/beta", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	if err := q.UpsertChatCodeReview(ctx, store.UpsertChatCodeReviewParams{
+		ChatID: chat.ID, RepoUrl: "https://github.com/acme/alpha.git", Branch: &b1, BaseSha: &sha1, HeadSha: &sha1,
+		Commits: []byte("[]"), Files: []byte(`[{"path":"a.go","status":"modified","additions":1,"deletions":0,"binary":false,"truncated":false}]`),
+		Tree:          []byte(`[{"path":"README.md","size":5,"binary":false,"content":"alpha","truncated":false}]`),
+		TreeTruncated: false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.UpsertChatCodeReview(ctx, store.UpsertChatCodeReviewParams{
+		ChatID: chat.ID, RepoUrl: "https://github.com/acme/beta.git", Branch: &b2, BaseSha: &sha2, HeadSha: &sha2,
+		Commits: []byte("[]"), Files: []byte(`[{"path":"b.ts","status":"added","additions":2,"deletions":0,"binary":false,"truncated":false}]`),
+		Tree:          []byte(`[{"path":"package.json","size":2,"binary":false,"content":"{}","truncated":false}]`),
+		TreeTruncated: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("GET", "/api/v1/chats/"+chat.ID.String()+"/code-review", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("status = %d body = %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Repositories []struct {
+			Repository    string `json:"repository"`
+			Branch        string `json:"branch"`
+			HeadSha       string `json:"head_sha"`
+			TreeTruncated bool   `json:"tree_truncated"`
+			Tree          []struct {
+				Path    string  `json:"path"`
+				Content *string `json:"content"`
+			} `json:"tree"`
+		} `json:"repositories"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Repositories) != 2 {
+		t.Fatalf("repos = %+v", resp.Repositories)
+	}
+	if resp.Repositories[0].Repository != "https://github.com/acme/alpha.git" || resp.Repositories[0].TreeTruncated ||
+		len(resp.Repositories[0].Tree) != 1 || resp.Repositories[0].Tree[0].Path != "README.md" || *resp.Repositories[0].Tree[0].Content != "alpha" {
+		t.Fatalf("alpha mismatch: %+v", resp.Repositories[0])
+	}
+	if resp.Repositories[1].Repository != "https://github.com/acme/beta.git" || !resp.Repositories[1].TreeTruncated ||
+		len(resp.Repositories[1].Tree) != 1 || resp.Repositories[1].Tree[0].Path != "package.json" || *resp.Repositories[1].Tree[0].Content != "{}" {
+		t.Fatalf("beta mismatch: %+v", resp.Repositories[1])
+	}
+
+	// Non-owned / unknown chat returns 404; unauthenticated server denies anonymous access.
+	w404 := httptest.NewRecorder()
+	handler.ServeHTTP(w404, httptest.NewRequest("GET", "/api/v1/chats/"+uuid.New().String()+"/code-review", nil))
+	if w404.Code != 404 {
+		t.Fatalf("missing chat status = %d", w404.Code)
+	}
+	strict := (&Server{AnonymousAPI: false, Pool: pool, Q: q, Tracker: tr, Runs: rs, Artifacts: arts}).Handler()
+	w401 := httptest.NewRecorder()
+	strict.ServeHTTP(w401, httptest.NewRequest("GET", "/api/v1/chats/"+chat.ID.String()+"/code-review", nil))
+	if w401.Code != 401 {
+		t.Fatalf("unauth status = %d", w401.Code)
+	}
+}

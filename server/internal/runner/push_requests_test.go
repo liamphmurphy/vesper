@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/liamphmurphy/vesper/server/internal/pushreq"
+	"github.com/liamphmurphy/vesper/server/internal/runner"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/secrets"
 	"github.com/liamphmurphy/vesper/server/internal/store"
@@ -218,5 +219,118 @@ func TestChatPushRequestIsStagedThenShipped(t *testing.T) {
 	}
 	if len(gh.pulls) != 1 {
 		t.Fatalf("the open pull request is reused, not duplicated: %+v", gh.pulls)
+	}
+}
+
+func TestChatCodeReviewTreeSnapshotAndCleanup(t *testing.T) {
+	e := setup(t)
+	t.Setenv("FAKE_HARNESS_MODE", "chat")
+	bare := bareRepo(t)
+	gitIn(t, bare, "symbolic-ref", "HEAD", "refs/heads/main")
+	config := filepath.Join(t.TempDir(), "gitconfig")
+	if out, err := exec.Command("git", "config", "--file", config, "url."+bare+".insteadOf", "https://github.com/acme/alpha.git").CombinedOutput(); err != nil {
+		t.Fatalf("rewrite: %v %s", err, out)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", config)
+
+	p := e.persona("TreeTester", true, false)
+	chat, err := e.runs.StartChat(e.ctx, e.ws, e.me.ID, runs.ChatInput{PersonaID: &p.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.runs.SetChatRepository(e.ctx, e.ws, e.me.ID, chat.ID, "acme/alpha", nil); err != nil {
+		t.Fatal(err)
+	}
+	dir := ".lazyagents/repos/acme/alpha"
+	cmd := strings.Join([]string{
+		"cd " + dir,
+		"git checkout -q -b feat/tree-view",
+		"mkdir -p src assets big",
+		`printf 'package src\nconst V = 1\n' > src/app.go`,
+		"git mv old.txt renamed.txt",
+		"git rm -q gone.txt",
+		`python3 -c 'open("assets/icon.bin","wb").write(b"\x00\x01\x02\x03")'`,
+		`python3 -c 'open("big/dump.txt","w").write("x"*140000)'`,
+		"git add -A",
+		`git commit -qm 'branch changes'`,
+		`printf 'uncommitted line\n' > untracked.txt`,
+		`mkdir -p .lazyagents/secret`,
+		`printf 'hidden\n' > .lazyagents/secret/leak.txt`,
+		`printf 'instructions\n' > AGENTS.md`,
+	}, " && ")
+	reply := e.postSh(chat.ID, cmd)
+	if !strings.Contains(reply, "err=<nil>") {
+		t.Fatalf("command failed: %s", reply)
+	}
+
+	reviews, err := e.q.ChatCodeReviews(e.ctx, chat.ID)
+	if err != nil || len(reviews) != 1 {
+		t.Fatalf("reviews = %+v, err=%v", reviews, err)
+	}
+	rv := reviews[0]
+	if rv.Branch == nil || *rv.Branch != "feat/tree-view" || !rv.Dirty || rv.Live || rv.HeadSha == nil {
+		t.Fatalf("unexpected review header: %+v", rv)
+	}
+	var tree []runner.CodeReviewFile
+	if err := json.Unmarshal(rv.Tree, &tree); err != nil {
+		t.Fatalf("unmarshal tree: %v (%s)", err, rv.Tree)
+	}
+	byPath := make(map[string]runner.CodeReviewFile, len(tree))
+	for _, f := range tree {
+		byPath[f.Path] = f
+	}
+	// Unchanged tracked file from branch HEAD
+	if f, ok := byPath["README.md"]; !ok || f.Binary || f.Truncated || f.Content == nil || *f.Content != "hello\n" {
+		t.Fatalf("README.md in tree = %+v (ok=%v)", f, ok)
+	}
+	// Added nested file, renamed destination, and untracked file
+	if f, ok := byPath["src/app.go"]; !ok || f.Content == nil || !strings.Contains(*f.Content, "const V = 1") {
+		t.Fatalf("src/app.go = %+v (ok=%v)", f, ok)
+	}
+	if _, ok := byPath["renamed.txt"]; !ok {
+		t.Fatalf("renamed.txt missing from tree: %+v", byPath)
+	}
+	if f, ok := byPath["untracked.txt"]; !ok || f.Content == nil || !strings.Contains(*f.Content, "uncommitted line") {
+		t.Fatalf("untracked.txt = %+v (ok=%v)", f, ok)
+	}
+	// Deleted / renamed-from / workspace-excluded files are omitted from tree
+	for _, excluded := range []string{"old.txt", "gone.txt", "AGENTS.md", ".lazyagents/secret/leak.txt"} {
+		if _, ok := byPath[excluded]; ok {
+			t.Fatalf("%s must not be in tree", excluded)
+		}
+	}
+	// Binary and oversize boundaries
+	if f, ok := byPath["assets/icon.bin"]; !ok || !f.Binary || f.Content != nil || f.Truncated {
+		t.Fatalf("assets/icon.bin = %+v (ok=%v)", f, ok)
+	}
+	if f, ok := byPath["big/dump.txt"]; !ok || f.Binary || f.Content != nil || !f.Truncated {
+		t.Fatalf("big/dump.txt = %+v (ok=%v)", f, ok)
+	}
+
+	// Simulate remote default-branch advancing AND workspace cleanup.
+	other := t.TempDir()
+	gitIn(t, other, "clone", "-q", bare, "work")
+	work := filepath.Join(other, "work")
+	if err := os.WriteFile(filepath.Join(work, "README.md"), []byte("newer remote main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, work, "add", "README.md")
+	gitIn(t, work, "commit", "-qm", "advance main")
+	gitIn(t, work, "push", "-q", "origin", "main")
+	if err := os.RemoveAll(e.dir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Saved snapshot still serves the exact persona branch content after cleanup.
+	after, err := e.q.ChatCodeReviews(e.ctx, chat.ID)
+	if err != nil || len(after) != 1 || *after[0].HeadSha != *rv.HeadSha {
+		t.Fatalf("after cleanup: %+v, err=%v", after, err)
+	}
+	var afterTree []runner.CodeReviewFile
+	_ = json.Unmarshal(after[0].Tree, &afterTree)
+	for _, f := range afterTree {
+		if f.Path == "README.md" && (f.Content == nil || *f.Content != "hello\n") {
+			t.Fatalf("README.md altered after cleanup: %+v", f)
+		}
 	}
 }

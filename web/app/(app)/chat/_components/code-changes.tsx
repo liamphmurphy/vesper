@@ -104,6 +104,32 @@ export function Diff({ patch, path, active, onLine, below, tall }: { patch: stri
   );
 }
 
+/** Read-only highlighted contents of a branch file (for unchanged tracked files in CodePanel). */
+export function CodeFileView({ content, path, active, tall }: { content: string; path: string; active: boolean; tall?: boolean }) {
+  const lines = useMemo(() => {
+    const raw = content.split("\n");
+    if (raw.length > 1 && raw.at(-1) === "") raw.pop();
+    return raw;
+  }, [content]);
+  const lang = langFromPath(path);
+  const highlighted = useHighlighted([lines], lang, active);
+  const toks = highlighted?.[0];
+  return (
+    <div className={cx("overflow-auto", !tall && "max-h-[480px]")} tabIndex={0} role="region" aria-label={`Contents of ${path}`} data-testid="code-file-content">
+      <div className="min-w-max font-mono text-12 leading-[1.55]">
+        {lines.map((line, i) => (
+          <div key={i} className="flex" data-file-line={i + 1}>
+            <span aria-hidden className="w-12 flex-none select-none pr-3 text-right text-fg-tertiary">{i + 1}</span>
+            <span className="whitespace-pre pr-4 text-fg-2">
+              <Code text={line} toks={toks?.[i]} />
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function FileBody({ c, active }: { c: Change; active: boolean }) {
   const note = (t: string) => <p className="px-3 py-2 text-12 text-fg-tertiary">{t}</p>;
   if (c.binary) return note("Binary file changed");
