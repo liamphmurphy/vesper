@@ -821,7 +821,7 @@ function Review({ plan, data }: { plan: Plan; data: Bootstrap }) {
 
 /** What the planner has read, from its run's tool calls (polled while live). */
 function SourcesRead({ plan, live }: { plan: Plan; live: boolean }) {
-  const events = useChatRunEvents(plan.run_id);
+  const events = useChatRunEvents(plan.run_id, true, live);
   const sources = useMemo(() => readSources(events.data), [events.data]);
   if (!live && sources.length === 0) return null;
   const list = (

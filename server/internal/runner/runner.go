@@ -480,6 +480,94 @@ func (r *Runner) eventJSON(ctx context.Context, runID uuid.UUID, typ string, b [
 	}
 }
 
+const (
+	runEventBatchMaxEvents = 64
+	runEventBatchMaxBytes  = 512 << 10
+	runEventBatchFlushWait = 50 * time.Millisecond
+)
+
+type pendingRunEvent struct {
+	typ     string
+	payload []byte
+}
+
+// eventsJSON records a batch of encoded events in order.
+func (r *Runner) eventsJSON(ctx context.Context, runID uuid.UUID, evs []pendingRunEvent) {
+	if len(evs) == 0 {
+		return
+	}
+	if len(evs) == 1 {
+		r.eventJSON(ctx, runID, evs[0].typ, evs[0].payload)
+		return
+	}
+	types := make([]string, len(evs))
+	payloads := make([]string, len(evs))
+	for i, ev := range evs {
+		types[i] = ev.typ
+		if len(ev.payload) == 0 {
+			payloads[i] = "{}"
+		} else {
+			payloads[i] = string(ev.payload)
+		}
+	}
+	if err := r.q().AddRunEvents(ctx, store.AddRunEventsParams{RunID: runID, Types: types, Payloads: payloads}); err != nil && ctx.Err() == nil {
+		r.Log.Warn("run events", "run", runID, "count", len(evs), "err", err)
+	}
+}
+
+func (r *Runner) flushRunEvents(ctx context.Context, runID uuid.UUID, ch <-chan pendingRunEvent) {
+	var buf []pendingRunEvent
+	var bufferedBytes int
+	var timer *time.Timer
+	var timerC <-chan time.Time
+	stopTimer := func() {
+		if timer == nil {
+			return
+		}
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		timer = nil
+		timerC = nil
+	}
+	flush := func(flushCtx context.Context) {
+		stopTimer()
+		if len(buf) == 0 {
+			return
+		}
+		wctx, cancel := context.WithTimeout(flushCtx, controlTimeout)
+		r.eventsJSON(wctx, runID, buf)
+		cancel()
+		clear(buf)
+		buf = buf[:0]
+		bufferedBytes = 0
+	}
+	for {
+		select {
+		case ev, ok := <-ch:
+			if !ok {
+				flush(context.WithoutCancel(ctx))
+				return
+			}
+			buf = append(buf, ev)
+			bufferedBytes += len(ev.payload)
+			if len(buf) >= runEventBatchMaxEvents || bufferedBytes >= runEventBatchMaxBytes {
+				flush(ctx)
+			} else if timer == nil {
+				timer = time.NewTimer(runEventBatchFlushWait)
+				timerC = timer.C
+			}
+		case <-timerC:
+			timer = nil
+			timerC = nil
+			flush(ctx)
+		}
+	}
+}
+
 // end finishes a run the runner had to stop (failure or a guard), with a
 // timeline entry and the workspace removed.
 func (r *Runner) end(ctx context.Context, c runCtx, state, outcome, verb string) {
@@ -1805,6 +1893,17 @@ func (r *Runner) watchSession(ctx context.Context, c runCtx, proc Process, p har
 	}()
 	go func() {
 		defer readers.Done()
+		ch := make(chan pendingRunEvent, runEventBatchMaxEvents*2)
+		var flusher sync.WaitGroup
+		flusher.Add(1)
+		go func() {
+			defer flusher.Done()
+			r.flushRunEvents(readCtx, c.run.ID, ch)
+		}()
+		defer func() {
+			close(ch)
+			flusher.Wait()
+		}()
 		sc := bufio.NewScanner(proc.Stdout())
 		sc.Buffer(make([]byte, 256<<10), 32<<20)
 		session := ""
@@ -1818,11 +1917,12 @@ func (r *Runner) watchSession(ctx context.Context, c runCtx, proc Process, p har
 			for _, e := range p.Line(line) {
 				payload, b := redactPayload(e.Payload, env)
 				opening.see(e.Type, payload)
-				func() {
-					ectx, cancel := context.WithTimeout(readCtx, controlTimeout)
-					defer cancel()
-					r.eventJSON(ectx, c.run.ID, e.Type, b)
-				}()
+				select {
+				case ch <- pendingRunEvent{typ: e.Type, payload: b}:
+				case <-readCtx.Done():
+					_, _ = io.Copy(io.Discard, proc.Stdout())
+					return
+				}
 			}
 			if s := p.Result().SessionID; s != "" && s != session {
 				session = s

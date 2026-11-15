@@ -71,6 +71,13 @@ SELECT * FROM run_turns WHERE run_id = $1 ORDER BY seq;
 -- name: AddRunEvent :exec
 INSERT INTO run_events (run_id, type, payload) VALUES ($1, $2, $3);
 
+-- name: AddRunEvents :exec
+INSERT INTO run_events (run_id, type, payload)
+SELECT sqlc.arg(run_id)::uuid, t.typ, p.payload::jsonb
+FROM unnest(sqlc.arg(types)::text[]) WITH ORDINALITY AS t(typ, i)
+JOIN unnest(sqlc.arg(payloads)::text[]) WITH ORDINALITY AS p(payload, i) USING (i)
+ORDER BY t.i;
+
 -- name: ListRunEvents :many
 SELECT * FROM run_events WHERE run_id = $1 AND seq > $2 ORDER BY seq LIMIT 1000;
 
@@ -265,9 +272,64 @@ LIMIT 51 OFFSET sqlc.arg(skip)::int;
 
 -- name: ChatSessionOfRun :one
 -- The chat a chat run belongs to: its current run or an earlier segment.
-SELECT * FROM chat_sessions
-WHERE current_run_id = sqlc.arg(run_id) OR id IN (SELECT session_id FROM chat_messages WHERE run_id = sqlc.arg(run_id))
+SELECT * FROM (
+  SELECT * FROM chat_sessions WHERE current_run_id = sqlc.arg(run_id)::uuid
+  UNION ALL
+  SELECT s.* FROM chat_messages m JOIN chat_sessions s ON s.id = m.session_id WHERE m.run_id = sqlc.arg(run_id)::uuid
+) matched
 LIMIT 1;
+
+-- name: RunsTicketsByIDs :many
+SELECT * FROM tickets WHERE workspace_id = sqlc.arg(workspace_id) AND id = ANY(sqlc.arg(ids)::uuid[]);
+
+-- name: ProjectsByIDs :many
+SELECT * FROM projects WHERE workspace_id = sqlc.arg(workspace_id) AND id = ANY(sqlc.arg(ids)::uuid[]);
+
+-- name: ChildRunCounts :many
+SELECT r.parent_run_id::uuid AS run_id, count(*)::bigint AS count
+FROM runs r
+WHERE r.parent_run_id = ANY(sqlc.arg(run_ids)::uuid[])
+GROUP BY r.parent_run_id;
+
+-- name: PlansForRuns :many
+SELECT * FROM plan_steps WHERE run_id = ANY(sqlc.arg(run_ids)::uuid[]) ORDER BY run_id, position;
+
+-- name: PlanningSessionsForRuns :many
+SELECT * FROM planning_sessions WHERE run_id = ANY(sqlc.arg(run_ids)::uuid[]);
+
+-- name: ResearchRunsMeta :many
+SELECT t.run_id, c.id AS chat_id, j.title, c.project_id
+FROM research_tasks t
+JOIN research_jobs j ON j.id = t.job_id
+JOIN chat_sessions c ON c.id = j.chat_id AND c.workspace_id = j.workspace_id
+WHERE t.run_id = ANY(sqlc.arg(run_ids)::uuid[]);
+
+-- name: LearningRunsMeta :many
+SELECT lr.run_id, l.topic AS title, c.project_id
+FROM learning_runs lr
+JOIN learning_courses l ON l.id = lr.course_id
+JOIN chat_sessions c ON c.id = l.chat_id AND c.workspace_id = l.workspace_id
+WHERE lr.run_id = ANY(sqlc.arg(run_ids)::uuid[]);
+
+-- name: WorkflowRunsMeta :many
+SELECT s.agent_run_id::uuid AS run_id, r.chat_id, r.name AS title, r.project_id
+FROM workflow_steps s
+JOIN workflow_runs r ON r.id = s.run_id
+WHERE s.agent_run_id = ANY(sqlc.arg(run_ids)::uuid[]);
+
+-- name: ChatSessionsOfRuns :many
+SELECT DISTINCT ON (matched.run_id) matched.run_id::uuid AS run_id, matched.chat_id, matched.title, matched.project_id
+FROM (
+  SELECT c.current_run_id AS run_id, c.id AS chat_id, c.title, c.project_id, 0 AS prio
+  FROM chat_sessions c
+  WHERE c.current_run_id = ANY(sqlc.arg(run_ids)::uuid[])
+  UNION ALL
+  SELECT m.run_id AS run_id, c.id AS chat_id, c.title, c.project_id, 1 AS prio
+  FROM chat_messages m
+  JOIN chat_sessions c ON c.id = m.session_id
+  WHERE m.run_id = ANY(sqlc.arg(run_ids)::uuid[])
+) matched
+ORDER BY matched.run_id, matched.prio;
 
 -- name: RunParentID :one
 SELECT parent_run_id FROM runs WHERE id = $1;

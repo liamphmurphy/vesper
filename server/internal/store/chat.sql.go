@@ -2102,23 +2102,30 @@ func (q *Queries) MarkChatRead(ctx context.Context, arg MarkChatReadParams) erro
 }
 
 const ownsChatRun = `-- name: OwnsChatRun :one
-SELECT EXISTS (
-  SELECT 1 FROM chat_sessions s
-  WHERE s.workspace_id = $1 AND s.created_by = $2
-    AND (s.current_run_id = $3::uuid OR EXISTS (
-      SELECT 1 FROM chat_messages m WHERE m.session_id = s.id AND m.run_id = $3::uuid
-    ))
+SELECT (
+  EXISTS (
+    SELECT 1 FROM chat_sessions s
+    WHERE s.current_run_id = $1::uuid
+      AND s.workspace_id = $2
+      AND s.created_by = $3
+  ) OR EXISTS (
+    SELECT 1 FROM chat_messages m
+    JOIN chat_sessions s ON s.id = m.session_id
+    WHERE m.run_id = $1::uuid
+      AND s.workspace_id = $2
+      AND s.created_by = $3
+  )
 )::boolean
 `
 
 type OwnsChatRunParams struct {
+	RunID       uuid.UUID
 	WorkspaceID uuid.UUID
 	Viewer      uuid.UUID
-	RunID       uuid.UUID
 }
 
 func (q *Queries) OwnsChatRun(ctx context.Context, arg OwnsChatRunParams) (bool, error) {
-	row := q.db.QueryRow(ctx, ownsChatRun, arg.WorkspaceID, arg.Viewer, arg.RunID)
+	row := q.db.QueryRow(ctx, ownsChatRun, arg.RunID, arg.WorkspaceID, arg.Viewer)
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err

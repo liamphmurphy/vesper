@@ -3,13 +3,17 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/google/uuid"
 
 	"github.com/liamphmurphy/vesper/server/internal/api"
+	"github.com/liamphmurphy/vesper/server/internal/apperr"
 	"github.com/liamphmurphy/vesper/server/internal/artifacts"
+	"github.com/liamphmurphy/vesper/server/internal/auth"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/seed"
 	"github.com/liamphmurphy/vesper/server/internal/store"
@@ -180,4 +184,128 @@ func TestListRuns(t *testing.T) {
 	list("?state=bogus", 422)
 	list("?purpose=bogus", 422)
 	list("?offset=-1", 422)
+}
+
+func TestListRunEventsAndBatchHydration(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	q := store.New(pool)
+	if _, err := seed.Run(ctx, pool, seed.Options{Demo: true, Artifacts: &artifacts.Service{Pool: pool}}); err != nil {
+		t.Fatal(err)
+	}
+	tr := &tracker.Service{Pool: pool}
+	s := &Server{AnonymousAPI: true, Pool: pool, Q: q, Tracker: tr, Runs: &runs.Service{Pool: pool, Tracker: tr}}
+	handler := s.Handler()
+
+	user, err := q.GetLocalUser(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := user.WorkspaceID
+	atlas, err := q.GetAgentByHandle(ctx, store.GetAgentByHandleParams{WorkspaceID: ws, Handle: "atlas"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ticket, err := tracker.Get(ctx, q, ws, "PAY-214")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parentRun, err := q.CreateRun(ctx, store.CreateRunParams{
+		WorkspaceID: ws, TicketID: &ticket.ID, AgentID: atlas.ID, Mode: "managed", State: "running",
+		ResolvedSpec: json.RawMessage(`{}`), Harness: "codex", Model: "m", Purpose: "ticket",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	childRun, err := q.CreateRun(ctx, store.CreateRunParams{
+		WorkspaceID: ws, TicketID: &ticket.ID, AgentID: atlas.ID, Mode: "managed", State: "completed",
+		ResolvedSpec: json.RawMessage(`{}`), Harness: "codex", Model: "m", ParentRunID: &parentRun.ID, Purpose: "ticket",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := q.InsertPlanStep(ctx, store.InsertPlanStepParams{RunID: parentRun.ID, Position: 1, Text: "Inspect index", State: "done"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.InsertPlanStep(ctx, store.InsertPlanStepParams{RunID: childRun.ID, Position: 1, Text: "Child step", State: "pending"}); err != nil {
+		t.Fatal(err)
+	}
+
+	chatOld, err := q.CreateRun(ctx, store.CreateRunParams{
+		WorkspaceID: ws, AgentID: atlas.ID, Mode: "managed", State: "completed",
+		ResolvedSpec: json.RawMessage(`{}`), Harness: "codex", Model: "m", Purpose: "chat",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var chatID uuid.UUID
+	if err := pool.QueryRow(ctx, `INSERT INTO chat_sessions (workspace_id, project_id, title, created_by, agent_id, harness, model, current_run_id) VALUES ($1, $2, 'Private chat', $3, $4, 'codex', 'm', $5) RETURNING id`, ws, ticket.ProjectID, user.ID, atlas.ID, chatOld.ID).Scan(&chatID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO chat_messages (session_id, seq, role, body_md, run_id) VALUES ($1, 1, 'assistant', 'hello', $2)`, chatID, chatOld.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := q.AddRunEvents(ctx, store.AddRunEventsParams{
+		RunID:    chatOld.ID,
+		Types:    []string{"message", "tool_call", "tool_result"},
+		Payloads: []string{`{"role":"assistant","text":"one"}`, `{"id":"t1","tool":"Bash"}`, `{"id":"t1","output":"ok"}`},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// GET /runs/{id}/events fetches events and respects ?after=seq.
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/runs/"+chatOld.ID.String()+"/events", nil))
+	if rec.Code != 200 {
+		t.Fatalf("events status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var all api.RunEventList
+	if err := json.Unmarshal(rec.Body.Bytes(), &all); err != nil {
+		t.Fatal(err)
+	}
+	if len(all.Events) != 3 {
+		t.Fatalf("got %d events, want 3", len(all.Events))
+	}
+
+	rec2 := httptest.NewRecorder()
+	handler.ServeHTTP(rec2, httptest.NewRequest("GET", "/api/v1/runs/"+chatOld.ID.String()+"/events?after="+strconv.FormatInt(all.Events[1].Seq, 10), nil))
+	if rec2.Code != 200 {
+		t.Fatalf("events after status=%d body=%s", rec2.Code, rec2.Body.String())
+	}
+	var tail api.RunEventList
+	if err := json.Unmarshal(rec2.Body.Bytes(), &tail); err != nil {
+		t.Fatal(err)
+	}
+	if len(tail.Events) != 1 || tail.Events[0].Seq != all.Events[2].Seq {
+		t.Fatalf("tail=%+v want seq=%d", tail.Events, all.Events[2].Seq)
+	}
+
+	// Private chat runs reject another user in the same workspace.
+	var otherID uuid.UUID
+	if err := pool.QueryRow(ctx, `INSERT INTO users (workspace_id, email, name, initials, password_hash) VALUES ($1, 'other-events@example.com', 'Other', 'O', 'x') RETURNING id`, ws).Scan(&otherID); err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.ListRunEvents(auth.WithUser(ctx, store.User{ID: otherID, WorkspaceID: ws}), api.ListRunEventsRequestObject{Id: chatOld.ID})
+	if !errors.Is(err, apperr.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound for another user's private chat run, got %v", err)
+	}
+
+	// GetRun still hydrates child runs via toRuns (including child plan steps and project key).
+	getRec := httptest.NewRecorder()
+	handler.ServeHTTP(getRec, httptest.NewRequest("GET", "/api/v1/runs/"+parentRun.ID.String(), nil))
+	if getRec.Code != 200 {
+		t.Fatalf("getRun status=%d body=%s", getRec.Code, getRec.Body.String())
+	}
+	var detail api.RunDetail
+	if err := json.Unmarshal(getRec.Body.Bytes(), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if detail.Run.ChildCount == nil || *detail.Run.ChildCount != 1 || len(detail.Run.Plan) != 1 {
+		t.Fatalf("parent hydration wrong: %+v", detail.Run)
+	}
+	if len(detail.ChildRuns) != 1 || detail.ChildRuns[0].Id != childRun.ID || len(detail.ChildRuns[0].Plan) != 1 || detail.ChildRuns[0].ProjectKey == nil || *detail.ChildRuns[0].ProjectKey != "PAY" {
+		t.Fatalf("child hydration wrong: %+v", detail.ChildRuns)
+	}
 }

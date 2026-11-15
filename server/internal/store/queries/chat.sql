@@ -205,12 +205,19 @@ SELECT * FROM agents WHERE workspace_id = $1 AND kind = 'main' AND archived_at I
 SELECT * FROM agents WHERE workspace_id = $1 AND kind = 'assistant';
 
 -- name: OwnsChatRun :one
-SELECT EXISTS (
-  SELECT 1 FROM chat_sessions s
-  WHERE s.workspace_id = sqlc.arg(workspace_id) AND s.created_by = sqlc.arg(viewer)
-    AND (s.current_run_id = sqlc.arg(run_id)::uuid OR EXISTS (
-      SELECT 1 FROM chat_messages m WHERE m.session_id = s.id AND m.run_id = sqlc.arg(run_id)::uuid
-    ))
+SELECT (
+  EXISTS (
+    SELECT 1 FROM chat_sessions s
+    WHERE s.current_run_id = sqlc.arg(run_id)::uuid
+      AND s.workspace_id = sqlc.arg(workspace_id)
+      AND s.created_by = sqlc.arg(viewer)
+  ) OR EXISTS (
+    SELECT 1 FROM chat_messages m
+    JOIN chat_sessions s ON s.id = m.session_id
+    WHERE m.run_id = sqlc.arg(run_id)::uuid
+      AND s.workspace_id = sqlc.arg(workspace_id)
+      AND s.created_by = sqlc.arg(viewer)
+  )
 )::boolean;
 
 -- name: CreateAssistantAgent :one
