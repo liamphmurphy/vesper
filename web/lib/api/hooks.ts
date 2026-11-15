@@ -63,10 +63,11 @@ export function useBootstrap() {
   });
 }
 
-export function useTickets(f: TicketFilters) {
+export function useTickets(f: TicketFilters, enabled = true) {
   return useQuery({
     queryKey: keys.ticketList(f),
     queryFn: () => unwrap(api.GET("/tickets", { params: { query: f } })).then((d) => d.tickets),
+    enabled,
   });
 }
 
