@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/liamphmurphy/vesper/server/internal/store"
@@ -35,9 +36,10 @@ const (
 	zipType        = "application/zip"
 )
 
-// backupName matches the archives Upload names, so pruning never touches
-// anything else a person keeps in the folder.
-var backupName = regexp.MustCompile(`^vesper-export-[0-9TZ-]+\.zip$`)
+// backupName matches exactly the names FileName makes, so pruning never
+// touches anything else a person keeps in the folder, such as a download
+// from Settings (vesper-export-2026-11-14.zip).
+var backupName = regexp.MustCompile(`^vesper-export-\d{8}T\d{6}Z\.zip$`)
 
 // validFolderID is config's check; Upload repeats it because the ID goes
 // into a Drive search query.
@@ -122,14 +124,32 @@ func FileName(t time.Time) string {
 	return filePrefix + t.UTC().Format("20060102T150405Z") + ".zip"
 }
 
+// defaultClient is shared, so every chunk reuses one kept-alive connection.
+var defaultClient = sync.OnceValue(func() *http.Client {
+	tr := usersecrets.SafeTransport(false, nil)
+	// Drive answers the last chunk once it has assembled the file.
+	tr.ResponseHeaderTimeout = 2 * time.Minute
+	tr.IdleConnTimeout = 90 * time.Second
+	return &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+})
+
 func (u *Uploader) client() *http.Client {
 	if u.HTTP != nil {
 		return u.HTTP
 	}
-	tr := usersecrets.SafeTransport(false, nil)
-	// Drive answers the last chunk once it has assembled the file.
-	tr.ResponseHeaderTimeout = 2 * time.Minute
-	return &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	return defaultClient()
+}
+
+// tokenError is Token failing. Retrying won't help: usersecrets already
+// retried the provider, or the grant lapsed and needs a person.
+type tokenError struct{ err error }
+
+func (e *tokenError) Error() string { return e.err.Error() }
+func (e *tokenError) Unwrap() error { return e.err }
+
+// permanent reports an error that retrying won't fix.
+func permanent(ctx context.Context, err error) bool {
+	return ctx.Err() != nil || errors.As(err, new(*usersecrets.Blocked)) || errors.As(err, new(*tokenError))
 }
 
 func (u *Uploader) base() string {
@@ -180,7 +200,7 @@ func (u *Uploader) retries() int {
 func (u *Uploader) do(ctx context.Context, method, target string, body []byte, hdr http.Header) (*http.Response, error) {
 	tok, err := u.Token(ctx)
 	if err != nil {
-		return nil, err
+		return nil, &tokenError{err}
 	}
 	var r io.Reader = http.NoBody
 	if body != nil {
@@ -299,7 +319,7 @@ func (u *Uploader) startSession(ctx context.Context, name, folderID string) (str
 				return "", de
 			}
 			err = de
-		} else if ctx.Err() != nil || errors.As(err, new(*usersecrets.Blocked)) {
+		} else if permanent(ctx, err) {
 			return "", err
 		}
 		if attempt >= u.retries() {
@@ -383,7 +403,7 @@ func (u *Uploader) sendChunk(ctx context.Context, session string, data []byte, s
 		switch {
 		case err != nil:
 			cancel()
-			if ctx.Err() != nil || errors.As(err, new(*usersecrets.Blocked)) {
+			if permanent(ctx, err) {
 				return "", err
 			}
 			retry = err

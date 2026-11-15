@@ -295,8 +295,27 @@ func TestUploadDriveFails(t *testing.T) {
 			return false
 		}
 		_, err := u.Upload(context.Background(), newArchive(chunkUnit+1), "folder1", 0)
-		if err == nil || !strings.Contains(err.Error(), "503") {
-			t.Fatalf("err = %v", err)
+		if err == nil || !strings.Contains(err.Error(), "503") || !d.cancelled {
+			t.Fatalf("err = %v, cancelled = %v", err, d.cancelled)
+		}
+	})
+	t.Run("no progress", func(t *testing.T) {
+		d := newFakeDrive(t)
+		puts := 0
+		d.intercept = func(w http.ResponseWriter, r *http.Request) bool {
+			if r.Method == http.MethodPut {
+				puts++
+				_, _ = io.Copy(io.Discard, r.Body)
+				w.WriteHeader(http.StatusPermanentRedirect) // keeps nothing
+				return true
+			}
+			return false
+		}
+		u := d.uploader()
+		u.Retries = 3
+		_, err := u.Upload(context.Background(), newArchive(chunkUnit+1), "folder1", 0)
+		if err == nil || !strings.Contains(err.Error(), "refusing") || puts != 4 {
+			t.Fatalf("err = %v after %d PUTs", err, puts)
 		}
 	})
 	t.Run("session not started", func(t *testing.T) {
@@ -311,19 +330,22 @@ func TestUploadDriveFails(t *testing.T) {
 	t.Run("token fails", func(t *testing.T) {
 		d := newFakeDrive(t)
 		u := d.uploader()
-		u.Token = func(context.Context) (string, error) { return "", errors.New("needs signing in again") }
-		if _, err := u.Upload(context.Background(), newArchive(10), "folder1", 0); err == nil || !strings.Contains(err.Error(), "signing in") {
-			t.Fatalf("err = %v", err)
+		calls := 0
+		u.Token = func(context.Context) (string, error) { calls++; return "", errors.New("needs signing in again") }
+		if _, err := u.Upload(context.Background(), newArchive(10), "folder1", 0); err == nil || !strings.Contains(err.Error(), "signing in") || calls != 1 {
+			t.Fatalf("err = %v after %d token calls (a token error isn't retried)", err, calls)
 		}
 	})
 	t.Run("session on another host", func(t *testing.T) {
 		d := newFakeDrive(t)
+		requests := 0
 		d.intercept = func(w http.ResponseWriter, r *http.Request) bool {
+			requests++
 			w.Header().Set("Location", "https://evil.example.com/session")
 			return true
 		}
-		if _, err := d.uploader().Upload(context.Background(), newArchive(10), "folder1", 0); err == nil {
-			t.Fatal("followed a session URI on another host")
+		if _, err := d.uploader().Upload(context.Background(), newArchive(10), "folder1", 0); err == nil || requests != 1 {
+			t.Fatalf("err = %v after %d requests: followed a session URI on another host", err, requests)
 		}
 	})
 	t.Run("bad folder", func(t *testing.T) {
@@ -342,6 +364,8 @@ func TestUploadPrunes(t *testing.T) {
 		{ID: "notes", Name: "notes.txt", CreatedTime: day(1)},
 		{ID: "d14", Name: "vesper-export-20261114T030000Z.zip", CreatedTime: day(14)},
 		{ID: "mine", Name: "vesper-export-mine.zip", CreatedTime: day(2)},
+		{ID: "download", Name: "vesper-export-2026-11-11.zip", CreatedTime: day(11)}, // from Settings › Backup & move
+		{ID: "copy", Name: "vesper-export-20261111T030000Z (1).zip", CreatedTime: day(11)},
 		{ID: "d12", Name: "vesper-export-20261112T030000Z.zip", CreatedTime: day(12)},
 		{ID: "d13", Name: "vesper-export-20261113T030000Z.zip", CreatedTime: day(13)},
 	}
@@ -375,6 +399,12 @@ func TestUploadPruneFails(t *testing.T) {
 	res, err := d.uploader().Upload(context.Background(), newArchive(100), "folder1", 1)
 	if !errors.Is(err, ErrPrune) || res.FileID != "new-file" {
 		t.Fatalf("Upload = %+v, %v", res, err)
+	}
+}
+
+func TestDefaultClientIsShared(t *testing.T) {
+	if a, b := (&Uploader{}).client(), (&Uploader{}).client(); a != b {
+		t.Fatal("each request would open its own connections")
 	}
 }
 
