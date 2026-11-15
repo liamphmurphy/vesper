@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/liamphmurphy/vesper/server/internal/transfer"
+	"github.com/liamphmurphy/vesper/server/internal/usersecrets"
 )
 
 // fakeDrive is enough of Drive v3 for resumable uploads, listing and deleting.
@@ -331,9 +332,29 @@ func TestUploadDriveFails(t *testing.T) {
 		d := newFakeDrive(t)
 		u := d.uploader()
 		calls := 0
-		u.Token = func(context.Context) (string, error) { calls++; return "", errors.New("needs signing in again") }
+		u.Token = func(context.Context) (string, error) {
+			calls++
+			return "", &usersecrets.Blocked{Reason: "Drive needs signing in again"}
+		}
 		if _, err := u.Upload(context.Background(), newArchive(10), "folder1", 0); err == nil || !strings.Contains(err.Error(), "signing in") || calls != 1 {
-			t.Fatalf("err = %v after %d token calls (a token error isn't retried)", err, calls)
+			t.Fatalf("err = %v after %d token calls (a lapsed sign-in isn't retried)", err, calls)
+		}
+	})
+	t.Run("token refresh blips", func(t *testing.T) {
+		d := newFakeDrive(t)
+		u := d.uploader()
+		calls := 0
+		u.Token = func(context.Context) (string, error) {
+			calls++
+			if calls == 3 { // mid-upload, the provider is briefly unreachable
+				return "", errors.New("couldn't reach the sign-in provider")
+			}
+			return "tok", nil
+		}
+		exp := newArchive(3*chunkUnit + 7)
+		res, err := u.Upload(context.Background(), exp, "folder1", 0)
+		if err != nil || res.Bytes != int64(len(exp.data)) || !bytes.Equal(d.stored, exp.data) {
+			t.Fatalf("Upload = %+v, %v", res, err)
 		}
 	})
 	t.Run("session on another host", func(t *testing.T) {

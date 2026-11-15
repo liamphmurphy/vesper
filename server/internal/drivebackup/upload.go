@@ -140,16 +140,11 @@ func (u *Uploader) client() *http.Client {
 	return defaultClient()
 }
 
-// tokenError is Token failing. Retrying won't help: usersecrets already
-// retried the provider, or the grant lapsed and needs a person.
-type tokenError struct{ err error }
-
-func (e *tokenError) Error() string { return e.err.Error() }
-func (e *tokenError) Unwrap() error { return e.err }
-
-// permanent reports an error that retrying won't fix.
+// permanent reports an error that retrying won't fix. usersecrets returns
+// Blocked when the sign-in lapsed or an address is refused; its other token
+// errors mean the provider was unreachable, which a retry may get past.
 func permanent(ctx context.Context, err error) bool {
-	return ctx.Err() != nil || errors.As(err, new(*usersecrets.Blocked)) || errors.As(err, new(*tokenError))
+	return ctx.Err() != nil || errors.As(err, new(*usersecrets.Blocked))
 }
 
 func (u *Uploader) base() string {
@@ -200,7 +195,7 @@ func (u *Uploader) retries() int {
 func (u *Uploader) do(ctx context.Context, method, target string, body []byte, hdr http.Header) (*http.Response, error) {
 	tok, err := u.Token(ctx)
 	if err != nil {
-		return nil, &tokenError{err}
+		return nil, err
 	}
 	var r io.Reader = http.NoBody
 	if body != nil {
