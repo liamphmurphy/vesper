@@ -278,29 +278,36 @@ export function EpicsScreen() {
                   setFilters({}, v);
                 }}
               />
-              <FilterMenu
-                label="Filter health"
-                value={filters.health}
-                onChange={(v) => setFilters({ health: v as EpicHealthFilter })}
-                options={[
-                  { value: "any", label: "All health" },
-                  { value: "at_risk", label: "At risk" },
-                  { value: "off_track", label: "Off track" },
-                  { value: "on_track", label: "On track" },
-                ]}
-              />
             </div>
-            <div role="group" aria-label="Sidebar epic status" className="work-list-controls">
-              {(["open", "done", "all"] as const).map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  aria-pressed={filters.status === s}
-                  onClick={() => setFilters({ status: s })}
-                >
-                  {s === "open" ? "Open" : s === "done" ? "Done" : "All"}
-                </button>
-              ))}
+            <div className="flex flex-col gap-2">
+              <Segmented<EpicStatusFilter>
+                label="Epic status"
+                small
+                value={filters.status}
+                onChange={(status) => setFilters({ status })}
+                options={(["open", "done", "all"] as const).map((s) => ({
+                  value: s,
+                  label: <>{s === "open" ? "Open" : s === "done" ? "Done" : "All"} <span className="font-mono text-fg-tertiary">{counts[s]}</span></>,
+                }))}
+              />
+              <div role="radiogroup" aria-label="Health" className="flex flex-wrap items-center gap-1">
+                {HEALTH_OPTIONS.map((h) => (
+                  <button
+                    key={h}
+                    type="button"
+                    role="radio"
+                    aria-checked={filters.health === h}
+                    onClick={() => setFilters({ health: h })}
+                    className={cx(
+                      "flex h-6 items-center gap-1 rounded-full border px-2 text-11",
+                      filters.health === h ? "border-border-strong bg-selected text-fg" : "border-border text-fg-secondary hover:text-fg",
+                    )}
+                  >
+                    {h !== "any" && <span aria-hidden className={cx("size-1.5 rounded-full", HEALTH_DOT[h])} />}
+                    {h === "any" ? "Any" : HEALTH_LABEL[h]}
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="work-nav-list">
               {shown.map((e) => (
@@ -402,26 +409,30 @@ export function EpicsScreen() {
           ) : (
             <>
               <div className="flex flex-wrap items-center gap-3">
-                <Segmented<EpicStatusFilter>
-                  label="Epic status"
-                  value={filters.status}
-                  onChange={(status) => setFilters({ status })}
-                  options={(["open", "done", "all"] as const).map((s) => ({
-                    value: s,
-                    label: <>{s === "open" ? "Open" : s === "done" ? "Done" : "All"} <span className="font-mono text-fg-tertiary">{counts[s]}</span></>,
-                  }))}
-                />
-                <div role="radiogroup" aria-label="Health" className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-12 text-fg-tertiary">Health</span>
-                  {HEALTH_OPTIONS.map((h) => (
-                    <button key={h} type="button" role="radio" aria-checked={filters.health === h} onClick={() => setFilters({ health: h })}
-                      className={cx("flex h-7 items-center gap-1.5 rounded-full border px-3 text-12",
-                        filters.health === h ? "border-border-strong bg-selected text-fg" : "border-border text-fg-secondary hover:text-fg")}>
-                      {h !== "any" && <span aria-hidden className={cx("size-2 rounded-full", HEALTH_DOT[h])} />}
-                      {h === "any" ? "Any" : HEALTH_LABEL[h]}
-                    </button>
-                  ))}
-                </div>
+                {compact && (
+                  <>
+                    <Segmented<EpicStatusFilter>
+                      label="Epic status"
+                      value={filters.status}
+                      onChange={(status) => setFilters({ status })}
+                      options={(["open", "done", "all"] as const).map((s) => ({
+                        value: s,
+                        label: <>{s === "open" ? "Open" : s === "done" ? "Done" : "All"} <span className="font-mono text-fg-tertiary">{counts[s]}</span></>,
+                      }))}
+                    />
+                    <div role="radiogroup" aria-label="Health" className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-12 text-fg-tertiary">Health</span>
+                      {HEALTH_OPTIONS.map((h) => (
+                        <button key={h} type="button" role="radio" aria-checked={filters.health === h} onClick={() => setFilters({ health: h })}
+                          className={cx("flex h-7 items-center gap-1.5 rounded-full border px-3 text-12",
+                            filters.health === h ? "border-border-strong bg-selected text-fg" : "border-border text-fg-secondary hover:text-fg")}>
+                          {h !== "any" && <span aria-hidden className={cx("size-2 rounded-full", HEALTH_DOT[h])} />}
+                          {h === "any" ? "Any" : HEALTH_LABEL[h]}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
                 <span className="ml-auto font-mono text-12 text-fg-tertiary" role="status">{shown.length} {shown.length === 1 ? "epic" : "epics"}</span>
                 <span className="flex items-center gap-2 text-12 text-fg-secondary">
                   Sort

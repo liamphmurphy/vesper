@@ -7,7 +7,7 @@ import { api, unwrap, type Schemas } from "@/lib/api/client";
 import { hasLiveRun, keys, useBootstrap, useBulkUpdate, useCosts, useDecideRunApproval, useDispatch, useEpicOverviews, useInbox, useTickets, useUpdateEpic } from "@/lib/api/hooks";
 import { spendLabel } from "@/lib/costs";
 import { cx } from "@/lib/cx";
-import { approvalId, epicProgress, needsYouByTicket, startReady, type NeedsYou } from "@/lib/work-rows";
+import { approvalId, epicProgress, needsYouByTicket, startReady, ticketNeedsYou, type NeedsYou } from "@/lib/work-rows";
 import { Icon } from "@/components/ui/icon";
 import { StackedBar } from "@/components/domain/data";
 import { StateText } from "@/app/(app)/tickets/_components/ticket-row";
@@ -24,15 +24,20 @@ import { DocTypeTag, Pill } from "@/components/domain/labels";
 import { EpicCompletion } from "@/components/domain/epic-completion";
 import { DependencyMap } from "@/components/domain/dependency-map";
 import { ticketsHref } from "@/lib/tickets-layout";
+import { useCompact } from "@/lib/viewport";
 import { ContextSection } from "@/components/shell/context-panel";
 import { CompanionDock } from "@/components/shell/companion";
+import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { WorkChat } from "@/components/domain/work-chat";
+import { WorkNavHeader } from "../../work/work-nav-header";
 
 type TicketSummary = Schemas["TicketSummary"];
 
 export function EpicDetailScreen({ epicId }: { epicId: string }) {
+  const compact = useCompact();
   const query = useEpicOverviews();
   const e = query.data?.find((x) => x.epic.id === epicId);
+  const siblingEpics = (query.data ?? []).filter((x) => !e || x.project.key === e.project.key);
   const crumbs: Crumb[] = e
     ? [
         { label: e.project.name, swatch: e.project.color, href: `/tickets?project=${encodeURIComponent(e.project.key)}` },
@@ -42,6 +47,25 @@ export function EpicDetailScreen({ epicId }: { epicId: string }) {
     : [{ label: "Epics", href: ticketsHref("epics") }];
   return (
     <>
+      {!compact && (
+        <NavigatorPortal>
+          <nav aria-label="Work" className="work-nav">
+            <WorkNavHeader active="epics" project={e?.project.key} />
+            <div className="work-nav-list">
+              {siblingEpics.map((item) => (
+                <Link
+                  key={item.epic.id}
+                  href={`/epics/${encodeURIComponent(item.epic.id)}`}
+                  aria-current={item.epic.id === epicId ? "true" : undefined}
+                >
+                  <strong className="truncate">{item.epic.name}</strong>
+                  <small>{item.epic.tickets_total - item.epic.tickets_open}/{item.epic.tickets_total} done</small>
+                </Link>
+              ))}
+            </div>
+          </nav>
+        </NavigatorPortal>
+      )}
       <TopBar
         crumbs={crumbs}
         actions={e && (
@@ -87,7 +111,7 @@ function EpicDetail({ epic: e }: { epic: EpicOverview }) {
   // Tickets whose run waits on the person, from the same queue as the Inbox.
   const inbox = useInbox(e.project.key);
   const needs = useMemo(() => needsYouByTicket(inbox.data), [inbox.data]);
-  const waiting = (tickets.data ?? []).filter((t) => needs.has(t.key) && t.status !== "done" && t.status !== "canceled");
+  const waiting = (tickets.data ?? []).filter((t) => Boolean(ticketNeedsYou(t, needs.get(t.key))));
   return (
     <article className="mx-auto max-w-[860px] space-y-8">
       <header className="space-y-3">
@@ -247,12 +271,13 @@ const CHECKLIST_ORDER: TicketSummary["status"][] = ["in_progress", "in_review", 
 function TicketChecklist({ tickets, needs }: { tickets: TicketSummary[]; needs: ReadonlyMap<string, NeedsYou> }) {
   if (!tickets.length) return <EmptyState compact icon="tickets" title="No tickets in this epic yet">Add tickets to the epic and they&apos;re checked off here as they finish.</EmptyState>;
   const sorted = [...tickets].sort((a, b) =>
-    Number(needs.has(b.key) && b.status !== "done") - Number(needs.has(a.key) && a.status !== "done") ||
+    Number(Boolean(ticketNeedsYou(b, needs.get(b.key)))) - Number(Boolean(ticketNeedsYou(a, needs.get(a.key)))) ||
     CHECKLIST_ORDER.indexOf(a.status) - CHECKLIST_ORDER.indexOf(b.status));
   return (
     <ul aria-label="Ticket checklist">
       {sorted.map((t) => {
         const done = t.status === "done";
+        const itemNeeds = ticketNeedsYou(t, needs.get(t.key));
         return (
           <li key={t.id} className="relative flex min-h-10 items-center gap-3 rounded-lg px-2 hover:bg-row-hover">
             <span
@@ -271,7 +296,7 @@ function TicketChecklist({ tickets, needs }: { tickets: TicketSummary[]; needs: 
             </Link>
             {t.assignee && <span className="hidden text-12 text-fg-tertiary sm:inline">{t.assignee.name}</span>}
             <span className="w-10 flex-none text-right font-mono text-12 text-fg-tertiary">{t.estimate_points != null ? `${t.estimate_points} pt` : "—"}</span>
-            <StateText t={t} needs={needs.get(t.key)} className="w-[200px] flex-none text-right max-sm:w-[110px]" />
+            <StateText t={t} needs={itemNeeds} className="w-[200px] flex-none text-right max-sm:w-[110px]" />
           </li>
         );
       })}

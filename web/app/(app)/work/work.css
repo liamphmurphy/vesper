@@ -66,7 +66,8 @@
   flex: 1;
   min-height: 0;
 }
-.work-nav-list > button {
+.work-nav-list > button,
+.work-nav-list > a {
   display: flex;
   width: 100%;
   text-align: left;
@@ -75,6 +76,8 @@
   padding: 8px 10px;
   border-radius: 5px;
   margin-bottom: 2px;
+  text-decoration: none;
+  color: inherit;
 }
 .work-nav-list strong {
   font-size: 13px;
@@ -84,7 +87,8 @@
   font-size: 11px;
   color: var(--fg-tertiary);
 }
-.work-nav button:hover {
+.work-nav button:hover,
+.work-nav-list > a:hover {
   background: var(--hover);
 }
 .work-run {
