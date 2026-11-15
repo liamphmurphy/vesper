@@ -118,6 +118,7 @@ export function TicketRow({
   showEpic,
   onSelect,
   onFocusRow,
+  onStart,
 }: {
   t: TicketSummary;
   needs?: NeedsYou;
@@ -127,8 +128,10 @@ export function TicketRow({
   showEpic: boolean;
   onSelect: (e: MouseEvent<HTMLInputElement>) => void;
   onFocusRow: () => void;
+  onStart?: (t: TicketSummary) => void;
 }) {
   const compact = density === "compact";
+  const canStart = !compact && !needs && t.status === "todo" && t.unmet_dependencies === 0 && !!t.assignee && !!onStart;
   return (
     <div
       data-ticket-row={t.key}
@@ -198,6 +201,20 @@ export function TicketRow({
         >
           Open
         </Link>
+      ) : canStart ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onStart(t);
+          }}
+          aria-label={`Start ${t.key}`}
+          className="relative z-10 inline-flex h-[24px] flex-none items-center gap-1 rounded-md border border-border-strong bg-surface px-2 text-12 font-medium text-fg hover:border-accent hover:text-accent"
+        >
+          <Icon name="play" size={10} />
+          Start
+        </button>
       ) : (
         <span className="w-[44px] flex-none text-right text-12 text-fg-tertiary" title={new Date(t.updated_at).toLocaleString()}>
           {shortAgo(t.updated_at)}

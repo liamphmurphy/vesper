@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { workSettingsHref } from "@/lib/spaces";
 import { DropdownMenu } from "radix-ui";
@@ -8,8 +7,17 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseE
 import { cx } from "@/lib/cx";
 import { useCompact } from "@/lib/viewport";
 import type { TicketStatus, TicketSummary } from "@/lib/api/client";
-import { useBulkEach, useBootstrap, useInbox, useSavedViews, useTickets, type TicketView } from "@/lib/api/hooks";
+import {
+  useBulkEach,
+  useBootstrap,
+  useEpicOverviews,
+  useInbox,
+  useSavedViews,
+  useTickets,
+  type TicketView,
+} from "@/lib/api/hooks";
 import { filterText, needsYouByTicket, resolveFilter, ticketNeedsYou, withoutProjectToken, workGroups, type WorkGroup } from "@/lib/work-rows";
+import { computeSidebarEpics, computeTaskQueueCounts } from "@/lib/work-overview";
 import {
   GROUPS,
   GROUP_NAME,
@@ -19,7 +27,8 @@ import {
   rangeKeys,
   type BulkResult,
 } from "@/lib/ticket-list";
-import { ButtonLink } from "@/components/ui/button";
+import { Button, ButtonLink } from "@/components/ui/button";
+import { DispatchDialog } from "@/components/domain/dispatch-dialog";
 import { Tabs } from "@/components/ui/controls";
 import { Icon } from "@/components/ui/icon";
 import { Banner, EmptyState, FilterChip, Kbd, Skeleton } from "@/components/ui/primitives";
@@ -31,7 +40,12 @@ import { SavedViewHeader, SavedViewTabs } from "@/components/domain/saved-views"
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { rememberProject, ProjectScopeState, projectCrumbs, useProjectScope } from "@/components/shell/project-scope";
 import { ticketsHref } from "@/lib/tickets-layout";
-import { WorkNavHeader, WorkSpacePersonaFilters } from "../../work/work-nav-header";
+import {
+  WorkNavHeader,
+  WorkSectionLabel,
+  WorkSidebarFilterRow,
+  WorkSpacePersonaFilters,
+} from "../../work/work-nav-header";
 import { BulkBar, BulkResultPanel } from "./bulk-bar";
 import { CompactTicketRow, TicketRow, type Density } from "./ticket-row";
 import { ChipScroller, TicketsLayoutBar, TicketsTopBar } from "./layout-bar";
@@ -187,7 +201,10 @@ export function TicketsScreen() {
   // No ?project= resolves to the remembered project; "All spaces" leaves it empty.
   const scope = useProjectScope("optional");
   const list = useTickets({ ready, project, view, status, assignee, epic, q: q || undefined });
+  const baseList = useTickets({ project, assignee, view: "all" });
+  const epicsQuery = useEpicOverviews();
   const savedViews = useSavedViews();
+  const [dispatchKeys, setDispatchKeys] = useState<string[] | null>(null);
   const savedView = svId ? savedViews.data?.find((v) => v.id === svId) : undefined;
 
   // Debounced box → URL, so views are shareable. Tokens that match nothing aren't applied.
@@ -231,6 +248,21 @@ export function TicketsScreen() {
   // Tickets whose run waits on the person, from the same queue as the Inbox.
   const inbox = useInbox(project);
   const needs = useMemo(() => needsYouByTicket(inbox.data), [inbox.data]);
+  const queueCounts = useMemo(
+    () => computeTaskQueueCounts(baseList.data ?? list.data ?? [], inbox.data ?? []),
+    [baseList.data, list.data, inbox.data],
+  );
+  const sidebarEpics = useMemo(
+    () => computeSidebarEpics(epicsQuery.data ?? [], project),
+    [epicsQuery.data, project],
+  );
+  const readyKeys = useMemo(
+    () =>
+      tickets
+        .filter((t) => t.status === "todo" && t.unmet_dependencies === 0 && !!t.assignee)
+        .map((t) => t.key),
+    [tickets],
+  );
   const groups = useMemo(() => workGroups(tickets, needs, group), [tickets, needs, group]);
   const flat = useMemo(() => groups.flatMap((g) => g.tickets.map((t) => t.key)), [groups]);
 
@@ -356,6 +388,16 @@ export function TicketsScreen() {
   const filterControls = (
     <>
       <button type="button" aria-pressed={ready} className={cx(`${chipH} rounded-sm border border-border-strong px-2 text-12 hover:bg-hover`, ready && "bg-selected text-accent")} onClick={() => replaceParams((next) => { if (ready) next.delete("ready"); else { next.set("ready", "true"); next.set("view", "all"); } })}>Ready to dispatch</button>
+      {readyKeys.length > 0 && !proj?.archived && (
+        <Button
+          variant="outline"
+          icon="play"
+          className={cx(chipH, "px-2.5 text-12 font-medium text-accent border-accent/45")}
+          onClick={() => setDispatchKeys(readyKeys)}
+        >
+          Start ready ({readyKeys.length})
+        </Button>
+      )}
       {blockedOnly && <FilterChip label="Only" value="Blocked ×" onClick={() => setParam("blocked", null)} title="Clear blocked filter" />}
       {unestimated && <FilterChip label="Only" value="Unestimated ×" onClick={() => setParam("unestimated", null)} title="Clear unestimated filter" />}
       <DropdownMenu.Root>
@@ -416,7 +458,17 @@ export function TicketsScreen() {
       {!compact && (
         <NavigatorPortal>
           <nav aria-label="Work" className="work-nav">
-            <WorkNavHeader active="tickets" project={project} />
+            <WorkNavHeader
+              active="tickets"
+              project={project}
+              search={search}
+              onSearchChange={setSearch}
+              searchPlaceholder="Filter tasks… epic: agent:"
+              counts={{
+                tickets: queueCounts.all || undefined,
+                epics: sidebarEpics.length || undefined,
+              }}
+            />
             <WorkSpacePersonaFilters
               projects={boot.data?.projects}
               agents={boot.data?.agents}
@@ -435,21 +487,131 @@ export function TicketsScreen() {
               onAgentChange={(v) => setParam("assignee", v || null)}
             />
             <div className="work-nav-list">
-              <div role="group" aria-label="Ticket views" className="flex flex-col gap-0.5 px-1">
-                {VIEWS.map((v) => (
-                  <Link
-                    key={v.key}
-                    href={href(v.key)}
-                    aria-current={!svId && view === v.key ? "true" : undefined}
-                    className={cx(
-                      "flex h-7 items-center rounded-[5px] px-2 text-12",
-                      !svId && view === v.key ? "bg-surface font-medium text-fg" : "text-fg-secondary hover:bg-hover hover:text-fg",
-                    )}
-                  >
-                    {v.label}
-                  </Link>
-                ))}
+              <div role="group" aria-label="Ticket views" className="flex flex-col gap-0.5">
+                <WorkSectionLabel>Queues</WorkSectionLabel>
+                <WorkSidebarFilterRow
+                  label="Needs you"
+                  count={queueCounts.needs_you}
+                  active={!svId && view === "needs_human"}
+                  dotClass="bg-state-human"
+                  countTone="human"
+                  onClick={() =>
+                    replaceParams((next) => {
+                      next.set("view", "needs_human");
+                      next.delete("ready");
+                      next.delete("blocked");
+                      next.delete("sv");
+                    })
+                  }
+                />
+                <WorkSidebarFilterRow
+                  label="In progress"
+                  count={queueCounts.in_progress}
+                  active={!svId && view === "active"}
+                  dotClass="bg-state-done"
+                  onClick={() =>
+                    replaceParams((next) => {
+                      next.set("view", "active");
+                      next.delete("ready");
+                      next.delete("blocked");
+                      next.delete("sv");
+                    })
+                  }
+                />
+                <WorkSidebarFilterRow
+                  label="Ready to dispatch"
+                  count={queueCounts.ready}
+                  active={!svId && ready}
+                  dotClass="bg-accent"
+                  onClick={() =>
+                    replaceParams((next) => {
+                      next.set("view", "all");
+                      next.set("ready", "true");
+                      next.delete("blocked");
+                      next.delete("sv");
+                    })
+                  }
+                />
+                <WorkSidebarFilterRow
+                  label="Blocked"
+                  count={queueCounts.blocked}
+                  active={!svId && blockedOnly}
+                  dotClass="bg-state-blocked"
+                  countTone="blocked"
+                  onClick={() =>
+                    replaceParams((next) => {
+                      next.set("view", "all");
+                      next.set("blocked", "true");
+                      next.delete("ready");
+                      next.delete("sv");
+                    })
+                  }
+                />
+                <WorkSidebarFilterRow
+                  label="All tasks"
+                  count={queueCounts.all}
+                  active={!svId && view === "all" && !ready && !blockedOnly && !epic}
+                  dotClass="bg-fg-tertiary/60"
+                  onClick={() =>
+                    replaceParams((next) => {
+                      next.delete("view");
+                      next.delete("ready");
+                      next.delete("blocked");
+                      next.delete("epic");
+                      next.delete("sv");
+                    })
+                  }
+                />
               </div>
+
+              {sidebarEpics.length > 0 && (
+                <div role="group" aria-label="By epic" className="mt-1 flex flex-col gap-0.5">
+                  <WorkSectionLabel count={sidebarEpics.length}>By epic</WorkSectionLabel>
+                  {sidebarEpics.map((e) => {
+                    const active = epic === e.id;
+                    return (
+                      <button
+                        key={e.id}
+                        type="button"
+                        aria-current={active ? "true" : undefined}
+                        onClick={() =>
+                          replaceParams((next) => {
+                            if (active) next.delete("epic");
+                            else next.set("epic", e.id);
+                            next.delete("sv");
+                          })
+                        }
+                        className={cx(
+                          "flex h-[26px] w-full items-center gap-2 rounded-md px-2 text-left text-12 transition-colors",
+                          active
+                            ? "bg-selected font-medium text-fg"
+                            : "text-fg-secondary hover:bg-hover hover:text-fg",
+                        )}
+                      >
+                        <Icon
+                          name={active ? "chev" : "chevr"}
+                          size={11}
+                          className="flex-none text-fg-tertiary"
+                        />
+                        <span className="min-w-0 flex-1 truncate">{e.name}</span>
+                        <span
+                          aria-hidden
+                          className="h-1 w-7 flex-none overflow-hidden rounded-full bg-surface-sunken"
+                        >
+                          <span
+                            className="block h-full rounded-full bg-accent"
+                            style={{ width: `${e.pct}%` }}
+                          />
+                        </span>
+                        <span className="flex-none font-mono text-10 text-fg-tertiary">
+                          {e.done}/{e.total}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
               <SavedViewTabs project={project} vertical />
             </div>
           </nav>
@@ -523,7 +685,7 @@ export function TicketsScreen() {
       ) : (
         <div className="overflow-x-auto pb-32">
           <div className="min-w-[760px] px-3 pt-3">
-            <div className="flex h-7 items-center gap-3 px-3 text-12 text-fg-tertiary">
+            <div className="flex h-7 items-center gap-3 border-b border-border-subtle px-3 text-10 font-semibold uppercase tracking-[0.06em] text-fg-tertiary">
               <input
                 type="checkbox"
                 aria-label={allSelected ? "Clear selection" : "Select all tickets"}
@@ -534,7 +696,15 @@ export function TicketsScreen() {
                 onChange={() => setSelected(allSelected ? new Set() : new Set(flat))}
                 className="size-3.5 flex-none accent-[var(--accent)]"
               />
-              <span>{tickets.length} {tickets.length === 1 ? "ticket" : "tickets"}</span>
+              <span className="w-3.5 flex-none" aria-hidden />
+              <span className="w-[72px] flex-none">Key ({tickets.length})</span>
+              <span className="min-w-0 flex-1">Task</span>
+              <span className="w-[220px] flex-none max-lg:w-[150px]">State</span>
+              {density !== "compact" && <span className="hidden w-[68px] flex-none lg:block">Crit</span>}
+              <span className="w-8 flex-none text-center">Pts</span>
+              {group !== "epic" && <span className="hidden w-[150px] flex-none md:block">Epic</span>}
+              <span className="w-6 flex-none text-center">Own</span>
+              <span className="w-[44px] flex-none text-right">Act</span>
             </div>
             {groups.map((g) => (
               <section
@@ -577,6 +747,7 @@ export function TicketsScreen() {
                     showEpic={group !== "epic"}
                     onSelect={(e) => toggle(t, e)}
                     onFocusRow={() => setFocused(t.key)}
+                    onStart={proj?.archived ? undefined : (ticket) => setDispatchKeys([ticket.key])}
                   />
                 ))}
               </section>
@@ -600,6 +771,15 @@ export function TicketsScreen() {
             <Kbd>x</Kbd> select · <Kbd>Shift+x</Kbd> range · <Kbd>j</Kbd>/<Kbd>k</Kbd> move · <Kbd>Enter</Kbd> open · <Kbd>Esc</Kbd> clear
           </p>
         </>
+      )}
+      {dispatchKeys && dispatchKeys.length > 0 && (
+        <DispatchDialog
+          keys={dispatchKeys}
+          open
+          onOpenChange={(open) => {
+            if (!open) setDispatchKeys(null);
+          }}
+        />
       )}
     </>
   );
