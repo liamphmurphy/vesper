@@ -4,10 +4,10 @@ import { useState, type KeyboardEvent } from "react";
 import { Dialog } from "radix-ui";
 import type { Schemas } from "@/lib/api/client";
 import { type Persona } from "@/lib/api/persona-hooks";
-import { useApiSecretCalls, useApiSecrets, useCreateApiSecret, useDeleteApiSecret, useUpdateApiSecret, type ApiSecret } from "@/lib/api/secret-hooks";
+import { useApiSecretCalls, useApiSecrets, useCreateApiSecret, useDeleteApiSecret, useSignInApiSecret, useUpdateApiSecret, type ApiSecret } from "@/lib/api/secret-hooks";
 import { cx } from "@/lib/cx";
 import { ago } from "@/lib/format";
-import { expiryPill, expiryText, handleFor, hostOf, jwtExpiry, PLACEMENTS, POLICIES, READ_METHODS, sentAs, WRITE_METHODS, type Placement, type Policy } from "@/lib/secrets-ui";
+import { expiryPill, expiryText, handleFor, hostOf, jwtExpiry, OAUTH_PRESETS, oauthStatus, PLACEMENTS, POLICIES, READ_METHODS, SECRET_KINDS, sentAs, splitScopes, WRITE_METHODS, type Placement, type Policy, type SecretKind } from "@/lib/secrets-ui";
 import { Button, IconButton } from "@/components/ui/button";
 import { Segmented, Toggle } from "@/components/ui/controls";
 import { Icon } from "@/components/ui/icon";
@@ -17,6 +17,17 @@ import { confirmAction } from "@/components/ui/confirm";
 import { LoadingLines } from "@/components/ui/loading";
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong. Please try again.");
+
+/** Opened before any await, so the browser treats it as the person's click (as Connectors does). */
+function signInWindow() {
+  return window.open("", "_blank", "width=560,height=720");
+}
+
+function finishSignIn(win: Window | null, link?: string) {
+  if (!win) return;
+  if (link && /^https?:/.test(link)) win.location.href = link;
+  else win.close();
+}
 
 const PILL = { done: "bg-pill-done-bg text-pill-done-fg", human: "bg-pill-human-bg text-pill-human-fg", blocked: "bg-pill-blocked-bg text-pill-blocked-fg" } as const;
 
@@ -63,7 +74,7 @@ export function ApiSecretsSection({ personas, initialId }: { personas: Persona[]
         <div className="flex gap-5 max-lg:flex-col">
           <ul className="flex min-w-0 flex-1 flex-col self-start overflow-hidden rounded-lg border border-border bg-surface max-lg:w-full">
             {rows.map((s) => {
-              const pill = expiryPill(s.expires_at);
+              const pill = oauthStatus(s.oauth) ?? expiryPill(s.expires_at);
               return (
                 <li key={s.id} className="border-b border-border-row last:border-b-0">
                   <button type="button" data-testid="secret-row" aria-current={s.id === selected?.id} onClick={() => setSelectedId(s.id)} className={cx("flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-hover", s.id === selected?.id && "bg-selected")}>
@@ -111,7 +122,7 @@ function SecretDetail({ secret: s, personas }: { secret: ApiSecret; personas: Pe
         <h3 className="text-18 font-semibold text-fg">{s.name}</h3>
         <p className="text-12 text-fg-secondary">Handle <code className="font-mono text-fg">{s.handle}</code>, the only name personas see</p>
       </div>
-      <Field label="Value">
+      {s.kind === "oauth" ? <SignInField secret={s} /> : <Field label="Value">
         {replacing ? (
           <div className="flex gap-2">
             <TextInput type="password" aria-label="New value" autoComplete="off" spellCheck={false} placeholder="Paste the new value" value={value} onChange={(e) => setValue(e.target.value)} />
@@ -123,7 +134,7 @@ function SecretDetail({ secret: s, personas }: { secret: ApiSecret; personas: Pe
             <button type="button" className="text-13 text-accent hover:underline" onClick={() => setReplacing(true)}>Replace</button>
           </div>
         )}
-      </Field>
+      </Field>}
       <Field label="Sent as"><p className="rounded-md border border-border-strong bg-surface px-3 py-2 font-mono text-13 text-fg-2">{sentAs(s.placement, s.placement_key, s.handle)}</p></Field>
       <Field label="Allowed hosts" hint="HTTPS only. Exact hosts: a subdomain needs its own entry.">
         <div className="flex flex-wrap items-center gap-1.5" data-testid="secret-hosts">
@@ -174,6 +185,37 @@ function SecretDetail({ secret: s, personas }: { secret: ApiSecret; personas: Pe
   );
 }
 
+/** An OAuth secret's sign-in: whether Vesper can get a token for it, and the button that (re)starts it. */
+function SignInField({ secret: s }: { secret: ApiSecret }) {
+  const signIn = useSignInApiSecret();
+  const status = oauthStatus(s.oauth);
+  if (!s.oauth || !status) return null;
+  const start = async () => {
+    const win = signInWindow();
+    try {
+      const res = await signIn.mutateAsync(s.id);
+      finishSignIn(win, res.authorize_url);
+    } catch {
+      finishSignIn(win);
+    }
+  };
+  return (
+    <Field label="Sign-in" hint="Vesper refreshes the access token itself; personas and apps never see it.">
+      <div className="flex items-center justify-between gap-2 rounded-md border border-border bg-surface px-3 py-2" data-testid="secret-sign-in">
+        <span className="min-w-0 text-12 text-fg-tertiary">
+          <span className={cx("mr-1.5 rounded-full px-2 py-0.5 text-11", PILL[status.tone])}>{status.label}</span>
+          {s.oauth.error ? s.oauth.error : s.oauth.signed_in_at ? `since ${ago(s.oauth.signed_in_at)}` : "Requests are refused until you sign in."}
+        </span>
+        <button type="button" className="flex-none text-13 text-accent hover:underline" disabled={signIn.isPending} onClick={start}>{status.action}</button>
+      </div>
+      <p className="mt-1 truncate font-mono text-11 text-fg-tertiary" title={s.oauth.scopes.join(" ")}>
+        {s.oauth.client_id}{s.oauth.scopes.length > 0 && ` · ${s.oauth.scopes.join(" ")}`}
+      </p>
+      {signIn.isError && <p role="alert" className="mt-1 text-12 text-pill-blocked-fg">{errorText(signIn.error)}</p>}
+    </Field>
+  );
+}
+
 const DECISION: Record<Schemas["ApiSecretCall"]["decision"], { label: string; className: string }> = {
   auto: { label: "Auto", className: "text-fg-2" },
   approved: { label: "Approved", className: "text-fg-2" },
@@ -210,6 +252,13 @@ function SecretActivity({ id }: { id: string }) {
 /** Adds a secret. With a proposal it's prefilled from what the persona asked for; the person still enters the value and confirms. */
 export function AddSecretDialog({ proposal, onClose }: { proposal?: Schemas["ApiSecretProposal"]; onClose: () => void }) {
   const [name, setName] = useState(proposal?.name ?? "");
+  const [kind, setKind] = useState<SecretKind>("static");
+  const [preset, setPreset] = useState(OAUTH_PRESETS[0].value);
+  const [authorizeUrl, setAuthorizeUrl] = useState("");
+  const [tokenUrl, setTokenUrl] = useState("");
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [scopes, setScopes] = useState("");
   const [value, setValue] = useState("");
   const [placement, setPlacement] = useState<Placement>(proposal?.placement ?? "bearer");
   const [key, setKey] = useState(proposal?.placement_key ?? "");
@@ -217,6 +266,23 @@ export function AddSecretDialog({ proposal, onClose }: { proposal?: Schemas["Api
   const [host, setHost] = useState("");
   const [hostError, setHostError] = useState("");
   const create = useCreateApiSecret();
+  const signIn = useSignInApiSecret();
+  const redirectUri = useApiSecrets().data?.oauth_redirect_uri;
+  const oauth = kind === "oauth";
+  const p = OAUTH_PRESETS.find((x) => x.value === preset) ?? OAUTH_PRESETS[0];
+  const endpoints = p.value === "custom" ? { authorize_url: authorizeUrl.trim(), token_url: tokenUrl.trim() } : { authorize_url: p.authorize_url, token_url: p.token_url };
+  const pickPreset = (v: string) => {
+    setPreset(v);
+    const next = OAUTH_PRESETS.find((x) => x.value === v);
+    if (next?.hosts.length && hosts.length === 0) setHosts(next.hosts);
+  };
+  const pickKind = (k: SecretKind) => {
+    setKind(k);
+    if (k === "oauth") {
+      setPlacement("bearer");
+      if (p.hosts.length && hosts.length === 0) setHosts(p.hosts);
+    }
+  };
   const exp = jwtExpiry(value);
   const handle = handleFor(name);
   const addHost = () => {
@@ -237,12 +303,32 @@ export function AddSecretDialog({ proposal, onClose }: { proposal?: Schemas["Api
   const pendingHost = host.trim() ? hostOf(host) : null;
   const allHosts = pendingHost && !hosts.includes(pendingHost) ? [...hosts, pendingHost] : hosts;
   const needsKey = placement === "header" || placement === "query";
-  const ready = name.trim() && value && allHosts.length > 0 && (!needsKey || key.trim()) && !create.isPending && (!host.trim() || pendingHost);
-  const save = () =>
-    create.mutate(
-      { name, value, placement, ...(needsKey ? { placement_key: key } : {}), allowed_hosts: allHosts, ...(proposal ? { proposal_id: proposal.id } : {}) },
-      { onSuccess: onClose },
-    );
+  const credsReady = oauth ? Boolean(clientId.trim() && endpoints.authorize_url && endpoints.token_url && (!p.scopes_required || splitScopes(scopes).length > 0)) : Boolean(value);
+  const busy = create.isPending || signIn.isPending;
+  const ready = name.trim() && credsReady && allHosts.length > 0 && (!needsKey || key.trim()) && !busy && (!host.trim() || pendingHost);
+  const save = async () => {
+    if (!oauth) {
+      create.mutate(
+        { name, value, placement, ...(needsKey ? { placement_key: key } : {}), allowed_hosts: allHosts, ...(proposal ? { proposal_id: proposal.id } : {}) },
+        { onSuccess: onClose },
+      );
+      return;
+    }
+    // Saved first, then signed in: a sign-in that's abandoned leaves a secret to retry from its detail.
+    const win = signInWindow();
+    try {
+      const made = await create.mutateAsync({
+        name, placement: "bearer", allowed_hosts: allHosts,
+        oauth: { ...endpoints, client_id: clientId.trim(), ...(clientSecret.trim() ? { client_secret: clientSecret.trim() } : {}), scopes: splitScopes(scopes) },
+        ...(proposal ? { proposal_id: proposal.id } : {}),
+      });
+      const res = await signIn.mutateAsync(made.id);
+      finishSignIn(win, res.authorize_url);
+      onClose();
+    } catch {
+      finishSignIn(win);
+    }
+  };
   return (
     <Dialog.Root open onOpenChange={(o) => !o && onClose()}>
       <Dialog.Portal>
@@ -255,17 +341,57 @@ export function AddSecretDialog({ proposal, onClose }: { proposal?: Schemas["Api
           <Field label="Name" htmlFor="secret-name" hint={handle ? `Personas see it as ${handle}` : undefined}>
             <TextInput id="secret-name" value={name} maxLength={60} placeholder="Acme API JWT" onChange={(e) => setName(e.target.value)} />
           </Field>
-          <Field label="Value" htmlFor="secret-value" hint="Stored encrypted. Vesper never shows it again, and personas never see it.">
-            <TextInput id="secret-value" type="password" autoComplete="off" spellCheck={false} value={value} onChange={(e) => setValue(e.target.value)} />
-          </Field>
-          {exp && (
+          {!proposal && (
+            <Field label="Type">
+              <Segmented label="Type" value={kind} onChange={pickKind} options={SECRET_KINDS} />
+            </Field>
+          )}
+          {oauth ? (
+            <>
+              <Field label="Provider">
+                <Segmented label="Provider" value={preset} onChange={pickPreset} options={OAUTH_PRESETS} />
+              </Field>
+              {p.value === "custom" && (
+                <>
+                  <Field label="Authorization URL" htmlFor="secret-authorize-url">
+                    <TextInput id="secret-authorize-url" mono value={authorizeUrl} placeholder="https://auth.example.com/oauth/authorize" onChange={(e) => setAuthorizeUrl(e.target.value)} />
+                  </Field>
+                  <Field label="Token URL" htmlFor="secret-token-url">
+                    <TextInput id="secret-token-url" mono value={tokenUrl} placeholder="https://auth.example.com/oauth/token" onChange={(e) => setTokenUrl(e.target.value)} />
+                  </Field>
+                </>
+              )}
+              <Field label="Client ID" htmlFor="secret-client-id" hint="From the OAuth client you registered with the provider.">
+                <TextInput id="secret-client-id" mono value={clientId} autoComplete="off" spellCheck={false} onChange={(e) => setClientId(e.target.value)} />
+              </Field>
+              <Field label="Client secret" htmlFor="secret-client-secret" hint="Stored encrypted and never shown again.">
+                <TextInput id="secret-client-secret" type="password" autoComplete="off" spellCheck={false} value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} />
+              </Field>
+              <Field label="Scopes" htmlFor="secret-scopes" hint={p.scopes_required ? `Separate with spaces or commas. ${p.label} needs at least one.` : "Separate with spaces or commas."}>
+                <TextInput id="secret-scopes" mono value={scopes} placeholder={p.scopes_hint} onChange={(e) => setScopes(e.target.value)} />
+              </Field>
+              {redirectUri && (
+                <div className="-mt-1 rounded-md border border-border bg-surface px-3 py-2 text-12 text-fg-secondary" data-testid="oauth-redirect">
+                  Add this redirect URI to the OAuth client:
+                  <code className="mt-1 block select-all break-all font-mono text-fg">{redirectUri}</code>
+                </div>
+              )}
+            </>
+          ) : (
+            <Field label="Value" htmlFor="secret-value" hint="Stored encrypted. Vesper never shows it again, and personas never see it.">
+              <TextInput id="secret-value" type="password" autoComplete="off" spellCheck={false} value={value} onChange={(e) => setValue(e.target.value)} />
+            </Field>
+          )}
+          {!oauth && exp && (
             <p className="-mt-2 flex items-center gap-1.5 text-12 text-pill-done-fg" data-testid="jwt-expiry">
               <Icon name="check" size={13} /> Looks like a JWT · {expiryText(exp).toLowerCase()}
             </p>
           )}
-          <Field label="Send it as">
-            <Segmented label="Send it as" value={placement} onChange={setPlacement} options={PLACEMENTS} />
-          </Field>
+          {!oauth && (
+            <Field label="Send it as">
+              <Segmented label="Send it as" value={placement} onChange={setPlacement} options={PLACEMENTS} />
+            </Field>
+          )}
           {needsKey && (
             <Field label={placement === "header" ? "Header name" : "Query parameter"} htmlFor="secret-key">
               <TextInput id="secret-key" mono value={key} placeholder={placement === "header" ? "X-Api-Key" : "api_key"} onChange={(e) => setKey(e.target.value)} />
@@ -290,10 +416,10 @@ export function AddSecretDialog({ proposal, onClose }: { proposal?: Schemas["Api
             Vesper adds the value on the server, and only to HTTPS requests to these hosts. Copies of it in a response are masked as far as Vesper can recognise them.
             <span className="mt-1 block text-12 text-fg-tertiary">{proposal?.proposed_by ? `${proposal.proposed_by.name} gets access. Reads run on their own; writes ask you first.` : "Personas get no access until you turn it on. Reads run on their own; writes ask you first."}</span>
           </div>
-          {create.isError && <p role="alert" className="text-13 text-pill-blocked-fg">{errorText(create.error)}</p>}
+          {(create.isError || signIn.isError) && <p role="alert" className="text-13 text-pill-blocked-fg">{errorText(create.error ?? signIn.error)}</p>}
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={onClose}>Cancel</Button>
-            <Button variant="primary" disabled={!ready} onClick={save}>Save</Button>
+            <Button variant="primary" disabled={!ready} onClick={save}>{oauth ? "Save and sign in" : "Save"}</Button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

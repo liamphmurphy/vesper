@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"net/http"
 	"regexp"
 	"slices"
 	"strconv"
@@ -43,13 +44,14 @@ const (
 // ErrNoKey means SECRETS_KEY isn't set, so values can't be stored or read.
 var ErrNoKey = apperr.Conflict("set SECRETS_KEY on the server to store secrets")
 
-// Service stores secrets and sends requests with them. LookupIP and Now are
-// overridable for tests.
+// Service stores secrets and sends requests with them. LookupIP, Now and
+// HTTP (the OAuth token endpoint's transport) are overridable for tests.
 type Service struct {
 	Q        *store.Queries
 	Box      *secrets.Box
 	LookupIP func(ctx context.Context, host string) ([]net.IP, error)
 	Now      func() time.Time
+	HTTP     http.RoundTripper
 }
 
 func (s *Service) now() time.Time {
@@ -227,12 +229,14 @@ func JWTExpiry(value string) *time.Time {
 }
 
 // Input creates a secret. A proposal's persona is the only one given access:
-// the person just approved exactly that.
+// the person just approved exactly that. With OAuth set, there's no Value:
+// the person signs in afterwards (BeginOAuth), and the token is sent as a bearer.
 type Input struct {
 	Name, Value, Placement, PlacementKey string
 	AllowedHosts                         []string
 	ReadPolicy, WritePolicy              string
 	ProposalID                           *uuid.UUID
+	OAuth                                *OAuthInput
 }
 
 // Create validates and stores a secret.
@@ -244,6 +248,19 @@ func (s *Service) Create(ctx context.Context, ws, user uuid.UUID, in Input) (sto
 	name, err := ValidName(in.Name)
 	if err != nil {
 		return out, err
+	}
+	var oauth OAuthSettings
+	if in.OAuth != nil {
+		if in.Value != "" {
+			return out, apperr.Invalid("value", "leave the value out: Vesper gets the token when you sign in")
+		}
+		if in.Placement != "" && in.Placement != PlacementBearer {
+			return out, apperr.Invalid("placement", "an OAuth secret is always sent as Authorization: Bearer")
+		}
+		in.Placement = PlacementBearer
+		if oauth, err = validOAuth(*in.OAuth); err != nil {
+			return out, err
+		}
 	}
 	key, err := ValidPlacement(in.Placement, in.PlacementKey)
 	if err != nil {
@@ -265,8 +282,10 @@ func (s *Service) Create(ctx context.Context, ws, user uuid.UUID, in Input) (sto
 	if err := ValidPolicy("write_policy", in.WritePolicy); err != nil {
 		return out, err
 	}
-	if err := validValue(in.Placement, in.Value); err != nil {
-		return out, err
+	if in.OAuth == nil {
+		if err := validValue(in.Placement, in.Value); err != nil {
+			return out, err
+		}
 	}
 	base, err := handleFor(name)
 	if err != nil {
@@ -298,12 +317,21 @@ func (s *Service) Create(ctx context.Context, ws, user uuid.UUID, in Input) (sto
 		proposal = &p
 	}
 	id := uuid.Must(uuid.NewV7())
-	nonce, ct, err := s.Box.Seal(ws, scope(id), []byte(in.Value))
+	params := store.CreateUserSecretParams{ID: id, WorkspaceID: ws, UserID: user, Name: name, Handle: handle, Placement: in.Placement,
+		PlacementKey: key, AllowedHosts: hosts, ReadPolicy: in.ReadPolicy, WritePolicy: in.WritePolicy, ExpiresAt: JWTExpiry(in.Value)}
+	if in.OAuth != nil {
+		// Until sign-in, the sealed credential holds only the client secret.
+		kind := KindOAuth
+		params.Kind, params.ExpiresAt = &kind, nil
+		params.Oauth, _ = json.Marshal(oauth)
+		params.Nonce, params.Ciphertext, err = s.seal(store.UserSecret{ID: id, WorkspaceID: ws}, credential{ClientSecret: strings.TrimSpace(in.OAuth.ClientSecret)})
+	} else {
+		params.Nonce, params.Ciphertext, err = s.Box.Seal(ws, scope(id), []byte(in.Value))
+	}
 	if err != nil {
 		return out, err
 	}
-	out, err = s.Q.CreateUserSecret(ctx, store.CreateUserSecretParams{ID: id, WorkspaceID: ws, UserID: user, Name: name, Handle: handle, Placement: in.Placement,
-		PlacementKey: key, AllowedHosts: hosts, ReadPolicy: in.ReadPolicy, WritePolicy: in.WritePolicy, Nonce: nonce, Ciphertext: ct, ExpiresAt: JWTExpiry(in.Value)})
+	out, err = s.Q.CreateUserSecret(ctx, params)
 	if err != nil {
 		return out, err
 	}
@@ -326,6 +354,9 @@ func (s *Service) SetValue(ctx context.Context, sec store.UserSecret, placement,
 	if s.Box == nil {
 		return sec, ErrNoKey
 	}
+	if sec.Kind == KindOAuth {
+		return sec, apperr.Invalid("value", "an OAuth secret's token comes from signing in; sign in again instead")
+	}
 	if err := validValue(placement, value); err != nil {
 		return sec, err
 	}
@@ -336,10 +367,16 @@ func (s *Service) SetValue(ctx context.Context, sec store.UserSecret, placement,
 	return s.Q.SetUserSecretValue(ctx, store.SetUserSecretValueParams{ID: sec.ID, Nonce: nonce, Ciphertext: ct, ExpiresAt: JWTExpiry(value)})
 }
 
-// Reveal decrypts a value for Send. Never return it through an API.
+// Reveal decrypts a static value. Never return it through an API. Send's
+// callers use Value, which also handles OAuth secrets.
 func (s *Service) Reveal(sec store.UserSecret) (string, error) {
 	if s.Box == nil {
 		return "", ErrNoKey
+	}
+	if sec.Kind == KindOAuth {
+		// The sealed credential holds a refresh token and client secret, which
+		// must never be sent as if they were the value.
+		return "", errors.New("an OAuth secret has no single value; use Value")
 	}
 	pt, err := s.Box.Open(sec.WorkspaceID, scope(sec.ID), sec.Nonce, sec.Ciphertext)
 	if err != nil {

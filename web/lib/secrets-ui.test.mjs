@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { expiryPill, expiryText, handleFor, hostOf, jwtExpiry, placementLabel, secretCall, sentAs } from "./secrets-ui.ts";
+import { expiryPill, expiryText, handleFor, hostOf, jwtExpiry, oauthStatus, placementLabel, secretCall, sentAs, splitScopes } from "./secrets-ui.ts";
 
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
 
@@ -50,4 +50,16 @@ test("secret calls are recognised in both harnesses' naming", () => {
   assert.deepEqual(secretCall("mcp__vesper_secrets__http_request", { secret: "acme-jwt", url: "https://api.acme.com/v1/orders?since=x" }), { tool: "http_request", handle: "acme-jwt", method: "GET", target: "api.acme.com/v1/orders" });
   assert.deepEqual(secretCall("vesper_secrets.http_request", { secret: "k", method: "post", url: "nope" }), { tool: "http_request", handle: "k", method: "POST", target: "nope" });
   assert.equal(secretCall("mcp__github__create_issue", {}), null);
+});
+
+test("scopes split on spaces, commas and new lines, without repeats", () => {
+  assert.deepEqual(splitScopes(" drive.readonly, drive.file\ndrive.readonly "), ["drive.readonly", "drive.file"]);
+  assert.deepEqual(splitScopes("   "), []);
+});
+
+test("an OAuth secret is usable only once signed in, until a refresh is refused", () => {
+  assert.equal(oauthStatus(undefined), null);
+  assert.deepEqual(oauthStatus({ error: "" }), { label: "Not signed in", tone: "human", action: "Sign in" });
+  assert.equal(oauthStatus({ signed_in_at: "2026-11-15T00:00:00Z", error: "" })?.tone, "done");
+  assert.equal(oauthStatus({ signed_in_at: "2026-11-15T00:00:00Z", error: "invalid_grant" })?.tone, "blocked");
 });

@@ -131,3 +131,43 @@ export function secretCall(tool: string, input: unknown): { tool: string; handle
   }
   return { tool: m[1], handle, method, target };
 }
+
+export type SecretKind = "static" | "oauth";
+
+export const SECRET_KINDS: ReadonlyArray<{ value: SecretKind; label: string }> = [
+  { value: "static", label: "Token or key" },
+  { value: "oauth", label: "OAuth sign-in" },
+];
+
+/** scopes_required: the provider refuses a sign-in that asks for none (Google does). */
+export type OAuthPreset = { value: string; label: string; authorize_url: string; token_url: string; hosts: string[]; scopes_hint: string; scopes_required: boolean };
+
+/** Providers whose endpoints Vesper fills in; "custom" leaves them to the person. */
+export const OAUTH_PRESETS: ReadonlyArray<OAuthPreset> = [
+  {
+    value: "google",
+    label: "Google",
+    authorize_url: "https://accounts.google.com/o/oauth2/v2/auth",
+    token_url: "https://oauth2.googleapis.com/token",
+    hosts: ["www.googleapis.com"],
+    scopes_hint: "https://www.googleapis.com/auth/drive.readonly",
+    scopes_required: true,
+  },
+  { value: "custom", label: "Other provider", authorize_url: "", token_url: "", hosts: [], scopes_hint: "read write", scopes_required: false },
+];
+
+/** Scopes typed with spaces, commas or new lines, without repeats. Matches the server's NormalizeScopes. */
+export function splitScopes(raw: string): string[] {
+  return [...new Set(raw.split(/[\s,]+/).filter(Boolean))];
+}
+
+/**
+ * An OAuth secret's state for the list pill and the detail: it can't be used
+ * until it's signed in, and a refresh the provider refused means signing in again.
+ */
+export function oauthStatus(oauth: { signed_in_at?: string; error: string } | undefined): { label: string; tone: "done" | "human" | "blocked"; action: string } | null {
+  if (!oauth) return null;
+  if (!oauth.signed_in_at) return { label: "Not signed in", tone: "human", action: "Sign in" };
+  if (oauth.error) return { label: "Sign in again", tone: "blocked", action: "Sign in again" };
+  return { label: "Signed in", tone: "done", action: "Sign in again" };
+}

@@ -1546,6 +1546,11 @@ type UserSecret struct {
 	Revision     int32
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+	Kind         string
+	Oauth        json.RawMessage
+	OauthState   *string
+	SignedInAt   *time.Time
+	OauthError   string
 }
 
 type UserSecretApproval struct {

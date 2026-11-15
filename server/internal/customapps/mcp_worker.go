@@ -504,12 +504,20 @@ func handleWorkerRPC(ctx context.Context, mc *MCPCallContext, method string, raw
 				return nil, fmt.Errorf("secret %q is set to ask; set its policy to allow or run from a chat where it can ask", handle)
 			}
 		}
-		val, err := mc.Secrets.Reveal(sec)
+		val, err := mc.Secrets.Value(ctx, sec)
 		if err != nil {
-			if mc.SecretLogger != nil {
-				mc.SecretLogger(ctx, sec, ck, req, "blocked", nil, "couldn't decrypt the secret", 0, 0)
+			var b *usersecrets.Blocked
+			reason, msg := "couldn't decrypt the secret", errors.New("couldn't decrypt secret; ask the person to replace it")
+			switch {
+			case errors.As(err, &b):
+				reason, msg = b.Reason, b
+			case sec.Kind == usersecrets.KindOAuth:
+				reason, msg = "couldn't refresh the token", errors.New("couldn't get a fresh token from the secret's sign-in provider; try again shortly")
 			}
-			return nil, errors.New("couldn't decrypt secret; ask the person to replace it")
+			if mc.SecretLogger != nil {
+				mc.SecretLogger(ctx, sec, ck, req, "blocked", nil, reason, 0, 0)
+			}
+			return nil, msg
 		}
 		start := time.Now()
 		res, err := mc.Secrets.Send(ctx, sec, val, ck, req)

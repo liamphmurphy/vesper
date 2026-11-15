@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/liamphmurphy/vesper/server/internal/api"
 	"github.com/liamphmurphy/vesper/server/internal/apperr"
+	"github.com/liamphmurphy/vesper/server/internal/connectors"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/secrets"
 	"github.com/liamphmurphy/vesper/server/internal/store"
@@ -44,9 +46,18 @@ func (s *Server) toApiSecrets(ctx context.Context, rows []store.UserSecret) ([]a
 				personas = append(personas, a.PersonaID)
 			}
 		}
-		out[i] = api.ApiSecret{Id: r.ID, Name: r.Name, Handle: r.Handle, Placement: api.ApiSecretPlacement(r.Placement), PlacementKey: r.PlacementKey, AllowedHosts: r.AllowedHosts,
+		out[i] = api.ApiSecret{Id: r.ID, Name: r.Name, Handle: r.Handle, Kind: api.ApiSecretKind(r.Kind), Placement: api.ApiSecretPlacement(r.Placement), PlacementKey: r.PlacementKey, AllowedHosts: r.AllowedHosts,
 			ReadPolicy: api.ApiSecretPolicy(r.ReadPolicy), WritePolicy: api.ApiSecretPolicy(r.WritePolicy), PersonaIds: personas, ExpiresAt: r.ExpiresAt, LastUsedAt: r.LastUsedAt,
 			Revision: int(r.Revision), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}
+		if r.Kind == usersecrets.KindOAuth {
+			st := usersecrets.Settings(r)
+			scopes := st.Scopes
+			if scopes == nil {
+				scopes = []string{}
+			}
+			out[i].Oauth = &api.ApiSecretOAuth{AuthorizeUrl: st.AuthorizeURL, TokenUrl: st.TokenURL, ClientId: st.ClientID, Scopes: scopes,
+				HasClientSecret: st.HasClientSecret, SignedInAt: r.SignedInAt, Error: r.OauthError}
+		}
 	}
 	return out, nil
 }
@@ -93,7 +104,7 @@ func (s *Server) ListApiSecrets(ctx context.Context, _ api.ListApiSecretsRequest
 		return nil, err
 	}
 	out, err := s.toApiSecrets(ctx, rows)
-	return api.ListApiSecrets200JSONResponse{Secrets: out, KeyConfigured: s.userSecrets().Box != nil}, err
+	return api.ListApiSecrets200JSONResponse{Secrets: out, KeyConfigured: s.userSecrets().Box != nil, OauthRedirectUri: s.oauthRedirect()}, err
 }
 
 func (s *Server) CreateApiSecret(ctx context.Context, req api.CreateApiSecretRequestObject) (api.CreateApiSecretResponseObject, error) {
@@ -102,7 +113,13 @@ func (s *Server) CreateApiSecret(ctx context.Context, req api.CreateApiSecretReq
 		return nil, apperr.Invalid("body", "required")
 	}
 	b := req.Body
-	in := usersecrets.Input{Name: b.Name, Value: b.Value, Placement: string(b.Placement), PlacementKey: deref(b.PlacementKey), AllowedHosts: b.AllowedHosts, ProposalID: b.ProposalId}
+	in := usersecrets.Input{Name: b.Name, Value: deref(b.Value), Placement: string(b.Placement), PlacementKey: deref(b.PlacementKey), AllowedHosts: b.AllowedHosts, ProposalID: b.ProposalId}
+	if o := b.Oauth; o != nil {
+		in.OAuth = &usersecrets.OAuthInput{AuthorizeURL: o.AuthorizeUrl, TokenURL: o.TokenUrl, ClientID: o.ClientId, ClientSecret: deref(o.ClientSecret)}
+		if o.Scopes != nil {
+			in.OAuth.Scopes = *o.Scopes
+		}
+	}
 	if b.ReadPolicy != nil {
 		in.ReadPolicy = string(*b.ReadPolicy)
 	}
@@ -152,6 +169,14 @@ func (s *Server) UpdateApiSecret(ctx context.Context, req api.UpdateApiSecretReq
 	cur, err := s.ownApiSecret(ctx, req.Id)
 	if err != nil {
 		return nil, err
+	}
+	if cur.Kind == usersecrets.KindOAuth {
+		if b.Value != nil {
+			return nil, apperr.Invalid("value", "an OAuth secret's token comes from signing in; sign in again instead")
+		}
+		if b.Placement != nil && string(*b.Placement) != usersecrets.PlacementBearer {
+			return nil, apperr.Invalid("placement", "an OAuth secret is always sent as Authorization: Bearer")
+		}
 	}
 	name, placement, key, hosts, read, write := cur.Name, cur.Placement, cur.PlacementKey, cur.AllowedHosts, cur.ReadPolicy, cur.WritePolicy
 	if b.Name != nil {
@@ -216,6 +241,28 @@ func (s *Server) UpdateApiSecret(ctx context.Context, req api.UpdateApiSecretReq
 	}
 	res, err := s.toApiSecret(ctx, out)
 	return api.UpdateApiSecret200JSONResponse(res), err
+}
+
+// oauthRedirect is where sign-in providers return the browser, for OAuth
+// secrets and connectors alike.
+func (s *Server) oauthRedirect() string {
+	return strings.TrimRight(s.PublicURL, "/") + connectors.CallbackPath
+}
+
+// SignInApiSecret starts an OAuth secret's sign-in. The provider returns the
+// browser to the same callback connectors use, so one redirect URI registered
+// on the person's OAuth client serves both.
+func (s *Server) SignInApiSecret(ctx context.Context, req api.SignInApiSecretRequestObject) (api.SignInApiSecretResponseObject, error) {
+	sec, err := s.ownApiSecret(ctx, req.Id)
+	if err != nil {
+		return nil, err
+	}
+	link, err := s.userSecrets().BeginOAuth(ctx, sec, s.oauthRedirect())
+	if err != nil {
+		return nil, err
+	}
+	res, err := s.toApiSecret(ctx, sec)
+	return api.SignInApiSecret200JSONResponse{Secret: res, AuthorizeUrl: link}, err
 }
 
 func (s *Server) DeleteApiSecret(ctx context.Context, req api.DeleteApiSecretRequestObject) (api.DeleteApiSecretResponseObject, error) {
