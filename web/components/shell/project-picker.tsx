@@ -67,7 +67,7 @@ export function ProjectPicker({ allowAll = true, crumb }: { allowAll?: boolean; 
               <>
                 <DropdownMenu.RadioItem value="" className={menuItem}>
                   <Icon name="folder" size={12} className="text-fg-secondary" />
-                  <span className="flex-1">All projects</span>
+                  <span className="flex-1">All spaces</span>
                   <DropdownMenu.ItemIndicator><Icon name="check" size={14} className="text-accent" /></DropdownMenu.ItemIndicator>
                 </DropdownMenu.RadioItem>
                 <DropdownMenu.Separator className="my-1 h-px bg-border-strong" />
