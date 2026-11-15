@@ -22,7 +22,7 @@ const DefaultChatImageTimeout = 5 * time.Minute
 
 // imageStepPrompt wraps a job's prompt for the one-shot image step: this,
 // then any reference images' note, then "Request: " and the prompt.
-const imageStepPrompt = "Generate exactly one image for this request with your image generation tool, then stop: Vesper collects it from where your tool saved it. Don't copy it or do anything else. "
+const imageStepPrompt = "Generate exactly one image for this request with your image generation tool (or the image-generator subagent if available), then stop: Vesper collects it from where your tool saved it. Don't copy it or do anything else. "
 
 // imageStepInstructions is the step's AGENTS.md: a stand-in for the chat
 // persona's instructions, which are meant for the chat's own model.

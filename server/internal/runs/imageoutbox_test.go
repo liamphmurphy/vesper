@@ -43,6 +43,8 @@ func TestImageOutboxTool(t *testing.T) {
 		{"recursive", run, cp("-r "+src, ".lazyagents/outbox/a.png"), false},
 		{"rm", run, ToolCheck{Tool: "Bash", Input: map[string]any{"command": "rm -rf .lazyagents/outbox"}}, false},
 		{"Write tool", run, ToolCheck{Tool: "Write"}, false},
+		{"image-generator subagent", run, ToolCheck{Tool: "Agent", Input: map[string]any{"subagent_type": "image-generator", "description": "Image Generator"}}, true},
+		{"other subagent", run, ToolCheck{Tool: "Agent", Input: map[string]any{"subagent_type": "general", "description": "helper"}}, false},
 		{"nil session tool", store.Run{}, ToolCheck{Tool: "image_generation"}, true},
 		// Codex names its files exec-<uuid>.png when the JavaScript orchestrator makes them.
 		{"exec uuid file", run, cp("/Users/u/.codex/generated_images/"+sid+"/exec-0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d.png", ".lazyagents/outbox/exec-0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d.png"), true},
