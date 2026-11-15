@@ -24,6 +24,7 @@ var excluded = map[string]string{
 	"provider_usage":         "observed provider usage, refreshed by the runner",
 	"provider_limits":        "observed provider rate limits, refreshed by the runner",
 	"metric_snapshots":       "cached dashboard metrics, recomputed on demand",
+	"drive_backup_locks":     "the lease on a Drive backup in progress on the old machine",
 }
 
 // excludedPrefixes are table-name prefixes owned by a library with its own
