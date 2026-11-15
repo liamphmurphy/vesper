@@ -186,10 +186,11 @@ func secretRequest(ctx context.Context, d Deps, c agents.Caller, in HTTPRequestI
 			return toolFailure(err.Error())
 		}
 	}
-	value, err := d.Secrets.Reveal(sec)
+	value, err := d.Secrets.Value(ctx, sec)
 	if err != nil {
-		log(ck, "blocked", nil, "couldn't decrypt the secret", 0, 0)
-		return toolFailure("Vesper couldn't decrypt this secret. Ask the person to replace it.")
+		msg, reason := secretValueFailure(sec, err)
+		log(ck, "blocked", nil, reason, 0, 0)
+		return toolFailure(msg)
 	}
 	start := time.Now()
 	res, err := d.Secrets.Send(ctx, sec, value, ck, req)
@@ -208,6 +209,20 @@ func secretRequest(ctx context.Context, d Deps, c agents.Caller, in HTTPRequestI
 	log(ck, decision, &status, "", res.Redactions, took)
 	raw, _ := json.Marshal(res)
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(raw)}}}
+}
+
+// secretValueFailure turns a failure to get a secret's value into what the run
+// is told and what the call log keeps. A lapsed OAuth sign-in says so; other
+// errors aren't shown, since they may describe the server rather than the request.
+func secretValueFailure(sec store.UserSecret, err error) (msg, reason string) {
+	var b *usersecrets.Blocked
+	switch {
+	case errors.As(err, &b):
+		return b.Reason, b.Reason
+	case sec.Kind == usersecrets.KindOAuth:
+		return "Vesper couldn't get a fresh token for this secret from its sign-in provider. Try again shortly.", "couldn't refresh the token"
+	}
+	return "Vesper couldn't decrypt this secret. Ask the person to replace it.", "couldn't decrypt the secret"
 }
 
 func requestSecretApproval(ctx context.Context, d Deps, chatID uuid.UUID, persona *uuid.UUID, sec store.UserSecret, ck usersecrets.Checked, req usersecrets.Request) (string, error) {
