@@ -1,12 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
 import { installChatApi } from "./mock-chat-api";
 
-const presets = ["Catppuccin", "Nord", "Dracula", "Gruvbox", "Solarized", "Rosé Pine", "Tokyo Night", "Everforest", "Ayu", "Flexoki"];
+const presets = ["Dusk", "Catppuccin", "Nord", "Dracula", "Gruvbox", "Solarized", "Rosé Pine", "Tokyo Night", "Everforest", "Ayu", "Flexoki", "GitHub", "One", "Kanagawa", "Monokai Pro", "High Contrast"];
 const rootColor = (page: Page, key: string) => page.evaluate((k) => document.documentElement.style.getPropertyValue(`--${k}`), key);
 async function settings(page: Page) {
   await installChatApi(page);
   await page.goto("/settings#appearance");
-  await expect(page.getByRole("radio", { name: "Dusk", exact: true })).toBeVisible();
+  await expect(page.getByRole("radio", { name: "Neutral", exact: true })).toBeVisible();
 }
 
 test("the Vesper logo follows presets, mode and custom colors without reloading", async ({ page }) => {
@@ -16,7 +16,7 @@ test("the Vesper logo follows presets, mode and custom colors without reloading"
     await page.getByRole("radio", { name: "Dark", exact: true }).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark", { timeout: 250 });
   }).toPass();
-  await expect.poll(() => rootColor(page, "accent")).toBe("#9B8CFF");
+  await expect.poll(() => rootColor(page, "accent")).toBe("#9b8cff");
   const menu = page.getByRole("complementary", { name: "Main menu" });
   const accent = menu.locator('svg linearGradient stop').nth(1);
   await expect(accent).toHaveCSS("stop-color", "rgb(155, 140, 255)");
@@ -38,7 +38,7 @@ test("the Vesper logo follows presets, mode and custom colors without reloading"
   await expect(accent).toHaveCSS("stop-color", "rgb(155, 140, 255)");
 });
 
-test("ten palettes work independently of mode, persist, and remain usable on mobile", async ({ page }) => {
+test("named palettes work independently of mode, persist, and remain usable on mobile", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await settings(page);
@@ -51,7 +51,7 @@ test("ten palettes work independently of mode, persist, and remain usable on mob
     await expect(page.getByRole("radio", { name, exact: true })).toBeChecked();
   }
   await page.reload();
-  await expect(page.getByRole("radio", { name: "Flexoki", exact: true })).toBeChecked();
+  await expect(page.getByRole("radio", { name: "High Contrast", exact: true })).toBeChecked();
   await expect(page.getByRole("radio", { name: "Light", exact: true })).toHaveAttribute("aria-checked", "true");
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("radio", { name: "Custom", exact: true }).check();
@@ -94,8 +94,8 @@ test("custom radial controls, overrides, contrast, reset, import and export", as
   await expect.poll(() => rootColor(page, "accent")).toBe("#445588");
   await page.screenshot({ path: "test-results/appearance-custom.png", fullPage: true });
   await page.getByRole("button", { name: "Reset palette", exact: true }).click();
-  await expect(page.getByRole("radio", { name: "Dusk", exact: true })).toBeChecked();
-  await expect.poll(() => rootColor(page, "accent")).toBe("#5B4BD6");
+  await expect(page.getByRole("radio", { name: "Neutral", exact: true })).toBeChecked();
+  await expect.poll(() => rootColor(page, "accent")).toBe("#5b4bd6");
 });
 
 test("system mode follows OS changes and storage synchronizes across tabs", async ({ page, context }) => {
