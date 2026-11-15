@@ -1,10 +1,14 @@
 package runner
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +38,8 @@ type reviewSnapshot struct {
 	commits            []pushreq.Commit
 	files              []CodeChange
 	dirty              bool
+	tree               []CodeReviewFile
+	treeTruncated      bool
 }
 
 // gitLine is one trimmed line of git output, "" when the command fails.
@@ -96,7 +102,232 @@ func (r *Runner) snapshot(ctx context.Context, runID string, env map[string]stri
 	}
 	status, _, code, err := r.gitCmd(ctx, runID, filterEnv, 1<<20, append([]string{"status", "--porcelain=v1", "-z", "--untracked-files=normal"}, codeChangePathspec...)...)
 	s.dirty = err == nil && code == 0 && len(status) > 0
+	s.tree, s.treeTruncated = r.branchTree(ctx, runID, filterEnv, s.files, env)
 	return s, true, nil
+}
+
+func isWorkspaceExcluded(p string) bool {
+	return p == "" || p == "AGENTS.md" || p == ".lazyagents" || strings.HasPrefix(p, ".lazyagents/")
+}
+
+func extractAddedContent(patch string) string {
+	var b strings.Builder
+	first := true
+	for _, line := range strings.Split(patch, "\n") {
+		if strings.HasPrefix(line, "@@") || strings.HasPrefix(line, `\`) {
+			continue
+		}
+		if strings.HasPrefix(line, "+") {
+			if !first {
+				b.WriteByte('\n')
+			}
+			first = false
+			b.WriteString(strings.TrimPrefix(line, "+"))
+		}
+	}
+	return b.String()
+}
+
+// branchTree reads the full non-ignored, non-excluded file tree for the
+// checkout's current branch state along with bounded text contents for viewing.
+func (r *Runner) branchTree(ctx context.Context, runID string, filterEnv map[string]string, files []CodeChange, env map[string]string) ([]CodeReviewFile, bool) {
+	lsOut, _, lsCode, lsErr := r.gitCmd(ctx, runID, filterEnv, 2<<20, append([]string{"ls-files", "--cached", "--others", "--exclude-standard", "-z"}, codeChangePathspec...)...)
+	if lsErr != nil || lsCode != 0 {
+		return []CodeReviewFile{}, false
+	}
+	delOut, _, _, _ := r.gitCmd(ctx, runID, filterEnv, 1<<20, append([]string{"ls-files", "--deleted", "-z"}, codeChangePathspec...)...)
+	deleted := map[string]bool{}
+	for _, rec := range bytes.Split(delOut, []byte{0}) {
+		if p := string(rec); p != "" {
+			deleted[p] = true
+		}
+	}
+	changedByPath := make(map[string]CodeChange, len(files))
+	changedSet := make(map[string]bool, len(files))
+	for _, ch := range files {
+		if ch.Status == "deleted" {
+			deleted[ch.Path] = true
+			continue
+		}
+		if ch.Status == "renamed" && ch.OldPath != nil {
+			deleted[*ch.OldPath] = true
+		}
+		changedByPath[ch.Path] = ch
+		changedSet[ch.Path] = true
+	}
+
+	pathSet := map[string]bool{}
+	for _, rec := range bytes.Split(lsOut, []byte{0}) {
+		p := string(rec)
+		if isWorkspaceExcluded(p) || deleted[p] {
+			continue
+		}
+		pathSet[p] = true
+	}
+	for p := range changedByPath {
+		if isWorkspaceExcluded(p) || deleted[p] {
+			continue
+		}
+		pathSet[p] = true
+	}
+	paths := make([]string, 0, len(pathSet))
+	for p := range pathSet {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+
+	treeTruncated := false
+	if len(paths) > CodeReviewMaxTreeFiles {
+		paths = paths[:CodeReviewMaxTreeFiles]
+		treeTruncated = true
+	}
+
+	headSize := map[string]int{}
+	headIsBlob := map[string]bool{}
+	treeOut, _, treeCode, treeErr := r.gitCmd(ctx, runID, filterEnv, 2<<20, "ls-tree", "-r", "-l", "-z", "HEAD")
+	if treeErr == nil && treeCode == 0 {
+		for _, rec := range bytes.Split(treeOut, []byte{0}) {
+			if len(rec) == 0 {
+				continue
+			}
+			meta, path, ok := strings.Cut(string(rec), "\t")
+			if !ok || isWorkspaceExcluded(path) {
+				continue
+			}
+			fields := strings.Fields(meta)
+			if len(fields) < 4 {
+				continue
+			}
+			typ, szStr := fields[1], fields[3]
+			if typ == "blob" {
+				headIsBlob[path] = true
+				if n, err := strconv.Atoi(szStr); err == nil {
+					headSize[path] = n
+				}
+			}
+		}
+	}
+
+	var unchangedCandidates, changedCandidates []string
+	queuedBudget := 0
+	for _, p := range paths {
+		if !headIsBlob[p] || headSize[p] > CodeReviewOversizeFileBytes {
+			continue
+		}
+		if ch, ok := changedByPath[p]; ok {
+			if !ch.Binary {
+				changedCandidates = append(changedCandidates, p)
+			}
+		} else {
+			sliceEst := headSize[p]
+			if sliceEst > CodeReviewMaxFileBytes {
+				sliceEst = CodeReviewMaxFileBytes
+			}
+			if queuedBudget < CodeReviewMaxTreeTotalBytes*2 {
+				unchangedCandidates = append(unchangedCandidates, p)
+				queuedBudget += sliceEst
+			}
+		}
+	}
+	candidates := append(unchangedCandidates, changedCandidates...)
+
+	blobData := make(map[string][]byte, len(candidates))
+	if len(candidates) > 0 {
+		archiveEnv := make(map[string]string, len(filterEnv)+1)
+		for k, v := range filterEnv {
+			archiveEnv[k] = v
+		}
+		archiveEnv["GIT_LITERAL_PATHSPECS"] = "1"
+		const chunkSize = 100
+		for start := 0; start < len(candidates); start += chunkSize {
+			end := start + chunkSize
+			if end > len(candidates) {
+				end = len(candidates)
+			}
+			args := append([]string{"archive", "--format=tar", "HEAD", "--"}, candidates[start:end]...)
+			tarBytes, _, code, err := r.gitCmd(ctx, runID, archiveEnv, 4<<20, args...)
+			if err != nil || code != 0 || len(tarBytes) == 0 {
+				continue
+			}
+			tr := tar.NewReader(bytes.NewReader(tarBytes))
+			for {
+				hdr, err := tr.Next()
+				if err == io.EOF || err != nil {
+					break
+				}
+				if hdr.Typeflag == tar.TypeDir || hdr.Typeflag == tar.TypeXHeader || hdr.Typeflag == tar.TypeXGlobalHeader {
+					continue
+				}
+				name := strings.TrimPrefix(hdr.Name, "./")
+				if hdr.Typeflag == tar.TypeSymlink {
+					blobData[name] = []byte(hdr.Linkname)
+					continue
+				}
+				raw, _ := io.ReadAll(io.LimitReader(tr, CodeReviewOversizeFileBytes+1))
+				blobData[name] = raw
+			}
+		}
+		// Fallback with git show for any missing candidate (e.g. export-ignore in .gitattributes)
+		fallbackFetched := 0
+		for _, p := range candidates {
+			if _, ok := blobData[p]; ok {
+				continue
+			}
+			if fallbackFetched >= CodeReviewMaxTreeTotalBytes*2 {
+				break
+			}
+			raw, _, code, err := r.gitCmd(ctx, runID, filterEnv, CodeReviewOversizeFileBytes+1, "show", "HEAD:"+p)
+			if err == nil && code == 0 {
+				blobData[p] = raw
+				if len(raw) > CodeReviewMaxFileBytes {
+					fallbackFetched += CodeReviewMaxFileBytes
+				} else {
+					fallbackFetched += len(raw)
+				}
+			}
+		}
+	}
+
+	entries := make([]CodeReviewFile, 0, len(paths))
+	budgetChanged := make(map[string]bool, len(changedByPath))
+	for _, p := range paths {
+		redactedPath := redact(p, env)
+		ch, hasChange := changedByPath[p]
+		if hasChange {
+			budgetChanged[redactedPath] = true
+		}
+		f := CodeReviewFile{
+			Path:   redactedPath,
+			Size:   headSize[p],
+			Binary: hasChange && ch.Binary,
+		}
+		if headIsBlob[p] {
+			if f.Size > CodeReviewOversizeFileBytes {
+				f.Truncated = true
+			} else if raw, ok := blobData[p]; ok {
+				if bytes.IndexByte(raw, 0) >= 0 {
+					f.Binary = true
+				} else if !f.Binary {
+					if f.Size == 0 {
+						f.Size = len(raw)
+					}
+					s := redact(string(raw), env)
+					f.Content = &s
+				}
+			}
+		} else if hasChange && !f.Binary {
+			if ch.Patch != nil {
+				s := redact(extractAddedContent(*ch.Patch), env)
+				f.Size = len(s)
+				f.Content = &s
+			} else if ch.Truncated {
+				f.Truncated = true
+			}
+		}
+		entries = append(entries, f)
+	}
+	out, budgetTruncated := ApplyCodeTreeBudgetWithChanged(entries, budgetChanged)
+	return out, treeTruncated || budgetTruncated
 }
 
 // saveCodeReviews reads and stores the review of every checkout the chat has.
@@ -127,12 +358,16 @@ func (r *Runner) saveCodeReviews(ctx context.Context, c runCtx, env map[string]s
 		}
 		commits, _ := json.Marshal(s.commits)
 		files, _ := json.Marshal(s.files)
+		if s.tree == nil {
+			s.tree = []CodeReviewFile{}
+		}
+		tree, _ := json.Marshal(s.tree)
 		var branch *string
 		if s.branch != "" {
 			branch = &s.branch
 		}
 		if err := r.q().UpsertChatCodeReview(ctx, store.UpsertChatCodeReviewParams{ChatID: chat.ID, RepoUrl: repo.RepoUrl, Branch: branch,
-			BaseSha: &s.base, HeadSha: &s.head, Commits: commits, Files: files, Dirty: s.dirty, Live: live}); err != nil {
+			BaseSha: &s.base, HeadSha: &s.head, Commits: commits, Files: files, Dirty: s.dirty, Live: live, Tree: tree, TreeTruncated: s.treeTruncated}); err != nil {
 			r.Log.Warn("save code review", "run", c.run.ID, "err", err)
 		}
 	}

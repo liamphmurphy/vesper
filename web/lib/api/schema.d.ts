@@ -8533,6 +8533,13 @@ export interface components {
             sha: string;
             subject: string;
         };
+        CodeReviewFile: {
+            path: string;
+            size: number;
+            binary: boolean;
+            content?: string;
+            truncated: boolean;
+        };
         CodeReview: {
             /** @description Repository URL */
             repository: string;
@@ -8549,6 +8556,10 @@ export interface components {
             dirty: boolean;
             /** @description A turn is running and may still change it */
             live: boolean;
+            /** @description Files present in the reviewed branch state, including unchanged tracked files */
+            tree?: components["schemas"]["CodeReviewFile"][];
+            /** @description The file tree or its contents were cut short to stay within limits */
+            tree_truncated?: boolean;
             /** Format: date-time */
             updated_at: string;
         };

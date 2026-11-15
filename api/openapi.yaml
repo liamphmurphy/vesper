@@ -9290,6 +9290,15 @@ components:
       properties:
         sha: { type: string }
         subject: { type: string }
+    CodeReviewFile:
+      type: object
+      required: [path, size, binary, truncated]
+      properties:
+        path: { type: string }
+        size: { type: integer }
+        binary: { type: boolean }
+        content: { type: string }
+        truncated: { type: boolean }
     CodeReview:
       type: object
       required: [repository, commits, files, dirty, live, updated_at]
@@ -9302,6 +9311,8 @@ components:
         files: { type: array, items: { $ref: "#/components/schemas/ChatCodeChange" }, description: "Committed and uncommitted changes against base_sha, within the same limits as a turn's changes" }
         dirty: { type: boolean, description: There are uncommitted changes }
         live: { type: boolean, description: A turn is running and may still change it }
+        tree: { type: array, items: { $ref: "#/components/schemas/CodeReviewFile" }, description: "Files present in the reviewed branch state, including unchanged tracked files" }
+        tree_truncated: { type: boolean, description: The file tree or its contents were cut short to stay within limits }
         updated_at: { type: string, format: date-time }
     CodeReviewList:
       type: object
