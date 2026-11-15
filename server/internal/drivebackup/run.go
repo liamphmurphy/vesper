@@ -113,6 +113,9 @@ var ErrRunning = apperr.Conflict("a backup is already running; wait for it to fi
 // when another run holds it, or a conflict naming what to set up first.
 // ctx only bounds taking the lease; the run outlives it until Shutdown.
 func (r *Runner) Start(ctx context.Context, ws uuid.UUID) error {
+	if r.ctx().Err() != nil {
+		return apperr.Conflict("Vesper is shutting down; run the backup once it is back")
+	}
 	q := store.New(r.Pool)
 	b, err := q.GetDriveBackup(ctx, ws)
 	if errors.Is(err, pgx.ErrNoRows) {

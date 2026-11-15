@@ -234,7 +234,9 @@ func serve(ctx context.Context, log *slog.Logger) error {
 		err := hs.Shutdown(sctx)
 		// A manual Drive backup outlives its request: stop it and let it
 		// record that Vesper stopped before the process exits.
-		if berr := srv.DriveBackups.Shutdown(sctx); berr != nil {
+		bctx, bcancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer bcancel()
+		if berr := srv.DriveBackups.Shutdown(bctx); berr != nil {
 			log.Warn("drive backups still running at exit", "err", berr)
 		}
 		return err
