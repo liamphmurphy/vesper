@@ -53,8 +53,13 @@ func GivePersona(ctx context.Context, q *store.Queries, a store.Agent, owner uui
 		}
 		name = fmt.Sprintf("%s %d", a.Name, n)
 	}
+	harness, model, effort := "", "", ""
+	if spec, _, err := CurrentSpec(ctx, q, a); err == nil {
+		harness, model, effort = spec.Harness, spec.Model, spec.Effort()
+	}
 	_, err := q.CreatePersonaForAgent(ctx, store.CreatePersonaForAgentParams{
 		ID: a.ID, WorkspaceID: a.WorkspaceID, UserID: owner, Name: name, Color: HueColor(int(a.ColorIndex)),
+		DefaultHarness: harness, DefaultModel: model, DefaultEffort: effort,
 	})
 	return err
 }
