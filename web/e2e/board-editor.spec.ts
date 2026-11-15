@@ -82,7 +82,8 @@ test("estimate can be changed or cleared, and shows who set it", async ({ page }
   await d.getByRole("button", { name: "Clear" }).click();
   await save(page).click();
   await expect(dialog(page)).toHaveCount(0);
-  await expect(card(page)).toContainText("unestimated");
+  await expect(card(page)).not.toContainText("8 pt");
+  await expect(card(page)).not.toContainText("unestimated");
   expect(api.patches.at(-1)).toEqual({ key: "WEB-1", body: { revision: 2, estimate_points: null } });
   await card(page, "WEB-3").click();
   await expect(page.getByRole("dialog", { name: "Edit WEB-3" }).getByText("Set by Sam")).toBeVisible();

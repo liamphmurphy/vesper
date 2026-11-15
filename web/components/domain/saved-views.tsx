@@ -219,7 +219,7 @@ function RenameInput({ view, onDone }: { view: SavedView; onDone: () => void }) 
 }
 
 /** Saved views after the list's built-in views, with + Save view. */
-export function SavedViewTabs({ project }: { project?: string }) {
+export function SavedViewTabs({ project, vertical = false }: { project?: string; vertical?: boolean }) {
   const views = useSavedViews();
   const pathname = usePathname();
   const search = useSearchParams();
@@ -228,17 +228,33 @@ export function SavedViewTabs({ project }: { project?: string }) {
   const [saving, setSaving] = useState<string | null>(null);
   const active = pathname === "/tickets" ? search.get("sv") : null;
   return (
-    <div role="group" aria-label="Saved views" className="flex flex-wrap items-center gap-1 border-l border-border-strong pl-2">
+    <div
+      role="group"
+      aria-label="Saved views"
+      className={vertical ? "mt-3 flex flex-col gap-0.5 px-1" : "flex flex-wrap items-center gap-1 border-l border-border-strong pl-2"}
+    >
+      {vertical && <p className="px-2 pb-1 text-11 font-medium uppercase tracking-[0.06em] text-fg-tertiary">Saved views</p>}
       {(views.data ?? []).map((v) =>
         renaming === v.id ? (
           <RenameInput key={v.id} view={v} onDone={() => setRenaming(null)} />
         ) : (
-          <div key={v.id} className={cx("group/view flex h-7 items-center rounded-md pr-0.5", active === v.id ? "bg-selected" : "hover:bg-hover")}>
+          <div
+            key={v.id}
+            className={cx(
+              "group/view flex h-7 items-center rounded-md pr-0.5",
+              vertical && "justify-between rounded-[5px]",
+              active === v.id ? (vertical ? "bg-surface" : "bg-selected") : "hover:bg-hover",
+            )}
+          >
             <Link
               href={savedViewHref(v, project)}
               aria-current={active === v.id ? "page" : undefined}
               onKeyDown={(e) => { if (e.key === "F2") { e.preventDefault(); setRenaming(v.id); } }}
-              className={cx("flex min-w-0 max-w-[180px] items-center gap-1.5 pl-2 pr-1 text-13", active === v.id ? "font-medium text-fg" : "text-fg-secondary hover:text-fg")}
+              className={cx(
+                "flex min-w-0 items-center gap-1.5 pl-2 pr-1",
+                vertical ? "flex-1 text-12" : "max-w-[180px] text-13",
+                active === v.id ? "font-medium text-fg" : "text-fg-secondary hover:text-fg",
+              )}
             >
               <Bookmark on={active === v.id} className={active === v.id ? "text-accent" : "text-fg-tertiary"} />
               <span className="truncate">{v.name}</span>
@@ -252,7 +268,10 @@ export function SavedViewTabs({ project }: { project?: string }) {
       <button
         type="button"
         onClick={() => setSaving(current)}
-        className="flex h-7 items-center gap-1.5 rounded-md px-2 text-left text-12 text-fg-tertiary hover:bg-hover hover:text-fg"
+        className={cx(
+          "flex h-7 items-center gap-1.5 px-2 text-left text-12 text-fg-tertiary hover:bg-hover hover:text-fg",
+          vertical ? "w-full rounded-[5px]" : "rounded-md",
+        )}
       >
         <Icon name="plus" size={12} />
         Save view

@@ -62,7 +62,7 @@ export function DockChatSwitcher({ current, sections, newLabel, onSelect, onNew,
           <DropdownMenu.Trigger
             className="flex h-7 items-center gap-1 rounded-md px-1.5 text-11 font-semibold text-fg-tertiary outline-none hover:bg-hover hover:text-fg focus-visible:ring-2 focus-visible:ring-accent"
             aria-label={label}
-            title="Switch chat"
+            title={label}
           >
             <Icon name="msg" size={13} />
             {count > 0 && count}

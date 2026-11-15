@@ -9,7 +9,7 @@ import { cx } from "@/lib/cx";
 import { useCompact } from "@/lib/viewport";
 import type { TicketStatus, TicketSummary } from "@/lib/api/client";
 import { useBulkEach, useBootstrap, useInbox, useSavedViews, useTickets, type TicketView } from "@/lib/api/hooks";
-import { filterText, needsYouByTicket, resolveFilter, withoutProjectToken, workGroups, type WorkGroup } from "@/lib/work-rows";
+import { filterText, needsYouByTicket, resolveFilter, ticketNeedsYou, withoutProjectToken, workGroups, type WorkGroup } from "@/lib/work-rows";
 import {
   GROUPS,
   GROUP_NAME,
@@ -30,7 +30,6 @@ import { floatPanel } from "@/components/domain/pickers";
 import { SavedViewHeader, SavedViewTabs } from "@/components/domain/saved-views";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { rememberProject, ProjectScopeState, projectCrumbs, useProjectScope } from "@/components/shell/project-scope";
-import { TextInput } from "@/components/ui/primitives";
 import { ticketsHref } from "@/lib/tickets-layout";
 import { WorkNavHeader, WorkSpacePersonaFilters } from "../../work/work-nav-header";
 import { BulkBar, BulkResultPanel } from "./bulk-bar";
@@ -418,12 +417,6 @@ export function TicketsScreen() {
         <NavigatorPortal>
           <nav aria-label="Work" className="work-nav">
             <WorkNavHeader active="tickets" project={project} />
-            <TextInput
-              aria-label="Search work"
-              placeholder="/  Search work…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
             <WorkSpacePersonaFilters
               projects={boot.data?.projects}
               agents={boot.data?.agents}
@@ -442,11 +435,6 @@ export function TicketsScreen() {
               onAgentChange={(v) => setParam("assignee", v || null)}
             />
             <div className="work-nav-list">
-              <div className="work-list-controls">
-                <span aria-current="true">List</span>
-                <span>/</span>
-                <Link href={ticketsHref("board", project ? { project } : undefined)}>Board</Link>
-              </div>
               <div role="group" aria-label="Ticket views" className="flex flex-col gap-0.5 px-1">
                 {VIEWS.map((v) => (
                   <Link
@@ -462,24 +450,7 @@ export function TicketsScreen() {
                   </Link>
                 ))}
               </div>
-              {(savedViews.data?.length ?? 0) > 0 && (
-                <div role="group" aria-label="Bookmarks" className="mt-3 flex flex-col gap-0.5 px-1">
-                  <p className="px-2 pb-1 text-11 font-medium uppercase tracking-[0.06em] text-fg-tertiary">Bookmarks</p>
-                  {savedViews.data!.map((v) => (
-                    <Link
-                      key={v.id}
-                      href={`/tickets?sv=${encodeURIComponent(v.id)}${project ? `&project=${encodeURIComponent(project)}` : ""}`}
-                      aria-current={svId === v.id ? "true" : undefined}
-                      className={cx(
-                        "flex h-7 items-center truncate rounded-[5px] px-2 text-12",
-                        svId === v.id ? "bg-surface font-medium text-fg" : "text-fg-secondary hover:bg-hover hover:text-fg",
-                      )}
-                    >
-                      {v.name}
-                    </Link>
-                  ))}
-                </div>
-              )}
+              <SavedViewTabs project={project} vertical />
             </div>
           </nav>
         </NavigatorPortal>
@@ -502,16 +473,10 @@ export function TicketsScreen() {
           {filterControls}
         </ChipScroller>
       ) : (
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-subtle px-6 py-2.5">
-          <div className="flex flex-wrap items-center gap-2">
-            <Tabs label="Views" value={svId ? "" : view} items={VIEWS.map((v) => ({ ...v, href: href(v.key) }))} />
-            <SavedViewTabs project={project} />
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {filterBox}
-            {filterControls}
-            {densitySwitch}
-          </div>
+        <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle px-6 py-2">
+          {filterBox}
+          {filterControls}
+          <div className="ml-auto flex items-center">{densitySwitch}</div>
         </div>
       )}
 
@@ -550,7 +515,7 @@ export function TicketsScreen() {
                 {g.points > 0 && <span className="whitespace-nowrap normal-case tracking-normal">{g.points} pts</span>}
               </h2>
               {g.tickets.map((t) => (
-                <CompactTicketRow key={t.id} t={t} needs={needs.get(t.key)} />
+                <CompactTicketRow key={t.id} t={t} needs={ticketNeedsYou(t, needs.get(t.key))} />
               ))}
             </section>
           ))}
@@ -605,7 +570,7 @@ export function TicketsScreen() {
                   <TicketRow
                     key={t.id}
                     t={t}
-                    needs={needs.get(t.key)}
+                    needs={ticketNeedsYou(t, needs.get(t.key))}
                     selected={selected.has(t.key)}
                     focused={focused === t.key}
                     density={density}

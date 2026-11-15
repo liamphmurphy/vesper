@@ -9,6 +9,7 @@ import {
   resolveFilter,
   startReady,
   stateText,
+  ticketNeedsYou,
   weekStart,
   withoutProjectToken,
   workGroups,
@@ -132,4 +133,24 @@ test("epicProgress and startReady", () => {
   const r = startReady(tickets, new Set(["B"]));
   assert.deepEqual(r.ready.map((x) => x.key), ["C", "D"]);
   assert.deepEqual(r.blocked.map((x) => x.key), ["F"]);
+});
+
+test("ticketNeedsYou filters stale dispatch items while keeping todo dispatches and other urgent kinds", () => {
+  const dispatchItem = { kind: "dispatch", id: "dispatch:t1" };
+  const approvalItem = { kind: "approval", id: "approval:a1" };
+  assert.equal(ticketNeedsYou({ status: "todo" }, dispatchItem), dispatchItem);
+  assert.equal(ticketNeedsYou({ status: "todo", run: { state: "completed" } }, dispatchItem), dispatchItem);
+  assert.equal(ticketNeedsYou({ status: "todo", run: { state: "running" } }, dispatchItem), undefined);
+  assert.equal(ticketNeedsYou({ status: "backlog" }, dispatchItem), undefined);
+  assert.equal(ticketNeedsYou({ status: "in_progress" }, dispatchItem), undefined);
+  assert.equal(ticketNeedsYou({ status: "in_review" }, dispatchItem), undefined);
+  assert.equal(ticketNeedsYou({ status: "done" }, dispatchItem), undefined);
+  assert.equal(ticketNeedsYou({ status: "in_progress" }, approvalItem), approvalItem);
+  assert.equal(ticketNeedsYou({ status: "in_review" }, { kind: "review", id: "review:t2" }).id, "review:t2");
+
+  const tickets = [t("LA-1", { status: "todo" }), t("LA-2", { status: "in_progress" }), t("LA-3", { status: "in_review" })];
+  const needs = new Map([["LA-1", dispatchItem], ["LA-2", dispatchItem], ["LA-3", approvalItem]]);
+  const groups = workGroups(tickets, needs, "status");
+  assert.deepEqual(groups.find((g) => g.needs)?.tickets.map((x) => x.key), ["LA-1", "LA-3"]);
+  assert.deepEqual(epicProgress(tickets, needs), { done: 0, running: 1, needs: 2, open: 0, total: 3 });
 });

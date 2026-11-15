@@ -26,11 +26,11 @@ export function ReviewBar({ page, persona, direct }: { page: Page; persona: stri
     }
   };
   return (
-    <div className="mx-4 mt-3 flex items-center gap-3 rounded-xl border border-[#F59E5B40] bg-[#F59E5B14] px-4 py-2.5">
+    <div className="mx-4 mt-3 flex items-center gap-3 rounded-xl border border-state-human/35 bg-pill-human-bg px-4 py-2.5">
       <Icon name="bulb" size={15} className="text-state-human" />
       <p className="flex-1 text-13 text-fg">
         <b>
-          {persona} {direct ? "changed" : "suggested"} {left.length} {left.length === 1 ? "change" : "changes"}
+          {persona} {direct ? "made" : "suggested"} {left.length} {left.length === 1 ? "change" : "changes"}
         </b>
         {direct && <span className="text-fg-secondary"> · applied, reviewed afterwards</span>}
         {stale > 0 && <span className="text-state-human"> · {stale} stale</span>}
@@ -69,7 +69,7 @@ function ChangeCard({ pageId, review, change, direct }: { pageId: string; review
   const n = (change.index as number) + 1;
   if (change.state === "stale")
     return (
-      <div className="flex gap-3 rounded-xl border border-[#F0BF4C40] bg-[#F0BF4C24] p-4">
+      <div className="flex gap-3 rounded-xl border border-state-progress/45 bg-pill-human-bg p-4">
         <Icon name="alert" size={15} className="mt-0.5 text-state-progress" />
         <div className="text-13">
           <p className="font-semibold text-fg">Change {n} is stale: you edited this passage after it was suggested</p>
@@ -83,8 +83,8 @@ function ChangeCard({ pageId, review, change, direct }: { pageId: string; review
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1 text-15 leading-relaxed">
           {property && <p className="mb-1 text-12 font-semibold text-fg-tertiary">{change.key ? `Property ${change.key}` : "Properties"}</p>}
-          {change.before && <p className="whitespace-pre-wrap rounded bg-[#EF646133] px-1 text-[#F48A87] line-through decoration-[#F48A87]/70">{change.before}</p>}
-          {change.after && <p className="mt-1 whitespace-pre-wrap rounded bg-[#4CB78233] px-1 text-[#7BD3A6]">{change.after}</p>}
+          {change.before && <p className="whitespace-pre-wrap rounded bg-pill-blocked-bg px-1 text-pill-blocked-fg line-through decoration-pill-blocked-fg/70">{change.before}</p>}
+          {change.after && <p className="mt-1 whitespace-pre-wrap rounded bg-pill-done-bg px-1 text-pill-done-fg">{change.after}</p>}
           <p className="mt-2 text-12 italic text-fg-tertiary">
             {n} · {change.why ? `Why: ${change.why}` : "No reason given"}
           </p>
