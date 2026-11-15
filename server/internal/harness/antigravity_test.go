@@ -112,6 +112,14 @@ func TestAntigravityRememberImagesTheToolSaved(t *testing.T) {
 	}
 }
 
+func TestAntigravityRememberImagesInAssistantText(t *testing.T) {
+	p := (Antigravity{}).NewParser("")
+	p.Line([]byte(`{"event":"step_update","step_update":{"conversation_id":"c","step_index":1,"state":"DONE","step_type":"agent_response","text_delta":"Saved to /home/agent/.gemini/antigravity-cli/brain/sub-123/fox.png"}}`))
+	if got := p.Result().Images; !slices.Equal(got, []string{"/home/agent/.gemini/antigravity-cli/brain/sub-123/fox.png"}) {
+		t.Fatalf("images = %v", got)
+	}
+}
+
 type agyConfigFile struct {
 	Install     bool           `json:"install"`
 	TokenEnv    string         `json:"token_env"`
