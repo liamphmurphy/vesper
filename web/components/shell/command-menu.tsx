@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Schemas } from "@/lib/api/client";
 import { hasLiveRun, useArtifact, useAskChat, useBootstrap, useChats, useControlRun, useCreateChat, useDecideApproval, useInbox, useLiveRuns, useSearch, useTicket, useUpdateTicket, useWikiPage } from "@/lib/api/hooks";
+import { useCreatePage, usePages, usePage, type PageRow } from "@/lib/api/knowledge-hooks";
 import { useQueryClient } from "@tanstack/react-query";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { Kbd } from "@/components/ui/primitives";
@@ -16,9 +17,11 @@ import { cx } from "@/lib/cx";
 import { shortAgo } from "@/lib/format";
 import { approvalId, KIND as INBOX_KIND } from "@/lib/inbox";
 import { attachQuery, chipFromTarget, type ContextRef } from "@/lib/chat-context";
+import { KINDS, pageHref, pageIcon, type PageKind } from "@/lib/knowledge";
 import {
   CHIP_TYPES,
   KIND_JUMPS,
+  KNOWLEDGE_VIEW_KEY,
   MORE_TYPES,
   RECENT_KEY,
   TYPE,
@@ -27,13 +30,17 @@ import {
   bestOf,
   facets,
   groupChats,
+  knowledgeFolder,
   linkFromTarget,
   matchParts,
   matchesWords,
   pageContext,
+  pageScope,
   parseFilters,
+  parseKnowledgeQuery,
   parseRecent,
   personaMatches,
+  plainExcerpt,
   projectOfKey,
   pushRecent,
   rankGroups,
@@ -41,11 +48,13 @@ import {
   searchKind,
   snippetParts,
   stepChip,
+  stepKnowledgeKind,
   ticketKeyFrom,
   typeCounts,
   typeOf,
   type ChatMatch,
   type MessageMatch,
+  type PageScope,
   type PaletteLink,
   type TypeKey,
 } from "@/lib/command-palette";
@@ -256,6 +265,39 @@ function messageRows(c: ChatMatch): Row[] {
   }));
 }
 
+export type OpenPaletteDetail = {
+  scope?: PageScope | "all" | "page";
+  includeAgent?: boolean;
+};
+
+/** Opens the command palette globally or scoped to the current page / Knowledge. */
+export function openCommandPalette(detail?: OpenPaletteDetail) {
+  window.dispatchEvent(new CustomEvent<OpenPaletteDetail>("la:search", { detail }));
+}
+
+function knowledgePageRow(r: PageRow): Row {
+  const href = pageHref(r.id, r.title);
+  const title = r.title || "Untitled";
+  const folder = knowledgeFolder(r.path);
+  const kindLabel = r.kind === "deck" ? "Deck" : r.kind === "design" ? "Design" : undefined;
+  const audLabel = r.audience === "agent" ? "Agent" : r.audience === "shared" ? "Shared" : undefined;
+  const summary = r.summary ? plainExcerpt(r.summary, 60) : undefined;
+  return {
+    id: `kpage-${r.id}`,
+    title,
+    sub: [folder, kindLabel, audLabel, summary].filter(Boolean).join(" · "),
+    meta: shortAgo(r.updated_at),
+    icon: pageIcon(r),
+    href,
+    recent: { id: r.id, title: r.path || title, meta: r.kind ?? "page", href, kind: "Pages" },
+    mark: true,
+    type: "page",
+    attach: { ref: { kind: "page", id: r.id }, label: title },
+    preview: { kind: "page", id: r.id, path: r.path, title, source: "knowledge", row: r },
+    facet: folder,
+  };
+}
+
 export function CommandMenu() {
   const router = useRouter();
   const qc = useQueryClient();
@@ -263,6 +305,7 @@ export function CommandMenu() {
   const boot = useBootstrap();
   const createChat = useCreateChat();
   const askChat = useAskChat();
+  const createPage = useCreatePage();
   const remembered = useRememberedProject();
   const personas = usePersonas();
   const [open, setOpen] = useState(false);
@@ -270,6 +313,9 @@ export function CommandMenu() {
   const [query, setQuery] = useState("");
   const [project, setProject] = useState<string>();
   const [scope, setScope] = useState(false);
+  const [paletteScope, setPaletteScope] = useState<PageScope>();
+  const [knowledgeKind, setKnowledgeKind] = useState<PageKind>();
+  const [includeAgent, setIncludeAgent] = useState(false);
   const [mode, setMode] = useState<"root" | "projects">("root");
   const [active, setActive] = useState(0);
   const [recent, setRecent] = useState<PaletteLink[]>([]);
@@ -281,32 +327,54 @@ export function CommandMenu() {
   const [moreOpen, setMoreOpen] = useState(false);
   const [moreActive, setMoreActive] = useState(0);
   const returnFocus = useRef<HTMLElement | null>(null);
+  const openRef = useRef(open);
   const rememberedRef = useRef(remembered);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const commands = query.startsWith(">");
-  const filters = parseFilters(commands ? "" : query);
+  const knowledgeMode = paletteScope?.kind === "knowledge";
+  const typeScoped = paletteScope?.kind === "type";
+  const commands = !knowledgeMode && !typeScoped && query.startsWith(">");
+  const filters = parseFilters(commands || knowledgeMode ? "" : query);
   const title = commands ? query.replace(/^>\s*/, "").trim() : filters.text;
-  const typed = filters.types;
-  // The types on show: typed is: tokens, else the chip, else everything.
-  const shownTypes: TypeKey[] | undefined = typed.length ? typed : chip ? [chip] : undefined;
+  const typed = typeScoped ? [] : filters.types;
+  // The types on show: locked to paletteScope when page-scoped, else typed is: tokens, else the chip.
+  const shownTypes: TypeKey[] | undefined = typeScoped ? [paletteScope.type] : typed.length ? typed : chip ? [chip] : undefined;
   const oneType = shownTypes?.length === 1 ? shownTypes[0] : undefined;
   const root = mode === "root" && !commands;
-  const searchText = root ? filters.text : "";
+  const searchText = !knowledgeMode && root ? filters.text : "";
   const text = useDebounced(searchText, 150);
   const scoped = scope ? project : undefined;
-  const all = useSearch(open ? text : "", scoped);
+  const all = useSearch(open && !knowledgeMode ? text : "", scoped);
   const kind = searchKind(oneType);
-  const one = useSearch(open ? text : "", scoped, kind, !!kind);
+  const one = useSearch(open && !knowledgeMode ? text : "", scoped, kind, !!kind);
   const shown = kind ? one : all;
+
+  // Knowledge-only query via POST /knowledge/query (covers immediate recents, #tags, kinds & agent view).
+  const kQuery = parseKnowledgeQuery(knowledgeMode ? query : "");
+  const kDebouncedText = useDebounced(kQuery.text, 150);
+  const kDebouncedTag = useDebounced(kQuery.tag, 150);
+  const pagesQuery = usePages(
+    {
+      text: kDebouncedText || undefined,
+      tag: kDebouncedTag || undefined,
+      kind: knowledgeKind,
+      include_agent: includeAgent,
+      limit: 25,
+    },
+    open && knowledgeMode,
+  );
+
   // Until the answer for exactly this text arrives, the rows on screen are stale.
-  const pending = !!searchText && (text !== searchText || shown.isLoading || shown.isPlaceholderData);
+  const pending = knowledgeMode
+    ? kQuery.text !== kDebouncedText || kQuery.tag !== kDebouncedTag || pagesQuery.isLoading || pagesQuery.isPlaceholderData
+    : !!searchText && (text !== searchText || shown.isLoading || shown.isPlaceholderData);
 
   // What the page is about (only fetched while open; the page usually has it cached).
   const ctx = pageContext(pathname);
-  const ticket = useTicket(open && ctx?.kind === "ticket" ? ctx.key : "");
-  const artifact = useArtifact(open && ctx?.kind === "artifact" ? ctx.id : undefined);
-  const wiki = useWikiPage(open && ctx?.kind === "wiki" ? ctx.path : "");
+  const ticket = useTicket(open && !knowledgeMode && ctx?.kind === "ticket" ? ctx.key : "");
+  const artifact = useArtifact(open && !knowledgeMode && ctx?.kind === "artifact" ? ctx.id : undefined);
+  const wiki = useWikiPage(open && !knowledgeMode && ctx?.kind === "wiki" ? ctx.path : "");
+  const currentKnowledgePage = usePage(open && !knowledgeMode && ctx?.kind === "knowledge" ? ctx.id : undefined);
   const ticketKey = ctx?.kind === "ticket" ? ctx.key : "";
   const updateTicket = useUpdateTicket(ticketKey);
   const controlRun = useControlRun(ticketKey);
@@ -315,22 +383,26 @@ export function CommandMenu() {
   if (ctx?.kind === "ticket") attachHere = { ref: { kind: "ticket", key: ctx.key }, label: ctx.key, project: projectOfKey(ctx.key) };
   const doc = ctx?.kind === "artifact" ? artifact.data : ctx?.kind === "wiki" ? wiki.data : undefined;
   if (doc) attachHere = { ref: { kind: doc.type === "note" ? "page" : "artifact", id: doc.id }, label: artifactTitle(doc), project: doc.project?.key };
+  else if (ctx?.kind === "knowledge" && currentKnowledgePage.data) {
+    attachHere = { ref: { kind: "page", id: currentKnowledgePage.data.id }, label: currentKnowledgePage.data.title || "Untitled" };
+  }
 
   const projects = (boot.data?.projects ?? []).filter((p) => !p.archived);
   // Where actions happen: the page's project, then the URL's, then the remembered one.
   const actionProject = attachHere?.project ?? project ?? remembered ?? projects[0]?.key;
 
-  // The opening list: what's waiting on you, what's moving, where you left off.
-  const idle = open && mode === "root" && !query.trim();
-  const inbox = useInbox(undefined, idle);
-  const liveRuns = useLiveRuns(idle);
-  const chats = useChats(false, "", idle, "all");
+  // The opening list: global idle fetches inbox + runs + chats; page-scoped fetches only what that type needs.
+  const idleGlobal = open && !paletteScope && mode === "root" && !query.trim();
+  const inbox = useInbox(undefined, idleGlobal);
+  const liveRuns = useLiveRuns(idleGlobal || (open && typeScoped && oneType === "run" && !searchText));
+  const chats = useChats(false, "", idleGlobal || (open && typeScoped && oneType === "chat" && !searchText), "all");
 
   const close = (next: boolean) => {
     // A failed action's alert belongs to that attempt only.
     if (!next) {
       createChat.reset();
       askChat.reset();
+      createPage.reset();
       setActionFailed(false);
     }
     setOpen(next);
@@ -406,7 +478,7 @@ export function CommandMenu() {
     }))
     .filter((i) => matchesWords(i.title, mode === "projects" ? query : title.replace(/^(switch|project|space)\b\s*/i, "")));
 
-  const key = root ? ticketKeyFrom(query.replace(/^#\s*/, ""), actionProject) : undefined;
+  const key = root && !knowledgeMode && (!typeScoped || oneType === "ticket") ? ticketKeyFrom(query.replace(/^#\s*/, ""), actionProject) : undefined;
   const jump: Row[] = key
     ? [{ id: `jump-${key}`, title: `Open ${key}`, sub: `/tickets/${key}`, icon: "tickets", href: `/tickets/${key}`, local: true,
         recent: { id: `jump-${key}`, title: key, meta: key, href: `/tickets/${key}`, kind: "Tickets" },
@@ -415,7 +487,7 @@ export function CommandMenu() {
 
   // Typing a persona's name offers a new chat with them first; an app's name, the app.
   // Matched here, from lists the shell already has, so they don't wait on the search.
-  const offers = (type: TypeKey) => root && (!shownTypes || shownTypes.includes(type));
+  const offers = (type: TypeKey) => root && !knowledgeMode && (!shownTypes || shownTypes.includes(type));
   const chatWith: Row[] = offers("people")
     ? personaMatches(personas.data?.personas ?? [], filters.text).map((p) => ({
         id: `chat-with-${p.id}`,
@@ -514,10 +586,10 @@ export function CommandMenu() {
     if (chatWith.length > 1 && top === chatWith[0]) resultSections.splice(1, 0, { key: "start", label: "Start a chat", rows: chatWith.slice(1) });
   }
 
-  const recentRows: Row[] = idle
+  const recentRows: Row[] = idleGlobal
     ? recent.map((r) => ({ id: `recent-${r.href}`, title: r.title, sub: r.meta, icon: LABEL_ICON[r.kind] ?? "history", href: r.href, recent: r }))
     : [];
-  const inboxItems = idle ? (inbox.data ?? []).filter((i) => !i.resolved && i.needs_you) : [];
+  const inboxItems = idleGlobal ? (inbox.data ?? []).filter((i) => !i.resolved && i.needs_you) : [];
   const needsYou: Row[] = inboxItems.slice(0, 3).map((i) => ({
     id: `inbox-${i.id}`,
     title: i.title,
@@ -528,7 +600,7 @@ export function CommandMenu() {
     href: i.href,
     preview: { kind: "inbox" as const, item: i },
   }));
-  const running: Row[] = idle
+  const running: Row[] = idleGlobal
     ? (liveRuns.data?.runs ?? []).slice(0, 3).map((r) => ({
         id: `live-${r.id}`,
         title: [r.ticket_key, r.work_title].filter(Boolean).join(" ") || r.agent.name,
@@ -539,7 +611,7 @@ export function CommandMenu() {
         preview: { kind: "item" as const, label: r.ticket_key ? `Run · ${r.ticket_key}` : "Run", title: r.work_title ?? r.ticket_key ?? r.agent.name, detail: `${r.agent.name} · ${r.state.replaceAll("_", " ")}` },
       }))
     : [];
-  const lastChat = idle ? chats.data?.chats[0] : undefined;
+  const lastChat = idleGlobal ? chats.data?.chats[0] : undefined;
   const resume: Row[] = lastChat
     ? [{
         id: `continue-${lastChat.id}`,
@@ -551,6 +623,90 @@ export function CommandMenu() {
         preview: { kind: "chat", chat: { id: lastChat.id, title: lastChat.title || "Untitled chat", href: `/chat/${lastChat.id}`, persona: lastChat.persona?.name, at: lastChat.last_message_at ?? lastChat.updated_at, score: 0, titled: true, messages: [] } },
       }]
     : [];
+
+  // Knowledge-only rows, facets and create-page fallback.
+  const kRawRows = knowledgeMode ? (pagesQuery.data?.rows ?? []) : [];
+  const kMappedRows = kRawRows.map(knowledgePageRow);
+  const kFacetValues = knowledgeMode ? facets(kMappedRows.map((r) => r.facet)) : [];
+  const kVisibleRows = knowledgeMode && facet ? kMappedRows.filter((r) => r.facet === facet) : kMappedRows;
+  const kCanCreate = knowledgeMode && !!kQuery.text && !kQuery.tag && !kRawRows.some((r) => r.title.toLowerCase() === kQuery.text.toLowerCase());
+  const createKnowledgePage = () => {
+    if (!kQuery.text || createPage.isPending) return;
+    close(false);
+    createPage.mutate(
+      { title: kQuery.text, path: `Inbox/${kQuery.text.replace(/[[\]#|^/\\]/g, " ").trim()}`, body_md: "" },
+      {
+        onSuccess: (p) => router.push(pageHref(p.id, p.title)),
+        onError: failed,
+      },
+    );
+  };
+  const knowledgeSections: Section[] = knowledgeMode
+    ? [
+        ...(kVisibleRows.length > 0
+          ? [{ key: "knowledge", label: kQuery.text || kQuery.tag ? "Pages" : "Recent pages", count: kVisibleRows.length, rows: kVisibleRows }]
+          : []),
+        ...(kCanCreate
+          ? [{
+              key: "knowledge-create",
+              rows: [{
+                id: "knowledge-create",
+                title: `Create “${kQuery.text}”`,
+                sub: "in Inbox",
+                icon: "plus" as const,
+                shortcut: "⇧↵",
+                local: true,
+                perform: createKnowledgePage,
+              }],
+            }]
+          : []),
+      ]
+    : [];
+
+  // Type-scoped opening rows when the search box is empty (shows relevant items immediately).
+  const scopedIdleRows: Row[] = (() => {
+    if (!typeScoped || !oneType || searchText) return [];
+    if (oneType === "app") return apps;
+    if (oneType === "people") {
+      return (personas.data?.personas ?? []).slice(0, 15).map((p) => ({
+        id: `chat-with-${p.id}`,
+        title: `Chat with ${p.name}`,
+        sub: "new chat",
+        icon: "msg" as const,
+        href: `/chat?new&persona=${encodeURIComponent(p.id)}`,
+        local: true,
+      }));
+    }
+    if (oneType === "chat") {
+      return (chats.data?.chats ?? []).slice(0, 10).map((c) => ({
+        id: `chat-${c.id}`,
+        title: c.title || "Untitled chat",
+        sub: [c.persona?.name, "chat"].filter(Boolean).join(" · "),
+        meta: shortAgo(c.last_message_at ?? c.updated_at),
+        icon: "msg" as const,
+        href: `/chat/${c.id}`,
+        recent: { id: c.id, title: c.title || "Untitled chat", meta: "chat", href: `/chat/${c.id}`, kind: "Chats" },
+        preview: { kind: "chat" as const, chat: { id: c.id, title: c.title || "Untitled chat", href: `/chat/${c.id}`, persona: c.persona?.name, at: c.last_message_at ?? c.updated_at, score: 0, titled: true, messages: [] } },
+      }));
+    }
+    const matchingRecent = recent
+      .filter((r) => r.kind === TYPE[oneType].label)
+      .map((r) => ({ id: `recent-${r.href}`, title: r.title, sub: r.meta, icon: LABEL_ICON[r.kind] ?? TYPE_ICON[oneType], href: r.href, recent: r }));
+    if (oneType === "run") {
+      const live: Row[] = (liveRuns.data?.runs ?? []).slice(0, 8).map((r) => ({
+        id: `live-${r.id}`,
+        title: [r.ticket_key, r.work_title].filter(Boolean).join(" ") || r.agent.name,
+        sub: [r.agent.name, r.state.replaceAll("_", " ")].join(" · "),
+        icon: "play" as const,
+        tone: "run" as const,
+        href: `/runs/${r.id}`,
+        preview: { kind: "item" as const, label: r.ticket_key ? `Run · ${r.ticket_key}` : "Run", title: r.work_title ?? r.ticket_key ?? r.agent.name, detail: `${r.agent.name} · ${r.state.replaceAll("_", " ")}` },
+      }));
+      const seen = new Set(live.map((r) => r.href));
+      return [...live, ...matchingRecent.filter((r) => !seen.has(r.href))];
+    }
+    return matchingRecent;
+  })();
 
   const withQuery = (base: string, params: Record<string, string | undefined>) => {
     const q = new URLSearchParams();
@@ -665,41 +821,52 @@ export function CommandMenu() {
       perform: () => window.dispatchEvent(new Event("la:shortcuts")),
     },
   ];
-  const shownActions = actions.filter((a) => {
-    if (commands) return matchesWords(a.title, title);
-    if (oneType) return false;
-    if (title) return a.fallback || matchesWords(a.title, title);
-    return !a.onDemand;
-  });
+  const shownActions = paletteScope
+    ? []
+    : actions.filter((a) => {
+        if (commands) return matchesWords(a.title, title);
+        if (oneType) return false;
+        if (title) return a.fallback || matchesWords(a.title, title);
+        return !a.onDemand;
+      });
 
   // Same item set as the sidebar (lib/project-scope.ts), scoped to the remembered project.
-  const goTo: Row[] = NAV_GROUPS.flatMap((g) =>
-    g.items.map((i) => ({
-      id: `nav-${i.href}`,
-      title: `Go to ${i.label}`,
-      sub: g.label,
-      icon: "compass" as const,
-      href: withProject(i.href, remembered),
-    })),
-  )
-    .filter((i) => !oneType && (title ? matchesWords(i.title, title) : commands))
-    // An app already offered above isn't offered again here.
-    .filter((i) => !apps.some((a) => a.href === i.href));
+  const goTo: Row[] = paletteScope
+    ? []
+    : NAV_GROUPS.flatMap((g) =>
+        g.items.map((i) => ({
+          id: `nav-${i.href}`,
+          title: `Go to ${i.label}`,
+          sub: g.label,
+          icon: "compass" as const,
+          href: withProject(i.href, remembered),
+        })),
+      )
+        .filter((i) => !oneType && (title ? matchesWords(i.title, title) : commands))
+        // An app already offered above isn't offered again here.
+        .filter((i) => !apps.some((a) => a.href === i.href));
 
   const sections: Section[] =
     mode === "projects"
       ? [{ key: "projects", label: "Switch space", rows: projectRows }]
-      : [
-          { key: "needs", label: "Needs you", count: inboxItems.length || undefined, tone: "human" as const, rows: needsYou },
-          { key: "running", label: "Running", rows: running },
-          { key: "continue", label: "Continue", rows: resume },
-          { key: "recent", label: "Recent", rows: recentRows },
-          { key: "jump", label: "Jump to", rows: jump },
-          ...resultSections,
-          { key: "actions", label: "Actions", rows: shownActions },
-          ...(commands && title ? [{ key: "projects", label: "Switch space", rows: projectRows }] : []),
-          { key: "goto", label: "Go to", rows: goTo },
-        ].filter((s) => s.rows.length > 0);
+      : knowledgeMode
+        ? knowledgeSections
+        : typeScoped
+          ? [
+              { key: "jump", label: "Jump to", rows: jump },
+              ...(searchText ? resultSections : [{ key: oneType!, label: TYPE[oneType!].label, rows: scopedIdleRows }]),
+            ].filter((s) => s.rows.length > 0)
+          : [
+              { key: "needs", label: "Needs you", count: inboxItems.length || undefined, tone: "human" as const, rows: needsYou },
+              { key: "running", label: "Running", rows: running },
+              { key: "continue", label: "Continue", rows: resume },
+              { key: "recent", label: "Recent", rows: recentRows },
+              { key: "jump", label: "Jump to", rows: jump },
+              ...resultSections,
+              { key: "actions", label: "Actions", rows: shownActions },
+              ...(commands && title ? [{ key: "projects", label: "Switch space", rows: projectRows }] : []),
+              { key: "goto", label: "Go to", rows: goTo },
+            ].filter((s) => s.rows.length > 0);
   const rows = sections.flatMap((s) => s.rows);
   const index = Math.max(0, Math.min(active, rows.length - 1));
   const selected = rows[index];
@@ -756,10 +923,22 @@ export function CommandMenu() {
   }, [remembered]);
 
   useEffect(() => {
-    const show = () => {
-      if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body)
-        returnFocus.current = document.activeElement;
-      else returnFocus.current = null;
+    openRef.current = open;
+  }, [open]);
+
+  useEffect(() => {
+    const show = (detail?: OpenPaletteDetail) => {
+      if (!openRef.current) {
+        if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body)
+          returnFocus.current = document.activeElement;
+        else returnFocus.current = null;
+      }
+      const nextScope: PageScope | undefined =
+        detail?.scope === "all" || !detail?.scope
+          ? undefined
+          : detail.scope === "page"
+            ? pageScope(window.location.pathname, window.location.search)
+            : detail.scope;
       const currentProject =
         new URLSearchParams(window.location.search).get("project") ??
         window.location.pathname.match(/^\/tickets\/([A-Z][A-Z0-9]*)-\d+$/)?.[1] ??
@@ -767,10 +946,23 @@ export function CommandMenu() {
         (projectSection(window.location.pathname) ? rememberedRef.current : undefined);
       setProject(currentProject ?? undefined);
       setScope(!!currentProject);
-      setQuery("");
+      setPaletteScope(nextScope);
+      setKnowledgeKind(undefined);
+      let nextAgent = false;
+      if (typeof detail?.includeAgent === "boolean") {
+        nextAgent = detail.includeAgent;
+      } else {
+        try {
+          nextAgent = JSON.parse(window.localStorage.getItem(KNOWLEDGE_VIEW_KEY) ?? "null") === "agent";
+        } catch {
+          nextAgent = false;
+        }
+      }
+      setIncludeAgent(nextAgent);
+      if (!openRef.current) setQuery("");
       setMode("root");
       setActive(0);
-      setChip(undefined);
+      setChip(nextScope?.kind === "type" ? nextScope.type : undefined);
       setFacet(undefined);
       setExpanded(undefined);
       setMoreOpen(false);
@@ -786,16 +978,37 @@ export function CommandMenu() {
     const key = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        show();
+        show({ scope: e.shiftKey ? "page" : "all" });
       }
     };
+    const onSearch = (e: Event) => {
+      const detail = e instanceof CustomEvent ? (e.detail as OpenPaletteDetail | undefined) : undefined;
+      show(detail);
+    };
     window.addEventListener("keydown", key);
-    window.addEventListener("la:search", show);
+    window.addEventListener("la:search", onSearch);
     return () => {
       window.removeEventListener("keydown", key);
-      window.removeEventListener("la:search", show);
+      window.removeEventListener("la:search", onSearch);
     };
   }, []);
+
+  const switchToGlobal = () => {
+    setPaletteScope(undefined);
+    setKnowledgeKind(undefined);
+    setChip(undefined);
+    setFacet(undefined);
+    setExpanded(undefined);
+    setActive(0);
+    inputRef.current?.focus();
+  };
+
+  const pickKnowledgeKind = (next: PageKind | undefined) => {
+    setKnowledgeKind(next);
+    setFacet(undefined);
+    setActive(0);
+    inputRef.current?.focus();
+  };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (moreOpen) {
@@ -851,6 +1064,11 @@ export function CommandMenu() {
       decideSelected(e.code === "KeyA" ? "approve" : "deny");
       return;
     }
+    if (e.key === "Enter" && e.shiftKey && kCanCreate) {
+      e.preventDefault();
+      createKnowledgePage();
+      return;
+    }
     // While results are stale, ↵ must not fall through to an action or an old hit.
     if (e.key === "Enter" && selected && (!pending || selected.local || selected.moreOf || jump.includes(selected))) {
       e.preventDefault();
@@ -863,7 +1081,8 @@ export function CommandMenu() {
     }
     if (e.key === "Tab" && mode === "root" && !commands) {
       e.preventDefault();
-      pickType(stepChip(oneType, e.shiftKey));
+      if (knowledgeMode) pickKnowledgeKind(stepKnowledgeKind(knowledgeKind, e.shiftKey));
+      else if (!typeScoped) pickType(stepChip(oneType, e.shiftKey));
     }
   };
 
@@ -874,15 +1093,28 @@ export function CommandMenu() {
         ? [["↑↓", "move"], ["↵", "show this type"], ["esc", "close menu"]]
         : commands
           ? [["↑↓", "move"], ["↵", "run"], ["esc", "close"]]
-          : selected?.message
-            ? [["↑↓", "move"], ["↵", "jump to message"], ["←", "collapse"], ["⌘↵", "new tab"]]
-            : approval
-              ? [["↑↓", "move"], ["⌥A", "approve"], ["⌥D", "deny"], ["Tab", "next type"], ["⌘↵", "new tab"]]
-              : !searchText
-                ? [["↑↓", "move"], ["↵", "open"], ["Tab", "next type"], ["⌘↵", "new tab"], ["@", "people"], ["#", "tickets"], [">", "commands"]]
-                : oneType
-                  ? [["↑↓", "move"], ["↵", "open"], ["Tab", "next type"], ["⇧Tab", "back to All"], ["⌥↵", "attach to chat"], ["⌘↵", "new tab"]]
-                  : [["↑↓", "move"], ["↵", "open"], ["→", "expand chat"], ["Tab", "next type"], ["⌥↵", "attach to chat"], ["⌘↵", "new tab"]];
+          : knowledgeMode
+            ? [
+                ["↑↓", "move"],
+                ["↵", "open"],
+                ...(kCanCreate ? [["⇧↵", "create"] as [string, string]] : []),
+                ["Tab", "next kind"],
+                ["#", "tags"],
+                ["⌥↵", "attach to chat"],
+                ["⌘↵", "new tab"],
+                ["⌘K", "all Vesper"],
+              ]
+            : typeScoped
+              ? [["↑↓", "move"], ["↵", "open"], ["⌥↵", "attach to chat"], ["⌘↵", "new tab"], ["⌘K", "all Vesper"]]
+              : selected?.message
+                ? [["↑↓", "move"], ["↵", "jump to message"], ["←", "collapse"], ["⌘↵", "new tab"]]
+                : approval
+                  ? [["↑↓", "move"], ["⌥A", "approve"], ["⌥D", "deny"], ["Tab", "next type"], ["⌘↵", "new tab"]]
+                  : !searchText
+                    ? [["↑↓", "move"], ["↵", "open"], ["Tab", "next type"], ["⌘↵", "new tab"], ["@", "people"], ["#", "tickets"], [">", "commands"]]
+                    : oneType
+                      ? [["↑↓", "move"], ["↵", "open"], ["Tab", "next type"], ["⇧Tab", "back to All"], ["⌥↵", "attach to chat"], ["⌘↵", "new tab"]]
+                      : [["↑↓", "move"], ["↵", "open"], ["→", "expand chat"], ["Tab", "next type"], ["⌥↵", "attach to chat"], ["⌘↵", "new tab"]];
 
   const chipClass = (on: boolean, empty: boolean) =>
     cx(
@@ -923,77 +1155,154 @@ export function CommandMenu() {
 
   const chipRow = root && (
     <div className="flex flex-none items-center gap-2 border-b border-border px-4 py-2.5 max-md:overflow-x-auto max-md:[scrollbar-width:none]">
-      <div role="toolbar" aria-label="Search types" className="flex items-center gap-2">
-        <button type="button" aria-pressed={!oneType} onMouseDown={(e) => e.preventDefault()} onClick={() => pickType(undefined)} className={chipClass(!oneType, false)}>
-          All {count(total, !oneType)}
-        </button>
-        {CHIP_TYPES.map((t) => (
-          <button
-            key={t}
-            type="button"
-            aria-pressed={oneType === t}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => pickType(t)}
-            className={chipClass(oneType === t, !!searchText && !pending && !counts[t])}
-          >
-            {TYPE[t].label} {count(counts[t], oneType === t)}
-          </button>
-        ))}
-        <Popover.Root open={moreOpen} onOpenChange={setMoreOpen}>
-          <Popover.Anchor asChild>
+      {knowledgeMode ? (
+        <>
+          <div role="toolbar" aria-label="Knowledge kinds" className="flex items-center gap-2">
+            <button type="button" aria-pressed={!knowledgeKind} onMouseDown={(e) => e.preventDefault()} onClick={() => pickKnowledgeKind(undefined)} className={chipClass(!knowledgeKind, false)}>
+              All
+            </button>
+            {KINDS.map((k) => (
+              <button
+                key={k.kind}
+                type="button"
+                aria-pressed={knowledgeKind === k.kind}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => pickKnowledgeKind(k.kind)}
+                className={chipClass(knowledgeKind === k.kind, false)}
+              >
+                {k.plural}
+              </button>
+            ))}
+          </div>
+          <div className="ml-auto flex items-center gap-2 max-md:ml-0">
             <button
               type="button"
-              aria-haspopup="listbox"
-              aria-expanded={moreOpen}
-              aria-pressed={!!moreType}
+              aria-pressed={includeAgent}
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
-                setMoreOpen(!moreOpen);
-                setMoreActive(0);
+                setIncludeAgent(!includeAgent);
+                setActive(0);
               }}
-              className={chipClass(!!moreType || moreOpen, false)}
+              className={chipClass(includeAgent, false)}
             >
-              {moreType ? (
-                <>
-                  {TYPE[moreType].label} {count(counts[moreType], true)}
-                </>
-              ) : (
-                <>More {searchText && moreWith.length ? <span className="font-normal text-fg-tertiary">{moreWith.length}</span> : "+"}</>
-              )}
+              Agent knowledge
             </button>
-          </Popover.Anchor>
-          <Popover.Portal>
-            <Popover.Content
-              align="start"
-              sideOffset={6}
-              // Typing stays in the search box; ↑↓ ↵ and esc there drive the menu.
-              onOpenAutoFocus={(e) => e.preventDefault()}
-              onCloseAutoFocus={(e) => e.preventDefault()}
-              // Focus belongs in the search box, which drives this menu; only a click elsewhere closes it.
-              onFocusOutside={(e) => e.preventDefault()}
-              className="z-[60] w-[280px] rounded-xl border border-border-float bg-surface-raised p-1.5 shadow-2xl"
+            <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={switchToGlobal} className={chipClass(false, true)}>
+              All Vesper
+            </button>
+          </div>
+        </>
+      ) : typeScoped ? (
+        <>
+          <div role="toolbar" aria-label="Scoped search" className="flex items-center gap-2">
+            <span className={chipClass(true, false)}>
+              {paletteScope.label} {count(counts[paletteScope.type], true)}
+            </span>
+            <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={switchToGlobal} className={chipClass(false, true)}>
+              All Vesper
+            </button>
+          </div>
+          {project && (
+            <button
+              type="button"
+              aria-pressed={scope}
+              aria-label={scope ? `Searching ${project} only; search all spaces` : `Searching all spaces; search ${project} only`}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setScope(!scope)}
+              className={cx(chipClass(scope, false), "ml-auto max-md:ml-0")}
             >
-              {moreMenu}
-            </Popover.Content>
-          </Popover.Portal>
-        </Popover.Root>
-      </div>
-      {project && (
-        <button
-          type="button"
-          aria-pressed={scope}
-          aria-label={scope ? `Searching ${project} only; search all spaces` : `Searching all spaces; search ${project} only`}
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => setScope(!scope)}
-          className={cx(chipClass(scope, false), "ml-auto max-md:ml-0")}
-        >
-          {scope ? project : "All spaces"}
-        </button>
+              {scope ? project : "All spaces"}
+            </button>
+          )}
+        </>
+      ) : (
+        <>
+          <div role="toolbar" aria-label="Search types" className="flex items-center gap-2">
+            <button type="button" aria-pressed={!oneType} onMouseDown={(e) => e.preventDefault()} onClick={() => pickType(undefined)} className={chipClass(!oneType, false)}>
+              All {count(total, !oneType)}
+            </button>
+            {CHIP_TYPES.map((t) => (
+              <button
+                key={t}
+                type="button"
+                aria-pressed={oneType === t}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => pickType(t)}
+                className={chipClass(oneType === t, !!searchText && !pending && !counts[t])}
+              >
+                {TYPE[t].label} {count(counts[t], oneType === t)}
+              </button>
+            ))}
+            <Popover.Root open={moreOpen} onOpenChange={setMoreOpen}>
+              <Popover.Anchor asChild>
+                <button
+                  type="button"
+                  aria-haspopup="listbox"
+                  aria-expanded={moreOpen}
+                  aria-pressed={!!moreType}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    setMoreOpen(!moreOpen);
+                    setMoreActive(0);
+                  }}
+                  className={chipClass(!!moreType || moreOpen, false)}
+                >
+                  {moreType ? (
+                    <>
+                      {TYPE[moreType].label} {count(counts[moreType], true)}
+                    </>
+                  ) : (
+                    <>More {searchText && moreWith.length ? <span className="font-normal text-fg-tertiary">{moreWith.length}</span> : "+"}</>
+                  )}
+                </button>
+              </Popover.Anchor>
+              <Popover.Portal>
+                <Popover.Content
+                  align="start"
+                  sideOffset={6}
+                  // Typing stays in the search box; ↑↓ ↵ and esc there drive the menu.
+                  onOpenAutoFocus={(e) => e.preventDefault()}
+                  onCloseAutoFocus={(e) => e.preventDefault()}
+                  // Focus belongs in the search box, which drives this menu; only a click elsewhere closes it.
+                  onFocusOutside={(e) => e.preventDefault()}
+                  className="z-[60] w-[280px] rounded-xl border border-border-float bg-surface-raised p-1.5 shadow-2xl"
+                >
+                  {moreMenu}
+                </Popover.Content>
+              </Popover.Portal>
+            </Popover.Root>
+          </div>
+          {project && (
+            <button
+              type="button"
+              aria-pressed={scope}
+              aria-label={scope ? `Searching ${project} only; search all spaces` : `Searching all spaces; search ${project} only`}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setScope(!scope)}
+              className={cx(chipClass(scope, false), "ml-auto max-md:ml-0")}
+            >
+              {scope ? project : "All spaces"}
+            </button>
+          )}
+        </>
       )}
     </div>
   );
 
   const showPreview = root && rows.length > 0;
+  const dialogTitle = mode === "projects" ? "Switch space" : paletteScope ? `Search ${paletteScope.label}` : "Search and commands";
+  const inputLabel = mode === "projects" ? "Switch to space" : paletteScope ? `Search ${paletteScope.label}` : "Search everything";
+  const inputPlaceholder =
+    mode === "projects"
+      ? "Switch to space…"
+      : knowledgeMode
+        ? "Search Knowledge pages, #tags…"
+        : typeScoped
+          ? `Search ${TYPE[paletteScope.type].noun}…`
+          : "Search everything, or type @ people  # tickets  > commands";
+  const activeFacets = knowledgeMode ? kFacetValues : facetValues;
+  const showFacets = knowledgeMode ? (kFacetValues.length > 1 || (!!(kQuery.text || kQuery.tag) && kFacetValues.length > 0)) : !!searchText && !!oneType && facetValues.length > 0;
+  const highlightQuery = knowledgeMode ? kQuery.text : title;
 
   return (
     <Dialog.Root open={open} onOpenChange={close}>
@@ -1018,7 +1327,7 @@ export function CommandMenu() {
         >
           {/* A hairline of the theme's accent along the top edge: the palette's only ornament. */}
           <div aria-hidden className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-accent to-transparent opacity-70" />
-          <Dialog.Title className="sr-only">{mode === "projects" ? "Switch space" : "Search and commands"}</Dialog.Title>
+          <Dialog.Title className="sr-only">{dialogTitle}</Dialog.Title>
           <div className="flex h-14 flex-none items-center gap-3 border-b border-border px-5 max-md:h-auto max-md:border-0 max-md:px-3 max-md:pb-1 max-md:pt-3">
             <div className="flex min-w-0 flex-1 items-center gap-3 max-md:h-11 max-md:rounded-xl max-md:bg-surface-sunken max-md:px-3">
               <Icon name="search" size={16} className="flex-none text-fg-tertiary" />
@@ -1039,7 +1348,7 @@ export function CommandMenu() {
                 autoComplete="off"
                 spellCheck={false}
                 role="combobox"
-                aria-label={mode === "projects" ? "Switch to space" : "Search everything"}
+                aria-label={inputLabel}
                 aria-expanded={rows.length > 0}
                 aria-autocomplete="list"
                 aria-controls="command-results"
@@ -1050,7 +1359,7 @@ export function CommandMenu() {
                   setActive(0);
                   setExpanded(undefined);
                 }}
-                placeholder={mode === "projects" ? "Switch to space…" : "Search everything, or type @ people  # tickets  > commands"}
+                placeholder={inputPlaceholder}
                 className="min-w-0 flex-1 bg-transparent text-16 outline-none placeholder:text-fg-tertiary focus-visible:!outline-none"
                 onKeyDown={onKeyDown}
               />
@@ -1095,7 +1404,7 @@ export function CommandMenu() {
                 moreOpen && "opacity-40",
               )}
             >
-              {(all.isError || one.isError) && (
+              {(all.isError || one.isError || (knowledgeMode && pagesQuery.isError)) && (
                 <p role="alert" className="p-3 text-12 text-pill-blocked-fg">
                   Search failed. Try again.
                 </p>
@@ -1105,14 +1414,19 @@ export function CommandMenu() {
                   Couldn’t start the chat.
                 </p>
               )}
+              {createPage.isError && (
+                <p role="alert" className="p-3 text-12 text-pill-blocked-fg">
+                  Couldn’t create the page.
+                </p>
+              )}
               {actionFailed && (
                 <p role="alert" className="p-3 text-12 text-pill-blocked-fg">
                   That action didn’t go through. Try again.
                 </p>
               )}
-              {searchText && oneType && facetValues.length > 0 && (
-                <div role="group" aria-label={`Filter ${TYPE[oneType].noun}`} className="flex flex-wrap gap-1.5 px-2 pb-1 pt-2.5">
-                  {[{ value: undefined, label: oneType === "ticket" || oneType === "run" ? "Any status" : oneType === "page" ? "Any folder" : "Anyone" }, ...facetValues.slice(0, 6).map((f) => ({ value: f.value, label: `${oneType === "ticket" ? statusLabel(f.value) : f.value} ${f.count}` }))].map((f) => (
+              {showFacets && (
+                <div role="group" aria-label={knowledgeMode ? "Filter folders" : `Filter ${TYPE[oneType!].noun}`} className="flex flex-wrap gap-1.5 px-2 pb-1 pt-2.5">
+                  {[{ value: undefined, label: !knowledgeMode && (oneType === "ticket" || oneType === "run") ? "Any status" : knowledgeMode || oneType === "page" ? "Any folder" : "Anyone" }, ...activeFacets.slice(0, 6).map((f) => ({ value: f.value, label: `${!knowledgeMode && oneType === "ticket" ? statusLabel(f.value) : f.value} ${f.count}` }))].map((f) => (
                     <button
                       key={f.value ?? "any"}
                       type="button"
@@ -1132,9 +1446,19 @@ export function CommandMenu() {
                   ))}
                 </div>
               )}
-              {searchText && !pending && resultSections.length === 0 && jump.length === 0 && (
+              {knowledgeMode && !pending && rows.length === 0 && (
+                <p className="px-3 py-8 text-center text-14 text-fg-tertiary">
+                  {kQuery.tag ? `No pages tagged #${kQuery.tag}.` : kQuery.text ? `No Knowledge pages match “${kQuery.text}”.` : "No Knowledge pages yet."}
+                </p>
+              )}
+              {!knowledgeMode && searchText && !pending && resultSections.length === 0 && jump.length === 0 && (
                 <p className="px-3 py-8 text-center text-14 text-fg-tertiary">
                   {oneType ? `No ${TYPE[oneType].noun} match “${filters.text}”.` : `No results for “${query.trim()}”.`}
+                </p>
+              )}
+              {typeScoped && !searchText && !pending && rows.length === 0 && (
+                <p className="px-3 py-8 text-center text-14 text-fg-tertiary">
+                  Type to search {TYPE[paletteScope.type].noun}…
                 </p>
               )}
               {mode === "projects" && rows.length === 0 && <p className="px-3 py-8 text-center text-14 text-fg-tertiary">No project matches “{query}”.</p>}
@@ -1155,12 +1479,12 @@ export function CommandMenu() {
                       )}
                       {s.rows.map((row) => {
                         const i = rows.indexOf(row);
-                        return <RowView key={row.id} row={row} i={i} on={i === index} query={title} expanded={!!row.chat && expanded === row.chat.id} onPick={go} onHover={setActive} onToggle={(id) => setExpanded(expanded === id ? undefined : id)} />;
+                        return <RowView key={row.id} row={row} i={i} on={i === index} query={highlightQuery} expanded={!!row.chat && expanded === row.chat.id} onPick={go} onHover={setActive} onToggle={(id) => setExpanded(expanded === id ? undefined : id)} />;
                       })}
                     </div>
                   );
                 })}
-                {searchText && oneType && oneTotal > oneShown && (
+                {!knowledgeMode && searchText && oneType && oneTotal > oneShown && (
                   <p className="px-3 py-3 text-12 text-fg-tertiary">
                     {oneShown} of {oneTotal}
                     {oneShown < 50 ? " · scroll for more" : " · add words to narrow it"}
@@ -1170,7 +1494,7 @@ export function CommandMenu() {
             </div>
             {showPreview && (
               <div className="flex min-w-0 flex-1 border-l border-border max-[919px]:hidden">
-                <CommandPreview preview={selected?.preview} query={title} actions={previewActions} />
+                <CommandPreview preview={selected?.preview} query={highlightQuery} actions={previewActions} />
               </div>
             )}
           </div>

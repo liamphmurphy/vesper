@@ -137,7 +137,7 @@ export function KnowledgeHome() {
           </ul>
 
           <p className="mt-8 text-center text-12 text-fg-tertiary">
-            <Kbd>⌘D</Kbd> today · <Kbd>⌘O</Kbd> go to page · <Kbd>⌥⌘N</Kbd> capture · <Kbd>⌘J</Kbd> ask a persona
+            <Kbd>⌘D</Kbd> today · <Kbd>⌘⇧K</Kbd> go to page · <Kbd>⌥⌘N</Kbd> capture · <Kbd>⌘J</Kbd> ask a persona
           </p>
         </div>
       </div>

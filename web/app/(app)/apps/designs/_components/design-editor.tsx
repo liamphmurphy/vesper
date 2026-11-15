@@ -531,9 +531,6 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
       } else if (mod && (e.code === "BracketRight" || e.code === "BracketLeft")) {
         e.preventDefault();
         if (!readOnly) order(e.code === "BracketRight" ? (e.altKey ? "front" : "forward") : e.altKey ? "back" : "backward");
-      } else if (mod && e.shiftKey && k === "k") {
-        e.preventDefault();
-        if (!readOnly) fileInput.current?.click();
       } else if (mod && (k === "=" || k === "+")) {
         e.preventDefault();
         zoomBy(1.25);
