@@ -147,6 +147,10 @@ export function installChatApi(page: Page, opts: MockOptions = {}) {
   const ticketChangeDecisions: string[] = [];
   const apiSecrets: Record<string, unknown>[] = [];
   const apiSecretPosts: Record<string, unknown>[] = [];
+  const apiSecretSignIns: string[] = [];
+  // The public half of an OAuth secret, as the API returns it: never the client secret.
+  const oauthView = (o: Record<string, unknown>) => ({ authorize_url: o.authorize_url, token_url: o.token_url, client_id: o.client_id, scopes: o.scopes ?? [],
+    has_client_secret: Boolean(o.client_secret), error: "" });
   const secretApprovals: Record<string, unknown>[] = [];
   const secretDecisions: string[] = [];
   const secretProposals: Record<string, unknown>[] = [];
@@ -606,13 +610,14 @@ export function installChatApi(page: Page, opts: MockOptions = {}) {
       if (refuse && decision !== "deny") return json({ code: "conflict", message: refuse }, 409);
       return json({ ...r, state: decision === "deny" ? "declined" : "applied" });
     }
-    if (path === "/api-secrets" && method === "GET") return json({ secrets: apiSecrets, key_configured: true });
+    if (path === "/api-secrets" && method === "GET") return json({ secrets: apiSecrets, key_configured: true, oauth_redirect_uri: "https://vesper.example.ts.net/api/v1/connector-oauth/callback" });
     if (path === "/api-secrets" && method === "POST") {
       const b = body();
       apiSecretPosts.push(b);
       const name = String(b.name);
       const sec = { id: uuid(), name, handle: name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""), placement: b.placement, placement_key: b.placement_key ?? "",
-        allowed_hosts: b.allowed_hosts, read_policy: "allow", write_policy: "ask", persona_ids: [] as string[], revision: 1, created_at: now(), updated_at: now() };
+        allowed_hosts: b.allowed_hosts, read_policy: "allow", write_policy: "ask", persona_ids: [] as string[], revision: 1, created_at: now(), updated_at: now(),
+        kind: b.oauth ? "oauth" : "static", ...(b.oauth ? { oauth: oauthView(b.oauth as Record<string, unknown>) } : {}) };
       apiSecrets.push(sec);
       secretProposals.length = 0;
       return json(sec);
@@ -624,6 +629,12 @@ export function installChatApi(page: Page, opts: MockOptions = {}) {
       delete patch.value; // Values are write-only: never echoed back.
       Object.assign(sec, patch, { revision: Number(sec.revision) + 1 });
       return json(sec);
+    }
+    if (/^\/api-secrets\/[^/]+\/sign-in$/.test(path) && method === "POST") {
+      const sec = apiSecrets.find((x) => path.includes(String(x.id)))!;
+      apiSecretSignIns.push(String(sec.id));
+      const o = sec.oauth as Record<string, unknown>;
+      return json({ secret: sec, authorize_url: `${o.authorize_url}?client_id=${o.client_id}&state=mock-state` });
     }
     if (/^\/api-secrets\/[^/]+\/calls$/.test(path) && method === "GET") return json({ calls: [] });
     if (/^\/chats\/[^/]+\/api-secrets$/.test(path) && method === "GET") return json({ secrets: chatSecrets });
@@ -1189,7 +1200,7 @@ export function installChatApi(page: Page, opts: MockOptions = {}) {
       (window as unknown as { EventSource: unknown }).EventSource = FakeEventSource;
     });
     await page.route("**/api/v1/**", handle);
-    return { spaces, workRequests, asides, inbox, dock, apiSecrets, apiSecretPosts, secretApprovals, secretDecisions, secretProposals, chatSecrets, connectors, connectorApprovals, connectorDecisions, ticketChanges, ticketChangeDecisions, scheduledTasks, proposals, decisions, chats, unhandled, posted, created, wikiPages, artifactForms, memories, memoryRequests, memoryPatches, memoryImports, personas, personaRequests, chatPersonaFilters, updatePersona, profileRequests, commitEmailRequests, codeReviews };
+    return { spaces, workRequests, asides, inbox, dock, apiSecrets, apiSecretPosts, apiSecretSignIns, secretApprovals, secretDecisions, secretProposals, chatSecrets, connectors, connectorApprovals, connectorDecisions, ticketChanges, ticketChangeDecisions, scheduledTasks, proposals, decisions, chats, unhandled, posted, created, wikiPages, artifactForms, memories, memoryRequests, memoryPatches, memoryImports, personas, personaRequests, chatPersonaFilters, updatePersona, profileRequests, commitEmailRequests, codeReviews };
   })();
 }
 

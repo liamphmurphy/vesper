@@ -39,6 +39,15 @@ export function useUpdateApiSecret() {
   });
 }
 
+/** Starts an OAuth secret's sign-in; open the returned authorize_url to finish it. */
+export function useSignInApiSecret() {
+  const done = useSecretInvalidate();
+  return useMutation({
+    mutationFn: (id: string) => unwrap(api.POST("/api-secrets/{id}/sign-in", { params: { path: { id } } })),
+    onSettled: done,
+  });
+}
+
 export function useDeleteApiSecret() {
   const done = useSecretInvalidate();
   return useMutation({ mutationFn: (id: string) => unwrap(api.DELETE("/api-secrets/{id}", { params: { path: { id } } })), onSettled: done });

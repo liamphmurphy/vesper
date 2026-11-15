@@ -42,6 +42,48 @@ test("a secret is added with its hosts, then given to a persona with request per
   expect(mock.unhandled).toEqual([]);
 });
 
+test("an OAuth secret is set up for Google and signed in, without a value", async ({ page, context }) => {
+  const mock = await installChatApi(page, { personas: [ATLAS] });
+  // The provider's page opens in its own window; keep it from leaving the test.
+  await context.route("https://accounts.google.com/**", (route) => route.fulfill({ body: "<title>Google sign-in</title>" }));
+  await page.goto("/customization?who=secrets");
+  await page.getByRole("button", { name: "Add secret" }).click();
+  await page.getByLabel("Name").fill("Google Drive");
+  await page.getByRole("radiogroup", { name: "Type" }).getByRole("radio", { name: "OAuth sign-in" }).click();
+  await expect(page.getByLabel("Value")).toHaveCount(0);
+  await expect(page.getByRole("radiogroup", { name: "Send it as" })).toHaveCount(0);
+  await expect(page.getByTestId("oauth-redirect")).toContainText("https://vesper.example.ts.net/api/v1/connector-oauth/callback");
+  // Google fills in its endpoints and the API host.
+  await expect(page.getByText("www.googleapis.com")).toBeVisible();
+  await page.getByLabel("Client ID").fill("123.apps.googleusercontent.com");
+  await page.getByLabel("Client secret").fill("GOCSPX-client-secret");
+  const save = page.getByRole("button", { name: "Save and sign in" });
+  await expect(save).toBeDisabled(); // Google needs at least one scope.
+  await page.getByLabel("Scopes").fill("https://www.googleapis.com/auth/drive.readonly, https://www.googleapis.com/auth/drive.file");
+  const popup = page.waitForEvent("popup");
+  await save.click();
+  await expect((await popup)).toHaveURL(/accounts\.google\.com\/o\/oauth2\/v2\/auth\?client_id=123\.apps/);
+
+  expect(mock.apiSecretPosts[0]).toMatchObject({
+    name: "Google Drive", placement: "bearer", allowed_hosts: ["www.googleapis.com"],
+    oauth: { authorize_url: "https://accounts.google.com/o/oauth2/v2/auth", token_url: "https://oauth2.googleapis.com/token", client_id: "123.apps.googleusercontent.com",
+      client_secret: "GOCSPX-client-secret", scopes: ["https://www.googleapis.com/auth/drive.readonly", "https://www.googleapis.com/auth/drive.file"] },
+  });
+  expect(mock.apiSecretPosts[0]).not.toHaveProperty("value");
+  expect(mock.apiSecretSignIns).toEqual([mock.apiSecrets[0].id]);
+  const detail = page.getByTestId("secret-detail");
+  await expect(detail.getByTestId("secret-sign-in")).toContainText("Not signed in");
+  await expect(page.getByTestId("secret-row")).toContainText("Not signed in");
+
+  // Once the callback finishes, the list shows it signed in.
+  (mock.apiSecrets[0].oauth as Record<string, unknown>).signed_in_at = new Date().toISOString();
+  await page.reload();
+  await expect(page.getByTestId("secret-sign-in")).toContainText("Signed in");
+  await expect(page.getByTestId("secret-sign-in").getByRole("button", { name: "Sign in again" })).toBeVisible();
+  await expect(page.getByText("GOCSPX-client-secret")).toHaveCount(0);
+  expect(mock.unhandled).toEqual([]);
+});
+
 test("a request with a secret waits in the chat; writes can only be allowed once", async ({ page }) => {
   const mock = await installChatApi(page, { personas: [ATLAS] });
   await openChat(page, "slow: Pull last week's orders from the Acme API");
