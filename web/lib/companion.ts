@@ -9,6 +9,7 @@
 // Claims are a count, so a page replacing another during navigation never drops the column.
 let claims = 0;
 let slot: HTMLElement | null = null;
+let railSlot: HTMLElement | null = null;
 const listeners = new Set<() => void>();
 const notify = () => listeners.forEach((l) => l());
 
@@ -35,6 +36,15 @@ export function setCompanionSlot(el: HTMLElement | null): void {
 }
 
 export const companionSlot = () => slot;
+
+/** The element the permanent right rail's dynamic top slot renders into on wide screens. */
+export function setRightRailSlot(el: HTMLElement | null): void {
+  if (el === railSlot) return;
+  railSlot = el;
+  notify();
+}
+
+export const rightRailSlot = () => railSlot;
 
 export function subscribeCompanion(l: () => void): () => void {
   listeners.add(l);

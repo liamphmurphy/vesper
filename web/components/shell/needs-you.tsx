@@ -22,8 +22,8 @@ type Item = Schemas["InboxItem"];
 
 /**
  * The Needs you pill and its tray (LAZYAGENTS-162): one queue of what waits on
- * the person, answerable from any page. It is a full-width pill at the top of the
- * left column, an icon with a badge in its collapsed strip, and a tab in the compact bar. The badge is the bootstrap's needs_you count (live over SSE).
+ * the person, answerable from any page. It is an icon with a badge in the persistent
+ * right rail, a tab in the compact bar, or an inline pill. The badge is the bootstrap's needs_you count (live over SSE).
  */
 export function NeedsYou({ variant, count }: { variant: "pill" | "rail" | "tab"; count: number }) {
   const [open, setOpen] = useState(false);
@@ -95,8 +95,8 @@ export function NeedsYou({ variant, count }: { variant: "pill" | "rail" | "tab";
         <Popover.Trigger asChild>{trigger}</Popover.Trigger>
         <Popover.Portal>
           <Popover.Content
-            side={variant === "tab" ? "top" : "right"}
-            align={variant === "tab" ? "center" : "start"}
+            side={variant === "tab" ? "top" : variant === "rail" ? "left" : "right"}
+            align={variant === "tab" ? "center" : variant === "rail" ? "end" : "start"}
             sideOffset={variant === "tab" ? 6 : 12}
             collisionPadding={8}
             aria-label="Needs you"

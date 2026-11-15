@@ -65,7 +65,7 @@ export function AppearanceSection() {
       <div className="flex flex-col gap-1.5">
         <Toggle label="Show harness activity" checked={settings.showHarnessActivity !== false}
           onChange={(showHarnessActivity) => update({ ...settings, showHarnessActivity })} />
-        <p className="type-small text-fg-tertiary">Show animated harness characters and usage in the sidebar. Turn off to give conversation history more room.</p>
+        <p className="type-small text-fg-tertiary">Show animated harness characters and usage in the right rail.</p>
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div><h3 className="type-heading">Text size</h3><p className="type-small text-fg-tertiary">Scales all text in Vesper. Documents and slides keep their own sizes when printed or exported.</p></div>
