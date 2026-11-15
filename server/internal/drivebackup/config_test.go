@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/liamphmurphy/vesper/server/internal/apperr"
 	"github.com/liamphmurphy/vesper/server/internal/secrets"
@@ -99,6 +100,7 @@ func TestNextRun(t *testing.T) {
 
 type fixture struct {
 	ctx      context.Context
+	pool     *pgxpool.Pool
 	q        *store.Queries
 	svc      *Service
 	ws, user uuid.UUID
@@ -129,7 +131,7 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &fixture{ctx: ctx, q: q, ws: me.WorkspaceID, user: me.ID, scope: ScopeFile}
+	f := &fixture{ctx: ctx, pool: pool, q: q, ws: me.WorkspaceID, user: me.ID, scope: ScopeFile}
 	f.secrets = &usersecrets.Service{Q: q, Box: box, HTTP: f}
 	f.svc = &Service{Q: q, Secrets: f.secrets, Now: func() time.Time { return time.Date(2026, 11, 15, 9, 0, 0, 0, time.UTC) }}
 	return f

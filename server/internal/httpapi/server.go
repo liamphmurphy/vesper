@@ -25,6 +25,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/blob"
 	"github.com/liamphmurphy/vesper/server/internal/connectors"
 	"github.com/liamphmurphy/vesper/server/internal/designs"
+	"github.com/liamphmurphy/vesper/server/internal/drivebackup"
 	"github.com/liamphmurphy/vesper/server/internal/realtime"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/secrets"
@@ -61,6 +62,9 @@ type Server struct {
 	// Exporter writes the whole-instance archive (Settings → Backup & move);
 	// nil makes the export endpoint refuse.
 	Exporter *transfer.Exporter
+	// DriveBackups runs exports to Google Drive by hand (Settings → Backup &
+	// move); nil makes POST /backups/drive/run refuse.
+	DriveBackups *drivebackup.Runner
 	// DesignWorker renders designs; nil leaves renders unavailable.
 	DesignWorker *designs.Worker
 	// Usage keeps harness plan-usage readings for the activity orb; nil

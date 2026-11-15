@@ -173,6 +173,16 @@ func (q *Queries) NextDueDriveBackup(ctx context.Context) (DriveBackup, error) {
 	return i, err
 }
 
+const notifyDriveBackupFinished = `-- name: NotifyDriveBackupFinished :exec
+SELECT pg_notify('lazyagents_changes', json_build_object('type', 'inbox.updated', 'ids', ARRAY[]::text[])::text)
+`
+
+// A finished run adds or clears its Attention item, which no trigger covers.
+func (q *Queries) NotifyDriveBackupFinished(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, notifyDriveBackupFinished)
+	return err
+}
+
 const releaseDriveBackupLock = `-- name: ReleaseDriveBackupLock :exec
 DELETE FROM drive_backup_locks WHERE workspace_id = $1 AND holder = $2
 `

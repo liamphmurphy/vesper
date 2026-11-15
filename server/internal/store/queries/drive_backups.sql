@@ -53,3 +53,7 @@ DELETE FROM drive_backup_locks WHERE workspace_id = $1 AND holder = $2;
 -- name: GetDriveBackupLock :one
 -- The live lease, if a backup is running.
 SELECT * FROM drive_backup_locks WHERE workspace_id = $1 AND expires_at > now();
+
+-- name: NotifyDriveBackupFinished :exec
+-- A finished run adds or clears its Attention item, which no trigger covers.
+SELECT pg_notify('lazyagents_changes', json_build_object('type', 'inbox.updated', 'ids', ARRAY[]::text[])::text);
