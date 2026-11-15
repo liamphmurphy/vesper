@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { workSettingsHref } from "@/lib/spaces";
 import { DropdownMenu } from "radix-ui";
@@ -27,7 +28,11 @@ import { PriorityGlyph } from "@/components/domain/glyphs";
 import { PRIORITY_NAME } from "@/components/domain/meta";
 import { floatPanel } from "@/components/domain/pickers";
 import { SavedViewHeader, SavedViewTabs } from "@/components/domain/saved-views";
-import { ProjectScopeState, projectCrumbs, useProjectScope } from "@/components/shell/project-scope";
+import { NavigatorPortal } from "@/components/shell/navigator-slot";
+import { rememberProject, ProjectScopeState, projectCrumbs, useProjectScope } from "@/components/shell/project-scope";
+import { TextInput } from "@/components/ui/primitives";
+import { ticketsHref } from "@/lib/tickets-layout";
+import { WorkNavHeader, WorkSpacePersonaFilters } from "../../work/work-nav-header";
 import { BulkBar, BulkResultPanel } from "./bulk-bar";
 import { CompactTicketRow, TicketRow, type Density } from "./ticket-row";
 import { ChipScroller, TicketsLayoutBar, TicketsTopBar } from "./layout-bar";
@@ -409,6 +414,76 @@ export function TicketsScreen() {
 
   return (
     <>
+      {!compact && (
+        <NavigatorPortal>
+          <nav aria-label="Work" className="work-nav">
+            <WorkNavHeader active="tickets" project={project} />
+            <TextInput
+              aria-label="Search work"
+              placeholder="/  Search work…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <WorkSpacePersonaFilters
+              projects={boot.data?.projects}
+              agents={boot.data?.agents}
+              project={project ?? ""}
+              onProjectChange={(v) => {
+                const key = v || null;
+                if (!key) rememberProject(null);
+                router.push(
+                  ticketsHref("list", {
+                    ...(key ? { project: key } : {}),
+                    ...(view && view !== "all" ? { view } : {}),
+                  }),
+                );
+              }}
+              agent={assignee ?? ""}
+              onAgentChange={(v) => setParam("assignee", v || null)}
+            />
+            <div className="work-nav-list">
+              <div className="work-list-controls">
+                <span aria-current="true">List</span>
+                <span>/</span>
+                <Link href={ticketsHref("board", project ? { project } : undefined)}>Board</Link>
+              </div>
+              <div role="group" aria-label="Ticket views" className="flex flex-col gap-0.5 px-1">
+                {VIEWS.map((v) => (
+                  <Link
+                    key={v.key}
+                    href={href(v.key)}
+                    aria-current={!svId && view === v.key ? "true" : undefined}
+                    className={cx(
+                      "flex h-7 items-center rounded-[5px] px-2 text-12",
+                      !svId && view === v.key ? "bg-surface font-medium text-fg" : "text-fg-secondary hover:bg-hover hover:text-fg",
+                    )}
+                  >
+                    {v.label}
+                  </Link>
+                ))}
+              </div>
+              {(savedViews.data?.length ?? 0) > 0 && (
+                <div role="group" aria-label="Bookmarks" className="mt-3 flex flex-col gap-0.5 px-1">
+                  <p className="px-2 pb-1 text-11 font-medium uppercase tracking-[0.06em] text-fg-tertiary">Bookmarks</p>
+                  {savedViews.data!.map((v) => (
+                    <Link
+                      key={v.id}
+                      href={`/tickets?sv=${encodeURIComponent(v.id)}${project ? `&project=${encodeURIComponent(project)}` : ""}`}
+                      aria-current={svId === v.id ? "true" : undefined}
+                      className={cx(
+                        "flex h-7 items-center truncate rounded-[5px] px-2 text-12",
+                        svId === v.id ? "bg-surface font-medium text-fg" : "text-fg-secondary hover:bg-hover hover:text-fg",
+                      )}
+                    >
+                      {v.name}
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </div>
+          </nav>
+        </NavigatorPortal>
+      )}
       {!compact && <TicketsTopBar
         layout="list"
         // The project crumb is the bar's project pill.

@@ -4,17 +4,19 @@ import { useCompact } from "@/lib/viewport";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { useEpicOverviews } from "@/lib/api/hooks";
+import { useBootstrap, useEpicOverviews } from "@/lib/api/hooks";
 import { dueDate } from "@/lib/format";
 import {
   EPIC_SORTS, HEALTH_LABEL, epicFilterQuery, filterEpics, isOverdue, parseEpicFilters, ratio, sortEpics, statusCounts, ymd,
   type EpicFilters, type EpicHealthFilter, type EpicSort, type EpicStatusFilter,
 } from "@/lib/epics";
 import { Button, ButtonLink } from "@/components/ui/button";
-import { Banner, Card, EmptyState, Skeleton } from "@/components/ui/primitives";
+import { Banner, Card, EmptyState, Skeleton, TextInput } from "@/components/ui/primitives";
 import { Segmented } from "@/components/ui/controls";
 import { Content } from "@/components/shell/topbar";
-import { ProjectScopeState, useProjectScope } from "@/components/shell/project-scope";
+import { CompanionPortal } from "@/components/shell/companion";
+import { NavigatorPortal } from "@/components/shell/navigator-slot";
+import { rememberProject, ProjectScopeState, useProjectScope } from "@/components/shell/project-scope";
 import { HealthPill, type EpicOverview } from "@/components/domain/overview";
 import { HumanAvatar } from "@/components/domain/avatars";
 import { SmallPill } from "@/components/domain/labels";
@@ -22,6 +24,8 @@ import { StackedBar } from "@/components/domain/data";
 import { cx } from "@/lib/cx";
 import { FilterMenu } from "@/components/domain/pickers";
 import { ticketsHref } from "@/lib/tickets-layout";
+import { EpicBrief } from "../../work/work-details";
+import { WorkNavHeader, WorkSpaceFilter } from "../../work/work-nav-header";
 import { TicketsLayoutBar, TicketsTopBar } from "./layout-bar";
 
 function Timeline({
@@ -224,6 +228,7 @@ const HEALTH_DOT: Record<Exclude<EpicHealthFilter, "any">, string> = {
 };
 
 export function EpicsScreen() {
+  const boot = useBootstrap();
   const query = useEpicOverviews();
   const params = useSearchParams(),
     router = useRouter();
@@ -238,14 +243,132 @@ export function EpicsScreen() {
   }, [legacy, router]);
   const compact = useCompact();
   const filters = parseEpicFilters(params);
-  const setFilters = (patch: Partial<EpicFilters>) =>
-    router.replace(ticketsHref("epics", new URLSearchParams(epicFilterQuery({ ...filters, ...patch }, project))), { scroll: false });
+  const setFilters = (patch: Partial<EpicFilters>, nextProject = project) =>
+    router.replace(ticketsHref("epics", new URLSearchParams(epicFilterQuery({ ...filters, ...patch }, nextProject))), { scroll: false });
+  const [search, setSearch] = useState("");
+  const [selectedEpicId, setSelectedEpicId] = useState<string | null>(null);
   const inProject = (query.data ?? []).filter((e) => !project || e.project.key === project);
   const counts = statusCounts(inProject);
-  const shown = sortEpics(filterEpics(inProject, filters), filters.sort);
+  const filtered = sortEpics(filterEpics(inProject, filters), filters.sort);
+  const shown = search
+    ? filtered.filter((e) => e.epic.name.toLowerCase().includes(search.toLowerCase()))
+    : filtered;
+  const selectedEpic = selectedEpicId
+    ? inProject.find((e) => e.epic.id === selectedEpicId)
+    : undefined;
   const today = ymd(new Date());
   return (
     <>
+      {!compact && (
+        <NavigatorPortal>
+          <nav aria-label="Work" className="work-nav">
+            <WorkNavHeader active="epics" project={project || undefined} />
+            <TextInput
+              aria-label="Search work"
+              placeholder="/  Search work…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <div className="work-filters">
+              <WorkSpaceFilter
+                projects={boot.data?.projects}
+                project={project}
+                onProjectChange={(v) => {
+                  if (!v) rememberProject(null);
+                  setFilters({}, v);
+                }}
+              />
+              <FilterMenu
+                label="Filter health"
+                value={filters.health}
+                onChange={(v) => setFilters({ health: v as EpicHealthFilter })}
+                options={[
+                  { value: "any", label: "All health" },
+                  { value: "at_risk", label: "At risk" },
+                  { value: "off_track", label: "Off track" },
+                  { value: "on_track", label: "On track" },
+                ]}
+              />
+            </div>
+            <div role="group" aria-label="Sidebar epic status" className="work-list-controls">
+              {(["open", "done", "all"] as const).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  aria-pressed={filters.status === s}
+                  onClick={() => setFilters({ status: s })}
+                >
+                  {s === "open" ? "Open" : s === "done" ? "Done" : "All"}
+                </button>
+              ))}
+            </div>
+            <div className="work-nav-list">
+              {shown.map((e) => (
+                <button
+                  key={e.epic.id}
+                  type="button"
+                  aria-current={selectedEpicId === e.epic.id ? "true" : undefined}
+                  onClick={() =>
+                    setSelectedEpicId((cur) => (cur === e.epic.id ? null : e.epic.id))
+                  }
+                >
+                  <strong className="flex items-center gap-2 truncate">
+                    <span
+                      aria-hidden
+                      className={cx("size-2 flex-none rounded-full", HEALTH_DOT[e.epic.health])}
+                    />
+                    <span className="truncate">{e.epic.name}</span>
+                  </strong>
+                  <small>
+                    {e.counts.done}/{e.counts.total} tickets · {HEALTH_LABEL[e.epic.health]}
+                  </small>
+                </button>
+              ))}
+              {!query.isLoading && !shown.length && (
+                <p className="p-3 text-12 text-fg-tertiary">No epics match.</p>
+              )}
+            </div>
+          </nav>
+        </NavigatorPortal>
+      )}
+      {!compact && selectedEpic && (
+        <CompanionPortal>
+          <section aria-label="Work context" className="work-details h-full">
+            <div className="work-pane-header">
+              <Link
+                className="truncate font-medium text-fg hover:text-accent"
+                href={`/epics/${encodeURIComponent(selectedEpic.epic.id)}`}
+              >
+                {selectedEpic.epic.name} →
+              </Link>
+              <button
+                type="button"
+                aria-label="Close context"
+                onClick={() => setSelectedEpicId(null)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="work-detail-scroll">
+              <EpicBrief
+                epicId={selectedEpic.epic.id}
+                focused={false}
+                navigate={(patch) => {
+                  if (patch.ticket) {
+                    router.push(`/tickets/${encodeURIComponent(patch.ticket)}`);
+                  } else if (patch.run) {
+                    router.push(`/work?run=${encodeURIComponent(patch.run)}&view=activity`);
+                  } else if (patch.view === "epics") {
+                    router.push(`/epics/${encodeURIComponent(selectedEpic.epic.id)}`);
+                  } else if (patch.epic) {
+                    setSelectedEpicId(patch.epic);
+                  }
+                }}
+              />
+            </div>
+          </section>
+        </CompanionPortal>
+      )}
       {/* Compact: the layout bar is the header, with its own + button. */}
       {!compact && <TicketsTopBar
         layout="epics"
