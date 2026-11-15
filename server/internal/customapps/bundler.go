@@ -75,64 +75,7 @@ if (rootEl && rootEl.childNodes.length === 0 && typeof RootComp === "function") 
 				return api.OnLoadResult{Contents: &src, Loader: api.LoaderJS}, nil
 			})
 
-			build.OnResolve(api.OnResolveOptions{Filter: `.*`}, func(args api.OnResolveArgs) (api.OnResolveResult, error) {
-				if !strings.HasPrefix(args.Path, "./") && !strings.HasPrefix(args.Path, "../") && !strings.HasPrefix(args.Path, "/") {
-					return api.OnResolveResult{
-						Errors: []api.Message{{Text: fmt.Sprintf("external import %q is not allowed in sandboxed apps; use relative files, react, or @vesper/bridge", args.Path)}},
-					}, nil
-				}
-				baseDir := ""
-				if args.Importer != "" && args.Namespace == "vesper-app" {
-					baseDir = path.Dir(args.Importer)
-				}
-				joined := path.Clean(path.Join(baseDir, strings.TrimPrefix(args.Path, "/")))
-				candidates := []string{
-					joined,
-					joined + ".tsx",
-					joined + ".ts",
-					joined + ".jsx",
-					joined + ".js",
-					joined + ".json",
-					path.Join(joined, "index.tsx"),
-					path.Join(joined, "index.ts"),
-					path.Join(joined, "index.jsx"),
-					path.Join(joined, "index.js"),
-				}
-				for _, cand := range candidates {
-					if _, ok := files[cand]; ok {
-						return api.OnResolveResult{Path: cand, Namespace: "vesper-app"}, nil
-					}
-				}
-				return api.OnResolveResult{}, fmt.Errorf("file %q not found", args.Path)
-			})
-
-			build.OnLoad(api.OnLoadOptions{Filter: `.*`, Namespace: "vesper-app"}, func(args api.OnLoadArgs) (api.OnLoadResult, error) {
-				src, ok := files[args.Path]
-				if !ok {
-					return api.OnLoadResult{}, fmt.Errorf("missing file %q", args.Path)
-				}
-				ext := strings.ToLower(path.Ext(args.Path))
-				switch ext {
-				case ".tsx":
-					return api.OnLoadResult{Contents: &src, Loader: api.LoaderTSX}, nil
-				case ".ts":
-					return api.OnLoadResult{Contents: &src, Loader: api.LoaderTS}, nil
-				case ".jsx":
-					return api.OnLoadResult{Contents: &src, Loader: api.LoaderJSX}, nil
-				case ".js":
-					return api.OnLoadResult{Contents: &src, Loader: api.LoaderJS}, nil
-				case ".json":
-					return api.OnLoadResult{Contents: &src, Loader: api.LoaderJSON}, nil
-				case ".css":
-					empty := ""
-					return api.OnLoadResult{Contents: &empty, Loader: api.LoaderJS}, nil
-				case ".sql":
-					quoted := fmt.Sprintf("export default %q;", src)
-					return api.OnLoadResult{Contents: &quoted, Loader: api.LoaderJS}, nil
-				default:
-					return api.OnLoadResult{}, fmt.Errorf("cannot import %q", args.Path)
-				}
-			})
+			registerAppFilesPlugin(build, files, "external import %q is not allowed in sandboxed apps; use relative files, react, or @vesper/bridge")
 		},
 	}
 
@@ -147,24 +90,142 @@ if (rootEl && rootEl.childNodes.length === 0 && typeof RootComp === "function") 
 		Plugins:         []api.Plugin{plugin},
 	})
 	if len(res.Errors) > 0 {
-		var msgs []string
-		for i, e := range res.Errors {
-			if i >= 5 {
-				msgs = append(msgs, fmt.Sprintf("...and %d more error(s)", len(res.Errors)-5))
-				break
-			}
-			if e.Location != nil && e.Location.File != "" {
-				msgs = append(msgs, fmt.Sprintf("%s:%d:%d: %s", e.Location.File, e.Location.Line, e.Location.Column+1, e.Text))
-			} else {
-				msgs = append(msgs, e.Text)
-			}
-		}
-		return "", "", apperr.Invalid("files", "compile error: %s", strings.Join(msgs, "; "))
+		return "", "", formatBuildError("files", res.Errors)
 	}
 	if len(res.OutputFiles) == 0 {
 		return "", "", apperr.Invalid("files", "bundler produced no output")
 	}
 	return string(res.OutputFiles[0].Contents), cssBuilder.String(), nil
+}
+
+// BundleMCPServer compiles a custom app's server-side MCP entrypoint (e.g. server.ts)
+// into a self-contained CommonJS bundle for Node execution, permitting only relative
+// imports from files and the virtual "@vesper/server" SDK.
+func BundleMCPServer(entry string, files map[string]string) (string, error) {
+	entry = path.Clean(strings.TrimPrefix(entry, "/"))
+	if _, ok := files[entry]; !ok {
+		return "", apperr.Invalid("manifest", "mcp_entry file %q not found", entry)
+	}
+
+	entryWrapper := fmt.Sprintf(`const { __hardenAndRun } = require("@vesper/server");
+__hardenAndRun(() => require("./%s"));
+`, entry)
+
+	plugin := api.Plugin{
+		Name: "vesper-custom-app-mcp",
+		Setup: func(build api.PluginBuild) {
+			build.OnResolve(api.OnResolveOptions{Filter: `^__vesper_mcp_entry__$`}, func(args api.OnResolveArgs) (api.OnResolveResult, error) {
+				return api.OnResolveResult{Path: "__vesper_mcp_entry__.ts", Namespace: "vesper-mcp-entry"}, nil
+			})
+			build.OnLoad(api.OnLoadOptions{Filter: `.*`, Namespace: "vesper-mcp-entry"}, func(args api.OnLoadArgs) (api.OnLoadResult, error) {
+				return api.OnLoadResult{Contents: &entryWrapper, Loader: api.LoaderJS}, nil
+			})
+
+			build.OnResolve(api.OnResolveOptions{Filter: `^@vesper/server$`}, func(args api.OnResolveArgs) (api.OnResolveResult, error) {
+				return api.OnResolveResult{Path: args.Path, Namespace: "vesper-mcp-runtime"}, nil
+			})
+			build.OnLoad(api.OnLoadOptions{Filter: `.*`, Namespace: "vesper-mcp-runtime"}, func(args api.OnLoadArgs) (api.OnLoadResult, error) {
+				src := serverRuntimeJS
+				return api.OnLoadResult{Contents: &src, Loader: api.LoaderJS}, nil
+			})
+
+			registerAppFilesPlugin(build, files, "external import %q is not allowed in sandboxed MCP servers; use relative files or @vesper/server")
+		},
+	}
+
+	res := api.Build(api.BuildOptions{
+		EntryPoints: []string{"__vesper_mcp_entry__"},
+		Bundle:      true,
+		Write:       false,
+		Platform:    api.PlatformNode,
+		Format:      api.FormatCommonJS,
+		Target:      api.ES2022,
+		Plugins:     []api.Plugin{plugin},
+	})
+	if len(res.Errors) > 0 {
+		return "", formatBuildError("files", res.Errors)
+	}
+	if len(res.OutputFiles) == 0 {
+		return "", apperr.Invalid("files", "MCP server bundler produced no output")
+	}
+	return string(res.OutputFiles[0].Contents), nil
+}
+
+func registerAppFilesPlugin(build api.PluginBuild, files map[string]string, externalErrFmt string) {
+	build.OnResolve(api.OnResolveOptions{Filter: `.*`}, func(args api.OnResolveArgs) (api.OnResolveResult, error) {
+		if !strings.HasPrefix(args.Path, "./") && !strings.HasPrefix(args.Path, "../") && !strings.HasPrefix(args.Path, "/") {
+			return api.OnResolveResult{
+				Errors: []api.Message{{Text: fmt.Sprintf(externalErrFmt, args.Path)}},
+			}, nil
+		}
+		baseDir := ""
+		if args.Importer != "" && args.Namespace == "vesper-app" {
+			baseDir = path.Dir(args.Importer)
+		}
+		joined := path.Clean(path.Join(baseDir, strings.TrimPrefix(args.Path, "/")))
+		candidates := []string{
+			joined,
+			joined + ".tsx",
+			joined + ".ts",
+			joined + ".jsx",
+			joined + ".js",
+			joined + ".json",
+			path.Join(joined, "index.tsx"),
+			path.Join(joined, "index.ts"),
+			path.Join(joined, "index.jsx"),
+			path.Join(joined, "index.js"),
+		}
+		for _, cand := range candidates {
+			if _, ok := files[cand]; ok {
+				return api.OnResolveResult{Path: cand, Namespace: "vesper-app"}, nil
+			}
+		}
+		return api.OnResolveResult{}, fmt.Errorf("file %q not found", args.Path)
+	})
+
+	build.OnLoad(api.OnLoadOptions{Filter: `.*`, Namespace: "vesper-app"}, func(args api.OnLoadArgs) (api.OnLoadResult, error) {
+		src, ok := files[args.Path]
+		if !ok {
+			return api.OnLoadResult{}, fmt.Errorf("missing file %q", args.Path)
+		}
+		ext := strings.ToLower(path.Ext(args.Path))
+		switch ext {
+		case ".tsx":
+			return api.OnLoadResult{Contents: &src, Loader: api.LoaderTSX}, nil
+		case ".ts":
+			return api.OnLoadResult{Contents: &src, Loader: api.LoaderTS}, nil
+		case ".jsx":
+			return api.OnLoadResult{Contents: &src, Loader: api.LoaderJSX}, nil
+		case ".js":
+			return api.OnLoadResult{Contents: &src, Loader: api.LoaderJS}, nil
+		case ".json":
+			return api.OnLoadResult{Contents: &src, Loader: api.LoaderJSON}, nil
+		case ".css":
+			empty := ""
+			return api.OnLoadResult{Contents: &empty, Loader: api.LoaderJS}, nil
+		case ".sql":
+			quoted := fmt.Sprintf("export default %q;", src)
+			return api.OnLoadResult{Contents: &quoted, Loader: api.LoaderJS}, nil
+		default:
+			return api.OnLoadResult{}, fmt.Errorf("cannot import %q", args.Path)
+		}
+	})
+}
+
+func formatBuildError(field string, errs []api.Message) error {
+	var msgs []string
+	for i, e := range errs {
+		if i >= 5 {
+			msgs = append(msgs, fmt.Sprintf("...and %d more error(s)", len(errs)-5))
+			break
+		}
+		if e.Location != nil && e.Location.File != "" {
+			msgs = append(msgs, fmt.Sprintf("%s:%d:%d: %s", e.Location.File, e.Location.Line, e.Location.Column+1, e.Text))
+		} else {
+			msgs = append(msgs, e.Text)
+		}
+	}
+	return apperr.Invalid(field, "compile error: %s", strings.Join(msgs, "; "))
 }
 
 const reactRuntimeJS = `
@@ -621,6 +682,10 @@ export function mcp(connector, tool, args = {}) {
   return callHost("mcp", { connector, tool, arguments: args });
 }
 
+export function server(tool, args = {}) {
+  return callHost("mcp", { connector: "self", tool, arguments: args });
+}
+
 export function setNav(items, activeId) {
   window.parent.postMessage({ channel: "vesper:custom-app", type: "set-nav", payload: { items, activeId } }, "*");
 }
@@ -656,5 +721,248 @@ export function useBridgeQuery(fn, deps = []) {
     return () => { cancelled = true; };
   }, [...deps, tick]);
   return { data, loading, error, refetch };
+}
+`
+
+const serverRuntimeJS = `
+const realStdoutWrite = process.stdout.write.bind(process.stdout);
+process.stdout.write = process.stderr.write.bind(process.stderr);
+console.log = console.error.bind(console);
+console.info = console.error.bind(console);
+console.warn = console.error.bind(console);
+console.debug = console.error.bind(console);
+
+let nextRpcId = 1;
+const pendingRpcs = new Map();
+
+function emit(msg) {
+  realStdoutWrite(JSON.stringify(msg) + "\n");
+}
+
+function callHost(method, params) {
+  return new Promise((resolve, reject) => {
+    const id = nextRpcId++;
+    pendingRpcs.set(id, { resolve, reject });
+    emit({ type: "rpc", id, method, params });
+  });
+}
+
+function normalizeHeaders(headers) {
+  if (!headers) return {};
+  if (typeof Headers !== "undefined" && headers instanceof Headers) {
+    const out = {};
+    headers.forEach((v, k) => { out[k] = v; });
+    return out;
+  }
+  if (Array.isArray(headers)) {
+    const out = {};
+    for (const pair of headers) {
+      if (Array.isArray(pair) && pair.length >= 2) out[String(pair[0])] = String(pair[1]);
+    }
+    return out;
+  }
+  const out = {};
+  for (const [k, v] of Object.entries(headers)) {
+    if (v !== undefined && v !== null) out[String(k)] = String(v);
+  }
+  return out;
+}
+
+function toResponse(raw) {
+  const status = Number(raw?.status ?? 0);
+  const body = typeof raw?.body === "string" ? raw.body : "";
+  const headers = raw?.headers && typeof raw.headers === "object" ? raw.headers : {};
+  return {
+    status,
+    ok: status >= 200 && status < 300,
+    headers,
+    body,
+    truncated: Boolean(raw?.truncated),
+    redactions: Number(raw?.redactions ?? 0),
+    contentType: raw?.content_type ?? "",
+    async text() { return body; },
+    async json() { return JSON.parse(body); },
+  };
+}
+
+function buildRequestParams(url, init = {}) {
+  const method = String(init.method || "GET").toUpperCase();
+  const headers = normalizeHeaders(init.headers);
+  const out = { url: String(url), method, headers };
+  if (init.json !== undefined) {
+    out.json = init.json;
+  } else if (init.body !== undefined && init.body !== null) {
+    out.body = typeof init.body === "string" ? init.body : JSON.stringify(init.body);
+  }
+  return out;
+}
+
+export function defineServer(def) {
+  return { __vesperServer: true, ...(def || {}) };
+}
+
+export function sql(query, params = []) {
+  return callHost("sql", { query, params });
+}
+
+export function api(method, path, body) {
+  return callHost("api", { method, path, body });
+}
+
+export async function secretFetch(secret, url, init = {}) {
+  const params = buildRequestParams(url, init);
+  params.secret = String(secret || "");
+  const res = await callHost("secret_fetch", params);
+  return toResponse(res);
+}
+
+export async function fetch(url, init = {}) {
+  const params = buildRequestParams(url, init);
+  const res = await callHost("http_fetch", params);
+  return toResponse(res);
+}
+
+const TOOL_NAME_RE = /^[A-Za-z0-9_.:-]{1,128}$/;
+
+function normalizeTools(mod) {
+  const target = mod && (mod.default || mod.server || mod);
+  const rawTools = target && (target.tools !== undefined ? target.tools : target);
+  const out = [];
+  const seen = new Set();
+
+  const addTool = (name, entry) => {
+    if (!entry || typeof entry !== "object") {
+      throw new Error("tool " + JSON.stringify(name) + " must be an object");
+    }
+    const n = String(name || "").trim();
+    if (!TOOL_NAME_RE.test(n)) {
+      throw new Error("invalid tool name " + JSON.stringify(n));
+    }
+    if (seen.has(n)) {
+      throw new Error("duplicate tool name " + JSON.stringify(n));
+    }
+    const desc = typeof entry.description === "string" ? entry.description.trim() : "";
+    if (!desc) {
+      throw new Error("tool " + JSON.stringify(n) + " must have a non-empty description");
+    }
+    const handler = typeof entry.handler === "function" ? entry.handler : typeof entry.execute === "function" ? entry.execute : null;
+    if (!handler) {
+      throw new Error("tool " + JSON.stringify(n) + " must define a handler function");
+    }
+    let schema = entry.inputSchema ?? entry.input_schema;
+    if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+      schema = { type: "object", properties: {} };
+    }
+    if (schema.type !== "object") {
+      schema = { ...schema, type: "object" };
+    }
+    seen.add(n);
+    out.push({ name: n, description: desc, input_schema: schema, handler });
+  };
+
+  if (Array.isArray(rawTools)) {
+    for (const item of rawTools) addTool(item?.name, item);
+  } else if (rawTools && typeof rawTools === "object") {
+    for (const [k, v] of Object.entries(rawTools)) addTool(v?.name || k, v);
+  } else {
+    throw new Error("MCP server entry must export defineServer({ tools: ... })");
+  }
+  return out;
+}
+
+export function __hardenAndRun(loadEntry) {
+  globalThis.fetch = fetch;
+  try { delete globalThis.WebSocket; } catch {}
+
+  let tools = [];
+  let loadError = null;
+  try {
+    const mod = loadEntry();
+    tools = normalizeTools(mod);
+  } catch (err) {
+    loadError = err;
+  }
+
+  let buf = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => {
+    buf += chunk;
+    let idx;
+    while ((idx = buf.indexOf("\n")) !== -1) {
+      const line = buf.slice(0, idx).trim();
+      buf = buf.slice(idx + 1);
+      if (!line) continue;
+      let msg;
+      try {
+        msg = JSON.parse(line);
+      } catch (err) {
+        emit({ type: "done", ok: false, error: "invalid worker protocol JSON: " + err.message });
+        process.exit(0);
+        return;
+      }
+      if (msg.type === "rpc_result") {
+        const waiter = pendingRpcs.get(msg.id);
+        if (waiter) {
+          pendingRpcs.delete(msg.id);
+          if (msg.ok) {
+            waiter.resolve(msg.result);
+          } else {
+            const err = new Error(msg.error || "Host RPC failed");
+            if (msg.approval_required) err.approvalRequired = msg.approval_required;
+            waiter.reject(err);
+          }
+        }
+        continue;
+      }
+      if (msg.type === "init") {
+        void handleInit(msg, tools, loadError);
+      }
+    }
+  });
+  process.stdin.resume();
+}
+
+async function handleInit(msg, tools, loadError) {
+  if (loadError) {
+    emit({ type: "done", ok: false, error: loadError?.message || String(loadError) });
+    process.exit(0);
+    return;
+  }
+  try {
+    if (msg.op === "list_tools") {
+      emit({
+        type: "done",
+        ok: true,
+        result: {
+          tools: tools.map(({ name, description, input_schema }) => ({ name, description, input_schema })),
+        },
+      });
+      process.exit(0);
+      return;
+    }
+    if (msg.op === "call_tool") {
+      const t = tools.find((x) => x.name === msg.tool);
+      if (!t) {
+        emit({ type: "done", ok: false, error: "unknown tool " + JSON.stringify(msg.tool) });
+        process.exit(0);
+        return;
+      }
+      const args = msg.arguments && typeof msg.arguments === "object" && !Array.isArray(msg.arguments) ? msg.arguments : {};
+      const res = await t.handler(args);
+      emit({ type: "done", ok: true, result: res === undefined ? null : res });
+      process.exit(0);
+      return;
+    }
+    emit({ type: "done", ok: false, error: "unknown worker op " + JSON.stringify(msg.op) });
+    process.exit(0);
+  } catch (err) {
+    emit({
+      type: "done",
+      ok: false,
+      error: err?.message || String(err),
+      ...(err?.approvalRequired ? { approval_required: err.approvalRequired } : {}),
+    });
+    process.exit(0);
+  }
 }
 `

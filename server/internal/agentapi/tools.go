@@ -39,6 +39,8 @@ type Deps struct {
 	Wiki       *wiki.Service
 	Designs    *designs.Service
 	CustomApps *customapps.Service
+	// AppAPICall forwards vesper.api:* calls from a custom app MCP server for its owning user.
+	AppAPICall func(ctx context.Context, user store.User, method, rawPath string, body any) (any, error)
 	// Files keeps a file in the person's Library (save_file); nil where there is no object store.
 	Files FileKeeper
 }

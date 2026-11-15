@@ -205,13 +205,17 @@ func blockedAddr(ip net.IP) bool {
 // transport dials only addresses it checked, so a hostname can't resolve to
 // a public address for the check and a private one for the connection.
 func (s *Service) transport(host string) *http.Transport {
-	lookup := s.LookupIP
+	return SafeTransport(isLocal(host), s.LookupIP)
+}
+
+// SafeTransport returns an http.Transport that verifies resolved IPs against
+// blocked private/reserved ranges unless allowLocal is true.
+func SafeTransport(allowLocal bool, lookup func(ctx context.Context, host string) ([]net.IP, error)) *http.Transport {
 	if lookup == nil {
 		lookup = func(ctx context.Context, h string) ([]net.IP, error) {
 			return net.DefaultResolver.LookupIP(ctx, "ip", h)
 		}
 	}
-	local := isLocal(host)
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	return &http.Transport{
 		Proxy:                 nil, // An environment proxy would dial for us, past the address check.
@@ -231,8 +235,8 @@ func (s *Service) transport(host string) *http.Transport {
 				}
 			}
 			for _, ip := range ips {
-				if blockedAddr(ip) && !local {
-					return nil, &Blocked{Reason: h + " resolves to a private address, which secrets can't be sent to"}
+				if blockedAddr(ip) && !allowLocal {
+					return nil, &Blocked{Reason: h + " resolves to a private address"}
 				}
 			}
 			// Every address was checked above; try each, as net.Dial would.
@@ -247,6 +251,103 @@ func (s *Service) transport(host string) *http.Transport {
 			return nil, last
 		},
 	}
+}
+
+// SendPublic makes a bounded outbound HTTPS request (no secret attached)
+// blocking private/loopback/reserved IPs via SafeTransport.
+func SendPublic(ctx context.Context, req Request, lookup func(ctx context.Context, host string) ([]net.IP, error)) (Response, error) {
+	method := strings.ToUpper(strings.TrimSpace(req.Method))
+	if method == "" {
+		method = http.MethodGet
+	}
+	if !slices.Contains(methods, method) {
+		return Response{}, blocked("method must be one of %s", strings.Join(methods, ", "))
+	}
+	u, err := url.Parse(strings.TrimSpace(req.URL))
+	if err != nil || u.Host == "" || len(req.URL) > 4000 {
+		return Response{}, blocked("url must be a full https URL")
+	}
+	if u.User != nil {
+		return Response{}, blocked("url can't contain credentials")
+	}
+	if u.Scheme != "https" {
+		return Response{}, blocked("outbound fetch requires https")
+	}
+	for k := range req.Headers {
+		if strings.ContainsAny(k+req.Headers[k], "\r\n") {
+			return Response{}, blocked("header %q has a line break", k)
+		}
+		lk := headerKey(k)
+		if lk == "host" || lk == "content-length" || lk == "transfer-encoding" || lk == "connection" {
+			return Response{}, blocked("header %q cannot be set", k)
+		}
+	}
+	if len(req.Body) > maxBody {
+		return Response{}, blocked("the body is limited to 1 MB")
+	}
+	write := method != http.MethodGet && method != http.MethodHead
+	if len(req.Body) > 0 && !write {
+		return Response{}, blocked("%s requests can't have a body", method)
+	}
+	ctx, cancel := context.WithTimeout(ctx, sendTimeout)
+	defer cancel()
+	var body io.Reader
+	if len(req.Body) > 0 {
+		body = strings.NewReader(string(req.Body))
+	}
+	out, err := http.NewRequestWithContext(ctx, method, u.String(), body)
+	if err != nil {
+		return Response{}, err
+	}
+	for k, v := range req.Headers {
+		out.Header.Set(k, v)
+	}
+	if len(req.Body) > 0 && req.ContentType != "" && out.Header.Get("Content-Type") == "" {
+		out.Header.Set("Content-Type", req.ContentType)
+	}
+	out.Header.Set("User-Agent", "Vesper")
+	t := SafeTransport(false, lookup)
+	defer t.CloseIdleConnections()
+	client := &http.Client{
+		Transport: t,
+		CheckRedirect: func(next *http.Request, via []*http.Request) error {
+			if write || len(via) >= maxRedirects || next.URL.Scheme != "https" {
+				return http.ErrUseLastResponse
+			}
+			return nil
+		},
+	}
+	res, err := client.Do(out)
+	if err != nil {
+		var b *Blocked
+		if errors.As(err, &b) {
+			return Response{}, b
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return Response{}, errors.New("the request timed out after 30 s")
+		}
+		return Response{}, err
+	}
+	defer res.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(res.Body, maxResponse))
+	if err != nil {
+		return Response{}, fmt.Errorf("reading the response: %w", err)
+	}
+	contentType := res.Header.Get("Content-Type")
+	resp := Response{Status: res.StatusCode, Headers: map[string]string{}, ContentType: contentType}
+	for k, vs := range res.Header {
+		if strings.EqualFold(k, "Set-Cookie") {
+			continue
+		}
+		resp.Headers[k] = strings.Join(vs, ", ")
+	}
+	if textual(contentType, raw) {
+		resp.Body = string(raw)
+		resp.Truncated = len(raw) >= maxResponse
+	} else {
+		resp.Body = fmt.Sprintf("(%d bytes of %s, not shown)", len(raw), contentType)
+	}
+	return resp, nil
 }
 
 // inject adds the secret to an outgoing request, exactly where the person said.

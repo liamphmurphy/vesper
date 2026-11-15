@@ -9971,18 +9971,26 @@ components:
     CustomAppCapabilities:
       type: object
       additionalProperties: { $ref: "#/components/schemas/CustomAppCapabilityMode" }
+    CustomAppMCPTool:
+      type: object
+      required: [name, description, input_schema]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        input_schema: { type: object, additionalProperties: true }
     CustomAppManifest:
       type: object
       required: [entry, tool_scope]
       properties:
         entry: { type: string }
+        mcp_entry: { type: string }
         tool_scope: { type: string, enum: [chats, app_only] }
         instructions: { type: string }
         nav: { type: array, items: { $ref: "#/components/schemas/CustomAppNavItem" } }
         requested_capabilities: { $ref: "#/components/schemas/CustomAppCapabilities" }
     CustomAppSummary:
       type: object
-      required: [id, slug, name, description, icon, current_seq, manifest, capabilities, db_size_bytes, created_at, updated_at]
+      required: [id, slug, name, description, icon, current_seq, manifest, capabilities, db_size_bytes, has_mcp_server, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         slug: { type: string }
@@ -9994,6 +10002,8 @@ components:
         manifest: { $ref: "#/components/schemas/CustomAppManifest" }
         capabilities: { $ref: "#/components/schemas/CustomAppCapabilities" }
         db_size_bytes: { type: integer }
+        has_mcp_server: { type: boolean }
+        mcp_tools: { type: array, items: { $ref: "#/components/schemas/CustomAppMCPTool" } }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     CustomAppVersionSummary:
@@ -10027,7 +10037,7 @@ components:
         sql: { type: string }
     CustomAppDetail:
       type: object
-      required: [id, slug, name, description, icon, current_seq, manifest, capabilities, db_size_bytes, created_at, updated_at, current, versions, schema]
+      required: [id, slug, name, description, icon, current_seq, manifest, capabilities, db_size_bytes, has_mcp_server, created_at, updated_at, current, versions, schema]
       properties:
         id: { type: string, format: uuid }
         slug: { type: string }
@@ -10039,6 +10049,8 @@ components:
         manifest: { $ref: "#/components/schemas/CustomAppManifest" }
         capabilities: { $ref: "#/components/schemas/CustomAppCapabilities" }
         db_size_bytes: { type: integer }
+        has_mcp_server: { type: boolean }
+        mcp_tools: { type: array, items: { $ref: "#/components/schemas/CustomAppMCPTool" } }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         current: { $ref: "#/components/schemas/CustomAppVersion" }

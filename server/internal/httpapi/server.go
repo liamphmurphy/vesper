@@ -121,7 +121,15 @@ func (s *Server) Handler() http.Handler {
 	// Agent API (docs/dev/plan.md §5.2): bearer agent tokens, not the local user.
 	deps := s.agentDeps()
 	mux.Handle("/mcp", agentapi.MCPHandler(deps, s.Version, s.Log))
-	mux.Handle("/mcp/connectors/{slug}", agentapi.ConnectorHandler(deps, s.Version))
+	connMCP := agentapi.ConnectorHandler(deps, s.Version)
+	customAppMCP := agentapi.CustomAppMCPHandler(deps, s.Version)
+	mux.HandleFunc("/mcp/connectors/{slug}", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.PathValue("slug"), agentdef.CustomAppMCPPrefix) {
+			customAppMCP.ServeHTTP(w, r)
+			return
+		}
+		connMCP.ServeHTTP(w, r)
+	})
 	// More specific than {slug}, so it wins; no connector slug can contain "_".
 	mux.Handle("/mcp/connectors/"+agentdef.SecretsMCPName, agentapi.SecretsHandler(deps, s.Version))
 	mux.HandleFunc("GET "+connectors.CallbackPath, s.connectorCallback)

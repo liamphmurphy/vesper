@@ -860,6 +860,7 @@ function PermissionsTab({ app }: { app: CustomAppDetail }) {
   const update = useUpdateCustomApp(app.slug);
   const connectors = useConnectors();
   const [schemaOpen, setSchemaOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
 
   const connectorRows = useMemo(() => {
     const rows = connectors.data?.connectors ?? [];
@@ -872,6 +873,7 @@ function PermissionsTab({ app }: { app: CustomAppDetail }) {
 
   const knownKeys = useMemo(() => {
     const keys = new Set<string>(["vesper.api:read", "vesper.api:write"]);
+    if (app.has_mcp_server) keys.add("app.http:outbound");
     for (const c of connectorRows) keys.add(c.key);
     for (const k of Object.keys(app.manifest.requested_capabilities ?? {})) {
       if (!k.startsWith("app.sql:")) keys.add(k);
@@ -880,7 +882,7 @@ function PermissionsTab({ app }: { app: CustomAppDetail }) {
       if (!k.startsWith("app.sql:")) keys.add(k);
     }
     return [...keys];
-  }, [connectorRows, app.manifest.requested_capabilities, app.capabilities]);
+  }, [app.has_mcp_server, connectorRows, app.manifest.requested_capabilities, app.capabilities]);
 
   const connectorMap = useMemo(() => new Map(connectorRows.map((c) => [c.key, c])), [connectorRows]);
 
@@ -899,6 +901,44 @@ function PermissionsTab({ app }: { app: CustomAppDetail }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto p-3.5">
+      {app.has_mcp_server && (
+        <section className="flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-12 font-semibold uppercase tracking-[0.04em] text-fg-tertiary">MCP Server</h3>
+            <span className="rounded-sm bg-pill-done-bg px-1.5 py-0.5 text-11 font-medium text-pill-done-fg">
+              {app.manifest.tool_scope === "app_only" ? "This app only" : "Chats & workflows"}
+            </span>
+          </div>
+          <div className="rounded-lg border border-border bg-surface-sunken p-2.5 text-12">
+            <div className="flex items-center justify-between text-fg-2">
+              <span>Entrypoint</span>
+              <span className="font-mono text-11">{app.manifest.mcp_entry || "server.ts"}</span>
+            </div>
+            <div className="mt-1.5 flex items-center justify-between text-fg-2">
+              <span>Exposed tools</span>
+              <button
+                type="button"
+                onClick={() => setToolsOpen((v) => !v)}
+                className="font-mono text-11 text-accent hover:underline"
+              >
+                {(app.mcp_tools ?? []).length} {(app.mcp_tools ?? []).length === 1 ? "tool" : "tools"}{" "}
+                {(app.mcp_tools ?? []).length > 0 ? (toolsOpen ? "▾" : "▸") : ""}
+              </button>
+            </div>
+            {toolsOpen && (app.mcp_tools ?? []).length > 0 && (
+              <ul className="mt-2 flex flex-col gap-1.5 border-t border-border-subtle pt-2">
+                {(app.mcp_tools ?? []).map((t) => (
+                  <li key={t.name} className="flex flex-col gap-0.5">
+                    <span className="font-mono text-11 font-medium text-fg">{t.name}</span>
+                    <span className="text-11 text-fg-secondary">{t.description}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </section>
+      )}
+
       <section className="flex flex-col gap-2">
         <div className="flex items-center justify-between gap-2">
           <h3 className="text-12 font-semibold uppercase tracking-[0.04em] text-fg-tertiary">Embedded SQLite</h3>
@@ -946,13 +986,21 @@ function PermissionsTab({ app }: { app: CustomAppDetail }) {
                 ? "Vesper API · Read"
                 : capKey === "vesper.api:write"
                   ? "Vesper API · Write"
-                  : cInfo?.label ?? capKey;
+                  : capKey === "app.http:outbound"
+                    ? "Outbound HTTPS (MCP server)"
+                    : capKey.startsWith("secret:")
+                      ? `Secret · ${capKey.slice("secret:".length)}`
+                      : cInfo?.label ?? capKey;
             const hint =
               capKey === "vesper.api:read"
                 ? "GET requests to Vesper REST APIs"
                 : capKey === "vesper.api:write"
                   ? "POST, PATCH, PUT, DELETE requests to Vesper APIs"
-                  : cInfo?.hint ?? "Requested by app manifest";
+                  : capKey === "app.http:outbound"
+                    ? "Public HTTPS fetch calls from the app's MCP server"
+                    : capKey.startsWith("secret:")
+                      ? "Authenticated secretFetch calls using this Vesper secret"
+                      : cInfo?.hint ?? "Requested by app manifest";
             const mode: CustomAppCapabilityMode = app.capabilities[capKey] ?? "denied";
             const requested = app.manifest.requested_capabilities?.[capKey];
             return (

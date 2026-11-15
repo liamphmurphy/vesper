@@ -589,17 +589,19 @@ type CustomAppDatabase struct {
 }
 
 type CustomAppVersion struct {
-	ID         uuid.UUID
-	AppID      uuid.UUID
-	Seq        int32
-	Note       string
-	AuthorType string
-	AgentID    *uuid.UUID
-	Manifest   json.RawMessage
-	Files      json.RawMessage
-	BundleJs   string
-	BundleCss  string
-	CreatedAt  time.Time
+	ID          uuid.UUID
+	AppID       uuid.UUID
+	Seq         int32
+	Note        string
+	AuthorType  string
+	AgentID     *uuid.UUID
+	Manifest    json.RawMessage
+	Files       json.RawMessage
+	BundleJs    string
+	BundleCss   string
+	CreatedAt   time.Time
+	BundleMcpJs string
+	McpTools    json.RawMessage
 }
 
 type DeckAsset struct {

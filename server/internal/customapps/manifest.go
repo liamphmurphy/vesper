@@ -26,9 +26,11 @@ const (
 )
 
 var (
-	slugRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,47}$`)
-	iconRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
-	mcpCap = regexp.MustCompile(`^mcp:([a-z0-9][a-z0-9-]{0,63}):(\*|[A-Za-z0-9_.:-]{1,128})$`)
+	slugRE    = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,47}$`)
+	iconRE    = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
+	mcpCap    = regexp.MustCompile(`^mcp:([a-z0-9][a-z0-9-]{0,63}):(\*|[A-Za-z0-9_.:-]{1,128})$`)
+	secretCap = regexp.MustCompile(`^secret:(\*|[a-z0-9][a-z0-9-]{0,35})$`)
+	toolRe    = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,128}$`)
 )
 
 // reservedSlugs protects built-in workbench routes; "finance" is explicitly allowed.
@@ -42,10 +44,17 @@ type NavItem struct {
 	Icon  string `json:"icon,omitempty"`
 }
 
+type MCPToolSpec struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	InputSchema map[string]any `json:"input_schema"`
+}
+
 type Capabilities map[string]agentdef.Mode
 
 type Manifest struct {
 	Entry                 string       `json:"entry"`
+	MCPEntry              string       `json:"mcp_entry,omitempty"`
 	ToolScope             string       `json:"tool_scope"`
 	Instructions          string       `json:"instructions,omitempty"`
 	Nav                   []NavItem    `json:"nav,omitempty"`
@@ -93,10 +102,10 @@ func ValidateIcon(icon string) (string, error) {
 
 func ValidCapabilityKey(key string) error {
 	switch key {
-	case "app.sql:read", "app.sql:write", "vesper.api:read", "vesper.api:write":
+	case "app.sql:read", "app.sql:write", "app.http:outbound", "vesper.api:read", "vesper.api:write":
 		return nil
 	default:
-		if mcpCap.MatchString(key) {
+		if mcpCap.MatchString(key) || secretCap.MatchString(key) {
 			return nil
 		}
 		return apperr.Invalid("capabilities", "unknown capability %q", key)
@@ -131,13 +140,26 @@ func NormalizeCapabilities(caps Capabilities) (Capabilities, error) {
 
 // ModeFor returns the effective permission mode for key.
 // app.sql:read and app.sql:write default to allowed; all external capabilities
-// (vesper.api:*, mcp:*) default to denied. mcp:<slug>:* wildcards combine with
-// exact matches via agentdef.Stricter.
+// (vesper.api:*, app.http:outbound, mcp:*, secret:*) default to denied.
+// mcp:<slug>:* and secret:* wildcards combine with exact matches via agentdef.Stricter.
 func ModeFor(caps Capabilities, key string) agentdef.Mode {
 	exact, hasExact := caps[key]
 	if m := mcpCap.FindStringSubmatch(key); len(m) == 3 && m[2] != "*" {
 		wildKey := "mcp:" + m[1] + ":*"
 		wild, hasWild := caps[wildKey]
+		switch {
+		case hasWild && hasExact:
+			return agentdef.Stricter(wild, exact)
+		case hasWild:
+			return wild
+		case hasExact:
+			return exact
+		default:
+			return agentdef.Denied
+		}
+	}
+	if m := secretCap.FindStringSubmatch(key); len(m) == 2 && m[1] != "*" {
+		wild, hasWild := caps["secret:*"]
 		switch {
 		case hasWild && hasExact:
 			return agentdef.Stricter(wild, exact)
@@ -217,6 +239,17 @@ func NormalizeManifest(m Manifest, files map[string]string) (Manifest, error) {
 	m.Entry = path.Clean(strings.TrimPrefix(m.Entry, "/"))
 	if _, ok := files[m.Entry]; !ok {
 		return Manifest{}, apperr.Invalid("manifest", "entry file %q not found in files", m.Entry)
+	}
+	m.MCPEntry = strings.TrimSpace(m.MCPEntry)
+	if m.MCPEntry != "" {
+		m.MCPEntry = path.Clean(strings.TrimPrefix(m.MCPEntry, "/"))
+		if _, ok := files[m.MCPEntry]; !ok {
+			return Manifest{}, apperr.Invalid("manifest", "mcp_entry file %q not found in files", m.MCPEntry)
+		}
+	} else if _, ok := files["server.ts"]; ok {
+		m.MCPEntry = "server.ts"
+	} else if _, ok := files["server.js"]; ok {
+		m.MCPEntry = "server.js"
 	}
 	m.ToolScope = strings.TrimSpace(m.ToolScope)
 	if m.ToolScope == "" {

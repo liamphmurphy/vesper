@@ -1,16 +1,35 @@
 -- User-built custom apps: one owner (workspace_id, user_id) per app.
 
 -- name: ListCustomApps :many
-SELECT a.*, db.size_bytes
+SELECT a.*, db.size_bytes,
+       (COALESCE(v.bundle_mcp_js, '') <> '')::bool AS has_mcp_server,
+       COALESCE(v.mcp_tools, '[]'::jsonb)::jsonb AS mcp_tools
 FROM custom_apps a
 LEFT JOIN custom_app_databases db ON db.app_id = a.id
+LEFT JOIN custom_app_versions v ON v.app_id = a.id AND v.seq = a.current_seq
 WHERE a.workspace_id = $1 AND a.user_id = $2
 ORDER BY lower(a.name), a.id;
 
 -- name: GetCustomAppBySlug :one
-SELECT a.*, db.size_bytes
+SELECT a.*, db.size_bytes,
+       (COALESCE(v.bundle_mcp_js, '') <> '')::bool AS has_mcp_server,
+       COALESCE(v.mcp_tools, '[]'::jsonb)::jsonb AS mcp_tools
 FROM custom_apps a
 LEFT JOIN custom_app_databases db ON db.app_id = a.id
+LEFT JOIN custom_app_versions v ON v.app_id = a.id AND v.seq = a.current_seq
+WHERE a.workspace_id = $1 AND a.user_id = $2 AND a.slug = $3;
+
+-- name: ListCustomAppsWithMCP :many
+SELECT a.id, a.slug, a.name, a.description, a.manifest, a.capabilities, a.current_seq, v.bundle_mcp_js, v.mcp_tools
+FROM custom_apps a
+JOIN custom_app_versions v ON v.app_id = a.id AND v.seq = a.current_seq
+WHERE a.workspace_id = $1 AND a.user_id = $2 AND v.bundle_mcp_js <> ''
+ORDER BY lower(a.name), a.id;
+
+-- name: GetCustomAppWithMCPBySlug :one
+SELECT a.id, a.workspace_id, a.user_id, a.slug, a.name, a.description, a.manifest, a.capabilities, a.current_seq, v.bundle_mcp_js, v.mcp_tools
+FROM custom_apps a
+JOIN custom_app_versions v ON v.app_id = a.id AND v.seq = a.current_seq
 WHERE a.workspace_id = $1 AND a.user_id = $2 AND a.slug = $3;
 
 -- name: GetCustomAppForUpdate :one
@@ -41,8 +60,8 @@ WHERE workspace_id = $1 AND user_id = $2 AND slug = $3
 RETURNING *;
 
 -- name: InsertCustomAppVersion :one
-INSERT INTO custom_app_versions (app_id, seq, note, author_type, agent_id, manifest, files, bundle_js, bundle_css)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+INSERT INTO custom_app_versions (app_id, seq, note, author_type, agent_id, manifest, files, bundle_js, bundle_css, bundle_mcp_js, mcp_tools)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 RETURNING *;
 
 -- name: GetCustomAppVersion :one
