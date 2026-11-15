@@ -231,7 +231,13 @@ func serve(ctx context.Context, log *slog.Logger) error {
 	case <-ctx.Done():
 		sctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		return hs.Shutdown(sctx)
+		err := hs.Shutdown(sctx)
+		// A manual Drive backup outlives its request: stop it and let it
+		// record that Vesper stopped before the process exits.
+		if berr := srv.DriveBackups.Shutdown(sctx); berr != nil {
+			log.Warn("drive backups still running at exit", "err", berr)
+		}
+		return err
 	}
 }
 

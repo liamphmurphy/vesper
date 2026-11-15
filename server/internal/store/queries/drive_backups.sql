@@ -12,7 +12,13 @@ VALUES (sqlc.arg(workspace_id), sqlc.arg(user_id), sqlc.arg(enabled), sqlc.narg(
   sqlc.arg(at_time), sqlc.arg(timezone), sqlc.arg(retention), sqlc.narg(next_run_at))
 ON CONFLICT (workspace_id) DO UPDATE SET user_id = EXCLUDED.user_id, enabled = EXCLUDED.enabled, secret_id = EXCLUDED.secret_id,
   folder_id = EXCLUDED.folder_id, folder_name = EXCLUDED.folder_name, at_time = EXCLUDED.at_time, timezone = EXCLUDED.timezone,
-  retention = EXCLUDED.retention, next_run_at = EXCLUDED.next_run_at, revision = drive_backups.revision + 1, updated_at = now()
+  retention = EXCLUDED.retention,
+  -- An unchanged schedule keeps the stored next run: a claim may have advanced
+  -- it since the caller read the row, and the revision doesn't cover that.
+  next_run_at = CASE WHEN drive_backups.enabled AND EXCLUDED.enabled AND drive_backups.at_time = EXCLUDED.at_time
+      AND drive_backups.timezone = EXCLUDED.timezone AND drive_backups.next_run_at IS NOT NULL
+    THEN drive_backups.next_run_at ELSE EXCLUDED.next_run_at END,
+  revision = drive_backups.revision + 1, updated_at = now()
 WHERE drive_backups.revision = sqlc.arg(revision)
 RETURNING *;
 

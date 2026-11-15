@@ -271,12 +271,91 @@ func TestLostLeaseStopsTheRun(t *testing.T) {
 	if !ran || err != nil {
 		t.Fatalf("RunDue = %v, %v", ran, err)
 	}
+	// The run that took over records the result; this one leaves it alone.
 	b, _ := f.q.GetDriveBackup(f.ctx, f.ws)
-	if b.LastStatus != StatusFailed || !strings.Contains(b.LastError, "another run took over") {
-		t.Fatalf("after losing the lease: %+v", b)
+	if b.LastStatus != "" || b.LastRunAt != nil {
+		t.Fatalf("a run that lost its lease recorded a result: %+v", b)
 	}
 	// The other holder's lease is left alone.
 	if l, err := f.q.GetDriveBackupLock(f.ctx, f.ws); err != nil || l.Holder != "thief" {
 		t.Fatalf("lease = %+v, %v", l, err)
+	}
+}
+
+func TestRunDueAdvancesPastTheClaimWhenTheAppClockIsBehind(t *testing.T) {
+	f := newFixture(t)
+	d := newFakeDrive(t)
+	sec := f.oauthSecret(t, "Drive", true, ScopeFile)
+	due := f.dueBackup(t, sec, 0)
+	r := newRunner(f, f.pool, d)
+	// The database says the run is due; this process's clock is a little
+	// earlier than the run time.
+	r.Now = func() time.Time { return due.NextRunAt.Add(-2 * time.Second) }
+	if ran, err := r.RunDue(f.ctx); !ran || err != nil {
+		t.Fatalf("RunDue = %v, %v", ran, err)
+	}
+	b, _ := f.q.GetDriveBackup(f.ctx, f.ws)
+	if b.NextRunAt == nil || b.NextRunAt.Sub(*due.NextRunAt) < 23*time.Hour {
+		t.Fatalf("next run moved from %v to %v; want the next day", due.NextRunAt, b.NextRunAt)
+	}
+}
+
+func TestShutdownStopsAManualRunAndRecordsIt(t *testing.T) {
+	f := newFixture(t)
+	d := newFakeDrive(t)
+	sec := f.oauthSecret(t, "Drive", true, ScopeFile)
+	f.dueBackup(t, sec, 0)
+	r := newRunner(f, f.pool, d)
+	uploading, ended := make(chan struct{}), make(chan struct{})
+	defer close(ended)
+	d.intercept = func(_ http.ResponseWriter, req *http.Request) bool {
+		if req.Method != http.MethodPut {
+			return false
+		}
+		close(uploading)
+		_, _ = io.Copy(io.Discard, req.Body)
+		select {
+		case <-req.Context().Done():
+		case <-ended:
+		}
+		return true
+	}
+	// The request that started it ends at once; the run carries on.
+	reqCtx, cancel := context.WithCancel(f.ctx)
+	if err := r.Start(reqCtx, f.ws); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	<-uploading
+	sctx, scancel := context.WithTimeout(f.ctx, 10*time.Second)
+	defer scancel()
+	if err := r.Shutdown(sctx); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	b, _ := f.q.GetDriveBackup(f.ctx, f.ws)
+	if b.LastStatus != StatusFailed || !strings.Contains(b.LastError, "Vesper stopped") {
+		t.Fatalf("after shutdown: %+v", b)
+	}
+	if _, err := f.q.GetDriveBackupLock(f.ctx, f.ws); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("lease kept after shutdown: %v", err)
+	}
+}
+
+func TestSaveKeepsAClaimedRunsNextTime(t *testing.T) {
+	f := newFixture(t)
+	sec := f.oauthSecret(t, "Drive", true, ScopeFile)
+	read := f.dueBackup(t, sec, 0)
+	// A runner claims the due run after Save read the row.
+	later := read.NextRunAt.Add(24 * time.Hour)
+	if err := f.q.AdvanceDriveBackup(f.ctx, store.AdvanceDriveBackupParams{WorkspaceID: f.ws, NextRunAt: &later}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := f.q.SaveDriveBackup(f.ctx, store.SaveDriveBackupParams{WorkspaceID: f.ws, UserID: &f.user, Enabled: true, SecretID: &sec.ID,
+		FolderID: "folder2", AtTime: read.AtTime, Timezone: read.Timezone, Retention: read.Retention, NextRunAt: read.NextRunAt, Revision: read.Revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.NextRunAt == nil || !b.NextRunAt.Equal(later) {
+		t.Fatalf("save moved the claimed next run back: %v, want %v", b.NextRunAt, later)
 	}
 }

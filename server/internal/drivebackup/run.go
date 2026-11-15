@@ -3,7 +3,9 @@ package drivebackup
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -47,7 +49,17 @@ type Runner struct {
 	Now      func() time.Time
 	Log      *slog.Logger
 
-	wg sync.WaitGroup
+	wg       sync.WaitGroup
+	baseOnce sync.Once
+	base     context.Context
+	stop     context.CancelFunc
+}
+
+// ctx is the context manual runs derive from: Shutdown cancels it, so a run
+// started by a request still records why it stopped when Vesper exits.
+func (r *Runner) ctx() context.Context {
+	r.baseOnce.Do(func() { r.base, r.stop = context.WithCancel(context.Background()) })
+	return r.base
 }
 
 func (r *Runner) now() time.Time {
@@ -78,13 +90,28 @@ func (r *Runner) holder() string {
 // Wait waits for runs Start began.
 func (r *Runner) Wait() { r.wg.Wait() }
 
+// Shutdown cancels the runs Start began and waits until each has recorded
+// how it ended, or ctx ends.
+func (r *Runner) Shutdown(ctx context.Context) error {
+	r.ctx()
+	r.stop()
+	done := make(chan struct{})
+	go func() { r.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // ErrRunning means a backup of the workspace is already running.
 var ErrRunning = apperr.Conflict("a backup is already running; wait for it to finish")
 
 // Start begins a backup of the workspace now, in the background, whether or
 // not the schedule is enabled. It returns once the lease is held: ErrRunning
 // when another run holds it, or a conflict naming what to set up first.
-// ctx only bounds taking the lease; the run outlives it.
+// ctx only bounds taking the lease; the run outlives it until Shutdown.
 func (r *Runner) Start(ctx context.Context, ws uuid.UUID) error {
 	q := store.New(r.Pool)
 	b, err := q.GetDriveBackup(ctx, ws)
@@ -104,10 +131,11 @@ func (r *Runner) Start(ctx context.Context, ws uuid.UUID) error {
 		}
 		return err
 	}
+	base := r.ctx()
 	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
-		r.execute(context.WithoutCancel(ctx), b, holder)
+		r.execute(base, b, holder)
 	}()
 	return nil
 }
@@ -126,7 +154,14 @@ func (r *Runner) RunDue(ctx context.Context) (bool, error) {
 		if b, err = q.NextDueDriveBackup(ctx); err != nil {
 			return err
 		}
-		next, err := NextRun(b.AtTime, b.Timezone, r.now())
+		// Due-ness is on the database's clock; never schedule the next run
+		// at or before the one being claimed, or an app clock behind the
+		// database's would leave the row due and run it twice.
+		after := r.now()
+		if b.NextRunAt != nil && b.NextRunAt.After(after) {
+			after = *b.NextRunAt
+		}
+		next, err := NextRun(b.AtTime, b.Timezone, after)
 		if err != nil {
 			// Save validates the schedule, so only a hand-edited row lands
 			// here; turn it off rather than claim it every tick.
@@ -175,7 +210,7 @@ func (r *Runner) execute(ctx context.Context, b store.DriveBackup, holder string
 		r.keepLease(ctx, cancel, b.WorkspaceID, holder)
 	}()
 
-	res, err := r.backup(ctx, b)
+	res, err := r.safeBackup(ctx, b)
 	if cause := context.Cause(ctx); err != nil && cause != nil {
 		// The upload saw a cancelled context; say why it was cancelled.
 		err = cause
@@ -184,6 +219,12 @@ func (r *Runner) execute(ctx context.Context, b store.DriveBackup, holder string
 	<-renewed
 
 	bg := context.WithoutCancel(ctx)
+	if errors.Is(err, errLeaseLost) {
+		// Another run holds the lease and records its own result; writing
+		// ours could overwrite it.
+		r.log().Warn("drive backup lost its lease", "workspace", b.WorkspaceID)
+		return
+	}
 	status, msg := StatusSucceeded, ""
 	if err != nil {
 		status, msg = StatusFailed, r.explain(bg, b, err)
@@ -228,6 +269,18 @@ func (r *Runner) keepLease(ctx context.Context, cancel context.CancelCauseFunc, 
 	}
 }
 
+// safeBackup is backup, with a panic turned into an error so that the run
+// still records a failure and releases its lease.
+func (r *Runner) safeBackup(ctx context.Context, b store.DriveBackup) (res Result, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			r.log().Error("drive backup panicked", "workspace", b.WorkspaceID, "panic", p, "stack", string(debug.Stack()))
+			res, err = Result{}, fmt.Errorf("internal error: %v", p)
+		}
+	}()
+	return r.backup(ctx, b)
+}
+
 // backup checks the secret and uploads.
 func (r *Runner) backup(ctx context.Context, b store.DriveBackup) (Result, error) {
 	if msg := incomplete(b); msg != "" {
@@ -252,8 +305,6 @@ func (r *Runner) backup(ctx context.Context, b store.DriveBackup) (Result, error
 // deleted) that is the cause to fix, whatever the upload said.
 func (r *Runner) explain(ctx context.Context, b store.DriveBackup, err error) string {
 	switch {
-	case errors.Is(err, errLeaseLost):
-		return "The backup stalled and another run took over."
 	case errors.Is(err, context.Canceled):
 		return "Vesper stopped before the backup finished. It runs again at the next scheduled time, or run it now from Settings › Backup & move."
 	}
