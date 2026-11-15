@@ -14,6 +14,53 @@ import (
 // from `claude setup-token` rather than an API key.
 func ClaudeOAuthToken(v string) bool { return strings.HasPrefix(v, "sk-ant-oat") }
 
+// ClaudeAuth is the part of Claude Code's ~/.claude/.credentials.json that
+// `claude auth login --claudeai` writes, carrying user:profile and refresh
+// tokens so `get_usage` and token rotation both work.
+type ClaudeAuth struct {
+	ClaudeAiOauth struct {
+		AccessToken      string   `json:"accessToken"`
+		RefreshToken     string   `json:"refreshToken"`
+		ExpiresAt        int64    `json:"expiresAt"`
+		Scopes           []string `json:"scopes,omitempty"`
+		SubscriptionType string   `json:"subscriptionType,omitempty"`
+		RateLimitTier    string   `json:"rateLimitTier,omitempty"`
+	} `json:"claudeAiOauth"`
+}
+
+// ParseClaudeAuth reports whether a harness:anthropic value is a Claude Code
+// ~/.claude/.credentials.json OAuth credential rather than a raw token or API key.
+func ParseClaudeAuth(v string) (ClaudeAuth, bool) {
+	var a ClaudeAuth
+	if !strings.HasPrefix(strings.TrimSpace(v), "{") || json.Unmarshal([]byte(v), &a) != nil {
+		return a, false
+	}
+	return a, a.ClaudeAiOauth.AccessToken != "" && a.ClaudeAiOauth.RefreshToken != ""
+}
+
+// ClaudeAuthRefreshed reports whether next is a newer OAuth credential than
+// current. next comes from a container an agent could write to, so an
+// invalidated or older expiry is rejected.
+func ClaudeAuthRefreshed(current, next string) bool {
+	cur, ok := ParseClaudeAuth(current)
+	if !ok {
+		return false
+	}
+	n, ok := ParseClaudeAuth(next)
+	return ok && n.ClaudeAiOauth.ExpiresAt > cur.ClaudeAiOauth.ExpiresAt &&
+		n.ClaudeAiOauth.ExpiresAt < time.Now().Add(365*24*time.Hour).UnixMilli()
+}
+
+// ClaudePlanLogin reports whether a harness:anthropic value is any Claude
+// subscription login (either ~/.claude/.credentials.json or a setup-token).
+func ClaudePlanLogin(v string) bool {
+	if ClaudeOAuthToken(v) {
+		return true
+	}
+	_, ok := ParseClaudeAuth(v)
+	return ok
+}
+
 // CodexAuth is the part of Codex's auth.json Vesper reads.
 type CodexAuth struct {
 	AuthMode    string    `json:"auth_mode"`
@@ -120,7 +167,7 @@ func ParseAntigravityAuth(v string) (AntigravityAuth, bool) {
 func subscriptionLogin(harness, key string) bool {
 	switch harness {
 	case agentdef.HarnessClaudeCode:
-		return ClaudeOAuthToken(key)
+		return ClaudePlanLogin(key)
 	case agentdef.HarnessAntigravity:
 		_, ok := ParseAntigravityAuth(key)
 		return ok

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -178,5 +179,79 @@ func TestUsageCheckFailureKeepsLastReadingAndBacksOff(t *testing.T) {
 	}
 	if c.Status != "done" || time.Until(c.RetryAfter) < 5*time.Minute {
 		t.Fatalf("check %+v", c)
+	}
+}
+
+func TestDockerProbeUsageClaudeAuthFileKeepsRefreshedLogin(t *testing.T) {
+	f, d := startModelsEngine(t)
+	now := time.Now()
+	claudeOld := fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"sk-ant-oat01-old","refreshToken":"sk-ant-ort01-old","expiresAt":%d,"scopes":["user:profile","user:inference"]}}`, now.Add(time.Hour).UnixMilli())
+	claudeNew := fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"sk-ant-oat01-new","refreshToken":"sk-ant-ort01-new","expiresAt":%d,"scopes":["user:profile","user:inference"]}}`, now.Add(2*time.Hour).UnixMilli())
+	f.authBack = claudeNew
+	var saved string
+	d.SaveClaudeAuth = func(_ context.Context, _, auth string) error { saved = auth; return nil }
+	snap, err := d.ProbeUsage(context.Background(), "claim1", agentdef.HarnessClaudeCode, claudeOld, "scope")
+	if err != nil || !snap.Available || snap.Plan != "max" || len(snap.Windows) != 2 {
+		t.Fatalf("snapshot %+v err %v", snap, err)
+	}
+	if env := f.created["Env"].([]any); len(env) != 0 {
+		t.Fatalf("oauth file login must not travel in Env: %v", env)
+	}
+	if got := f.archive[homePath+"|.claude/.credentials.json"]; got != claudeOld {
+		t.Fatalf("uploaded %v", f.archive)
+	}
+	if saved != claudeNew {
+		t.Fatalf("refreshed login not kept: %q", saved)
+	}
+}
+
+func TestDockerProbeUsageAntigravityParsesUsage(t *testing.T) {
+	f, d := startModelsEngine(t)
+	f.agyMode = true
+	f.started = make(chan struct{})
+	f.agyOut = `{"event":"command_result","command":{"name":"usage","data":{"plan_name":"Pro","groups":[{"display_name":"Gemini","window":"5h","remaining_fraction":0.7,"reset_time":"2099-01-01T00:00:00Z"}]}}}`
+	agyLogin := `{"v":1,"files":{".gemini/antigravity-cli/installation_id":"id-1"}}`
+	snap, err := d.ProbeUsage(context.Background(), "claim1", agentdef.HarnessAntigravity, agyLogin, "scope")
+	if err != nil || !snap.Available || snap.Plan != "Pro" || len(snap.Windows) != 1 || int(snap.Windows[0].UsedPercent+0.5) != 30 {
+		t.Fatalf("snapshot %+v err %v", snap, err)
+	}
+	if f.created["OpenStdin"] != false {
+		t.Fatalf("agy probe should not attach stdin: %v", f.created["OpenStdin"])
+	}
+	if got := f.archive[homePath+"|.gemini/antigravity-cli/installation_id"]; got != "id-1" {
+		t.Fatalf("uploaded %v", f.archive)
+	}
+}
+
+func TestUsageCheckPreservesPassiveClaudeWindowsOnSetupToken(t *testing.T) {
+	p := &fakeProber{err: usage.ErrSignedOut}
+	e := newUsageEnv(t, p)
+	e.set("harness:anthropic", "sk-ant-oat01-abcdefghijklmnopqrstuvwxyz")
+	resets := time.Now().Add(3 * time.Hour)
+	svc := &usage.Service{Q: e.q}
+	if err := svc.Record(e.ctx, e.ws, agentdef.HarnessClaudeCode, []usage.Window{{ID: "five_hour", Kind: usage.Session, Label: "Session", UsedPercent: 42, ResetsAt: &resets}}); err != nil {
+		t.Fatal(err)
+	}
+	reading, _ := e.check(t, agentdef.HarnessClaudeCode)
+	var ws []usage.Window
+	_ = json.Unmarshal(reading.Windows, &ws)
+	if !reading.Available || len(ws) != 1 || ws[0].UsedPercent != 42 {
+		t.Fatalf("passive setup-token reading wiped: %+v windows %s", reading, reading.Windows)
+	}
+}
+
+func TestUsageCheckClearsProviderLimitWhenUsageHasCapacity(t *testing.T) {
+	p := &fakeProber{snap: usage.Snapshot{Harness: agentdef.HarnessAntigravity, Plan: "Pro", Available: true, ObservedAt: time.Now(),
+		Windows: []usage.Window{{ID: "agy_gemini", Kind: usage.Session, Label: "Gemini", UsedPercent: 25}}}}
+	e := newUsageEnv(t, p)
+	agyLogin := `{"v":1,"files":{".gemini/antigravity-cli/installation_id":"id-1"}}`
+	e.set("harness:google", agyLogin)
+	if err := e.q.MarkProviderLimited(e.ctx, store.MarkProviderLimitedParams{WorkspaceID: e.ws, Harness: agentdef.HarnessAntigravity, Until: time.Now().Add(time.Hour), Reason: "stale"}); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = e.check(t, agentdef.HarnessAntigravity)
+	limits, err := e.q.ActiveProviderLimits(e.ctx, e.ws)
+	if err != nil || len(limits) != 0 {
+		t.Fatalf("stale provider limit not cleared: limits=%+v err=%v", limits, err)
 	}
 }

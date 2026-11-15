@@ -357,10 +357,14 @@ var HarnessKeys = map[string]struct {
 }
 
 // Subscription logins. A stored harness key can be a plan login rather than an
-// API key, recognized by its shape (ClaudeOAuthToken, ParseCodexAuth,
-// ParseAntigravityAuth).
+// API key, recognized by its shape (ClaudeOAuthToken, ParseClaudeAuth,
+// ParseCodexAuth, ParseAntigravityAuth).
 const (
 	ClaudeOAuthEnv = "CLAUDE_CODE_OAUTH_TOKEN"
+	// ClaudeAuthEnv and ClaudeAuthScopeEnv only travel from SecretEnv to the
+	// backend: Docker turns them into ~/.claude/.credentials.json.
+	ClaudeAuthEnv      = "LAZYAGENTS_CLAUDE_AUTH"
+	ClaudeAuthScopeEnv = "LAZYAGENTS_CLAUDE_AUTH_SCOPE"
 	// CodexAuthEnv and CodexAuthScopeEnv only travel from SecretEnv to the
 	// backend: Docker turns them into ~/.codex/auth.json.
 	CodexAuthEnv      = "LAZYAGENTS_CODEX_AUTH"
@@ -504,9 +508,16 @@ func SecretEnv(ctx context.Context, rv Revealer, ws uuid.UUID, project *uuid.UUI
 			return nil, err
 		}
 		switch {
-		case d.Name == chatmodels.KeySecret[agentdef.HarnessClaudeCode] && chatmodels.ClaudeOAuthToken(v):
-			env[ClaudeOAuthEnv] = v
-			continue
+		case d.Name == chatmodels.KeySecret[agentdef.HarnessClaudeCode]:
+			if chatmodels.ClaudeOAuthToken(v) {
+				env[ClaudeOAuthEnv] = v
+				continue
+			}
+			if _, ok := chatmodels.ParseClaudeAuth(v); ok {
+				env[ClaudeAuthEnv] = v
+				env[ClaudeAuthScopeEnv] = CodexAuthScope(ws, project)
+				continue
+			}
 		case d.Name == chatmodels.KeySecret[agentdef.HarnessCodex]:
 			if _, ok := chatmodels.ParseCodexAuth(v); ok {
 				env[CodexAuthEnv] = v
@@ -551,6 +562,9 @@ func sensitiveEnv(env map[string]string) map[string]string {
 	out := make(map[string]string, len(env)+3)
 	for k, v := range env {
 		out[k] = v
+	}
+	if auth, ok := chatmodels.ParseClaudeAuth(env[ClaudeAuthEnv]); ok {
+		out["claude_access"], out["claude_refresh"] = auth.ClaudeAiOauth.AccessToken, auth.ClaudeAiOauth.RefreshToken
 	}
 	if auth, ok := chatmodels.ParseCodexAuth(env[CodexAuthEnv]); ok {
 		out["codex_access"], out["codex_refresh"], out["codex_id"] = auth.Tokens.AccessToken, auth.Tokens.RefreshToken, auth.Tokens.IDToken

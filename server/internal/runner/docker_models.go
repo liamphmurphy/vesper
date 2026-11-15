@@ -68,13 +68,14 @@ func (d *Docker) converseCLI(ctx context.Context, kind, claim, harness, login, c
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	env := []string{}
-	if harness == agentdef.HarnessClaudeCode {
+	if harness == agentdef.HarnessClaudeCode && chatmodels.ClaudeOAuthToken(login) {
 		env = append(env, ClaudeOAuthEnv+"="+login)
 	}
+	openStdin := harness != agentdef.HarnessAntigravity
 	body := map[string]any{
 		"Image": d.Image, "Cmd": argv, "Env": env, "WorkingDir": homePath,
 		"Labels": d.labels(kind + "-" + harness),
-		"Tty":    false, "OpenStdin": true, "StdinOnce": true, "AttachStdin": true, "AttachStdout": true, "AttachStderr": true,
+		"Tty":    false, "OpenStdin": openStdin, "StdinOnce": openStdin, "AttachStdin": openStdin, "AttachStdout": true, "AttachStderr": true,
 		"HostConfig": d.hostConfig([]map[string]any{}),
 	}
 	var created struct{ ID string }
@@ -95,6 +96,15 @@ func (d *Docker) converseCLI(ctx context.Context, kind, claim, harness, login, c
 			wctx, wcancel := context.WithTimeout(context.Background(), listExitWait)
 			_, _ = d.do(wctx, "POST", "/containers/"+created.ID+"/wait", nil, "", nil)
 			wcancel()
+			if harness == agentdef.HarnessClaudeCode && d.SaveClaudeAuth != nil {
+				if _, ok := chatmodels.ParseClaudeAuth(login); ok {
+					if next, ok := d.refreshedClaudeAuth(cctx, created.ID, login); ok {
+						if err := d.SaveClaudeAuth(cctx, codexScope, next); err != nil {
+							slog.Warn("save refreshed claude login", "err", err)
+						}
+					}
+				}
+			}
 			if harness == agentdef.HarnessCodex && d.SaveCodexAuth != nil {
 				// Codex rotates its refresh token, so a refreshed login must be kept.
 				if next, ok := d.refreshedCodexAuth(cctx, created.ID, login); ok {
@@ -110,6 +120,10 @@ func (d *Docker) converseCLI(ctx context.Context, kind, claim, harness, login, c
 	var authTar io.Reader
 	var tarErr error
 	switch harness {
+	case agentdef.HarnessClaudeCode:
+		if _, ok := chatmodels.ParseClaudeAuth(login); ok {
+			authTar, tarErr = claudeAuthTar(login)
+		}
 	case agentdef.HarnessCodex:
 		authTar, tarErr = codexAuthTar(login)
 	case agentdef.HarnessAntigravity:
@@ -243,7 +257,7 @@ func (r *Runner) runModelListing(parent context.Context, ml ModelLister, l store
 		return // shutting down: the claim times out and another runner retries
 	}
 	label := "Claude"
-	planLogin := chatmodels.ClaudeOAuthToken(login)
+	planLogin := chatmodels.ClaudePlanLogin(login)
 	badMsg := "The saved login isn't a Claude or ChatGPT plan login."
 	switch l.Harness {
 	case agentdef.HarnessCodex:

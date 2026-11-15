@@ -223,12 +223,12 @@ printf '{"auth_mode":"chatgpt","tokens":{"refresh_token":"r","account_id":"a"}}'
 }
 
 // Claude's page shows a code the person pastes back: it reaches the CLI's
-// terminal once, and the token it prints is stored without waiting for exit.
+// terminal once, and the ~/.claude/.credentials.json file it saves is stored on exit.
 func TestClaudeSignInRelaysPastedCode(t *testing.T) {
 	e := newSignInEnv(t, `printf 'Browser\033[1Cdidn'"'"'t\033[1Copen?\r\n\033[32mhttps://claude.com/cai/oauth/authorize?code=true&state=x\033[0m\r\n\r\nPaste code here if prompted > '
 read code
-printf '\r\nToken: sk-ant-oat01-%s0123456789abcdefghij\r\n' "$code"
-exec sleep 60`)
+mkdir -p "$HOME/.claude"
+printf '{"claudeAiOauth":{"accessToken":"sk-ant-oat01-%s","refreshToken":"sk-ant-ort01-r","expiresAt":4070908800000,"scopes":["user:profile","user:inference"]}}' "$code" > "$HOME/.claude/.credentials.json"`)
 	s := e.start(t, "claude")
 	shown := e.waitFor(t, s.ID, func(s store.SignIn) bool { return s.Url != "" || ended(s) })
 	if shown.Url != "https://claude.com/cai/oauth/authorize?code=true&state=x" || shown.UserCode != "" {
@@ -248,11 +248,8 @@ exec sleep 60`)
 	if done.PastedCode != nil {
 		t.Fatal("the pasted code was kept")
 	}
-	if e.secret("harness:anthropic") != "sk-ant-oat01-pastedcode0123456789abcdefghij" {
-		t.Fatal("wrong secret stored")
-	}
-	if !e.f.wasKilled() {
-		t.Fatal("the CLI was left running after printing its token")
+	if !strings.Contains(e.secret("harness:anthropic"), `"accessToken":"sk-ant-oat01-pastedcode"`) {
+		t.Fatalf("wrong secret stored: %q", e.secret("harness:anthropic"))
 	}
 	// Enter goes on its own: in one chunk with the code, Claude's prompt
 	// takes it as part of a paste and never submits.

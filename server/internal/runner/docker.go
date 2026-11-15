@@ -57,6 +57,9 @@ type Docker struct {
 	// SaveCodexAuth stores a ChatGPT login a turn refreshed. scope is what
 	// SecretEnv put in CodexAuthScopeEnv.
 	SaveCodexAuth func(ctx context.Context, scope, auth string) error
+	// SaveClaudeAuth stores a Claude OAuth login a turn refreshed. scope is
+	// what SecretEnv put in ClaudeAuthScopeEnv.
+	SaveClaudeAuth func(ctx context.Context, scope, auth string) error
 	// HostWorkspaces is where checkouts go when they live in a folder on the
 	// person's machine (RUNNER_HOST_WORKSPACES_DIR); "" turns that off. The
 	// runner must see it at the same absolute path as the Docker daemon: it
@@ -84,12 +87,13 @@ type Docker struct {
 }
 
 const (
-	dockerAPI     = "http://docker/v1.43"
-	workspacePath = "/workspace"
-	homePath      = "/home/node"
-	codexAuthPath = ".codex/auth.json"
-	labelKey      = "dev.lazyagents.run"
-	stackLabelKey = "dev.lazyagents.stack"
+	dockerAPI      = "http://docker/v1.43"
+	workspacePath  = "/workspace"
+	homePath       = "/home/node"
+	claudeAuthPath = ".claude/.credentials.json"
+	codexAuthPath  = ".codex/auth.json"
+	labelKey       = "dev.lazyagents.run"
+	stackLabelKey  = "dev.lazyagents.stack"
 )
 
 func (d *Docker) Name() string { return "docker" }
@@ -450,22 +454,30 @@ func (d *Docker) hostConfig(mounts []map[string]any) map[string]any {
 	return host
 }
 
-// codexAuthTar is the archive that puts a ChatGPT login at ~/.codex/auth.json.
-func codexAuthTar(auth string) (io.Reader, error) {
+// singleFileTar builds an archive unpacking content at relPath under $HOME.
+func singleFileTar(relPath, content string) (io.Reader, error) {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
-	dir, _ := path.Split(codexAuthPath)
-	if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeDir, Name: dir, Mode: 0o700, Uid: 1000, Gid: 1000, ModTime: time.Now()}); err != nil {
+	dir, _ := path.Split(relPath)
+	if dir != "" {
+		if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeDir, Name: dir, Mode: 0o700, Uid: 1000, Gid: 1000, ModTime: time.Now()}); err != nil {
+			return nil, err
+		}
+	}
+	if err := tw.WriteHeader(&tar.Header{Name: relPath, Mode: 0o600, Size: int64(len(content)), Uid: 1000, Gid: 1000, ModTime: time.Now()}); err != nil {
 		return nil, err
 	}
-	if err := tw.WriteHeader(&tar.Header{Name: codexAuthPath, Mode: 0o600, Size: int64(len(auth)), Uid: 1000, Gid: 1000, ModTime: time.Now()}); err != nil {
-		return nil, err
-	}
-	if _, err := io.WriteString(tw, auth); err != nil {
+	if _, err := io.WriteString(tw, content); err != nil {
 		return nil, err
 	}
 	return &buf, tw.Close()
 }
+
+// claudeAuthTar puts a Claude OAuth login at ~/.claude/.credentials.json.
+func claudeAuthTar(auth string) (io.Reader, error) { return singleFileTar(claudeAuthPath, auth) }
+
+// codexAuthTar is the archive that puts a ChatGPT login at ~/.codex/auth.json.
+func codexAuthTar(auth string) (io.Reader, error) { return singleFileTar(codexAuthPath, auth) }
 
 // antigravityAuthTar builds a tar archive unpacking an Antigravity login bundle
 // under $HOME in a container.
@@ -513,7 +525,7 @@ func (d *Docker) Start(ctx context.Context, runID string, spec ExecSpec) (Proces
 	}
 	env := make([]string, 0, len(spec.Env))
 	for k, v := range spec.Env {
-		if k == CodexAuthEnv || k == CodexAuthScopeEnv || k == AntigravityAuthEnv {
+		if k == ClaudeAuthEnv || k == ClaudeAuthScopeEnv || k == CodexAuthEnv || k == CodexAuthScopeEnv || k == AntigravityAuthEnv {
 			continue // delivered as a file below, never through the environment
 		}
 		env = append(env, k+"="+v)
@@ -542,11 +554,16 @@ func (d *Docker) Start(ctx context.Context, runID string, spec ExecSpec) (Proces
 			return nil, err
 		}
 	}
-	p := &dockerProc{d: d, id: created.ID, parent: ctx, codexAuth: spec.Env[CodexAuthEnv], codexScope: spec.Env[CodexAuthScopeEnv]}
+	p := &dockerProc{
+		d: d, id: created.ID, parent: ctx,
+		claudeAuth: spec.Env[ClaudeAuthEnv], claudeScope: spec.Env[ClaudeAuthScopeEnv],
+		codexAuth: spec.Env[CodexAuthEnv], codexScope: spec.Env[CodexAuthScopeEnv],
+	}
 	for _, item := range []struct {
 		raw   string
 		build func(string) (io.Reader, error)
 	}{
+		{p.claudeAuth, claudeAuthTar},
 		{p.codexAuth, codexAuthTar},
 		{spec.Env[AntigravityAuthEnv], antigravityAuthTar},
 	} {
@@ -635,8 +652,9 @@ type dockerProc struct {
 	cancel      context.CancelFunc
 	contextOnce sync.Once
 	logs        io.Closer
-	// The ChatGPT login this process was given, and where it is stored.
-	codexAuth, codexScope string
+	// The Claude/ChatGPT logins this process was given, and where they are stored.
+	claudeAuth, claudeScope string
+	codexAuth, codexScope   string
 	// nixManifest is the run's Nix profile as the turn left it.
 	nixManifest []byte
 }
@@ -727,8 +745,8 @@ func (p *dockerProc) Wait() (int, error) {
 	if err != nil {
 		return -1, err
 	}
-	// Even a failed turn may have rotated the Codex login: keep it first.
-	p.keepRefreshedCodexAuth()
+	// Even a failed turn may have rotated the Claude or Codex login: keep it first.
+	p.keepRefreshedLogins()
 	p.readNixManifest()
 	if res.StatusCode != 0 && p.oomKilled() {
 		return res.StatusCode, fmt.Errorf("the container ran out of memory (exit %d); raise RUNNER_MEMORY_MB or reduce what the run builds at once", res.StatusCode)
@@ -748,22 +766,26 @@ func (p *dockerProc) oomKilled() bool {
 	return info.State.OOMKilled
 }
 
-// keepRefreshedCodexAuth reads the only file that ever comes back out of a
-// container. Codex rotates its refresh token, so losing a refreshed login
-// would break the stored one. The file is agent-writable, so only a newer
-// login for the same account is accepted (chatmodels.CodexAuthRefreshed).
-func (p *dockerProc) keepRefreshedCodexAuth() {
-	if p.codexAuth == "" || p.d.SaveCodexAuth == nil {
+// keepRefreshedLogins persists any Claude or Codex OAuth login rotated inside
+// the container before it is removed. Both files are agent-writable, so only a
+// strictly newer login validated by refreshed is saved.
+func (p *dockerProc) keepRefreshedLogins() {
+	p.keepRefreshedLogin(claudeAuthPath, p.claudeAuth, p.claudeScope, p.d.SaveClaudeAuth, chatmodels.ClaudeAuthRefreshed, "claude")
+	p.keepRefreshedLogin(codexAuthPath, p.codexAuth, p.codexScope, p.d.SaveCodexAuth, chatmodels.CodexAuthRefreshed, "codex")
+}
+
+func (p *dockerProc) keepRefreshedLogin(relPath, current, scope string, save func(context.Context, string, string) error, refreshed func(string, string) bool, label string) {
+	if current == "" || save == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	next, ok := p.d.refreshedCodexAuth(ctx, p.id, p.codexAuth)
+	next, ok := p.d.refreshedAuthFile(ctx, p.id, relPath, current, refreshed)
 	if !ok {
 		return
 	}
-	if err := p.d.SaveCodexAuth(ctx, p.codexScope, next); err != nil {
-		slog.Warn("save refreshed codex login", "err", err)
+	if err := save(ctx, scope, next); err != nil {
+		slog.Warn("save refreshed "+label+" login", "err", err)
 	}
 }
 
@@ -793,10 +815,10 @@ func (p *dockerProc) readNixManifest() {
 	}
 }
 
-// refreshedCodexAuth reads ~/.codex/auth.json back out of a container and
-// returns it only when it is a newer login than current.
-func (d *Docker) refreshedCodexAuth(ctx context.Context, id, current string) (string, bool) {
-	res, err := d.do(ctx, "GET", "/containers/"+id+"/archive?path="+url.QueryEscape(path.Join(homePath, codexAuthPath)), nil, "", nil)
+// refreshedAuthFile reads relPath back out of a container and returns it only
+// when valid(current, next) accepts it as a newer login.
+func (d *Docker) refreshedAuthFile(ctx context.Context, id, relPath, current string, valid func(string, string) bool) (string, bool) {
+	res, err := d.do(ctx, "GET", "/containers/"+id+"/archive?path="+url.QueryEscape(path.Join(homePath, relPath)), nil, "", nil)
 	if err != nil {
 		return "", false
 	}
@@ -806,8 +828,16 @@ func (d *Docker) refreshedCodexAuth(ctx context.Context, id, current string) (st
 		return "", false
 	}
 	next, err := io.ReadAll(io.LimitReader(tr, maxCodexAuth+1))
-	if err != nil || len(next) > maxCodexAuth || !chatmodels.CodexAuthRefreshed(current, string(next)) {
+	if err != nil || len(next) > maxCodexAuth || !valid(current, string(next)) {
 		return "", false
 	}
 	return string(next), true
+}
+
+func (d *Docker) refreshedCodexAuth(ctx context.Context, id, current string) (string, bool) {
+	return d.refreshedAuthFile(ctx, id, codexAuthPath, current, chatmodels.CodexAuthRefreshed)
+}
+
+func (d *Docker) refreshedClaudeAuth(ctx context.Context, id, current string) (string, bool) {
+	return d.refreshedAuthFile(ctx, id, claudeAuthPath, current, chatmodels.ClaudeAuthRefreshed)
 }

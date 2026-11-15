@@ -57,29 +57,32 @@ require_api() {
   curl -fsS -o /dev/null "$API/health" || { echo "vesper: the API isn't running on :$API_PORT (start it with make dev)" >&2; exit 1; }
 }
 
-# Prints the login token from a captured terminal session.
-extract_claude_token() {
-  python3 -c 'import re, sys
-text = open(sys.argv[1], errors="replace").read()
-text = re.sub(r"\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[=>]", "", text)
-found = re.findall(r"sk-ant-oat[0-9]*-[A-Za-z0-9_-]+", text)
-print(found[-1] if found else "")' "$1"
+valid_claude_auth() {
+  python3 -c 'import json, sys
+a = json.load(open(sys.argv[1])).get("claudeAiOauth", {})
+sys.exit(0 if a.get("accessToken") and a.get("refreshToken") else 1)' "$1" 2>/dev/null
 }
 
 login_claude() {
-  need docker python3 curl
+  need docker python3 curl tar
   require_api
-  echo "vesper: open the URL below, sign in, and paste the code back here."
-  capture=$(mktemp)
-  # A wide terminal keeps the URL and the token on one line each.
-  docker run -it --rm "$IMAGE" sh -c 'stty cols 2000; exec claude setup-token' | tee "$capture" || true
-  token=$(extract_claude_token "$capture")
-  rm -f "$capture"
-  if [ -z "$token" ]; then
-    read -rsp "vesper: paste the sk-ant-oat token: " token; echo
-    case $token in sk-ant-oat*) ;; *) echo "vesper: that isn't a Claude plan token" >&2; return 1 ;; esac
+  auth=$(mktemp)
+  if [ -n "${CLAUDE_AUTH_FILE:-}" ]; then
+    cp "${CLAUDE_AUTH_FILE/#\~/$HOME}" "$auth"
+  else
+    echo "vesper: open the URL below, sign in, and paste the code back here."
+    name=vesper-claude-login-$$
+    docker run -it --name "$name" "$IMAGE" sh -c 'stty cols 2000; exec claude auth login --claudeai' || true
+    docker cp "$name:/home/node/.claude/.credentials.json" - 2>/dev/null | tar -xO > "$auth" || true
+    docker rm -f "$name" >/dev/null 2>&1 || true
   fi
-  printf %s "$token" | store_secret harness:anthropic
+  if ! valid_claude_auth "$auth"; then
+    rm -f "$auth"
+    echo "vesper: no Claude subscription login was captured. Run: CLAUDE_AUTH_FILE=~/.claude/.credentials.json make claude-login" >&2
+    return 1
+  fi
+  store_secret harness:anthropic < "$auth"
+  rm -f "$auth"
 }
 
 valid_codex_auth() {

@@ -26,7 +26,7 @@ function UsageBubble({ h, all, onNavigate }: { h: HarnessActivity; all: HarnessA
         {pct !== null && <i style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />}
       </div>
       <div className="harness-usage-meta">
-        <span>{primary ? `${primary.label} allowance used` : h.harness === ANTIGRAVITY ? "Allowance not reported" : h.usage_checking ? "Checking usage…" : "Usage unavailable"}</span>
+        <span>{primary ? `${primary.label} allowance used` : h.usage_checking ? "Checking usage…" : h.harness === ANTIGRAVITY ? "Allowance not reported" : "Usage unavailable"}</span>
         <span>{h.limited_until ? "Limited" : working ? `${h.running} working` : "Idle"}</span>
       </div>
       <p className="harness-usage-sub">{usageSub(h, all)}</p>

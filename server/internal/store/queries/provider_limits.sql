@@ -10,6 +10,10 @@ DO UPDATE SET until = EXCLUDED.until, reason = EXCLUDED.reason, updated_at = now
 SELECT harness, until FROM provider_limits
 WHERE workspace_id = @workspace_id AND until > now();
 
+-- name: ClearProviderLimit :exec
+DELETE FROM provider_limits
+WHERE workspace_id = @workspace_id AND harness = @harness;
+
 -- name: ActiveHarnessRuns :many
 -- Runs working right now in a workspace, by harness, for the activity orb.
 SELECT harness, count(*)::int AS runs FROM runs

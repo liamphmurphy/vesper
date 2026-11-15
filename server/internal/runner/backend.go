@@ -190,7 +190,7 @@ func (l *Fake) Start(ctx context.Context, runID string, spec ExecSpec) (Process,
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
 	for k, v := range spec.Env {
-		if k == ClaudeOAuthEnv || k == CodexAuthEnv || k == CodexAuthScopeEnv {
+		if k == ClaudeOAuthEnv || k == ClaudeAuthEnv || k == ClaudeAuthScopeEnv || k == CodexAuthEnv || k == CodexAuthScopeEnv || k == AntigravityAuthEnv {
 			continue // a fake harness needs no login; keep real ones out of host processes
 		}
 		cmd.Env = append(cmd.Env, k+"="+v)

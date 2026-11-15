@@ -89,17 +89,17 @@ export const HARNESS_SECRETS: Record<HarnessId, string> = { "claude-code": "harn
 /** Harnesses that can make images. */
 export const IMAGE_HARNESSES: readonly HarnessId[] = ["codex", "antigravity"];
 
-/** The shapes runner/prepare.go recognises: a setup-token, auth.json, or Antigravity login, else an API key. */
+/** The shapes runner/prepare.go recognises: .credentials.json / setup-token, auth.json, or Antigravity login, else an API key. */
 export function credentialPlaceholder(h: HarnessId, kind: CredentialKind): string {
   if (h === "antigravity") return "Paste Antigravity login";
   if (h === "codex") return kind === "subscription" ? "Paste auth.json" : "OPENAI_API_KEY";
-  return kind === "subscription" ? "Paste setup-token" : "ANTHROPIC_API_KEY";
+  return kind === "subscription" ? "Paste .credentials.json or setup-token" : "ANTHROPIC_API_KEY";
 }
 
 export function credentialHelp(h: HarnessId, kind: CredentialKind): string {
   if (h === "antigravity") return "Sign in to Google (Antigravity) in Settings → Connections, or paste a saved Antigravity login.";
   if (h === "codex") return kind === "subscription" ? "The contents of ~/.codex/auth.json after `codex login`." : "An OpenAI API key (sk-…).";
-  return kind === "subscription" ? "Run `claude setup-token` and paste the token (sk-ant-oat…)." : "An Anthropic API key (sk-ant-…).";
+  return kind === "subscription" ? "The contents of ~/.claude/.credentials.json from `claude auth login --claudeai` (or an sk-ant-oat… setup-token)." : "An Anthropic API key (sk-ant-…).";
 }
 
 /** The harness step's hint: what is still missing. */

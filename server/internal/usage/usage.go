@@ -12,6 +12,7 @@ package usage
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"sort"
 	"strconv"
@@ -234,6 +235,201 @@ func ParseCodexRateLimits(result json.RawMessage, now time.Time) Snapshot {
 			id = "codex_" + strconv.Itoa(w.WindowDurationMins)
 		}
 		snap.Windows = append(snap.Windows, Window{ID: id, Kind: kind, Label: label, UsedPercent: clampPercent(*w.UsedPercent), ResetsAt: timeValue(w.ResetsAt)})
+	}
+	Sort(snap.Windows)
+	snap.Available = len(snap.Windows) > 0
+	return snap
+}
+
+type agyUsageEntry struct {
+	ID                  string          `json:"id"`
+	Name                string          `json:"name"`
+	Label               string          `json:"label"`
+	DisplayName         string          `json:"display_name"`
+	DisplayNameCamel    string          `json:"displayName"`
+	Window              string          `json:"window"`
+	RefreshWindowLabel  string          `json:"refresh_window_label"`
+	RefreshWindowCamel  string          `json:"refreshWindowLabel"`
+	Description         string          `json:"description"`
+	RemainingFraction   *float64        `json:"remaining_fraction"`
+	RemainingFracCamel  *float64        `json:"remainingFraction"`
+	RemainingPercent    *float64        `json:"remaining_percentage"`
+	RemainingPctCamel   *float64        `json:"remainingPercentage"`
+	UsedPercent         *float64        `json:"used_percent"`
+	UsedPercentCamel    *float64        `json:"usedPercent"`
+	UsedPercentage      *float64        `json:"used_percentage"`
+	UsedPercentageCamel *float64        `json:"usedPercentage"`
+	ResetTime           json.RawMessage `json:"reset_time"`
+	ResetTimeCamel      json.RawMessage `json:"resetTime"`
+	ResetsAt            json.RawMessage `json:"resets_at"`
+	ResetsAtCamel       json.RawMessage `json:"resetsAt"`
+	Disabled            bool            `json:"disabled"`
+}
+
+func firstText(vals ...string) string {
+	for _, v := range vals {
+		if s := strings.TrimSpace(v); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func firstRaw(vals ...json.RawMessage) json.RawMessage {
+	for _, v := range vals {
+		if len(v) > 0 && string(v) != "null" {
+			return v
+		}
+	}
+	return nil
+}
+
+func agyUsedPercent(e agyUsageEntry) (float64, bool) {
+	for _, p := range []*float64{e.UsedPercent, e.UsedPercentCamel, e.UsedPercentage, e.UsedPercentageCamel} {
+		if p != nil {
+			return clampPercent(*p), true
+		}
+	}
+	for _, p := range []*float64{e.RemainingPercent, e.RemainingPctCamel} {
+		if p != nil {
+			return clampPercent(100 - *p), true
+		}
+	}
+	for _, f := range []*float64{e.RemainingFraction, e.RemainingFracCamel} {
+		if f != nil {
+			frac := math.Min(1, math.Max(0, *f))
+			return clampPercent((1 - frac) * 100), true
+		}
+	}
+	return 0, false
+}
+
+func agyWindowKind(hint string) Kind {
+	s := strings.ToLower(hint)
+	switch {
+	case strings.Contains(s, "week") || strings.Contains(s, "7d") || strings.Contains(s, "7 day"):
+		return Weekly
+	case strings.Contains(s, "5h") || strings.Contains(s, "5 hour") || strings.Contains(s, "session") || strings.Contains(s, "daily") || strings.Contains(s, "24h") || strings.Contains(s, "hour"):
+		return Session
+	}
+	return Other
+}
+
+func agyWindowID(raw, fallback string) string {
+	var b strings.Builder
+	prevUnderscore := false
+	for _, r := range strings.ToLower(strings.TrimSpace(raw)) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			prevUnderscore = false
+		} else if !prevUnderscore && b.Len() > 0 {
+			b.WriteByte('_')
+			prevUnderscore = true
+		}
+	}
+	s := strings.Trim(b.String(), "_")
+	if s == "" {
+		return fallback
+	}
+	return "agy_" + s
+}
+
+// ParseAntigravityUsage reads the JSON payload from `agy -p /usage --output-format stream-json`,
+// accepting a `command_result` line, a `result` line, or the inner `command.data` object.
+func ParseAntigravityUsage(raw json.RawMessage, now time.Time) Snapshot {
+	snap := Snapshot{Harness: agentdef.HarnessAntigravity, ObservedAt: now, Windows: []Window{}}
+	type commandPayload struct {
+		Name string          `json:"name"`
+		Data json.RawMessage `json:"data"`
+	}
+	var env struct {
+		Event   string          `json:"event"`
+		Command *commandPayload `json:"command"`
+		Result  *struct {
+			PlanName string          `json:"plan_name"`
+			Command  *commandPayload `json:"command"`
+		} `json:"result"`
+	}
+	data := raw
+	if json.Unmarshal(raw, &env) == nil {
+		switch {
+		case env.Command != nil && len(env.Command.Data) > 0:
+			data = env.Command.Data
+		case env.Result != nil:
+			if env.Result.PlanName != "" {
+				snap.Plan = env.Result.PlanName
+			}
+			if env.Result.Command != nil && len(env.Result.Command.Data) > 0 {
+				data = env.Result.Command.Data
+			}
+		}
+	}
+	type agyGroup struct {
+		agyUsageEntry
+		Buckets []agyUsageEntry `json:"buckets"`
+		Models  []agyUsageEntry `json:"models"`
+	}
+	var quota struct {
+		PlanName        string     `json:"plan_name"`
+		Plan            string     `json:"plan"`
+		TierDisplayName string     `json:"tier_display_name"`
+		Groups          []agyGroup `json:"groups"`
+	}
+	if json.Unmarshal(data, &quota) != nil {
+		return snap
+	}
+	if snap.Plan == "" {
+		snap.Plan = firstText(quota.PlanName, quota.Plan, quota.TierDisplayName)
+	}
+	seenID := map[string]int{}
+	addEntry := func(e agyUsageEntry, groupLabel, fallbackID string) {
+		if e.Disabled {
+			return
+		}
+		used, ok := agyUsedPercent(e)
+		if !ok {
+			return
+		}
+		label := firstText(e.DisplayName, e.DisplayNameCamel, e.Label, e.Name, e.RefreshWindowLabel, e.RefreshWindowCamel, e.Window, groupLabel)
+		if groupLabel != "" && label != "" && !strings.EqualFold(groupLabel, label) && !strings.Contains(strings.ToLower(label), strings.ToLower(groupLabel)) {
+			label = groupLabel + " · " + label
+		}
+		if label == "" {
+			label = "Quota"
+		}
+		hint := firstText(e.RefreshWindowLabel, e.RefreshWindowCamel, e.Window, e.Description, label)
+		id := agyWindowID(firstText(e.ID, label), fallbackID)
+		if n := seenID[id]; n > 0 {
+			id = id + "_" + strconv.Itoa(n+1)
+		}
+		seenID[id]++
+		resets := timeValue(firstRaw(e.ResetTime, e.ResetTimeCamel, e.ResetsAt, e.ResetsAtCamel))
+		snap.Windows = append(snap.Windows, Window{
+			ID:          id,
+			Kind:        agyWindowKind(hint),
+			Label:       label,
+			UsedPercent: used,
+			ResetsAt:    resets,
+		})
+	}
+	for gi, g := range quota.Groups {
+		if g.Disabled {
+			continue
+		}
+		groupLabel := firstText(g.DisplayName, g.DisplayNameCamel, g.Label, g.Name, g.RefreshWindowLabel, g.RefreshWindowCamel, g.Window)
+		if len(g.Buckets) > 0 {
+			for bi, b := range g.Buckets {
+				addEntry(b, groupLabel, fmt.Sprintf("agy_%d_%d", gi, bi))
+			}
+			continue
+		}
+		if len(g.Models) > 0 {
+			for mi, m := range g.Models {
+				addEntry(m, groupLabel, fmt.Sprintf("agy_%d_%d", gi, mi))
+			}
+			continue
+		}
+		addEntry(g.agyUsageEntry, "", fmt.Sprintf("agy_%d", gi))
 	}
 	Sort(snap.Windows)
 	snap.Available = len(snap.Windows) > 0

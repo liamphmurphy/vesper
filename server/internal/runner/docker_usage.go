@@ -114,18 +114,48 @@ func (r *Runner) runUsageCheck(parent context.Context, up UsageProber, c store.H
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
 	defer cancel()
 	svc := usage.Service{Q: r.q(), Log: r.Log}
+	// Legacy setup-tokens (user:inference only) cannot answer active get_usage
+	// calls, so don't let ErrSignedOut wipe passive rate_limit_event windows
+	// observed during real turns.
+	if c.Harness == agentdef.HarnessClaudeCode && chatmodels.ClaudeOAuthToken(login) && errors.Is(err, usage.ErrSignedOut) {
+		if readings, rerr := svc.Readings(ctx, c.WorkspaceID); rerr == nil {
+			if prev, ok := readings[c.Harness]; ok && prev.Available && len(usage.Current(prev.Windows, time.Now())) > 0 {
+				err = usage.ErrOutdated
+			}
+		}
+	}
+	if err == nil && snap.Available && len(snap.Windows) > 0 && !usageExhausted(snap.Windows) {
+		if cerr := r.q().ClearProviderLimit(ctx, store.ClearProviderLimitParams{WorkspaceID: c.WorkspaceID, Harness: c.Harness}); cerr != nil {
+			r.Log.Warn("clear provider limit", "workspace", c.WorkspaceID, "harness", c.Harness, "err", cerr)
+		}
+	}
 	wait := svc.Settle(ctx, c.WorkspaceID, c.Harness, snap, err)
 	if _, err := r.q().FinishUsageCheck(ctx, store.FinishUsageCheckParams{ClaimID: c.ClaimID, RetryAfter: time.Now().Add(wait)}); err != nil {
 		r.Log.Warn("finish usage check", "workspace", c.WorkspaceID, "harness", c.Harness, "err", err)
 	}
 }
 
-// planLogin reports whether a saved harness secret is a Claude or ChatGPT
-// plan login rather than an API key.
+func usageExhausted(ws []usage.Window) bool {
+	for _, w := range ws {
+		if w.UsedPercent >= 100 {
+			return true
+		}
+	}
+	return false
+}
+
+// planLogin reports whether a saved harness secret is a subscription login
+// rather than an API key.
 func planLogin(harness, login string) bool {
-	if harness == agentdef.HarnessCodex {
+	switch harness {
+	case agentdef.HarnessCodex:
 		_, plan := chatmodels.ParseCodexAuth(login)
 		return plan
+	case agentdef.HarnessClaudeCode:
+		return chatmodels.ClaudePlanLogin(login)
+	case agentdef.HarnessAntigravity:
+		_, plan := chatmodels.ParseAntigravityAuth(login)
+		return plan
 	}
-	return chatmodels.ClaudeOAuthToken(login)
+	return false
 }

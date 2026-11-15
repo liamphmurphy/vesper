@@ -54,11 +54,23 @@ test("usage lines", () => {
   assert.equal(checkedAgo([claude, { ...codex, usage_checking: true }], now.getTime()), "checking…");
 });
 
-test("Antigravity's meter has no allowance to read and says so, instead of looking unchecked", () => {
-  const agy = harness("antigravity", { usage_checked_at: "2026-11-09T18:00:00Z" });
-  assert.equal(sessionPercent(agy), null);
-  assert.equal(usageTone(agy), "ok");
-  assert.match(usageSub(agy, [agy]), /^Usage unknown/);
+test("Antigravity displays usage windows when reported and falls back cleanly when unavailable", () => {
+  const agyUnknown = harness("antigravity", { usage_checked_at: "2026-11-09T18:00:00Z" });
+  assert.equal(sessionPercent(agyUnknown), null);
+  assert.equal(usageTone(agyUnknown), "ok");
+  assert.match(usageSub(agyUnknown, [agyUnknown]), /^Usage unknown/);
+  assert.equal(usageSub(harness("antigravity", { usage_checking: true }), []), "Checking usage…");
+
+  const now = new Date("2026-11-09T18:00:00");
+  const agyLive = harness("antigravity", {
+    usage_available: true,
+    windows: [
+      { id: "agy_gemini", kind: "other", label: "Gemini", used_percent: 28.4, resets_at: "2026-11-09T21:20:00" },
+      { id: "agy_claude", kind: "other", label: "Claude", used_percent: 45 },
+    ],
+  });
+  assert.equal(sessionPercent(agyLive), 28);
+  assert.match(usageSub(agyLive, [agyLive], now), /^Gemini · resets 9:20\s?PM · Claude 45%$/);
   // Claude's wording is unchanged.
   assert.equal(usageSub(harness("claude-code"), []), "Usage not checked yet");
 });

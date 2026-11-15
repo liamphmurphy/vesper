@@ -50,6 +50,50 @@ func TestClaudeOAuthToken(t *testing.T) {
 	}
 }
 
+func claudeAuthJSON(access, refresh string, expiresAt int64) string {
+	return fmt.Sprintf(`{"claudeAiOauth":{"accessToken":%q,"refreshToken":%q,"expiresAt":%d,"scopes":["user:profile","user:inference"],"subscriptionType":"max"}}`, access, refresh, expiresAt)
+}
+
+func TestParseClaudeAuth(t *testing.T) {
+	for name, tc := range map[string]struct {
+		v    string
+		want bool
+	}{
+		"valid":        {claudeAuthJSON("sk-ant-oat01-a", "sk-ant-ort01-r", time.Now().Add(time.Hour).UnixMilli()), true},
+		"setup token":  {"sk-ant-oat01-abc", false},
+		"api key":      {"sk-ant-api03-abc", false},
+		"no refresh":   {`{"claudeAiOauth":{"accessToken":"sk-ant-oat01-a"}}`, false},
+		"invalidacted": {`{"claudeAiOauth":{"accessToken":"","refreshToken":"","expiresAt":0}}`, false},
+		"garbage":      {"{not json", false},
+	} {
+		if _, ok := ParseClaudeAuth(tc.v); ok != tc.want {
+			t.Errorf("%s: ParseClaudeAuth = %v, want %v", name, ok, tc.want)
+		}
+	}
+	if !ClaudePlanLogin("sk-ant-oat01-abc") || !ClaudePlanLogin(claudeAuthJSON("a", "r", 1)) || ClaudePlanLogin("sk-ant-api03-abc") {
+		t.Fatal("ClaudePlanLogin misclassified credential")
+	}
+}
+
+func TestClaudeAuthRefreshed(t *testing.T) {
+	base := time.Now().Add(time.Hour)
+	cur := claudeAuthJSON("sk-ant-oat01-old", "sk-ant-ort01-old", base.UnixMilli())
+	for name, tc := range map[string]struct {
+		next string
+		want bool
+	}{
+		"newer":      {claudeAuthJSON("sk-ant-oat01-new", "sk-ant-ort01-new", base.Add(time.Minute).UnixMilli()), true},
+		"unchanged":  {cur, false},
+		"older":      {claudeAuthJSON("sk-ant-oat01-old", "sk-ant-ort01-old", base.Add(-time.Minute).UnixMilli()), false},
+		"far future": {claudeAuthJSON("sk-ant-oat01-new", "sk-ant-ort01-new", time.Now().Add(400*24*time.Hour).UnixMilli()), false},
+		"empty":      {`{"claudeAiOauth":{"accessToken":"","refreshToken":"","expiresAt":0}}`, false},
+	} {
+		if got := ClaudeAuthRefreshed(cur, tc.next); got != tc.want {
+			t.Errorf("%s: got %v, want %v", name, got, tc.want)
+		}
+	}
+}
+
 func TestParseAntigravityAuth(t *testing.T) {
 	valid := `{"v":1,"files":{".gemini/antigravity-cli/installation_id":"id-1",".gemini/antigravity-cli/jetski_state.pbtxt":"state"}}`
 	validB64 := `{"v":1,"files_b64":{".local/share/antigravity/token.bin":"AQID"}}`
