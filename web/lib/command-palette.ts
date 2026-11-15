@@ -591,9 +591,12 @@ export const SHORTCUTS: { section: string; items: { label: string; keys: string[
     items: [
       { label: "Open command palette", keys: ["⌘/Ctrl", "K"] },
       { label: "Open page-scoped command palette", keys: ["⌘/Ctrl", "⇧", "K"] },
-      { label: "New ticket", keys: ["C"] },
       { label: "Show this reference", keys: ["?"] },
     ],
+  },
+  {
+    section: "Work",
+    items: [{ label: "New ticket", keys: ["C"] }],
   },
   {
     section: "Chat",
