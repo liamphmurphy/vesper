@@ -1641,6 +1641,29 @@ paths:
               schema: { $ref: "#/components/schemas/RunDetail" }
         default: { $ref: "#/components/responses/Error" }
 
+  /runs/{id}/events:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: listRunEvents
+      summary: A run's streamed events after an optional sequence cursor
+      tags: [runs]
+      parameters:
+        - name: after
+          in: query
+          description: Only events after this sequence number
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Run events
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunEventList" }
+        default: { $ref: "#/components/responses/Error" }
+
   /runs/{id}/{action}:
     parameters:
       - name: id
@@ -7655,6 +7678,13 @@ components:
           type: object
           additionalProperties: true
         at: { type: string, format: date-time }
+    RunEventList:
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          items: { $ref: "#/components/schemas/RunEvent" }
     RunDetail:
       type: object
       required: [run, turns, approvals, events, child_runs]

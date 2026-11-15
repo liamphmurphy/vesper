@@ -1447,9 +1447,10 @@ export function useChatRunEvents(runId?: string, enabled = true, poll = true) {
     // Each poll reads only what came after the newest event it has.
     queryFn: () =>
       eventsAfter(qc.getQueryData<Schemas["RunEvent"][]>(queryKey) ?? [], (after) =>
-        unwrap(api.GET("/runs/{id}", { params: { path: { id: runId! }, query: { after } } })).then((d) => d.events),
+        unwrap(api.GET("/runs/{id}/events", { params: { path: { id: runId! }, query: { after } } })).then((d) => d.events),
       ),
     refetchInterval: poll ? 2_000 : false,
+    staleTime: poll ? 0 : Infinity,
   });
 }
 

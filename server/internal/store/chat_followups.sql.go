@@ -63,7 +63,7 @@ func (q *Queries) DeleteChatFollowup(ctx context.Context, arg DeleteChatFollowup
 }
 
 const listChatAsides = `-- name: ListChatAsides :many
-SELECT id, workspace_id, project_id, title, created_by, agent_id, harness, model, current_run_id, state, archived, revision, created_at, updated_at, last_message_at, persona_id, repo_url, effort, speaker_persona_id, queued_persona_ids, relay_turns, relay_limit, interrupt_message_id, last_read_seq, hidden, connector_ids, space_id, work_branches, commit_email, secret_ids, temporary, pending_repo_url, parent_chat_id, auto_model, anchor_message_id, second_opinion FROM chat_sessions WHERE parent_chat_id = $1 ORDER BY created_at, id
+SELECT id, workspace_id, project_id, title, created_by, agent_id, harness, model, current_run_id, state, archived, revision, created_at, updated_at, last_message_at, persona_id, repo_url, effort, speaker_persona_id, queued_persona_ids, relay_turns, relay_limit, interrupt_message_id, last_read_seq, hidden, connector_ids, space_id, work_branches, commit_email, secret_ids, temporary, pending_repo_url, parent_chat_id, auto_model, anchor_message_id, second_opinion, last_assistant_seq FROM chat_sessions WHERE parent_chat_id = $1 ORDER BY created_at, id
 `
 
 // A chat's asides, oldest first.
@@ -113,6 +113,7 @@ func (q *Queries) ListChatAsides(ctx context.Context, parentChatID *uuid.UUID) (
 			&i.AutoModel,
 			&i.AnchorMessageID,
 			&i.SecondOpinion,
+			&i.LastAssistantSeq,
 		); err != nil {
 			return nil, err
 		}
@@ -209,7 +210,7 @@ func (q *Queries) OpenChatTurnStart(ctx context.Context, runID uuid.UUID) (time.
 }
 
 const setChatParent = `-- name: SetChatParent :one
-UPDATE chat_sessions SET parent_chat_id = $1, anchor_message_id = $2, second_opinion = $3 WHERE id = $4 RETURNING id, workspace_id, project_id, title, created_by, agent_id, harness, model, current_run_id, state, archived, revision, created_at, updated_at, last_message_at, persona_id, repo_url, effort, speaker_persona_id, queued_persona_ids, relay_turns, relay_limit, interrupt_message_id, last_read_seq, hidden, connector_ids, space_id, work_branches, commit_email, secret_ids, temporary, pending_repo_url, parent_chat_id, auto_model, anchor_message_id, second_opinion
+UPDATE chat_sessions SET parent_chat_id = $1, anchor_message_id = $2, second_opinion = $3 WHERE id = $4 RETURNING id, workspace_id, project_id, title, created_by, agent_id, harness, model, current_run_id, state, archived, revision, created_at, updated_at, last_message_at, persona_id, repo_url, effort, speaker_persona_id, queued_persona_ids, relay_turns, relay_limit, interrupt_message_id, last_read_seq, hidden, connector_ids, space_id, work_branches, commit_email, secret_ids, temporary, pending_repo_url, parent_chat_id, auto_model, anchor_message_id, second_opinion, last_assistant_seq
 `
 
 type SetChatParentParams struct {
@@ -267,6 +268,7 @@ func (q *Queries) SetChatParent(ctx context.Context, arg SetChatParentParams) (C
 		&i.AutoModel,
 		&i.AnchorMessageID,
 		&i.SecondOpinion,
+		&i.LastAssistantSeq,
 	)
 	return i, err
 }

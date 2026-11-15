@@ -17,133 +17,301 @@ import (
 )
 
 func (s *Server) toRun(ctx context.Context, r store.Run) (api.Run, error) {
-	a, err := s.Q.GetAgent(ctx, store.GetAgentParams{ID: r.AgentID, WorkspaceID: r.WorkspaceID})
+	out, err := s.toRuns(ctx, r.WorkspaceID, []store.Run{r})
 	if err != nil {
 		return api.Run{}, err
 	}
-	var t store.Ticket
-	if r.TicketID != nil {
-		t, err = s.Q.GetTicketByID(ctx, *r.TicketID)
-		if err != nil {
-			return api.Run{}, err
-		}
+	return out[0], nil
+}
+
+// toRuns builds API run views for rows in ws with batched metadata queries.
+func (s *Server) toRuns(ctx context.Context, ws uuid.UUID, rows []store.Run) ([]api.Run, error) {
+	if len(rows) == 0 {
+		return []api.Run{}, nil
 	}
-	out := api.Run{
-		Id: r.ID, TicketKey: t.Key, Purpose: api.RunPurpose(r.Purpose), Agent: *toAgentRef(a), Mode: api.RunMode(r.Mode), State: api.RunState(r.State),
-		Harness: r.Harness, Model: r.Model, Outcome: r.Outcome, StartedAt: r.StartedAt, EndedAt: r.EndedAt,
-		ToolCalls: int(r.ToolCalls), InputTokens: r.InputTokens, OutputTokens: r.OutputTokens,
-		CostUsd: float32(r.CostUsdMicros) / 1e6, CostSource: r.CostSource,
-		SetupMs: r.SetupMs, HarnessMs: r.HarnessMs, ChecksMs: r.ChecksMs,
-		Plan: []api.PlanStep{}, Scopes: []string{}, ApprovalScopes: []string{},
-	}
-	cacheRows, err := s.Q.CacheUsageForRuns(ctx, []uuid.UUID{r.ID})
+	dir, err := s.directory(ctx, ws)
 	if err != nil {
-		return out, err
+		return nil, err
 	}
-	var cached, reported int64
-	if len(cacheRows) > 0 {
-		cached, reported = cacheRows[0].CachedInputTokens, cacheRows[0].ReportedInputTokens
-	}
-	cached, uncached, unknown := cacheBreakdown(r.InputTokens, cached, reported)
-	out.CachedInputTokens, out.UncachedInputTokens, out.UnreportedInputTokens = &cached, &uncached, &unknown
-	var projectID uuid.UUID
-	switch {
-	case r.TicketID != nil:
-		projectID = t.ProjectID
-		out.WorkTitle = &t.Title
-		out.Branch, out.PrUrl, out.PrState = t.Branch, t.PrUrl, t.PrState
-		if t.PrNumber != nil {
-			n := int(*t.PrNumber)
-			out.PrNumber = &n
+	runIDs := make([]uuid.UUID, len(rows))
+	var topLevelIDs, ticketIDs, planningIDs, researchIDs, learningIDs, workflowIDs, chatIDs []uuid.UUID
+	seenTicket := make(map[uuid.UUID]struct{})
+	for i, r := range rows {
+		runIDs[i] = r.ID
+		if r.ParentRunID == nil {
+			topLevelIDs = append(topLevelIDs, r.ID)
 		}
-	case r.Purpose == "planning":
-		p, err := s.Q.PlanningSessionForRun(ctx, r.ID)
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return out, err
-		}
-		if err == nil {
-			out.PlanningId, out.WorkTitle, projectID = &p.ID, &p.Goal, p.ProjectID
-		}
-	case r.Purpose == runs.PurposeResearch:
-		if j, err := s.Q.ResearchJobForRun(ctx, r.ID); err == nil {
-			if c, err := s.Q.GetChatSession(ctx, store.GetChatSessionParams{ID: j.ChatID, WorkspaceID: j.WorkspaceID}); err == nil {
-				out.ChatId, out.WorkTitle, projectID = &c.ID, &j.Title, runs.ProjectIDOrNil(c.ProjectID)
+		if r.TicketID != nil {
+			if _, ok := seenTicket[*r.TicketID]; !ok {
+				seenTicket[*r.TicketID] = struct{}{}
+				ticketIDs = append(ticketIDs, *r.TicketID)
 			}
-		} else if !errors.Is(err, pgx.ErrNoRows) {
-			return out, err
+			continue
 		}
-	case r.Purpose == runs.PurposeLearning:
-		if l, err := s.Q.LearningCourseForRun(ctx, r.ID); err == nil {
-			if c, err := s.Q.GetChatSession(ctx, store.GetChatSessionParams{ID: l.ChatID, WorkspaceID: l.WorkspaceID}); err == nil {
-				out.WorkTitle, projectID = &l.Topic, runs.ProjectIDOrNil(c.ProjectID)
-			}
-		} else if !errors.Is(err, pgx.ErrNoRows) {
-			return out, err
-		}
-	case r.Purpose == runs.PurposeWorkflow:
-		if w, err := s.Q.WorkflowRunForAgentRun(ctx, &r.ID); err == nil {
-			out.ChatId, out.WorkTitle, projectID = &w.ChatID, &w.Name, runs.ProjectIDOrNil(w.ProjectID)
-		} else if !errors.Is(err, pgx.ErrNoRows) {
-			return out, err
-		}
-	case r.Purpose == "chat":
-		// A chat run without its session (deleted chat) still renders.
-		if c, err := s.Q.ChatSessionOfRun(ctx, &r.ID); err == nil {
-			out.ChatId, out.WorkTitle, projectID = &c.ID, &c.Title, runs.ProjectIDOrNil(c.ProjectID)
-		} else if !errors.Is(err, pgx.ErrNoRows) {
-			return out, err
+		switch r.Purpose {
+		case "planning":
+			planningIDs = append(planningIDs, r.ID)
+		case runs.PurposeResearch:
+			researchIDs = append(researchIDs, r.ID)
+		case runs.PurposeLearning:
+			learningIDs = append(learningIDs, r.ID)
+		case runs.PurposeWorkflow:
+			workflowIDs = append(workflowIDs, r.ID)
+		case "chat":
+			chatIDs = append(chatIDs, r.ID)
 		}
 	}
-	if projectID != uuid.Nil {
-		if p, err := s.Q.GetProject(ctx, store.GetProjectParams{ID: projectID, WorkspaceID: r.WorkspaceID}); err == nil {
-			out.ProjectKey = &p.Key
-		}
-	}
-	if r.ParentRunID == nil {
-		n, err := s.Q.CountChildRuns(ctx, &r.ID)
+
+	ticketsByID := make(map[uuid.UUID]store.Ticket, len(ticketIDs))
+	if len(ticketIDs) > 0 {
+		tickets, err := s.Q.RunsTicketsByIDs(ctx, store.RunsTicketsByIDsParams{WorkspaceID: ws, Ids: ticketIDs})
 		if err != nil {
-			return out, err
+			return nil, err
 		}
-		c := int(n)
-		out.ChildCount = &c
-	}
-	if r.WaitReason != nil {
-		w := api.RunWaitReason(*r.WaitReason)
-		out.WaitReason = &w
-	}
-	out.ParentRunId = r.ParentRunID
-	out.SessionId = r.HarnessSessionID
-	if r.State == "waiting_for_quota" {
-		attempts := int(r.HoldAttempts)
-		out.HoldUntil, out.HoldResetKnown, out.HoldAttempts = r.HoldUntil, &r.HoldResetKnown, &attempts
-	}
-	out.CheckpointBranch, out.CheckpointError = r.CheckpointBranch, r.CheckpointError
-	if r.WorkspaceVolume != nil { // the checkout still exists
-		out.WorkspacePath = r.WorkspaceHostPath
-	}
-	if r.DispatchedByUserID != nil {
-		if u, err := s.Q.GetUser(ctx, store.GetUserParams{ID: *r.DispatchedByUserID, WorkspaceID: r.WorkspaceID}); err == nil {
-			out.DispatchedBy = toUserRef(u)
+		for _, t := range tickets {
+			ticketsByID[t.ID] = t
 		}
 	}
-	if spec, err := runs.Spec(r); err == nil {
-		for _, sc := range spec.Scopes {
-			switch sc.Mode {
-			case agentdef.Allowed:
-				out.Scopes = append(out.Scopes, sc.Scope)
-			case agentdef.RequiresApproval:
-				out.ApprovalScopes = append(out.ApprovalScopes, sc.Scope)
+	cacheRows, err := s.Q.CacheUsageForRuns(ctx, runIDs)
+	if err != nil {
+		return nil, err
+	}
+	cacheByRun := make(map[uuid.UUID]store.CacheUsageForRunsRow, len(cacheRows))
+	for _, cr := range cacheRows {
+		cacheByRun[cr.RunID] = cr
+	}
+
+	childCounts := make(map[uuid.UUID]int, len(topLevelIDs))
+	if len(topLevelIDs) > 0 {
+		counts, err := s.Q.ChildRunCounts(ctx, topLevelIDs)
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range counts {
+			childCounts[c.RunID] = int(c.Count)
+		}
+	}
+
+	planRows, err := s.Q.PlansForRuns(ctx, runIDs)
+	if err != nil {
+		return nil, err
+	}
+	plansByRun := make(map[uuid.UUID][]store.PlanStep, len(rows))
+	for _, step := range planRows {
+		plansByRun[step.RunID] = append(plansByRun[step.RunID], step)
+	}
+
+	planningByRun := make(map[uuid.UUID]store.PlanningSession, len(planningIDs))
+	if len(planningIDs) > 0 {
+		ps, err := s.Q.PlanningSessionsForRuns(ctx, planningIDs)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range ps {
+			planningByRun[p.RunID] = p
+		}
+	}
+	researchByRun := make(map[uuid.UUID]store.ResearchRunsMetaRow, len(researchIDs))
+	if len(researchIDs) > 0 {
+		rs, err := s.Q.ResearchRunsMeta(ctx, researchIDs)
+		if err != nil {
+			return nil, err
+		}
+		for _, rm := range rs {
+			researchByRun[rm.RunID] = rm
+		}
+	}
+	learningByRun := make(map[uuid.UUID]store.LearningRunsMetaRow, len(learningIDs))
+	if len(learningIDs) > 0 {
+		ls, err := s.Q.LearningRunsMeta(ctx, learningIDs)
+		if err != nil {
+			return nil, err
+		}
+		for _, lm := range ls {
+			learningByRun[lm.RunID] = lm
+		}
+	}
+	workflowByRun := make(map[uuid.UUID]store.WorkflowRunsMetaRow, len(workflowIDs))
+	if len(workflowIDs) > 0 {
+		wsRows, err := s.Q.WorkflowRunsMeta(ctx, workflowIDs)
+		if err != nil {
+			return nil, err
+		}
+		for _, wm := range wsRows {
+			workflowByRun[wm.RunID] = wm
+		}
+	}
+	chatByRun := make(map[uuid.UUID]store.ChatSessionsOfRunsRow, len(chatIDs))
+	if len(chatIDs) > 0 {
+		cs, err := s.Q.ChatSessionsOfRuns(ctx, chatIDs)
+		if err != nil {
+			return nil, err
+		}
+		for _, cm := range cs {
+			chatByRun[cm.RunID] = cm
+		}
+	}
+
+	// Collect all project IDs resolved above so projects load in one query.
+	projectIDForRun := make([]uuid.UUID, len(rows))
+	var projectIDs []uuid.UUID
+	seenProject := make(map[uuid.UUID]struct{})
+	addProjectID := func(i int, pid uuid.UUID) {
+		if pid == uuid.Nil {
+			return
+		}
+		projectIDForRun[i] = pid
+		if _, ok := seenProject[pid]; !ok {
+			seenProject[pid] = struct{}{}
+			projectIDs = append(projectIDs, pid)
+		}
+	}
+	for i, r := range rows {
+		switch {
+		case r.TicketID != nil:
+			if t, ok := ticketsByID[*r.TicketID]; ok {
+				addProjectID(i, t.ProjectID)
+			}
+		case r.Purpose == "planning":
+			if p, ok := planningByRun[r.ID]; ok {
+				addProjectID(i, p.ProjectID)
+			}
+		case r.Purpose == runs.PurposeResearch:
+			if m, ok := researchByRun[r.ID]; ok {
+				addProjectID(i, runs.ProjectIDOrNil(m.ProjectID))
+			}
+		case r.Purpose == runs.PurposeLearning:
+			if m, ok := learningByRun[r.ID]; ok {
+				addProjectID(i, runs.ProjectIDOrNil(m.ProjectID))
+			}
+		case r.Purpose == runs.PurposeWorkflow:
+			if m, ok := workflowByRun[r.ID]; ok {
+				addProjectID(i, runs.ProjectIDOrNil(m.ProjectID))
+			}
+		case r.Purpose == "chat":
+			if m, ok := chatByRun[r.ID]; ok {
+				addProjectID(i, runs.ProjectIDOrNil(m.ProjectID))
 			}
 		}
 	}
-	plan, err := s.Q.ListPlan(ctx, r.ID)
-	if err != nil {
-		return out, err
+	projectsByID := make(map[uuid.UUID]store.Project, len(projectIDs))
+	if len(projectIDs) > 0 {
+		projs, err := s.Q.ProjectsByIDs(ctx, store.ProjectsByIDsParams{WorkspaceID: ws, Ids: projectIDs})
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range projs {
+			projectsByID[p.ID] = p
+		}
 	}
-	for _, p := range plan {
-		out.Plan = append(out.Plan, api.PlanStep{Position: int(p.Position), Text: p.Text, State: api.PlanStepState(p.State)})
+
+	result := make([]api.Run, 0, len(rows))
+	for i, r := range rows {
+		a, ok := dir.agents[r.AgentID]
+		if !ok {
+			var err error
+			a, err = s.Q.GetAgent(ctx, store.GetAgentParams{ID: r.AgentID, WorkspaceID: r.WorkspaceID})
+			if err != nil {
+				return nil, err
+			}
+		}
+		var t store.Ticket
+		if r.TicketID != nil {
+			var ok bool
+			t, ok = ticketsByID[*r.TicketID]
+			if !ok {
+				var err error
+				t, err = s.Q.GetTicketByID(ctx, *r.TicketID)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+		out := api.Run{
+			Id: r.ID, TicketKey: t.Key, Purpose: api.RunPurpose(r.Purpose), Agent: *toAgentRef(a), Mode: api.RunMode(r.Mode), State: api.RunState(r.State),
+			Harness: r.Harness, Model: r.Model, Outcome: r.Outcome, StartedAt: r.StartedAt, EndedAt: r.EndedAt,
+			ToolCalls: int(r.ToolCalls), InputTokens: r.InputTokens, OutputTokens: r.OutputTokens,
+			CostUsd: float32(r.CostUsdMicros) / 1e6, CostSource: r.CostSource,
+			SetupMs: r.SetupMs, HarnessMs: r.HarnessMs, ChecksMs: r.ChecksMs,
+			Plan: []api.PlanStep{}, Scopes: []string{}, ApprovalScopes: []string{},
+		}
+		cr := cacheByRun[r.ID]
+		cached, uncached, unknown := cacheBreakdown(r.InputTokens, cr.CachedInputTokens, cr.ReportedInputTokens)
+		out.CachedInputTokens, out.UncachedInputTokens, out.UnreportedInputTokens = &cached, &uncached, &unknown
+		switch {
+		case r.TicketID != nil:
+			out.WorkTitle = &t.Title
+			out.Branch, out.PrUrl, out.PrState = t.Branch, t.PrUrl, t.PrState
+			if t.PrNumber != nil {
+				n := int(*t.PrNumber)
+				out.PrNumber = &n
+			}
+		case r.Purpose == "planning":
+			if p, ok := planningByRun[r.ID]; ok {
+				out.PlanningId, out.WorkTitle = &p.ID, &p.Goal
+			}
+		case r.Purpose == runs.PurposeResearch:
+			if m, ok := researchByRun[r.ID]; ok {
+				out.ChatId, out.WorkTitle = &m.ChatID, &m.Title
+			}
+		case r.Purpose == runs.PurposeLearning:
+			if m, ok := learningByRun[r.ID]; ok {
+				out.WorkTitle = &m.Title
+			}
+		case r.Purpose == runs.PurposeWorkflow:
+			if m, ok := workflowByRun[r.ID]; ok {
+				out.ChatId, out.WorkTitle = &m.ChatID, &m.Title
+			}
+		case r.Purpose == "chat":
+			// A chat run without its session (deleted chat) still renders.
+			if m, ok := chatByRun[r.ID]; ok {
+				out.ChatId, out.WorkTitle = &m.ChatID, &m.Title
+			}
+		}
+		if pid := projectIDForRun[i]; pid != uuid.Nil {
+			if p, ok := projectsByID[pid]; ok {
+				out.ProjectKey = &p.Key
+			}
+		}
+		if r.ParentRunID == nil {
+			c := childCounts[r.ID]
+			out.ChildCount = &c
+		}
+		if r.WaitReason != nil {
+			w := api.RunWaitReason(*r.WaitReason)
+			out.WaitReason = &w
+		}
+		out.ParentRunId = r.ParentRunID
+		out.SessionId = r.HarnessSessionID
+		if r.State == "waiting_for_quota" {
+			attempts := int(r.HoldAttempts)
+			out.HoldUntil, out.HoldResetKnown, out.HoldAttempts = r.HoldUntil, &r.HoldResetKnown, &attempts
+		}
+		out.CheckpointBranch, out.CheckpointError = r.CheckpointBranch, r.CheckpointError
+		if r.WorkspaceVolume != nil { // the checkout still exists
+			out.WorkspacePath = r.WorkspaceHostPath
+		}
+		if r.DispatchedByUserID != nil {
+			if u, ok := dir.users[*r.DispatchedByUserID]; ok {
+				out.DispatchedBy = toUserRef(u)
+			}
+		}
+		if spec, err := runs.Spec(r); err == nil {
+			for _, sc := range spec.Scopes {
+				switch sc.Mode {
+				case agentdef.Allowed:
+					out.Scopes = append(out.Scopes, sc.Scope)
+				case agentdef.RequiresApproval:
+					out.ApprovalScopes = append(out.ApprovalScopes, sc.Scope)
+				}
+			}
+		}
+		for _, p := range plansByRun[r.ID] {
+			out.Plan = append(out.Plan, api.PlanStep{Position: int(p.Position), Text: p.Text, State: api.PlanStepState(p.State)})
+		}
+		result = append(result, out)
 	}
-	return out, nil
+	return result, nil
 }
 
 func (s *Server) toApproval(ctx context.Context, ap store.ApprovalRequest, dir actorDirectory) (api.Approval, error) {
@@ -315,15 +483,17 @@ func (s *Server) GetRun(ctx context.Context, req api.GetRunRequestObject) (api.G
 	if err != nil {
 		return nil, err
 	}
+	var inWSChildren []store.Run
 	for _, child := range children {
-		if child.WorkspaceID != ws {
-			continue
+		if child.WorkspaceID == ws {
+			inWSChildren = append(inWSChildren, child)
 		}
-		cr, err := s.toRun(ctx, child)
+	}
+	if len(inWSChildren) > 0 {
+		out.ChildRuns, err = s.toRuns(ctx, ws, inWSChildren)
 		if err != nil {
 			return nil, err
 		}
-		out.ChildRuns = append(out.ChildRuns, cr)
 	}
 	turns, err := s.Q.ListTurns(ctx, r.ID)
 	if err != nil {
@@ -363,16 +533,41 @@ func (s *Server) GetRun(ctx context.Context, req api.GetRunRequestObject) (api.G
 	if req.Params.After != nil {
 		after = *req.Params.After
 	}
-	evs, err := s.Q.ListRunEvents(ctx, store.ListRunEventsParams{RunID: r.ID, Seq: after})
+	out.Events, err = s.runEvents(ctx, r.ID, after)
 	if err != nil {
 		return nil, err
 	}
+	return out, nil
+}
+
+func (s *Server) runEvents(ctx context.Context, runID uuid.UUID, after int64) ([]api.RunEvent, error) {
+	evs, err := s.Q.ListRunEvents(ctx, store.ListRunEventsParams{RunID: runID, Seq: after})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]api.RunEvent, 0, len(evs))
 	for _, e := range evs {
 		m := map[string]any{}
 		_ = json.Unmarshal(e.Payload, &m)
-		out.Events = append(out.Events, api.RunEvent{Seq: e.Seq, Type: api.RunEventType(e.Type), Payload: m, At: e.At})
+		out = append(out, api.RunEvent{Seq: e.Seq, Type: api.RunEventType(e.Type), Payload: m, At: e.At})
 	}
 	return out, nil
+}
+
+func (s *Server) ListRunEvents(ctx context.Context, req api.ListRunEventsRequestObject) (api.ListRunEventsResponseObject, error) {
+	r, err := s.readableRun(ctx, req.Id)
+	if err != nil {
+		return nil, apperr.ErrNotFound
+	}
+	after := int64(0)
+	if req.Params.After != nil {
+		after = *req.Params.After
+	}
+	evs, err := s.runEvents(ctx, r.ID, after)
+	if err != nil {
+		return nil, err
+	}
+	return api.ListRunEvents200JSONResponse{Events: evs}, nil
 }
 
 // liveRunStates are the states the Runs index shows by default.
@@ -446,12 +641,9 @@ func (s *Server) ListRuns(ctx context.Context, req api.ListRunsRequestObject) (a
 	if len(rows) > 50 {
 		out.HasMore, rows = true, rows[:50]
 	}
-	for _, r := range rows {
-		run, err := s.toRun(ctx, r)
-		if err != nil {
-			return nil, err
-		}
-		out.Runs = append(out.Runs, run)
+	out.Runs, err = s.toRuns(ctx, ws, rows)
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }

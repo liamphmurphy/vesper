@@ -1267,6 +1267,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runs/{id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** A run's streamed events after an optional sequence cursor */
+        get: operations["listRunEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/runs/{id}/{action}": {
         parameters: {
             query?: never;
@@ -6719,6 +6738,9 @@ export interface components {
             /** Format: date-time */
             at: string;
         };
+        RunEventList: {
+            events: components["schemas"]["RunEvent"][];
+        };
         RunDetail: {
             run: components["schemas"]["Run"];
             /** @description Direct delegated runs, including active and finished runs. Fetch each run for its own events and cursor. */
@@ -11752,6 +11774,32 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunDetail"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listRunEvents: {
+        parameters: {
+            query?: {
+                /** @description Only events after this sequence number */
+                after?: number;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Run events */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunEventList"];
                 };
             };
             default: components["responses"]["Error"];

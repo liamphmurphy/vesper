@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"sort"
 	"strconv"
@@ -42,37 +43,45 @@ type reviewSnapshot struct {
 	treeTruncated      bool
 }
 
-// gitLine is one trimmed line of git output, "" when the command fails.
-func (r *Runner) gitLine(ctx context.Context, runID string, args ...string) string {
-	out, _, code, err := r.gitCmd(ctx, runID, nil, 4<<10, args...)
-	if err != nil || code != 0 {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
+// repoReviewCache caches HEAD tree blobs across live code-review ticks within a
+// turn (keyed by HEAD SHA) and skips redundant JSONB writes when the serialized
+// tree is unchanged.
+type repoReviewCache struct {
+	head           string
+	headSize       map[string]int
+	headIsBlob     map[string]bool
+	blobData       map[string][]byte
+	hasSavedTree   bool
+	savedTreeJSON  []byte
+	savedTreeTrunc bool
 }
 
-// reviewBase is where the branch left the remote's default branch: the
-// merge base with origin/HEAD, else the commit the checkout was cloned at.
-func (r *Runner) reviewBase(ctx context.Context, runID, head string) string {
-	if base := r.gitLine(ctx, runID, "merge-base", head, "refs/remotes/origin/HEAD"); commitRe.MatchString(base) {
-		return base
-	}
-	if base := r.gitLine(ctx, runID, "config", "--get", "vesper.base"); commitRe.MatchString(base) {
-		return base
-	}
-	return head
+type codeReviewCache struct {
+	mu    sync.Mutex
+	repos map[string]*repoReviewCache
 }
 
-// commitList is `git log base..head`, newest first.
-func (r *Runner) commitList(ctx context.Context, runID, base, head string) []pushreq.Commit {
-	if base == head {
-		return []pushreq.Commit{}
+func newCodeReviewCache() *codeReviewCache {
+	return &codeReviewCache{repos: map[string]*repoReviewCache{}}
+}
+
+func (c *codeReviewCache) repo(repoURL string) *repoReviewCache {
+	if c == nil {
+		return nil
 	}
-	out, _, code, err := r.gitCmd(ctx, runID, nil, 1<<20, "log", "--no-color", "--format=%H%x1f%s%x1e", "-n", "100", base+".."+head)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	rc := c.repos[repoURL]
+	if rc == nil {
+		rc = &repoReviewCache{}
+		c.repos[repoURL] = rc
+	}
+	return rc
+}
+
+// parseCommitList parses `git log --format=%H%x1f%s%x1e` output.
+func parseCommitList(out []byte) []pushreq.Commit {
 	commits := []pushreq.Commit{}
-	if err != nil || code != 0 {
-		return commits
-	}
 	for _, rec := range bytes.Split(out, []byte{0x1e}) {
 		sha, subject, ok := strings.Cut(strings.TrimSpace(string(rec)), "\x1f")
 		if ok && commitRe.MatchString(sha) && len(commits) < reviewCommitLimit {
@@ -82,27 +91,81 @@ func (r *Runner) commitList(ctx context.Context, runID, base, head string) []pus
 	return commits
 }
 
-// snapshot reads one checkout's review. ok is false when it has no commit yet.
-func (r *Runner) snapshot(ctx context.Context, runID string, env map[string]string) (reviewSnapshot, bool, error) {
-	head := r.gitLine(ctx, runID, "rev-parse", "--verify", "-q", "HEAD")
-	if !commitRe.MatchString(head) {
+// gitLine is one trimmed line of git output, "" when the command fails.
+func (r *Runner) gitLine(ctx context.Context, runID string, args ...string) string {
+	out, _, code, err := r.gitCmd(ctx, runID, nil, 4<<10, args...)
+	if err != nil || code != 0 {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// commitList is `git log base..head`, newest first.
+func (r *Runner) commitList(ctx context.Context, runID, base, head string) []pushreq.Commit {
+	if base == head {
+		return []pushreq.Commit{}
+	}
+	out, _, code, err := r.gitCmd(ctx, runID, nil, 1<<20, "log", "--no-color", "--format=%H%x1f%s%x1e", "-n", "100", base+".."+head)
+	if err != nil || code != 0 {
+		return []pushreq.Commit{}
+	}
+	return parseCommitList(out)
+}
+
+// snapshot reads one checkout's review in a single workspace process call. ok is
+// false when the repository has no commit yet.
+func (r *Runner) snapshot(ctx context.Context, runID string, env map[string]string, cache *repoReviewCache) (reviewSnapshot, bool, error) {
+	cachedHead := ""
+	if cache != nil {
+		cachedHead = cache.head
+	}
+	res, err := r.runGitBatch(ctx, runID, gitBatchRequest{
+		Mode:              "snapshot",
+		CachedHead:        cachedHead,
+		Pathspec:          codeChangePathspec,
+		DiffLimit:         codeDiffReadLimit,
+		UntrackedLimit:    codeUntrackedReadLimit,
+		MaxFiles:          CodeChangeMaxFiles,
+		MaxTreeFiles:      CodeReviewMaxTreeFiles,
+		MaxFileBytes:      CodeReviewMaxFileBytes,
+		OversizeFileBytes: CodeReviewOversizeFileBytes,
+		MaxTreeTotalBytes: CodeReviewMaxTreeTotalBytes,
+	})
+	if err != nil {
+		return reviewSnapshot{}, false, err
+	}
+	headRec, ok := res.get("head")
+	head := strings.TrimSpace(string(headRec.Data))
+	if !ok || headRec.Code != 0 || !commitRe.MatchString(head) {
 		return reviewSnapshot{}, false, nil
 	}
-	s := reviewSnapshot{head: head, branch: r.gitLine(ctx, runID, "symbolic-ref", "--quiet", "--short", "HEAD")}
-	s.base = r.reviewBase(ctx, runID, head)
-	s.commits = r.commitList(ctx, runID, s.base, head)
-	files, err := r.codeChanges(ctx, runID, s.base, env)
+	branchRec, _ := res.get("branch")
+	baseRec, _ := res.get("base")
+	base := strings.TrimSpace(string(baseRec.Data))
+	if !commitRe.MatchString(base) {
+		base = head
+	}
+	commits := []pushreq.Commit{}
+	if cr, ok := res.get("commits"); ok && cr.Code == 0 {
+		commits = parseCommitList(cr.Data)
+	}
+	s := reviewSnapshot{
+		head:    head,
+		branch:  strings.TrimSpace(string(branchRec.Data)),
+		base:    base,
+		commits: commits,
+	}
+	files, err := r.buildCodeChanges(res, runID, env)
 	if err != nil {
 		return s, false, err
 	}
 	s.files = files
-	filterEnv, err := r.repoFilterEnv(ctx, runID)
-	if err != nil {
+	if _, hasFilterErr := res.get("filter_err"); hasFilterErr {
 		return s, true, nil
 	}
-	status, _, code, err := r.gitCmd(ctx, runID, filterEnv, 1<<20, append([]string{"status", "--porcelain=v1", "-z", "--untracked-files=normal"}, codeChangePathspec...)...)
-	s.dirty = err == nil && code == 0 && len(status) > 0
-	s.tree, s.treeTruncated = r.branchTree(ctx, runID, filterEnv, s.files, env)
+	statusRec, hasStatus := res.get("status")
+	s.dirty = hasStatus && statusRec.Code == 0 && len(statusRec.Data) > 0
+	s.tree, s.treeTruncated = r.branchTree(ctx, runID, res, head, s.files, env, cache)
 	return s, true, nil
 }
 
@@ -130,20 +193,19 @@ func extractAddedContent(patch string) string {
 
 // branchTree reads the full non-ignored, non-excluded file tree for the
 // checkout's current branch state along with bounded text contents for viewing.
-func (r *Runner) branchTree(ctx context.Context, runID string, filterEnv map[string]string, files []CodeChange, env map[string]string) ([]CodeReviewFile, bool) {
-	lsOut, _, lsCode, lsErr := r.gitCmd(ctx, runID, filterEnv, 2<<20, append([]string{"ls-files", "--cached", "--others", "--exclude-standard", "-z"}, codeChangePathspec...)...)
-	if lsErr != nil || lsCode != 0 {
+func (r *Runner) branchTree(ctx context.Context, runID string, res *gitBatchResult, head string, files []CodeChange, env map[string]string, cache *repoReviewCache) ([]CodeReviewFile, bool) {
+	lsRec, hasLS := res.get("ls_tree_files")
+	if !hasLS || lsRec.Code != 0 {
 		return []CodeReviewFile{}, false
 	}
-	delOut, _, _, _ := r.gitCmd(ctx, runID, filterEnv, 1<<20, append([]string{"ls-files", "--deleted", "-z"}, codeChangePathspec...)...)
+	delRec, _ := res.get("ls_deleted")
 	deleted := map[string]bool{}
-	for _, rec := range bytes.Split(delOut, []byte{0}) {
+	for _, rec := range bytes.Split(delRec.Data, []byte{0}) {
 		if p := string(rec); p != "" {
 			deleted[p] = true
 		}
 	}
 	changedByPath := make(map[string]CodeChange, len(files))
-	changedSet := make(map[string]bool, len(files))
 	for _, ch := range files {
 		if ch.Status == "deleted" {
 			deleted[ch.Path] = true
@@ -153,11 +215,10 @@ func (r *Runner) branchTree(ctx context.Context, runID string, filterEnv map[str
 			deleted[*ch.OldPath] = true
 		}
 		changedByPath[ch.Path] = ch
-		changedSet[ch.Path] = true
 	}
 
 	pathSet := map[string]bool{}
-	for _, rec := range bytes.Split(lsOut, []byte{0}) {
+	for _, rec := range bytes.Split(lsRec.Data, []byte{0}) {
 		p := string(rec)
 		if isWorkspaceExcluded(p) || deleted[p] {
 			continue
@@ -182,109 +243,87 @@ func (r *Runner) branchTree(ctx context.Context, runID string, filterEnv map[str
 		treeTruncated = true
 	}
 
-	headSize := map[string]int{}
-	headIsBlob := map[string]bool{}
-	treeOut, _, treeCode, treeErr := r.gitCmd(ctx, runID, filterEnv, 2<<20, "ls-tree", "-r", "-l", "-z", "HEAD")
-	if treeErr == nil && treeCode == 0 {
-		for _, rec := range bytes.Split(treeOut, []byte{0}) {
-			if len(rec) == 0 {
-				continue
-			}
-			meta, path, ok := strings.Cut(string(rec), "\t")
-			if !ok || isWorkspaceExcluded(path) {
-				continue
-			}
-			fields := strings.Fields(meta)
-			if len(fields) < 4 {
-				continue
-			}
-			typ, szStr := fields[1], fields[3]
-			if typ == "blob" {
-				headIsBlob[path] = true
-				if n, err := strconv.Atoi(szStr); err == nil {
-					headSize[path] = n
-				}
-			}
-		}
-	}
+	var headSize map[string]int
+	var headIsBlob map[string]bool
+	var blobData map[string][]byte
 
-	var unchangedCandidates, changedCandidates []string
-	queuedBudget := 0
-	for _, p := range paths {
-		if !headIsBlob[p] || headSize[p] > CodeReviewOversizeFileBytes {
-			continue
-		}
-		if ch, ok := changedByPath[p]; ok {
-			if !ch.Binary {
-				changedCandidates = append(changedCandidates, p)
-			}
-		} else {
-			sliceEst := headSize[p]
-			if sliceEst > CodeReviewMaxFileBytes {
-				sliceEst = CodeReviewMaxFileBytes
-			}
-			if queuedBudget < CodeReviewMaxTreeTotalBytes*2 {
-				unchangedCandidates = append(unchangedCandidates, p)
-				queuedBudget += sliceEst
-			}
-		}
-	}
-	candidates := append(unchangedCandidates, changedCandidates...)
-
-	blobData := make(map[string][]byte, len(candidates))
-	if len(candidates) > 0 {
-		archiveEnv := make(map[string]string, len(filterEnv)+1)
-		for k, v := range filterEnv {
-			archiveEnv[k] = v
-		}
-		archiveEnv["GIT_LITERAL_PATHSPECS"] = "1"
-		const chunkSize = 100
-		for start := 0; start < len(candidates); start += chunkSize {
-			end := start + chunkSize
-			if end > len(candidates) {
-				end = len(candidates)
-			}
-			args := append([]string{"archive", "--format=tar", "HEAD", "--"}, candidates[start:end]...)
-			tarBytes, _, code, err := r.gitCmd(ctx, runID, archiveEnv, 4<<20, args...)
-			if err != nil || code != 0 || len(tarBytes) == 0 {
+	if cache != nil && cache.head == head && head != "" {
+		headSize = cache.headSize
+		headIsBlob = cache.headIsBlob
+		blobData = cache.blobData
+		// If a previously unarchived unchanged file in a large repo became dirty on
+		// the same HEAD, populate it lazily so tree contents stay complete.
+		var filterEnv map[string]string
+		var gotFilterEnv bool
+		for _, p := range paths {
+			ch, ok := changedByPath[p]
+			if !ok || ch.Binary || !headIsBlob[p] || headSize[p] > CodeReviewOversizeFileBytes {
 				continue
 			}
-			tr := tar.NewReader(bytes.NewReader(tarBytes))
-			for {
-				hdr, err := tr.Next()
-				if err == io.EOF || err != nil {
-					break
-				}
-				if hdr.Typeflag == tar.TypeDir || hdr.Typeflag == tar.TypeXHeader || hdr.Typeflag == tar.TypeXGlobalHeader {
-					continue
-				}
-				name := strings.TrimPrefix(hdr.Name, "./")
-				if hdr.Typeflag == tar.TypeSymlink {
-					blobData[name] = []byte(hdr.Linkname)
-					continue
-				}
-				raw, _ := io.ReadAll(io.LimitReader(tr, CodeReviewOversizeFileBytes+1))
-				blobData[name] = raw
-			}
-		}
-		// Fallback with git show for any missing candidate (e.g. export-ignore in .gitattributes)
-		fallbackFetched := 0
-		for _, p := range candidates {
 			if _, ok := blobData[p]; ok {
 				continue
 			}
-			if fallbackFetched >= CodeReviewMaxTreeTotalBytes*2 {
-				break
+			if !gotFilterEnv {
+				filterEnv, _ = r.repoFilterEnv(ctx, runID)
+				gotFilterEnv = true
 			}
-			raw, _, code, err := r.gitCmd(ctx, runID, filterEnv, CodeReviewOversizeFileBytes+1, "show", "HEAD:"+p)
-			if err == nil && code == 0 {
+			if raw, _, code, err := r.gitCmd(ctx, runID, filterEnv, CodeReviewOversizeFileBytes+1, "show", "HEAD:"+p); err == nil && code == 0 {
 				blobData[p] = raw
-				if len(raw) > CodeReviewMaxFileBytes {
-					fallbackFetched += CodeReviewMaxFileBytes
-				} else {
-					fallbackFetched += len(raw)
+			}
+		}
+	} else {
+		headSize = map[string]int{}
+		headIsBlob = map[string]bool{}
+		blobData = map[string][]byte{}
+		if treeRec, ok := res.get("ls_tree"); ok && treeRec.Code == 0 {
+			for _, rec := range bytes.Split(treeRec.Data, []byte{0}) {
+				if len(rec) == 0 {
+					continue
+				}
+				meta, p, ok := strings.Cut(string(rec), "\t")
+				if !ok || isWorkspaceExcluded(p) {
+					continue
+				}
+				fields := strings.Fields(meta)
+				if len(fields) < 4 {
+					continue
+				}
+				if fields[1] == "blob" {
+					headIsBlob[p] = true
+					if n, err := strconv.Atoi(fields[3]); err == nil {
+						headSize[p] = n
+					}
 				}
 			}
+		}
+		for _, rec := range res.records {
+			if strings.HasPrefix(rec.Key, "tar\x00") {
+				tr := tar.NewReader(bytes.NewReader(rec.Data))
+				for {
+					hdr, err := tr.Next()
+					if err == io.EOF || err != nil {
+						break
+					}
+					if hdr.Typeflag == tar.TypeDir || hdr.Typeflag == tar.TypeXHeader || hdr.Typeflag == tar.TypeXGlobalHeader {
+						continue
+					}
+					name := strings.TrimPrefix(hdr.Name, "./")
+					if hdr.Typeflag == tar.TypeSymlink {
+						blobData[name] = []byte(hdr.Linkname)
+						continue
+					}
+					raw, _ := io.ReadAll(io.LimitReader(tr, CodeReviewOversizeFileBytes+1))
+					blobData[name] = raw
+				}
+			} else if name, ok := strings.CutPrefix(rec.Key, "show\x00"); ok {
+				blobData[name] = rec.Data
+			}
+		}
+		if cache != nil {
+			cache.head = head
+			cache.headSize = headSize
+			cache.headIsBlob = headIsBlob
+			cache.blobData = blobData
 		}
 	}
 
@@ -332,7 +371,7 @@ func (r *Runner) branchTree(ctx context.Context, runID string, filterEnv map[str
 
 // saveCodeReviews reads and stores the review of every checkout the chat has.
 // Failures are logged and never fail the turn.
-func (r *Runner) saveCodeReviews(ctx context.Context, c runCtx, env map[string]string, live bool) {
+func (r *Runner) saveCodeReviews(ctx context.Context, c runCtx, env map[string]string, live bool, cache *codeReviewCache) {
 	chat, err := r.q().ChatSessionForRun(ctx, &c.run.ID)
 	if err != nil {
 		return
@@ -349,7 +388,8 @@ func (r *Runner) saveCodeReviews(ctx context.Context, c runCtx, env map[string]s
 	tctx, cancel := context.WithTimeout(ctx, codeChangesTimeout)
 	defer cancel()
 	for _, repo := range repos {
-		s, ok, err := r.snapshot(inRepository(tctx, repo.Directory), c.run.ID.String(), env)
+		rc := cache.repo(repo.RepoUrl)
+		s, ok, err := r.snapshot(inRepository(tctx, repo.Directory), c.run.ID.String(), env, rc)
 		if err != nil {
 			r.Log.Warn("code review", "run", c.run.ID, "repo", repo.RepoUrl, "err", err)
 		}
@@ -362,52 +402,75 @@ func (r *Runner) saveCodeReviews(ctx context.Context, c runCtx, env map[string]s
 			s.tree = []CodeReviewFile{}
 		}
 		tree, _ := json.Marshal(s.tree)
+		var treeArg []byte
+		treeChanged := rc == nil || !rc.hasSavedTree || !bytes.Equal(tree, rc.savedTreeJSON) || s.treeTruncated != rc.savedTreeTrunc
+		if treeChanged {
+			treeArg = tree
+		}
 		var branch *string
 		if s.branch != "" {
 			branch = &s.branch
 		}
 		if err := r.q().UpsertChatCodeReview(ctx, store.UpsertChatCodeReviewParams{ChatID: chat.ID, RepoUrl: repo.RepoUrl, Branch: branch,
-			BaseSha: &s.base, HeadSha: &s.head, Commits: commits, Files: files, Dirty: s.dirty, Live: live, Tree: tree, TreeTruncated: s.treeTruncated}); err != nil {
+			BaseSha: &s.base, HeadSha: &s.head, Commits: commits, Files: files, Dirty: s.dirty, Live: live, Tree: treeArg, TreeTruncated: s.treeTruncated}); err != nil {
 			r.Log.Warn("save code review", "run", c.run.ID, "err", err)
+			continue
+		}
+		if rc != nil && treeChanged {
+			rc.hasSavedTree = true
+			rc.savedTreeJSON = tree
+			rc.savedTreeTrunc = s.treeTruncated
 		}
 	}
 }
 
 // reviewSignature changes whenever a checkout's commits, files or diff sizes
-// do; the watcher refreshes the review only then. Three short git commands per
-// checkout.
+// do; the watcher refreshes the review only then. All checkouts are inspected
+// in a single container invocation.
 func (r *Runner) reviewSignature(ctx context.Context, c runCtx) string {
 	chat, err := r.q().ChatSessionForRun(ctx, &c.run.ID)
 	if err != nil {
 		return ""
 	}
 	repos, err := r.q().ChatRepositories(ctx, chat.ID)
+	if err != nil || len(repos) == 0 {
+		return ""
+	}
+	entries := make([]gitSignatureEntry, len(repos))
+	for i, repo := range repos {
+		entries[i] = gitSignatureEntry{Dir: repo.Directory}
+	}
+	res, err := r.runGitBatch(ctx, c.run.ID.String(), gitBatchRequest{
+		Mode:     "signature",
+		Pathspec: codeChangePathspec,
+		Repos:    entries,
+	})
 	if err != nil {
 		return ""
 	}
 	var b strings.Builder
-	for _, repo := range repos {
-		rc := inRepository(ctx, repo.Directory)
-		id := c.run.ID.String()
-		// Reading the working tree must never run the repository's programs.
-		filterEnv, err := r.repoFilterEnv(rc, id)
-		if err != nil {
+	for i, repo := range repos {
+		st, hasSt := res.get(fmt.Sprintf("sig\x00%d\x00status", i))
+		ns, hasNs := res.get(fmt.Sprintf("sig\x00%d\x00numstat", i))
+		if !hasSt && !hasNs {
 			continue
 		}
-		status, _, _, _ := r.gitCmd(rc, id, filterEnv, 1<<20, append([]string{"status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"}, codeChangePathspec...)...)
-		numstat, _, _, _ := r.gitCmd(rc, id, filterEnv, 1<<20, append([]string{"diff", "--no-ext-diff", "--no-textconv", "--numstat", "-z", "HEAD"}, codeChangePathspec...)...)
 		b.WriteString(repo.RepoUrl)
-		b.Write(status)
-		b.Write(numstat)
+		b.Write(st.Data)
+		b.Write(ns.Data)
 	}
 	return b.String()
 }
 
 // watchCodeReview keeps a coding chat's review live while its turn runs, and
-// returns a stop that waits for the watcher to finish.
-func (r *Runner) watchCodeReview(ctx context.Context, c runCtx, env map[string]string) (stop func()) {
-	if c.run.Purpose != "chat" || !allowedScope(c.spec, "repo:write") || CodeReviewInterval <= 0 {
-		return func() {}
+// returns a turn-scoped cache and a stop that waits for the watcher to finish.
+func (r *Runner) watchCodeReview(ctx context.Context, c runCtx, env map[string]string) (*codeReviewCache, func()) {
+	if c.run.Purpose != "chat" || !allowedScope(c.spec, "repo:write") {
+		return nil, func() {}
+	}
+	cache := newCodeReviewCache()
+	if CodeReviewInterval <= 0 {
+		return cache, func() {}
 	}
 	wctx, cancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
@@ -428,10 +491,10 @@ func (r *Runner) watchCodeReview(ctx context.Context, c runCtx, env map[string]s
 				continue
 			}
 			last = sig
-			r.saveCodeReviews(wctx, c, env, true)
+			r.saveCodeReviews(wctx, c, env, true, cache)
 		}
 	}()
-	return func() { cancel(); wg.Wait() }
+	return cache, func() { cancel(); wg.Wait() }
 }
 
 // withoutPushCredentials is a coding chat turn's environment without anything

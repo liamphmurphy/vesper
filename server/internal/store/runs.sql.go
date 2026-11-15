@@ -273,6 +273,25 @@ func (q *Queries) AddRunEvent(ctx context.Context, arg AddRunEventParams) error 
 	return err
 }
 
+const addRunEvents = `-- name: AddRunEvents :exec
+INSERT INTO run_events (run_id, type, payload)
+SELECT $1::uuid, t.typ, p.payload::jsonb
+FROM unnest($2::text[]) WITH ORDINALITY AS t(typ, i)
+JOIN unnest($3::text[]) WITH ORDINALITY AS p(payload, i) USING (i)
+ORDER BY t.i
+`
+
+type AddRunEventsParams struct {
+	RunID    uuid.UUID
+	Types    []string
+	Payloads []string
+}
+
+func (q *Queries) AddRunEvents(ctx context.Context, arg AddRunEventsParams) error {
+	_, err := q.db.Exec(ctx, addRunEvents, arg.RunID, arg.Types, arg.Payloads)
+	return err
+}
+
 const addRunTiming = `-- name: AddRunTiming :exec
 UPDATE runs SET setup_ms = coalesce(setup_ms, 0) + $2::bigint,
   harness_ms = coalesce(harness_ms, 0) + $3::bigint,
@@ -426,13 +445,16 @@ func (q *Queries) CacheUsageForRuns(ctx context.Context, runIds []uuid.UUID) ([]
 }
 
 const chatSessionOfRun = `-- name: ChatSessionOfRun :one
-SELECT id, workspace_id, project_id, title, created_by, agent_id, harness, model, current_run_id, state, archived, revision, created_at, updated_at, last_message_at, persona_id, repo_url, effort, speaker_persona_id, queued_persona_ids, relay_turns, relay_limit, interrupt_message_id, last_read_seq, hidden, connector_ids, space_id, work_branches, commit_email, secret_ids, temporary, pending_repo_url, parent_chat_id, auto_model, anchor_message_id, second_opinion FROM chat_sessions
-WHERE current_run_id = $1 OR id IN (SELECT session_id FROM chat_messages WHERE run_id = $1)
+SELECT id, workspace_id, project_id, title, created_by, agent_id, harness, model, current_run_id, state, archived, revision, created_at, updated_at, last_message_at, persona_id, repo_url, effort, speaker_persona_id, queued_persona_ids, relay_turns, relay_limit, interrupt_message_id, last_read_seq, hidden, connector_ids, space_id, work_branches, commit_email, secret_ids, temporary, pending_repo_url, parent_chat_id, auto_model, anchor_message_id, second_opinion, last_assistant_seq FROM (
+  SELECT id, workspace_id, project_id, title, created_by, agent_id, harness, model, current_run_id, state, archived, revision, created_at, updated_at, last_message_at, persona_id, repo_url, effort, speaker_persona_id, queued_persona_ids, relay_turns, relay_limit, interrupt_message_id, last_read_seq, hidden, connector_ids, space_id, work_branches, commit_email, secret_ids, temporary, pending_repo_url, parent_chat_id, auto_model, anchor_message_id, second_opinion, last_assistant_seq FROM chat_sessions WHERE current_run_id = $1::uuid
+  UNION ALL
+  SELECT s.id, s.workspace_id, s.project_id, s.title, s.created_by, s.agent_id, s.harness, s.model, s.current_run_id, s.state, s.archived, s.revision, s.created_at, s.updated_at, s.last_message_at, s.persona_id, s.repo_url, s.effort, s.speaker_persona_id, s.queued_persona_ids, s.relay_turns, s.relay_limit, s.interrupt_message_id, s.last_read_seq, s.hidden, s.connector_ids, s.space_id, s.work_branches, s.commit_email, s.secret_ids, s.temporary, s.pending_repo_url, s.parent_chat_id, s.auto_model, s.anchor_message_id, s.second_opinion, s.last_assistant_seq FROM chat_messages m JOIN chat_sessions s ON s.id = m.session_id WHERE m.run_id = $1::uuid
+) matched
 LIMIT 1
 `
 
 // The chat a chat run belongs to: its current run or an earlier segment.
-func (q *Queries) ChatSessionOfRun(ctx context.Context, runID *uuid.UUID) (ChatSession, error) {
+func (q *Queries) ChatSessionOfRun(ctx context.Context, runID uuid.UUID) (ChatSession, error) {
 	row := q.db.QueryRow(ctx, chatSessionOfRun, runID)
 	var i ChatSession
 	err := row.Scan(
@@ -472,8 +494,88 @@ func (q *Queries) ChatSessionOfRun(ctx context.Context, runID *uuid.UUID) (ChatS
 		&i.AutoModel,
 		&i.AnchorMessageID,
 		&i.SecondOpinion,
+		&i.LastAssistantSeq,
 	)
 	return i, err
+}
+
+const chatSessionsOfRuns = `-- name: ChatSessionsOfRuns :many
+SELECT DISTINCT ON (matched.run_id) matched.run_id::uuid AS run_id, matched.chat_id, matched.title, matched.project_id
+FROM (
+  SELECT c.current_run_id AS run_id, c.id AS chat_id, c.title, c.project_id, 0 AS prio
+  FROM chat_sessions c
+  WHERE c.current_run_id = ANY($1::uuid[])
+  UNION ALL
+  SELECT m.run_id AS run_id, c.id AS chat_id, c.title, c.project_id, 1 AS prio
+  FROM chat_messages m
+  JOIN chat_sessions c ON c.id = m.session_id
+  WHERE m.run_id = ANY($1::uuid[])
+) matched
+ORDER BY matched.run_id, matched.prio
+`
+
+type ChatSessionsOfRunsRow struct {
+	RunID     uuid.UUID
+	ChatID    uuid.UUID
+	Title     string
+	ProjectID *uuid.UUID
+}
+
+func (q *Queries) ChatSessionsOfRuns(ctx context.Context, runIds []uuid.UUID) ([]ChatSessionsOfRunsRow, error) {
+	rows, err := q.db.Query(ctx, chatSessionsOfRuns, runIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ChatSessionsOfRunsRow{}
+	for rows.Next() {
+		var i ChatSessionsOfRunsRow
+		if err := rows.Scan(
+			&i.RunID,
+			&i.ChatID,
+			&i.Title,
+			&i.ProjectID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const childRunCounts = `-- name: ChildRunCounts :many
+SELECT r.parent_run_id::uuid AS run_id, count(*)::bigint AS count
+FROM runs r
+WHERE r.parent_run_id = ANY($1::uuid[])
+GROUP BY r.parent_run_id
+`
+
+type ChildRunCountsRow struct {
+	RunID uuid.UUID
+	Count int64
+}
+
+func (q *Queries) ChildRunCounts(ctx context.Context, runIds []uuid.UUID) ([]ChildRunCountsRow, error) {
+	rows, err := q.db.Query(ctx, childRunCounts, runIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ChildRunCountsRow{}
+	for rows.Next() {
+		var i ChildRunCountsRow
+		if err := rows.Scan(&i.RunID, &i.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const childRuns = `-- name: ChildRuns :many
@@ -1166,6 +1268,40 @@ func (q *Queries) LatestRunForTicket(ctx context.Context, ticketID *uuid.UUID) (
 	return i, err
 }
 
+const learningRunsMeta = `-- name: LearningRunsMeta :many
+SELECT lr.run_id, l.topic AS title, c.project_id
+FROM learning_runs lr
+JOIN learning_courses l ON l.id = lr.course_id
+JOIN chat_sessions c ON c.id = l.chat_id AND c.workspace_id = l.workspace_id
+WHERE lr.run_id = ANY($1::uuid[])
+`
+
+type LearningRunsMetaRow struct {
+	RunID     uuid.UUID
+	Title     string
+	ProjectID *uuid.UUID
+}
+
+func (q *Queries) LearningRunsMeta(ctx context.Context, runIds []uuid.UUID) ([]LearningRunsMetaRow, error) {
+	rows, err := q.db.Query(ctx, learningRunsMeta, runIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LearningRunsMetaRow{}
+	for rows.Next() {
+		var i LearningRunsMetaRow
+		if err := rows.Scan(&i.RunID, &i.Title, &i.ProjectID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listApprovalsForRun = `-- name: ListApprovalsForRun :many
 SELECT id, workspace_id, run_id, ticket_id, agent_id, scope, action_summary, action_detail, risk_summary, state, decided_by_user_id, decided_at, decision_note, executed_at, result, created_at FROM approval_requests WHERE run_id = $1 ORDER BY created_at
 `
@@ -1670,6 +1806,122 @@ func (q *Queries) PendingApprovalsForTicket(ctx context.Context, ticketID uuid.U
 	return items, nil
 }
 
+const planningSessionsForRuns = `-- name: PlanningSessionsForRuns :many
+SELECT id, workspace_id, project_id, epic_id, artifact_id, source_version_id, goal, run_id, state, proposals, ticket_keys, revision, created_by, created_at, updated_at, context_refs, proposal_count FROM planning_sessions WHERE run_id = ANY($1::uuid[])
+`
+
+func (q *Queries) PlanningSessionsForRuns(ctx context.Context, runIds []uuid.UUID) ([]PlanningSession, error) {
+	rows, err := q.db.Query(ctx, planningSessionsForRuns, runIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PlanningSession{}
+	for rows.Next() {
+		var i PlanningSession
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ProjectID,
+			&i.EpicID,
+			&i.ArtifactID,
+			&i.SourceVersionID,
+			&i.Goal,
+			&i.RunID,
+			&i.State,
+			&i.Proposals,
+			&i.TicketKeys,
+			&i.Revision,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ContextRefs,
+			&i.ProposalCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const plansForRuns = `-- name: PlansForRuns :many
+SELECT id, run_id, position, text, state, note FROM plan_steps WHERE run_id = ANY($1::uuid[]) ORDER BY run_id, position
+`
+
+func (q *Queries) PlansForRuns(ctx context.Context, runIds []uuid.UUID) ([]PlanStep, error) {
+	rows, err := q.db.Query(ctx, plansForRuns, runIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PlanStep{}
+	for rows.Next() {
+		var i PlanStep
+		if err := rows.Scan(
+			&i.ID,
+			&i.RunID,
+			&i.Position,
+			&i.Text,
+			&i.State,
+			&i.Note,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const projectsByIDs = `-- name: ProjectsByIDs :many
+SELECT id, workspace_id, key, name, color, next_ticket_seq, repo_url, default_branch, created_at, updated_at, archived, revision, space_id FROM projects WHERE workspace_id = $1 AND id = ANY($2::uuid[])
+`
+
+type ProjectsByIDsParams struct {
+	WorkspaceID uuid.UUID
+	Ids         []uuid.UUID
+}
+
+func (q *Queries) ProjectsByIDs(ctx context.Context, arg ProjectsByIDsParams) ([]Project, error) {
+	rows, err := q.db.Query(ctx, projectsByIDs, arg.WorkspaceID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Project{}
+	for rows.Next() {
+		var i Project
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Key,
+			&i.Name,
+			&i.Color,
+			&i.NextTicketSeq,
+			&i.RepoUrl,
+			&i.DefaultBranch,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Archived,
+			&i.Revision,
+			&i.SpaceID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const releaseApprovalExecution = `-- name: ReleaseApprovalExecution :exec
 UPDATE approval_requests SET executed_at = NULL WHERE id = $1 AND result IS NULL
 `
@@ -1678,6 +1930,46 @@ UPDATE approval_requests SET executed_at = NULL WHERE id = $1 AND result IS NULL
 func (q *Queries) ReleaseApprovalExecution(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, releaseApprovalExecution, id)
 	return err
+}
+
+const researchRunsMeta = `-- name: ResearchRunsMeta :many
+SELECT t.run_id, c.id AS chat_id, j.title, c.project_id
+FROM research_tasks t
+JOIN research_jobs j ON j.id = t.job_id
+JOIN chat_sessions c ON c.id = j.chat_id AND c.workspace_id = j.workspace_id
+WHERE t.run_id = ANY($1::uuid[])
+`
+
+type ResearchRunsMetaRow struct {
+	RunID     uuid.UUID
+	ChatID    uuid.UUID
+	Title     string
+	ProjectID *uuid.UUID
+}
+
+func (q *Queries) ResearchRunsMeta(ctx context.Context, runIds []uuid.UUID) ([]ResearchRunsMetaRow, error) {
+	rows, err := q.db.Query(ctx, researchRunsMeta, runIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ResearchRunsMetaRow{}
+	for rows.Next() {
+		var i ResearchRunsMetaRow
+		if err := rows.Scan(
+			&i.RunID,
+			&i.ChatID,
+			&i.Title,
+			&i.ProjectID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const runEfficiencyEvents = `-- name: RunEfficiencyEvents :many
@@ -1756,6 +2048,72 @@ func (q *Queries) RunVerdict(ctx context.Context, runID uuid.UUID) (string, erro
 	var verdict string
 	err := row.Scan(&verdict)
 	return verdict, err
+}
+
+const runsTicketsByIDs = `-- name: RunsTicketsByIDs :many
+SELECT id, workspace_id, project_id, number, key, title, description_md, status, priority, epic_id, assignee_agent_id, reviewer_user_id, created_by_user_id, estimate, due_date, branch, pr_number, pr_url, pr_state, pr_additions, pr_deletions, sort_order, search, created_at, updated_at, pr_synced_at, pr_closed_unmerged, dependency_revision, requires_mockup, revision, estimate_points, estimate_rationale, estimated_by_type, estimated_by_id, estimated_at, epic_review FROM tickets WHERE workspace_id = $1 AND id = ANY($2::uuid[])
+`
+
+type RunsTicketsByIDsParams struct {
+	WorkspaceID uuid.UUID
+	Ids         []uuid.UUID
+}
+
+func (q *Queries) RunsTicketsByIDs(ctx context.Context, arg RunsTicketsByIDsParams) ([]Ticket, error) {
+	rows, err := q.db.Query(ctx, runsTicketsByIDs, arg.WorkspaceID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Ticket{}
+	for rows.Next() {
+		var i Ticket
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ProjectID,
+			&i.Number,
+			&i.Key,
+			&i.Title,
+			&i.DescriptionMd,
+			&i.Status,
+			&i.Priority,
+			&i.EpicID,
+			&i.AssigneeAgentID,
+			&i.ReviewerUserID,
+			&i.CreatedByUserID,
+			&i.Estimate,
+			&i.DueDate,
+			&i.Branch,
+			&i.PrNumber,
+			&i.PrUrl,
+			&i.PrState,
+			&i.PrAdditions,
+			&i.PrDeletions,
+			&i.SortOrder,
+			&i.Search,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.PrSyncedAt,
+			&i.PrClosedUnmerged,
+			&i.DependencyRevision,
+			&i.RequiresMockup,
+			&i.Revision,
+			&i.EstimatePoints,
+			&i.EstimateRationale,
+			&i.EstimatedByType,
+			&i.EstimatedByID,
+			&i.EstimatedAt,
+			&i.EpicReview,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const setAgentStatus = `-- name: SetAgentStatus :exec
@@ -2136,4 +2494,43 @@ func (q *Queries) StartTurn(ctx context.Context, arg StartTurnParams) (RunTurn, 
 		&i.ExecutionExpiresAt,
 	)
 	return i, err
+}
+
+const workflowRunsMeta = `-- name: WorkflowRunsMeta :many
+SELECT s.agent_run_id::uuid AS run_id, r.chat_id, r.name AS title, r.project_id
+FROM workflow_steps s
+JOIN workflow_runs r ON r.id = s.run_id
+WHERE s.agent_run_id = ANY($1::uuid[])
+`
+
+type WorkflowRunsMetaRow struct {
+	RunID     uuid.UUID
+	ChatID    uuid.UUID
+	Title     string
+	ProjectID *uuid.UUID
+}
+
+func (q *Queries) WorkflowRunsMeta(ctx context.Context, runIds []uuid.UUID) ([]WorkflowRunsMetaRow, error) {
+	rows, err := q.db.Query(ctx, workflowRunsMeta, runIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WorkflowRunsMetaRow{}
+	for rows.Next() {
+		var i WorkflowRunsMetaRow
+		if err := rows.Scan(
+			&i.RunID,
+			&i.ChatID,
+			&i.Title,
+			&i.ProjectID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

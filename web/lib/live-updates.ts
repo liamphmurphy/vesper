@@ -42,3 +42,14 @@ export function invalidatedBy(type: string): string[] {
   const quiet = ["video.updated", "audio.updated", "code_review.updated", "push_request.updated", "custom_app.updated"];
   return quiet.includes(type) ? keys : [...keys, "dashboard", "epics", "agent-overviews"];
 }
+
+/** Specific React Query keys invalidated by an SSE change hint (scopes `run.events` to listed run IDs). */
+export function invalidatedKeys(msg: { type?: unknown; ids?: unknown }): (readonly unknown[])[] {
+  if (typeof msg.type !== "string" || !msg.type) return [];
+  if (msg.type === "run.events") {
+    const ids = Array.isArray(msg.ids) ? msg.ids.filter((id): id is string => typeof id === "string" && id.length > 0) : [];
+    if (ids.length === 0) return [["runs"]];
+    return ids.flatMap((id) => [["runs", id], ["runs", "chat", id]] as const);
+  }
+  return invalidatedBy(msg.type).map((k) => [k]);
+}

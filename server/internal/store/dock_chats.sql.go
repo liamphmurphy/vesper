@@ -36,7 +36,7 @@ func (q *Queries) AddDockChat(ctx context.Context, arg AddDockChatParams) error 
 }
 
 const listDockChats = `-- name: ListDockChats :many
-SELECT c.id, c.workspace_id, c.project_id, c.title, c.created_by, c.agent_id, c.harness, c.model, c.current_run_id, c.state, c.archived, c.revision, c.created_at, c.updated_at, c.last_message_at, c.persona_id, c.repo_url, c.effort, c.speaker_persona_id, c.queued_persona_ids, c.relay_turns, c.relay_limit, c.interrupt_message_id, c.last_read_seq, c.hidden, c.connector_ids, c.space_id, c.work_branches, c.commit_email, c.secret_ids, c.temporary, c.pending_repo_url, c.parent_chat_id, c.auto_model, c.anchor_message_id, c.second_opinion FROM dock_chats d JOIN chat_sessions c ON c.id = d.chat_id
+SELECT c.id, c.workspace_id, c.project_id, c.title, c.created_by, c.agent_id, c.harness, c.model, c.current_run_id, c.state, c.archived, c.revision, c.created_at, c.updated_at, c.last_message_at, c.persona_id, c.repo_url, c.effort, c.speaker_persona_id, c.queued_persona_ids, c.relay_turns, c.relay_limit, c.interrupt_message_id, c.last_read_seq, c.hidden, c.connector_ids, c.space_id, c.work_branches, c.commit_email, c.secret_ids, c.temporary, c.pending_repo_url, c.parent_chat_id, c.auto_model, c.anchor_message_id, c.second_opinion, c.last_assistant_seq FROM dock_chats d JOIN chat_sessions c ON c.id = d.chat_id
 WHERE d.workspace_id = $1 AND d.user_id = $2 AND d.scope = $3
   AND c.created_by = $2 AND NOT c.archived
 ORDER BY COALESCE(c.last_message_at, d.attached_at) DESC, c.id DESC
@@ -96,6 +96,7 @@ func (q *Queries) ListDockChats(ctx context.Context, arg ListDockChatsParams) ([
 			&i.AutoModel,
 			&i.AnchorMessageID,
 			&i.SecondOpinion,
+			&i.LastAssistantSeq,
 		); err != nil {
 			return nil, err
 		}

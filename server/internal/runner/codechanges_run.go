@@ -108,55 +108,55 @@ func (r *Runner) repoFilterEnv(ctx context.Context, runID string) (map[string]st
 // uncommitted tracked changes (the working tree against base) plus new
 // untracked files. Secrets in env are redacted from the result.
 func (r *Runner) codeChanges(ctx context.Context, runID, base string, env map[string]string) ([]CodeChange, error) {
-	filterEnv, err := r.repoFilterEnv(ctx, runID)
+	res, err := r.runGitBatch(ctx, runID, gitBatchRequest{
+		Mode:           "code_changes",
+		Base:           base,
+		Pathspec:       codeChangePathspec,
+		DiffLimit:      codeDiffReadLimit,
+		UntrackedLimit: codeUntrackedReadLimit,
+		MaxFiles:       CodeChangeMaxFiles,
+	})
 	if err != nil {
 		return nil, err
 	}
-	diffArgs := func(mode ...string) []string {
-		args := []string{"diff", "--no-ext-diff", "--no-textconv", "-M", "--src-prefix=a/", "--dst-prefix=b/"}
-		return append(append(args, mode...), base)
+	return r.buildCodeChanges(res, runID, env)
+}
+
+func (r *Runner) buildCodeChanges(res *gitBatchResult, runID string, env map[string]string) ([]CodeChange, error) {
+	if fe, ok := res.get("filter_err"); ok {
+		return nil, fmt.Errorf("git config --list: exit %d", fe.Code)
 	}
-	tracked := func(limit int64, mode ...string) ([]byte, bool, error) {
-		out, cut, code, err := r.gitCmd(ctx, runID, filterEnv, limit, append(diffArgs(mode...), codeChangePathspec...)...)
-		if err != nil || code != 0 {
-			return nil, false, fmt.Errorf("git diff %v: exit %d: %v", mode, code, err)
-		}
-		return out, cut, nil
+	nsRec, ok := res.get("numstat")
+	if !ok || nsRec.Code != 0 || nsRec.Cut {
+		return nil, fmt.Errorf("git diff --numstat: exit %d (cut %v)", nsRec.Code, nsRec.Cut)
 	}
-	numstat, cut, err := tracked(1<<20, "--numstat", "-z")
-	if err != nil || cut {
-		return nil, fmt.Errorf("git diff --numstat: %v (cut %v)", err, cut)
+	patchRec, ok := res.get("patch")
+	if !ok || patchRec.Code != 0 {
+		return nil, fmt.Errorf("git diff [-p --unified=3]: exit %d", patchRec.Code)
 	}
-	patch, patchCut, err := tracked(codeDiffReadLimit, "-p", "--unified=3")
+	changes, err := ParseCodeChanges(nsRec.Data, string(patchRec.Data), patchRec.Cut)
 	if err != nil {
 		return nil, err
 	}
-	changes, err := ParseCodeChanges(numstat, string(patch), patchCut)
-	if err != nil {
-		return nil, err
-	}
-	// New files git doesn't track yet (not ignored ones, and never our own).
-	list, _, code, err := r.gitCmd(ctx, runID, nil, 1<<20, "ls-files", "--others", "--exclude-standard", "-z")
-	if err != nil || code != 0 {
-		return nil, fmt.Errorf("git ls-files: exit %d: %v", code, err)
+	lsRec, ok := res.get("ls_others")
+	if !ok || lsRec.Code != 0 {
+		return nil, fmt.Errorf("git ls-files: exit %d", lsRec.Code)
 	}
 	seen := 0
-	for _, name := range bytes.Split(list, []byte{0}) {
-		f := string(name)
-		if f == "" || f == "AGENTS.md" || strings.HasPrefix(f, ".lazyagents/") {
+	for _, rec := range res.records {
+		name, isUntracked := strings.CutPrefix(rec.Key, "untracked\x00")
+		if !isUntracked {
 			continue
 		}
 		if len(changes) >= CodeChangeMaxFiles || seen >= CodeChangeMaxFiles {
 			break
 		}
 		seen++
-		out, cut, code, err := r.gitCmd(ctx, runID, nil, codeUntrackedReadLimit, "diff", "--no-index", "--no-ext-diff", "--no-textconv",
-			"--src-prefix=a/", "--dst-prefix=b/", "--unified=3", "--", "/dev/null", f)
-		if err != nil || code > 1 { // exit 1 only says the files differ
-			r.Log.Warn("diff untracked file", "run", runID, "err", err, "exit", code)
+		if rec.Code > 1 { // exit 1 only says the files differ
+			r.Log.Warn("diff untracked file", "run", runID, "exit", rec.Code)
 			continue
 		}
-		changes = append(changes, UntrackedChange(f, string(out), cut))
+		changes = append(changes, UntrackedChange(name, string(rec.Data), rec.Cut))
 	}
 	changes = ApplyCodeChangeBudget(changes)
 	for i := range changes {

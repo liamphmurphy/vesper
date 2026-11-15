@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { invalidatedBy } from "./live-updates.ts";
+import { invalidatedBy, invalidatedKeys } from "./live-updates.ts";
 
 test("a change hint invalidates its entity's queries and the overview counts", () => {
   assert.deepEqual(invalidatedBy("chat.updated"), ["chats", "canvases", "videos", "audio", "dock", "dashboard", "epics", "agent-overviews"]);
@@ -21,4 +21,16 @@ test("an unknown hint refetches only the overview counts", () => {
 // designKeys (lib/api/designs-hooks.ts) live under "canvases": the design, its versions and its suggestions.
 test("a persona's patch on a design refreshes the open design mid-turn, not when the turn ends", () => {
   assert.ok(invalidatedBy("design.updated").includes("canvases"));
+});
+
+test("run.events invalidates only matching run and chat-run keys when ids are present", () => {
+  assert.deepEqual(invalidatedKeys({ type: "run.events", ids: ["run-1", "run-2"] }), [
+    ["runs", "run-1"],
+    ["runs", "chat", "run-1"],
+    ["runs", "run-2"],
+    ["runs", "chat", "run-2"],
+  ]);
+  assert.deepEqual(invalidatedKeys({ type: "run.events", ids: [] }), [["runs"]]);
+  assert.deepEqual(invalidatedKeys({ type: "run.events" }), [["runs"]]);
+  assert.deepEqual(invalidatedKeys({ type: "video.updated", ids: ["v1"] }), [["videos"]]);
 });

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { invalidatedBy } from "@/lib/live-updates";
+import { invalidatedKeys } from "@/lib/live-updates";
 
 /** One stream per shell. Coalesce bursts from harness logs before refetching. */
 export function LiveUpdates() {
@@ -11,23 +11,23 @@ export function LiveUpdates() {
   useEffect(() => {
     const stream = new EventSource("/events");
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const pending = new Set<string>();
+    const pending = new Map<string, readonly unknown[]>();
     const flush = () => {
       timer = undefined;
-      for (const key of pending) void qc.invalidateQueries({ queryKey: [key] });
+      for (const queryKey of pending.values()) void qc.invalidateQueries({ queryKey });
       pending.clear();
     };
     stream.onopen = () => setOffline(false);
     stream.onerror = () => setOffline(true);
     stream.onmessage = (e) => {
       try {
-        const payload = JSON.parse(e.data) as { type: string; [k: string]: unknown };
+        const payload = JSON.parse(e.data) as { type: string; ids?: unknown; [k: string]: unknown };
         if (payload.type === "reset") {
           void qc.invalidateQueries();
           return;
         }
         window.dispatchEvent(new CustomEvent("vesper:sse", { detail: payload }));
-        for (const key of invalidatedBy(payload.type)) pending.add(key);
+        for (const queryKey of invalidatedKeys(payload)) pending.set(JSON.stringify(queryKey), queryKey);
         if (!timer) timer = setTimeout(flush, 100);
       } catch {
         /* Ignore malformed hints; reconnect resets every cache. */
