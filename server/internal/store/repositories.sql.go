@@ -14,7 +14,7 @@ import (
 const activateChatRepository = `-- name: ActivateChatRepository :one
 UPDATE chat_sessions SET repo_url = r.repo_url, work_branches = r.work_branches, revision = revision + 1, updated_at = now()
 FROM chat_repositories r WHERE chat_sessions.id = $1 AND r.chat_id = chat_sessions.id AND r.repo_url = $2
-RETURNING chat_sessions.id, chat_sessions.workspace_id, chat_sessions.project_id, chat_sessions.title, chat_sessions.created_by, chat_sessions.agent_id, chat_sessions.harness, chat_sessions.model, chat_sessions.current_run_id, chat_sessions.state, chat_sessions.archived, chat_sessions.revision, chat_sessions.created_at, chat_sessions.updated_at, chat_sessions.last_message_at, chat_sessions.persona_id, chat_sessions.repo_url, chat_sessions.effort, chat_sessions.speaker_persona_id, chat_sessions.queued_persona_ids, chat_sessions.relay_turns, chat_sessions.relay_limit, chat_sessions.interrupt_message_id, chat_sessions.last_read_seq, chat_sessions.hidden, chat_sessions.connector_ids, chat_sessions.space_id, chat_sessions.work_branches, chat_sessions.commit_email, chat_sessions.secret_ids, chat_sessions.temporary, chat_sessions.pending_repo_url, chat_sessions.parent_chat_id, chat_sessions.auto_model, chat_sessions.anchor_message_id
+RETURNING chat_sessions.id, chat_sessions.workspace_id, chat_sessions.project_id, chat_sessions.title, chat_sessions.created_by, chat_sessions.agent_id, chat_sessions.harness, chat_sessions.model, chat_sessions.current_run_id, chat_sessions.state, chat_sessions.archived, chat_sessions.revision, chat_sessions.created_at, chat_sessions.updated_at, chat_sessions.last_message_at, chat_sessions.persona_id, chat_sessions.repo_url, chat_sessions.effort, chat_sessions.speaker_persona_id, chat_sessions.queued_persona_ids, chat_sessions.relay_turns, chat_sessions.relay_limit, chat_sessions.interrupt_message_id, chat_sessions.last_read_seq, chat_sessions.hidden, chat_sessions.connector_ids, chat_sessions.space_id, chat_sessions.work_branches, chat_sessions.commit_email, chat_sessions.secret_ids, chat_sessions.temporary, chat_sessions.pending_repo_url, chat_sessions.parent_chat_id, chat_sessions.auto_model, chat_sessions.anchor_message_id, chat_sessions.second_opinion
 `
 
 type ActivateChatRepositoryParams struct {
@@ -61,6 +61,7 @@ func (q *Queries) ActivateChatRepository(ctx context.Context, arg ActivateChatRe
 		&i.ParentChatID,
 		&i.AutoModel,
 		&i.AnchorMessageID,
+		&i.SecondOpinion,
 	)
 	return i, err
 }
@@ -315,7 +316,7 @@ func (q *Queries) PreviousChatWorkspaces(ctx context.Context, arg PreviousChatWo
 }
 
 const queueChatRepository = `-- name: QueueChatRepository :one
-UPDATE chat_sessions SET pending_repo_url = $2, revision = revision + 1, updated_at = now() WHERE id = $1 RETURNING id, workspace_id, project_id, title, created_by, agent_id, harness, model, current_run_id, state, archived, revision, created_at, updated_at, last_message_at, persona_id, repo_url, effort, speaker_persona_id, queued_persona_ids, relay_turns, relay_limit, interrupt_message_id, last_read_seq, hidden, connector_ids, space_id, work_branches, commit_email, secret_ids, temporary, pending_repo_url, parent_chat_id, auto_model, anchor_message_id
+UPDATE chat_sessions SET pending_repo_url = $2, revision = revision + 1, updated_at = now() WHERE id = $1 RETURNING id, workspace_id, project_id, title, created_by, agent_id, harness, model, current_run_id, state, archived, revision, created_at, updated_at, last_message_at, persona_id, repo_url, effort, speaker_persona_id, queued_persona_ids, relay_turns, relay_limit, interrupt_message_id, last_read_seq, hidden, connector_ids, space_id, work_branches, commit_email, secret_ids, temporary, pending_repo_url, parent_chat_id, auto_model, anchor_message_id, second_opinion
 `
 
 type QueueChatRepositoryParams struct {
@@ -362,6 +363,7 @@ func (q *Queries) QueueChatRepository(ctx context.Context, arg QueueChatReposito
 		&i.ParentChatID,
 		&i.AutoModel,
 		&i.AnchorMessageID,
+		&i.SecondOpinion,
 	)
 	return i, err
 }
