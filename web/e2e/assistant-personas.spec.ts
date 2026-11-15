@@ -265,3 +265,35 @@ test("a chat whose checkout is a host folder shows the folder with a copy button
   await expect(chip).toHaveAccessibleName(`Copy folder path ${path}`);
   expect(mock.unhandled).toEqual([]);
 });
+
+test("non-worker persona can set a default model and effort on customization and new chats inherit it", async ({ page }) => {
+  const mock = await installChatApi(page, { personas: team() });
+  await openPanel(page);
+  await select(page, "Nova");
+
+  const picker = page.getByRole("button", { name: "Default model and effort for Nova" });
+  await expect(picker).toContainText("Auto");
+  await picker.click();
+  await page.getByRole("menuitem", { name: "Codex gpt-5-codex" }).click();
+  await expect(picker).toContainText("Codex · gpt-5-codex");
+
+  await picker.click();
+  await page.getByRole("menuitem", { name: "High", exact: true }).click();
+  await expect(picker).toContainText("Codex · gpt-5-codex · High");
+
+  // Switching Nova back to Auto or starting a chat as Nova carries the model & effort.
+  const nova = mock.personas.find((p) => p.name === "Nova")!;
+  expect(nova.default_harness).toBe("codex");
+  expect(nova.default_model).toBe("gpt-5-codex");
+  expect(nova.default_effort).toBe("high");
+
+  await page.goto(`/chat?persona=${nova.id}`);
+  const composerModel = page.getByRole("button", { name: /^Model and effort for the next message:/ });
+  await expect(composerModel).toContainText("gpt-5-codex · High");
+  await page.getByRole("combobox", { name: "Message" }).fill("review this");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page).toHaveURL(/\/chat\/[^/]+/);
+  expect(mock.created[0]).toMatchObject({ persona_id: nova.id });
+  expect(mock.posted[0].body).toMatchObject({ harness: "codex", model: "gpt-5-codex", effort: "high" });
+  expect(mock.unhandled).toEqual([]);
+});

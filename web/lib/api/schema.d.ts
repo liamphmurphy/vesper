@@ -9248,6 +9248,12 @@ export interface components {
              * @enum {string}
              */
             work_status?: "running" | "waiting" | "blocked" | "idle";
+            /** @description Default harness for new chats and runs; absent means Auto */
+            default_harness?: components["schemas"]["Harness"];
+            /** @description Default model for new chats and runs; absent means Auto */
+            default_model?: string;
+            /** @description Default reasoning effort for new chats and runs; absent means automatic */
+            default_effort?: components["schemas"]["ChatEffort"];
             tone: components["schemas"]["PersonaTone"];
             /** @description Stored in lower case */
             color: string;
@@ -9306,6 +9312,11 @@ export interface components {
              * @default false
              */
             is_default: boolean;
+            /** @description Must be paired with default_model */
+            default_harness?: components["schemas"]["Harness"];
+            /** @description Default model for new chats and work; must be paired with default_harness unless auto/empty */
+            default_model?: string;
+            default_effort?: components["schemas"]["ChatEffort"];
         };
         PersonaPatch: {
             revision: number;
@@ -9319,6 +9330,18 @@ export interface components {
             capabilities?: components["schemas"]["PersonaCapabilities"];
             /** @description Replaces the whole list; existing chats keep their repo */
             repos?: string[];
+            /**
+             * @description Empty string clears default_harness and default_model back to Auto
+             * @enum {string}
+             */
+            default_harness?: "" | "claude-code" | "codex" | "antigravity";
+            /** @description Empty string or 'auto' clears the default model back to Auto */
+            default_model?: string;
+            /**
+             * @description Empty string or 'default' clears reasoning effort back to automatic
+             * @enum {string}
+             */
+            default_effort?: "" | "default" | "low" | "medium" | "high" | "xhigh" | "max";
         };
         CustomAppNavItem: {
             id: string;

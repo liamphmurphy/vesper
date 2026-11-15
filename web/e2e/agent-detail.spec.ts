@@ -151,7 +151,11 @@ test("old definition and runs links open Settings and Activity", async ({ page }
   await installAgentApi(page);
   await page.goto("/agents/atlas?tab=definition");
   await expect(tab(page, "Settings")).toHaveAttribute("aria-current", "page");
-  await expect(page.getByRole("radiogroup", { name: "Harness", exact: true })).toBeVisible();
+  await expect(page.getByLabel("Harness", { exact: true })).toHaveValue("Claude Code");
+  await expect(page.getByRole("link", { name: "Change model on persona page" })).toHaveAttribute(
+    "href",
+    "/customization?who=00000000-0000-4000-8000-000000000001",
+  );
   await page.goto("/agents/atlas?tab=runs");
   await expect(tab(page, "Activity")).toHaveAttribute("aria-current", "page");
 });

@@ -145,13 +145,16 @@ func stopWork(ctx context.Context, q *store.Queries, a *store.Agent) error {
 }
 
 // startWork gives a persona its first work record: a handle from its name and the default
-// definition, which the person fills in on the persona's Work tab.
+// definition (inheriting the persona's default harness/model/effort when set).
 func startWork(ctx context.Context, q *store.Queries, p store.Persona, work string, by uuid.UUID) (*store.Agent, error) {
 	handle, err := freeHandle(ctx, q, p.WorkspaceID, p.Name)
 	if err != nil {
 		return nil, err
 	}
 	spec := agents.DefaultSpec()
+	if p.DefaultHarness != "" && p.DefaultModel != "" || p.DefaultEffort != "" {
+		spec.SetModel(p.DefaultHarness, p.DefaultModel, p.DefaultEffort)
+	}
 	a, err := q.CreatePersonaAgent(ctx, store.CreatePersonaAgentParams{
 		ID: p.ID, WorkspaceID: p.WorkspaceID, Name: p.Name, Handle: handle,
 		ColorIndex: int32(agents.NearestHue(p.Color)), Model: spec.Model, Kind: kindFor(work),
@@ -164,7 +167,7 @@ func startWork(ctx context.Context, q *store.Queries, p store.Persona, work stri
 }
 
 // changeWork revives an archived record (under a free handle) and sets its kind, keeping its
-// definition.
+// definition (syncing the persona's default model on revival or change).
 func changeWork(ctx context.Context, q *store.Queries, p store.Persona, a store.Agent, work string, by uuid.UUID) (*store.Agent, error) {
 	kind := kindFor(work)
 	if kind == agents.KindSub && a.ArchivedAt == nil {
@@ -172,7 +175,8 @@ func changeWork(ctx context.Context, q *store.Queries, p store.Persona, a store.
 			return nil, err
 		}
 	}
-	if a.ArchivedAt != nil {
+	revived := a.ArchivedAt != nil
+	if revived {
 		handle := a.Handle
 		taken, err := q.AgentHandleTaken(ctx, store.AgentHandleTakenParams{WorkspaceID: a.WorkspaceID, Handle: handle})
 		if err != nil {
@@ -187,16 +191,27 @@ func changeWork(ctx context.Context, q *store.Queries, p store.Persona, a store.
 			return nil, err
 		}
 	}
-	if a.Kind == kind {
+	if a.Kind == kind && !revived {
 		return &a, nil
 	}
 	spec, _, err := agents.CurrentSpec(ctx, q, a)
 	if err != nil {
 		return nil, err
 	}
-	note := "Takes tickets"
-	if kind == agents.KindSub {
-		note = "Helps on runs"
+	modelSynced := false
+	if revived && (p.DefaultHarness != "" && p.DefaultModel != "" || p.DefaultEffort != "") {
+		spec.SetModel(p.DefaultHarness, p.DefaultModel, p.DefaultEffort)
+		modelSynced = true
+	}
+	if a.Kind == kind && !modelSynced {
+		return &a, nil
+	}
+	note := "Resumed work"
+	if a.Kind != kind {
+		note = "Takes tickets"
+		if kind == agents.KindSub {
+			note = "Helps on runs"
+		}
 	}
 	a, err = agents.WriteVersion(ctx, q, a, agents.Identity{Name: p.Name, Role: a.Role, Specialty: a.Specialty, ColorIndex: int(a.ColorIndex), Kind: kind}, spec, note, &by, nil)
 	return &a, err

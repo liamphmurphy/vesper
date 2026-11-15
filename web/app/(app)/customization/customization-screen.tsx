@@ -23,6 +23,7 @@ import { ConnectorsSection, PersonaConnectors } from "./connectors-section";
 import { useSpaces } from "@/lib/api/space-hooks";
 import { SpaceTile } from "../spaces/_components/space-parts";
 import { PersonasList } from "./personas-list";
+import { PersonaModelSection } from "./persona-model";
 import { PersonaWorkSection } from "./persona-work";
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong. Please try again.");
@@ -230,6 +231,7 @@ export function CustomizationScreen() {
                     )}
                   </div>
                 )}
+                {selected && <PersonaModelSection p={selected} />}
                 {selected && <PersonaWorkSection p={selected} />}
                 {selected && <PersonaConnectors personaId={selected.id} />}
                 <div className="pt-2">

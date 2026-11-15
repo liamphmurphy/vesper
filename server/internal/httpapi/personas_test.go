@@ -491,3 +491,94 @@ func TestPersonaWork(t *testing.T) {
 	}
 	e.invalid("PATCH", "/personas/"+id, map[string]any{"revision": int(p["revision"].(float64)), "work": "everything"}, "work", "")
 }
+
+func TestPersonaDefaultModelAndWorkSync(t *testing.T) {
+	e := newChatEnv(t)
+	ctx := context.Background()
+
+	// 1. Non-worker persona sets a default harness, model, and effort; new chats inherit it.
+	p := e.want("POST", "/personas", map[string]any{
+		"name": "Reviewer", "default_harness": "codex", "default_model": "gpt-5-codex", "default_effort": "high",
+	}, http.StatusCreated)
+	id := p["id"].(string)
+	if p["default_harness"] != "codex" || p["default_model"] != "gpt-5-codex" || p["default_effort"] != "high" {
+		t.Fatalf("created persona default model = %v", p)
+	}
+	chat := e.newChat(map[string]any{"persona_id": id})
+	if chat["harness"] != "codex" || chat["model"] != "gpt-5-codex" || chat["effort"] != "high" || chat["auto_model"] != nil {
+		t.Fatalf("chat inherited %v", chat)
+	}
+
+	// 2. Enabling work inherits the persona's default harness/model/effort on the agent definition.
+	p = e.want("PATCH", "/personas/"+id, map[string]any{"revision": p["revision"], "work": "tickets"}, http.StatusOK)
+	if p["work_model"] != "gpt-5-codex" {
+		t.Fatalf("started work_model = %v, want gpt-5-codex", p["work_model"])
+	}
+	detail := e.want("GET", "/agents/"+p["handle"].(string), nil, http.StatusOK)
+	spec := detail["spec"].(map[string]any)
+	if spec["harness"] != "codex" || spec["model"] != "gpt-5-codex" {
+		t.Fatalf("agent spec after starting work = %v", spec)
+	}
+	if opts := spec["harness_options"].(map[string]any)["codex"].(map[string]any); opts["effort"] != "high" {
+		t.Fatalf("agent effort after starting work = %v, want high", opts)
+	}
+
+	// 3. Add a fallback for claude-code/opus-5.5 on the agent, then switch persona's default
+	// to claude-code/opus-5.5: work definition updates AND matching fallback is stripped.
+	spec["fallbacks"] = []any{map[string]any{"harness": "claude-code", "model": "opus-5.5"}}
+	e.want("PUT", "/agents/"+p["handle"].(string)+"/definition", map[string]any{
+		"name": p["name"], "role": "", "specialty": "", "color_index": 0, "spec": spec, "note": "Add fallback",
+	}, http.StatusOK)
+	// Direct agent definition save keeps persona default synced; refetch persona for latest revision.
+	p = e.want("GET", "/personas/"+id, nil, http.StatusOK)
+	p = e.want("PATCH", "/personas/"+id, map[string]any{
+		"revision": p["revision"], "default_harness": "claude-code", "default_model": "opus-5.5", "default_effort": "default",
+	}, http.StatusOK)
+	if p["default_harness"] != "claude-code" || p["default_model"] != "opus-5.5" || p["default_effort"] != nil || p["work_model"] != "opus-5.5" {
+		t.Fatalf("updated persona = %v", p)
+	}
+	detail = e.want("GET", "/agents/"+p["handle"].(string), nil, http.StatusOK)
+	spec = detail["spec"].(map[string]any)
+	if spec["harness"] != "claude-code" || spec["model"] != "opus-5.5" {
+		t.Fatalf("agent spec after persona update = %v", spec)
+	}
+	if fbs, ok := spec["fallbacks"].([]any); ok && len(fbs) != 0 {
+		t.Fatalf("matching fallback should be removed, got %v", fbs)
+	}
+	var dbModel string
+	if err := e.pool.QueryRow(ctx, `SELECT model FROM agents WHERE id = $1`, id).Scan(&dbModel); err != nil || dbModel != "opus-5.5" {
+		t.Fatalf("agents.model = %q err=%v", dbModel, err)
+	}
+
+	// 4. Editing via PUT /agents/{handle}/definition syncs back to persona.
+	spec["harness"], spec["model"] = "codex", "gpt-5"
+	spec["harness_options"] = map[string]any{"codex": map[string]any{"effort": "medium"}}
+	e.want("PUT", "/agents/"+p["handle"].(string)+"/definition", map[string]any{
+		"name": p["name"], "role": "", "specialty": "", "color_index": 0, "spec": spec,
+	}, http.StatusOK)
+	p = e.want("GET", "/personas/"+id, nil, http.StatusOK)
+	if p["default_harness"] != "codex" || p["default_model"] != "gpt-5" || p["default_effort"] != "medium" {
+		t.Fatalf("persona after PUT definition = %v", p)
+	}
+
+	// 5. Stopping work, clearing back to Auto, and resuming work keeps things valid.
+	p = e.want("PATCH", "/personas/"+id, map[string]any{"revision": p["revision"], "work": "none"}, http.StatusOK)
+	p = e.want("PATCH", "/personas/"+id, map[string]any{
+		"revision": p["revision"], "default_harness": "", "default_model": "auto", "default_effort": "",
+	}, http.StatusOK)
+	if p["default_harness"] != nil || p["default_model"] != nil || p["default_effort"] != nil {
+		t.Fatalf("cleared to Auto = %v", p)
+	}
+	p = e.want("PATCH", "/personas/"+id, map[string]any{
+		"revision": p["revision"], "default_harness": "antigravity", "default_model": "gemini-2.5-pro",
+	}, http.StatusOK)
+	p = e.want("PATCH", "/personas/"+id, map[string]any{"revision": p["revision"], "work": "tickets"}, http.StatusOK)
+	if p["work_model"] != "gemini-2.5-pro" {
+		t.Fatalf("resumed work_model = %v, want gemini-2.5-pro", p["work_model"])
+	}
+
+	// 6. Validation errors.
+	rev := int(p["revision"].(float64))
+	e.invalid("PATCH", "/personas/"+id, map[string]any{"revision": rev, "default_harness": "codex", "default_model": "auto"}, "default_model", "")
+	e.invalid("PATCH", "/personas/"+id, map[string]any{"revision": rev, "default_effort": "ludicrous"}, "default_effort", "")
+}

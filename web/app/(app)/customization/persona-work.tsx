@@ -47,7 +47,7 @@ export function PersonaWorkSection({ p }: { p: Persona }) {
       )}
       {work !== "none" && (
         <p className="text-12 text-fg-tertiary">
-          Work settings hold its harness and model, work brief, permissions, helpers and limits. Its voice (tone and style above) reaches its runs too; its work brief reaches runs only.
+          Work settings hold its work brief, permissions, fallbacks, helpers and limits. Its voice and default model above reach its runs too.
         </p>
       )}
       {update.isError && (
