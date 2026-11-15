@@ -771,17 +771,38 @@ function normalizeHeaders(headers) {
 function toResponse(raw) {
   const status = Number(raw?.status ?? 0);
   const body = typeof raw?.body === "string" ? raw.body : "";
+  const bodyBase64 = typeof raw?.body_base64 === "string" ? raw.body_base64 : "";
+  const isBinary = Boolean(raw?.binary) || typeof raw?.body_base64 === "string";
   const headers = raw?.headers && typeof raw.headers === "object" ? raw.headers : {};
+  const contentType = raw?.content_type ?? "";
+  const toBuffer = () => (isBinary ? Buffer.from(bodyBase64, "base64") : Buffer.from(body, "utf8"));
   return {
     status,
     ok: status >= 200 && status < 300,
     headers,
     body,
+    bodyBase64,
     truncated: Boolean(raw?.truncated),
     redactions: Number(raw?.redactions ?? 0),
-    contentType: raw?.content_type ?? "",
+    contentType,
     async text() { return body; },
     async json() { return JSON.parse(body); },
+    async arrayBuffer() {
+      const buf = toBuffer();
+      return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+    },
+    async bytes() {
+      return new Uint8Array(toBuffer());
+    },
+    async base64() {
+      return isBinary ? bodyBase64 : Buffer.from(body, "utf8").toString("base64");
+    },
+    async dataUrl(mimeType) {
+      const fallback = String(contentType).split(";")[0].trim() || "application/octet-stream";
+      const mime = typeof mimeType === "string" && mimeType.trim() ? mimeType.trim() : fallback;
+      const b64 = isBinary ? bodyBase64 : Buffer.from(body, "utf8").toString("base64");
+      return "data:" + mime + ";base64," + b64;
+    },
   };
 }
 

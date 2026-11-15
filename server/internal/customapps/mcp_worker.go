@@ -65,6 +65,7 @@ type MCPCallContext struct {
 	SQLQuery          func(ctx context.Context, query string, params []any) (SQLResult, error)
 	APICall           func(ctx context.Context, method, rawPath string, body any) (any, error)
 	LookupIP          func(ctx context.Context, host string) ([]net.IP, error)
+	PublicFetch       func(ctx context.Context, req usersecrets.Request) (usersecrets.Response, error)
 	NodeBinary        string
 }
 
@@ -419,6 +420,9 @@ func handleWorkerRPC(ctx context.Context, mc *MCPCallContext, method string, raw
 		req, err := toUserSecretRequest(in.Method, in.URL, in.Headers, in.Body, in.JSON)
 		if err != nil {
 			return nil, err
+		}
+		if mc.PublicFetch != nil {
+			return mc.PublicFetch(ctx, req)
 		}
 		return usersecrets.SendPublic(ctx, req, mc.LookupIP)
 
