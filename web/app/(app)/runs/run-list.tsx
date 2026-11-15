@@ -355,18 +355,51 @@ export function RunList({ selected, fill, embedded = false, search: workSearch }
   }, [searchedRuns, activityFilter, needsRunIds, now]);
 
   const selectedNeeds = data.shownNeeds.find((i) => i.run_id === selected)?.id;
+  const runIds = useMemo(() => new Set(data.runs.map((r) => r.id)), [data.runs]);
   const nonRunNeeds = useMemo(
     () =>
       activityFilter === "all" || activityFilter === "needs_you"
-        ? data.shownNeeds.filter((i) => !i.run_id)
+        ? data.shownNeeds.filter((i) => !i.run_id || !runIds.has(i.run_id))
         : [],
-    [activityFilter, data.shownNeeds],
+    [activityFilter, data.shownNeeds, runIds],
   );
+  const hasActiveGroup = embeddedGroups.some((g) => g.kind === "active");
   const empty = embedded
     ? !data.loading && !data.error && embeddedGroups.length === 0 && nonRunNeeds.length === 0
     : !data.loading && !data.error && data.shownNeeds.length === 0 && data.groups.length === 0;
 
   if (embedded) {
+    const extraNeedsSection = nonRunNeeds.length > 0 && (
+      <section
+        id={hasActiveGroup ? "needs-you-items" : "needs-you"}
+        aria-label={hasActiveGroup ? "Other needs you" : "Needs you"}
+        className="flex scroll-mt-2 flex-col"
+      >
+        <WorkSectionLabel count={nonRunNeeds.length} tone="human">
+          {hasActiveGroup ? "Waiting" : "Needs you"}
+        </WorkSectionLabel>
+        <ul className="flex flex-col gap-0.5">
+          {nonRunNeeds.map((i) => (
+            <li key={i.id}>
+              <Link
+                href={itemHref(i, query)}
+                aria-current={i.id === selectedNeeds ? "page" : undefined}
+                data-needs-row={i.id}
+                className="flex h-[28px] items-center gap-2 rounded-md px-2 text-12 text-fg-secondary hover:bg-hover hover:text-fg"
+              >
+                <span aria-hidden className="grid size-5 flex-none place-items-center rounded bg-pill-human-bg text-pill-human-fg">
+                  <Icon name="inbox" size={11} />
+                </span>
+                <span aria-hidden className="size-1.5 flex-none rounded-full bg-state-human" />
+                <span className="min-w-0 flex-1 truncate">{i.title}</span>
+                <span className="flex-none font-mono text-10 text-pill-human-fg">{waited(i.created_at)}</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </section>
+    );
+
     return (
       <aside aria-label="Runs" className="flex min-h-0 flex-1 flex-col gap-1">
         <div className="flex flex-col gap-0.5 pb-1">
@@ -404,6 +437,7 @@ export function RunList({ selected, fill, embedded = false, search: workSearch }
         </div>
 
         <div ref={listRef} className="relative flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto pb-3">
+          {!hasActiveGroup && extraNeedsSection}
           {data.error ? (
             <div role="alert" className="flex flex-col items-start gap-2 px-2 py-4 text-12 text-pill-blocked-fg">
               Couldn’t load runs. {data.error.message}
@@ -422,7 +456,7 @@ export function RunList({ selected, fill, embedded = false, search: workSearch }
               {embeddedGroups.map((g, idx) => (
                 <section
                   key={g.label}
-                  id={idx === 0 ? "needs-you" : `runs-${g.label.toLowerCase().replace(/\W+/g, "-")}`}
+                  id={g.kind === "active" && idx === 0 ? "needs-you" : `runs-${g.label.toLowerCase().replace(/\W+/g, "-")}`}
                   aria-label={g.label}
                   className="flex scroll-mt-2 flex-col"
                 >
@@ -441,32 +475,7 @@ export function RunList({ selected, fill, embedded = false, search: workSearch }
                   </ul>
                 </section>
               ))}
-              {nonRunNeeds.length > 0 && (
-                <section id="needs-you-items" aria-label="Other needs you" className="flex flex-col">
-                  <WorkSectionLabel count={nonRunNeeds.length} tone="human">
-                    Waiting
-                  </WorkSectionLabel>
-                  <ul className="flex flex-col gap-0.5">
-                    {nonRunNeeds.map((i) => (
-                      <li key={i.id}>
-                        <Link
-                          href={itemHref(i, query)}
-                          aria-current={i.id === selectedNeeds ? "page" : undefined}
-                          data-needs-row={i.id}
-                          className="flex h-[28px] items-center gap-2 rounded-md px-2 text-12 text-fg-secondary hover:bg-hover hover:text-fg"
-                        >
-                          <span aria-hidden className="grid size-5 flex-none place-items-center rounded bg-pill-human-bg text-pill-human-fg">
-                            <Icon name="inbox" size={11} />
-                          </span>
-                          <span aria-hidden className="size-1.5 flex-none rounded-full bg-state-human" />
-                          <span className="min-w-0 flex-1 truncate">{i.title}</span>
-                          <span className="flex-none font-mono text-10 text-pill-human-fg">{waited(i.created_at)}</span>
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              )}
+              {hasActiveGroup && extraNeedsSection}
               {data.hasMore && activityFilter === "all" && (
                 <div className="px-2 pt-1">
                   <Button variant="ghost" disabled={data.loadingMore} onClick={data.loadMore}>
