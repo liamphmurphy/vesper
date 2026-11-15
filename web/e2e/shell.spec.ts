@@ -130,11 +130,17 @@ test("the Chat area brings back the Chats list, and the mark collapses the colum
   const menu = page.getByRole("complementary", { name: "Main menu" });
   await nav(page).getByRole("link", { name: "Chat", exact: true }).click();
   await expect(page).toHaveURL(/\/chat/);
-  await expect(menu.getByRole("heading", { name: "Chats", level: 2 })).toBeVisible();
+  await expect(menu.getByRole("heading", { name: "Chats" })).toHaveCount(0);
   await expect(menu.getByRole("complementary", { name: "Chat history" })).toBeVisible();
   await expect(page.getByRole("list", { name: "Areas" }).getByRole("link", { name: "Chat", exact: true })).toHaveAttribute("aria-current", "page");
-  // New chat is a button-high row beside the list's title, with the history right under it.
-  expect((await menu.getByRole("button", { name: "New chat" }).boundingBox())!.height).toBeLessThan(40);
+  // New chat sits on the same line as the persona filter, with the history right under it.
+  const newChatBox = (await menu.getByRole("button", { name: "New chat" }).boundingBox())!;
+  expect(newChatBox.height).toBeLessThan(40);
+  const picker = menu.getByRole("button", { name: /^Show conversations for:/ });
+  if (await picker.count()) {
+    const pickerBox = (await picker.boundingBox())!;
+    expect(Math.abs((pickerBox.y + pickerBox.height / 2) - (newChatBox.y + newChatBox.height / 2))).toBeLessThan(6);
+  }
   await menu.getByRole("button", { name: "Collapse sidebar" }).click();
   await expect(menu).not.toHaveAttribute("data-expanded");
   await expect(menu.getByRole("complementary", { name: "Chat history" })).toHaveCount(0);

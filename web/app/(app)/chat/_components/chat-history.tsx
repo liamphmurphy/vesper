@@ -292,7 +292,7 @@ function ChatSearchResults({ query, onPick }: { query: string; onPick: () => voi
  * history drawer's spaces); `fill` drops the narrow-screen height cap for a drawer of its own and
  * puts a Search chats box on top, where a phone has no room to tuck it into a heading.
  */
-export function ChatHistory({ id, viewed, between, fill }: { id?: string; viewed: string | null; between?: ReactNode; fill?: boolean }) {
+export function ChatHistory({ id, viewed, between, fill, action }: { id?: string; viewed: string | null; between?: ReactNode; fill?: boolean; action?: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const search = useSearchParams();
@@ -349,7 +349,7 @@ export function ChatHistory({ id, viewed, between, fill }: { id?: string; viewed
       {fill && (
         <TextInput type="search" aria-label="Search chats" placeholder="Search chats" className="!h-[44px] w-full !text-16" value={query} onChange={(e) => setQuery(e.target.value)} />
       )}
-      <PersonaFilter filter={{ ...filter, set: pick }} activity={activity} />
+      <PersonaFilter filter={{ ...filter, set: pick }} activity={activity} trailing={action} />
       {between}
       <nav ref={nav} aria-label="Chats" className="mt-1 min-h-0 flex-1 overflow-y-auto">
         {onTop && headingRow(view === "archived" ? "Archived" : "Recent")}

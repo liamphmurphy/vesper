@@ -112,16 +112,15 @@ function Areas({ vertical, counts, onNewSpace }: { vertical: boolean; counts: Re
 /** The column's default middle: your chats, with the persona filter, then spaces. Personas sit here and nowhere else in the column. */
 function ChatsList({ viewed }: { viewed: string | null }) {
   const conversation = useNewConversation(viewed ?? undefined);
+  const newChat = (
+    <button type="button" aria-label="New chat" title="New chat" disabled={conversation.disabled} onClick={conversation.start}
+      className="grid size-7 place-items-center rounded-md text-accent hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50">
+      <Icon name="plus" size={15} strokeWidth={1.7} />
+    </button>
+  );
   return (
     <div data-navigator="chats" className="flex min-h-0 flex-1 flex-col gap-3 px-2.5 pb-2">
-      <div className="flex flex-none items-center justify-between pl-1.5">
-        <h2 className="text-13 font-semibold text-fg">Chats</h2>
-        <button type="button" aria-label="New chat" title="New chat" disabled={conversation.disabled} onClick={conversation.start}
-          className="grid size-7 place-items-center rounded-md text-accent hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50">
-          <Icon name="plus" size={15} strokeWidth={1.7} />
-        </button>
-      </div>
-      <ChatHistory id={viewed ?? undefined} viewed={viewed} />
+      <ChatHistory id={viewed ?? undefined} viewed={viewed} action={newChat} />
       <SidebarSpaces viewed={viewed} hideWhenEmpty />
       <SetupProgress />
     </div>
