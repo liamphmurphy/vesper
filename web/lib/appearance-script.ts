@@ -13,7 +13,7 @@ export const themeScript = `(${function (palettes: readonly Palette[], defaults:
     if (saved?.version === 1) {
       const known = (id: string) => palettes.some((p) => p.id === id);
       const clean = (input: Record<string, string>) => Object.fromEntries(keys.flatMap((key) => typeof input?.[key] === "string" && /^#[\da-f]{6}$/i.test(input[key]) ? [[key, input[key].toLowerCase()]] : []));
-      settings = { version: 1, palette: saved.palette === "custom" || known(saved.palette) ? saved.palette : "dusk", custom: { base: known(saved.custom?.base) ? saved.custom.base : "dusk", dark: clean(saved.custom?.dark), light: clean(saved.custom?.light) }, showHarnessActivity: saved.showHarnessActivity !== false, textSize: textSizes.includes(saved.textSize) ? saved.textSize : "default" };
+      settings = { version: 1, palette: saved.palette === "custom" || known(saved.palette) ? saved.palette : defaults.palette, custom: { base: known(saved.custom?.base) ? saved.custom.base : defaults.palette, dark: clean(saved.custom?.dark), light: clean(saved.custom?.light) }, showHarnessActivity: saved.showHarnessActivity !== false, textSize: textSizes.includes(saved.textSize) ? saved.textSize : "default" };
     }
   } catch { /* A corrupt preference or blocked storage must not prevent rendering. */ }
   if (pref !== "system") root.setAttribute("data-theme", pref);

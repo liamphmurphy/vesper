@@ -21,8 +21,8 @@ export const AVATAR_ACCEPT = ".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/w
 export const AVATAR_HINT = "PNG, JPG or WebP · up to 1 MB · shown as a circle.";
 /** The built-in Assistant's look when a chat has no persona. */
 export const BUILTIN_COLOR = "#9b8cff";
-/** The dark theme's app ground (tokens.css --bg); the chat background names are read on. */
-export const CHAT_BG = "#0c0b12";
+/** The default dark theme's app ground (Neutral --bg); fallback before reading CSS vars. */
+export const CHAT_BG = "#18181b";
 export const MIN_CONTRAST = 4.5;
 
 export const TONES: { value: Tone; label: string; hint: string; sample: string[] }[] = [
