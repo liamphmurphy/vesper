@@ -83,22 +83,21 @@ test("one column switches areas; a screen's own list takes the place of Chats", 
   await expect(menu.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
 
 
-  // Apps opens a grid to the right: Custom Apps (Knowledge and Library live on the main bar), then Tools, then New space.
+  // Apps opens a grid to the right: Tools, then New space (your own apps get a row above Tools once there are any).
   const apps = work.getByRole("button", { name: "Apps" });
   await expect(apps).toHaveAttribute("aria-expanded", "false");
   await apps.click();
   const flyout = page.getByRole("dialog", { name: "Apps" });
-  await expect(flyout.getByRole("group", { name: "Apps" }).getByRole("link")).toHaveText(["Custom Apps"]);
+  await expect(flyout.getByRole("group", { name: "Apps" })).toHaveCount(0);
+  await expect(flyout.getByRole("link", { name: "Custom Apps" })).toHaveCount(0);
   await expect(flyout.getByRole("group", { name: "Tools" }).getByRole("link")).toHaveText(["Workflows", /Scheduled/, "Learn", "Reports"]);
   await expect(flyout.getByRole("button", { name: "New space" })).toBeVisible();
   const flyoutBox = await flyout.boundingBox();
   const appsBox = await apps.boundingBox();
   expect(flyoutBox!.x).toBeGreaterThan(appsBox!.x + appsBox!.width);
   // Arrow keys move through the grid; Esc closes and returns to the row.
-  await expect(flyout.getByRole("link", { name: "Custom Apps" })).toBeFocused();
-  // Down moves from Custom Apps (col 0) to Workflows (col 0 in Tools), Right to Scheduled.
-  await page.keyboard.press("ArrowDown");
   await expect(flyout.getByRole("link", { name: "Workflows" })).toBeFocused();
+  // Right moves to Scheduled.
   await page.keyboard.press("ArrowRight");
   await expect(flyout.getByRole("link", { name: /Scheduled/ })).toBeFocused();
   await page.keyboard.press("Escape");
