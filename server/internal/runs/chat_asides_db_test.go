@@ -1,6 +1,7 @@
 package runs
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/liamphmurphy/vesper/server/internal/agentdef"
 	"github.com/liamphmurphy/vesper/server/internal/apperr"
+	"github.com/liamphmurphy/vesper/server/internal/chatmodels"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 )
 
@@ -208,5 +210,145 @@ func TestChatThread(t *testing.T) {
 	var invalid *apperr.ValidationError
 	if _, err := f.rs.StartChatAside(f.ctx, f.ws, f.user, parent.ID, "?", &foreign[0].ID); !errors.As(err, &invalid) {
 		t.Fatalf("thread on another chat's message: %v", err)
+	}
+}
+
+func TestChatSecondOpinion(t *testing.T) {
+	f := newChatFixture(t)
+	f.rs.ModelDiscovery = func(_ context.Context, h, _ string) ([]chatmodels.Model, error) {
+		switch h {
+		case agentdef.HarnessClaudeCode:
+			return []chatmodels.Model{{ID: "claude-sonnet-4-6", Label: "Sonnet 4.6", Default: true}}, nil
+		case agentdef.HarnessCodex:
+			return []chatmodels.Model{{ID: "gpt-5.4", Label: "GPT-5.4", Default: true}}, nil
+		default:
+			return []chatmodels.Model{{ID: "default", Label: "Default", Default: true}}, nil
+		}
+	}
+
+	// Empty idle chat with no messages or code reviews cannot start a second opinion.
+	empty, err := f.rs.StartChat(f.ctx, f.ws, f.user, ChatInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.rs.StartChatAsideWith(f.ctx, f.ws, f.user, empty.ID, AsideInput{
+		SecondOpinion: true,
+		Harness:       agentdef.HarnessCodex,
+	}); !isConflict(err) {
+		t.Fatalf("empty idle chat second opinion: got %v, want conflict", err)
+	}
+
+	parent, err := f.rs.StartChat(f.ctx, f.ws, f.user, ChatInput{
+		Message: &ChatMessageInput{Body: "implement optimistic locking"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.endTurn(t, parent.ID, "idle")
+	reply, err := f.q.AppendChatMessage(f.ctx, store.AppendChatMessageParams{
+		SessionID:   parent.ID,
+		Role:        "assistant",
+		BodyMd:      "Added revision check in store/lock.go.",
+		ContextRefs: []byte("[]"),
+		Citations:   []byte("[]"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeParent := f.chat(t, parent.ID)
+	repoURL := "https://github.com/acme/app"
+	branch := "feat/optimistic"
+	baseSHA := "1111111222222"
+	headSHA := "abc1234567890"
+	commitsJSON, _ := json.Marshal([]map[string]string{{"sha": headSHA, "subject": "Add optimistic revision check"}})
+	filesJSON, _ := json.Marshal([]map[string]any{{
+		"path":      "store/lock.go",
+		"status":    "modified",
+		"additions": 2,
+		"deletions": 0,
+		"patch":     "@@ -10,0 +11,2 @@\n+if rev != cur {\n+  return ErrConflict\n+}",
+	}})
+	if err := f.q.UpsertChatCodeReview(f.ctx, store.UpsertChatCodeReviewParams{
+		ChatID:  parent.ID,
+		RepoUrl: repoURL,
+		Branch:  &branch,
+		BaseSha: &baseSHA,
+		HeadSha: &headSHA,
+		Commits: commitsJSON,
+		Files:   filesJSON,
+		Dirty:   true,
+		Tree:    []byte("[]"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Unknown repository filter fails validation (422).
+	var invalid *apperr.ValidationError
+	if _, err := f.rs.StartChatAsideWith(f.ctx, f.ws, f.user, parent.ID, AsideInput{
+		SecondOpinion: true,
+		Harness:       agentdef.HarnessCodex,
+		Repository:    "https://github.com/acme/other",
+	}); !errors.As(err, &invalid) {
+		t.Fatalf("unknown repository filter: got %v, want validation error", err)
+	}
+
+	// Empty body defaults prompt; nil anchor auto-anchors to newest assistant reply;
+	// parent chat's harness/model/run stays untouched.
+	aside, err := f.rs.StartChatAsideWith(f.ctx, f.ws, f.user, parent.ID, AsideInput{
+		SecondOpinion: true,
+		Harness:       agentdef.HarnessCodex,
+		Repository:    repoURL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !aside.SecondOpinion || !aside.Hidden || aside.ParentChatID == nil || *aside.ParentChatID != parent.ID {
+		t.Fatalf("unexpected second opinion chat: %+v", aside)
+	}
+	if aside.AnchorMessageID == nil || *aside.AnchorMessageID != reply.ID {
+		t.Fatalf("expected auto-anchor to %s, got %v", reply.ID, aside.AnchorMessageID)
+	}
+	if aside.Harness != agentdef.HarnessCodex || aside.Model != "gpt-5.4" {
+		t.Fatalf("second opinion selection = %s/%s, want codex/gpt-5.4", aside.Harness, aside.Model)
+	}
+	afterParent := f.chat(t, parent.ID)
+	if afterParent.Harness != beforeParent.Harness || afterParent.Model != beforeParent.Model ||
+		afterParent.CurrentRunID == nil || beforeParent.CurrentRunID == nil || *afterParent.CurrentRunID != *beforeParent.CurrentRunID {
+		t.Fatalf("parent chat was mutated: before=%+v after=%+v", beforeParent, afterParent)
+	}
+	if got := f.userMessages(t, parent.ID); len(got) != 1 {
+		t.Fatalf("second opinion polluted parent user messages: %q", got)
+	}
+
+	turns, err := f.q.ListTurns(f.ctx, *aside.CurrentRunID)
+	if err != nil || len(turns) != 1 {
+		t.Fatalf("aside turns %d, %v", len(turns), err)
+	}
+	prompt := turns[0].InputMessage
+	for _, want := range []string{
+		"implement optimistic locking",
+		"Added revision check in store/lock.go.",
+		"feat/optimistic",
+		"abc1234",
+		"store/lock.go",
+		"+if rev != cur",
+		"second-opinion aside",
+		"Give an independent second opinion on this reply",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("second opinion prompt lacks %q:\n%s", want, prompt)
+		}
+	}
+
+	asideRun, err := f.q.GetRun(f.ctx, store.GetRunParams{ID: *aside.CurrentRunID, WorkspaceID: f.ws})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := Spec(asideRun)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.HarnessOptions[agentdef.OptionAside] != "true" || spec.HarnessOptions["sandbox"] != "read-only" || spec.Mode("repo:write") == agentdef.Allowed {
+		t.Fatalf("second opinion spec not read-only: %+v %+v", spec.HarnessOptions, spec.Scopes)
 	}
 }

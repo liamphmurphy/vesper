@@ -445,7 +445,7 @@ test("the Welcome's box is a chat's: model and effort, / commands, @ mentions an
   await expect(page.getByTestId("composer-hints")).toContainText("/ commands");
 
   await box.pressSequentially("/");
-  await expect(page.getByTestId("command-suggestions").getByRole("option")).toHaveCount(11);
+  await expect(page.getByTestId("command-suggestions").getByRole("option")).toHaveCount(12);
   await box.fill("/model sonnet");
   await box.press("Enter");
   await expect(picker(page)).toHaveAccessibleName(/Sonnet 5\.5, Automatic effort/);

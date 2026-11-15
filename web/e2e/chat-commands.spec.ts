@@ -43,7 +43,7 @@ test("/ lists the commands and /memory opens the Memory page without sending", a
   const mock = await installChatApi(page);
   await openChat(page);
   await composer(page).pressSequentially("/");
-  await expect(menu(page).getByRole("option")).toHaveCount(11);
+  await expect(menu(page).getByRole("option")).toHaveCount(12);
   await composer(page).pressSequentially("mem");
   await expect(menu(page).getByRole("option")).toHaveCount(1);
   await composer(page).press("Enter");

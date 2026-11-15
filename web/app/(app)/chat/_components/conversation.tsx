@@ -2,7 +2,6 @@
 
 import { useNewDeck } from "@/components/domain/use-new-deck";
 import { canvasFenceIds } from "@/lib/chat-canvas";
-import { DOC_DRAFT, designRequest, type CreateKind } from "@/lib/chat-commands";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
@@ -28,11 +27,14 @@ import {
   useSendChatMessage,
   useSetChatCommitEmail,
   useStartAside,
+  useStartSecondOpinion,
 } from "@/lib/api/hooks";
+import { DOC_DRAFT, designRequest, resolveCompareTarget, type CreateKind } from "@/lib/chat-commands";
 import { asidesInWindow, commandSendMode, cycleSendMode, SEND_MODE_ENTER, SEND_MODE_HINT, SEND_MODE_LABEL, sendModeAction, sendModePlaceholder, type SendMode } from "@/lib/send-mode";
 import { SEND_TONE, SendModeSwitch } from "./send-modes";
 import { FollowupTray } from "./followups";
-import { LiveAsides, ReplyAsides } from "./asides";
+import { LiveAsides, ReplyAsides, SecondOpinions } from "./asides";
+import { buildCompareOptions, type SecondOpinionPick } from "./second-opinion-menu";
 import { RepositoryPicker } from "./repository-picker";
 import { useRepositories, useSetChatRepository } from "@/lib/api/repository-hooks";
 import { usePersonas } from "@/lib/api/persona-hooks";
@@ -151,7 +153,7 @@ function Divider({ children, testId }: { children: string; testId?: string }) {
 
 type ChatInfo = { id: string; title: string; project?: string; agent: { name: string } };
 
-const Bubble = memo(function Bubble({ m, chat, persona, saveable, names, turn, ended, summaryUrl, editable, onEdit, onRetry, highlighted, videos, audio, asides, thread }: { m: Message; chat: ChatInfo; persona: PersonaLook; saveable: boolean; names: Map<string, string>; turn?: TurnWindow; ended?: EndedTurn; summaryUrl?: string | null; editable?: boolean; onEdit?: (body: string) => void; onRetry?: () => void; highlighted?: boolean; videos?: ChatVideo[]; audio?: ChatAudio[]; asides?: ReactNode; thread?: { count: number; running: boolean } }) {
+const Bubble = memo(function Bubble({ m, chat, persona, saveable, names, turn, ended, summaryUrl, editable, onEdit, onRetry, highlighted, videos, audio, asides, secondOpinions, thread }: { m: Message; chat: ChatInfo; persona: PersonaLook; saveable: boolean; names: Map<string, string>; turn?: TurnWindow; ended?: EndedTurn; summaryUrl?: string | null; editable?: boolean; onEdit?: (body: string) => void; onRetry?: () => void; highlighted?: boolean; videos?: ChatVideo[]; audio?: ChatAudio[]; asides?: ReactNode; secondOpinions?: ReactNode; thread?: { count: number; running: boolean } }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(m.body_md);
   const self = useRef<HTMLLIElement>(null);
@@ -250,6 +252,7 @@ const Bubble = memo(function Bubble({ m, chat, persona, saveable, names, turn, e
       )}
       {!mine && <Sources citations={m.citations} body={parts.body} listed={parts.listed} runId={m.run_id} since={turn?.since} until={turn?.until} webEvents={!!turn} focus={citeFocus} />}
       {!mine && asides}
+      {secondOpinions}
       {thread && <ThreadLink messageId={m.id} count={thread.count} running={thread.running} />}
       {!mine && saveable && summaryUrl && <SaveSummary messageId={m.id} url={summaryUrl} />}
       {!mine && saveable && m.body_md.trim() && (
@@ -271,7 +274,7 @@ type ChatAsides = NonNullable<ReturnType<typeof useChatAsides>["data"]>;
  * a ref when it is a callback) and a keystroke only re-checks props instead of re-rendering
  * every message's markdown.
  */
-function BubbleList({ unreadFrom, list, chat, persona, speakerName, names, highlight, running, since, locked, archived, editPending, lastUser, videosByMessage, audioByMessage, asideList, pinnedRef, editLast }: {
+function BubbleList({ unreadFrom, list, chat, persona, speakerName, names, highlight, running, since, locked, archived, editPending, lastUser, videosByMessage, audioByMessage, asideList, pinnedRef, editLast, onQuoteSecondOpinion }: {
   /** The first reply since the person last read the chat: "New" goes above it. */
   unreadFrom?: string;
   list: Message[];
@@ -291,6 +294,7 @@ function BubbleList({ unreadFrom, list, chat, persona, speakerName, names, highl
   asideList?: ChatAsides;
   pinnedRef: RefObject<boolean>;
   editLast: (body: string) => void;
+  onQuoteSecondOpinion?: (quote: { text: string; modelLabel: string }) => void;
 }) {
   const turns = useMemo(() => turnWindows(list), [list]);
   const latest = useRef({ editLast, retryBody: lastUser?.body_md });
@@ -315,12 +319,24 @@ function BubbleList({ unreadFrom, list, chat, persona, speakerName, names, highl
     return out;
   }, [turns, asideList, running, since, speakerName]);
   const ended = useMemo(() => endedTurns(list, running), [list, running]);
-  // Each message's newest thread, for the line under it.
+  // Each message's newest thread, for the line under it (excluding second opinions).
   const threads = useMemo(() => {
     const out = new Map<string, { count: number; running: boolean }>();
-    for (const a of asideList ?? []) if (a.anchor_message_id) out.set(a.anchor_message_id, { count: a.message_count ?? 0, running: a.state === "running" });
+    for (const a of asideList ?? []) if (a.anchor_message_id && !a.second_opinion) out.set(a.anchor_message_id, { count: a.message_count ?? 0, running: a.state === "running" });
     return out;
   }, [asideList]);
+  const secondOpinionNodes = useMemo(() => {
+    const grouped = new Map<string, ChatAsides>();
+    for (const a of asideList ?? []) {
+      if (!a.second_opinion || !a.anchor_message_id) continue;
+      grouped.set(a.anchor_message_id, [...(grouped.get(a.anchor_message_id) ?? []), a]);
+    }
+    const out = new Map<string, ReactNode>();
+    for (const [id, group] of grouped) {
+      out.set(id, <SecondOpinions asides={group} speakerName={speakerName} onQuote={onQuoteSecondOpinion} />);
+    }
+    return out;
+  }, [asideList, speakerName, onQuoteSecondOpinion]);
   const canEdit = !running && !locked && !editPending && !archived;
   const canRetry = !running && !editPending && !archived && !!lastUser;
   const lastId = list.at(-1)?.id;
@@ -335,6 +351,7 @@ function BubbleList({ unreadFrom, list, chat, persona, speakerName, names, highl
       videos={videosByMessage.get(m.id)}
       audio={audioByMessage.get(m.id)}
       asides={asideNodes.get(m.id) ?? null}
+      secondOpinions={secondOpinionNodes.get(m.id) ?? null}
       thread={threads.get(m.id)} />
     </Fragment>
   ));
@@ -532,6 +549,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   const send = useSendChatMessage(id, context?.prepare);
   const queue = useQueueFollowup(id, context?.prepareText);
   const aside = useStartAside(id, context?.prepareText);
+  const secondOpinion = useStartSecondOpinion(id);
   const asideList = useChatAsides(id).data;
   // While a reply runs, how Send sends: queue a follow-up (the default), ask an aside, or interrupt.
   const [sendMode, setSendMode] = useState<SendMode>("followup");
@@ -789,6 +807,32 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
     return true;
   };
 
+  const quoteSecondOpinionRef = useRef<(q: { text: string; modelLabel: string }) => void>(() => {});
+  quoteSecondOpinionRef.current = ({ text: qText, modelLabel: label }) => {
+    const quoted = qText
+      .trim()
+      .split("\n")
+      .map((line) => `> ${line}`)
+      .join("\n");
+    const prefix = `> **Second opinion (${label}):**\n${quoted}\n\n`;
+    setText((t) => prefix + t);
+    requestAnimationFrame(() => {
+      const el = area.current;
+      el?.focus();
+      el?.setSelectionRange(prefix.length, prefix.length);
+    });
+  };
+  const onQuoteSecondOpinion = useCallback((q: { text: string; modelLabel: string }) => quoteSecondOpinionRef.current(q), []);
+
+  const startSecondOpinionRef = useRef<(messageId: string, pick: SecondOpinionPick) => void>(() => {});
+  startSecondOpinionRef.current = (messageId, pick) => {
+    setModeError(null);
+    secondOpinion.mutate(
+      { anchor_message_id: messageId, harness: pick.harness, model: pick.model, ...(pick.body ? { body: pick.body } : {}) },
+      { onError: (e) => setModeError(errorText(e)) },
+    );
+  };
+
   // A message's Reply quotes it into the box, above whatever is already drafted, and puts the caret after it.
   const replyTo = useRef<(body: string, authorId?: string, author?: string) => void>(() => {});
   replyTo.current = (body, authorId, author) => {
@@ -802,10 +846,21 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   };
   // Threads open in the desktop dock (the compact sheet has no Thread tab yet).
   const threadDock = dockActivity;
+  const archivedChat = !!c?.archived;
   const messageActions = useMemo<MessageActions>(() => ({
     reply: (body, authorId, author) => replyTo.current(body, authorId, author),
     ...(threadDock ? { thread: (messageId: string) => router.replace(`${window.location.pathname}?${openThread(new URLSearchParams(window.location.search), messageId).toString()}`, { scroll: false }) } : {}),
-  }), [threadDock, router]);
+    ...(!archivedChat
+      ? {
+          secondOpinion: {
+            groups,
+            currentHarness: current?.harness,
+            currentModel: current?.model,
+            start: (messageId, pick) => startSecondOpinionRef.current(messageId, pick),
+          },
+        }
+      : {}),
+  }), [threadDock, router, archivedChat, groups, current?.harness, current?.model]);
 
   // J/K move between messages, R replies to the one in focus, T threads it, E edits your last
   // message, Esc goes back to the box: the messaging-app keys, listed in the ? reference.
@@ -973,7 +1028,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
       </div>
     );
   }
-  const actionError = send.error ?? queue.error ?? aside.error ?? edit.error ?? cancel.error ?? create.error ?? setCommitEmail.error;
+  const actionError = send.error ?? queue.error ?? aside.error ?? secondOpinion.error ?? edit.error ?? cancel.error ?? create.error ?? setCommitEmail.error;
   // A chat without a persona, or whose persona was deleted, is the built-in Assistant.
   const persona = personaLook(c.persona);
   const full = personas.data?.personas.find((p) => p.id === c.persona?.id);
@@ -1028,6 +1083,16 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
       el?.setSelectionRange(el.value.length, el.value.length);
     });
   };
+  const compareOptions = buildCompareOptions(groups, current?.harness, current?.model);
+  const startSecondOpinion = (opts: { harness: Selection["harness"]; model: string; body?: string }): string | void => {
+    if (c.archived) return "This chat is archived.";
+    if (list?.length === 0 && !running) return "/compare works once the conversation has started.";
+    setModeError(null);
+    secondOpinion.mutate(
+      { harness: opts.harness, model: opts.model, ...(opts.body ? { body: opts.body } : {}) },
+      { onError: (e) => setModeError(errorText(e)) },
+    );
+  };
   const commandOptions = (name: string): { name: string; run: CommandRun }[] => {
     switch (name) {
       case "workflow":
@@ -1039,6 +1104,11 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
             .filter((g) => g.available)
             .flatMap((g) => g.models.map((m) => ({ name: `${g.label} ${m.label}`, run: () => whileIdle("model", () => pick({ harness: g.harness, model: m.id })) }))),
         ];
+      case "compare":
+        return compareOptions.map((o) => ({
+          name: o.name,
+          run: () => startSecondOpinion({ harness: o.harness as Selection["harness"], model: o.model }),
+        }));
       case "effort":
         return [undefined, ...offered.efforts].map((e) => ({ name: effortLabel(e).toLowerCase(), run: () => whileIdle("effort", () => setPickedEffort(e ?? "default")) }));
       case "persona":
@@ -1226,7 +1296,16 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
               {messages.data?.has_more && <Divider>Earlier messages are not shown</Divider>}
               <BubbleList unreadFrom={unreadFrom?.message ?? undefined} list={list} chat={c} persona={persona} speakerName={speaker.name} names={names} highlight={highlight} running={running} since={since}
                 locked={locked} archived={c.archived} editPending={edit.isPending} lastUser={lastUser} videosByMessage={videosByMessage} audioByMessage={audioByMessage} asideList={asideList}
-                pinnedRef={pinned} editLast={edit.mutate} />
+                pinnedRef={pinned} editLast={edit.mutate} onQuoteSecondOpinion={onQuoteSecondOpinion} />
+              {(asideList ?? []).some((a) => a.second_opinion && !a.anchor_message_id) && (
+                <li>
+                  <SecondOpinions
+                    asides={(asideList ?? []).filter((a) => a.second_opinion && !a.anchor_message_id)}
+                    speakerName={speaker.name}
+                    onQuote={onQuoteSecondOpinion}
+                  />
+                </li>
+              )}
               <PersonaProposals chatId={c.id} disabled={c.archived} />
               <ConnectorRequests chatId={c.id} disabled={c.archived} />
               <SecretRequests chatId={c.id} disabled={c.archived} />
@@ -1478,6 +1557,15 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
                 // The persona starts it with design_create, which opens it beside the chat.
                 design: (brief: string) => (running ? sendWhileRunning("followup", designRequest(brief)) : submit(designRequest(brief))),
               },
+              compare: (arg: string) => {
+                const res = resolveCompareTarget(compareOptions, arg);
+                if ("error" in res) return res.error;
+                return startSecondOpinion({
+                  harness: res.option.harness as Selection["harness"],
+                  model: res.option.model,
+                  body: res.question || undefined,
+                });
+              },
               repository: (arg) => { if (!(c.speaker ?? c.persona)?.capabilities?.code) return "This persona cannot write code."; if (arg) selectRepo.mutate(arg); else setRepoSignal((n) => n + 1); }, hasWorkflows: published.length > 0 }}
               personas={personas.data?.personas ?? []}
               inChat={(personaId) => participants.some((x) => x.id === personaId)}
@@ -1546,6 +1634,15 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
             agent={c.agent.name || "The agent"}
             onCancel={() => setConfirming(null)}
             onClosed={() => area.current?.focus()}
+            onSecondOpinion={
+              confirming && !c.archived
+                ? () => {
+                    const target = confirming;
+                    setConfirming(null);
+                    startSecondOpinion({ harness: target.harness, model: target.model });
+                  }
+                : undefined
+            }
             onConfirm={() => {
               setPicked(confirming);
               setConfirming(null);

@@ -47,16 +47,16 @@ export function commandSendMode(name: string): SendMode | null {
   return name === "aside" ? "aside" : name === "queue" ? "followup" : null;
 }
 
-type Dated = { created_at: string; anchor_message_id?: string };
+type Dated = { created_at: string; anchor_message_id?: string; second_opinion?: boolean };
 
-/** The asides asked during a turn, from its start up to (not including) the next turn's; threads, which belong to a message, aren't among them. */
+/** The asides asked during a turn, from its start up to (not including) the next turn's; threads and second opinions aren't among them. */
 export function asidesInWindow<T extends Dated>(asides: T[] | undefined, since?: string, until?: string): T[] {
   if (!asides?.length || !since) return [];
   const from = Date.parse(since);
   const to = until ? Date.parse(until) : Infinity;
   return asides.filter((a) => {
-    // A thread belongs to its message, not to the turn it was started in.
-    if (a.anchor_message_id) return false;
+    // A thread or second opinion belongs to its card/anchor, not to the generic turn aside rail.
+    if (a.anchor_message_id || a.second_opinion) return false;
     const at = Date.parse(a.created_at);
     return at >= from && at < to;
   });

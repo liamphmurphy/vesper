@@ -4435,20 +4435,25 @@ export interface paths {
         get: operations["listChatAsides"];
         put?: never;
         /**
-         * Ask about the running reply, or start a thread on a message, without interrupting the chat
+         * Ask about the running reply, start a thread on a message, or request a second opinion without interrupting the chat
          * @description Starts an aside: a hidden chat whose first turn answers the question.
          *     The same persona answers in a fresh session that gets the chat's
          *     recent conversation and a snapshot of the running reply (what it has
          *     written and which tools it called, with their output). With
          *     anchor_message_id it is a thread about that message instead: it gets
          *     the message rather than the running reply, and can start while
-         *     nothing runs. The person can keep replying in it (POST its
-         *     /messages). An aside only reads: no shell, images, connectors or
-         *     secrets, and no Vesper tool that changes anything. Neither
-         *     conversation sees the other afterwards. 409 when nothing is running
-         *     (and there is no anchor), the chat is archived or is itself an aside,
-         *     or 3 asides are still answering; 422 when the anchor isn't a person's
-         *     or persona's message of this chat.
+         *     nothing runs. With second_opinion: true (and optional harness, model,
+         *     effort, repository) it runs a read-only second-opinion critique on the
+         *     chosen harness/model with bounded history and any branch/turn diff
+         *     snapshot while keeping the parent chat's harness session and prompt
+         *     cache warm; it may start while the parent chat is idle. The person can
+         *     keep replying in it (POST its /messages). An aside only reads: no
+         *     shell, images, connectors or secrets, and no Vesper tool that changes
+         *     anything. Neither conversation sees the other afterwards. 409 when
+         *     nothing is running (and there is no anchor or second-opinion target),
+         *     the chat is archived or is itself an aside, or 3 asides are still
+         *     answering; 422 when the anchor, model selection, or repository filter
+         *     is invalid.
          */
         post: operations["startChatAside"];
         delete?: never;
@@ -7542,6 +7547,8 @@ export interface components {
              * @description Set on a thread (an aside anchored to a message): the parent chat's message it is about
              */
             anchor_message_id?: string;
+            /** @description Set on a second-opinion aside: a read-only critique on a chosen harness/model with the conversation and branch diff snapshot */
+            second_opinion?: boolean;
             revision: number;
             message_count: number;
             /** @description Assistant replies newer than the person's read position (POST /chats/{id}/read) */
@@ -7632,12 +7639,21 @@ export interface components {
             body: string;
         };
         ChatAsideStart: {
+            /** @description Question or critique focus; may be empty when second_opinion is true to use the default critique prompt */
             body: string;
             /**
              * Format: uuid
-             * @description Starts a thread about this message of the chat instead of an aside about the running reply
+             * @description Starts a thread or second opinion anchored to this message of the chat
              */
             anchor_message_id?: string;
+            harness?: components["schemas"]["Harness"];
+            /** @description Model for this aside; defaults to the parent chat's model, or the chosen harness's default when harness differs */
+            model?: string;
+            effort?: components["schemas"]["ChatEffort"];
+            /** @description Run as a read-only second opinion with any branch/turn diff snapshot, allowed while idle without switching the parent chat's session */
+            second_opinion?: boolean;
+            /** @description Optional repository URL to scope the branch diff snapshot to */
+            repository?: string;
         };
         ChatFollowup: {
             /** Format: uuid */

@@ -1419,6 +1419,23 @@ export function useStartThread(id: string) {
   });
 }
 
+export type SecondOpinionRequest = Omit<Schemas["ChatAsideStart"], "body" | "second_opinion"> & { body?: string };
+
+/** Starts a read-only cross-harness second opinion aside without touching the parent chat's harness, model, or prompt cache. */
+export function useStartSecondOpinion(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: SecondOpinionRequest) =>
+      unwrap(
+        api.POST("/chats/{id}/asides", {
+          params: { path: { id } },
+          body: { ...input, body: input.body?.trim() ?? "", second_opinion: true },
+        }),
+      ),
+    onSettled: () => qc.invalidateQueries({ queryKey: asidesKey(id) }),
+  });
+}
+
 /** The current turn's tool calls/results, read from the segment run's events. */
 export function useChatRunEvents(runId?: string, enabled = true, poll = true) {
   const qc = useQueryClient();

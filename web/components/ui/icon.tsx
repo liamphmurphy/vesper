@@ -67,6 +67,7 @@ const paths = {
   audio: <path d="M2.5 6.5v3M5.2 4.5v7M8 2.5v11M10.8 4.5v7M13.5 6.5v3" />,
   film: <><rect x="2.5" y="3" width="11" height="10" rx="1.5" /><path d="m6.7 6 3.3 2-3.3 2z" /></>,
   library: <><rect x="2.5" y="3" width="11" height="10" rx="1.5" /><circle cx="6" cy="6.5" r="1.2" /><path d="m2.5 11 3.2-3 2.6 2.4 1.7-1.6 3.5 3.2" /></>,
+  compare: <><path d="M8 2.5v11" /><rect x="2" y="4" width="4" height="8" rx="1" /><rect x="10" y="4" width="4" height="8" rx="1" /></>,
 } as const;
 
 export type IconName = keyof typeof paths;

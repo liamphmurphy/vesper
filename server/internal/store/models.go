@@ -384,6 +384,7 @@ type ChatSession struct {
 	ParentChatID       *uuid.UUID
 	AutoModel          bool
 	AnchorMessageID    *uuid.UUID
+	SecondOpinion      bool
 }
 
 type ChatSpace struct {

@@ -2,9 +2,11 @@
 
 import { createContext, useContext, useState, type ReactNode } from "react";
 import { DropdownMenu } from "radix-ui";
+import type { Harness, Schemas } from "@/lib/api/client";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { cx } from "@/lib/cx";
 import { SaveDialogs, type SaveMode } from "./save-actions";
+import { SecondOpinionMenu, type SecondOpinionPick } from "./second-opinion-menu";
 
 /**
  * What a message's toolbar can do to the conversation around it. A context, read through a ref by
@@ -15,6 +17,13 @@ export type MessageActions = {
   reply: (body: string, authorId?: string, author?: string) => void;
   /** Starts a thread on the message: a side conversation about it, in the right panel. */
   thread?: (messageId: string) => void;
+  /** Requests a read-only cross-harness second opinion anchored to the message. */
+  secondOpinion?: {
+    groups: Schemas["ChatHarnessModels"][] | undefined;
+    currentHarness?: Harness;
+    currentModel?: string;
+    start: (messageId: string, pick: SecondOpinionPick) => void;
+  };
 };
 export const MessageActionsContext = createContext<MessageActions | null>(null);
 
@@ -63,6 +72,7 @@ export function MessageToolbar({
   const [copied, setCopied] = useState(false);
   const [save, setSave] = useState<SaveMode | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [secondOpinionOpen, setSecondOpinionOpen] = useState(false);
   const more: MoreItem[] = [
     ...(onRetry ? [{ icon: "refresh" as const, label: "Retry", onSelect: onRetry }] : []),
     ...(onTop ? [{ icon: "chev" as const, label: "Top of reply", onSelect: onTop }] : []),
@@ -77,7 +87,7 @@ export function MessageToolbar({
         role="toolbar"
         aria-label="Message actions"
         data-testid={testId}
-        data-open={menuOpen || undefined}
+        data-open={(menuOpen || secondOpinionOpen) || undefined}
         className={cx(
           "absolute -top-4 right-0 z-10 flex items-center gap-0.5 rounded-lg border border-border-float bg-surface-raised p-0.5 shadow-[var(--shadow-float)]",
           // Out of sight until the message is hovered or a control in it has focus; kept open while its menu is.
@@ -93,6 +103,15 @@ export function MessageToolbar({
           </ToolButton>
         )}
         {actions?.thread && <ToolButton icon="branch" label="Start a thread" onClick={() => actions.thread!(messageId)} />}
+        {!mine && actions?.secondOpinion && (
+          <SecondOpinionMenu
+            groups={actions.secondOpinion.groups}
+            currentHarness={actions.secondOpinion.currentHarness}
+            currentModel={actions.secondOpinion.currentModel}
+            onOpenChange={setSecondOpinionOpen}
+            onSelect={(pick) => actions.secondOpinion!.start(messageId, pick)}
+          />
+        )}
         <ToolButton
           icon={copied ? "check" : "link"}
           label={copied ? "Copied" : "Copy"}

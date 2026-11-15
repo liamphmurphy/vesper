@@ -959,3 +959,43 @@ func TestFailedTurnSystemMessageCarriesItsTurn(t *testing.T) {
 		t.Errorf("a note without a turn has no turn_seq: %v", note)
 	}
 }
+
+func TestChatSecondOpinionEndpoint(t *testing.T) {
+	e := newChatEnv(t)
+	id := e.newChat(map[string]any{"harness": "claude-code", "model": "opus-5.5"})["id"].(string)
+	e.want("POST", "/chats/"+id+"/messages", map[string]any{"body": "check mutex usage"}, http.StatusAccepted)
+	chatUUID := uuid.MustParse(id)
+	chatRow, err := e.q.GetChatSession(t.Context(), store.GetChatSessionParams{ID: chatUUID, WorkspaceID: e.me.WorkspaceID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.q.SetChatRunState(t.Context(), store.SetChatRunStateParams{ID: chatUUID, CurrentRunID: chatRow.CurrentRunID, State: "idle"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.q.AppendChatMessage(t.Context(), store.AppendChatMessageParams{
+		SessionID: chatUUID, Role: "assistant", BodyMd: "Looks safe.", ContextRefs: []byte("[]"), Citations: []byte("[]"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	created := e.want("POST", "/chats/"+id+"/asides", map[string]any{
+		"body":           "double check edge cases",
+		"harness":        "codex",
+		"model":          "gpt-5-codex",
+		"second_opinion": true,
+	}, http.StatusCreated)
+	if created["second_opinion"] != true || created["harness"] != "codex" || created["model"] != "gpt-5-codex" {
+		t.Fatalf("unexpected POST aside response: %v", created)
+	}
+	if created["anchor_message_id"] == nil {
+		t.Fatalf("expected auto-anchored second opinion: %v", created)
+	}
+	list := e.want("GET", "/chats/"+id+"/asides", nil, http.StatusOK)["asides"].([]any)
+	if len(list) != 1 || list[0].(map[string]any)["second_opinion"] != true {
+		t.Fatalf("GET asides missing second_opinion: %v", list)
+	}
+	parent := e.want("GET", "/chats/"+id, nil, http.StatusOK)
+	if parent["harness"] != "claude-code" || parent["model"] != "opus-5.5" {
+		t.Fatalf("parent chat was mutated: %v", parent)
+	}
+}

@@ -5,6 +5,7 @@ import (
 
 	"github.com/liamphmurphy/vesper/server/internal/api"
 	"github.com/liamphmurphy/vesper/server/internal/apperr"
+	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 )
 
@@ -66,7 +67,24 @@ func (s *Server) StartChatAside(ctx context.Context, req api.StartChatAsideReque
 	if req.Body == nil {
 		return nil, apperr.Invalid("body", "required")
 	}
-	aside, err := s.Runs.StartChatAside(ctx, ws, u.ID, req.Id, req.Body.Body, req.Body.AnchorMessageId)
+	in := runs.AsideInput{
+		Body:            req.Body.Body,
+		AnchorMessageID: req.Body.AnchorMessageId,
+		SecondOpinion:   req.Body.SecondOpinion != nil && *req.Body.SecondOpinion,
+	}
+	if req.Body.Harness != nil {
+		in.Harness = string(*req.Body.Harness)
+	}
+	if req.Body.Model != nil {
+		in.Model = *req.Body.Model
+	}
+	if req.Body.Effort != nil {
+		in.Effort = string(*req.Body.Effort)
+	}
+	if req.Body.Repository != nil {
+		in.Repository = *req.Body.Repository
+	}
+	aside, err := s.Runs.StartChatAsideWith(ctx, ws, u.ID, req.Id, in)
 	if err != nil {
 		return nil, err
 	}

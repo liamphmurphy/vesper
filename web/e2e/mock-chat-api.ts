@@ -41,8 +41,8 @@ type Chat = {
   created_at: string; updated_at: string; last_message_at?: string; persona_id?: string; repo_url?: string; pending_repo_url?: string; repositories?: { repo_url: string; directory: string; work_branches: string[] }[]; work_branches?: string[]; commit_email?: string; workspace_path?: string; temporary?: boolean;
   effort?: Effort; auto_model?: boolean;
   unread?: number;
-  /** A thread: an aside anchored to a message of parent_chat_id. Hidden from the chat list. */
-  parent_chat_id?: string; anchor_message_id?: string; hidden?: boolean;
+  /** A thread or second-opinion aside anchored to a message of parent_chat_id. Hidden from the chat list. */
+  parent_chat_id?: string; anchor_message_id?: string; second_opinion?: boolean; hidden?: boolean;
   // Personas that joined besides the host (chat_participants); listed by their persona filter too.
   guest_persona_ids?: string[];
   /** The space the chat is in (PATCH space_id). */
@@ -159,6 +159,7 @@ export function installChatApi(page: Page, opts: MockOptions = {}) {
   const scheduledTasks: Record<string, unknown>[] = [];
   const posted: Posted[] = [];
   const asides: string[] = [];
+  const secondOpinions: Array<{ chat: string; body: string; harness: Harness; model: string; anchor_message_id?: string; repository?: string }> = [];
   const suggestions = opts.suggestions ?? [];
   const created: Array<Record<string, unknown>> = [];
   const artifactForms: string[] = [];
@@ -208,10 +209,10 @@ export function installChatApi(page: Page, opts: MockOptions = {}) {
 
   const emit = (c: Chat) =>
     page
-      .evaluate((id) => {
-        const data = JSON.stringify({ type: "chat.updated", ids: [id] });
+      .evaluate((ids) => {
+        const data = JSON.stringify({ type: "chat.updated", ids });
         for (const s of (window as unknown as { __sse: Array<{ onmessage?: (e: { data: string }) => void }> }).__sse) s.onmessage?.({ data });
-      }, c.id)
+      }, [c.id, ...(c.parent_chat_id ? [c.parent_chat_id] : [])])
       .catch(() => undefined); // page may be navigating; the next fetch catches up
 
   function memoryEvents(c: Chat, prompt: string) {
@@ -555,6 +556,76 @@ export function installChatApi(page: Page, opts: MockOptions = {}) {
       const c = chats.find((x) => x.id === asideOn[1]);
       if (!c) return fail(err(404, "not_found", "chat not found"));
       const b = body();
+      if (b.second_opinion) {
+        const list = messages.get(c.id) ?? [];
+        const hasReviews = (codeReviews.get(c.id)?.length ?? 0) > 0;
+        if (c.state !== "running" && list.length === 0 && !hasReviews) {
+          return fail(err(409, "conflict", "Start a conversation or generate changes before asking for a second opinion."));
+        }
+        const harness = (b.harness as Harness | undefined) ?? c.harness;
+        const g = catalog(codexAvailable).find((x) => x.harness === harness);
+        const model = (b.model as string | undefined) ?? g?.models.find((m) => m.default)?.id ?? g?.models[0]?.id;
+        if (!g || !g.available || !model || !g.models.some((m) => m.id === model)) {
+          return fail(err(422, "invalid", "Unknown or unavailable harness/model", "model"));
+        }
+        let anchorId = b.anchor_message_id as string | undefined;
+        if (anchorId && !list.some((m) => m.id === anchorId)) {
+          return fail(err(422, "invalid", "not a message of this chat", "anchor_message_id"));
+        }
+        if (!anchorId && c.state !== "running") {
+          anchorId = list.findLast((m) => m.role === "assistant" || m.role === "user")?.id;
+        }
+        const prompt = String(b.body ?? "").trim() || "Give a concise second opinion on the latest reply and code changes.";
+        const repo = typeof b.repository === "string" && b.repository ? b.repository : undefined;
+        secondOpinions.push({
+          chat: c.id,
+          body: prompt,
+          harness,
+          model,
+          ...(anchorId ? { anchor_message_id: anchorId } : {}),
+          ...(repo ? { repository: repo } : {}),
+        });
+        const opinion: Chat = {
+          ...c,
+          id: uuid(),
+          title: `Second opinion: ${prompt.slice(0, 40)}`,
+          harness,
+          model,
+          effort: undefined,
+          auto_model: undefined,
+          state: "running",
+          revision: 1,
+          message_count: 0,
+          created_at: now(),
+          updated_at: now(),
+          parent_chat_id: c.id,
+          ...(anchorId ? { anchor_message_id: anchorId } : {}),
+          second_opinion: true,
+          hidden: true,
+        };
+        chats.push(opinion);
+        messages.set(opinion.id, []);
+        add(opinion, "user", prompt);
+        prompts.set(opinion.id, prompt);
+        opinion.current_run_id = uuid();
+        touch(opinion);
+        timers.set(
+          opinion.id,
+          setTimeout(() => {
+            opinion.state = "idle";
+            add(
+              opinion,
+              "assistant",
+              `Second opinion (${label(harness, model)}): looks solid${repo ? ` in ${repo}` : ""}, watch edge cases — ${prompt}`,
+              { harness, model, run_id: opinion.current_run_id, ...USAGE },
+            );
+            touch(opinion);
+            void emit(opinion);
+          }, delay),
+        );
+        void emit(opinion);
+        return json(ref(opinion), 201);
+      }
       asides.push(String(b.body));
       if (!b.anchor_message_id) return json(ref(c), 201);
       // A thread: a hidden chat about one message, which answers like any chat (an Echo).
@@ -1217,7 +1288,7 @@ export function installChatApi(page: Page, opts: MockOptions = {}) {
       (window as unknown as { EventSource: unknown }).EventSource = FakeEventSource;
     });
     await page.route("**/api/v1/**", handle);
-    return { spaces, workRequests, asides, inbox, dock, apiSecrets, apiSecretPosts, apiSecretSignIns, secretApprovals, secretDecisions, secretProposals, chatSecrets, connectors, connectorApprovals, connectorDecisions, ticketChanges, ticketChangeDecisions, scheduledTasks, proposals, decisions, chats, unhandled, posted, created, wikiPages, artifactForms, memories, memoryRequests, memoryPatches, memoryImports, personas, personaRequests, chatPersonaFilters, updatePersona, profileRequests, commitEmailRequests, codeReviews };
+    return { spaces, workRequests, asides, secondOpinions, inbox, dock, apiSecrets, apiSecretPosts, apiSecretSignIns, secretApprovals, secretDecisions, secretProposals, chatSecrets, connectors, connectorApprovals, connectorDecisions, ticketChanges, ticketChangeDecisions, scheduledTasks, proposals, decisions, chats, unhandled, posted, created, wikiPages, artifactForms, memories, memoryRequests, memoryPatches, memoryImports, personas, personaRequests, chatPersonaFilters, updatePersona, profileRequests, commitEmailRequests, codeReviews };
   })();
 }
 
