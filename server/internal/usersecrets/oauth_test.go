@@ -319,3 +319,56 @@ func TestStaticSecretValueIsTheStoredValue(t *testing.T) {
 		t.Fatalf("value = %q, %v", v, err)
 	}
 }
+
+func TestRequireScope(t *testing.T) {
+	f := newOAuthFixture(t)
+	wantErr := func(sec store.UserSecret, msg string, anyOf ...string) {
+		t.Helper()
+		err := f.svc.RequireScope(sec, anyOf...)
+		var ce *apperr.ConflictError
+		if !errors.As(err, &ce) || !strings.Contains(ce.Msg, msg) {
+			t.Fatalf("RequireScope(%v) = %v, want a conflict containing %q", anyOf, err, msg)
+		}
+	}
+	wantErr(f.sec, "isn't signed in", "drive.file")
+
+	// The provider didn't say what it granted: the scopes asked for count.
+	f.signIn(t)
+	if err := f.svc.RequireScope(f.sec, "drive", "drive.file"); err != nil {
+		t.Fatalf("requested scope: %v", err)
+	}
+	wantErr(f.sec, "it has drive.readonly drive.file. Add drive or drive.metadata", "drive", "drive.metadata")
+
+	// The person unticked drive.file on the consent screen.
+	f.ts.reply = func(form url.Values) (int, string) {
+		if form.Get("grant_type") == "authorization_code" {
+			return 200, `{"access_token":"a","refresh_token":"r","expires_in":3600,"scope":"drive.readonly"}`
+		}
+		return 200, `{"access_token":"b","expires_in":3600}`
+	}
+	f.signIn(t)
+	wantErr(f.sec, "it has drive.readonly.", "drive.file")
+	// A refresh that doesn't name its scope keeps the grant's.
+	f.clock = f.clock.Add(2 * time.Hour)
+	if _, err := f.svc.Value(f.ctx, f.sec); err != nil {
+		t.Fatal(err)
+	}
+	f.sec, _ = f.q.UserSecretByID(f.ctx, f.sec.ID)
+	wantErr(f.sec, "it has drive.readonly.", "drive.file")
+	if err := f.svc.RequireScope(f.sec, "drive.readonly"); err != nil {
+		t.Fatalf("granted scope: %v", err)
+	}
+
+	if err := f.q.SetUserSecretOAuthError(f.ctx, store.SetUserSecretOAuthErrorParams{ID: f.sec.ID, OauthError: "invalid_grant"}); err != nil {
+		t.Fatal(err)
+	}
+	f.sec, _ = f.q.UserSecretByID(f.ctx, f.sec.ID)
+	wantErr(f.sec, "needs signing in again (invalid_grant)", "drive.readonly")
+
+	me, _ := f.q.GetLocalUser(f.ctx)
+	static, err := f.svc.Create(f.ctx, me.WorkspaceID, me.ID, Input{Name: "Plain token", Value: "tok", Placement: PlacementBearer, AllowedHosts: []string{"api.example.com"}, ReadPolicy: PolicyAllow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantErr(static, "isn't an OAuth secret", "drive.file")
+}

@@ -699,6 +699,32 @@ type DockChat struct {
 	AttachedAt  time.Time
 }
 
+type DriveBackup struct {
+	WorkspaceID uuid.UUID
+	UserID      *uuid.UUID
+	Enabled     bool
+	SecretID    *uuid.UUID
+	FolderID    string
+	FolderName  string
+	AtTime      string
+	Timezone    string
+	Retention   int32
+	NextRunAt   *time.Time
+	LastRunAt   *time.Time
+	LastStatus  string
+	LastError   string
+	Revision    int32
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+type DriveBackupLock struct {
+	WorkspaceID uuid.UUID
+	Holder      string
+	StartedAt   time.Time
+	ExpiresAt   time.Time
+}
+
 type Epic struct {
 	ID             uuid.UUID
 	WorkspaceID    uuid.UUID
