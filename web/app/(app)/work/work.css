@@ -19,46 +19,68 @@
   flex: 1;
   flex-direction: column;
   min-height: 0;
-  gap: 16px;
-  padding: 18px 10px 0;
+  gap: 8px;
+  padding: 10px 8px 0;
 }
 .work-nav-title {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  min-height: 26px;
   padding: 0 4px;
 }
-.work-nav-title h1 {
-  font-size: 20px;
+.work-nav-title h2 {
+  font-size: 13px;
   font-weight: 600;
-}
-.work-nav-title a {
-  font-size: 24px;
-  line-height: 28px;
+  color: var(--fg);
 }
 .work-tabs {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 2px;
+  border-radius: 7px;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-sunken);
+  padding: 2px;
 }
 .work-tabs button,
 .work-tabs a {
-  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   text-align: center;
   border-radius: 5px;
-  padding: 6px 8px;
-  font-size: 12px;
+  padding: 4px 4px;
+  font-size: 11px;
+  line-height: 1.2;
   color: var(--fg-secondary);
+  transition: background-color 120ms ease, color 120ms ease;
 }
 .work-tabs button[aria-current],
-.work-tabs a[aria-current],
+.work-tabs a[aria-current] {
+  background: var(--surface);
+  color: var(--fg);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14);
+}
+.work-tab-count {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+  color: var(--fg-tertiary);
+}
+.work-tabs [aria-current] .work-tab-count {
+  color: var(--fg-secondary);
+}
 .work-nav-list button[aria-current],
 .work-nav-list a[aria-current] {
-  background: var(--surface);
+  background: var(--selected);
   color: var(--fg);
 }
 .work-filters {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
 }
 .work-nav-list {
@@ -352,15 +374,11 @@
   }
 }
 .work-nav [data-run-row] {
-  min-height: 60px;
-  border-radius: 5px;
-  padding-top: 8px;
-  padding-bottom: 8px;
-}
-.work-nav [data-run-row] > span:last-child {
-  display: none;
+  min-height: 28px;
+  border-radius: 6px;
+  padding: 3px 8px;
 }
 .work-nav [data-run-row][aria-current] {
-  background: var(--surface);
+  background: var(--selected);
 }
 .work-run form > div.rounded-xl { border-radius:7px; }

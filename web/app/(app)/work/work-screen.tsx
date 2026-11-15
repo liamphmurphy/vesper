@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 import type { TicketStatus } from "@/lib/api/client";
 import {
   useBootstrap,
@@ -23,7 +23,6 @@ import { TopBar } from "@/components/shell/topbar";
 import { useProjectScope } from "@/components/shell/project-scope";
 import { STATUS_NAME } from "@/components/domain/meta";
 import { Button } from "@/components/ui/button";
-import { TextInput } from "@/components/ui/primitives";
 import { WorkSavedViews } from "./work-saved-views";
 import {
   TicketBrief,
@@ -110,24 +109,6 @@ export function WorkScreen() {
       router.replace(ticketsHref(view === "epics" ? "epics" : "list", keep));
     }
   }, [browse, view, project, params, router]);
-  const searchRef = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (
-        e.key === "/" &&
-        !e.metaKey &&
-        !e.ctrlKey &&
-        !(e.target as HTMLElement).closest(
-          "input,textarea,[contenteditable=true]",
-        )
-      ) {
-        e.preventDefault();
-        searchRef.current?.focus();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
   // Pin inferred selections into the URL before opening context or changing views.
   const go: Navigate = (patch) =>
     navigate({
@@ -181,11 +162,27 @@ export function WorkScreen() {
       (!agent || e.agents.some((a) => a.handle === agent)) &&
       e.epic.name.toLowerCase().includes(search.toLowerCase()),
   );
+  const openEpicsCount = epics.data?.filter(
+    (e) => (!project || e.project.key === project) && e.epic.status === "open",
+  ).length;
+  const openTicketsCount = tickets.data?.filter(
+    (t) => t.status !== "done" && t.status !== "canceled",
+  ).length;
   const nav = (
     <nav aria-label="Work" className="work-nav">
       <WorkNavHeader
         active={view}
         project={project}
+        search={search}
+        onSearchChange={(q) => {
+          setSearch(q);
+          updateWorkUrl({ q: q || null }, true);
+        }}
+        counts={{
+          activity: runs.needs.length + runs.runs.filter((r) => r.state === "running" || r.state === "queued").length || undefined,
+          tickets: openTicketsCount || undefined,
+          epics: openEpicsCount || undefined,
+        }}
         onActivityClick={() =>
           go({
             view: "activity",
@@ -195,16 +192,6 @@ export function WorkScreen() {
             layout: null,
           })
         }
-      />
-      <TextInput
-        ref={searchRef}
-        aria-label="Search work"
-        placeholder="/  Search work…"
-        value={search}
-        onChange={(e) => {
-          setSearch(e.target.value);
-          updateWorkUrl({ q: e.target.value || null }, true);
-        }}
       />
       <WorkSpacePersonaFilters
         projects={boot.data?.projects}
