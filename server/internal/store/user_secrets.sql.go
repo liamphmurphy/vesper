@@ -27,6 +27,21 @@ func (q *Queries) AddUserSecretPersona(ctx context.Context, arg AddUserSecretPer
 	return err
 }
 
+const beginUserSecretOAuth = `-- name: BeginUserSecretOAuth :exec
+UPDATE user_secrets SET oauth = $2, oauth_state = $3, updated_at = now() WHERE id = $1
+`
+
+type BeginUserSecretOAuthParams struct {
+	ID         uuid.UUID
+	Oauth      json.RawMessage
+	OauthState *string
+}
+
+func (q *Queries) BeginUserSecretOAuth(ctx context.Context, arg BeginUserSecretOAuthParams) error {
+	_, err := q.db.Exec(ctx, beginUserSecretOAuth, arg.ID, arg.Oauth, arg.OauthState)
+	return err
+}
+
 const chatSecretUsage = `-- name: ChatSecretUsage :many
 SELECT s.id, s.name, s.handle, count(*)::int AS calls, max(c.created_at)::timestamptz AS last_used_at,
   array_agg(DISTINCT c.method ORDER BY c.method)::text[] AS methods
@@ -111,8 +126,9 @@ func (q *Queries) CountPendingUserSecretProposals(ctx context.Context, chatID uu
 
 const createUserSecret = `-- name: CreateUserSecret :one
 
-INSERT INTO user_secrets (id, workspace_id, user_id, name, handle, placement, placement_key, allowed_hosts, read_policy, write_policy, nonce, ciphertext, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id, workspace_id, user_id, name, handle, placement, placement_key, allowed_hosts, read_policy, write_policy, nonce, ciphertext, expires_at, last_used_at, revision, created_at, updated_at
+INSERT INTO user_secrets (id, workspace_id, user_id, name, handle, placement, placement_key, allowed_hosts, read_policy, write_policy, nonce, ciphertext, expires_at, kind, oauth)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+  COALESCE($14::text, 'static'), COALESCE($15::jsonb, '{}')) RETURNING id, workspace_id, user_id, name, handle, placement, placement_key, allowed_hosts, read_policy, write_policy, nonce, ciphertext, expires_at, last_used_at, revision, created_at, updated_at, kind, oauth, oauth_state, signed_in_at, oauth_error
 `
 
 type CreateUserSecretParams struct {
@@ -129,6 +145,8 @@ type CreateUserSecretParams struct {
 	Nonce        []byte
 	Ciphertext   []byte
 	ExpiresAt    *time.Time
+	Kind         *string
+	Oauth        []byte
 }
 
 // A person's API secrets are private to them: every query filters on (workspace_id, user_id).
@@ -147,6 +165,8 @@ func (q *Queries) CreateUserSecret(ctx context.Context, arg CreateUserSecretPara
 		arg.Nonce,
 		arg.Ciphertext,
 		arg.ExpiresAt,
+		arg.Kind,
+		arg.Oauth,
 	)
 	var i UserSecret
 	err := row.Scan(
@@ -167,6 +187,11 @@ func (q *Queries) CreateUserSecret(ctx context.Context, arg CreateUserSecretPara
 		&i.Revision,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Kind,
+		&i.Oauth,
+		&i.OauthState,
+		&i.SignedInAt,
+		&i.OauthError,
 	)
 	return i, err
 }
@@ -330,6 +355,54 @@ func (q *Queries) ExpireUserSecretApproval(ctx context.Context, id uuid.UUID) er
 	return err
 }
 
+const finishUserSecretOAuth = `-- name: FinishUserSecretOAuth :one
+UPDATE user_secrets SET oauth = $2, oauth_state = NULL, nonce = $3, ciphertext = $4, signed_in_at = now(), oauth_error = '',
+  revision = revision + 1, updated_at = now()
+WHERE id = $1 RETURNING id, workspace_id, user_id, name, handle, placement, placement_key, allowed_hosts, read_policy, write_policy, nonce, ciphertext, expires_at, last_used_at, revision, created_at, updated_at, kind, oauth, oauth_state, signed_in_at, oauth_error
+`
+
+type FinishUserSecretOAuthParams struct {
+	ID         uuid.UUID
+	Oauth      json.RawMessage
+	Nonce      []byte
+	Ciphertext []byte
+}
+
+func (q *Queries) FinishUserSecretOAuth(ctx context.Context, arg FinishUserSecretOAuthParams) (UserSecret, error) {
+	row := q.db.QueryRow(ctx, finishUserSecretOAuth,
+		arg.ID,
+		arg.Oauth,
+		arg.Nonce,
+		arg.Ciphertext,
+	)
+	var i UserSecret
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.Name,
+		&i.Handle,
+		&i.Placement,
+		&i.PlacementKey,
+		&i.AllowedHosts,
+		&i.ReadPolicy,
+		&i.WritePolicy,
+		&i.Nonce,
+		&i.Ciphertext,
+		&i.ExpiresAt,
+		&i.LastUsedAt,
+		&i.Revision,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Kind,
+		&i.Oauth,
+		&i.OauthState,
+		&i.SignedInAt,
+		&i.OauthError,
+	)
+	return i, err
+}
+
 const finishUserSecretProposal = `-- name: FinishUserSecretProposal :one
 UPDATE user_secret_proposals SET state = $2, secret_id = $3, decided_at = now()
 WHERE id = $1 AND state = 'pending' RETURNING id, chat_id, run_id, proposed_by, name, host, placement, placement_key, reason, state, secret_id, created_at, decided_at
@@ -363,7 +436,7 @@ func (q *Queries) FinishUserSecretProposal(ctx context.Context, arg FinishUserSe
 }
 
 const getUserSecret = `-- name: GetUserSecret :one
-SELECT id, workspace_id, user_id, name, handle, placement, placement_key, allowed_hosts, read_policy, write_policy, nonce, ciphertext, expires_at, last_used_at, revision, created_at, updated_at FROM user_secrets WHERE id = $1 AND workspace_id = $2 AND user_id = $3
+SELECT id, workspace_id, user_id, name, handle, placement, placement_key, allowed_hosts, read_policy, write_policy, nonce, ciphertext, expires_at, last_used_at, revision, created_at, updated_at, kind, oauth, oauth_state, signed_in_at, oauth_error FROM user_secrets WHERE id = $1 AND workspace_id = $2 AND user_id = $3
 `
 
 type GetUserSecretParams struct {
@@ -393,6 +466,11 @@ func (q *Queries) GetUserSecret(ctx context.Context, arg GetUserSecretParams) (U
 		&i.Revision,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Kind,
+		&i.Oauth,
+		&i.OauthState,
+		&i.SignedInAt,
+		&i.OauthError,
 	)
 	return i, err
 }
@@ -423,7 +501,7 @@ func (q *Queries) GetUserSecretApproval(ctx context.Context, id uuid.UUID) (User
 }
 
 const getUserSecretByHandle = `-- name: GetUserSecretByHandle :one
-SELECT id, workspace_id, user_id, name, handle, placement, placement_key, allowed_hosts, read_policy, write_policy, nonce, ciphertext, expires_at, last_used_at, revision, created_at, updated_at FROM user_secrets WHERE workspace_id = $1 AND user_id = $2 AND handle = $3
+SELECT id, workspace_id, user_id, name, handle, placement, placement_key, allowed_hosts, read_policy, write_policy, nonce, ciphertext, expires_at, last_used_at, revision, created_at, updated_at, kind, oauth, oauth_state, signed_in_at, oauth_error FROM user_secrets WHERE workspace_id = $1 AND user_id = $2 AND handle = $3
 `
 
 type GetUserSecretByHandleParams struct {
@@ -453,6 +531,11 @@ func (q *Queries) GetUserSecretByHandle(ctx context.Context, arg GetUserSecretBy
 		&i.Revision,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Kind,
+		&i.Oauth,
+		&i.OauthState,
+		&i.SignedInAt,
+		&i.OauthError,
 	)
 	return i, err
 }
@@ -620,7 +703,7 @@ func (q *Queries) ListUserSecretProposals(ctx context.Context, chatID uuid.UUID)
 }
 
 const listUserSecrets = `-- name: ListUserSecrets :many
-SELECT id, workspace_id, user_id, name, handle, placement, placement_key, allowed_hosts, read_policy, write_policy, nonce, ciphertext, expires_at, last_used_at, revision, created_at, updated_at FROM user_secrets WHERE workspace_id = $1 AND user_id = $2 ORDER BY lower(name), id
+SELECT id, workspace_id, user_id, name, handle, placement, placement_key, allowed_hosts, read_policy, write_policy, nonce, ciphertext, expires_at, last_used_at, revision, created_at, updated_at, kind, oauth, oauth_state, signed_in_at, oauth_error FROM user_secrets WHERE workspace_id = $1 AND user_id = $2 ORDER BY lower(name), id
 `
 
 type ListUserSecretsParams struct {
@@ -655,6 +738,11 @@ func (q *Queries) ListUserSecrets(ctx context.Context, arg ListUserSecretsParams
 			&i.Revision,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Kind,
+			&i.Oauth,
+			&i.OauthState,
+			&i.SignedInAt,
+			&i.OauthError,
 		); err != nil {
 			return nil, err
 		}
@@ -818,6 +906,20 @@ func (q *Queries) SetChatSecrets(ctx context.Context, arg SetChatSecretsParams) 
 	return i, err
 }
 
+const setUserSecretOAuthError = `-- name: SetUserSecretOAuthError :exec
+UPDATE user_secrets SET oauth_error = $2 WHERE id = $1
+`
+
+type SetUserSecretOAuthErrorParams struct {
+	ID         uuid.UUID
+	OauthError string
+}
+
+func (q *Queries) SetUserSecretOAuthError(ctx context.Context, arg SetUserSecretOAuthErrorParams) error {
+	_, err := q.db.Exec(ctx, setUserSecretOAuthError, arg.ID, arg.OauthError)
+	return err
+}
+
 const setUserSecretPolicy = `-- name: SetUserSecretPolicy :exec
 UPDATE user_secrets SET read_policy = CASE WHEN $2::bool THEN read_policy ELSE $3::text END,
   write_policy = CASE WHEN $2::bool THEN $3::text ELSE write_policy END,
@@ -838,7 +940,7 @@ func (q *Queries) SetUserSecretPolicy(ctx context.Context, arg SetUserSecretPoli
 }
 
 const setUserSecretValue = `-- name: SetUserSecretValue :one
-UPDATE user_secrets SET nonce = $2, ciphertext = $3, expires_at = $4, revision = revision + 1, updated_at = now() WHERE id = $1 RETURNING id, workspace_id, user_id, name, handle, placement, placement_key, allowed_hosts, read_policy, write_policy, nonce, ciphertext, expires_at, last_used_at, revision, created_at, updated_at
+UPDATE user_secrets SET nonce = $2, ciphertext = $3, expires_at = $4, revision = revision + 1, updated_at = now() WHERE id = $1 RETURNING id, workspace_id, user_id, name, handle, placement, placement_key, allowed_hosts, read_policy, write_policy, nonce, ciphertext, expires_at, last_used_at, revision, created_at, updated_at, kind, oauth, oauth_state, signed_in_at, oauth_error
 `
 
 type SetUserSecretValueParams struct {
@@ -874,8 +976,29 @@ func (q *Queries) SetUserSecretValue(ctx context.Context, arg SetUserSecretValue
 		&i.Revision,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Kind,
+		&i.Oauth,
+		&i.OauthState,
+		&i.SignedInAt,
+		&i.OauthError,
 	)
 	return i, err
+}
+
+const storeUserSecretToken = `-- name: StoreUserSecretToken :exec
+UPDATE user_secrets SET nonce = $2, ciphertext = $3, oauth_error = '' WHERE id = $1
+`
+
+type StoreUserSecretTokenParams struct {
+	ID         uuid.UUID
+	Nonce      []byte
+	Ciphertext []byte
+}
+
+// A refreshed token. Not the person's edit, so the revision stays put.
+func (q *Queries) StoreUserSecretToken(ctx context.Context, arg StoreUserSecretTokenParams) error {
+	_, err := q.db.Exec(ctx, storeUserSecretToken, arg.ID, arg.Nonce, arg.Ciphertext)
+	return err
 }
 
 const touchUserSecret = `-- name: TouchUserSecret :exec
@@ -890,7 +1013,7 @@ func (q *Queries) TouchUserSecret(ctx context.Context, id uuid.UUID) error {
 const updateUserSecret = `-- name: UpdateUserSecret :one
 UPDATE user_secrets SET name = $4, placement = $5, placement_key = $6, allowed_hosts = $7, read_policy = $8, write_policy = $9,
   revision = revision + 1, updated_at = now()
-WHERE id = $1 AND workspace_id = $2 AND revision = $3 RETURNING id, workspace_id, user_id, name, handle, placement, placement_key, allowed_hosts, read_policy, write_policy, nonce, ciphertext, expires_at, last_used_at, revision, created_at, updated_at
+WHERE id = $1 AND workspace_id = $2 AND revision = $3 RETURNING id, workspace_id, user_id, name, handle, placement, placement_key, allowed_hosts, read_policy, write_policy, nonce, ciphertext, expires_at, last_used_at, revision, created_at, updated_at, kind, oauth, oauth_state, signed_in_at, oauth_error
 `
 
 type UpdateUserSecretParams struct {
@@ -937,6 +1060,80 @@ func (q *Queries) UpdateUserSecret(ctx context.Context, arg UpdateUserSecretPara
 		&i.Revision,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Kind,
+		&i.Oauth,
+		&i.OauthState,
+		&i.SignedInAt,
+		&i.OauthError,
+	)
+	return i, err
+}
+
+const userSecretByID = `-- name: UserSecretByID :one
+SELECT id, workspace_id, user_id, name, handle, placement, placement_key, allowed_hosts, read_policy, write_policy, nonce, ciphertext, expires_at, last_used_at, revision, created_at, updated_at, kind, oauth, oauth_state, signed_in_at, oauth_error FROM user_secrets WHERE id = $1
+`
+
+// For a token refresh, which already holds a secret its caller was allowed to use.
+func (q *Queries) UserSecretByID(ctx context.Context, id uuid.UUID) (UserSecret, error) {
+	row := q.db.QueryRow(ctx, userSecretByID, id)
+	var i UserSecret
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.Name,
+		&i.Handle,
+		&i.Placement,
+		&i.PlacementKey,
+		&i.AllowedHosts,
+		&i.ReadPolicy,
+		&i.WritePolicy,
+		&i.Nonce,
+		&i.Ciphertext,
+		&i.ExpiresAt,
+		&i.LastUsedAt,
+		&i.Revision,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Kind,
+		&i.Oauth,
+		&i.OauthState,
+		&i.SignedInAt,
+		&i.OauthError,
+	)
+	return i, err
+}
+
+const userSecretByOAuthState = `-- name: UserSecretByOAuthState :one
+SELECT id, workspace_id, user_id, name, handle, placement, placement_key, allowed_hosts, read_policy, write_policy, nonce, ciphertext, expires_at, last_used_at, revision, created_at, updated_at, kind, oauth, oauth_state, signed_in_at, oauth_error FROM user_secrets WHERE oauth_state = $1
+`
+
+func (q *Queries) UserSecretByOAuthState(ctx context.Context, oauthState *string) (UserSecret, error) {
+	row := q.db.QueryRow(ctx, userSecretByOAuthState, oauthState)
+	var i UserSecret
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.Name,
+		&i.Handle,
+		&i.Placement,
+		&i.PlacementKey,
+		&i.AllowedHosts,
+		&i.ReadPolicy,
+		&i.WritePolicy,
+		&i.Nonce,
+		&i.Ciphertext,
+		&i.ExpiresAt,
+		&i.LastUsedAt,
+		&i.Revision,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Kind,
+		&i.Oauth,
+		&i.OauthState,
+		&i.SignedInAt,
+		&i.OauthError,
 	)
 	return i, err
 }
@@ -959,7 +1156,7 @@ func (q *Queries) UserSecretHandleTaken(ctx context.Context, arg UserSecretHandl
 }
 
 const userSecretsForPersona = `-- name: UserSecretsForPersona :many
-SELECT s.id, s.workspace_id, s.user_id, s.name, s.handle, s.placement, s.placement_key, s.allowed_hosts, s.read_policy, s.write_policy, s.nonce, s.ciphertext, s.expires_at, s.last_used_at, s.revision, s.created_at, s.updated_at FROM user_secrets s JOIN user_secret_personas sp ON sp.secret_id = s.id
+SELECT s.id, s.workspace_id, s.user_id, s.name, s.handle, s.placement, s.placement_key, s.allowed_hosts, s.read_policy, s.write_policy, s.nonce, s.ciphertext, s.expires_at, s.last_used_at, s.revision, s.created_at, s.updated_at, s.kind, s.oauth, s.oauth_state, s.signed_in_at, s.oauth_error FROM user_secrets s JOIN user_secret_personas sp ON sp.secret_id = s.id
 WHERE s.workspace_id = $1 AND s.user_id = $2 AND sp.persona_id = $3
   AND ($4::uuid[] IS NULL OR s.id = ANY($4::uuid[]))
 ORDER BY s.handle
@@ -1005,6 +1202,11 @@ func (q *Queries) UserSecretsForPersona(ctx context.Context, arg UserSecretsForP
 			&i.Revision,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Kind,
+			&i.Oauth,
+			&i.OauthState,
+			&i.SignedInAt,
+			&i.OauthError,
 		); err != nil {
 			return nil, err
 		}

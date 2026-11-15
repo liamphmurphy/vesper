@@ -1,8 +1,9 @@
 -- A person's API secrets are private to them: every query filters on (workspace_id, user_id).
 
 -- name: CreateUserSecret :one
-INSERT INTO user_secrets (id, workspace_id, user_id, name, handle, placement, placement_key, allowed_hosts, read_policy, write_policy, nonce, ciphertext, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *;
+INSERT INTO user_secrets (id, workspace_id, user_id, name, handle, placement, placement_key, allowed_hosts, read_policy, write_policy, nonce, ciphertext, expires_at, kind, oauth)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+  COALESCE(sqlc.narg(kind)::text, 'static'), COALESCE(sqlc.narg(oauth)::jsonb, '{}')) RETURNING *;
 
 -- name: ListUserSecrets :many
 SELECT * FROM user_secrets WHERE workspace_id = $1 AND user_id = $2 ORDER BY lower(name), id;
@@ -31,6 +32,28 @@ UPDATE user_secrets SET read_policy = CASE WHEN sqlc.arg(write)::bool THEN read_
   write_policy = CASE WHEN sqlc.arg(write)::bool THEN sqlc.arg(policy)::text ELSE write_policy END,
   revision = revision + 1, updated_at = now()
 WHERE id = $1;
+
+-- name: UserSecretByID :one
+-- For a token refresh, which already holds a secret its caller was allowed to use.
+SELECT * FROM user_secrets WHERE id = $1;
+
+-- name: UserSecretByOAuthState :one
+SELECT * FROM user_secrets WHERE oauth_state = $1;
+
+-- name: BeginUserSecretOAuth :exec
+UPDATE user_secrets SET oauth = $2, oauth_state = $3, updated_at = now() WHERE id = $1;
+
+-- name: FinishUserSecretOAuth :one
+UPDATE user_secrets SET oauth = $2, oauth_state = NULL, nonce = $3, ciphertext = $4, signed_in_at = now(), oauth_error = '',
+  revision = revision + 1, updated_at = now()
+WHERE id = $1 RETURNING *;
+
+-- name: StoreUserSecretToken :exec
+-- A refreshed token. Not the person's edit, so the revision stays put.
+UPDATE user_secrets SET nonce = $2, ciphertext = $3, oauth_error = '' WHERE id = $1;
+
+-- name: SetUserSecretOAuthError :exec
+UPDATE user_secrets SET oauth_error = $2 WHERE id = $1;
 
 -- name: TouchUserSecret :exec
 UPDATE user_secrets SET last_used_at = now() WHERE id = $1;
