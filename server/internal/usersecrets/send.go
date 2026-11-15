@@ -91,6 +91,12 @@ func (s *Service) Check(sec store.UserSecret, req Request) (Checked, error) {
 	if sec.ExpiresAt != nil && !s.now().Before(*sec.ExpiresAt) {
 		return c, blocked("%s has expired. Ask the person to replace it in Customization › Secrets.", sec.Handle)
 	}
+	if sec.Kind == KindOAuth && sec.SignedInAt == nil {
+		return c, notSignedIn(sec)
+	}
+	if sec.Kind == KindOAuth && sec.OauthError != "" {
+		return c, blocked("%s needs signing in again (%s). Ask the person to sign in from Customization › Secrets.", sec.Handle, sec.OauthError)
+	}
 	c.Method = strings.ToUpper(strings.TrimSpace(req.Method))
 	if c.Method == "" {
 		c.Method = http.MethodGet
