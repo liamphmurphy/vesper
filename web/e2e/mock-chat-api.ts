@@ -185,6 +185,27 @@ export function installChatApi(page: Page, opts: MockOptions = {}) {
   // Chat audio the same way: "audio: <state>" and "audio-live: <stage>".
   const audio = new Map<string, Record<string, unknown>[]>();
   const codeReviews = new Map<string, components["schemas"]["CodeReview"][]>();
+  const pushRequests = new Map<string, components["schemas"]["PushRequest"][]>();
+  const refusePush = new Map<string, string>();
+  const pushPolicies: components["schemas"]["RepositoryPushPolicy"][] = [];
+  function mockPushRequest(title: string, runId?: string, messageId?: string): components["schemas"]["PushRequest"] {
+    return {
+      id: uuid(),
+      repository: "https://github.com/acme/alpha.git",
+      branch: "feat/" + title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
+      base_branch: "main",
+      title: title || "Update alpha",
+      body: "Changes for review.",
+      draft: false,
+      state: messageId ? "pending" : "staging",
+      auto: false,
+      commits: [{ sha: "abcdef1234567890abcdef1234567890abcdef12", subject: title || "Update alpha" }],
+      files: [{ path: "src/app.ts", status: "modified", additions: 2, deletions: 1, binary: false, truncated: false }],
+      created_at: now(),
+      run_id: runId,
+      message_id: messageId,
+    };
+  }
   // The persona_id each GET /chats asked for ("" when omitted, i.e. the default).
   const chatPersonaFilters: string[] = [];
   let n = 0;
@@ -278,6 +299,21 @@ export function installChatApi(page: Page, opts: MockOptions = {}) {
       if (prompt.startsWith("audio:")) list.push(mockAudio(prompt.slice(6).trim(), c.current_run_id!));
       for (const a of list) if (!a.message_id && a.run_id === c.current_run_id) a.message_id = reply.id;
       audio.set(c.id, list);
+      void emit(c);
+      return;
+    }
+    if (prompt.startsWith("push:") || prompt.startsWith("push-live:")) {
+      const label = prompt.replace(/^push(?:-live)?:\s*/, "").trim() || "changes";
+      const reply = add(c, "assistant", `Staged ${label} for your review.`, { harness: c.harness, model: c.model, run_id: c.current_run_id, ...USAGE });
+      const list = pushRequests.get(c.id) ?? [];
+      if (prompt.startsWith("push:")) list.push(mockPushRequest(label, c.current_run_id, reply.id));
+      for (const r of list) {
+        if (!r.message_id && r.run_id === c.current_run_id) {
+          r.message_id = reply.id;
+          if (r.state === "staging") r.state = "pending";
+        }
+      }
+      pushRequests.set(c.id, list);
       void emit(c);
       return;
     }
@@ -545,7 +581,30 @@ export function installChatApi(page: Page, opts: MockOptions = {}) {
     const cr = /^\/chats\/([^/]+)\/code-review$/.exec(path);
     if (cr && method === "GET") return json({ repositories: codeReviews.get(cr[1]) ?? [] });
     const pr = /^\/chats\/([^/]+)\/push-requests$/.exec(path);
-    if (pr && method === "GET") return json({ requests: [] });
+    if (pr && method === "GET") return json({ requests: pushRequests.get(pr[1]) ?? [] });
+    const prDecide = /^\/push-requests\/([^/]+)$/.exec(path);
+    if (prDecide && method === "POST") {
+      const id = prDecide[1];
+      const msg = refusePush.get(id);
+      if (msg) return fail(err(422, "invalid", msg));
+      const b = body() as components["schemas"]["PushRequestDecision"];
+      for (const list of pushRequests.values()) {
+        const hit = list.find((r) => r.id === id);
+        if (!hit) continue;
+        if (b.decision === "deny") {
+          hit.state = "declined";
+        } else {
+          hit.state = "pushed";
+          hit.auto = b.decision === "always";
+          hit.pr_number = hit.pr_number ?? 99;
+          hit.pr_url = hit.pr_url ?? `https://github.com/acme/alpha/pull/${hit.pr_number}`;
+          if (b.title) hit.title = b.title;
+        }
+        return json(hit);
+      }
+      return fail(err(404, "not_found", "push request not found"));
+    }
+    if (path === "/repository-push-policies" && method === "GET") return json({ policies: pushPolicies });
     if (/^\/chats\/[^/]+\/research$/.test(path) && method === "GET") return json({ jobs: [] });
     if (/^\/chats\/[^/]+\/runs$/.test(path) && method === "GET") return json({ runs: [] });
     if (/^\/chats\/[^/]+\/followups$/.test(path) && method === "GET") return json({ followups: [] });
@@ -923,6 +982,7 @@ export function installChatApi(page: Page, opts: MockOptions = {}) {
         c.state = "running";
         c.current_run_id = uuid();
         touch(c);
+        if (first.body.startsWith("push-live:")) pushRequests.set(c.id, [...(pushRequests.get(c.id) ?? []), mockPushRequest(first.body.slice(10).trim(), c.current_run_id)]);
         timers.set(c.id, setTimeout(() => finishTurn(c, first.body!), delay));
         void emit(c);
       }
@@ -1046,6 +1106,7 @@ export function installChatApi(page: Page, opts: MockOptions = {}) {
         touch(c);
         if (text.startsWith("audio-live:")) audio.set(c.id, [...(audio.get(c.id) ?? []), mockAudio(text.slice(11).trim(), c.current_run_id)]);
         if (text.startsWith("video-live:")) videos.set(c.id, [...(videos.get(c.id) ?? []), mockVideo(text.slice(11).trim(), c.current_run_id)]);
+        if (text.startsWith("push-live:")) pushRequests.set(c.id, [...(pushRequests.get(c.id) ?? []), mockPushRequest(text.slice(10).trim(), c.current_run_id)]);
         if (text.startsWith("slow:")) {
           const events = runEvents.get(c.current_run_id) ?? [];
           events.push({ seq: events.length + 1, type: "tool_call", at: now(), payload: { id: `call-${events.length + 1}`, tool: "mcp__lazyagents__read_page", input: { ref: PLAN.path } } });
@@ -1288,7 +1349,7 @@ export function installChatApi(page: Page, opts: MockOptions = {}) {
       (window as unknown as { EventSource: unknown }).EventSource = FakeEventSource;
     });
     await page.route("**/api/v1/**", handle);
-    return { spaces, workRequests, asides, secondOpinions, inbox, dock, apiSecrets, apiSecretPosts, apiSecretSignIns, secretApprovals, secretDecisions, secretProposals, chatSecrets, connectors, connectorApprovals, connectorDecisions, ticketChanges, ticketChangeDecisions, scheduledTasks, proposals, decisions, chats, unhandled, posted, created, wikiPages, artifactForms, memories, memoryRequests, memoryPatches, memoryImports, personas, personaRequests, chatPersonaFilters, updatePersona, profileRequests, commitEmailRequests, codeReviews };
+    return { spaces, workRequests, asides, secondOpinions, inbox, dock, apiSecrets, apiSecretPosts, apiSecretSignIns, secretApprovals, secretDecisions, secretProposals, chatSecrets, connectors, connectorApprovals, connectorDecisions, ticketChanges, ticketChangeDecisions, scheduledTasks, proposals, decisions, chats, messages, unhandled, posted, created, wikiPages, artifactForms, memories, memoryRequests, memoryPatches, memoryImports, personas, personaRequests, chatPersonaFilters, updatePersona, profileRequests, commitEmailRequests, codeReviews, pushRequests, refusePush };
   })();
 }
 

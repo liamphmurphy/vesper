@@ -106,6 +106,100 @@ export function pushStateLabel(r: Pick<Schemas["PushRequest"], "state" | "auto" 
   }
 }
 
+type PlacedPushMessage = Pick<Schemas["ChatMessage"], "id" | "role" | "created_at" | "run_id" | "turn_seq">;
+
+export type PlacedPushRequests<T extends Pick<Schemas["PushRequest"], "id" | "state" | "error" | "created_at" | "run_id" | "message_id">> = {
+  byMessage: Map<string, T[]>;
+  afterMessage: Map<string, T[]>;
+  leading: T[];
+  trailing: T[];
+  live: T[];
+};
+
+const appendPlaced = <T>(map: Map<string, T[]>, key: string, item: T) => {
+  const list = map.get(key);
+  if (list) list.push(item);
+  else map.set(key, [item]);
+};
+
+/**
+ * Anchors each shown push request to its place in the chat log so open, pushed, and failed
+ * PR blocks stay with the turn that requested them instead of stacking at the bottom.
+ */
+export function placePushRequests<T extends Pick<Schemas["PushRequest"], "id" | "state" | "error" | "created_at" | "run_id" | "message_id">>(
+  requests: readonly T[],
+  messages: readonly PlacedPushMessage[],
+  opts: { running: boolean; currentRunId?: string | null; hasMore?: boolean },
+): PlacedPushRequests<T> {
+  const byMessage = new Map<string, T[]>();
+  const afterMessage = new Map<string, T[]>();
+  const leading: T[] = [];
+  const trailing: T[] = [];
+  const live: T[] = [];
+
+  // Decided cards stay as a record only when they say something: a pull request, or why not.
+  const shown = requests.filter((r) => r.state !== "declined" || !!r.error);
+  if (!shown.length) return { byMessage, afterMessage, leading, trailing, live };
+
+  const messageIds = new Set(messages.map((m) => m.id));
+  const firstAt = messages.length ? Date.parse(messages[0].created_at) : Number.NaN;
+  const lastAt = messages.length ? Date.parse(messages[messages.length - 1].created_at) : Number.NaN;
+
+  for (const r of shown) {
+    if (r.message_id && messageIds.has(r.message_id)) {
+      appendPlaced(byMessage, r.message_id, r);
+      continue;
+    }
+
+    const reqAt = Date.parse(r.created_at);
+    // When earlier messages aren't loaded yet, requests linked before the window stay hidden with them.
+    if (r.message_id && opts.hasMore && !Number.isNaN(firstAt) && reqAt < firstAt) {
+      continue;
+    }
+
+    // Only treat an unlinked request as live when it belongs to the currently active turn
+    // (a chat segment reuses current_run_id across turns, so ordering after the last message matters).
+    const afterLast = !messages.length || Number.isNaN(lastAt) || reqAt >= lastAt;
+    if (!r.message_id && opts.running && (!r.run_id || r.run_id === opts.currentRunId) && afterLast) {
+      live.push(r);
+      continue;
+    }
+
+    // Legacy rows (and requests in the brief turn-end refetch gap) fall back to creation time.
+    const idx = messages.findIndex((m) => Date.parse(m.created_at) >= reqAt);
+    if (idx === -1) {
+      trailing.push(r);
+      continue;
+    }
+    const anchor = messages[idx];
+    if (anchor.role !== "user") {
+      // Opening lines share a turn with the final reply; attach to the turn's last assistant message.
+      let end = idx;
+      while (
+        anchor.role === "assistant" &&
+        anchor.run_id &&
+        end + 1 < messages.length &&
+        messages[end + 1].role === "assistant" &&
+        messages[end + 1].run_id === anchor.run_id &&
+        messages[end + 1].turn_seq === anchor.turn_seq
+      ) {
+        end++;
+      }
+      appendPlaced(byMessage, messages[end].id, r);
+      continue;
+    }
+    if (idx === 0) {
+      leading.push(r);
+    } else if (messages[idx - 1].role !== "user") {
+      appendPlaced(byMessage, messages[idx - 1].id, r);
+    } else {
+      appendPlaced(afterMessage, messages[idx - 1].id, r);
+    }
+  }
+
+  return { byMessage, afterMessage, leading, trailing, live };
+}
+
 /** Parent directory paths from outermost to immediate parent (e.g. "a/b/c.ts" -> ["a", "a/b"]). */
 export function ancestorDirs(filePath: string): string[] {
   const parts = filePath.split("/");

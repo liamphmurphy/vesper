@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ancestorDirs, baseName, branchFileTree, commentKey, fileTree, formatBytes, pushStateLabel, repoName, resolveSelectedFile, reviewMessage, treeCounts } from "./code-review.ts";
+import { ancestorDirs, baseName, branchFileTree, commentKey, fileTree, formatBytes, placePushRequests, pushStateLabel, repoName, resolveSelectedFile, reviewMessage, treeCounts } from "./code-review.ts";
 
 test("reviewMessage anchors each comment to file:line, quotes the line and sorts like a review", () => {
   const msg = reviewMessage(
@@ -85,4 +85,63 @@ test("branchFileTree merges unchanged tree files with added, modified, renamed, 
   assert.equal(resolveSelectedFile("src/config.ts", tree, changes, false).path, "src/app.ts");
   assert.equal(formatBytes(512), "512 B");
   assert.equal(formatBytes(2048), "2.0 KB");
+});
+
+test("placePushRequests anchors linked, live, and legacy PR cards to their turns", () => {
+  const msgs = [
+    { id: "m1", role: "user", created_at: "2026-11-15T10:00:00Z" },
+    { id: "m2", role: "assistant", created_at: "2026-11-15T10:00:05Z", run_id: "r1", turn_seq: 1 },
+    { id: "m3", role: "assistant", created_at: "2026-11-15T10:01:00Z", run_id: "r1", turn_seq: 1 },
+    { id: "m4", role: "user", created_at: "2026-11-15T10:02:00Z" },
+    { id: "m5", role: "assistant", created_at: "2026-11-15T10:03:00Z", run_id: "r1", turn_seq: 2 },
+    { id: "m6", role: "user", created_at: "2026-11-15T10:04:00Z" },
+    { id: "m7", role: "user", created_at: "2026-11-15T10:05:00Z" },
+  ];
+
+  const req = (over) => ({
+    id: "p0",
+    state: "pending",
+    created_at: "2026-11-15T10:00:30Z",
+    run_id: "r1",
+    ...over,
+  });
+
+  const placed = placePushRequests(
+    [
+      // Linked directly to turn 1 reply and turn 2 reply.
+      req({ id: "linked-t1", state: "pushed", message_id: "m3", created_at: "2026-11-15T10:00:40Z" }),
+      req({ id: "linked-t2", state: "pending", message_id: "m5", created_at: "2026-11-15T10:02:30Z" }),
+      // Cleanly declined card stays hidden; declined with error stays on its reply.
+      req({ id: "declined-clean", state: "declined", message_id: "m3" }),
+      req({ id: "declined-err", state: "declined", error: "Replaced by newer request", message_id: "m5" }),
+      // Legacy unlinked request created between m2 (opening line) and m3 (turn 1 final reply) stays on m3, not m5.
+      req({ id: "legacy-t1", state: "pushed", created_at: "2026-11-15T10:00:20Z" }),
+      // Legacy unlinked request between consecutive user messages m6 and m7 anchors right after m6.
+      req({ id: "legacy-between-users", state: "failed", created_at: "2026-11-15T10:04:30Z" }),
+      // Legacy unlinked request before the very first message goes to leading.
+      req({ id: "legacy-first", state: "pushed", created_at: "2026-11-15T09:59:00Z" }),
+      // Unlinked staging request created after m7 during active run r1 goes to live.
+      req({ id: "live-staging", state: "staging", created_at: "2026-11-15T10:05:10Z" }),
+      // Request linked to an older message outside the paginated window is omitted when hasMore=true.
+      req({ id: "older-window", state: "pushed", message_id: "m0", created_at: "2026-11-15T09:00:00Z" }),
+    ],
+    msgs,
+    { running: true, currentRunId: "r1", hasMore: true },
+  );
+
+  assert.deepEqual(placed.byMessage.get("m3")?.map((r) => r.id), ["linked-t1", "legacy-t1"]);
+  assert.deepEqual(placed.byMessage.get("m5")?.map((r) => r.id), ["linked-t2", "declined-err"]);
+  assert.deepEqual(placed.afterMessage.get("m6")?.map((r) => r.id), ["legacy-between-users"]);
+  assert.deepEqual(placed.leading.map((r) => r.id), ["legacy-first"]);
+  assert.deepEqual(placed.live.map((r) => r.id), ["live-staging"]);
+  assert.deepEqual(placed.trailing.map((r) => r.id), []);
+
+  // When not running, an unlinked post-last-message request falls back to trailing instead of vanishing.
+  const idle = placePushRequests(
+    [req({ id: "unlinked-end", state: "pending", created_at: "2026-11-15T10:05:10Z" })],
+    msgs,
+    { running: false, currentRunId: "r1" },
+  );
+  assert.deepEqual(idle.trailing.map((r) => r.id), ["unlinked-end"]);
+  assert.deepEqual(idle.live, []);
 });

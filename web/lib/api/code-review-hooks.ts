@@ -22,11 +22,12 @@ export function useCodeReview(chatId: string | undefined) {
   });
 }
 
-export function usePushRequests(chatId: string | undefined) {
+export function usePushRequests(chatId: string | undefined, live?: boolean) {
   return useQuery({
     queryKey: pushKey(chatId ?? ""),
     enabled: !!chatId,
     queryFn: () => unwrap(api.GET("/chats/{id}/push-requests", { params: { path: { id: chatId! } } })),
+    refetchInterval: live ? 3000 : false,
   });
 }
 

@@ -37,6 +37,8 @@ import { LiveAsides, ReplyAsides, SecondOpinions } from "./asides";
 import { buildCompareOptions, type SecondOpinionPick } from "./second-opinion-menu";
 import { RepositoryPicker } from "./repository-picker";
 import { useRepositories, useSetChatRepository } from "@/lib/api/repository-hooks";
+import { usePushRequests, type PushRequest } from "@/lib/api/code-review-hooks";
+import { placePushRequests } from "@/lib/code-review";
 import { usePersonas } from "@/lib/api/persona-hooks";
 import { useChatWorkflowRuns, useWorkflows, type Workflow } from "@/lib/api/workflow-hooks";
 import { runActive } from "@/lib/workflows";
@@ -153,7 +155,7 @@ function Divider({ children, testId }: { children: string; testId?: string }) {
 
 type ChatInfo = { id: string; title: string; project?: string; agent: { name: string } };
 
-const Bubble = memo(function Bubble({ m, chat, persona, saveable, names, turn, ended, summaryUrl, editable, onEdit, onRetry, highlighted, videos, audio, asides, secondOpinions, thread }: { m: Message; chat: ChatInfo; persona: PersonaLook; saveable: boolean; names: Map<string, string>; turn?: TurnWindow; ended?: EndedTurn; summaryUrl?: string | null; editable?: boolean; onEdit?: (body: string) => void; onRetry?: () => void; highlighted?: boolean; videos?: ChatVideo[]; audio?: ChatAudio[]; asides?: ReactNode; secondOpinions?: ReactNode; thread?: { count: number; running: boolean } }) {
+const Bubble = memo(function Bubble({ m, chat, persona, saveable, names, turn, ended, summaryUrl, editable, archived, onEdit, onRetry, highlighted, videos, audio, pushRequests, asides, secondOpinions, thread }: { m: Message; chat: ChatInfo; persona: PersonaLook; saveable: boolean; names: Map<string, string>; turn?: TurnWindow; ended?: EndedTurn; summaryUrl?: string | null; editable?: boolean; archived?: boolean; onEdit?: (body: string) => void; onRetry?: () => void; highlighted?: boolean; videos?: ChatVideo[]; audio?: ChatAudio[]; pushRequests?: PushRequest[]; asides?: ReactNode; secondOpinions?: ReactNode; thread?: { count: number; running: boolean } }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(m.body_md);
   const self = useRef<HTMLLIElement>(null);
@@ -182,6 +184,7 @@ const Bubble = memo(function Bubble({ m, chat, persona, saveable, names, turn, e
         {endedSteps}
         {videos?.length ? <li className="flex flex-col items-start"><VideoCards chatId={chat.id} videos={videos} messageId={m.id} /></li> : null}
         {audio?.length ? <li className="flex flex-col items-start"><AudioCards chatId={chat.id} audio={audio} messageId={m.id} /></li> : null}
+        {pushRequests?.length ? <li className="flex flex-col items-start"><PushRequests chatId={chat.id} requests={pushRequests} disabled={archived} /></li> : null}
         <Divider testId="system-message">{m.body_md}</Divider>
       </>
     );
@@ -241,6 +244,7 @@ const Bubble = memo(function Bubble({ m, chat, persona, saveable, names, turn, e
       {!mine && videos?.length ? <VideoRendererNotes videos={videos} /> : null}
       {mine ? <SentAttachments attachments={m.attachments} /> : <ReplyAttachments attachments={m.attachments} />}
       {!mine && <ReplyCodeChanges changes={m.code_changes} />}
+      {!mine && pushRequests?.length ? <PushRequests chatId={chat.id} requests={pushRequests} disabled={archived} /> : null}
       {mine && <SentChips chips={(m.context_refs ?? []).map((r) => {
         const chip = chipFromRef(r, names);
         // A design's selection rides along with every message sent from the editor.
@@ -274,7 +278,7 @@ type ChatAsides = NonNullable<ReturnType<typeof useChatAsides>["data"]>;
  * a ref when it is a callback) and a keystroke only re-checks props instead of re-rendering
  * every message's markdown.
  */
-function BubbleList({ unreadFrom, list, chat, persona, speakerName, names, highlight, running, since, locked, archived, editPending, lastUser, videosByMessage, audioByMessage, asideList, pinnedRef, editLast, onQuoteSecondOpinion }: {
+function BubbleList({ unreadFrom, list, chat, persona, speakerName, names, highlight, running, since, locked, archived, editPending, lastUser, videosByMessage, audioByMessage, pushRequestsByMessage, afterMessagePushRequests, asideList, pinnedRef, editLast, onQuoteSecondOpinion }: {
   /** The first reply since the person last read the chat: "New" goes above it. */
   unreadFrom?: string;
   list: Message[];
@@ -291,6 +295,8 @@ function BubbleList({ unreadFrom, list, chat, persona, speakerName, names, highl
   lastUser?: Message;
   videosByMessage: Map<string, ChatVideo[]>;
   audioByMessage: Map<string, ChatAudio[]>;
+  pushRequestsByMessage: Map<string, PushRequest[]>;
+  afterMessagePushRequests: Map<string, PushRequest[]>;
   asideList?: ChatAsides;
   pinnedRef: RefObject<boolean>;
   editLast: (body: string) => void;
@@ -348,11 +354,18 @@ function BubbleList({ unreadFrom, list, chat, persona, speakerName, names, highl
       onEdit={onEdit}
       onRetry={canRetry && m.id === lastId ? onRetry : undefined}
       summaryUrl={m.role === "assistant" && turns.has(m.id) ? summaryRequestUrl(list.slice(0, i).findLast((x) => x.role === "user")?.body_md) : null}
+      archived={archived}
       videos={videosByMessage.get(m.id)}
       audio={audioByMessage.get(m.id)}
+      pushRequests={pushRequestsByMessage.get(m.id)}
       asides={asideNodes.get(m.id) ?? null}
       secondOpinions={secondOpinionNodes.get(m.id) ?? null}
       thread={threads.get(m.id)} />
+    {afterMessagePushRequests.get(m.id)?.length ? (
+      <li className="flex flex-col gap-2">
+        <PushRequests chatId={chat.id} requests={afterMessagePushRequests.get(m.id)!} disabled={archived} />
+      </li>
+    ) : null}
     </Fragment>
   ));
 }
@@ -677,6 +690,16 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
     ...(effortPending ? { effort: effort ?? ("default" as const) } : {}),
   };
   const list = messages.data?.messages;
+  const pushRequests = usePushRequests(c?.id, running);
+  const placedPushes = useMemo(
+    () =>
+      placePushRequests(pushRequests.data?.requests ?? [], list ?? [], {
+        running,
+        currentRunId: c?.current_run_id,
+        hasMore: messages.data?.has_more,
+      }),
+    [pushRequests.data?.requests, list, running, c?.current_run_id, messages.data?.has_more],
+  );
   // Where "New" goes: before the first reply that arrived since the person last read this chat,
   // fixed when the chat opens so it doesn't move as they read on.
   const [unreadFrom, setUnreadFrom] = useState<{ chat: string; message: string | null }>();
@@ -1294,9 +1317,20 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
             <MessageActionsContext.Provider value={c.archived ? null : messageActions}>
             <ol ref={log} aria-label="Conversation" role="log" aria-live="polite" className="mx-auto flex max-w-[768px] flex-col gap-6">
               {messages.data?.has_more && <Divider>Earlier messages are not shown</Divider>}
+              {placedPushes.leading.length > 0 && (
+                <li className="flex flex-col gap-2">
+                  <PushRequests chatId={c.id} requests={placedPushes.leading} disabled={c.archived} />
+                </li>
+              )}
               <BubbleList unreadFrom={unreadFrom?.message ?? undefined} list={list} chat={c} persona={persona} speakerName={speaker.name} names={names} highlight={highlight} running={running} since={since}
-                locked={locked} archived={c.archived} editPending={edit.isPending} lastUser={lastUser} videosByMessage={videosByMessage} audioByMessage={audioByMessage} asideList={asideList}
+                locked={locked} archived={c.archived} editPending={edit.isPending} lastUser={lastUser} videosByMessage={videosByMessage} audioByMessage={audioByMessage}
+                pushRequestsByMessage={placedPushes.byMessage} afterMessagePushRequests={placedPushes.afterMessage} asideList={asideList}
                 pinnedRef={pinned} editLast={edit.mutate} onQuoteSecondOpinion={onQuoteSecondOpinion} />
+              {placedPushes.trailing.length > 0 && (
+                <li className="flex flex-col gap-2">
+                  <PushRequests chatId={c.id} requests={placedPushes.trailing} disabled={c.archived} />
+                </li>
+              )}
               {(asideList ?? []).some((a) => a.second_opinion && !a.anchor_message_id) && (
                 <li>
                   <SecondOpinions
@@ -1310,7 +1344,6 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
               <ConnectorRequests chatId={c.id} disabled={c.archived} />
               <SecretRequests chatId={c.id} disabled={c.archived} />
               <TicketChangeRequests chatId={c.id} disabled={c.archived} />
-              <PushRequests chatId={c.id} disabled={c.archived} />
               {pending && selection && (
                 <Divider testId="pending-switch">
                   {selection.auto
@@ -1326,6 +1359,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
                   <InterimReply runId={c.current_run_id} since={since} persona={speaker} />
                   <VideoCards chatId={c.id} videos={liveVideos} onStop={stopping ? undefined : () => cancel.mutate()} />
                   <AudioCards chatId={c.id} audio={liveAudio} onStop={stopping ? undefined : () => cancel.mutate()} />
+                  <PushRequests chatId={c.id} requests={placedPushes.live} disabled={c.archived} />
                   <div ref={statusRef} className="contents">
                   <ChatStatus chatId={c.id} disabled={c.archived} runId={c.current_run_id} since={since} persona={speaker} stopping={stopping} folded={docked} onOpenStep={openStep}
                     onAsk={locked || aside.isPending ? undefined : () => aside.mutate(QUIET_CHECK_IN)} onStop={stopping ? undefined : () => cancel.mutate()} />
