@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ancestors, buildTree, closeTab, folderPaths, joinPath, kindHref, monthGrid, movedPath, moveTargets, nameError, nameOf, openTab, outline, pageHref, parentOf, parseKind, slug, startTab, startTabKind, visibleProperties, wordCount } from "./knowledge.ts";
+import { ancestors, buildTree, closeOtherTabs, closeTab, closeTabsToRight, folderPaths, joinPath, kindHref, monthGrid, movedPath, moveTargets, nameError, nameOf, openTab, outline, pageHref, parentOf, parseKind, slug, startTab, startTabKind, visibleProperties, wordCount } from "./knowledge.ts";
 
 test("the explorer tree puts folders first, counts pages and lists daily notes newest first", () => {
   const t = buildTree([
@@ -49,6 +49,33 @@ test("tabs open after the active one, refocus instead of duplicating, and close 
   assert.deepEqual(closed.tabs.map((t) => t.id), ["a", "b"]);
   assert.equal(closed.next?.id, "b");
   assert.equal(closeTab(tabs, "a", "c").next, undefined);
+});
+
+test("closeOtherTabs and closeTabsToRight only redirect when the active tab was closed", () => {
+  const tabs = [
+    { id: "a", title: "A" },
+    { id: "b", title: "B" },
+    { id: "c", title: "C" },
+  ];
+  const othersKeepActive = closeOtherTabs(tabs, "b", "b");
+  assert.deepEqual(othersKeepActive.tabs.map((t) => t.id), ["b"]);
+  assert.equal(othersKeepActive.next, undefined);
+
+  const othersSwitch = closeOtherTabs(tabs, "a", "c");
+  assert.deepEqual(othersSwitch.tabs.map((t) => t.id), ["a"]);
+  assert.equal(othersSwitch.next?.id, "a");
+  assert.equal(closeOtherTabs(tabs, "missing", "a").tabs, tabs);
+
+  const rightKeepActive = closeTabsToRight(tabs, "b", "a");
+  assert.deepEqual(rightKeepActive.tabs.map((t) => t.id), ["a", "b"]);
+  assert.equal(rightKeepActive.next, undefined);
+
+  const rightSwitch = closeTabsToRight(tabs, "a", "c");
+  assert.deepEqual(rightSwitch.tabs.map((t) => t.id), ["a"]);
+  assert.equal(rightSwitch.next?.id, "a");
+
+  assert.deepEqual(closeTabsToRight(tabs, "c", "c").tabs.map((t) => t.id), ["a", "b", "c"]);
+  assert.equal(closeTabsToRight(tabs, "missing", "a").tabs, tabs);
 });
 
 test("outline skips headings inside code fences", () => {

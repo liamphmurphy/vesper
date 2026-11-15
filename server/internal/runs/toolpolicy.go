@@ -373,6 +373,9 @@ func imageOutboxTool(in ToolCheck, sessions []string) bool {
 	if imageToolName(in.Tool) {
 		return true
 	}
+	if in.Tool == "Agent" && in.Input["subagent_type"] == "image-generator" {
+		return true
+	}
 	switch in.Tool {
 	case "Bash", "shell", "exec_command", "shell_command":
 	default:

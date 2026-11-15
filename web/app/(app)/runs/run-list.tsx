@@ -15,19 +15,29 @@ import { cx } from "@/lib/cx";
 import { absoluteTime, ago } from "@/lib/format";
 import { KIND, trayItems, waited } from "@/lib/inbox";
 import { DOT_LABEL, groupRuns, itemHref, matchesItem, matchesRun, runDot, runLine, runTitle, type Dot } from "@/lib/run-list";
+import {
+  compactRunTime,
+  computeActivityViewCounts,
+  filterActivityRuns,
+  groupActivitySidebarRuns,
+  isRunNeedsYou,
+  parseActivityFilter,
+} from "@/lib/work-overview";
 import { AgentAvatar } from "@/components/domain/avatars";
+import { AgentOrPersonaAvatar } from "../tickets/_components/ticket-row";
 import { FilterMenu } from "@/components/domain/pickers";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Kbd, Skeleton, TextInput } from "@/components/ui/primitives";
 import { useProjectScope } from "@/components/shell/project-scope";
 import { shortcutBlocked } from "@/components/shell/shortcuts";
+import { WorkSectionLabel, WorkSidebarFilterRow } from "../work/work-nav-header";
 
 type Run = Schemas["Run"];
 type Item = Schemas["InboxItem"];
 
-/** The list's filters live in the URL, so a selected run keeps them: ?project=, ?agent=, ?done=hide. */
-const LIST_PARAMS = ["project", "agent", "done"] as const;
+/** The list's filters live in the URL, so a selected run keeps them: ?project=, ?agent=, ?done=hide, ?filter=. */
+const LIST_PARAMS = ["project", "agent", "done", "filter"] as const;
 
 /** The query string the list's filters make, for links between runs. */
 export function listQuery(params: URLSearchParams): string {
@@ -112,7 +122,7 @@ function StatusDot({ dot }: { dot: Dot }) {
 const rowClass = (active: boolean) =>
   cx("flex min-h-[44px] items-start gap-2.5 rounded-[10px] px-2.5 py-2 outline-none focus-visible:ring-1 focus-visible:ring-accent/60", active ? "bg-selected" : "hover:bg-hover");
 
-function RunRow({ run, active, query, embedded }: { run: Run; active: boolean; query: string; embedded?: boolean }) {
+function RunRow({ run, active, query }: { run: Run; active: boolean; query: string }) {
   return (
     <li>
       <Link
@@ -125,13 +135,74 @@ function RunRow({ run, active, query, embedded }: { run: Run; active: boolean; q
         <AgentAvatar name={run.agent.name} colorIndex={run.agent.color_index} label={false} />
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="truncate text-13 text-fg">{runTitle(run)}</span>
-          <span className="truncate text-12 text-fg-tertiary">{embedded ? [run.ticket_key, run.agent.name].filter(Boolean).join(" · ") : runLine(run)}</span>
-          {embedded && <span className="mt-2 truncate text-11 text-state-done">● {run.plan.find(s => s.state === "current")?.text ?? DOT_LABEL[runDot(run)]}</span>}
+          <span className="truncate text-12 text-fg-tertiary">{runLine(run)}</span>
         </span>
         <span className="flex flex-none flex-col items-end gap-1.5 pt-0.5">
           <time dateTime={run.started_at} className="text-11 text-fg-tertiary">{ago(run.started_at)}</time>
           <StatusDot dot={runDot(run)} />
         </span>
+      </Link>
+    </li>
+  );
+}
+
+/** Compact single-line 28px run row for Work's Activity sidebar, matching ChatRow density. */
+function CompactWorkRunRow({
+  run,
+  needsYou,
+  active,
+  query,
+  now,
+}: {
+  run: Run;
+  needsYou: boolean;
+  active: boolean;
+  query: string;
+  now: Date;
+}) {
+  const dot = runDot(run, needsYou);
+  const currentStep = run.plan.find((s) => s.state === "current")?.text;
+  const tooltip = [
+    runTitle(run),
+    [run.ticket_key, run.agent.name, run.model].filter(Boolean).join(" · "),
+    currentStep ?? DOT_LABEL[dot],
+    `started ${absoluteTime(run.started_at)}`,
+  ].join("\n");
+
+  return (
+    <li>
+      <Link
+        href={`/runs/${run.id}${query ? `?${query}` : ""}`}
+        aria-current={active ? "page" : undefined}
+        data-run-row={run.id}
+        title={tooltip}
+        className={cx(
+          "flex h-[28px] items-center gap-2 rounded-md px-2 text-12 outline-none focus-visible:ring-1 focus-visible:ring-accent/60",
+          active ? "bg-selected font-medium text-fg" : "text-fg-secondary hover:bg-hover hover:text-fg",
+        )}
+      >
+        <AgentOrPersonaAvatar agent={run.agent} size="sm" />
+        <span
+          title={DOT_LABEL[dot]}
+          aria-hidden
+          className={cx("size-1.5 flex-none rounded-full", DOT_CLASS[dot])}
+        />
+        <span className="min-w-0 flex-1 truncate">{runTitle(run)}</span>
+        <time
+          dateTime={run.ended_at ?? run.started_at}
+          className={cx(
+            "flex-none font-mono text-10",
+            dot === "human"
+              ? "text-pill-human-fg"
+              : dot === "running"
+                ? "text-state-done"
+                : dot === "failed"
+                  ? "text-pill-blocked-fg"
+                  : "text-fg-tertiary",
+          )}
+        >
+          {compactRunTime(run, dot, now)}
+        </time>
       </Link>
     </li>
   );
@@ -229,14 +300,28 @@ function Chips({ project, agent, hideDone, doneOnly = false }: { project?: strin
 /** The grouped list. `selected` is the run (or Needs you run) open beside it. */
 export function RunList({ selected, fill, embedded = false, search: workSearch }: { selected?: string; fill?: boolean; embedded?: boolean; search?: string }) {
   const params = useSearchParams();
+  const router = useRouter();
+  const path = usePathname();
   const [search, setSearch] = useState("");
-  const data = useRunList(workSearch ?? search);
+  const effectiveSearch = workSearch ?? search;
+  const data = useRunList(effectiveSearch);
   const query = listQuery(params);
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const [now] = useState(() => new Date());
+  const activityFilter = parseActivityFilter(params.get("filter"), params.get("done"));
 
-  // "/" focuses the search box.
+  const setActivityFilter = (next: "all" | "needs_you" | "active" | "failed") => {
+    const q = new URLSearchParams(params);
+    q.delete("done");
+    if (next === "all") q.delete("filter");
+    else q.set("filter", next);
+    router.replace(`${path}${q.size ? `?${q}` : ""}`, { scroll: false });
+  };
+
+  // "/" focuses the standalone /runs search box (embedded search lives in WorkNavHeader).
   useEffect(() => {
+    if (embedded) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "/" || shortcutBlocked(e)) return;
       e.preventDefault();
@@ -244,30 +329,173 @@ export function RunList({ selected, fill, embedded = false, search: workSearch }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [embedded]);
 
   // The tray's "Open all" lands on /work#needs-you: bring the group into view once it's there.
-  // Also on a path change: Open all from /runs/X goes to /runs, which opens a run with the hash kept.
   const hasNeeds = data.shownNeeds.length > 0;
-  const path = usePathname();
   useEffect(() => {
     if (hasNeeds && window.location.hash === "#needs-you") document.getElementById("needs-you")?.scrollIntoView({ block: "start" });
   }, [hasNeeds, path]);
 
+  const needsRunIds = useMemo(
+    () => new Set(data.shownNeeds.flatMap((i) => (i.run_id ? [i.run_id] : []))),
+    [data.shownNeeds],
+  );
+  const searchedRuns = useMemo(
+    () => data.runs.filter((r) => matchesRun(r, effectiveSearch)),
+    [data.runs, effectiveSearch],
+  );
+  const viewCounts = useMemo(
+    () => computeActivityViewCounts(searchedRuns, needsRunIds, now),
+    [searchedRuns, needsRunIds, now],
+  );
+  const embeddedGroups = useMemo(() => {
+    const filtered = filterActivityRuns(searchedRuns, activityFilter, needsRunIds, now);
+    return groupActivitySidebarRuns(filtered, now);
+  }, [searchedRuns, activityFilter, needsRunIds, now]);
+
   const selectedNeeds = data.shownNeeds.find((i) => i.run_id === selected)?.id;
-  const empty = !data.loading && !data.error && data.shownNeeds.length === 0 && data.groups.length === 0;
+  const runIds = useMemo(() => new Set(data.runs.map((r) => r.id)), [data.runs]);
+  const nonRunNeeds = useMemo(
+    () =>
+      activityFilter === "all" || activityFilter === "needs_you"
+        ? data.shownNeeds.filter((i) => !i.run_id || !runIds.has(i.run_id))
+        : [],
+    [activityFilter, data.shownNeeds, runIds],
+  );
+  const hasActiveGroup = embeddedGroups.some((g) => g.kind === "active");
+  const empty = embedded
+    ? !data.loading && !data.error && embeddedGroups.length === 0 && nonRunNeeds.length === 0
+    : !data.loading && !data.error && data.shownNeeds.length === 0 && data.groups.length === 0;
+
+  if (embedded) {
+    const extraNeedsSection = nonRunNeeds.length > 0 && (
+      <section
+        id={hasActiveGroup ? "needs-you-items" : "needs-you"}
+        aria-label={hasActiveGroup ? "Other needs you" : "Needs you"}
+        className="flex scroll-mt-2 flex-col"
+      >
+        <WorkSectionLabel count={nonRunNeeds.length} tone="human">
+          {hasActiveGroup ? "Waiting" : "Needs you"}
+        </WorkSectionLabel>
+        <ul className="flex flex-col gap-0.5">
+          {nonRunNeeds.map((i) => (
+            <li key={i.id}>
+              <Link
+                href={itemHref(i, query)}
+                aria-current={i.id === selectedNeeds ? "page" : undefined}
+                data-needs-row={i.id}
+                className="flex h-[28px] items-center gap-2 rounded-md px-2 text-12 text-fg-secondary hover:bg-hover hover:text-fg"
+              >
+                <span aria-hidden className="grid size-5 flex-none place-items-center rounded bg-pill-human-bg text-pill-human-fg">
+                  <Icon name="inbox" size={11} />
+                </span>
+                <span aria-hidden className="size-1.5 flex-none rounded-full bg-state-human" />
+                <span className="min-w-0 flex-1 truncate">{i.title}</span>
+                <span className="flex-none font-mono text-10 text-pill-human-fg">{waited(i.created_at)}</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </section>
+    );
+
+    return (
+      <aside aria-label="Runs" className="flex min-h-0 flex-1 flex-col gap-1">
+        <div className="flex flex-col gap-0.5 pb-1">
+          <WorkSectionLabel>View</WorkSectionLabel>
+          <WorkSidebarFilterRow
+            label="All activity"
+            count={viewCounts.all}
+            active={activityFilter === "all"}
+            dotClass="bg-accent"
+            onClick={() => setActivityFilter("all")}
+          />
+          <WorkSidebarFilterRow
+            label="Needs you"
+            count={Math.max(viewCounts.needs_you, data.shownNeeds.length)}
+            active={activityFilter === "needs_you"}
+            dotClass="bg-state-human"
+            countTone="human"
+            onClick={() => setActivityFilter("needs_you")}
+          />
+          <WorkSidebarFilterRow
+            label="Running & queued"
+            count={viewCounts.active}
+            active={activityFilter === "active"}
+            dotClass="bg-state-done"
+            onClick={() => setActivityFilter("active")}
+          />
+          <WorkSidebarFilterRow
+            label="Failed today"
+            count={viewCounts.failed}
+            active={activityFilter === "failed"}
+            dotClass="bg-state-blocked"
+            countTone="blocked"
+            onClick={() => setActivityFilter("failed")}
+          />
+        </div>
+
+        <div ref={listRef} className="relative flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto pb-3">
+          {!hasActiveGroup && extraNeedsSection}
+          {data.error ? (
+            <div role="alert" className="flex flex-col items-start gap-2 px-2 py-4 text-12 text-pill-blocked-fg">
+              Couldn’t load runs. {data.error.message}
+              <Button variant="outline" onClick={data.retry}>Retry</Button>
+            </div>
+          ) : data.loading ? (
+            <div aria-busy="true" className="flex flex-col gap-1 px-1 pt-2">
+              {[0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-7" />)}
+            </div>
+          ) : empty ? (
+            <p className="px-2 py-6 text-center text-12 text-fg-tertiary">
+              {effectiveSearch ? "No runs match." : "No runs in this view."}
+            </p>
+          ) : (
+            <>
+              {embeddedGroups.map((g, idx) => (
+                <section
+                  key={g.label}
+                  id={g.kind === "active" && idx === 0 ? "needs-you" : `runs-${g.label.toLowerCase().replace(/\W+/g, "-")}`}
+                  aria-label={g.label}
+                  className="flex scroll-mt-2 flex-col"
+                >
+                  <WorkSectionLabel count={g.runs.length}>{g.label}</WorkSectionLabel>
+                  <ul className="flex flex-col gap-0.5">
+                    {g.runs.map((r) => (
+                      <CompactWorkRunRow
+                        key={r.id}
+                        run={r}
+                        needsYou={isRunNeedsYou(r, needsRunIds)}
+                        active={r.id === selected}
+                        query={query}
+                        now={now}
+                      />
+                    ))}
+                  </ul>
+                </section>
+              ))}
+              {hasActiveGroup && extraNeedsSection}
+              {data.hasMore && activityFilter === "all" && (
+                <div className="px-2 pt-1">
+                  <Button variant="ghost" disabled={data.loadingMore} onClick={data.loadMore}>
+                    Load older runs
+                  </Button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </aside>
+    );
+  }
+
   return (
     <aside
       aria-label="Runs"
       className={cx("flex min-h-0 flex-1 flex-col gap-2", fill ? "px-2 pt-safe" : "px-1.5")}
     >
-      {embedded && (
-        <div className="flex flex-col gap-2 px-1">
-          <StatusLine project={data.project} />
-          <Chips project={data.project} agent={data.agent} hideDone={data.hideDone} doneOnly />
-        </div>
-      )}
-      {!embedded && <div className="flex flex-col gap-2 px-1">
+      <div className="flex flex-col gap-2 px-1">
         <div className="flex items-center gap-2 px-1.5">
           <h1 className={cx("flex-1 font-semibold", fill ? "type-display" : "text-13")}>Runs</h1>
         </div>
@@ -286,7 +514,7 @@ export function RunList({ selected, fill, embedded = false, search: workSearch }
           {!search && <Kbd className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 pointer-coarse:hidden">/</Kbd>}
         </div>
         <Chips project={data.project} agent={data.agent} hideDone={data.hideDone} />
-      </div>}
+      </div>
       {/* Contain absolute screen-reader labels as well as the visible rows. */}
       <div ref={listRef} className="relative flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pb-3">
         {data.shownNeeds.length > 0 && (
@@ -311,7 +539,7 @@ export function RunList({ selected, fill, embedded = false, search: workSearch }
           <>
             {data.groups.map((g) => (
               <Group key={g.key} id={`runs-${g.key.replace(/\W+/g, "-")}`} label={g.label} count={g.key === "running" || g.key === "queued" ? g.runs.length : undefined}>
-                {g.runs.map((r) => <RunRow key={r.id} run={r} active={r.id === selected && !selectedNeeds} query={query} embedded={embedded} />)}
+                {g.runs.map((r) => <RunRow key={r.id} run={r} active={r.id === selected && !selectedNeeds} query={query} />)}
               </Group>
             ))}
             {data.hasMore && (

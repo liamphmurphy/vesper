@@ -231,9 +231,9 @@ export function SavedViewTabs({ project, vertical = false }: { project?: string;
     <div
       role="group"
       aria-label="Saved views"
-      className={vertical ? "mt-3 flex flex-col gap-0.5 px-1" : "flex flex-wrap items-center gap-1 border-l border-border-strong pl-2"}
+      className={vertical ? "mt-2 flex flex-col gap-0.5" : "flex flex-wrap items-center gap-1 border-l border-border-strong pl-2"}
     >
-      {vertical && <p className="px-2 pb-1 text-11 font-medium uppercase tracking-[0.06em] text-fg-tertiary">Saved views</p>}
+      {vertical && <p className="px-2 pb-1 pt-2 text-10 font-semibold uppercase tracking-[0.06em] text-fg-tertiary">Saved views</p>}
       {(views.data ?? []).map((v) =>
         renaming === v.id ? (
           <RenameInput key={v.id} view={v} onDone={() => setRenaming(null)} />
@@ -241,9 +241,9 @@ export function SavedViewTabs({ project, vertical = false }: { project?: string;
           <div
             key={v.id}
             className={cx(
-              "group/view flex h-7 items-center rounded-md pr-0.5",
-              vertical && "justify-between rounded-[5px]",
-              active === v.id ? (vertical ? "bg-surface" : "bg-selected") : "hover:bg-hover",
+              "group/view flex items-center rounded-md pr-0.5",
+              vertical ? "h-[26px] justify-between" : "h-7",
+              active === v.id ? (vertical ? "bg-selected" : "bg-selected") : "hover:bg-hover",
             )}
           >
             <Link
@@ -269,8 +269,8 @@ export function SavedViewTabs({ project, vertical = false }: { project?: string;
         type="button"
         onClick={() => setSaving(current)}
         className={cx(
-          "flex h-7 items-center gap-1.5 px-2 text-left text-12 text-fg-tertiary hover:bg-hover hover:text-fg",
-          vertical ? "w-full rounded-[5px]" : "rounded-md",
+          "flex items-center gap-1.5 px-2 text-left text-12 text-fg-tertiary hover:bg-hover hover:text-fg",
+          vertical ? "h-[26px] w-full rounded-md" : "h-7 rounded-md",
         )}
       >
         <Icon name="plus" size={12} />

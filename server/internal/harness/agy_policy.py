@@ -33,7 +33,10 @@ def canonical(name, args):
         tool_input = args.get("Arguments")
         return "mcp__" + server + "__" + tool, tool_input if isinstance(tool_input, dict) else None
     if name in ("invoke_subagent", "define_subagent", "manage_subagents", "swarm", "send_message"):
-        return "Agent", {"description": FIRST(args, "Role", "Name", "TypeName", "action")}
+        out = {"description": FIRST(args, "Role", "Name", "TypeName", "action")}
+        if name == "invoke_subagent" and isinstance(args.get("TypeName"), str) and args["TypeName"]:
+            out["subagent_type"] = args["TypeName"]
+        return "Agent", out
     if name in ("replace_file_content", "multi_replace_file_content", "edit_file"):
         return "Edit", {"file_path": FIRST(args, *PATH)}
     if name == "list_dir":
