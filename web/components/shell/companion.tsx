@@ -120,12 +120,29 @@ function RailFootLinks({ settingsNeedYou }: { settingsNeedYou: boolean }) {
   const router = useRouter();
   const devWorkspace = useDevWorkspace();
   const onDevPage = isActive(pathname, "/dev");
+  const onHttpPage = isActive(pathname, "/http");
   const link = (href: string) => cx(
     "relative grid size-[30px] place-items-center rounded-md text-12",
     isActive(pathname, href) ? "bg-selected text-fg" : "text-fg-tertiary hover:bg-hover hover:text-fg",
   );
   return (
     <div className="flex flex-none flex-col items-center gap-1 pb-1">
+      <Link
+        href="/http"
+        data-testid="http-launcher"
+        aria-label={onHttpPage ? "Return to previous page" : "HTTP Client"}
+        title={onHttpPage ? "Return to previous page (⌘⇧H)" : "HTTP Client (⌘⇧H)"}
+        aria-current={onHttpPage ? "page" : undefined}
+        onClick={(e) => {
+          if (!onHttpPage) return;
+          e.preventDefault();
+          if (window.history.length > 1) router.back();
+          else router.push("/");
+        }}
+        className={link("/http")}
+      >
+        <Icon name="plug" size={15} />
+      </Link>
       {devWorkspace.data?.enabled && (
         <Link
           href="/dev"

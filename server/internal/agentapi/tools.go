@@ -1315,6 +1315,10 @@ var Tools = []Tool{
 	define("update_custom_app", "Update a Custom App's source files, manifest, metadata, or restore an earlier version. Recompiles TSX with React + @vesper/bridge and applies new schema.sql definitions.", updateCustomApp),
 	define("delete_custom_app", "Delete a Custom App and its embedded SQLite database permanently. Only when the person asks.", deleteCustomApp),
 	define("custom_app_sql", "Run a parameterized SQLite query against a Custom App's private database. Respects the app's tool_scope (chats vs app_only).", customAppSQL),
+	define("http_list_workspaces", "List HTTP Client workspaces (collections for apps/services, active environment, and default auth/headers).", httpListWorkspaces),
+	define("http_get_workspace", "Read an HTTP Client workspace's environments, folders, and saved requests.", httpGetWorkspace),
+	define("http_save_request", "Create or update a saved HTTP request in an HTTP Client workspace.", httpSaveRequest),
+	define("http_run_request", "Execute a saved HTTP request against an external host using workspace/folder auth inheritance and active environment variables (secret values are masked).", httpRunRequest),
 }
 
 // ByName indexes Tools.

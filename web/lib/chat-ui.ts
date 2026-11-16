@@ -584,6 +584,13 @@ export function chatStatusOf(call: { tool: string; input: unknown }): ChatStatus
       return status("writing-code", "deleting a custom app");
     case "custom_app_sql":
       return status("playground", "querying app data");
+    case "http_list_workspaces":
+    case "http_get_workspace":
+      return status("reading-code", "checking HTTP collections");
+    case "http_save_request":
+      return status("writing-code", "saving an HTTP request");
+    case "http_run_request":
+      return status("web", "sending an HTTP request");
     case "propose_workflow_edit":
       return status("workflow", "sketching a workflow");
     case "image_generation":
@@ -916,6 +923,14 @@ export function stepDetail(call: { tool: string; input: unknown }, names: Map<st
       return named("Deleting app", o.slug);
     case "custom_app_sql":
       return o.slug ? `Querying ${clip(str(o.slug))}` : general;
+    case "http_list_workspaces":
+      return "Listing HTTP workspaces";
+    case "http_get_workspace":
+      return named("Inspecting HTTP workspace", known(o.workspace_id));
+    case "http_save_request":
+      return named("Saving request", o.name || o.url);
+    case "http_run_request":
+      return named("Sending request", known(o.request_id));
     case "create_scheduled_task":
       return named("Scheduling", o.name);
     case "update_scheduled_task":

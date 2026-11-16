@@ -514,6 +514,7 @@ export function CommandMenu() {
     ...myApps,
     ...KIND_JUMPS.map((i) => ({ ...i, kind: "in Knowledge" })),
     ...TOOL_ITEMS.map((i) => ({ ...i, kind: "tool" })),
+    { href: "/http", label: "HTTP Client", aliases: "bruno api curl rest requests", icon: "plug" as IconName, kind: "tool" },
     ...(devWorkspace.data?.enabled
       ? [{ href: "/dev", label: "Dev workspace", aliases: "terminal lazyvim nvim tmux", icon: "terminal" as IconName, kind: "tool" }]
       : []),
