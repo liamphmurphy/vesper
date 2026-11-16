@@ -508,3 +508,61 @@ test("image engine: auto by default, shows what is connected, and saves the choi
   await expect(page.locator("#images").getByRole("radio", { name: /^Antigravity/ })).toHaveAttribute("aria-checked", "true");
   expect(mock.api.unhandled).toEqual([]);
 });
+
+test("dev workspace configured repositories are collapsed by default, filterable, and clearable", async ({ page }) => {
+  const mock = await installSettingsApi(page);
+  await page.route("**/api/v1/backups/drive", (route) =>
+    route.fulfill({ json: { enabled: false, secret_id: null, folder_id: "", folder_name: "", at_time: "03:00", timezone: "", retention: 7, revision: 0, running: false, last_status: "", last_error: "" } }),
+  );
+  await page.route("**/api/v1/github/review-requests*", (route) =>
+    route.fulfill({ json: { items: [], configured: false } }),
+  );
+  let repos = Array.from({ length: 560 }, (_, i) => {
+    const name = `repo-${String(i).padStart(3, "0")}`;
+    return { repo_url: `https://github.com/org/${name}`, directory: name };
+  });
+  await page.route("**/api/v1/dev-workspace", async (route) => {
+    const req = route.request();
+    if (req.method() === "PATCH") {
+      const body = req.postDataJSON() as { repos?: string[] };
+      if (Array.isArray(body.repos)) {
+        repos = body.repos.map((url) => ({ repo_url: url, directory: url.split("/").pop() || "repo" }));
+      }
+    }
+    return route.fulfill({
+      json: {
+        enabled: true,
+        nix_mode: "default",
+        repos,
+        extra_packages: [],
+        tmux_prefix: "C-b",
+        state: "ready",
+        action: null,
+        step: null,
+        error: null,
+        port: 8090,
+        arch: "x86_64-linux",
+        updated_at: at,
+      },
+    });
+  });
+
+  await page.goto("/settings#dev-workspace");
+  const section = page.locator("#dev-workspace");
+  const toggle = section.getByRole("button", { name: "560 repositories configured" });
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(section.getByText("https://github.com/org/repo-000")).toHaveCount(0);
+
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(section.getByText("https://github.com/org/repo-000")).toBeVisible();
+
+  await section.getByLabel("Filter configured repositories").fill("repo-420");
+  await expect(section.getByText("https://github.com/org/repo-420")).toBeVisible();
+  await expect(section.getByText("https://github.com/org/repo-000")).toHaveCount(0);
+
+  await section.getByRole("button", { name: "Clear all" }).click();
+  await section.getByRole("button", { name: "Remove all 560" }).click();
+  await expect(section.getByRole("button", { name: /repositories configured/ })).toHaveCount(0);
+  expect(mock.api.unhandled).toEqual([]);
+});

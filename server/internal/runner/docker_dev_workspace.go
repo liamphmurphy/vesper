@@ -124,7 +124,9 @@ func (d *Docker) EnsureDevWorkspaceContainer(ctx context.Context, workspaceID uu
 	return created.ID, nil
 }
 
-// ExecDevWorkspaceScript runs a shell script inside the dev-workspace container.
+// ExecDevWorkspaceScript runs a shell script inside the dev-workspace container
+// over stdin (`sh -s`) so large scripts (such as syncing hundreds of repos)
+// never hit Linux's per-argument MAX_ARG_STRLEN limit.
 func (d *Docker) ExecDevWorkspaceScript(ctx context.Context, containerID, script string, env []string) (string, int, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
@@ -135,36 +137,96 @@ func (d *Docker) ExecDevWorkspaceScript(ctx context.Context, containerID, script
 	}, env...)
 	var created struct{ ID string }
 	if _, err := d.do(ctx, "POST", "/containers/"+url.PathEscape(containerID)+"/exec", jsonBody(map[string]any{
-		"Cmd":          []string{"sh", "-c", script},
+		"Cmd":          []string{"sh", "-s"},
 		"User":         "1000",
 		"WorkingDir":   workspacePath,
 		"Env":          fullEnv,
+		"AttachStdin":  true,
 		"AttachStdout": true,
 		"AttachStderr": true,
+		"Tty":          false,
 	}), "application/json", &created); err != nil {
 		return "", -1, err
 	}
-	res, err := d.do(ctx, "POST", "/exec/"+created.ID+"/start", jsonBody(map[string]any{"Detach": false, "Tty": false}), "application/json", nil)
+
+	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", d.Socket)
+	if err != nil {
+		return "", -1, fmt.Errorf("docker exec dial: %w", err)
+	}
+	defer conn.Close()
+
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-done:
+		}
+	}()
+
+	reqTimeout := d.RequestTimeout
+	if reqTimeout <= 0 {
+		reqTimeout = 30 * time.Second
+	}
+	_ = conn.SetDeadline(time.Now().Add(reqTimeout))
+
+	payload, _ := json.Marshal(map[string]any{"Detach": false, "Tty": false})
+	req, err := http.NewRequestWithContext(ctx, "POST", dockerAPI+"/exec/"+url.PathEscape(created.ID)+"/start", bytes.NewReader(payload))
 	if err != nil {
 		return "", -1, err
 	}
-	var out bytes.Buffer
-	derr := demux(io.LimitReader(res.Body, 512<<10), &out, &out)
-	res.Body.Close()
-	if derr != nil {
-		return out.String(), -1, derr
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "tcp")
+	if err := req.Write(conn); err != nil {
+		return "", -1, fmt.Errorf("docker exec start write: %w", err)
 	}
+	br := bufio.NewReader(conn)
+	res, err := http.ReadResponse(br, req)
+	if err != nil {
+		return "", -1, fmt.Errorf("docker exec start response: %w", err)
+	}
+	if res.StatusCode != http.StatusSwitchingProtocols && res.StatusCode != http.StatusOK {
+		msg, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
+		res.Body.Close()
+		return "", -1, fmt.Errorf("docker exec start: status %d %s", res.StatusCode, strings.TrimSpace(string(msg)))
+	}
+	_ = conn.SetDeadline(time.Time{})
+
+	out := cappedBuffer{limit: 512 << 10}
+	demuxErrCh := make(chan error, 1)
+	go func() {
+		demuxErrCh <- demux(br, &out, &out)
+	}()
+
+	if script != "" && !strings.HasSuffix(script, "\n") {
+		script += "\n"
+	}
+	if _, err := io.WriteString(conn, script); err != nil {
+		_ = conn.Close()
+		<-demuxErrCh
+		return out.buf.String(), -1, fmt.Errorf("docker exec stdin: %w", err)
+	}
+	if cw, ok := conn.(interface{ CloseWrite() error }); ok {
+		_ = cw.CloseWrite()
+	}
+
+	if derr := <-demuxErrCh; derr != nil {
+		return out.buf.String(), -1, derr
+	}
+
 	var info struct {
 		ExitCode int
 		Running  bool
 	}
-	if _, err := d.do(ctx, "GET", "/exec/"+created.ID+"/json", nil, "", &info); err != nil {
-		return out.String(), -1, err
+	if _, err := d.do(ctx, "GET", "/exec/"+url.PathEscape(created.ID)+"/json", nil, "", &info); err != nil {
+		return out.buf.String(), -1, err
 	}
 	if info.Running {
-		return out.String(), -1, fmt.Errorf("script still running when output ended")
+		return out.buf.String(), -1, fmt.Errorf("script still running when output ended")
 	}
-	return out.String(), info.ExitCode, nil
+	return out.buf.String(), info.ExitCode, nil
 }
 
 // StopDevWorkspaceContainer removes the running dev-workspace container while

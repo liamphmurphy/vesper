@@ -7,6 +7,7 @@ import {
   devWorkspaceStatusLabel,
   devWorkspaceStatusTone,
   extractTerminalLines,
+  filterDevWorkspaceRepos,
   formatTerminalSnapshot,
   fullscreenExitHint,
   isDevFullscreenShortcut,
@@ -87,4 +88,22 @@ test("formatTerminalSnapshot and terminalSnapshotFilename render markdown", () =
   assert.match(md, /## Selected text/);
   assert.match(md, /## Visible terminal output \(2 lines\)/);
   assert.match(md, /\$ ls\nvesper/);
+});
+
+test("filterDevWorkspaceRepos matches repo_url and directory case-insensitively", () => {
+  const repos = [
+    { repo_url: "https://github.com/acme/alpha-service", directory: "alpha-service" },
+    { repo_url: "https://github.com/other/alpha-service", directory: "alpha-service-2" },
+    { repo_url: "https://github.com/acme/vesper", directory: "vesper" },
+  ];
+  assert.equal(filterDevWorkspaceRepos(repos, "  ").length, 3);
+  assert.deepEqual(
+    filterDevWorkspaceRepos(repos, "VESPER").map((r) => r.directory),
+    ["vesper"],
+  );
+  assert.deepEqual(
+    filterDevWorkspaceRepos(repos, "alpha-service-2").map((r) => r.repo_url),
+    ["https://github.com/other/alpha-service"],
+  );
+  assert.equal(filterDevWorkspaceRepos(repos, "missing").length, 0);
 });
