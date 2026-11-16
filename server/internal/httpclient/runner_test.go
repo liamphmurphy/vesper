@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -103,7 +104,7 @@ func TestSSRFBlocksInternalTargets(t *testing.T) {
 			return []net.IP{net.ParseIP("10.1.2.3")}, nil
 		},
 	}
-	client := svc.httpClient(true, defaultTimeoutMS)
+	client := svc.httpClient(true, 5*time.Second)
 	req, _ := http.NewRequest(http.MethodGet, "https://api.example.com/test", nil)
 	_, err := client.Do(req)
 	var blocked *usersecrets.Blocked

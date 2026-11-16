@@ -293,4 +293,18 @@ func (s *Server) httpClientRoutes(mux *http.ServeMux) {
 		exec, err := s.httpClient().RunAdHocRequest(r.Context(), ws, u.ID, id, in)
 		return exec, http.StatusOK, err
 	})
+
+	handle("POST /api/v1/http/workspaces/{id}/import", func(r *http.Request) (any, int, error) {
+		_, _, ws := me(r.Context())
+		id, err := httpClientID(r, "id")
+		if err != nil {
+			return nil, 0, err
+		}
+		var in httpclient.ImportInput
+		if err := httpClientJSON(r, &in, 24<<20); err != nil {
+			return nil, 0, err
+		}
+		res, err := s.httpClient().ImportCollection(r.Context(), ws, id, in)
+		return res, http.StatusOK, err
+	})
 }
