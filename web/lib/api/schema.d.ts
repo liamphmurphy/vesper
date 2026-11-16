@@ -5243,10 +5243,11 @@ export interface components {
             id: string;
             name: string;
         };
+        /** @enum {string} */
+        PullRequestState: "draft" | "open" | "merged" | "closed";
         PullRequest: {
             number: number;
-            /** @enum {string} */
-            state: "draft" | "open" | "merged" | "closed";
+            state: components["schemas"]["PullRequestState"];
             url?: string;
             additions?: number;
             deletions?: number;
@@ -8051,8 +8052,13 @@ export interface components {
             steps_done: number;
             /** @description The first plan step not done yet */
             current_step?: string;
+            /** @description Repository URL for the ticket's project, if configured */
+            repository?: string;
+            /** @description The ticket's git branch, once recorded */
+            branch?: string;
             /** @description The ticket's pull request, once recorded */
             pr_url?: string;
+            pr_state?: components["schemas"]["PullRequestState"];
             activity?: components["schemas"]["ChatTicketRunActivity"];
             approval?: components["schemas"]["ChatTicketRunApproval"];
         };
@@ -8794,6 +8800,7 @@ export interface components {
             auto: boolean;
             pr_url?: string;
             pr_number?: number;
+            pr_state?: components["schemas"]["PullRequestState"];
             /** @description Why it failed or was replaced */
             error?: string;
             persona?: components["schemas"]["PersonaSummary"];

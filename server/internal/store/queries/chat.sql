@@ -469,7 +469,7 @@ SELECT * FROM chat_ticket_runs WHERE message_id = $1 AND ticket_id = $2;
 -- name: ListChatTicketRuns :many
 -- The ticket runs a chat started, oldest first, with what the tray shows.
 SELECT r.id AS run_id, ctr.message_id, r.state, r.wait_reason, r.started_at, r.ended_at, r.cost_usd_micros,
-  t.key AS ticket_key, t.title AS ticket_title, t.pr_url, a.handle AS agent_handle,
+  t.key AS ticket_key, t.title AS ticket_title, t.pr_url, t.pr_state, t.branch, p.repo_url AS repository, a.handle AS agent_handle,
   (SELECT count(*) FROM plan_steps ps WHERE ps.run_id = r.id)::int AS steps_total,
   (SELECT count(*) FROM plan_steps ps WHERE ps.run_id = r.id AND ps.state = 'done')::int AS steps_done,
   COALESCE((SELECT ps.text FROM plan_steps ps WHERE ps.run_id = r.id AND ps.state <> 'done' ORDER BY ps.position LIMIT 1), '')::text AS current_step,
@@ -481,6 +481,7 @@ SELECT r.id AS run_id, ctr.message_id, r.state, r.wait_reason, r.started_at, r.e
 FROM chat_ticket_runs ctr
 JOIN runs r ON r.id = ctr.run_id
 JOIN tickets t ON t.id = r.ticket_id
+JOIN projects p ON p.id = t.project_id
 JOIN agents a ON a.id = r.agent_id
 LEFT JOIN LATERAL (SELECT e.payload->>'tool' AS tool, left(e.payload->'input'->>'command', 300) AS command
   FROM run_events e WHERE e.run_id = r.id AND e.type = 'tool_call' ORDER BY e.seq DESC LIMIT 1) tc ON true

@@ -698,6 +698,9 @@ type DevWorkspace struct {
 	CustomTmuxConf *string
 	TmuxPrefix     string
 	ExtraPackages  json.RawMessage
+	TargetRepo     *string
+	TargetBranch   *string
+	TargetPrNumber *int32
 }
 
 type DocPageRedirect struct {
@@ -1255,6 +1258,8 @@ type PushRequest struct {
 	DecidedAt   *time.Time
 	TurnID      *uuid.UUID
 	MessageID   *uuid.UUID
+	PrState     *string
+	PrSyncedAt  *time.Time
 }
 
 type RepositoryPushPolicy struct {

@@ -63,7 +63,7 @@ UPDATE push_requests SET state = 'pushing', auto = true, decided_at = now()
 WHERE id = $1 AND state = 'pending' RETURNING *;
 
 -- name: FinishPushRequest :one
-UPDATE push_requests SET state = $2, error = $3, pr_url = $4, pr_number = $5, decided_at = coalesce(decided_at, now())
+UPDATE push_requests SET state = $2, error = $3, pr_url = $4, pr_number = $5, pr_state = sqlc.narg(pr_state), decided_at = coalesce(decided_at, now())
 WHERE id = $1 RETURNING *;
 
 -- name: DeclinePushRequest :one

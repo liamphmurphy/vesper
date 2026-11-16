@@ -27,6 +27,7 @@ type Commit struct {
 type Result struct {
 	PRNumber int
 	PRURL    string
+	PRState  string
 	Opened   bool // false: the branch already had an open pull request, now updated
 }
 
@@ -82,6 +83,11 @@ func Ship(ctx context.Context, gh *GitHub, r store.PushRequest) (Result, error) 
 		out.Opened = true
 	}
 	out.PRNumber, out.PRURL = pr.Number, pr.HTMLURL
+	if pr.Draft || (out.Opened && r.Draft) {
+		out.PRState = "draft"
+	} else {
+		out.PRState = "open"
+	}
 	if r.StagingRef != nil && *r.StagingRef != "" {
 		// Best effort: the branch already shipped, a leftover staging branch is only clutter.
 		_ = gh.DeleteBranch(ctx, owner, name, *r.StagingRef)
@@ -131,7 +137,15 @@ func Finish(ctx context.Context, q *store.Queries, r store.PushRequest, res Resu
 		return q.FinishPushRequest(ctx, store.FinishPushRequestParams{ID: r.ID, State: "failed", Error: &msg})
 	}
 	n := int32(res.PRNumber)
-	out, err := q.FinishPushRequest(ctx, store.FinishPushRequestParams{ID: r.ID, State: "pushed", PrUrl: &res.PRURL, PrNumber: &n})
+	prState := res.PRState
+	if prState == "" {
+		if r.Draft {
+			prState = "draft"
+		} else {
+			prState = "open"
+		}
+	}
+	out, err := q.FinishPushRequest(ctx, store.FinishPushRequestParams{ID: r.ID, State: "pushed", PrUrl: &res.PRURL, PrNumber: &n, PrState: &prState})
 	if err != nil {
 		return out, err
 	}

@@ -212,6 +212,22 @@ WHERE id = $1;
 -- name: TouchPRSync :exec
 UPDATE tickets SET pr_synced_at = now() WHERE id = $1;
 
+-- name: PushRequestsWithOpenPRs :many
+SELECT p.id, p.workspace_id, p.chat_id, p.pr_url, p.pr_number, p.pr_state, cs.project_id
+FROM push_requests p
+JOIN chat_sessions cs ON cs.id = p.chat_id
+WHERE p.pr_url IS NOT NULL AND coalesce(p.pr_state, 'open') IN ('draft', 'open')
+  AND (p.pr_synced_at IS NULL OR p.pr_synced_at < now() - make_interval(secs => sqlc.arg(min_age_s)::int))
+ORDER BY p.pr_synced_at NULLS FIRST
+LIMIT 50;
+
+-- name: UpdatePushRequestPRSync :exec
+UPDATE push_requests SET pr_state = $2, pr_synced_at = now()
+WHERE id = $1;
+
+-- name: TouchPushRequestPRSync :exec
+UPDATE push_requests SET pr_synced_at = now() WHERE id = $1;
+
 -- name: SetRunDispatcher :exec
 UPDATE runs SET dispatched_by_user_id = $2 WHERE id = $1;
 

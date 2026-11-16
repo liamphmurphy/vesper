@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -76,7 +77,17 @@ func (s *Syncer) Once(ctx context.Context) (int, error) {
 			_ = q.TouchPRSync(ctx, t.ID) // back off until MinAge passes
 		}
 	}
-	return len(rows), nil
+	pushRows, err := q.PushRequestsWithOpenPRs(ctx, int32(s.MinAge/time.Second))
+	if err != nil {
+		return len(rows), err
+	}
+	for _, p := range pushRows {
+		if err := s.syncPushRequest(ctx, q, p); err != nil {
+			s.Log.Warn("pr sync", "push_request", p.ID, "err", err)
+			_ = q.TouchPushRequestPRSync(ctx, p.ID)
+		}
+	}
+	return len(rows) + len(pushRows), nil
 }
 
 func (s *Syncer) fetch(ctx context.Context, token, owner, repo string, n int) (PR, error) {
@@ -109,19 +120,19 @@ func (s *Syncer) fetch(ctx context.Context, token, owner, repo string, n int) (P
 	return pr, json.NewDecoder(res.Body).Decode(&pr)
 }
 
-func (s *Syncer) sync(ctx context.Context, q *store.Queries, t store.TicketsWithOpenPRsRow) error {
-	m := prURL.FindStringSubmatch(*t.PrUrl)
+func (s *Syncer) fetchPRState(ctx context.Context, workspaceID uuid.UUID, projectID *uuid.UUID, rawURL string) (PR, int, string, bool, error) {
+	m := prURL.FindStringSubmatch(rawURL)
 	if m == nil {
-		return q.TouchPRSync(ctx, t.ID)
+		return PR{}, 0, "", false, nil
 	}
 	n, _ := strconv.Atoi(m[3])
 	token := ""
 	if s.Secrets != nil {
-		token, _ = s.Secrets.Reveal(ctx, t.WorkspaceID, &t.ProjectID, "git:pat") // public repos work without
+		token, _ = s.Secrets.Reveal(ctx, workspaceID, projectID, "git:pat") // public repos work without
 	}
 	pr, err := s.fetch(ctx, token, m[1], m[2], n)
 	if err != nil {
-		return err
+		return PR{}, 0, "", true, err
 	}
 	state := "open"
 	switch {
@@ -131,6 +142,28 @@ func (s *Syncer) sync(ctx context.Context, q *store.Queries, t store.TicketsWith
 		state = "closed"
 	case pr.Draft:
 		state = "draft"
+	}
+	return pr, n, state, true, nil
+}
+
+func (s *Syncer) syncPushRequest(ctx context.Context, q *store.Queries, p store.PushRequestsWithOpenPRsRow) error {
+	_, _, state, valid, err := s.fetchPRState(ctx, p.WorkspaceID, p.ProjectID, *p.PrUrl)
+	if err != nil {
+		return err
+	}
+	if !valid {
+		return q.TouchPushRequestPRSync(ctx, p.ID)
+	}
+	return q.UpdatePushRequestPRSync(ctx, store.UpdatePushRequestPRSyncParams{ID: p.ID, PrState: &state})
+}
+
+func (s *Syncer) sync(ctx context.Context, q *store.Queries, t store.TicketsWithOpenPRsRow) error {
+	pr, n, state, valid, err := s.fetchPRState(ctx, t.WorkspaceID, &t.ProjectID, *t.PrUrl)
+	if err != nil {
+		return err
+	}
+	if !valid {
+		return q.TouchPRSync(ctx, t.ID)
 	}
 	err = pgx.BeginFunc(ctx, s.Pool, func(tx pgx.Tx) error {
 		q := store.New(tx)

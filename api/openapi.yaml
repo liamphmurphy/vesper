@@ -6350,12 +6350,16 @@ components:
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
+    PullRequestState:
+      type: string
+      enum: [draft, open, merged, closed]
+
     PullRequest:
       type: object
       required: [number, state]
       properties:
         number: { type: integer }
-        state: { type: string, enum: [draft, open, merged, closed] }
+        state: { $ref: "#/components/schemas/PullRequestState" }
         url: { type: string }
         additions: { type: integer }
         deletions: { type: integer }
@@ -8915,7 +8919,10 @@ components:
         steps_total: { type: integer, description: Steps in the agent's plan; 0 until it posts one }
         steps_done: { type: integer }
         current_step: { type: string, description: The first plan step not done yet }
+        repository: { type: string, description: "Repository URL for the ticket's project, if configured" }
+        branch: { type: string, description: "The ticket's git branch, once recorded" }
         pr_url: { type: string, description: "The ticket's pull request, once recorded" }
+        pr_state: { $ref: "#/components/schemas/PullRequestState" }
         activity: { $ref: "#/components/schemas/ChatTicketRunActivity" }
         approval: { $ref: "#/components/schemas/ChatTicketRunApproval" }
     ChatTicketRunActivity:
@@ -9540,6 +9547,7 @@ components:
         auto: { type: boolean, description: Pushed because the person always allows the repository }
         pr_url: { type: string }
         pr_number: { type: integer }
+        pr_state: { $ref: "#/components/schemas/PullRequestState" }
         error: { type: string, description: Why it failed or was replaced }
         persona: { $ref: "#/components/schemas/PersonaSummary" }
         run_id: { type: string, format: uuid }

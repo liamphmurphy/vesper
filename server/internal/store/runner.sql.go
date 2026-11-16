@@ -741,6 +741,54 @@ func (q *Queries) OwnsRunExecution(ctx context.Context, arg OwnsRunExecutionPara
 	return column_1, err
 }
 
+const pushRequestsWithOpenPRs = `-- name: PushRequestsWithOpenPRs :many
+SELECT p.id, p.workspace_id, p.chat_id, p.pr_url, p.pr_number, p.pr_state, cs.project_id
+FROM push_requests p
+JOIN chat_sessions cs ON cs.id = p.chat_id
+WHERE p.pr_url IS NOT NULL AND coalesce(p.pr_state, 'open') IN ('draft', 'open')
+  AND (p.pr_synced_at IS NULL OR p.pr_synced_at < now() - make_interval(secs => $1::int))
+ORDER BY p.pr_synced_at NULLS FIRST
+LIMIT 50
+`
+
+type PushRequestsWithOpenPRsRow struct {
+	ID          uuid.UUID
+	WorkspaceID uuid.UUID
+	ChatID      uuid.UUID
+	PrUrl       *string
+	PrNumber    *int32
+	PrState     *string
+	ProjectID   *uuid.UUID
+}
+
+func (q *Queries) PushRequestsWithOpenPRs(ctx context.Context, minAgeS int32) ([]PushRequestsWithOpenPRsRow, error) {
+	rows, err := q.db.Query(ctx, pushRequestsWithOpenPRs, minAgeS)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PushRequestsWithOpenPRsRow{}
+	for rows.Next() {
+		var i PushRequestsWithOpenPRsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ChatID,
+			&i.PrUrl,
+			&i.PrNumber,
+			&i.PrState,
+			&i.ProjectID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const queuedRunsCount = `-- name: QueuedRunsCount :one
 SELECT count(*)::int FROM runs WHERE state = 'queued'
 `
@@ -1352,6 +1400,15 @@ func (q *Queries) TouchPRSync(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+const touchPushRequestPRSync = `-- name: TouchPushRequestPRSync :exec
+UPDATE push_requests SET pr_synced_at = now() WHERE id = $1
+`
+
+func (q *Queries) TouchPushRequestPRSync(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, touchPushRequestPRSync, id)
+	return err
+}
+
 const updatePRSync = `-- name: UpdatePRSync :exec
 UPDATE tickets SET pr_state = $2, pr_additions = $3, pr_deletions = $4, pr_synced_at = now(),
   pr_closed_unmerged = $5
@@ -1374,6 +1431,21 @@ func (q *Queries) UpdatePRSync(ctx context.Context, arg UpdatePRSyncParams) erro
 		arg.PrDeletions,
 		arg.PrClosedUnmerged,
 	)
+	return err
+}
+
+const updatePushRequestPRSync = `-- name: UpdatePushRequestPRSync :exec
+UPDATE push_requests SET pr_state = $2, pr_synced_at = now()
+WHERE id = $1
+`
+
+type UpdatePushRequestPRSyncParams struct {
+	ID      uuid.UUID
+	PrState *string
+}
+
+func (q *Queries) UpdatePushRequestPRSync(ctx context.Context, arg UpdatePushRequestPRSyncParams) error {
+	_, err := q.db.Exec(ctx, updatePushRequestPRSync, arg.ID, arg.PrState)
 	return err
 }
 

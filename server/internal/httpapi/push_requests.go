@@ -175,6 +175,10 @@ func (s *Server) toPushRequest(ctx context.Context, r store.PushRequest) api.Pus
 		n := int(*r.PrNumber)
 		out.PrNumber = &n
 	}
+	if r.PrState != nil {
+		st := api.PullRequestState(*r.PrState)
+		out.PrState = &st
+	}
 	_ = json.Unmarshal(r.Commits, &out.Commits)
 	_ = json.Unmarshal(r.Files, &out.Files)
 	if r.PersonaID != nil {

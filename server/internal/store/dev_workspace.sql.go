@@ -28,7 +28,7 @@ SET action = NULL,
     updated_at = now()
 FROM target
 WHERE d.workspace_id = target.workspace_id
-RETURNING d.workspace_id, d.user_id, d.enabled, d.nix_mode, d.repos, d.state, d.action, d.step, d.error, d.port, d.runner_id, d.stack, d.arch, d.updated_at, d.custom_zshrc, d.custom_tmux_conf, d.tmux_prefix, d.extra_packages, target.action AS claimed_action
+RETURNING d.workspace_id, d.user_id, d.enabled, d.nix_mode, d.repos, d.state, d.action, d.step, d.error, d.port, d.runner_id, d.stack, d.arch, d.updated_at, d.custom_zshrc, d.custom_tmux_conf, d.tmux_prefix, d.extra_packages, d.target_repo, d.target_branch, d.target_pr_number, target.action AS claimed_action
 `
 
 type ClaimDevWorkspaceActionParams struct {
@@ -55,6 +55,9 @@ type ClaimDevWorkspaceActionRow struct {
 	CustomTmuxConf *string
 	TmuxPrefix     string
 	ExtraPackages  json.RawMessage
+	TargetRepo     *string
+	TargetBranch   *string
+	TargetPrNumber *int32
 	ClaimedAction  *string
 }
 
@@ -80,13 +83,16 @@ func (q *Queries) ClaimDevWorkspaceAction(ctx context.Context, arg ClaimDevWorks
 		&i.CustomTmuxConf,
 		&i.TmuxPrefix,
 		&i.ExtraPackages,
+		&i.TargetRepo,
+		&i.TargetBranch,
+		&i.TargetPrNumber,
 		&i.ClaimedAction,
 	)
 	return i, err
 }
 
 const getDevWorkspace = `-- name: GetDevWorkspace :one
-SELECT workspace_id, user_id, enabled, nix_mode, repos, state, action, step, error, port, runner_id, stack, arch, updated_at, custom_zshrc, custom_tmux_conf, tmux_prefix, extra_packages FROM dev_workspaces WHERE workspace_id = $1
+SELECT workspace_id, user_id, enabled, nix_mode, repos, state, action, step, error, port, runner_id, stack, arch, updated_at, custom_zshrc, custom_tmux_conf, tmux_prefix, extra_packages, target_repo, target_branch, target_pr_number FROM dev_workspaces WHERE workspace_id = $1
 `
 
 func (q *Queries) GetDevWorkspace(ctx context.Context, workspaceID uuid.UUID) (DevWorkspace, error) {
@@ -111,6 +117,9 @@ func (q *Queries) GetDevWorkspace(ctx context.Context, workspaceID uuid.UUID) (D
 		&i.CustomTmuxConf,
 		&i.TmuxPrefix,
 		&i.ExtraPackages,
+		&i.TargetRepo,
+		&i.TargetBranch,
+		&i.TargetPrNumber,
 	)
 	return i, err
 }
@@ -122,7 +131,7 @@ SET action = $1,
     error = NULL,
     updated_at = now()
 WHERE workspace_id = $2
-RETURNING workspace_id, user_id, enabled, nix_mode, repos, state, action, step, error, port, runner_id, stack, arch, updated_at, custom_zshrc, custom_tmux_conf, tmux_prefix, extra_packages
+RETURNING workspace_id, user_id, enabled, nix_mode, repos, state, action, step, error, port, runner_id, stack, arch, updated_at, custom_zshrc, custom_tmux_conf, tmux_prefix, extra_packages, target_repo, target_branch, target_pr_number
 `
 
 type RequestDevWorkspaceActionParams struct {
@@ -152,6 +161,9 @@ func (q *Queries) RequestDevWorkspaceAction(ctx context.Context, arg RequestDevW
 		&i.CustomTmuxConf,
 		&i.TmuxPrefix,
 		&i.ExtraPackages,
+		&i.TargetRepo,
+		&i.TargetBranch,
+		&i.TargetPrNumber,
 	)
 	return i, err
 }
@@ -235,7 +247,7 @@ ON CONFLICT (workspace_id) DO UPDATE SET
   state = CASE WHEN $10::text IS NOT NULL THEN 'starting' ELSE dev_workspaces.state END,
   error = CASE WHEN $10::text IS NOT NULL THEN NULL ELSE dev_workspaces.error END,
   updated_at = now()
-RETURNING workspace_id, user_id, enabled, nix_mode, repos, state, action, step, error, port, runner_id, stack, arch, updated_at, custom_zshrc, custom_tmux_conf, tmux_prefix, extra_packages
+RETURNING workspace_id, user_id, enabled, nix_mode, repos, state, action, step, error, port, runner_id, stack, arch, updated_at, custom_zshrc, custom_tmux_conf, tmux_prefix, extra_packages, target_repo, target_branch, target_pr_number
 `
 
 type UpsertDevWorkspaceParams struct {
@@ -284,6 +296,9 @@ func (q *Queries) UpsertDevWorkspace(ctx context.Context, arg UpsertDevWorkspace
 		&i.CustomTmuxConf,
 		&i.TmuxPrefix,
 		&i.ExtraPackages,
+		&i.TargetRepo,
+		&i.TargetBranch,
+		&i.TargetPrNumber,
 	)
 	return i, err
 }
