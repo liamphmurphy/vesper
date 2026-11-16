@@ -1,4 +1,5 @@
 import type { Schemas } from "@/lib/api/client";
+import type { ComposerDrop } from "./playground-report";
 
 export type DevWorkspace = Schemas["DevWorkspace"];
 export type DevWorkspaceState = DevWorkspace["state"];
@@ -104,3 +105,90 @@ export function devTerminalShortcutGroups(tmuxPrefix?: TmuxPrefix): TerminalShor
 }
 
 export const DEV_TERMINAL_SHORTCUT_GROUPS: TerminalShortcutGroup[] = devTerminalShortcutGroups("C-b");
+
+export type TerminalBufferLine = { translateToString: (trimRight?: boolean) => string };
+export type TerminalBufferLike = {
+  length: number;
+  getLine: (index: number) => TerminalBufferLine | undefined;
+};
+
+/** Reads up to the last maxLines non-trailing-empty lines from an xterm buffer. */
+export function extractTerminalLines(buffer: TerminalBufferLike, maxLines = 120): string[] {
+  let end = buffer.length - 1;
+  while (end >= 0) {
+    const line = buffer.getLine(end)?.translateToString(true) ?? "";
+    if (line.length > 0) break;
+    end--;
+  }
+  if (end < 0) return [];
+  const start = Math.max(0, end - Math.max(1, maxLines) + 1);
+  const out: string[] = [];
+  for (let i = start; i <= end; i++) {
+    out.push(buffer.getLine(i)?.translateToString(true) ?? "");
+  }
+  return out;
+}
+
+export function terminalSnapshotFilename(at: number): string {
+  const stamp = new Date(at).toISOString().slice(0, 19).replace(/[-:]/g, "").replace("T", "-");
+  return `dev-terminal-${stamp}.md`;
+}
+
+const fence = (s: string) => {
+  const ticks = "`".repeat(Math.max(3, ...[...s.matchAll(/`+/g)].map((m) => m[0].length + 1)));
+  return `${ticks}\n${s}\n${ticks}`;
+};
+
+export function formatTerminalSnapshot({
+  lines,
+  selection,
+  cols,
+  rows,
+  at,
+}: {
+  lines: string[];
+  selection?: string;
+  cols: number;
+  rows: number;
+  at: number;
+}): string {
+  const out: string[] = [
+    "# Dev terminal snapshot",
+    "",
+    `- Captured: ${new Date(at).toISOString()}`,
+    `- Size: ${cols}x${rows}`,
+    "",
+  ];
+  const trimmedSel = selection?.trim();
+  if (trimmedSel) {
+    out.push("## Selected text", "", fence(trimmedSel), "");
+  }
+  out.push(`## Visible terminal output (${lines.length} ${lines.length === 1 ? "line" : "lines"})`, "");
+  if (lines.length === 0) {
+    out.push("(empty)");
+  } else {
+    out.push(fence(lines.join("\n")));
+  }
+  return out.join("\n").trimEnd() + "\n";
+}
+
+export const COMPANION_OPEN_EVENT = "vesper:open-companion";
+export const COMPANION_DROP_EVENT = "vesper:companion-drop";
+
+let pendingCompanionDrop: ComposerDrop | null = null;
+
+export function queueCompanionDrop(drop: ComposerDrop) {
+  pendingCompanionDrop = drop;
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(COMPANION_OPEN_EVENT));
+    window.dispatchEvent(new Event(COMPANION_DROP_EVENT));
+  }
+}
+
+export function peekCompanionDrop(): ComposerDrop | null {
+  return pendingCompanionDrop;
+}
+
+export function clearCompanionDrop() {
+  pendingCompanionDrop = null;
+}

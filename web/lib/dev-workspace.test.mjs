@@ -6,7 +6,10 @@ import {
   devWorkspaceSocketUrl,
   devWorkspaceStatusLabel,
   devWorkspaceStatusTone,
+  extractTerminalLines,
+  formatTerminalSnapshot,
   fullscreenExitHint,
+  terminalSnapshotFilename,
   tmuxPrefixLabel,
 } from "./dev-workspace.ts";
 
@@ -47,4 +50,30 @@ test("DEV_TERMINAL_SHORTCUT_GROUPS covers LazyVim, tmux, and browser", () => {
   const custom = devTerminalShortcutGroups("C-a");
   assert.equal(custom[1].title, "tmux (Ctrl+a prefix)");
   assert.equal(custom[1].items[0].keys, "Ctrl+a c");
+});
+
+test("extractTerminalLines trims trailing blank lines and caps output", () => {
+  const rows = ["$ go test ./...", "PASS", "   ", ""];
+  const buf = {
+    length: rows.length,
+    getLine: (i) => ({ translateToString: (trimRight) => (trimRight ? rows[i].replace(/\s+$/, "") : rows[i]) }),
+  };
+  assert.deepEqual(extractTerminalLines(buf, 120), ["$ go test ./...", "PASS"]);
+  assert.deepEqual(extractTerminalLines(buf, 1), ["PASS"]);
+});
+
+test("formatTerminalSnapshot and terminalSnapshotFilename render markdown", () => {
+  const at = Date.UTC(2026, 10, 16, 6, 15, 30);
+  assert.equal(terminalSnapshotFilename(at), "dev-terminal-20261116-061530.md");
+  const md = formatTerminalSnapshot({
+    lines: ["$ ls", "vesper"],
+    selection: "vesper",
+    cols: 120,
+    rows: 36,
+    at,
+  });
+  assert.match(md, /# Dev terminal snapshot/);
+  assert.match(md, /## Selected text/);
+  assert.match(md, /## Visible terminal output \(2 lines\)/);
+  assert.match(md, /\$ ls\nvesper/);
 });

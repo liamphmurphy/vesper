@@ -12,8 +12,12 @@ import {
   devWorkspaceSocketUrl,
   devWorkspaceStatusLabel,
   devWorkspaceStatusTone,
+  extractTerminalLines,
+  formatTerminalSnapshot,
   FULLSCREEN_LOCK_KEYS,
   fullscreenExitHint,
+  queueCompanionDrop,
+  terminalSnapshotFilename,
 } from "@/lib/dev-workspace";
 import { cx } from "@/lib/cx";
 import { Button, ButtonLink } from "@/components/ui/button";
@@ -61,6 +65,7 @@ export function DevTerminal() {
   const [fallbackFullscreen, setFallbackFullscreen] = useState(false);
   const [keyboardLocked, setKeyboardLocked] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [sentNotice, setSentNotice] = useState(false);
   const [conn, setConn] = useState<ConnState>("disconnected");
   const [reconnectSeq, setReconnectSeq] = useState(0);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -213,6 +218,25 @@ export function DevTerminal() {
     }
   }, []);
 
+  const sendToChat = useCallback(() => {
+    const term = termRef.current;
+    if (!term) return;
+    const at = Date.now();
+    const lines = extractTerminalLines(term.buffer.active, 120);
+    const selection = term.getSelection();
+    const md = formatTerminalSnapshot({
+      lines,
+      selection,
+      cols: term.cols,
+      rows: term.rows,
+      at,
+    });
+    const file = new File([md], terminalSnapshotFilename(at), { type: "text/markdown" });
+    queueCompanionDrop({ files: [file] });
+    setSentNotice(true);
+    setTimeout(() => setSentNotice(false), 1800);
+  }, []);
+
   if (q.isPending) {
     return <Skeleton className="h-[calc(100dvh-5rem)] w-full" />;
   }
@@ -284,6 +308,14 @@ export function DevTerminal() {
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              disabled={!port}
+              onClick={sendToChat}
+              title="Attach the visible terminal output (and any selected text) to the companion chat"
+            >
+              {sentNotice ? "Sent to chat" : "Send to chat"}
+            </Button>
             <Button
               variant="outline"
               disabled={wsData.state === "starting" || action.isPending}
