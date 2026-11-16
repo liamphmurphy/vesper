@@ -149,6 +149,7 @@ func (r *Runner) stagePushRequests(ctx context.Context, c runCtx) {
 		}
 		staged, err := r.stage(ctx, c, req, dir, url, token)
 		if err != nil {
+			r.Log.Warn("stage push request", "id", req.ID, "branch", req.Branch, "err", err)
 			fail(err.Error())
 			continue
 		}
@@ -174,12 +175,13 @@ func (r *Runner) stage(ctx context.Context, c runCtx, req store.PushRequest, dir
 		return req, &pushreq.Refusal{Reason: req.Branch + " has no commits GitHub doesn't already have. Commit the work, then ask again."}
 	}
 	out, err = r.runScript(ctx, c.run.ID, "lazyagents-push-stage", PushBundleScript(bundlePath(id), stageDir(id), url, staging, true, r.isolatesGit()), map[string]string{"GH_TOKEN": token})
+	redactedOut := redact(out, map[string]string{"GH_TOKEN": token})
 	if err != nil {
-		return req, &pushreq.Refusal{Reason: "Couldn't stage " + req.Branch + ": " + lastLine(out, err)}
+		return req, &pushreq.Refusal{Reason: "Couldn't stage " + req.Branch + ": " + PushErrorDetail(redactedOut, err)}
 	}
 	baseBranch, base := markerValue(out, stagedMarker), markerValue(out, baseMarker)
 	if baseBranch == "" {
-		return req, &pushreq.Refusal{Reason: "Couldn't stage " + req.Branch + ": " + lastLine(out, nil)}
+		return req, &pushreq.Refusal{Reason: "Couldn't stage " + req.Branch + ": " + PushErrorDetail(redactedOut, nil)}
 	}
 	if baseBranch == req.Branch {
 		return req, &pushreq.Refusal{Reason: req.Branch + " is the default branch; push a work branch instead."}
@@ -245,6 +247,35 @@ func (r *Runner) autoShip(ctx context.Context, req store.PushRequest, token stri
 	if _, err := pushreq.Finish(context.WithoutCancel(ctx), r.q(), claimed, res, shipErr); err != nil {
 		r.Log.Warn("finish push request", "id", req.ID, "err", err)
 	}
+}
+
+// PushErrorDetail summarizes a failed push script's output, keeping the remote
+// rejection lines that precede git's generic "failed to push some refs" line.
+func PushErrorDetail(out string, err error) string {
+	var lines []string
+	for _, raw := range strings.Split(strings.TrimSpace(out), "\n") {
+		l := strings.TrimSpace(raw)
+		if l == "" || strings.HasPrefix(l, stagedMarker) || strings.HasPrefix(l, baseMarker) {
+			continue
+		}
+		lines = append(lines, strings.TrimPrefix(l, "vesper: "))
+	}
+	if len(lines) == 0 {
+		if err != nil {
+			return err.Error()
+		}
+		return "no output"
+	}
+	const maxLines = 6
+	if len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+	}
+	detail := strings.Join(lines, "\n")
+	const maxBytes = 600
+	if len(detail) > maxBytes {
+		detail = "..." + detail[len(detail)-(maxBytes-3):]
+	}
+	return detail
 }
 
 // lastLine is the most useful line of a failed script's output.

@@ -348,3 +348,81 @@ func TestChatCodeReviewTreeSnapshotAndCleanup(t *testing.T) {
 		}
 	}
 }
+
+func TestPushErrorDetailPreservesRemoteReasons(t *testing.T) {
+	out := strings.Join([]string{
+		"vesper-base abc123",
+		"vesper-staged main",
+		"remote: error: GH006: Protected branch update failed",
+		"remote: refusing to allow a Personal Access Token to create or update workflow `.github/workflows/ci.yml` without `workflow` scope",
+		"To https://github.com/acme/alpha.git",
+		" ! [remote rejected] stage -> vesper-checkpoint/push/123 (refusing workflow update)",
+		"error: failed to push some refs to 'https://github.com/acme/alpha.git'",
+	}, "\n")
+	got := runner.PushErrorDetail(out, nil)
+	if !strings.Contains(got, "refusing to allow a Personal Access Token") {
+		t.Fatalf("expected remote rejection reason in %q", got)
+	}
+	if strings.Contains(got, "vesper-base") || strings.Contains(got, "vesper-staged") {
+		t.Fatalf("internal markers leaked into %q", got)
+	}
+	if !strings.Contains(got, "error: failed to push some refs") {
+		t.Fatalf("expected final error line in %q", got)
+	}
+}
+
+func TestChatPushRequestStageFailurePreservesRemoteReason(t *testing.T) {
+	for _, name := range []string{"GH_TOKEN", "GITHUB_TOKEN", "GIT_PAT"} {
+		t.Setenv(name, "")
+		os.Unsetenv(name)
+	}
+	e := setup(t)
+	t.Setenv("FAKE_HARNESS_MODE", "chat")
+	bare := bareRepo(t)
+	gitIn(t, bare, "symbolic-ref", "HEAD", "refs/heads/main")
+	hookPath := filepath.Join(bare, "hooks", "pre-receive")
+	if err := os.WriteFile(hookPath, []byte("#!/bin/sh\necho 'refusing workflow update without workflow scope' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(t.TempDir(), "gitconfig")
+	if out, err := exec.Command("git", "config", "--file", config, "url."+bare+".insteadOf", "https://github.com/acme/alpha.git").CombinedOutput(); err != nil {
+		t.Fatalf("rewrite: %v %s", err, out)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", config)
+	sec := e.runner.Secrets.(*secrets.Service)
+	if _, err := sec.Set(e.ctx, e.ws, e.me.ID, secrets.SetInput{Name: "git:pat", Value: "ghp_testtoken123"}); err != nil {
+		t.Fatal(err)
+	}
+
+	p := e.persona("Pusher", true, false)
+	chat, err := e.runs.StartChat(e.ctx, e.ws, e.me.ID, runs.ChatInput{PersonaID: &p.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.runs.SetChatRepository(e.ctx, e.ws, e.me.ID, chat.ID, "acme/alpha", nil); err != nil {
+		t.Fatal(err)
+	}
+	dir := ".lazyagents/repos/acme/alpha"
+	reply := e.postSh(chat.ID, "cd "+dir+" && git checkout -q -b feat/push-fail && echo hi > new.txt && git add new.txt && git commit -qm 'Add new'")
+	if !strings.Contains(reply, "err=<nil>") {
+		t.Fatalf("setup command failed: %s", reply)
+	}
+	run := e.chatRun(chat.ID)
+	req, err := e.q.CreatePushRequest(e.ctx, store.CreatePushRequestParams{WorkspaceID: e.ws, UserID: e.me.ID, ChatID: chat.ID, RunID: &run.ID,
+		PersonaID: &p.ID, AgentID: run.AgentID, RepoUrl: "https://github.com/acme/alpha.git", Branch: "feat/push-fail", Title: "Fail test", Body: "Body"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.postSh(chat.ID, "cd "+dir+" && echo two > two.txt && git add two.txt && git commit -qm 'Add two'")
+
+	failed, err := e.q.GetPushRequest(e.ctx, store.GetPushRequestParams{ID: req.ID, WorkspaceID: e.ws, UserID: e.me.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.State != "failed" || failed.Error == nil {
+		t.Fatalf("expected failed push request with error, got %+v", failed)
+	}
+	if !strings.Contains(*failed.Error, "refusing workflow update without workflow scope") {
+		t.Fatalf("expected remote hook message in error, got %q", *failed.Error)
+	}
+}
