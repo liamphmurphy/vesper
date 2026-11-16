@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Popover } from "radix-ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Schemas } from "@/lib/api/client";
+import { useInbox, useReadInbox } from "@/lib/api/hooks";
 import { useGitHubReviewRequests, useRefreshGitHubReviewRequests } from "@/lib/api/github-reviews-hooks";
 import { Button } from "@/components/ui/button";
 import { Toggle } from "@/components/ui/controls";
@@ -20,7 +21,7 @@ import {
   saveReviewFilterPrefs,
   type ReviewFilterPrefs,
 } from "@/lib/github-reviews";
-import { nextSelection, step } from "@/lib/inbox";
+import { isOpen, nextSelection, step } from "@/lib/inbox";
 import { isTyping } from "./shortcuts";
 
 type ReviewItem = Schemas["GitHubReviewRequest"];
@@ -47,10 +48,24 @@ export function PrReviewRequests() {
   const filtered = useMemo(() => filterReviewRequests(allItems, prefs), [allItems, prefs]);
   const counts = useMemo(() => countReviewRequests(allItems), [allItems]);
 
+  // Approvals of PRs you authored arrive as inbox items (kind pr_approved); the unread ones are the green badge.
+  const inbox = useInbox();
+  const read = useReadInbox();
+  const approved = useMemo(() => (inbox.data ?? []).filter((i) => i.kind === "pr_approved" && isOpen(i)), [inbox.data]);
+  const approvedCount = approved.length;
+  const approvedPulse = usePulse<HTMLSpanElement>(approvedCount);
+  const clearApproved = () => Promise.all(approved.map((i) => read.mutateAsync(i.id)));
+
   const count = query.data?.configured ? filtered.length : 0;
   const pulse = usePulse<HTMLSpanElement>(count);
   const badge = count > 99 ? "99+" : count;
-  const label = count > 0 ? `GitHub review requests, ${count} waiting` : "GitHub review requests";
+  const label = [
+    "GitHub pull requests",
+    count > 0 ? `${count} review ${count === 1 ? "request" : "requests"} waiting` : "",
+    approvedCount > 0 ? `${approvedCount} of yours approved` : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
 
   const updatePrefs = useCallback((next: ReviewFilterPrefs) => {
     setPrefs(next);
@@ -72,7 +87,9 @@ export function PrReviewRequests() {
               ? "bg-selected text-pill-review-fg ring-1 ring-state-review/50"
               : count > 0
                 ? "bg-pill-review-bg text-pill-review-fg"
-                : "text-fg-tertiary hover:bg-hover hover:text-fg",
+                : approvedCount > 0
+                  ? "bg-pill-done-bg text-pill-done-fg"
+                  : "text-fg-tertiary hover:bg-hover hover:text-fg",
           )}
         >
           <Icon name="pr" size={15} strokeWidth={1.6} />
@@ -83,6 +100,16 @@ export function PrReviewRequests() {
               className="absolute -right-1.5 -top-1.5 grid h-4 min-w-4 place-items-center rounded-full bg-state-review px-1 text-10 font-semibold leading-none text-on-accent"
             >
               {badge}
+            </span>
+          )}
+          {approvedCount > 0 && (
+            <span
+              ref={approvedPulse}
+              aria-hidden
+              data-pr-approved-badge
+              className="absolute -bottom-1.5 -right-1.5 grid h-4 min-w-4 place-items-center rounded-full bg-state-done px-1 text-10 font-semibold leading-none text-on-accent"
+            >
+              {approvedCount > 99 ? "99+" : approvedCount}
             </span>
           )}
         </button>
@@ -109,6 +136,10 @@ export function PrReviewRequests() {
             onChangePrefs={updatePrefs}
             onRetry={() => void query.refetch()}
             onRefresh={() => refresh.mutate()}
+            approved={approved}
+            isClearing={read.isPending}
+            onRead={(id) => read.mutate(id)}
+            onClear={() => void clearApproved()}
             onClose={() => setOpen(false)}
           />
         </Popover.Content>
@@ -129,8 +160,16 @@ function FeedTray({
   onChangePrefs,
   onRetry,
   onRefresh,
+  approved,
+  isClearing,
+  onRead,
+  onClear,
   onClose,
 }: {
+  approved: Schemas["InboxItem"][];
+  isClearing: boolean;
+  onRead: (id: string) => void;
+  onClear: () => void;
   data: Schemas["GitHubReviewRequestsResponse"] | undefined;
   isPending: boolean;
   isError: boolean;
@@ -252,6 +291,46 @@ function FeedTray({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-1.5 py-1.5">
+        {approved.length > 0 && (
+          <section data-pr-approved aria-label="Approved pull requests" className="mb-1.5 border-b border-border-subtle pb-1.5">
+            <div className="flex items-center gap-2 px-2.5 py-1">
+              <Icon name="check" size={13} className="text-pill-done-fg" />
+              <span className="text-12 font-semibold text-fg">Your PRs approved</span>
+              <span className="rounded-full bg-pill-done-bg px-1.5 py-0.5 font-mono text-11 font-semibold leading-none text-pill-done-fg">
+                {approved.length}
+              </span>
+              <button
+                type="button"
+                onClick={onClear}
+                disabled={isClearing}
+                className="ml-auto rounded-md px-2 py-1 text-12 font-medium text-accent hover:bg-hover disabled:opacity-60"
+              >
+                Clear
+              </button>
+            </div>
+            <ul className="flex flex-col gap-px">
+              {approved.map((item) => (
+                <li key={item.id}>
+                  <a
+                    href={item.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => {
+                      onRead(item.id);
+                      onClose();
+                    }}
+                    className="flex flex-col gap-0.5 rounded-[9px] px-2.5 py-1.5 outline-none hover:bg-hover focus-visible:ring-1 focus-visible:ring-accent/60"
+                  >
+                    <span className="truncate text-13 font-medium text-fg">{item.title}</span>
+                    <span className="truncate text-11.5 text-fg-tertiary">
+                      {item.summary} · {relativeAge(item.created_at)}
+                    </span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
         {isPending ? (
           <div aria-busy="true" className="space-y-2 p-2">
             {[0, 1, 2].map((i) => (
