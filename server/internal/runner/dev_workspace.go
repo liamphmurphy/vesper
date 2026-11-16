@@ -195,12 +195,10 @@ func (r *Runner) runDevWorkspaceAction(ctx context.Context, row store.ClaimDevWo
 		}
 
 		if len(repos) > 0 {
-			setStep("Syncing repositories")
 			env := r.devWorkspaceGitEnv(ctx, row.WorkspaceID)
 			userName, userEmail := r.devWorkspaceAuthor(ctx, row.WorkspaceID, row.UserID)
-			out, code, err := db.ExecDevWorkspaceScript(ctx, containerID, devworkspace.SyncReposScript(repos, userName, userEmail), env)
-			if err != nil || code != 0 {
-				fail(fmt.Sprintf("repo sync failed (exit %d): %s", code, lastLines(out, 20)))
+			if err := syncDevWorkspaceRepos(ctx, db, containerID, repos, userName, userEmail, env, setStep); err != nil {
+				fail(err.Error())
 				return
 			}
 		}
@@ -220,6 +218,39 @@ func (r *Runner) runDevWorkspaceAction(ctx context.Context, row store.ClaimDevWo
 	}); err != nil {
 		r.Log.Warn("dev workspace: update ready state", "err", err)
 	}
+}
+
+const devWorkspaceRepoSyncBatchSize = 30
+
+func syncDevWorkspaceRepos(
+	ctx context.Context,
+	db DevWorkspaceBackend,
+	containerID string,
+	repos []devworkspace.RepoSpec,
+	userName, userEmail string,
+	env []string,
+	setStep func(string),
+) error {
+	for i := 0; i < len(repos); i += devWorkspaceRepoSyncBatchSize {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("repo sync canceled: %w", err)
+		}
+		end := min(i+devWorkspaceRepoSyncBatchSize, len(repos))
+		if len(repos) > devWorkspaceRepoSyncBatchSize {
+			setStep(fmt.Sprintf("Syncing repositories (%d/%d)", i, len(repos)))
+		} else {
+			setStep("Syncing repositories")
+		}
+		out, code, err := db.ExecDevWorkspaceScript(ctx, containerID, devworkspace.SyncReposScript(repos[i:end], userName, userEmail), env)
+		if err != nil || code != 0 {
+			msg := lastLines(out, 20)
+			if err != nil && msg == "" {
+				msg = err.Error()
+			}
+			return fmt.Errorf("repo sync failed (exit %d): %s", code, msg)
+		}
+	}
+	return nil
 }
 
 func (r *Runner) devWorkspaceGitEnv(ctx context.Context, workspaceID uuid.UUID) []string {

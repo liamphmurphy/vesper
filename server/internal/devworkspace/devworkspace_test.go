@@ -1,6 +1,7 @@
 package devworkspace
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -24,6 +25,15 @@ func TestDeriveRepoDirsDisambiguates(t *testing.T) {
 	}
 	if got[0].Directory != "vesper" || got[1].Directory != "vesper-2" || got[2].Directory != "os-setup" {
 		t.Fatalf("unexpected dirs: %+v", got)
+	}
+
+	var many []string
+	for i := 0; i < 12; i++ {
+		many = append(many, "https://github.com/org"+string(rune('a'+i))+"/shared")
+	}
+	manyDirs := DeriveRepoDirs(many)
+	if manyDirs[9].Directory != "shared-10" || manyDirs[11].Directory != "shared-12" {
+		t.Fatalf("expected numeric suffix past 9 collisions, got %q and %q", manyDirs[9].Directory, manyDirs[11].Directory)
 	}
 }
 
@@ -75,14 +85,44 @@ func TestValidateNixPackageAndRenderFlake(t *testing.T) {
 
 func TestSyncReposScriptClonesAndFetchesWithoutStoringTokens(t *testing.T) {
 	s := SyncReposScript([]RepoSpec{{RepoURL: "https://github.com/liamphmurphy/vesper.git", Directory: "vesper"}}, "Liam", "liam@example.com")
-	if !strings.Contains(s, "clone --quiet -- 'https://github.com/liamphmurphy/vesper.git' '/workspace/vesper'") {
+	if !strings.Contains(s, "clone --quiet -- \"$url\" \"$dest\"") {
 		t.Fatalf("missing clone command: %s", s)
+	}
+	if !strings.Contains(s, "sync_repo 'https://github.com/liamphmurphy/vesper.git' '/workspace/vesper'") {
+		t.Fatalf("missing sync_repo invocation: %s", s)
 	}
 	if !strings.Contains(s, "fetch --quiet --all --prune") {
 		t.Fatalf("missing fetch command: %s", s)
 	}
+	if !strings.Contains(s, "GIT_TERMINAL_PROMPT=0") || !strings.Contains(s, "</dev/null") {
+		t.Fatalf("git_net must disable terminal prompts and stdin reads: %s", s)
+	}
 	if strings.Contains(s, "credential.helper store") {
 		t.Fatalf("must not store credentials on disk")
+	}
+}
+
+func TestSyncReposScriptBatchesWavesForLargeSets(t *testing.T) {
+	repos := make([]RepoSpec, 15)
+	for i := range repos {
+		repos[i] = RepoSpec{
+			RepoURL:   "https://github.com/org/repo-" + string(rune('a'+i)),
+			Directory: "repo-" + string(rune('a'+i)),
+		}
+	}
+	s := SyncReposScript(repos, "Liam", "liam@example.com")
+	if got := strings.Count(s, "for p in $pids; do wait \"$p\" || true; done"); got != 3 {
+		t.Fatalf("expected 3 concurrency waves for 15 repos, got %d:\n%s", got, s)
+	}
+	if !strings.Contains(s, "if [ -s \"$fail_log\" ]; then") {
+		t.Fatalf("expected aggregated failure check in script")
+	}
+	if _, err := exec.LookPath("sh"); err == nil {
+		cmd := exec.Command("sh", "-n")
+		cmd.Stdin = strings.NewReader(s)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("sh -n failed: %v\n%s", err, out)
+		}
 	}
 }
 

@@ -63,10 +63,13 @@ func DeriveRepoDirs(urls []string) []RepoSpec {
 			base = "repo"
 		}
 		dir := base
-		if n := used[dir]; n > 0 {
-			dir = base + "-" + string(rune('1'+n))
-			for used[dir] > 0 {
-				dir += "-x"
+		if used[dir] > 0 {
+			for i := 2; ; i++ {
+				cand := fmt.Sprintf("%s-%d", base, i)
+				if used[cand] == 0 {
+					dir = cand
+					break
+				}
 			}
 		}
 		used[dir]++
@@ -206,7 +209,7 @@ func SetupNixScript(forceRebuild bool, customZshrc, tmuxPrefix, customTmuxConf s
 	}
 	b.WriteString("if [ ! -e " + shellQuote(ProfilePath+"/bin/nvim") + " ] || [ \"$(cat " + shellQuote(stamp) + " 2>/dev/null || true)\" != " + shellQuote(hash) + " ]; then\n")
 	b.WriteString("  rm -rf " + shellQuote(ProfilePath) + "\n")
-	b.WriteString("  nix profile install --profile " + shellQuote(ProfilePath) + " path:/home/node/.config/vesper-dev#default\n")
+	b.WriteString("  nix profile install --profile " + shellQuote(ProfilePath) + " path:/home/node/.config/vesper-dev#default </dev/null\n")
 	b.WriteString("  printf '%s\\n' " + shellQuote(hash) + " > " + shellQuote(stamp) + "\n")
 	b.WriteString("fi\n")
 	b.WriteString("uname -m\n")
@@ -285,7 +288,8 @@ func ValidateBranchName(raw string) (string, error) {
 }
 
 func writeCredentialHelperPrelude(b *strings.Builder) {
-	b.WriteString(`helper=""
+	b.WriteString(`export GIT_TERMINAL_PROMPT=0
+helper=""
 cleanup_helper() { [ -n "$helper" ] && rm -f "$helper"; }
 trap cleanup_helper EXIT
 if [ -n "${GH_TOKEN:-}" ]; then
@@ -295,26 +299,29 @@ if [ -n "${GH_TOKEN:-}" ]; then
 fi
 git_net() {
   if [ -n "$helper" ]; then
-    git -c credential.helper= -c "credential.helper=$helper" "$@"
+    git -c credential.helper= -c "credential.helper=$helper" "$@" </dev/null
   else
-    git "$@"
+    git "$@" </dev/null
   fi
 }
 `)
 }
 
-func writeGitConfigAuthor(b *strings.Builder, qDest, userName, userEmail string) {
+func writeGitConfigAuthor(b *strings.Builder, destExpr, userName, userEmail string) {
 	if userName != "" {
-		b.WriteString("  git -C " + qDest + " config user.name " + shellQuote(userName) + "\n")
+		b.WriteString("    git -C " + destExpr + " config user.name " + shellQuote(userName) + "\n")
 	}
 	if userEmail != "" {
-		b.WriteString("  git -C " + qDest + " config user.email " + shellQuote(userEmail) + "\n")
+		b.WriteString("    git -C " + destExpr + " config user.email " + shellQuote(userEmail) + "\n")
 	}
 }
 
+const syncConcurrency = 6
+
 // SyncReposScript returns a shell script that clones any missing repositories
 // into /workspace/<directory> and fetches existing ones without storing git
-// credentials on disk.
+// credentials on disk. Repos run with bounded concurrency so large sets finish
+// within a single step and report any failing clones together.
 func SyncReposScript(repos []RepoSpec, userName, userEmail string) string {
 	var b strings.Builder
 	b.WriteString("set -eu\n")
@@ -323,17 +330,36 @@ func SyncReposScript(repos []RepoSpec, userName, userEmail string) string {
 		return b.String()
 	}
 	writeCredentialHelperPrelude(&b)
-	for _, r := range repos {
-		dest := "/workspace/" + r.Directory
-		qDest := shellQuote(dest)
-		qURL := shellQuote(r.RepoURL)
-		b.WriteString("if [ ! -d " + shellQuote(dest+"/.git") + " ]; then\n")
-		b.WriteString("  git_net clone --quiet -- " + qURL + " " + qDest + "\n")
-		writeGitConfigAuthor(&b, qDest, userName, userEmail)
-		b.WriteString("else\n")
-		b.WriteString("  git_net -C " + qDest + " fetch --quiet --all --prune || true\n")
-		b.WriteString("fi\n")
+	b.WriteString("fail_log=$(mktemp)\n")
+	b.WriteString("cleanup_sync() {\n  cleanup_helper\n  rm -f \"$fail_log\"\n}\n")
+	b.WriteString("trap cleanup_sync EXIT\n")
+	b.WriteString("sync_repo() {\n")
+	b.WriteString("  url=\"$1\"\n")
+	b.WriteString("  dest=\"$2\"\n")
+	b.WriteString("  if [ ! -d \"$dest/.git\" ]; then\n")
+	b.WriteString("    if ! err=$(git_net clone --quiet -- \"$url\" \"$dest\" 2>&1); then\n")
+	b.WriteString("      printf '%s\\n' \"$dest ($url): $err\" >> \"$fail_log\"\n")
+	b.WriteString("      return 1\n")
+	b.WriteString("    fi\n")
+	writeGitConfigAuthor(&b, "\"$dest\"", userName, userEmail)
+	b.WriteString("  else\n")
+	b.WriteString("    git_net -C \"$dest\" fetch --quiet --all --prune || true\n")
+	b.WriteString("  fi\n")
+	b.WriteString("}\n")
+
+	for i := 0; i < len(repos); i += syncConcurrency {
+		end := min(i+syncConcurrency, len(repos))
+		b.WriteString("pids=\"\"\n")
+		for _, r := range repos[i:end] {
+			dest := "/workspace/" + r.Directory
+			b.WriteString("sync_repo " + shellQuote(r.RepoURL) + " " + shellQuote(dest) + " & pids=\"$pids $!\"\n")
+		}
+		b.WriteString("for p in $pids; do wait \"$p\" || true; done\n")
 	}
+	b.WriteString("if [ -s \"$fail_log\" ]; then\n")
+	b.WriteString("  cat \"$fail_log\" >&2\n")
+	b.WriteString("  exit 1\n")
+	b.WriteString("fi\n")
 	return b.String()
 }
 
