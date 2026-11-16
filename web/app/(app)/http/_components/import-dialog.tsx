@@ -7,16 +7,21 @@ import { toast } from "@/components/ui/toast";
 import { cx } from "@/lib/cx";
 import { useImportHttpCollection } from "@/lib/api/http-client-hooks";
 
-type ImportTab = "bru" | "curl" | "openapi";
+export type ImportTab = "bru" | "curl" | "openapi";
 
 export function ImportDialog({
   workspaceId,
+  folder,
+  initialTab = "bru",
   onClose,
 }: {
   workspaceId: string;
+  /** Where the imported requests go; omitted for the workspace root. */
+  folder?: { id: string; name: string } | null;
+  initialTab?: ImportTab;
   onClose: () => void;
 }) {
-  const [tab, setTab] = useState<ImportTab>("bru");
+  const [tab, setTab] = useState<ImportTab>(initialTab);
   const [content, setContent] = useState("");
   const [bruFiles, setBruFiles] = useState<{ path: string; content: string }[]>([]);
   const [zipBase64, setZipBase64] = useState("");
@@ -51,6 +56,7 @@ export function ImportDialog({
       const res = await importer.mutateAsync({
         format: tab,
         content: content.trim() || undefined,
+        folder_id: folder?.id ?? null,
         zip_base64: zipBase64 || undefined,
         files: bruFiles.length > 0 ? bruFiles : undefined,
       });
@@ -72,7 +78,7 @@ export function ImportDialog({
       className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4"
     >
       <Card
-        title="Import into Workspace"
+        title={folder ? `Import into “${folder.name}”` : "Import into Workspace"}
         className="w-full max-w-[600px]"
         action={
           <Button variant="ghost" icon="x" aria-label="Close" onClick={onClose} />
@@ -129,9 +135,13 @@ export function ImportDialog({
           )}
 
           {tab === "curl" && (
-            <Field label="Paste a cURL command">
+            <Field
+              label="Paste a cURL command"
+              hint="Works with a browser’s “Copy as cURL”. Becomes one request."
+            >
               <TextArea
                 mono
+                autoFocus
                 rows={7}
                 value={content}
                 placeholder={`curl -X POST "https://api.example.com/v1/items" -H "Authorization: Bearer tok" -d '{"name":"test"}'`}
