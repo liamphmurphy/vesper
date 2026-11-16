@@ -3,13 +3,13 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { invalidatedKeys } from "@/lib/live-updates";
+import { createSseClient } from "@/lib/sse-multiplexer";
 
-/** One stream per shell. Coalesce bursts from harness logs before refetching. */
+/** One stream per origin (leader-elected via Web Locks + BroadcastChannel). Coalesce bursts from harness logs before refetching. */
 export function LiveUpdates() {
   const qc = useQueryClient();
   const [offline, setOffline] = useState(false);
   useEffect(() => {
-    const stream = new EventSource("/events");
     let timer: ReturnType<typeof setTimeout> | undefined;
     const pending = new Map<string, readonly unknown[]>();
     const flush = () => {
@@ -17,11 +17,10 @@ export function LiveUpdates() {
       for (const queryKey of pending.values()) void qc.invalidateQueries({ queryKey });
       pending.clear();
     };
-    stream.onopen = () => setOffline(false);
-    stream.onerror = () => setOffline(true);
-    stream.onmessage = (e) => {
-      try {
-        const payload = JSON.parse(e.data) as { type: string; ids?: unknown; [k: string]: unknown };
+    const client = createSseClient({
+      url: "/events",
+      onStatus: (isOffline) => setOffline(isOffline),
+      onEvent: (payload) => {
         if (payload.type === "reset") {
           void qc.invalidateQueries();
           return;
@@ -29,12 +28,10 @@ export function LiveUpdates() {
         window.dispatchEvent(new CustomEvent("vesper:sse", { detail: payload }));
         for (const queryKey of invalidatedKeys(payload)) pending.set(JSON.stringify(queryKey), queryKey);
         if (!timer) timer = setTimeout(flush, 100);
-      } catch {
-        /* Ignore malformed hints; reconnect resets every cache. */
-      }
-    };
+      },
+    });
     return () => {
-      stream.close();
+      client.stop();
       if (timer) clearTimeout(timer);
     };
   }, [qc]);

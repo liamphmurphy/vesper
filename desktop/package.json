@@ -1,0 +1,27 @@
+{
+  "name": "vesper-desktop",
+  "version": "0.1.0",
+  "description": "macOS Electron desktop client for Vesper",
+  "private": true,
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "test:e2e": "playwright test",
+    "start": "npm run build && electron .",
+    "dev": "npm run build && electron .",
+    "gen:icon": "node scripts/gen-icon.mjs",
+    "pack:mac": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir --config electron-builder.yml",
+    "dmg": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg --arm64 --config electron-builder.yml",
+    "dmg:universal": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg --universal --config electron-builder.yml"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.1",
+    "@resvg/resvg-js": "^2.6.2",
+    "@types/node": "^22.15.0",
+    "electron": "^45.3.3",
+    "electron-builder": "^26.18.0",
+    "typescript": "^5.8.3"
+  }
+}

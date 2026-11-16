@@ -1,0 +1,30 @@
+appId: com.vesper.desktop
+productName: Vesper
+directories:
+  buildResources: build
+  output: release
+files:
+  - dist/**/*
+  - renderer/**/*
+  - package.json
+mac:
+  category: public.app-category.developer-tools
+  icon: build/icon.icns
+  target:
+    - target: dmg
+      arch:
+        - arm64
+dmg:
+  title: Vesper
+  icon: build/icon.icns
+  contents:
+    - x: 140
+      y: 200
+    - x: 400
+      y: 200
+      type: link
+      path: /Applications
+  window:
+    width: 540
+    height: 380
+artifactName: ${productName}-${arch}.${ext}
