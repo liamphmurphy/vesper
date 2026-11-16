@@ -9,6 +9,7 @@ import {
   extractTerminalLines,
   formatTerminalSnapshot,
   fullscreenExitHint,
+  isDevFullscreenShortcut,
   terminalSnapshotFilename,
   tmuxPrefixLabel,
 } from "./dev-workspace.ts";
@@ -39,6 +40,16 @@ test("fullscreenExitHint reflects native and keyboard-lock state", () => {
   assert.equal(fullscreenExitHint(true, true), "Hold Esc to exit");
   assert.equal(fullscreenExitHint(true, false), "Esc or Exit");
   assert.equal(fullscreenExitHint(false, false), "Exit");
+});
+
+test("isDevFullscreenShortcut matches Cmd/Ctrl+Shift+Enter only", () => {
+  const mk = (over = {}) => ({ key: "Enter", code: "Enter", metaKey: false, ctrlKey: true, altKey: false, shiftKey: true, ...over });
+  assert.equal(isDevFullscreenShortcut(mk()), true);
+  assert.equal(isDevFullscreenShortcut(mk({ metaKey: true, ctrlKey: false })), true);
+  assert.equal(isDevFullscreenShortcut(mk({ shiftKey: false })), false);
+  assert.equal(isDevFullscreenShortcut(mk({ altKey: true })), false);
+  assert.equal(isDevFullscreenShortcut(mk({ metaKey: false, ctrlKey: false })), false);
+  assert.equal(isDevFullscreenShortcut(mk({ key: "f", code: "KeyF" })), false);
 });
 
 test("DEV_TERMINAL_SHORTCUT_GROUPS covers LazyVim, tmux, and browser", () => {

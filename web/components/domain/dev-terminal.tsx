@@ -8,6 +8,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { useDevWorkspace, useDevWorkspaceAction } from "@/lib/api/dev-workspace-hooks";
 import {
+  DEV_FULLSCREEN_HINT,
   devTerminalShortcutGroups,
   devWorkspaceSocketUrl,
   devWorkspaceStatusLabel,
@@ -16,9 +17,11 @@ import {
   formatTerminalSnapshot,
   FULLSCREEN_LOCK_KEYS,
   fullscreenExitHint,
+  isDevFullscreenShortcut,
   queueCompanionDrop,
   terminalSnapshotFilename,
 } from "@/lib/dev-workspace";
+import { isSidebarToggleShortcut } from "@/lib/navigator";
 import { cx } from "@/lib/cx";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
@@ -94,6 +97,12 @@ export function DevTerminal() {
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       theme: GRUVBOX_THEME,
       allowProposedApi: true,
+    });
+    term.attachCustomKeyEventHandler((e) => {
+      if (isSidebarToggleShortcut(e) || isDevFullscreenShortcut(e)) {
+        return false;
+      }
+      return true;
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -218,6 +227,22 @@ export function DevTerminal() {
     }
   }, []);
 
+  const toggleFullscreen = useCallback(() => {
+    if (fullscreen) void exitFullscreen();
+    else void enterFullscreen();
+  }, [fullscreen, enterFullscreen, exitFullscreen]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || !isDevFullscreenShortcut(e)) return;
+      if (document.querySelector('[role="dialog"],[role="menu"],[role="listbox"]:not([hidden])')) return;
+      e.preventDefault();
+      toggleFullscreen();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggleFullscreen]);
+
   const sendToChat = useCallback(() => {
     const term = termRef.current;
     if (!term) return;
@@ -288,10 +313,12 @@ export function DevTerminal() {
             )}
             <button
               type="button"
+              aria-label="Exit"
+              title={`Exit fullscreen (${DEV_FULLSCREEN_HINT})`}
               onClick={() => void exitFullscreen()}
               className="rounded bg-[#3c3836] px-2 py-0.5 font-medium text-[#ebdbb2] hover:bg-[#504945]"
             >
-              Exit
+              Exit <span className="ml-0.5 font-mono text-10 opacity-70">{DEV_FULLSCREEN_HINT}</span>
             </button>
           </div>
         </div>
@@ -337,7 +364,13 @@ export function DevTerminal() {
             >
               Settings
             </Link>
-            <Button variant="primary" onClick={() => void enterFullscreen()}>
+            <Button
+              variant="primary"
+              hint={DEV_FULLSCREEN_HINT}
+              aria-label="Fullscreen"
+              title={`Toggle fullscreen (${DEV_FULLSCREEN_HINT})`}
+              onClick={() => void enterFullscreen()}
+            >
               Fullscreen
             </Button>
           </div>
