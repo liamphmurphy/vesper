@@ -263,4 +263,34 @@ func (s *Server) httpClientRoutes(mux *http.ServeMux) {
 		list, err := s.httpClient().ListExecutionsByRequest(r.Context(), ws, id, limit)
 		return map[string]any{"executions": list}, http.StatusOK, err
 	})
+
+	handle("POST /api/v1/http/requests/{id}/run", func(r *http.Request) (any, int, error) {
+		u, _, ws := me(r.Context())
+		id, err := httpClientID(r, "id")
+		if err != nil {
+			return nil, 0, err
+		}
+		var opts httpclient.RunOptions
+		if r.ContentLength != 0 {
+			if err := httpClientJSON(r, &opts, 4<<20); err != nil {
+				return nil, 0, err
+			}
+		}
+		exec, err := s.httpClient().RunSavedRequest(r.Context(), ws, u.ID, id, opts)
+		return exec, http.StatusOK, err
+	})
+
+	handle("POST /api/v1/http/workspaces/{id}/run", func(r *http.Request) (any, int, error) {
+		u, _, ws := me(r.Context())
+		id, err := httpClientID(r, "id")
+		if err != nil {
+			return nil, 0, err
+		}
+		var in httpclient.AdHocRunInput
+		if err := httpClientJSON(r, &in, 4<<20); err != nil {
+			return nil, 0, err
+		}
+		exec, err := s.httpClient().RunAdHocRequest(r.Context(), ws, u.ID, id, in)
+		return exec, http.StatusOK, err
+	})
 }
