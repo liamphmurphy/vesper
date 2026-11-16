@@ -220,7 +220,7 @@ func (r *Runner) runDevWorkspaceAction(ctx context.Context, row store.ClaimDevWo
 	}
 }
 
-const devWorkspaceRepoSyncBatchSize = 30
+const devWorkspaceRepoSyncBatchSize = 100
 
 func syncDevWorkspaceRepos(
 	ctx context.Context,
@@ -257,10 +257,14 @@ func (r *Runner) devWorkspaceGitEnv(ctx context.Context, workspaceID uuid.UUID) 
 	if r.Secrets == nil {
 		return nil
 	}
+	var env []string
 	if tok, err := r.Secrets.Reveal(ctx, workspaceID, nil, "git:pat"); err == nil && tok != "" {
-		return []string{"GH_TOKEN=" + tok}
+		env = append(env, "GH_TOKEN="+tok)
 	}
-	return nil
+	if key, err := r.Secrets.Reveal(ctx, workspaceID, nil, "git:ssh"); err == nil && key != "" {
+		env = append(env, SSHKeyEnv+"="+key)
+	}
+	return env
 }
 
 func (r *Runner) devWorkspaceAuthor(ctx context.Context, workspaceID, userID uuid.UUID) (string, string) {

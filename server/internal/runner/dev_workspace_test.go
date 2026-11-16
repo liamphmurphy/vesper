@@ -193,7 +193,7 @@ func TestSyncDevWorkspaceReposBatchesAndReportsProgress(t *testing.T) {
 	if len(backend.scripts) != wantBatches {
 		t.Fatalf("batches = %d, want %d", len(backend.scripts), wantBatches)
 	}
-	if steps[0] != "Syncing repositories (0/560)" || steps[len(steps)-1] != "Syncing repositories (540/560)" {
+	if steps[0] != "Syncing repositories (0/560)" || steps[len(steps)-1] != "Syncing repositories (500/560)" {
 		t.Fatalf("unexpected progress steps: first=%q last=%q", steps[0], steps[len(steps)-1])
 	}
 	for i, r := range repos {

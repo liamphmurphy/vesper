@@ -287,18 +287,48 @@ func ValidateBranchName(raw string) (string, error) {
 	return b, nil
 }
 
+const githubHostKeys = `github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=
+`
+
 func writeCredentialHelperPrelude(b *strings.Builder) {
 	b.WriteString(`export GIT_TERMINAL_PROMPT=0
 helper=""
 cleanup_helper() { [ -n "$helper" ] && rm -f "$helper"; }
 trap cleanup_helper EXIT
+if [ -n "${LAZYAGENTS_SSH_KEY:-}" ]; then
+  mkdir -p /home/node/.ssh
+  chmod 700 /home/node/.ssh
+  (umask 077; printf '%s\n' "$LAZYAGENTS_SSH_KEY" > /home/node/.ssh/id_vesper)
+  cat > /home/node/.ssh/known_hosts <<'VESPER_KNOWN_HOSTS'
+` + githubHostKeys + `VESPER_KNOWN_HOSTS
+  (umask 077; cat > /home/node/.ssh/config <<'VESPER_SSH_CFG'
+Host github.com
+  HostName github.com
+  User git
+  IdentityFile /home/node/.ssh/id_vesper
+  IdentitiesOnly yes
+  UserKnownHostsFile /home/node/.ssh/known_hosts
+  StrictHostKeyChecking yes
+  ControlMaster auto
+  ControlPath /home/node/.ssh/cm-%r@%h:%p
+  ControlPersist 60s
+VESPER_SSH_CFG
+)
+  git config --global url."git@github.com:".insteadOf "https://github.com/"
+  export GIT_SSH_COMMAND="ssh -o BatchMode=yes"
+else
+  rm -f /home/node/.ssh/id_vesper
+  git config --global --unset-all url."git@github.com:".insteadOf 2>/dev/null || true
+fi
 if [ -n "${GH_TOKEN:-}" ]; then
   helper=$(mktemp)
   chmod 700 "$helper"
   printf '#!/bin/sh\necho "username=x-access-token"\necho "password=%s"\n' "$GH_TOKEN" > "$helper"
 fi
+export helper
 git_net() {
-  if [ -n "$helper" ]; then
+  if [ -n "${helper:-}" ]; then
     git -c credential.helper= -c "credential.helper=$helper" "$@" </dev/null
   else
     git "$@" </dev/null
@@ -316,12 +346,12 @@ func writeGitConfigAuthor(b *strings.Builder, destExpr, userName, userEmail stri
 	}
 }
 
-const syncConcurrency = 6
+const syncConcurrency = 12
 
 // SyncReposScript returns a shell script that clones any missing repositories
-// into /workspace/<directory> and fetches existing ones without storing git
-// credentials on disk. Repos run with bounded concurrency so large sets finish
-// within a single step and report any failing clones together.
+// into /workspace/<directory> and fetches existing ones without storing HTTPS
+// tokens on disk. Repos run in a 12-worker xargs pool so large sets finish
+// quickly and report any failing clones together.
 func SyncReposScript(repos []RepoSpec, userName, userEmail string) string {
 	var b strings.Builder
 	b.WriteString("set -eu\numask 022\n")
@@ -331,31 +361,32 @@ func SyncReposScript(repos []RepoSpec, userName, userEmail string) string {
 	}
 	writeCredentialHelperPrelude(&b)
 	b.WriteString("fail_log=$(mktemp)\n")
-	b.WriteString("cleanup_sync() {\n  cleanup_helper\n  rm -f \"$fail_log\"\n}\n")
+	b.WriteString("sync_one=$(mktemp)\n")
+	b.WriteString("export fail_log\n")
+	b.WriteString("cleanup_sync() {\n  cleanup_helper\n  rm -f \"$fail_log\" \"$sync_one\"\n}\n")
 	b.WriteString("trap cleanup_sync EXIT\n")
-	b.WriteString("sync_repo() {\n")
-	b.WriteString("  url=\"$1\"\n")
-	b.WriteString("  dest=\"$2\"\n")
-	b.WriteString("  if [ ! -d \"$dest/.git\" ]; then\n")
-	b.WriteString("    if ! err=$(git_net clone --quiet -- \"$url\" \"$dest\" 2>&1); then\n")
-	b.WriteString("      printf '%s\\n' \"$dest ($url): $err\" >> \"$fail_log\"\n")
-	b.WriteString("      return 1\n")
-	b.WriteString("    fi\n")
-	writeGitConfigAuthor(&b, "\"$dest\"", userName, userEmail)
-	b.WriteString("  else\n")
-	b.WriteString("    git_net -C \"$dest\" fetch --quiet --all --prune || true\n")
+	b.WriteString("cat > \"$sync_one\" <<'VESPER_SYNC_ONE'\n")
+	b.WriteString("#!/bin/sh\nset -eu\numask 022\n")
+	b.WriteString("git_net() {\n  if [ -n \"${helper:-}\" ]; then\n    git -c credential.helper= -c \"credential.helper=$helper\" \"$@\" </dev/null\n  else\n    git \"$@\" </dev/null\n  fi\n}\n")
+	b.WriteString("url=\"$1\"\ndest=\"$2\"\n")
+	b.WriteString("if [ ! -d \"$dest/.git\" ]; then\n")
+	b.WriteString("  if ! err=$(git_net clone --quiet -- \"$url\" \"$dest\" 2>&1); then\n")
+	b.WriteString("    printf '%s\\n' \"$dest ($url): $err\" >> \"$fail_log\"\n")
+	b.WriteString("    exit 0\n")
 	b.WriteString("  fi\n")
-	b.WriteString("}\n")
+	writeGitConfigAuthor(&b, "\"$dest\"", userName, userEmail)
+	b.WriteString("else\n")
+	b.WriteString("  git_net -C \"$dest\" fetch --quiet --prune --no-tags origin || true\n")
+	b.WriteString("fi\n")
+	b.WriteString("VESPER_SYNC_ONE\n")
 
-	for i := 0; i < len(repos); i += syncConcurrency {
-		end := min(i+syncConcurrency, len(repos))
-		b.WriteString("pids=\"\"\n")
-		for _, r := range repos[i:end] {
-			dest := "/workspace/" + r.Directory
-			b.WriteString("sync_repo " + shellQuote(r.RepoURL) + " " + shellQuote(dest) + " & pids=\"$pids $!\"\n")
-		}
-		b.WriteString("for p in $pids; do wait \"$p\" || true; done\n")
+	b.WriteString(fmt.Sprintf("xargs -P %d -n 2 sh \"$sync_one\" <<'VESPER_REPOS'\n", syncConcurrency))
+	for _, r := range repos {
+		dest := "/workspace/" + r.Directory
+		b.WriteString(shellQuote(r.RepoURL) + " " + shellQuote(dest) + "\n")
 	}
+	b.WriteString("VESPER_REPOS\n")
+
 	b.WriteString("if [ -s \"$fail_log\" ]; then\n")
 	b.WriteString("  cat \"$fail_log\" >&2\n")
 	b.WriteString("  exit 1\n")
