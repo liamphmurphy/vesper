@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Vesper</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #141221;
+        --surface: #1d1a2f;
+        --surface-2: #25213b;
+        --border: rgba(247, 245, 255, 0.12);
+        --fg: #f7f5ff;
+        --fg-muted: #b3add0;
+        --accent: #8c78ec;
+        --accent-hover: #9f8ef2;
+        --amber: #f2a97e;
+        --green: #6ad4a4;
+        --red: #f27e8d;
+      }
+
+      @media (prefers-color-scheme: light) {
+        :root {
+          --bg: #f6f4fc;
+          --surface: #ffffff;
+          --surface-2: #f1eef9;
+          --border: rgba(28, 23, 69, 0.12);
+          --fg: #1c1745;
+          --fg-muted: #5a547a;
+          --accent: #6854c7;
+          --accent-hover: #5844b8;
+          --amber: #c96c35;
+          --green: #1e8f5c;
+          --red: #c43b4d;
+        }
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--fg);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 32px 20px;
+        -webkit-app-region: drag;
+      }
+
+      .card {
+        -webkit-app-region: no-drag;
+        width: 100%;
+        max-width: 480px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 28px;
+        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.28);
+      }
+
+      .header {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-bottom: 18px;
+      }
+
+      .header h1 {
+        margin: 0;
+        font-size: 19px;
+        font-weight: 650;
+        letter-spacing: -0.01em;
+      }
+
+      .subtitle {
+        margin: 2px 0 0;
+        font-size: 13px;
+        color: var(--fg-muted);
+      }
+
+      .status-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12.5px;
+        font-weight: 600;
+        padding: 6px 11px;
+        border-radius: 999px;
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        margin-bottom: 14px;
+      }
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--amber);
+      }
+
+      .dot.checking {
+        background: var(--accent);
+      }
+
+      .dot.reachable {
+        background: var(--green);
+      }
+
+      .dot.unreachable {
+        background: var(--red);
+      }
+
+      .detail {
+        margin: 0 0 18px;
+        font-size: 13px;
+        line-height: 1.5;
+        color: var(--fg-muted);
+        word-break: break-word;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-bottom: 22px;
+      }
+
+      button {
+        font: inherit;
+        font-size: 13px;
+        font-weight: 600;
+        border-radius: 9px;
+        padding: 8px 14px;
+        border: 1px solid var(--border);
+        background: var(--surface-2);
+        color: var(--fg);
+        cursor: pointer;
+      }
+
+      button:hover:not(:disabled) {
+        filter: brightness(1.06);
+      }
+
+      button:disabled {
+        opacity: 0.55;
+        cursor: default;
+      }
+
+      button.primary {
+        background: var(--accent);
+        border-color: transparent;
+        color: #ffffff;
+      }
+
+      button.primary:hover:not(:disabled) {
+        background: var(--accent-hover);
+      }
+
+      form {
+        border-top: 1px solid var(--border);
+        padding-top: 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      label {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--fg-muted);
+      }
+
+      .input-row {
+        display: flex;
+        gap: 8px;
+      }
+
+      input[type="text"],
+      input[type="url"] {
+        flex: 1;
+        min-width: 0;
+        font: inherit;
+        font-size: 13px;
+        padding: 8px 11px;
+        border-radius: 9px;
+        border: 1px solid var(--border);
+        background: var(--surface-2);
+        color: var(--fg);
+        outline: none;
+      }
+
+      input:focus {
+        border-color: var(--accent);
+      }
+
+      .hint {
+        margin: 0;
+        font-size: 12px;
+        color: var(--fg-muted);
+      }
+
+      .error-text {
+        margin: 0;
+        font-size: 12px;
+        color: var(--red);
+        min-height: 16px;
+      }
+
+      .hidden {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <div class="header">
+        <svg xmlns="http://www.w3.org/2000/svg" width="42" height="42" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <defs>
+            <linearGradient id="dusk" x1="32" y1="0" x2="32" y2="64" gradientUnits="userSpaceOnUse">
+              <stop stop-color="#2B2366" />
+              <stop offset=".62" stop-color="#7864D9" />
+              <stop offset="1" stop-color="#F2A97E" />
+            </linearGradient>
+            <clipPath id="tile"><rect width="64" height="64" rx="18" /></clipPath>
+          </defs>
+          <g clip-path="url(#tile)">
+            <rect width="64" height="64" fill="url(#dusk)" />
+            <path d="M32 12c1.2 8.6 3.4 10.8 12 12-8.6 1.2-10.8 3.4-12 12-1.2-8.6-3.4-10.8-12-12 8.6-1.2 10.8-3.4 12-12Z" fill="#FFF6DD" />
+            <path d="M-4 52c12-6 24-8 36-8s24 2 36 8v16H-4Z" fill="#1C1745" />
+          </g>
+        </svg>
+        <div>
+          <h1 id="page-title">Connecting to Vesper</h1>
+          <p class="subtitle" id="target-url">http://localhost:8080</p>
+        </div>
+      </div>
+
+      <div class="status-pill" role="status" aria-live="polite">
+        <span class="dot checking" id="status-dot"></span>
+        <span id="status-label">Checking server…</span>
+      </div>
+
+      <p class="detail" id="status-detail">
+        Waiting for your local OrbStack/Docker stack or remote Vesper host.
+      </p>
+
+      <div class="actions">
+        <button type="button" class="primary" id="retry-btn">Retry now</button>
+        <button type="button" class="hidden" id="open-btn">Open Vesper</button>
+      </div>
+
+      <form id="url-form">
+        <label for="server-url-input">Vesper Server URL</label>
+        <div class="input-row">
+          <input
+            id="server-url-input"
+            type="url"
+            placeholder="http://localhost:8080 or https://vesper.tailnet.ts.net"
+            autocomplete="off"
+            spellcheck="false"
+            required
+          />
+          <button type="submit" id="save-url-btn">Save &amp; Connect</button>
+        </div>
+        <p class="hint">
+          Use <code>http://localhost:8080</code> for local OrbStack/Docker, or your remote Tailscale URL.
+        </p>
+        <p class="error-text" id="form-error" role="alert"></p>
+      </form>
+    </main>
+
+    <script src="./offline.js"></script>
+  </body>
+</html>

@@ -1,0 +1,18 @@
+{
+  "name": "vesper-desktop",
+  "version": "0.1.0",
+  "description": "macOS Electron desktop client for Vesper",
+  "private": true,
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "start": "npm run build && electron .",
+    "dev": "npm run build && electron ."
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "electron": "^45.3.3",
+    "typescript": "^5.8.3"
+  }
+}
