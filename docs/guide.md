@@ -11,6 +11,8 @@ cp .env.example .env
 docker compose up --build      # → http://localhost:8080
 ```
 
+For a native macOS desktop window with Cocoa tabs, Dock badges, and macOS notifications, see the [macOS Electron desktop client guide](../desktop/README.md).
+
 The first boot creates an empty workspace with one local user and an Assistant
 with all persona permissions enabled. A signed-in browser acts as that user.
 The first visit opens the Welcome Wizard in the new-chat welcome, hosted by

@@ -2,7 +2,7 @@
 SHELL := /bin/bash
 COMPOSE_DEV := docker compose -f docker-compose.dev.yml
 
-.PHONY: help up down start setup signin login claude-login codex-login github-login stop-dev dev dev-infra api web web-deps runner stop-host-runners gen gen-check test lint build reset
+.PHONY: help up down start setup signin login claude-login codex-login github-login stop-dev dev dev-infra api web web-deps runner stop-host-runners gen gen-check test lint build reset desktop-deps desktop-dev desktop-dmg desktop-dmg-universal
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-13s %s\n", $$1, $$2}'
@@ -118,3 +118,20 @@ build: web-deps ## Build both apps
 reset: ## Delete dev volumes (all local data)
 	$(RUNNER_COMPOSE) down -v
 	docker compose down -v
+
+DESKTOP_DEPS := desktop/node_modules/.package-lock.json
+
+$(DESKTOP_DEPS): desktop/package-lock.json
+	cd desktop && npm ci
+	@touch $@
+
+desktop-deps: $(DESKTOP_DEPS) ## Install desktop Electron dependencies if the lockfile changed
+
+desktop-dev: desktop-deps ## Build and launch the Electron desktop client
+	cd desktop && npm run start
+
+desktop-dmg: desktop-deps ## Package macOS Apple Silicon Vesper.dmg (run on macOS)
+	cd desktop && npm run dmg
+
+desktop-dmg-universal: desktop-deps ## Package macOS universal Vesper.dmg (run on macOS)
+	cd desktop && npm run dmg:universal
