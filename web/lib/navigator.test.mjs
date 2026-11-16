@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { claimNavigator, currentArea, navigatorClaimed, navigatorSlot, setNavigatorSlot, subscribeNavigator } from "./navigator.ts";
+import { claimNavigator, currentArea, isSidebarToggleShortcut, navigatorClaimed, navigatorSlot, setNavigatorSlot, subscribeNavigator } from "./navigator.ts";
 
 test("a path selects its area on the icon row", () => {
   assert.equal(currentArea("/"), "chat");
@@ -39,4 +39,14 @@ test("the column's middle is claimed while any screen holds it, and tells its li
   setNavigatorSlot(null);
   assert.equal(calls, 6); // two claims, two releases, the slot set and cleared
   off();
+});
+
+test("isSidebarToggleShortcut matches Cmd/Ctrl+Shift+Backslash only", () => {
+  const mk = (over = {}) => ({ key: "|", code: "Backslash", metaKey: false, ctrlKey: true, altKey: false, shiftKey: true, ...over });
+  assert.equal(isSidebarToggleShortcut(mk()), true);
+  assert.equal(isSidebarToggleShortcut(mk({ metaKey: true, ctrlKey: false, key: "\\" })), true);
+  assert.equal(isSidebarToggleShortcut(mk({ shiftKey: false, key: "\\" })), false);
+  assert.equal(isSidebarToggleShortcut(mk({ altKey: true })), false);
+  assert.equal(isSidebarToggleShortcut(mk({ metaKey: false, ctrlKey: false })), false);
+  assert.equal(isSidebarToggleShortcut(mk({ key: "k", code: "KeyK" })), false);
 });

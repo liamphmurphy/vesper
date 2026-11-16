@@ -11,6 +11,21 @@ import { inAppsMenu, isActive } from "./project-scope.ts";
  */
 export const NAVIGATOR_WIDTH = "w-[248px]";
 
+export const SIDEBAR_TOGGLE_HINT = "⌘⇧\\";
+
+/** ⌘⇧\ (or Ctrl+Shift+\) toggles the left navigation column's collapsed state. */
+export function isSidebarToggleShortcut(e: {
+  key: string;
+  code?: string;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+  shiftKey: boolean;
+}): boolean {
+  if (!(e.metaKey || e.ctrlKey) || !e.shiftKey || e.altKey) return false;
+  return e.code === "Backslash" || e.key === "|" || e.key === "\\";
+}
+
 /** The areas on the column's icon row, in order. Apps is the flyout of Custom Apps and tools. */
 export type Area = "chat" | "work" | "runs" | "tickets" | "knowledge" | "library" | "apps";
 

@@ -38,6 +38,21 @@ export function devWorkspaceStatusLabel(ws: Pick<DevWorkspace, "enabled" | "stat
 
 export const FULLSCREEN_LOCK_KEYS = ["Escape", "KeyW", "KeyT", "KeyN"] as const;
 
+export const DEV_FULLSCREEN_HINT = "⌘⇧↵";
+
+/** ⌘⇧↵ (or Ctrl+Shift+Enter) toggles Dev workspace fullscreen. */
+export function isDevFullscreenShortcut(e: {
+  key: string;
+  code?: string;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+  shiftKey: boolean;
+}): boolean {
+  if (!(e.metaKey || e.ctrlKey) || !e.shiftKey || e.altKey) return false;
+  return e.key === "Enter" || e.code === "Enter";
+}
+
 export function fullscreenExitHint(native: boolean, keyboardLocked: boolean): string {
   if (native && keyboardLocked) return "Hold Esc to exit";
   if (native) return "Esc or Exit";
@@ -94,6 +109,8 @@ export function devTerminalShortcutGroups(tmuxPrefix?: TmuxPrefix): TerminalShor
     {
       title: "Browser & Fullscreen",
       items: [
+        { keys: "Cmd/Ctrl+Shift+Enter", description: "Toggle fullscreen" },
+        { keys: "Cmd/Ctrl+Shift+\\", description: "Toggle left sidebar" },
         { keys: "Fullscreen", description: "Locks Esc, Ctrl+W/T/N to Neovim (Chromium)" },
         { keys: "Hold Esc (1.5s)", description: "Exit native fullscreen" },
         { keys: "Ctrl+K", description: "Sent to terminal while focused" },

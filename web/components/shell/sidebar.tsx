@@ -2,12 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { SetupProgress } from "@/components/domain/setup-progress";
 import { cx } from "@/lib/cx";
 import { useNavCounts } from "@/lib/use-nav-counts";
 import { type NavBadge } from "@/lib/project-scope";
-import { currentArea, navigatorClaimed, setNavigatorSlot, subscribeNavigator, NAVIGATOR_WIDTH, type Area } from "@/lib/navigator";
+import { currentArea, isSidebarToggleShortcut, navigatorClaimed, setNavigatorSlot, SIDEBAR_TOGGLE_HINT, subscribeNavigator, NAVIGATOR_WIDTH, type Area } from "@/lib/navigator";
 import { badgeLabel } from "@/lib/tab-bar";
 import { viewedChatId } from "@/lib/persona-dock";
 import { Icon, type IconName } from "@/components/ui/icon";
@@ -28,7 +28,7 @@ const AREAS: { area: Exclude<Area, "apps">; href: string; label: string; icon: I
 const COLLAPSED_KEY = "lazyagents.column-collapsed";
 
 /** The column starts expanded; collapsing it to the strip is remembered per browser, for every screen. */
-function useCollapsed(): [boolean, (v: boolean) => void] {
+function useCollapsed(): [boolean, (v: boolean) => void, () => void] {
   const [collapsed, setCollapsed] = useState(false);
   // Read after mount so the server render (always expanded) matches the first client render.
   useEffect(() => {
@@ -39,22 +39,32 @@ function useCollapsed(): [boolean, (v: boolean) => void] {
       /* No storage: stays expanded. */
     }
   }, []);
-  const set = (v: boolean) => {
-    setCollapsed(v);
+  const persist = useCallback((v: boolean) => {
     try {
       if (v) localStorage.setItem(COLLAPSED_KEY, "1");
       else localStorage.removeItem(COLLAPSED_KEY);
     } catch {
       /* Not remembered. */
     }
-  };
-  return [collapsed, set];
+  }, []);
+  const set = useCallback((v: boolean) => {
+    setCollapsed(v);
+    persist(v);
+  }, [persist]);
+  const toggle = useCallback(() => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      persist(next);
+      return next;
+    });
+  }, [persist]);
+  return [collapsed, set, toggle];
 }
 
 function CollapseButton({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const label = collapsed ? "Expand sidebar" : "Collapse sidebar";
   return (
-    <button type="button" aria-label={label} aria-expanded={!collapsed} title={label} onClick={onToggle}
+    <button type="button" aria-label={label} aria-expanded={!collapsed} title={`${label} (${SIDEBAR_TOGGLE_HINT})`} onClick={onToggle}
       className="grid size-[30px] flex-none place-items-center rounded-md text-fg-tertiary hover:bg-hover hover:text-fg">
       <Icon name="sidebar" size={15} />
     </button>
@@ -137,13 +147,30 @@ function ChatsList({ viewed }: { viewed: string | null }) {
 export function Sidebar() {
   const pathname = usePathname();
   const counts = useNavCounts();
-  const [collapsed, setCollapsed] = useCollapsed();
+  const [collapsed, setCollapsed, toggleCollapsed] = useCollapsed();
   // The chat's ⌘. reading focus hides the column altogether, leaving the preference alone.
   const readingFocus = useReadingFocus();
   const claimed = useSyncExternalStore(subscribeNavigator, navigatorClaimed, () => false);
   const [creatingSpace, setCreatingSpace] = useState(false);
   const viewed = viewedChatId(pathname);
   const newSpace = () => setCreatingSpace(true);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || readingFocus || !isSidebarToggleShortcut(e)) return;
+      if (document.querySelector('[role="dialog"],[role="menu"],[role="listbox"]:not([hidden])')) return;
+      e.preventDefault();
+      toggleCollapsed();
+    };
+    const onToggle = () => {
+      if (!readingFocus) toggleCollapsed();
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("la:toggle-sidebar", onToggle);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("la:toggle-sidebar", onToggle);
+    };
+  }, [readingFocus, toggleCollapsed]);
   if (readingFocus) return null;
 
   if (collapsed) {

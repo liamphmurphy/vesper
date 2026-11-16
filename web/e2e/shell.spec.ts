@@ -357,3 +357,46 @@ test("C opens New ticket only in Work when no menu is open, and space filter lis
   await page.locator("body").press("c");
   await expect(page).toHaveURL(/\/tickets\/new\?project=WEB$/);
 });
+
+test("keyboard shortcuts toggle left sidebar collapse and Dev workspace fullscreen with hint", async ({ page }) => {
+  await installChatApi(page);
+  await page.route("**/api/v1/dev-workspace", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        enabled: true,
+        nix_mode: "default",
+        repos: [],
+        extra_packages: [],
+        tmux_prefix: "C-b",
+        state: "ready",
+        action: null,
+        step: null,
+        error: null,
+        port: null,
+        arch: null,
+        updated_at: new Date().toISOString(),
+      }),
+    }),
+  );
+  await page.goto("/chat");
+  const menu = page.getByRole("complementary", { name: "Main menu" });
+  await expect(menu).toHaveAttribute("data-expanded");
+
+  await page.keyboard.press("Control+Shift+Backslash");
+  await expect(menu).not.toHaveAttribute("data-expanded");
+  await page.keyboard.press("Control+Shift+Backslash");
+  await expect(menu).toHaveAttribute("data-expanded");
+
+  await page.goto("/dev");
+  const fsBtn = page.getByRole("button", { name: "Fullscreen" });
+  await expect(fsBtn).toBeVisible();
+  await expect(fsBtn).toContainText("⌘⇧↵");
+  await page.keyboard.press("Control+Shift+Enter");
+  const exitBtn = page.getByRole("button", { name: "Exit" });
+  await expect(exitBtn).toBeVisible();
+  await expect(exitBtn).toContainText("⌘⇧↵");
+  await page.keyboard.press("Control+Shift+Enter");
+  await expect(fsBtn).toBeVisible();
+});
