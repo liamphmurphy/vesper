@@ -111,6 +111,7 @@ type Gateway struct {
 
 	mu       sync.RWMutex
 	live     map[int]*Live
+	custom   map[int]http.Handler
 	sessions sync.Map // sha256(token) → time.Time the check expires
 }
 
@@ -157,9 +158,37 @@ func (g *Gateway) Serving(port int) *Live {
 // LastUsed is when the person last made a request to the playground.
 func (p *Live) LastUsed() time.Time { return time.Unix(0, p.lastUsed.Load()) }
 
+// RegisterCustomHandler attaches a dedicated handler (such as a dev-workspace
+// WebSocket PTY) to a gateway port.
+func (g *Gateway) RegisterCustomHandler(port int, h http.Handler) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.custom == nil {
+		g.custom = map[int]http.Handler{}
+	}
+	g.custom[port] = h
+}
+
+// UnregisterCustomHandler removes any custom handler registered on port.
+func (g *Gateway) UnregisterCustomHandler(port int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	delete(g.custom, port)
+}
+
+func (g *Gateway) customHandler(port int) http.Handler {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.custom[port]
+}
+
 // Handler serves one port.
 func (g *Gateway) Handler(port int) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if ch := g.customHandler(port); ch != nil {
+			ch.ServeHTTP(w, r)
+			return
+		}
 		p := g.Serving(port)
 		if p == nil {
 			page(w, http.StatusServiceUnavailable, "No playground is running here", "Start it again from its chat in Vesper.")
