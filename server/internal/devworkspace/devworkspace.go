@@ -117,9 +117,10 @@ func validTmuxPrefix(p string) string {
 
 // WriteShellConfigScript writes ~/.zshenv (preserving Nix PATH and ZSH),
 // ~/.zshrc (using customZshrc when non-empty, or the default oh-my-zsh config),
-// and ~/.tmux.conf (using customTmuxConf when non-empty, or the default config
-// with the chosen prefix, reloading a running tmux server).
-func WriteShellConfigScript(customZshrc, tmuxPrefix, customTmuxConf string) string {
+// ~/.tmux.conf (using customTmuxConf when non-empty, or the default config
+// with the chosen prefix, reloading a running tmux server), and ~/.gitconfig
+// (when customGitconfig is non-empty, removing it when cleared).
+func WriteShellConfigScript(customZshrc, tmuxPrefix, customTmuxConf, customGitconfig string) string {
 	var b strings.Builder
 	b.WriteString("set -eu\n")
 	_ = writeEmbeddedFile(&b, "defaults/zshenv", "/home/node/.zshenv")
@@ -137,6 +138,11 @@ func WriteShellConfigScript(customZshrc, tmuxPrefix, customTmuxConf string) stri
 			tmuxConf = append(tmuxConf, []byte("\nunbind C-b\nset -g prefix "+prefix+"\nbind "+prefix+" send-prefix\n")...)
 		}
 		writeContent(&b, tmuxConf, "/home/node/.tmux.conf")
+	}
+	if strings.TrimSpace(customGitconfig) != "" {
+		writeContent(&b, []byte(customGitconfig), "/home/node/.gitconfig")
+	} else {
+		b.WriteString("rm -f /home/node/.gitconfig\n")
 	}
 	b.WriteString("tmux source-file /home/node/.tmux.conf >/dev/null 2>&1 || true\n")
 	return b.String()
@@ -185,10 +191,10 @@ func RenderFlakeNix(extraPackages []string) string {
 }
 
 // SetupNixScript returns a shell script that writes the default Nix flake
-// (including any extraPackages), LazyVim config, and shell/tmux config into
+// (including any extraPackages), LazyVim config, and shell/tmux/git config into
 // /home/node, then installs the Nix profile if the env hash changed or
 // forceRebuild is true (refreshing the nixos-unstable flake lock on rebuild).
-func SetupNixScript(forceRebuild bool, customZshrc, tmuxPrefix, customTmuxConf string, extraPackages []string) string {
+func SetupNixScript(forceRebuild bool, customZshrc, tmuxPrefix, customTmuxConf, customGitconfig string, extraPackages []string) string {
 	hash := EnvHash(extraPackages)
 	var b strings.Builder
 	b.WriteString("set -eu\n")
@@ -196,7 +202,7 @@ func SetupNixScript(forceRebuild bool, customZshrc, tmuxPrefix, customTmuxConf s
 	writeContent(&b, []byte(RenderFlakeNix(extraPackages)), "/home/node/.config/vesper-dev/flake.nix")
 	_ = writeEmbeddedFile(&b, "defaults/profile", "/home/node/.profile")
 	_ = writeEmbeddedFile(&b, "defaults/bashrc", "/home/node/.bashrc")
-	b.WriteString(WriteShellConfigScript(customZshrc, tmuxPrefix, customTmuxConf))
+	b.WriteString(WriteShellConfigScript(customZshrc, tmuxPrefix, customTmuxConf, customGitconfig))
 	_ = writeEmbeddedFile(&b, "defaults/nvim/init.lua", "/home/node/.config/nvim/init.lua")
 	_ = writeEmbeddedFile(&b, "defaults/nvim/lua/config/lazy.lua", "/home/node/.config/nvim/lua/config/lazy.lua")
 	_ = writeEmbeddedFile(&b, "defaults/nvim/lua/config/options.lua", "/home/node/.config/nvim/lua/config/options.lua")
@@ -315,11 +321,12 @@ Host github.com
   ControlPersist 60s
 VESPER_SSH_CFG
 )
-  git config --global url."git@github.com:".insteadOf "https://github.com/"
+  mkdir -p /home/node/.config/git
+  git config --file /home/node/.config/git/config url."git@github.com:".insteadOf "https://github.com/"
   export GIT_SSH_COMMAND="ssh -o BatchMode=yes"
 else
   rm -f /home/node/.ssh/id_vesper
-  git config --global --unset-all url."git@github.com:".insteadOf 2>/dev/null || true
+  git config --file /home/node/.config/git/config --unset-all url."git@github.com:".insteadOf 2>/dev/null || true
 fi
 if [ -n "${GH_TOKEN:-}" ]; then
   helper=$(mktemp)
@@ -339,19 +346,19 @@ git_net() {
 
 func writeGitConfigAuthor(b *strings.Builder, destExpr, userName, userEmail string) {
 	if userName != "" {
-		b.WriteString("    git -C " + destExpr + " config user.name " + shellQuote(userName) + "\n")
+		b.WriteString("    if ! git -C " + destExpr + " config user.name >/dev/null 2>&1; then git -C " + destExpr + " config user.name " + shellQuote(userName) + "; fi\n")
 	}
 	if userEmail != "" {
-		b.WriteString("    git -C " + destExpr + " config user.email " + shellQuote(userEmail) + "\n")
+		b.WriteString("    if ! git -C " + destExpr + " config user.email >/dev/null 2>&1; then git -C " + destExpr + " config user.email " + shellQuote(userEmail) + "; fi\n")
 	}
 }
 
 const syncConcurrency = 12
 
-// SyncReposScript returns a shell script that clones any missing repositories
-// into /workspace/<directory> and fetches existing ones without storing HTTPS
-// tokens on disk. Repos run in a 12-worker xargs pool so large sets finish
-// quickly and report any failing clones together.
+// SyncReposScript returns a shell script that ensures missing repositories are
+// cloned into /workspace/<directory> without storing HTTPS tokens on disk.
+// Already-cloned directories (containing .git) are skipped so env rebuilds and
+// restarts do not re-pull every repo; missing repos clone in a 12-worker pool.
 func SyncReposScript(repos []RepoSpec, userName, userEmail string) string {
 	var b strings.Builder
 	b.WriteString("set -eu\numask 022\n")
@@ -362,10 +369,21 @@ func SyncReposScript(repos []RepoSpec, userName, userEmail string) string {
 	writeCredentialHelperPrelude(&b)
 	b.WriteString("fail_log=$(mktemp)\n")
 	b.WriteString("sync_one=$(mktemp)\n")
+	b.WriteString("missing_list=$(mktemp)\n")
 	b.WriteString("export fail_log\n")
-	b.WriteString("cleanup_sync() {\n  cleanup_helper\n  rm -f \"$fail_log\" \"$sync_one\"\n}\n")
+	b.WriteString("cleanup_sync() {\n  cleanup_helper\n  rm -f \"$fail_log\" \"$sync_one\" \"$missing_list\"\n}\n")
 	b.WriteString("trap cleanup_sync EXIT\n")
-	b.WriteString("cat > \"$sync_one\" <<'VESPER_SYNC_ONE'\n")
+	b.WriteString("while IFS= read -r url && IFS= read -r dest; do\n")
+	b.WriteString("  if [ ! -d \"$dest/.git\" ]; then\n")
+	b.WriteString("    printf '%s\\n%s\\n' \"$url\" \"$dest\" >> \"$missing_list\"\n")
+	b.WriteString("  fi\n")
+	b.WriteString("done <<'VESPER_REPOS'\n")
+	for _, r := range repos {
+		b.WriteString(r.RepoURL + "\n/workspace/" + r.Directory + "\n")
+	}
+	b.WriteString("VESPER_REPOS\n")
+	b.WriteString("if [ -s \"$missing_list\" ]; then\n")
+	b.WriteString("  cat > \"$sync_one\" <<'VESPER_SYNC_ONE'\n")
 	b.WriteString("#!/bin/sh\nset -eu\numask 022\n")
 	b.WriteString("git_net() {\n  if [ -n \"${helper:-}\" ]; then\n    git -c credential.helper= -c \"credential.helper=$helper\" \"$@\" </dev/null\n  else\n    git \"$@\" </dev/null\n  fi\n}\n")
 	b.WriteString("url=\"$1\"\ndest=\"$2\"\n")
@@ -375,17 +393,10 @@ func SyncReposScript(repos []RepoSpec, userName, userEmail string) string {
 	b.WriteString("    exit 0\n")
 	b.WriteString("  fi\n")
 	writeGitConfigAuthor(&b, "\"$dest\"", userName, userEmail)
-	b.WriteString("else\n")
-	b.WriteString("  git_net -C \"$dest\" fetch --quiet --prune --no-tags origin || true\n")
 	b.WriteString("fi\n")
 	b.WriteString("VESPER_SYNC_ONE\n")
-
-	b.WriteString(fmt.Sprintf("xargs -P %d -n 2 sh \"$sync_one\" <<'VESPER_REPOS'\n", syncConcurrency))
-	for _, r := range repos {
-		dest := "/workspace/" + r.Directory
-		b.WriteString(shellQuote(r.RepoURL) + " " + shellQuote(dest) + "\n")
-	}
-	b.WriteString("VESPER_REPOS\n")
+	b.WriteString(fmt.Sprintf("  tr '\\n' '\\0' < \"$missing_list\" | xargs -0 -P %d -n 2 sh \"$sync_one\"\n", syncConcurrency))
+	b.WriteString("fi\n")
 
 	b.WriteString("if [ -s \"$fail_log\" ]; then\n")
 	b.WriteString("  cat \"$fail_log\" >&2\n")

@@ -2,7 +2,7 @@
 SELECT * FROM dev_workspaces WHERE workspace_id = $1;
 
 -- name: UpsertDevWorkspace :one
-INSERT INTO dev_workspaces (workspace_id, user_id, enabled, nix_mode, repos, extra_packages, custom_zshrc, custom_tmux_conf, tmux_prefix, action, state, error, updated_at)
+INSERT INTO dev_workspaces (workspace_id, user_id, enabled, nix_mode, repos, extra_packages, custom_zshrc, custom_tmux_conf, custom_gitconfig, tmux_prefix, action, state, error, updated_at)
 VALUES (
   sqlc.arg(workspace_id),
   sqlc.arg(user_id),
@@ -12,6 +12,7 @@ VALUES (
   sqlc.arg(extra_packages),
   sqlc.narg(custom_zshrc),
   sqlc.narg(custom_tmux_conf),
+  sqlc.narg(custom_gitconfig),
   sqlc.arg(tmux_prefix),
   sqlc.narg(action),
   CASE WHEN sqlc.narg(action)::text IS NOT NULL THEN 'starting' ELSE 'stopped' END,
@@ -26,6 +27,7 @@ ON CONFLICT (workspace_id) DO UPDATE SET
   extra_packages = EXCLUDED.extra_packages,
   custom_zshrc = EXCLUDED.custom_zshrc,
   custom_tmux_conf = EXCLUDED.custom_tmux_conf,
+  custom_gitconfig = EXCLUDED.custom_gitconfig,
   tmux_prefix = EXCLUDED.tmux_prefix,
   action = COALESCE(sqlc.narg(action), dev_workspaces.action),
   state = CASE WHEN sqlc.narg(action)::text IS NOT NULL THEN 'starting' ELSE dev_workspaces.state END,

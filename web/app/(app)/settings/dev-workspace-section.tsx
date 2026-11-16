@@ -22,6 +22,7 @@ export function DevWorkspaceSection() {
   const [selectedOrgUrls, setSelectedOrgUrls] = useState<string[] | null>(null);
   const [zshrcDraft, setZshrcDraft] = useState<string | null>(null);
   const [tmuxConfDraft, setTmuxConfDraft] = useState<string | null>(null);
+  const [gitconfigDraft, setGitconfigDraft] = useState<string | null>(null);
   const [reposExpanded, setReposExpanded] = useState(false);
   const [repoFilter, setRepoFilter] = useState("");
   const [confirmClearAll, setConfirmClearAll] = useState(false);
@@ -302,6 +303,47 @@ export function DevWorkspaceSection() {
                 }}
               >
                 Save .tmux.conf
+              </Button>
+            </div>
+          </div>
+
+          <div className="space-y-2 pt-2">
+            <div>
+              <div className="text-12 font-medium text-fg">Custom .gitconfig</div>
+              <p className="text-12 text-fg-tertiary">
+                Leave blank to remove <code className="font-mono">~/.gitconfig</code> (Vesper’s SSH/credential settings live separately under <code className="font-mono">~/.config/git/config</code>).
+              </p>
+            </div>
+            <textarea
+              aria-label="Custom .gitconfig"
+              rows={4}
+              value={gitconfigDraft ?? (ws.custom_gitconfig ?? "")}
+              onChange={(e) => setGitconfigDraft(e.target.value)}
+              placeholder={`# Leave blank for no custom ~/.gitconfig.\n[user]\n\tname = Your Name\n\temail = you@example.com\n[pull]\n\trebase = true`}
+              className="w-full rounded-md border border-border bg-surface p-2.5 font-mono text-12 text-fg"
+            />
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {(ws.custom_gitconfig || (gitconfigDraft !== null && gitconfigDraft !== "")) && (
+                <Button
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => update.mutate({ custom_gitconfig: null }, { onSuccess: () => setGitconfigDraft(null) })}
+                >
+                  Reset to default
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                disabled={busy || gitconfigDraft === null || gitconfigDraft === (ws.custom_gitconfig ?? "")}
+                onClick={() => {
+                  const value = gitconfigDraft ?? "";
+                  update.mutate(
+                    { custom_gitconfig: value.trim() === "" ? null : value },
+                    { onSuccess: () => setGitconfigDraft(null) },
+                  );
+                }}
+              >
+                Save .gitconfig
               </Button>
             </div>
           </div>

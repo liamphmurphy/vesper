@@ -517,6 +517,7 @@ test("dev workspace configured repositories are collapsed by default, filterable
   await page.route("**/api/v1/github/review-requests*", (route) =>
     route.fulfill({ json: { items: [], configured: false } }),
   );
+  let customGitconfig: string | null = null;
   let repos = Array.from({ length: 560 }, (_, i) => {
     const name = `repo-${String(i).padStart(3, "0")}`;
     return { repo_url: `https://github.com/org/${name}`, directory: name };
@@ -524,9 +525,12 @@ test("dev workspace configured repositories are collapsed by default, filterable
   await page.route("**/api/v1/dev-workspace", async (route) => {
     const req = route.request();
     if (req.method() === "PATCH") {
-      const body = req.postDataJSON() as { repos?: string[] };
+      const body = req.postDataJSON() as { repos?: string[]; custom_gitconfig?: string | null };
       if (Array.isArray(body.repos)) {
         repos = body.repos.map((url) => ({ repo_url: url, directory: url.split("/").pop() || "repo" }));
+      }
+      if ("custom_gitconfig" in body) {
+        customGitconfig = body.custom_gitconfig ?? null;
       }
     }
     return route.fulfill({
@@ -535,6 +539,7 @@ test("dev workspace configured repositories are collapsed by default, filterable
         nix_mode: "default",
         repos,
         extra_packages: [],
+        custom_gitconfig: customGitconfig,
         tmux_prefix: "C-b",
         state: "ready",
         action: null,
@@ -549,6 +554,11 @@ test("dev workspace configured repositories are collapsed by default, filterable
 
   await page.goto("/settings#dev-workspace");
   const section = page.locator("#dev-workspace");
+  const gitconfigBox = section.getByLabel("Custom .gitconfig");
+  await gitconfigBox.fill("[pull]\n\trebase = true\n");
+  await section.getByRole("button", { name: "Save .gitconfig" }).click();
+  await expect(gitconfigBox).toHaveValue("[pull]\n\trebase = true\n");
+
   const toggle = section.getByRole("button", { name: "560 repositories configured" });
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
   await expect(section.getByText("https://github.com/org/repo-000")).toHaveCount(0);

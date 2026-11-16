@@ -9825,6 +9825,7 @@ export interface components {
             extra_packages: string[];
             custom_zshrc?: string | null;
             custom_tmux_conf?: string | null;
+            custom_gitconfig?: string | null;
             /** @enum {string} */
             tmux_prefix: "C-b" | "C-a" | "C-Space" | "C-s";
             /** @enum {string} */
@@ -9846,6 +9847,7 @@ export interface components {
             extra_packages?: string[];
             custom_zshrc?: string | null;
             custom_tmux_conf?: string | null;
+            custom_gitconfig?: string | null;
             /** @enum {string} */
             tmux_prefix?: "C-b" | "C-a" | "C-Space" | "C-s";
         };

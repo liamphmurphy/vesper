@@ -680,27 +680,28 @@ type DesignSetting struct {
 }
 
 type DevWorkspace struct {
-	WorkspaceID    uuid.UUID
-	UserID         uuid.UUID
-	Enabled        bool
-	NixMode        string
-	Repos          json.RawMessage
-	State          string
-	Action         *string
-	Step           *string
-	Error          *string
-	Port           *int32
-	RunnerID       *string
-	Stack          *string
-	Arch           *string
-	UpdatedAt      time.Time
-	CustomZshrc    *string
-	CustomTmuxConf *string
-	TmuxPrefix     string
-	ExtraPackages  json.RawMessage
-	TargetRepo     *string
-	TargetBranch   *string
-	TargetPrNumber *int32
+	WorkspaceID     uuid.UUID
+	UserID          uuid.UUID
+	Enabled         bool
+	NixMode         string
+	Repos           json.RawMessage
+	State           string
+	Action          *string
+	Step            *string
+	Error           *string
+	Port            *int32
+	RunnerID        *string
+	Stack           *string
+	Arch            *string
+	UpdatedAt       time.Time
+	CustomZshrc     *string
+	CustomTmuxConf  *string
+	TmuxPrefix      string
+	ExtraPackages   json.RawMessage
+	TargetRepo      *string
+	TargetBranch    *string
+	TargetPrNumber  *int32
+	CustomGitconfig *string
 }
 
 type DocPageRedirect struct {

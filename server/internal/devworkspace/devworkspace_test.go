@@ -38,7 +38,7 @@ func TestDeriveRepoDirsDisambiguates(t *testing.T) {
 }
 
 func TestSetupNixScriptEmbedsDefaultsAndForceRebuild(t *testing.T) {
-	s := SetupNixScript(false, "", "C-b", "", nil)
+	s := SetupNixScript(false, "", "C-b", "", "", nil)
 	for _, want := range []string{
 		"/home/node/.config/vesper-dev/flake.nix",
 		"/home/node/.config/nvim/init.lua",
@@ -47,19 +47,20 @@ func TestSetupNixScriptEmbedsDefaultsAndForceRebuild(t *testing.T) {
 		"/home/node/.zshrc",
 		"/home/node/.bashrc",
 		"/home/node/.profile",
+		"rm -f /home/node/.gitconfig",
 		"nix profile install --profile",
 	} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("SetupNixScript missing %q", want)
 		}
 	}
-	rebuild := SetupNixScript(true, "", "C-b", "", nil)
+	rebuild := SetupNixScript(true, "", "C-b", "", "", nil)
 	if !strings.Contains(rebuild, "rm -f '/home/node/.local/share/vesper-dev/env.hash' '/home/node/.config/vesper-dev/flake.lock'") {
 		t.Fatalf("forceRebuild should remove stamp and flake.lock: %s", rebuild)
 	}
-	custom := WriteShellConfigScript("export FOO=bar\n", "C-a", "set -g mouse on\n")
-	if !strings.Contains(custom, "/home/node/.zshenv") || !strings.Contains(custom, "ZXhwb3J0IEZPTz1iYXIK") || !strings.Contains(custom, "c2V0IC1nIG1vdXNlIG9uCg==") || !strings.Contains(custom, "tmux source-file") {
-		t.Fatalf("WriteShellConfigScript should write .zshenv, custom .zshrc, custom .tmux.conf, and reload tmux: %s", custom)
+	custom := WriteShellConfigScript("export FOO=bar\n", "C-a", "set -g mouse on\n", "[user]\n\tname = Liam\n")
+	if !strings.Contains(custom, "/home/node/.zshenv") || !strings.Contains(custom, "ZXhwb3J0IEZPTz1iYXIK") || !strings.Contains(custom, "c2V0IC1nIG1vdXNlIG9uCg==") || !strings.Contains(custom, "/home/node/.gitconfig") || !strings.Contains(custom, "W3VzZXJdCgluYW1lID0gTGlhbQo=") || !strings.Contains(custom, "tmux source-file") {
+		t.Fatalf("WriteShellConfigScript should write .zshenv, custom .zshrc, custom .tmux.conf, custom .gitconfig, and reload tmux: %s", custom)
 	}
 }
 
@@ -88,14 +89,17 @@ func TestSyncReposScriptClonesAndFetchesWithoutStoringTokens(t *testing.T) {
 	if !strings.Contains(s, "clone --quiet -- \"$url\" \"$dest\"") {
 		t.Fatalf("missing clone command: %s", s)
 	}
-	if !strings.Contains(s, "'https://github.com/liamphmurphy/vesper.git' '/workspace/vesper'") {
+	if !strings.Contains(s, "https://github.com/liamphmurphy/vesper.git\n/workspace/vesper\n") {
 		t.Fatalf("missing repo entry: %s", s)
 	}
-	if !strings.Contains(s, "fetch --quiet --prune --no-tags origin") {
-		t.Fatalf("missing fetch command: %s", s)
+	if strings.Contains(s, "fetch --quiet") {
+		t.Fatalf("existing repos should be skipped rather than re-fetched on every sync/rebuild: %s", s)
 	}
-	if !strings.Contains(s, "LAZYAGENTS_SSH_KEY") || !strings.Contains(s, "ControlMaster auto") || !strings.Contains(s, `url."git@github.com:".insteadOf`) {
-		t.Fatalf("missing SSH key + multiplexing + insteadOf setup: %s", s)
+	if !strings.Contains(s, "if [ -s \"$missing_list\" ]; then") {
+		t.Fatalf("expected missing_list guard so already-cloned repos skip xargs: %s", s)
+	}
+	if !strings.Contains(s, "LAZYAGENTS_SSH_KEY") || !strings.Contains(s, "ControlMaster auto") || !strings.Contains(s, `git config --file /home/node/.config/git/config url."git@github.com:".insteadOf`) {
+		t.Fatalf("missing SSH key + multiplexing + isolated insteadOf setup: %s", s)
 	}
 	if !strings.Contains(s, "GIT_TERMINAL_PROMPT=0") || !strings.Contains(s, "</dev/null") {
 		t.Fatalf("git_net must disable terminal prompts and stdin reads: %s", s)
@@ -151,7 +155,7 @@ func TestSyncReposScriptBatchesWavesForLargeSets(t *testing.T) {
 		}
 	}
 	s := SyncReposScript(repos, "Liam", "liam@example.com")
-	if !strings.Contains(s, "xargs -P 12 -n 2 sh \"$sync_one\"") {
+	if !strings.Contains(s, "xargs -0 -P 12 -n 2 sh \"$sync_one\"") {
 		t.Fatalf("expected 12-worker xargs pool:\n%s", s)
 	}
 	if !strings.Contains(s, "if [ -s \"$fail_log\" ]; then") {

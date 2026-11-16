@@ -151,6 +151,22 @@ func (s *Server) UpdateDevWorkspace(ctx context.Context, req api.UpdateDevWorksp
 		}
 	}
 
+	customGitconfig := cur.CustomGitconfig
+	if req.Body.CustomGitconfig.IsSpecified() {
+		if req.Body.CustomGitconfig.IsNull() || strings.TrimSpace(req.Body.CustomGitconfig.MustGet()) == "" {
+			if customGitconfig != nil {
+				customGitconfig = nil
+				shellChanged = true
+			}
+		} else {
+			v := req.Body.CustomGitconfig.MustGet()
+			if customGitconfig == nil || *customGitconfig != v {
+				customGitconfig = &v
+				shellChanged = true
+			}
+		}
+	}
+
 	tmuxPrefix := cur.TmuxPrefix
 	if tmuxPrefix == "" {
 		tmuxPrefix = "C-b"
@@ -174,16 +190,17 @@ func (s *Server) UpdateDevWorkspace(ctx context.Context, req api.UpdateDevWorksp
 	}
 
 	row, err := s.Q.UpsertDevWorkspace(ctx, store.UpsertDevWorkspaceParams{
-		WorkspaceID:    ws,
-		UserID:         u.ID,
-		Enabled:        enabled,
-		NixMode:        nixMode,
-		Repos:          reposJSON,
-		ExtraPackages:  extraPackagesJSON,
-		CustomZshrc:    customZshrc,
-		CustomTmuxConf: customTmuxConf,
-		TmuxPrefix:     tmuxPrefix,
-		Action:         action,
+		WorkspaceID:     ws,
+		UserID:          u.ID,
+		Enabled:         enabled,
+		NixMode:         nixMode,
+		Repos:           reposJSON,
+		ExtraPackages:   extraPackagesJSON,
+		CustomZshrc:     customZshrc,
+		CustomTmuxConf:  customTmuxConf,
+		CustomGitconfig: customGitconfig,
+		TmuxPrefix:      tmuxPrefix,
+		Action:          action,
 	})
 	if err != nil {
 		return nil, err
@@ -310,6 +327,11 @@ func devWorkspaceOut(row store.DevWorkspace) api.DevWorkspace {
 		out.CustomTmuxConf.Set(*row.CustomTmuxConf)
 	} else {
 		out.CustomTmuxConf.SetNull()
+	}
+	if row.CustomGitconfig != nil {
+		out.CustomGitconfig.Set(*row.CustomGitconfig)
+	} else {
+		out.CustomGitconfig.SetNull()
 	}
 	if row.Port != nil {
 		out.Port.Set(int(*row.Port))
