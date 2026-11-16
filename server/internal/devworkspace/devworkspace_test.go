@@ -88,11 +88,14 @@ func TestSyncReposScriptClonesAndFetchesWithoutStoringTokens(t *testing.T) {
 	if !strings.Contains(s, "clone --quiet -- \"$url\" \"$dest\"") {
 		t.Fatalf("missing clone command: %s", s)
 	}
-	if !strings.Contains(s, "sync_repo 'https://github.com/liamphmurphy/vesper.git' '/workspace/vesper'") {
-		t.Fatalf("missing sync_repo invocation: %s", s)
+	if !strings.Contains(s, "'https://github.com/liamphmurphy/vesper.git' '/workspace/vesper'") {
+		t.Fatalf("missing repo entry: %s", s)
 	}
-	if !strings.Contains(s, "fetch --quiet --all --prune") {
+	if !strings.Contains(s, "fetch --quiet --prune --no-tags origin") {
 		t.Fatalf("missing fetch command: %s", s)
+	}
+	if !strings.Contains(s, "LAZYAGENTS_SSH_KEY") || !strings.Contains(s, "ControlMaster auto") || !strings.Contains(s, `url."git@github.com:".insteadOf`) {
+		t.Fatalf("missing SSH key + multiplexing + insteadOf setup: %s", s)
 	}
 	if !strings.Contains(s, "GIT_TERMINAL_PROMPT=0") || !strings.Contains(s, "</dev/null") {
 		t.Fatalf("git_net must disable terminal prompts and stdin reads: %s", s)
@@ -148,8 +151,8 @@ func TestSyncReposScriptBatchesWavesForLargeSets(t *testing.T) {
 		}
 	}
 	s := SyncReposScript(repos, "Liam", "liam@example.com")
-	if got := strings.Count(s, "for p in $pids; do wait \"$p\" || true; done"); got != 3 {
-		t.Fatalf("expected 3 concurrency waves for 15 repos, got %d:\n%s", got, s)
+	if !strings.Contains(s, "xargs -P 12 -n 2 sh \"$sync_one\"") {
+		t.Fatalf("expected 12-worker xargs pool:\n%s", s)
 	}
 	if !strings.Contains(s, "if [ -s \"$fail_log\" ]; then") {
 		t.Fatalf("expected aggregated failure check in script")
