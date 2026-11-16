@@ -36,6 +36,7 @@ const KIND_LABELS: Record<string, string> = {
   secret_approval: "Secret approval",
   secret_expiring: "Secret expiring",
   merged: "PR merged",
+  pr_approved: "PR approved",
   drive_backup: "Backup failed",
 };
 
@@ -51,6 +52,7 @@ const NOTIFIABLE_KINDS = new Set([
   "connector_approval",
   "secret_approval",
   "merged",
+  "pr_approved",
   "drive_backup",
 ]);
 

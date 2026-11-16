@@ -781,6 +781,18 @@ type EpicCriterion struct {
 	UpdatedAt     time.Time
 }
 
+type GithubPrApproval struct {
+	ID          uuid.UUID
+	WorkspaceID uuid.UUID
+	Repository  string
+	Number      int32
+	Title       string
+	Url         string
+	Approver    string
+	ApprovedAt  time.Time
+	CreatedAt   time.Time
+}
+
 type HarnessModelListing struct {
 	WorkspaceID   uuid.UUID
 	Harness       string

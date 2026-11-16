@@ -14,7 +14,8 @@ export type InboxKind =
   | "dispatch"
   | "mention"
   | "suggestion"
-  | "merged";
+  | "merged"
+  | "pr_approved";
 
 type Item = { id: string; kind: string; created_at: string; resolved: boolean; read: boolean };
 
@@ -33,6 +34,7 @@ export const GROUPS: ReadonlyArray<{ key: string; label: string; kinds: readonly
   { key: "mention", label: "Mentions", kinds: ["mention"] },
   { key: "suggestion", label: "Wiki edits", kinds: ["suggestion"] },
   { key: "merged", label: "Merged PRs", kinds: ["merged"] },
+  { key: "pr_approved", label: "Approved PRs", kinds: ["pr_approved"] },
 ];
 
 /** Row pill label and tone: "blocked" means something broke, the rest need a person. */
@@ -53,6 +55,7 @@ export const KIND: Record<string, { label: string; tone: "human" | "blocked" | "
   secret_approval: { label: "Secret", tone: "human" },
   secret_expiring: { label: "Expiring", tone: "human" },
   merged: { label: "Merged", tone: "info" },
+  pr_approved: { label: "Approved", tone: "info" },
   drive_backup: { label: "Backup failed", tone: "blocked" },
 };
 
@@ -156,10 +159,20 @@ export function trayAction(kind: string, hasRun = true): TrayAction {
     secret_approval: "Review",
     secret_expiring: "Replace",
     drive_backup: "Open settings",
+    pr_approved: "Open on GitHub",
     blocked: "Open run",
     stalled: "Open run",
   };
   return { type: "open", label: label[kind] ?? "Open" };
+}
+
+/** An item's href is an app route, except a GitHub pull request's, which is a full URL. */
+export const isExternalHref = (href: string) => /^https?:\/\//.test(href);
+
+/** Open an item: an app route through the router, an external link in a new tab. */
+export function openHref(href: string, push: (path: string) => void) {
+  if (isExternalHref(href)) window.open(href, "_blank", "noopener,noreferrer");
+  else push(href);
 }
 
 /** The approval's id from its inbox id ("approval:<uuid>"), for /approvals/{id}/{decision}. */

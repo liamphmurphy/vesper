@@ -14,7 +14,7 @@ import { Icon } from "@/components/ui/icon";
 import { EmptyState, Kbd, Skeleton, TextArea } from "@/components/ui/primitives";
 import { useEntrances, usePulse } from "@/components/ui/motion";
 import { cx } from "@/lib/cx";
-import { KIND, approvalId, isOpen, nextSelection, step, trayAction, trayItems, waited, type TrayTab } from "@/lib/inbox";
+import { KIND, approvalId, isExternalHref, openHref, isOpen, nextSelection, step, trayAction, trayItems, waited, type TrayTab } from "@/lib/inbox";
 import { withMention } from "@/lib/run-question";
 import { isTyping } from "./shortcuts";
 
@@ -176,7 +176,7 @@ function Tray({ onClose, onDispatch }: { onClose: () => void; onDispatch: (key: 
     // Updates and mentions never resolve on their own: opening one from the tray is reading it.
     if (isOpen(item) && (!item.needs_you || item.kind === "mention")) read.mutate(item.id);
     onClose();
-    router.push(item.href);
+    openHref(item.href, router.push);
   };
 
   // On window, not the tray: focus can fall to <body> (a row or button leaves), and the keys still have to work.
@@ -339,7 +339,7 @@ function Row({
         <AgentAvatar name={item.agent.name} colorIndex={item.agent.color_index} label={false} size="md" />
       ) : (
         <span aria-hidden className="grid size-6 flex-none place-items-center rounded-md bg-track text-fg-tertiary">
-          <Icon name={item.kind === "merged" ? "check" : "inbox"} size={13} />
+          <Icon name={item.kind === "merged" || item.kind === "pr_approved" ? "check" : "inbox"} size={13} />
         </span>
       )}
       <div className="flex min-w-0 flex-1 flex-col gap-1">
@@ -367,7 +367,7 @@ function Row({
         )}
         {action?.type === "open" && (
           <RowButtons>
-            <ButtonLink href={item.href} variant="outline" onClick={onOpen}>
+            <ButtonLink href={item.href} variant="outline" onClick={onOpen} {...(isExternalHref(item.href) ? { target: "_blank", rel: "noopener noreferrer" } : {})}>
               {action.label}
             </ButtonLink>
           </RowButtons>

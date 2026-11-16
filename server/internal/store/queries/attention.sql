@@ -62,6 +62,14 @@ WITH items AS (
  FROM activity_events e JOIN tickets t ON t.id=e.ticket_id JOIN projects p ON p.id=t.project_id
  WHERE e.workspace_id=sqlc.arg(workspace_id) AND NOT p.archived AND e.verb='pr_merged' AND e.created_at>now()-interval '14 days'
  UNION ALL
+ -- A pull request you authored on GitHub was approved in the last two weeks: news, nothing to act on.
+ -- The id carries the approval time, so a later approval of the same PR is a new item.
+ SELECT 'pr_approved:'||g.id||':'||(extract(epoch FROM g.approved_at)*1000)::bigint,'pr_approved',g.title,
+ 'Pull request '||g.repository||'#'||g.number||' approved'||CASE WHEN g.approver<>'' THEN ' by '||g.approver ELSE '' END,
+ g.url,'','',g.approved_at,false,NULL,NULL,NULL
+ FROM github_pr_approvals g
+ WHERE g.workspace_id=sqlc.arg(workspace_id) AND g.approved_at>now()-interval '14 days'
+ UNION ALL
  SELECT 'suggestion:'||v.id,'suggestion',ar.title,v.note,'/wiki/'||ar.path,coalesce(p.key,''),'',v.created_at,v.state<>'suggested',
  CASE WHEN v.created_by_type='agent' THEN v.created_by_id END,NULL,ar.id
  FROM artifact_versions v JOIN artifacts ar ON ar.id=v.artifact_id LEFT JOIN projects p ON p.id=ar.project_id
@@ -120,7 +128,7 @@ WHERE (sqlc.narg(project)::text IS NULL OR items.project=sqlc.narg(project))
 -- Open items to act on first, then mentions (which may ask), then news: plenty of unread
 -- merged PRs or scheduled results must never push a pending approval past the limit.
 ORDER BY items.resolved, (rd.read_at IS NOT NULL AND rd.read_at>=items.created_at),
- CASE WHEN items.kind IN ('scheduled','merged') THEN 2 WHEN items.kind='mention' THEN 1 ELSE 0 END,
+ CASE WHEN items.kind IN ('scheduled','merged','pr_approved') THEN 2 WHEN items.kind='mention' THEN 1 ELSE 0 END,
  items.created_at DESC,items.id LIMIT 500;
 
 -- name: ReadInboxItem :exec

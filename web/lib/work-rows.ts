@@ -66,6 +66,7 @@ export const NEEDS_PREFIX: Record<NeedsKind, string> = {
   secret_approval: "Secret to approve",
   secret_expiring: "Secret expiring",
   merged: "PR merged",
+  pr_approved: "PR approved",
   drive_backup: "Drive backup failed",
 };
 

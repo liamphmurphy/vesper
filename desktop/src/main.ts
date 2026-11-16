@@ -101,6 +101,16 @@ function focusOrOpenHref(href: string) {
     fullUrl = currentConfig.serverUrl;
   }
 
+  // A link off this server (a GitHub pull request) opens in the browser, not an app window.
+  try {
+    if (new URL(fullUrl).origin !== new URL(currentConfig.serverUrl).origin) {
+      void shell.openExternal(fullUrl).catch(() => {});
+      return;
+    }
+  } catch {
+    // Fall through to the window lookup.
+  }
+
   if (process.platform === "darwin") {
     app.focus({ steal: true });
   }

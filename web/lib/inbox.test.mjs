@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { approvalId, groupItems, isOpen, nextSelection, step, trayAction, trayItems, waited } from "./inbox.ts";
+import { approvalId, isExternalHref, groupItems, isOpen, nextSelection, step, trayAction, trayItems, waited } from "./inbox.ts";
 
 const at = (min) => new Date(Date.UTC(2026, 10, 7, 12, 0) - min * 60_000).toISOString();
 const item = (id, kind, min, extra = {}) => ({ id, kind, created_at: at(min), resolved: false, read: false, ...extra });
@@ -83,4 +83,12 @@ test("each kind gets its inline tray action", () => {
   assert.deepEqual(trayAction("planning"), { type: "open", label: "Review plan" });
   assert.equal(approvalId("approval:abc"), "abc");
   assert.equal(approvalId("question:abc"), undefined);
+});
+
+test("a pull request's GitHub URL is external, an app route is not", () => {
+  assert.equal(isExternalHref("https://github.com/o/r/pull/1"), true);
+  assert.equal(isExternalHref("/tickets/WEB-4"), false);
+  assert.equal(trayAction("pr_approved").label, "Open on GitHub");
+  const g = groupItems([item("pr_approved:1", "pr_approved", 5)], "open", "oldest");
+  assert.deepEqual(g.map((x) => x.key), ["pr_approved"]);
 });

@@ -37,6 +37,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/config"
 	"github.com/liamphmurphy/vesper/server/internal/db"
 	"github.com/liamphmurphy/vesper/server/internal/designs"
+	"github.com/liamphmurphy/vesper/server/internal/githubpr"
 	"github.com/liamphmurphy/vesper/server/internal/httpapi"
 	"github.com/liamphmurphy/vesper/server/internal/memory"
 	"github.com/liamphmurphy/vesper/server/internal/metrics"
@@ -206,6 +207,8 @@ func serve(ctx context.Context, log *slog.Logger) error {
 		sync := &prsync.Syncer{Pool: pool, Secrets: secretsSvc, Tracker: trackerSvc, Log: log,
 			MinAge: time.Duration(cfg.PRSyncInterval) * time.Second}
 		go sync.Run(ctx, time.Duration(cfg.PRSyncInterval)*time.Second)
+		approvals := &githubpr.ApprovalSyncer{Queries: q, Secrets: secretsSvc, GitHub: &githubpr.Service{BaseURL: srv.GitHubAPIURL}, Log: log}
+		go approvals.Run(ctx, time.Duration(cfg.PRSyncInterval)*time.Second)
 	}
 	if cfg.MemoryConsolidateInterval > 0 {
 		go memory.RunConsolidation(ctx, q, log, time.Duration(cfg.MemoryConsolidateInterval)*time.Second)
