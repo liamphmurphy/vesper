@@ -91,6 +91,8 @@ When a one-off inline `app` block in chat isn't enough, you—or any persona in 
 
 ## Dev workspace
 
+![Dev workspace running LazyVim and tmux inside a persistent Nix container](docs/images/dev-workspace.png)
+
 Open a persistent **Dev workspace** (`/dev`, from the rail or `⌘K`) whenever you want a full terminal editor alongside Vesper without leaving the workbench:
 
 - **Nix + LazyVim container**: runs a persistent `nixos-unstable` container preloaded with **LazyVim**, **zsh** (Oh My Zsh), **tmux**, **Go**, and **Node.js**, plus any extra Nix packages you add in Settings.
