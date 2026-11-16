@@ -79,6 +79,8 @@ export const DEV_TERMINAL_SHORTCUT_GROUPS: TerminalShortcutGroup[] = [
       { keys: "Fullscreen", description: "Locks Esc, Ctrl+W/T/N to Neovim (Chromium)" },
       { keys: "Hold Esc (1.5s)", description: "Exit native fullscreen" },
       { keys: "Ctrl+K", description: "Sent to terminal while focused" },
+      { keys: "Cmd+V / Ctrl+Shift+V", description: "Paste into terminal" },
+      { keys: "Shift+drag", description: "Select text bypassing tmux mouse mode" },
     ],
   },
 ];
