@@ -33,6 +33,9 @@ func TestSetupNixScriptEmbedsDefaultsAndForceRebuild(t *testing.T) {
 		"/home/node/.config/vesper-dev/flake.nix",
 		"/home/node/.config/nvim/init.lua",
 		"/home/node/.tmux.conf",
+		"/home/node/.zshrc",
+		"/home/node/.bashrc",
+		"/home/node/.profile",
 		"nix profile install --profile",
 	} {
 		if !strings.Contains(s, want) {

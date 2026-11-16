@@ -1,0 +1,11 @@
+export PATH="/home/node/.local/share/vesper-dev/profile/bin:/home/node/.nix-profile/bin:/usr/local/go/bin:/nix/var/nix/profiles/default/bin:$PATH"
+export EDITOR="nvim"
+export VISUAL="nvim"
+
+alias ls="ls --color=auto"
+alias ll="ls -lah --color=auto"
+alias la="ls -A --color=auto"
+alias l="ls -CF --color=auto"
+alias neovim="nvim"
+alias vim="nvim"
+alias vi="nvim"
