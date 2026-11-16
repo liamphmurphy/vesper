@@ -113,6 +113,22 @@ func (s *Server) UpdateDevWorkspace(ctx context.Context, req api.UpdateDevWorksp
 		}
 	}
 
+	customTmuxConf := cur.CustomTmuxConf
+	if req.Body.CustomTmuxConf.IsSpecified() {
+		if req.Body.CustomTmuxConf.IsNull() || strings.TrimSpace(req.Body.CustomTmuxConf.MustGet()) == "" {
+			if customTmuxConf != nil {
+				customTmuxConf = nil
+				shellChanged = true
+			}
+		} else {
+			v := req.Body.CustomTmuxConf.MustGet()
+			if customTmuxConf == nil || *customTmuxConf != v {
+				customTmuxConf = &v
+				shellChanged = true
+			}
+		}
+	}
+
 	tmuxPrefix := cur.TmuxPrefix
 	if tmuxPrefix == "" {
 		tmuxPrefix = "C-b"
@@ -136,14 +152,15 @@ func (s *Server) UpdateDevWorkspace(ctx context.Context, req api.UpdateDevWorksp
 	}
 
 	row, err := s.Q.UpsertDevWorkspace(ctx, store.UpsertDevWorkspaceParams{
-		WorkspaceID: ws,
-		UserID:      u.ID,
-		Enabled:     enabled,
-		NixMode:     nixMode,
-		Repos:       reposJSON,
-		CustomZshrc: customZshrc,
-		TmuxPrefix:  tmuxPrefix,
-		Action:      action,
+		WorkspaceID:    ws,
+		UserID:         u.ID,
+		Enabled:        enabled,
+		NixMode:        nixMode,
+		Repos:          reposJSON,
+		CustomZshrc:    customZshrc,
+		CustomTmuxConf: customTmuxConf,
+		TmuxPrefix:     tmuxPrefix,
+		Action:         action,
 	})
 	if err != nil {
 		return nil, err
@@ -200,6 +217,11 @@ func devWorkspaceOut(row store.DevWorkspace) api.DevWorkspace {
 		out.CustomZshrc.Set(*row.CustomZshrc)
 	} else {
 		out.CustomZshrc.SetNull()
+	}
+	if row.CustomTmuxConf != nil {
+		out.CustomTmuxConf.Set(*row.CustomTmuxConf)
+	} else {
+		out.CustomTmuxConf.SetNull()
 	}
 	if row.Port != nil {
 		out.Port.Set(int(*row.Port))

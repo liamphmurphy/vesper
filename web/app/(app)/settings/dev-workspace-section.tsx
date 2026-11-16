@@ -19,6 +19,7 @@ export function DevWorkspaceSection() {
   const [seekOwner, setSeekOwner] = useState("");
   const [selectedOrgUrls, setSelectedOrgUrls] = useState<string[] | null>(null);
   const [zshrcDraft, setZshrcDraft] = useState<string | null>(null);
+  const [tmuxConfDraft, setTmuxConfDraft] = useState<string | null>(null);
   const ownerRepos = useOwnerRepositories(seekOwner);
 
   if (q.isPending) {
@@ -190,6 +191,47 @@ export function DevWorkspaceSection() {
             >
               Save .zshrc
             </Button>
+          </div>
+
+          <div className="space-y-2 pt-2">
+            <div>
+              <div className="text-12 font-medium text-fg">Custom .tmux.conf</div>
+              <p className="text-12 text-fg-tertiary">
+                Leave blank for Vesper’s default <code className="font-mono">.tmux.conf</code> using the prefix above. Reloads live sessions on save.
+              </p>
+            </div>
+            <textarea
+              aria-label="Custom .tmux.conf"
+              rows={4}
+              value={tmuxConfDraft ?? (ws.custom_tmux_conf ?? "")}
+              onChange={(e) => setTmuxConfDraft(e.target.value)}
+              placeholder={`# Leave blank for Vesper's default .tmux.conf.\nset -g mouse on\nunbind C-b\nset -g prefix C-a\nbind C-a send-prefix`}
+              className="w-full rounded-md border border-border bg-surface p-2.5 font-mono text-12 text-fg"
+            />
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {(ws.custom_tmux_conf || (tmuxConfDraft !== null && tmuxConfDraft !== "")) && (
+                <Button
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => update.mutate({ custom_tmux_conf: null }, { onSuccess: () => setTmuxConfDraft(null) })}
+                >
+                  Reset to default
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                disabled={busy || tmuxConfDraft === null || tmuxConfDraft === (ws.custom_tmux_conf ?? "")}
+                onClick={() => {
+                  const value = tmuxConfDraft ?? "";
+                  update.mutate(
+                    { custom_tmux_conf: value.trim() === "" ? null : value },
+                    { onSuccess: () => setTmuxConfDraft(null) },
+                  );
+                }}
+              >
+                Save .tmux.conf
+              </Button>
+            </div>
           </div>
         </div>
 

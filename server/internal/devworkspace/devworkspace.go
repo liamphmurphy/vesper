@@ -112,8 +112,9 @@ func validTmuxPrefix(p string) string {
 
 // WriteShellConfigScript writes ~/.zshenv (preserving Nix PATH and ZSH),
 // ~/.zshrc (using customZshrc when non-empty, or the default oh-my-zsh config),
-// and ~/.tmux.conf (with the chosen prefix, reloading a running tmux server).
-func WriteShellConfigScript(customZshrc, tmuxPrefix string) string {
+// and ~/.tmux.conf (using customTmuxConf when non-empty, or the default config
+// with the chosen prefix, reloading a running tmux server).
+func WriteShellConfigScript(customZshrc, tmuxPrefix, customTmuxConf string) string {
 	var b strings.Builder
 	b.WriteString("set -eu\n")
 	_ = writeEmbeddedFile(&b, "defaults/zshenv", "/home/node/.zshenv")
@@ -122,12 +123,16 @@ func WriteShellConfigScript(customZshrc, tmuxPrefix string) string {
 	} else {
 		_ = writeEmbeddedFile(&b, "defaults/zshrc", "/home/node/.zshrc")
 	}
-	tmuxConf, _ := defaultFiles.ReadFile("defaults/tmux.conf")
-	prefix := validTmuxPrefix(tmuxPrefix)
-	if prefix != "C-b" {
-		tmuxConf = append(tmuxConf, []byte("\nunbind C-b\nset -g prefix "+prefix+"\nbind "+prefix+" send-prefix\n")...)
+	if strings.TrimSpace(customTmuxConf) != "" {
+		writeContent(&b, []byte(customTmuxConf), "/home/node/.tmux.conf")
+	} else {
+		tmuxConf, _ := defaultFiles.ReadFile("defaults/tmux.conf")
+		prefix := validTmuxPrefix(tmuxPrefix)
+		if prefix != "C-b" {
+			tmuxConf = append(tmuxConf, []byte("\nunbind C-b\nset -g prefix "+prefix+"\nbind "+prefix+" send-prefix\n")...)
+		}
+		writeContent(&b, tmuxConf, "/home/node/.tmux.conf")
 	}
-	writeContent(&b, tmuxConf, "/home/node/.tmux.conf")
 	b.WriteString("tmux source-file /home/node/.tmux.conf >/dev/null 2>&1 || true\n")
 	return b.String()
 }
@@ -136,7 +141,7 @@ func WriteShellConfigScript(customZshrc, tmuxPrefix string) string {
 // LazyVim config, and shell/tmux config into /home/node, then installs the Nix
 // profile if the config hash changed or forceRebuild is true (refreshing the
 // nixos-unstable flake lock on rebuild).
-func SetupNixScript(forceRebuild bool, customZshrc, tmuxPrefix string) string {
+func SetupNixScript(forceRebuild bool, customZshrc, tmuxPrefix, customTmuxConf string) string {
 	hash := ConfigHash()
 	var b strings.Builder
 	b.WriteString("set -eu\n")
@@ -144,7 +149,7 @@ func SetupNixScript(forceRebuild bool, customZshrc, tmuxPrefix string) string {
 	_ = writeEmbeddedFile(&b, "defaults/flake.nix", "/home/node/.config/vesper-dev/flake.nix")
 	_ = writeEmbeddedFile(&b, "defaults/profile", "/home/node/.profile")
 	_ = writeEmbeddedFile(&b, "defaults/bashrc", "/home/node/.bashrc")
-	b.WriteString(WriteShellConfigScript(customZshrc, tmuxPrefix))
+	b.WriteString(WriteShellConfigScript(customZshrc, tmuxPrefix, customTmuxConf))
 	_ = writeEmbeddedFile(&b, "defaults/nvim/init.lua", "/home/node/.config/nvim/init.lua")
 	_ = writeEmbeddedFile(&b, "defaults/nvim/lua/config/lazy.lua", "/home/node/.config/nvim/lua/config/lazy.lua")
 	_ = writeEmbeddedFile(&b, "defaults/nvim/lua/config/options.lua", "/home/node/.config/nvim/lua/config/options.lua")
