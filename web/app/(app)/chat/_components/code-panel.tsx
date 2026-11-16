@@ -26,6 +26,7 @@ import {
 } from "@/lib/code-review";
 import { cx } from "@/lib/cx";
 import { Button } from "@/components/ui/button";
+import { CopyButton } from "@/components/ui/copy-button";
 import { Icon } from "@/components/ui/icon";
 import { CodeChanges, CodeFileView, Counts, Diff } from "./code-changes";
 
@@ -316,6 +317,13 @@ export function CodePanel({ chatId }: { chatId: string }) {
           <Icon name="branch" size={13} className="flex-none text-fg-tertiary" />
           <span className="truncate">{review.branch ?? "detached"}</span>
         </span>
+        {review.branch && (
+          <CopyButton
+            text={`git fetch origin && git checkout ${review.branch}`}
+            label="Copy checkout command"
+            size={12}
+          />
+        )}
         {review.head_sha && (
           <code
             className="rounded bg-surface-sunken px-1.5 py-0.5 font-mono text-11 text-fg-secondary"

@@ -5848,6 +5848,26 @@ paths:
               schema: { $ref: "#/components/schemas/RepositoryPresets" }
         default: { $ref: "#/components/responses/Error" }
 
+  /repositories/owner/{owner}:
+    get:
+      operationId: listOwnerRepositories
+      summary: List all repositories under a GitHub user or organization
+      parameters:
+        - name: owner
+          in: path
+          required: true
+          schema: { type: string }
+        - name: refresh
+          in: query
+          schema: { type: boolean }
+      responses:
+        "200":
+          description: Repositories owned by the GitHub user or organization
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/RepositoryEntry" } }
+        default: { $ref: "#/components/responses/Error" }
+
   /repositories/sources:
     get:
       operationId: listRepositorySources

@@ -75,3 +75,15 @@ func (s *Server) GetRepositoryPresets(ctx context.Context, _ api.GetRepositoryPr
 	}
 	return api.GetRepositoryPresets200JSONResponse(out), nil
 }
+
+func (s *Server) ListOwnerRepositories(ctx context.Context, req api.ListOwnerRepositoriesRequestObject) (api.ListOwnerRepositoriesResponseObject, error) {
+	rows, err := s.Runs.Repositories().OwnerRepos(ctx, repositoryOwner(ctx), req.Owner, req.Params.Refresh != nil && *req.Params.Refresh)
+	if err != nil {
+		return nil, err
+	}
+	out := api.ListOwnerRepositories200JSONResponse{}
+	for _, r := range rows {
+		out = append(out, api.RepositoryEntry{Name: r.Name, Url: r.URL})
+	}
+	return out, nil
+}

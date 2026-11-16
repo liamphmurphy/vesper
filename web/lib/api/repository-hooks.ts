@@ -36,3 +36,20 @@ export function useSetChatRepository(id: string) {
 export function useRepositoryPresets() {
   return useQuery({ queryKey: ["repository-presets"], queryFn: () => unwrap(api.GET("/repositories/presets")), staleTime: 60_000, retry: false });
 }
+
+/** Lists all repositories under a GitHub user or organization. */
+export function useOwnerRepositories(owner: string, refresh = false) {
+  const trimmed = owner.trim();
+  return useQuery({
+    enabled: trimmed.length > 0,
+    queryKey: ["owner-repositories", trimmed, refresh],
+    queryFn: () =>
+      unwrap(
+        api.GET("/repositories/owner/{owner}", {
+          params: { path: { owner: trimmed }, query: refresh ? { refresh: true } : undefined },
+        }),
+      ),
+    staleTime: 60_000,
+    retry: false,
+  });
+}

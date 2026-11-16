@@ -12,6 +12,7 @@ import { Kbd } from "@/components/ui/primitives";
 import { artifactTitle } from "@/components/domain/artifacts";
 import { usePersonas } from "@/lib/api/persona-hooks";
 import { useCustomApps } from "@/lib/api/custom-app-hooks";
+import { useDevWorkspace } from "@/lib/api/dev-workspace-hooks";
 import { resolveAppIcon } from "@/lib/custom-app-bridge";
 import { cx } from "@/lib/cx";
 import { shortAgo } from "@/lib/format";
@@ -310,6 +311,7 @@ export function CommandMenu() {
   const personas = usePersonas();
   const [open, setOpen] = useState(false);
   const customApps = useCustomApps(open);
+  const devWorkspace = useDevWorkspace();
   const [query, setQuery] = useState("");
   const [project, setProject] = useState<string>();
   const [scope, setScope] = useState(false);
@@ -511,6 +513,9 @@ export function CommandMenu() {
     ...myApps,
     ...KIND_JUMPS.map((i) => ({ ...i, kind: "in Knowledge" })),
     ...TOOL_ITEMS.map((i) => ({ ...i, kind: "tool" })),
+    ...(devWorkspace.data?.enabled
+      ? [{ href: "/dev", label: "Dev workspace", aliases: "terminal lazyvim nvim tmux", icon: "terminal" as IconName, kind: "tool" }]
+      : []),
   ];
   // is:app on its own lists every app.
   const appsWanted = filters.text ? appMatches(appsMenu, filters.text) : oneType === "app" ? appsMenu : [];

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  DEV_TERMINAL_SHORTCUT_GROUPS,
   devWorkspaceSocketUrl,
   devWorkspaceStatusLabel,
   devWorkspaceStatusTone,
@@ -33,4 +34,11 @@ test("fullscreenExitHint reflects native and keyboard-lock state", () => {
   assert.equal(fullscreenExitHint(true, true), "Hold Esc to exit");
   assert.equal(fullscreenExitHint(true, false), "Esc or Exit");
   assert.equal(fullscreenExitHint(false, false), "Exit");
+});
+
+test("DEV_TERMINAL_SHORTCUT_GROUPS covers LazyVim, tmux, and browser", () => {
+  assert.equal(DEV_TERMINAL_SHORTCUT_GROUPS.length, 3);
+  for (const g of DEV_TERMINAL_SHORTCUT_GROUPS) {
+    assert.ok(g.items.length > 0);
+  }
 });
