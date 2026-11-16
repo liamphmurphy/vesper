@@ -6,7 +6,13 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { useDevWorkspace, useDevWorkspaceAction } from "@/lib/api/dev-workspace-hooks";
-import { devWorkspaceSocketUrl, devWorkspaceStatusLabel, devWorkspaceStatusTone } from "@/lib/dev-workspace";
+import {
+  devWorkspaceSocketUrl,
+  devWorkspaceStatusLabel,
+  devWorkspaceStatusTone,
+  FULLSCREEN_LOCK_KEYS,
+  fullscreenExitHint,
+} from "@/lib/dev-workspace";
 import { cx } from "@/lib/cx";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Banner, EmptyState, Skeleton } from "@/components/ui/primitives";
@@ -38,12 +44,22 @@ const GRUVBOX_THEME = {
 
 type ConnState = "connecting" | "connected" | "disconnected";
 
+type NavigatorWithKeyboardLock = Navigator & {
+  keyboard?: {
+    lock?: (keys?: readonly string[]) => Promise<void>;
+    unlock?: () => void;
+  };
+};
+
 export function DevTerminal() {
   const q = useDevWorkspace();
   const action = useDevWorkspaceAction();
-  const [fullscreen, setFullscreen] = useState(false);
+  const [nativeFullscreen, setNativeFullscreen] = useState(false);
+  const [fallbackFullscreen, setFallbackFullscreen] = useState(false);
+  const [keyboardLocked, setKeyboardLocked] = useState(false);
   const [conn, setConn] = useState<ConnState>("disconnected");
   const [reconnectSeq, setReconnectSeq] = useState(0);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -51,6 +67,7 @@ export function DevTerminal() {
 
   const wsData = q.data;
   const port = wsData?.state === "ready" ? wsData.port : null;
+  const fullscreen = nativeFullscreen || fallbackFullscreen;
 
   const sendResize = useCallback((cols: number, rows: number) => {
     const sock = wsRef.current;
@@ -127,17 +144,70 @@ export function DevTerminal() {
   }, [port, reconnectSeq, sendResize]);
 
   useEffect(() => {
-    fitRef.current?.fit();
-    const kb = (navigator as Navigator & { keyboard?: { lock?: (keys?: string[]) => Promise<void>; unlock?: () => void } }).keyboard;
-    if (fullscreen) {
-      void kb?.lock?.(["Escape", "KeyW", "KeyT", "KeyN"]).catch(() => {});
+    const onFullscreenChange = () => {
+      const active = !!wrapperRef.current && document.fullscreenElement === wrapperRef.current;
+      setNativeFullscreen(active);
+      if (!active) {
+        setKeyboardLocked(false);
+      }
+    };
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const raf = requestAnimationFrame(() => {
+      fitRef.current?.fit();
+      termRef.current?.focus();
+    });
+    const kb = (navigator as NavigatorWithKeyboardLock).keyboard;
+    if (nativeFullscreen && kb?.lock) {
+      void kb
+        .lock([...FULLSCREEN_LOCK_KEYS])
+        .then(() => {
+          if (!cancelled) setKeyboardLocked(true);
+        })
+        .catch(() => {
+          if (!cancelled) setKeyboardLocked(false);
+        });
     } else {
       kb?.unlock?.();
     }
     return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
       kb?.unlock?.();
     };
-  }, [fullscreen]);
+  }, [nativeFullscreen, fallbackFullscreen]);
+
+  const enterFullscreen = useCallback(async () => {
+    const el = wrapperRef.current;
+    if (!el || !el.requestFullscreen) {
+      setFallbackFullscreen(true);
+      return;
+    }
+    try {
+      await el.requestFullscreen({ navigationUI: "hide" });
+    } catch {
+      try {
+        await el.requestFullscreen();
+      } catch {
+        setFallbackFullscreen(true);
+      }
+    }
+  }, []);
+
+  const exitFullscreen = useCallback(async () => {
+    setFallbackFullscreen(false);
+    if (document.fullscreenElement) {
+      try {
+        await document.exitFullscreen();
+      } catch {
+        /* already exited */
+      }
+    }
+  }, []);
 
   if (q.isPending) {
     return <Skeleton className="h-[calc(100dvh-5rem)] w-full" />;
@@ -163,46 +233,77 @@ export function DevTerminal() {
 
   return (
     <div
+      ref={wrapperRef}
       className={cx(
-        "flex flex-col overflow-hidden bg-[#1d2021]",
+        "relative flex flex-col overflow-hidden bg-[#1d2021]",
         fullscreen ? "fixed inset-0 z-50 h-dvh w-screen" : "h-[calc(100dvh-2rem)] rounded-lg border border-border",
       )}
     >
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-surface px-3 py-2 text-13">
-        <div className="flex flex-wrap items-center gap-2.5">
-          <span className="font-semibold text-fg">Dev workspace</span>
-          <code className="font-mono text-12 text-fg-tertiary">/workspace</code>
-          <SmallPill tone={conn === "connected" ? "done" : devWorkspaceStatusTone(wsData.state)}>
-            {conn === "connected" ? "Connected · tmux" : conn === "connecting" ? "Connecting…" : devWorkspaceStatusLabel(wsData)}
-          </SmallPill>
-          <span className="hidden text-12 text-fg-tertiary md:inline">
-            Tip: Fullscreen locks Ctrl+W / Esc to terminal
-          </span>
+      {fullscreen ? (
+        <div className="pointer-events-none absolute right-3 top-2 z-10 flex items-center gap-2 opacity-35 transition-opacity hover:opacity-100 focus-within:opacity-100">
+          <div className="pointer-events-auto flex items-center gap-2 rounded-md border border-[#3c3836] bg-[#1d2021]/90 px-2.5 py-1 text-11 text-[#ebdbb2] backdrop-blur-sm">
+            <span
+              className={cx(
+                "size-1.5 rounded-full",
+                conn === "connected" ? "bg-[#b8bb26]" : conn === "connecting" ? "bg-[#fabd2f]" : "bg-[#fb4934]",
+              )}
+            />
+            <span className="text-[#a89984]">{fullscreenExitHint(nativeFullscreen, keyboardLocked)}</span>
+            {port && conn === "disconnected" && (
+              <button
+                type="button"
+                onClick={() => setReconnectSeq((n) => n + 1)}
+                className="rounded border border-[#504945] px-1.5 py-0.5 text-[#ebdbb2] hover:bg-[#3c3836]"
+              >
+                Reconnect
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => void exitFullscreen()}
+              className="rounded bg-[#3c3836] px-2 py-0.5 font-medium text-[#ebdbb2] hover:bg-[#504945]"
+            >
+              Exit
+            </button>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            variant="outline"
-            disabled={wsData.state === "starting" || action.isPending}
-            onClick={() => action.mutate("sync")}
-          >
-            Sync repos
-          </Button>
-          {port && conn === "disconnected" && (
-            <Button variant="outline" onClick={() => setReconnectSeq((n) => n + 1)}>
-              Reconnect
+      ) : (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-surface px-3 py-2 text-13">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <span className="font-semibold text-fg">Dev workspace</span>
+            <code className="font-mono text-12 text-fg-tertiary">/workspace</code>
+            <SmallPill tone={conn === "connected" ? "done" : devWorkspaceStatusTone(wsData.state)}>
+              {conn === "connected" ? "Connected · tmux" : conn === "connecting" ? "Connecting…" : devWorkspaceStatusLabel(wsData)}
+            </SmallPill>
+            <span className="hidden text-12 text-fg-tertiary md:inline">
+              Tip: Fullscreen locks Ctrl+W / Esc to Neovim (Chromium)
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              disabled={wsData.state === "starting" || action.isPending}
+              onClick={() => action.mutate("sync")}
+            >
+              Sync repos
             </Button>
-          )}
-          <Link
-            href="/settings#dev-workspace"
-            className="rounded-md border border-border bg-surface px-2.5 py-1 text-12 font-medium text-fg hover:bg-hover"
-          >
-            Settings
-          </Link>
-          <Button variant="primary" onClick={() => setFullscreen((f) => !f)}>
-            {fullscreen ? "Exit Fullscreen" : "Fullscreen"}
-          </Button>
+            {port && conn === "disconnected" && (
+              <Button variant="outline" onClick={() => setReconnectSeq((n) => n + 1)}>
+                Reconnect
+              </Button>
+            )}
+            <Link
+              href="/settings#dev-workspace"
+              className="rounded-md border border-border bg-surface px-2.5 py-1 text-12 font-medium text-fg hover:bg-hover"
+            >
+              Settings
+            </Link>
+            <Button variant="primary" onClick={() => void enterFullscreen()}>
+              Fullscreen
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
 
       {wsData.state === "error" && wsData.error && (
         <div className="border-b border-border bg-pill-blocked-bg px-4 py-2 text-12 text-pill-blocked-fg">

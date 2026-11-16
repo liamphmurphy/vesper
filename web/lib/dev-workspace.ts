@@ -34,3 +34,11 @@ export function devWorkspaceStatusLabel(ws: Pick<DevWorkspace, "enabled" | "stat
   if (ws.state === "error") return "Error";
   return "Stopped";
 }
+
+export const FULLSCREEN_LOCK_KEYS = ["Escape", "KeyW", "KeyT", "KeyN"] as const;
+
+export function fullscreenExitHint(native: boolean, keyboardLocked: boolean): string {
+  if (native && keyboardLocked) return "Hold Esc to exit";
+  if (native) return "Esc or Exit";
+  return "Exit";
+}
