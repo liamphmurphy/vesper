@@ -17,6 +17,7 @@
           paths = with pkgs; [
             neovim
             tmux
+            zsh
             lazygit
             ripgrep
             fd
@@ -29,7 +30,7 @@
             ruff
             typescript-language-server
             nixd
-            nixfmt-rfc-style
+            nixfmt
             marksman
           ];
         };

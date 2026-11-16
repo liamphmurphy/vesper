@@ -1,0 +1,19 @@
+export PATH="/home/node/.local/share/vesper-dev/profile/bin:/home/node/.nix-profile/bin:/usr/local/go/bin:/nix/var/nix/profiles/default/bin:$PATH"
+export EDITOR="nvim"
+export VISUAL="nvim"
+
+HISTFILE="$HOME/.zsh_history"
+HISTSIZE=10000
+SAVEHIST=10000
+setopt APPEND_HISTORY SHARE_HISTORY HIST_IGNORE_DUPS
+
+autoload -Uz compinit && compinit -C
+PROMPT='%F{yellow}%n@vesper-dev%f %F{blue}%~%f %# '
+
+alias ls="ls --color=auto"
+alias ll="ls -lah --color=auto"
+alias la="ls -A --color=auto"
+alias l="ls -CF --color=auto"
+alias neovim="nvim"
+alias vim="nvim"
+alias vi="nvim"
