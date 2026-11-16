@@ -8,7 +8,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { useDevWorkspace, useDevWorkspaceAction } from "@/lib/api/dev-workspace-hooks";
 import {
-  DEV_TERMINAL_SHORTCUT_GROUPS,
+  devTerminalShortcutGroups,
   devWorkspaceSocketUrl,
   devWorkspaceStatusLabel,
   devWorkspaceStatusTone,
@@ -337,7 +337,7 @@ export function DevTerminal() {
               </Dialog.Close>
             </div>
             <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">
-              {DEV_TERMINAL_SHORTCUT_GROUPS.map((group) => (
+              {devTerminalShortcutGroups(wsData.tmux_prefix).map((group) => (
                 <section key={group.title} className="space-y-2">
                   <h3 className="text-11 font-semibold uppercase tracking-[0.06em] text-fg-tertiary">
                     {group.title}

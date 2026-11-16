@@ -2,10 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   DEV_TERMINAL_SHORTCUT_GROUPS,
+  devTerminalShortcutGroups,
   devWorkspaceSocketUrl,
   devWorkspaceStatusLabel,
   devWorkspaceStatusTone,
   fullscreenExitHint,
+  tmuxPrefixLabel,
 } from "./dev-workspace.ts";
 
 test("devWorkspaceSocketUrl builds ws/wss URL from location and port", () => {
@@ -41,4 +43,8 @@ test("DEV_TERMINAL_SHORTCUT_GROUPS covers LazyVim, tmux, and browser", () => {
   for (const g of DEV_TERMINAL_SHORTCUT_GROUPS) {
     assert.ok(g.items.length > 0);
   }
+  assert.equal(tmuxPrefixLabel("C-a"), "Ctrl+a");
+  const custom = devTerminalShortcutGroups("C-a");
+  assert.equal(custom[1].title, "tmux (Ctrl+a prefix)");
+  assert.equal(custom[1].items[0].keys, "Ctrl+a c");
 });

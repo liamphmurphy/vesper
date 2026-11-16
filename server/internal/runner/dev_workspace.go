@@ -114,16 +114,31 @@ func (r *Runner) runDevWorkspaceAction(ctx context.Context, row store.ClaimDevWo
 		return
 	}
 
+	var customZshrc, customTmuxConf string
+	if row.CustomZshrc != nil {
+		customZshrc = *row.CustomZshrc
+	}
+	if row.CustomTmuxConf != nil {
+		customTmuxConf = *row.CustomTmuxConf
+	}
+
 	var arch *string
 	if action == "start" || action == "rebuild" {
 		setStep("Installing Nix + LazyVim")
-		out, code, err := db.ExecDevWorkspaceScript(ctx, containerID, devworkspace.SetupNixScript(action == "rebuild"), nil)
+		out, code, err := db.ExecDevWorkspaceScript(ctx, containerID, devworkspace.SetupNixScript(action == "rebuild", customZshrc, row.TmuxPrefix, customTmuxConf), nil)
 		if err != nil || code != 0 {
 			fail(fmt.Sprintf("nix setup failed (exit %d): %s", code, lastLines(out, 20)))
 			return
 		}
 		if a := parseArch(out); a != "" {
 			arch = &a
+		}
+	} else if action == "sync" {
+		setStep("Updating shell config")
+		out, code, err := db.ExecDevWorkspaceScript(ctx, containerID, devworkspace.WriteShellConfigScript(customZshrc, row.TmuxPrefix, customTmuxConf), nil)
+		if err != nil || code != 0 {
+			fail(fmt.Sprintf("shell config sync failed (exit %d): %s", code, lastLines(out, 20)))
+			return
 		}
 	}
 

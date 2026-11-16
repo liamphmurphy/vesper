@@ -18,6 +18,9 @@
             neovim
             tmux
             zsh
+            oh-my-zsh
+            zsh-autosuggestions
+            zsh-syntax-highlighting
             lazygit
             ripgrep
             fd

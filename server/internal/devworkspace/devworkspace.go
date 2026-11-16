@@ -87,37 +87,78 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
 }
 
+func writeContent(b *strings.Builder, data []byte, destPath string) {
+	b.WriteString("mkdir -p " + shellQuote(path.Dir(destPath)) + "\n")
+	b.WriteString("printf '%s' " + shellQuote(base64.StdEncoding.EncodeToString(data)) + " | base64 -d > " + shellQuote(destPath) + "\n")
+}
+
 func writeEmbeddedFile(b *strings.Builder, embedPath, destPath string) error {
 	data, err := defaultFiles.ReadFile(embedPath)
 	if err != nil {
 		return err
 	}
-	b.WriteString("mkdir -p " + shellQuote(path.Dir(destPath)) + "\n")
-	b.WriteString("printf '%s' " + shellQuote(base64.StdEncoding.EncodeToString(data)) + " | base64 -d > " + shellQuote(destPath) + "\n")
+	writeContent(b, data, destPath)
 	return nil
 }
 
+func validTmuxPrefix(p string) string {
+	switch p {
+	case "C-a", "C-b", "C-Space", "C-s":
+		return p
+	default:
+		return "C-b"
+	}
+}
+
+// WriteShellConfigScript writes ~/.zshenv (preserving Nix PATH and ZSH),
+// ~/.zshrc (using customZshrc when non-empty, or the default oh-my-zsh config),
+// and ~/.tmux.conf (using customTmuxConf when non-empty, or the default config
+// with the chosen prefix, reloading a running tmux server).
+func WriteShellConfigScript(customZshrc, tmuxPrefix, customTmuxConf string) string {
+	var b strings.Builder
+	b.WriteString("set -eu\n")
+	_ = writeEmbeddedFile(&b, "defaults/zshenv", "/home/node/.zshenv")
+	if strings.TrimSpace(customZshrc) != "" {
+		writeContent(&b, []byte(customZshrc), "/home/node/.zshrc")
+	} else {
+		_ = writeEmbeddedFile(&b, "defaults/zshrc", "/home/node/.zshrc")
+	}
+	if strings.TrimSpace(customTmuxConf) != "" {
+		writeContent(&b, []byte(customTmuxConf), "/home/node/.tmux.conf")
+	} else {
+		tmuxConf, _ := defaultFiles.ReadFile("defaults/tmux.conf")
+		prefix := validTmuxPrefix(tmuxPrefix)
+		if prefix != "C-b" {
+			tmuxConf = append(tmuxConf, []byte("\nunbind C-b\nset -g prefix "+prefix+"\nbind "+prefix+" send-prefix\n")...)
+		}
+		writeContent(&b, tmuxConf, "/home/node/.tmux.conf")
+	}
+	b.WriteString("tmux source-file /home/node/.tmux.conf >/dev/null 2>&1 || true\n")
+	return b.String()
+}
+
 // SetupNixScript returns a shell script that writes the default Nix flake,
-// LazyVim config, and tmux config into /home/node, then installs the Nix
-// profile if the config hash changed or forceRebuild is true.
-func SetupNixScript(forceRebuild bool) string {
+// LazyVim config, and shell/tmux config into /home/node, then installs the Nix
+// profile if the config hash changed or forceRebuild is true (refreshing the
+// nixos-unstable flake lock on rebuild).
+func SetupNixScript(forceRebuild bool, customZshrc, tmuxPrefix, customTmuxConf string) string {
 	hash := ConfigHash()
 	var b strings.Builder
 	b.WriteString("set -eu\n")
 	b.WriteString("mkdir -p /home/node/.local/share/vesper-dev /home/node/.config/vesper-dev /home/node/.config/nvim/lua/config /home/node/.config/nvim/lua/plugins\n")
 	_ = writeEmbeddedFile(&b, "defaults/flake.nix", "/home/node/.config/vesper-dev/flake.nix")
-	_ = writeEmbeddedFile(&b, "defaults/tmux.conf", "/home/node/.tmux.conf")
 	_ = writeEmbeddedFile(&b, "defaults/profile", "/home/node/.profile")
 	_ = writeEmbeddedFile(&b, "defaults/bashrc", "/home/node/.bashrc")
-	_ = writeEmbeddedFile(&b, "defaults/zshrc", "/home/node/.zshrc")
+	b.WriteString(WriteShellConfigScript(customZshrc, tmuxPrefix, customTmuxConf))
 	_ = writeEmbeddedFile(&b, "defaults/nvim/init.lua", "/home/node/.config/nvim/init.lua")
 	_ = writeEmbeddedFile(&b, "defaults/nvim/lua/config/lazy.lua", "/home/node/.config/nvim/lua/config/lazy.lua")
 	_ = writeEmbeddedFile(&b, "defaults/nvim/lua/config/options.lua", "/home/node/.config/nvim/lua/config/options.lua")
 	_ = writeEmbeddedFile(&b, "defaults/nvim/lua/plugins/init.lua", "/home/node/.config/nvim/lua/plugins/init.lua")
 
 	stamp := "/home/node/.local/share/vesper-dev/env.hash"
+	lockFile := "/home/node/.config/vesper-dev/flake.lock"
 	if forceRebuild {
-		b.WriteString("rm -f " + shellQuote(stamp) + "\n")
+		b.WriteString("rm -f " + shellQuote(stamp) + " " + shellQuote(lockFile) + "\n")
 	}
 	b.WriteString("if [ ! -e " + shellQuote(ProfilePath+"/bin/nvim") + " ] || [ \"$(cat " + shellQuote(stamp) + " 2>/dev/null || true)\" != " + shellQuote(hash) + " ]; then\n")
 	b.WriteString("  rm -rf " + shellQuote(ProfilePath) + "\n")

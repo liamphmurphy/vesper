@@ -28,11 +28,12 @@ func TestDeriveRepoDirsDisambiguates(t *testing.T) {
 }
 
 func TestSetupNixScriptEmbedsDefaultsAndForceRebuild(t *testing.T) {
-	s := SetupNixScript(false)
+	s := SetupNixScript(false, "", "C-b", "")
 	for _, want := range []string{
 		"/home/node/.config/vesper-dev/flake.nix",
 		"/home/node/.config/nvim/init.lua",
 		"/home/node/.tmux.conf",
+		"/home/node/.zshenv",
 		"/home/node/.zshrc",
 		"/home/node/.bashrc",
 		"/home/node/.profile",
@@ -42,9 +43,13 @@ func TestSetupNixScriptEmbedsDefaultsAndForceRebuild(t *testing.T) {
 			t.Fatalf("SetupNixScript missing %q", want)
 		}
 	}
-	rebuild := SetupNixScript(true)
-	if !strings.Contains(rebuild, "rm -f '/home/node/.local/share/vesper-dev/env.hash'") {
-		t.Fatalf("forceRebuild should remove stamp")
+	rebuild := SetupNixScript(true, "", "C-b", "")
+	if !strings.Contains(rebuild, "rm -f '/home/node/.local/share/vesper-dev/env.hash' '/home/node/.config/vesper-dev/flake.lock'") {
+		t.Fatalf("forceRebuild should remove stamp and flake.lock: %s", rebuild)
+	}
+	custom := WriteShellConfigScript("export FOO=bar\n", "C-a", "set -g mouse on\n")
+	if !strings.Contains(custom, "/home/node/.zshenv") || !strings.Contains(custom, "ZXhwb3J0IEZPTz1iYXIK") || !strings.Contains(custom, "c2V0IC1nIG1vdXNlIG9uCg==") || !strings.Contains(custom, "tmux source-file") {
+		t.Fatalf("WriteShellConfigScript should write .zshenv, custom .zshrc, custom .tmux.conf, and reload tmux: %s", custom)
 	}
 }
 
