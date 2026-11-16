@@ -10360,11 +10360,12 @@ components:
         directory: { type: string }
     DevWorkspace:
       type: object
-      required: [enabled, nix_mode, repos, tmux_prefix, state, updated_at]
+      required: [enabled, nix_mode, repos, extra_packages, tmux_prefix, state, updated_at]
       properties:
         enabled: { type: boolean }
         nix_mode: { type: string, enum: [default] }
         repos: { type: array, items: { $ref: "#/components/schemas/DevWorkspaceRepo" } }
+        extra_packages: { type: array, items: { type: string } }
         custom_zshrc: { type: string, nullable: true }
         custom_tmux_conf: { type: string, nullable: true }
         tmux_prefix: { type: string, enum: [C-b, C-a, C-Space, C-s] }
@@ -10381,6 +10382,7 @@ components:
         enabled: { type: boolean }
         nix_mode: { type: string, enum: [default] }
         repos: { type: array, items: { type: string } }
+        extra_packages: { type: array, items: { type: string } }
         custom_zshrc: { type: string, nullable: true }
         custom_tmux_conf: { type: string, nullable: true }
         tmux_prefix: { type: string, enum: [C-b, C-a, C-Space, C-s] }

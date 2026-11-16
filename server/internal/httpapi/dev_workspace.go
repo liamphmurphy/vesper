@@ -21,12 +21,13 @@ func (s *Server) GetDevWorkspace(ctx context.Context, _ api.GetDevWorkspaceReque
 	row, err := s.Q.GetDevWorkspace(ctx, ws)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return api.GetDevWorkspace200JSONResponse{
-			Enabled:    false,
-			NixMode:    api.DevWorkspaceNixModeDefault,
-			Repos:      []api.DevWorkspaceRepo{},
-			TmuxPrefix: api.DevWorkspaceTmuxPrefixCB,
-			State:      api.DevWorkspaceStateStopped,
-			UpdatedAt:  time.Now().UTC(),
+			Enabled:       false,
+			NixMode:       api.DevWorkspaceNixModeDefault,
+			Repos:         []api.DevWorkspaceRepo{},
+			ExtraPackages: []string{},
+			TmuxPrefix:    api.DevWorkspaceTmuxPrefixCB,
+			State:         api.DevWorkspaceStateStopped,
+			UpdatedAt:     time.Now().UTC(),
 		}, nil
 	}
 	if err != nil {
@@ -42,13 +43,14 @@ func (s *Server) UpdateDevWorkspace(ctx context.Context, req api.UpdateDevWorksp
 	if errors.Is(err, pgx.ErrNoRows) {
 		hasCur = false
 		cur = store.DevWorkspace{
-			WorkspaceID: ws,
-			UserID:      u.ID,
-			Enabled:     false,
-			NixMode:     "default",
-			Repos:       []byte("[]"),
-			TmuxPrefix:  "C-b",
-			State:       "stopped",
+			WorkspaceID:   ws,
+			UserID:        u.ID,
+			Enabled:       false,
+			NixMode:       "default",
+			Repos:         []byte("[]"),
+			ExtraPackages: []byte("[]"),
+			TmuxPrefix:    "C-b",
+			State:         "stopped",
 		}
 	} else if err != nil {
 		return nil, err
@@ -92,6 +94,30 @@ func (s *Server) UpdateDevWorkspace(ctx context.Context, req api.UpdateDevWorksp
 	}
 
 	reposJSON, err := json.Marshal(repos)
+	if err != nil {
+		return nil, err
+	}
+
+	var extraPackages []string
+	_ = json.Unmarshal(cur.ExtraPackages, &extraPackages)
+	packagesChanged := false
+	if req.Body.ExtraPackages != nil {
+		nextPkgs := make([]string, 0, len(*req.Body.ExtraPackages))
+		seen := map[string]bool{}
+		for _, raw := range *req.Body.ExtraPackages {
+			pkg, perr := devworkspace.ValidateNixPackage(raw)
+			if perr != nil {
+				return nil, apperr.Invalid("extra_packages", "%s", perr.Error())
+			}
+			if !seen[pkg] {
+				seen[pkg] = true
+				nextPkgs = append(nextPkgs, pkg)
+			}
+		}
+		extraPackages = nextPkgs
+		packagesChanged = true
+	}
+	extraPackagesJSON, err := json.Marshal(extraPackages)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +169,7 @@ func (s *Server) UpdateDevWorkspace(ctx context.Context, req api.UpdateDevWorksp
 	case !enabled && hasCur && (cur.Enabled || cur.State != "stopped"):
 		a := "stop"
 		action = &a
-	case enabled && (!hasCur || !cur.Enabled || cur.State == "stopped" || cur.State == "error"):
+	case enabled && (!hasCur || !cur.Enabled || cur.State == "stopped" || cur.State == "error" || packagesChanged):
 		a := "start"
 		action = &a
 	case enabled && (reposChanged || shellChanged):
@@ -157,6 +183,7 @@ func (s *Server) UpdateDevWorkspace(ctx context.Context, req api.UpdateDevWorksp
 		Enabled:        enabled,
 		NixMode:        nixMode,
 		Repos:          reposJSON,
+		ExtraPackages:  extraPackagesJSON,
 		CustomZshrc:    customZshrc,
 		CustomTmuxConf: customTmuxConf,
 		TmuxPrefix:     tmuxPrefix,
@@ -198,20 +225,26 @@ func devWorkspaceOut(row store.DevWorkspace) api.DevWorkspace {
 	for _, r := range repos {
 		apiRepos = append(apiRepos, api.DevWorkspaceRepo{RepoUrl: r.RepoURL, Directory: r.Directory})
 	}
+	var extraPackages []string
+	_ = json.Unmarshal(row.ExtraPackages, &extraPackages)
+	if extraPackages == nil {
+		extraPackages = []string{}
+	}
 	tmuxPrefix := api.DevWorkspaceTmuxPrefix(row.TmuxPrefix)
 	if tmuxPrefix == "" {
 		tmuxPrefix = api.DevWorkspaceTmuxPrefixCB
 	}
 	out := api.DevWorkspace{
-		Enabled:    row.Enabled,
-		NixMode:    api.DevWorkspaceNixMode(row.NixMode),
-		Repos:      apiRepos,
-		TmuxPrefix: tmuxPrefix,
-		State:      api.DevWorkspaceState(row.State),
-		Step:       nullableOf(row.Step),
-		Error:      nullableOf(row.Error),
-		Arch:       nullableOf(row.Arch),
-		UpdatedAt:  row.UpdatedAt,
+		Enabled:       row.Enabled,
+		NixMode:       api.DevWorkspaceNixMode(row.NixMode),
+		Repos:         apiRepos,
+		ExtraPackages: extraPackages,
+		TmuxPrefix:    tmuxPrefix,
+		State:         api.DevWorkspaceState(row.State),
+		Step:          nullableOf(row.Step),
+		Error:         nullableOf(row.Error),
+		Arch:          nullableOf(row.Arch),
+		UpdatedAt:     row.UpdatedAt,
 	}
 	if row.CustomZshrc != nil {
 		out.CustomZshrc.Set(*row.CustomZshrc)

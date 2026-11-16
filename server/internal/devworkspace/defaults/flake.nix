@@ -15,6 +15,8 @@
         default = pkgs.buildEnv {
           name = "vesper-dev-env";
           paths = with pkgs; [
+            go
+            nodejs
             neovim
             tmux
             zsh

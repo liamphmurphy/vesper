@@ -122,10 +122,13 @@ func (r *Runner) runDevWorkspaceAction(ctx context.Context, row store.ClaimDevWo
 		customTmuxConf = *row.CustomTmuxConf
 	}
 
+	var extraPackages []string
+	_ = json.Unmarshal(row.ExtraPackages, &extraPackages)
+
 	var arch *string
 	if action == "start" || action == "rebuild" {
 		setStep("Installing Nix + LazyVim")
-		out, code, err := db.ExecDevWorkspaceScript(ctx, containerID, devworkspace.SetupNixScript(action == "rebuild", customZshrc, row.TmuxPrefix, customTmuxConf), nil)
+		out, code, err := db.ExecDevWorkspaceScript(ctx, containerID, devworkspace.SetupNixScript(action == "rebuild", customZshrc, row.TmuxPrefix, customTmuxConf, extraPackages), nil)
 		if err != nil || code != 0 {
 			fail(fmt.Sprintf("nix setup failed (exit %d): %s", code, lastLines(out, 20)))
 			return

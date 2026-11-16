@@ -28,7 +28,7 @@ func TestDeriveRepoDirsDisambiguates(t *testing.T) {
 }
 
 func TestSetupNixScriptEmbedsDefaultsAndForceRebuild(t *testing.T) {
-	s := SetupNixScript(false, "", "C-b", "")
+	s := SetupNixScript(false, "", "C-b", "", nil)
 	for _, want := range []string{
 		"/home/node/.config/vesper-dev/flake.nix",
 		"/home/node/.config/nvim/init.lua",
@@ -43,13 +43,33 @@ func TestSetupNixScriptEmbedsDefaultsAndForceRebuild(t *testing.T) {
 			t.Fatalf("SetupNixScript missing %q", want)
 		}
 	}
-	rebuild := SetupNixScript(true, "", "C-b", "")
+	rebuild := SetupNixScript(true, "", "C-b", "", nil)
 	if !strings.Contains(rebuild, "rm -f '/home/node/.local/share/vesper-dev/env.hash' '/home/node/.config/vesper-dev/flake.lock'") {
 		t.Fatalf("forceRebuild should remove stamp and flake.lock: %s", rebuild)
 	}
 	custom := WriteShellConfigScript("export FOO=bar\n", "C-a", "set -g mouse on\n")
 	if !strings.Contains(custom, "/home/node/.zshenv") || !strings.Contains(custom, "ZXhwb3J0IEZPTz1iYXIK") || !strings.Contains(custom, "c2V0IC1nIG1vdXNlIG9uCg==") || !strings.Contains(custom, "tmux source-file") {
 		t.Fatalf("WriteShellConfigScript should write .zshenv, custom .zshrc, custom .tmux.conf, and reload tmux: %s", custom)
+	}
+}
+
+func TestValidateNixPackageAndRenderFlake(t *testing.T) {
+	for _, good := range []string{"bat", "eza", "python312Packages.pytest", "gcc_multi"} {
+		if _, err := ValidateNixPackage(good); err != nil {
+			t.Fatalf("ValidateNixPackage(%q) unexpected err: %v", good, err)
+		}
+	}
+	for _, bad := range []string{"", "bat; rm -rf /", "a b", "../foo", "pkgs.\"x\""} {
+		if _, err := ValidateNixPackage(bad); err == nil {
+			t.Fatalf("ValidateNixPackage(%q) should have failed", bad)
+		}
+	}
+	if EnvHash(nil) == EnvHash([]string{"bat"}) {
+		t.Fatal("EnvHash should change when extraPackages changes")
+	}
+	rendered := RenderFlakeNix([]string{"bat", "python3Packages.ipython"})
+	if !strings.Contains(rendered, `"bat"`) || !strings.Contains(rendered, `"python3Packages.ipython"`) {
+		t.Fatalf("RenderFlakeNix missing extra packages: %s", rendered)
 	}
 }
 
