@@ -324,7 +324,7 @@ const syncConcurrency = 6
 // within a single step and report any failing clones together.
 func SyncReposScript(repos []RepoSpec, userName, userEmail string) string {
 	var b strings.Builder
-	b.WriteString("set -eu\n")
+	b.WriteString("set -eu\numask 022\n")
 	b.WriteString("mkdir -p /workspace\n")
 	if len(repos) == 0 {
 		return b.String()
@@ -376,7 +376,7 @@ func OpenBranchScript(repos []RepoSpec, repoURL, branch string, prNumber int, us
 	}
 
 	var b strings.Builder
-	b.WriteString("set -eu\n")
+	b.WriteString("set -eu\numask 022\n")
 	b.WriteString("mkdir -p /workspace\n")
 	writeCredentialHelperPrelude(&b)
 	b.WriteString(`norm_url() {

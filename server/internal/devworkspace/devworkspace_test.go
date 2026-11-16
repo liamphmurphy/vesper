@@ -102,6 +102,43 @@ func TestSyncReposScriptClonesAndFetchesWithoutStoringTokens(t *testing.T) {
 	}
 }
 
+func TestDefaultShellConfigsOverrideOtherWritableDirColors(t *testing.T) {
+	zshenv, err := defaultFiles.ReadFile("defaults/zshenv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(zshenv), "umask 022") {
+		t.Fatalf("defaults/zshenv should set umask 022:\n%s", zshenv)
+	}
+
+	zshrc, err := defaultFiles.ReadFile("defaults/zshrc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	omzIdx := strings.Index(string(zshrc), "oh-my-zsh.sh")
+	lsIdx := strings.Index(string(zshrc), "ow=01;34:tw=01;34:")
+	if omzIdx < 0 || lsIdx < 0 || lsIdx < omzIdx {
+		t.Fatalf("defaults/zshrc must override ow/tw LS_COLORS after oh-my-zsh.sh:\n%s", zshrc)
+	}
+
+	bashrc, err := defaultFiles.ReadFile("defaults/bashrc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(bashrc), "umask 022") || !strings.Contains(string(bashrc), "ow=01;34:tw=01;34:") {
+		t.Fatalf("defaults/bashrc must set umask 022 and override ow/tw LS_COLORS:\n%s", bashrc)
+	}
+
+	syncScript := SyncReposScript([]RepoSpec{{RepoURL: "https://github.com/liamphmurphy/vesper.git", Directory: "vesper"}}, "Liam", "liam@example.com")
+	if !strings.Contains(syncScript, "umask 022") {
+		t.Fatalf("SyncReposScript should set umask 022")
+	}
+	branchScript := OpenBranchScript(nil, "https://github.com/liamphmurphy/vesper.git", "main", 0, "Liam", "liam@example.com")
+	if !strings.Contains(branchScript, "umask 022") {
+		t.Fatalf("OpenBranchScript should set umask 022")
+	}
+}
+
 func TestSyncReposScriptBatchesWavesForLargeSets(t *testing.T) {
 	repos := make([]RepoSpec, 15)
 	for i := range repos {

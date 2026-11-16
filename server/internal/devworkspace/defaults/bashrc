@@ -1,6 +1,12 @@
+umask 022
 export PATH="/home/node/.local/share/vesper-dev/profile/bin:/home/node/.nix-profile/bin:/usr/local/go/bin:/nix/var/nix/profiles/default/bin:$PATH"
 export EDITOR="nvim"
 export VISUAL="nvim"
+
+if command -v dircolors >/dev/null 2>&1 && [ -z "${LS_COLORS:-}" ]; then
+  eval "$(dircolors -b 2>/dev/null || true)"
+fi
+export LS_COLORS="${LS_COLORS:-rs=0:di=01;34:ln=01;36:ex=01;32}:ow=01;34:tw=01;34:"
 
 alias ls="ls --color=auto"
 alias ll="ls -lah --color=auto"

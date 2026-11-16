@@ -19,6 +19,12 @@ HISTSIZE=10000
 SAVEHIST=10000
 setopt APPEND_HISTORY SHARE_HISTORY HIST_IGNORE_DUPS
 
+if command -v dircolors >/dev/null 2>&1 && [ -z "${LS_COLORS:-}" ]; then
+  eval "$(dircolors -b 2>/dev/null || true)"
+fi
+export LS_COLORS="${LS_COLORS:-rs=0:di=01;34:ln=01;36:ex=01;32}:ow=01;34:tw=01;34:"
+zstyle ':completion:*' list-colors "${(s.:.)LS_COLORS}"
+
 alias ls="ls --color=auto"
 alias ll="ls -lah --color=auto"
 alias la="ls -A --color=auto"
