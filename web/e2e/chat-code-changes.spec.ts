@@ -262,3 +262,38 @@ test("Code dock tab is persistently available on repository chats before any edi
   await expect(page.getByRole("button", { name: "Open Activity" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Open Code" })).toHaveCount(0);
 });
+
+test("live branch creation glows the Code rail icon without auto-opening the Code dock", async ({ page }) => {
+  const api = await installChatApi(page, { replyDelayMs: 1200 });
+  await page.goto("/chat?project=WEB");
+  await page.getByRole("combobox", { name: "Message" }).fill("slow: create a branch");
+  await page.getByRole("combobox", { name: "Message" }).press("Enter");
+
+  const chat = api.chats[0];
+  api.codeReviews.set(chat.id, [
+    {
+      repository: "https://github.com/acme/alpha.git",
+      branch: "feat/new-branch",
+      base_sha: "1111111111111111111111111111111111111111",
+      head_sha: "2222222222222222222222222222222222222222",
+      commits: [],
+      files: [],
+      dirty: false,
+      live: true,
+      tree: [],
+      tree_truncated: false,
+      updated_at: new Date().toISOString(),
+    },
+  ]);
+  await page.evaluate((cid) => {
+    const data = JSON.stringify({ type: "code_review.updated", chat_id: cid });
+    for (const s of (window as unknown as { __sse: Array<{ onmessage?: (e: { data: string }) => void }> }).__sse) {
+      s.onmessage?.({ data });
+    }
+  }, chat.id);
+
+  const codeBtn = page.getByRole("button", { name: /Open Code, working/ });
+  await expect(codeBtn).toBeVisible();
+  await expect(codeBtn.locator("[data-busy]")).toBeVisible();
+  await expect(page.getByTestId("code-panel")).not.toBeVisible();
+});

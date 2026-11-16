@@ -147,19 +147,6 @@ function ChatDock({ chatId, live, readOnly, agent, activity, panels }: { chatId:
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs when the set of open panels changes
   }, [key, ready]);
 
-  // Auto-open the Code tab when a live turn starts writing code changes (unless the person collapsed the dock).
-  const codeLive = !!code?.some((r) => r.live);
-  const prevCodeLive = useRef<boolean | null>(null);
-  useEffect(() => {
-    if (code === undefined) return;
-    const wasLive = prevCodeLive.current;
-    prevCodeLive.current = codeLive;
-    if (wasLive === null || wasLive || !codeLive || !live) return;
-    if (search.get("dock") === "0") return;
-    go(setDock(new URLSearchParams(search.toString()), { tab: "code", open: true }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs when codeLive transitions false -> true during a live turn
-  }, [code, codeLive, live]);
-
   // ⌘\ collapses or reopens the dock and ⌘. hides or restores it with the sidebar. The composer
   // usually has focus in a chat, so they apply while typing too. ⌘J doesn't: the composer is always there.
   useEffect(() => {
