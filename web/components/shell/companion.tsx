@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useId, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { WorkChat } from "@/components/domain/work-chat";
@@ -110,7 +110,9 @@ export function RightRailPortal({ children }: { children: ReactNode }) {
 
 function RailFootLinks({ settingsNeedYou }: { settingsNeedYou: boolean }) {
   const pathname = usePathname();
+  const router = useRouter();
   const devWorkspace = useDevWorkspace();
+  const onDevPage = isActive(pathname, "/dev");
   const link = (href: string) => cx(
     "relative grid size-[30px] place-items-center rounded-md text-12",
     isActive(pathname, href) ? "bg-selected text-fg" : "text-fg-tertiary hover:bg-hover hover:text-fg",
@@ -118,8 +120,19 @@ function RailFootLinks({ settingsNeedYou }: { settingsNeedYou: boolean }) {
   return (
     <div className="flex flex-none flex-col items-center gap-1 pb-1">
       {devWorkspace.data?.enabled && (
-        <Link href="/dev" aria-label="Dev workspace" title="Dev workspace: Nix + LazyVim terminal"
-          aria-current={isActive(pathname, "/dev") ? "page" : undefined} className={link("/dev")}>
+        <Link
+          href="/dev"
+          aria-label={onDevPage ? "Return to previous page" : "Dev workspace"}
+          title={onDevPage ? "Return to previous page" : "Dev workspace: Nix + LazyVim terminal"}
+          aria-current={onDevPage ? "page" : undefined}
+          onClick={(e) => {
+            if (!onDevPage) return;
+            e.preventDefault();
+            if (window.history.length > 1) router.back();
+            else router.push("/");
+          }}
+          className={link("/dev")}
+        >
           <Icon name="terminal" size={15} />
         </Link>
       )}

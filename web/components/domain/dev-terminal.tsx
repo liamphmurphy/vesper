@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { Dialog } from "radix-ui";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { useDevWorkspace, useDevWorkspaceAction } from "@/lib/api/dev-workspace-hooks";
 import {
+  DEV_TERMINAL_SHORTCUT_GROUPS,
   devWorkspaceSocketUrl,
   devWorkspaceStatusLabel,
   devWorkspaceStatusTone,
@@ -15,6 +17,7 @@ import {
 } from "@/lib/dev-workspace";
 import { cx } from "@/lib/cx";
 import { Button, ButtonLink } from "@/components/ui/button";
+import { Icon } from "@/components/ui/icon";
 import { Banner, EmptyState, Skeleton } from "@/components/ui/primitives";
 import { SmallPill } from "@/components/domain/labels";
 
@@ -57,6 +60,7 @@ export function DevTerminal() {
   const [nativeFullscreen, setNativeFullscreen] = useState(false);
   const [fallbackFullscreen, setFallbackFullscreen] = useState(false);
   const [keyboardLocked, setKeyboardLocked] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [conn, setConn] = useState<ConnState>("disconnected");
   const [reconnectSeq, setReconnectSeq] = useState(0);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -292,6 +296,9 @@ export function DevTerminal() {
                 Reconnect
               </Button>
             )}
+            <Button variant="outline" onClick={() => setShortcutsOpen(true)}>
+              Shortcuts
+            </Button>
             <Link
               href="/settings#dev-workspace"
               className="rounded-md border border-border bg-surface px-2.5 py-1 text-12 font-medium text-fg hover:bg-hover"
@@ -304,6 +311,51 @@ export function DevTerminal() {
           </div>
         </div>
       )}
+
+      <Dialog.Root
+        open={shortcutsOpen}
+        onOpenChange={(open) => {
+          setShortcutsOpen(open);
+          if (!open) {
+            requestAnimationFrame(() => termRef.current?.focus());
+          }
+        }}
+      >
+        <Dialog.Portal>
+          <Dialog.Overlay className="motion-scrim fixed inset-0 z-50 bg-scrim" />
+          <Dialog.Content
+            aria-describedby={undefined}
+            className="fixed left-1/2 top-1/2 z-50 flex max-h-[85dvh] w-[min(92vw,620px)] -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl border border-border-float bg-surface-raised text-fg shadow-[var(--shadow-float)] outline-none"
+          >
+            <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
+              <Dialog.Title className="type-heading text-fg">Terminal &amp; LazyVim shortcuts</Dialog.Title>
+              <Dialog.Close
+                aria-label="Close shortcuts"
+                className="grid size-8 place-items-center rounded-md text-fg-secondary hover:bg-hover hover:text-fg"
+              >
+                <Icon name="x" size={16} />
+              </Dialog.Close>
+            </div>
+            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">
+              {DEV_TERMINAL_SHORTCUT_GROUPS.map((group) => (
+                <section key={group.title} className="space-y-2">
+                  <h3 className="text-11 font-semibold uppercase tracking-[0.06em] text-fg-tertiary">
+                    {group.title}
+                  </h3>
+                  <dl className="divide-y divide-border-subtle rounded-lg border border-border bg-surface">
+                    {group.items.map((item) => (
+                      <div key={item.keys} className="flex items-center justify-between gap-4 px-3 py-2 text-13">
+                        <dt className="font-mono text-12 font-medium text-fg">{item.keys}</dt>
+                        <dd className="text-right text-fg-secondary">{item.description}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </section>
+              ))}
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
 
       {wsData.state === "error" && wsData.error && (
         <div className="border-b border-border bg-pill-blocked-bg px-4 py-2 text-12 text-pill-blocked-fg">
