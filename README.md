@@ -9,8 +9,10 @@
     <a href="#a-flagship-chat-experience">Chat</a> ·
     <a href="#apps-with-a-persona-beside-you">Apps</a> ·
     <a href="#build-custom-apps">Custom Apps</a> ·
+    <a href="#dev-workspace">Dev workspace</a> ·
     <a href="#hand-work-to-personas">Work</a> ·
     <a href="#get-started">Get started</a> ·
+    <a href="#macos-desktop-client">macOS app</a> ·
     <a href="docs/guide.md">Documentation</a>
   </p>
   <p><strong>Self-hosted</strong> &nbsp; / &nbsp; Claude Code · Codex · Antigravity &nbsp; / &nbsp; Your memory, your Postgres &nbsp; / &nbsp; No lock-in</p>
@@ -87,6 +89,14 @@ When a one-off inline `app` block in chat isn't enough, you—or any persona in 
 - **Bundled MCP servers (`@vesper/server`)**: add a `server.ts` entrypoint (`defineServer`, `sql`, `secretFetch`, `fetch`, `api`) and Vesper runs it in a stripped Node `--permission` sandbox. The tools your app defines are automatically exposed as an MCP server (`app_<slug>`) to your personas in chats, workflows, and the app UI itself.
 - **Workbench dock, permissions & versions**: every Custom App opens inside the workbench with a companion dock containing **Chat** (talk to a persona that can inspect files, run `custom_app_sql`, and ship new versions), **Code** (edit files and compile in browser), and **Permissions** (set `vesper.api:read`, `vesper.api:write`, outbound HTTPS, workspace secrets, and MCP connectors to **Allow**, **Ask**, or **Deny**, scope SQL access to **All chats** or **This app only**, and restore any numbered release from **Version history**).
 
+## Dev workspace
+
+Open a persistent **Dev workspace** (`/dev`, from the rail or `⌘K`) whenever you want a full terminal editor alongside Vesper without leaving the workbench:
+
+- **Nix + LazyVim container**: runs a persistent `nixos-unstable` container preloaded with **LazyVim**, **zsh** (Oh My Zsh), **tmux**, **Go**, and **Node.js**, plus any extra Nix packages you add in Settings.
+- **Live-editable shell & tmux config**: customize your `.zshrc`, `.tmux.conf`, and tmux prefix (`Ctrl+a`, `Ctrl+b`, `Ctrl+Space`, or `Ctrl+s`) right in the UI with live reload.
+- **Repository & terminal ergonomics**: clone or switch between any repository your GitHub token can reach, toggle native exclusive fullscreen with keyboard lock (so `Esc` and Vim bindings pass straight through), and use **Send to chat** to drop a terminal snapshot into a persona conversation.
+
 ## Workflows and scheduled tasks
 
 ![Workflow editor with a chat trigger, a draft step, a fact-check step, a human approval gate, and wiki and chat outputs](docs/images/workflows.png)
@@ -134,6 +144,17 @@ To run personas with API keys, set `SECRETS_KEY` in `.env`, then follow the **[s
 
 Developing Vesper or running it from a checkout? `make start` does everything in one command: it creates `.env`, builds the hardened agent image, signs in to your **Claude and ChatGPT subscriptions** so chats and runs can use the plans you already have, and starts the workbench at **[localhost:3000](http://localhost:3000)**.
 
+### macOS desktop client
+
+Prefer a native macOS app over a browser tab? Build the thin Electron wrapper from a checkout on macOS:
+
+```sh
+make desktop-dmg            # Apple Silicon → desktop/release/Vesper-arm64.dmg
+make desktop-dmg-universal  # Universal     → desktop/release/Vesper-universal.dmg
+```
+
+`Vesper.app` connects to your local OrbStack/Docker stack (`http://localhost:8080`) or a remote Tailscale host with native Cocoa tabs (`⌘T`, `⌘W`, `⇧⌘T`, `⌘1`–`⌘9`), persistent cookies, multi-tab SSE `/events` multiplexing (so 6+ HTTP/1.1 tabs never stall), Dock badge **Needs you** counts, Notification Center alerts, one-click `docker compose up -d` startup, and clean `Esc` / terminal keybindings in the **Dev workspace**. See the **[desktop guide](desktop/README.md)** for Gatekeeper first-launch instructions.
+
 ### Current scope
 
 Vesper is designed for one person per install: the username and password chosen on first visit sign in as the workspace owner. The app binds to `127.0.0.1` by default unless you set `LAZYAGENTS_BIND`, and the Docker runner mounts the host Docker socket to launch sandboxed agent containers. On a remote host, keep Vesper on a private network (such as Tailscale) or behind an authenticating proxy, and only run repositories you trust. Read the **[guide](docs/guide.md)** before deploying.
@@ -141,6 +162,7 @@ Vesper is designed for one person per install: the username and password chosen 
 ## Explore further
 
 - **[Running and developing](docs/guide.md)**: setup, harnesses, chat tools, Knowledge, Custom Apps, workflows, and development commands.
+- **[macOS desktop client](desktop/README.md)**: building `Vesper.dmg`, Gatekeeper setup, and keyboard shortcuts.
 - **[Kanban board](docs/board.md)**: ticket statuses, estimates, epics, and work tools.
 - **[Example skills](examples/skills/)**: starter playbooks for your personas.
 - **[Project plan](docs/dev/plan.md)**: architecture and implementation details.
