@@ -114,12 +114,15 @@ func (r *Runner) runDevWorkspaceAction(ctx context.Context, row store.ClaimDevWo
 		return
 	}
 
-	var customZshrc, customTmuxConf string
+	var customZshrc, customTmuxConf, customGitconfig string
 	if row.CustomZshrc != nil {
 		customZshrc = *row.CustomZshrc
 	}
 	if row.CustomTmuxConf != nil {
 		customTmuxConf = *row.CustomTmuxConf
+	}
+	if row.CustomGitconfig != nil {
+		customGitconfig = *row.CustomGitconfig
 	}
 
 	var extraPackages []string
@@ -132,7 +135,7 @@ func (r *Runner) runDevWorkspaceAction(ctx context.Context, row store.ClaimDevWo
 	if action == "open_branch" {
 		if row.Arch == nil || row.Port == nil {
 			setStep("Installing Nix + LazyVim")
-			out, code, err := db.ExecDevWorkspaceScript(ctx, containerID, devworkspace.SetupNixScript(false, customZshrc, row.TmuxPrefix, customTmuxConf, extraPackages), nil)
+			out, code, err := db.ExecDevWorkspaceScript(ctx, containerID, devworkspace.SetupNixScript(false, customZshrc, row.TmuxPrefix, customTmuxConf, customGitconfig, extraPackages), nil)
 			if err != nil || code != 0 {
 				fail(fmt.Sprintf("nix setup failed (exit %d): %s", code, lastLines(out, 20)))
 				return
@@ -174,7 +177,7 @@ func (r *Runner) runDevWorkspaceAction(ctx context.Context, row store.ClaimDevWo
 		var archOut *string
 		if action == "start" || action == "rebuild" {
 			setStep("Installing Nix + LazyVim")
-			out, code, err := db.ExecDevWorkspaceScript(ctx, containerID, devworkspace.SetupNixScript(action == "rebuild", customZshrc, row.TmuxPrefix, customTmuxConf, extraPackages), nil)
+			out, code, err := db.ExecDevWorkspaceScript(ctx, containerID, devworkspace.SetupNixScript(action == "rebuild", customZshrc, row.TmuxPrefix, customTmuxConf, customGitconfig, extraPackages), nil)
 			if err != nil || code != 0 {
 				fail(fmt.Sprintf("nix setup failed (exit %d): %s", code, lastLines(out, 20)))
 				return
@@ -184,7 +187,7 @@ func (r *Runner) runDevWorkspaceAction(ctx context.Context, row store.ClaimDevWo
 			}
 		} else if action == "sync" {
 			setStep("Updating shell config")
-			out, code, err := db.ExecDevWorkspaceScript(ctx, containerID, devworkspace.WriteShellConfigScript(customZshrc, row.TmuxPrefix, customTmuxConf), nil)
+			out, code, err := db.ExecDevWorkspaceScript(ctx, containerID, devworkspace.WriteShellConfigScript(customZshrc, row.TmuxPrefix, customTmuxConf, customGitconfig), nil)
 			if err != nil || code != 0 {
 				fail(fmt.Sprintf("shell config sync failed (exit %d): %s", code, lastLines(out, 20)))
 				return

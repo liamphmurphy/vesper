@@ -10437,6 +10437,7 @@ components:
         extra_packages: { type: array, items: { type: string } }
         custom_zshrc: { type: string, nullable: true }
         custom_tmux_conf: { type: string, nullable: true }
+        custom_gitconfig: { type: string, nullable: true }
         tmux_prefix: { type: string, enum: [C-b, C-a, C-Space, C-s] }
         state: { type: string, enum: [stopped, starting, ready, error] }
         action: { type: string, nullable: true, enum: [start, rebuild, sync, stop, open_branch] }
@@ -10454,6 +10455,7 @@ components:
         extra_packages: { type: array, items: { type: string } }
         custom_zshrc: { type: string, nullable: true }
         custom_tmux_conf: { type: string, nullable: true }
+        custom_gitconfig: { type: string, nullable: true }
         tmux_prefix: { type: string, enum: [C-b, C-a, C-Space, C-s] }
     DevWorkspaceActionRequest:
       type: object
