@@ -9753,6 +9753,8 @@ export interface components {
             repos: components["schemas"]["DevWorkspaceRepo"][];
             custom_zshrc?: string | null;
             /** @enum {string} */
+            tmux_prefix: "C-b" | "C-a" | "C-Space" | "C-s";
+            /** @enum {string} */
             state: "stopped" | "starting" | "ready" | "error";
             /** @enum {string|null} */
             action?: "start" | "rebuild" | "sync" | "stop" | null;
@@ -9769,6 +9771,8 @@ export interface components {
             nix_mode?: "default";
             repos?: string[];
             custom_zshrc?: string | null;
+            /** @enum {string} */
+            tmux_prefix?: "C-b" | "C-a" | "C-Space" | "C-s";
         };
         DevWorkspaceActionRequest: {
             /** @enum {string} */

@@ -695,6 +695,7 @@ type DevWorkspace struct {
 	Arch        *string
 	UpdatedAt   time.Time
 	CustomZshrc *string
+	TmuxPrefix  string
 }
 
 type DocPageRedirect struct {

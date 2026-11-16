@@ -133,8 +133,8 @@ export function DevWorkspaceSection() {
           </div>
         </div>
 
-        <div className="space-y-2.5 border-t border-border-subtle pt-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="space-y-3 border-t border-border-subtle pt-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="text-13 font-medium text-fg">Shell &amp; custom .zshrc</div>
               <p className="text-12 text-fg-tertiary">
@@ -143,6 +143,21 @@ export function DevWorkspaceSection() {
                 <code className="font-mono">$ZSH</code> on <code className="font-mono">PATH</code>.
               </p>
             </div>
+            <label className="flex items-center gap-2 text-12 text-fg-secondary">
+              <span>tmux prefix</span>
+              <select
+                aria-label="tmux prefix"
+                disabled={busy}
+                value={ws.tmux_prefix}
+                onChange={(e) => update.mutate({ tmux_prefix: e.target.value as typeof ws.tmux_prefix })}
+                className="rounded-md border border-border bg-surface px-2.5 py-1 text-12 text-fg"
+              >
+                <option value="C-b">Ctrl+b (default)</option>
+                <option value="C-a">Ctrl+a</option>
+                <option value="C-Space">Ctrl+Space</option>
+                <option value="C-s">Ctrl+s</option>
+              </select>
+            </label>
           </div>
           <textarea
             aria-label="Custom .zshrc"

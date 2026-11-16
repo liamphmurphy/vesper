@@ -21,11 +21,12 @@ func (s *Server) GetDevWorkspace(ctx context.Context, _ api.GetDevWorkspaceReque
 	row, err := s.Q.GetDevWorkspace(ctx, ws)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return api.GetDevWorkspace200JSONResponse{
-			Enabled:   false,
-			NixMode:   api.DevWorkspaceNixModeDefault,
-			Repos:     []api.DevWorkspaceRepo{},
-			State:     api.DevWorkspaceStateStopped,
-			UpdatedAt: time.Now().UTC(),
+			Enabled:    false,
+			NixMode:    api.DevWorkspaceNixModeDefault,
+			Repos:      []api.DevWorkspaceRepo{},
+			TmuxPrefix: api.DevWorkspaceTmuxPrefixCB,
+			State:      api.DevWorkspaceStateStopped,
+			UpdatedAt:  time.Now().UTC(),
 		}, nil
 	}
 	if err != nil {
@@ -46,6 +47,7 @@ func (s *Server) UpdateDevWorkspace(ctx context.Context, req api.UpdateDevWorksp
 			Enabled:     false,
 			NixMode:     "default",
 			Repos:       []byte("[]"),
+			TmuxPrefix:  "C-b",
 			State:       "stopped",
 		}
 	} else if err != nil {
@@ -111,6 +113,15 @@ func (s *Server) UpdateDevWorkspace(ctx context.Context, req api.UpdateDevWorksp
 		}
 	}
 
+	tmuxPrefix := cur.TmuxPrefix
+	if tmuxPrefix == "" {
+		tmuxPrefix = "C-b"
+	}
+	if req.Body.TmuxPrefix != nil && string(*req.Body.TmuxPrefix) != tmuxPrefix {
+		tmuxPrefix = string(*req.Body.TmuxPrefix)
+		shellChanged = true
+	}
+
 	var action *string
 	switch {
 	case !enabled && hasCur && (cur.Enabled || cur.State != "stopped"):
@@ -131,6 +142,7 @@ func (s *Server) UpdateDevWorkspace(ctx context.Context, req api.UpdateDevWorksp
 		NixMode:     nixMode,
 		Repos:       reposJSON,
 		CustomZshrc: customZshrc,
+		TmuxPrefix:  tmuxPrefix,
 		Action:      action,
 	})
 	if err != nil {
@@ -169,15 +181,20 @@ func devWorkspaceOut(row store.DevWorkspace) api.DevWorkspace {
 	for _, r := range repos {
 		apiRepos = append(apiRepos, api.DevWorkspaceRepo{RepoUrl: r.RepoURL, Directory: r.Directory})
 	}
+	tmuxPrefix := api.DevWorkspaceTmuxPrefix(row.TmuxPrefix)
+	if tmuxPrefix == "" {
+		tmuxPrefix = api.DevWorkspaceTmuxPrefixCB
+	}
 	out := api.DevWorkspace{
-		Enabled:   row.Enabled,
-		NixMode:   api.DevWorkspaceNixMode(row.NixMode),
-		Repos:     apiRepos,
-		State:     api.DevWorkspaceState(row.State),
-		Step:      nullableOf(row.Step),
-		Error:     nullableOf(row.Error),
-		Arch:      nullableOf(row.Arch),
-		UpdatedAt: row.UpdatedAt,
+		Enabled:    row.Enabled,
+		NixMode:    api.DevWorkspaceNixMode(row.NixMode),
+		Repos:      apiRepos,
+		TmuxPrefix: tmuxPrefix,
+		State:      api.DevWorkspaceState(row.State),
+		Step:       nullableOf(row.Step),
+		Error:      nullableOf(row.Error),
+		Arch:       nullableOf(row.Arch),
+		UpdatedAt:  row.UpdatedAt,
 	}
 	if row.CustomZshrc != nil {
 		out.CustomZshrc.Set(*row.CustomZshrc)
