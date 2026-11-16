@@ -10,6 +10,7 @@ import { LiveUpdates } from "./live-updates";
 import { ViewedChatReader } from "./viewed-chat-reader";
 import { CommandMenu } from "./command-menu";
 import { CompanionColumn } from "./companion";
+import { DocumentTitle } from "./document-title";
 import { shortcutBlocked, ShortcutsDialog } from "./shortcuts";
 import { Sidebar } from "./sidebar";
 import { SystemBanner } from "./system-banner";
@@ -93,6 +94,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <LiveUpdates />
       {/* usePathname needs a Suspense boundary for prerendering. */}
       <Suspense fallback={null}>
+        <DocumentTitle />
         <CommandMenu />
       </Suspense>
       <ShortcutsDialog />
