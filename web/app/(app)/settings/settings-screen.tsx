@@ -15,6 +15,7 @@ import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { useCompact } from "@/lib/viewport";
 import { AppearanceSection } from "./appearance-section";
 import { BackupSection } from "./backup-section";
+import { DevWorkspaceSection } from "./dev-workspace-section";
 import { ImageEngineSection } from "./image-engine-section";
 import { RepositorySourcesSection } from "./repositories-section";
 import { SecretsSection } from "./secrets-section";
@@ -50,6 +51,7 @@ export function SettingsScreen() {
     { id: "images", label: "Image engine", health: "idle" },
     { id: "repositories", label: "Repository discovery", health: "idle" },
     { id: "runners", label: "Runner backends", health: !runner.data ? "unknown" : runner.data.online ? "ok" : "attention" },
+    { id: "dev-workspace", label: "Dev workspace", health: "idle" },
     { id: "overrides", label: "Space overrides", health: "idle" },
     { id: "sign-in", label: "Sign-in", health: !auth.data ? "unknown" : auth.data.password_set ? "ok" : "attention" },
     { id: "backup", label: "Backup & move", health: "idle" },
@@ -124,6 +126,13 @@ export function SettingsScreen() {
             lead="Reported by each runner’s heartbeat. Set by environment variables on the runner process; restart the runner to change them."
           >
             <RunnerSection />
+          </Section>
+          <Section
+            id="dev-workspace"
+            title="Dev workspace"
+            lead="Persistent Nix + LazyVim container for inspecting and testing agent branches. No container runs until enabled."
+          >
+            <DevWorkspaceSection />
           </Section>
           <Section id="overrides" title="Space overrides" lead="Customize an agent for one space while keeping future agent definition updates.">
             <ProjectOverridesSection />

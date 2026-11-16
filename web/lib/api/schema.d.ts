@@ -1142,6 +1142,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/dev-workspace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Persistent Nix + LazyVim dev workspace settings and runtime state */
+        get: operations["getDevWorkspace"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Enable, disable, or update auto-cloned repositories for the dev workspace */
+        patch: operations["updateDevWorkspace"];
+        trace?: never;
+    };
+    "/dev-workspace/action": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Trigger a dev workspace action (start, rebuild, sync, stop) */
+        post: operations["devWorkspaceAction"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/runner/test-environments": {
         parameters: {
             query?: never;
@@ -9690,6 +9725,36 @@ export interface components {
             summary?: string;
             result?: unknown;
         };
+        DevWorkspaceRepo: {
+            repo_url: string;
+            directory: string;
+        };
+        DevWorkspace: {
+            enabled: boolean;
+            /** @enum {string} */
+            nix_mode: "default";
+            repos: components["schemas"]["DevWorkspaceRepo"][];
+            /** @enum {string} */
+            state: "stopped" | "starting" | "ready" | "error";
+            /** @enum {string|null} */
+            action?: "start" | "rebuild" | "sync" | "stop" | null;
+            step?: string | null;
+            error?: string | null;
+            port?: number | null;
+            arch?: string | null;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        UpdateDevWorkspace: {
+            enabled?: boolean;
+            /** @enum {string} */
+            nix_mode?: "default";
+            repos?: string[];
+        };
+        DevWorkspaceActionRequest: {
+            /** @enum {string} */
+            action: "start" | "rebuild" | "sync" | "stop";
+        };
     };
     responses: {
         /** @description Error */
@@ -11567,6 +11632,77 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunnerEnvironment"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getDevWorkspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current dev workspace configuration and container state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DevWorkspace"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateDevWorkspace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateDevWorkspace"];
+            };
+        };
+        responses: {
+            /** @description Updated dev workspace */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DevWorkspace"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    devWorkspaceAction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DevWorkspaceActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated dev workspace */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DevWorkspace"];
                 };
             };
             default: components["responses"]["Error"];

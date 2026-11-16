@@ -7,6 +7,7 @@ import { createPortal } from "react-dom";
 import { WorkChat } from "@/components/domain/work-chat";
 import { Icon } from "@/components/ui/icon";
 import { useNavCounts } from "@/lib/use-nav-counts";
+import { useDevWorkspace } from "@/lib/api/dev-workspace-hooks";
 import { claimCompanion, companionClaimed, companionSlot, rightRailSlot, setCompanionSlot, setRightRailSlot, subscribeCompanion } from "@/lib/companion";
 import { cx } from "@/lib/cx";
 import { actOnDock, dockReducer, dockShortcut, loadDock, saveDock, type DockAction, type DockState } from "@/lib/editor-layout";
@@ -109,12 +110,19 @@ export function RightRailPortal({ children }: { children: ReactNode }) {
 
 function RailFootLinks({ settingsNeedYou }: { settingsNeedYou: boolean }) {
   const pathname = usePathname();
+  const devWorkspace = useDevWorkspace();
   const link = (href: string) => cx(
     "relative grid size-[30px] place-items-center rounded-md text-12",
     isActive(pathname, href) ? "bg-selected text-fg" : "text-fg-tertiary hover:bg-hover hover:text-fg",
   );
   return (
     <div className="flex flex-none flex-col items-center gap-1 pb-1">
+      {devWorkspace.data?.enabled && (
+        <Link href="/dev" aria-label="Dev workspace" title="Dev workspace: Nix + LazyVim terminal"
+          aria-current={isActive(pathname, "/dev") ? "page" : undefined} className={link("/dev")}>
+          <Icon name="terminal" size={15} />
+        </Link>
+      )}
       <Link href="/customization" aria-label="Customization" title="Customization: personas, agents, memory and your profile"
         aria-current={isActive(pathname, "/customization") ? "page" : undefined} className={link("/customization")}>
         <Icon name="sliders" size={15} />
