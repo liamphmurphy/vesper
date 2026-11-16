@@ -9751,6 +9751,7 @@ export interface components {
             /** @enum {string} */
             nix_mode: "default";
             repos: components["schemas"]["DevWorkspaceRepo"][];
+            extra_packages: string[];
             custom_zshrc?: string | null;
             custom_tmux_conf?: string | null;
             /** @enum {string} */
@@ -9771,6 +9772,7 @@ export interface components {
             /** @enum {string} */
             nix_mode?: "default";
             repos?: string[];
+            extra_packages?: string[];
             custom_zshrc?: string | null;
             custom_tmux_conf?: string | null;
             /** @enum {string} */

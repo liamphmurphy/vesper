@@ -5,8 +5,10 @@ import (
 	"embed"
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"io/fs"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -137,16 +139,58 @@ func WriteShellConfigScript(customZshrc, tmuxPrefix, customTmuxConf string) stri
 	return b.String()
 }
 
-// SetupNixScript returns a shell script that writes the default Nix flake,
-// LazyVim config, and shell/tmux config into /home/node, then installs the Nix
-// profile if the config hash changed or forceRebuild is true (refreshing the
-// nixos-unstable flake lock on rebuild).
-func SetupNixScript(forceRebuild bool, customZshrc, tmuxPrefix, customTmuxConf string) string {
-	hash := ConfigHash()
+var nixPkgRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._+-]*$`)
+
+// ValidateNixPackage checks that a user-supplied nixpkgs attribute name is
+// safe to interpolate into flake.nix.
+func ValidateNixPackage(raw string) (string, error) {
+	name := strings.TrimSpace(raw)
+	if name == "" {
+		return "", fmt.Errorf("package name cannot be empty")
+	}
+	if strings.Contains(name, "..") || strings.HasSuffix(name, ".") || !nixPkgRe.MatchString(name) {
+		return "", fmt.Errorf("invalid nixpkgs package name %q", raw)
+	}
+	return name, nil
+}
+
+// EnvHash returns the stamp hash for the embedded defaults plus any extra
+// nixpkgs packages, so adding or removing a package invalidates the stamp.
+func EnvHash(extraPackages []string) string {
+	h := sha256.New()
+	h.Write([]byte(ConfigHash()))
+	for _, p := range extraPackages {
+		h.Write([]byte{0})
+		h.Write([]byte(p))
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+// RenderFlakeNix returns defaults/flake.nix with any validated extraPackages
+// appended to the buildEnv paths using nixpkgs.lib.attrByPath.
+func RenderFlakeNix(extraPackages []string) string {
+	base, _ := defaultFiles.ReadFile("defaults/flake.nix")
+	if len(extraPackages) == 0 {
+		return string(base)
+	}
+	var extra strings.Builder
+	for _, p := range extraPackages {
+		extra.WriteString("          ] ++ [\n            (nixpkgs.lib.attrByPath (nixpkgs.lib.splitString \".\" " + fmt.Sprintf("%q", p) + ") (throw \"unknown nixpkgs package: " + p + "\") pkgs)\n")
+	}
+	// Replace the closing `          ];` of `paths = with pkgs; [ ... ];`
+	return strings.Replace(string(base), "          ];", strings.TrimPrefix(extra.String(), "          ] ++ ")+"          ];", 1)
+}
+
+// SetupNixScript returns a shell script that writes the default Nix flake
+// (including any extraPackages), LazyVim config, and shell/tmux config into
+// /home/node, then installs the Nix profile if the env hash changed or
+// forceRebuild is true (refreshing the nixos-unstable flake lock on rebuild).
+func SetupNixScript(forceRebuild bool, customZshrc, tmuxPrefix, customTmuxConf string, extraPackages []string) string {
+	hash := EnvHash(extraPackages)
 	var b strings.Builder
 	b.WriteString("set -eu\n")
 	b.WriteString("mkdir -p /home/node/.local/share/vesper-dev /home/node/.config/vesper-dev /home/node/.config/nvim/lua/config /home/node/.config/nvim/lua/plugins\n")
-	_ = writeEmbeddedFile(&b, "defaults/flake.nix", "/home/node/.config/vesper-dev/flake.nix")
+	writeContent(&b, []byte(RenderFlakeNix(extraPackages)), "/home/node/.config/vesper-dev/flake.nix")
 	_ = writeEmbeddedFile(&b, "defaults/profile", "/home/node/.profile")
 	_ = writeEmbeddedFile(&b, "defaults/bashrc", "/home/node/.bashrc")
 	b.WriteString(WriteShellConfigScript(customZshrc, tmuxPrefix, customTmuxConf))

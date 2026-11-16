@@ -15,6 +15,7 @@ export function DevWorkspaceSection() {
   const action = useDevWorkspaceAction();
   const presets = useRepositoryPresets();
   const [repoInput, setRepoInput] = useState("");
+  const [pkgInput, setPkgInput] = useState("");
   const [ownerInput, setOwnerInput] = useState("");
   const [seekOwner, setSeekOwner] = useState("");
   const [selectedOrgUrls, setSelectedOrgUrls] = useState<string[] | null>(null);
@@ -61,6 +62,20 @@ export function DevWorkspaceSection() {
   const removeRepo = (repoUrl: string) => {
     const next = ws.repos.filter((r) => r.repo_url !== repoUrl).map((r) => r.repo_url);
     update.mutate({ repos: next });
+  };
+
+  const addPackages = () => {
+    const parts = pkgInput
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (parts.length === 0) return;
+    const next = Array.from(new Set([...ws.extra_packages, ...parts]));
+    update.mutate({ extra_packages: next }, { onSuccess: () => setPkgInput("") });
+  };
+
+  const removePackage = (pkg: string) => {
+    update.mutate({ extra_packages: ws.extra_packages.filter((p) => p !== pkg) });
   };
 
   const startSeekOwner = (owner: string) => {
@@ -116,7 +131,7 @@ export function DevWorkspaceSection() {
             <div className="rounded-lg border border-accent bg-accent-soft/40 p-3">
               <div className="text-13 font-semibold text-fg">Vesper default (nixos-unstable + LazyVim)</div>
               <p className="mt-1 text-12 text-fg-secondary">
-                Latest nixos-unstable: neovim, tmux, zsh, oh-my-zsh, lazygit, rg, fd, gopls, pyright, tsserver, nixd
+                Latest nixos-unstable: go, nodejs, neovim, tmux, zsh, oh-my-zsh, lazygit, rg, fd, gopls, pyright, tsserver, nixd
               </p>
             </div>
             <div
@@ -132,6 +147,59 @@ export function DevWorkspaceSection() {
               </p>
             </div>
           </div>
+        </div>
+
+        <div className="space-y-2.5 border-t border-border-subtle pt-4">
+          <div>
+            <div className="text-13 font-medium text-fg">
+              Extra Nix packages {ws.extra_packages.length > 0 ? `(${ws.extra_packages.length})` : ""}
+            </div>
+            <p className="text-12 text-fg-tertiary">
+              Add any <code className="font-mono">nixpkgs</code> package names (e.g. <code className="font-mono">eza bat btop rustc cargo uv</code>).
+              Adding or removing packages rebuilds the profile automatically.
+            </p>
+          </div>
+
+          {ws.extra_packages.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {ws.extra_packages.map((pkg) => (
+                <span
+                  key={pkg}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-0.5 font-mono text-12 text-fg"
+                >
+                  {pkg}
+                  <button
+                    type="button"
+                    aria-label={`Remove ${pkg}`}
+                    disabled={busy}
+                    onClick={() => removePackage(pkg)}
+                    className="text-fg-tertiary hover:text-pill-blocked-fg disabled:opacity-50"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+
+          <form
+            className="flex flex-wrap gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              addPackages();
+            }}
+          >
+            <input
+              aria-label="Extra Nix packages"
+              value={pkgInput}
+              onChange={(e) => setPkgInput(e.target.value)}
+              placeholder="e.g. eza bat btop rustc cargo"
+              className="min-w-60 flex-1 rounded-md border border-border bg-surface px-3 py-1.5 font-mono text-13 text-fg"
+            />
+            <Button type="submit" variant="outline" disabled={!pkgInput.trim() || busy}>
+              + Add packages
+            </Button>
+          </form>
         </div>
 
         <div className="space-y-3 border-t border-border-subtle pt-4">

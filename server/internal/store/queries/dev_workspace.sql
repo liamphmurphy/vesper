@@ -2,13 +2,14 @@
 SELECT * FROM dev_workspaces WHERE workspace_id = $1;
 
 -- name: UpsertDevWorkspace :one
-INSERT INTO dev_workspaces (workspace_id, user_id, enabled, nix_mode, repos, custom_zshrc, custom_tmux_conf, tmux_prefix, action, state, error, updated_at)
+INSERT INTO dev_workspaces (workspace_id, user_id, enabled, nix_mode, repos, extra_packages, custom_zshrc, custom_tmux_conf, tmux_prefix, action, state, error, updated_at)
 VALUES (
   sqlc.arg(workspace_id),
   sqlc.arg(user_id),
   sqlc.arg(enabled),
   sqlc.arg(nix_mode),
   sqlc.arg(repos),
+  sqlc.arg(extra_packages),
   sqlc.narg(custom_zshrc),
   sqlc.narg(custom_tmux_conf),
   sqlc.arg(tmux_prefix),
@@ -22,6 +23,7 @@ ON CONFLICT (workspace_id) DO UPDATE SET
   enabled = EXCLUDED.enabled,
   nix_mode = EXCLUDED.nix_mode,
   repos = EXCLUDED.repos,
+  extra_packages = EXCLUDED.extra_packages,
   custom_zshrc = EXCLUDED.custom_zshrc,
   custom_tmux_conf = EXCLUDED.custom_tmux_conf,
   tmux_prefix = EXCLUDED.tmux_prefix,

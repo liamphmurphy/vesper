@@ -697,6 +697,7 @@ type DevWorkspace struct {
 	CustomZshrc    *string
 	CustomTmuxConf *string
 	TmuxPrefix     string
+	ExtraPackages  json.RawMessage
 }
 
 type DocPageRedirect struct {
