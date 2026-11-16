@@ -16,7 +16,7 @@ import { Kbd, Skeleton } from "@/components/ui/primitives";
 import { useMotionList } from "@/components/ui/motion";
 import { cx } from "@/lib/cx";
 import { duration } from "@/lib/format";
-import { KIND, groupItems, isOpen, longWait, nextSelection, step, waited, type Sort, type View } from "@/lib/inbox";
+import { KIND, groupItems, isOpen, openHref, longWait, nextSelection, step, waited, type Sort, type View } from "@/lib/inbox";
 import { DetailPane, type PaneActions } from "./detail-pane";
 import { FilterMenu } from "@/components/domain/pickers";
 import { useCompact } from "@/lib/viewport";
@@ -213,7 +213,7 @@ function DesktopInbox() {
         const t = e.target;
         if (t === document.body || (t instanceof HTMLElement && t.closest("[data-inbox-row]"))) {
           e.preventDefault();
-          router.push(item.href);
+          openHref(item.href, router.push);
         }
         return;
       }

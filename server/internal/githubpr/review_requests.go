@@ -191,21 +191,19 @@ type graphQLResponse struct {
 	} `json:"errors"`
 }
 
-func (s *Service) fetch(ctx context.Context, token string, now time.Time) (Feed, error) {
+// graphQL posts one query and returns the raw 200 response body.
+func (s *Service) graphQL(ctx context.Context, token, query string, vars map[string]any) ([]byte, error) {
 	base := s.BaseURL
 	if base == "" {
 		base = DefaultBaseURL
 	}
-	payload, err := json.Marshal(graphQLRequest{
-		Query:     reviewRequestsGraphQL,
-		Variables: map[string]any{"q": searchQuery},
-	})
+	payload, err := json.Marshal(graphQLRequest{Query: query, Variables: vars})
 	if err != nil {
-		return Feed{}, err
+		return nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(base, "/")+"/graphql", bytes.NewReader(payload))
 	if err != nil {
-		return Feed{}, err
+		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
@@ -218,13 +216,13 @@ func (s *Service) fetch(ctx context.Context, token string, now time.Time) (Feed,
 	}
 	res, err := client.Do(req)
 	if err != nil {
-		return Feed{}, fmt.Errorf("GitHub lookup failed: %w", err)
+		return nil, fmt.Errorf("GitHub lookup failed: %w", err)
 	}
 	defer res.Body.Close()
 
 	raw, err := io.ReadAll(io.LimitReader(res.Body, 4<<20))
 	if err != nil {
-		return Feed{}, err
+		return nil, err
 	}
 	if res.StatusCode != http.StatusOK {
 		var apiErr struct {
@@ -232,9 +230,17 @@ func (s *Service) fetch(ctx context.Context, token string, now time.Time) (Feed,
 		}
 		_ = json.Unmarshal(raw, &apiErr)
 		if apiErr.Message != "" {
-			return Feed{}, fmt.Errorf("GitHub answered %d: %s", res.StatusCode, apiErr.Message)
+			return nil, fmt.Errorf("GitHub answered %d: %s", res.StatusCode, apiErr.Message)
 		}
-		return Feed{}, fmt.Errorf("GitHub answered %d", res.StatusCode)
+		return nil, fmt.Errorf("GitHub answered %d", res.StatusCode)
+	}
+	return raw, nil
+}
+
+func (s *Service) fetch(ctx context.Context, token string, now time.Time) (Feed, error) {
+	raw, err := s.graphQL(ctx, token, reviewRequestsGraphQL, map[string]any{"q": searchQuery})
+	if err != nil {
+		return Feed{}, err
 	}
 
 	var resp graphQLResponse

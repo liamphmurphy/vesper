@@ -7323,10 +7323,10 @@ export interface components {
         InboxItem: {
             id: string;
             /**
-             * @description question is a run waiting on await_human (summary is the question); blocked is a failed or blocked run; stalled is a running run with no event for 30 minutes; merged is a pull request merged in the last 14 days; drive_backup is a failed scheduled or manual export to Google Drive (summary is the reason)
+             * @description question is a run waiting on await_human (summary is the question); blocked is a failed or blocked run; stalled is a running run with no event for 30 minutes; merged is a pull request merged in the last 14 days; pr_approved is a pull request you authored on GitHub that a reviewer approved in the last 14 days (href is the pull request's GitHub URL); drive_backup is a failed scheduled or manual export to Google Drive (summary is the reason)
              * @enum {string}
              */
-            kind: "approval" | "question" | "blocked" | "stalled" | "mockup" | "planning" | "review" | "dispatch" | "mention" | "suggestion" | "workflow_gate" | "scheduled" | "connector_approval" | "secret_approval" | "secret_expiring" | "merged" | "drive_backup";
+            kind: "approval" | "question" | "blocked" | "stalled" | "mockup" | "planning" | "review" | "dispatch" | "mention" | "suggestion" | "workflow_gate" | "scheduled" | "connector_approval" | "secret_approval" | "secret_expiring" | "merged" | "pr_approved" | "drive_backup";
             title: string;
             summary: string;
             href: string;

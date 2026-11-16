@@ -48,7 +48,7 @@ func (s *Server) ListInbox(ctx context.Context, req api.ListInboxRequestObject) 
 // comment that asks "@you can you check X?" is a question like any await_human.
 func inboxNeedsYou(kind, body string) bool {
 	switch kind {
-	case "scheduled", "merged":
+	case "scheduled", "merged", "pr_approved":
 		return false
 	case "mention":
 		return asksQuestion(body)
