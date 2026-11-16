@@ -3,8 +3,9 @@
 import { useState } from "react";
 import { useDevWorkspace, useDevWorkspaceAction, useUpdateDevWorkspace } from "@/lib/api/dev-workspace-hooks";
 import { useOwnerRepositories, useRepositoryPresets } from "@/lib/api/repository-hooks";
-import { devWorkspaceStatusLabel, devWorkspaceStatusTone } from "@/lib/dev-workspace";
+import { devWorkspaceStatusLabel, devWorkspaceStatusTone, filterDevWorkspaceRepos } from "@/lib/dev-workspace";
 import { Button, ButtonLink } from "@/components/ui/button";
+import { Icon } from "@/components/ui/icon";
 import { Toggle } from "@/components/ui/controls";
 import { Banner, Card, Skeleton } from "@/components/ui/primitives";
 import { SmallPill } from "@/components/domain/labels";
@@ -21,6 +22,9 @@ export function DevWorkspaceSection() {
   const [selectedOrgUrls, setSelectedOrgUrls] = useState<string[] | null>(null);
   const [zshrcDraft, setZshrcDraft] = useState<string | null>(null);
   const [tmuxConfDraft, setTmuxConfDraft] = useState<string | null>(null);
+  const [reposExpanded, setReposExpanded] = useState(false);
+  const [repoFilter, setRepoFilter] = useState("");
+  const [confirmClearAll, setConfirmClearAll] = useState(false);
   const ownerRepos = useOwnerRepositories(seekOwner);
 
   if (q.isPending) {
@@ -313,24 +317,108 @@ export function DevWorkspaceSection() {
             </p>
           </div>
 
-          {ws.repos.length > 0 && (
-            <ul className="divide-y divide-border rounded-lg border border-border bg-surface">
-              {ws.repos.map((r) => (
-                <li key={r.repo_url} className="flex flex-wrap items-center gap-3 px-3 py-2 text-13">
-                  <span className="font-medium text-fg">{r.repo_url}</span>
-                  <span className="font-mono text-12 text-fg-tertiary">/workspace/{r.directory}</span>
+          {ws.repos.length > 0 && (() => {
+            const filteredRepos = filterDevWorkspaceRepos(ws.repos, repoFilter);
+            return (
+              <div className="rounded-lg border border-border bg-surface">
+                <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
                   <button
                     type="button"
-                    disabled={busy}
-                    onClick={() => removeRepo(r.repo_url)}
-                    className="ml-auto text-12 text-pill-blocked-fg hover:underline disabled:opacity-50"
+                    aria-expanded={reposExpanded}
+                    onClick={() => setReposExpanded((open) => !open)}
+                    className="flex items-center gap-2 text-left text-13 font-medium text-fg hover:text-accent"
                   >
-                    Remove
+                    <Icon name={reposExpanded ? "chev" : "chevr"} size={14} className="text-fg-tertiary" />
+                    <span>
+                      {ws.repos.length} {ws.repos.length === 1 ? "repository" : "repositories"} configured
+                    </span>
                   </button>
-                </li>
-              ))}
-            </ul>
-          )}
+                  <button
+                    type="button"
+                    onClick={() => setReposExpanded((open) => !open)}
+                    className="text-12 text-accent hover:underline"
+                  >
+                    {reposExpanded ? "Hide list" : "Show list"}
+                  </button>
+                </div>
+
+                {reposExpanded && (
+                  <div className="space-y-2 border-t border-border p-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        aria-label="Filter configured repositories"
+                        value={repoFilter}
+                        onChange={(e) => setRepoFilter(e.target.value)}
+                        placeholder="Filter by repo or /workspace path…"
+                        className="min-w-48 flex-1 rounded-md border border-border bg-surface-muted/40 px-2.5 py-1 text-12 text-fg"
+                      />
+                      {!confirmClearAll ? (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => setConfirmClearAll(true)}
+                          className="text-12 text-pill-blocked-fg hover:underline disabled:opacity-50"
+                        >
+                          Clear all
+                        </button>
+                      ) : (
+                        <div className="flex items-center gap-2 text-12">
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() =>
+                              update.mutate(
+                                { repos: [] },
+                                {
+                                  onSuccess: () => {
+                                    setConfirmClearAll(false);
+                                    setRepoFilter("");
+                                    setReposExpanded(false);
+                                  },
+                                },
+                              )
+                            }
+                            className="font-medium text-pill-blocked-fg hover:underline disabled:opacity-50"
+                          >
+                            Remove all {ws.repos.length}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => setConfirmClearAll(false)}
+                            className="text-fg-secondary hover:underline"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {filteredRepos.length > 0 ? (
+                      <ul className="max-h-64 divide-y divide-border overflow-y-auto rounded-md border border-border bg-surface">
+                        {filteredRepos.map((r) => (
+                          <li key={r.repo_url} className="flex flex-wrap items-center gap-3 px-3 py-2 text-13">
+                            <span className="font-medium text-fg">{r.repo_url}</span>
+                            <span className="font-mono text-12 text-fg-tertiary">/workspace/{r.directory}</span>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => removeRepo(r.repo_url)}
+                              className="ml-auto text-12 text-pill-blocked-fg hover:underline disabled:opacity-50"
+                            >
+                              Remove
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-12 text-fg-tertiary">No repositories match “{repoFilter.trim()}”.</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           <form
             className="flex flex-wrap gap-2"

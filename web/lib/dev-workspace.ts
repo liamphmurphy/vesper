@@ -2,7 +2,14 @@ import type { Schemas } from "@/lib/api/client";
 import type { ComposerDrop } from "./playground-report";
 
 export type DevWorkspace = Schemas["DevWorkspace"];
+export type DevWorkspaceRepo = DevWorkspace["repos"][number];
 export type DevWorkspaceState = DevWorkspace["state"];
+
+export function filterDevWorkspaceRepos(repos: readonly DevWorkspaceRepo[], query: string): DevWorkspaceRepo[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [...repos];
+  return repos.filter((r) => r.repo_url.toLowerCase().includes(q) || r.directory.toLowerCase().includes(q));
+}
 
 export function devWorkspaceSocketUrl(
   loc: { protocol: string; hostname: string },
