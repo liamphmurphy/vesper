@@ -98,8 +98,11 @@ func TestSyncReposScriptClonesAndFetchesWithoutStoringTokens(t *testing.T) {
 	if !strings.Contains(s, "if [ -s \"$missing_list\" ]; then") {
 		t.Fatalf("expected missing_list guard so already-cloned repos skip xargs: %s", s)
 	}
-	if !strings.Contains(s, "LAZYAGENTS_SSH_KEY") || !strings.Contains(s, "ControlMaster auto") || !strings.Contains(s, `git config --file /home/node/.config/git/config url."git@github.com:".insteadOf`) {
-		t.Fatalf("missing SSH key + multiplexing + isolated insteadOf setup: %s", s)
+	if !strings.Contains(s, "LAZYAGENTS_SSH_KEY") || !strings.Contains(s, "ConnectTimeout 10") || !strings.Contains(s, "ServerAliveInterval 15") || !strings.Contains(s, "rm -f /home/node/.ssh/cm-*") || !strings.Contains(s, `git config --file /home/node/.config/git/config url."git@github.com:".insteadOf`) {
+		t.Fatalf("missing SSH key + keepalive + isolated insteadOf setup: %s", s)
+	}
+	if strings.Contains(s, "ControlMaster") {
+		t.Fatalf("must not enable SSH ControlMaster multiplexing: %s", s)
 	}
 	if !strings.Contains(s, "GIT_TERMINAL_PROMPT=0") || !strings.Contains(s, "</dev/null") {
 		t.Fatalf("git_net must disable terminal prompts and stdin reads: %s", s)

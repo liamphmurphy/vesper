@@ -308,6 +308,7 @@ if [ -n "${LAZYAGENTS_SSH_KEY:-}" ]; then
   (umask 077; printf '%s\n' "$LAZYAGENTS_SSH_KEY" > /home/node/.ssh/id_vesper)
   cat > /home/node/.ssh/known_hosts <<'VESPER_KNOWN_HOSTS'
 ` + githubHostKeys + `VESPER_KNOWN_HOSTS
+  rm -f /home/node/.ssh/cm-*
   (umask 077; cat > /home/node/.ssh/config <<'VESPER_SSH_CFG'
 Host github.com
   HostName github.com
@@ -316,9 +317,9 @@ Host github.com
   IdentitiesOnly yes
   UserKnownHostsFile /home/node/.ssh/known_hosts
   StrictHostKeyChecking yes
-  ControlMaster auto
-  ControlPath /home/node/.ssh/cm-%r@%h:%p
-  ControlPersist 60s
+  ConnectTimeout 10
+  ServerAliveInterval 15
+  ServerAliveCountMax 2
 VESPER_SSH_CFG
 )
   mkdir -p /home/node/.config/git
