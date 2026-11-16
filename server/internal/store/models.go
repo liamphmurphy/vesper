@@ -810,6 +810,84 @@ type HarnessUsageCheck struct {
 	RetryAfter   time.Time
 }
 
+type HttpEnvironment struct {
+	ID              uuid.UUID
+	HttpWorkspaceID uuid.UUID
+	Name            string
+	Color           string
+	Variables       json.RawMessage
+	SortOrder       int32
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+type HttpExecution struct {
+	ID                uuid.UUID
+	HttpWorkspaceID   uuid.UUID
+	RequestID         *uuid.UUID
+	EnvironmentID     *uuid.UUID
+	EnvironmentName   string
+	Method            string
+	ResolvedUrl       string
+	RequestHeaders    json.RawMessage
+	RequestBody       string
+	StatusCode        int32
+	StatusText        string
+	DurationMs        int32
+	SizeBytes         int32
+	ResponseHeaders   json.RawMessage
+	ResponseBody      string
+	ResponseTruncated bool
+	Error             string
+	CreatedAt         time.Time
+}
+
+type HttpFolder struct {
+	ID              uuid.UUID
+	HttpWorkspaceID uuid.UUID
+	ParentFolderID  *uuid.UUID
+	Name            string
+	DefaultAuth     json.RawMessage
+	DefaultHeaders  json.RawMessage
+	SortOrder       int32
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+type HttpRequest struct {
+	ID              uuid.UUID
+	HttpWorkspaceID uuid.UUID
+	FolderID        *uuid.UUID
+	Name            string
+	Method          string
+	Url             string
+	Params          json.RawMessage
+	Headers         json.RawMessage
+	Auth            json.RawMessage
+	BodyMode        string
+	Body            string
+	BodyForm        json.RawMessage
+	TimeoutMs       int32
+	FollowRedirects bool
+	SortOrder       int32
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+type HttpWorkspace struct {
+	ID                  uuid.UUID
+	WorkspaceID         uuid.UUID
+	UserID              uuid.UUID
+	Name                string
+	Description         string
+	ActiveEnvironmentID *uuid.UUID
+	DefaultAuth         json.RawMessage
+	DefaultHeaders      json.RawMessage
+	DefaultVars         json.RawMessage
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+}
+
 type InboxRead struct {
 	UserID uuid.UUID
 	ItemID string
