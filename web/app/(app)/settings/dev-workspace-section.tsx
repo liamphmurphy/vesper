@@ -18,6 +18,7 @@ export function DevWorkspaceSection() {
   const [ownerInput, setOwnerInput] = useState("");
   const [seekOwner, setSeekOwner] = useState("");
   const [selectedOrgUrls, setSelectedOrgUrls] = useState<string[] | null>(null);
+  const [zshrcDraft, setZshrcDraft] = useState<string | null>(null);
   const ownerRepos = useOwnerRepositories(seekOwner);
 
   if (q.isPending) {
@@ -112,9 +113,9 @@ export function DevWorkspaceSection() {
           <div className="mb-2 text-13 font-medium text-fg">Nix environment</div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="rounded-lg border border-accent bg-accent-soft/40 p-3">
-              <div className="text-13 font-semibold text-fg">Vesper default (Nix + LazyVim)</div>
+              <div className="text-13 font-semibold text-fg">Vesper default (nixos-unstable + LazyVim)</div>
               <p className="mt-1 text-12 text-fg-secondary">
-                Pinned flake: neovim, tmux, lazygit, rg, fd, gopls, pyright, tsserver, nixd
+                Latest nixos-unstable: neovim, tmux, zsh, oh-my-zsh, lazygit, rg, fd, gopls, pyright, tsserver, nixd
               </p>
             </div>
             <div
@@ -129,6 +130,51 @@ export function DevWorkspaceSection() {
                 Point at your own flake repo (e.g. os-setup) in a follow-up.
               </p>
             </div>
+          </div>
+        </div>
+
+        <div className="space-y-2.5 border-t border-border-subtle pt-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="text-13 font-medium text-fg">Shell &amp; custom .zshrc</div>
+              <p className="text-12 text-fg-tertiary">
+                Includes <code className="font-mono">oh-my-zsh</code>, <code className="font-mono">zsh-autosuggestions</code>, and{" "}
+                <code className="font-mono">zsh-syntax-highlighting</code>. <code className="font-mono">~/.zshenv</code> keeps Nix tools and{" "}
+                <code className="font-mono">$ZSH</code> on <code className="font-mono">PATH</code>.
+              </p>
+            </div>
+          </div>
+          <textarea
+            aria-label="Custom .zshrc"
+            rows={5}
+            value={zshrcDraft ?? (ws.custom_zshrc ?? "")}
+            onChange={(e) => setZshrcDraft(e.target.value)}
+            placeholder={`# Leave blank for Vesper's default oh-my-zsh config (robbyrussell + git + ll/neovim aliases).\nZSH_THEME="robbyrussell"\nplugins=(git)\nsource "$ZSH/oh-my-zsh.sh"`}
+            className="w-full rounded-md border border-border bg-surface p-2.5 font-mono text-12 text-fg"
+          />
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {(ws.custom_zshrc || (zshrcDraft !== null && zshrcDraft !== "")) && (
+              <Button
+                variant="outline"
+                disabled={busy}
+                onClick={() => update.mutate({ custom_zshrc: null }, { onSuccess: () => setZshrcDraft(null) })}
+              >
+                Reset to default
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              disabled={busy || zshrcDraft === null || zshrcDraft === (ws.custom_zshrc ?? "")}
+              onClick={() => {
+                const value = zshrcDraft ?? "";
+                update.mutate(
+                  { custom_zshrc: value.trim() === "" ? null : value },
+                  { onSuccess: () => setZshrcDraft(null) },
+                );
+              }}
+            >
+              Save .zshrc
+            </Button>
           </div>
         </div>
 

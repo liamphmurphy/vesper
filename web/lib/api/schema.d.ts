@@ -9751,6 +9751,7 @@ export interface components {
             /** @enum {string} */
             nix_mode: "default";
             repos: components["schemas"]["DevWorkspaceRepo"][];
+            custom_zshrc?: string | null;
             /** @enum {string} */
             state: "stopped" | "starting" | "ready" | "error";
             /** @enum {string|null} */
@@ -9767,6 +9768,7 @@ export interface components {
             /** @enum {string} */
             nix_mode?: "default";
             repos?: string[];
+            custom_zshrc?: string | null;
         };
         DevWorkspaceActionRequest: {
             /** @enum {string} */
