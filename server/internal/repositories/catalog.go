@@ -174,6 +174,11 @@ func (s *Service) get(ctx context.Context, token, path string, dst any) error {
 
 // ownerRepos includes public and token-visible private repositories. The
 // users/{owner}/repos endpoint alone only lists public repositories.
+// OwnerRepos lists all repositories owned by a GitHub user or organization.
+func (s *Service) OwnerRepos(ctx context.Context, o Owner, owner string, refresh bool) ([]Entry, error) {
+	return s.ownerRepos(ctx, o, strings.TrimSpace(owner), refresh)
+}
+
 func (s *Service) ownerRepos(ctx context.Context, o Owner, owner string, refresh bool) ([]Entry, error) {
 	token, err := s.token(ctx, o)
 	if err != nil {
