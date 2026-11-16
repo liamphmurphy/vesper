@@ -1,0 +1,4 @@
+export PATH="/home/node/.local/share/vesper-dev/profile/bin:/home/node/.nix-profile/bin:/usr/local/go/bin:/nix/var/nix/profiles/default/bin:$PATH"
+export EDITOR="nvim"
+export VISUAL="nvim"
+export ZSH="/home/node/.local/share/vesper-dev/profile/share/oh-my-zsh"

@@ -28,7 +28,7 @@ SET action = NULL,
     updated_at = now()
 FROM target
 WHERE d.workspace_id = target.workspace_id
-RETURNING d.workspace_id, d.user_id, d.enabled, d.nix_mode, d.repos, d.state, d.action, d.step, d.error, d.port, d.runner_id, d.stack, d.arch, d.updated_at, target.action AS claimed_action
+RETURNING d.workspace_id, d.user_id, d.enabled, d.nix_mode, d.repos, d.state, d.action, d.step, d.error, d.port, d.runner_id, d.stack, d.arch, d.updated_at, d.custom_zshrc, target.action AS claimed_action
 `
 
 type ClaimDevWorkspaceActionParams struct {
@@ -51,6 +51,7 @@ type ClaimDevWorkspaceActionRow struct {
 	Stack         *string
 	Arch          *string
 	UpdatedAt     time.Time
+	CustomZshrc   *string
 	ClaimedAction *string
 }
 
@@ -72,13 +73,14 @@ func (q *Queries) ClaimDevWorkspaceAction(ctx context.Context, arg ClaimDevWorks
 		&i.Stack,
 		&i.Arch,
 		&i.UpdatedAt,
+		&i.CustomZshrc,
 		&i.ClaimedAction,
 	)
 	return i, err
 }
 
 const getDevWorkspace = `-- name: GetDevWorkspace :one
-SELECT workspace_id, user_id, enabled, nix_mode, repos, state, action, step, error, port, runner_id, stack, arch, updated_at FROM dev_workspaces WHERE workspace_id = $1
+SELECT workspace_id, user_id, enabled, nix_mode, repos, state, action, step, error, port, runner_id, stack, arch, updated_at, custom_zshrc FROM dev_workspaces WHERE workspace_id = $1
 `
 
 func (q *Queries) GetDevWorkspace(ctx context.Context, workspaceID uuid.UUID) (DevWorkspace, error) {
@@ -99,6 +101,7 @@ func (q *Queries) GetDevWorkspace(ctx context.Context, workspaceID uuid.UUID) (D
 		&i.Stack,
 		&i.Arch,
 		&i.UpdatedAt,
+		&i.CustomZshrc,
 	)
 	return i, err
 }
@@ -110,7 +113,7 @@ SET action = $1,
     error = NULL,
     updated_at = now()
 WHERE workspace_id = $2
-RETURNING workspace_id, user_id, enabled, nix_mode, repos, state, action, step, error, port, runner_id, stack, arch, updated_at
+RETURNING workspace_id, user_id, enabled, nix_mode, repos, state, action, step, error, port, runner_id, stack, arch, updated_at, custom_zshrc
 `
 
 type RequestDevWorkspaceActionParams struct {
@@ -136,6 +139,7 @@ func (q *Queries) RequestDevWorkspaceAction(ctx context.Context, arg RequestDevW
 		&i.Stack,
 		&i.Arch,
 		&i.UpdatedAt,
+		&i.CustomZshrc,
 	)
 	return i, err
 }
@@ -190,7 +194,7 @@ func (q *Queries) UpdateDevWorkspaceState(ctx context.Context, arg UpdateDevWork
 }
 
 const upsertDevWorkspace = `-- name: UpsertDevWorkspace :one
-INSERT INTO dev_workspaces (workspace_id, user_id, enabled, nix_mode, repos, action, state, error, updated_at)
+INSERT INTO dev_workspaces (workspace_id, user_id, enabled, nix_mode, repos, custom_zshrc, action, state, error, updated_at)
 VALUES (
   $1,
   $2,
@@ -198,7 +202,8 @@ VALUES (
   $4,
   $5,
   $6,
-  CASE WHEN $6::text IS NOT NULL THEN 'starting' ELSE 'stopped' END,
+  $7,
+  CASE WHEN $7::text IS NOT NULL THEN 'starting' ELSE 'stopped' END,
   NULL,
   now()
 )
@@ -207,11 +212,12 @@ ON CONFLICT (workspace_id) DO UPDATE SET
   enabled = EXCLUDED.enabled,
   nix_mode = EXCLUDED.nix_mode,
   repos = EXCLUDED.repos,
-  action = COALESCE($6, dev_workspaces.action),
-  state = CASE WHEN $6::text IS NOT NULL THEN 'starting' ELSE dev_workspaces.state END,
-  error = CASE WHEN $6::text IS NOT NULL THEN NULL ELSE dev_workspaces.error END,
+  custom_zshrc = EXCLUDED.custom_zshrc,
+  action = COALESCE($7, dev_workspaces.action),
+  state = CASE WHEN $7::text IS NOT NULL THEN 'starting' ELSE dev_workspaces.state END,
+  error = CASE WHEN $7::text IS NOT NULL THEN NULL ELSE dev_workspaces.error END,
   updated_at = now()
-RETURNING workspace_id, user_id, enabled, nix_mode, repos, state, action, step, error, port, runner_id, stack, arch, updated_at
+RETURNING workspace_id, user_id, enabled, nix_mode, repos, state, action, step, error, port, runner_id, stack, arch, updated_at, custom_zshrc
 `
 
 type UpsertDevWorkspaceParams struct {
@@ -220,6 +226,7 @@ type UpsertDevWorkspaceParams struct {
 	Enabled     bool
 	NixMode     string
 	Repos       json.RawMessage
+	CustomZshrc *string
 	Action      *string
 }
 
@@ -230,6 +237,7 @@ func (q *Queries) UpsertDevWorkspace(ctx context.Context, arg UpsertDevWorkspace
 		arg.Enabled,
 		arg.NixMode,
 		arg.Repos,
+		arg.CustomZshrc,
 		arg.Action,
 	)
 	var i DevWorkspace
@@ -248,6 +256,7 @@ func (q *Queries) UpsertDevWorkspace(ctx context.Context, arg UpsertDevWorkspace
 		&i.Stack,
 		&i.Arch,
 		&i.UpdatedAt,
+		&i.CustomZshrc,
 	)
 	return i, err
 }

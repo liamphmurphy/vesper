@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -93,6 +94,23 @@ func (s *Server) UpdateDevWorkspace(ctx context.Context, req api.UpdateDevWorksp
 		return nil, err
 	}
 
+	customZshrc := cur.CustomZshrc
+	shellChanged := false
+	if req.Body.CustomZshrc.IsSpecified() {
+		if req.Body.CustomZshrc.IsNull() || strings.TrimSpace(req.Body.CustomZshrc.MustGet()) == "" {
+			if customZshrc != nil {
+				customZshrc = nil
+				shellChanged = true
+			}
+		} else {
+			v := req.Body.CustomZshrc.MustGet()
+			if customZshrc == nil || *customZshrc != v {
+				customZshrc = &v
+				shellChanged = true
+			}
+		}
+	}
+
 	var action *string
 	switch {
 	case !enabled && hasCur && (cur.Enabled || cur.State != "stopped"):
@@ -101,7 +119,7 @@ func (s *Server) UpdateDevWorkspace(ctx context.Context, req api.UpdateDevWorksp
 	case enabled && (!hasCur || !cur.Enabled || cur.State == "stopped" || cur.State == "error"):
 		a := "start"
 		action = &a
-	case enabled && reposChanged:
+	case enabled && (reposChanged || shellChanged):
 		a := "sync"
 		action = &a
 	}
@@ -112,6 +130,7 @@ func (s *Server) UpdateDevWorkspace(ctx context.Context, req api.UpdateDevWorksp
 		Enabled:     enabled,
 		NixMode:     nixMode,
 		Repos:       reposJSON,
+		CustomZshrc: customZshrc,
 		Action:      action,
 	})
 	if err != nil {
@@ -159,6 +178,11 @@ func devWorkspaceOut(row store.DevWorkspace) api.DevWorkspace {
 		Error:     nullableOf(row.Error),
 		Arch:      nullableOf(row.Arch),
 		UpdatedAt: row.UpdatedAt,
+	}
+	if row.CustomZshrc != nil {
+		out.CustomZshrc.Set(*row.CustomZshrc)
+	} else {
+		out.CustomZshrc.SetNull()
 	}
 	if row.Port != nil {
 		out.Port.Set(int(*row.Port))

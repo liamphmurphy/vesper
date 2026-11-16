@@ -694,6 +694,7 @@ type DevWorkspace struct {
 	Stack       *string
 	Arch        *string
 	UpdatedAt   time.Time
+	CustomZshrc *string
 }
 
 type DocPageRedirect struct {

@@ -10365,6 +10365,7 @@ components:
         enabled: { type: boolean }
         nix_mode: { type: string, enum: [default] }
         repos: { type: array, items: { $ref: "#/components/schemas/DevWorkspaceRepo" } }
+        custom_zshrc: { type: string, nullable: true }
         state: { type: string, enum: [stopped, starting, ready, error] }
         action: { type: string, nullable: true, enum: [start, rebuild, sync, stop] }
         step: { type: string, nullable: true }
@@ -10378,6 +10379,7 @@ components:
         enabled: { type: boolean }
         nix_mode: { type: string, enum: [default] }
         repos: { type: array, items: { type: string } }
+        custom_zshrc: { type: string, nullable: true }
     DevWorkspaceActionRequest:
       type: object
       required: [action]
