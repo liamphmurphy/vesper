@@ -21,6 +21,16 @@ function useShortcuts() {
   const router = useRouter();
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "h") {
+        e.preventDefault();
+        if (window.location.pathname.startsWith("/http")) {
+          if (window.history.length > 1) router.back();
+          else router.push("/");
+        } else {
+          router.push("/http");
+        }
+        return;
+      }
       if (e.defaultPrevented || shortcutBlocked(e)) return;
       if (e.key === "?") {
         e.preventDefault();
