@@ -213,6 +213,105 @@ func SetupNixScript(forceRebuild bool, customZshrc, tmuxPrefix, customTmuxConf s
 	return b.String()
 }
 
+// NormalizeRepoURL normalizes a git repository URL to lower-cased host/owner/repo
+// without scheme, userinfo, trailing slash, or .git suffix.
+func NormalizeRepoURL(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return ""
+	}
+	s = strings.TrimSuffix(s, "/")
+	s = strings.TrimSuffix(s, ".git")
+	s = strings.ToLower(s)
+	for _, prefix := range []string{"https://", "http://", "ssh://"} {
+		if strings.HasPrefix(s, prefix) {
+			s = strings.TrimPrefix(s, prefix)
+			if at := strings.IndexByte(s, '@'); at >= 0 {
+				if slash := strings.IndexByte(s, '/'); slash < 0 || at < slash {
+					s = s[at+1:]
+				}
+			}
+			return s
+		}
+	}
+	if strings.HasPrefix(s, "git@") {
+		s = strings.TrimPrefix(s, "git@")
+		s = strings.Replace(s, ":", "/", 1)
+	}
+	return s
+}
+
+// ResolveRepoDir returns the configured /workspace/<dir> for repoURL when it
+// matches one of repos, or derives a collision-free directory name.
+func ResolveRepoDir(repos []RepoSpec, repoURL string) string {
+	want := NormalizeRepoURL(repoURL)
+	used := make(map[string]bool, len(repos))
+	for _, r := range repos {
+		used[r.Directory] = true
+		if want != "" && NormalizeRepoURL(r.RepoURL) == want && r.Directory != "" {
+			return r.Directory
+		}
+	}
+	derived := DeriveRepoDirs([]string{repoURL})
+	base := "repo"
+	if len(derived) > 0 && derived[0].Directory != "" {
+		base = derived[0].Directory
+	}
+	dir := base
+	for i := 2; used[dir]; i++ {
+		dir = fmt.Sprintf("%s-%d", base, i)
+	}
+	return dir
+}
+
+// ValidateBranchName checks that branch is a safe git branch name.
+func ValidateBranchName(raw string) (string, error) {
+	b := strings.TrimSpace(raw)
+	if b == "" {
+		return "", fmt.Errorf("branch cannot be empty")
+	}
+	if strings.HasPrefix(b, "-") || strings.HasPrefix(b, "/") || strings.HasSuffix(b, "/") || strings.HasSuffix(b, ".") || strings.HasSuffix(b, ".lock") {
+		return "", fmt.Errorf("invalid branch name %q", raw)
+	}
+	if strings.Contains(b, "..") || strings.Contains(b, "//") || strings.Contains(b, "@{") || strings.Contains(b, "/.") {
+		return "", fmt.Errorf("invalid branch name %q", raw)
+	}
+	for _, r := range b {
+		if r <= 0x20 || r == 0x7f || strings.ContainsRune("~^:?*[\\", r) {
+			return "", fmt.Errorf("invalid branch name %q", raw)
+		}
+	}
+	return b, nil
+}
+
+func writeCredentialHelperPrelude(b *strings.Builder) {
+	b.WriteString(`helper=""
+cleanup_helper() { [ -n "$helper" ] && rm -f "$helper"; }
+trap cleanup_helper EXIT
+if [ -n "${GH_TOKEN:-}" ]; then
+  helper=$(mktemp)
+  chmod 700 "$helper"
+  printf '#!/bin/sh\necho "username=x-access-token"\necho "password=%s"\n' "$GH_TOKEN" > "$helper"
+fi
+git_net() {
+  if [ -n "$helper" ]; then
+    git -c credential.helper= -c "credential.helper=$helper" "$@"
+  else
+    git "$@"
+  fi
+}
+`)
+}
+
+func writeGitConfigAuthor(b *strings.Builder, qDest, userName, userEmail string) {
+	if userName != "" {
+		b.WriteString("  git -C " + qDest + " config user.name " + shellQuote(userName) + "\n")
+	}
+	if userEmail != "" {
+		b.WriteString("  git -C " + qDest + " config user.email " + shellQuote(userEmail) + "\n")
+	}
+}
+
 // SyncReposScript returns a shell script that clones any missing repositories
 // into /workspace/<directory> and fetches existing ones without storing git
 // credentials on disk.
@@ -223,38 +322,100 @@ func SyncReposScript(repos []RepoSpec, userName, userEmail string) string {
 	if len(repos) == 0 {
 		return b.String()
 	}
-	b.WriteString(`helper=""
-cleanup_helper() { [ -n "$helper" ] && rm -f "$helper"; }
-trap cleanup_helper EXIT
-if [ -n "${GH_TOKEN:-}" ]; then
-  helper=$(mktemp)
-  chmod 700 "$helper"
-  printf '#!/bin/sh\necho "username=x-access-token"\necho "password=%s"\n' "$GH_TOKEN" > "$helper"
-fi
-`)
+	writeCredentialHelperPrelude(&b)
 	for _, r := range repos {
 		dest := "/workspace/" + r.Directory
 		qDest := shellQuote(dest)
 		qURL := shellQuote(r.RepoURL)
 		b.WriteString("if [ ! -d " + shellQuote(dest+"/.git") + " ]; then\n")
-		b.WriteString("  if [ -n \"$helper\" ]; then\n")
-		b.WriteString("    git -c credential.helper= -c \"credential.helper=$helper\" clone --quiet -- " + qURL + " " + qDest + "\n")
-		b.WriteString("  else\n")
-		b.WriteString("    git clone --quiet -- " + qURL + " " + qDest + "\n")
-		b.WriteString("  fi\n")
-		if userName != "" {
-			b.WriteString("  git -C " + qDest + " config user.name " + shellQuote(userName) + "\n")
-		}
-		if userEmail != "" {
-			b.WriteString("  git -C " + qDest + " config user.email " + shellQuote(userEmail) + "\n")
-		}
+		b.WriteString("  git_net clone --quiet -- " + qURL + " " + qDest + "\n")
+		writeGitConfigAuthor(&b, qDest, userName, userEmail)
 		b.WriteString("else\n")
-		b.WriteString("  if [ -n \"$helper\" ]; then\n")
-		b.WriteString("    git -C " + qDest + " -c credential.helper= -c \"credential.helper=$helper\" fetch --quiet --all --prune || true\n")
-		b.WriteString("  else\n")
-		b.WriteString("    git -C " + qDest + " fetch --quiet --all --prune || true\n")
-		b.WriteString("  fi\n")
+		b.WriteString("  git_net -C " + qDest + " fetch --quiet --all --prune || true\n")
 		b.WriteString("fi\n")
 	}
+	return b.String()
+}
+
+// OpenBranchScript returns a shell script that ensures repoURL is cloned in
+// /workspace, safely fetches and checks out branch (refusing to clobber
+// uncommitted changes), and opens or focuses a tmux window in that repository.
+func OpenBranchScript(repos []RepoSpec, repoURL, branch string, prNumber int, userName, userEmail string) string {
+	dir := ResolveRepoDir(repos, repoURL)
+	altDir := dir + "-pr"
+	normTarget := NormalizeRepoURL(repoURL)
+	winName := sanitizeDirName(dir)
+	if winName == "" {
+		winName = "repo"
+	}
+
+	var b strings.Builder
+	b.WriteString("set -eu\n")
+	b.WriteString("mkdir -p /workspace\n")
+	writeCredentialHelperPrelude(&b)
+	b.WriteString(`norm_url() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's#^ssh://git@([^/]+)/#\1/#; s#^https?://([^@/]+@)?([^/]+)/#\2/#; s#^git@([^:]+):(.*)$#\1/\2#; s#\.git$##; s#/+$##'
+}
+`)
+	b.WriteString("dest=" + shellQuote("/workspace/"+dir) + "\n")
+	b.WriteString("target_norm=" + shellQuote(normTarget) + "\n")
+	b.WriteString("if [ -d \"$dest/.git\" ]; then\n")
+	b.WriteString("  cur_norm=$(norm_url \"$(git -C \"$dest\" remote get-url origin 2>/dev/null || true)\")\n")
+	b.WriteString("  if [ -n \"$cur_norm\" ] && [ \"$cur_norm\" != \"$target_norm\" ]; then\n")
+	b.WriteString("    dest=" + shellQuote("/workspace/"+altDir) + "\n")
+	b.WriteString("  fi\n")
+	b.WriteString("fi\n")
+
+	b.WriteString("if [ ! -d \"$dest/.git\" ]; then\n")
+	b.WriteString("  git_net clone --quiet -- " + shellQuote(repoURL) + " \"$dest\"\n")
+	writeGitConfigAuthor(&b, "\"$dest\"", userName, userEmail)
+	b.WriteString("fi\n")
+
+	qBranch := shellQuote(branch)
+	b.WriteString("branch=" + qBranch + "\n")
+	if prNumber > 0 {
+		b.WriteString(fmt.Sprintf("git_net -C \"$dest\" fetch --quiet origin -- \"+refs/heads/$branch:refs/remotes/origin/$branch\" 2>/dev/null || git_net -C \"$dest\" fetch --quiet origin -- \"+refs/pull/%d/head:refs/remotes/origin/$branch\"\n", prNumber))
+	} else {
+		b.WriteString("git_net -C \"$dest\" fetch --quiet origin -- \"+refs/heads/$branch:refs/remotes/origin/$branch\"\n")
+	}
+
+	b.WriteString(`cur_branch=$(git -C "$dest" symbolic-ref --short HEAD 2>/dev/null || true)
+dirty=$(git -C "$dest" status --porcelain)
+if [ "$cur_branch" = "$branch" ]; then
+  head_sha=$(git -C "$dest" rev-parse HEAD)
+  remote_sha=$(git -C "$dest" rev-parse "refs/remotes/origin/$branch")
+  if [ "$head_sha" != "$remote_sha" ]; then
+    if git -C "$dest" merge-base --is-ancestor "$head_sha" "$remote_sha"; then
+      git -C "$dest" merge --ff-only --quiet "refs/remotes/origin/$branch"
+    else
+      printf '%s\n' "Local branch '$branch' in $dest has diverged from origin/$branch." >&2
+      exit 1
+    fi
+  fi
+else
+  if [ -n "$dirty" ]; then
+    printf '%s\n' "$dest has uncommitted changes on ${cur_branch:-HEAD}; commit or stash them before switching to $branch." >&2
+    exit 1
+  fi
+  if git -C "$dest" show-ref --verify --quiet "refs/heads/$branch"; then
+    git -C "$dest" checkout --quiet "$branch"
+    git -C "$dest" merge --ff-only --quiet "refs/remotes/origin/$branch"
+  else
+    git -C "$dest" checkout --quiet -b "$branch" --track "refs/remotes/origin/$branch"
+  fi
+fi
+export TERM=xterm-256color COLORTERM=truecolor
+if [ -x ` + shellQuote(ProfilePath+"/bin/zsh") + ` ]; then
+  export SHELL=` + shellQuote(ProfilePath+"/bin/zsh") + `
+fi
+pane_cmd='if command -v nvim >/dev/null 2>&1; then nvim .; fi; if command -v zsh >/dev/null 2>&1; then exec zsh; else exec bash; fi'
+if command -v tmux >/dev/null 2>&1; then
+  if tmux has-session -t dev 2>/dev/null; then
+    tmux new-window -t dev -n ` + shellQuote(winName) + ` -c "$dest" "$pane_cmd"
+  else
+    tmux new-session -d -s dev -n ` + shellQuote(winName) + ` -c "$dest" "$pane_cmd"
+  fi
+fi
+`)
 	return b.String()
 }

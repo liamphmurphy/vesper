@@ -15,7 +15,7 @@ import (
 
 const claimDevWorkspaceAction = `-- name: ClaimDevWorkspaceAction :one
 WITH target AS (
-  SELECT workspace_id, action FROM dev_workspaces
+  SELECT workspace_id, action, target_repo, target_branch, target_pr_number FROM dev_workspaces
   WHERE action IS NOT NULL
   ORDER BY updated_at
   FOR UPDATE SKIP LOCKED
@@ -23,12 +23,19 @@ WITH target AS (
 )
 UPDATE dev_workspaces d
 SET action = NULL,
+    target_repo = NULL,
+    target_branch = NULL,
+    target_pr_number = NULL,
     runner_id = $1,
     stack = $2,
     updated_at = now()
 FROM target
 WHERE d.workspace_id = target.workspace_id
-RETURNING d.workspace_id, d.user_id, d.enabled, d.nix_mode, d.repos, d.state, d.action, d.step, d.error, d.port, d.runner_id, d.stack, d.arch, d.updated_at, d.custom_zshrc, d.custom_tmux_conf, d.tmux_prefix, d.extra_packages, d.target_repo, d.target_branch, d.target_pr_number, target.action AS claimed_action
+RETURNING d.workspace_id, d.user_id, d.enabled, d.nix_mode, d.repos, d.state, d.action, d.step, d.error, d.port, d.runner_id, d.stack, d.arch, d.updated_at, d.custom_zshrc, d.custom_tmux_conf, d.tmux_prefix, d.extra_packages, d.target_repo, d.target_branch, d.target_pr_number,
+  target.action AS claimed_action,
+  target.target_repo AS claimed_repo,
+  target.target_branch AS claimed_branch,
+  target.target_pr_number AS claimed_pr_number
 `
 
 type ClaimDevWorkspaceActionParams struct {
@@ -37,28 +44,31 @@ type ClaimDevWorkspaceActionParams struct {
 }
 
 type ClaimDevWorkspaceActionRow struct {
-	WorkspaceID    uuid.UUID
-	UserID         uuid.UUID
-	Enabled        bool
-	NixMode        string
-	Repos          json.RawMessage
-	State          string
-	Action         *string
-	Step           *string
-	Error          *string
-	Port           *int32
-	RunnerID       *string
-	Stack          *string
-	Arch           *string
-	UpdatedAt      time.Time
-	CustomZshrc    *string
-	CustomTmuxConf *string
-	TmuxPrefix     string
-	ExtraPackages  json.RawMessage
-	TargetRepo     *string
-	TargetBranch   *string
-	TargetPrNumber *int32
-	ClaimedAction  *string
+	WorkspaceID     uuid.UUID
+	UserID          uuid.UUID
+	Enabled         bool
+	NixMode         string
+	Repos           json.RawMessage
+	State           string
+	Action          *string
+	Step            *string
+	Error           *string
+	Port            *int32
+	RunnerID        *string
+	Stack           *string
+	Arch            *string
+	UpdatedAt       time.Time
+	CustomZshrc     *string
+	CustomTmuxConf  *string
+	TmuxPrefix      string
+	ExtraPackages   json.RawMessage
+	TargetRepo      *string
+	TargetBranch    *string
+	TargetPrNumber  *int32
+	ClaimedAction   *string
+	ClaimedRepo     *string
+	ClaimedBranch   *string
+	ClaimedPrNumber *int32
 }
 
 func (q *Queries) ClaimDevWorkspaceAction(ctx context.Context, arg ClaimDevWorkspaceActionParams) (ClaimDevWorkspaceActionRow, error) {
@@ -87,6 +97,9 @@ func (q *Queries) ClaimDevWorkspaceAction(ctx context.Context, arg ClaimDevWorks
 		&i.TargetBranch,
 		&i.TargetPrNumber,
 		&i.ClaimedAction,
+		&i.ClaimedRepo,
+		&i.ClaimedBranch,
+		&i.ClaimedPrNumber,
 	)
 	return i, err
 }
@@ -127,6 +140,9 @@ func (q *Queries) GetDevWorkspace(ctx context.Context, workspaceID uuid.UUID) (D
 const requestDevWorkspaceAction = `-- name: RequestDevWorkspaceAction :one
 UPDATE dev_workspaces
 SET action = $1,
+    target_repo = NULL,
+    target_branch = NULL,
+    target_pr_number = NULL,
     state = 'starting',
     error = NULL,
     updated_at = now()
@@ -168,10 +184,70 @@ func (q *Queries) RequestDevWorkspaceAction(ctx context.Context, arg RequestDevW
 	return i, err
 }
 
+const requestDevWorkspaceOpenBranch = `-- name: RequestDevWorkspaceOpenBranch :one
+UPDATE dev_workspaces
+SET action = 'open_branch',
+    target_repo = $1,
+    target_branch = $2,
+    target_pr_number = $3,
+    state = 'starting',
+    step = $4,
+    error = NULL,
+    updated_at = now()
+WHERE workspace_id = $5
+RETURNING workspace_id, user_id, enabled, nix_mode, repos, state, action, step, error, port, runner_id, stack, arch, updated_at, custom_zshrc, custom_tmux_conf, tmux_prefix, extra_packages, target_repo, target_branch, target_pr_number
+`
+
+type RequestDevWorkspaceOpenBranchParams struct {
+	TargetRepo     *string
+	TargetBranch   *string
+	TargetPrNumber *int32
+	Step           *string
+	WorkspaceID    uuid.UUID
+}
+
+func (q *Queries) RequestDevWorkspaceOpenBranch(ctx context.Context, arg RequestDevWorkspaceOpenBranchParams) (DevWorkspace, error) {
+	row := q.db.QueryRow(ctx, requestDevWorkspaceOpenBranch,
+		arg.TargetRepo,
+		arg.TargetBranch,
+		arg.TargetPrNumber,
+		arg.Step,
+		arg.WorkspaceID,
+	)
+	var i DevWorkspace
+	err := row.Scan(
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.Enabled,
+		&i.NixMode,
+		&i.Repos,
+		&i.State,
+		&i.Action,
+		&i.Step,
+		&i.Error,
+		&i.Port,
+		&i.RunnerID,
+		&i.Stack,
+		&i.Arch,
+		&i.UpdatedAt,
+		&i.CustomZshrc,
+		&i.CustomTmuxConf,
+		&i.TmuxPrefix,
+		&i.ExtraPackages,
+		&i.TargetRepo,
+		&i.TargetBranch,
+		&i.TargetPrNumber,
+	)
+	return i, err
+}
+
 const stopStackDevWorkspaces = `-- name: StopStackDevWorkspaces :exec
 UPDATE dev_workspaces
 SET state = CASE WHEN enabled THEN 'starting' ELSE 'stopped' END,
     action = CASE WHEN enabled THEN 'start' ELSE NULL END,
+    target_repo = NULL,
+    target_branch = NULL,
+    target_pr_number = NULL,
     step = NULL,
     port = NULL,
     runner_id = NULL,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -72,17 +73,12 @@ func (s *Server) UpdateDevWorkspace(ctx context.Context, req api.UpdateDevWorksp
 	_ = json.Unmarshal(cur.Repos, &repos)
 	reposChanged := false
 	if req.Body.Repos != nil {
-		owner := repositoryOwner(ctx)
 		resolved := make([]string, 0, len(*req.Body.Repos))
 		seen := map[string]bool{}
 		for _, raw := range *req.Body.Repos {
-			repoURL, rerr := s.Runs.Repositories().Resolve(ctx, owner, raw)
+			repoURL, rerr := s.resolveDevRepoURL(ctx, raw)
 			if rerr != nil {
-				if canonical, cerr := repositories.Canonical(raw); cerr == nil {
-					repoURL = canonical
-				} else {
-					return nil, rerr
-				}
+				return nil, rerr
 			}
 			if !seen[repoURL] {
 				seen[repoURL] = true
@@ -216,6 +212,65 @@ func (s *Server) DevWorkspaceAction(ctx context.Context, req api.DevWorkspaceAct
 		return nil, err
 	}
 	return api.DevWorkspaceAction200JSONResponse(devWorkspaceOut(row)), nil
+}
+
+func (s *Server) OpenDevWorkspaceBranch(ctx context.Context, req api.OpenDevWorkspaceBranchRequestObject) (api.OpenDevWorkspaceBranchResponseObject, error) {
+	_, _, ws := me(ctx)
+	cur, err := s.Q.GetDevWorkspace(ctx, ws)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !cur.Enabled) {
+		return nil, apperr.Conflict("Enable the persistent dev workspace in Settings first.")
+	}
+	if err != nil {
+		return nil, err
+	}
+	if req.Body == nil {
+		return nil, apperr.Invalid("repository", "required")
+	}
+	repoURL, err := s.resolveDevRepoURL(ctx, req.Body.Repository)
+	if err != nil {
+		return nil, err
+	}
+	branch, err := devworkspace.ValidateBranchName(req.Body.Branch)
+	if err != nil {
+		return nil, apperr.Invalid("branch", "%s", err.Error())
+	}
+	var repos []devworkspace.RepoSpec
+	_ = json.Unmarshal(cur.Repos, &repos)
+	dir := devworkspace.ResolveRepoDir(repos, repoURL)
+	step := fmt.Sprintf("Opening %s (%s)", dir, branch)
+	var prNum *int32
+	if req.Body.PrNumber != nil && *req.Body.PrNumber > 0 {
+		n := int32(*req.Body.PrNumber)
+		prNum = &n
+	}
+	row, err := s.Q.RequestDevWorkspaceOpenBranch(ctx, store.RequestDevWorkspaceOpenBranchParams{
+		WorkspaceID:    ws,
+		TargetRepo:     &repoURL,
+		TargetBranch:   &branch,
+		TargetPrNumber: prNum,
+		Step:           &step,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return api.OpenDevWorkspaceBranch200JSONResponse(devWorkspaceOut(row)), nil
+}
+
+func (s *Server) resolveDevRepoURL(ctx context.Context, raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", apperr.Invalid("repository", "required")
+	}
+	if s.Runs != nil {
+		if repoURL, err := s.Runs.Repositories().Resolve(ctx, repositoryOwner(ctx), trimmed); err == nil {
+			return repoURL, nil
+		}
+	}
+	canonical, err := repositories.Canonical(trimmed)
+	if err != nil {
+		return "", apperr.Invalid("repository", "%s", err.Error())
+	}
+	return canonical, nil
 }
 
 func devWorkspaceOut(row store.DevWorkspace) api.DevWorkspace {

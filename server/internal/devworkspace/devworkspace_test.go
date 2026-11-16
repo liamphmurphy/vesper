@@ -85,3 +85,52 @@ func TestSyncReposScriptClonesAndFetchesWithoutStoringTokens(t *testing.T) {
 		t.Fatalf("must not store credentials on disk")
 	}
 }
+
+func TestValidateBranchName(t *testing.T) {
+	for _, good := range []string{"feat/open-pr", "fix-123", "release/v1.2.3", "user_topic"} {
+		if got, err := ValidateBranchName("  " + good + " "); err != nil || got != good {
+			t.Fatalf("ValidateBranchName(%q) = (%q, %v)", good, got, err)
+		}
+	}
+	for _, bad := range []string{"", " ", "-rf", "a..b", "a b", "feat~1", "feat:bar", "/leading", "trailing/", "a.lock", "a//b", "a@{0}"} {
+		if _, err := ValidateBranchName(bad); err == nil {
+			t.Fatalf("ValidateBranchName(%q) should have failed", bad)
+		}
+	}
+}
+
+func TestResolveRepoDir(t *testing.T) {
+	repos := []RepoSpec{
+		{RepoURL: "https://github.com/liamphmurphy/vesper.git", Directory: "vesper"},
+		{RepoURL: "https://github.com/other/app.git", Directory: "app"},
+	}
+	if got := ResolveRepoDir(repos, "git@github.com:LiamPHMurphy/Vesper"); got != "vesper" {
+		t.Fatalf("matched configured repo = %q, want vesper", got)
+	}
+	if got := ResolveRepoDir(repos, "https://github.com/another/app.git"); got != "app-2" {
+		t.Fatalf("disambiguated colliding dir = %q, want app-2", got)
+	}
+	if got := ResolveRepoDir(repos, "https://github.com/acme/new-repo.git"); got != "new-repo" {
+		t.Fatalf("derived new dir = %q, want new-repo", got)
+	}
+}
+
+func TestOpenBranchScript(t *testing.T) {
+	repos := []RepoSpec{{RepoURL: "https://github.com/liamphmurphy/vesper.git", Directory: "vesper"}}
+	s := OpenBranchScript(repos, "https://github.com/liamphmurphy/vesper.git", "feat/my-pr", 42, "Liam", "liam@example.com")
+	for _, want := range []string{
+		"dest='/workspace/vesper'",
+		"+refs/heads/$branch:refs/remotes/origin/$branch",
+		"+refs/pull/42/head:refs/remotes/origin/$branch",
+		"has uncommitted changes",
+		"tmux new-window -t dev -n 'vesper' -c \"$dest\"",
+		"tmux new-session -d -s dev -n 'vesper' -c \"$dest\"",
+	} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("OpenBranchScript missing %q:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "credential.helper store") {
+		t.Fatalf("must not store credentials on disk")
+	}
+}
