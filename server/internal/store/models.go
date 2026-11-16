@@ -679,6 +679,23 @@ type DesignSetting struct {
 	UpdatedAt     time.Time
 }
 
+type DevWorkspace struct {
+	WorkspaceID uuid.UUID
+	UserID      uuid.UUID
+	Enabled     bool
+	NixMode     string
+	Repos       json.RawMessage
+	State       string
+	Action      *string
+	Step        *string
+	Error       *string
+	Port        *int32
+	RunnerID    *string
+	Stack       *string
+	Arch        *string
+	UpdatedAt   time.Time
+}
+
 type DocPageRedirect struct {
 	CanvasID           uuid.UUID
 	ArtifactID         uuid.UUID

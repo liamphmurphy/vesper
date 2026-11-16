@@ -115,6 +115,8 @@ type Runner struct {
 	DriveBackups *drivebackup.Runner
 	// backingUp is set while tickDriveBackups' worker runs.
 	backingUp atomic.Bool
+	// devWSBusy is set while tickDevWorkspace's worker runs.
+	devWSBusy atomic.Bool
 	// Designs draws and inspects design frames linked to a ticket, which its
 	// runs receive as context; nil delivers only a note for each frame.
 	Designs DesignRenderer
@@ -156,6 +158,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 	r.expireModelListings(ctx)
 	r.ServePlaygrounds(ctx)
+	r.InitDevWorkspaces(ctx)
 	beat := time.NewTicker(10 * time.Second)
 	defer beat.Stop()
 	sweep := time.NewTicker(30 * time.Second)
@@ -325,6 +328,7 @@ func (r *Runner) Tick(ctx context.Context) {
 	r.tickUsageChecks(ctx)
 	r.resumeHeld(ctx)
 	r.tickPlaygrounds(ctx)
+	r.tickDevWorkspace(ctx)
 	r.tickChecks(ctx)
 	for r.slot() {
 		token, expires := uuid.New(), time.Now().Add(executionTTL)
