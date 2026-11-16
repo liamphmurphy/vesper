@@ -475,23 +475,64 @@ func parseBruRequest(fallbackName, src string) RequestInput {
 
 func (s *Service) importCurl(ctx context.Context, ws, httpWS uuid.UUID, in ImportInput) (ImportResult, error) {
 	var res ImportResult
-	tokens := splitShellTokens(strings.ReplaceAll(in.Content, "\\\n", " "))
+	req, err := parseCurl(in.Content)
+	if err != nil {
+		return res, err
+	}
+	req.FolderID = in.FolderID
+	if _, err := s.CreateRequest(ctx, ws, httpWS, req); err != nil {
+		return res, err
+	}
+	res.RequestsCreated = 1
+	return res, nil
+}
+
+// parseCurl turns a pasted cURL command (including a browser's "Copy as cURL")
+// into a request. Flags it doesn't model (-L, -s, --compressed, -o …) are ignored.
+func parseCurl(content string) (RequestInput, error) {
+	tokens := splitShellTokens(strings.ReplaceAll(strings.ReplaceAll(content, "\\\r\n", " "), "\\\n", " "))
 	if len(tokens) == 0 {
-		return res, apperr.Invalid("content", "enter a cURL command")
+		return RequestInput{}, apperr.Invalid("content", "enter a cURL command")
 	}
 	req := RequestInput{
-		FolderID: in.FolderID,
 		Method:   "GET",
 		BodyMode: BodyNone,
 		Auth:     AuthConfig{Type: AuthInherit},
 	}
+	hasHeader := func(name string) bool {
+		for _, h := range req.Headers {
+			if strings.EqualFold(h.Key, name) {
+				return true
+			}
+		}
+		return false
+	}
+	addHeader := func(raw string) {
+		if k, v, ok := strings.Cut(raw, ":"); ok {
+			req.Headers = append(req.Headers, KeyValue{Key: strings.TrimSpace(k), Value: strings.TrimSpace(v), Enabled: true})
+		}
+	}
 	var dataParts []string
+	jsonBody, explicitMethod := false, false
 	for i := 0; i < len(tokens); i++ {
 		tok := tokens[i]
 		if i == 0 && strings.EqualFold(tok, "curl") {
 			continue
 		}
+		// --opt=value is the same as --opt value; -XPOST the same as -X POST.
+		var inline *string
+		if strings.HasPrefix(tok, "--") {
+			if k, v, ok := strings.Cut(tok, "="); ok {
+				tok, inline = k, &v
+			}
+		} else if len(tok) > 2 && tok[0] == '-' && tok[1] == 'X' {
+			v := tok[2:]
+			tok, inline = "-X", &v
+		}
 		next := func() string {
+			if inline != nil {
+				return *inline
+			}
 			if i+1 < len(tokens) {
 				i++
 				return tokens[i]
@@ -501,84 +542,135 @@ func (s *Service) importCurl(ctx context.Context, ws, httpWS uuid.UUID, in Impor
 		switch {
 		case tok == "-X" || tok == "--request":
 			req.Method = strings.ToUpper(next())
+			explicitMethod = true
+		case tok == "-I" || tok == "--head":
+			req.Method, explicitMethod = "HEAD", true
 		case tok == "-H" || tok == "--header":
-			raw := next()
-			if k, v, ok := strings.Cut(raw, ":"); ok {
-				req.Headers = append(req.Headers, KeyValue{Key: strings.TrimSpace(k), Value: strings.TrimSpace(v), Enabled: true})
+			addHeader(next())
+		case tok == "-b" || tok == "--cookie":
+			if c := next(); strings.Contains(c, "=") {
+				addHeader("Cookie: " + c)
 			}
-		case tok == "-d" || tok == "--data" || tok == "--data-raw" || tok == "--data-binary" || tok == "--data-urlencode":
+		case tok == "-d" || tok == "--data" || tok == "--data-raw" || tok == "--data-binary" || tok == "--data-ascii" || tok == "--data-urlencode":
 			dataParts = append(dataParts, next())
-			if req.Method == "GET" {
-				req.Method = "POST"
-			}
+		case tok == "--json":
+			dataParts = append(dataParts, next())
+			jsonBody = true
 		case tok == "-u" || tok == "--user":
 			u, p, _ := strings.Cut(next(), ":")
 			req.Auth = AuthConfig{Type: AuthBasic, Username: u, Password: p}
+		case tok == "--url":
+			req.URL = next()
 		case strings.HasPrefix(tok, "http://") || strings.HasPrefix(tok, "https://") || strings.HasPrefix(tok, "{{"):
 			req.URL = tok
 		}
 	}
 	if req.URL == "" {
-		return res, apperr.Invalid("content", "could not find URL in cURL command")
+		return RequestInput{}, apperr.Invalid("content", "could not find URL in cURL command")
 	}
 	if len(dataParts) > 0 {
+		if !explicitMethod {
+			req.Method = "POST"
+		}
 		joined := strings.Join(dataParts, "&")
 		req.Body = joined
-		if strings.HasPrefix(strings.TrimSpace(joined), "{") || strings.HasPrefix(strings.TrimSpace(joined), "[") {
+		trimmed := strings.TrimSpace(joined)
+		if jsonBody || strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
 			req.BodyMode = BodyJSON
 		} else {
 			req.BodyMode = BodyRaw
+		}
+		if jsonBody {
+			if !hasHeader("Content-Type") {
+				addHeader("Content-Type: application/json")
+			}
+			if !hasHeader("Accept") {
+				addHeader("Accept: application/json")
+			}
 		}
 	}
 	req.Name = req.Method + " " + req.URL
 	if len(req.Name) > 80 {
 		req.Name = req.Name[:80]
 	}
-	if _, err := s.CreateRequest(ctx, ws, httpWS, req); err != nil {
-		return res, err
-	}
-	res.RequestsCreated = 1
-	return res, nil
+	return req, nil
 }
 
+// splitShellTokens splits a command line the way a POSIX shell would: single and
+// double quotes, backslash escapes, and bash's $'…' (which browsers emit for
+// bodies with newlines or quotes).
 func splitShellTokens(s string) []string {
 	var out []string
 	var cur strings.Builder
 	var quote rune
-	escaped := false
+	escaped, started := false, false
 	flush := func() {
-		if cur.Len() > 0 {
+		if started {
 			out = append(out, cur.String())
 			cur.Reset()
+			started = false
 		}
 	}
-	for _, r := range s {
+	runes := []rune(s)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
 		if escaped {
 			cur.WriteRune(r)
 			escaped = false
 			continue
 		}
-		if quote != 0 {
-			if r == '\\' && quote == '"' {
-				escaped = true
-				continue
-			}
-			if r == quote {
+		switch quote {
+		case '\'': // single quotes: literal
+			if r == '\'' {
 				quote = 0
-				continue
+			} else {
+				cur.WriteRune(r)
 			}
-			cur.WriteRune(r)
+			continue
+		case '$': // $'…': C-style escapes
+			switch {
+			case r == '\'':
+				quote = 0
+			case r == '\\' && i+1 < len(runes):
+				i++
+				switch runes[i] {
+				case 'n':
+					cur.WriteRune('\n')
+				case 'r':
+					cur.WriteRune('\r')
+				case 't':
+					cur.WriteRune('\t')
+				default:
+					cur.WriteRune(runes[i])
+				}
+			default:
+				cur.WriteRune(r)
+			}
+			continue
+		case '"':
+			switch {
+			case r == '\\' && i+1 < len(runes):
+				escaped = true
+			case r == '"':
+				quote = 0
+			default:
+				cur.WriteRune(r)
+			}
 			continue
 		}
-		switch r {
-		case '\\':
-			escaped = true
-		case '\'', '"':
-			quote = r
-		case ' ', '\t', '\n', '\r':
+		switch {
+		case r == '$' && i+1 < len(runes) && runes[i+1] == '\'':
+			quote, started = '$', true
+			i++
+		case r == '\\':
+			escaped, started = true, true
+		case r == '\'' || r == '"':
+			quote, started = r, true
+		case r == ' ' || r == '\t' || r == '\n' || r == '\r':
 			flush()
 		default:
 			cur.WriteRune(r)
+			started = true
 		}
 	}
 	flush()

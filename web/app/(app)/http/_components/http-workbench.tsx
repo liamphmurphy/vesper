@@ -33,8 +33,9 @@ import {
 } from "@/lib/api/http-client-hooks";
 import { AuthEditor, describeAuth } from "./auth-editor";
 import { AuthEnvView, ENV_DOT } from "./auth-env-view";
-import { ImportDialog } from "./import-dialog";
+import { ImportDialog, type ImportTab } from "./import-dialog";
 import { KVEditor } from "./kv-editor";
+import { TreeMenu, type TreeMenuEntry } from "./tree-menu";
 
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
 
@@ -159,7 +160,7 @@ export function HttpWorkbench() {
   const runRequest = useRunHttpRequest();
 
   const [viewMode, setViewMode] = useState<"requests" | "auth-env">("requests");
-  const [showImport, setShowImport] = useState(false);
+  const [showImport, setShowImport] = useState<{ folder: HttpFolder | null; tab: ImportTab } | null>(null);
   const [newWsOpen, setNewWsOpen] = useState(false);
   const [newWsName, setNewWsName] = useState("");
   const [newFolderOpen, setNewFolderOpen] = useState(false);
@@ -330,6 +331,41 @@ export function HttpWorkbench() {
     r.url.toLowerCase().includes(normalizedFilter) ||
     r.method.toLowerCase().includes(normalizedFilter);
 
+  const startNewFolder = (parentId: string | null) => {
+    setSelectedFolderId(parentId);
+    if (parentId) setCollapsedFolders((p) => ({ ...p, [parentId]: false }));
+    setNewFolderOpen(true);
+  };
+  const handleDeleteFolder = async (folder: HttpFolder) => {
+    const ok = await confirmAction({
+      title: `Delete folder "${folder.name}"?`,
+      body: "This removes the folder and any nested folders or requests inside it.",
+      confirmLabel: "Delete",
+    });
+    if (ok) void deleteFolder.mutateAsync(folder.id);
+  };
+  const folderMenu = (folder: HttpFolder): TreeMenuEntry[] => [
+    {
+      icon: "plus",
+      label: "New request",
+      onSelect: () => {
+        setCollapsedFolders((p) => ({ ...p, [folder.id]: false }));
+        void handleCreateRequest(folder.id);
+      },
+    },
+    { icon: "upload", label: "Import cURL…", onSelect: () => setShowImport({ folder, tab: "curl" }) },
+    { icon: "upload", label: "Import collection…", onSelect: () => setShowImport({ folder, tab: "bru" }) },
+    { icon: "folder", label: "New folder", onSelect: () => startNewFolder(folder.id) },
+    "separator",
+    { icon: "trash", label: "Delete folder", danger: true, onSelect: () => void handleDeleteFolder(folder) },
+  ];
+  const rootMenu: TreeMenuEntry[] = [
+    { icon: "plus", label: "New request", onSelect: () => void handleCreateRequest(null) },
+    { icon: "upload", label: "Import cURL…", onSelect: () => setShowImport({ folder: null, tab: "curl" }) },
+    { icon: "upload", label: "Import collection…", onSelect: () => setShowImport({ folder: null, tab: "bru" }) },
+    { icon: "folder", label: "New folder", onSelect: () => startNewFolder(null) },
+  ];
+
   const renderTree = (parentId: string | null, depth = 0) => {
     if (!bundle) return null;
     const folders = bundle.folders.filter((f) => f.parent_folder_id === parentId);
@@ -342,6 +378,7 @@ export function HttpWorkbench() {
           const isFolderSelected = selectedFolderId === folder.id && !selectedReqId;
           return (
             <div key={folder.id}>
+              <TreeMenu entries={folderMenu(folder)}>
               <div
                 style={{ paddingLeft: `${8 + depth * 12}px` }}
                 className={cx(
@@ -379,19 +416,13 @@ export function HttpWorkbench() {
                 <button
                   type="button"
                   title="Delete folder"
-                  onClick={async () => {
-                    const ok = await confirmAction({
-                      title: `Delete folder "${folder.name}"?`,
-                      body: "This removes the folder and any nested folders or requests inside it.",
-                      confirmLabel: "Delete",
-                    });
-                    if (ok) void deleteFolder.mutateAsync(folder.id);
-                  }}
+                  onClick={() => void handleDeleteFolder(folder)}
                   className="hidden size-5 place-items-center rounded text-fg-tertiary hover:bg-surface hover:text-state-blocked group-hover:grid"
                 >
                   <Icon name="trash" size={12} />
                 </button>
               </div>
+              </TreeMenu>
               {!isCollapsed && renderTree(folder.id, depth + 1)}
             </div>
           );
@@ -399,8 +430,15 @@ export function HttpWorkbench() {
         {reqs.map((r) => {
           const active = r.id === activeReqId && viewMode === "requests";
           return (
-            <div
+            <TreeMenu
               key={r.id}
+              entries={[
+                { icon: "plus", label: "New request here", onSelect: () => void handleCreateRequest(r.folder_id) },
+                "separator",
+                { icon: "trash", label: "Delete request", danger: true, onSelect: () => void deleteRequest.mutateAsync(r.id) },
+              ]}
+            >
+            <div
               style={{ paddingLeft: `${12 + depth * 12}px` }}
               className={cx(
                 "group flex h-[30px] items-center gap-2 rounded-md pr-1.5 text-12",
@@ -426,6 +464,7 @@ export function HttpWorkbench() {
                 <Icon name="trash" size={12} />
               </button>
             </div>
+            </TreeMenu>
           );
         })}
       </>
@@ -514,7 +553,7 @@ export function HttpWorkbench() {
               </select>
             </div>
 
-            <Button variant="outline" icon="upload" onClick={() => setShowImport(true)}>
+            <Button variant="outline" icon="upload" onClick={() => setShowImport({ folder: null, tab: "bru" })}>
               Import
             </Button>
             <Button
@@ -603,7 +642,7 @@ export function HttpWorkbench() {
                 </Button>
               </div>
             )}
-            <div className="flex-1 overflow-y-auto p-2">
+            <TreeMenu entries={rootMenu} className="flex-1 overflow-y-auto p-2">
               {bundle.folders.length === 0 && bundle.requests.length === 0 ? (
                 <div className="p-3 text-center text-12 text-fg-tertiary">
                   No requests yet. Click <strong>+</strong> or <strong>Import</strong> to add one.
@@ -611,7 +650,7 @@ export function HttpWorkbench() {
               ) : (
                 renderTree(null, 0)
               )}
-            </div>
+            </TreeMenu>
           </aside>
 
           {/* Request + Response workspace */}
@@ -625,7 +664,7 @@ export function HttpWorkbench() {
                     <Button variant="primary" icon="plus" onClick={() => void handleCreateRequest(null)}>
                       New Request
                     </Button>
-                    <Button variant="outline" icon="upload" onClick={() => setShowImport(true)}>
+                    <Button variant="outline" icon="upload" onClick={() => setShowImport({ folder: null, tab: "bru" })}>
                       Import .bru / cURL / OpenAPI
                     </Button>
                   </>
@@ -964,7 +1003,14 @@ export function HttpWorkbench() {
         </div>
       )}
 
-      {showImport && bundle && <ImportDialog workspaceId={bundle.workspace.id} onClose={() => setShowImport(false)} />}
+      {showImport && bundle && (
+        <ImportDialog
+          workspaceId={bundle.workspace.id}
+          folder={showImport.folder}
+          initialTab={showImport.tab}
+          onClose={() => setShowImport(null)}
+        />
+      )}
     </div>
   );
 }
