@@ -33,15 +33,17 @@ OrbStack, and both are a problem for this goal:
 
 The goal: **bundle the runtime Vesper's hardening needs, with no Docker on the
 host**. Memory should return to the OS when work ends, isolation should be a
-VM per run, and every current feature should keep working.
+VM per run, and every current feature should keep working. On a Mac it ships
+as **one DMG**: drag Vesper to Applications, open it, done; no Docker, no
+checkout folder, no server to point the app at (section 9).
 
 ### Non-goals
 
 - **Windows.** People use WSL2; the Linux driver covers it where WSL exposes
   `/dev/kvm` (Windows 11 with nested virtualisation; to be verified).
 - **Intel Macs.** Apple silicon only.
-- **Signed, notarised distribution.** The first users build and run it
-  themselves (see [Development setup](#development-setup)).
+- **Signed, notarised distribution.** The first users build the DMG and run it
+  themselves (see [Development setup](#development-setup) and section 9).
 - **Replacing the Docker backend.** It stays, as the fallback where there is
   no hardware virtualisation (cloud VMs without nested virtualisation, most
   Kubernetes pods).
@@ -264,7 +266,106 @@ the runner is a container holding the host's Docker socket
   `make dev`), Postgres from a package manager or bundled binaries, SeaweedFS
   (a single Go binary), started by a `Procfile`/Makefile target. Alternative:
   one long-lived "stack VM" for Postgres and SeaweedFS.
-- Desktop-app bundling and upgrades are out of scope until distribution is.
+- On a Mac, the desktop app starts and supervises all of it (section 9).
+
+### 9. Packaging: one DMG
+
+**Today** the desktop app is a thin client. It loads a server URL
+(`http://localhost:8080` by default, `desktop/src/main.ts:49`), and for a
+local stack it asks for a Vesper checkout containing `docker-compose.yml` and
+runs `docker compose up -d` there (`desktop/src/main.ts:663`,
+`desktop/src/docker.ts:105`). `make desktop-dmg` builds an unsigned arm64 DMG
+with electron-builder (`desktop/electron-builder.yml`, `desktop/package.json`).
+
+**Proposed:** the same `make desktop-dmg` builds a DMG whose app carries the
+whole local stack. Install is drag to Applications; first launch downloads the
+guest images and opens Vesper, already signed in.
+
+#### What `Vesper.app` contains
+
+| In the bundle | What it is | Replaces |
+|---|---|---|
+| Electron | The window, tabs, notifications (as today) | — |
+| Next standalone server | `web` built with `output: "standalone"`, run on Electron's own Node (`ELECTRON_RUN_AS_NODE` or a utility process); includes the arm64 resvg binding the designs routes need | The `web` container |
+| `vesper` (darwin/arm64) | API, runner and VM drivers in one process: a new combined mode (for example `vesper app`) that runs `serve` and `runner`, supervises Postgres, and serves the single origin | The `api` and `runner` containers, and Caddy |
+| Postgres binaries | Matching the `postgres:17` the stack uses today, with contrib (migrations use `pg_trgm`) | The `postgres` container |
+| Guest kernel | Small, versioned with the app | — |
+
+**Not in the bundle: guest root filesystems.** The agent base image carries
+the harness CLIs and toolchains and is large. It is downloaded on first launch
+(with progress) and versioned separately, so harness CLI updates don't need a
+new DMG. Bundling it instead gives an offline install at the cost of a
+multi-GB DMG.
+
+**Single origin without Caddy.** `deploy/Caddyfile` routes `/api/*`, `/mcp`,
+`/mcp/*` and `/events` to the API, answers 404 for `/internal/*`, and sends the
+rest to Next. `vesper app` does the same in Go, with streaming (no buffering)
+for SSE and MCP, as Caddy's `flush_interval -1` does.
+
+**Blobs without SeaweedFS.** `blob.Store` is an S3 client
+(`server/internal/blob/blob.go:26`). It gains a local-filesystem backend.
+`vesper export` lists buckets, so the backend must list them too
+(`AGENTS.md`, "Export and import"). Nothing presigns URLs today, so the
+filesystem backend needs no URL signing.
+
+#### Where things live
+
+Everything goes under Electron's `userData` directory
+(`~/Library/Application Support/<app name>`), next to the `config.json` and
+`session.json` the desktop app already writes (`desktop/src/main.ts:776`):
+
+```text
+config.json, session.json   desktop settings (as today)
+postgres/                   database cluster
+blobs/                      object storage
+images/                     guest kernels and root filesystems, by version
+vm/                         run disks, cache generations, saved VM state
+logs/                       vesper, Postgres, Next, guest consoles
+```
+
+`SECRETS_KEY` is generated on first launch and kept in the macOS Keychain
+(Electron `safeStorage`), not in a file. Uninstalling is deleting the app and
+this directory.
+
+#### Signing in
+
+No `VESPER_NO_SIGNIN`: that lets any local process act as the owner. The app
+signs its own window in with `vesper sign-in-link` (a one-time, short-lived
+link, `server/cmd/vesper/main.go:257`) whenever its session is missing, so
+there is no password prompt and other local processes still need a session.
+`PUBLIC_URL` stays a loopback address; everything binds to `127.0.0.1` only.
+
+#### Lifecycle
+
+- **Launch:** Electron starts `vesper app`, which starts Postgres, runs
+  migrations (as `vesper migrate` does), then serves. Electron waits for
+  `/api/v1/health` and loads the UI.
+- **Closing the window doesn't stop runs.** Vesper stays in the menu bar while
+  runs, playgrounds or dev workspaces are active. An optional login item
+  starts it at login.
+- **Quit** warns if runs are active, pushes unpushed work to a
+  `vesper-checkpoint/...` branch as cleanup does today (`docs/guide.md:170`),
+  suspends or stops the VMs, then stops Postgres.
+- **Crash:** Electron restarts `vesper app`; the runner's startup recovery
+  (`Cleanup`) handles VMs left behind.
+- **Upgrade:** a new DMG replaces the app; the data directory stays, and
+  migrations run on the next launch. Guest images update on their own.
+- **Remote mode stays.** The server URL setting can still point the app at a
+  remote Vesper (for example over Tailscale); then it starts nothing locally.
+
+#### Signing the bundle
+
+The builds stay ad-hoc signed (`CSC_IDENTITY_AUTO_DISCOVERY=false` today).
+After electron-builder packs the app, a build step signs inside out: `vesper`
+with the virtualization entitlement (it's the process that starts VMs), then
+the Postgres binaries, then the app. A DMG built on the same Mac has no
+quarantine flag and opens directly. One downloaded from elsewhere, even your
+own from GitHub, needs `xattr -cr /Applications/Vesper.app` once, as
+`desktop/README.md` already documents. Giving it to other people properly
+means a Developer ID, the hardened runtime and notarisation: out of scope.
+
+Packaging doesn't depend on the microVM backend: `vesper app` can run the
+Docker backend until `microvm` exists, so this can be built in parallel.
 
 ## Feature mapping
 
@@ -341,6 +442,9 @@ microVM backend:
 - The Docker backend stays for hosts without hardware virtualisation.
 - `RUNNER_BACKEND` gains `microvm` (`config.go:189` accepts only `docker` and
   `fake` today).
+- On a Mac, Vesper becomes one DMG with no prerequisites. The desktop app
+  stops being only a thin client: it starts and supervises the local stack,
+  and the checkout-folder and `docker compose up` flow goes away.
 
 ## Development setup
 
@@ -394,6 +498,7 @@ bottlenecks are hardware feedback, decisions and review:
 |---|---|
 | Spike (steps 1–4) | About 1–2 weeks |
 | Parity with the Docker backend, stack out of Compose | A further 3–5 weeks |
+| One-DMG packaging (section 9), in parallel | About 1–2 weeks |
 | Dogfooding and soak | 2+ weeks, alongside fixes |
 
 One bad VM bug (virtiofs speed, the balloon not reclaiming under
@@ -411,7 +516,15 @@ required: they are the sandbox boundary.
   and does `nix copy` promotion keep the store database consistent?
 - Turn = cgroup in the run's VM, or a container per turn inside it for parity
   with today?
-- Native processes for Postgres and SeaweedFS, or a stack VM?
+- Native processes for Postgres and SeaweedFS, or a stack VM? Section 9
+  assumes native Postgres and a filesystem blob backend.
+- Where do arm64 Postgres binaries come from for the bundle (a project build,
+  or a maintained distribution), and how are major-version upgrades of the
+  bundled cluster handled?
+- Download or bundle the guest root filesystem? Section 9 assumes download.
+- Does any web feature assume the separate `web` container beyond what the
+  Caddyfile routes? `API_INTERNAL_URL` (`web/next.config.ts`,
+  `web/lib/api/client.ts`) must point at `vesper app`'s loopback port.
 - Does WSL2 with nested virtualisation give the Linux driver a working
   `/dev/kvm`?
 - Licences of every bundled component (Code-Hex/vz, Cloud Hypervisor, the
