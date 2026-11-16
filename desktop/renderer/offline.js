@@ -17,12 +17,50 @@
   const saveUrlBtn = document.getElementById("save-url-btn");
   const formError = document.getElementById("form-error");
 
+  const dockerSection = document.getElementById("docker-section");
+  const dockerBadge = document.getElementById("docker-badge");
+  const checkoutPathInput = document.getElementById("checkout-path-input");
+  const browseCheckoutBtn = document.getElementById("browse-checkout-btn");
+  const startStackBtn = document.getElementById("start-stack-btn");
+  const stackError = document.getElementById("stack-error");
+  const stackLog = document.getElementById("stack-log");
+
   let inputDirty = false;
+  let checkoutDirty = false;
   let pollTimer = null;
 
   if (isSettingsMode) {
     document.title = "Vesper Settings";
     pageTitle.textContent = "Vesper Server Settings";
+  }
+
+  function renderDocker(state) {
+    if (!state.isLocalhost) {
+      dockerSection.classList.add("hidden");
+      return;
+    }
+    dockerSection.classList.remove("hidden");
+
+    if (!checkoutDirty && state.localCheckoutPath && checkoutPathInput.value !== state.localCheckoutPath) {
+      checkoutPathInput.value = state.localCheckoutPath;
+    }
+
+    const docker = state.docker;
+    if (!docker) {
+      dockerBadge.textContent = "Checking Docker…";
+      dockerBadge.className = "docker-badge";
+      startStackBtn.disabled = true;
+    } else if (docker.available) {
+      dockerBadge.textContent = docker.runtime === "orbstack" ? "OrbStack ready" : "Docker ready";
+      dockerBadge.className = "docker-badge ready";
+      startStackBtn.disabled = Boolean(state.stackStarting);
+    } else {
+      dockerBadge.textContent = "Docker / OrbStack not running";
+      dockerBadge.className = "docker-badge";
+      startStackBtn.disabled = true;
+    }
+
+    startStackBtn.textContent = state.stackStarting ? "Starting Stack…" : "Start Vesper Stack";
   }
 
   function renderState(state) {
@@ -60,11 +98,18 @@
       retryBtn.disabled = false;
       openBtn.classList.add("hidden");
     }
+
+    renderDocker(state);
   }
 
   serverUrlInput.addEventListener("input", function () {
     inputDirty = true;
     formError.textContent = "";
+  });
+
+  checkoutPathInput.addEventListener("input", function () {
+    checkoutDirty = true;
+    stackError.textContent = "";
   });
 
   retryBtn.addEventListener("click", function () {
@@ -75,23 +120,56 @@
     void api.openTarget();
   });
 
+  browseCheckoutBtn.addEventListener("click", function () {
+    void api.pickCheckoutFolder().then(function (chosen) {
+      if (chosen) {
+        checkoutPathInput.value = chosen;
+        checkoutDirty = false;
+        stackError.textContent = "";
+      }
+    });
+  });
+
+  startStackBtn.addEventListener("click", function () {
+    stackError.textContent = "";
+    stackLog.textContent = "";
+    stackLog.classList.remove("hidden");
+    startStackBtn.disabled = true;
+    void api.startLocalStack(checkoutPathInput.value).then(function (res) {
+      if (!res.ok) {
+        stackError.textContent = res.error || "Failed to start local stack.";
+      }
+      void api.retryConnection().then(renderState);
+    });
+  });
+
   urlForm.addEventListener("submit", function (event) {
     event.preventDefault();
     formError.textContent = "";
     saveUrlBtn.disabled = true;
     void api
-      .setServerUrl({ serverUrl: serverUrlInput.value })
+      .setServerUrl({
+        serverUrl: serverUrlInput.value,
+        localCheckoutPath: checkoutPathInput.value,
+      })
       .then(function (result) {
         if (!result.ok) {
           formError.textContent = result.error || "Invalid server URL.";
           return;
         }
         inputDirty = false;
+        checkoutDirty = false;
         renderState(result.state);
       })
       .finally(function () {
         saveUrlBtn.disabled = false;
       });
+  });
+
+  api.onStackLog(function (chunk) {
+    stackLog.classList.remove("hidden");
+    stackLog.textContent += chunk;
+    stackLog.scrollTop = stackLog.scrollHeight;
   });
 
   api.onStateChange(renderState);

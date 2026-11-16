@@ -1,6 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, ipcMain, session, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Notification, session, shell } from "electron";
 import {
   loadConfig,
   loadSession,
@@ -11,8 +11,10 @@ import {
   type SessionState,
   type WindowBounds,
 } from "./config";
+import { checkDockerAvailability, isLocalhostUrl, isValidVesperCheckout, startLocalComposeStack } from "./docker";
 import { buildApplicationMenu } from "./menu";
-import type { DesktopConnectionState, SetServerUrlInput, SetServerUrlResult } from "./preload";
+import { InboxMonitor, type DesktopAlert } from "./notifications";
+import type { DesktopConnectionState, SetServerUrlInput, SetServerUrlResult, StartStackResult } from "./preload";
 import { classifyNavigation, cleanTabTitle, ClosedTabStack } from "./routing";
 
 export const SESSION_PARTITION = "persist:vesper";
@@ -27,6 +29,7 @@ let currentConfig: DesktopConfig;
 let settingsWindow: BrowserWindow | null = null;
 let isQuitting = false;
 let sessionSaveTimer: NodeJS.Timeout | undefined;
+let stackStarting = false;
 
 interface WindowEntry {
   win: BrowserWindow;
@@ -42,7 +45,19 @@ let currentState: DesktopConnectionState = {
   serverUrl: "http://localhost:8080",
   targetUrl: "http://localhost:8080",
   phase: "checking",
+  isLocalhost: true,
 };
+
+const inboxMonitor = new InboxMonitor({
+  fetch: (url, init) => getVesperSession().fetch(url, init),
+  onBadgeChange: (badge) => {
+    if (process.platform === "darwin" && app.dock) {
+      app.dock.setBadge(badge);
+    }
+  },
+  shouldNotify: (href) => shouldNotifyForHref(href),
+  onAlert: (alert) => showDesktopAlert(alert),
+});
 
 function getVesperSession() {
   return session.fromPartition(SESSION_PARTITION);
@@ -58,6 +73,69 @@ export function isTrustedRendererUrl(frameUrl: string | undefined): boolean {
   } catch {
     return false;
   }
+}
+
+function shouldNotifyForHref(href: string): boolean {
+  const focused = BrowserWindow.getFocusedWindow();
+  if (!focused || focused.isDestroyed()) return true;
+  const entry = windows.get(focused.id);
+  if (!entry || entry.showingOffline) return true;
+  try {
+    const current = new URL(entry.targetUrl);
+    const target = new URL(href, currentConfig.serverUrl);
+    return `${current.pathname}${current.search}` !== `${target.pathname}${target.search}`;
+  } catch {
+    return true;
+  }
+}
+
+function focusOrOpenHref(href: string) {
+  let fullUrl: string;
+  try {
+    fullUrl = new URL(href, currentConfig.serverUrl).toString();
+  } catch {
+    fullUrl = currentConfig.serverUrl;
+  }
+
+  if (process.platform === "darwin") {
+    app.focus({ steal: true });
+  }
+
+  for (const id of tabOrder) {
+    const entry = windows.get(id);
+    if (!entry || entry.win.isDestroyed()) continue;
+    try {
+      const tabParsed = new URL(entry.targetUrl);
+      const targetParsed = new URL(fullUrl);
+      if (`${tabParsed.pathname}${tabParsed.search}` === `${targetParsed.pathname}${targetParsed.search}`) {
+        if (entry.win.isMinimized()) entry.win.restore();
+        entry.win.show();
+        entry.win.focus();
+        return;
+      }
+    } catch {
+      // Ignore unparseable window URLs.
+    }
+  }
+
+  const parentWin = resolveActiveWindow();
+  createVesperWindow({
+    url: fullUrl,
+    parentWin,
+    tabbed: Boolean(parentWin),
+  });
+}
+
+function showDesktopAlert(alert: DesktopAlert) {
+  if (!Notification.isSupported()) return;
+  const notification = new Notification({
+    title: alert.title,
+    body: alert.body,
+  });
+  notification.on("click", () => {
+    focusOrOpenHref(alert.href);
+  });
+  notification.show();
 }
 
 async function probeServer(serverUrl: string): Promise<{ reachable: boolean; errorMessage?: string }> {
@@ -87,14 +165,22 @@ function broadcastState(next: DesktopConnectionState) {
 
 async function checkAndUpdateState(targetUrlOverride?: string): Promise<DesktopConnectionState> {
   const targetUrl = targetUrlOverride ?? currentConfig.serverUrl;
+  const localhost = isLocalhostUrl(currentConfig.serverUrl);
   broadcastState({
     serverUrl: currentConfig.serverUrl,
     targetUrl,
     phase: "checking",
     localCheckoutPath: currentConfig.localCheckoutPath,
+    isLocalhost: localhost,
+    docker: currentState.docker,
+    stackStarting,
   });
 
-  const probe = await probeServer(currentConfig.serverUrl);
+  const [probe, docker] = await Promise.all([
+    probeServer(currentConfig.serverUrl),
+    localhost ? checkDockerAvailability() : Promise.resolve(undefined),
+  ]);
+
   const next: DesktopConnectionState = {
     serverUrl: currentConfig.serverUrl,
     targetUrl,
@@ -102,6 +188,9 @@ async function checkAndUpdateState(targetUrlOverride?: string): Promise<DesktopC
     errorMessage: probe.errorMessage,
     lastCheckedAt: new Date().toISOString(),
     localCheckoutPath: currentConfig.localCheckoutPath,
+    isLocalhost: localhost,
+    docker,
+    stackStarting,
   };
   broadcastState(next);
   return next;
@@ -158,6 +247,7 @@ async function navigateWindow(entry: WindowEntry, targetUrl?: string) {
   const dest = targetUrl ?? entry.targetUrl ?? currentConfig.serverUrl;
   entry.targetUrl = dest;
 
+  const localhost = isLocalhostUrl(currentConfig.serverUrl);
   const probe = await probeServer(currentConfig.serverUrl);
   if (probe.reachable) {
     entry.showingOffline = false;
@@ -167,6 +257,9 @@ async function navigateWindow(entry: WindowEntry, targetUrl?: string) {
       phase: "reachable",
       lastCheckedAt: new Date().toISOString(),
       localCheckoutPath: currentConfig.localCheckoutPath,
+      isLocalhost: localhost,
+      docker: currentState.docker,
+      stackStarting,
     });
     await entry.win.loadURL(dest).catch(() => {
       // did-fail-load handles rendering the offline screen if navigation fails mid-flight.
@@ -175,6 +268,7 @@ async function navigateWindow(entry: WindowEntry, targetUrl?: string) {
   }
 
   entry.showingOffline = true;
+  const docker = localhost ? await checkDockerAvailability() : undefined;
   broadcastState({
     serverUrl: currentConfig.serverUrl,
     targetUrl: dest,
@@ -182,6 +276,9 @@ async function navigateWindow(entry: WindowEntry, targetUrl?: string) {
     errorMessage: probe.errorMessage,
     lastCheckedAt: new Date().toISOString(),
     localCheckoutPath: currentConfig.localCheckoutPath,
+    isLocalhost: localhost,
+    docker,
+    stackStarting,
   });
   await entry.win.loadFile(OFFLINE_HTML);
 }
@@ -291,15 +388,21 @@ function createVesperWindow(opts: CreateWindowOptions = {}): BrowserWindow {
     if (validatedURL.startsWith("file://")) return;
     entry.targetUrl = validatedURL || currentConfig.serverUrl;
     entry.showingOffline = true;
-    broadcastState({
-      serverUrl: currentConfig.serverUrl,
-      targetUrl: entry.targetUrl,
-      phase: "unreachable",
-      errorMessage: errorDescription || `Error ${errorCode}`,
-      lastCheckedAt: new Date().toISOString(),
-      localCheckoutPath: currentConfig.localCheckoutPath,
+    void checkAndUpdateState(entry.targetUrl).then((state) => {
+      broadcastState({
+        ...state,
+        phase: "unreachable",
+        errorMessage: errorDescription || state.errorMessage || `Error ${errorCode}`,
+      });
     });
     void win.loadFile(OFFLINE_HTML);
+  });
+
+  win.webContents.on("did-finish-load", () => {
+    const loadedUrl = win.webContents.getURL();
+    if (!loadedUrl.startsWith("file://")) {
+      void inboxMonitor.refreshNow();
+    }
   });
 
   win.webContents.on("did-navigate", (_event, navUrl) => {
@@ -408,8 +511,8 @@ function openSettingsWindow() {
     return;
   }
   settingsWindow = new BrowserWindow({
-    width: 540,
-    height: 480,
+    width: 560,
+    height: 540,
     resizable: false,
     minimizable: false,
     maximizable: false,
@@ -525,6 +628,63 @@ function registerIpc() {
     }
   });
 
+  ipcMain.handle("vesper:pick-checkout-folder", async (event): Promise<string | null> => {
+    if (!isTrustedRendererUrl(event.senderFrame?.url)) {
+      throw new Error("Untrusted IPC caller");
+    }
+    const senderWin = BrowserWindow.fromWebContents(event.sender);
+    const dialogOpts: Electron.OpenDialogOptions = {
+      properties: ["openDirectory"],
+      title: "Select Local Vesper Checkout",
+    };
+    const result = senderWin ? await dialog.showOpenDialog(senderWin, dialogOpts) : await dialog.showOpenDialog(dialogOpts);
+    if (result.canceled || result.filePaths.length === 0) return null;
+    const chosen = result.filePaths[0];
+    currentConfig = { ...currentConfig, localCheckoutPath: chosen };
+    saveConfig(configPath, currentConfig);
+    broadcastState({ ...currentState, localCheckoutPath: chosen });
+    return chosen;
+  });
+
+  ipcMain.handle("vesper:start-local-stack", async (event, checkoutArg?: string): Promise<StartStackResult> => {
+    if (!isTrustedRendererUrl(event.senderFrame?.url)) {
+      throw new Error("Untrusted IPC caller");
+    }
+    if (!isLocalhostUrl(currentConfig.serverUrl)) {
+      return { ok: false, error: "Local stack startup is only available for localhost targets." };
+    }
+    if (stackStarting) {
+      return { ok: false, error: "Stack startup is already in progress." };
+    }
+
+    const checkoutPath = (checkoutArg ?? currentConfig.localCheckoutPath ?? "").trim();
+    if (!isValidVesperCheckout(checkoutPath)) {
+      return { ok: false, error: "Please choose a Vesper checkout folder containing docker-compose.yml." };
+    }
+
+    if (checkoutPath !== currentConfig.localCheckoutPath) {
+      currentConfig = { ...currentConfig, localCheckoutPath: checkoutPath };
+      saveConfig(configPath, currentConfig);
+    }
+
+    stackStarting = true;
+    broadcastState({ ...currentState, localCheckoutPath: checkoutPath, stackStarting: true });
+
+    try {
+      const result = await startLocalComposeStack(checkoutPath, (chunk) => {
+        for (const win of BrowserWindow.getAllWindows()) {
+          if (!win.isDestroyed()) {
+            win.webContents.send("vesper:stack-log", chunk);
+          }
+        }
+      });
+      return result;
+    } finally {
+      stackStarting = false;
+      broadcastState({ ...currentState, localCheckoutPath: checkoutPath, stackStarting: false });
+    }
+  });
+
   ipcMain.handle("vesper:set-server-url", async (event, input: SetServerUrlInput): Promise<SetServerUrlResult> => {
     if (!isTrustedRendererUrl(event.senderFrame?.url)) {
       throw new Error("Untrusted IPC caller");
@@ -540,6 +700,7 @@ function registerIpc() {
       };
       saveConfig(configPath, nextConfig);
       currentConfig = nextConfig;
+      inboxMonitor.start(normalized);
 
       for (const entry of windows.values()) {
         entry.targetUrl = normalized;
@@ -568,7 +729,6 @@ function registerIpc() {
 
 function restoreSessionWindows() {
   const saved = loadSession(sessionPath);
-  // Restore tabs matching the active server origin or playground ports; otherwise start fresh on serverUrl.
   const restorable = saved.tabs.filter((tabUrl) => {
     const kind = classifyNavigation(tabUrl, currentConfig.serverUrl, currentConfig.playgroundPorts);
     return kind === "vesper" || kind === "playground";
@@ -614,10 +774,12 @@ void app.whenReady().then(() => {
     targetUrl: currentConfig.serverUrl,
     phase: "checking",
     localCheckoutPath: currentConfig.localCheckoutPath,
+    isLocalhost: isLocalhostUrl(currentConfig.serverUrl),
   };
 
   setupMenu();
   registerIpc();
+  inboxMonitor.start(currentConfig.serverUrl);
   restoreSessionWindows();
 
   app.on("activate", () => {
@@ -629,6 +791,7 @@ void app.whenReady().then(() => {
 
 app.on("before-quit", () => {
   isQuitting = true;
+  inboxMonitor.stop();
   if (sessionSaveTimer) {
     clearTimeout(sessionSaveTimer);
     sessionSaveTimer = undefined;

@@ -60,7 +60,7 @@
       .card {
         -webkit-app-region: no-drag;
         width: 100%;
-        max-width: 480px;
+        max-width: 520px;
         background: var(--surface);
         border: 1px solid var(--border);
         border-radius: 16px;
@@ -132,7 +132,7 @@
         display: flex;
         flex-wrap: wrap;
         gap: 10px;
-        margin-bottom: 22px;
+        margin-bottom: 20px;
       }
 
       button {
@@ -145,6 +145,7 @@
         background: var(--surface-2);
         color: var(--fg);
         cursor: pointer;
+        white-space: nowrap;
       }
 
       button:hover:not(:disabled) {
@@ -166,9 +167,10 @@
         background: var(--accent-hover);
       }
 
-      form {
+      .section {
         border-top: 1px solid var(--border);
         padding-top: 18px;
+        margin-top: 18px;
         display: flex;
         flex-direction: column;
         gap: 10px;
@@ -216,6 +218,42 @@
         min-height: 16px;
       }
 
+      .docker-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .docker-badge {
+        font-size: 11.5px;
+        font-weight: 600;
+        padding: 3px 9px;
+        border-radius: 999px;
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        color: var(--fg-muted);
+      }
+
+      .docker-badge.ready {
+        color: var(--green);
+      }
+
+      .stack-log {
+        margin: 4px 0 0;
+        padding: 10px;
+        border-radius: 9px;
+        border: 1px solid var(--border);
+        background: rgba(0, 0, 0, 0.24);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11.5px;
+        line-height: 1.45;
+        max-height: 130px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
       .hidden {
         display: none;
       }
@@ -259,7 +297,7 @@
         <button type="button" class="hidden" id="open-btn">Open Vesper</button>
       </div>
 
-      <form id="url-form">
+      <form class="section" id="url-form">
         <label for="server-url-input">Vesper Server URL</label>
         <div class="input-row">
           <input
@@ -277,6 +315,28 @@
         </p>
         <p class="error-text" id="form-error" role="alert"></p>
       </form>
+
+      <section class="section hidden" id="docker-section">
+        <div class="docker-header">
+          <label for="checkout-path-input">Local Vesper Stack (OrbStack / Docker)</label>
+          <span class="docker-badge" id="docker-badge">Checking Docker…</span>
+        </div>
+        <div class="input-row">
+          <input
+            id="checkout-path-input"
+            type="text"
+            placeholder="/path/to/vesper (contains docker-compose.yml)"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button type="button" id="browse-checkout-btn">Browse…</button>
+        </div>
+        <div class="actions" style="margin-bottom: 0">
+          <button type="button" class="primary" id="start-stack-btn">Start Vesper Stack</button>
+        </div>
+        <p class="error-text" id="stack-error" role="alert"></p>
+        <pre class="stack-log hidden" id="stack-log"></pre>
+      </section>
     </main>
 
     <script src="./offline.js"></script>
