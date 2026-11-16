@@ -17,6 +17,7 @@ import { useCompact } from "@/lib/viewport";
 import { Dock, useReadingFocus, type DockTab } from "./editor-layout";
 import { HarnessFooter } from "./harness-footer";
 import { NeedsYou } from "./needs-you";
+import { PrReviewRequests } from "./pr-review-requests";
 import { isTyping } from "./shortcuts";
 import { useAppearance } from "./theme";
 
@@ -172,6 +173,7 @@ function RightRail() {
     >
       <div ref={setRightRailSlot} data-right-rail-top className="flex w-full flex-col items-center gap-2 empty:hidden" />
       <div className="mt-auto flex w-full flex-col items-center gap-2 pt-2">
+        <PrReviewRequests />
         <NeedsYou variant="rail" count={counts.inbox} />
         {harness && <HarnessFooter layout="rail" />}
         <div aria-hidden className="h-px w-6 bg-border-subtle" />

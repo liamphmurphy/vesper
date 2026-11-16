@@ -4853,6 +4853,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/github/review-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Open GitHub pull requests requesting the connected user's review */
+        get: operations["listGitHubReviewRequests"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repositories/presets": {
         parameters: {
             query?: never;
@@ -5044,6 +5061,36 @@ export interface components {
             /** @description Checkout path relative to the chat workspace */
             directory: string;
             work_branches: string[];
+        };
+        GitHubReviewRequest: {
+            id: string;
+            number: number;
+            title: string;
+            url: string;
+            repository: string;
+            author_login: string;
+            author_avatar_url?: string;
+            draft: boolean;
+            /** @description Review requested directly from the connected user */
+            direct: boolean;
+            /** @description Review requested via a team the user belongs to */
+            team: boolean;
+            /** @description Team slugs requested for review */
+            teams?: string[];
+            additions: number;
+            deletions: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        GitHubReviewRequestsResponse: {
+            /** @description Whether git:pat is configured for this workspace */
+            configured: boolean;
+            viewer_login?: string;
+            /** Format: date-time */
+            synced_at: string;
+            items: components["schemas"]["GitHubReviewRequest"][];
         };
         Health: {
             /** @enum {string} */
@@ -17708,6 +17755,29 @@ export interface operations {
                 };
             };
             404: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    listGitHubReviewRequests: {
+        parameters: {
+            query?: {
+                refresh?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Open pull requests requesting review from the connected GitHub account */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubReviewRequestsResponse"];
+                };
+            };
             default: components["responses"]["Error"];
         };
     };

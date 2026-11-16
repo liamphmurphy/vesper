@@ -26,6 +26,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/connectors"
 	"github.com/liamphmurphy/vesper/server/internal/designs"
 	"github.com/liamphmurphy/vesper/server/internal/drivebackup"
+	"github.com/liamphmurphy/vesper/server/internal/githubpr"
 	"github.com/liamphmurphy/vesper/server/internal/realtime"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/secrets"
@@ -77,10 +78,12 @@ type Server struct {
 	// GitHubAPIURL is GitHub's REST API for shipping approved pushes;
 	// api.github.com when empty (tests point elsewhere).
 	GitHubAPIURL string
+	GitHubPR     *githubpr.Service
 
-	logins  loginLimiter
-	apiOnce sync.Once
-	apiMux  http.Handler
+	logins       loginLimiter
+	apiOnce      sync.Once
+	apiMux       http.Handler
+	githubPROnce sync.Once
 }
 
 var _ api.StrictServerInterface = (*Server)(nil)
