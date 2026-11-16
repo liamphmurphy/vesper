@@ -1473,6 +1473,53 @@ paths:
               schema: { $ref: "#/components/schemas/RunnerEnvironment" }
         default: { $ref: "#/components/responses/Error" }
 
+  /dev-workspace:
+    get:
+      operationId: getDevWorkspace
+      summary: Persistent Nix + LazyVim dev workspace settings and runtime state
+      tags: [runs]
+      responses:
+        "200":
+          description: Current dev workspace configuration and container state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DevWorkspace" }
+        default: { $ref: "#/components/responses/Error" }
+    patch:
+      operationId: updateDevWorkspace
+      summary: Enable, disable, or update auto-cloned repositories for the dev workspace
+      tags: [runs]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateDevWorkspace" }
+      responses:
+        "200":
+          description: Updated dev workspace
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DevWorkspace" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /dev-workspace/action:
+    post:
+      operationId: devWorkspaceAction
+      summary: Trigger a dev workspace action (start, rebuild, sync, stop)
+      tags: [runs]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DevWorkspaceActionRequest" }
+      responses:
+        "200":
+          description: Updated dev workspace
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DevWorkspace" }
+        default: { $ref: "#/components/responses/Error" }
+
   /runner/test-environments:
     get:
       operationId: listTestEnvironments
@@ -10285,3 +10332,34 @@ components:
         capability: { type: string }
         summary: { type: string }
         result: {}
+    DevWorkspaceRepo:
+      type: object
+      required: [repo_url, directory]
+      properties:
+        repo_url: { type: string }
+        directory: { type: string }
+    DevWorkspace:
+      type: object
+      required: [enabled, nix_mode, repos, state, updated_at]
+      properties:
+        enabled: { type: boolean }
+        nix_mode: { type: string, enum: [default] }
+        repos: { type: array, items: { $ref: "#/components/schemas/DevWorkspaceRepo" } }
+        state: { type: string, enum: [stopped, starting, ready, error] }
+        action: { type: string, nullable: true, enum: [start, rebuild, sync, stop] }
+        step: { type: string, nullable: true }
+        error: { type: string, nullable: true }
+        port: { type: integer, nullable: true }
+        arch: { type: string, nullable: true }
+        updated_at: { type: string, format: date-time }
+    UpdateDevWorkspace:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        nix_mode: { type: string, enum: [default] }
+        repos: { type: array, items: { type: string } }
+    DevWorkspaceActionRequest:
+      type: object
+      required: [action]
+      properties:
+        action: { type: string, enum: [start, rebuild, sync, stop] }
