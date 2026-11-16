@@ -7,6 +7,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "test:e2e": "playwright test",
     "start": "npm run build && electron .",
     "dev": "npm run build && electron .",
     "gen:icon": "node scripts/gen-icon.mjs",
@@ -15,6 +17,7 @@
     "dmg:universal": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg --universal --config electron-builder.yml"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.1",
     "@resvg/resvg-js": "^2.6.2",
     "@types/node": "^22.15.0",
     "electron": "^45.3.3",

@@ -41,7 +41,11 @@ export function normalizeServerUrl(raw: string): string {
     throw new Error("Server URL cannot be empty.");
   }
 
-  const hasScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed);
+  if (/^(javascript|data|vbscript|file|mailto|ftp):/i.test(trimmed)) {
+    throw new Error("Server URL must use http:// or https://.");
+  }
+
+  const hasScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmed);
   const candidate = hasScheme ? trimmed : `http://${trimmed}`;
 
   let parsed: URL;

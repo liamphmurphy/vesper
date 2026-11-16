@@ -20,6 +20,10 @@ import { classifyNavigation, cleanTabTitle, ClosedTabStack } from "./routing";
 export const SESSION_PARTITION = "persist:vesper";
 export const TABBING_IDENTIFIER = "vesper";
 
+if (process.env.VESPER_USER_DATA_DIR) {
+  app.setPath("userData", path.resolve(process.env.VESPER_USER_DATA_DIR));
+}
+
 const RENDERER_DIR = path.resolve(__dirname, "../renderer");
 const OFFLINE_HTML = path.join(RENDERER_DIR, "offline.html");
 
@@ -426,7 +430,7 @@ function createVesperWindow(opts: CreateWindowOptions = {}): BrowserWindow {
     if (kind === "vesper" || kind === "playground") return;
     event.preventDefault();
     if (kind === "external") {
-      void shell.openExternal(navUrl);
+      void shell.openExternal(navUrl).catch(() => {});
     }
   });
 
@@ -442,7 +446,7 @@ function createVesperWindow(opts: CreateWindowOptions = {}): BrowserWindow {
       return { action: "deny" };
     }
     if (kind === "external") {
-      void shell.openExternal(url);
+      void shell.openExternal(url).catch(() => {});
     }
     return { action: "deny" };
   });

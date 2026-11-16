@@ -166,7 +166,7 @@ export function buildApplicationMenu(actions: MenuActions): void {
         {
           label: "Vesper Repository & Docs",
           click: () => {
-            void shell.openExternal("https://github.com/liamphmurphy/vesper");
+            void shell.openExternal("https://github.com/liamphmurphy/vesper").catch(() => {});
           },
         },
       ],
