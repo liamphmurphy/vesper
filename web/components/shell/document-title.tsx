@@ -22,11 +22,32 @@ export function DocumentTitle() {
       if (document.title !== next) document.title = next;
     };
     apply();
+
+    const onFocus = () => apply();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") apply();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+
+    const observers: MutationObserver[] = [];
     const main = document.querySelector("main");
-    if (!main) return;
-    const observer = new MutationObserver(apply);
-    observer.observe(main, { childList: true, subtree: true, characterData: true });
-    return () => observer.disconnect();
+    if (main) {
+      const mainObs = new MutationObserver(apply);
+      mainObs.observe(main, { childList: true, subtree: true, characterData: true });
+      observers.push(mainObs);
+    }
+    if (document.head) {
+      const headObs = new MutationObserver(apply);
+      headObs.observe(document.head, { childList: true, subtree: true, characterData: true });
+      observers.push(headObs);
+    }
+
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+      for (const obs of observers) obs.disconnect();
+    };
   }, [pathname]);
   return null;
 }
