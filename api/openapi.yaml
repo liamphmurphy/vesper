@@ -5854,6 +5854,22 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
         default: { $ref: "#/components/responses/Error" }
 
+  /github/review-requests:
+    get:
+      operationId: listGitHubReviewRequests
+      summary: Open GitHub pull requests requesting the connected user's review
+      parameters:
+        - name: refresh
+          in: query
+          schema: { type: boolean }
+      responses:
+        "200":
+          description: Open pull requests requesting review from the connected GitHub account
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GitHubReviewRequestsResponse" }
+        default: { $ref: "#/components/responses/Error" }
+
   /repositories/presets:
     get:
       operationId: getRepositoryPresets
@@ -6145,6 +6161,33 @@ components:
         repo_url: { type: string }
         directory: { type: string, description: "Checkout path relative to the chat workspace" }
         work_branches: { type: array, items: { type: string } }
+    GitHubReviewRequest:
+      type: object
+      required: [id, number, title, url, repository, author_login, draft, direct, team, additions, deletions, created_at, updated_at]
+      properties:
+        id: { type: string }
+        number: { type: integer }
+        title: { type: string }
+        url: { type: string }
+        repository: { type: string }
+        author_login: { type: string }
+        author_avatar_url: { type: string }
+        draft: { type: boolean }
+        direct: { type: boolean, description: "Review requested directly from the connected user" }
+        team: { type: boolean, description: "Review requested via a team the user belongs to" }
+        teams: { type: array, items: { type: string }, description: "Team slugs requested for review" }
+        additions: { type: integer }
+        deletions: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    GitHubReviewRequestsResponse:
+      type: object
+      required: [configured, synced_at, items]
+      properties:
+        configured: { type: boolean, description: "Whether git:pat is configured for this workspace" }
+        viewer_login: { type: string }
+        synced_at: { type: string, format: date-time }
+        items: { type: array, items: { $ref: "#/components/schemas/GitHubReviewRequest" } }
     Health:
       type: object
       required: [status, version, checks]
