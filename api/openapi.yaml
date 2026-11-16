@@ -1520,6 +1520,24 @@ paths:
               schema: { $ref: "#/components/schemas/DevWorkspace" }
         default: { $ref: "#/components/responses/Error" }
 
+  /dev-workspace/open-branch:
+    post:
+      operationId: openDevWorkspaceBranch
+      summary: Pull a repository branch into the dev workspace and focus tmux in it
+      tags: [runs]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OpenDevWorkspaceBranchRequest" }
+      responses:
+        "200":
+          description: Updated dev workspace
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DevWorkspace" }
+        default: { $ref: "#/components/responses/Error" }
+
   /runner/test-environments:
     get:
       operationId: listTestEnvironments
@@ -6350,12 +6368,16 @@ components:
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
+    PullRequestState:
+      type: string
+      enum: [draft, open, merged, closed]
+
     PullRequest:
       type: object
       required: [number, state]
       properties:
         number: { type: integer }
-        state: { type: string, enum: [draft, open, merged, closed] }
+        state: { $ref: "#/components/schemas/PullRequestState" }
         url: { type: string }
         additions: { type: integer }
         deletions: { type: integer }
@@ -8915,7 +8937,10 @@ components:
         steps_total: { type: integer, description: Steps in the agent's plan; 0 until it posts one }
         steps_done: { type: integer }
         current_step: { type: string, description: The first plan step not done yet }
+        repository: { type: string, description: "Repository URL for the ticket's project, if configured" }
+        branch: { type: string, description: "The ticket's git branch, once recorded" }
         pr_url: { type: string, description: "The ticket's pull request, once recorded" }
+        pr_state: { $ref: "#/components/schemas/PullRequestState" }
         activity: { $ref: "#/components/schemas/ChatTicketRunActivity" }
         approval: { $ref: "#/components/schemas/ChatTicketRunApproval" }
     ChatTicketRunActivity:
@@ -9540,6 +9565,7 @@ components:
         auto: { type: boolean, description: Pushed because the person always allows the repository }
         pr_url: { type: string }
         pr_number: { type: integer }
+        pr_state: { $ref: "#/components/schemas/PullRequestState" }
         error: { type: string, description: Why it failed or was replaced }
         persona: { $ref: "#/components/schemas/PersonaSummary" }
         run_id: { type: string, format: uuid }
@@ -10370,7 +10396,7 @@ components:
         custom_tmux_conf: { type: string, nullable: true }
         tmux_prefix: { type: string, enum: [C-b, C-a, C-Space, C-s] }
         state: { type: string, enum: [stopped, starting, ready, error] }
-        action: { type: string, nullable: true, enum: [start, rebuild, sync, stop] }
+        action: { type: string, nullable: true, enum: [start, rebuild, sync, stop, open_branch] }
         step: { type: string, nullable: true }
         error: { type: string, nullable: true }
         port: { type: integer, nullable: true }
@@ -10391,3 +10417,10 @@ components:
       required: [action]
       properties:
         action: { type: string, enum: [start, rebuild, sync, stop] }
+    OpenDevWorkspaceBranchRequest:
+      type: object
+      required: [repository, branch]
+      properties:
+        repository: { type: string }
+        branch: { type: string }
+        pr_number: { type: integer }

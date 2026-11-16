@@ -6,6 +6,7 @@ import { useDecidePush, usePushPolicies, useSetPushPolicy, type PushRequest } fr
 import { pushStateLabel, repoName } from "@/lib/code-review";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
+import { OpenInDevWorkspaceButton } from "@/components/domain/open-in-dev-button";
 import { CodeChanges } from "./code-changes";
 import { PersonaAvatar, PersonaName, personaLook } from "./persona";
 
@@ -39,6 +40,7 @@ function PushCard({ chatId, r, disabled }: { chatId: string; r: PushRequest; dis
   const [title, setTitle] = useState(r.title);
   const [body, setBody] = useState(r.body);
   const [draft, setDraft] = useState(r.draft);
+  const [devError, setDevError] = useState<string | null>(null);
   const waiting = r.state === "pending";
   const edits = { title: title.trim() || r.title, body, draft };
   return (
@@ -94,10 +96,28 @@ function PushCard({ chatId, r, disabled }: { chatId: string; r: PushRequest; dis
         </p>
       )}
       {r.pr_url && (
-        <a href={r.pr_url} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-13 text-accent hover:underline">
-          <Icon name="pr" size={14} />
-          {r.pr_number ? `Pull request #${r.pr_number}` : "Pull request"} on GitHub
-        </a>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <a href={r.pr_url} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-13 text-accent hover:underline">
+            <Icon name="pr" size={14} />
+            {r.pr_number ? `Pull request #${r.pr_number}` : "Pull request"} on GitHub
+            {r.pr_state && r.pr_state !== "open" && (
+              <span className="text-12 text-fg-tertiary">· {r.pr_state}</span>
+            )}
+          </a>
+          <OpenInDevWorkspaceButton
+            repository={r.repository}
+            branch={r.branch}
+            prNumber={r.pr_number}
+            prUrl={r.pr_url}
+            prState={r.pr_state}
+            onError={setDevError}
+          />
+        </div>
+      )}
+      {devError && (
+        <p role="alert" className="text-13 text-pill-blocked-fg">
+          {devError}
+        </p>
       )}
       {r.auto && <AlwaysAllowed repository={r.repository} />}
       {waiting && (

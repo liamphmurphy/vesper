@@ -126,40 +126,83 @@ func (r *Runner) runDevWorkspaceAction(ctx context.Context, row store.ClaimDevWo
 	_ = json.Unmarshal(row.ExtraPackages, &extraPackages)
 
 	var arch *string
-	if action == "start" || action == "rebuild" {
-		setStep("Installing Nix + LazyVim")
-		out, code, err := db.ExecDevWorkspaceScript(ctx, containerID, devworkspace.SetupNixScript(action == "rebuild", customZshrc, row.TmuxPrefix, customTmuxConf, extraPackages), nil)
-		if err != nil || code != 0 {
-			fail(fmt.Sprintf("nix setup failed (exit %d): %s", code, lastLines(out, 20)))
-			return
-		}
-		if a := parseArch(out); a != "" {
-			arch = &a
-		}
-	} else if action == "sync" {
-		setStep("Updating shell config")
-		out, code, err := db.ExecDevWorkspaceScript(ctx, containerID, devworkspace.WriteShellConfigScript(customZshrc, row.TmuxPrefix, customTmuxConf), nil)
-		if err != nil || code != 0 {
-			fail(fmt.Sprintf("shell config sync failed (exit %d): %s", code, lastLines(out, 20)))
-			return
-		}
-	}
-
 	var repos []devworkspace.RepoSpec
 	_ = json.Unmarshal(row.Repos, &repos)
-	if len(repos) > 0 {
-		setStep("Syncing repositories")
-		var env []string
-		if r.Secrets != nil {
-			if tok, serr := r.Secrets.Reveal(ctx, row.WorkspaceID, nil, "git:pat"); serr == nil && tok != "" {
-				env = append(env, "GH_TOKEN="+tok)
+
+	if action == "open_branch" {
+		if row.Arch == nil || row.Port == nil {
+			setStep("Installing Nix + LazyVim")
+			out, code, err := db.ExecDevWorkspaceScript(ctx, containerID, devworkspace.SetupNixScript(false, customZshrc, row.TmuxPrefix, customTmuxConf, extraPackages), nil)
+			if err != nil || code != 0 {
+				fail(fmt.Sprintf("nix setup failed (exit %d): %s", code, lastLines(out, 20)))
+				return
+			}
+			if a := parseArch(out); a != "" {
+				arch = &a
 			}
 		}
-		userName, userEmail := r.devWorkspaceAuthor(ctx, row.WorkspaceID, row.UserID)
-		out, code, err := db.ExecDevWorkspaceScript(ctx, containerID, devworkspace.SyncReposScript(repos, userName, userEmail), env)
-		if err != nil || code != 0 {
-			fail(fmt.Sprintf("repo sync failed (exit %d): %s", code, lastLines(out, 20)))
+		targetRepo := ""
+		if row.ClaimedRepo != nil {
+			targetRepo = strings.TrimSpace(*row.ClaimedRepo)
+		}
+		targetBranch := ""
+		if row.ClaimedBranch != nil {
+			targetBranch = strings.TrimSpace(*row.ClaimedBranch)
+		}
+		if targetRepo == "" || targetBranch == "" {
+			fail("open branch failed: missing target repository or branch")
 			return
+		}
+		prNum := 0
+		if row.ClaimedPrNumber != nil {
+			prNum = int(*row.ClaimedPrNumber)
+		}
+		dir := devworkspace.ResolveRepoDir(repos, targetRepo)
+		setStep(fmt.Sprintf("Checking out %s in %s", targetBranch, dir))
+		env := r.devWorkspaceGitEnv(ctx, row.WorkspaceID)
+		userName, userEmail := r.devWorkspaceAuthor(ctx, row.WorkspaceID, row.UserID)
+		out, code, err := db.ExecDevWorkspaceScript(ctx, containerID, devworkspace.OpenBranchScript(repos, targetRepo, targetBranch, prNum, userName, userEmail), env)
+		if err != nil || code != 0 {
+			msg := lastLines(out, 20)
+			if err != nil && msg == "" {
+				msg = err.Error()
+			}
+			fail(fmt.Sprintf("open branch failed (exit %d): %s", code, msg))
+			return
+		}
+	} else {
+		var archOut *string
+		if action == "start" || action == "rebuild" {
+			setStep("Installing Nix + LazyVim")
+			out, code, err := db.ExecDevWorkspaceScript(ctx, containerID, devworkspace.SetupNixScript(action == "rebuild", customZshrc, row.TmuxPrefix, customTmuxConf, extraPackages), nil)
+			if err != nil || code != 0 {
+				fail(fmt.Sprintf("nix setup failed (exit %d): %s", code, lastLines(out, 20)))
+				return
+			}
+			if a := parseArch(out); a != "" {
+				archOut = &a
+			}
+		} else if action == "sync" {
+			setStep("Updating shell config")
+			out, code, err := db.ExecDevWorkspaceScript(ctx, containerID, devworkspace.WriteShellConfigScript(customZshrc, row.TmuxPrefix, customTmuxConf), nil)
+			if err != nil || code != 0 {
+				fail(fmt.Sprintf("shell config sync failed (exit %d): %s", code, lastLines(out, 20)))
+				return
+			}
+		}
+		if archOut != nil {
+			arch = archOut
+		}
+
+		if len(repos) > 0 {
+			setStep("Syncing repositories")
+			env := r.devWorkspaceGitEnv(ctx, row.WorkspaceID)
+			userName, userEmail := r.devWorkspaceAuthor(ctx, row.WorkspaceID, row.UserID)
+			out, code, err := db.ExecDevWorkspaceScript(ctx, containerID, devworkspace.SyncReposScript(repos, userName, userEmail), env)
+			if err != nil || code != 0 {
+				fail(fmt.Sprintf("repo sync failed (exit %d): %s", code, lastLines(out, 20)))
+				return
+			}
 		}
 	}
 
@@ -177,6 +220,16 @@ func (r *Runner) runDevWorkspaceAction(ctx context.Context, row store.ClaimDevWo
 	}); err != nil {
 		r.Log.Warn("dev workspace: update ready state", "err", err)
 	}
+}
+
+func (r *Runner) devWorkspaceGitEnv(ctx context.Context, workspaceID uuid.UUID) []string {
+	if r.Secrets == nil {
+		return nil
+	}
+	if tok, err := r.Secrets.Reveal(ctx, workspaceID, nil, "git:pat"); err == nil && tok != "" {
+		return []string{"GH_TOKEN=" + tok}
+	}
+	return nil
 }
 
 func (r *Runner) devWorkspaceAuthor(ctx context.Context, workspaceID, userID uuid.UUID) (string, string) {

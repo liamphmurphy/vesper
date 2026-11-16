@@ -92,3 +92,36 @@ func TestShipRefusesAnUnstagedRequest(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestShipSetsPRState(t *testing.T) {
+	for _, draft := range []bool{false, true} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == "GET" && strings.Contains(r.URL.Path, "/git/ref/"):
+				_ = json.NewEncoder(w).Encode(map[string]any{"object": map[string]any{"sha": "abc123"}})
+			case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/pulls"):
+				_, _ = w.Write([]byte(`[]`))
+			case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/pulls"):
+				_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "html_url": "https://github.com/acme/app/pull/7", "draft": draft})
+			case r.Method == "DELETE":
+				w.WriteHeader(204)
+			default:
+				t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			}
+		}))
+		req := staged()
+		req.Draft = draft
+		res, err := Ship(context.Background(), &GitHub{BaseURL: srv.URL, Token: "t"}, req)
+		srv.Close()
+		if err != nil {
+			t.Fatalf("draft=%v: %v", draft, err)
+		}
+		want := "open"
+		if draft {
+			want = "draft"
+		}
+		if res.PRState != want {
+			t.Fatalf("draft=%v: PRState=%q, want %q", draft, res.PRState, want)
+		}
+	}
+}

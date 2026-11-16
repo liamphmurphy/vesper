@@ -67,8 +67,8 @@ func (q *Queries) ChatCodeReviews(ctx context.Context, chatID uuid.UUID) ([]Chat
 }
 
 const chatPushRequests = `-- name: ChatPushRequests :many
-SELECT id, workspace_id, user_id, chat_id, run_id, persona_id, agent_id, repo_url, branch, base_branch, base_sha, head_sha, staging_ref, commits, files, title, body, draft, state, auto, pr_url, pr_number, error, created_at, decided_at, turn_id, message_id FROM (
-  SELECT id, workspace_id, user_id, chat_id, run_id, persona_id, agent_id, repo_url, branch, base_branch, base_sha, head_sha, staging_ref, commits, files, title, body, draft, state, auto, pr_url, pr_number, error, created_at, decided_at, turn_id, message_id FROM push_requests WHERE chat_id = $1
+SELECT id, workspace_id, user_id, chat_id, run_id, persona_id, agent_id, repo_url, branch, base_branch, base_sha, head_sha, staging_ref, commits, files, title, body, draft, state, auto, pr_url, pr_number, error, created_at, decided_at, turn_id, message_id, pr_state, pr_synced_at FROM (
+  SELECT id, workspace_id, user_id, chat_id, run_id, persona_id, agent_id, repo_url, branch, base_branch, base_sha, head_sha, staging_ref, commits, files, title, body, draft, state, auto, pr_url, pr_number, error, created_at, decided_at, turn_id, message_id, pr_state, pr_synced_at FROM push_requests WHERE chat_id = $1
   ORDER BY (state IN ('staging', 'pending', 'pushing')) DESC, created_at DESC LIMIT 20
 ) r ORDER BY created_at, id
 `
@@ -111,6 +111,8 @@ func (q *Queries) ChatPushRequests(ctx context.Context, chatID uuid.UUID) ([]Pus
 			&i.DecidedAt,
 			&i.TurnID,
 			&i.MessageID,
+			&i.PrState,
+			&i.PrSyncedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -124,7 +126,7 @@ func (q *Queries) ChatPushRequests(ctx context.Context, chatID uuid.UUID) ([]Pus
 
 const claimPushRequest = `-- name: ClaimPushRequest :one
 UPDATE push_requests SET state = 'pushing', title = $4, body = $5, draft = $6, auto = $7, decided_at = now()
-WHERE id = $1 AND workspace_id = $2 AND user_id = $3 AND state = 'pending' RETURNING id, workspace_id, user_id, chat_id, run_id, persona_id, agent_id, repo_url, branch, base_branch, base_sha, head_sha, staging_ref, commits, files, title, body, draft, state, auto, pr_url, pr_number, error, created_at, decided_at, turn_id, message_id
+WHERE id = $1 AND workspace_id = $2 AND user_id = $3 AND state = 'pending' RETURNING id, workspace_id, user_id, chat_id, run_id, persona_id, agent_id, repo_url, branch, base_branch, base_sha, head_sha, staging_ref, commits, files, title, body, draft, state, auto, pr_url, pr_number, error, created_at, decided_at, turn_id, message_id, pr_state, pr_synced_at
 `
 
 type ClaimPushRequestParams struct {
@@ -178,13 +180,15 @@ func (q *Queries) ClaimPushRequest(ctx context.Context, arg ClaimPushRequestPara
 		&i.DecidedAt,
 		&i.TurnID,
 		&i.MessageID,
+		&i.PrState,
+		&i.PrSyncedAt,
 	)
 	return i, err
 }
 
 const claimStagedPushRequest = `-- name: ClaimStagedPushRequest :one
 UPDATE push_requests SET state = 'pushing', auto = true, decided_at = now()
-WHERE id = $1 AND state = 'pending' RETURNING id, workspace_id, user_id, chat_id, run_id, persona_id, agent_id, repo_url, branch, base_branch, base_sha, head_sha, staging_ref, commits, files, title, body, draft, state, auto, pr_url, pr_number, error, created_at, decided_at, turn_id, message_id
+WHERE id = $1 AND state = 'pending' RETURNING id, workspace_id, user_id, chat_id, run_id, persona_id, agent_id, repo_url, branch, base_branch, base_sha, head_sha, staging_ref, commits, files, title, body, draft, state, auto, pr_url, pr_number, error, created_at, decided_at, turn_id, message_id, pr_state, pr_synced_at
 `
 
 // The runner's own claim for a repository the person always allows.
@@ -219,6 +223,8 @@ func (q *Queries) ClaimStagedPushRequest(ctx context.Context, id uuid.UUID) (Pus
 		&i.DecidedAt,
 		&i.TurnID,
 		&i.MessageID,
+		&i.PrState,
+		&i.PrSyncedAt,
 	)
 	return i, err
 }
@@ -236,7 +242,7 @@ func (q *Queries) CountOpenPushRequests(ctx context.Context, chatID uuid.UUID) (
 
 const createPushRequest = `-- name: CreatePushRequest :one
 INSERT INTO push_requests (workspace_id, user_id, chat_id, run_id, turn_id, persona_id, agent_id, repo_url, branch, title, body, draft)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id, workspace_id, user_id, chat_id, run_id, persona_id, agent_id, repo_url, branch, base_branch, base_sha, head_sha, staging_ref, commits, files, title, body, draft, state, auto, pr_url, pr_number, error, created_at, decided_at, turn_id, message_id
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id, workspace_id, user_id, chat_id, run_id, persona_id, agent_id, repo_url, branch, base_branch, base_sha, head_sha, staging_ref, commits, files, title, body, draft, state, auto, pr_url, pr_number, error, created_at, decided_at, turn_id, message_id, pr_state, pr_synced_at
 `
 
 type CreatePushRequestParams struct {
@@ -298,13 +304,15 @@ func (q *Queries) CreatePushRequest(ctx context.Context, arg CreatePushRequestPa
 		&i.DecidedAt,
 		&i.TurnID,
 		&i.MessageID,
+		&i.PrState,
+		&i.PrSyncedAt,
 	)
 	return i, err
 }
 
 const declinePushRequest = `-- name: DeclinePushRequest :one
 UPDATE push_requests SET state = 'declined', decided_at = now()
-WHERE id = $1 AND workspace_id = $2 AND user_id = $3 AND state = 'pending' RETURNING id, workspace_id, user_id, chat_id, run_id, persona_id, agent_id, repo_url, branch, base_branch, base_sha, head_sha, staging_ref, commits, files, title, body, draft, state, auto, pr_url, pr_number, error, created_at, decided_at, turn_id, message_id
+WHERE id = $1 AND workspace_id = $2 AND user_id = $3 AND state = 'pending' RETURNING id, workspace_id, user_id, chat_id, run_id, persona_id, agent_id, repo_url, branch, base_branch, base_sha, head_sha, staging_ref, commits, files, title, body, draft, state, auto, pr_url, pr_number, error, created_at, decided_at, turn_id, message_id, pr_state, pr_synced_at
 `
 
 type DeclinePushRequestParams struct {
@@ -344,13 +352,15 @@ func (q *Queries) DeclinePushRequest(ctx context.Context, arg DeclinePushRequest
 		&i.DecidedAt,
 		&i.TurnID,
 		&i.MessageID,
+		&i.PrState,
+		&i.PrSyncedAt,
 	)
 	return i, err
 }
 
 const finishPushRequest = `-- name: FinishPushRequest :one
-UPDATE push_requests SET state = $2, error = $3, pr_url = $4, pr_number = $5, decided_at = coalesce(decided_at, now())
-WHERE id = $1 RETURNING id, workspace_id, user_id, chat_id, run_id, persona_id, agent_id, repo_url, branch, base_branch, base_sha, head_sha, staging_ref, commits, files, title, body, draft, state, auto, pr_url, pr_number, error, created_at, decided_at, turn_id, message_id
+UPDATE push_requests SET state = $2, error = $3, pr_url = $4, pr_number = $5, pr_state = $6, decided_at = coalesce(decided_at, now())
+WHERE id = $1 RETURNING id, workspace_id, user_id, chat_id, run_id, persona_id, agent_id, repo_url, branch, base_branch, base_sha, head_sha, staging_ref, commits, files, title, body, draft, state, auto, pr_url, pr_number, error, created_at, decided_at, turn_id, message_id, pr_state, pr_synced_at
 `
 
 type FinishPushRequestParams struct {
@@ -359,6 +369,7 @@ type FinishPushRequestParams struct {
 	Error    *string
 	PrUrl    *string
 	PrNumber *int32
+	PrState  *string
 }
 
 func (q *Queries) FinishPushRequest(ctx context.Context, arg FinishPushRequestParams) (PushRequest, error) {
@@ -368,6 +379,7 @@ func (q *Queries) FinishPushRequest(ctx context.Context, arg FinishPushRequestPa
 		arg.Error,
 		arg.PrUrl,
 		arg.PrNumber,
+		arg.PrState,
 	)
 	var i PushRequest
 	err := row.Scan(
@@ -398,12 +410,14 @@ func (q *Queries) FinishPushRequest(ctx context.Context, arg FinishPushRequestPa
 		&i.DecidedAt,
 		&i.TurnID,
 		&i.MessageID,
+		&i.PrState,
+		&i.PrSyncedAt,
 	)
 	return i, err
 }
 
 const getPushRequest = `-- name: GetPushRequest :one
-SELECT id, workspace_id, user_id, chat_id, run_id, persona_id, agent_id, repo_url, branch, base_branch, base_sha, head_sha, staging_ref, commits, files, title, body, draft, state, auto, pr_url, pr_number, error, created_at, decided_at, turn_id, message_id FROM push_requests WHERE id = $1 AND workspace_id = $2 AND user_id = $3
+SELECT id, workspace_id, user_id, chat_id, run_id, persona_id, agent_id, repo_url, branch, base_branch, base_sha, head_sha, staging_ref, commits, files, title, body, draft, state, auto, pr_url, pr_number, error, created_at, decided_at, turn_id, message_id, pr_state, pr_synced_at FROM push_requests WHERE id = $1 AND workspace_id = $2 AND user_id = $3
 `
 
 type GetPushRequestParams struct {
@@ -443,6 +457,8 @@ func (q *Queries) GetPushRequest(ctx context.Context, arg GetPushRequestParams) 
 		&i.DecidedAt,
 		&i.TurnID,
 		&i.MessageID,
+		&i.PrState,
+		&i.PrSyncedAt,
 	)
 	return i, err
 }
@@ -532,7 +548,7 @@ func (q *Queries) SetChatCodeReviewsSettled(ctx context.Context, chatID uuid.UUI
 
 const setPushRequestStaged = `-- name: SetPushRequestStaged :one
 UPDATE push_requests SET state = 'pending', base_branch = $2, base_sha = $3, head_sha = $4, staging_ref = $5, commits = $6, files = $7
-WHERE id = $1 AND state = 'staging' RETURNING id, workspace_id, user_id, chat_id, run_id, persona_id, agent_id, repo_url, branch, base_branch, base_sha, head_sha, staging_ref, commits, files, title, body, draft, state, auto, pr_url, pr_number, error, created_at, decided_at, turn_id, message_id
+WHERE id = $1 AND state = 'staging' RETURNING id, workspace_id, user_id, chat_id, run_id, persona_id, agent_id, repo_url, branch, base_branch, base_sha, head_sha, staging_ref, commits, files, title, body, draft, state, auto, pr_url, pr_number, error, created_at, decided_at, turn_id, message_id, pr_state, pr_synced_at
 `
 
 type SetPushRequestStagedParams struct {
@@ -584,6 +600,8 @@ func (q *Queries) SetPushRequestStaged(ctx context.Context, arg SetPushRequestSt
 		&i.DecidedAt,
 		&i.TurnID,
 		&i.MessageID,
+		&i.PrState,
+		&i.PrSyncedAt,
 	)
 	return i, err
 }
@@ -621,7 +639,7 @@ func (q *Queries) SetRepositoryPushPolicy(ctx context.Context, arg SetRepository
 }
 
 const stagingPushRequests = `-- name: StagingPushRequests :many
-SELECT id, workspace_id, user_id, chat_id, run_id, persona_id, agent_id, repo_url, branch, base_branch, base_sha, head_sha, staging_ref, commits, files, title, body, draft, state, auto, pr_url, pr_number, error, created_at, decided_at, turn_id, message_id FROM push_requests WHERE chat_id = $1 AND state = 'staging' ORDER BY created_at, id
+SELECT id, workspace_id, user_id, chat_id, run_id, persona_id, agent_id, repo_url, branch, base_branch, base_sha, head_sha, staging_ref, commits, files, title, body, draft, state, auto, pr_url, pr_number, error, created_at, decided_at, turn_id, message_id, pr_state, pr_synced_at FROM push_requests WHERE chat_id = $1 AND state = 'staging' ORDER BY created_at, id
 `
 
 // What a chat asked to push and the runner hasn't staged yet, oldest first.
@@ -662,6 +680,8 @@ func (q *Queries) StagingPushRequests(ctx context.Context, chatID uuid.UUID) ([]
 			&i.DecidedAt,
 			&i.TurnID,
 			&i.MessageID,
+			&i.PrState,
+			&i.PrSyncedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -676,7 +696,7 @@ func (q *Queries) StagingPushRequests(ctx context.Context, chatID uuid.UUID) ([]
 const supersedePushRequests = `-- name: SupersedePushRequests :many
 UPDATE push_requests SET state = 'declined', error = 'Replaced by a newer request for this branch.', decided_at = now()
 WHERE chat_id = $1 AND repo_url = $2 AND branch = $3 AND state IN ('staging', 'pending') AND id <> $4
-RETURNING id, workspace_id, user_id, chat_id, run_id, persona_id, agent_id, repo_url, branch, base_branch, base_sha, head_sha, staging_ref, commits, files, title, body, draft, state, auto, pr_url, pr_number, error, created_at, decided_at, turn_id, message_id
+RETURNING id, workspace_id, user_id, chat_id, run_id, persona_id, agent_id, repo_url, branch, base_branch, base_sha, head_sha, staging_ref, commits, files, title, body, draft, state, auto, pr_url, pr_number, error, created_at, decided_at, turn_id, message_id, pr_state, pr_synced_at
 `
 
 type SupersedePushRequestsParams struct {
@@ -729,6 +749,8 @@ func (q *Queries) SupersedePushRequests(ctx context.Context, arg SupersedePushRe
 			&i.DecidedAt,
 			&i.TurnID,
 			&i.MessageID,
+			&i.PrState,
+			&i.PrSyncedAt,
 		); err != nil {
 			return nil, err
 		}

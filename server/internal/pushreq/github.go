@@ -185,6 +185,7 @@ func (g *GitHub) DeleteBranch(ctx context.Context, owner, name, branch string) e
 type PullRequest struct {
 	Number  int    `json:"number"`
 	HTMLURL string `json:"html_url"`
+	Draft   bool   `json:"draft"`
 }
 
 // OpenPullRequest is the open pull request from branch, if there is one.

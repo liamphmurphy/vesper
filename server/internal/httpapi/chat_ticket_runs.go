@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"fmt"
+	"regexp"
 
 	"github.com/google/uuid"
 
@@ -10,6 +11,8 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 )
+
+var githubPRRepoRe = regexp.MustCompile(`^https://github\.com/([^/]+/[^/]+)/pull/\d+`)
 
 func (s *Server) ListChatTicketRuns(ctx context.Context, req api.ListChatTicketRunsRequestObject) (api.ListChatTicketRunsResponseObject, error) {
 	c, err := s.ownChat(ctx, req.Id)
@@ -51,7 +54,18 @@ func toChatTicketRun(r store.ListChatTicketRunsRow) api.ChatTicketRun {
 	out := api.ChatTicketRun{
 		RunId: r.RunID, MessageId: r.MessageID, Ticket: r.TicketKey, TicketTitle: r.TicketTitle, Agent: r.AgentHandle,
 		State: r.State, WaitReason: r.WaitReason, StartedAt: r.StartedAt, EndedAt: r.EndedAt,
-		CostUsd: float32(r.CostUsdMicros) / 1e6, StepsTotal: int(r.StepsTotal), StepsDone: int(r.StepsDone), PrUrl: r.PrUrl,
+		CostUsd: float32(r.CostUsdMicros) / 1e6, StepsTotal: int(r.StepsTotal), StepsDone: int(r.StepsDone),
+		Repository: r.Repository, Branch: r.Branch, PrUrl: r.PrUrl,
+	}
+	if out.Repository == nil && r.PrUrl != nil {
+		if m := githubPRRepoRe.FindStringSubmatch(*r.PrUrl); m != nil {
+			repo := "https://github.com/" + m[1] + ".git"
+			out.Repository = &repo
+		}
+	}
+	if r.PrState != nil {
+		st := api.PullRequestState(*r.PrState)
+		out.PrState = &st
 	}
 	if r.CurrentStep != "" {
 		out.CurrentStep = &r.CurrentStep

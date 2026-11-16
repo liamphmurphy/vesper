@@ -48,8 +48,8 @@ async function serve(page: Page, state: State) {
   });
 }
 
-async function offer(page: Page, state: State, routes?: () => Promise<unknown>) {
-  const mock = await installChatApi(page, { replyDelayMs: 10 });
+async function offer(page: Page, state: State, routes?: () => Promise<unknown>, opts?: { devWorkspaceEnabled?: boolean }) {
+  const mock = await installChatApi(page, { replyDelayMs: 10, devWorkspaceEnabled: opts?.devWorkspaceEnabled });
   await serve(page, state);
   await routes?.();
   await page.goto("/chat");
@@ -122,6 +122,29 @@ test("a dispatch card starts the run as you, then the tray follows it", async ({
   // Review it with me hands the PR to this chat's persona as the person's message.
   await summary.getByRole("button", { name: "Review it with me" }).click();
   await expect.poll(() => card.mock.posted.map((p) => JSON.stringify(p.body))).toContainEqual(expect.stringContaining("Review the pull request for WEB-3: https://github.com/acme/web/pull/412"));
+});
+
+test("ticket run card with an open PR opens its branch in Dev workspace", async ({ page }) => {
+  const state: State = { runs: [], starts: [], cancels: 0, blockers: [] };
+  const card = await offer(page, state, undefined, { devWorkspaceEnabled: true });
+  await card.getByRole("button", { name: "Start run" }).click();
+  await expect.poll(() => state.starts.length).toBe(1);
+  const messageId = (state.starts[0] as { message_id: string }).message_id;
+
+  state.runs = [run({
+    message_id: messageId, state: "completed", ended_at: now(), steps_done: 4, current_step: undefined,
+    repository: "https://github.com/acme/web.git", branch: "pike/web-3",
+    pr_url: "https://github.com/acme/web/pull/412", pr_state: "open",
+  })];
+  const summary = page.getByTestId("ticket-run");
+  await expect(summary).toContainText("Completed", { timeout: 10000 });
+  const openBtn = summary.getByRole("button", { name: "Open in Dev workspace" });
+  await expect(openBtn).toBeVisible();
+  await openBtn.click();
+  await expect(page).toHaveURL(/\/dev$/);
+  expect(card.mock.devWorkspaceOpenBranches).toEqual([
+    { repository: "https://github.com/acme/web.git", branch: "pike/web-3", pr_number: 412 },
+  ]);
 });
 
 test("a card that dispatch would refuse says why and can't start", async ({ page }) => {

@@ -1177,6 +1177,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/dev-workspace/open-branch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Pull a repository branch into the dev workspace and focus tmux in it */
+        post: operations["openDevWorkspaceBranch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/runner/test-environments": {
         parameters: {
             query?: never;
@@ -5243,10 +5260,11 @@ export interface components {
             id: string;
             name: string;
         };
+        /** @enum {string} */
+        PullRequestState: "draft" | "open" | "merged" | "closed";
         PullRequest: {
             number: number;
-            /** @enum {string} */
-            state: "draft" | "open" | "merged" | "closed";
+            state: components["schemas"]["PullRequestState"];
             url?: string;
             additions?: number;
             deletions?: number;
@@ -8051,8 +8069,13 @@ export interface components {
             steps_done: number;
             /** @description The first plan step not done yet */
             current_step?: string;
+            /** @description Repository URL for the ticket's project, if configured */
+            repository?: string;
+            /** @description The ticket's git branch, once recorded */
+            branch?: string;
             /** @description The ticket's pull request, once recorded */
             pr_url?: string;
+            pr_state?: components["schemas"]["PullRequestState"];
             activity?: components["schemas"]["ChatTicketRunActivity"];
             approval?: components["schemas"]["ChatTicketRunApproval"];
         };
@@ -8794,6 +8817,7 @@ export interface components {
             auto: boolean;
             pr_url?: string;
             pr_number?: number;
+            pr_state?: components["schemas"]["PullRequestState"];
             /** @description Why it failed or was replaced */
             error?: string;
             persona?: components["schemas"]["PersonaSummary"];
@@ -9759,7 +9783,7 @@ export interface components {
             /** @enum {string} */
             state: "stopped" | "starting" | "ready" | "error";
             /** @enum {string|null} */
-            action?: "start" | "rebuild" | "sync" | "stop" | null;
+            action?: "start" | "rebuild" | "sync" | "stop" | "open_branch" | null;
             step?: string | null;
             error?: string | null;
             port?: number | null;
@@ -9781,6 +9805,11 @@ export interface components {
         DevWorkspaceActionRequest: {
             /** @enum {string} */
             action: "start" | "rebuild" | "sync" | "stop";
+        };
+        OpenDevWorkspaceBranchRequest: {
+            repository: string;
+            branch: string;
+            pr_number?: number;
         };
     };
     responses: {
@@ -11720,6 +11749,31 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["DevWorkspaceActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated dev workspace */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DevWorkspace"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    openDevWorkspaceBranch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OpenDevWorkspaceBranchRequest"];
             };
         };
         responses: {
