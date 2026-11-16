@@ -10,6 +10,20 @@ export interface DesktopConfig {
   playgroundPorts: number[];
 }
 
+export interface WindowBounds {
+  x?: number;
+  y?: number;
+  width: number;
+  height: number;
+  isMaximized?: boolean;
+}
+
+export interface SessionState {
+  tabs: string[];
+  activeIndex: number;
+  bounds?: WindowBounds;
+}
+
 export function defaultConfig(): DesktopConfig {
   return {
     serverUrl: DEFAULT_SERVER_URL,
@@ -98,4 +112,59 @@ export function saveConfig(configPath: string, config: DesktopConfig): void {
   };
   fs.writeFileSync(tmpPath, `${JSON.stringify(clean, null, 2)}\n`, "utf8");
   fs.renameSync(tmpPath, configPath);
+}
+
+export function defaultSession(): SessionState {
+  return { tabs: [], activeIndex: 0 };
+}
+
+export function loadSession(sessionPath: string): SessionState {
+  try {
+    const raw = fs.readFileSync(sessionPath, "utf8");
+    const parsed = JSON.parse(raw) as Partial<SessionState> | null;
+    if (!parsed || typeof parsed !== "object") return defaultSession();
+
+    const tabs = Array.isArray(parsed.tabs)
+      ? parsed.tabs.filter((t): t is string => {
+          if (typeof t !== "string") return false;
+          try {
+            const u = new URL(t);
+            return u.protocol === "http:" || u.protocol === "https:";
+          } catch {
+            return false;
+          }
+        })
+      : [];
+
+    const activeIndex =
+      typeof parsed.activeIndex === "number" && Number.isInteger(parsed.activeIndex) && parsed.activeIndex >= 0
+        ? Math.min(parsed.activeIndex, Math.max(0, tabs.length - 1))
+        : 0;
+
+    let bounds: WindowBounds | undefined;
+    if (parsed.bounds && typeof parsed.bounds === "object") {
+      const b = parsed.bounds;
+      if (typeof b.width === "number" && b.width >= 400 && typeof b.height === "number" && b.height >= 300) {
+        bounds = {
+          width: Math.round(b.width),
+          height: Math.round(b.height),
+          ...(typeof b.x === "number" ? { x: Math.round(b.x) } : {}),
+          ...(typeof b.y === "number" ? { y: Math.round(b.y) } : {}),
+          ...(typeof b.isMaximized === "boolean" ? { isMaximized: b.isMaximized } : {}),
+        };
+      }
+    }
+
+    return { tabs, activeIndex, bounds };
+  } catch {
+    return defaultSession();
+  }
+}
+
+export function saveSession(sessionPath: string, sessionState: SessionState): void {
+  const dir = path.dirname(sessionPath);
+  fs.mkdirSync(dir, { recursive: true });
+  const tmpPath = `${sessionPath}.tmp-${process.pid}`;
+  fs.writeFileSync(tmpPath, `${JSON.stringify(sessionState, null, 2)}\n`, "utf8");
+  fs.renameSync(tmpPath, sessionPath);
 }
