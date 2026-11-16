@@ -19,6 +19,7 @@ import { StartsLine } from "./dispatch-dialog";
 import { RecommendActions } from "./recommend-fence";
 import { RUN_STATE, WAIT_LABEL } from "./run-status";
 import { SmallPill } from "./labels";
+import { OpenInDevWorkspaceButton } from "./open-in-dev-button";
 import { SvgFenceMessage } from "./svg-fence";
 import { Spinner } from "@/components/ui/loading";
 
@@ -244,6 +245,7 @@ function useHandOffBatch(ids: string[] | undefined): HandOffBatch {
 /** One ticket run a chat started: live in the tray, or as its card's summary once it ends. */
 export function TicketRunCard({ run, scene, onReview, handoff }: { run: TicketRun; scene?: SceneRenderer; onReview?: () => void; handoff?: { from?: ReactNode } }) {
   const control = useControlRunById(run.run_id);
+  const [devError, setDevError] = useState<string | null>(null);
   const elapsed = useElapsed(run);
   const live = !runEnded(run.state);
   const step = planLine(run);
@@ -277,8 +279,16 @@ export function TicketRunCard({ run, scene, onReview, handoff }: { run: TicketRu
         @{run.agent} · {elapsed} · ${run.cost_usd.toFixed(2)}{step && ` · ${step}`}
       </p>
       {control.isError && <p role="alert" className="text-12 text-pill-blocked-fg">{control.error.message}</p>}
+      {devError && <p role="alert" className="text-12 text-pill-blocked-fg">{devError}</p>}
       <div className="flex flex-wrap items-center gap-2">
         {run.pr_url && <a href={run.pr_url} target="_blank" rel="noreferrer" className={buttonClass(live ? "outline" : "primary")}>Open PR</a>}
+        <OpenInDevWorkspaceButton
+          repository={run.repository}
+          branch={run.branch}
+          prUrl={run.pr_url}
+          prState={run.pr_state}
+          onError={setDevError}
+        />
         {!live && run.pr_url && onReview && <Button variant="outline" onClick={onReview}>Review it with me</Button>}
         <Link href={`/runs/${run.run_id}`} className={buttonClass("outline")}>Open run</Link>
         {live && <Button variant="ghost" disabled={control.isPending} onClick={() => control.mutate("cancel")}>Stop</Button>}

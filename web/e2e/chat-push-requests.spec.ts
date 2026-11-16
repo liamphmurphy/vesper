@@ -107,3 +107,31 @@ test("legacy push requests without message_id stay in their historical turn and 
   await expect(replies.nth(0).getByRole("alert")).toContainText("Not pushed: Branch protected");
   await expect(replies.nth(1).getByRole("alert")).toHaveCount(0);
 });
+
+test("open PR cards offer Open in Dev workspace when enabled and hide once merged", async ({ page }) => {
+  const api = await installChatApi(page, { replyDelayMs: 10, devWorkspaceEnabled: true });
+  await askFirst(page, "push: Open PR feature");
+  const card = page.getByTestId("push-request");
+  await card.getByRole("button", { name: "Push & open PR" }).click();
+  await expect(card).toHaveAttribute("data-state", "pushed");
+
+  // Merged PRs do not offer Open in Dev workspace.
+  const chat = api.chats[0];
+  const reqs = api.pushRequests.get(chat.id) ?? [];
+  expect(reqs).toHaveLength(1);
+  reqs[0].pr_state = "merged";
+  await page.reload();
+  await expect(page.getByTestId("push-request")).toContainText("merged");
+  await expect(page.getByRole("button", { name: "Open in Dev workspace" })).toHaveCount(0);
+
+  // Open PRs offer Open in Dev workspace, pull the branch, and navigate to /dev.
+  reqs[0].pr_state = "open";
+  await page.reload();
+  const openBtn = page.getByRole("button", { name: "Open in Dev workspace" });
+  await expect(openBtn).toBeVisible();
+  await openBtn.click();
+  await expect(page).toHaveURL(/\/dev$/);
+  expect(api.devWorkspaceOpenBranches).toEqual([
+    { repository: "https://github.com/acme/alpha.git", branch: "feat/open-pr-feature", pr_number: 99 },
+  ]);
+});

@@ -91,7 +91,9 @@ export type MockOptions = { codexAvailable?: boolean; replyDelayMs?: number; per
   /** Keys of work with tickets: stopping it is refused (409). */
   workWithTickets?: string[];
   /** false: a fresh install that hasn't finished the Welcome Wizard. */
-  onboarded?: boolean };
+  onboarded?: boolean;
+  /** true: Dev workspace is enabled in Settings. */
+  devWorkspaceEnabled?: boolean };
 
 /** A persona fixture for the persona specs. */
 export function persona(i: number, over: Partial<MockPersona> = {}): MockPersona {
@@ -188,6 +190,21 @@ export function installChatApi(page: Page, opts: MockOptions = {}) {
   const pushRequests = new Map<string, components["schemas"]["PushRequest"][]>();
   const refusePush = new Map<string, string>();
   const pushPolicies: components["schemas"]["RepositoryPushPolicy"][] = [];
+  const devWorkspaceOpenBranches: components["schemas"]["OpenDevWorkspaceBranchRequest"][] = [];
+  const devWorkspace: components["schemas"]["DevWorkspace"] = {
+    enabled: !!opts.devWorkspaceEnabled,
+    nix_mode: "default",
+    repos: [],
+    extra_packages: [],
+    tmux_prefix: "C-b",
+    state: opts.devWorkspaceEnabled ? "ready" : "stopped",
+    action: null,
+    step: null,
+    error: null,
+    port: null,
+    arch: null,
+    updated_at: new Date().toISOString(),
+  };
   function mockPushRequest(title: string, runId?: string, messageId?: string): components["schemas"]["PushRequest"] {
     return {
       id: uuid(),
@@ -598,6 +615,7 @@ export function installChatApi(page: Page, opts: MockOptions = {}) {
           hit.auto = b.decision === "always";
           hit.pr_number = hit.pr_number ?? 99;
           hit.pr_url = hit.pr_url ?? `https://github.com/acme/alpha/pull/${hit.pr_number}`;
+          hit.pr_state = hit.pr_state ?? (hit.draft ? "draft" : "open");
           if (b.title) hit.title = b.title;
         }
         return json(hit);
@@ -1321,6 +1339,17 @@ export function installChatApi(page: Page, opts: MockOptions = {}) {
       return json({ run: {}, turns: [], approvals: [], events: runEvents.get(run[1]) ?? [] });
     }
     if (path === "/custom-apps" && method === "GET") return json({ apps: [] });
+    if (path === "/dev-workspace" && method === "GET") return json(devWorkspace);
+    if (path === "/dev-workspace/open-branch" && method === "POST") {
+      if (!devWorkspace.enabled) return fail(err(409, "conflict", "Enable the persistent dev workspace in Settings first."));
+      const b = body() as components["schemas"]["OpenDevWorkspaceBranchRequest"];
+      devWorkspaceOpenBranches.push(b);
+      devWorkspace.state = "starting";
+      devWorkspace.action = "open_branch";
+      devWorkspace.step = `Opening ${b.branch}`;
+      devWorkspace.updated_at = now();
+      return json(devWorkspace);
+    }
     unhandled.push(`${method} ${path}`);
     return fail(err(404, "not_found", `mock: no handler for ${method} ${path}`));
   }
@@ -1349,7 +1378,7 @@ export function installChatApi(page: Page, opts: MockOptions = {}) {
       (window as unknown as { EventSource: unknown }).EventSource = FakeEventSource;
     });
     await page.route("**/api/v1/**", handle);
-    return { spaces, workRequests, asides, secondOpinions, inbox, dock, apiSecrets, apiSecretPosts, apiSecretSignIns, secretApprovals, secretDecisions, secretProposals, chatSecrets, connectors, connectorApprovals, connectorDecisions, ticketChanges, ticketChangeDecisions, scheduledTasks, proposals, decisions, chats, messages, unhandled, posted, created, wikiPages, artifactForms, memories, memoryRequests, memoryPatches, memoryImports, personas, personaRequests, chatPersonaFilters, updatePersona, profileRequests, commitEmailRequests, codeReviews, pushRequests, refusePush };
+    return { spaces, workRequests, asides, secondOpinions, inbox, dock, apiSecrets, apiSecretPosts, apiSecretSignIns, secretApprovals, secretDecisions, secretProposals, chatSecrets, connectors, connectorApprovals, connectorDecisions, ticketChanges, ticketChangeDecisions, scheduledTasks, proposals, decisions, chats, messages, unhandled, posted, created, wikiPages, artifactForms, memories, memoryRequests, memoryPatches, memoryImports, personas, personaRequests, chatPersonaFilters, updatePersona, profileRequests, commitEmailRequests, codeReviews, pushRequests, refusePush, devWorkspace, devWorkspaceOpenBranches };
   })();
 }
 
