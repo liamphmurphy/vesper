@@ -1,0 +1,294 @@
+package guestproto
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"sync"
+)
+
+// Client calls vesper-guest-agent over PortRPC streams.
+type Client struct {
+	Dial func(ctx context.Context) (net.Conn, error)
+}
+
+func (c *Client) callUnary(ctx context.Context, op string, req, resp any) error {
+	conn, err := c.Dial(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if dl, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(dl)
+	}
+	if err := WriteRequest(conn, 1, op, req); err != nil {
+		return err
+	}
+	return ReadResponse(conn, resp)
+}
+
+func (c *Client) Ping(ctx context.Context) (PingResp, error) {
+	var out PingResp
+	err := c.callUnary(ctx, OpPing, nil, &out)
+	return out, err
+}
+
+func (c *Client) WriteFiles(ctx context.Context, files []FileWrite) error {
+	if len(files) == 0 {
+		return nil
+	}
+	return c.callUnary(ctx, OpWriteFiles, WriteFilesReq{Files: files}, nil)
+}
+
+func (c *Client) Stat(ctx context.Context, path string) (StatResp, error) {
+	var out StatResp
+	err := c.callUnary(ctx, OpStat, StatReq{Path: path}, &out)
+	return out, err
+}
+
+func (c *Client) WalkDir(ctx context.Context, root string, maxDepth int) ([]DirEntry, error) {
+	var out WalkDirResp
+	err := c.callUnary(ctx, OpWalkDir, WalkDirReq{Root: root, MaxDepth: maxDepth}, &out)
+	return out.Entries, err
+}
+
+func (c *Client) UnlinkPaths(ctx context.Context, paths []string, recursive bool) error {
+	if len(paths) == 0 {
+		return nil
+	}
+	return c.callUnary(ctx, OpUnlinkPaths, UnlinkPathsReq{Paths: paths, Recursive: recursive}, nil)
+}
+
+func (c *Client) SyncAndDropCaches(ctx context.Context) error {
+	return c.callUnary(ctx, OpSyncAndDropCaches, nil, nil)
+}
+
+func (c *Client) StartDockerd(ctx context.Context, registryMirror string) error {
+	return c.callUnary(ctx, OpStartDockerd, StartDockerdReq{RegistryMirror: registryMirror}, nil)
+}
+
+func (c *Client) EnsureBridgeAliases(ctx context.Context, aliases map[string]string) error {
+	return c.callUnary(ctx, OpEnsureBridgeAliases, EnsureBridgeAliasesReq{Aliases: aliases}, nil)
+}
+
+func (c *Client) Shutdown(ctx context.Context) error {
+	return c.callUnary(ctx, OpShutdown, nil, nil)
+}
+
+// OpenFile opens a streaming file reader over a dedicated vsock connection.
+func (c *Client) OpenFile(ctx context.Context, path string, offset, limit int64) (io.ReadCloser, error) {
+	conn, err := c.Dial(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := WriteRequest(conn, 1, OpReadFile, ReadFileReq{Path: path, Offset: offset, Limit: limit}); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	if err := ReadResponse(conn, nil); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return &remoteFileReader{conn: conn}, nil
+}
+
+// ReadFile reads up to limit bytes (or whole file if limit <= 0) from the guest.
+func (c *Client) ReadFile(ctx context.Context, path string, limit int64) ([]byte, error) {
+	rc, err := c.OpenFile(ctx, path, 0, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close()
+	return io.ReadAll(rc)
+}
+
+type remoteFileReader struct {
+	conn net.Conn
+	buf  []byte
+	eof  bool
+}
+
+func (r *remoteFileReader) Read(p []byte) (int, error) {
+	for len(r.buf) == 0 {
+		if r.eof {
+			return 0, io.EOF
+		}
+		f, err := ReadFrame(r.conn)
+		if err != nil {
+			return 0, err
+		}
+		switch f.Type {
+		case FrameFileChunk:
+			r.buf = f.Data
+		case FrameFileEOF:
+			r.eof = true
+			return 0, io.EOF
+		case FrameFileError:
+			r.eof = true
+			return 0, errors.New(string(f.Data))
+		default:
+			return 0, fmt.Errorf("guestproto: unexpected file frame type %d", f.Type)
+		}
+	}
+	n := copy(p, r.buf)
+	r.buf = r.buf[n:]
+	return n, nil
+}
+
+func (r *remoteFileReader) Close() error {
+	return r.conn.Close()
+}
+
+// RemoteProcess represents an active process running inside the guest VM.
+type RemoteProcess struct {
+	conn    net.Conn
+	sw      *SyncWriter
+	stdoutR *io.PipeReader
+	stdoutW *io.PipeWriter
+	stderrR *io.PipeReader
+	stderrW *io.PipeWriter
+
+	doneOnce sync.Once
+	done     chan struct{}
+	exit     ExecExit
+	exitErr  error
+}
+
+// StartExec launches a command inside the guest and begins streaming stdio.
+func (c *Client) StartExec(ctx context.Context, req ExecReq) (*RemoteProcess, error) {
+	conn, err := c.Dial(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := WriteRequest(conn, 1, OpExecStart, req); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	if err := ReadResponse(conn, nil); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	outr, outw := io.Pipe()
+	errr, errw := io.Pipe()
+	rp := &RemoteProcess{
+		conn:    conn,
+		sw:      NewSyncWriter(conn),
+		stdoutR: outr,
+		stdoutW: outw,
+		stderrR: errr,
+		stderrW: errw,
+		done:    make(chan struct{}),
+	}
+	go rp.readLoop()
+	return rp, nil
+}
+
+func (p *RemoteProcess) readLoop() {
+	var exit ExecExit
+	var exitErr error
+	defer func() {
+		p.finish(exit, exitErr)
+		_ = p.stdoutW.Close()
+		_ = p.stderrW.Close()
+		_ = p.conn.Close()
+	}()
+	for {
+		f, err := ReadFrame(p.conn)
+		if err != nil {
+			exitErr = err
+			return
+		}
+		switch f.Type {
+		case FrameStdout:
+			if len(f.Data) > 0 {
+				if _, werr := p.stdoutW.Write(f.Data); werr != nil {
+					// Drain remains optional; keep reading until process exits if caller closed stdout early.
+					continue
+				}
+			}
+		case FrameStderr:
+			if len(f.Data) > 0 {
+				if _, werr := p.stderrW.Write(f.Data); werr != nil {
+					continue
+				}
+			}
+		case FrameExecExit:
+			if err := json.Unmarshal(f.Data, &exit); err != nil {
+				exitErr = err
+			}
+			return
+		default:
+			exitErr = fmt.Errorf("guestproto: unexpected exec frame type %d", f.Type)
+			return
+		}
+	}
+}
+
+func (p *RemoteProcess) finish(exit ExecExit, err error) {
+	p.doneOnce.Do(func() {
+		p.exit = exit
+		p.exitErr = err
+		close(p.done)
+	})
+}
+
+func (p *RemoteProcess) Stdout() io.Reader { return p.stdoutR }
+func (p *RemoteProcess) Stderr() io.Reader { return p.stderrR }
+
+func (p *RemoteProcess) Stdin() io.WriteCloser { return &remoteStdin{sw: p.sw} }
+
+type remoteStdin struct {
+	sw     *SyncWriter
+	closed bool
+}
+
+func (s *remoteStdin) Write(b []byte) (int, error) {
+	if s.closed {
+		return 0, io.ErrClosedPipe
+	}
+	if len(b) == 0 {
+		return 0, nil
+	}
+	const chunk = 64 << 10
+	written := 0
+	for len(b) > 0 {
+		n := min(len(b), chunk)
+		if err := s.sw.WriteFrame(Frame{Type: FrameStdin, ID: 1, Data: b[:n]}); err != nil {
+			return written, err
+		}
+		written += n
+		b = b[n:]
+	}
+	return written, nil
+}
+
+func (s *remoteStdin) Close() error {
+	if s.closed {
+		return nil
+	}
+	s.closed = true
+	return s.sw.WriteFrame(Frame{Type: FrameStdinEOF, ID: 1})
+}
+
+func (p *RemoteProcess) Resize(rows, cols uint16) error {
+	return p.sw.WriteFrame(Frame{Type: FrameResize, ID: 1, Data: EncodeResize(rows, cols)})
+}
+
+func (p *RemoteProcess) Signal(sig uint32) error {
+	return p.sw.WriteFrame(Frame{Type: FrameSignal, ID: 1, Data: EncodeSignal(sig)})
+}
+
+func (p *RemoteProcess) Wait() (ExecExit, error) {
+	<-p.done
+	return p.exit, p.exitErr
+}
+
+// Close closes the underlying stream connection (unblocking Wait if hung).
+func (p *RemoteProcess) Close() error {
+	_ = p.stdoutW.Close()
+	_ = p.stderrW.Close()
+	return p.conn.Close()
+}
