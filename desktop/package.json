@@ -12,6 +12,7 @@
     "start": "npm run build && electron .",
     "dev": "npm run build && electron .",
     "gen:icon": "node scripts/gen-icon.mjs",
+    "gen:tray-icons": "node scripts/gen-tray-icons.mjs",
     "pack:mac": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir --config electron-builder.yml",
     "dmg": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg --arm64 --config electron-builder.yml",
     "dmg:universal": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg --universal --config electron-builder.yml"

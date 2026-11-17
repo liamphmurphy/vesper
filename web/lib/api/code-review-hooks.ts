@@ -6,6 +6,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, unwrap, type Schemas } from "./client";
+import { confirmApprovalLocally } from "../desktop-bridge";
 
 export type CodeReview = Schemas["CodeReview"];
 export type PushRequest = Schemas["PushRequest"];
@@ -34,8 +35,9 @@ export function usePushRequests(chatId: string | undefined, live?: boolean) {
 export function useDecidePush(chatId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { id: string } & PushDecision) => {
+    mutationFn: async (v: { id: string } & PushDecision) => {
       const { id, ...body } = v;
+      if (body.decision !== "deny") await confirmApprovalLocally("push_requests");
       return unwrap(api.POST("/push-requests/{id}", { params: { path: { id } }, body }));
     },
     onSettled: () =>

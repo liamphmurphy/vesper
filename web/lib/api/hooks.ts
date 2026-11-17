@@ -22,6 +22,7 @@ import { runEach } from "../ticket-list";
 import { runEnded } from "../chat-dispatch";
 import { eventsAfter } from "../run-events";
 import { personaKeys } from "./persona-hooks";
+import { confirmApprovalLocally } from "../desktop-bridge";
 
 type NewTicket = Schemas["NewTicket"];
 
@@ -635,8 +636,10 @@ function useTicketRefresh(key: string) {
 export function useDecideApproval(key: string) {
   const refresh = useTicketRefresh(key);
   return useMutation({
-    mutationFn: (v: { id: string; decision: "approve" | "deny"; note?: string }) =>
-      unwrap(api.POST("/approvals/{id}/{decision}", { params: { path: { id: v.id, decision: v.decision } }, body: { note: v.note } })),
+    mutationFn: async (v: { id: string; decision: "approve" | "deny"; note?: string }) => {
+      if (v.decision === "approve") await confirmApprovalLocally("run_approvals");
+      return unwrap(api.POST("/approvals/{id}/{decision}", { params: { path: { id: v.id, decision: v.decision } }, body: { note: v.note } }));
+    },
     onSettled: refresh,
   });
 }
@@ -767,8 +770,10 @@ export function useControlRunById(id: string) {
 export function useDecideRunApproval(runId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { id: string; decision: "approve" | "deny"; note?: string }) =>
-      unwrap(api.POST("/approvals/{id}/{decision}", { params: { path: { id: v.id, decision: v.decision } }, body: { note: v.note } })),
+    mutationFn: async (v: { id: string; decision: "approve" | "deny"; note?: string }) => {
+      if (v.decision === "approve") await confirmApprovalLocally("run_approvals");
+      return unwrap(api.POST("/approvals/{id}/{decision}", { params: { path: { id: v.id, decision: v.decision } }, body: { note: v.note } }));
+    },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ["runs", runId] });
       qc.invalidateQueries({ queryKey: ["inbox"] });

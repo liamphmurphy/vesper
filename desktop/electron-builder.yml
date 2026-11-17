@@ -25,10 +25,26 @@ extraResources:
     to: web
     filter:
       - "**/*"
+protocols:
+  # vesper:// deep links (LAZYAGENTS-244); parsed and validated in src/deeplink.ts.
+  - name: Vesper
+    schemes:
+      - vesper
+fileAssociations:
+  # Lets files be dropped on the Dock icon or opened with Vesper to send them to a
+  # chat (LAZYAGENTS-247). Alternate: Vesper shows in Open With but never becomes
+  # the default app for these types.
+  - ext: [pdf, png, jpg, jpeg, gif, webp, txt, md, markdown, csv, json, zip]
+    name: Vesper attachment
+    role: Viewer
+    rank: Alternate
 mac:
   category: public.app-category.developer-tools
   icon: build/icon.icns
   identity: null
+  extendInfo:
+    # Alerts (not banners) by default, so Approve/Decline and Reply buttons show (LAZYAGENTS-241).
+    NSUserNotificationAlertStyle: alert
   target:
     - target: dmg
       arch:

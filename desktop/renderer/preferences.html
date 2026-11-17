@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:"
+    />
+    <title>Vesper Settings</title>
+    <link rel="stylesheet" href="./native.css" />
+    <style>
+      body {
+        display: grid;
+        grid-template-columns: 188px 1fr;
+      }
+      nav {
+        background: var(--surface);
+        border-right: 1px solid var(--border);
+        padding: 18px 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      nav button {
+        text-align: left;
+        border: none;
+        background: transparent;
+        font-weight: 500;
+        padding: 7px 10px;
+      }
+      nav button[aria-current="page"] {
+        background: var(--surface-2);
+        font-weight: 650;
+      }
+      nav .spacer {
+        flex: 1;
+      }
+      nav .version {
+        padding: 0 10px;
+      }
+      main {
+        overflow-y: auto;
+        padding: 22px 28px 28px;
+      }
+      section > header {
+        margin-bottom: 8px;
+      }
+      .kinds {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 2px 18px;
+        padding: 6px 0 10px 18px;
+      }
+      .kinds label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 0;
+        font-size: 12.5px;
+      }
+      .inline {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex: none;
+      }
+      #shortcut-input {
+        width: 210px;
+        text-align: center;
+      }
+      #shortcut-input.recording {
+        border-color: var(--accent);
+      }
+    </style>
+  </head>
+  <body>
+    <nav aria-label="Settings sections">
+      <button type="button" data-section="general" aria-current="page">General</button>
+      <button type="button" data-section="notifications">Notifications</button>
+      <button type="button" data-section="capture">Quick Capture</button>
+      <button type="button" data-section="files">Files &amp; Links</button>
+      <button type="button" data-section="power">Power &amp; Stack</button>
+      <button type="button" data-section="security">Security</button>
+      <button type="button" data-section="updates">Updates</button>
+      <div class="spacer"></div>
+      <p class="muted small version" id="version"></p>
+    </nav>
+    <main>
+      <p class="error" id="global-error" role="alert"></p>
+
+      <section data-panel="general">
+        <header><h2>General</h2><p class="muted small">The menu bar icon, what closing windows does, and starting at login.</p></header>
+        <div class="row">
+          <div class="text">
+            <span class="label">Show Vesper in the menu bar</span>
+            <span class="hint">Stack status, the Needs-you count, items waiting on you and running runs.</span>
+          </div>
+          <label class="switch"><input type="checkbox" data-key="tray.enabled" aria-label="Show Vesper in the menu bar" /><span></span></label>
+        </div>
+        <div class="row sub" data-requires="tray.enabled">
+          <div class="text"><span class="label">Show the Needs-you count beside the icon</span></div>
+          <label class="switch"><input type="checkbox" data-key="tray.showCount" aria-label="Show the Needs-you count" /><span></span></label>
+        </div>
+        <div class="row">
+          <div class="text">
+            <span class="label">When the last window closes</span>
+            <span class="hint" id="last-window-hint">Vesper keeps running, and so do your runs.</span>
+          </div>
+          <div class="segmented" role="group" aria-label="When the last window closes" data-key="tray.onLastWindowClose">
+            <button type="button" data-value="dock">Stay in Dock</button>
+            <button type="button" data-value="menuBar">Menu bar only</button>
+            <button type="button" data-value="quit">Quit</button>
+          </div>
+        </div>
+        <div class="row">
+          <div class="text">
+            <span class="label">Open Vesper at login</span>
+            <span class="hint">The local stack starts in the background, so Vesper is ready when you are.</span>
+            <span class="hint error" id="login-status"></span>
+          </div>
+          <label class="switch"><input type="checkbox" data-key="login.openAtLogin" aria-label="Open Vesper at login" /><span></span></label>
+        </div>
+        <div class="row sub" data-requires="login.openAtLogin">
+          <div class="text">
+            <span class="label">Start in the menu bar, without a window</span>
+            <span class="hint">Needs the menu bar icon. If the stack can't start, you get a notification.</span>
+          </div>
+          <label class="switch"><input type="checkbox" data-key="login.startHidden" aria-label="Start in the menu bar" /><span></span></label>
+        </div>
+        <div class="row">
+          <div class="text">
+            <span class="label">Server</span>
+            <span class="hint">Which Vesper this app connects to: the built-in one or a remote host.</span>
+          </div>
+          <button type="button" id="server-btn">Change Server URL…</button>
+        </div>
+      </section>
+
+      <section data-panel="notifications" class="hidden">
+        <header><h2>Notifications</h2><p class="muted small">Alerts for things that need you, from your inbox and runs.</p></header>
+        <div class="row">
+          <div class="text"><span class="label">Show notifications</span></div>
+          <div class="inline">
+            <button type="button" id="test-notification">Send a Test</button>
+            <label class="switch"><input type="checkbox" data-key="notifications.enabled" aria-label="Show notifications" /><span></span></label>
+          </div>
+        </div>
+        <div data-requires="notifications.enabled">
+          <div class="row sub">
+            <div class="text"><span class="label">Notify me about</span></div>
+          </div>
+          <div class="kinds" id="kinds"></div>
+          <div class="row sub">
+            <div class="text">
+              <span class="label">When a run finishes or fails</span>
+              <span class="hint">Once per ticket, planning, research or workflow run. Chat replies don't count.</span>
+            </div>
+            <label class="switch"><input type="checkbox" data-key="notifications.runFinished" aria-label="When a run finishes" /><span></span></label>
+          </div>
+          <div class="row sub">
+            <div class="text">
+              <span class="label">Approve, Decline and Reply in the notification</span>
+              <span class="hint">Buttons show when the notification style for Vesper is Alerts (System Settings › Notifications). A reply goes to the ticket, mentioning the agent.</span>
+            </div>
+            <label class="switch"><input type="checkbox" data-key="notifications.actions" aria-label="Notification actions" /><span></span></label>
+          </div>
+          <div class="row sub">
+            <div class="text">
+              <span class="label">Group by ticket or run</span>
+              <span class="hint">A busy run stacks into one group in Notification Center.</span>
+            </div>
+            <label class="switch"><input type="checkbox" data-key="notifications.groupByWork" aria-label="Group notifications" /><span></span></label>
+          </div>
+          <div class="row sub">
+            <div class="text"><span class="label">Play a sound</span></div>
+            <label class="switch"><input type="checkbox" data-key="notifications.sound" aria-label="Play a sound" /><span></span></label>
+          </div>
+          <div class="row sub">
+            <div class="text">
+              <span class="label">Quiet hours</span>
+              <span class="hint">No notifications in this window; they don't arrive later either. macOS Focus also applies on its own.</span>
+            </div>
+            <div class="inline">
+              <input type="time" id="quiet-start" aria-label="Quiet hours start" />
+              <span class="muted">to</span>
+              <input type="time" id="quiet-end" aria-label="Quiet hours end" />
+              <label class="switch"><input type="checkbox" data-key="notifications.quietHours.enabled" aria-label="Quiet hours" /><span></span></label>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section data-panel="capture" class="hidden">
+        <header><h2>Quick Capture</h2><p class="muted small">From any app: capture a note, message a persona, or file a ticket.</p></header>
+        <div class="row">
+          <div class="text">
+            <span class="label">Global shortcut</span>
+            <span class="hint">Click the field and press the keys. Use ⌘, ⌥ or ⌃; Shift alone isn't enough.</span>
+            <span class="error" id="shortcut-error" role="alert"></span>
+          </div>
+          <div class="inline">
+            <input type="text" id="shortcut-input" readonly aria-label="Quick capture shortcut" />
+            <label class="switch"><input type="checkbox" data-key="quickCapture.enabled" aria-label="Enable quick capture" /><span></span></label>
+          </div>
+        </div>
+      </section>
+
+      <section data-panel="files" class="hidden">
+        <header><h2>Files &amp; Links</h2></header>
+        <div class="row">
+          <div class="text">
+            <span class="label">Send files dropped on Vesper to a chat</span>
+            <span class="hint">Drop files on the Dock icon, on a Vesper window, or use Open With. You pick the chat first. PDF, images, text, Markdown, CSV, JSON or zip, up to 25 MB each.</span>
+          </div>
+          <label class="switch"><input type="checkbox" data-key="files.dockDrop" aria-label="Send dropped files to a chat" /><span></span></label>
+        </div>
+        <div class="row">
+          <div class="text">
+            <span class="label">"Send to Vesper" Quick Actions</span>
+            <span class="hint">Adds Send to Vesper (files, in Finder) and Send Text to Vesper (selected text) to the Services menu and Finder's Quick Actions.</span>
+            <span class="error" id="services-error" role="alert"></span>
+          </div>
+          <button type="button" id="services-btn">Install</button>
+        </div>
+        <div class="row">
+          <div class="text">
+            <span class="label">Open vesper:// links</span>
+            <span class="hint">
+              vesper://run/&lt;id&gt;, vesper://ticket/&lt;KEY-1&gt;, vesper://epic/&lt;id&gt;, vesper://page/&lt;id&gt;, vesper://chat/&lt;id&gt;,
+              vesper://inbox and vesper://capture. Anything else is ignored.
+            </span>
+          </div>
+          <label class="switch"><input type="checkbox" data-key="deepLinks.enabled" aria-label="Open vesper links" /><span></span></label>
+        </div>
+      </section>
+
+      <section data-panel="power" class="hidden">
+        <header><h2>Power &amp; Stack</h2></header>
+        <div class="row">
+          <div class="text">
+            <span class="label">Keep the Mac awake while runs are working</span>
+            <span class="hint">Stops idle sleep while a run is starting or running. Closing the lid still sleeps.</span>
+          </div>
+          <label class="switch"><input type="checkbox" data-key="power.preventSleepWhileRunning" aria-label="Keep the Mac awake while runs work" /><span></span></label>
+        </div>
+        <div class="row">
+          <div class="text">
+            <span class="label">When the Mac sleeps</span>
+            <span class="hint" id="sleep-hint"></span>
+          </div>
+          <div class="segmented" role="group" aria-label="When the Mac sleeps" data-key="power.onSleep">
+            <button type="button" data-value="keep">Leave runs</button>
+            <button type="button" data-value="pause">Pause and resume</button>
+          </div>
+        </div>
+        <div class="row">
+          <div class="text"><span class="label">Warn when switching to battery with runs working</span></div>
+          <label class="switch"><input type="checkbox" data-key="power.warnOnBattery" aria-label="Warn on battery" /><span></span></label>
+        </div>
+        <div class="row">
+          <div class="text"><span class="label">Ask before quitting with runs working</span></div>
+          <label class="switch"><input type="checkbox" data-key="power.confirmQuitWithActiveRuns" aria-label="Ask before quitting" /><span></span></label>
+        </div>
+        <div class="row" data-local-only>
+          <div class="text">
+            <span class="label">Restart the stack after a crash</span>
+            <span class="hint">Up to 3 times in 10 minutes, then Vesper tells you and stops trying.</span>
+          </div>
+          <label class="switch"><input type="checkbox" data-key="stack.autoRestart" aria-label="Restart after a crash" /><span></span></label>
+        </div>
+        <div class="row" data-local-only>
+          <div class="text">
+            <span class="label">Warn when free disk space drops below</span>
+            <span class="hint">In the data directory, where runs keep their disks.</span>
+          </div>
+          <div class="inline">
+            <input type="number" id="min-disk" min="1" max="1000" step="1" style="width: 72px" aria-label="Minimum free disk space in GB" />
+            <span class="muted">GB</span>
+          </div>
+        </div>
+        <div class="row" data-local-only>
+          <div class="text"><span class="label">Stack</span><span class="hint" id="data-dir"></span></div>
+          <div class="inline">
+            <button type="button" id="logs-btn">Show Logs…</button>
+            <button type="button" id="data-btn">Open Data Folder</button>
+          </div>
+        </div>
+      </section>
+
+      <section data-panel="security" class="hidden">
+        <header><h2>Security</h2></header>
+        <div class="row">
+          <div class="text">
+            <span class="label">Confirm approvals with Touch ID</span>
+            <span class="hint">
+              Asks for your fingerprint in this app before an approval goes through. It's a local check only: the server doesn't verify it,
+              so it guards an unlocked Mac, not other browsers or API calls.
+            </span>
+            <span class="hint error" id="touchid-status"></span>
+          </div>
+          <div class="inline">
+            <button type="button" id="touchid-test">Test</button>
+            <label class="switch"><input type="checkbox" data-key="touchId.enabled" aria-label="Confirm approvals with Touch ID" /><span></span></label>
+          </div>
+        </div>
+        <div data-requires="touchId.enabled">
+          <div class="row sub"><div class="text"><span class="label">Agent requests on runs</span></div><label class="switch"><input type="checkbox" data-key="touchId.scopes.run_approvals" aria-label="Run approvals" /><span></span></label></div>
+          <div class="row sub"><div class="text"><span class="label">Pushes and pull requests</span></div><label class="switch"><input type="checkbox" data-key="touchId.scopes.push_requests" aria-label="Push requests" /><span></span></label></div>
+          <div class="row sub"><div class="text"><span class="label">Connector tool calls</span></div><label class="switch"><input type="checkbox" data-key="touchId.scopes.connector_approvals" aria-label="Connector approvals" /><span></span></label></div>
+          <div class="row sub"><div class="text"><span class="label">Requests that use a secret</span></div><label class="switch"><input type="checkbox" data-key="touchId.scopes.secret_approvals" aria-label="Secret approvals" /><span></span></label></div>
+        </div>
+      </section>
+
+      <section data-panel="updates" class="hidden">
+        <header><h2>Updates</h2><p class="muted small">Vesper.app isn't notarised, so it can't update itself. It can tell you when a newer DMG is out.</p></header>
+        <div class="row">
+          <div class="text">
+            <span class="label">Check for new versions daily</span>
+            <span class="hint">Asks the release feed (GitHub) once a day. Nothing about you or your workspace is sent.</span>
+            <span class="hint" id="update-status"></span>
+          </div>
+          <div class="inline">
+            <button type="button" id="update-check">Check Now</button>
+            <label class="switch"><input type="checkbox" data-key="updates.checkEnabled" aria-label="Check for updates daily" /><span></span></label>
+          </div>
+        </div>
+        <div class="row">
+          <div class="text">
+            <span class="label">Updating</span>
+            <span class="hint">Download the new DMG and drag Vesper.app into Applications, replacing the old one. Your data stays in the data folder and is upgraded on next launch.</span>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script src="./preferences.js"></script>
+  </body>
+</html>

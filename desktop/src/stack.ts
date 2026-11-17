@@ -180,6 +180,14 @@ export interface LocalStackOptions {
   nodeBin?: string;
   nodeRunAsNode?: boolean;
   onLog?: (line: string) => void;
+  /** Called when the process exits without stop() having been called (a crash). */
+  onUnexpectedExit?: (exit: StackExit) => void;
+}
+
+export interface StackExit {
+  code: number | null;
+  signal: string | null;
+  stderrTail: string;
 }
 
 export class LocalVesperStack {
@@ -188,6 +196,8 @@ export class LocalVesperStack {
   private stopping = false;
   private readyUrlValue = "";
   private exitPromise: Promise<void> | null = null;
+  private stderrTail = "";
+  private lastExitValue: StackExit | null = null;
 
   constructor(opts: LocalStackOptions) {
     this.opts = opts;
@@ -201,11 +211,19 @@ export class LocalVesperStack {
     return this.readyUrlValue;
   }
 
+  /** How the process last ended, or null if it hasn't since the last start. */
+  lastExit(): StackExit | null {
+    return this.lastExitValue;
+  }
+
   async start(): Promise<string> {
     if (this.isRunning() && this.readyUrlValue) {
       return this.readyUrlValue;
     }
     this.stopping = false;
+    this.stderrTail = "";
+    this.lastExitValue = null;
+    this.readyUrlValue = "";
 
     const logsDir = path.join(this.opts.userDataDir, "logs");
     fs.mkdirSync(logsDir, { recursive: true });
@@ -232,9 +250,14 @@ export class LocalVesperStack {
     });
     this.proc = child;
     this.exitPromise = new Promise((resolve) => {
-      child.once("exit", () => {
+      child.once("exit", (code, signal) => {
         logStream.end();
         this.proc = null;
+        this.lastExitValue = { code, signal, stderrTail: this.stderrTail };
+        if (!this.stopping && this.readyUrlValue) {
+          // Only after a successful start; a failed start rejects start() instead.
+          this.opts.onUnexpectedExit?.(this.lastExitValue);
+        }
         resolve();
       });
     });
@@ -267,6 +290,7 @@ export class LocalVesperStack {
       child.stderr?.on("data", (buf: Buffer) => {
         emitLog(buf);
         stderrTail = (stderrTail + buf.toString("utf8")).slice(-4096);
+        this.stderrTail = stderrTail;
       });
 
       child.once("error", (err) => {

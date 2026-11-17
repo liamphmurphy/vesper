@@ -298,6 +298,41 @@
         word-break: break-word;
       }
 
+      .health {
+        margin: 0 0 18px;
+        padding: 12px 14px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: var(--surface-2);
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .health.error {
+        border-color: var(--red);
+      }
+
+      .health strong {
+        font-size: 13.5px;
+      }
+
+      .health p {
+        margin: 0;
+        font-size: 12.5px;
+        line-height: 1.45;
+        color: var(--fg-muted);
+      }
+
+      .health progress {
+        width: 100%;
+        accent-color: var(--accent);
+      }
+
+      .health .actions {
+        margin: 4px 0 0;
+      }
+
       .hidden {
         display: none;
       }
@@ -335,6 +370,17 @@
       <p class="detail" id="status-detail">
         Waiting for your local OrbStack/Docker stack or remote Vesper host.
       </p>
+
+      <div class="health hidden" id="health" role="status" aria-live="polite">
+        <strong id="health-title"></strong>
+        <p id="health-message"></p>
+        <progress id="health-progress" class="hidden" max="1" value="0"></progress>
+        <p id="health-step"></p>
+        <div class="actions">
+          <button type="button" class="hidden" id="health-restart">Restart Stack</button>
+          <button type="button" class="hidden" id="health-logs">Show Logs</button>
+        </div>
+      </div>
 
       <div class="actions" id="connection-actions">
         <button type="button" class="primary" id="retry-btn">Retry now</button>

@@ -7,6 +7,21 @@ A thin, native-feeling macOS Electron client and self-contained runtime for Vesp
 
 All tabs share a persistent `persist:vesper` cookie session (automatically signed in via one-time `vesper sign-in-link -code` in local mode), native Cocoa window tabs (`tabbingIdentifier: "vesper"`), standard macOS tab/navigation shortcuts, trackpad swipe navigation, **File → Import Backup…** for migrating `.zip` archives from Docker/server installs, menu bar tray lifecycle while microVMs are running, Playground `getDisplayMedia()` screenshot/recording support, Dock badge Needs-you counts, and macOS Notification Center alerts.
 
+## Native macOS features
+
+Everything below has its own switch in **Vesper › Settings… (⌘,)**. Details, defaults, security notes and the manual Mac checklist: [`docs/dev/desktop-native.md`](../docs/dev/desktop-native.md).
+
+- **Menu bar icon**: stack status (running / starting / error), the Needs-you count, the newest items waiting on you and the runs that are working, plus Open, Quick Capture, Pause/Resume Runs, Restart Stack, Show Logs and Quit. Choose whether closing the last window keeps Vesper in the Dock, only in the menu bar, or quits.
+- **Notifications**: Approve / Decline on approvals and inline Reply on agent questions (set Vesper's notification style to *Alerts* to see the buttons), grouped by ticket or run, a once-per-run "run finished" alert, per-kind switches and quiet hours.
+- **Open at login**, optionally starting in the menu bar with no window; a failed background start is reported with a notification.
+- **Quick capture** from any app with a global shortcut (default ⌥⇧Space, off until you turn it on): a note to your Knowledge inbox, a message to a persona, or a ticket.
+- **`vesper://` links**: `vesper://run/<id>`, `ticket/<KEY-1>`, `epic/<id>`, `page/<id>`, `chat/<id>`, `inbox`, `capture`. Anything else is ignored.
+- **Power**: keeps the Mac awake while runs work; optionally pauses runs on sleep and resumes them on wake; warns on battery and before quitting with runs working ([`docs/dev/desktop-power.md`](../docs/dev/desktop-power.md)).
+- **Stack health**: first-run download progress, named failures with a next step (virtualization, disk, port, database, Keychain), a logs window, Restart Stack, and bounded auto-restart after a crash.
+- **Files in**: drop files on the Dock icon or a window, use Open With, or install the *Send to Vesper* Quick Actions, then pick a chat to send them to.
+- **Touch ID for approvals** (opt-in, per kind). A local check in this app only; the server doesn't verify it.
+- **Update check** (opt-in): tells you when a newer DMG is published. The app can't update itself while it's unsigned ([`docs/dev/desktop-updates.md`](../docs/dev/desktop-updates.md)).
+
 ## Prerequisites
 
 - **macOS on Apple Silicon (`arm64`)**
@@ -57,13 +72,14 @@ You can override the default server URL at launch for testing:
 VESPER_SERVER_URL=http://localhost:3000 npm --prefix desktop start
 ```
 
-## Regenerating app icons
+## Regenerating app and menu bar icons
 
 `build/icon.icns` and `build/icon.png` are generated from [`web/public/logo.svg`](../web/public/logo.svg):
 
 ```sh
 cd desktop
 npm run gen:icon
+npm run gen:tray-icons   # menu bar icons → renderer/tray/ (packed into the app)
 ```
 
 ## Keyboard shortcuts
@@ -79,4 +95,4 @@ npm run gen:icon
 | `⌘1`–`⌘9` | Switch to tab 1–8 (`⌘9` switches to last tab) |
 | `⌘[` / `⌘]` | Back / Forward (also trackpad swipe) |
 | `⌘R` / `⇧⌘R` | Reload / Force reload |
-| `⌘,` | Server URL & local checkout settings |
+| `⌘,` | Settings (native features; **Change Server URL…** inside, or under Help) |

@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { defaultNativeSettings, normalizeNativeSettings, type NativeSettings } from "./settings";
 
 export const DEFAULT_SERVER_URL = "http://localhost:8080";
 export const DEFAULT_PLAYGROUND_PORTS = [8090, 8091, 8092, 8093, 8094] as const;
@@ -8,6 +9,7 @@ export interface DesktopConfig {
   serverUrl: string;
   localCheckoutPath?: string;
   playgroundPorts: number[];
+  native: NativeSettings;
 }
 
 export interface WindowBounds {
@@ -28,6 +30,7 @@ export function defaultConfig(): DesktopConfig {
   return {
     serverUrl: DEFAULT_SERVER_URL,
     playgroundPorts: [...DEFAULT_PLAYGROUND_PORTS],
+    native: defaultNativeSettings(),
   };
 }
 
@@ -99,6 +102,7 @@ export function loadConfig(configPath: string): DesktopConfig {
       serverUrl,
       localCheckoutPath,
       playgroundPorts: normalizePlaygroundPorts(parsed.playgroundPorts),
+      native: normalizeNativeSettings(parsed.native),
     };
   } catch {
     return defaults;
@@ -113,6 +117,7 @@ export function saveConfig(configPath: string, config: DesktopConfig): void {
     serverUrl: normalizeServerUrl(config.serverUrl),
     ...(config.localCheckoutPath?.trim() ? { localCheckoutPath: config.localCheckoutPath.trim() } : {}),
     playgroundPorts: normalizePlaygroundPorts(config.playgroundPorts),
+    native: normalizeNativeSettings(config.native),
   };
   fs.writeFileSync(tmpPath, `${JSON.stringify(clean, null, 2)}\n`, "utf8");
   fs.renameSync(tmpPath, configPath);

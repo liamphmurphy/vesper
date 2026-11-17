@@ -1,20 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  app,
-  BrowserWindow,
-  desktopCapturer,
-  dialog,
-  ipcMain,
-  Menu,
-  nativeImage,
-  Notification,
-  safeStorage,
-  session,
-  shell,
-  Tray,
-} from "electron";
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, safeStorage, session, shell } from "electron";
 import {
   loadConfig,
   loadSession,
@@ -27,7 +14,9 @@ import {
 } from "./config";
 import { checkDockerAvailability, isLocalhostUrl, isValidVesperCheckout, startLocalComposeStack } from "./docker";
 import { buildApplicationMenu } from "./menu";
-import { InboxMonitor, type DesktopAlert } from "./notifications";
+import { findVesperLinkInArgv } from "./deeplink";
+import { NativeFeatures } from "./native";
+import { InboxMonitor } from "./notifications";
 import type {
   DesktopConnectionState,
   ImportBackupInput,
@@ -70,7 +59,12 @@ let quitConfirmed = false;
 let sessionSaveTimer: NodeJS.Timeout | undefined;
 let stackStarting = false;
 let localStack: LocalVesperStack | null = null;
-let tray: Tray | null = null;
+/** The bundled stack is starting (first launch, restart); drives the health view. */
+let bundledStarting = false;
+/** Why the bundled stack last failed to start, until it next starts. */
+let bundledStartError: string | undefined;
+/** A main Vesper window was open since the last time every window closed. */
+let hadMainWindow = false;
 
 interface WindowEntry {
   win: BrowserWindow;
@@ -89,16 +83,93 @@ let currentState: DesktopConnectionState = {
   isLocalhost: true,
 };
 
+const native = new NativeFeatures({
+  config: () => currentConfig,
+  saveNative: (next) => {
+    currentConfig = { ...currentConfig, native: next };
+    saveConfig(configPath, currentConfig);
+  },
+  fetch: (url, init) => getVesperSession().fetch(url, init),
+  openHref: (href) => focusOrOpenHref(href),
+  showMainWindow: () => showMainWindow(),
+  openServerSettings: () => openSettingsWindow(),
+  stackMode: () => stackMode(),
+  stackSnapshot: () => ({
+    starting: bundledStarting,
+    running: Boolean(localStack?.isRunning()),
+    startError: bundledStartError,
+    exit: localStack?.lastExit() ?? null,
+  }),
+  connectionReachable: () => (currentState.phase === "reachable" ? true : currentState.phase === "unreachable" ? false : undefined),
+  restartStack: () => restartBundledStack(),
+  isTrustedRendererUrl: (url) => isTrustedRendererUrl(url),
+  rendererDir: RENDERER_DIR,
+  preloadPath: path.join(__dirname, "preload.js"),
+  partition: SESSION_PARTITION,
+  backgroundColor: "#141221",
+});
+
 const inboxMonitor = new InboxMonitor({
   fetch: (url, init) => getVesperSession().fetch(url, init),
-  onBadgeChange: (badge) => {
+  onBadgeChange: (badge, count) => {
     if (process.platform === "darwin" && app.dock) {
       app.dock.setBadge(badge);
     }
+    native.onBadge(count);
   },
   shouldNotify: (href) => shouldNotifyForHref(href),
-  onAlert: (alert) => showDesktopAlert(alert),
+  onAlert: (alert) => native.showAlert(alert),
+  onItems: (items) => native.onInboxItems(items),
+  onServerEvent: (type) => native.onServerEvent(type),
 });
+
+// macOS delivers vesper:// links and opened files as app events, possibly before
+// "ready" (cold start); NativeFeatures queues them until it has started.
+app.on("open-url", (event, url) => {
+  event.preventDefault();
+  native.handleLink(url);
+});
+app.on("open-file", (event, filePath) => {
+  if (native.handleOpenFile(filePath)) event.preventDefault();
+});
+
+/** local: the bundled `vesper app`; remote: a server off this Mac; external: localhost served by something else. */
+function stackMode(): "local" | "remote" | "external" {
+  if (!isLocalhostUrl(currentConfig?.serverUrl ?? "")) return "remote";
+  return bundledResourcesDir() ? "local" : "external";
+}
+
+function showMainWindow() {
+  if (process.platform === "darwin") app.focus({ steal: true });
+  const win = resolveActiveWindow();
+  if (win) {
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+  } else {
+    createVesperWindow({ url: currentConfig.serverUrl });
+  }
+}
+
+/** Stops and starts the bundled stack (menu, tray, logs window, auto-restart after a crash). */
+async function restartBundledStack(): Promise<void> {
+  if (stackMode() !== "local" || bundledStarting) return;
+  inboxMonitor.stop();
+  await localStack?.stop();
+  localStack = null;
+  try {
+    await startBundledStackIfLocalhost();
+  } catch {
+    // startBundledStackIfLocalhost recorded the error for the health view.
+  }
+  inboxMonitor.start(currentConfig.serverUrl);
+  const state = await checkAndUpdateState();
+  if (state.phase === "reachable") {
+    for (const entry of windows.values()) {
+      if (entry.showingOffline) void navigateWindow(entry, entry.targetUrl);
+    }
+  }
+}
 
 function getVesperSession() {
   return session.fromPartition(SESSION_PARTITION);
@@ -177,18 +248,6 @@ function focusOrOpenHref(href: string) {
   });
 }
 
-function showDesktopAlert(alert: DesktopAlert) {
-  if (!Notification.isSupported()) return;
-  const notification = new Notification({
-    title: alert.title,
-    body: alert.body,
-  });
-  notification.on("click", () => {
-    focusOrOpenHref(alert.href);
-  });
-  notification.show();
-}
-
 async function probeServer(serverUrl: string): Promise<{ reachable: boolean; errorMessage?: string }> {
   const ses = getVesperSession();
   try {
@@ -212,6 +271,7 @@ function broadcastState(next: DesktopConnectionState) {
       win.webContents.send("vesper:state", currentState);
     }
   }
+  native.refreshHealth();
 }
 
 async function checkAndUpdateState(targetUrlOverride?: string): Promise<DesktopConnectionState> {
@@ -381,6 +441,8 @@ function createVesperWindow(opts: CreateWindowOptions = {}): BrowserWindow {
     win.maximize();
   }
 
+  native.windowOpened();
+  hadMainWindow = true;
   const entry: WindowEntry = {
     win,
     targetUrl: opts.url ?? currentConfig.serverUrl,
@@ -473,6 +535,16 @@ function createVesperWindow(opts: CreateWindowOptions = {}): BrowserWindow {
 
   win.webContents.on("will-navigate", (event, navUrl) => {
     if (isTrustedRendererUrl(navUrl)) return;
+    // A file dropped on the page outside a drop target navigates to its file:// URL;
+    // offer to send it to a chat instead (LAZYAGENTS-247). Only a browser-initiated
+    // navigation (a drop) counts: a file:// link clicked in page content has an
+    // initiator frame and is just blocked, so content can't put a local file in front
+    // of the person to send.
+    if (navUrl.startsWith("file://")) {
+      event.preventDefault();
+      if (!event.initiator) native.handleDroppedFileUrl(navUrl);
+      return;
+    }
     const kind = classifyNavigation(navUrl, currentConfig.serverUrl, currentConfig.playgroundPorts);
     if (kind === "vesper" || kind === "playground") return;
     event.preventDefault();
@@ -662,8 +734,23 @@ function setupMenu() {
         target.webContents.navigationHistory.goForward();
       }
     },
-    openSettings: () => openSettingsWindow(),
+    openSettings: () => native.openPreferences(),
+    openServerSettings: () => openSettingsWindow(),
     importBackup: () => openImportWindow(),
+    quickCapture: () => native.openCapture(),
+    restartStack: () => void native.restartStack(),
+    showLogs: () => native.openLogs(),
+    checkForUpdates: () => void manualUpdateCheck(),
+  });
+}
+
+async function manualUpdateCheck() {
+  const result = await native.checkForUpdates(true);
+  if (result.status === "available") return;
+  await dialog.showMessageBox({
+    type: result.status === "error" ? "warning" : "info",
+    message: result.status === "error" ? "Couldn't check for updates" : `Vesper ${app.getVersion()} is the newest version`,
+    detail: result.status === "error" ? result.error : undefined,
   });
 }
 
@@ -948,6 +1035,7 @@ function registerIpc() {
       saveConfig(configPath, nextConfig);
       currentConfig = nextConfig;
       inboxMonitor.start(normalized);
+      native.serverUrlChanged(normalized);
 
       for (const entry of windows.values()) {
         entry.targetUrl = normalized;
@@ -1040,7 +1128,7 @@ async function startBundledStackIfLocalhost(): Promise<void> {
   }
 
   if (!localStack) {
-    localStack = new LocalVesperStack({
+    const stack = new LocalVesperStack({
       resources,
       userDataDir,
       secretsKey,
@@ -1054,10 +1142,26 @@ async function startBundledStackIfLocalhost(): Promise<void> {
           }
         }
       },
+      onUnexpectedExit: (exit) => {
+        if (localStack === stack) native.stackCrashed(exit);
+      },
     });
+    localStack = stack;
   }
 
-  const readyUrl = await localStack.start();
+  bundledStarting = true;
+  bundledStartError = undefined;
+  native.refreshHealth();
+  let readyUrl: string;
+  try {
+    readyUrl = await localStack.start();
+  } catch (err) {
+    bundledStartError = err instanceof Error ? err.message : String(err);
+    throw err;
+  } finally {
+    bundledStarting = false;
+    native.refreshHealth();
+  }
   try {
     const parsedReady = new URL(readyUrl);
     const parsedCurrent = new URL(currentConfig.serverUrl);
@@ -1095,54 +1199,6 @@ function setupDisplayMediaHandler() {
   });
 }
 
-function setupTray() {
-  if (process.platform !== "darwin" || tray) return;
-  const iconPath = path.resolve(__dirname, "../build/icon.png");
-  if (!fs.existsSync(iconPath)) return;
-  const img = nativeImage.createFromPath(iconPath).resize({ width: 18, height: 18 });
-  img.setTemplateImage(false);
-  tray = new Tray(img);
-  tray.setToolTip("Vesper");
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      {
-        label: "Open Vesper",
-        click: () => {
-          app.focus({ steal: true });
-          const win = resolveActiveWindow();
-          if (win) {
-            win.show();
-            win.focus();
-          } else {
-            createVesperWindow({ url: currentConfig.serverUrl });
-          }
-        },
-      },
-      {
-        label: "New Tab",
-        click: () => {
-          const parentWin = resolveActiveWindow();
-          createVesperWindow({ url: currentConfig.serverUrl, parentWin, tabbed: Boolean(parentWin) });
-        },
-      },
-      { type: "separator" },
-      { label: "Import Backup…", click: () => openImportWindow() },
-      { label: "Settings…", click: () => openSettingsWindow() },
-      { type: "separator" },
-      { label: "Quit Vesper", click: () => app.quit() },
-    ]),
-  );
-  tray.on("click", () => {
-    const win = resolveActiveWindow();
-    if (win) {
-      win.show();
-      win.focus();
-    } else {
-      createVesperWindow({ url: currentConfig.serverUrl });
-    }
-  });
-}
-
 void app.whenReady().then(async () => {
   configPath = path.join(app.getPath("userData"), "config.json");
   sessionPath = path.join(app.getPath("userData"), "session.json");
@@ -1164,8 +1220,34 @@ void app.whenReady().then(async () => {
 
   setupMenu();
   setupDisplayMediaHandler();
-  setupTray();
   registerIpc();
+  native.start();
+  const coldStartLink = findVesperLinkInArgv(process.argv);
+  if (coldStartLink) native.handleLink(coldStartLink);
+
+  // An older build opening data a newer one migrated may fail to start (LAZYAGENTS-249).
+  const version = native.checkVersion();
+  if (version.transition === "downgrade" && stackMode() === "local") {
+    const res = await dialog.showMessageBox({
+      type: "warning",
+      buttons: ["Open Anyway", "Quit"],
+      defaultId: 1,
+      cancelId: 1,
+      message: `This Vesper (${version.current}) is older than the one that last opened your data (${version.last}).`,
+      detail:
+        "Its database may have changes this version doesn't know about, so it may not start. Installing the newer Vesper.app again is the safe choice. Your data isn't changed by quitting.",
+    });
+    if (res.response === 1) {
+      app.exit(0);
+      return;
+    }
+  } else if (version.transition !== "downgrade") {
+    // A downgrade keeps the newer version on record, so the warning repeats until it's back.
+    native.recordVersion();
+  }
+
+  const hidden = native.startHidden();
+  if (hidden) app.dock?.hide();
 
   try {
     await startBundledStackIfLocalhost();
@@ -1175,10 +1257,11 @@ void app.whenReady().then(async () => {
       phase: "unreachable",
       errorMessage: err instanceof Error ? err.message : String(err),
     };
+    if (hidden) native.hiddenStartFailed(currentState.errorMessage ?? "The local stack didn't start.");
   }
 
   inboxMonitor.start(currentConfig.serverUrl);
-  restoreSessionWindows();
+  if (!hidden) restoreSessionWindows();
 
   app.on("activate", () => {
     if (windows.size === 0) {
@@ -1192,7 +1275,7 @@ app.on("before-quit", (event) => {
     event.preventDefault();
     void (async () => {
       const busy = await hasActiveRuns(currentConfig.serverUrl, (url, init) => getVesperSession().fetch(url, init));
-      if (busy) {
+      if (native.quitNeedsConfirm(true, busy)) {
         const res = await dialog.showMessageBox({
           type: "warning",
           buttons: ["Quit Anyway", "Cancel"],
@@ -1209,6 +1292,7 @@ app.on("before-quit", (event) => {
       isQuitting = true;
       quitConfirmed = true;
       inboxMonitor.stop();
+      native.stop();
       if (sessionSaveTimer) {
         clearTimeout(sessionSaveTimer);
         sessionSaveTimer = undefined;
@@ -1221,6 +1305,7 @@ app.on("before-quit", (event) => {
   }
   isQuitting = true;
   inboxMonitor.stop();
+  native.stop();
   if (sessionSaveTimer) {
     clearTimeout(sessionSaveTimer);
     sessionSaveTimer = undefined;
@@ -1229,7 +1314,9 @@ app.on("before-quit", (event) => {
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit();
-  }
+  // Only the last Vesper window closing counts; closing Settings or Quick Capture
+  // while no Vesper window is open (menu bar mode) must not quit the app.
+  if (!hadMainWindow) return;
+  hadMainWindow = false;
+  native.windowAllClosed();
 });

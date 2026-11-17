@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:"
+    />
+    <title>Send to Vesper</title>
+    <link rel="stylesheet" href="./native.css" />
+    <style>
+      body {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        padding: 22px 24px;
+      }
+      ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface);
+        max-height: 150px;
+        overflow-y: auto;
+      }
+      li {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--border);
+      }
+      li:last-child {
+        border-bottom: none;
+      }
+      li .name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      li.rejected .name {
+        text-decoration: line-through;
+        opacity: 0.7;
+      }
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .field label {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--fg-muted);
+      }
+      .actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <div>
+      <h1 id="title">Send files to a chat</h1>
+      <p class="muted small">They're uploaded the same way as attaching them in the composer.</p>
+    </div>
+    <ul id="files" aria-label="Files"></ul>
+    <div class="field">
+      <label for="target">Send to</label>
+      <select id="target"></select>
+    </div>
+    <div class="field" id="persona-field">
+      <label for="persona">Persona</label>
+      <select id="persona"></select>
+    </div>
+    <div class="field">
+      <label for="message">Message (optional)</label>
+      <textarea id="message" rows="3" placeholder="What should it do with them?"></textarea>
+    </div>
+    <p class="error" id="error" role="alert"></p>
+    <div class="actions">
+      <button type="button" id="cancel">Cancel</button>
+      <button type="button" class="primary" id="send">Send</button>
+    </div>
+    <script src="./send-files.js"></script>
+  </body>
+</html>

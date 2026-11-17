@@ -9,7 +9,8 @@ export interface InboxItemSummary {
   resolved: boolean;
   read: boolean;
   needs_you: boolean;
-  agent?: { name?: string };
+  agent?: { name?: string; handle?: string };
+  run_id?: string;
 }
 
 export interface DesktopAlert {
@@ -17,6 +18,13 @@ export interface DesktopAlert {
   body: string;
   href: string;
   signature: string;
+  /** Inbox kind, or "run_finished" for run-finished alerts. */
+  kind: string;
+  /** Inbox item id (e.g. "approval:<uuid>"); empty for run-finished alerts. */
+  itemId: string;
+  runId?: string;
+  ticketKey?: string;
+  agentHandle?: string;
 }
 
 const KIND_LABELS: Record<string, string> = {
@@ -107,6 +115,11 @@ export function collectNewNotifications(
       body: bodyParts.join(" · ") || "Open in Vesper",
       href: item.href || "/inbox",
       signature,
+      kind: item.kind,
+      itemId: item.id,
+      ...(item.run_id ? { runId: item.run_id } : {}),
+      ...(item.ticket_key ? { ticketKey: item.ticket_key } : {}),
+      ...(item.agent?.handle ? { agentHandle: item.agent.handle } : {}),
     });
   }
 
@@ -124,6 +137,10 @@ export interface InboxMonitorDeps {
   onBadgeChange: (badge: string, count: number) => void;
   onAlert: (alert: DesktopAlert) => void;
   shouldNotify?: (href: string) => boolean;
+  /** Every successful inbox read, for the tray's Needs-you list. */
+  onItems?: (items: readonly InboxItemSummary[]) => void;
+  /** Every SSE event type seen, so other monitors (runs) can refresh without their own stream. */
+  onServerEvent?: (eventType: string) => void;
   pollIntervalMs?: number;
 }
 
@@ -199,6 +216,7 @@ export class InboxMonitor {
       const { badgeCount, alerts } = collectNewNotifications(this.seenSignatures, items, this.baselineInitialized);
       this.baselineInitialized = true;
       this.deps.onBadgeChange(formatDockBadge(badgeCount), badgeCount);
+      this.deps.onItems?.(items);
 
       for (const alert of alerts) {
         if (!this.deps.shouldNotify || this.deps.shouldNotify(alert.href)) {
@@ -250,8 +268,11 @@ export class InboxMonitor {
               if (!raw) continue;
               try {
                 const payload = JSON.parse(raw) as { type?: unknown };
-                if (typeof payload.type === "string" && shouldRefreshInboxForSseEvent(payload.type)) {
-                  void this.refreshNow();
+                if (typeof payload.type === "string") {
+                  this.deps.onServerEvent?.(payload.type);
+                  if (shouldRefreshInboxForSseEvent(payload.type)) {
+                    void this.refreshNow();
+                  }
                 }
               } catch {
                 // Ignore malformed SSE frames.
@@ -274,5 +295,130 @@ export class InboxMonitor {
       this.sseReconnectTimer = undefined;
       this.connectSse();
     }, 5000);
+  }
+}
+
+// ---------------------------------------------------------------- policy (LAZYAGENTS-241)
+
+export interface NotificationPolicy {
+  enabled: boolean;
+  kinds: Record<string, boolean>;
+  actions: boolean;
+  groupByWork: boolean;
+  runFinished: boolean;
+  sound: boolean;
+  quietHours: { enabled: boolean; start: string; end: string };
+}
+
+function minutesOf(hhmm: string): number {
+  const [h, m] = hhmm.split(":").map(Number);
+  return h * 60 + m;
+}
+
+/**
+ * Whether `now` (local time) falls in the quiet window. The window may cross
+ * midnight (22:00–08:00). Equal start and end means no quiet time at all.
+ */
+export function isWithinQuietHours(now: Date, quiet: { enabled: boolean; start: string; end: string }): boolean {
+  if (!quiet.enabled) return false;
+  const start = minutesOf(quiet.start);
+  const end = minutesOf(quiet.end);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start === end) return false;
+  const cur = now.getHours() * 60 + now.getMinutes();
+  return start < end ? cur >= start && cur < end : cur >= start || cur < end;
+}
+
+/** Whether an alert should be shown at all. Suppressed alerts are still marked seen, so they never fire late. */
+export function shouldShowAlert(alert: DesktopAlert, policy: NotificationPolicy, now: Date): boolean {
+  if (!policy.enabled) return false;
+  if (isWithinQuietHours(now, policy.quietHours)) return false;
+  if (alert.kind === "run_finished") return policy.runFinished;
+  return policy.kinds[alert.kind] !== false;
+}
+
+/**
+ * Notification Center thread for an alert: everything about one run (or, when
+ * there's no run, one ticket) stacks together. Null when grouping is off or
+ * there's nothing to group by.
+ */
+export function alertGroupId(alert: DesktopAlert, policy: Pick<NotificationPolicy, "groupByWork">): string | null {
+  if (!policy.groupByWork) return null;
+  if (alert.ticketKey) return `ticket:${alert.ticketKey}`;
+  if (alert.runId) return `run:${alert.runId}`;
+  return null;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export type AlertAction = { type: "decide"; labels: [string, string] } | { type: "reply"; placeholder: string } | { type: "none" };
+
+/**
+ * Which inline controls a notification gets. Approvals of every kind get
+ * Approve/Decline; a run's question gets an inline Reply (sent as a ticket
+ * comment mentioning the agent, the same way the run page replies).
+ */
+export function alertActionFor(alert: DesktopAlert, policy: Pick<NotificationPolicy, "actions">): AlertAction {
+  if (!policy.actions) return { type: "none" };
+  if (decisionRequest(alert, "approve")) return { type: "decide", labels: ["Approve", "Decline"] };
+  if (alert.kind === "question" && alert.ticketKey && alert.agentHandle) {
+    return { type: "reply", placeholder: `Reply to ${alert.agentHandle}` };
+  }
+  return { type: "none" };
+}
+
+export interface ApiRequest {
+  method: "POST";
+  path: string;
+  body: Record<string, unknown>;
+}
+
+/** The existing API call that approves or declines an inbox item, or null when it can't be decided from a notification. */
+export function decisionRequest(alert: DesktopAlert, decision: "approve" | "deny"): ApiRequest | null {
+  const [prefix, id, ...rest] = alert.itemId.split(":");
+  if (rest.length > 0 || !id || !UUID_RE.test(id)) return null;
+  switch (prefix) {
+    case "approval":
+      if (alert.kind !== "approval") return null;
+      return { method: "POST", path: `/api/v1/approvals/${id}/${decision}`, body: {} };
+    case "connector_approval":
+      if (alert.kind !== "connector_approval") return null;
+      return { method: "POST", path: `/api/v1/connector-approvals/${id}`, body: { decision: decision === "approve" ? "allow" : "deny" } };
+    case "secret_approval":
+      if (alert.kind !== "secret_approval") return null;
+      return { method: "POST", path: `/api/v1/api-secret-approvals/${id}`, body: { decision: decision === "approve" ? "allow" : "deny" } };
+    default:
+      return null;
+  }
+}
+
+const TICKET_KEY_RE = /^[A-Z][A-Z0-9_]{0,31}-[1-9][0-9]{0,8}$/;
+const HANDLE_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
+
+/** A reply to a run's question: a ticket comment mentioning the agent (as web/lib/run-question.ts withMention does). */
+export function replyRequest(alert: DesktopAlert, reply: string): ApiRequest | null {
+  const text = reply.trim();
+  if (!text || text.length > 20_000) return null;
+  if (alert.kind !== "question" || !alert.ticketKey || !alert.agentHandle) return null;
+  if (!TICKET_KEY_RE.test(alert.ticketKey) || !HANDLE_RE.test(alert.agentHandle)) return null;
+  const escaped = alert.agentHandle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const mentioned = new RegExp(`(^|[^\\w@])@${escaped}(?![\\w-])`, "i").test(text);
+  return {
+    method: "POST",
+    path: `/api/v1/tickets/${alert.ticketKey}/comments`,
+    body: { body_md: mentioned ? text : `@${alert.agentHandle} ${text}` },
+  };
+}
+
+/** The Touch ID scope (LAZYAGENTS-248) an inbox approval kind falls under. */
+export function touchIdScopeForKind(kind: string): "run_approvals" | "connector_approvals" | "secret_approvals" | null {
+  switch (kind) {
+    case "approval":
+      return "run_approvals";
+    case "connector_approval":
+      return "connector_approvals";
+    case "secret_approval":
+      return "secret_approvals";
+    default:
+      return null;
   }
 }

@@ -4,6 +4,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, unwrap, type Schemas } from "./client";
+import { confirmApprovalLocally } from "../desktop-bridge";
 
 export type Connector = Schemas["Connector"];
 export type NewConnector = Schemas["NewConnector"];
@@ -70,8 +71,10 @@ export function useConnectorApprovals(chatId: string) {
 export function useDecideConnectorApproval(chatId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { id: string; decision: Schemas["ConnectorApprovalDecision"]["decision"] }) =>
-      unwrap(api.POST("/connector-approvals/{id}", { params: { path: { id: v.id } }, body: { decision: v.decision } })),
+    mutationFn: async (v: { id: string; decision: Schemas["ConnectorApprovalDecision"]["decision"] }) => {
+      if (v.decision !== "deny") await confirmApprovalLocally("connector_approvals");
+      return unwrap(api.POST("/connector-approvals/{id}", { params: { path: { id: v.id } }, body: { decision: v.decision } }));
+    },
     onSettled: () => qc.invalidateQueries({ queryKey: ["connector-approvals", chatId] }),
   });
 }

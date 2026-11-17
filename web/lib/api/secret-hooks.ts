@@ -4,6 +4,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, unwrap, type Schemas } from "./client";
+import { confirmApprovalLocally } from "../desktop-bridge";
 
 export type ApiSecret = Schemas["ApiSecret"];
 export type NewApiSecret = Schemas["NewApiSecret"];
@@ -88,8 +89,10 @@ export function useApiSecretApprovals(chatId: string) {
 export function useDecideApiSecretApproval(chatId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { id: string; decision: Schemas["ConnectorApprovalDecision"]["decision"] }) =>
-      unwrap(api.POST("/api-secret-approvals/{id}", { params: { path: { id: v.id } }, body: { decision: v.decision } })),
+    mutationFn: async (v: { id: string; decision: Schemas["ConnectorApprovalDecision"]["decision"] }) => {
+      if (v.decision !== "deny") await confirmApprovalLocally("secret_approvals");
+      return unwrap(api.POST("/api-secret-approvals/{id}", { params: { path: { id: v.id } }, body: { decision: v.decision } }));
+    },
     onSettled: () => Promise.all([qc.invalidateQueries({ queryKey: ["api-secret-approvals", chatId] }), qc.invalidateQueries({ queryKey: secretKey })]),
   });
 }
