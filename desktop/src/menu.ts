@@ -12,7 +12,12 @@ export interface MenuActions {
   goBack: (focusedWin?: BrowserWindow) => void;
   goForward: (focusedWin?: BrowserWindow) => void;
   openSettings: () => void;
+  openServerSettings: () => void;
   importBackup: () => void;
+  quickCapture: () => void;
+  restartStack: () => void;
+  showLogs: () => void;
+  checkForUpdates: () => void;
 }
 
 export function buildApplicationMenu(actions: MenuActions): void {
@@ -33,9 +38,22 @@ export function buildApplicationMenu(actions: MenuActions): void {
               { role: "about" as const },
               { type: "separator" as const },
               {
+                label: "Check for Updates…",
+                click: () => actions.checkForUpdates(),
+              },
+              {
                 label: "Settings…",
                 accelerator: "CmdOrCtrl+,",
                 click: () => actions.openSettings(),
+              },
+              { type: "separator" as const },
+              {
+                label: "Restart Stack",
+                click: () => actions.restartStack(),
+              },
+              {
+                label: "Show Logs…",
+                click: () => actions.showLogs(),
               },
               { type: "separator" as const },
               { role: "services" as const },
@@ -67,6 +85,11 @@ export function buildApplicationMenu(actions: MenuActions): void {
           accelerator: "CmdOrCtrl+Shift+T",
           click: (_item, win) => actions.reopenClosedTab(win instanceof BrowserWindow ? win : undefined),
         },
+        {
+          // Display only: the global shortcut is registered in Settings, so the accelerator isn't bound here.
+          label: "Quick Capture…",
+          click: () => actions.quickCapture(),
+        },
         { type: "separator" },
         {
           label: "Import Backup…",
@@ -75,7 +98,7 @@ export function buildApplicationMenu(actions: MenuActions): void {
         {
           label: "Change Server URL…",
           accelerator: isMac ? undefined : "CmdOrCtrl+,",
-          click: () => actions.openSettings(),
+          click: () => actions.openServerSettings(),
         },
         { type: "separator" },
         {
@@ -166,7 +189,11 @@ export function buildApplicationMenu(actions: MenuActions): void {
       submenu: [
         {
           label: "Change Server URL…",
-          click: () => actions.openSettings(),
+          click: () => actions.openServerSettings(),
+        },
+        {
+          label: "Show Logs…",
+          click: () => actions.showLogs(),
         },
         {
           label: "Vesper Repository & Docs",

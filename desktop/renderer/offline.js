@@ -312,6 +312,51 @@
     });
   }
 
+  // Stack health (LAZYAGENTS-246): first run, image download, and named failures.
+  const healthBox = document.getElementById("health");
+  const healthTitle = document.getElementById("health-title");
+  const healthMessage = document.getElementById("health-message");
+  const healthStep = document.getElementById("health-step");
+  const healthProgress = document.getElementById("health-progress");
+  const healthRestart = document.getElementById("health-restart");
+  const healthLogs = document.getElementById("health-logs");
+
+  function renderHealth(h) {
+    if (!h || isImportMode || h.phase === "running" || h.phase === "remote") {
+      healthBox.classList.add("hidden");
+      return;
+    }
+    healthBox.classList.remove("hidden");
+    healthBox.classList.toggle("error", h.phase === "error" || h.phase === "degraded");
+    healthTitle.textContent = h.title;
+    healthMessage.textContent = h.message || "";
+    healthStep.textContent = h.nextStep || "";
+    const p = h.progress;
+    healthProgress.classList.toggle("hidden", !(p && p.total > 0));
+    if (p && p.total > 0) {
+      healthProgress.max = p.total;
+      healthProgress.value = p.done;
+    }
+    const actions = h.actions || [];
+    healthRestart.classList.toggle("hidden", actions.indexOf("restart") < 0);
+    healthLogs.classList.toggle("hidden", actions.indexOf("logs") < 0);
+  }
+
+  if (api.getHealth) {
+    healthRestart.addEventListener("click", function () {
+      healthRestart.disabled = true;
+      void api.restartStack().finally(function () {
+        healthRestart.disabled = false;
+        void api.retryConnection().then(renderState);
+      });
+    });
+    healthLogs.addEventListener("click", function () {
+      void api.openLogs();
+    });
+    void api.getHealth().then(renderHealth);
+    api.onHealth(renderHealth);
+  }
+
   api.onStackLog(function (chunk) {
     stackLog.classList.remove("hidden");
     stackLog.textContent += chunk;

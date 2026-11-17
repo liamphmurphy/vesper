@@ -1,0 +1,320 @@
+/* Shared styles for the desktop's own windows: Settings, Quick Capture, Send to Vesper, Logs.
+   Same palette as offline.html (Dusk, light and dark). */
+:root {
+  color-scheme: light dark;
+  --bg: #141221;
+  --surface: #1d1a2f;
+  --surface-2: #25213b;
+  --border: rgba(247, 245, 255, 0.12);
+  --fg: #f7f5ff;
+  --fg-muted: #b3add0;
+  --accent: #8c78ec;
+  --accent-hover: #9f8ef2;
+  --amber: #f2a97e;
+  --green: #6ad4a4;
+  --red: #f27e8d;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f6f4fc;
+    --surface: #ffffff;
+    --surface-2: #f1eef9;
+    --border: rgba(28, 23, 69, 0.12);
+    --fg: #1c1745;
+    --fg-muted: #5a547a;
+    --accent: #6854c7;
+    --accent-hover: #5844b8;
+    --amber: #c96c35;
+    --green: #1e8f5c;
+    --red: #c43b4d;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
+  font-size: 13px;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+h1 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+h2 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+p {
+  margin: 0;
+}
+
+.muted {
+  color: var(--fg-muted);
+}
+
+.small {
+  font-size: 12px;
+}
+
+button {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 8px;
+  padding: 7px 13px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--fg);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+button:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: #ffffff;
+}
+
+button.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+button.link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+input[type="text"],
+input[type="time"],
+input[type="number"],
+select,
+textarea {
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--fg);
+  outline: none;
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+textarea {
+  resize: none;
+  line-height: 1.45;
+}
+
+.error {
+  color: var(--red);
+  font-size: 12px;
+}
+
+/* Status lines only take space when they say something. */
+.hint:empty,
+.error:empty {
+  display: none;
+}
+
+input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+.ok {
+  color: var(--green);
+  font-size: 12px;
+}
+
+.hidden {
+  display: none !important;
+}
+
+kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+/* Settings rows */
+.row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.row:last-child {
+  border-bottom: none;
+}
+
+.row .text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.row .label {
+  font-weight: 600;
+}
+
+.row .hint {
+  color: var(--fg-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.row.sub {
+  padding-left: 18px;
+}
+
+.row.disabled .label,
+.row.disabled .hint {
+  opacity: 0.5;
+}
+
+/* macOS-style switch */
+.switch {
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 20px;
+}
+
+.switch input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+.switch span {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: rgba(128, 122, 160, 0.35);
+  border: 1px solid var(--border);
+  transition: background 120ms ease;
+  pointer-events: none;
+}
+
+.switch span::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  transition: transform 120ms ease;
+}
+
+.switch input:checked + span {
+  background: var(--accent);
+  border-color: transparent;
+}
+
+.switch input:checked + span::after {
+  transform: translateX(14px);
+}
+
+.switch input:disabled + span {
+  opacity: 0.5;
+}
+
+.switch input:focus-visible + span {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  flex: none;
+}
+
+.segmented button {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 6px 11px;
+  font-weight: 500;
+}
+
+.segmented button[aria-pressed="true"] {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--amber);
+}
+
+.dot.green {
+  background: var(--green);
+}
+
+.dot.red {
+  background: var(--red);
+}
