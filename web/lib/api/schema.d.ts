@@ -1101,6 +1101,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runner/slot-limit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Cap how many runs the runners take at once, or lift the cap
+         * @description A temporary cap below each runner's max_concurrent, for the desktop
+         *     app to ease off while the Mac is hot or in Low Power Mode. Each runner
+         *     reads it on its next heartbeat (within about 10 seconds). Runs already
+         *     going finish; the runner only claims less. The cap is kept on the
+         *     runners' registrations, so a runner that restarts or registers later
+         *     starts uncapped. null lifts it.
+         */
+        put: operations["setRunnerSlotLimit"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/image-engine": {
         parameters: {
             query?: never;
@@ -7157,6 +7182,8 @@ export interface components {
             heartbeat_at: string;
             /** @description Where this runner keeps host-folder workspaces (RUNNER_HOST_WORKSPACES_DIR); absent when it has none */
             host_workspaces_dir?: string;
+            /** @description A temporary cap below max_concurrent (PUT /runner/slot-limit); absent when none */
+            slot_limit?: number;
         };
         DriveBackupInput: {
             enabled: boolean;
@@ -7221,6 +7248,7 @@ export interface components {
             host_folder_workspaces: boolean;
             online: boolean;
             runners: components["schemas"]["RunnerInfo"][];
+            /** @description Runs the online runners take at once: each one's max_concurrent, or its slot_limit while lower */
             slots: number;
             /** @description Runner slots in use */
             busy: number;
@@ -11658,6 +11686,33 @@ export interface operations {
         };
         responses: {
             /** @description Status with the new setting */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    setRunnerSlotLimit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    limit: number | null;
+                };
+            };
+        };
+        responses: {
+            /** @description Status with the cap applied */
             200: {
                 headers: {
                     [name: string]: unknown;

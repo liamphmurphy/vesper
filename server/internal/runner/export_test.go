@@ -24,3 +24,13 @@ func (r *Runner) TickChecks(ctx context.Context) { r.tickChecks(ctx) }
 func (r *Runner) PullPlaygroundImages(ctx context.Context, pb PlaygroundBackend) {
 	r.pullPlaygroundImages(ctx, pb)
 }
+
+// Heartbeat sends one heartbeat, which also reads back the slot limit.
+func (r *Runner) Heartbeat(ctx context.Context) { r.heartbeat(ctx) }
+
+// Capacity is how many runs the runner would take at once now.
+func (r *Runner) Capacity() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.capacity()
+}

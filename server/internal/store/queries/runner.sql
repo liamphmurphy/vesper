@@ -176,6 +176,15 @@ ON CONFLICT (id) DO UPDATE SET backend = EXCLUDED.backend, max_concurrent = EXCL
   running = EXCLUDED.running, version = EXCLUDED.version, host_workspaces_dir = EXCLUDED.host_workspaces_dir,
   heartbeat_at = now();
 
+-- name: RunnerSlotLimit :one
+-- The cap set with SetRunnerSlotLimit; NULL means none.
+SELECT slot_limit FROM runners WHERE id = $1;
+
+-- name: SetRunnerSlotLimit :exec
+-- Caps (or, with NULL, uncaps) every registered runner. Read back on each
+-- heartbeat; a runner that registers later starts uncapped.
+UPDATE runners SET slot_limit = sqlc.narg(slot_limit);
+
 -- name: DeleteRunner :exec
 DELETE FROM runners WHERE id = $1;
 

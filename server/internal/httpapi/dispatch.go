@@ -42,8 +42,14 @@ func (s *Server) runnerStatus(ctx context.Context) (api.RunnerStatus, error) {
 		if r.HostWorkspacesDir != "" {
 			info.HostWorkspacesDir = &r.HostWorkspacesDir
 		}
+		slots := int(r.MaxConcurrent)
+		if r.SlotLimit != nil {
+			limit := int(*r.SlotLimit)
+			info.SlotLimit = &limit
+			slots = min(slots, limit)
+		}
 		out.Runners = append(out.Runners, info)
-		out.Slots += int(r.MaxConcurrent)
+		out.Slots += slots
 		out.Busy += int(r.Running)
 	}
 	out.Online = len(rs) > 0
@@ -69,6 +75,28 @@ func (s *Server) UpdateRunnerSettings(ctx context.Context, req api.UpdateRunnerS
 	}
 	st, err := s.runnerStatus(ctx)
 	return api.UpdateRunnerSettings200JSONResponse(st), err
+}
+
+// SetRunnerSlotLimit caps (or uncaps) the runners for the desktop's thermal
+// back-off. Runners apply it on their next heartbeat.
+func (s *Server) SetRunnerSlotLimit(ctx context.Context, req api.SetRunnerSlotLimitRequestObject) (api.SetRunnerSlotLimitResponseObject, error) {
+	if !req.Body.Limit.IsSpecified() {
+		return nil, apperr.Invalid("limit", "required: a number from 1 to 32, or null")
+	}
+	var limit *int32
+	if !req.Body.Limit.IsNull() {
+		n := req.Body.Limit.MustGet()
+		if n < 1 || n > 32 {
+			return nil, apperr.Invalid("limit", "must be between 1 and 32, or null")
+		}
+		v := int32(n)
+		limit = &v
+	}
+	if err := s.Q.SetRunnerSlotLimit(ctx, limit); err != nil {
+		return nil, err
+	}
+	st, err := s.runnerStatus(ctx)
+	return api.SetRunnerSlotLimit200JSONResponse(st), err
 }
 
 func (s *Server) GetDispatchPreview(ctx context.Context, req api.GetDispatchPreviewRequestObject) (api.GetDispatchPreviewResponseObject, error) {
