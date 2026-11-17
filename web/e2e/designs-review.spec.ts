@@ -147,7 +147,8 @@ test.describe("@design-review", () => {
     const direct = page.getByTestId("direct-edit");
     await direct.click();
     await page.getByRole("menuitemradio", { name: /Edits directly/ }).click();
-    await expect(direct).toContainText("edits directly");
+    // The chip reads "Direct ▾"; its accessible name says who edits directly.
+    await expect(direct).toHaveAccessibleName(/edits directly$/);
     await expect.poll(async () => (await get(`/designs/${id}`)).settings.direct_edit).toBe(true);
     const seqBefore = (await head(id)).seq;
     await pick(kept);

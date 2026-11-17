@@ -60,7 +60,8 @@ test("Kanban: agent estimates via MCP, board shows it live, person edits to done
   await page.goto(`/board?project=E2E&epic=${epic.id}`);
   const card = page.getByRole("article", { name: `Ticket ${target.key}` });
   await expect(page.getByTestId("column-todo").getByRole("article", { name: `Ticket ${target.key}` })).toBeVisible();
-  await expect(card).toContainText("unestimated");
+  // An unestimated card shows no points (it no longer says "unestimated").
+  await expect(card).not.toContainText(/\d+ pt/);
 
   // --- Agent: claim its own ticket, estimate a sibling, tick epic criterion 1
   const call = await mcpSession(request, token);
