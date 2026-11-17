@@ -56,6 +56,10 @@ npm ci
 npm run dmg                 # or: npm run dmg:universal
 ```
 
+### Publishing a release
+
+Push a version tag (`git tag v0.2.0 && git push origin v0.2.0`). The `desktop-release` workflow builds the kernel and agent image on Linux arm64, the DMG on macOS, and publishes a GitHub release with both; installed apps with the daily update check on are told about it. Details: [`docs/dev/desktop-updates.md`](../docs/dev/desktop-updates.md).
+
 ### Installing an unsigned personal build (Gatekeeper)
 
 Personal local builds are unsigned (`CSC_IDENTITY_AUTO_DISCOVERY=false`). When you drag `Vesper.app` into `/Applications` and launch it for the first time, macOS Gatekeeper may warn that the app is from an unidentified developer:

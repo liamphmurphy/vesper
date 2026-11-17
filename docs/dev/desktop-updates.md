@@ -1,8 +1,8 @@
 # Desktop: how Vesper.app updates (LAZYAGENTS-249)
 
-Status: **proposed; needs Liam's approval.** The implementation in this PR is
-the low-risk part of the recommended option, off by default, so approving a
-different option only means changing or removing it.
+Status: **option A in use** (Liam, 2026-11-17: "the release workflow approach
+for now"). Releases are published from version tags (see "Publishing a
+release"); the in-app check is still off by default. Option B is still open.
 
 ## The constraint
 
@@ -50,9 +50,29 @@ ever distributed beyond Liam's machines, do B.
 - **A failed update leaves a working app**: there's no in-place swap, so the
   old app keeps working until the person replaces it.
 
+## Publishing a release
+
+`.github/workflows/desktop-release.yml` publishes from a version tag:
+
+```sh
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+- The tag sets the app version (`desktop/package.json` stays as it is in
+  git). A suffix, like `v0.2.0-rc.1`, publishes a pre-release, which
+  installed apps don't announce: use it to try a build first.
+- The release carries `Vesper-arm64.dmg` (+ `.sha256`) and
+  `agent-base.erofs` (+ `.sha256`). A packaged app downloads the agent
+  image from its own version's release on first launch, checked against
+  the checksum bundled in the DMG, so a fresh Mac needs nothing else.
+  After an upgrade the bundled checksum changes, so the new image is
+  downloaded once.
+- To rebuild a published version (a broken build, a re-run), run the
+  workflow by hand with the tag: it replaces the release's files.
+- The kernel is cached by its inputs; the agent image is rebuilt every
+  release. The build fails if the image passes GitHub's 2 GiB asset limit.
+
 ## Not done
 
-- No release feed exists yet: GitHub releases for `liamphmurphy/vesper` would
-  need a DMG attached per version (a CI job, or `make desktop-dmg` + `gh
-  release create`). Until then a check finds nothing.
-- Option B is unbuilt.
+- Option B (Developer ID, notarisation, self-installing updates) is unbuilt.
+- The workflow hasn't run yet: its first tag is its first test.
