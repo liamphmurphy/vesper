@@ -182,12 +182,36 @@ export interface LocalStackOptions {
   onLog?: (line: string) => void;
   /** Called when the process exits without stop() having been called (a crash). */
   onUnexpectedExit?: (exit: StackExit) => void;
+  /**
+   * Where to download agent-base.erofs on first launch when it isn't on this
+   * Mac: this build's GitHub release asset. VESPER_ROOTFS_URL in the
+   * environment still wins.
+   */
+  rootfsUrl?: string;
 }
 
 export interface StackExit {
   code: number | null;
   signal: string | null;
   stderrTail: string;
+}
+
+/** The environment `vesper app` runs with. */
+export function buildStackEnv(opts: LocalStackOptions, addr: string, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    ...base,
+    SECRETS_KEY: opts.secretsKey,
+    VESPER_APP_DATA_DIR: opts.userDataDir,
+    VESPER_APP_ADDR: addr,
+    VESPER_POSTGRES_BIN_DIR: opts.resources.postgresBinDir,
+    ...(opts.resources.kernelPath ? { VESPER_KERNEL_PATH: opts.resources.kernelPath } : {}),
+    ...(opts.resources.webDistDir ? { VESPER_WEB_DIST_DIR: opts.resources.webDistDir } : {}),
+    ...(opts.nodeBin ? { VESPER_NODE_BIN: opts.nodeBin } : {}),
+    ...(opts.nodeRunAsNode ? { VESPER_NODE_RUN_AS_NODE: "1" } : {}),
+    ...(opts.rootfsUrl && !base.VESPER_ROOTFS_URL?.trim() ? { VESPER_ROOTFS_URL: opts.rootfsUrl } : {}),
+  };
+  delete env.VESPER_NO_SIGNIN;
+  return env;
 }
 
 export class LocalVesperStack {
@@ -231,18 +255,7 @@ export class LocalVesperStack {
 
     const port = this.opts.port ?? 8080;
     const addr = `127.0.0.1:${port}`;
-    const env: NodeJS.ProcessEnv = {
-      ...process.env,
-      SECRETS_KEY: this.opts.secretsKey,
-      VESPER_APP_DATA_DIR: this.opts.userDataDir,
-      VESPER_APP_ADDR: addr,
-      VESPER_POSTGRES_BIN_DIR: this.opts.resources.postgresBinDir,
-      ...(this.opts.resources.kernelPath ? { VESPER_KERNEL_PATH: this.opts.resources.kernelPath } : {}),
-      ...(this.opts.resources.webDistDir ? { VESPER_WEB_DIST_DIR: this.opts.resources.webDistDir } : {}),
-      ...(this.opts.nodeBin ? { VESPER_NODE_BIN: this.opts.nodeBin } : {}),
-      ...(this.opts.nodeRunAsNode ? { VESPER_NODE_RUN_AS_NODE: "1" } : {}),
-    };
-    delete env.VESPER_NO_SIGNIN;
+    const env = buildStackEnv(this.opts, addr);
 
     const child = spawn(this.opts.resources.vesperBin, ["app", "-data-dir", this.opts.userDataDir, "-addr", addr], {
       env,

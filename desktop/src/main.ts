@@ -16,6 +16,7 @@ import { checkDockerAvailability, isLocalhostUrl, isValidVesperCheckout, startLo
 import { buildApplicationMenu } from "./menu";
 import { findVesperLinkInArgv } from "./deeplink";
 import { NativeFeatures } from "./native";
+import { releaseAssetUrl } from "./updates";
 import { InboxMonitor } from "./notifications";
 import type {
   DesktopConnectionState,
@@ -1146,6 +1147,8 @@ async function startBundledStackIfLocalhost(): Promise<void> {
       onUnexpectedExit: (exit) => {
         if (localStack === stack) native.stackCrashed(exit);
       },
+      // A downloaded DMG has no agent image on a fresh Mac; fetch this version's from its release.
+      ...(app.isPackaged ? { rootfsUrl: releaseAssetUrl(app.getVersion(), "agent-base.erofs") ?? undefined } : {}),
     });
     localStack = stack;
   }

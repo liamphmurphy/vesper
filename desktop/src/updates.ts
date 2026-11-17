@@ -87,3 +87,17 @@ export function versionTransition(lastVersion: string | undefined, currentVersio
 export function isCheckDue(lastCheckedAt: number | undefined, now: number, intervalMs = 24 * 60 * 60 * 1000): boolean {
   return !lastCheckedAt || !Number.isFinite(lastCheckedAt) || now - lastCheckedAt >= intervalMs || lastCheckedAt > now;
 }
+
+/** The GitHub repository that publishes Vesper.app releases (.github/workflows/desktop-release.yml). */
+export const RELEASE_REPO = "liamphmurphy/vesper";
+
+/**
+ * The download URL of a file attached to this version's release, e.g.
+ * agent-base.erofs for v0.2.0. Null for a version that isn't plain semver
+ * (a dev build) or a name that isn't a plain file name.
+ */
+export function releaseAssetUrl(version: string, assetName: string, repo = RELEASE_REPO): string | null {
+  if (!parseVersion(version) || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(assetName) || !/^[\w.-]+\/[\w.-]+$/.test(repo)) return null;
+  const tag = version.startsWith("v") ? version : `v${version}`;
+  return `https://github.com/${repo}/releases/download/${tag}/${assetName}`;
+}
