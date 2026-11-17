@@ -738,6 +738,7 @@ function setupMenu() {
     openServerSettings: () => openSettingsWindow(),
     importBackup: () => openImportWindow(),
     quickCapture: () => native.openCapture(),
+    screenshot: () => void native.takeScreenshot(),
     restartStack: () => void native.restartStack(),
     showLogs: () => native.openLogs(),
     checkForUpdates: () => void manualUpdateCheck(),

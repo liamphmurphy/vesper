@@ -32,7 +32,7 @@ export function apiErrorMessage(status: number, body: unknown): string {
 export async function apiRequest<T = unknown>(
   fetchFn: FetchFn,
   serverUrl: string,
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "PUT",
   apiPath: string,
   body?: unknown,
   opts: { timeoutMs?: number; rawBody?: { data: Buffer; contentType: string } } = {},

@@ -1417,6 +1417,35 @@ paths:
               schema: { $ref: "#/components/schemas/RunnerStatus" }
         default: { $ref: "#/components/responses/Error" }
 
+  /runner/slot-limit:
+    put:
+      operationId: setRunnerSlotLimit
+      summary: Cap how many runs the runners take at once, or lift the cap
+      description: |
+        A temporary cap below each runner's max_concurrent, for the desktop
+        app to ease off while the Mac is hot or in Low Power Mode. Each runner
+        reads it on its next heartbeat (within about 10 seconds). Runs already
+        going finish; the runner only claims less. The cap is kept on the
+        runners' registrations, so a runner that restarts or registers later
+        starts uncapped. null lifts it.
+      tags: [runs]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [limit]
+              properties:
+                limit: { type: integer, minimum: 1, maximum: 32, nullable: true }
+      responses:
+        "200":
+          description: Status with the cap applied
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunnerStatus" }
+        default: { $ref: "#/components/responses/Error" }
+
   /image-engine:
     get:
       operationId: getImageEngine
@@ -8104,6 +8133,7 @@ components:
         version: { type: string }
         heartbeat_at: { type: string, format: date-time }
         host_workspaces_dir: { type: string, description: "Where this runner keeps host-folder workspaces (RUNNER_HOST_WORKSPACES_DIR); absent when it has none" }
+        slot_limit: { type: integer, description: "A temporary cap below max_concurrent (PUT /runner/slot-limit); absent when none" }
     DriveBackupInput:
       type: object
       required: [enabled, folder_id, at_time, timezone, retention, revision]
@@ -8155,7 +8185,7 @@ components:
         host_folder_workspaces: { type: boolean, description: "New runs keep their checkout in a host folder when their runner has host_workspaces_dir" }
         online: { type: boolean }
         runners: { type: array, items: { $ref: "#/components/schemas/RunnerInfo" } }
-        slots: { type: integer }
+        slots: { type: integer, description: "Runs the online runners take at once: each one's max_concurrent, or its slot_limit while lower" }
         busy: { type: integer, description: Runner slots in use, Personal Assistant chat turns included }
         live: { type: integer, description: "Ticket and planning runs starting or running: the Runs nav count (chat runs live in Chat)" }
         queued: { type: integer }

@@ -20,6 +20,10 @@ ID (`web/lib/desktop-bridge.ts`).
 | Files in | 247 | `drop.ts`, `services.ts` | `native.ts` (`handleOpenFile`), `main.ts` (`open-file`, file:// drops) | `renderer/send-files.*` |
 | Touch ID | 248 | `biometrics.ts` | `native.ts` (`confirmTouchId`) | Settings › Security; web approve hooks |
 | Updates | 249 | `updates.ts`, `appstate.ts` | `native.ts` (`checkForUpdates`), `main.ts` (downgrade guard) | Settings › Updates; [desktop-updates.md](desktop-updates.md) |
+| Screenshot to Chat | follow-up | `screenshot.ts` | `native.ts` (`takeScreenshot`, `offerFiles`) | Settings › Shortcuts; tray; File menu |
+| Backups | follow-up | `backups.ts` | `native.ts` (`applyTimeMachine`, `exportNow`) | Settings › Backups |
+| Ease off when hot | follow-up | `thermal.ts`; server `PUT /runner/slot-limit` | `native.ts` (`setupThermal`, `applySlotLimit`) | Settings › Power & Stack; tray notice |
+| Open workspace folder | follow-up | `workspace-open.ts` | `native.ts` (`openWorkspaceMenu`) | Settings › Workspaces; web folder chip and chat title menu |
 
 ## Settings and defaults
 
@@ -44,6 +48,11 @@ opt-in.
 | Low disk warning | 10 GB |
 | Touch ID for approvals | off; all four scopes once on |
 | Daily update check | off |
+| Screenshot to Chat | off, ⌥⇧S |
+| Keep VM disks and caches out of Time Machine | on |
+| Scheduled export to a folder | off; daily, keep 7 |
+| Take fewer runs when hot / Low Power Mode | on |
+| Terminal app / editor | Terminal / `nvim` in Terminal |
 
 ## Security notes
 
@@ -68,9 +77,20 @@ opt-in.
   approvals (passkeys/WebAuthn) are a separate decision. A cancelled or
   failed prompt fails closed; a Mac that can't prompt (no sensor, clamshell,
   nothing enrolled) falls back to the normal click.
-- The `vesper:confirm-approval` IPC is only answered for frames on the
-  configured server's origin; every other new IPC only for the desktop's own
-  `file://` pages.
+- The `vesper:confirm-approval` and `vesper:open-workspace-menu` IPCs are only
+  answered for frames on the configured server's origin; every other new IPC
+  only for the desktop's own `file://` pages.
+- **Opening workspace folders**: the path comes from the page, so the desktop
+  resolves it (following symlinks) and opens it only if it's a folder strictly
+  inside a live runner's `host_workspaces_dir` from `GET /runner`. The
+  terminal-editor command is limited to plain words; the folder is
+  shell-quoted and the whole line is an AppleScript string literal.
+- **Exports** contain everything, with secrets sealed by this Mac's
+  `SECRETS_KEY`. They're written 0600, and only files named
+  `vesper-export-YYYY-MM-DD-HHMM.zip` are ever pruned from the folder.
+- **The slot limit** sits on runner registrations, which runners delete when
+  they stop, so a cap can't outlive the app that set it. The desktop only sets
+  it for its own local stack, never a remote server.
 
 ## Manual checklist on a Mac
 
@@ -109,3 +129,17 @@ anything that differs.
       Mac without a sensor (or lid closed) approvals fall back to a click.
 - [ ] **Updates**: Check Now with no releases says up to date; a downgrade
       warning appears when an older build opens newer data.
+- [ ] **Screenshot to Chat**: first use prompts for Screen Recording; a region
+      lands in the Send picker; Esc in the picker sends nothing; the temp file
+      is gone after the picker closes; ⌥⇧S can't also be Quick Capture's.
+- [ ] **Time Machine**: `tmutil isexcluded ~/Library/Application\ Support/Vesper/vm`
+      says Excluded; turning the setting off removes it.
+- [ ] **Exports**: Export Now writes a zip that File › Import Backup can
+      inspect; with keep 2, a third export deletes the oldest; a stopped
+      server records a failure and notifies once.
+- [ ] **Ease off**: under sustained load until macOS reports serious thermal pressure, or with Low Power Mode on
+      (System Settings › Battery), `GET /api/v1/runner` shows `slot_limit`
+      within ~15 s and the tray says so; it lifts when back to normal.
+- [ ] **Open folder**: with host-folder workspaces on, the run chip's Open
+      menu opens Finder, the terminal app, and `nvim` in Terminal; a path
+      outside the workspace root is refused.

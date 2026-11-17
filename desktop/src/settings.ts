@@ -37,6 +37,11 @@ export const LAST_WINDOW_POLICIES = ["dock", "menuBar", "quit"] as const;
 export type LastWindowPolicy = (typeof LAST_WINDOW_POLICIES)[number];
 
 export const DEFAULT_QUICK_CAPTURE_SHORTCUT = "Alt+Shift+Space";
+export const DEFAULT_SCREENSHOT_SHORTCUT = "Alt+Shift+S";
+
+/** How "Open in editor" opens a workspace: a command run in Terminal (e.g. nvim), or a GUI app. */
+export const EDITOR_KINDS = ["terminal", "app"] as const;
+export type EditorKind = (typeof EDITOR_KINDS)[number];
 export const DEFAULT_UPDATE_FEED_URL = "https://api.github.com/repos/liamphmurphy/vesper/releases/latest";
 
 export interface NativeSettings {
@@ -71,6 +76,33 @@ export interface NativeSettings {
     /** Electron accelerator, e.g. "Alt+Shift+Space". */
     shortcut: string;
   };
+  screenshot: {
+    /** A global shortcut that captures a screen region and offers it to a chat. */
+    enabled: boolean;
+    shortcut: string;
+  };
+  backups: {
+    /** Keep VM disks, caches and downloaded images (all rebuildable) out of Time Machine. */
+    excludeFromTimeMachine: boolean;
+    export: {
+      /** Save a whole-instance export to `folder` every `everyHours`, keeping the newest `keep`. */
+      enabled: boolean;
+      folder: string;
+      everyHours: number;
+      keep: number;
+    };
+  };
+  workspaces: {
+    /** App that "Open in Terminal" uses (open -a). */
+    terminalApp: string;
+    editor: {
+      kind: EditorKind;
+      /** kind terminal: a command run in Terminal in the folder, e.g. "nvim". */
+      command: string;
+      /** kind app: an app to open the folder with, e.g. "Visual Studio Code". */
+      app: string;
+    };
+  };
   deepLinks: {
     /** Handle vesper:// links. */
     enabled: boolean;
@@ -84,6 +116,8 @@ export interface NativeSettings {
     warnOnBattery: boolean;
     /** Ask before quitting with live runs. */
     confirmQuitWithActiveRuns: boolean;
+    /** Take fewer runs at once while the Mac is hot or in Low Power Mode (local stack only). */
+    easeOffWhenHot: boolean;
   };
   stack: {
     /** Restart the local stack automatically after it crashes (at most 3 times in 10 minutes). */
@@ -120,12 +154,22 @@ export function defaultNativeSettings(): NativeSettings {
       quietHours: { enabled: false, start: "22:00", end: "08:00" },
     },
     quickCapture: { enabled: false, shortcut: DEFAULT_QUICK_CAPTURE_SHORTCUT },
+    screenshot: { enabled: false, shortcut: DEFAULT_SCREENSHOT_SHORTCUT },
+    backups: {
+      excludeFromTimeMachine: true,
+      export: { enabled: false, folder: "", everyHours: 24, keep: 7 },
+    },
+    workspaces: {
+      terminalApp: "Terminal",
+      editor: { kind: "terminal", command: "nvim", app: "Visual Studio Code" },
+    },
     deepLinks: { enabled: true },
     power: {
       preventSleepWhileRunning: true,
       onSleep: "keep",
       warnOnBattery: true,
       confirmQuitWithActiveRuns: true,
+      easeOffWhenHot: true,
     },
     stack: { autoRestart: true, minFreeDiskGb: 10 },
     files: { dockDrop: true },
@@ -154,6 +198,32 @@ function obj(value: unknown): Record<string, unknown> {
 function boolMap<K extends string>(keys: readonly K[], value: unknown, fallback: Record<K, boolean>): Record<K, boolean> {
   const src = obj(value);
   return Object.fromEntries(keys.map((k) => [k, bool(src[k], fallback[k])])) as Record<K, boolean>;
+}
+
+/** An app name for `open -a`: letters, digits, spaces and a little punctuation. */
+export function isValidAppName(value: unknown): value is string {
+  return typeof value === "string" && /^[\p{L}\p{N} ._&+()'-]{1,64}$/u.test(value) && value.trim() === value && value.length > 0;
+}
+
+/**
+ * A command for "Open in editor" run in Terminal: a program and plain
+ * arguments. No quotes, $, `, ;, |, & or redirects, so it can't become more
+ * than one command when Terminal runs it.
+ */
+export function isValidTerminalCommand(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9._\/=+-]+( [A-Za-z0-9._\/=+-]+)*$/.test(value) && value.length <= 100;
+}
+
+/** An absolute folder path, or "" for none. */
+export function normalizeFolder(value: unknown, fallback: string): string {
+  if (value === "") return "";
+  if (typeof value !== "string" || !value.startsWith("/") || value.length > 1024 || /[\u0000-\u001f]/.test(value)) return fallback;
+  return value.replace(/\/+$/, "") || "/";
+}
+
+function intIn(value: unknown, min: number, max: number, fallback: number): number {
+  const n = Number(value);
+  return Number.isInteger(n) && n >= min && n <= max ? n : fallback;
 }
 
 /** Only https feeds (or http on loopback, for testing) are accepted. */
@@ -188,6 +258,11 @@ export function normalizeNativeSettings(raw: unknown, base: NativeSettings = def
   const files = obj(src.files);
   const touch = obj(src.touchId);
   const updates = obj(src.updates);
+  const shot = obj(src.screenshot);
+  const backups = obj(src.backups);
+  const exp = obj(backups.export);
+  const wsp = obj(src.workspaces);
+  const editor = obj(wsp.editor);
 
   const minDisk = Number(stack.minFreeDiskGb);
   const shortcut = typeof qc.shortcut === "string" && qc.shortcut.trim() ? qc.shortcut.trim().slice(0, 64) : base.quickCapture.shortcut;
@@ -221,6 +296,27 @@ export function normalizeNativeSettings(raw: unknown, base: NativeSettings = def
       enabled: bool(qc.enabled, base.quickCapture.enabled),
       shortcut,
     },
+    screenshot: {
+      enabled: bool(shot.enabled, base.screenshot.enabled),
+      shortcut: typeof shot.shortcut === "string" && shot.shortcut.trim() ? shot.shortcut.trim().slice(0, 64) : base.screenshot.shortcut,
+    },
+    backups: {
+      excludeFromTimeMachine: bool(backups.excludeFromTimeMachine, base.backups.excludeFromTimeMachine),
+      export: {
+        enabled: bool(exp.enabled, base.backups.export.enabled),
+        folder: normalizeFolder(exp.folder, base.backups.export.folder),
+        everyHours: intIn(exp.everyHours, 1, 24 * 7, base.backups.export.everyHours),
+        keep: intIn(exp.keep, 1, 100, base.backups.export.keep),
+      },
+    },
+    workspaces: {
+      terminalApp: isValidAppName(wsp.terminalApp) ? wsp.terminalApp : base.workspaces.terminalApp,
+      editor: {
+        kind: (EDITOR_KINDS as readonly string[]).includes(editor.kind as string) ? (editor.kind as EditorKind) : base.workspaces.editor.kind,
+        command: isValidTerminalCommand(editor.command) ? editor.command : base.workspaces.editor.command,
+        app: isValidAppName(editor.app) ? editor.app : base.workspaces.editor.app,
+      },
+    },
     deepLinks: { enabled: bool(deep.enabled, base.deepLinks.enabled) },
     power: {
       preventSleepWhileRunning: bool(power.preventSleepWhileRunning, base.power.preventSleepWhileRunning),
@@ -229,6 +325,7 @@ export function normalizeNativeSettings(raw: unknown, base: NativeSettings = def
         : base.power.onSleep,
       warnOnBattery: bool(power.warnOnBattery, base.power.warnOnBattery),
       confirmQuitWithActiveRuns: bool(power.confirmQuitWithActiveRuns, base.power.confirmQuitWithActiveRuns),
+      easeOffWhenHot: bool(power.easeOffWhenHot, base.power.easeOffWhenHot),
     },
     stack: {
       autoRestart: bool(stack.autoRestart, base.stack.autoRestart),

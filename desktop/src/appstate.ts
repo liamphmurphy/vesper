@@ -11,6 +11,9 @@ export interface AppState {
   lastUpdateCheckAt?: number;
   /** An update the person already heard about, so it's announced once. */
   announcedUpdate?: string;
+  /** The last successful export to the backup folder, and the last failure's message. */
+  lastExportAt?: number;
+  lastExportError?: string;
 }
 
 export function loadAppState(filePath: string): AppState {
@@ -20,6 +23,8 @@ export function loadAppState(filePath: string): AppState {
       ...(typeof raw.lastVersion === "string" ? { lastVersion: raw.lastVersion.slice(0, 64) } : {}),
       ...(typeof raw.lastUpdateCheckAt === "number" && Number.isFinite(raw.lastUpdateCheckAt) ? { lastUpdateCheckAt: raw.lastUpdateCheckAt } : {}),
       ...(typeof raw.announcedUpdate === "string" ? { announcedUpdate: raw.announcedUpdate.slice(0, 64) } : {}),
+      ...(typeof raw.lastExportAt === "number" && Number.isFinite(raw.lastExportAt) ? { lastExportAt: raw.lastExportAt } : {}),
+      ...(typeof raw.lastExportError === "string" ? { lastExportError: raw.lastExportError.slice(0, 300) } : {}),
     };
   } catch {
     return {};

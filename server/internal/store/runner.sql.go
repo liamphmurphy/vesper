@@ -588,7 +588,7 @@ func (q *Queries) LatestTicketCheckpoint(ctx context.Context, arg LatestTicketCh
 }
 
 const liveRunners = `-- name: LiveRunners :many
-SELECT id, backend, max_concurrent, running, version, started_at, heartbeat_at, host_workspaces_dir FROM runners WHERE heartbeat_at > now() - interval '45 seconds' ORDER BY started_at
+SELECT id, backend, max_concurrent, running, version, started_at, heartbeat_at, host_workspaces_dir, slot_limit FROM runners WHERE heartbeat_at > now() - interval '45 seconds' ORDER BY started_at
 `
 
 func (q *Queries) LiveRunners(ctx context.Context) ([]Runner, error) {
@@ -609,6 +609,7 @@ func (q *Queries) LiveRunners(ctx context.Context) ([]Runner, error) {
 			&i.StartedAt,
 			&i.HeartbeatAt,
 			&i.HostWorkspacesDir,
+			&i.SlotLimit,
 		); err != nil {
 			return nil, err
 		}
@@ -1044,6 +1045,18 @@ func (q *Queries) RunnerEnvironments(ctx context.Context, arg RunnerEnvironments
 	return items, nil
 }
 
+const runnerSlotLimit = `-- name: RunnerSlotLimit :one
+SELECT slot_limit FROM runners WHERE id = $1
+`
+
+// The cap set with SetRunnerSlotLimit; NULL means none.
+func (q *Queries) RunnerSlotLimit(ctx context.Context, id string) (*int32, error) {
+	row := q.db.QueryRow(ctx, runnerSlotLimit, id)
+	var slot_limit *int32
+	err := row.Scan(&slot_limit)
+	return slot_limit, err
+}
+
 const runsToCheckpoint = `-- name: RunsToCheckpoint :many
 SELECT id FROM runs
 WHERE ticket_id = $1 AND id <> $2 AND parent_run_id IS NULL AND purpose = 'ticket'
@@ -1288,6 +1301,17 @@ type SetRunWorkspaceHostPathParams struct {
 
 func (q *Queries) SetRunWorkspaceHostPath(ctx context.Context, arg SetRunWorkspaceHostPathParams) error {
 	_, err := q.db.Exec(ctx, setRunWorkspaceHostPath, arg.ID, arg.WorkspaceHostPath)
+	return err
+}
+
+const setRunnerSlotLimit = `-- name: SetRunnerSlotLimit :exec
+UPDATE runners SET slot_limit = $1
+`
+
+// Caps (or, with NULL, uncaps) every registered runner. Read back on each
+// heartbeat; a runner that registers later starts uncapped.
+func (q *Queries) SetRunnerSlotLimit(ctx context.Context, slotLimit *int32) error {
+	_, err := q.db.Exec(ctx, setRunnerSlotLimit, slotLimit)
 	return err
 }
 

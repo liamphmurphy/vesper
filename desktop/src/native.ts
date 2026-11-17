@@ -1,13 +1,20 @@
+import { execFile } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import {
   app,
   BrowserWindow,
   clipboard,
+  dialog,
   globalShortcut,
   ipcMain,
+  Menu,
   net,
   powerMonitor,
   powerSaveBlocker,
@@ -16,6 +23,10 @@ import {
   type IpcMainInvokeEvent,
 } from "electron";
 import { apiRequest, type FetchFn } from "./api";
+import { exportFileName, exportsToPrune, isExportDue, parseIsExcluded, timeMachineTargets } from "./backups";
+import { SCREENCAPTURE_BIN, screencaptureArgs, screenshotFileName } from "./screenshot";
+import { desiredSlotLimit, easingOffLabel, isThermalState, parseLowPowerMode, type ThermalState } from "./thermal";
+import { isInsideRoots, openCommand, type OpenTarget } from "./workspace-open";
 import { loadAppState, saveAppState, type AppState } from "./appstate";
 import { touchIdDecision, touchIdReason, isTouchIdScope } from "./biometrics";
 import {
@@ -57,6 +68,8 @@ import {
 import type { StackExit } from "./stack";
 import { lastWindowClosedAction, type TrayAction } from "./tray-model";
 import { isCheckDue, pickUpdate, versionTransition } from "./updates";
+
+const execFileAsync = promisify(execFile);
 
 /** What the native features need from main.ts. */
 export interface NativeContext {
@@ -101,8 +114,22 @@ export class NativeFeatures {
   private readonly pausedByVesper = new Set<string>();
   private sleepBlockerId: number | null = null;
   private batteryWarned = false;
-  private registeredShortcut: string | null = null;
+  private registeredShortcuts: string[] = [];
+  private quickCaptureActive = false;
   private shortcutError: string | null = null;
+  private screenshotActive = false;
+  private screenshotError: string | null = null;
+  /** Temp folders holding screenshots offered to the Send picker; removed when it closes. */
+  private screenshotDirs: string[] = [];
+  private thermal: ThermalState = "unknown";
+  private lowPowerMode = false;
+  private lowPowerTimer: NodeJS.Timeout | undefined;
+  /** The runner's max_concurrent and current slot_limit, from GET /api/v1/runner. */
+  private runnerMaxSlots = 0;
+  private runnerSlotLimit: number | null = null;
+  private exportTimer: NodeJS.Timeout | undefined;
+  private exporting = false;
+  private timeMachineExcluded: boolean | null = null;
   private restartTimes: number[] = [];
   private ready = false;
   private readonly pendingLinks: string[] = [];
@@ -149,8 +176,10 @@ export class NativeFeatures {
     this.registerIpc();
     this.applyTray();
     this.applyLoginItem();
-    this.applyQuickCapture();
+    this.applyShortcuts();
     this.setupPower();
+    void this.applyTimeMachine();
+    this.scheduleExport(60_000);
     this.runMonitor.start(this.ctx.config().serverUrl);
     this.scheduleHealth(0);
     this.scheduleUpdateCheck(30_000);
@@ -162,6 +191,9 @@ export class NativeFeatures {
     this.runMonitor.stop();
     if (this.healthTimer) clearTimeout(this.healthTimer);
     if (this.updateTimer) clearTimeout(this.updateTimer);
+    if (this.lowPowerTimer) clearInterval(this.lowPowerTimer);
+    if (this.exportTimer) clearTimeout(this.exportTimer);
+    this.removeScreenshotDirs();
     globalShortcut.unregisterAll();
     this.releaseBlocker();
   }
@@ -307,7 +339,9 @@ export class NativeFeatures {
         items: this.items,
         runs: this.runs,
         pausedByVesper: this.pausedByVesper.size,
-        quickCapture: { enabled: this.settings.quickCapture.enabled && this.registeredShortcut !== null, shortcut: this.settings.quickCapture.shortcut },
+        quickCapture: { enabled: this.settings.quickCapture.enabled && this.quickCaptureActive, shortcut: this.settings.quickCapture.shortcut },
+        screenshot: { enabled: this.settings.screenshot.enabled && this.screenshotActive, shortcut: this.settings.screenshot.shortcut },
+        notice: easingOffLabel(this.runnerSlotLimit, this.thermal, this.lowPowerMode) ?? undefined,
       },
       this.count,
       this.settings.tray.showCount,
@@ -322,6 +356,8 @@ export class NativeFeatures {
         return this.ctx.openHref(action.href);
       case "quick-capture":
         return this.openCapture();
+      case "screenshot":
+        return this.takeScreenshot();
       case "pause-runs":
         return this.pauseRuns(pausableRuns(this.runs));
       case "resume-runs":
@@ -405,39 +441,40 @@ export class NativeFeatures {
 
   // ---------------------------------------------------------------- quick capture (LAZYAGENTS-243)
 
-  private applyQuickCapture(): string | null {
-    if (this.registeredShortcut) {
-      globalShortcut.unregister(this.registeredShortcut);
-      this.registeredShortcut = null;
-    }
-    this.shortcutError = null;
+  /** Registers the global shortcuts for Quick Capture and Screenshot to Chat, reporting conflicts. */
+  private applyShortcuts(): void {
+    for (const acc of this.registeredShortcuts) globalShortcut.unregister(acc);
+    this.registeredShortcuts = [];
     const qc = this.settings.quickCapture;
-    if (!qc.enabled) {
-      this.renderTray();
-      return null;
-    }
-    const v = validateGlobalShortcut(qc.shortcut);
-    if (!v.ok) {
-      this.shortcutError = v.error;
-    } else {
-      const owner = systemShortcutConflict(v.accelerator);
-      if (owner) {
-        this.shortcutError = `${formatAccelerator(v.accelerator)} belongs to ${owner}. Pick another shortcut.`;
-      } else if (globalShortcut.isRegistered(v.accelerator)) {
-        this.shortcutError = `${formatAccelerator(v.accelerator)} is already in use. Pick another shortcut.`;
-      } else {
-        let ok = false;
-        try {
-          ok = globalShortcut.register(v.accelerator, () => this.openCapture());
-        } catch {
-          ok = false;
-        }
-        if (ok) this.registeredShortcut = v.accelerator;
-        else this.shortcutError = `${formatAccelerator(v.accelerator)} is taken by macOS or another app. Pick another shortcut.`;
-      }
-    }
+    const ss = this.settings.screenshot;
+    const capture = qc.enabled ? this.registerShortcut(qc.shortcut, () => this.openCapture(), null) : { accelerator: null, error: null };
+    this.shortcutError = capture.error;
+    this.quickCaptureActive = capture.accelerator !== null;
+    const shot = ss.enabled
+      ? this.registerShortcut(ss.shortcut, () => void this.takeScreenshot(), capture.accelerator)
+      : { accelerator: null, error: null };
+    this.screenshotError = shot.error;
+    this.screenshotActive = shot.accelerator !== null;
     this.renderTray();
-    return this.shortcutError;
+  }
+
+  private registerShortcut(raw: string, handler: () => void, usedByCapture: string | null): { accelerator: string | null; error: string | null } {
+    const v = validateGlobalShortcut(raw);
+    if (!v.ok) return { accelerator: null, error: v.error };
+    const label = formatAccelerator(v.accelerator);
+    if (usedByCapture && usedByCapture === v.accelerator) return { accelerator: null, error: `Quick Capture already uses ${label}. Pick another shortcut.` };
+    const owner = systemShortcutConflict(v.accelerator);
+    if (owner) return { accelerator: null, error: `${label} belongs to ${owner}. Pick another shortcut.` };
+    if (globalShortcut.isRegistered(v.accelerator)) return { accelerator: null, error: `${label} is already in use. Pick another shortcut.` };
+    let ok = false;
+    try {
+      ok = globalShortcut.register(v.accelerator, handler);
+    } catch {
+      ok = false;
+    }
+    if (!ok) return { accelerator: null, error: `${label} is taken by macOS or another app. Pick another shortcut.` };
+    this.registeredShortcuts.push(v.accelerator);
+    return { accelerator: v.accelerator, error: null };
   }
 
   openCapture(): void {
@@ -474,6 +511,251 @@ export class NativeFeatures {
     if (process.platform === "darwin") app.focus({ steal: true });
   }
 
+  // ---------------------------------------------------------------- screenshot to a chat
+
+  /**
+   * Runs the macOS region picker and offers the result to a chat. macOS asks
+   * for Screen Recording permission the first time; Escape in the picker
+   * cancels without a file, and then nothing happens.
+   */
+  async takeScreenshot(): Promise<void> {
+    if (process.platform !== "darwin") return;
+    let dir: string;
+    try {
+      dir = fs.mkdtempSync(path.join(os.tmpdir(), "vesper-shot-"));
+    } catch {
+      return;
+    }
+    const file = path.join(dir, screenshotFileName(new Date()));
+    try {
+      await execFileAsync(SCREENCAPTURE_BIN, screencaptureArgs(file), { timeout: 5 * 60_000 });
+    } catch {
+      // A cancelled capture can exit non-zero; the file check below decides.
+    }
+    let size = 0;
+    try {
+      size = fs.statSync(file).size;
+    } catch {
+      size = 0;
+    }
+    if (size === 0) {
+      fs.rmSync(dir, { recursive: true, force: true });
+      if (systemPreferences.getMediaAccessStatus("screen") === "denied") {
+        this.presenter.notice(
+          "Vesper can't take screenshots",
+          "Allow Vesper under System Settings › Privacy & Security › Screen & System Audio Recording, then try again.",
+          () => void shell.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture").catch(() => {}),
+        );
+      }
+      return;
+    }
+    this.screenshotDirs.push(dir);
+    this.offerFiles([file]);
+  }
+
+  private removeScreenshotDirs(): void {
+    for (const dir of this.screenshotDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  // ---------------------------------------------------------------- open a workspace folder
+
+  /**
+   * Shows a native menu (Finder / terminal / editor) for a run's or chat's
+   * host-folder workspace. The path comes from the page, so it must resolve
+   * inside a live runner's host workspaces directory, and be a folder.
+   */
+  async openWorkspaceMenu(event: IpcMainInvokeEvent, rawPath: unknown): Promise<{ ok: boolean; error?: string }> {
+    const dir = await this.checkedWorkspace(rawPath);
+    if (!dir.ok) return dir;
+    const ws = this.settings.workspaces;
+    const editorLabel = ws.editor.kind === "app" ? ws.editor.app : ws.editor.command.split(" ")[0];
+    const pick = (target: OpenTarget) => void this.openWorkspace(dir.path, target);
+    const menu = Menu.buildFromTemplate([
+      { label: "Open in Finder", click: () => pick("finder") },
+      { label: `Open in ${ws.terminalApp}`, click: () => pick("terminal") },
+      { label: `Open in ${editorLabel}`, click: () => pick("editor") },
+    ]);
+    const win = BrowserWindow.fromWebContents(event.sender);
+    menu.popup(win ? { window: win } : {});
+    return { ok: true };
+  }
+
+  private async checkedWorkspace(rawPath: unknown): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
+    if (typeof rawPath !== "string" || !path.isAbsolute(rawPath) || rawPath.length > 2048) return { ok: false, error: "Not a workspace folder." };
+    const status = await apiRequest<{ runners?: Array<{ host_workspaces_dir?: string }> }>(
+      this.ctx.fetch,
+      this.ctx.config().serverUrl,
+      "GET",
+      "/api/v1/runner",
+      undefined,
+      { timeoutMs: 4000 },
+    );
+    const roots = (status.data?.runners ?? [])
+      .map((r) => r.host_workspaces_dir)
+      .filter((d): d is string => typeof d === "string" && path.isAbsolute(d))
+      .map((d) => {
+        try {
+          return fs.realpathSync(d);
+        } catch {
+          return "";
+        }
+      })
+      .filter(Boolean);
+    let real: string;
+    try {
+      real = fs.realpathSync(rawPath);
+      if (!fs.statSync(real).isDirectory()) return { ok: false, error: "That folder isn't there any more." };
+    } catch {
+      return { ok: false, error: "That folder isn't on this Mac." };
+    }
+    if (!isInsideRoots(real, roots)) return { ok: false, error: "Only run and chat workspace folders can be opened." };
+    return { ok: true, path: real };
+  }
+
+  private async openWorkspace(dir: string, target: OpenTarget): Promise<void> {
+    const cmd = openCommand(target, dir, this.settings.workspaces);
+    try {
+      if (!cmd) {
+        const err = await shell.openPath(dir);
+        if (err) throw new Error(err);
+      } else {
+        await execFileAsync(cmd.file, cmd.args, { timeout: 15_000 });
+      }
+    } catch (err) {
+      this.presenter.notice("Couldn't open the folder", err instanceof Error ? err.message.slice(0, 200) : String(err), undefined, true);
+    }
+  }
+
+  // ---------------------------------------------------------------- easing off when hot
+
+  private setupThermal(): void {
+    try {
+      const state = powerMonitor.getCurrentThermalState();
+      if (isThermalState(state)) this.thermal = state;
+    } catch {
+      this.thermal = "unknown";
+    }
+    powerMonitor.on("thermal-state-change", (details) => {
+      if (isThermalState(details.state)) this.thermal = details.state;
+      void this.applySlotLimit();
+    });
+    if (process.platform === "darwin") {
+      void this.readLowPowerMode();
+      this.lowPowerTimer = setInterval(() => void this.readLowPowerMode(), 60_000);
+    }
+  }
+
+  private async readLowPowerMode(): Promise<void> {
+    try {
+      const { stdout } = await execFileAsync("/usr/bin/pmset", ["-g"], { timeout: 5000 });
+      const next = parseLowPowerMode(stdout);
+      if (next !== this.lowPowerMode) {
+        this.lowPowerMode = next;
+        void this.applySlotLimit();
+      }
+    } catch {
+      // pmset missing or failed: treat as off.
+    }
+  }
+
+  /** Asks the local runner for fewer slots while hot, and lifts the cap after. Local stack only. */
+  private async applySlotLimit(): Promise<void> {
+    if (this.ctx.stackMode() !== "local" || !this.ctx.stackSnapshot().running || this.runnerMaxSlots < 1) return;
+    const desired = desiredSlotLimit({
+      enabled: this.settings.power.easeOffWhenHot,
+      thermal: this.thermal,
+      lowPowerMode: this.lowPowerMode,
+      maxSlots: this.runnerMaxSlots,
+    });
+    if (desired === this.runnerSlotLimit) return;
+    const res = await apiRequest<{ runners?: Array<{ slot_limit?: number }> }>(
+      this.ctx.fetch,
+      this.ctx.config().serverUrl,
+      "PUT",
+      "/api/v1/runner/slot-limit",
+      { limit: desired },
+    );
+    if (res.ok) {
+      this.runnerSlotLimit = desired;
+      this.renderTray();
+    }
+  }
+
+  // ---------------------------------------------------------------- backups
+
+  /** Keeps rebuildable folders (VM disks, caches, images) out of Time Machine, or puts them back. */
+  private async applyTimeMachine(): Promise<void> {
+    if (process.platform !== "darwin" || this.ctx.stackMode() !== "local") return;
+    const exclude = this.settings.backups.excludeFromTimeMachine;
+    let all = true;
+    for (const dir of timeMachineTargets(app.getPath("userData"))) {
+      try {
+        fs.mkdirSync(dir, { recursive: true });
+        // Without -p this is a sticky exclusion on the folder itself (an xattr): no admin rights needed.
+        await execFileAsync("/usr/bin/tmutil", [exclude ? "addexclusion" : "removeexclusion", dir], { timeout: 15_000 });
+        const { stdout } = await execFileAsync("/usr/bin/tmutil", ["isexcluded", dir], { timeout: 15_000 });
+        if (parseIsExcluded(stdout) !== true) all = false;
+      } catch (err) {
+        all = false;
+        console.warn("[vesper] tmutil failed:", err instanceof Error ? err.message : err);
+      }
+    }
+    this.timeMachineExcluded = all;
+  }
+
+  private scheduleExport(delayMs: number): void {
+    if (this.exportTimer) clearTimeout(this.exportTimer);
+    this.exportTimer = setTimeout(() => {
+      void this.runExportIfDue().finally(() => this.scheduleExport(30 * 60_000));
+    }, delayMs);
+  }
+
+  private async runExportIfDue(): Promise<void> {
+    const exp = this.settings.backups.export;
+    if (!exp.enabled || !exp.folder) return;
+    if (!isExportDue(this.appState.lastExportAt, Date.now(), exp.everyHours)) return;
+    const failingAlready = Boolean(this.appState.lastExportError);
+    const result = await this.exportNow();
+    // A failing export retries every 30 minutes; say so once, not on every retry.
+    if (!result.ok && !failingAlready) {
+      this.presenter.notice("Scheduled export failed", result.error ?? "Open Settings › Backups to see why.", () => this.openPreferences());
+    }
+  }
+
+  /**
+   * Streams GET /api/v1/instance/export into the export folder (as .part,
+   * renamed when complete), then deletes Vesper's own exports beyond `keep`.
+   */
+  async exportNow(): Promise<{ ok: boolean; file?: string; error?: string }> {
+    const exp = this.settings.backups.export;
+    if (!exp.folder) return { ok: false, error: "Choose a folder first." };
+    if (this.exporting) return { ok: false, error: "An export is already running." };
+    this.exporting = true;
+    const final = path.join(exp.folder, exportFileName(new Date()));
+    const part = `${final}.part`;
+    try {
+      if (!fs.statSync(exp.folder).isDirectory()) throw new Error("The export folder isn't a folder.");
+      const res = await this.ctx.fetch(`${this.ctx.config().serverUrl.replace(/\/+$/, "")}/api/v1/instance/export`, { method: "GET" });
+      if (!res.ok || !res.body) throw new Error(`The server answered ${res.status}.`);
+      await pipeline(Readable.fromWeb(res.body as unknown as NodeReadableStream<Uint8Array>), fs.createWriteStream(part, { mode: 0o600 }));
+      fs.renameSync(part, final);
+      for (const name of exportsToPrune(fs.readdirSync(exp.folder), exp.keep)) {
+        fs.rmSync(path.join(exp.folder, name), { force: true });
+      }
+      this.appState = { ...this.appState, lastExportAt: Date.now(), lastExportError: undefined };
+      saveAppState(this.appStatePath, this.appState);
+      return { ok: true, file: final };
+    } catch (err) {
+      fs.rmSync(part, { force: true });
+      const message = err instanceof Error ? err.message : String(err);
+      this.appState = { ...this.appState, lastExportError: message.slice(0, 300) };
+      saveAppState(this.appStatePath, this.appState);
+      return { ok: false, error: message };
+    } finally {
+      this.exporting = false;
+    }
+  }
+
   // ---------------------------------------------------------------- power (LAZYAGENTS-245)
 
   private setupPower(): void {
@@ -481,6 +763,7 @@ export class NativeFeatures {
     powerMonitor.on("resume", () => void this.onResume());
     powerMonitor.on("on-battery", () => this.onBattery(true));
     powerMonitor.on("on-ac", () => this.onBattery(false));
+    this.setupThermal();
   }
 
   private async onSuspend(): Promise<void> {
@@ -579,10 +862,25 @@ export class NativeFeatures {
       const url = this.ctx.config().serverUrl;
       const [img, runner] = await Promise.all([
         apiRequest<RootfsStatus>(this.ctx.fetch, url, "GET", "/api/v1/system/vm-image", undefined, { timeoutMs: 3000 }),
-        apiRequest<{ online?: boolean }>(this.ctx.fetch, url, "GET", "/api/v1/runner", undefined, { timeoutMs: 3000 }),
+        apiRequest<{ online?: boolean; runners?: Array<{ max_concurrent?: number; slot_limit?: number }> }>(
+          this.ctx.fetch,
+          url,
+          "GET",
+          "/api/v1/runner",
+          undefined,
+          { timeoutMs: 3000 },
+        ),
       ]);
       this.image = img.ok ? img.data : undefined;
       this.runnerOnline = runner.ok && typeof runner.data?.online === "boolean" ? runner.data.online : undefined;
+      const first = runner.data?.runners?.[0];
+      if (runner.ok && first) {
+        this.runnerMaxSlots = typeof first.max_concurrent === "number" ? first.max_concurrent : 0;
+        // What the server holds, so a restarted (uncapped) runner gets the cap again below.
+        this.runnerSlotLimit = typeof first.slot_limit === "number" ? first.slot_limit : null;
+        void this.applySlotLimit();
+      }
+      if (this.timeMachineExcluded === null) void this.applyTimeMachine();
     } else {
       this.image = undefined;
       this.runnerOnline = undefined;
@@ -660,6 +958,11 @@ export class NativeFeatures {
   private flushFiles(): void {
     const paths = [...new Set(this.pendingFiles.splice(0))];
     if (!this.settings.files.dockDrop || paths.length === 0) return;
+    this.offerFiles(paths);
+  }
+
+  /** Opens (or refreshes) the Send to Vesper picker for these files. */
+  private offerFiles(paths: readonly string[]): void {
     const stats = paths.map((p) => {
       try {
         const st = fs.statSync(p);
@@ -686,6 +989,8 @@ export class NativeFeatures {
     });
     win.on("closed", () => {
       if (this.sendWin === win) this.sendWin = null;
+      // Screenshots exist only to be sent; once the picker is gone, so are they.
+      this.removeScreenshotDirs();
     });
     this.sendWin = win;
     void win.loadFile(path.join(this.ctx.rendererDir, "send-files.html"));
@@ -819,6 +1124,13 @@ export class NativeFeatures {
         login: this.loginStatus(),
         shortcut: this.shortcutError,
         shortcutLabel: formatAccelerator(this.settings.quickCapture.shortcut),
+        screenshot: this.screenshotError,
+        screenshotLabel: formatAccelerator(this.settings.screenshot.shortcut),
+        timeMachineExcluded: this.timeMachineExcluded,
+        lastExportAt: this.appState.lastExportAt ?? null,
+        lastExportError: this.appState.lastExportError ?? null,
+        exporting: this.exporting,
+        easingOff: easingOffLabel(this.runnerSlotLimit, this.thermal, this.lowPowerMode),
         touchIdAvailable: canTouchId,
         servicesInstalled: servicesInstalled(),
         servicesAvailable: Boolean(appBundlePath(process.execPath)),
@@ -832,20 +1144,30 @@ export class NativeFeatures {
   private applySettings(patch: unknown): { ok: boolean; error?: string; state: ReturnType<NativeFeatures["prefsState"]> } {
     const before = this.settings;
     const next = applyNativeSettingsPatch(before, patch);
-    if (next.quickCapture.enabled) {
-      const v = validateGlobalShortcut(next.quickCapture.shortcut);
+    for (const key of ["quickCapture", "screenshot"] as const) {
+      if (!next[key].enabled) continue;
+      const v = validateGlobalShortcut(next[key].shortcut);
       if (!v.ok) return { ok: false, error: v.error, state: this.prefsState() };
-      next.quickCapture.shortcut = v.accelerator;
+      next[key].shortcut = v.accelerator;
     }
     this.ctx.saveNative(next);
-    if (JSON.stringify(before.tray) !== JSON.stringify(next.tray)) this.applyTray();
-    if (JSON.stringify(before.login) !== JSON.stringify(next.login)) this.applyLoginItem();
-    if (JSON.stringify(before.quickCapture) !== JSON.stringify(next.quickCapture)) this.applyQuickCapture();
-    if (JSON.stringify(before.power) !== JSON.stringify(next.power)) this.updatePowerBlocker();
-    if (JSON.stringify(before.stack) !== JSON.stringify(next.stack)) this.refreshHealth();
+    const changed = (k: keyof NativeSettings) => JSON.stringify(before[k]) !== JSON.stringify(next[k]);
+    if (changed("tray")) this.applyTray();
+    if (changed("login")) this.applyLoginItem();
+    if (changed("quickCapture") || changed("screenshot")) this.applyShortcuts();
+    if (changed("power")) {
+      this.updatePowerBlocker();
+      void this.applySlotLimit();
+    }
+    if (changed("stack")) this.refreshHealth();
+    if (before.backups.excludeFromTimeMachine !== next.backups.excludeFromTimeMachine) void this.applyTimeMachine();
+    if (JSON.stringify(before.backups.export) !== JSON.stringify(next.backups.export)) this.scheduleExport(5000);
     if (!before.updates.checkEnabled && next.updates.checkEnabled) this.scheduleUpdateCheck(1000);
     this.renderTray();
-    const error = next.quickCapture.enabled ? (this.shortcutError ?? undefined) : undefined;
+    const error =
+      (next.quickCapture.enabled && changed("quickCapture") ? this.shortcutError : null) ??
+      (next.screenshot.enabled && changed("screenshot") ? this.screenshotError : null) ??
+      undefined;
     return { ok: !error, ...(error ? { error } : {}), state: this.prefsState() };
   }
 
@@ -865,7 +1187,7 @@ export class NativeFeatures {
     if (!this.ctx.isTrustedRendererUrl(event.senderFrame?.url)) throw new Error("Untrusted IPC caller");
   }
 
-  /** The Vesper web app itself (same origin as the server URL), for Touch ID on approvals. */
+  /** The Vesper web app itself (same origin as the server URL): Touch ID on approvals, opening workspace folders. */
   private fromVesperOrigin(event: IpcMainInvokeEvent): boolean {
     try {
       const frameUrl = event.senderFrame?.url;
@@ -911,6 +1233,17 @@ export class NativeFeatures {
       }
     });
     handle("vesper:open-server-settings", () => this.ctx.openServerSettings());
+    handle("vesper:prefs-pick-export-folder", async (event) => {
+      const win = BrowserWindow.fromWebContents(event.sender);
+      const opts: Electron.OpenDialogOptions = { title: "Choose a Folder for Vesper Exports", properties: ["openDirectory", "createDirectory"] };
+      const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+      if (res.canceled || res.filePaths.length === 0) return { ok: true, state: this.prefsState() };
+      return this.applySettings({ backups: { export: { folder: res.filePaths[0] } } });
+    });
+    handle("vesper:prefs-export-now", async () => {
+      const result = await this.exportNow();
+      return { ...result, state: this.prefsState() };
+    });
     handle("vesper:open-data-dir", () => void shell.openPath(app.getPath("userData")));
 
     handle("vesper:capture-options", async () => {
@@ -974,6 +1307,12 @@ export class NativeFeatures {
     });
     handle("vesper:stack-restart", () => this.restartStack());
     handle("vesper:open-logs", () => this.openLogs());
+
+    // From the Vesper web app (not file://): a menu to open a workspace folder.
+    ipcMain.handle("vesper:open-workspace-menu", (event, folder: unknown) => {
+      if (!this.fromVesperOrigin(event)) throw new Error("Untrusted IPC caller");
+      return this.openWorkspaceMenu(event, folder);
+    });
 
     // From the Vesper web app (not file://): Touch ID before approving.
     ipcMain.handle("vesper:confirm-approval", async (event, scope: unknown) => {

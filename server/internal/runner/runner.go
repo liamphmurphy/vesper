@@ -127,7 +127,10 @@ type Runner struct {
 
 	mu     sync.Mutex
 	active int
-	wg     sync.WaitGroup
+	// slotLimit is a temporary cap below Cfg.MaxConcurrent (0: none), read
+	// from the runner's registration on each heartbeat (PUT /runner/slot-limit).
+	slotLimit int
+	wg        sync.WaitGroup
 	// sweeping keeps Run to one Sweep in flight (Sweep alone owns otherBackend).
 	sweeping atomic.Bool
 	// playgrounds is what this process serves of chats' playgrounds; nil
@@ -291,15 +294,42 @@ func (r *Runner) heartbeat(ctx context.Context) {
 		hostDir = hf.HostWorkspacesDir()
 	}
 	if err := r.q().Heartbeat(ctx, store.HeartbeatParams{ID: r.Cfg.ID, Backend: r.Backend.Name(),
-		MaxConcurrent: int32(r.Cfg.MaxConcurrent), Running: int32(n), Version: r.Cfg.Version, HostWorkspacesDir: hostDir}); err != nil && ctx.Err() == nil {
-		r.Log.Warn("heartbeat", "err", err)
+		MaxConcurrent: int32(r.Cfg.MaxConcurrent), Running: int32(n), Version: r.Cfg.Version, HostWorkspacesDir: hostDir}); err != nil {
+		if ctx.Err() == nil {
+			r.Log.Warn("heartbeat", "err", err)
+		}
+		return
 	}
+	limit, err := r.q().RunnerSlotLimit(ctx, r.Cfg.ID)
+	if err != nil {
+		// Keep the last known cap: a failed read must not lift a thermal cap.
+		if ctx.Err() == nil {
+			r.Log.Warn("read slot limit", "err", err)
+		}
+		return
+	}
+	r.mu.Lock()
+	r.slotLimit = 0
+	if limit != nil {
+		r.slotLimit = int(*limit)
+	}
+	r.mu.Unlock()
+}
+
+// capacity is how many runs this runner takes at once right now: its
+// MaxConcurrent, or a lower slot limit while one is set. Work already running
+// over a new cap finishes; the runner just claims nothing more until below it.
+func (r *Runner) capacity() int {
+	if r.slotLimit > 0 && r.slotLimit < r.Cfg.MaxConcurrent {
+		return r.slotLimit
+	}
+	return r.Cfg.MaxConcurrent
 }
 
 func (r *Runner) slot() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.active >= r.Cfg.MaxConcurrent {
+	if r.active >= r.capacity() {
 		return false
 	}
 	r.active++

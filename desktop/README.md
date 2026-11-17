@@ -20,6 +20,10 @@ Everything below has its own switch in **Vesper › Settings… (⌘,)**. Detail
 - **Stack health**: first-run download progress, named failures with a next step (virtualization, disk, port, database, Keychain), a logs window, Restart Stack, and bounded auto-restart after a crash.
 - **Files in**: drop files on the Dock icon or a window, use Open With, or install the *Send to Vesper* Quick Actions, then pick a chat to send them to.
 - **Touch ID for approvals** (opt-in, per kind). A local check in this app only; the server doesn't verify it.
+- **Screenshot to Chat** (opt-in, default ⌥⇧S): capture a region with the macOS picker, then pick a chat to send it to.
+- **Backups**: VM disks, caches and downloaded images are kept out of Time Machine; optionally save a whole-instance export to a folder (iCloud Drive, a NAS…) on a schedule, keeping the newest N.
+- **Ease off when hot**: in Low Power Mode or under thermal pressure the local runner takes fewer runs at once; running work finishes.
+- **Open workspace folders**: with host-folder workspaces on, a run's or chat's folder opens in Finder, your terminal, or your editor (`nvim` in Terminal by default).
 - **Update check** (opt-in): tells you when a newer DMG is published. The app can't update itself while it's unsigned ([`docs/dev/desktop-updates.md`](../docs/dev/desktop-updates.md)).
 
 ## Prerequisites

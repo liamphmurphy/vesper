@@ -1488,6 +1488,7 @@ type Runner struct {
 	StartedAt         time.Time
 	HeartbeatAt       time.Time
 	HostWorkspacesDir string
+	SlotLimit         *int32
 }
 
 type SavedView struct {

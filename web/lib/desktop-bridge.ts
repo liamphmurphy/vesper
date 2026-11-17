@@ -8,6 +8,7 @@ export type ApprovalScope = "run_approvals" | "push_requests" | "connector_appro
 
 interface DesktopBridge {
   confirmApproval?: (scope: ApprovalScope) => Promise<{ ok: boolean; prompted: boolean; error?: string }>;
+  openWorkspaceMenu?: (folder: string) => Promise<{ ok: boolean; error?: string }>;
 }
 
 function bridge(): DesktopBridge | undefined {
@@ -39,4 +40,26 @@ export async function confirmApprovalLocally(scope: ApprovalScope, getBridge: ()
     return;
   }
   if (!result?.ok) throw new ApprovalNotConfirmedError();
+}
+
+/** Whether this page runs in a desktop build that can open workspace folders. */
+export function canOpenWorkspaceFolder(getBridge: () => DesktopBridge | undefined = bridge): boolean {
+  return typeof getBridge()?.openWorkspaceMenu === "function";
+}
+
+/**
+ * Shows the desktop app's Open menu (Finder, terminal, editor) for a
+ * workspace folder. Resolves to an error message, or null when the menu
+ * showed. The desktop only opens folders inside a runner's host workspaces
+ * directory.
+ */
+export async function openWorkspaceFolder(folder: string, getBridge: () => DesktopBridge | undefined = bridge): Promise<string | null> {
+  const open = getBridge()?.openWorkspaceMenu;
+  if (typeof open !== "function") return "Opening folders needs the Vesper desktop app.";
+  try {
+    const res = await open(folder);
+    return res?.ok ? null : (res?.error ?? "Couldn't open the folder.");
+  } catch {
+    return "Couldn't open the folder.";
+  }
 }

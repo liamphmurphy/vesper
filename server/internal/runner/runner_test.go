@@ -929,3 +929,35 @@ func TestHarnessKeyMapping(t *testing.T) {
 		t.Errorf("unknown harness resolved to %+v instead of failing", k)
 	}
 }
+
+func TestHeartbeatAppliesAndLiftsSlotLimit(t *testing.T) {
+	e := setup(t)
+	e.runner.Heartbeat(e.ctx)
+	if got := e.runner.Capacity(); got != 2 {
+		t.Fatalf("uncapped capacity %d, want MaxConcurrent 2", got)
+	}
+	one := int32(1)
+	if err := e.q.SetRunnerSlotLimit(e.ctx, &one); err != nil {
+		t.Fatal(err)
+	}
+	e.runner.Heartbeat(e.ctx)
+	if got := e.runner.Capacity(); got != 1 {
+		t.Fatalf("capped capacity %d, want 1", got)
+	}
+	// A cap above MaxConcurrent never raises it.
+	ten := int32(10)
+	if err := e.q.SetRunnerSlotLimit(e.ctx, &ten); err != nil {
+		t.Fatal(err)
+	}
+	e.runner.Heartbeat(e.ctx)
+	if got := e.runner.Capacity(); got != 2 {
+		t.Fatalf("cap above max: capacity %d, want 2", got)
+	}
+	if err := e.q.SetRunnerSlotLimit(e.ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	e.runner.Heartbeat(e.ctx)
+	if got := e.runner.Capacity(); got != 2 {
+		t.Fatalf("lifted capacity %d, want 2", got)
+	}
+}
