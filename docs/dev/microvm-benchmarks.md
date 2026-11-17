@@ -34,4 +34,14 @@ Measured with `vesper/agent-base:latest`, `postgres:17-alpine`, and OrbStack `29
 |---|---|---|
 | `128 MiB` guest-to-host TCP upload via `dummy0` + `iptables` NAT `REDIRECT` + `SO_ORIGINAL_DST` + `AF_VSOCK` | 172.7 ms (`741.0 MiB/s`, `5927.7 Mbps`) | ~46% of OrbStack direct socket (`1608.6 MiB/s`); zero-NIC hardware VM egress at ~6 Gbps |
 
-_(Slice 3 1/4/8-VM balloon memory benchmarks added as Slice 3 lands.)_
+### Slice 3 — Multi-VM Concurrency, Balloon Reclaim & `WarmTTL` Cold Shutdown (`TestVZConcurrentRunsAndMemoryReclaim`)
+
+Measured on `Virtualization.VirtualMachine` XPC helper RSS (`ps -axo rss,comm`) across 1, 4, and 8 concurrent `512 MiB` VMs allocating `48 MiB` each in RAM, then idling via `SyncAndDropCaches` + `SetMemoryTarget(128 MiB)`, then shutting down after `WarmTTL` (`400 ms` in test, `90 s` default in config):
+
+| Concurrent VMs | Parallel Boot + Exec Wall Time | Peak `VZ` Helper RSS | Post-Balloon RSS (150 ms) | Post-`WarmTTL` Stopped RSS | Cold Resume Latency (preserved disks) |
+|---|---|---|---|---|---|
+| 1 | 698 ms | 260.8 MiB (`267104 KiB`) | 262.0 MiB | 0 MiB (`0 KiB`) | ~210 ms |
+| 4 | 745 ms | 1048.1 MiB (`1073296 KiB`) | 1049.0 MiB | 0 MiB (`0 KiB`) | ~210 ms |
+| 8 | 833 ms | 2095.7 MiB (`2145952 KiB`) | 2097.3 MiB | 0 MiB (`0 KiB`) | ~210 ms |
+
+Finding (answers open question #1 in `microvm-architecture.md`): `virtio_balloon` alone does not synchronously drop macOS XPC helper RSS within 150 ms under zero host memory pressure (and guest `tmpfs` pages stay pinned until VM exit), whereas aggressive `WarmTTL` (`90 s`) shutdown returns **100% (`0 MiB`)** of host RAM cleanly vs OrbStack's retained `16,701 MiB` baseline, with ~210 ms cold-boot resume preserving `/workspace` and `/home/node`.

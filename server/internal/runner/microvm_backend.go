@@ -41,15 +41,16 @@ const (
 // MicroVM runs each Vesper run in an isolated NIC-less Linux microVM driven via
 // microvm.Driver (Apple Virtualization.framework on darwin/arm64).
 type MicroVM struct {
-	Driver     microvm.Driver
-	StateDir   string
-	KernelPath string
-	RootfsPath string
-	CPUs       int
-	MemoryMB   int64
-	PidsLimit  int64
-	WarmTTL    time.Duration
-	MCPURL     string
+	Driver       microvm.Driver
+	StateDir     string
+	KernelPath   string
+	RootfsPath   string
+	CPUs         int
+	MemoryMB     int64
+	IdleMemoryMB int64 // target balloon memory between turns when activeTurns == 0 (default 192 MiB)
+	PidsLimit    int64
+	WarmTTL      time.Duration
+	MCPURL       string
 
 	APIHandler    http.Handler
 	APIUpstream   string // optional http(s)://host:port used when APIHandler == nil
@@ -78,6 +79,7 @@ type runVM struct {
 	runID       string
 	vm          microvm.VM
 	egress      *microvm.Egress
+	vmGen       uint64
 	activeTurns int
 	idleTimer   *time.Timer
 }
@@ -362,7 +364,12 @@ func (b *MicroVM) acquireVM(ctx context.Context, runID string) (*runVM, error) {
 		rvm.idleTimer.Stop()
 		rvm.idleTimer = nil
 	}
+	memMB := b.MemoryMB
+	if memMB <= 0 {
+		memMB = 2048
+	}
 	if rvm.vm != nil {
+		_ = rvm.vm.SetMemoryTarget(uint64(memMB) << 20)
 		rvm.activeTurns++
 		return rvm, nil
 	}
@@ -373,10 +380,6 @@ func (b *MicroVM) acquireVM(ctx context.Context, runID string) (*runVM, error) {
 	dir, err := b.runDir(runID)
 	if err != nil {
 		return nil, err
-	}
-	memMB := b.MemoryMB
-	if memMB <= 0 {
-		memMB = 2048
 	}
 	cpus := b.CPUs
 	if cpus <= 0 {
@@ -409,16 +412,91 @@ func (b *MicroVM) acquireVM(ctx context.Context, runID string) (*runVM, error) {
 	}
 	rvm.egress = eg
 	rvm.vm = vm
+	rvm.vmGen++
 	rvm.activeTurns++
 	return rvm, nil
 }
 
 func (b *MicroVM) releaseVM(rvm *runVM) {
 	rvm.mu.Lock()
-	defer rvm.mu.Unlock()
 	if rvm.activeTurns > 0 {
 		rvm.activeTurns--
 	}
+	idleNow := rvm.activeTurns == 0 && rvm.vm != nil
+	vm := rvm.vm
+	gen := rvm.vmGen
+	rvm.mu.Unlock()
+
+	if !idleNow {
+		return
+	}
+
+	// Free guest page cache first, then deflate guest memory toward IdleMemoryMB
+	// via virtio_balloon so freed pages return promptly to macOS.
+	dctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	_ = vm.Client().SyncAndDropCaches(dctx)
+	cancel()
+
+	idleMB := b.IdleMemoryMB
+	if idleMB <= 0 {
+		idleMB = 192
+	}
+	memMB := b.MemoryMB
+	if memMB <= 0 {
+		memMB = 2048
+	}
+	if idleMB > memMB {
+		idleMB = memMB
+	}
+
+	rvm.mu.Lock()
+	defer rvm.mu.Unlock()
+	if rvm.activeTurns != 0 || rvm.vm == nil || rvm.vmGen != gen {
+		return
+	}
+	if idleMB < memMB {
+		_ = rvm.vm.SetMemoryTarget(uint64(idleMB) << 20)
+	}
+	if b.WarmTTL > 0 {
+		if rvm.idleTimer != nil {
+			rvm.idleTimer.Stop()
+		}
+		rvm.idleTimer = time.AfterFunc(b.WarmTTL, func() {
+			rvm.mu.Lock()
+			defer rvm.mu.Unlock()
+			if rvm.activeTurns != 0 || rvm.vm == nil || rvm.vmGen != gen {
+				return
+			}
+			sctx, scancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer scancel()
+			_ = rvm.vm.Stop(sctx)
+			if rvm.egress != nil {
+				_ = rvm.egress.Close()
+			}
+			rvm.vm = nil
+			rvm.egress = nil
+			rvm.idleTimer = nil
+		})
+	}
+}
+
+// ActiveVMCount reports how many microVMs currently have a booted hypervisor instance.
+func (b *MicroVM) ActiveVMCount() int {
+	b.runsMu.Lock()
+	list := make([]*runVM, 0, len(b.vms))
+	for _, rvm := range b.vms {
+		list = append(list, rvm)
+	}
+	b.runsMu.Unlock()
+	n := 0
+	for _, rvm := range list {
+		rvm.mu.Lock()
+		if rvm.vm != nil {
+			n++
+		}
+		rvm.mu.Unlock()
+	}
+	return n
 }
 
 func (b *MicroVM) stopRunVM(ctx context.Context, runID string) {
