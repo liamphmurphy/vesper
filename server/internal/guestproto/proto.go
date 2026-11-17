@@ -51,6 +51,7 @@ const (
 	OpUnlinkPaths         = "unlink_paths"
 	OpSyncAndDropCaches   = "sync_drop_caches"
 	OpStartDockerd        = "start_dockerd"
+	OpStartNixDaemon      = "start_nix_daemon"
 	OpEnsureBridgeAliases = "ensure_bridge_aliases"
 	OpCheckTCPPort        = "check_tcp_port"
 	OpShutdown            = "shutdown"

@@ -205,6 +205,12 @@ func (s *agentServer) handleConn(ctx context.Context, conn net.Conn) {
 			return
 		}
 		_ = writeRPCOK(conn, f.ID, nil)
+	case guestproto.OpStartNixDaemon:
+		if err := ensureNixDaemon(ctx, s.execs); err != nil {
+			_ = writeRPCError(conn, f.ID, err.Error())
+			return
+		}
+		_ = writeRPCOK(conn, f.ID, nil)
 	case guestproto.OpEnsureBridgeAliases:
 		var in guestproto.EnsureBridgeAliasesReq
 		if err := json.Unmarshal(req.V, &in); err != nil {

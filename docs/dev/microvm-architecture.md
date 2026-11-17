@@ -80,7 +80,7 @@ run's persistent workspace disk already carries state from turn to turn.
 | Workload | VM ownership & isolation |
 |---|---|
 | Agent turns (incl. delegated worktree runs) | The run's Linux microVM (dedicated `cgroup` per turn) |
-| Dev workspace (`docker_dev_workspace.go`) | One long-lived Linux VM per workspace; two persistent disks (`workspace.ext4`, `home.ext4`) + balloon |
+| Dev workspace (`docker_dev_workspace.go`) | One long-lived Linux VM per workspace; persistent disks (`workspace.ext4`, `home.ext4`, plus `nix.ext4` holding a writable `/nix` served by an in-guest nix-daemon) + balloon |
 | Playground (`playgrounds.go`) | One Linux VM per playground; services and spec processes run inside it; **no `home.ext4` mounted** so playgrounds never see harness logins (`docs/dev/playgrounds.md:28`) |
 | Sign-ins, model listings, usage probes | A shared short-lived utility VM (or warm pool of tiny VMs; latency-sensitive) |
 | Host-authenticated git push/fetch (`push_staging.go`) | Isolated bare repository on the host (or a clean utility VM); **`git:pat` never enters a run VM** |
@@ -549,7 +549,7 @@ logs/                       vesper, Postgres, Next, guest serial consoles
 | Feature | Docker backend today | MicroVM backend (`darwin/arm64`) |
 |---|---|---|
 | Agent turns, outbox, video files | Container per turn on run volumes | Process tree in dedicated cgroup v2 in run VM; `cgroup.kill` + `drop_caches` on exit |
-| Dev workspace (`docker_dev_workspace.go`) | Long-lived container, tmux + LazyVim PTY | Long-lived VM, PTY over `vsock`; balloon reclaims idle memory |
+| Dev workspace (`docker_dev_workspace.go`) | Long-lived container, tmux + LazyVim PTY | Long-lived VM, PTY over `vsock`; persistent `nix.ext4` + in-guest nix-daemon; balloon reclaims idle memory |
 | Sign-ins, model listings, usage probes | Throwaway containers with saved login | Shared short-lived utility VM or warm pool |
 | Design renderer, images, video, audio | Processes inside turn containers | Same, inside run VM; streamed out over `vsock` |
 | Turn services (`docker_services.go`) | Sibling containers on turn network | Containers via in-guest `dockerd` + loopback-excluded bridge |

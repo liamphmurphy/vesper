@@ -50,5 +50,9 @@ func ensureDockerd(context.Context, *slog.Logger, *execTracker, string) error {
 	return errors.New("dockerd is only supported inside Linux guest VM")
 }
 
+func ensureNixDaemon(context.Context, *execTracker) error {
+	return errors.New("nix-daemon is only supported inside Linux guest VM")
+}
+
 // quiet unused import lint on non-linux builds
 var _ = io.Discard

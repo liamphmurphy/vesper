@@ -191,8 +191,16 @@ func mountAttachedDisks() error {
 	if err != nil {
 		return err
 	}
-	for _, dev := range blocks {
-		fsType, label := detectBlockVolume(dev)
+	type blockInfo struct{ fsType, label string }
+	infos := make([]blockInfo, len(blocks))
+	scan := make([]volumeInfo, len(blocks))
+	for i, dev := range blocks {
+		infos[i].fsType, infos[i].label = detectBlockVolume(dev)
+		scan[i] = volumeInfo{infos[i].fsType, infos[i].label}
+	}
+	persistNix := hasPersistentNix(scan)
+	for i, dev := range blocks {
+		fsType, label := infos[i].fsType, infos[i].label
 		switch fsType {
 		case "ext4":
 			var target string
@@ -212,6 +220,11 @@ func mountAttachedDisks() error {
 				chownNode = true
 			case "vesper-dkr":
 				target = "/var/lib/docker"
+			case nixDiskLabel:
+				if err := mountPersistentNix(dev); err != nil {
+					return err
+				}
+				continue
 			default:
 				continue
 			}
@@ -226,6 +239,9 @@ func mountAttachedDisks() error {
 			var target string
 			switch label {
 			case "cache-nix":
+				if persistNix {
+					continue
+				}
 				target = "/nix"
 			case "cache-gomod":
 				target = "/cache/gomod"
@@ -243,6 +259,58 @@ func mountAttachedDisks() error {
 	_ = os.Chown("/home/node", 1000, 1000)
 	_ = os.MkdirAll("/workspace", 0o755)
 	_ = os.Chown("/workspace", 1000, 1000)
+	return nil
+}
+
+const nixDiskLabel = "vesper-nix"
+
+type volumeInfo struct{ fsType, label string }
+
+// hasPersistentNix reports whether an ext4 volume labelled vesper-nix is
+// attached. When it is, /nix lives on that disk and the cache-nix EROFS
+// overlay must not be stacked on it.
+func hasPersistentNix(vols []volumeInfo) bool {
+	for _, v := range vols {
+		if v.fsType == "ext4" && v.label == nixDiskLabel {
+			return true
+		}
+	}
+	return false
+}
+
+// mountPersistentNix mounts the vesper-nix disk, seeds it once from the
+// image's /nix, and bind-mounts it over /nix. The atomic rename of nix.tmp to
+// nix is the "seeded" marker, so a crash mid-copy simply reseeds.
+func mountPersistentNix(dev string) error {
+	const mnt = "/run/vesper-nix"
+	if err := os.MkdirAll(mnt, 0o755); err != nil {
+		return err
+	}
+	if err := unix.Mount(dev, mnt, "ext4", unix.MS_NOATIME, ""); err != nil {
+		return fmt.Errorf("mount %s (%s) on %s: %w", dev, nixDiskLabel, mnt, err)
+	}
+	store := filepath.Join(mnt, "nix")
+	if _, err := os.Stat(store); err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		tmp := filepath.Join(mnt, "nix.tmp")
+		if err := os.RemoveAll(tmp); err != nil {
+			return fmt.Errorf("clean %s: %w", tmp, err)
+		}
+		if err := os.MkdirAll(tmp, 0o755); err != nil {
+			return err
+		}
+		if out, err := exec.Command("cp", "-a", "/nix/.", tmp+"/").CombinedOutput(); err != nil {
+			return fmt.Errorf("seed nix disk: %w: %s", err, out)
+		}
+		if err := os.Rename(tmp, store); err != nil {
+			return fmt.Errorf("seed nix disk: %w", err)
+		}
+	}
+	if err := unix.Mount(store, "/nix", "", unix.MS_BIND, ""); err != nil {
+		return fmt.Errorf("bind %s on /nix: %w", store, err)
+	}
 	return nil
 }
 

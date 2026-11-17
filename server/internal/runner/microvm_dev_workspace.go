@@ -80,6 +80,10 @@ func (b *MicroVM) EnsureDevWorkspaceContainer(ctx context.Context, workspaceID u
 	if dkrSz <= 0 {
 		dkrSz = dkrTemplateSize
 	}
+	nixSz := b.TestNixBytes
+	if nixSz <= 0 {
+		nixSz = nixTemplateSize
+	}
 	for _, dspec := range []struct {
 		file, tmpl, label string
 		sz                int64
@@ -87,6 +91,7 @@ func (b *MicroVM) EnsureDevWorkspaceContainer(ctx context.Context, workspaceID u
 		{"workspace.ext4", "ws.ext4", wsDiskLabel, wsSz},
 		{"home.ext4", "home.ext4", homeDiskLabel, homeSz},
 		{"docker.ext4", "dkr.ext4", dkrDiskLabel, dkrSz},
+		{"nix.ext4", "nix.ext4", nixDiskLabel, nixSz},
 	} {
 		dst := filepath.Join(dir, dspec.file)
 		if _, serr := os.Stat(dst); serr == nil {
@@ -106,6 +111,7 @@ func (b *MicroVM) EnsureDevWorkspaceContainer(ctx context.Context, workspaceID u
 		{Path: filepath.Join(dir, "workspace.ext4"), ReadOnly: false},
 		{Path: filepath.Join(dir, "home.ext4"), ReadOnly: false},
 		{Path: filepath.Join(dir, "docker.ext4"), ReadOnly: false},
+		{Path: filepath.Join(dir, "nix.ext4"), ReadOnly: false},
 	}
 	if b.CacheStore != nil {
 		drives = append(drives, b.CacheStore.LatestEROFSDrives()...)
@@ -145,6 +151,12 @@ func (b *MicroVM) EnsureDevWorkspaceContainer(ctx context.Context, workspaceID u
 			return "", werr
 		}
 	}
+	// nix-daemon reads nix.conf at start, so start it after the write above.
+	if nerr := vm.Client().StartNixDaemon(ctx); nerr != nil {
+		_ = vm.Stop(context.Background())
+		_ = eg.Close()
+		return "", nerr
+	}
 
 	b.devMu.Lock()
 	if b.devVMs == nil {
@@ -170,6 +182,20 @@ func (b *MicroVM) findDevVM(containerID string) (*devWorkspaceVM, error) {
 	return dvm, nil
 }
 
+// devShellEnv is the environment shared by dev workspace scripts and PTYs.
+func (b *MicroVM) devShellEnv() map[string]string {
+	envMap := map[string]string{
+		"HOME":       homePath,
+		"USER":       "node",
+		"LOGNAME":    "node",
+		"TMPDIR":     "/tmp",
+		"NIX_REMOTE": "daemon",
+		"PATH":       devworkspace.ProfilePath + "/bin:" + homePath + "/.nix-profile/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/nix/var/nix/profiles/default/bin",
+	}
+	b.applyCacheEnv(envMap)
+	return envMap
+}
+
 func (b *MicroVM) ExecDevWorkspaceScript(ctx context.Context, containerID, script string, env []string) (string, int, error) {
 	dvm, err := b.findDevVM(containerID)
 	if err != nil {
@@ -178,14 +204,7 @@ func (b *MicroVM) ExecDevWorkspaceScript(ctx context.Context, containerID, scrip
 	sctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
 
-	envMap := map[string]string{
-		"HOME":    homePath,
-		"USER":    "node",
-		"LOGNAME": "node",
-		"TMPDIR":  "/tmp",
-		"PATH":    devworkspace.ProfilePath + "/bin:" + homePath + "/.nix-profile/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/nix/var/nix/profiles/default/bin",
-	}
-	b.applyCacheEnv(envMap)
+	envMap := b.devShellEnv()
 	for _, kv := range env {
 		if k, v, ok := strings.Cut(kv, "="); ok && k != "" {
 			envMap[k] = v
@@ -278,15 +297,8 @@ func (b *MicroVM) OpenDevWorkspacePTY(ctx context.Context, workspaceID uuid.UUID
 	if rows > 0 {
 		rRows = uint16(rows)
 	}
-	envMap := map[string]string{
-		"HOME":    homePath,
-		"USER":    "node",
-		"LOGNAME": "node",
-		"TERM":    "xterm-256color",
-		"TMPDIR":  "/tmp",
-		"PATH":    devworkspace.ProfilePath + "/bin:" + homePath + "/.nix-profile/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/nix/var/nix/profiles/default/bin",
-	}
-	b.applyCacheEnv(envMap)
+	envMap := b.devShellEnv()
+	envMap["TERM"] = "xterm-256color"
 
 	cmd := "if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s main; fi; exec bash -l"
 	rp, err := dvm.vm.Client().StartExec(ctx, guestproto.ExecReq{

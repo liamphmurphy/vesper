@@ -66,6 +66,11 @@ func (c *Client) SyncAndDropCaches(ctx context.Context) error {
 	return c.callUnary(ctx, OpSyncAndDropCaches, nil, nil)
 }
 
+// StartNixDaemon starts the in-guest nix-daemon (idempotent).
+func (c *Client) StartNixDaemon(ctx context.Context) error {
+	return c.callUnary(ctx, OpStartNixDaemon, struct{}{}, nil)
+}
+
 func (c *Client) StartDockerd(ctx context.Context, registryMirror string) error {
 	return c.callUnary(ctx, OpStartDockerd, StartDockerdReq{RegistryMirror: registryMirror}, nil)
 }

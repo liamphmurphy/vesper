@@ -394,3 +394,51 @@ printf '%s\n' '` + string(refreshedCodex) + `' > "$HOME/.codex/auth.json"
 		t.Fatalf("expected refreshed Codex auth saved, got scope=%q auth=%q", savedScope, savedCodex)
 	}
 }
+
+func TestVZDevWorkspaceNixPersists(t *testing.T) {
+	kernel, rootfs := requireRunnerVZImages(t)
+	ctx := context.Background()
+
+	b := &MicroVM{
+		Driver:             microvm.NewVZDriver(),
+		StateDir:           t.TempDir(),
+		KernelPath:         kernel,
+		RootfsPath:         rootfs,
+		CPUs:               2,
+		MemoryMB:           1024,
+		PidsLimit:          256,
+		TestWorkspaceBytes: 64 << 20,
+		TestHomeBytes:      64 << 20,
+		TestDockerBytes:    32 << 20,
+		TestNixBytes:       2 << 30,
+	}
+	defer func() { _ = b.Cleanup(ctx) }()
+
+	wsID := uuid.New()
+	cid, err := b.EnsureDevWorkspaceContainer(ctx, wsID)
+	if err != nil {
+		t.Fatalf("EnsureDevWorkspaceContainer: %v", err)
+	}
+	out, code, err := b.ExecDevWorkspaceScript(ctx, cid,
+		`echo persist-me > /tmp/f && nix-store --add /tmp/f > /home/node/nixpath && nix-env -p /home/node/prof -i "$(cat /home/node/nixpath)"`, nil)
+	if err != nil || code != 0 {
+		t.Fatalf("nix add code=%d out=%q err=%v", code, out, err)
+	}
+	out, code, err = b.ExecDevWorkspaceScript(ctx, cid, `touch /nix/store/x`, nil)
+	if err != nil || code == 0 {
+		t.Fatalf("uid 1000 wrote /nix/store directly: code=%d out=%q err=%v", code, out, err)
+	}
+
+	if err := b.StopDevWorkspaceContainer(ctx, wsID); err != nil {
+		t.Fatalf("StopDevWorkspaceContainer: %v", err)
+	}
+	cid, err = b.EnsureDevWorkspaceContainer(ctx, wsID)
+	if err != nil {
+		t.Fatalf("second EnsureDevWorkspaceContainer: %v", err)
+	}
+	out, code, err = b.ExecDevWorkspaceScript(ctx, cid,
+		`p=$(cat /home/node/nixpath); nix-store --check-validity "$p" && cat "$p" && test -e /home/node/prof && test -e /nix/var/nix/profiles/default/bin/nix`, nil)
+	if err != nil || code != 0 || !strings.Contains(out, "persist-me") {
+		t.Fatalf("after restart code=%d out=%q err=%v", code, out, err)
+	}
+}

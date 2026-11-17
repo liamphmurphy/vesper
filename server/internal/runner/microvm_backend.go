@@ -30,10 +30,12 @@ const (
 	wsTemplateSize  int64 = 64 << 30 // 64 GiB sparse APFS image
 	homeTemplateSz  int64 = 16 << 30 // 16 GiB sparse APFS image
 	dkrTemplateSize int64 = 32 << 30 // 32 GiB sparse APFS image
+	nixTemplateSize int64 = 32 << 30 // 32 GiB sparse APFS image (dev workspaces)
 
 	wsDiskLabel   = "vesper-ws"
 	homeDiskLabel = "vesper-home"
 	dkrDiskLabel  = "vesper-dkr"
+	nixDiskLabel  = "vesper-nix"
 
 	maxAuthReadBytes    = 16 << 10
 	maxNixManifestBytes = 4 << 20
@@ -74,6 +76,7 @@ type MicroVM struct {
 	TestWorkspaceBytes int64
 	TestHomeBytes      int64
 	TestDockerBytes    int64
+	TestNixBytes       int64
 
 	tmplMu      sync.Mutex
 	runsMu      sync.Mutex
