@@ -28,6 +28,9 @@ type PlaygroundConfig struct {
 	// Ports the gateway listens on, one playground each (RUNNER_PLAYGROUND_PORTS).
 	// None turns playgrounds off for this runner.
 	Ports []int
+	// Host is the address the ports listen on; "" means every interface,
+	// which a container needs (compose publishes them on loopback only).
+	Host string
 	// IdleTTL stops a playground nobody has made a request to for this long.
 	// 0 means DefaultPlaygroundIdleTTL.
 	IdleTTL time.Duration
@@ -75,7 +78,7 @@ func (r *Runner) ServePlaygrounds(ctx context.Context) {
 		busy:  map[uuid.UUID]bool{},
 	}
 	for _, port := range r.Cfg.Playgrounds.Ports {
-		ln, err := net.Listen("tcp", ":"+strconv.Itoa(port))
+		ln, err := net.Listen("tcp", net.JoinHostPort(r.Cfg.Playgrounds.Host, strconv.Itoa(port)))
 		if err != nil {
 			r.Log.Warn("playgrounds: can't serve port", "port", port, "err", err)
 			continue

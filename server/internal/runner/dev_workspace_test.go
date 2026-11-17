@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/liamphmurphy/vesper/server/internal/auth"
 	"github.com/liamphmurphy/vesper/server/internal/devworkspace"
 	"github.com/liamphmurphy/vesper/server/internal/playground"
 )
@@ -36,13 +37,33 @@ func TestParseArch(t *testing.T) {
 }
 
 func TestDevWorkspaceHandlerRejectsUnauthenticated(t *testing.T) {
-	r := &Runner{}
+	r := &Runner{Cfg: Config{Playgrounds: PlaygroundConfig{Origins: []string{"http://localhost:8080"}}}}
 	h := r.devWorkspaceHandler(uuid.New())
 	req := httptest.NewRequest(http.MethodGet, "/ws", nil)
+	req.Header.Set("Origin", "http://localhost:8080")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+// The session cookie is SameSite=Strict, so a playground on a neighbouring
+// port of the same host still sends it: only Vesper's pages may connect.
+func TestDevWorkspaceHandlerRejectsOtherOrigins(t *testing.T) {
+	r := &Runner{Cfg: Config{Playgrounds: PlaygroundConfig{Origins: []string{"http://localhost:8080"}}}}
+	h := r.devWorkspaceHandler(uuid.New())
+	for _, origin := range []string{"", "http://localhost:8091", "https://evil.example"} {
+		req := httptest.NewRequest(http.MethodGet, "/ws", nil)
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		req.AddCookie(&http.Cookie{Name: auth.SessionCookie, Value: "stolen"})
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("Origin %q: status = %d, want 403", origin, rec.Code)
+		}
 	}
 }
 

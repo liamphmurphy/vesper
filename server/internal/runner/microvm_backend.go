@@ -99,6 +99,12 @@ type runVM struct {
 	vmGen       uint64
 	activeTurns int
 	idleTimer   *time.Timer
+
+	// credMu orders credential writes and sweeps in this VM: a process's
+	// post-exit sweep must not delete a login another process just wrote.
+	credMu sync.Mutex
+	// credHolds counts running processes per home credential path they wrote.
+	credHolds map[string]int
 }
 
 func (b *MicroVM) Name() string               { return "microvm" }
@@ -586,7 +592,9 @@ func (b *MicroVM) Start(ctx context.Context, runID string, spec ExecSpec) (Proce
 		})
 	}
 
-	var unlinkPaths []string
+	// heldPaths are the credentials this process writes; sweepPaths are
+	// removed after it exits unless a process still running holds them.
+	var heldPaths []string
 	claudeAuth := spec.Env[ClaudeAuthEnv]
 	claudeScope := spec.Env[ClaudeAuthScopeEnv]
 	codexAuth := spec.Env[CodexAuthEnv]
@@ -596,12 +604,12 @@ func (b *MicroVM) Start(ctx context.Context, runID string, spec ExecSpec) (Proce
 	if claudeAuth != "" {
 		p := path.Join(homePath, claudeAuthPath)
 		writes = append(writes, guestproto.FileWrite{Path: p, Data: []byte(claudeAuth), Mode: 0o600, UID: 1000, GID: 1000})
-		unlinkPaths = append(unlinkPaths, p)
+		heldPaths = append(heldPaths, p)
 	}
 	if codexAuth != "" {
 		p := path.Join(homePath, codexAuthPath)
 		writes = append(writes, guestproto.FileWrite{Path: p, Data: []byte(codexAuth), Mode: 0o600, UID: 1000, GID: 1000})
-		unlinkPaths = append(unlinkPaths, p)
+		heldPaths = append(heldPaths, p)
 	}
 	if agyAuthRaw != "" {
 		auth, valid := chatmodels.ParseAntigravityAuth(agyAuthRaw)
@@ -615,11 +623,12 @@ func (b *MicroVM) Start(ctx context.Context, runID string, spec ExecSpec) (Proce
 			}
 			p := path.Join(homePath, cleanRel)
 			writes = append(writes, guestproto.FileWrite{Path: p, Data: []byte(content), Mode: 0o600, UID: 1000, GID: 1000})
-			unlinkPaths = append(unlinkPaths, p)
+			heldPaths = append(heldPaths, p)
 		}
 	}
-	// Always sweep standard secret paths unconditionally after every turn.
-	unlinkPaths = append(unlinkPaths,
+	// Sweep the standard secret paths after every process too, except what a
+	// process still running in this VM holds (see releaseCredentials).
+	sweepPaths := append(append([]string(nil), heldPaths...),
 		path.Join(homePath, claudeAuthPath),
 		path.Join(homePath, codexAuthPath),
 		path.Join(homePath, ".config/antigravity"),
@@ -668,6 +677,13 @@ func (b *MicroVM) Start(ctx context.Context, runID string, spec ExecSpec) (Proce
 	if dir == "" {
 		dir = workspacePath
 	}
+	// Hold the logins before writing them: a process exiting meanwhile either
+	// finished its sweep before the hold (it sweeps under credMu) or skips them.
+	if len(heldPaths) > 0 {
+		rvm.credMu.Lock()
+		rvm.holdCredentials(heldPaths)
+		rvm.credMu.Unlock()
+	}
 	rp, err := rvm.vm.Client().StartExec(ctx, guestproto.ExecReq{
 		Argv:             spec.Argv,
 		Env:              env,
@@ -680,6 +696,8 @@ func (b *MicroVM) Start(ctx context.Context, runID string, spec ExecSpec) (Proce
 		CgroupName:       spec.Name,
 	})
 	if err != nil {
+		// The files may have been written before the exec failed.
+		b.releaseCredentials(rvm, heldPaths, sweepPaths)
 		if gitProxySet && rvm.egress != nil {
 			rvm.egress.SetGitHandler(b.GitHandler)
 		}
@@ -697,7 +715,8 @@ func (b *MicroVM) Start(ctx context.Context, runID string, spec ExecSpec) (Proce
 		claudeScope: claudeScope,
 		codexAuth:   codexAuth,
 		codexScope:  codexScope,
-		unlinkPaths: unlinkPaths,
+		heldPaths:   heldPaths,
+		sweepPaths:  sweepPaths,
 		gitProxySet: gitProxySet,
 		pgProxySet:  pgProxySet,
 	}, nil
@@ -711,7 +730,8 @@ type microvmProc struct {
 	claudeScope string
 	codexAuth   string
 	codexScope  string
-	unlinkPaths []string
+	heldPaths   []string
+	sweepPaths  []string
 	nixManifest []byte
 	gitProxySet bool
 	pgProxySet  bool
@@ -753,8 +773,9 @@ func (p *microvmProc) Wait() (int, error) {
 	p.keepRefreshed(cctx, client, path.Join(homePath, claudeAuthPath), p.claudeAuth, p.claudeScope, p.b.SaveClaudeAuth, chatmodels.ClaudeAuthRefreshed)
 	p.keepRefreshed(cctx, client, path.Join(homePath, codexAuthPath), p.codexAuth, p.codexScope, p.b.SaveCodexAuth, chatmodels.CodexAuthRefreshed)
 
-	// Unconditionally unlink credentials from /home/node even on error/kill.
-	_ = client.UnlinkPaths(cctx, p.unlinkPaths, true)
+	// Unlink credentials from /home/node even on error/kill, unless another
+	// running process in this VM still holds them.
+	p.b.releaseCredentials(p.rvm, p.heldPaths, p.sweepPaths)
 
 	if err != nil {
 		return -1, err
@@ -778,6 +799,66 @@ func (p *microvmProc) Wait() (int, error) {
 
 func formatMemLimit(mb int64) string {
 	return strconv.FormatInt(mb, 10) + " MiB"
+}
+
+// holdCredentials records that a starting process writes paths. The caller
+// holds credMu.
+func (rvm *runVM) holdCredentials(paths []string) {
+	if rvm.credHolds == nil {
+		rvm.credHolds = make(map[string]int)
+	}
+	for _, p := range paths {
+		rvm.credHolds[p]++
+	}
+}
+
+// releaseCredentials drops a finished process's holds on held and unlinks
+// the sweep paths no running process in rvm still holds. A swept directory is
+// kept while a held file lies under it.
+func (b *MicroVM) releaseCredentials(rvm *runVM, held, sweep []string) {
+	rvm.credMu.Lock()
+	defer rvm.credMu.Unlock()
+	unlink := rvm.releaseHolds(held, sweep)
+	rvm.mu.Lock()
+	vm := rvm.vm
+	rvm.mu.Unlock()
+	if len(unlink) == 0 || vm == nil {
+		return
+	}
+	// A fresh budget: the caller's may be spent on refresh saves or the lock.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := vm.Client().UnlinkPaths(ctx, unlink, true); err != nil {
+		b.logger().Warn("microvm: remove credentials", "run", rvm.runID, "err", err)
+	}
+}
+
+// releaseHolds drops one hold per path in held and returns the sweep paths
+// nothing holds any more. The caller holds credMu.
+func (rvm *runVM) releaseHolds(held, sweep []string) []string {
+	for _, p := range held {
+		if rvm.credHolds[p] <= 1 {
+			delete(rvm.credHolds, p)
+		} else {
+			rvm.credHolds[p]--
+		}
+	}
+	unlink := make([]string, 0, len(sweep))
+	for _, p := range sweep {
+		if !rvm.credentialHeld(p) {
+			unlink = append(unlink, p)
+		}
+	}
+	return unlink
+}
+
+func (rvm *runVM) credentialHeld(p string) bool {
+	for h := range rvm.credHolds {
+		if h == p || strings.HasPrefix(h, p+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *microvmProc) keepRefreshed(ctx context.Context, client *guestproto.Client, guestFile, current, scope string, save func(context.Context, string, string) error, valid func(string, string) bool) {

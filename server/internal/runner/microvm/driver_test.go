@@ -127,6 +127,13 @@ func TestVZBootAndExec(t *testing.T) {
 		}
 	}
 
+	// Builds (nix's patchelf hook, any bash script) use process substitution,
+	// which needs the /dev/fd links udev would make on a normal system.
+	code, out, stderr, _ = execOnce(`test -L /dev/fd && test -e /dev/stdin && test -e /dev/stdout && test -e /dev/stderr && bash -c 'cat <(echo procsub-ok)'`)
+	if code != 0 || !strings.Contains(out, "procsub-ok") {
+		t.Fatalf("/dev/fd links missing: code=%d out=%q err=%q", code, out, stderr)
+	}
+
 	var execDurs []time.Duration
 	for i := 0; i < 5; i++ {
 		c, _, _, d := execOnce("true")

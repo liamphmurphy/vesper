@@ -424,6 +424,13 @@ func TestVZDevWorkspaceNixPersists(t *testing.T) {
 	if err != nil || code != 0 {
 		t.Fatalf("nix add code=%d out=%q err=%v", code, out, err)
 	}
+	// A daemon build whose builder uses process substitution, as nixpkgs'
+	// patchelf setup hook does (it failed without /dev/fd in the guest).
+	out, code, err = b.ExecDevWorkspaceScript(ctx, cid,
+		`p=$(nix-build --no-out-link -E 'derivation { name = "procsub"; system = builtins.currentSystem; builder = "/bin/bash"; args = [ "-c" "read -r x < <(echo built-ok); echo $x > $out" ]; }') && cat "$p"`, nil)
+	if err != nil || code != 0 || !strings.Contains(out, "built-ok") {
+		t.Fatalf("nix build with process substitution: code=%d out=%q err=%v", code, out, err)
+	}
 	out, code, err = b.ExecDevWorkspaceScript(ctx, cid, `touch /nix/store/x`, nil)
 	if err != nil || code == 0 {
 		t.Fatalf("uid 1000 wrote /nix/store directly: code=%d out=%q err=%v", code, out, err)

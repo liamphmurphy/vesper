@@ -430,9 +430,11 @@ func runAppMicroVMRunner(
 			RolloverContextTokens: int64(cfg.RolloverContextTokens),
 			RepoMap:               cfg.Runner.RepoMap,
 			Playgrounds: runner.PlaygroundConfig{
-				Ports:   cfg.Runner.PlaygroundPorts,
+				Ports:   appPlaygroundPorts(cfg.Runner.PlaygroundPorts),
+				Host:    "127.0.0.1",
 				IdleTTL: cfg.Runner.PlaygroundIdleTTL,
-				Origins: origins(baseURL),
+				// The window loads localhost; baseURL is the 127.0.0.1 listener.
+				Origins: origins(baseURL, localhostURL(baseURL)),
 			},
 		},
 		Pool:        pool,
@@ -611,4 +613,28 @@ func randomHex16() string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])
+}
+
+// appPlaygroundPorts are the gateway ports for playgrounds and the dev
+// workspace terminal: RUNNER_PLAYGROUND_PORTS, else the Docker stack's default
+// 8090-8094. The app serves them on loopback only.
+func appPlaygroundPorts(configured []int) []int {
+	if len(configured) > 0 {
+		return configured
+	}
+	return []int{8090, 8091, 8092, 8093, 8094}
+}
+
+// localhostURL is baseURL with its loopback IP spelled localhost, the name the
+// desktop window loads; "" when baseURL isn't a loopback IP.
+func localhostURL(baseURL string) string {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return ""
+	}
+	if ip := net.ParseIP(u.Hostname()); ip == nil || !ip.IsLoopback() {
+		return ""
+	}
+	u.Host = net.JoinHostPort("localhost", u.Port())
+	return u.String()
 }

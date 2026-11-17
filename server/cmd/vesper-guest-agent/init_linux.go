@@ -126,6 +126,18 @@ func mountCoreFS() error {
 	}
 	_ = os.Remove("/dev/ptmx")
 	_ = os.Symlink("pts/ptmx", "/dev/ptmx")
+	// devtmpfs has no /dev/fd or std links (udev makes them elsewhere); bash
+	// process substitution needs them, e.g. nixpkgs' patchelf setup hook.
+	for name, target := range map[string]string{
+		"/dev/fd":     "/proc/self/fd",
+		"/dev/stdin":  "/proc/self/fd/0",
+		"/dev/stdout": "/proc/self/fd/1",
+		"/dev/stderr": "/proc/self/fd/2",
+	} {
+		if _, err := os.Lstat(name); os.IsNotExist(err) {
+			_ = os.Symlink(target, name)
+		}
+	}
 	if err := ensureMount("tmpfs", "/dev/shm", "tmpfs", unix.MS_NOSUID|unix.MS_NODEV, "mode=1777", 0o1777); err != nil {
 		return fmt.Errorf("/dev/shm: %w", err)
 	}

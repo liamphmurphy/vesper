@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/liamphmurphy/vesper/server/internal/guestproto"
 	"github.com/liamphmurphy/vesper/server/internal/runner/microvm"
@@ -232,4 +233,96 @@ func requireRunnerVZImages(t *testing.T) (kernel, rootfs string) {
 	_ = errors.New
 	_ = guestproto.PortRPC
 	return kernel, rootfs
+}
+
+// A process without logins that exits while a turn runs (the code review's
+// git batch in a coding chat) must not sweep the turn's Claude login.
+func TestVZCredentialSweepSparesRunningTurn(t *testing.T) {
+	kernel, rootfs := requireRunnerVZImages(t)
+	b := &MicroVM{
+		Driver:             microvm.NewVZDriver(),
+		StateDir:           t.TempDir(),
+		KernelPath:         kernel,
+		RootfsPath:         rootfs,
+		CPUs:               2,
+		MemoryMB:           512,
+		PidsLimit:          256,
+		TestWorkspaceBytes: 64 << 20,
+		TestHomeBytes:      32 << 20,
+		TestDockerBytes:    32 << 20,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	defer func() { _ = b.Cleanup(context.Background()) }()
+	const runID = "cred-sweep"
+	if err := b.EnsureWorkspace(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+	auth := `{"claudeAiOauth":{"accessToken":"sk-ant-oat01-test","refreshToken":"sk-ant-ort01-test","expiresAt":4070908800000,"scopes":["user:inference"]}}`
+
+	turn, err := b.Start(ctx, runID, ExecSpec{
+		Name: "lazyagents-turn-" + runID + "-1",
+		Argv: []string{"sh", "-c", `exec 2>&1; while [ ! -e /tmp/swept ]; do sleep 0.1; done; cat /home/node/.claude/.credentials.json`},
+		Env:  map[string]string{ClaudeAuthEnv: auth},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	turnOut := make(chan []byte, 1)
+	go func() { b, _ := io.ReadAll(turn.Stdout()); turnOut <- b }()
+
+	other, err := b.Start(ctx, runID, ExecSpec{Name: "lazyagents-git-" + runID, Argv: []string{"true"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, other.Stdout())
+	if code, err := other.Wait(); err != nil || code != 0 {
+		t.Fatalf("other process: code=%d err=%v", code, err)
+	}
+	// Its sweep has run; let the turn read its login now.
+	marker, err := b.Start(ctx, runID, ExecSpec{Name: "marker-" + runID, Argv: []string{"touch", "/tmp/swept"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, marker.Stdout())
+	_, _ = marker.Wait()
+
+	out := <-turnOut
+	if code, err := turn.Wait(); err != nil || code != 0 || !strings.Contains(string(out), "sk-ant-oat01-test") {
+		t.Fatalf("turn lost its Claude login to another process's sweep: code=%d err=%v out=%q", code, err, out)
+	}
+
+	after, err := b.Start(ctx, runID, ExecSpec{Name: "after-" + runID, Argv: []string{"sh", "-c", "test ! -e /home/node/.claude/.credentials.json"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, after.Stdout())
+	if code, err := after.Wait(); err != nil || code != 0 {
+		t.Fatalf("Claude login left in /home/node after its last holder exited: code=%d err=%v", code, err)
+	}
+}
+
+func TestCredentialHolds(t *testing.T) {
+	const claude = "/home/node/.claude/.credentials.json"
+	const agy = "/home/node/.gemini/oauth_creds.json"
+	sweep := []string{claude, "/home/node/.codex/auth.json", "/home/node/.gemini", "/home/node/.ssh"}
+	var rvm runVM
+
+	rvm.holdCredentials([]string{claude})
+	rvm.holdCredentials([]string{claude, agy})
+	// A process with no logins exits: nothing held may go.
+	if got := rvm.releaseHolds(nil, sweep); strings.Join(got, ",") != "/home/node/.codex/auth.json,/home/node/.ssh" {
+		t.Fatalf("sweep while held = %v", got)
+	}
+	// One of two Claude holders exits: the login and the held file's directory stay.
+	if got := rvm.releaseHolds([]string{claude, agy}, append(sweep, agy)); strings.Join(got, ",") != "/home/node/.codex/auth.json,/home/node/.gemini,/home/node/.ssh,"+agy {
+		t.Fatalf("sweep with one holder left = %v", got)
+	}
+	// The last holder exits: everything goes.
+	if got := rvm.releaseHolds([]string{claude}, sweep); len(got) != len(sweep) {
+		t.Fatalf("sweep after last holder = %v", got)
+	}
+	if len(rvm.credHolds) != 0 {
+		t.Fatalf("holds left: %v", rvm.credHolds)
+	}
 }

@@ -223,3 +223,22 @@ func TestAppBootsSealedAndRedeemsSignInCode(t *testing.T) {
 		t.Fatal("timed out waiting for runApp shutdown")
 	}
 }
+
+func TestAppPlaygroundDefaults(t *testing.T) {
+	if got := appPlaygroundPorts(nil); len(got) != 5 || got[0] != 8090 || got[4] != 8094 {
+		t.Fatalf("default ports = %v, want 8090-8094", got)
+	}
+	if got := appPlaygroundPorts([]int{9000}); len(got) != 1 || got[0] != 9000 {
+		t.Fatalf("configured ports = %v, want [9000]", got)
+	}
+	for in, want := range map[string]string{
+		"http://127.0.0.1:8080": "http://localhost:8080",
+		"http://[::1]:8080":     "http://localhost:8080",
+		"http://10.0.0.5:8080":  "",
+		"http://localhost:8080": "",
+	} {
+		if got := localhostURL(in); got != want {
+			t.Fatalf("localhostURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

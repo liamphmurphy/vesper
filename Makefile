@@ -2,7 +2,7 @@
 SHELL := /bin/bash
 COMPOSE_DEV := docker compose -f docker-compose.dev.yml
 
-.PHONY: help up down start setup signin login claude-login codex-login github-login stop-dev dev dev-infra api web web-deps runner stop-host-runners gen gen-check test lint build reset desktop-deps desktop-dev desktop-test desktop-dmg desktop-dmg-universal
+.PHONY: help up down start setup signin login claude-login codex-login github-login stop-dev dev dev-infra api web web-deps runner stop-host-runners gen gen-check test lint build reset desktop-deps desktop-dev desktop-test desktop-dmg desktop-dmg-universal desktop-reinstall
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-13s %s\n", $$1, $$2}'
@@ -139,3 +139,8 @@ desktop-dmg: desktop-deps ## Package self-contained macOS Apple Silicon Vesper.d
 
 desktop-dmg-universal: desktop-deps ## Package macOS universal Vesper.dmg (run on macOS)
 	cd desktop && npm run dmg:universal
+
+desktop-reinstall: desktop-deps ## Rebuild VM image + DMG, replace /Applications/Vesper.app, relaunch (SKIP_IMAGES=1 skips the image)
+	@if [ "$(SKIP_IMAGES)" != 1 ]; then deploy/microvm/build-images.sh --rootfs; fi
+	$(MAKE) desktop-dmg
+	bash scripts/reinstall-desktop.sh
