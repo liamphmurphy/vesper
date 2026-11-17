@@ -1,5 +1,6 @@
 appId: com.vesper.desktop
 productName: Vesper
+afterSign: scripts/after-pack.cjs
 directories:
   buildResources: build
   output: release
@@ -7,9 +8,27 @@ files:
   - dist/**/*
   - renderer/**/*
   - package.json
+extraResources:
+  - from: resources/bin
+    to: bin
+    filter:
+      - "**/*"
+  - from: resources/postgres
+    to: postgres
+    filter:
+      - "**/*"
+  - from: resources/images
+    to: images
+    filter:
+      - "**/*"
+  - from: resources/web
+    to: web
+    filter:
+      - "**/*"
 mac:
   category: public.app-category.developer-tools
   icon: build/icon.icns
+  identity: null
   target:
     - target: dmg
       arch:

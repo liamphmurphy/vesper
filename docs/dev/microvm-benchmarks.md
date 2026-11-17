@@ -45,3 +45,17 @@ Measured on `Virtualization.VirtualMachine` XPC helper RSS (`ps -axo rss,comm`) 
 | 8 | 833 ms | 2095.7 MiB (`2145952 KiB`) | 2097.3 MiB | 0 MiB (`0 KiB`) | ~210 ms |
 
 Finding (answers open question #1 in `microvm-architecture.md`): `virtio_balloon` alone does not synchronously drop macOS XPC helper RSS within 150 ms under zero host memory pressure (and guest `tmpfs` pages stay pinned until VM exit), whereas aggressive `WarmTTL` (`90 s`) shutdown returns **100% (`0 MiB`)** of host RAM cleanly vs OrbStack's retained `16,701 MiB` baseline, with ~210 ms cold-boot resume preserving `/workspace` and `/home/node`.
+
+### Slice 6 — Self-Contained macOS DMG & `vesper app`
+
+Measured on Apple Silicon (`darwin/arm64`) against the packaged `Vesper.app` bundle inside `desktop/release/Vesper-arm64.dmg`:
+
+| Artifact / Metric | Measured Value | Notes |
+|---|---|---|
+| `Vesper-arm64.dmg` | `223 MiB` (`223M`) | Compressed macOS ARM64 DMG including `Vesper.app`, Electron, Go, Postgres 17, Next standalone (`node_modules` + signed native addons), and `vmlinux` |
+| Bundled `vesper` (`bin/vesper`) | `42 MiB` (`42M`) | Ad-hoc signed with `com.apple.security.virtualization` without `--options runtime` |
+| Bundled PostgreSQL 17 (`postgres/`) | `104 MiB` (`104M`) | Relocatable `initdb`/`postgres` + `pg_trgm` + `@loader_path` dylibs, zero `/nix/store` refs, Unix-socket-only (`-h ""`) |
+| Bundled guest kernel (`images/vmlinux`) | `54 MiB` (`54M`) | Linux arm64 kernel (`agent-base.erofs` copied/fetched on first launch into data dir) |
+| Bundled Next standalone (`web/`) | `122 MiB` (`122M`) | Run via Electron `ELECTRON_RUN_AS_NODE=1`, proxied single-origin behind `vesper app` |
+| Packaged cold boot (`VESPER_READY_URL`) | `2444.6 ms` | Fresh data dir (`initdb` + schema migrations + `pg_trgm` + sealed user + Next standalone + health 200) |
+| First-launch `agent-base.erofs` ready | `3277.4 ms` | `1,901,375,488`-byte image verified & APFS `cp -c` cloned from local image cache into data dir |

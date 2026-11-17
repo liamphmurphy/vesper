@@ -1,24 +1,24 @@
 # Vesper Desktop (macOS)
 
-A thin, native-feeling macOS Electron client for Vesper. It connects to either:
+A thin, native-feeling macOS Electron client and self-contained runtime for Vesper. It connects to either:
 
-- **Your local Vesper Docker / OrbStack stack** (`http://localhost:8080`, the default), or
-- **A remote Vesper host** (for example over Tailscale, `https://vesper.tailnet.ts.net`).
+- **Built-in local Vesper (`vesper app`, default):** launches bundled Unix-socket PostgreSQL 17, Next.js standalone UI, local directory blob store, and Apple `Virtualization.framework` (`vz`) Linux microVMs per run (`agent-base.erofs` is verified/downloaded on first launch; zero Docker dependency).
+- **A remote Vesper host** (for example over Tailscale, `https://vesper.tailnet.ts.net`), skipping the local embedded stack automatically.
 
-All tabs share a persistent `persist:vesper` cookie session, native Cocoa window tabs (`tabbingIdentifier: "vesper"`), standard macOS tab/navigation shortcuts, trackpad swipe navigation, Dock badge Needs-you counts, macOS Notification Center alerts, and optional one-click `docker compose up -d` startup when targeting `localhost`.
+All tabs share a persistent `persist:vesper` cookie session (automatically signed in via one-time `vesper sign-in-link -code` in local mode), native Cocoa window tabs (`tabbingIdentifier: "vesper"`), standard macOS tab/navigation shortcuts, trackpad swipe navigation, menu bar tray lifecycle while microVMs are running, Playground `getDisplayMedia()` screenshot/recording support, Dock badge Needs-you counts, and macOS Notification Center alerts.
 
 ## Prerequisites
 
-- **Node.js 24+** and **npm**
-- **Running Vesper backend** (OrbStack / Docker Desktop running `docker compose up -d` locally, or a remote Vesper server)
-- Building `.dmg` installers must be run on **macOS** (Apple Silicon or Intel, or via the `desktop-macos` GitHub Actions workflow).
+- **macOS on Apple Silicon (`arm64`)**
+- **Node.js 24+**, **npm**, **Go**, and **Nix** (`nixpkgs#postgresql_17`, for building the relocatable Postgres 17 bundle)
+- **`vmlinux` kernel image** cached at `~/.cache/vesper/images/vmlinux` (via `bash deploy/microvm/build-images.sh --kernel`)
 
 ## Build the `.dmg` on macOS
 
 From the repository root:
 
 ```sh
-make desktop-dmg            # Apple Silicon (arm64) → desktop/release/Vesper-arm64.dmg
+make desktop-dmg            # Stage Postgres + Next standalone + signed vesper binary -> desktop/release/Vesper-arm64.dmg
 ```
 
 Or for a universal (Apple Silicon + Intel) installer:

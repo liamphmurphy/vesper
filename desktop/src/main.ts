@@ -1,6 +1,20 @@
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, dialog, ipcMain, Notification, session, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  desktopCapturer,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeImage,
+  Notification,
+  safeStorage,
+  session,
+  shell,
+  Tray,
+} from "electron";
 import {
   loadConfig,
   loadSession,
@@ -16,6 +30,13 @@ import { buildApplicationMenu } from "./menu";
 import { InboxMonitor, type DesktopAlert } from "./notifications";
 import type { DesktopConnectionState, SetServerUrlInput, SetServerUrlResult, StartStackResult } from "./preload";
 import { classifyNavigation, cleanTabTitle, ClosedTabStack } from "./routing";
+import {
+  ensureAuthenticatedSession,
+  ensureSecretsKey,
+  hasActiveRuns,
+  LocalVesperStack,
+  resolveBundledResources,
+} from "./stack";
 
 export const SESSION_PARTITION = "persist:vesper";
 export const TABBING_IDENTIFIER = "vesper";
@@ -32,8 +53,11 @@ let sessionPath = "";
 let currentConfig: DesktopConfig;
 let settingsWindow: BrowserWindow | null = null;
 let isQuitting = false;
+let quitConfirmed = false;
 let sessionSaveTimer: NodeJS.Timeout | undefined;
 let stackStarting = false;
+let localStack: LocalVesperStack | null = null;
+let tray: Tray | null = null;
 
 interface WindowEntry {
   win: BrowserWindow;
@@ -671,6 +695,21 @@ function registerIpc() {
       return { ok: false, error: "Stack startup is already in progress." };
     }
 
+    if (bundledResourcesDir()) {
+      stackStarting = true;
+      broadcastState({ ...currentState, stackStarting: true });
+      try {
+        await startBundledStackIfLocalhost();
+        await checkAndUpdateState();
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      } finally {
+        stackStarting = false;
+        broadcastState({ ...currentState, stackStarting: false });
+      }
+    }
+
     const checkoutPath = (checkoutArg ?? currentConfig.localCheckoutPath ?? "").trim();
     if (!isValidVesperCheckout(checkoutPath)) {
       return { ok: false, error: "Please choose a Vesper checkout folder containing docker-compose.yml." };
@@ -772,7 +811,144 @@ function restoreSessionWindows() {
   }
 }
 
-void app.whenReady().then(() => {
+function bundledResourcesDir() {
+  const candidates = app.isPackaged
+    ? [process.resourcesPath]
+    : [path.resolve(__dirname, "../resources")];
+  for (const dir of candidates) {
+    if (resolveBundledResources(dir)) {
+      return dir;
+    }
+  }
+  return null;
+}
+
+async function startBundledStackIfLocalhost(): Promise<void> {
+  if (!isLocalhostUrl(currentConfig.serverUrl)) {
+    return;
+  }
+  const baseDir = bundledResourcesDir();
+  const resources = baseDir ? resolveBundledResources(baseDir) : null;
+  if (!resources) {
+    return;
+  }
+
+  const userDataDir = app.getPath("userData");
+  const secretsKey = ensureSecretsKey(userDataDir, safeStorage);
+  let targetPort = 8080;
+  try {
+    const parsed = new URL(currentConfig.serverUrl);
+    if (parsed.port) {
+      targetPort = Number(parsed.port);
+    }
+  } catch {
+    targetPort = 8080;
+  }
+
+  if (!localStack) {
+    localStack = new LocalVesperStack({
+      resources,
+      userDataDir,
+      secretsKey,
+      port: targetPort,
+      nodeBin: process.execPath,
+      nodeRunAsNode: true,
+      onLog: (chunk) => {
+        for (const win of BrowserWindow.getAllWindows()) {
+          if (!win.isDestroyed()) {
+            win.webContents.send("vesper:stack-log", chunk);
+          }
+        }
+      },
+    });
+  }
+
+  const readyUrl = await localStack.start();
+  try {
+    const parsedReady = new URL(readyUrl);
+    const parsedCurrent = new URL(currentConfig.serverUrl);
+    const canonical = `${parsedCurrent.protocol}//${parsedCurrent.hostname}:${parsedReady.port}`;
+    if (canonical !== currentConfig.serverUrl) {
+      currentConfig = { ...currentConfig, serverUrl: canonical };
+      currentState = { ...currentState, serverUrl: canonical, targetUrl: canonical };
+    }
+  } catch {
+    // Keep configured serverUrl.
+  }
+
+  await ensureAuthenticatedSession({
+    serverUrl: currentConfig.serverUrl,
+    vesperBin: resources.vesperBin,
+    runtimeJsonPath: path.join(userDataDir, "runtime.json"),
+    fetch: (url, init) => getVesperSession().fetch(url, init),
+  });
+}
+
+function setupDisplayMediaHandler() {
+  getVesperSession().setDisplayMediaRequestHandler(async (_request, callback) => {
+    try {
+      const sources = await desktopCapturer.getSources({ types: ["window", "screen"] });
+      const preferred =
+        sources.find((s) => s.name.includes("Vesper") || s.name.includes("Playground")) ?? sources[0];
+      if (!preferred) {
+        callback({});
+        return;
+      }
+      callback({ video: preferred });
+    } catch {
+      callback({});
+    }
+  });
+}
+
+function setupTray() {
+  if (process.platform !== "darwin" || tray) return;
+  const iconPath = path.resolve(__dirname, "../build/icon.png");
+  if (!fs.existsSync(iconPath)) return;
+  const img = nativeImage.createFromPath(iconPath).resize({ width: 18, height: 18 });
+  img.setTemplateImage(false);
+  tray = new Tray(img);
+  tray.setToolTip("Vesper");
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      {
+        label: "Open Vesper",
+        click: () => {
+          app.focus({ steal: true });
+          const win = resolveActiveWindow();
+          if (win) {
+            win.show();
+            win.focus();
+          } else {
+            createVesperWindow({ url: currentConfig.serverUrl });
+          }
+        },
+      },
+      {
+        label: "New Tab",
+        click: () => {
+          const parentWin = resolveActiveWindow();
+          createVesperWindow({ url: currentConfig.serverUrl, parentWin, tabbed: Boolean(parentWin) });
+        },
+      },
+      { type: "separator" },
+      { label: "Settings…", click: () => openSettingsWindow() },
+      { type: "separator" },
+      { label: "Quit Vesper", click: () => app.quit() },
+    ]),
+  );
+  tray.on("click", () => {
+    const win = resolveActiveWindow();
+    if (win) {
+      win.show();
+      win.focus();
+    } else {
+      createVesperWindow({ url: currentConfig.serverUrl });
+    }
+  });
+}
+
+void app.whenReady().then(async () => {
   configPath = path.join(app.getPath("userData"), "config.json");
   sessionPath = path.join(app.getPath("userData"), "session.json");
   currentConfig = loadConfig(configPath);
@@ -792,7 +968,20 @@ void app.whenReady().then(() => {
   };
 
   setupMenu();
+  setupDisplayMediaHandler();
+  setupTray();
   registerIpc();
+
+  try {
+    await startBundledStackIfLocalhost();
+  } catch (err) {
+    currentState = {
+      ...currentState,
+      phase: "unreachable",
+      errorMessage: err instanceof Error ? err.message : String(err),
+    };
+  }
+
   inboxMonitor.start(currentConfig.serverUrl);
   restoreSessionWindows();
 
@@ -803,7 +992,38 @@ void app.whenReady().then(() => {
   });
 });
 
-app.on("before-quit", () => {
+app.on("before-quit", (event) => {
+  if (!quitConfirmed && localStack?.isRunning()) {
+    event.preventDefault();
+    void (async () => {
+      const busy = await hasActiveRuns(currentConfig.serverUrl, (url, init) => getVesperSession().fetch(url, init));
+      if (busy) {
+        const res = await dialog.showMessageBox({
+          type: "warning",
+          buttons: ["Quit Anyway", "Cancel"],
+          defaultId: 1,
+          cancelId: 1,
+          title: "Runs are still active",
+          message: "One or more microVM runs are still in progress.",
+          detail: "Quitting Vesper will shut down the embedded runtime and stop active VMs.",
+        });
+        if (res.response === 1) {
+          return;
+        }
+      }
+      isQuitting = true;
+      quitConfirmed = true;
+      inboxMonitor.stop();
+      if (sessionSaveTimer) {
+        clearTimeout(sessionSaveTimer);
+        sessionSaveTimer = undefined;
+      }
+      persistSessionNow();
+      await localStack?.stop();
+      app.quit();
+    })();
+    return;
+  }
   isQuitting = true;
   inboxMonitor.stop();
   if (sessionSaveTimer) {

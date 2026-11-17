@@ -1,6 +1,7 @@
 // Command vesper is the single Vesper binary.
 //
 //	vesper serve        run migrations, ensure buckets, serve HTTP (default)
+//	vesper app          run all-in-one embedded Postgres + API + Web + MicroVM desktop backend
 //	vesper migrate      run migrations and exit
 //	vesper runner       execute dispatched runs in hardened containers
 //	vesper healthcheck  exit 0 if the local API reports healthy (for container probes)
@@ -69,6 +70,8 @@ func main() {
 	switch cmd {
 	case "serve":
 		err = serve(ctx, log)
+	case "app":
+		err = runApp(ctx, log, os.Args[2:])
 	case "migrate":
 		err = migrateOnly(ctx)
 	case "runner":
@@ -82,7 +85,7 @@ func main() {
 	case "sign-in-link":
 		err = printSignInLink(ctx, len(os.Args) > 2 && os.Args[2] == "-code")
 	default:
-		err = fmt.Errorf("unknown command %q (want serve|migrate|runner|healthcheck|export|import|sign-in-link)", cmd)
+		err = fmt.Errorf("unknown command %q (want serve|app|migrate|runner|healthcheck|export|import|sign-in-link)", cmd)
 	}
 	if err != nil {
 		log.Error("exit", "err", err)
@@ -427,19 +430,7 @@ func runRunner(ctx context.Context, log *slog.Logger) error {
 	host, _ := os.Hostname()
 	blobs := blob.New(cfg.S3)
 	secretStore := &secrets.Service{Q: store.New(pool), Box: box}
-	saveScoped := func(secret string, valid func(current, next string) bool) func(context.Context, string, string) error {
-		return func(ctx context.Context, scope, auth string) error {
-			ws, project, err := runner.ParseCodexAuthScope(scope)
-			if err != nil {
-				return err
-			}
-			return secretStore.Replace(ctx, ws, project, secret, func(current string) (string, bool) {
-				return auth, valid(current, auth)
-			})
-		}
-	}
-	saveClaude := saveScoped(chatmodels.KeySecret[agentdef.HarnessClaudeCode], chatmodels.ClaudeAuthRefreshed)
-	saveCodex := saveScoped(chatmodels.KeySecret[agentdef.HarnessCodex], chatmodels.CodexAuthRefreshed)
+	saveClaude, saveCodex := buildAuthSavers(secretStore)
 	if d, ok := backend.(*runner.Docker); ok {
 		d.SaveClaudeAuth = saveClaude
 		d.SaveCodexAuth = saveCodex
@@ -501,4 +492,20 @@ func planModels(backend string, pool *pgxpool.Pool) func(context.Context, uuid.U
 		return nil
 	}
 	return (&chatmodels.QueuedListings{Pool: pool}).Models
+}
+
+func buildAuthSavers(secretStore *secrets.Service) (saveClaude, saveCodex func(context.Context, string, string) error) {
+	saveScoped := func(secret string, valid func(current, next string) bool) func(context.Context, string, string) error {
+		return func(ctx context.Context, scope, auth string) error {
+			ws, project, err := runner.ParseCodexAuthScope(scope)
+			if err != nil {
+				return err
+			}
+			return secretStore.Replace(ctx, ws, project, secret, func(current string) (string, bool) {
+				return auth, valid(current, auth)
+			})
+		}
+	}
+	return saveScoped(chatmodels.KeySecret[agentdef.HarnessClaudeCode], chatmodels.ClaudeAuthRefreshed),
+		saveScoped(chatmodels.KeySecret[agentdef.HarnessCodex], chatmodels.CodexAuthRefreshed)
 }

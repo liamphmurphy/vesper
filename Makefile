@@ -133,7 +133,8 @@ desktop-dev: desktop-deps ## Build and launch the Electron desktop client
 desktop-test: desktop-deps ## Typecheck and run desktop unit tests
 	cd desktop && npm run typecheck && npm test
 
-desktop-dmg: desktop-deps ## Package macOS Apple Silicon Vesper.dmg (run on macOS)
+desktop-dmg: desktop-deps ## Package self-contained macOS Apple Silicon Vesper.dmg (run on macOS)
+	bash scripts/stage-desktop-resources.sh
 	cd desktop && npm run dmg
 
 desktop-dmg-universal: desktop-deps ## Package macOS universal Vesper.dmg (run on macOS)
