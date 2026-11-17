@@ -51,6 +51,8 @@
           document.getElementById("shortcut-error").textContent = res.error;
         } else if (patch.screenshot) {
           document.getElementById("screenshot-error").textContent = res.error;
+        } else if (patch.showHide) {
+          document.getElementById("showhide-error").textContent = res.error;
         } else {
           globalError.textContent = res.error;
         }
@@ -135,7 +137,7 @@
     return named[code] || null;
   }
 
-  const ERROR_IDS = { quickCapture: "shortcut-error", screenshot: "screenshot-error" };
+  const ERROR_IDS = { quickCapture: "shortcut-error", screenshot: "screenshot-error", showHide: "showhide-error" };
   document.querySelectorAll("input.shortcut[data-shortcut]").forEach(function (input) {
     const key = input.getAttribute("data-shortcut");
     const errorEl = document.getElementById(ERROR_IDS[key]);
@@ -332,9 +334,11 @@
     const screenshotInput = document.getElementById("screenshot-input");
     if (recording !== "quickCapture") shortcutInput.value = st.shortcutLabel;
     if (recording !== "screenshot") screenshotInput.value = st.screenshotLabel;
+    if (recording !== "showHide") document.getElementById("showhide-input").value = st.showHideLabel;
     if (recording === null) {
       document.getElementById("shortcut-error").textContent = s.quickCapture.enabled && st.shortcut ? st.shortcut : "";
       document.getElementById("screenshot-error").textContent = s.screenshot.enabled && st.screenshot ? st.screenshot : "";
+      document.getElementById("showhide-error").textContent = s.showHide.enabled && st.showHide ? st.showHide : "";
     }
 
     document.querySelectorAll("input[data-text-key]").forEach(function (input) {

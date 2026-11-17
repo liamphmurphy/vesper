@@ -1,9 +1,23 @@
 import path from "node:path";
 import { Menu, nativeImage, Tray, type MenuItemConstructorOptions, type NativeImage } from "electron";
-import { buildTrayMenu, trayTitle, trayTooltip, type TrayAction, type TrayMenuInput } from "./tray-model";
+import { buildTrayMenu, trayTitle, trayTooltip, type TrayAction, type TrayMenuInput, type TrayMenuItem } from "./tray-model";
 import { trayIconState } from "./stack-health";
 
 const ICON_DIR = path.resolve(__dirname, "../renderer/tray");
+
+/** Maps a menu model (tray or Dock) onto Electron menu items. */
+export function menuTemplate(items: readonly TrayMenuItem[], onAction: (action: TrayAction) => void): MenuItemConstructorOptions[] {
+  return items.map((item) => {
+    if (item.type === "separator") return { type: "separator" };
+    if (item.type === "header") return { label: item.label, enabled: false };
+    return {
+      label: item.label,
+      enabled: item.enabled !== false,
+      ...(item.accelerator ? { accelerator: item.accelerator, registerAccelerator: false } : {}),
+      click: () => onAction(item.action),
+    };
+  });
+}
 
 /** Maps the tray model (tray-model.ts) onto an Electron Tray. macOS only. */
 export class TrayController {
@@ -35,17 +49,7 @@ export class TrayController {
     this.tray.setImage(this.icon(trayIconState(input.health.phase)));
     this.tray.setTitle(trayTitle(count, showCount), { fontType: "monospacedDigit" });
     this.tray.setToolTip(trayTooltip(input.health, count));
-    const template: MenuItemConstructorOptions[] = buildTrayMenu(input).map((item) => {
-      if (item.type === "separator") return { type: "separator" };
-      if (item.type === "header") return { label: item.label, enabled: false };
-      return {
-        label: item.label,
-        enabled: item.enabled !== false,
-        ...(item.accelerator ? { accelerator: item.accelerator, registerAccelerator: false } : {}),
-        click: () => this.onAction(item.action),
-      };
-    });
-    this.tray.setContextMenu(Menu.buildFromTemplate(template));
+    this.tray.setContextMenu(Menu.buildFromTemplate(menuTemplate(buildTrayMenu(input), this.onAction)));
   }
 
   private icon(state: "running" | "starting" | "error"): NativeImage {

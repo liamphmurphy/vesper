@@ -43,7 +43,7 @@ import { hrefToVesperLink, parseVesperLink } from "./deeplink";
 import { buildMultipartBody, buildSendFilesRequest, classifyDroppedFiles, type AcceptedFile, type RejectedFile } from "./drop";
 import { loginItemSettingsFor, loginStatusMessage, shouldStartHidden, type LoginItemStatus } from "./login";
 import { NotificationPresenter } from "./native-notify";
-import { TrayController } from "./native-tray";
+import { menuTemplate, TrayController } from "./native-tray";
 import {
   decisionRequest,
   replyRequest,
@@ -67,6 +67,7 @@ import {
 } from "./stack-health";
 import type { StackExit } from "./stack";
 import { lastWindowClosedAction, type TrayAction } from "./tray-model";
+import { buildDockMenu, dockProgress, showHideAction, type PersonaSummary } from "./dock-model";
 import { isCheckDue, pickUpdate, versionTransition } from "./updates";
 
 const execFileAsync = promisify(execFile);
@@ -116,6 +117,11 @@ export class NativeFeatures {
   private batteryWarned = false;
   private registeredShortcuts: string[] = [];
   private quickCaptureActive = false;
+  private showHideError: string | null = null;
+  /** The person's personas, for the Dock menu's New Chat with… items. */
+  private personas: PersonaSummary[] = [];
+  private personasTimer: NodeJS.Timeout | undefined;
+  private lastDockProgress = -1;
   private shortcutError: string | null = null;
   private screenshotActive = false;
   private screenshotError: string | null = null;
@@ -177,6 +183,8 @@ export class NativeFeatures {
     this.applyTray();
     this.applyLoginItem();
     this.applyShortcuts();
+    void this.refreshPersonas();
+    this.personasTimer = setInterval(() => void this.refreshPersonas(), 10 * 60_000);
     this.setupPower();
     void this.applyTimeMachine();
     this.scheduleExport(60_000);
@@ -193,6 +201,7 @@ export class NativeFeatures {
     if (this.updateTimer) clearTimeout(this.updateTimer);
     if (this.lowPowerTimer) clearInterval(this.lowPowerTimer);
     if (this.exportTimer) clearTimeout(this.exportTimer);
+    if (this.personasTimer) clearInterval(this.personasTimer);
     this.removeScreenshotDirs();
     globalShortcut.unregisterAll();
     this.releaseBlocker();
@@ -204,8 +213,10 @@ export class NativeFeatures {
     this.runs = [];
     this.image = undefined;
     this.runnerOnline = undefined;
+    this.personas = [];
     this.runMonitor.start(url);
     this.refreshHealth();
+    void this.refreshPersonas();
   }
 
   /** Whether this launch should start in the menu bar only (LAZYAGENTS-242). */
@@ -242,6 +253,7 @@ export class NativeFeatures {
   onInboxItems(items: readonly InboxItemSummary[]): void {
     this.items = items;
     this.renderTray();
+    this.renderDock();
   }
 
   onBadge(count: number): void {
@@ -382,6 +394,9 @@ export class NativeFeatures {
 
   windowOpened(): void {
     if (process.platform === "darwin" && app.dock && !app.dock.isVisible()) void app.dock.show();
+    // A Dock progress bar needs a window; one opening mid-download picks it up.
+    this.lastDockProgress = -1;
+    setImmediate(() => this.updateDockProgress());
   }
 
   // ---------------------------------------------------------------- runs: pause / resume
@@ -441,28 +456,39 @@ export class NativeFeatures {
 
   // ---------------------------------------------------------------- quick capture (LAZYAGENTS-243)
 
-  /** Registers the global shortcuts for Quick Capture and Screenshot to Chat, reporting conflicts. */
+  /** Registers the global shortcuts (Quick Capture, Screenshot to Chat, Show/Hide), reporting conflicts. */
   private applyShortcuts(): void {
     for (const acc of this.registeredShortcuts) globalShortcut.unregister(acc);
     this.registeredShortcuts = [];
-    const qc = this.settings.quickCapture;
-    const ss = this.settings.screenshot;
-    const capture = qc.enabled ? this.registerShortcut(qc.shortcut, () => this.openCapture(), null) : { accelerator: null, error: null };
+    const taken = new Map<string, string>();
+    const register = (cfg: { enabled: boolean; shortcut: string }, name: string, handler: () => void) => {
+      if (!cfg.enabled) return { accelerator: null, error: null };
+      const r = this.registerShortcut(cfg.shortcut, handler, taken);
+      if (r.accelerator) taken.set(r.accelerator, name);
+      return r;
+    };
+    const capture = register(this.settings.quickCapture, "Quick Capture", () => this.openCapture());
     this.shortcutError = capture.error;
     this.quickCaptureActive = capture.accelerator !== null;
-    const shot = ss.enabled
-      ? this.registerShortcut(ss.shortcut, () => void this.takeScreenshot(), capture.accelerator)
-      : { accelerator: null, error: null };
+    const shot = register(this.settings.screenshot, "Screenshot to Chat", () => void this.takeScreenshot());
     this.screenshotError = shot.error;
     this.screenshotActive = shot.accelerator !== null;
+    const showHide = register(this.settings.showHide, "Show/Hide Vesper", () => this.toggleVesper());
+    this.showHideError = showHide.error;
     this.renderTray();
+    this.renderDock();
   }
 
-  private registerShortcut(raw: string, handler: () => void, usedByCapture: string | null): { accelerator: string | null; error: string | null } {
+  private registerShortcut(
+    raw: string,
+    handler: () => void,
+    taken: ReadonlyMap<string, string>,
+  ): { accelerator: string | null; error: string | null } {
     const v = validateGlobalShortcut(raw);
     if (!v.ok) return { accelerator: null, error: v.error };
     const label = formatAccelerator(v.accelerator);
-    if (usedByCapture && usedByCapture === v.accelerator) return { accelerator: null, error: `Quick Capture already uses ${label}. Pick another shortcut.` };
+    const ours = taken.get(v.accelerator);
+    if (ours) return { accelerator: null, error: `${ours} already uses ${label}. Pick another shortcut.` };
     const owner = systemShortcutConflict(v.accelerator);
     if (owner) return { accelerator: null, error: `${label} belongs to ${owner}. Pick another shortcut.` };
     if (globalShortcut.isRegistered(v.accelerator)) return { accelerator: null, error: `${label} is already in use. Pick another shortcut.` };
@@ -475,6 +501,51 @@ export class NativeFeatures {
     if (!ok) return { accelerator: null, error: `${label} is taken by macOS or another app. Pick another shortcut.` };
     this.registeredShortcuts.push(v.accelerator);
     return { accelerator: v.accelerator, error: null };
+  }
+
+  /** The Show/Hide shortcut: hide Vesper when it's in front, otherwise bring it forward. */
+  private toggleVesper(): void {
+    const appFocused = BrowserWindow.getFocusedWindow() !== null;
+    const visibleWindows = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed() && w.isVisible() && !w.isMinimized()).length;
+    if (showHideAction({ appFocused, visibleWindows }) === "hide" && process.platform === "darwin") app.hide();
+    else this.ctx.showMainWindow();
+  }
+
+  // ---------------------------------------------------------------- Dock menu and progress
+
+  private async refreshPersonas(): Promise<void> {
+    const res = await apiRequest<{ personas?: Array<{ id?: unknown; name?: unknown }> }>(
+      this.ctx.fetch,
+      this.ctx.config().serverUrl,
+      "GET",
+      "/api/v1/personas",
+      undefined,
+      { timeoutMs: 5000 },
+    );
+    if (!res.ok) return;
+    this.personas = (res.data?.personas ?? [])
+      .filter((p): p is { id: string; name: string } => typeof p.id === "string" && typeof p.name === "string")
+      .map((p) => ({ id: p.id, name: p.name }));
+    this.renderDock();
+  }
+
+  /** The Dock icon's right-click menu. macOS adds the window list, Options and Quit. */
+  private renderDock(): void {
+    if (process.platform !== "darwin" || !app.dock || !this.ready) return;
+    const items = this.settings.dock.menu ? buildDockMenu({ items: this.items, personas: this.personas, screenshot: true }) : [];
+    app.dock.setMenu(Menu.buildFromTemplate(menuTemplate(items, (a) => void this.onTrayAction(a))));
+  }
+
+  /** A progress bar on the Dock icon while the run image downloads. */
+  private updateDockProgress(): void {
+    if (process.platform !== "darwin") return;
+    const value = this.settings.dock.progress ? dockProgress(this.healthValue) : -1;
+    if (value === this.lastDockProgress) return;
+    // On macOS any window's progress bar is the Dock tile's; with no window (menu bar only) there's no Dock icon to show it.
+    const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
+    if (!win) return;
+    win.setProgressBar(value);
+    this.lastDockProgress = value;
   }
 
   openCapture(): void {
@@ -845,6 +916,7 @@ export class NativeFeatures {
     this.healthValue = next;
     if (changed) {
       this.renderTray();
+      this.updateDockProgress();
       for (const l of this.healthListeners) l(next);
       for (const win of BrowserWindow.getAllWindows()) {
         if (!win.isDestroyed()) win.webContents.send("vesper:health", next);
@@ -1126,6 +1198,8 @@ export class NativeFeatures {
         shortcutLabel: formatAccelerator(this.settings.quickCapture.shortcut),
         screenshot: this.screenshotError,
         screenshotLabel: formatAccelerator(this.settings.screenshot.shortcut),
+        showHide: this.showHideError,
+        showHideLabel: formatAccelerator(this.settings.showHide.shortcut),
         timeMachineExcluded: this.timeMachineExcluded,
         lastExportAt: this.appState.lastExportAt ?? null,
         lastExportError: this.appState.lastExportError ?? null,
@@ -1144,7 +1218,7 @@ export class NativeFeatures {
   private applySettings(patch: unknown): { ok: boolean; error?: string; state: ReturnType<NativeFeatures["prefsState"]> } {
     const before = this.settings;
     const next = applyNativeSettingsPatch(before, patch);
-    for (const key of ["quickCapture", "screenshot"] as const) {
+    for (const key of ["quickCapture", "screenshot", "showHide"] as const) {
       if (!next[key].enabled) continue;
       const v = validateGlobalShortcut(next[key].shortcut);
       if (!v.ok) return { ok: false, error: v.error, state: this.prefsState() };
@@ -1154,7 +1228,11 @@ export class NativeFeatures {
     const changed = (k: keyof NativeSettings) => JSON.stringify(before[k]) !== JSON.stringify(next[k]);
     if (changed("tray")) this.applyTray();
     if (changed("login")) this.applyLoginItem();
-    if (changed("quickCapture") || changed("screenshot")) this.applyShortcuts();
+    if (changed("quickCapture") || changed("screenshot") || changed("showHide")) this.applyShortcuts();
+    if (changed("dock")) {
+      this.renderDock();
+      this.updateDockProgress();
+    }
     if (changed("power")) {
       this.updatePowerBlocker();
       void this.applySlotLimit();
@@ -1167,6 +1245,7 @@ export class NativeFeatures {
     const error =
       (next.quickCapture.enabled && changed("quickCapture") ? this.shortcutError : null) ??
       (next.screenshot.enabled && changed("screenshot") ? this.screenshotError : null) ??
+      (next.showHide.enabled && changed("showHide") ? this.showHideError : null) ??
       undefined;
     return { ok: !error, ...(error ? { error } : {}), state: this.prefsState() };
   }
