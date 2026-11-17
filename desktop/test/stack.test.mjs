@@ -7,7 +7,11 @@ import {
   ensureAuthenticatedSession,
   ensureSecretsKey,
   hasActiveRuns,
+  inspectBackupArchive,
   resolveBundledResources,
+  runAppImportArchive,
+  saveSecretsKey,
+  validateSecretsKeyFormat,
 } from "../dist/stack.js";
 
 test("ensureSecretsKey generates, encrypts, and reuses key across restarts", () => {
@@ -115,4 +119,101 @@ test("hasActiveRuns inspects running runs JSON safely", async () => {
     json: async () => ({ runs: [] }),
   }));
   assert.equal(idle, false);
+});
+
+test("validateSecretsKeyFormat and saveSecretsKey validate and persist 32-byte keys", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vesper-save-key-"));
+  const fakeStorage = {
+    isEncryptionAvailable: () => true,
+    encryptString: (s) => Buffer.from(`enc:${s}`, "utf8"),
+    decryptString: (b) => b.toString("utf8").replace(/^enc:/, ""),
+  };
+
+  assert.throws(() => validateSecretsKeyFormat("not-valid-base64"), /32-byte base64/);
+  assert.throws(() => validateSecretsKeyFormat("dG9vLXNob3J0"), /32-byte base64/);
+
+  const rawKey = Buffer.alloc(32, 7).toString("base64");
+  const saved = saveSecretsKey(dir, fakeStorage, `  ${rawKey}  `);
+  assert.equal(saved, rawKey);
+  assert.equal(ensureSecretsKey(dir, fakeStorage), rawKey);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("inspectBackupArchive and runAppImportArchive invoke vesper app-import cleanly", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vesper-import-"));
+  const fakeBin = path.join(dir, "vesper");
+  const pgBinDir = path.join(dir, "postgres", "bin");
+  fs.mkdirSync(pgBinDir, { recursive: true });
+  fs.writeFileSync(path.join(pgBinDir, "postgres"), "", "utf8");
+
+  const logFile = path.join(dir, "cli.log");
+  fs.writeFileSync(
+    fakeBin,
+    `#!/bin/sh
+if [ "$1" = "app-import" ] && [ "$2" = "-inspect" ]; then
+  echo '{"exportedAt":"2026-11-16T20:00:00Z","appVersion":"dev","schemaVersion":155,"tableCount":10,"totalRows":42,"objectCount":3,"encryptedSecretRows":0,"matchesCurrentKey":false}'
+  exit 0
+fi
+if [ "$1" = "app-import" ]; then
+  if [ "$VESPER_NO_SIGNIN" != "" ]; then
+    exit 99
+  fi
+  printf '%s|%s|%s\n' "$*" "$SECRETS_KEY" "$VESPER_POSTGRES_BIN_DIR" > "${logFile}"
+  if [ "$SECRETS_KEY" = "fail-key" ]; then
+    echo '{"level":"ERROR","msg":"exit","err":"the provided SECRETS_KEY does not match this backup archive"}'
+    exit 1
+  fi
+  exit 0
+fi
+exit 1
+`,
+    { mode: 0o755 },
+  );
+
+  const insp = await inspectBackupArchive({
+    vesperBin: fakeBin,
+    archivePath: "/tmp/example.zip",
+  });
+  assert.equal(insp.tableCount, 10);
+  assert.equal(insp.totalRows, 42);
+  assert.equal(insp.objectCount, 3);
+
+  const resources = { vesperBin: fakeBin, postgresBinDir: pgBinDir };
+  await runAppImportArchive({
+    resources,
+    userDataDir: path.join(dir, "data"),
+    archivePath: "/tmp/example.zip",
+    secretsKey: "test-key",
+    dropSecrets: false,
+  });
+  assert.equal(
+    fs.readFileSync(logFile, "utf8").trim(),
+    `app-import -data-dir ${path.join(dir, "data")} /tmp/example.zip|test-key|${pgBinDir}`,
+  );
+
+  await runAppImportArchive({
+    resources,
+    userDataDir: path.join(dir, "data"),
+    archivePath: "/tmp/example.zip",
+    secretsKey: "ignored-when-dropped",
+    dropSecrets: true,
+  });
+  assert.equal(
+    fs.readFileSync(logFile, "utf8").trim(),
+    `app-import -data-dir ${path.join(dir, "data")} -drop-secrets /tmp/example.zip||${pgBinDir}`,
+  );
+
+  await assert.rejects(
+    () =>
+      runAppImportArchive({
+        resources,
+        userDataDir: path.join(dir, "data"),
+        archivePath: "/tmp/example.zip",
+        secretsKey: "fail-key",
+      }),
+    /does not match this backup archive/,
+  );
+
+  fs.rmSync(dir, { recursive: true, force: true });
 });

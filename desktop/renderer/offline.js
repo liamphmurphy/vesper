@@ -3,19 +3,36 @@
   if (!api) return;
 
   const params = new URLSearchParams(window.location.search);
-  const isSettingsMode = params.get("mode") === "settings";
+  const mode = params.get("mode");
+  const isSettingsMode = mode === "settings";
+  const isImportMode = mode === "import";
 
   const pageTitle = document.getElementById("page-title");
   const targetUrlEl = document.getElementById("target-url");
+  const statusPill = document.getElementById("status-pill");
   const statusDot = document.getElementById("status-dot");
   const statusLabel = document.getElementById("status-label");
   const statusDetail = document.getElementById("status-detail");
+  const connectionActions = document.getElementById("connection-actions");
   const retryBtn = document.getElementById("retry-btn");
   const openBtn = document.getElementById("open-btn");
   const urlForm = document.getElementById("url-form");
   const serverUrlInput = document.getElementById("server-url-input");
   const saveUrlBtn = document.getElementById("save-url-btn");
   const formError = document.getElementById("form-error");
+
+  const importSection = document.getElementById("import-section");
+  const backupPathInput = document.getElementById("backup-path-input");
+  const browseBackupBtn = document.getElementById("browse-backup-btn");
+  const backupSummary = document.getElementById("backup-summary");
+  const importKeyOk = document.getElementById("import-key-ok");
+  const importKeyOkText = document.getElementById("import-key-ok-text");
+  const importKeyGroup = document.getElementById("import-key-group");
+  const importSecretsKeyInput = document.getElementById("import-secrets-key-input");
+  const importKeyHint = document.getElementById("import-key-hint");
+  const importDropSecrets = document.getElementById("import-drop-secrets");
+  const importError = document.getElementById("import-error");
+  const runImportBtn = document.getElementById("run-import-btn");
 
   const dockerSection = document.getElementById("docker-section");
   const dockerBadge = document.getElementById("docker-badge");
@@ -28,10 +45,21 @@
   let inputDirty = false;
   let checkoutDirty = false;
   let pollTimer = null;
+  let selectedInspection = null;
 
   if (isSettingsMode) {
     document.title = "Vesper Settings";
     pageTitle.textContent = "Vesper Server Settings";
+  } else if (isImportMode) {
+    document.title = "Import Vesper Backup";
+    pageTitle.textContent = "Import Vesper Backup";
+    targetUrlEl.textContent = "Replace local Postgres database & blobs from an export .zip";
+    statusPill.classList.add("hidden");
+    statusDetail.classList.add("hidden");
+    connectionActions.classList.add("hidden");
+    urlForm.classList.add("hidden");
+    dockerSection.classList.add("hidden");
+    importSection.classList.remove("hidden");
   }
 
   function renderDocker(state) {
@@ -166,22 +194,142 @@
       });
   });
 
+  function updateImportControls() {
+    if (!isImportMode) return;
+    if (!selectedInspection || !backupPathInput.value) {
+      runImportBtn.disabled = true;
+      return;
+    }
+    const noKeyRequired = !selectedInspection.secretsKeyFingerprint && selectedInspection.encryptedSecretRows === 0;
+    if (noKeyRequired || selectedInspection.matchesCurrentKey) {
+      runImportBtn.disabled = false;
+      return;
+    }
+    importSecretsKeyInput.disabled = importDropSecrets.checked;
+    runImportBtn.disabled = !importDropSecrets.checked && importSecretsKeyInput.value.trim().length === 0;
+  }
+
+  function renderImportInspection(res) {
+    importError.textContent = "";
+    selectedInspection = null;
+    backupSummary.classList.add("hidden");
+    importKeyOk.classList.add("hidden");
+    importKeyGroup.classList.add("hidden");
+
+    if (!res) {
+      updateImportControls();
+      return;
+    }
+    backupPathInput.value = res.archivePath || "";
+    if (res.error || !res.inspection) {
+      importError.textContent = res.error || "Could not inspect backup archive.";
+      updateImportControls();
+      return;
+    }
+
+    const insp = res.inspection;
+    selectedInspection = insp;
+    const exportedLabel = insp.exportedAt ? new Date(insp.exportedAt).toLocaleString() : "unknown time";
+    backupSummary.textContent =
+      "Exported " +
+      exportedLabel +
+      " · Schema v" +
+      insp.schemaVersion +
+      " · " +
+      insp.tableCount +
+      " tables (" +
+      insp.totalRows +
+      " rows) · " +
+      insp.objectCount +
+      " objects";
+    backupSummary.classList.remove("hidden");
+
+    const noKeyRequired = !insp.secretsKeyFingerprint && insp.encryptedSecretRows === 0;
+    if (noKeyRequired) {
+      importKeyOkText.textContent = "No SECRETS_KEY needed for this backup";
+      importKeyOk.classList.remove("hidden");
+    } else if (insp.matchesCurrentKey) {
+      importKeyOkText.textContent = "Backup SECRETS_KEY matches this Mac's Keychain key";
+      importKeyOk.classList.remove("hidden");
+    } else {
+      importDropSecrets.checked = false;
+      importSecretsKeyInput.disabled = false;
+      importKeyHint.textContent =
+        "This archive holds encrypted logins or tokens (" +
+        insp.encryptedSecretRows +
+        " secret row(s)). Paste the source SECRETS_KEY to preserve them, or check below to clear them.";
+      importKeyGroup.classList.remove("hidden");
+    }
+    updateImportControls();
+  }
+
+  if (isImportMode) {
+    browseBackupBtn.addEventListener("click", function () {
+      importError.textContent = "";
+      void api.pickBackupArchive().then(function (res) {
+        if (res) {
+          renderImportInspection(res);
+        }
+      });
+    });
+
+    importSecretsKeyInput.addEventListener("input", function () {
+      importError.textContent = "";
+      updateImportControls();
+    });
+
+    importDropSecrets.addEventListener("change", function () {
+      importError.textContent = "";
+      updateImportControls();
+    });
+
+    runImportBtn.addEventListener("click", function () {
+      if (!backupPathInput.value) return;
+      importError.textContent = "";
+      runImportBtn.disabled = true;
+      browseBackupBtn.disabled = true;
+      runImportBtn.textContent = "Importing Backup…";
+      void api
+        .importBackup({
+          archivePath: backupPathInput.value,
+          secretsKey: importDropSecrets.checked ? "" : importSecretsKeyInput.value.trim(),
+          dropSecrets: importDropSecrets.checked,
+        })
+        .then(function (res) {
+          if (!res.ok) {
+            importError.textContent = res.error || "Import failed.";
+            browseBackupBtn.disabled = false;
+            runImportBtn.textContent = "Import Backup";
+            updateImportControls();
+          }
+        })
+        .catch(function (err) {
+          importError.textContent = err && err.message ? err.message : String(err);
+          browseBackupBtn.disabled = false;
+          runImportBtn.textContent = "Import Backup";
+          updateImportControls();
+        });
+    });
+  }
+
   api.onStackLog(function (chunk) {
     stackLog.classList.remove("hidden");
     stackLog.textContent += chunk;
     stackLog.scrollTop = stackLog.scrollHeight;
   });
 
-  api.onStateChange(renderState);
+  if (!isImportMode) {
+    api.onStateChange(renderState);
 
-  void api.getState().then(function (state) {
-    renderState(state);
-    if (!isSettingsMode && state.phase === "unreachable") {
-      void api.retryConnection().then(renderState);
-    }
-  });
+    void api.getState().then(function (state) {
+      renderState(state);
+      if (!isSettingsMode && state.phase === "unreachable") {
+        void api.retryConnection().then(renderState);
+      }
+    });
+  }
 
-  if (!isSettingsMode) {
+  if (!isSettingsMode && !isImportMode) {
     pollTimer = window.setInterval(function () {
       void api.retryConnection().then(renderState);
     }, 4000);

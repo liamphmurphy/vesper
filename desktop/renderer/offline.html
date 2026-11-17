@@ -188,7 +188,8 @@
       }
 
       input[type="text"],
-      input[type="url"] {
+      input[type="url"],
+      input[type="password"] {
         flex: 1;
         min-width: 0;
         font: inherit;
@@ -199,6 +200,49 @@
         background: var(--surface-2);
         color: var(--fg);
         outline: none;
+      }
+
+      .summary-box {
+        padding: 10px 12px;
+        border-radius: 9px;
+        border: 1px solid var(--border);
+        background: var(--surface-2);
+        font-size: 12.5px;
+        line-height: 1.5;
+        color: var(--fg);
+      }
+
+      .checkbox-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12.5px;
+        font-weight: 500;
+        color: var(--fg);
+        cursor: pointer;
+        margin-top: 4px;
+      }
+
+      .checkbox-row input[type="checkbox"] {
+        accent-color: var(--accent);
+        width: 15px;
+        height: 15px;
+      }
+
+      .section.borderless {
+        border-top: none;
+        padding-top: 4px;
+        margin-top: 4px;
+      }
+
+      .import-key-group {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .import-key-group.hidden {
+        display: none;
       }
 
       input:focus {
@@ -283,7 +327,7 @@
         </div>
       </div>
 
-      <div class="status-pill" role="status" aria-live="polite">
+      <div class="status-pill" id="status-pill" role="status" aria-live="polite">
         <span class="dot checking" id="status-dot"></span>
         <span id="status-label">Checking server…</span>
       </div>
@@ -292,10 +336,49 @@
         Waiting for your local OrbStack/Docker stack or remote Vesper host.
       </p>
 
-      <div class="actions">
+      <div class="actions" id="connection-actions">
         <button type="button" class="primary" id="retry-btn">Retry now</button>
         <button type="button" class="hidden" id="open-btn">Open Vesper</button>
       </div>
+
+      <section class="section borderless hidden" id="import-section">
+        <label for="backup-path-input">Vesper Export Archive (.zip)</label>
+        <div class="input-row">
+          <input
+            id="backup-path-input"
+            type="text"
+            placeholder="Select vesper-export.zip…"
+            readonly
+          />
+          <button type="button" id="browse-backup-btn">Choose Archive…</button>
+        </div>
+        <div class="summary-box hidden" id="backup-summary"></div>
+        <div class="status-pill hidden" id="import-key-ok" style="margin-bottom: 0; align-self: flex-start">
+          <span class="dot reachable"></span>
+          <span id="import-key-ok-text">No SECRETS_KEY needed</span>
+        </div>
+        <div class="import-key-group hidden" id="import-key-group">
+          <label for="import-secrets-key-input">Source SECRETS_KEY (from Docker .env)</label>
+          <input
+            id="import-secrets-key-input"
+            type="password"
+            placeholder="Paste 32-byte base64 SECRETS_KEY…"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <p class="hint" id="import-key-hint">
+            This archive contains encrypted logins or tokens. Paste the source SECRETS_KEY to preserve them, or check below to clear them.
+          </p>
+          <label class="checkbox-row">
+            <input type="checkbox" id="import-drop-secrets" />
+            <span>Import without encrypted secrets (clear saved logins &amp; tokens)</span>
+          </label>
+        </div>
+        <p class="error-text" id="import-error" role="alert"></p>
+        <div class="actions" style="margin-bottom: 0">
+          <button type="button" class="primary" id="run-import-btn" disabled>Import Backup</button>
+        </div>
+      </section>
 
       <form class="section" id="url-form">
         <label for="server-url-input">Vesper Server URL</label>

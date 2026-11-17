@@ -30,7 +30,10 @@ type Importer struct {
 	// Replace wipes any rows the exported tables already hold. Without it,
 	// import refuses a target that has data.
 	Replace bool
-	Log     *slog.Logger
+	// DropSecrets skips the SECRETS_KEY fingerprint check and clears imported
+	// secret ciphertexts after migration.
+	DropSecrets bool
+	Log         *slog.Logger
 }
 
 // Import checks the archive, uploads its objects, loads its tables in one
@@ -64,7 +67,30 @@ func (i *Importer) Import(ctx context.Context, zr *zip.Reader) error {
 	if err := db.Migrate(ctx, i.Pool); err != nil {
 		return fmt.Errorf("transfer: rows loaded, but upgrading the schema failed: %w", err)
 	}
+	if i.DropSecrets {
+		if err := dropEncryptedSecrets(ctx, i.Pool); err != nil {
+			return fmt.Errorf("transfer: rows loaded, but clearing undecryptable secrets failed: %w", err)
+		}
+	}
 	return nil
+}
+
+func dropEncryptedSecrets(ctx context.Context, pool *pgxpool.Pool) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	for _, stmt := range []string{
+		`DELETE FROM secrets`,
+		`DELETE FROM user_secrets`,
+		`UPDATE connectors SET cred_nonce = NULL, cred_ciphertext = NULL`,
+	} {
+		if _, err := tx.Exec(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 func readManifest(files map[string]*zip.File) (*Manifest, error) {
@@ -90,7 +116,7 @@ func readManifest(files map[string]*zip.File) (*Manifest, error) {
 // preflight refuses anything that would fail or do damage before it changes
 // the target: a mismatched key, a newer export, a target with data.
 func (i *Importer) preflight(ctx context.Context, m *Manifest, files map[string]*zip.File, log *slog.Logger) error {
-	if m.SecretsKeyFingerprint != "" && KeyFingerprint(i.SecretsKey) != m.SecretsKeyFingerprint {
+	if !i.DropSecrets && m.SecretsKeyFingerprint != "" && KeyFingerprint(i.SecretsKey) != m.SecretsKeyFingerprint {
 		return errors.New("transfer: this export holds secrets sealed with a different SECRETS_KEY; " +
 			"set SECRETS_KEY to the source instance's value, or the secrets can't be read")
 	}

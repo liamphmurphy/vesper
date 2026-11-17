@@ -2,6 +2,7 @@
 //
 //	vesper serve        run migrations, ensure buckets, serve HTTP (default)
 //	vesper app          run all-in-one embedded Postgres + API + Web + MicroVM desktop backend
+//	vesper app-import   inspect or import a backup archive into Vesper desktop storage
 //	vesper migrate      run migrations and exit
 //	vesper runner       execute dispatched runs in hardened containers
 //	vesper healthcheck  exit 0 if the local API reports healthy (for container probes)
@@ -72,6 +73,8 @@ func main() {
 		err = serve(ctx, log)
 	case "app":
 		err = runApp(ctx, log, os.Args[2:])
+	case "app-import":
+		err = runAppImport(ctx, log, os.Args[2:])
 	case "migrate":
 		err = migrateOnly(ctx)
 	case "runner":
@@ -85,7 +88,7 @@ func main() {
 	case "sign-in-link":
 		err = printSignInLink(ctx, len(os.Args) > 2 && os.Args[2] == "-code")
 	default:
-		err = fmt.Errorf("unknown command %q (want serve|app|migrate|runner|healthcheck|export|import|sign-in-link)", cmd)
+		err = fmt.Errorf("unknown command %q (want serve|app|app-import|migrate|runner|healthcheck|export|import|sign-in-link)", cmd)
 	}
 	if err != nil {
 		log.Error("exit", "err", err)

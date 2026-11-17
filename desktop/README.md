@@ -5,7 +5,7 @@ A thin, native-feeling macOS Electron client and self-contained runtime for Vesp
 - **Built-in local Vesper (`vesper app`, default):** launches bundled Unix-socket PostgreSQL 17, Next.js standalone UI, local directory blob store, and Apple `Virtualization.framework` (`vz`) Linux microVMs per run (`agent-base.erofs` is verified/downloaded on first launch; zero Docker dependency).
 - **A remote Vesper host** (for example over Tailscale, `https://vesper.tailnet.ts.net`), skipping the local embedded stack automatically.
 
-All tabs share a persistent `persist:vesper` cookie session (automatically signed in via one-time `vesper sign-in-link -code` in local mode), native Cocoa window tabs (`tabbingIdentifier: "vesper"`), standard macOS tab/navigation shortcuts, trackpad swipe navigation, menu bar tray lifecycle while microVMs are running, Playground `getDisplayMedia()` screenshot/recording support, Dock badge Needs-you counts, and macOS Notification Center alerts.
+All tabs share a persistent `persist:vesper` cookie session (automatically signed in via one-time `vesper sign-in-link -code` in local mode), native Cocoa window tabs (`tabbingIdentifier: "vesper"`), standard macOS tab/navigation shortcuts, trackpad swipe navigation, **File → Import Backup…** for migrating `.zip` archives from Docker/server installs, menu bar tray lifecycle while microVMs are running, Playground `getDisplayMedia()` screenshot/recording support, Dock badge Needs-you counts, and macOS Notification Center alerts.
 
 ## Prerequisites
 

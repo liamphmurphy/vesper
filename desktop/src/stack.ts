@@ -56,12 +56,120 @@ export function ensureSecretsKey(userDataDir: string, storage: SafeStorageLike):
     if (decrypted) return decrypted;
   }
   const generated = crypto.randomBytes(32).toString("base64");
-  const enc = storage.encryptString(generated);
-  fs.mkdirSync(userDataDir, { recursive: true });
+  writeEncryptedSecretsKey(keyPath, storage, generated);
+  return generated;
+}
+
+export function validateSecretsKeyFormat(plainKey: string): string {
+  const trimmed = plainKey.trim();
+  if (!/^[A-Za-z0-9+/=]+$/.test(trimmed) || trimmed.length % 4 !== 0) {
+    throw new Error("SECRETS_KEY must be a 32-byte base64 string.");
+  }
+  const decoded = Buffer.from(trimmed, "base64");
+  if (decoded.length !== 32) {
+    throw new Error("SECRETS_KEY must be a 32-byte base64 string.");
+  }
+  return trimmed;
+}
+
+export function saveSecretsKey(userDataDir: string, storage: SafeStorageLike, plainKey: string): string {
+  if (!storage.isEncryptionAvailable()) {
+    throw new Error("macOS Keychain safeStorage encryption is unavailable.");
+  }
+  const validated = validateSecretsKeyFormat(plainKey);
+  const keyPath = path.join(userDataDir, "secrets-key.enc");
+  writeEncryptedSecretsKey(keyPath, storage, validated);
+  return validated;
+}
+
+function writeEncryptedSecretsKey(keyPath: string, storage: SafeStorageLike, plainKey: string): void {
+  const enc = storage.encryptString(plainKey);
+  fs.mkdirSync(path.dirname(keyPath), { recursive: true });
   const tmpPath = `${keyPath}.tmp-${process.pid}`;
   fs.writeFileSync(tmpPath, enc, { mode: 0o600 });
   fs.renameSync(tmpPath, keyPath);
-  return generated;
+}
+
+export interface BackupInspection {
+  exportedAt: string;
+  appVersion: string;
+  schemaVersion: number;
+  tableCount: number;
+  totalRows: number;
+  objectCount: number;
+  secretsKeyFingerprint?: string;
+  encryptedSecretRows: number;
+  matchesCurrentKey: boolean;
+}
+
+function extractVesperCliError(err: unknown): string {
+  const rec = err as { stdout?: string; stderr?: string; message?: string };
+  const combined = `${rec?.stdout ?? ""}\n${rec?.stderr ?? ""}`;
+  for (const line of combined.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{")) continue;
+    try {
+      const parsed = JSON.parse(trimmed) as { err?: string; error?: string };
+      if (parsed.err) return parsed.err;
+      if (parsed.error) return parsed.error;
+    } catch {
+      // Ignore non-JSON log lines.
+    }
+  }
+  const stderr = (rec?.stderr ?? "").trim();
+  if (stderr) return stderr;
+  return err instanceof Error ? err.message : String(err);
+}
+
+export async function inspectBackupArchive(opts: {
+  vesperBin: string;
+  archivePath: string;
+  currentSecretsKey?: string;
+}): Promise<BackupInspection> {
+  try {
+    const { stdout } = await execFileAsync(opts.vesperBin, ["app-import", "-inspect", opts.archivePath], {
+      env: {
+        ...process.env,
+        SECRETS_KEY: opts.currentSecretsKey?.trim() ?? "",
+      },
+      timeout: 30000,
+      maxBuffer: 4 * 1024 * 1024,
+    });
+    return JSON.parse(stdout) as BackupInspection;
+  } catch (err) {
+    throw new Error(extractVesperCliError(err));
+  }
+}
+
+export async function runAppImportArchive(opts: {
+  resources: BundledResources;
+  userDataDir: string;
+  archivePath: string;
+  secretsKey?: string;
+  dropSecrets?: boolean;
+}): Promise<void> {
+  const args = ["app-import", "-data-dir", opts.userDataDir];
+  if (opts.dropSecrets) {
+    args.push("-drop-secrets");
+  }
+  args.push(opts.archivePath);
+
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    VESPER_POSTGRES_BIN_DIR: opts.resources.postgresBinDir,
+    SECRETS_KEY: opts.dropSecrets ? "" : (opts.secretsKey?.trim() ?? ""),
+  };
+  delete env.VESPER_NO_SIGNIN;
+
+  try {
+    await execFileAsync(opts.resources.vesperBin, args, {
+      env,
+      timeout: 15 * 60 * 1000,
+      maxBuffer: 16 * 1024 * 1024,
+    });
+  } catch (err) {
+    throw new Error(extractVesperCliError(err));
+  }
 }
 
 export interface LocalStackOptions {
