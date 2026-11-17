@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -341,4 +342,190 @@ func TestAppImportInspectSecretPreserveAndDropSecrets(t *testing.T) {
 	if userCount != 1 {
 		t.Fatalf("expected imported user preserved after -drop-secrets, got %d", userCount)
 	}
+}
+
+func TestAppImportFinderNestedZipAndSafariUnpackedDir(t *testing.T) {
+	pgBin := testBundledPostgresDir(t)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctx := context.Background()
+	srcKey := randomKeyBase64(t)
+
+	// 1. Export a flat archive from a temporary database + blob store.
+	srcDir := t.TempDir()
+	srcPG, err := pgembed.Start(ctx, pgembed.Config{
+		BinDir:   pgBin,
+		DataDir:  filepath.Join(srcDir, "postgres"),
+		Database: "vesper",
+		User:     "vesper",
+		Log:      log,
+	})
+	if err != nil {
+		t.Fatalf("pgembed.Start: %v", err)
+	}
+	srcPool, err := db.Open(ctx, srcPG.DSN())
+	if err != nil {
+		_ = srcPG.Stop(ctx)
+		t.Fatal(err)
+	}
+	if err := db.Migrate(ctx, srcPool); err != nil {
+		srcPool.Close()
+		_ = srcPG.Stop(ctx)
+		t.Fatal(err)
+	}
+	srcS3 := config.S3{Dir: filepath.Join(srcDir, "blobs"), ArtifactBucket: "artifacts", Buckets: []string{"artifacts", "run-logs"}}
+	srcBlobs := blob.New(srcS3)
+	if err := srcBlobs.EnsureBuckets(ctx); err != nil {
+		srcPool.Close()
+		_ = srcPG.Stop(ctx)
+		t.Fatal(err)
+	}
+	if _, err := seed.Run(ctx, srcPool, seed.Options{Demo: false, UserName: "Finder User", UserEmail: "finder@example.com"}); err != nil {
+		srcPool.Close()
+		_ = srcPG.Stop(ctx)
+		t.Fatal(err)
+	}
+	const blobBody = "finder-safari-blob"
+	if err := srcBlobs.Put(ctx, "artifacts", "nested/doc.txt", strings.NewReader(blobBody), int64(len(blobBody)), "text/plain"); err != nil {
+		t.Fatal(err)
+	}
+	flatZip := filepath.Join(t.TempDir(), "flat.zip")
+	fzip, err := os.Create(flatZip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&transfer.Exporter{
+		Pool:         srcPool,
+		Blobs:        srcBlobs,
+		AppVersion:   "test-1.0",
+		SecretsKey:   srcKey,
+		KnownBuckets: srcS3.Buckets,
+		Log:          log,
+	}).Export(ctx, fzip); err != nil {
+		_ = fzip.Close()
+		t.Fatal(err)
+	}
+	_ = fzip.Close()
+	srcPool.Close()
+	_ = srcPG.Stop(ctx)
+
+	// 2. Repackage into (a) a Finder-compressed zip (nested folder + __MACOSX/.DS_Store)
+	//    and (b) a Safari-unpacked directory.
+	finderZip := filepath.Join(t.TempDir(), "vesper-export-finder.zip")
+	unpackedDir := filepath.Join(t.TempDir(), "vesper-export-2026-11-17")
+	srcReader, err := zip.OpenReader(flatZip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fw, err := os.Create(finderZip)
+	if err != nil {
+		_ = srcReader.Close()
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(fw)
+	addNoise := func(name, content string) {
+		w, werr := zw.Create(name)
+		if werr != nil {
+			t.Fatal(werr)
+		}
+		_, _ = w.Write([]byte(content))
+	}
+	addNoise("__MACOSX/vesper-export-2026-11-17/._manifest.json", "appledouble")
+	addNoise("vesper-export-2026-11-17/.DS_Store", "finder-ds-store")
+	for _, entry := range srcReader.File {
+		rc, oerr := entry.Open()
+		if oerr != nil {
+			t.Fatal(oerr)
+		}
+		raw, rerr := io.ReadAll(rc)
+		_ = rc.Close()
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		w, cerr := zw.Create("vesper-export-2026-11-17/" + entry.Name)
+		if cerr != nil {
+			t.Fatal(cerr)
+		}
+		if _, werr := w.Write(raw); werr != nil {
+			t.Fatal(werr)
+		}
+		diskPath := filepath.Join(unpackedDir, filepath.FromSlash(entry.Name))
+		if merr := os.MkdirAll(filepath.Dir(diskPath), 0o755); merr != nil {
+			t.Fatal(merr)
+		}
+		if werr := os.WriteFile(diskPath, raw, 0o644); werr != nil {
+			t.Fatal(werr)
+		}
+	}
+	_ = zw.Close()
+	_ = fw.Close()
+	_ = srcReader.Close()
+
+	t.Setenv("VESPER_POSTGRES_BIN_DIR", pgBin)
+	t.Setenv("SECRETS_KEY", srcKey)
+
+	verifySource := func(label, source string) {
+		t.Helper()
+		oldOut := os.Stdout
+		pr, pw, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		os.Stdout = pw
+		runErr := runAppImport(ctx, log, []string{"-inspect", source})
+		_ = pw.Close()
+		os.Stdout = oldOut
+		var outBuf bytes.Buffer
+		_, _ = io.Copy(&outBuf, pr)
+		_ = pr.Close()
+		if runErr != nil {
+			t.Fatalf("%s -inspect: %v", label, runErr)
+		}
+		var insp appImportInspection
+		if err := json.Unmarshal(outBuf.Bytes(), &insp); err != nil {
+			t.Fatalf("%s inspect decode: %v", label, err)
+		}
+		if !insp.MatchesCurrentKey || insp.ObjectCount < 1 || insp.TableCount == 0 {
+			t.Fatalf("%s unexpected inspect: %+v", label, insp)
+		}
+
+		dstDir := t.TempDir()
+		if err := runAppImport(ctx, log, []string{"-data-dir", dstDir, source}); err != nil {
+			t.Fatalf("%s runAppImport: %v", label, err)
+		}
+		gotObj, err := blob.NewDir(filepath.Join(dstDir, "blobs"), nil).Get(ctx, "artifacts", "nested/doc.txt")
+		if err != nil {
+			t.Fatalf("%s blob.Get: %v", label, err)
+		}
+		gotBytes, err := io.ReadAll(gotObj.Body)
+		_ = gotObj.Body.Close()
+		if err != nil || string(gotBytes) != blobBody {
+			t.Fatalf("%s blob = %q err=%v", label, gotBytes, err)
+		}
+		pg, err := pgembed.Start(ctx, pgembed.Config{
+			BinDir:   pgBin,
+			DataDir:  filepath.Join(dstDir, "postgres"),
+			Database: "vesper",
+			User:     "vesper",
+			Log:      log,
+		})
+		if err != nil {
+			t.Fatalf("%s pgembed.Start: %v", label, err)
+		}
+		defer func() { _ = pg.Stop(context.Background()) }()
+		pool, err := db.Open(ctx, pg.DSN())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer pool.Close()
+		var email string
+		if err := pool.QueryRow(ctx, `SELECT email FROM users LIMIT 1`).Scan(&email); err != nil {
+			t.Fatalf("%s query users: %v", label, err)
+		}
+		if email != "finder@example.com" {
+			t.Fatalf("%s user email = %q, want finder@example.com", label, email)
+		}
+	}
+
+	verifySource("finder-nested-zip", finderZip)
+	verifySource("safari-unpacked-dir", unpackedDir)
 }

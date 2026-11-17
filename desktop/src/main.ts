@@ -736,9 +736,8 @@ function registerIpc() {
     }
     const senderWin = BrowserWindow.fromWebContents(event.sender);
     const dialogOpts: Electron.OpenDialogOptions = {
-      properties: ["openFile"],
-      title: "Select Vesper Backup Archive (.zip)",
-      filters: [{ name: "Vesper Backup Archive", extensions: ["zip"] }],
+      properties: ["openFile", "openDirectory"],
+      title: "Select Vesper Backup (.zip or unpacked folder)",
     };
     const result = senderWin ? await dialog.showOpenDialog(senderWin, dialogOpts) : await dialog.showOpenDialog(dialogOpts);
     if (result.canceled || result.filePaths.length === 0) return null;

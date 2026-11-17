@@ -53,7 +53,7 @@
   } else if (isImportMode) {
     document.title = "Import Vesper Backup";
     pageTitle.textContent = "Import Vesper Backup";
-    targetUrlEl.textContent = "Replace local Postgres database & blobs from an export .zip";
+    targetUrlEl.textContent = "Replace local Postgres database & blobs from an export .zip or folder";
     statusPill.classList.add("hidden");
     statusDetail.classList.add("hidden");
     connectionActions.classList.add("hidden");

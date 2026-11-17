@@ -259,12 +259,38 @@ func writeRPCError(w io.Writer, id uint32, msg string) error {
 	return guestproto.WriteFrame(w, guestproto.Frame{Type: guestproto.FrameResp, ID: id, Data: b})
 }
 
+func mkdirAllChown(dir string, mode os.FileMode, uid, gid int) error {
+	clean := filepath.Clean(dir)
+	var missing []string
+	cur := clean
+	for {
+		if _, err := os.Stat(cur); err == nil {
+			break
+		}
+		missing = append(missing, cur)
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			break
+		}
+		cur = parent
+	}
+	for i := len(missing) - 1; i >= 0; i-- {
+		if err := os.Mkdir(missing[i], mode); err != nil && !os.IsExist(err) {
+			return err
+		}
+		if uid > 0 || gid > 0 {
+			_ = os.Chown(missing[i], uid, gid)
+		}
+	}
+	return nil
+}
+
 func writeGuestFiles(files []guestproto.FileWrite) error {
 	for _, fw := range files {
 		if fw.Path == "" || !filepath.IsAbs(fw.Path) {
 			return fmt.Errorf("invalid guest file path %q", fw.Path)
 		}
-		if err := os.MkdirAll(filepath.Dir(fw.Path), 0o755); err != nil {
+		if err := mkdirAllChown(filepath.Dir(fw.Path), 0o755, fw.UID, fw.GID); err != nil {
 			return err
 		}
 		mode := os.FileMode(fw.Mode)

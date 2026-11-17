@@ -7,7 +7,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -44,22 +43,13 @@ func runAppImport(ctx context.Context, log *slog.Logger, args []string) error {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return errors.New("usage: vesper app-import [-inspect] [-data-dir DIR] [-drop-secrets] ARCHIVE.zip")
+		return errors.New("usage: vesper app-import [-inspect] [-data-dir DIR] [-drop-secrets] ARCHIVE.zip|EXPORT_DIR")
 	}
 	archivePath := fs.Arg(0)
 
-	zr, err := zip.OpenReader(archivePath)
-	if err != nil {
-		return fmt.Errorf("app-import: open archive: %w", err)
-	}
-	defer zr.Close()
-
-	manifest, err := readArchiveManifest(&zr.Reader)
+	manifest, err := transfer.InspectArchivePath(archivePath)
 	if err != nil {
 		return err
-	}
-	if manifest.Format != transfer.FormatVersion {
-		return fmt.Errorf("app-import: archive format %d is unsupported (want %d)", manifest.Format, transfer.FormatVersion)
 	}
 	latest, err := db.LatestVersion()
 	if err != nil {
@@ -128,7 +118,7 @@ func runAppImport(ctx context.Context, log *slog.Logger, args []string) error {
 	}
 	pgBinDir := resolvePostgresBinDir(exeDir)
 
-	if err := populateStagedImport(ctx, log, pgBinDir, stagePG, stageBlobs, filepath.Join(dataDir, "logs", "postgres-import.log"), srcKey, *dropSecrets, &zr.Reader); err != nil {
+	if err := populateStagedImport(ctx, log, pgBinDir, stagePG, stageBlobs, filepath.Join(dataDir, "logs", "postgres-import.log"), srcKey, *dropSecrets, archivePath); err != nil {
 		return err
 	}
 
@@ -138,20 +128,6 @@ func runAppImport(ctx context.Context, log *slog.Logger, args []string) error {
 	stagePG = ""
 	stageBlobs = ""
 	return nil
-}
-
-func readArchiveManifest(zr *zip.Reader) (*transfer.Manifest, error) {
-	mf, err := zr.Open("manifest.json")
-	if err != nil {
-		return nil, fmt.Errorf("app-import: not a Vesper export archive (missing manifest.json): %w", err)
-	}
-	defer mf.Close()
-
-	var m transfer.Manifest
-	if err := json.NewDecoder(io.LimitReader(mf, 16<<20)).Decode(&m); err != nil {
-		return nil, fmt.Errorf("app-import: decode manifest.json: %w", err)
-	}
-	return &m, nil
 }
 
 func inspectArchiveManifest(m *transfer.Manifest, currentKey string) appImportInspection {
@@ -210,7 +186,7 @@ func resolvePostgresBinDir(exeDir string) string {
 	return pgBinDir
 }
 
-func populateStagedImport(ctx context.Context, log *slog.Logger, pgBinDir, stagePG, stageBlobs, logPath, secretsKey string, dropSecrets bool, zr *zip.Reader) error {
+func populateStagedImport(ctx context.Context, log *slog.Logger, pgBinDir, stagePG, stageBlobs, logPath, secretsKey string, dropSecrets bool, archivePath string) error {
 	pgCluster, err := pgembed.Start(ctx, pgembed.Config{
 		BinDir:   pgBinDir,
 		DataDir:  stagePG,
@@ -252,8 +228,23 @@ func populateStagedImport(ctx context.Context, log *slog.Logger, pgBinDir, stage
 		DropSecrets: dropSecrets,
 		Log:         log,
 	}
-	if err := imp.Import(ctx, zr); err != nil {
-		return err
+	st, err := os.Stat(archivePath)
+	if err != nil {
+		return fmt.Errorf("app-import stat %s: %w", archivePath, err)
+	}
+	if st.IsDir() {
+		if err := imp.ImportDir(ctx, archivePath); err != nil {
+			return err
+		}
+	} else {
+		zr, err := zip.OpenReader(archivePath)
+		if err != nil {
+			return fmt.Errorf("app-import open archive: %w", err)
+		}
+		defer zr.Close()
+		if err := imp.Import(ctx, &zr.Reader); err != nil {
+			return err
+		}
 	}
 
 	// Keep desktop onboarding sealed after restoring users from Docker/server exports.
