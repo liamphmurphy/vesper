@@ -64,11 +64,11 @@
         gap: 8px;
         flex: none;
       }
-      #shortcut-input {
+      input.shortcut {
         width: 210px;
         text-align: center;
       }
-      #shortcut-input.recording {
+      input.shortcut.recording {
         border-color: var(--accent);
       }
     </style>
@@ -77,9 +77,11 @@
     <nav aria-label="Settings sections">
       <button type="button" data-section="general" aria-current="page">General</button>
       <button type="button" data-section="notifications">Notifications</button>
-      <button type="button" data-section="capture">Quick Capture</button>
+      <button type="button" data-section="capture">Shortcuts</button>
       <button type="button" data-section="files">Files &amp; Links</button>
+      <button type="button" data-section="workspaces">Workspaces</button>
       <button type="button" data-section="power">Power &amp; Stack</button>
+      <button type="button" data-section="backups">Backups</button>
       <button type="button" data-section="security">Security</button>
       <button type="button" data-section="updates">Updates</button>
       <div class="spacer"></div>
@@ -191,17 +193,108 @@
       </section>
 
       <section data-panel="capture" class="hidden">
-        <header><h2>Quick Capture</h2><p class="muted small">From any app: capture a note, message a persona, or file a ticket.</p></header>
+        <header><h2>Shortcuts</h2><p class="muted small">Global shortcuts that work from any app. Click a field and press the keys; use ⌘, ⌥ or ⌃ (Shift alone isn't enough).</p></header>
         <div class="row">
           <div class="text">
-            <span class="label">Global shortcut</span>
-            <span class="hint">Click the field and press the keys. Use ⌘, ⌥ or ⌃; Shift alone isn't enough.</span>
+            <span class="label">Quick Capture</span>
+            <span class="hint">Capture a note, message a persona, or file a ticket.</span>
             <span class="error" id="shortcut-error" role="alert"></span>
           </div>
           <div class="inline">
-            <input type="text" id="shortcut-input" readonly aria-label="Quick capture shortcut" />
+            <input type="text" class="shortcut" id="shortcut-input" data-shortcut="quickCapture" readonly aria-label="Quick capture shortcut" />
             <label class="switch"><input type="checkbox" data-key="quickCapture.enabled" aria-label="Enable quick capture" /><span></span></label>
           </div>
+        </div>
+        <div class="row">
+          <div class="text">
+            <span class="label">Screenshot to Chat</span>
+            <span class="hint">Drag to capture part of the screen (Space for a window, Esc to cancel), then pick a chat to send it to. macOS asks for Screen Recording permission the first time.</span>
+            <span class="error" id="screenshot-error" role="alert"></span>
+          </div>
+          <div class="inline">
+            <input type="text" class="shortcut" id="screenshot-input" data-shortcut="screenshot" readonly aria-label="Screenshot to chat shortcut" />
+            <label class="switch"><input type="checkbox" data-key="screenshot.enabled" aria-label="Enable screenshot to chat" /><span></span></label>
+          </div>
+        </div>
+      </section>
+
+      <section data-panel="workspaces" class="hidden">
+        <header><h2>Workspaces</h2><p class="muted small">With host-folder workspaces on, a run's or chat's folder chip gets an Open menu: Finder, your terminal, or your editor.</p></header>
+        <div class="row">
+          <div class="text">
+            <span class="label">Terminal app</span>
+            <span class="hint">The app "Open in Terminal" uses, e.g. Terminal, iTerm, Ghostty.</span>
+            <span class="error" id="terminal-app-error" role="alert"></span>
+          </div>
+          <input type="text" id="terminal-app" data-text-key="workspaces.terminalApp" style="width: 210px" aria-label="Terminal app" />
+        </div>
+        <div class="row">
+          <div class="text">
+            <span class="label">Editor</span>
+            <span class="hint" id="editor-hint"></span>
+          </div>
+          <div class="segmented" role="group" aria-label="Editor kind" data-key="workspaces.editor.kind">
+            <button type="button" data-value="terminal">Command in Terminal</button>
+            <button type="button" data-value="app">App</button>
+          </div>
+        </div>
+        <div class="row sub" id="editor-command-row">
+          <div class="text">
+            <span class="label">Command</span>
+            <span class="hint">Runs in Terminal in the folder, with "." added, e.g. nvim, hx, emacs -nw. Plain words only.</span>
+            <span class="error" id="editor-command-error" role="alert"></span>
+          </div>
+          <input type="text" id="editor-command" data-text-key="workspaces.editor.command" style="width: 210px" aria-label="Editor command" />
+        </div>
+        <div class="row sub" id="editor-app-row">
+          <div class="text">
+            <span class="label">App</span>
+            <span class="hint">Opens the folder, e.g. Visual Studio Code, Zed, Cursor.</span>
+            <span class="error" id="editor-app-error" role="alert"></span>
+          </div>
+          <input type="text" id="editor-app" data-text-key="workspaces.editor.app" style="width: 210px" aria-label="Editor app" />
+        </div>
+      </section>
+
+      <section data-panel="backups" class="hidden">
+        <header><h2>Backups</h2></header>
+        <div class="row" data-local-only>
+          <div class="text">
+            <span class="label">Keep VM disks and caches out of Time Machine</span>
+            <span class="hint">Skips the data folder's vm and images folders: run disks, caches and downloaded images that Vesper rebuilds. Your database, files and settings are still backed up.</span>
+            <span class="hint" id="tm-status"></span>
+          </div>
+          <label class="switch"><input type="checkbox" data-key="backups.excludeFromTimeMachine" aria-label="Exclude VM disks from Time Machine" /><span></span></label>
+        </div>
+        <div class="row">
+          <div class="text">
+            <span class="label">Save an export to a folder on a schedule</span>
+            <span class="hint">A whole-instance export (the same zip as File › Import Backup takes). Secrets in it stay sealed with this Mac's key, so keep the key too if you move it; still, pick a private folder.</span>
+            <span class="hint" id="export-status"></span>
+            <span class="error" id="export-error" role="alert"></span>
+          </div>
+          <label class="switch"><input type="checkbox" data-key="backups.export.enabled" aria-label="Scheduled export" /><span></span></label>
+        </div>
+        <div class="row sub">
+          <div class="text"><span class="label">Folder</span><span class="hint" id="export-folder"></span></div>
+          <button type="button" id="export-folder-btn">Choose…</button>
+        </div>
+        <div class="row sub">
+          <div class="text"><span class="label">How often, and how many to keep</span></div>
+          <div class="inline">
+            <select id="export-every" aria-label="How often">
+              <option value="6">Every 6 hours</option>
+              <option value="12">Every 12 hours</option>
+              <option value="24">Daily</option>
+              <option value="168">Weekly</option>
+            </select>
+            <input type="number" id="export-keep" min="1" max="100" step="1" style="width: 64px" aria-label="Exports to keep" />
+            <span class="muted">kept</span>
+          </div>
+        </div>
+        <div class="row sub">
+          <div class="text"><span class="label">Export now</span></div>
+          <button type="button" id="export-now">Export Now</button>
         </div>
       </section>
 
@@ -242,6 +335,14 @@
             <span class="hint">Stops idle sleep while a run is starting or running. Closing the lid still sleeps.</span>
           </div>
           <label class="switch"><input type="checkbox" data-key="power.preventSleepWhileRunning" aria-label="Keep the Mac awake while runs work" /><span></span></label>
+        </div>
+        <div class="row" data-local-only>
+          <div class="text">
+            <span class="label">Take fewer runs when the Mac is hot or in Low Power Mode</span>
+            <span class="hint">Half the runs at once when it's hot or in Low Power Mode, one at a time when it's very hot. Runs already going finish; the cap lifts when things cool down.</span>
+            <span class="hint" id="easing-off"></span>
+          </div>
+          <label class="switch"><input type="checkbox" data-key="power.easeOffWhenHot" aria-label="Take fewer runs when hot" /><span></span></label>
         </div>
         <div class="row">
           <div class="text">

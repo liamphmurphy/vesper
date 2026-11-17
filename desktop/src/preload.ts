@@ -105,6 +105,8 @@ const api = {
   testTouchId: (): Promise<unknown> => ipcRenderer.invoke("vesper:prefs-test-touch-id"),
   openServerSettings: (): Promise<void> => ipcRenderer.invoke("vesper:open-server-settings"),
   openDataDir: (): Promise<void> => ipcRenderer.invoke("vesper:open-data-dir"),
+  pickExportFolder: (): Promise<unknown> => ipcRenderer.invoke("vesper:prefs-pick-export-folder"),
+  exportNow: (): Promise<unknown> => ipcRenderer.invoke("vesper:prefs-export-now"),
 
   /** Quick capture (renderer/capture.html). */
   getCaptureOptions: (): Promise<unknown> => ipcRenderer.invoke("vesper:capture-options"),
@@ -127,6 +129,14 @@ const api = {
   copyLogs: (): Promise<void> => ipcRenderer.invoke("vesper:logs-copy"),
   restartStack: (): Promise<void> => ipcRenderer.invoke("vesper:stack-restart"),
   openLogs: (): Promise<void> => ipcRenderer.invoke("vesper:open-logs"),
+
+  /**
+   * For the web app: a native menu to open a run's or chat's workspace folder
+   * in Finder, a terminal or an editor. The main process only opens folders
+   * inside a runner's host workspaces directory.
+   */
+  openWorkspaceMenu: (folder: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke("vesper:open-workspace-menu", folder),
 
   /**
    * Touch ID before an approval (LAZYAGENTS-248), for the web app. Resolves

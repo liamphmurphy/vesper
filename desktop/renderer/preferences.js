@@ -49,6 +49,8 @@
       if (res && !res.ok && res.error) {
         if (patch.quickCapture) {
           document.getElementById("shortcut-error").textContent = res.error;
+        } else if (patch.screenshot) {
+          document.getElementById("screenshot-error").textContent = res.error;
         } else {
           globalError.textContent = res.error;
         }
@@ -116,11 +118,9 @@
     if (Number.isFinite(n) && n >= 1 && n <= 1000) void save({ stack: { minFreeDiskGb: Math.round(n) } });
   });
 
-  // Shortcut recorder
-  const shortcutInput = document.getElementById("shortcut-input");
-  const shortcutError = document.getElementById("shortcut-error");
-  let recording = false;
+  // Shortcut recorders (Quick Capture, Screenshot to Chat)
   const SYMBOLS = { Command: "⌘", Control: "⌃", Alt: "⌥", Shift: "⇧" };
+  let recording = null;
 
   function keyName(e) {
     const code = e.code || "";
@@ -135,39 +135,100 @@
     return named[code] || null;
   }
 
-  shortcutInput.addEventListener("focus", function () {
-    recording = true;
-    shortcutInput.classList.add("recording");
-    shortcutInput.value = "Press keys…";
-    shortcutError.textContent = "";
-  });
-  shortcutInput.addEventListener("blur", function () {
-    recording = false;
-    shortcutInput.classList.remove("recording");
-    render();
-  });
-  shortcutInput.addEventListener("keydown", function (e) {
-    if (!recording) return;
-    e.preventDefault();
-    if (e.key === "Escape") {
-      shortcutInput.blur();
-      return;
-    }
-    const mods = [];
-    if (e.metaKey) mods.push("Command");
-    if (e.ctrlKey) mods.push("Control");
-    if (e.altKey) mods.push("Alt");
-    if (e.shiftKey) mods.push("Shift");
-    const key = keyName(e);
-    shortcutInput.value =
-      mods.map(function (m) {
-        return SYMBOLS[m];
-      }).join("") + (key || "…");
-    if (!key) return;
-    const accelerator = mods.concat([key]).join("+");
-    void save({ quickCapture: { shortcut: accelerator, enabled: true } }).then(function (res) {
-      if (res && res.ok) shortcutInput.blur();
+  const ERROR_IDS = { quickCapture: "shortcut-error", screenshot: "screenshot-error" };
+  document.querySelectorAll("input.shortcut[data-shortcut]").forEach(function (input) {
+    const key = input.getAttribute("data-shortcut");
+    const errorEl = document.getElementById(ERROR_IDS[key]);
+    input.addEventListener("focus", function () {
+      recording = key;
+      input.classList.add("recording");
+      input.value = "Press keys…";
+      errorEl.textContent = "";
     });
+    input.addEventListener("blur", function () {
+      recording = null;
+      input.classList.remove("recording");
+      render();
+    });
+    input.addEventListener("keydown", function (e) {
+      if (recording !== key) return;
+      e.preventDefault();
+      if (e.key === "Escape") {
+        input.blur();
+        return;
+      }
+      const mods = [];
+      if (e.metaKey) mods.push("Command");
+      if (e.ctrlKey) mods.push("Control");
+      if (e.altKey) mods.push("Alt");
+      if (e.shiftKey) mods.push("Shift");
+      const name = keyName(e);
+      input.value =
+        mods.map(function (m) {
+          return SYMBOLS[m];
+        }).join("") + (name || "…");
+      if (!name) return;
+      const patch = {};
+      patch[key] = { shortcut: mods.concat([name]).join("+"), enabled: true };
+      void save(patch).then(function (res) {
+        if (res && res.ok) input.blur();
+      });
+    });
+  });
+
+  // Text settings: saved on change; the main process refuses invalid values, which then show as errors.
+  const TEXT_ERRORS = {
+    "workspaces.terminalApp": ["terminal-app-error", "Use an app name like Terminal or iTerm."],
+    "workspaces.editor.command": ["editor-command-error", "Use plain words, like nvim or emacs -nw."],
+    "workspaces.editor.app": ["editor-app-error", "Use an app name like Visual Studio Code."],
+  };
+  document.querySelectorAll("input[data-text-key]").forEach(function (input) {
+    const key = input.getAttribute("data-text-key");
+    input.addEventListener("change", function () {
+      const typed = input.value.trim();
+      const errorEl = document.getElementById(TEXT_ERRORS[key][0]);
+      errorEl.textContent = "";
+      void save(patchFor(key, typed)).then(function () {
+        if (get(state.settings, key) !== typed) errorEl.textContent = TEXT_ERRORS[key][1];
+      });
+    });
+  });
+
+  // Backups
+  document.getElementById("export-folder-btn").addEventListener("click", function () {
+    void api.pickExportFolder().then(function (res) {
+      if (res && res.state) {
+        state = res.state;
+        render();
+      }
+    });
+  });
+  document.getElementById("export-every").addEventListener("change", function (e) {
+    void save({ backups: { export: { everyHours: Number(e.target.value) } } });
+  });
+  document.getElementById("export-keep").addEventListener("change", function (e) {
+    const n = Number(e.target.value);
+    if (Number.isInteger(n) && n >= 1 && n <= 100) void save({ backups: { export: { keep: n } } });
+  });
+  document.getElementById("export-now").addEventListener("click", function () {
+    const btn = document.getElementById("export-now");
+    const err = document.getElementById("export-error");
+    btn.disabled = true;
+    btn.textContent = "Exporting…";
+    err.textContent = "";
+    void api
+      .exportNow()
+      .then(function (res) {
+        if (res && res.state) {
+          state = res.state;
+          render();
+        }
+        if (res && !res.ok) err.textContent = res.error || "The export failed.";
+      })
+      .finally(function () {
+        btn.disabled = false;
+        btn.textContent = "Export Now";
+      });
   });
 
   // Buttons
@@ -267,8 +328,36 @@
     minDisk.value = String(s.stack.minFreeDiskGb);
     document.getElementById("data-dir").textContent = st.dataDir;
 
-    if (!recording) shortcutInput.value = st.shortcutLabel;
-    shortcutError.textContent = s.quickCapture.enabled && st.shortcut ? st.shortcut : "";
+    const shortcutInput = document.getElementById("shortcut-input");
+    const screenshotInput = document.getElementById("screenshot-input");
+    if (recording !== "quickCapture") shortcutInput.value = st.shortcutLabel;
+    if (recording !== "screenshot") screenshotInput.value = st.screenshotLabel;
+    if (recording === null) {
+      document.getElementById("shortcut-error").textContent = s.quickCapture.enabled && st.shortcut ? st.shortcut : "";
+      document.getElementById("screenshot-error").textContent = s.screenshot.enabled && st.screenshot ? st.screenshot : "";
+    }
+
+    document.querySelectorAll("input[data-text-key]").forEach(function (input) {
+      if (document.activeElement !== input) input.value = get(s, input.getAttribute("data-text-key"));
+    });
+    const appKind = s.workspaces.editor.kind === "app";
+    document.getElementById("editor-command-row").classList.toggle("hidden", appKind);
+    document.getElementById("editor-app-row").classList.toggle("hidden", !appKind);
+    document.getElementById("editor-hint").textContent = appKind
+      ? "Open in " + s.workspaces.editor.app + "."
+      : "Open in " + s.workspaces.editor.command + " in Terminal.";
+
+    document.getElementById("tm-status").textContent =
+      st.timeMachineExcluded === true ? "Excluded now." : st.timeMachineExcluded === false ? "Not excluded yet (tmutil hasn't succeeded)." : "";
+    document.getElementById("export-folder").textContent = s.backups.export.folder || "No folder chosen.";
+    document.getElementById("export-every").value = String(s.backups.export.everyHours);
+    document.getElementById("export-keep").value = String(s.backups.export.keep);
+    document.getElementById("export-now").disabled = !s.backups.export.folder || st.exporting;
+    document.getElementById("export-status").textContent = st.lastExportAt
+      ? "Last export: " + new Date(st.lastExportAt).toLocaleString() + "."
+      : "No export yet.";
+    if (st.lastExportError) document.getElementById("export-error").textContent = "Last attempt failed: " + st.lastExportError;
+    document.getElementById("easing-off").textContent = st.easingOff ? "Now: " + st.easingOff + "." : "";
 
     const servicesBtn = document.getElementById("services-btn");
     servicesBtn.textContent = st.servicesInstalled ? "Remove" : "Install";

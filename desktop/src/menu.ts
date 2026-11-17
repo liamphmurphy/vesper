@@ -15,6 +15,7 @@ export interface MenuActions {
   openServerSettings: () => void;
   importBackup: () => void;
   quickCapture: () => void;
+  screenshot: () => void;
   restartStack: () => void;
   showLogs: () => void;
   checkForUpdates: () => void;
@@ -89,6 +90,10 @@ export function buildApplicationMenu(actions: MenuActions): void {
           // Display only: the global shortcut is registered in Settings, so the accelerator isn't bound here.
           label: "Quick Capture…",
           click: () => actions.quickCapture(),
+        },
+        {
+          label: "Screenshot to Chat…",
+          click: () => actions.screenshot(),
         },
         { type: "separator" },
         {
