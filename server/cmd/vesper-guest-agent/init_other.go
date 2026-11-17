@@ -28,6 +28,8 @@ func powerOffGuest() {}
 
 func setupGuestNetworking(*slog.Logger, *dnsStubConfig) error { return nil }
 
+func checkLocalTCPPort(uint16) bool { return false }
+
 func applyCgroupLimits(string, int64, int64) (string, error) { return "", nil }
 
 func addPidToCgroup(string, int) error { return nil }

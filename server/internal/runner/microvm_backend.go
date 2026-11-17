@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/liamphmurphy/vesper/server/internal/chatmodels"
 	"github.com/liamphmurphy/vesper/server/internal/guestproto"
 	"github.com/liamphmurphy/vesper/server/internal/runner/microvm"
@@ -66,16 +67,25 @@ type MicroVM struct {
 	SaveClaudeAuth func(ctx context.Context, scope, auth string) error
 	SaveCodexAuth  func(ctx context.Context, scope, auth string) error
 	Log            *slog.Logger
+	ModelsTimeout  time.Duration
+	UsageTimeout   time.Duration
 
 	// Optional disk template sizes (defaults to 64G/16G/32G sparse ext4 images).
 	TestWorkspaceBytes int64
 	TestHomeBytes      int64
 	TestDockerBytes    int64
 
-	tmplMu sync.Mutex
-	runsMu sync.Mutex
-	locks  map[string]*sync.Mutex
-	vms    map[string]*runVM
+	tmplMu      sync.Mutex
+	runsMu      sync.Mutex
+	locks       map[string]*sync.Mutex
+	vms         map[string]*runVM
+	pgMu        sync.Mutex
+	playgrounds map[uuid.UUID]*activePlaygroundVM
+	devMu       sync.Mutex
+	devVMs      map[uuid.UUID]*devWorkspaceVM
+	semOnce     sync.Once
+	listSem     chan struct{}
+	usageSem    chan struct{}
 }
 
 type runVM struct {
@@ -614,10 +624,8 @@ func (b *MicroVM) Start(ctx context.Context, runID string, spec ExecSpec) (Proce
 		path.Join(homePath, ".ssh"),
 	)
 
-	if b.CacheStore != nil {
-		nixConf := fmt.Sprintf("build-users-group = nixbld\nexperimental-features = nix-command flakes\nsandbox = false\nauto-optimise-store = true\nextra-substituters = http://%s/nix\nextra-trusted-public-keys = %s\n",
-			microvm.InternalCacheHost, b.CacheStore.NixPublicKey())
-		writes = append(writes, guestproto.FileWrite{Path: "/etc/nix/nix.conf", Data: []byte(nixConf), Mode: 0o644})
+	if wf, ok := b.nixConfFileWrite(); ok {
+		writes = append(writes, wf)
 	}
 
 	env := map[string]string{
@@ -628,10 +636,7 @@ func (b *MicroVM) Start(ctx context.Context, runID string, spec ExecSpec) (Proce
 		"GOCACHE": homePath + "/.cache/go-build",
 		"PATH":    homePath + "/.nix-profile/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/nix/var/nix/profiles/default/bin",
 	}
-	if b.CacheStore != nil || b.CacheHandler != nil {
-		env["GOPROXY"] = "http://" + microvm.InternalCacheHost + "/goproxy,direct"
-		env["npm_config_registry"] = "http://" + microvm.InternalCacheHost + "/npm"
-	}
+	b.applyCacheEnv(env)
 
 	var gitPAT string
 	for _, k := range []string{"GH_TOKEN", "GITHUB_TOKEN", envName("git:pat")} {
@@ -654,6 +659,7 @@ func (b *MicroVM) Start(ctx context.Context, runID string, spec ExecSpec) (Proce
 		}
 		rewriteGitInsteadOfEnv(env, b.GitRewriteFrom)
 	}
+	pgProxySet := b.attachPlaygroundProxy(spec, env, rvm.egress)
 
 	dir := spec.Dir
 	if dir == "" {
@@ -674,6 +680,9 @@ func (b *MicroVM) Start(ctx context.Context, runID string, spec ExecSpec) (Proce
 		if gitProxySet && rvm.egress != nil {
 			rvm.egress.SetGitHandler(b.GitHandler)
 		}
+		if pgProxySet && rvm.egress != nil {
+			rvm.egress.SetPlaygroundHandler(nil)
+		}
 		return nil, err
 	}
 	ok = true
@@ -687,6 +696,7 @@ func (b *MicroVM) Start(ctx context.Context, runID string, spec ExecSpec) (Proce
 		codexScope:  codexScope,
 		unlinkPaths: unlinkPaths,
 		gitProxySet: gitProxySet,
+		pgProxySet:  pgProxySet,
 	}, nil
 }
 
@@ -701,6 +711,7 @@ type microvmProc struct {
 	unlinkPaths []string
 	nixManifest []byte
 	gitProxySet bool
+	pgProxySet  bool
 }
 
 var (
@@ -718,6 +729,9 @@ func (p *microvmProc) Wait() (int, error) {
 	defer func() {
 		if p.gitProxySet && p.rvm.egress != nil {
 			p.rvm.egress.SetGitHandler(p.b.GitHandler)
+		}
+		if p.pgProxySet && p.rvm.egress != nil {
+			p.rvm.egress.SetPlaygroundHandler(nil)
 		}
 		if hostDir, ok := p.b.hostWorkspacePath(p.rvm.runID); ok {
 			p.b.ensureSafeHostGitConfig(hostDir)
@@ -806,7 +820,35 @@ func (b *MicroVM) Cleanup(ctx context.Context) error {
 	for _, id := range ids {
 		b.stopRunVM(ctx, id)
 	}
+	b.cleanupPlaygrounds(ctx)
+	b.cleanupDevWorkspaces(ctx)
 	return nil
 }
 
 func (b *MicroVM) Close() error { return b.Cleanup(context.Background()) }
+
+func (b *MicroVM) cacheHandler() http.Handler {
+	if b.CacheHandler != nil {
+		return b.CacheHandler
+	}
+	if b.CacheStore != nil {
+		return b.CacheStore
+	}
+	return nil
+}
+
+func (b *MicroVM) nixConfFileWrite() (guestproto.FileWrite, bool) {
+	if b.CacheStore == nil {
+		return guestproto.FileWrite{}, false
+	}
+	nixConf := fmt.Sprintf("build-users-group = nixbld\nexperimental-features = nix-command flakes\nsandbox = false\nauto-optimise-store = true\nextra-substituters = http://%s/nix\nextra-trusted-public-keys = %s\n",
+		microvm.InternalCacheHost, b.CacheStore.NixPublicKey())
+	return guestproto.FileWrite{Path: "/etc/nix/nix.conf", Data: []byte(nixConf), Mode: 0o644}, true
+}
+
+func (b *MicroVM) applyCacheEnv(env map[string]string) {
+	if b.cacheHandler() != nil {
+		env["GOPROXY"] = "http://" + microvm.InternalCacheHost + "/goproxy,direct"
+		env["npm_config_registry"] = "http://" + microvm.InternalCacheHost + "/npm"
+	}
+}

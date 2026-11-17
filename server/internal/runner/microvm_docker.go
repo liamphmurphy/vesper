@@ -167,29 +167,42 @@ func (b *MicroVM) StartServices(ctx context.Context, runID, key string, services
 		}
 	}
 
-	if err := rvm.vm.Client().StartDockerd(ctx, b.registryMirrorURL()); err != nil {
+	netName := serviceNetworkName(key)
+	hc := b.vmDockerHTTP(rvm)
+	stopContainers, err := b.startGuestServices(ctx, rvm.vm.Client(), hc, netName, key, services)
+	if err != nil {
 		releaseOnce()
 		return "", nil, err
 	}
-	hc := b.vmDockerHTTP(rvm)
-	netName := serviceNetworkName(key)
+	var stopOnce sync.Once
+	stop := func() {
+		stopOnce.Do(func() {
+			defer releaseOnce()
+			stopContainers()
+		})
+	}
+	return netName, stop, nil
+}
+
+func (b *MicroVM) startGuestServices(ctx context.Context, client *guestproto.Client, hc *http.Client, netName, key string, services []agentdef.Service) (func(), error) {
+	if err := client.StartDockerd(ctx, b.registryMirrorURL()); err != nil {
+		return nil, err
+	}
 	_, _, nerr := b.dockerDo(ctx, hc, http.MethodPost, "/networks/create", map[string]any{
 		"Name":   netName,
 		"Driver": "bridge",
 	}, nil)
 	if nerr != nil && !strings.Contains(nerr.Error(), "already exists") {
-		releaseOnce()
-		return "", nil, nerr
+		return nil, nerr
 	}
 
 	var started []string
 	var stopOnce sync.Once
 	stop := func() {
 		stopOnce.Do(func() {
-			defer releaseOnce()
 			sctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
-			_ = rvm.vm.Client().EnsureBridgeAliases(sctx, nil)
+			_ = client.EnsureBridgeAliases(sctx, nil)
 			for _, id := range started {
 				_, _, _ = b.dockerDo(sctx, hc, http.MethodDelete, "/containers/"+url.PathEscape(id)+"?force=true&v=true", nil, nil)
 			}
@@ -204,7 +217,7 @@ func (b *MicroVM) StartServices(ctx context.Context, runID, key string, services
 		cancel()
 		if perr != nil {
 			stop()
-			return "", nil, fmt.Errorf("service %s: %w", s.Name, perr)
+			return nil, fmt.Errorf("service %s: %w", s.Name, perr)
 		}
 
 		tmpfs := map[string]string{}
@@ -248,29 +261,29 @@ func (b *MicroVM) StartServices(ctx context.Context, runID, key string, services
 		}
 		if _, _, err := b.dockerDo(ctx, hc, http.MethodPost, "/containers/create?name="+url.QueryEscape(cname), body, &created); err != nil {
 			stop()
-			return "", nil, fmt.Errorf("service %s create: %w", s.Name, err)
+			return nil, fmt.Errorf("service %s create: %w", s.Name, err)
 		}
 		started = append(started, created.ID)
 		if _, _, err := b.dockerDo(ctx, hc, http.MethodPost, "/containers/"+url.PathEscape(created.ID)+"/start", nil, nil); err != nil {
 			stop()
-			return "", nil, fmt.Errorf("service %s start: %w", s.Name, err)
+			return nil, fmt.Errorf("service %s start: %w", s.Name, err)
 		}
 
 		ip, err := b.waitGuestServiceReady(ctx, hc, created.ID, netName, s)
 		if err != nil {
 			stop()
-			return "", nil, fmt.Errorf("service %s: %w", s.Name, err)
+			return nil, fmt.Errorf("service %s: %w", s.Name, err)
 		}
 		if ip != "" {
 			aliases[s.Name] = ip
 		}
 	}
 
-	if err := rvm.vm.Client().EnsureBridgeAliases(ctx, aliases); err != nil {
+	if err := client.EnsureBridgeAliases(ctx, aliases); err != nil {
 		stop()
-		return "", nil, fmt.Errorf("register guest service DNS aliases: %w", err)
+		return nil, fmt.Errorf("register guest service DNS aliases: %w", err)
 	}
-	return netName, stop, nil
+	return stop, nil
 }
 
 func (b *MicroVM) waitGuestServiceReady(ctx context.Context, hc *http.Client, id, netName string, s agentdef.Service) (string, error) {

@@ -52,6 +52,7 @@ const (
 	OpSyncAndDropCaches   = "sync_drop_caches"
 	OpStartDockerd        = "start_dockerd"
 	OpEnsureBridgeAliases = "ensure_bridge_aliases"
+	OpCheckTCPPort        = "check_tcp_port"
 	OpShutdown            = "shutdown"
 )
 
@@ -154,6 +155,14 @@ type StartDockerdReq struct {
 
 type EnsureBridgeAliasesReq struct {
 	Aliases map[string]string `json:"aliases"` // hostname -> container IPv4
+}
+
+type CheckTCPPortReq struct {
+	Port uint16 `json:"port"`
+}
+
+type CheckTCPPortResp struct {
+	Listening bool `json:"listening"`
 }
 
 // Frame header layout: [type(1)][id(4)][len(4)] = 9 bytes.

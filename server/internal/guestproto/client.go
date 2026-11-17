@@ -74,6 +74,12 @@ func (c *Client) EnsureBridgeAliases(ctx context.Context, aliases map[string]str
 	return c.callUnary(ctx, OpEnsureBridgeAliases, EnsureBridgeAliasesReq{Aliases: aliases}, nil)
 }
 
+func (c *Client) CheckTCPPort(ctx context.Context, port uint16) (bool, error) {
+	var out CheckTCPPortResp
+	err := c.callUnary(ctx, OpCheckTCPPort, CheckTCPPortReq{Port: port}, &out)
+	return out.Listening, err
+}
+
 func (c *Client) Shutdown(ctx context.Context) error {
 	return c.callUnary(ctx, OpShutdown, nil, nil)
 }

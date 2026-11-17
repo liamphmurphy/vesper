@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"time"
 	"unsafe"
 
 	"golang.org/x/net/dns/dnsmessage"
@@ -62,6 +63,9 @@ func setupGuestNetworking(log *slog.Logger, aliases *dnsStubConfig) error {
 	}
 	if err := startTransparentTCPProxy(log); err != nil {
 		return fmt.Errorf("tcp proxy: %w", err)
+	}
+	if err := startPlaygroundVSockBridge(log); err != nil {
+		return fmt.Errorf("playground vsock bridge: %w", err)
 	}
 	return nil
 }
@@ -370,4 +374,80 @@ func getOriginalDst(conn *net.TCPConn) (net.IP, uint16, error) {
 	port := binary.BigEndian.Uint16(raw[2:4])
 	ip := net.IPv4(raw[4], raw[5], raw[6], raw[7])
 	return ip, port, nil
+}
+
+func startPlaygroundVSockBridge(log *slog.Logger) error {
+	ln, err := listenVSock(guestproto.PortPlayground)
+	if err != nil {
+		return err
+	}
+	go func() {
+		for {
+			c, aerr := ln.Accept()
+			if aerr != nil {
+				return
+			}
+			// Accept playground forwarding connections strictly from host CID 2.
+			if vc, ok := c.(*vsockConn); !ok || vc.remote.cid != 2 {
+				_ = c.Close()
+				continue
+			}
+			go handlePlaygroundConn(log, c)
+		}
+	}()
+	return nil
+}
+
+func dialLocalTCP(port uint16, timeout time.Duration) (net.Conn, error) {
+	if port == 0 {
+		return nil, errors.New("invalid zero port")
+	}
+	d := net.Dialer{Timeout: timeout}
+	conn, err := d.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err == nil {
+		return conn, nil
+	}
+	return d.Dial("tcp", fmt.Sprintf("[::1]:%d", port))
+}
+
+func checkLocalTCPPort(port uint16) bool {
+	c, err := dialLocalTCP(port, 200*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = c.Close()
+	return true
+}
+
+func handlePlaygroundConn(log *slog.Logger, client net.Conn) {
+	defer client.Close()
+	port, err := guestproto.ReadPlaygroundHeader(client)
+	if err != nil || port == 0 {
+		log.Debug("playground header failed", "err", err)
+		return
+	}
+	up, err := dialLocalTCP(port, 5*time.Second)
+	if err != nil {
+		log.Debug("playground localhost dial failed", "port", port, "err", err)
+		return
+	}
+	defer up.Close()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(up, client)
+		if tc, ok := up.(*net.TCPConn); ok {
+			_ = tc.CloseWrite()
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(client, up)
+		if vc, ok := client.(*vsockConn); ok {
+			_ = shutdownVSockWrite(vc)
+		}
+	}()
+	wg.Wait()
 }

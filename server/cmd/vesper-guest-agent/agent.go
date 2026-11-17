@@ -213,6 +213,14 @@ func (s *agentServer) handleConn(ctx context.Context, conn net.Conn) {
 		}
 		s.dnsStub.setAliases(in.Aliases)
 		_ = writeRPCOK(conn, f.ID, nil)
+	case guestproto.OpCheckTCPPort:
+		var in guestproto.CheckTCPPortReq
+		if err := json.Unmarshal(req.V, &in); err != nil {
+			_ = writeRPCError(conn, f.ID, err.Error())
+			return
+		}
+		listening := checkLocalTCPPort(in.Port)
+		_ = writeRPCOK(conn, f.ID, guestproto.CheckTCPPortResp{Listening: listening})
 	case guestproto.OpShutdown:
 		s.shutdown.Store(true)
 		_ = syncAndDropCaches()
