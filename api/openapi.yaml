@@ -8098,7 +8098,7 @@ components:
       required: [id, backend, max_concurrent, running, heartbeat_at]
       properties:
         id: { type: string }
-        backend: { type: string, enum: [docker, fake] }
+        backend: { type: string, enum: [docker, microvm, fake] }
         max_concurrent: { type: integer }
         running: { type: integer }
         version: { type: string }

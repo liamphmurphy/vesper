@@ -96,7 +96,8 @@ const (
 	stackLabelKey  = "dev.lazyagents.stack"
 )
 
-func (d *Docker) Name() string { return "docker" }
+func (d *Docker) Name() string   { return "docker" }
+func (d *Docker) Isolates() bool { return true }
 
 func (d *Docker) stack() string {
 	if d.Stack == "" {

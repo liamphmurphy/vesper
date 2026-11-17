@@ -330,7 +330,7 @@ function RunnerSection() {
           <Row label="Backend">
             <span className="font-mono text-12 text-fg-secondary">RUNNER_BACKEND = {current(backends)}</span>
             <span className="mt-1 block text-12 text-fg-tertiary">
-              docker runs each harness in a container that only receives the secrets its scopes allow. fake runs stand-in harnesses on the runner’s machine, for tests and playgrounds.
+              microvm runs each harness in a hardware-virtualised Linux microVM with host-enforced egress. docker runs each harness in a container that only receives the secrets its scopes allow. fake runs stand-in harnesses on the runner’s machine, for tests and playgrounds.
             </span>
           </Row>
           <Row label="Slots">

@@ -20,10 +20,14 @@ import (
 
 type Store struct {
 	client  *s3.Client
+	dir     string
 	buckets []string
 }
 
 func New(cfg config.S3) *Store {
+	if cfg.Dir != "" {
+		return NewDir(cfg.Dir, cfg.Buckets)
+	}
 	client := s3.New(s3.Options{
 		Region:       cfg.Region,
 		BaseEndpoint: aws.String(cfg.Endpoint),
@@ -33,9 +37,18 @@ func New(cfg config.S3) *Store {
 	return &Store{client: client, buckets: cfg.Buckets}
 }
 
+// NewDir returns a Store backed by a local filesystem directory rather than an
+// S3 server (used by standalone Vesper.app when BLOB_DIR is set).
+func NewDir(dir string, buckets []string) *Store {
+	return &Store{dir: dir, buckets: append([]string{}, buckets...)}
+}
+
 // EnsureBuckets creates any configured bucket that doesn't exist yet,
 // retrying until ctx is done so the API can start before the S3 gateway is up.
 func (s *Store) EnsureBuckets(ctx context.Context) error {
+	if s.dir != "" {
+		return s.localEnsureBuckets()
+	}
 	for _, b := range s.buckets {
 		for {
 			err := s.ensure(ctx, b)
@@ -77,6 +90,9 @@ var ErrNotFound = errors.New("blob: not found")
 
 // Put stores a blob. size must be exact; the S3 API needs it up front.
 func (s *Store) Put(ctx context.Context, bucket, key string, body io.Reader, size int64, contentType string) error {
+	if s.dir != "" {
+		return s.localPut(ctx, bucket, key, body, size, contentType)
+	}
 	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:        &bucket,
 		Key:           &key,
@@ -92,6 +108,9 @@ func (s *Store) Put(ctx context.Context, bucket, key string, body io.Reader, siz
 
 // Get opens a blob for reading. The caller closes Body.
 func (s *Store) Get(ctx context.Context, bucket, key string) (Object, error) {
+	if s.dir != "" {
+		return s.localGet(ctx, bucket, key)
+	}
 	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{Bucket: &bucket, Key: &key})
 	if err != nil {
 		var nsk *types.NoSuchKey
@@ -110,6 +129,9 @@ func (s *Store) Get(ctx context.Context, bucket, key string) (Object, error) {
 // GetRange opens bytes start through end (inclusive) of a blob. The caller
 // closes Body.
 func (s *Store) GetRange(ctx context.Context, bucket, key string, start, end int64) (Object, error) {
+	if s.dir != "" {
+		return s.localGetRange(ctx, bucket, key, start, end)
+	}
 	rng := fmt.Sprintf("bytes=%d-%d", start, end)
 	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{Bucket: &bucket, Key: &key, Range: &rng})
 	if err != nil {
@@ -128,12 +150,18 @@ func (s *Store) GetRange(ctx context.Context, bucket, key string, start, end int
 
 // Delete removes a blob; a missing key is not an error.
 func (s *Store) Delete(ctx context.Context, bucket, key string) error {
+	if s.dir != "" {
+		return s.localDelete(ctx, bucket, key)
+	}
 	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: &bucket, Key: &key})
 	return err
 }
 
 // Ping checks the gateway is reachable by listing buckets.
 func (s *Store) Ping(ctx context.Context) error {
+	if s.dir != "" {
+		return s.localPing(ctx)
+	}
 	_, err := s.client.ListBuckets(ctx, &s3.ListBucketsInput{})
 	return err
 }
@@ -146,6 +174,9 @@ type Info struct {
 
 // ListBuckets returns the name of every bucket the credential can see.
 func (s *Store) ListBuckets(ctx context.Context) ([]string, error) {
+	if s.dir != "" {
+		return s.localListBuckets(ctx)
+	}
 	out, err := s.client.ListBuckets(ctx, &s3.ListBucketsInput{})
 	if err != nil {
 		return nil, fmt.Errorf("blob: list buckets: %w", err)
@@ -160,6 +191,9 @@ func (s *Store) ListBuckets(ctx context.Context) ([]string, error) {
 // List calls fn for every object in a bucket, page by page, and stops at the
 // first error fn returns.
 func (s *Store) List(ctx context.Context, bucket string, fn func(Info) error) error {
+	if s.dir != "" {
+		return s.localList(ctx, bucket, fn)
+	}
 	pages := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{Bucket: &bucket})
 	for pages.HasMorePages() {
 		page, err := pages.NextPage(ctx)
@@ -182,6 +216,9 @@ func (s *Store) List(ctx context.Context, bucket string, fn func(Info) error) er
 // EnsureBucket creates one bucket if it doesn't exist. Unlike EnsureBuckets it
 // doesn't retry: the caller already has a working connection.
 func (s *Store) EnsureBucket(ctx context.Context, bucket string) error {
+	if s.dir != "" {
+		return s.localEnsureBucket(bucket)
+	}
 	if err := s.ensure(ctx, bucket); err != nil {
 		return fmt.Errorf("blob: bucket %q: %w", bucket, err)
 	}

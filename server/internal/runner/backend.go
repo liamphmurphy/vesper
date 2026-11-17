@@ -41,7 +41,10 @@ type Process interface {
 
 // Backend runs processes in a run's persistent workspace (§6.5).
 type Backend interface {
-	Name() string // docker | fake
+	Name() string // docker | microvm | fake
+	// Isolates reports whether turns run inside an isolated sandbox (container
+	// or microVM) rather than unisolated host fake mode.
+	Isolates() bool
 	// WorkspaceDir is the checkout's path as processes see it.
 	WorkspaceDir(runID string) string
 	// EnsureWorkspace creates the run's workspace if it doesn't exist.
@@ -94,7 +97,8 @@ type Fake struct {
 // harnessPrograms are the CLIs adapters invoke.
 var harnessPrograms = map[string]bool{"claude": true, "codex": true, "agy": true}
 
-func (l *Fake) Name() string { return "fake" }
+func (l *Fake) Name() string   { return "fake" }
+func (l *Fake) Isolates() bool { return false }
 
 func (l *Fake) WorkspaceDir(runID string) string {
 	p := filepath.Join(l.Dir, "runs", runID, "workspace")

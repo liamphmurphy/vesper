@@ -94,7 +94,7 @@ func (s *Server) ListSecrets(ctx context.Context, _ api.ListSecretsRequestObject
 	if err != nil {
 		return nil, err
 	}
-	live, err := s.Q.LiveDockerRunnerExists(ctx)
+	live, err := s.Q.LiveIsolatingRunnerExists(ctx)
 	if err != nil {
 		return nil, err
 	}

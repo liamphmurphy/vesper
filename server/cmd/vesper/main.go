@@ -183,7 +183,7 @@ func serve(ctx context.Context, log *slog.Logger) error {
 		Artifacts:      arts,
 		Agents:         &agents.Service{Pool: pool},
 		Secrets:        secretsSvc,
-		Runs:           &runs.Service{Pool: pool, Secrets: secretsSvc, Artifacts: arts, Tracker: trackerSvc, RequireHarnessKey: cfg.Runner.Backend == "docker", PlanModels: planModels(cfg.Runner.Backend, pool), Transcripts: transcript.Shared, RolloverContextTokens: int64(cfg.RolloverContextTokens)},
+		Runs:           &runs.Service{Pool: pool, Secrets: secretsSvc, Artifacts: arts, Tracker: trackerSvc, RequireHarnessKey: config.IsolatesBackend(cfg.Runner.Backend), PlanModels: planModels(cfg.Runner.Backend, pool), Transcripts: transcript.Shared, RolloverContextTokens: int64(cfg.RolloverContextTokens)},
 		Wiki:           &wiki.Service{Pool: pool, Artifacts: arts, Tracker: trackerSvc},
 		PublicURL:      cfg.PublicURL,
 		Blobs:          blobs,
@@ -195,10 +195,10 @@ func serve(ctx context.Context, log *slog.Logger) error {
 		DriveBackups:   driveBackupRunner(cfg, pool, box, apiHolder(), log),
 	}
 	go srv.Wiki.RunVaultWorker(ctx, log)
-	// In Docker the CLIs and logins live in agent containers, so the API
-	// queues usage checks for a runner to answer. The fake backend's stand-in
-	// harnesses (config requires RUNNER_*_BIN) answer the API directly.
-	if cfg.Runner.Backend == "docker" {
+	// In isolated backends (Docker, microVM) the CLIs and logins live inside the
+	// sandbox, so the API queues usage checks for a runner to answer. The fake
+	// backend's stand-in harnesses (config requires RUNNER_*_BIN) answer directly.
+	if config.IsolatesBackend(cfg.Runner.Backend) {
 		srv.Usage.Queued = true
 	} else {
 		srv.Usage.Probe = usage.Probe
@@ -380,6 +380,8 @@ func runRunner(ctx context.Context, log *slog.Logger) error {
 		}
 		cancel()
 		backend = d
+	case "microvm":
+		return fmt.Errorf("runner: microvm backend is not wired yet")
 	case "fake":
 		log.Warn("RUNNER_BACKEND=fake runs stand-in harnesses on this machine with no isolation; it's only for tests and playgrounds")
 		bins := map[string]string{"claude": rc.ClaudeBin, "codex": rc.CodexBin}
@@ -407,12 +409,12 @@ func runRunner(ctx context.Context, log *slog.Logger) error {
 		d.SaveCodexAuth = saveScoped(chatmodels.KeySecret[agentdef.HarnessCodex], chatmodels.CodexAuthRefreshed)
 	}
 	workflows := runs.NewWorkflowEngine(pool, &artifacts.Service{Pool: pool, Blobs: blobs, Bucket: cfg.S3.ArtifactBucket}, &tracker.Service{Pool: pool})
-	workflows.Catalog = chatmodels.Catalog{RequireKey: rc.Backend == "docker", Secrets: secretStore, PlanModels: planModels(rc.Backend, pool)}
+	workflows.Catalog = chatmodels.Catalog{RequireKey: config.IsolatesBackend(rc.Backend), Secrets: secretStore, PlanModels: planModels(rc.Backend, pool)}
 	r := &runner.Runner{
 		Cfg: runner.Config{
 			ModelPrices: rc.ModelPrices,
 			ID:          fmt.Sprintf("%s-%d", host, os.Getpid()), MaxConcurrent: rc.MaxConcurrent, MCPURL: rc.MCPURL,
-			Grace: 30 * time.Second, LogBucket: "run-logs", AttachmentBucket: cfg.S3.ArtifactBucket, Version: cfg.Version, RequireHarnessKey: rc.Backend == "docker",
+			Grace: 30 * time.Second, LogBucket: "run-logs", AttachmentBucket: cfg.S3.ArtifactBucket, Version: cfg.Version, RequireHarnessKey: config.IsolatesBackend(rc.Backend),
 			ChatIdleTTL: rc.ChatIdleTTL, MaxHold: rc.MaxHold, MaxHoldAttempts: rc.MaxHoldAttempts, RolloverContextTokens: int64(cfg.RolloverContextTokens),
 			RepoMap:     rc.RepoMap,
 			Playgrounds: runner.PlaygroundConfig{Ports: rc.PlaygroundPorts, IdleTTL: rc.PlaygroundIdleTTL, Origins: origins(cfg.WebURL, cfg.PublicURL)},
@@ -421,7 +423,7 @@ func runRunner(ctx context.Context, log *slog.Logger) error {
 		Tracker: &tracker.Service{Pool: pool}, Blobs: blobs, Attachments: blobs, Log: log,
 		Workflows:    workflows,
 		Designs:      &designs.Service{Pool: pool, Worker: &designs.Worker{URL: cfg.DesignWorkerURL, Token: cfg.DesignWorkerToken}, Blobs: blobs, Bucket: cfg.S3.ArtifactBucket},
-		Scheduled:    &runs.Service{Pool: pool, Secrets: secretStore, Tracker: &tracker.Service{Pool: pool}, Artifacts: &artifacts.Service{Pool: pool, Blobs: blobs, Bucket: cfg.S3.ArtifactBucket}, RequireHarnessKey: rc.Backend == "docker", PlanModels: planModels(rc.Backend, pool), RolloverContextTokens: int64(cfg.RolloverContextTokens)},
+		Scheduled:    &runs.Service{Pool: pool, Secrets: secretStore, Tracker: &tracker.Service{Pool: pool}, Artifacts: &artifacts.Service{Pool: pool, Blobs: blobs, Bucket: cfg.S3.ArtifactBucket}, RequireHarnessKey: config.IsolatesBackend(rc.Backend), PlanModels: planModels(rc.Backend, pool), RolloverContextTokens: int64(cfg.RolloverContextTokens)},
 		DriveBackups: driveBackupRunner(cfg, pool, box, fmt.Sprintf("%s-%d", host, os.Getpid()), log),
 		StoreSecret: func(ctx context.Context, ws, by uuid.UUID, name, value string) error {
 			_, err := secretStore.Set(ctx, ws, by, secrets.SetInput{Name: name, Value: value})
@@ -453,10 +455,10 @@ func origins(urls ...string) []string {
 	return out
 }
 
-// planModels lists plan-login models through a runner in Docker mode, where
-// the API image has no harness CLI; nil elsewhere (the local CLI is used).
+// planModels lists plan-login models through a runner in isolated modes
+// (Docker, microVM) where the API lacks direct sandbox CLIs; nil elsewhere.
 func planModels(backend string, pool *pgxpool.Pool) func(context.Context, uuid.UUID, string, bool) ([]chatmodels.Model, error) {
-	if backend != "docker" {
+	if !config.IsolatesBackend(backend) {
 		return nil
 	}
 	return (&chatmodels.QueuedListings{Pool: pool}).Models

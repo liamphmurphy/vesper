@@ -239,13 +239,14 @@ export function DispatchDialog({ keys, open, onOpenChange, onDone }: { keys: str
   const previews = single ? [one.data] : many.map((q) => q.data);
   const loaded = previews.every(Boolean);
   const blocked = previews.some((p) => p && p.blockers.length > 0);
-  // Only Docker runs need a stored key; a local runner uses the machine's own CLI login.
+  const isolates = (backend: string) => backend === "docker" || backend === "microvm";
+  // Only isolated runs need a stored key; a fake/local runner uses the machine's own CLI login.
   const needsKey = (p: NonNullable<(typeof previews)[number]>) =>
-    p.runner.runners.length === 0 || p.runner.runners.some((r) => r.backend === "docker");
+    p.runner.runners.length === 0 || p.runner.runners.some((r) => isolates(r.backend));
   const keyless = previews.filter((p): p is NonNullable<typeof p> => !!p && p.blockers.length === 0 && !p.harness_key.present && needsKey(p));
   const noKey = keyless.length > 0;
-  // Every online runner is Docker, so a run without its harness key would sit in starting: refuse before approving.
-  const stuck = keyless.filter((p) => p.runner.runners.length > 0 && p.runner.runners.every((r) => r.backend === "docker"));
+  // Every online runner is isolated, so a run without its harness key would sit in starting: refuse before approving.
+  const stuck = keyless.filter((p) => p.runner.runners.length > 0 && p.runner.runners.every((r) => isolates(r.backend)));
   const stuckReasons = [...new Set(stuck.map((p) => `${p.resolved?.harness ?? "This harness"}: no ${p.harness_key.secret} secret`))];
   const p = one.data;
 
@@ -318,7 +319,7 @@ export function DispatchDialog({ keys, open, onOpenChange, onDone }: { keys: str
                   </ButtonLink>
                 }
               >
-                {stuckReasons.join(". ")}. Every online runner uses Docker, so the run would sit in starting.
+                {stuckReasons.join(". ")}. Every online runner uses an isolated sandbox, so the run would sit in starting.
               </Banner>
             ) : noKey && (
               <Banner
@@ -330,7 +331,7 @@ export function DispatchDialog({ keys, open, onOpenChange, onDone }: { keys: str
                   </ButtonLink>
                 }
               >
-                Docker runs fail at start without <code className="inline">{(p ?? previews.find(Boolean))?.harness_key.secret}</code>. A local runner can use
+                Sandboxed runs fail at start without <code className="inline">{(p ?? previews.find(Boolean))?.harness_key.secret}</code>. A local runner can use
                 the machine&apos;s own CLI login instead.
               </Banner>
             )}

@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/liamphmurphy/vesper/server/internal/chatmodels"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
@@ -188,13 +191,15 @@ func TestVerifyHarnessAgainstFakeHarness(t *testing.T) {
 // harness:google, checked through the runner's `agy models` listing rather than
 // a Gemini API key.
 func TestVerifyHarnessAntigravityTakesNativeSignIn(t *testing.T) {
-	var seen []string
+	var asked []string
 	var srv *Server
 	e := newChatEnvServer(t, func(rs *runs.Service) {
 		rs.RequireHarnessKey = true
-		rs.ModelDiscovery = func(_ context.Context, h, key string) ([]chatmodels.Model, error) {
-			seen = append(seen, h+"="+key)
-			return nil, context.DeadlineExceeded
+		rs.ModelDiscovery = nil
+		l := &chatmodels.QueuedListings{Pool: rs.Pool, Wait: time.Millisecond, Poll: time.Millisecond}
+		rs.PlanModels = func(ctx context.Context, ws uuid.UUID, h string, wait bool) ([]chatmodels.Model, error) {
+			asked = append(asked, h)
+			return l.Models(ctx, ws, h, wait)
 		}
 	}, func(s *Server) { srv = s })
 	box := &secrets.Service{Q: e.q, Box: testBox(t)}
@@ -203,14 +208,14 @@ func TestVerifyHarnessAntigravityTakesNativeSignIn(t *testing.T) {
 
 	e.invalid("POST", "/harness/antigravity/verify", map[string]any{"kind": "api_key", "credential": "AIzaSyExample"}, "credential", "native Google Antigravity sign-in")
 	e.invalid("POST", "/harness/antigravity/verify", map[string]any{"kind": "subscription", "credential": "AIzaSyExample"}, "credential", "Antigravity login")
-	if len(seen) != 0 {
-		t.Fatalf("a malformed credential reached discovery: %v", seen)
+	if len(asked) != 0 {
+		t.Fatalf("a malformed credential reached discovery: %v", asked)
 	}
 	bundle := `{"v":1,"files":{".config/antigravity/plugin-secrets.json":"{\"token\":\"ok\"}"}}`
 	out := e.want("POST", "/harness/antigravity/verify", map[string]any{"kind": "subscription", "credential": bundle}, http.StatusOK)
-	// No runner is present to complete listing; first login stays pending or rolls back safely without hitting AI Studio HTTP discovery.
-	if out["ok"] != false || len(seen) != 0 {
-		t.Fatalf("unexpected verify result: %v seen=%v", out, seen)
+	// No runner is present to complete listing; first login stays pending without hitting AI Studio HTTP discovery.
+	if out["ok"] != false || out["checking"] != true || len(asked) != 1 || asked[0] != "antigravity" {
+		t.Fatalf("unexpected verify result: %v asked=%v", out, asked)
 	}
 	// Verifying with nothing configured reports no harness:google secret once rolled back.
 	if _, err := e.pool.Exec(context.Background(), `DELETE FROM secrets WHERE name = 'harness:google'`); err != nil {

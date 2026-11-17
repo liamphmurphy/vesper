@@ -67,7 +67,7 @@ func TestGatewayCustomHandlerLifecycle(t *testing.T) {
 }
 
 func TestExecDevWorkspaceScriptStreamsLargeScriptViaStdin(t *testing.T) {
-	sock := filepath.Join(t.TempDir(), "docker.sock")
+	sock := filepath.Join(shortTempDir(t), "docker.sock")
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatalf("listen unix: %v", err)

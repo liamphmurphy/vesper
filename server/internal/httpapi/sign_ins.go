@@ -34,12 +34,12 @@ func (s *Server) StartSignIn(ctx context.Context, req api.StartSignInRequestObje
 	if s.Secrets.Box == nil {
 		return nil, apperr.Conflict("Secrets can't be stored until SECRETS_KEY is set.")
 	}
-	live, err := s.Q.LiveDockerRunnerExists(ctx)
+	live, err := s.Q.LiveIsolatingRunnerExists(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if !live {
-		return nil, apperr.Conflict("Signing in from Settings needs the Docker runner. Start Vesper with make start, or add the key by hand.")
+		return nil, apperr.Conflict("Signing in from Settings needs an active Vesper runner. Start Vesper or add the key by hand.")
 	}
 	var out store.SignIn
 	err = pgx.BeginFunc(ctx, s.Pool, func(tx pgx.Tx) error {

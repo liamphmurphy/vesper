@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -15,7 +16,11 @@ func TestFakeRefusesHarnessWithoutStandIn(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", path+":"+os.Getenv("PATH"))
-	b := &Fake{Dir: t.TempDir(), Bins: map[string]string{"claude": "/bin/true"}}
+	trueBin, err := exec.LookPath("true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &Fake{Dir: t.TempDir(), Bins: map[string]string{"claude": trueBin}}
 	if err := b.EnsureWorkspace(context.Background(), "r1"); err != nil {
 		t.Fatal(err)
 	}

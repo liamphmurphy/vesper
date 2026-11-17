@@ -15,7 +15,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -177,12 +176,7 @@ func (f *modelsEngine) speak(conn net.Conn, in *bufio.Reader) {
 func startModelsEngine(t *testing.T) (*modelsEngine, *Docker) {
 	t.Helper()
 	// A short path: unix socket names are limited to about 100 bytes.
-	dir, err := os.MkdirTemp("", "dm")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
-	sock := filepath.Join(dir, "d.sock")
+	sock := filepath.Join(shortTempDir(t), "d.sock")
 	l, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)

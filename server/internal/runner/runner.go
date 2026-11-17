@@ -1615,7 +1615,7 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 		cacheDir = backend.DependencyCacheDir()
 	}
 	inv, err := h.Invocation(harness.Workspace{
-		DependencyCacheDir: cacheDir, Dir: wsDir, MCPURL: r.Cfg.MCPURL, Token: token, TokenEnv: tokenEnv, ContainerSandbox: r.Backend.Name() == "docker",
+		DependencyCacheDir: cacheDir, Dir: wsDir, MCPURL: r.Cfg.MCPURL, Token: token, TokenEnv: tokenEnv, ContainerSandbox: r.Backend.Isolates(),
 	}, harness.Turn{Spec: c.spec, Prompt: prompt, SessionID: session, Images: inputPaths, InlineImages: inputImages, Lead: runs.LeadRun(c.run)})
 	if err != nil {
 		r.end(ctx, c, "failed", err.Error(), runs.VerbRunFailed)

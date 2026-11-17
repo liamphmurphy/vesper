@@ -216,7 +216,7 @@ func (r *Runner) runChatImageJob(ctx context.Context, c runCtx, turn store.RunTu
 		h = harness.Antigravity{}
 	}
 	inv, err := h.Invocation(harness.Workspace{
-		DependencyCacheDir: cacheDir, Dir: r.Backend.WorkspaceDir(wsID(c.run)), MCPURL: r.Cfg.MCPURL, Token: token, TokenEnv: tokenEnv, ContainerSandbox: r.Backend.Name() == "docker",
+		DependencyCacheDir: cacheDir, Dir: r.Backend.WorkspaceDir(wsID(c.run)), MCPURL: r.Cfg.MCPURL, Token: token, TokenEnv: tokenEnv, ContainerSandbox: r.Backend.Isolates(),
 	}, harness.Turn{Spec: spec, Prompt: imageStepPrompt + imageStepReferencePrompt(refs) + "Request: " + job.Prompt, Images: refs.images()})
 	if err != nil {
 		r.Log.Warn("image step invocation", "run", c.run.ID, "err", err)

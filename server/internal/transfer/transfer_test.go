@@ -595,3 +595,75 @@ func TestExportIncludesConfiguredBucketsTheStoreWontList(t *testing.T) {
 		t.Errorf("buckets = %+v, want the artifacts object (run-logs doesn't exist, so it is skipped)", m.Buckets)
 	}
 }
+
+func TestRoundTripLocalBlobStore(t *testing.T) {
+	src := testdb.New(t)
+	seed(t, src)
+	srcDir := t.TempDir()
+	srcBlobs := blob.New(config.S3{Dir: srcDir, Buckets: []string{"artifacts", "run-logs"}})
+	ctx := t.Context()
+	if err := srcBlobs.EnsureBuckets(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := srcBlobs.EnsureBucket(ctx, "empty-bucket"); err != nil {
+		t.Fatal(err)
+	}
+	if err := srcBlobs.EnsureBucket(ctx, "added-next-year"); err != nil {
+		t.Fatal(err)
+	}
+	objects := map[string]map[string]struct {
+		ct   string
+		body []byte
+	}{
+		"artifacts": {
+			"a/one.png":                     {ct: "image/png", body: []byte{0x89, 'P', 'N', 'G', 0, 1, 2}},
+			"weird/../key with spaces?.txt": {ct: "text/plain", body: []byte("hello")},
+			"with space/ü.txt":              {ct: "application/octet-stream", body: []byte("unicode")},
+		},
+		"run-logs": {
+			"run/1.log": {ct: "text/plain", body: bytes.Repeat([]byte("log line\n"), 200)},
+		},
+		"added-next-year": {
+			"k": {ct: "application/octet-stream", body: []byte("new feature")},
+		},
+	}
+	for bucket, entries := range objects {
+		for k, obj := range entries {
+			if err := srcBlobs.Put(ctx, bucket, k, bytes.NewReader(obj.body), int64(len(obj.body)), obj.ct); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	zr, m := exportToZip(t, src, srcBlobs, "")
+	dst := testdb.NewUnmigrated(t)
+	dstDir := t.TempDir()
+	dstBlobs := blob.NewDir(dstDir, []string{"artifacts", "run-logs"})
+	if err := (&transfer.Importer{Pool: dst, Blobs: dstBlobs}).Import(ctx, zr); err != nil {
+		t.Fatalf("import into local blob store: %v", err)
+	}
+
+	gotBuckets, err := dstBlobs.ListBuckets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, wantB := range []string{"added-next-year", "artifacts", "empty-bucket", "run-logs"} {
+		if !slices.Contains(gotBuckets, wantB) {
+			t.Errorf("bucket %q missing after import: %v", wantB, gotBuckets)
+		}
+	}
+	for _, b := range m.Buckets {
+		for _, o := range b.Objects {
+			g, err := dstBlobs.Get(ctx, b.Name, o.Key)
+			if err != nil {
+				t.Fatalf("get %s/%s: %v", b.Name, o.Key, err)
+			}
+			body, _ := io.ReadAll(g.Body)
+			g.Body.Close()
+			sum := sha256.Sum256(body)
+			if hex.EncodeToString(sum[:]) != o.SHA256 || g.ContentType != o.ContentType {
+				t.Errorf("object %s/%s changed across local export/import", b.Name, o.Key)
+			}
+		}
+	}
+}

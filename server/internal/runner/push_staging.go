@@ -92,7 +92,7 @@ func PushBundleScript(bundle, bare, url, dest string, base, isolate bool) string
 const isolatedGitConfig = "export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 HOME=/tmp\n"
 
 // isolatesGit reports whether this runner's scripts must ignore global git config.
-func (r *Runner) isolatesGit() bool { return r.Backend.Name() == "docker" }
+func (r *Runner) isolatesGit() bool { return r.Backend.Isolates() }
 
 // markerValue is the text after the last line starting with marker.
 func markerValue(out, marker string) string {
