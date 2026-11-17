@@ -201,3 +201,22 @@ test("tray title, tooltip, label clipping and last-window policy", () => {
   assert.equal(lastWindowClosedAction({ enabled: false, onLastWindowClose: "menuBar" }), "stay", "never invisible without a tray");
   assert.equal(lastWindowClosedAction({ enabled: false, onLastWindowClose: "quit" }), "quit");
 });
+
+test("buildTrayMenu shows the easing-off notice and Screenshot to Chat when enabled", () => {
+  const menu = buildTrayMenu({
+    health: running,
+    localStack: true,
+    items: [],
+    runs: [],
+    pausedByVesper: 0,
+    screenshot: { enabled: true, shortcut: "Alt+Shift+S" },
+    notice: "Mac is hot: 1 run at a time",
+  });
+  const labels = menu.map((m) => (m.type === "separator" ? "---" : m.label));
+  assert.equal(labels[1], "Mac is hot: 1 run at a time");
+  const shot = menu.find((m) => m.type === "item" && m.label === "Screenshot to Chat…");
+  assert.deepEqual(shot.action, { kind: "screenshot" });
+  assert.equal(shot.accelerator, "Alt+Shift+S");
+  const off = buildTrayMenu({ health: running, localStack: true, items: [], runs: [], pausedByVesper: 0, screenshot: { enabled: false, shortcut: "Alt+Shift+S" } });
+  assert.ok(!off.some((m) => m.type === "item" && m.label === "Screenshot to Chat…"));
+});

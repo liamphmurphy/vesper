@@ -11,6 +11,7 @@ export type TrayAction =
   | { kind: "open" }
   | { kind: "open-href"; href: string }
   | { kind: "quick-capture" }
+  | { kind: "screenshot" }
   | { kind: "pause-runs" }
   | { kind: "resume-runs" }
   | { kind: "restart-stack" }
@@ -32,6 +33,9 @@ export interface TrayMenuInput {
   /** Runs paused from the tray (or on sleep) that Resume would restart. */
   pausedByVesper: number;
   quickCapture?: { enabled: boolean; shortcut: string };
+  screenshot?: { enabled: boolean; shortcut: string };
+  /** A line under the status, e.g. "Mac is hot: 1 run at a time". */
+  notice?: string;
   maxPerSection?: number;
 }
 
@@ -76,6 +80,7 @@ export function buildTrayMenu(input: TrayMenuInput): TrayMenuItem[] {
   if (input.health.phase === "error" || input.health.phase === "degraded") {
     out.push({ type: "header", label: clipLabel(input.health.nextStep || input.health.message, 60) });
   }
+  if (input.notice) out.push({ type: "header", label: clipLabel(input.notice, 60) });
   out.push({ type: "separator" });
 
   const needs = newestNeedsYou(input.items);
@@ -107,6 +112,9 @@ export function buildTrayMenu(input: TrayMenuInput): TrayMenuItem[] {
   out.push({ type: "item", label: "Open Vesper", action: { kind: "open" } });
   if (input.quickCapture?.enabled) {
     out.push({ type: "item", label: "Quick Capture…", action: { kind: "quick-capture" }, accelerator: input.quickCapture.shortcut });
+  }
+  if (input.screenshot?.enabled) {
+    out.push({ type: "item", label: "Screenshot to Chat…", action: { kind: "screenshot" }, accelerator: input.screenshot.shortcut });
   }
 
   const pausable = pausableRuns(running).length;
