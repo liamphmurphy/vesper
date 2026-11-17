@@ -25,3 +25,18 @@ test("a bridge that refuses the call behaves like a browser", async () => {
   });
   await confirmApprovalLocally("secret_approvals", refusing);
 });
+
+test("workspace folders open through the desktop menu, with errors passed back", async () => {
+  const { canOpenWorkspaceFolder, openWorkspaceFolder } = await import("./desktop-bridge.ts");
+  assert.equal(canOpenWorkspaceFolder(() => undefined), false);
+  const opened = [];
+  const ok = () => ({ openWorkspaceMenu: async (p) => (opened.push(p), { ok: true }) });
+  assert.equal(canOpenWorkspaceFolder(ok), true);
+  assert.equal(await openWorkspaceFolder("/w/run-1", ok), null);
+  assert.deepEqual(opened, ["/w/run-1"]);
+  const refused = () => ({ openWorkspaceMenu: async () => ({ ok: false, error: "Only run and chat workspace folders can be opened." }) });
+  assert.equal(await openWorkspaceFolder("/etc", refused), "Only run and chat workspace folders can be opened.");
+  const broken = () => ({ openWorkspaceMenu: async () => { throw new Error("x"); } });
+  assert.equal(await openWorkspaceFolder("/w", broken), "Couldn't open the folder.");
+  assert.equal(await openWorkspaceFolder("/w", () => undefined), "Opening folders needs the Vesper desktop app.");
+});

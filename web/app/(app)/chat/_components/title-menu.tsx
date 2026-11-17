@@ -6,6 +6,8 @@ import type { Schemas } from "@/lib/api/client";
 import { useUpdateChat } from "@/lib/api/hooks";
 import { chatTitle } from "@/lib/chat-ui";
 import { cx } from "@/lib/cx";
+import { canOpenWorkspaceFolder, openWorkspaceFolder } from "@/lib/desktop-bridge";
+import { toast } from "@/lib/toast";
 import { floatPanel } from "@/components/domain/pickers";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { TextInput } from "@/components/ui/primitives";
@@ -139,6 +141,20 @@ export function ChatTitleMenu({ chat: c, participants, running, commitEmail, onC
                   {/* rtl keeps the run's own folder visible when the path truncates */}
                   <bdi>{c.workspace_path}</bdi>
                 </span>
+              </DropdownMenu.Item>
+            )}
+            {/* Menu content renders only on the client, once open, so the desktop bridge can be checked inline. */}
+            {c.workspace_path && canOpenWorkspaceFolder() && (
+              <DropdownMenu.Item
+                className={item}
+                onSelect={() => {
+                  void openWorkspaceFolder(c.workspace_path ?? "").then((error) => {
+                    if (error) toast({ title: error, tone: "error" });
+                  });
+                }}
+              >
+                <Icon name="expand" size={14} />
+                <span className="flex-1">Open workspace folder in…</span>
               </DropdownMenu.Item>
             )}
             {secrets.any && (
