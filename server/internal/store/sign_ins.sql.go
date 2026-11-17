@@ -173,12 +173,12 @@ func (q *Queries) GetSignIn(ctx context.Context, arg GetSignInParams) (SignIn, e
 	return i, err
 }
 
-const liveDockerRunnerExists = `-- name: LiveDockerRunnerExists :one
-SELECT EXISTS (SELECT 1 FROM runners WHERE backend = 'docker' AND heartbeat_at > now() - interval '45 seconds')
+const liveIsolatingRunnerExists = `-- name: LiveIsolatingRunnerExists :one
+SELECT EXISTS (SELECT 1 FROM runners WHERE backend IN ('docker', 'microvm') AND heartbeat_at > now() - interval '45 seconds')
 `
 
-func (q *Queries) LiveDockerRunnerExists(ctx context.Context) (bool, error) {
-	row := q.db.QueryRow(ctx, liveDockerRunnerExists)
+func (q *Queries) LiveIsolatingRunnerExists(ctx context.Context) (bool, error) {
+	row := q.db.QueryRow(ctx, liveIsolatingRunnerExists)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err

@@ -12,6 +12,8 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -30,7 +32,10 @@ type Importer struct {
 	// Replace wipes any rows the exported tables already hold. Without it,
 	// import refuses a target that has data.
 	Replace bool
-	Log     *slog.Logger
+	// DropSecrets skips the SECRETS_KEY fingerprint check and clears imported
+	// secret ciphertexts after migration.
+	DropSecrets bool
+	Log         *slog.Logger
 }
 
 // Import checks the archive, uploads its objects, loads its tables in one
@@ -39,13 +44,81 @@ type Importer struct {
 // Objects go first so a failed import leaves the database untouched and can be
 // run again as it was. The tables are all-or-nothing.
 func (i *Importer) Import(ctx context.Context, zr *zip.Reader) error {
+	files, err := indexZipEntries(zr)
+	if err != nil {
+		return err
+	}
+	return i.importFromEntries(ctx, files)
+}
+
+// ImportDir loads an unpacked Vesper export directory (e.g. a Safari-unpacked
+// download folder containing manifest.json, db/, and blobs/).
+func (i *Importer) ImportDir(ctx context.Context, dir string) error {
+	resolved, err := resolveExportDir(dir)
+	if err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(resolved)
+	if err != nil {
+		return fmt.Errorf("transfer: open export dir: %w", err)
+	}
+	defer root.Close()
+
+	st, err := root.Stat(manifestName)
+	if err != nil || st.IsDir() {
+		return errors.New("transfer: not a Vesper export (no manifest.json)")
+	}
+	m, err := readManifest(map[string]archiveEntry{
+		manifestName: rootFileEntry{root: root, name: manifestName, size: st.Size()},
+	})
+	if err != nil {
+		return err
+	}
+	files := indexDirEntries(root, m, st.Size())
+	return i.importFromEntries(ctx, files)
+}
+
+// InspectArchivePath reads manifest.json from either a Vesper .zip archive
+// (flat or nested under a single top-level directory) or an unpacked export folder.
+func InspectArchivePath(archivePath string) (*Manifest, error) {
+	st, err := os.Stat(archivePath)
+	if err != nil {
+		return nil, fmt.Errorf("transfer: inspect %s: %w", archivePath, err)
+	}
+	if st.IsDir() {
+		resolved, err := resolveExportDir(archivePath)
+		if err != nil {
+			return nil, err
+		}
+		root, err := os.OpenRoot(resolved)
+		if err != nil {
+			return nil, fmt.Errorf("transfer: open export dir: %w", err)
+		}
+		defer root.Close()
+		mst, err := root.Stat(manifestName)
+		if err != nil || mst.IsDir() {
+			return nil, errors.New("transfer: not a Vesper export (no manifest.json)")
+		}
+		return readManifest(map[string]archiveEntry{
+			manifestName: rootFileEntry{root: root, name: manifestName, size: mst.Size()},
+		})
+	}
+	zr, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return nil, fmt.Errorf("transfer: open archive: %w", err)
+	}
+	defer zr.Close()
+	files, err := indexZipEntries(&zr.Reader)
+	if err != nil {
+		return nil, err
+	}
+	return readManifest(files)
+}
+
+func (i *Importer) importFromEntries(ctx context.Context, files map[string]archiveEntry) error {
 	log := i.Log
 	if log == nil {
 		log = slog.Default()
-	}
-	files := map[string]*zip.File{}
-	for _, f := range zr.File {
-		files[f.Name] = f
 	}
 	m, err := readManifest(files)
 	if err != nil {
@@ -64,10 +137,152 @@ func (i *Importer) Import(ctx context.Context, zr *zip.Reader) error {
 	if err := db.Migrate(ctx, i.Pool); err != nil {
 		return fmt.Errorf("transfer: rows loaded, but upgrading the schema failed: %w", err)
 	}
+	if i.DropSecrets {
+		if err := dropEncryptedSecrets(ctx, i.Pool); err != nil {
+			return fmt.Errorf("transfer: rows loaded, but clearing undecryptable secrets failed: %w", err)
+		}
+	}
 	return nil
 }
 
-func readManifest(files map[string]*zip.File) (*Manifest, error) {
+type archiveEntry interface {
+	Open() (io.ReadCloser, error)
+	Size() int64
+}
+
+type zipEntry struct{ f *zip.File }
+
+func (z zipEntry) Open() (io.ReadCloser, error) { return z.f.Open() }
+func (z zipEntry) Size() int64                  { return int64(z.f.UncompressedSize64) }
+
+type rootFileEntry struct {
+	root *os.Root
+	name string
+	size int64
+}
+
+func (r rootFileEntry) Open() (io.ReadCloser, error) { return r.root.Open(r.name) }
+func (r rootFileEntry) Size() int64                  { return r.size }
+
+func isIgnoredArchivePath(name string) bool {
+	if name == "" || name == "." {
+		return true
+	}
+	for _, seg := range strings.Split(name, "/") {
+		if seg == "__MACOSX" {
+			return true
+		}
+	}
+	base := path.Base(name)
+	return base == ".DS_Store" || strings.HasPrefix(base, "._")
+}
+
+func indexZipEntries(zr *zip.Reader) (map[string]archiveEntry, error) {
+	raw := make(map[string]archiveEntry, len(zr.File))
+	var manifestCandidates []string
+	for _, f := range zr.File {
+		if f.FileInfo().IsDir() {
+			continue
+		}
+		norm := strings.TrimPrefix(path.Clean(strings.ReplaceAll(f.Name, "\\", "/")), "./")
+		if isIgnoredArchivePath(norm) {
+			continue
+		}
+		raw[norm] = zipEntry{f: f}
+		if norm == manifestName || strings.HasSuffix(norm, "/"+manifestName) {
+			manifestCandidates = append(manifestCandidates, norm)
+		}
+	}
+	if _, ok := raw[manifestName]; ok {
+		return raw, nil
+	}
+	if len(manifestCandidates) != 1 {
+		return raw, nil
+	}
+	prefix := strings.TrimSuffix(manifestCandidates[0], manifestName)
+	out := make(map[string]archiveEntry, len(raw))
+	for name, entry := range raw {
+		if strings.HasPrefix(name, prefix) {
+			out[strings.TrimPrefix(name, prefix)] = entry
+		}
+	}
+	return out, nil
+}
+
+func resolveExportDir(dir string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		resolved = dir
+	}
+	if st, err := os.Stat(filepath.Join(resolved, manifestName)); err == nil && !st.IsDir() {
+		return resolved, nil
+	}
+	entries, err := os.ReadDir(resolved)
+	if err != nil {
+		return "", fmt.Errorf("transfer: read export dir: %w", err)
+	}
+	var match string
+	for _, e := range entries {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") || e.Name() == "__MACOSX" {
+			continue
+		}
+		cand := filepath.Join(resolved, e.Name())
+		if st, serr := os.Stat(filepath.Join(cand, manifestName)); serr == nil && !st.IsDir() {
+			if match != "" {
+				return "", errors.New("transfer: multiple export subdirectories contain manifest.json; choose one directly")
+			}
+			match = cand
+		}
+	}
+	if match == "" {
+		return "", errors.New("transfer: not a Vesper export (no manifest.json)")
+	}
+	if subResolved, err := filepath.EvalSymlinks(match); err == nil {
+		return subResolved, nil
+	}
+	return match, nil
+}
+
+func indexDirEntries(root *os.Root, m *Manifest, manifestSize int64) map[string]archiveEntry {
+	files := map[string]archiveEntry{
+		manifestName: rootFileEntry{root: root, name: manifestName, size: manifestSize},
+	}
+	add := func(entryName string) {
+		rel := filepath.FromSlash(entryName)
+		if st, err := root.Stat(rel); err == nil && !st.IsDir() {
+			files[entryName] = rootFileEntry{root: root, name: rel, size: st.Size()}
+		}
+	}
+	for _, t := range m.Tables {
+		add(t.Entry)
+	}
+	for _, b := range m.Buckets {
+		for _, o := range b.Objects {
+			add(o.Entry)
+		}
+	}
+	return files
+}
+
+func dropEncryptedSecrets(ctx context.Context, pool *pgxpool.Pool) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	for _, stmt := range []string{
+		`DELETE FROM secrets`,
+		`DELETE FROM user_secrets`,
+		`UPDATE connectors SET cred_nonce = NULL, cred_ciphertext = NULL`,
+	} {
+		if _, err := tx.Exec(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+func readManifest(files map[string]archiveEntry) (*Manifest, error) {
 	f, ok := files[manifestName]
 	if !ok {
 		return nil, errors.New("transfer: not a Vesper export (no manifest.json)")
@@ -89,8 +304,8 @@ func readManifest(files map[string]*zip.File) (*Manifest, error) {
 
 // preflight refuses anything that would fail or do damage before it changes
 // the target: a mismatched key, a newer export, a target with data.
-func (i *Importer) preflight(ctx context.Context, m *Manifest, files map[string]*zip.File, log *slog.Logger) error {
-	if m.SecretsKeyFingerprint != "" && KeyFingerprint(i.SecretsKey) != m.SecretsKeyFingerprint {
+func (i *Importer) preflight(ctx context.Context, m *Manifest, files map[string]archiveEntry, log *slog.Logger) error {
+	if !i.DropSecrets && m.SecretsKeyFingerprint != "" && KeyFingerprint(i.SecretsKey) != m.SecretsKeyFingerprint {
 		return errors.New("transfer: this export holds secrets sealed with a different SECRETS_KEY; " +
 			"set SECRETS_KEY to the source instance's value, or the secrets can't be read")
 	}
@@ -184,7 +399,7 @@ func sameColumns(a, b []Column) bool {
 	return true
 }
 
-func (i *Importer) importBlobs(ctx context.Context, m *Manifest, files map[string]*zip.File, log *slog.Logger) error {
+func (i *Importer) importBlobs(ctx context.Context, m *Manifest, files map[string]archiveEntry, log *slog.Logger) error {
 	for _, b := range m.Buckets {
 		if err := i.Blobs.EnsureBucket(ctx, b.Name); err != nil {
 			return err
@@ -203,9 +418,9 @@ func (i *Importer) importBlobs(ctx context.Context, m *Manifest, files map[strin
 // uploaded; bigger ones go through a temp file.
 const spoolLimit = 8 << 20
 
-func (i *Importer) importObject(ctx context.Context, bucket string, o ObjectEntry, f *zip.File) error {
-	if int64(f.UncompressedSize64) != o.Size {
-		return fmt.Errorf("transfer: %s/%s is %d bytes in the archive, the manifest says %d", bucket, o.Key, f.UncompressedSize64, o.Size)
+func (i *Importer) importObject(ctx context.Context, bucket string, o ObjectEntry, f archiveEntry) error {
+	if f.Size() != o.Size {
+		return fmt.Errorf("transfer: %s/%s is %d bytes in the archive, the manifest says %d", bucket, o.Key, f.Size(), o.Size)
 	}
 	rc, err := f.Open()
 	if err != nil {
@@ -263,7 +478,7 @@ func spool(r io.Reader, size int64) (seekReader, func(), error) {
 	return tmp, cleanup, nil
 }
 
-func (i *Importer) importTables(ctx context.Context, m *Manifest, files map[string]*zip.File, log *slog.Logger) error {
+func (i *Importer) importTables(ctx context.Context, m *Manifest, files map[string]archiveEntry, log *slog.Logger) error {
 	tx, err := i.Pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -349,7 +564,7 @@ func (i *Importer) importTables(ctx context.Context, m *Manifest, files map[stri
 	return tx.Commit(ctx)
 }
 
-func copyTable(ctx context.Context, tx pgx.Tx, t Table, te TableEntry, f *zip.File) error {
+func copyTable(ctx context.Context, tx pgx.Tx, t Table, te TableEntry, f archiveEntry) error {
 	rc, err := f.Open()
 	if err != nil {
 		return err

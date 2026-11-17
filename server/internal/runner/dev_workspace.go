@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -338,7 +339,7 @@ func (r *Runner) releaseDevWorkspacePort(workspaceID uuid.UUID) {
 func (r *Runner) devWorkspaceHandler(workspaceID uuid.UUID) http.Handler {
 	wsServer := websocket.Server{
 		Handshake: func(_ *websocket.Config, _ *http.Request) error {
-			return nil // origin/session already checked below
+			return nil // origin and session are checked below
 		},
 		Handler: func(ws *websocket.Conn) {
 			defer ws.Close()
@@ -410,6 +411,13 @@ func (r *Runner) devWorkspaceHandler(workspaceID uuid.UUID) http.Handler {
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		// The session cookie is SameSite=Strict, which keeps other sites out but
+		// not other origins on this one: a playground on a neighbouring port
+		// gets the cookie too. Only Vesper's own pages may open the terminal.
+		if !slices.Contains(r.Cfg.Playgrounds.Origins, req.Header.Get("Origin")) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
 		c, err := req.Cookie(auth.SessionCookie)
 		if err != nil || c.Value == "" {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)

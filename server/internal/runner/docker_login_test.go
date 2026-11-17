@@ -150,7 +150,7 @@ func (f *fakeEngine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func startFakeEngine(t *testing.T) (*fakeEngine, *Docker) {
 	t.Helper()
-	sock := filepath.Join(t.TempDir(), "d.sock")
+	sock := filepath.Join(shortTempDir(t), "d.sock")
 	l, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)

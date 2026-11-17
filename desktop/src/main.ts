@@ -1,6 +1,20 @@
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, dialog, ipcMain, Notification, session, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  desktopCapturer,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeImage,
+  Notification,
+  safeStorage,
+  session,
+  shell,
+  Tray,
+} from "electron";
 import {
   loadConfig,
   loadSession,
@@ -14,8 +28,27 @@ import {
 import { checkDockerAvailability, isLocalhostUrl, isValidVesperCheckout, startLocalComposeStack } from "./docker";
 import { buildApplicationMenu } from "./menu";
 import { InboxMonitor, type DesktopAlert } from "./notifications";
-import type { DesktopConnectionState, SetServerUrlInput, SetServerUrlResult, StartStackResult } from "./preload";
+import type {
+  DesktopConnectionState,
+  ImportBackupInput,
+  ImportBackupResult,
+  PickBackupResult,
+  SetServerUrlInput,
+  SetServerUrlResult,
+  StartStackResult,
+} from "./preload";
 import { classifyNavigation, cleanTabTitle, ClosedTabStack } from "./routing";
+import {
+  ensureAuthenticatedSession,
+  ensureSecretsKey,
+  hasActiveRuns,
+  inspectBackupArchive,
+  LocalVesperStack,
+  resolveBundledResources,
+  runAppImportArchive,
+  saveSecretsKey,
+  validateSecretsKeyFormat,
+} from "./stack";
 
 export const SESSION_PARTITION = "persist:vesper";
 export const TABBING_IDENTIFIER = "vesper";
@@ -31,9 +64,13 @@ let configPath = "";
 let sessionPath = "";
 let currentConfig: DesktopConfig;
 let settingsWindow: BrowserWindow | null = null;
+let importWindow: BrowserWindow | null = null;
 let isQuitting = false;
+let quitConfirmed = false;
 let sessionSaveTimer: NodeJS.Timeout | undefined;
 let stackStarting = false;
+let localStack: LocalVesperStack | null = null;
+let tray: Tray | null = null;
 
 interface WindowEntry {
   win: BrowserWindow;
@@ -547,6 +584,33 @@ function openSettingsWindow() {
   void checkAndUpdateState();
 }
 
+function openImportWindow() {
+  if (importWindow && !importWindow.isDestroyed()) {
+    importWindow.focus();
+    return;
+  }
+  importWindow = new BrowserWindow({
+    width: 560,
+    height: 560,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    title: "Import Vesper Backup",
+    backgroundColor: "#141221",
+    webPreferences: {
+      partition: SESSION_PARTITION,
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  importWindow.on("closed", () => {
+    importWindow = null;
+  });
+  void importWindow.loadFile(OFFLINE_HTML, { query: { mode: "import" } });
+}
+
 function setupMenu() {
   buildApplicationMenu({
     newTab: (focusedWin) => {
@@ -599,6 +663,7 @@ function setupMenu() {
       }
     },
     openSettings: () => openSettingsWindow(),
+    importBackup: () => openImportWindow(),
   });
 }
 
@@ -660,6 +725,159 @@ function registerIpc() {
     return chosen;
   });
 
+  ipcMain.handle("vesper:pick-backup-archive", async (event): Promise<PickBackupResult | null> => {
+    if (!isTrustedRendererUrl(event.senderFrame?.url)) {
+      throw new Error("Untrusted IPC caller");
+    }
+    const baseDir = bundledResourcesDir();
+    const resources = baseDir ? resolveBundledResources(baseDir) : null;
+    if (!resources) {
+      return { archivePath: "", error: "Bundled Vesper runtime is not available in this build." };
+    }
+    const senderWin = BrowserWindow.fromWebContents(event.sender);
+    const dialogOpts: Electron.OpenDialogOptions = {
+      properties: ["openFile", "openDirectory"],
+      title: "Select Vesper Backup (.zip or unpacked folder)",
+    };
+    const result = senderWin ? await dialog.showOpenDialog(senderWin, dialogOpts) : await dialog.showOpenDialog(dialogOpts);
+    if (result.canceled || result.filePaths.length === 0) return null;
+
+    const archivePath = result.filePaths[0];
+    try {
+      const currentKey = ensureSecretsKey(app.getPath("userData"), safeStorage);
+      const inspection = await inspectBackupArchive({
+        vesperBin: resources.vesperBin,
+        archivePath,
+        currentSecretsKey: currentKey,
+      });
+      return { archivePath, inspection };
+    } catch (err) {
+      return {
+        archivePath,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  });
+
+  ipcMain.handle("vesper:import-backup", async (event, input: ImportBackupInput): Promise<ImportBackupResult> => {
+    if (!isTrustedRendererUrl(event.senderFrame?.url)) {
+      throw new Error("Untrusted IPC caller");
+    }
+    if (!isLocalhostUrl(currentConfig.serverUrl)) {
+      return { ok: false, error: "Switch Server URL back to http://localhost:8080 before importing into the local app." };
+    }
+    const baseDir = bundledResourcesDir();
+    const resources = baseDir ? resolveBundledResources(baseDir) : null;
+    if (!resources) {
+      return { ok: false, error: "Bundled Vesper runtime is not available in this build." };
+    }
+    const archivePath = (input?.archivePath ?? "").trim();
+    if (!archivePath) {
+      return { ok: false, error: "Choose a .zip backup archive first." };
+    }
+
+    const userDataDir = app.getPath("userData");
+    const dropSecrets = Boolean(input.dropSecrets);
+    const providedKey = (input.secretsKey ?? "").trim();
+    if (!dropSecrets && providedKey) {
+      try {
+        validateSecretsKeyFormat(providedKey);
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    }
+
+    if (localStack?.isRunning()) {
+      const busy = await hasActiveRuns(currentConfig.serverUrl, (url, init) => getVesperSession().fetch(url, init));
+      if (busy) {
+        const senderWin = BrowserWindow.fromWebContents(event.sender);
+        const promptOpts: Electron.MessageBoxOptions = {
+          type: "warning",
+          buttons: ["Import Anyway", "Cancel"],
+          defaultId: 1,
+          cancelId: 1,
+          title: "Runs are still active",
+          message: "One or more microVM runs are still in progress.",
+          detail: "Importing a backup will stop the local Vesper runtime and replace the current database and blobs.",
+        };
+        const res = senderWin ? await dialog.showMessageBox(senderWin, promptOpts) : await dialog.showMessageBox(promptOpts);
+        if (res.response === 1) {
+          return { ok: false, error: "Import cancelled." };
+        }
+      }
+    }
+
+    let keyForImport = "";
+    if (!dropSecrets) {
+      if (providedKey) {
+        keyForImport = providedKey;
+      } else {
+        try {
+          const existingKey = ensureSecretsKey(userDataDir, safeStorage);
+          const insp = await inspectBackupArchive({
+            vesperBin: resources.vesperBin,
+            archivePath,
+            currentSecretsKey: existingKey,
+          });
+          if (insp.matchesCurrentKey) {
+            keyForImport = existingKey;
+          }
+        } catch (err) {
+          return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+      }
+    }
+
+    inboxMonitor.stop();
+    await localStack?.stop();
+    localStack = null;
+
+    try {
+      await runAppImportArchive({
+        resources,
+        userDataDir,
+        archivePath,
+        secretsKey: keyForImport,
+        dropSecrets,
+      });
+    } catch (err) {
+      await startBundledStackIfLocalhost().catch(() => {});
+      inboxMonitor.start(currentConfig.serverUrl);
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+
+    if (!dropSecrets && providedKey) {
+      saveSecretsKey(userDataDir, safeStorage, providedKey);
+    }
+
+    try {
+      const vesperSession = getVesperSession();
+      for (const cookie of await vesperSession.cookies.get({ url: currentConfig.serverUrl })) {
+        const domain = (cookie.domain ?? "").replace(/^\./, "") || new URL(currentConfig.serverUrl).hostname;
+        const cookieUrl = `${cookie.secure ? "https" : "http"}://${domain}${cookie.path || "/"}`;
+        await vesperSession.cookies.remove(cookieUrl, cookie.name);
+      }
+      await startBundledStackIfLocalhost();
+      inboxMonitor.start(currentConfig.serverUrl);
+      await checkAndUpdateState();
+
+      if (windows.size === 0) {
+        createVesperWindow({ url: currentConfig.serverUrl });
+      } else {
+        for (const entry of windows.values()) {
+          entry.targetUrl = currentConfig.serverUrl;
+          void navigateWindow(entry, currentConfig.serverUrl);
+        }
+      }
+      if (importWindow && !importWindow.isDestroyed()) {
+        importWindow.close();
+      }
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
   ipcMain.handle("vesper:start-local-stack", async (event, checkoutArg?: string): Promise<StartStackResult> => {
     if (!isTrustedRendererUrl(event.senderFrame?.url)) {
       throw new Error("Untrusted IPC caller");
@@ -669,6 +887,21 @@ function registerIpc() {
     }
     if (stackStarting) {
       return { ok: false, error: "Stack startup is already in progress." };
+    }
+
+    if (bundledResourcesDir()) {
+      stackStarting = true;
+      broadcastState({ ...currentState, stackStarting: true });
+      try {
+        await startBundledStackIfLocalhost();
+        await checkAndUpdateState();
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      } finally {
+        stackStarting = false;
+        broadcastState({ ...currentState, stackStarting: false });
+      }
     }
 
     const checkoutPath = (checkoutArg ?? currentConfig.localCheckoutPath ?? "").trim();
@@ -772,7 +1005,145 @@ function restoreSessionWindows() {
   }
 }
 
-void app.whenReady().then(() => {
+function bundledResourcesDir() {
+  const candidates = app.isPackaged
+    ? [process.resourcesPath]
+    : [path.resolve(__dirname, "../resources")];
+  for (const dir of candidates) {
+    if (resolveBundledResources(dir)) {
+      return dir;
+    }
+  }
+  return null;
+}
+
+async function startBundledStackIfLocalhost(): Promise<void> {
+  if (!isLocalhostUrl(currentConfig.serverUrl)) {
+    return;
+  }
+  const baseDir = bundledResourcesDir();
+  const resources = baseDir ? resolveBundledResources(baseDir) : null;
+  if (!resources) {
+    return;
+  }
+
+  const userDataDir = app.getPath("userData");
+  const secretsKey = ensureSecretsKey(userDataDir, safeStorage);
+  let targetPort = 8080;
+  try {
+    const parsed = new URL(currentConfig.serverUrl);
+    if (parsed.port) {
+      targetPort = Number(parsed.port);
+    }
+  } catch {
+    targetPort = 8080;
+  }
+
+  if (!localStack) {
+    localStack = new LocalVesperStack({
+      resources,
+      userDataDir,
+      secretsKey,
+      port: targetPort,
+      nodeBin: process.execPath,
+      nodeRunAsNode: true,
+      onLog: (chunk) => {
+        for (const win of BrowserWindow.getAllWindows()) {
+          if (!win.isDestroyed()) {
+            win.webContents.send("vesper:stack-log", chunk);
+          }
+        }
+      },
+    });
+  }
+
+  const readyUrl = await localStack.start();
+  try {
+    const parsedReady = new URL(readyUrl);
+    const parsedCurrent = new URL(currentConfig.serverUrl);
+    const canonical = `${parsedCurrent.protocol}//${parsedCurrent.hostname}:${parsedReady.port}`;
+    if (canonical !== currentConfig.serverUrl) {
+      currentConfig = { ...currentConfig, serverUrl: canonical };
+      currentState = { ...currentState, serverUrl: canonical, targetUrl: canonical };
+    }
+  } catch {
+    // Keep configured serverUrl.
+  }
+
+  await ensureAuthenticatedSession({
+    serverUrl: currentConfig.serverUrl,
+    vesperBin: resources.vesperBin,
+    runtimeJsonPath: path.join(userDataDir, "runtime.json"),
+    fetch: (url, init) => getVesperSession().fetch(url, init),
+  });
+}
+
+function setupDisplayMediaHandler() {
+  getVesperSession().setDisplayMediaRequestHandler(async (_request, callback) => {
+    try {
+      const sources = await desktopCapturer.getSources({ types: ["window", "screen"] });
+      const preferred =
+        sources.find((s) => s.name.includes("Vesper") || s.name.includes("Playground")) ?? sources[0];
+      if (!preferred) {
+        callback({});
+        return;
+      }
+      callback({ video: preferred });
+    } catch {
+      callback({});
+    }
+  });
+}
+
+function setupTray() {
+  if (process.platform !== "darwin" || tray) return;
+  const iconPath = path.resolve(__dirname, "../build/icon.png");
+  if (!fs.existsSync(iconPath)) return;
+  const img = nativeImage.createFromPath(iconPath).resize({ width: 18, height: 18 });
+  img.setTemplateImage(false);
+  tray = new Tray(img);
+  tray.setToolTip("Vesper");
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      {
+        label: "Open Vesper",
+        click: () => {
+          app.focus({ steal: true });
+          const win = resolveActiveWindow();
+          if (win) {
+            win.show();
+            win.focus();
+          } else {
+            createVesperWindow({ url: currentConfig.serverUrl });
+          }
+        },
+      },
+      {
+        label: "New Tab",
+        click: () => {
+          const parentWin = resolveActiveWindow();
+          createVesperWindow({ url: currentConfig.serverUrl, parentWin, tabbed: Boolean(parentWin) });
+        },
+      },
+      { type: "separator" },
+      { label: "Import Backup…", click: () => openImportWindow() },
+      { label: "Settings…", click: () => openSettingsWindow() },
+      { type: "separator" },
+      { label: "Quit Vesper", click: () => app.quit() },
+    ]),
+  );
+  tray.on("click", () => {
+    const win = resolveActiveWindow();
+    if (win) {
+      win.show();
+      win.focus();
+    } else {
+      createVesperWindow({ url: currentConfig.serverUrl });
+    }
+  });
+}
+
+void app.whenReady().then(async () => {
   configPath = path.join(app.getPath("userData"), "config.json");
   sessionPath = path.join(app.getPath("userData"), "session.json");
   currentConfig = loadConfig(configPath);
@@ -792,7 +1163,20 @@ void app.whenReady().then(() => {
   };
 
   setupMenu();
+  setupDisplayMediaHandler();
+  setupTray();
   registerIpc();
+
+  try {
+    await startBundledStackIfLocalhost();
+  } catch (err) {
+    currentState = {
+      ...currentState,
+      phase: "unreachable",
+      errorMessage: err instanceof Error ? err.message : String(err),
+    };
+  }
+
   inboxMonitor.start(currentConfig.serverUrl);
   restoreSessionWindows();
 
@@ -803,7 +1187,38 @@ void app.whenReady().then(() => {
   });
 });
 
-app.on("before-quit", () => {
+app.on("before-quit", (event) => {
+  if (!quitConfirmed && localStack?.isRunning()) {
+    event.preventDefault();
+    void (async () => {
+      const busy = await hasActiveRuns(currentConfig.serverUrl, (url, init) => getVesperSession().fetch(url, init));
+      if (busy) {
+        const res = await dialog.showMessageBox({
+          type: "warning",
+          buttons: ["Quit Anyway", "Cancel"],
+          defaultId: 1,
+          cancelId: 1,
+          title: "Runs are still active",
+          message: "One or more microVM runs are still in progress.",
+          detail: "Quitting Vesper will shut down the embedded runtime and stop active VMs.",
+        });
+        if (res.response === 1) {
+          return;
+        }
+      }
+      isQuitting = true;
+      quitConfirmed = true;
+      inboxMonitor.stop();
+      if (sessionSaveTimer) {
+        clearTimeout(sessionSaveTimer);
+        sessionSaveTimer = undefined;
+      }
+      persistSessionNow();
+      await localStack?.stop();
+      app.quit();
+    })();
+    return;
+  }
   isQuitting = true;
   inboxMonitor.stop();
   if (sessionSaveTimer) {

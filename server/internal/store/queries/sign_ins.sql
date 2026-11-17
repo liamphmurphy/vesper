@@ -29,8 +29,8 @@ RETURNING *;
 UPDATE sign_ins SET status = 'cancelled', pasted_code = NULL, updated_at = now()
 WHERE id = $1 AND workspace_id = $2 AND status IN ('pending', 'running', 'verifying');
 
--- name: LiveDockerRunnerExists :one
-SELECT EXISTS (SELECT 1 FROM runners WHERE backend = 'docker' AND heartbeat_at > now() - interval '45 seconds');
+-- name: LiveIsolatingRunnerExists :one
+SELECT EXISTS (SELECT 1 FROM runners WHERE backend IN ('docker', 'microvm') AND heartbeat_at > now() - interval '45 seconds');
 
 -- name: ClaimSignIn :one
 UPDATE sign_ins SET status = 'running', runner_id = $1, updated_at = now()

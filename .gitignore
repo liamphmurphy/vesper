@@ -5,3 +5,8 @@ server/.lazyagents/runs/
 
 # Claude Code agent worktrees (separate checkouts, never commit)
 .claude/worktrees/
+
+# Packaged desktop artifacts & staged binaries
+desktop/resources/
+desktop/release/
+desktop/dist/

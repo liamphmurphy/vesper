@@ -111,7 +111,7 @@ func startSvcEngine(t *testing.T, f *svcEngine) *Docker {
 	if f.images == nil {
 		f.images = map[string]bool{}
 	}
-	sock := filepath.Join(t.TempDir(), "d.sock")
+	sock := filepath.Join(shortTempDir(t), "d.sock")
 	l, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)

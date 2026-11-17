@@ -1,6 +1,8 @@
 // Command vesper is the single Vesper binary.
 //
 //	vesper serve        run migrations, ensure buckets, serve HTTP (default)
+//	vesper app          run all-in-one embedded Postgres + API + Web + MicroVM desktop backend
+//	vesper app-import   inspect or import a backup archive into Vesper desktop storage
 //	vesper migrate      run migrations and exit
 //	vesper runner       execute dispatched runs in hardened containers
 //	vesper healthcheck  exit 0 if the local API reports healthy (for container probes)
@@ -18,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"slices"
 	"strings"
 	"syscall"
@@ -44,6 +47,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/prsync"
 	"github.com/liamphmurphy/vesper/server/internal/realtime"
 	"github.com/liamphmurphy/vesper/server/internal/runner"
+	"github.com/liamphmurphy/vesper/server/internal/runner/microvm"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/secrets"
 	"github.com/liamphmurphy/vesper/server/internal/seed"
@@ -67,6 +71,10 @@ func main() {
 	switch cmd {
 	case "serve":
 		err = serve(ctx, log)
+	case "app":
+		err = runApp(ctx, log, os.Args[2:])
+	case "app-import":
+		err = runAppImport(ctx, log, os.Args[2:])
 	case "migrate":
 		err = migrateOnly(ctx)
 	case "runner":
@@ -80,7 +88,7 @@ func main() {
 	case "sign-in-link":
 		err = printSignInLink(ctx, len(os.Args) > 2 && os.Args[2] == "-code")
 	default:
-		err = fmt.Errorf("unknown command %q (want serve|migrate|runner|healthcheck|export|import|sign-in-link)", cmd)
+		err = fmt.Errorf("unknown command %q (want serve|app|app-import|migrate|runner|healthcheck|export|import|sign-in-link)", cmd)
 	}
 	if err != nil {
 		log.Error("exit", "err", err)
@@ -183,7 +191,7 @@ func serve(ctx context.Context, log *slog.Logger) error {
 		Artifacts:      arts,
 		Agents:         &agents.Service{Pool: pool},
 		Secrets:        secretsSvc,
-		Runs:           &runs.Service{Pool: pool, Secrets: secretsSvc, Artifacts: arts, Tracker: trackerSvc, RequireHarnessKey: cfg.Runner.Backend == "docker", PlanModels: planModels(cfg.Runner.Backend, pool), Transcripts: transcript.Shared, RolloverContextTokens: int64(cfg.RolloverContextTokens)},
+		Runs:           &runs.Service{Pool: pool, Secrets: secretsSvc, Artifacts: arts, Tracker: trackerSvc, RequireHarnessKey: config.IsolatesBackend(cfg.Runner.Backend), PlanModels: planModels(cfg.Runner.Backend, pool), Transcripts: transcript.Shared, RolloverContextTokens: int64(cfg.RolloverContextTokens)},
 		Wiki:           &wiki.Service{Pool: pool, Artifacts: arts, Tracker: trackerSvc},
 		PublicURL:      cfg.PublicURL,
 		Blobs:          blobs,
@@ -195,10 +203,10 @@ func serve(ctx context.Context, log *slog.Logger) error {
 		DriveBackups:   driveBackupRunner(cfg, pool, box, apiHolder(), log),
 	}
 	go srv.Wiki.RunVaultWorker(ctx, log)
-	// In Docker the CLIs and logins live in agent containers, so the API
-	// queues usage checks for a runner to answer. The fake backend's stand-in
-	// harnesses (config requires RUNNER_*_BIN) answer the API directly.
-	if cfg.Runner.Backend == "docker" {
+	// In isolated backends (Docker, microVM) the CLIs and logins live inside the
+	// sandbox, so the API queues usage checks for a runner to answer. The fake
+	// backend's stand-in harnesses (config requires RUNNER_*_BIN) answer directly.
+	if config.IsolatesBackend(cfg.Runner.Backend) {
 		srv.Usage.Queued = true
 	} else {
 		srv.Usage.Probe = usage.Probe
@@ -380,6 +388,40 @@ func runRunner(ctx context.Context, log *slog.Logger) error {
 		}
 		cancel()
 		backend = d
+	case "microvm":
+		apiUpstream := os.Getenv("API_INTERNAL_URL")
+		if apiUpstream == "" {
+			if u, err := url.Parse(rc.MCPURL); err == nil && u.Host != "" && u.Host != microvm.InternalAPIHost {
+				apiUpstream = u.Scheme + "://" + u.Host
+			} else {
+				apiUpstream = cfg.PublicURL
+			}
+		}
+		var cacheStore *microvm.CacheStore
+		if rc.VMDir != "" {
+			if cs, cerr := microvm.NewCacheStore(microvm.CacheStoreConfig{Dir: filepath.Join(rc.VMDir, "caches")}); cerr == nil {
+				cacheStore = cs
+			} else {
+				log.Warn("runner: microvm cache store disabled", "err", cerr)
+			}
+		}
+		m := &runner.MicroVM{
+			Driver:         microvm.NewVZDriver(),
+			StateDir:       rc.VMDir,
+			KernelPath:     rc.KernelPath,
+			RootfsPath:     rc.RootfsPath,
+			HostWorkspaces: rc.HostWorkspaces,
+			CPUs:           rc.CPUs,
+			MemoryMB:       rc.MemoryMB,
+			PidsLimit:      rc.PidsLimit,
+			WarmTTL:        rc.WarmTTL,
+			MCPURL:         rc.MCPURL,
+			APIUpstream:    apiUpstream,
+			CacheStore:     cacheStore,
+			Log:            log,
+		}
+		defer func() { _ = m.Close() }()
+		backend = m
 	case "fake":
 		log.Warn("RUNNER_BACKEND=fake runs stand-in harnesses on this machine with no isolation; it's only for tests and playgrounds")
 		bins := map[string]string{"claude": rc.ClaudeBin, "codex": rc.CodexBin}
@@ -391,28 +433,21 @@ func runRunner(ctx context.Context, log *slog.Logger) error {
 	host, _ := os.Hostname()
 	blobs := blob.New(cfg.S3)
 	secretStore := &secrets.Service{Q: store.New(pool), Box: box}
+	saveClaude, saveCodex := buildAuthSavers(secretStore)
 	if d, ok := backend.(*runner.Docker); ok {
-		saveScoped := func(secret string, valid func(current, next string) bool) func(context.Context, string, string) error {
-			return func(ctx context.Context, scope, auth string) error {
-				ws, project, err := runner.ParseCodexAuthScope(scope)
-				if err != nil {
-					return err
-				}
-				return secretStore.Replace(ctx, ws, project, secret, func(current string) (string, bool) {
-					return auth, valid(current, auth)
-				})
-			}
-		}
-		d.SaveClaudeAuth = saveScoped(chatmodels.KeySecret[agentdef.HarnessClaudeCode], chatmodels.ClaudeAuthRefreshed)
-		d.SaveCodexAuth = saveScoped(chatmodels.KeySecret[agentdef.HarnessCodex], chatmodels.CodexAuthRefreshed)
+		d.SaveClaudeAuth = saveClaude
+		d.SaveCodexAuth = saveCodex
+	} else if m, ok := backend.(*runner.MicroVM); ok {
+		m.SaveClaudeAuth = saveClaude
+		m.SaveCodexAuth = saveCodex
 	}
 	workflows := runs.NewWorkflowEngine(pool, &artifacts.Service{Pool: pool, Blobs: blobs, Bucket: cfg.S3.ArtifactBucket}, &tracker.Service{Pool: pool})
-	workflows.Catalog = chatmodels.Catalog{RequireKey: rc.Backend == "docker", Secrets: secretStore, PlanModels: planModels(rc.Backend, pool)}
+	workflows.Catalog = chatmodels.Catalog{RequireKey: config.IsolatesBackend(rc.Backend), Secrets: secretStore, PlanModels: planModels(rc.Backend, pool)}
 	r := &runner.Runner{
 		Cfg: runner.Config{
 			ModelPrices: rc.ModelPrices,
 			ID:          fmt.Sprintf("%s-%d", host, os.Getpid()), MaxConcurrent: rc.MaxConcurrent, MCPURL: rc.MCPURL,
-			Grace: 30 * time.Second, LogBucket: "run-logs", AttachmentBucket: cfg.S3.ArtifactBucket, Version: cfg.Version, RequireHarnessKey: rc.Backend == "docker",
+			Grace: 30 * time.Second, LogBucket: "run-logs", AttachmentBucket: cfg.S3.ArtifactBucket, Version: cfg.Version, RequireHarnessKey: config.IsolatesBackend(rc.Backend),
 			ChatIdleTTL: rc.ChatIdleTTL, MaxHold: rc.MaxHold, MaxHoldAttempts: rc.MaxHoldAttempts, RolloverContextTokens: int64(cfg.RolloverContextTokens),
 			RepoMap:     rc.RepoMap,
 			Playgrounds: runner.PlaygroundConfig{Ports: rc.PlaygroundPorts, IdleTTL: rc.PlaygroundIdleTTL, Origins: origins(cfg.WebURL, cfg.PublicURL)},
@@ -421,7 +456,7 @@ func runRunner(ctx context.Context, log *slog.Logger) error {
 		Tracker: &tracker.Service{Pool: pool}, Blobs: blobs, Attachments: blobs, Log: log,
 		Workflows:    workflows,
 		Designs:      &designs.Service{Pool: pool, Worker: &designs.Worker{URL: cfg.DesignWorkerURL, Token: cfg.DesignWorkerToken}, Blobs: blobs, Bucket: cfg.S3.ArtifactBucket},
-		Scheduled:    &runs.Service{Pool: pool, Secrets: secretStore, Tracker: &tracker.Service{Pool: pool}, Artifacts: &artifacts.Service{Pool: pool, Blobs: blobs, Bucket: cfg.S3.ArtifactBucket}, RequireHarnessKey: rc.Backend == "docker", PlanModels: planModels(rc.Backend, pool), RolloverContextTokens: int64(cfg.RolloverContextTokens)},
+		Scheduled:    &runs.Service{Pool: pool, Secrets: secretStore, Tracker: &tracker.Service{Pool: pool}, Artifacts: &artifacts.Service{Pool: pool, Blobs: blobs, Bucket: cfg.S3.ArtifactBucket}, RequireHarnessKey: config.IsolatesBackend(rc.Backend), PlanModels: planModels(rc.Backend, pool), RolloverContextTokens: int64(cfg.RolloverContextTokens)},
 		DriveBackups: driveBackupRunner(cfg, pool, box, fmt.Sprintf("%s-%d", host, os.Getpid()), log),
 		StoreSecret: func(ctx context.Context, ws, by uuid.UUID, name, value string) error {
 			_, err := secretStore.Set(ctx, ws, by, secrets.SetInput{Name: name, Value: value})
@@ -453,11 +488,27 @@ func origins(urls ...string) []string {
 	return out
 }
 
-// planModels lists plan-login models through a runner in Docker mode, where
-// the API image has no harness CLI; nil elsewhere (the local CLI is used).
+// planModels lists plan-login models through a runner in isolated modes
+// (Docker, microVM) where the API lacks direct sandbox CLIs; nil elsewhere.
 func planModels(backend string, pool *pgxpool.Pool) func(context.Context, uuid.UUID, string, bool) ([]chatmodels.Model, error) {
-	if backend != "docker" {
+	if !config.IsolatesBackend(backend) {
 		return nil
 	}
 	return (&chatmodels.QueuedListings{Pool: pool}).Models
+}
+
+func buildAuthSavers(secretStore *secrets.Service) (saveClaude, saveCodex func(context.Context, string, string) error) {
+	saveScoped := func(secret string, valid func(current, next string) bool) func(context.Context, string, string) error {
+		return func(ctx context.Context, scope, auth string) error {
+			ws, project, err := runner.ParseCodexAuthScope(scope)
+			if err != nil {
+				return err
+			}
+			return secretStore.Replace(ctx, ws, project, secret, func(current string) (string, bool) {
+				return auth, valid(current, auth)
+			})
+		}
+	}
+	return saveScoped(chatmodels.KeySecret[agentdef.HarnessClaudeCode], chatmodels.ClaudeAuthRefreshed),
+		saveScoped(chatmodels.KeySecret[agentdef.HarnessCodex], chatmodels.CodexAuthRefreshed)
 }

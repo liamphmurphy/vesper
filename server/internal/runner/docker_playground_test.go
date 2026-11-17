@@ -107,7 +107,7 @@ func (f *playgroundEngine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func startPlaygroundEngine(t *testing.T) (*playgroundEngine, *Docker) {
 	t.Helper()
-	sock := filepath.Join(t.TempDir(), "d.sock")
+	sock := filepath.Join(shortTempDir(t), "d.sock")
 	l, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)
@@ -286,8 +286,16 @@ func TestProcessScriptMakesItsDirAndRunsThere(t *testing.T) {
 		t.Errorf("PATH %q doesn't start with the playground's tools", p)
 	}
 	// A dir that can't be made fails the process instead of running elsewhere.
-	if err := exec.Command("bash", "-c", strings.ReplaceAll(processScript("here/../../../../../proc/x", "touch ran"), workspacePath, root)).Run(); err == nil {
+	if err := os.WriteFile(filepath.Join(root, "not-a-dir"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	failCmd := exec.Command("bash", "-c", strings.ReplaceAll(processScript("not-a-dir/sub", "touch ran"), workspacePath, root))
+	failCmd.Dir = root
+	if err := failCmd.Run(); err == nil {
 		t.Error("a dir that can't be created didn't fail the process")
+	}
+	if _, err := os.Stat(filepath.Join(root, "ran")); err == nil {
+		t.Error("command ran even though its dir could not be made")
 	}
 }
 

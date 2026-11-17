@@ -62,21 +62,28 @@ type Config struct {
 // Runner configures `vesper runner` (docs/dev/plan.md §6.5).
 type Runner struct {
 	ModelPrices   map[string]harness.Price
-	Backend       string // docker, or fake (stand-in harnesses on the host, for tests)
+	Backend       string // docker, microvm, or fake (stand-in harnesses on the host, for tests)
 	MaxConcurrent int
 	MCPURL        string // how turns reach the API's /mcp
 	Image         string // docker
 	Network       string // docker
 	DockerSocket  string // docker
-	Stack         string // docker: the install whose containers this runner owns (RUNNER_STACK)
-	MemoryMB      int64  // docker: per-container memory limit, 0 = none
-	PidsLimit     int64  // docker: per-container process limit, 0 = none
+	Stack         string // docker / microvm: the install whose workloads this runner owns (RUNNER_STACK)
+	MemoryMB      int64  // docker / microvm: per-container / per-VM memory limit, 0 = none (docker)
+	PidsLimit     int64  // docker / microvm: per-container / per-cgroup process limit, 0 = none
 	DataDir       string // fake: run workspaces
 	ClaudeBin     string // fake: stand-in for `claude`
 	CodexBin      string // fake: stand-in for `codex`
 	// AntigravityBin is the fake backend's stand-in for `agy`. Optional: without
 	// it Antigravity is simply unavailable on that instance.
 	AntigravityBin string
+	// MicroVM settings (RUNNER_VM_DIR, RUNNER_KERNEL_PATH, RUNNER_ROOTFS_PATH,
+	// RUNNER_CPUS, RUNNER_VM_WARM_TTL_S).
+	VMDir      string
+	KernelPath string
+	RootfsPath string
+	CPUs       int
+	WarmTTL    time.Duration
 	// ChatIdleTTL is how long an idle Personal Assistant chat keeps its run
 	// and workspace (RUNNER_CHAT_IDLE_TTL_S).
 	ChatIdleTTL time.Duration
@@ -89,8 +96,8 @@ type Runner struct {
 	RepoMap bool
 
 	// HostWorkspaces is the absolute folder that checkouts go in when a person
-	// turns on host-folder workspaces (RUNNER_HOST_WORKSPACES_DIR, docker
-	// only). The runner and the Docker daemon must both see it at that path.
+	// turns on host-folder workspaces (RUNNER_HOST_WORKSPACES_DIR, docker and
+	// microvm). The runner and the container/VM must both see it at that path.
 	HostWorkspaces string
 	// DockerProxyDir is where the runner serves each turn's sandboxed Docker
 	// API socket, and DockerProxyVolume the Docker volume mounted there, which
@@ -102,16 +109,23 @@ type Runner struct {
 	// Unset, turns have no Nix.
 	NixVolume string
 	// PlaygroundPorts are where the runner serves chats' playgrounds, one
-	// each (RUNNER_PLAYGROUND_PORTS, e.g. 8090-8094; docker only). The
-	// browser reaches them on Vesper's host, so publish them there. Unset,
-	// chats can't start playgrounds on this runner.
+	// each (RUNNER_PLAYGROUND_PORTS, e.g. 8090-8094). The browser reaches them
+	// on Vesper's host, so publish them there. Unset, chats can't start
+	// playgrounds on this runner.
 	PlaygroundPorts []int
 	// PlaygroundIdleTTL stops a playground unused this long
 	// (RUNNER_PLAYGROUND_IDLE_S).
 	PlaygroundIdleTTL time.Duration
 }
 
+// IsolatesBackend reports whether backend runs harnesses inside an isolated
+// sandbox (Docker container or MicroVM) rather than unisolated host fake mode.
+func IsolatesBackend(backend string) bool {
+	return backend == "docker" || backend == "microvm"
+}
+
 type S3 struct {
+	Dir          string // local directory backend (BLOB_DIR), bypassing S3 when set
 	Endpoint     string // e.g. http://seaweedfs:8333
 	Region       string
 	AccessKey    string
@@ -128,6 +142,7 @@ func Load() (Config, error) {
 		Addr:        env("API_ADDR", ":8000"),
 		DatabaseURL: env("DATABASE_URL", "postgres://lazyagents:lazyagents@localhost:5432/lazyagents?sslmode=disable"),
 		S3: S3{
+			Dir:            env("BLOB_DIR", ""),
 			Endpoint:       env("S3_ENDPOINT", "http://localhost:8333"),
 			Region:         env("S3_REGION", "us-east-1"),
 			AccessKey:      env("S3_ACCESS_KEY", "lazyagents"),
@@ -163,6 +178,9 @@ func Load() (Config, error) {
 		DockerSocket:   env("DOCKER_SOCKET", "/var/run/docker.sock"),
 		Stack:          env("RUNNER_STACK", "default"),
 		DataDir:        env("RUNNER_DATA_DIR", ".lazyagents/runs"),
+		VMDir:          env("RUNNER_VM_DIR", ".lazyagents/vm"),
+		KernelPath:     env("RUNNER_KERNEL_PATH", ""),
+		RootfsPath:     env("RUNNER_ROOTFS_PATH", ""),
 		ClaudeBin:      env("RUNNER_CLAUDE_BIN", ""),
 		CodexBin:       env("RUNNER_CODEX_BIN", ""),
 		AntigravityBin: env("RUNNER_ANTIGRAVITY_BIN", ""),
@@ -178,7 +196,7 @@ func Load() (Config, error) {
 		return c, fmt.Errorf("config: RUNNER_HOST_WORKSPACES_DIR=%q must be an absolute path: Docker resolves it on the host", r.HostWorkspaces)
 	}
 	switch r.Backend {
-	case "docker":
+	case "docker", "microvm":
 	case "fake":
 		// Fake turns run on the host with no isolation, so they may only ever
 		// start stand-in harnesses, never a real CLI found on PATH.
@@ -186,13 +204,30 @@ func Load() (Config, error) {
 			return c, fmt.Errorf("config: RUNNER_BACKEND=fake needs RUNNER_CLAUDE_BIN and RUNNER_CODEX_BIN set to fake harness binaries")
 		}
 	default:
-		return c, fmt.Errorf("config: RUNNER_BACKEND=%q must be docker (or fake, for tests and playgrounds)", r.Backend)
+		return c, fmt.Errorf("config: RUNNER_BACKEND=%q must be docker, microvm (or fake, for tests and playgrounds)", r.Backend)
 	}
 	defMCP := "http://api:8000/mcp"
-	if r.Backend == "fake" {
+	switch r.Backend {
+	case "fake":
 		defMCP = "http://localhost:8000/mcp"
+	case "microvm":
+		defMCP = "http://api.vesper.internal/mcp"
 	}
 	r.MCPURL = env("RUNNER_MCP_URL", defMCP)
+	if r.CPUs, err = intEnv("RUNNER_CPUS", 4); err != nil {
+		return c, err
+	}
+	if r.CPUs < 1 || r.CPUs > 32 {
+		return c, fmt.Errorf("config: RUNNER_CPUS must be 1–32")
+	}
+	warmTTL, err := intEnv("RUNNER_VM_WARM_TTL_S", 180)
+	if err != nil {
+		return c, err
+	}
+	if warmTTL < 10 {
+		return c, fmt.Errorf("config: RUNNER_VM_WARM_TTL_S must be at least 10")
+	}
+	r.WarmTTL = time.Duration(warmTTL) * time.Second
 	memory, err := intEnv("RUNNER_MEMORY_MB", 8192)
 	if err != nil {
 		return c, err

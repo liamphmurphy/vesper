@@ -204,14 +204,18 @@ func runMCPWorker(
 		return nil, err
 	}
 	defer os.RemoveAll(tmpDir)
+	realTmpDir := tmpDir
+	if resolved, err := filepath.EvalSymlinks(tmpDir); err == nil {
+		realTmpDir = resolved
+	}
 
-	bundlePath := filepath.Join(tmpDir, "server.cjs")
+	bundlePath := filepath.Join(realTmpDir, "server.cjs")
 	if err := os.WriteFile(bundlePath, []byte(bundleJS), 0o400); err != nil {
 		return nil, err
 	}
 
-	cmd := exec.CommandContext(ctx, bin, "--permission", "--allow-fs-read="+tmpDir, bundlePath)
-	cmd.Dir = tmpDir
+	cmd := exec.CommandContext(ctx, bin, "--permission", "--preserve-symlinks-main", "--allow-fs-read="+realTmpDir, bundlePath)
+	cmd.Dir = realTmpDir
 	cmd.Env = []string{"NODE_NO_WARNINGS=1", "TZ=UTC"}
 
 	stdin, err := cmd.StdinPipe()

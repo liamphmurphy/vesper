@@ -12,6 +12,7 @@ export interface MenuActions {
   goBack: (focusedWin?: BrowserWindow) => void;
   goForward: (focusedWin?: BrowserWindow) => void;
   openSettings: () => void;
+  importBackup: () => void;
 }
 
 export function buildApplicationMenu(actions: MenuActions): void {
@@ -67,6 +68,10 @@ export function buildApplicationMenu(actions: MenuActions): void {
           click: (_item, win) => actions.reopenClosedTab(win instanceof BrowserWindow ? win : undefined),
         },
         { type: "separator" },
+        {
+          label: "Import Backup…",
+          click: () => actions.importBackup(),
+        },
         {
           label: "Change Server URL…",
           accelerator: isMac ? undefined : "CmdOrCtrl+,",

@@ -133,7 +133,14 @@ func (r *Runner) checkpoint(ctx context.Context, runID uuid.UUID) error {
 		return r.checkpointFailed(ctx, c, err)
 	}
 	branch := CheckpointBranch(c.ticket.Key, c.run.ID)
-	out, err := r.runScript(ctx, c.run.ID, "lazyagents-checkpoint", CheckpointScript(branch), env)
+	var (
+		out string
+	)
+	if r.usesHostGitAuth() {
+		out, err = r.pushCheckpointOnHost(ctx, c.run.ID, ".", branch, *c.project.RepoUrl, env["GH_TOKEN"])
+	} else {
+		out, err = r.runScript(ctx, c.run.ID, "lazyagents-checkpoint", CheckpointScript(branch), env)
+	}
 	if err != nil {
 		return r.checkpointFailed(ctx, c, err)
 	}
@@ -268,6 +275,9 @@ func (r *Runner) recoverTicketWork(ctx context.Context, c runCtx) (string, error
 // vesper-checkpoint-absent when there is no checkout, checkpointPushed after a
 // push, and nothing when the work is already on the remote.
 func (r *Runner) pushChatCheckpoint(ctx context.Context, c runCtx, repo store.ChatRepository, branch string, env map[string]string) (string, error) {
+	if r.usesHostGitAuth() {
+		return r.pushCheckpointOnHost(ctx, c.run.ID, repo.Directory, branch, repo.RepoUrl, env["GH_TOKEN"])
+	}
 	dir := shellQuote(repo.Directory)
 	script := "if [ ! -d " + shellQuote(repo.Directory+"/.git") + " ]; then echo vesper-checkpoint-absent; exit 0; fi\n(cd " + dir + "\n" + ChatCheckpointCommitScript() + ")\n"
 	out, err := r.runScript(ctx, c.run.ID, "lazyagents-checkpoint", script, nil)

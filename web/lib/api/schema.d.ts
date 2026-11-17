@@ -7149,7 +7149,7 @@ export interface components {
         RunnerInfo: {
             id: string;
             /** @enum {string} */
-            backend: "docker" | "fake";
+            backend: "docker" | "microvm" | "fake";
             max_concurrent: number;
             running: number;
             version?: string;

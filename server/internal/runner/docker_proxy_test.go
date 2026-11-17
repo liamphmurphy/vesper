@@ -159,11 +159,7 @@ func startProxyEngine(t *testing.T, f *proxyEngine) (*Docker, *TurnDocker) {
 	}
 	// Short: unix socket paths are limited to 108 bytes, and t.TempDir
 	// embeds the test's name.
-	dir, err := os.MkdirTemp("", "dp")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	dir := shortTempDir(t)
 	sock := filepath.Join(dir, "engine.sock")
 	l, err := net.Listen("unix", sock)
 	if err != nil {
@@ -618,7 +614,7 @@ func TestEnsureNixDaemonPinsTheLocalStore(t *testing.T) {
 					w.WriteHeader(204)
 				}
 			})
-			sock := filepath.Join(t.TempDir(), "d.sock")
+			sock := filepath.Join(shortTempDir(t), "d.sock")
 			l, err := net.Listen("unix", sock)
 			if err != nil {
 				t.Fatal(err)

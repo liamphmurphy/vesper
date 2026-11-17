@@ -63,7 +63,7 @@ func TestDockerWaitReadsNixManifest(t *testing.T) {
 		_, _ = w.Write(tb.Bytes())
 	})
 	mux.HandleFunc("/v1.43/containers/c1", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) })
-	sock := filepath.Join(t.TempDir(), "d.sock")
+	sock := filepath.Join(shortTempDir(t), "d.sock")
 	l, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)
@@ -131,7 +131,7 @@ func (f *nixEngine) serve(t *testing.T) *Docker {
 		}
 		_, _ = fmt.Fprintf(w, `{"ExitCode":%d,"Running":false}`, code)
 	})
-	sock := filepath.Join(t.TempDir(), "d.sock")
+	sock := filepath.Join(shortTempDir(t), "d.sock")
 	l, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)
@@ -139,7 +139,7 @@ func (f *nixEngine) serve(t *testing.T) *Docker {
 	srv := &http.Server{Handler: mux}
 	go func() { _ = srv.Serve(l) }()
 	t.Cleanup(func() { _ = srv.Close() })
-	return &Docker{Socket: sock, Stack: "test", NixVolume: "lazyagents-nix", ProxyDir: t.TempDir(), ProxyVolume: "p"}
+	return &Docker{Socket: sock, Stack: "test", NixVolume: "lazyagents-nix", ProxyDir: shortTempDir(t), ProxyVolume: "p"}
 }
 
 // A daemon that never answers store queries is restarted once, then kept

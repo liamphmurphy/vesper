@@ -40,7 +40,7 @@ func TestSignInLifecycle(t *testing.T) {
 		return out
 	}
 
-	// Without a Docker runner nobody would pick it up.
+	// Without an isolating runner nobody would pick it up.
 	if l := do("GET", "/secrets", "", 200); l["sign_in_available"] != false {
 		t.Fatalf("available without a runner: %v", l)
 	}
@@ -49,6 +49,12 @@ func TestSignInLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	do("POST", "/sign-ins", `{"provider":"claude"}`, 409) // a fake runner can't
+	if err := q.Heartbeat(ctx, store.HeartbeatParams{ID: "r-vm", Backend: "microvm", MaxConcurrent: 1, Version: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	if l := do("GET", "/secrets", "", 200); l["sign_in_available"] != true {
+		t.Fatalf("not available with a microvm runner: %v", l)
+	}
 	if err := q.Heartbeat(ctx, store.HeartbeatParams{ID: "r2", Backend: "docker", MaxConcurrent: 1, Version: "t"}); err != nil {
 		t.Fatal(err)
 	}

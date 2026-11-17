@@ -9,6 +9,7 @@ import { useGitHubReviewRequests, useRefreshGitHubReviewRequests } from "@/lib/a
 import { Button } from "@/components/ui/button";
 import { Toggle } from "@/components/ui/controls";
 import { Icon } from "@/components/ui/icon";
+import { Spinner } from "@/components/ui/loading";
 import { usePulse } from "@/components/ui/motion";
 import { EmptyState, Kbd, Skeleton } from "@/components/ui/primitives";
 import { cx } from "@/lib/cx";
@@ -245,19 +246,23 @@ function FeedTray({
             title="Refresh (R)"
             className="grid size-6 place-items-center rounded-md text-fg-secondary hover:bg-hover hover:text-fg disabled:opacity-40"
           >
-            <svg
-              aria-hidden
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className={cx("size-3.5", isRefreshing && "animate-spin")}
-            >
-              <path d="M13 6.5A5.2 5.2 0 0 0 3.8 5L2.5 6.3M2.5 3v3.3h3.3" />
-              <path d="M3 9.5A5.2 5.2 0 0 0 12.2 11l1.3-1.3M13.5 13V9.7h-3.3" />
-            </svg>
+            {isRefreshing ? (
+              <Spinner size={12} />
+            ) : (
+              <svg
+                aria-hidden
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="size-3.5"
+              >
+                <path d="M13 6.5A5.2 5.2 0 0 0 3.8 5L2.5 6.3M2.5 3v3.3h3.3" />
+                <path d="M3 9.5A5.2 5.2 0 0 0 12.2 11l1.3-1.3M13.5 13V9.7h-3.3" />
+              </svg>
+            )}
           </button>
         </div>
       </div>

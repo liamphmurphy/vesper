@@ -137,7 +137,7 @@ func (r *Runner) generateChatSuggestions(ctx context.Context, due store.NextChat
 		}
 	}()
 	// No token: this turn has nothing to say to Vesper.
-	inv, err := h.Invocation(harness.Workspace{Dir: r.Backend.WorkspaceDir(workspace), MCPURL: r.Cfg.MCPURL, TokenEnv: tokenEnv, ContainerSandbox: r.Backend.Name() == "docker"}, harness.Turn{Spec: spec, Prompt: chatSuggestionRequest(background)})
+	inv, err := h.Invocation(harness.Workspace{Dir: r.Backend.WorkspaceDir(workspace), MCPURL: r.Cfg.MCPURL, TokenEnv: tokenEnv, ContainerSandbox: r.Backend.Isolates()}, harness.Turn{Spec: spec, Prompt: chatSuggestionRequest(background)})
 	if err != nil {
 		return err
 	}
