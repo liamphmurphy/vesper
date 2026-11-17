@@ -162,6 +162,9 @@ func (r *Runner) stagePushRequests(ctx context.Context, c runCtx) {
 // staging branch from a clean repository, and records the commits and diff
 // the card shows.
 func (r *Runner) stage(ctx context.Context, c runCtx, req store.PushRequest, dir, url, token string) (store.PushRequest, error) {
+	if r.usesHostGitAuth() {
+		return r.stageOnHost(ctx, c, req, dir, url, token)
+	}
 	id := req.ID.String()
 	staging := pushreq.StagingBranch(req.ID)
 	defer func() {

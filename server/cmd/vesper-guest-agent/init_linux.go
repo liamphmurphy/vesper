@@ -8,7 +8,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -407,9 +406,4 @@ func syncAndDropCaches() error {
 func powerOffGuest() {
 	unix.Sync()
 	_ = unix.Reboot(unix.LINUX_REBOOT_CMD_POWER_OFF)
-}
-
-// Placeholder for Slice 4 in-guest dockerd.
-func ensureDockerd(context.Context, *slog.Logger, string) error {
-	return errors.New("in-guest dockerd not enabled until Slice 4")
 }

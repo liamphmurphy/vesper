@@ -18,6 +18,7 @@ const (
 	PortEgressTCP  uint32 = 1025 // guest -> host proxied TCP stream
 	PortEgressDNS  uint32 = 1026 // guest -> host synthetic DNS over length-framed stream
 	PortReady      uint32 = 1027 // guest -> host boot readiness ping
+	PortDocker     uint32 = 1028 // host -> guest docker-raw.sock bridge (CID 2 only)
 	PortPlayground uint32 = 2000 // host -> guest localhost port forwarder
 )
 

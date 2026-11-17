@@ -49,7 +49,7 @@ func setupGuestNetworking(log *slog.Logger, aliases *dnsStubConfig) error {
 	_ = os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1\n"), 0o644)
 
 	_ = os.Remove("/etc/resolv.conf")
-	if err := os.WriteFile("/etc/resolv.conf", []byte("nameserver "+guestDummyIP+"\noptions edns0\n"), 0o644); err != nil {
+	if err := os.WriteFile("/etc/resolv.conf", []byte("nameserver "+guestDummyIP+"\noptions single-request timeout:1 attempts:3\n"), 0o644); err != nil {
 		return fmt.Errorf("write resolv.conf: %w", err)
 	}
 
@@ -167,10 +167,13 @@ func startDNSStub(log *slog.Logger, aliases *dnsStubConfig) error {
 		return err
 	}
 
+	var dnsFwdMu sync.Mutex
 	resolvePacket := func(pkt []byte) ([]byte, error) {
 		if resp, handled := maybeAnswerLocalAlias(pkt, aliases); handled {
 			return resp, nil
 		}
+		dnsFwdMu.Lock()
+		defer dnsFwdMu.Unlock()
 		vs, err := dialHostVSock(guestproto.PortEgressDNS)
 		if err != nil {
 			return nil, err

@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"slices"
 	"strings"
 	"syscall"
@@ -390,18 +391,28 @@ func runRunner(ctx context.Context, log *slog.Logger) error {
 				apiUpstream = cfg.PublicURL
 			}
 		}
+		var cacheStore *microvm.CacheStore
+		if rc.VMDir != "" {
+			if cs, cerr := microvm.NewCacheStore(microvm.CacheStoreConfig{Dir: filepath.Join(rc.VMDir, "caches")}); cerr == nil {
+				cacheStore = cs
+			} else {
+				log.Warn("runner: microvm cache store disabled", "err", cerr)
+			}
+		}
 		m := &runner.MicroVM{
-			Driver:      microvm.NewVZDriver(),
-			StateDir:    rc.VMDir,
-			KernelPath:  rc.KernelPath,
-			RootfsPath:  rc.RootfsPath,
-			CPUs:        rc.CPUs,
-			MemoryMB:    rc.MemoryMB,
-			PidsLimit:   rc.PidsLimit,
-			WarmTTL:     rc.WarmTTL,
-			MCPURL:      rc.MCPURL,
-			APIUpstream: apiUpstream,
-			Log:         log,
+			Driver:         microvm.NewVZDriver(),
+			StateDir:       rc.VMDir,
+			KernelPath:     rc.KernelPath,
+			RootfsPath:     rc.RootfsPath,
+			HostWorkspaces: rc.HostWorkspaces,
+			CPUs:           rc.CPUs,
+			MemoryMB:       rc.MemoryMB,
+			PidsLimit:      rc.PidsLimit,
+			WarmTTL:        rc.WarmTTL,
+			MCPURL:         rc.MCPURL,
+			APIUpstream:    apiUpstream,
+			CacheStore:     cacheStore,
+			Log:            log,
 		}
 		defer func() { _ = m.Close() }()
 		backend = m

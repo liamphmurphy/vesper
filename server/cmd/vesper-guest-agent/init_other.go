@@ -44,7 +44,7 @@ func resizePTY(*os.File, uint16, uint16) error { return nil }
 
 func signalProcessGroup(*exec.Cmd, uint32) error { return nil }
 
-func ensureDockerd(context.Context, *slog.Logger, string) error {
+func ensureDockerd(context.Context, *slog.Logger, *execTracker, string) error {
 	return errors.New("dockerd is only supported inside Linux guest VM")
 }
 

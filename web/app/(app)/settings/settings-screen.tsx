@@ -236,6 +236,7 @@ function WorkspaceSection() {
 function HostFoldersSetting({ status }: { status: Schemas["RunnerStatus"] }) {
   const update = useUpdateRunnerSettings();
   const dirs = [...new Set(status.runners.flatMap((x) => (x.host_workspaces_dir ? [x.host_workspaces_dir] : [])))];
+  const hasMicroVM = status.runners.some((x) => x.backend === "microvm");
   const on = status.host_folder_workspaces;
   return (
     <>
@@ -257,6 +258,11 @@ function HostFoldersSetting({ status }: { status: Schemas["RunnerStatus"] }) {
           </>
         )}
       </span>
+      {hasMicroVM && (
+        <span className="mt-1 block text-12 text-fg-tertiary">
+          With the microvm backend, folders share via virtiofs (<code className="font-mono">core.hooksPath</code> is disabled automatically); only open trusted folders in host editors or tools that auto-run workspace tasks.
+        </span>
+      )}
       {update.isError && <span className="mt-1 block text-12 text-pill-blocked-fg">Couldn’t save: {update.error.message}</span>}
     </>
   );

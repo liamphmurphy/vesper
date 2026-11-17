@@ -36,6 +36,13 @@ type vsockConn struct {
 func (c *vsockConn) LocalAddr() net.Addr  { return c.local }
 func (c *vsockConn) RemoteAddr() net.Addr { return c.remote }
 
+func shutdownVSockWrite(vc *vsockConn) error {
+	if vc == nil || vc.File == nil {
+		return nil
+	}
+	return unix.Shutdown(int(vc.Fd()), unix.SHUT_WR)
+}
+
 func listenVSock(port uint32) (net.Listener, error) {
 	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC|unix.SOCK_NONBLOCK, 0)
 	if err != nil {

@@ -45,10 +45,12 @@ func main() {
 	defer srv.close()
 
 	if runtime.GOOS == "linux" && os.Getpid() == 1 {
-		startOrphanReaper(ctx, srv.execs)
 		if err := setupGuestNetworking(log, srv.dnsStub); err != nil {
-			log.Warn("guest networking setup incomplete", "err", err)
+			log.Error("guest networking setup failed", "err", err)
+			time.Sleep(2 * time.Second)
+			os.Exit(1)
 		}
+		startOrphanReaper(ctx, srv.execs)
 	}
 
 	var ln net.Listener

@@ -200,7 +200,7 @@ func (s *agentServer) handleConn(ctx context.Context, conn net.Conn) {
 		if len(req.V) > 0 {
 			_ = json.Unmarshal(req.V, &in)
 		}
-		if err := ensureDockerd(ctx, s.log, in.RegistryMirror); err != nil {
+		if err := ensureDockerd(ctx, s.log, s.execs, in.RegistryMirror); err != nil {
 			_ = writeRPCError(conn, f.ID, err.Error())
 			return
 		}

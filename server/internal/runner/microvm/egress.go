@@ -217,6 +217,11 @@ type Egress struct {
 	table *SyntheticTable
 	log   *slog.Logger
 
+	dynMu             sync.RWMutex
+	cacheHandler      http.Handler
+	gitHandler        http.Handler
+	playgroundHandler http.Handler
+
 	servers   []*http.Server
 	listeners []*memListener
 	closeOnce sync.Once
@@ -236,16 +241,54 @@ func NewEgress(cfg EgressConfig) *Egress {
 		cfg.DialTimeout = 10 * time.Second
 	}
 	e := &Egress{
-		cfg:    cfg,
-		table:  NewSyntheticTable(),
-		log:    cfg.Log,
-		closed: make(chan struct{}),
+		cfg:               cfg,
+		table:             NewSyntheticTable(),
+		log:               cfg.Log,
+		cacheHandler:      cfg.CacheHandler,
+		gitHandler:        cfg.GitHandler,
+		playgroundHandler: cfg.PlaygroundHandler,
+		closed:            make(chan struct{}),
 	}
 	e.mountHTTPService(internalAPIIP, blockInternalAPI(cfg.APIHandler))
-	e.mountHTTPService(internalCacheIP, cfg.CacheHandler)
-	e.mountHTTPService(internalGitIP, cfg.GitHandler)
-	e.mountHTTPService(internalPlaygroundIP, cfg.PlaygroundHandler)
+	e.mountDynamicHTTPService(internalCacheIP, func() http.Handler {
+		e.dynMu.RLock()
+		defer e.dynMu.RUnlock()
+		return e.cacheHandler
+	})
+	e.mountDynamicHTTPService(internalGitIP, func() http.Handler {
+		e.dynMu.RLock()
+		defer e.dynMu.RUnlock()
+		return e.gitHandler
+	})
+	e.mountDynamicHTTPService(internalPlaygroundIP, func() http.Handler {
+		e.dynMu.RLock()
+		defer e.dynMu.RUnlock()
+		return e.playgroundHandler
+	})
 	return e
+}
+
+func (e *Egress) SetGitHandler(h http.Handler) {
+	e.dynMu.Lock()
+	e.gitHandler = h
+	e.dynMu.Unlock()
+}
+
+func (e *Egress) SetPlaygroundHandler(h http.Handler) {
+	e.dynMu.Lock()
+	e.playgroundHandler = h
+	e.dynMu.Unlock()
+}
+
+func (e *Egress) mountDynamicHTTPService(ip [4]byte, lookup func() http.Handler) {
+	e.mountHTTPService(ip, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := lookup()
+		if h == nil {
+			http.NotFound(w, r)
+			return
+		}
+		h.ServeHTTP(w, r)
+	}))
 }
 
 func (e *Egress) Table() *SyntheticTable { return e.table }

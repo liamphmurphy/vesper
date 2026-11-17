@@ -41,23 +41,27 @@ const (
 // MicroVM runs each Vesper run in an isolated NIC-less Linux microVM driven via
 // microvm.Driver (Apple Virtualization.framework on darwin/arm64).
 type MicroVM struct {
-	Driver       microvm.Driver
-	StateDir     string
-	KernelPath   string
-	RootfsPath   string
-	CPUs         int
-	MemoryMB     int64
-	IdleMemoryMB int64 // target balloon memory between turns when activeTurns == 0 (default 192 MiB)
-	PidsLimit    int64
-	WarmTTL      time.Duration
-	MCPURL       string
+	Driver         microvm.Driver
+	StateDir       string
+	KernelPath     string
+	RootfsPath     string
+	HostWorkspaces string
+	CPUs           int
+	MemoryMB       int64
+	IdleMemoryMB   int64 // target balloon memory between turns when activeTurns == 0 (default 192 MiB)
+	PidsLimit      int64
+	WarmTTL        time.Duration
+	MCPURL         string
 
-	APIHandler    http.Handler
-	APIUpstream   string // optional http(s)://host:port used when APIHandler == nil
-	CacheHandler  http.Handler
-	GitHandler    http.Handler
-	Resolver      func(ctx context.Context, host string) ([]net.IP, error)
-	TestUpstreams map[string]string
+	APIHandler      http.Handler
+	APIUpstream     string // optional http(s)://host:port used when APIHandler == nil
+	CacheStore      *microvm.CacheStore
+	CacheHandler    http.Handler
+	GitHandler      http.Handler
+	GitUpstreamBase string // defaults to https://github.com
+	GitRewriteFrom  string // defaults to https://github.com/
+	Resolver        func(ctx context.Context, host string) ([]net.IP, error)
+	TestUpstreams   map[string]string
 
 	SaveClaudeAuth func(ctx context.Context, scope, auth string) error
 	SaveCodexAuth  func(ctx context.Context, scope, auth string) error
@@ -87,6 +91,7 @@ type runVM struct {
 func (b *MicroVM) Name() string               { return "microvm" }
 func (b *MicroVM) Isolates() bool             { return true }
 func (b *MicroVM) WorkspaceDir(string) string { return workspacePath }
+func (b *MicroVM) DependencyCacheDir() string { return "/cache" }
 
 func (b *MicroVM) logger() *slog.Logger {
 	if b.Log != nil {
@@ -386,25 +391,41 @@ func (b *MicroVM) acquireVM(ctx context.Context, runID string) (*runVM, error) {
 		cpus = 2
 	}
 
+	cacheH := b.CacheHandler
+	if cacheH == nil && b.CacheStore != nil {
+		cacheH = b.CacheStore
+	}
 	eg := microvm.NewEgress(microvm.EgressConfig{
 		Log:           b.logger(),
 		APIHandler:    b.apiHandler(),
-		CacheHandler:  b.CacheHandler,
+		CacheHandler:  cacheH,
 		GitHandler:    b.GitHandler,
 		Resolver:      b.Resolver,
 		TestUpstreams: b.TestUpstreams,
 	})
+	drives := []microvm.DriveSpec{
+		{Path: b.RootfsPath, ReadOnly: true},
+	}
+	var shares []microvm.VirtioFSSpec
+	if hostDir, isHost := b.hostWorkspacePath(runID); isHost {
+		shares = append(shares, microvm.VirtioFSSpec{Tag: "workspace", HostDir: hostDir, ReadOnly: false})
+	} else {
+		drives = append(drives, microvm.DriveSpec{Path: filepath.Join(dir, "workspace.ext4"), ReadOnly: false})
+	}
+	drives = append(drives,
+		microvm.DriveSpec{Path: filepath.Join(dir, "home.ext4"), ReadOnly: false},
+		microvm.DriveSpec{Path: filepath.Join(dir, "docker.ext4"), ReadOnly: false},
+	)
+	if b.CacheStore != nil {
+		drives = append(drives, b.CacheStore.LatestEROFSDrives()...)
+	}
 	vm, err := b.Driver.Start(ctx, microvm.VMConfig{
 		KernelPath:  b.KernelPath,
 		CPUs:        cpus,
 		MemoryBytes: uint64(memMB) << 20,
-		Drives: []microvm.DriveSpec{
-			{Path: b.RootfsPath, ReadOnly: true},
-			{Path: filepath.Join(dir, "workspace.ext4"), ReadOnly: false},
-			{Path: filepath.Join(dir, "home.ext4"), ReadOnly: false},
-			{Path: filepath.Join(dir, "docker.ext4"), ReadOnly: false},
-		},
-		Listeners: eg.Listeners(),
+		Drives:      drives,
+		Shares:      shares,
+		Listeners:   eg.Listeners(),
 	})
 	if err != nil {
 		_ = eg.Close()
@@ -593,6 +614,12 @@ func (b *MicroVM) Start(ctx context.Context, runID string, spec ExecSpec) (Proce
 		path.Join(homePath, ".ssh"),
 	)
 
+	if b.CacheStore != nil {
+		nixConf := fmt.Sprintf("build-users-group = nixbld\nexperimental-features = nix-command flakes\nsandbox = false\nauto-optimise-store = true\nextra-substituters = http://%s/nix\nextra-trusted-public-keys = %s\n",
+			microvm.InternalCacheHost, b.CacheStore.NixPublicKey())
+		writes = append(writes, guestproto.FileWrite{Path: "/etc/nix/nix.conf", Data: []byte(nixConf), Mode: 0o644})
+	}
+
 	env := map[string]string{
 		"HOME":    homePath,
 		"USER":    "node",
@@ -601,11 +628,31 @@ func (b *MicroVM) Start(ctx context.Context, runID string, spec ExecSpec) (Proce
 		"GOCACHE": homePath + "/.cache/go-build",
 		"PATH":    homePath + "/.nix-profile/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/nix/var/nix/profiles/default/bin",
 	}
+	if b.CacheStore != nil || b.CacheHandler != nil {
+		env["GOPROXY"] = "http://" + microvm.InternalCacheHost + "/goproxy,direct"
+		env["npm_config_registry"] = "http://" + microvm.InternalCacheHost + "/npm"
+	}
+
+	var gitPAT string
+	for _, k := range []string{"GH_TOKEN", "GITHUB_TOKEN", envName("git:pat")} {
+		if v := spec.Env[k]; v != "" && gitPAT == "" {
+			gitPAT = v
+		}
+	}
+	gitProxySet := false
 	for k, v := range spec.Env {
-		if k == ClaudeAuthEnv || k == ClaudeAuthScopeEnv || k == CodexAuthEnv || k == CodexAuthScopeEnv || k == AntigravityAuthEnv {
+		if k == ClaudeAuthEnv || k == ClaudeAuthScopeEnv || k == CodexAuthEnv || k == CodexAuthScopeEnv || k == AntigravityAuthEnv ||
+			k == "GH_TOKEN" || k == "GITHUB_TOKEN" || k == envName("git:pat") {
 			continue
 		}
 		env[k] = v
+	}
+	if gitPAT != "" || b.GitUpstreamBase != "" {
+		if rvm.egress != nil {
+			rvm.egress.SetGitHandler(newGitUploadProxy(b.GitUpstreamBase, gitPAT))
+			gitProxySet = true
+		}
+		rewriteGitInsteadOfEnv(env, b.GitRewriteFrom)
 	}
 
 	dir := spec.Dir
@@ -624,6 +671,9 @@ func (b *MicroVM) Start(ctx context.Context, runID string, spec ExecSpec) (Proce
 		CgroupName:       spec.Name,
 	})
 	if err != nil {
+		if gitProxySet && rvm.egress != nil {
+			rvm.egress.SetGitHandler(b.GitHandler)
+		}
 		return nil, err
 	}
 	ok = true
@@ -636,6 +686,7 @@ func (b *MicroVM) Start(ctx context.Context, runID string, spec ExecSpec) (Proce
 		codexAuth:   codexAuth,
 		codexScope:  codexScope,
 		unlinkPaths: unlinkPaths,
+		gitProxySet: gitProxySet,
 	}, nil
 }
 
@@ -649,6 +700,7 @@ type microvmProc struct {
 	codexScope  string
 	unlinkPaths []string
 	nixManifest []byte
+	gitProxySet bool
 }
 
 var (
@@ -663,7 +715,15 @@ func (p *microvmProc) Kill() error         { return p.rp.Signal(9) }
 func (p *microvmProc) NixManifest() []byte { return p.nixManifest }
 
 func (p *microvmProc) Wait() (int, error) {
-	defer p.b.releaseVM(p.rvm)
+	defer func() {
+		if p.gitProxySet && p.rvm.egress != nil {
+			p.rvm.egress.SetGitHandler(p.b.GitHandler)
+		}
+		if hostDir, ok := p.b.hostWorkspacePath(p.rvm.runID); ok {
+			p.b.ensureSafeHostGitConfig(hostDir)
+		}
+		p.b.releaseVM(p.rvm)
+	}()
 
 	ex, err := p.rp.Wait()
 	cctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
