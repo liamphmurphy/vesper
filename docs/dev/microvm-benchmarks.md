@@ -28,4 +28,10 @@ Measured with `vesper/agent-base:latest`, `postgres:17-alpine`, and OrbStack `29
 | First `vsock` exec inside running VM | 4.98 ms | ~10x faster than `docker exec` (47–53 ms) |
 | Warm `vsock` exec (`true`, 5 runs) | 0.77 ms, 0.48 ms, 0.38 ms, 0.33 ms, 0.39 ms (median 0.39 ms) | ~125x faster than `docker exec` |
 
-_(Slices 2–3 egress throughput and 1/4/8-VM balloon memory benchmarks added as those slices land.)_
+### Slice 2 — NIC-less Synthetic-DNS `vsock` Egress (`TestVZEgressEndToEnd`)
+
+| Metric | Measurement | vs OrbStack Baseline |
+|---|---|---|
+| `128 MiB` guest-to-host TCP upload via `dummy0` + `iptables` NAT `REDIRECT` + `SO_ORIGINAL_DST` + `AF_VSOCK` | 172.7 ms (`741.0 MiB/s`, `5927.7 Mbps`) | ~46% of OrbStack direct socket (`1608.6 MiB/s`); zero-NIC hardware VM egress at ~6 Gbps |
+
+_(Slice 3 1/4/8-VM balloon memory benchmarks added as Slice 3 lands.)_

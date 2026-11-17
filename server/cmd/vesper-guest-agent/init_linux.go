@@ -409,15 +409,6 @@ func powerOffGuest() {
 	_ = unix.Reboot(unix.LINUX_REBOOT_CMD_POWER_OFF)
 }
 
-// Placeholder for Slice 2 guest networking (loopback up now; dummy0 + DNS + NAT in Slice 2).
-func setupGuestNetworking(_ *slog.Logger, _ *dnsStubConfig) error {
-	// Bring up loopback lo via rtnetlink / ip link if present.
-	if ipBin, err := exec.LookPath("ip"); err == nil {
-		_ = exec.Command(ipBin, "link", "set", "lo", "up").Run()
-	}
-	return nil
-}
-
 // Placeholder for Slice 4 in-guest dockerd.
 func ensureDockerd(context.Context, *slog.Logger, string) error {
 	return errors.New("in-guest dockerd not enabled until Slice 4")

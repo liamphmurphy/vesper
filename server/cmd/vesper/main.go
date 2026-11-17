@@ -44,6 +44,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/prsync"
 	"github.com/liamphmurphy/vesper/server/internal/realtime"
 	"github.com/liamphmurphy/vesper/server/internal/runner"
+	"github.com/liamphmurphy/vesper/server/internal/runner/microvm"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/secrets"
 	"github.com/liamphmurphy/vesper/server/internal/seed"
@@ -381,7 +382,29 @@ func runRunner(ctx context.Context, log *slog.Logger) error {
 		cancel()
 		backend = d
 	case "microvm":
-		return fmt.Errorf("runner: microvm backend is not wired yet")
+		apiUpstream := os.Getenv("API_INTERNAL_URL")
+		if apiUpstream == "" {
+			if u, err := url.Parse(rc.MCPURL); err == nil && u.Host != "" && u.Host != microvm.InternalAPIHost {
+				apiUpstream = u.Scheme + "://" + u.Host
+			} else {
+				apiUpstream = cfg.PublicURL
+			}
+		}
+		m := &runner.MicroVM{
+			Driver:      microvm.NewVZDriver(),
+			StateDir:    rc.VMDir,
+			KernelPath:  rc.KernelPath,
+			RootfsPath:  rc.RootfsPath,
+			CPUs:        rc.CPUs,
+			MemoryMB:    rc.MemoryMB,
+			PidsLimit:   rc.PidsLimit,
+			WarmTTL:     rc.WarmTTL,
+			MCPURL:      rc.MCPURL,
+			APIUpstream: apiUpstream,
+			Log:         log,
+		}
+		defer func() { _ = m.Close() }()
+		backend = m
 	case "fake":
 		log.Warn("RUNNER_BACKEND=fake runs stand-in harnesses on this machine with no isolation; it's only for tests and playgrounds")
 		bins := map[string]string{"claude": rc.ClaudeBin, "codex": rc.CodexBin}
@@ -393,20 +416,25 @@ func runRunner(ctx context.Context, log *slog.Logger) error {
 	host, _ := os.Hostname()
 	blobs := blob.New(cfg.S3)
 	secretStore := &secrets.Service{Q: store.New(pool), Box: box}
-	if d, ok := backend.(*runner.Docker); ok {
-		saveScoped := func(secret string, valid func(current, next string) bool) func(context.Context, string, string) error {
-			return func(ctx context.Context, scope, auth string) error {
-				ws, project, err := runner.ParseCodexAuthScope(scope)
-				if err != nil {
-					return err
-				}
-				return secretStore.Replace(ctx, ws, project, secret, func(current string) (string, bool) {
-					return auth, valid(current, auth)
-				})
+	saveScoped := func(secret string, valid func(current, next string) bool) func(context.Context, string, string) error {
+		return func(ctx context.Context, scope, auth string) error {
+			ws, project, err := runner.ParseCodexAuthScope(scope)
+			if err != nil {
+				return err
 			}
+			return secretStore.Replace(ctx, ws, project, secret, func(current string) (string, bool) {
+				return auth, valid(current, auth)
+			})
 		}
-		d.SaveClaudeAuth = saveScoped(chatmodels.KeySecret[agentdef.HarnessClaudeCode], chatmodels.ClaudeAuthRefreshed)
-		d.SaveCodexAuth = saveScoped(chatmodels.KeySecret[agentdef.HarnessCodex], chatmodels.CodexAuthRefreshed)
+	}
+	saveClaude := saveScoped(chatmodels.KeySecret[agentdef.HarnessClaudeCode], chatmodels.ClaudeAuthRefreshed)
+	saveCodex := saveScoped(chatmodels.KeySecret[agentdef.HarnessCodex], chatmodels.CodexAuthRefreshed)
+	if d, ok := backend.(*runner.Docker); ok {
+		d.SaveClaudeAuth = saveClaude
+		d.SaveCodexAuth = saveCodex
+	} else if m, ok := backend.(*runner.MicroVM); ok {
+		m.SaveClaudeAuth = saveClaude
+		m.SaveCodexAuth = saveCodex
 	}
 	workflows := runs.NewWorkflowEngine(pool, &artifacts.Service{Pool: pool, Blobs: blobs, Bucket: cfg.S3.ArtifactBucket}, &tracker.Service{Pool: pool})
 	workflows.Catalog = chatmodels.Catalog{RequireKey: config.IsolatesBackend(rc.Backend), Secrets: secretStore, PlanModels: planModels(rc.Backend, pool)}

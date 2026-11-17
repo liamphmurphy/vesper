@@ -21,6 +21,9 @@ import (
 const agentVersion = "vesper-guest-agent/0.1"
 
 func main() {
+	if runtime.GOOS == "linux" && os.Getenv("PATH") == "" {
+		_ = os.Setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+	}
 	if runtime.GOOS == "linux" && os.Getpid() == 1 {
 		if err := bootstrapPID1(); err != nil {
 			fmt.Fprintf(os.Stderr, "vesper-guest-agent: pid1 bootstrap failed: %v\n", err)

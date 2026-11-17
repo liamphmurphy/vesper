@@ -1,0 +1,674 @@
+package runner
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"os"
+	"os/exec"
+	"path"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/liamphmurphy/vesper/server/internal/chatmodels"
+	"github.com/liamphmurphy/vesper/server/internal/guestproto"
+	"github.com/liamphmurphy/vesper/server/internal/runner/microvm"
+)
+
+const (
+	wsTemplateSize  int64 = 64 << 30 // 64 GiB sparse APFS image
+	homeTemplateSz  int64 = 16 << 30 // 16 GiB sparse APFS image
+	dkrTemplateSize int64 = 32 << 30 // 32 GiB sparse APFS image
+
+	wsDiskLabel   = "vesper-ws"
+	homeDiskLabel = "vesper-home"
+	dkrDiskLabel  = "vesper-dkr"
+
+	maxAuthReadBytes    = 16 << 10
+	maxNixManifestBytes = 4 << 20
+)
+
+// MicroVM runs each Vesper run in an isolated NIC-less Linux microVM driven via
+// microvm.Driver (Apple Virtualization.framework on darwin/arm64).
+type MicroVM struct {
+	Driver     microvm.Driver
+	StateDir   string
+	KernelPath string
+	RootfsPath string
+	CPUs       int
+	MemoryMB   int64
+	PidsLimit  int64
+	WarmTTL    time.Duration
+	MCPURL     string
+
+	APIHandler    http.Handler
+	APIUpstream   string // optional http(s)://host:port used when APIHandler == nil
+	CacheHandler  http.Handler
+	GitHandler    http.Handler
+	Resolver      func(ctx context.Context, host string) ([]net.IP, error)
+	TestUpstreams map[string]string
+
+	SaveClaudeAuth func(ctx context.Context, scope, auth string) error
+	SaveCodexAuth  func(ctx context.Context, scope, auth string) error
+	Log            *slog.Logger
+
+	// Optional disk template sizes (defaults to 64G/16G/32G sparse ext4 images).
+	TestWorkspaceBytes int64
+	TestHomeBytes      int64
+	TestDockerBytes    int64
+
+	tmplMu sync.Mutex
+	runsMu sync.Mutex
+	locks  map[string]*sync.Mutex
+	vms    map[string]*runVM
+}
+
+type runVM struct {
+	mu          sync.Mutex
+	runID       string
+	vm          microvm.VM
+	egress      *microvm.Egress
+	activeTurns int
+	idleTimer   *time.Timer
+}
+
+func (b *MicroVM) Name() string               { return "microvm" }
+func (b *MicroVM) Isolates() bool             { return true }
+func (b *MicroVM) WorkspaceDir(string) string { return workspacePath }
+
+func (b *MicroVM) logger() *slog.Logger {
+	if b.Log != nil {
+		return b.Log
+	}
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+func (b *MicroVM) runLock(runID string) *sync.Mutex {
+	b.runsMu.Lock()
+	defer b.runsMu.Unlock()
+	if b.locks == nil {
+		b.locks = make(map[string]*sync.Mutex)
+	}
+	l := b.locks[runID]
+	if l == nil {
+		l = &sync.Mutex{}
+		b.locks[runID] = l
+	}
+	return l
+}
+
+func safeVMRunKey(runID string) (string, error) {
+	if runID == "" || runID == "." || runID == ".." || strings.ContainsAny(runID, "/\\\x00 \t\n\r") || strings.Contains(runID, "..") {
+		return "", fmt.Errorf("invalid run id %q", runID)
+	}
+	return runID, nil
+}
+
+func (b *MicroVM) runDir(runID string) (string, error) {
+	key, err := safeVMRunKey(runID)
+	if err != nil {
+		return "", err
+	}
+	if b.StateDir == "" {
+		return "", errors.New("microvm: StateDir is required")
+	}
+	return filepath.Join(b.StateDir, "runs", key), nil
+}
+
+func (b *MicroVM) EnsureWorkspace(ctx context.Context, runID string) error {
+	dir, err := b.runDir(runID)
+	if err != nil {
+		return err
+	}
+	mu := b.runLock(runID)
+	mu.Lock()
+	defer mu.Unlock()
+
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	wsSz := b.TestWorkspaceBytes
+	if wsSz <= 0 {
+		wsSz = wsTemplateSize
+	}
+	homeSz := b.TestHomeBytes
+	if homeSz <= 0 {
+		homeSz = homeTemplateSz
+	}
+	dkrSz := b.TestDockerBytes
+	if dkrSz <= 0 {
+		dkrSz = dkrTemplateSize
+	}
+
+	specs := []struct {
+		file  string
+		tmpl  string
+		label string
+		size  int64
+	}{
+		{"workspace.ext4", "ws.ext4", wsDiskLabel, wsSz},
+		{"home.ext4", "home.ext4", homeDiskLabel, homeSz},
+		{"docker.ext4", "dkr.ext4", dkrDiskLabel, dkrSz},
+	}
+	for _, s := range specs {
+		dst := filepath.Join(dir, s.file)
+		if _, err := os.Stat(dst); err == nil {
+			continue
+		}
+		tmpl, err := b.ensureExt4Template(ctx, s.tmpl, s.label, s.size)
+		if err != nil {
+			return fmt.Errorf("template %s: %w", s.file, err)
+		}
+		if err := cloneFile(tmpl, dst); err != nil {
+			return fmt.Errorf("clone %s: %w", s.file, err)
+		}
+	}
+	metaPath := filepath.Join(dir, "meta.json")
+	if _, err := os.Stat(metaPath); os.IsNotExist(err) {
+		meta, _ := json.Marshal(map[string]any{"run_id": runID, "created_at": time.Now().UTC()})
+		if err := os.WriteFile(metaPath, meta, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b *MicroVM) HasWorkspace(_ context.Context, runID string) (bool, error) {
+	dir, err := b.runDir(runID)
+	if err != nil {
+		return false, err
+	}
+	_, err = os.Stat(filepath.Join(dir, "workspace.ext4"))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (b *MicroVM) RemoveWorkspace(ctx context.Context, runID string) error {
+	dir, err := b.runDir(runID)
+	if err != nil {
+		return err
+	}
+	mu := b.runLock(runID)
+	mu.Lock()
+	defer mu.Unlock()
+
+	b.stopRunVM(ctx, runID)
+	return os.RemoveAll(dir)
+}
+
+func (b *MicroVM) ensureExt4Template(ctx context.Context, name, label string, size int64) (string, error) {
+	b.tmplMu.Lock()
+	defer b.tmplMu.Unlock()
+
+	tmplDir := filepath.Join(b.StateDir, "templates")
+	if err := os.MkdirAll(tmplDir, 0o755); err != nil {
+		return "", err
+	}
+	dst := filepath.Join(tmplDir, fmt.Sprintf("%s-%s-%d", name, label, size))
+	if hasExt4Magic(dst) {
+		return dst, nil
+	}
+
+	tmp := dst + ".tmp"
+	_ = os.Remove(tmp)
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o644)
+	if err != nil {
+		return "", err
+	}
+	if err := f.Truncate(size); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return "", err
+	}
+	_ = f.Close()
+
+	if err := b.formatExt4(ctx, tmp, label); err != nil {
+		_ = os.Remove(tmp)
+		return "", err
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		_ = os.Remove(tmp)
+		return "", err
+	}
+	return dst, nil
+}
+
+func hasExt4Magic(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	var buf [2]byte
+	if _, err := f.ReadAt(buf[:], 1024+0x38); err != nil {
+		return false
+	}
+	return buf[0] == 0x53 && buf[1] == 0xEF
+}
+
+func (b *MicroVM) formatExt4(ctx context.Context, imgPath, label string) error {
+	if mke2fs := findMke2fs(); mke2fs != "" {
+		out, err := exec.CommandContext(ctx, mke2fs, "-t", "ext4", "-L", label, "-F", "-q", imgPath).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("%s: %w (%s)", mke2fs, err, string(out))
+		}
+		return nil
+	}
+	// If host lacks mke2fs (e.g., packaged macOS app), format the sparse image
+	// inside an ephemeral microVM using the bundled mkfs.ext4 in agent-base.erofs.
+	if b.Driver == nil {
+		return errors.New("microvm: no mke2fs tool and no VM driver to format ext4 template")
+	}
+	if _, isMem := b.Driver.(*microvm.MemDriver); isMem {
+		// MemDriver tests without host mke2fs write an ext4 superblock magic stub.
+		f, err := os.OpenFile(imgPath, os.O_WRONLY, 0o644)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		_, err = f.WriteAt([]byte{0x53, 0xEF}, 1024+0x38)
+		return err
+	}
+	vm, err := b.Driver.Start(ctx, microvm.VMConfig{
+		KernelPath:  b.KernelPath,
+		CPUs:        1,
+		MemoryBytes: 512 << 20,
+		Drives: []microvm.DriveSpec{
+			{Path: b.RootfsPath, ReadOnly: true},
+			{Path: imgPath, ReadOnly: false},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("boot formatter VM: %w", err)
+	}
+	defer func() { _ = vm.Stop(context.Background()) }()
+
+	proc, err := vm.Client().StartExec(ctx, guestproto.ExecReq{
+		Argv: []string{"/sbin/mkfs.ext4", "-L", label, "-F", "-q", "/dev/vdb"},
+	})
+	if err != nil {
+		return err
+	}
+	go func() { _, _ = io.Copy(io.Discard, proc.Stdout()) }()
+	var errBuf strings.Builder
+	_, _ = io.Copy(&errBuf, io.LimitReader(proc.Stderr(), 64<<10))
+	ex, err := proc.Wait()
+	if err != nil {
+		return err
+	}
+	if ex.Code != 0 {
+		return fmt.Errorf("guest mkfs.ext4 exit %d: %s", ex.Code, errBuf.String())
+	}
+	return nil
+}
+
+func findMke2fs() string {
+	for _, tool := range []string{"mkfs.ext4", "mke2fs"} {
+		if p, err := exec.LookPath(tool); err == nil {
+			return p
+		}
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		p := filepath.Join(home, "Library/Android/sdk/platform-tools/mke2fs")
+		if _, serr := os.Stat(p); serr == nil {
+			return p
+		}
+	}
+	return ""
+}
+
+func (b *MicroVM) apiHandler() http.Handler {
+	if b.APIHandler != nil {
+		return b.APIHandler
+	}
+	if b.APIUpstream != "" {
+		if u, err := url.Parse(b.APIUpstream); err == nil && u.Host != "" {
+			return httputil.NewSingleHostReverseProxy(u)
+		}
+	}
+	return nil
+}
+
+func (b *MicroVM) acquireVM(ctx context.Context, runID string) (*runVM, error) {
+	if err := b.EnsureWorkspace(ctx, runID); err != nil {
+		return nil, err
+	}
+	b.runsMu.Lock()
+	if b.vms == nil {
+		b.vms = make(map[string]*runVM)
+	}
+	rvm := b.vms[runID]
+	if rvm == nil {
+		rvm = &runVM{runID: runID}
+		b.vms[runID] = rvm
+	}
+	b.runsMu.Unlock()
+
+	rvm.mu.Lock()
+	defer rvm.mu.Unlock()
+	if rvm.idleTimer != nil {
+		rvm.idleTimer.Stop()
+		rvm.idleTimer = nil
+	}
+	if rvm.vm != nil {
+		rvm.activeTurns++
+		return rvm, nil
+	}
+
+	if b.Driver == nil {
+		return nil, errors.New("microvm: Driver is required")
+	}
+	dir, err := b.runDir(runID)
+	if err != nil {
+		return nil, err
+	}
+	memMB := b.MemoryMB
+	if memMB <= 0 {
+		memMB = 2048
+	}
+	cpus := b.CPUs
+	if cpus <= 0 {
+		cpus = 2
+	}
+
+	eg := microvm.NewEgress(microvm.EgressConfig{
+		Log:           b.logger(),
+		APIHandler:    b.apiHandler(),
+		CacheHandler:  b.CacheHandler,
+		GitHandler:    b.GitHandler,
+		Resolver:      b.Resolver,
+		TestUpstreams: b.TestUpstreams,
+	})
+	vm, err := b.Driver.Start(ctx, microvm.VMConfig{
+		KernelPath:  b.KernelPath,
+		CPUs:        cpus,
+		MemoryBytes: uint64(memMB) << 20,
+		Drives: []microvm.DriveSpec{
+			{Path: b.RootfsPath, ReadOnly: true},
+			{Path: filepath.Join(dir, "workspace.ext4"), ReadOnly: false},
+			{Path: filepath.Join(dir, "home.ext4"), ReadOnly: false},
+			{Path: filepath.Join(dir, "docker.ext4"), ReadOnly: false},
+		},
+		Listeners: eg.Listeners(),
+	})
+	if err != nil {
+		_ = eg.Close()
+		return nil, err
+	}
+	rvm.egress = eg
+	rvm.vm = vm
+	rvm.activeTurns++
+	return rvm, nil
+}
+
+func (b *MicroVM) releaseVM(rvm *runVM) {
+	rvm.mu.Lock()
+	defer rvm.mu.Unlock()
+	if rvm.activeTurns > 0 {
+		rvm.activeTurns--
+	}
+}
+
+func (b *MicroVM) stopRunVM(ctx context.Context, runID string) {
+	b.runsMu.Lock()
+	rvm := b.vms[runID]
+	delete(b.vms, runID)
+	b.runsMu.Unlock()
+	if rvm == nil {
+		return
+	}
+	rvm.mu.Lock()
+	if rvm.idleTimer != nil {
+		rvm.idleTimer.Stop()
+		rvm.idleTimer = nil
+	}
+	vm := rvm.vm
+	eg := rvm.egress
+	rvm.vm = nil
+	rvm.egress = nil
+	rvm.mu.Unlock()
+	if vm != nil {
+		_ = vm.Stop(ctx)
+	}
+	if eg != nil {
+		_ = eg.Close()
+	}
+}
+
+func (b *MicroVM) Start(ctx context.Context, runID string, spec ExecSpec) (Process, error) {
+	rvm, err := b.acquireVM(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	ok := false
+	defer func() {
+		if !ok {
+			b.releaseVM(rvm)
+		}
+	}()
+
+	var writes []guestproto.FileWrite
+	for rel, data := range spec.Files {
+		clean := path.Clean("/" + rel)
+		if rel == "" || clean == "/" || strings.HasPrefix(rel, "/") || strings.Contains(rel, "..") {
+			return nil, fmt.Errorf("microvm: invalid workspace file path %q", rel)
+		}
+		writes = append(writes, guestproto.FileWrite{
+			Path: path.Join(workspacePath, strings.TrimPrefix(clean, "/")),
+			Data: data,
+			Mode: 0o644,
+			UID:  1000,
+			GID:  1000,
+		})
+	}
+
+	var unlinkPaths []string
+	claudeAuth := spec.Env[ClaudeAuthEnv]
+	claudeScope := spec.Env[ClaudeAuthScopeEnv]
+	codexAuth := spec.Env[CodexAuthEnv]
+	codexScope := spec.Env[CodexAuthScopeEnv]
+	agyAuthRaw := spec.Env[AntigravityAuthEnv]
+
+	if claudeAuth != "" {
+		p := path.Join(homePath, claudeAuthPath)
+		writes = append(writes, guestproto.FileWrite{Path: p, Data: []byte(claudeAuth), Mode: 0o600, UID: 1000, GID: 1000})
+		unlinkPaths = append(unlinkPaths, p)
+	}
+	if codexAuth != "" {
+		p := path.Join(homePath, codexAuthPath)
+		writes = append(writes, guestproto.FileWrite{Path: p, Data: []byte(codexAuth), Mode: 0o600, UID: 1000, GID: 1000})
+		unlinkPaths = append(unlinkPaths, p)
+	}
+	if agyAuthRaw != "" {
+		auth, valid := chatmodels.ParseAntigravityAuth(agyAuthRaw)
+		if !valid {
+			return nil, errors.New("microvm: invalid Antigravity login bundle")
+		}
+		for rel, content := range auth.Files {
+			cleanRel, cleanOK := chatmodels.CleanAntigravityRelPath(rel)
+			if !cleanOK {
+				continue
+			}
+			p := path.Join(homePath, cleanRel)
+			writes = append(writes, guestproto.FileWrite{Path: p, Data: []byte(content), Mode: 0o600, UID: 1000, GID: 1000})
+			unlinkPaths = append(unlinkPaths, p)
+		}
+	}
+	// Always sweep standard secret paths unconditionally after every turn.
+	unlinkPaths = append(unlinkPaths,
+		path.Join(homePath, claudeAuthPath),
+		path.Join(homePath, codexAuthPath),
+		path.Join(homePath, ".config/antigravity"),
+		path.Join(homePath, ".gemini"),
+		path.Join(homePath, ".ssh"),
+	)
+
+	env := map[string]string{
+		"HOME":    homePath,
+		"USER":    "node",
+		"LOGNAME": "node",
+		"TMPDIR":  "/tmp",
+		"GOCACHE": homePath + "/.cache/go-build",
+		"PATH":    homePath + "/.nix-profile/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/nix/var/nix/profiles/default/bin",
+	}
+	for k, v := range spec.Env {
+		if k == ClaudeAuthEnv || k == ClaudeAuthScopeEnv || k == CodexAuthEnv || k == CodexAuthScopeEnv || k == AntigravityAuthEnv {
+			continue
+		}
+		env[k] = v
+	}
+
+	dir := spec.Dir
+	if dir == "" {
+		dir = workspacePath
+	}
+	rp, err := rvm.vm.Client().StartExec(ctx, guestproto.ExecReq{
+		Argv:             spec.Argv,
+		Env:              env,
+		Dir:              dir,
+		UID:              1000,
+		GID:              1000,
+		Files:            writes,
+		MemoryLimitBytes: b.MemoryMB << 20,
+		PidsLimit:        b.PidsLimit,
+		CgroupName:       spec.Name,
+	})
+	if err != nil {
+		return nil, err
+	}
+	ok = true
+	return &microvmProc{
+		b:           b,
+		rvm:         rvm,
+		rp:          rp,
+		claudeAuth:  claudeAuth,
+		claudeScope: claudeScope,
+		codexAuth:   codexAuth,
+		codexScope:  codexScope,
+		unlinkPaths: unlinkPaths,
+	}, nil
+}
+
+type microvmProc struct {
+	b           *MicroVM
+	rvm         *runVM
+	rp          *guestproto.RemoteProcess
+	claudeAuth  string
+	claudeScope string
+	codexAuth   string
+	codexScope  string
+	unlinkPaths []string
+	nixManifest []byte
+}
+
+var (
+	_ Process            = (*microvmProc)(nil)
+	_ NixManifestProcess = (*microvmProc)(nil)
+)
+
+func (p *microvmProc) Stdout() io.Reader   { return p.rp.Stdout() }
+func (p *microvmProc) Stderr() io.Reader   { return p.rp.Stderr() }
+func (p *microvmProc) Interrupt() error    { return p.rp.Signal(2) }
+func (p *microvmProc) Kill() error         { return p.rp.Signal(9) }
+func (p *microvmProc) NixManifest() []byte { return p.nixManifest }
+
+func (p *microvmProc) Wait() (int, error) {
+	defer p.b.releaseVM(p.rvm)
+
+	ex, err := p.rp.Wait()
+	cctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	client := p.rvm.vm.Client()
+	if b, rerr := client.ReadFile(cctx, path.Join(homePath, ".nix-profile/manifest.json"), maxNixManifestBytes); rerr == nil {
+		p.nixManifest = b
+	}
+	p.keepRefreshed(cctx, client, path.Join(homePath, claudeAuthPath), p.claudeAuth, p.claudeScope, p.b.SaveClaudeAuth, chatmodels.ClaudeAuthRefreshed)
+	p.keepRefreshed(cctx, client, path.Join(homePath, codexAuthPath), p.codexAuth, p.codexScope, p.b.SaveCodexAuth, chatmodels.CodexAuthRefreshed)
+
+	// Unconditionally unlink credentials from /home/node even on error/kill.
+	_ = client.UnlinkPaths(cctx, p.unlinkPaths, true)
+
+	if err != nil {
+		return -1, err
+	}
+	if ex.OOMKilled {
+		code := ex.Code
+		if code <= 0 {
+			code = 137
+		}
+		limit := p.b.MemoryMB
+		if limit <= 0 {
+			limit = 2048
+		}
+		return code, fmt.Errorf("out of memory: killed at the %s memory limit (exit %d)", formatMemLimit(limit), code)
+	}
+	if ex.Error != "" && ex.Code == 0 {
+		return 1, errors.New(ex.Error)
+	}
+	return ex.Code, nil
+}
+
+func formatMemLimit(mb int64) string {
+	return strconv.FormatInt(mb, 10) + " MiB"
+}
+
+func (p *microvmProc) keepRefreshed(ctx context.Context, client *guestproto.Client, guestFile, current, scope string, save func(context.Context, string, string) error, valid func(string, string) bool) {
+	if current == "" || save == nil {
+		return
+	}
+	b, err := client.ReadFile(ctx, guestFile, maxAuthReadBytes+1)
+	if err != nil || len(b) > maxAuthReadBytes {
+		return
+	}
+	next := string(b)
+	if !valid(current, next) {
+		return
+	}
+	if err := save(ctx, scope, next); err != nil {
+		p.b.logger().Warn("save refreshed oauth failed", "file", guestFile, "err", err)
+	}
+}
+
+func (b *MicroVM) ReadOutbox(ctx context.Context, runID string) ([]OutboxFile, []string, error) {
+	return readOutboxExec(ctx, b, runID)
+}
+
+func (b *MicroVM) RemoveOutbox(ctx context.Context, runID string, names []string) error {
+	return removeOutboxExec(ctx, b, runID, names)
+}
+
+func (b *MicroVM) ReadVideoFiles(ctx context.Context, runID string, req VideoFilesRequest) ([]VideoFile, error) {
+	return readVideoFilesExec(ctx, b, runID, req)
+}
+
+func (b *MicroVM) OpenWorkspaceFile(ctx context.Context, runID, rel string, limit int64) (io.ReadCloser, int64, error) {
+	return openWorkspaceFileExec(ctx, b, runID, rel, limit)
+}
+
+func (b *MicroVM) Cleanup(ctx context.Context) error {
+	b.runsMu.Lock()
+	ids := make([]string, 0, len(b.vms))
+	for id := range b.vms {
+		ids = append(ids, id)
+	}
+	b.runsMu.Unlock()
+	for _, id := range ids {
+		b.stopRunVM(ctx, id)
+	}
+	return nil
+}
+
+func (b *MicroVM) Close() error { return b.Cleanup(context.Background()) }

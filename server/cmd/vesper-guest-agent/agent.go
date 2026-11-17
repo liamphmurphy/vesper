@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/liamphmurphy/vesper/server/internal/guestproto"
@@ -586,7 +587,11 @@ func (s *agentServer) handleExec(ctx context.Context, conn net.Conn, id uint32, 
 	if waitErr != nil {
 		var ee *exec.ExitError
 		if errors.As(waitErr, &ee) {
-			exit.Code = ee.ExitCode()
+			if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+				exit.Code = 128 + int(ws.Signal())
+			} else {
+				exit.Code = ee.ExitCode()
+			}
 		} else {
 			exit.Code = 1
 			exit.Error = waitErr.Error()
