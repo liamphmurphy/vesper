@@ -24,6 +24,8 @@ ID (`web/lib/desktop-bridge.ts`).
 | Backups | follow-up | `backups.ts` | `native.ts` (`applyTimeMachine`, `exportNow`) | Settings › Backups |
 | Ease off when hot | follow-up | `thermal.ts`; server `PUT /runner/slot-limit` | `native.ts` (`setupThermal`, `applySlotLimit`) | Settings › Power & Stack; tray notice |
 | Open workspace folder | follow-up | `workspace-open.ts` | `native.ts` (`openWorkspaceMenu`) | Settings › Workspaces; web folder chip and chat title menu |
+| Dock menu and progress | follow-up | `dock-model.ts` | `native.ts` (`renderDock`, `updateDockProgress`) | Settings › General |
+| Show/Hide shortcut | follow-up | `dock-model.ts` (`showHideAction`) | `native.ts` (`applyShortcuts`, `toggleVesper`) | Settings › Shortcuts |
 
 ## Settings and defaults
 
@@ -49,6 +51,8 @@ opt-in.
 | Touch ID for approvals | off; all four scopes once on |
 | Daily update check | off |
 | Screenshot to Chat | off, ⌥⇧S |
+| Show/Hide Vesper shortcut | off, ⌥⇧V |
+| Dock menu / Dock download progress | on / on |
 | Keep VM disks and caches out of Time Machine | on |
 | Scheduled export to a folder | off; daily, keep 7 |
 | Take fewer runs when hot / Low Power Mode | on |
@@ -140,6 +144,13 @@ anything that differs.
 - [ ] **Ease off**: under sustained load until macOS reports serious thermal pressure, or with Low Power Mode on
       (System Settings › Battery), `GET /api/v1/runner` shows `slot_limit`
       within ~15 s and the tray says so; it lifts when back to normal.
+- [ ] **Dock**: right-click the Dock icon shows Needs-you items (opening their
+      pages), New Chat and New Chat with each persona (opening the new-chat
+      page with that persona picked), Quick Capture and Screenshot to Chat; on
+      first launch the icon shows the run image download's progress.
+- [ ] **Show/Hide**: the shortcut brings Vesper forward from another app and
+      hides it when pressed again; with no window open it opens one; it can't
+      reuse Quick Capture's or Screenshot's keys.
 - [ ] **Open folder**: with host-folder workspaces on, the run chip's Open
       menu opens Finder, the terminal app, and `nvim` in Terminal; a path
       outside the workspace root is refused.

@@ -38,6 +38,7 @@ export type LastWindowPolicy = (typeof LAST_WINDOW_POLICIES)[number];
 
 export const DEFAULT_QUICK_CAPTURE_SHORTCUT = "Alt+Shift+Space";
 export const DEFAULT_SCREENSHOT_SHORTCUT = "Alt+Shift+S";
+export const DEFAULT_SHOW_HIDE_SHORTCUT = "Alt+Shift+V";
 
 /** How "Open in editor" opens a workspace: a command run in Terminal (e.g. nvim), or a GUI app. */
 export const EDITOR_KINDS = ["terminal", "app"] as const;
@@ -80,6 +81,17 @@ export interface NativeSettings {
     /** A global shortcut that captures a screen region and offers it to a chat. */
     enabled: boolean;
     shortcut: string;
+  };
+  showHide: {
+    /** A global shortcut that brings Vesper forward, or hides it when it's already in front. */
+    enabled: boolean;
+    shortcut: string;
+  };
+  dock: {
+    /** Needs-you items, new chats and capture in the Dock icon's right-click menu. */
+    menu: boolean;
+    /** A progress bar on the Dock icon while the run image downloads. */
+    progress: boolean;
   };
   backups: {
     /** Keep VM disks, caches and downloaded images (all rebuildable) out of Time Machine. */
@@ -155,6 +167,8 @@ export function defaultNativeSettings(): NativeSettings {
     },
     quickCapture: { enabled: false, shortcut: DEFAULT_QUICK_CAPTURE_SHORTCUT },
     screenshot: { enabled: false, shortcut: DEFAULT_SCREENSHOT_SHORTCUT },
+    showHide: { enabled: false, shortcut: DEFAULT_SHOW_HIDE_SHORTCUT },
+    dock: { menu: true, progress: true },
     backups: {
       excludeFromTimeMachine: true,
       export: { enabled: false, folder: "", everyHours: 24, keep: 7 },
@@ -259,6 +273,8 @@ export function normalizeNativeSettings(raw: unknown, base: NativeSettings = def
   const touch = obj(src.touchId);
   const updates = obj(src.updates);
   const shot = obj(src.screenshot);
+  const showHide = obj(src.showHide);
+  const dock = obj(src.dock);
   const backups = obj(src.backups);
   const exp = obj(backups.export);
   const wsp = obj(src.workspaces);
@@ -299,6 +315,15 @@ export function normalizeNativeSettings(raw: unknown, base: NativeSettings = def
     screenshot: {
       enabled: bool(shot.enabled, base.screenshot.enabled),
       shortcut: typeof shot.shortcut === "string" && shot.shortcut.trim() ? shot.shortcut.trim().slice(0, 64) : base.screenshot.shortcut,
+    },
+    showHide: {
+      enabled: bool(showHide.enabled, base.showHide.enabled),
+      shortcut:
+        typeof showHide.shortcut === "string" && showHide.shortcut.trim() ? showHide.shortcut.trim().slice(0, 64) : base.showHide.shortcut,
+    },
+    dock: {
+      menu: bool(dock.menu, base.dock.menu),
+      progress: bool(dock.progress, base.dock.progress),
     },
     backups: {
       excludeFromTimeMachine: bool(backups.excludeFromTimeMachine, base.backups.excludeFromTimeMachine),

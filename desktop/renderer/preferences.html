@@ -116,6 +116,20 @@
         </div>
         <div class="row">
           <div class="text">
+            <span class="label">Dock menu</span>
+            <span class="hint">Right-click the Dock icon for what needs you, a new chat with any persona, Quick Capture and Screenshot to Chat.</span>
+          </div>
+          <label class="switch"><input type="checkbox" data-key="dock.menu" aria-label="Dock menu" /><span></span></label>
+        </div>
+        <div class="row">
+          <div class="text">
+            <span class="label">Show download progress on the Dock icon</span>
+            <span class="hint">While the run image downloads on first launch.</span>
+          </div>
+          <label class="switch"><input type="checkbox" data-key="dock.progress" aria-label="Dock progress" /><span></span></label>
+        </div>
+        <div class="row">
+          <div class="text">
             <span class="label">Open Vesper at login</span>
             <span class="hint">The local stack starts in the background, so Vesper is ready when you are.</span>
             <span class="hint error" id="login-status"></span>
@@ -214,6 +228,17 @@
           <div class="inline">
             <input type="text" class="shortcut" id="screenshot-input" data-shortcut="screenshot" readonly aria-label="Screenshot to chat shortcut" />
             <label class="switch"><input type="checkbox" data-key="screenshot.enabled" aria-label="Enable screenshot to chat" /><span></span></label>
+          </div>
+        </div>
+        <div class="row">
+          <div class="text">
+            <span class="label">Show or hide Vesper</span>
+            <span class="hint">Brings Vesper forward from any app, or hides it when it's already in front.</span>
+            <span class="error" id="showhide-error" role="alert"></span>
+          </div>
+          <div class="inline">
+            <input type="text" class="shortcut" id="showhide-input" data-shortcut="showHide" readonly aria-label="Show or hide Vesper shortcut" />
+            <label class="switch"><input type="checkbox" data-key="showHide.enabled" aria-label="Enable show or hide shortcut" /><span></span></label>
           </div>
         </div>
       </section>

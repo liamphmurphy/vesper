@@ -24,6 +24,8 @@ Everything below has its own switch in **Vesper › Settings… (⌘,)**. Detail
 - **Backups**: VM disks, caches and downloaded images are kept out of Time Machine; optionally save a whole-instance export to a folder (iCloud Drive, a NAS…) on a schedule, keeping the newest N.
 - **Ease off when hot**: in Low Power Mode or under thermal pressure the local runner takes fewer runs at once; running work finishes.
 - **Open workspace folders**: with host-folder workspaces on, a run's or chat's folder opens in Finder, your terminal, or your editor (`nvim` in Terminal by default).
+- **Dock**: right-click the Dock icon for what needs you, a new chat with any persona, Quick Capture and Screenshot to Chat; the icon shows the run image download's progress on first launch.
+- **Show/Hide shortcut** (opt-in, default ⌥⇧V): bring Vesper forward from any app, or hide it when it's in front.
 - **Update check** (opt-in): tells you when a newer DMG is published. The app can't update itself while it's unsigned ([`docs/dev/desktop-updates.md`](../docs/dev/desktop-updates.md)).
 
 ## Prerequisites
