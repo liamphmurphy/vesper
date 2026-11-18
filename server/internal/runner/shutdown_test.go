@@ -3,8 +3,11 @@ package runner_test
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/liamphmurphy/vesper/server/internal/runner"
 )
 
 // A runner that shuts down mid-turn kills the harness; the turn must stay
@@ -64,5 +67,64 @@ func TestCancelBeforeStartSaysWhy(t *testing.T) {
 	e.runner.Wait()
 	if evs := e.eventTypes(run.ID); strings.Contains(evs, "lifecycle:starting") {
 		t.Fatalf("a cancelled run was set up: %s", evs)
+	}
+}
+
+type blockingCleanupBackend struct {
+	runner.Backend
+	cleaning chan struct{}
+	release  chan struct{}
+}
+
+func (b *blockingCleanupBackend) Cleanup(ctx context.Context) error {
+	close(b.cleaning)
+	select {
+	case <-b.release:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	return b.Backend.Cleanup(ctx)
+}
+
+// OnHeartbeat must only clear the startup state after the first heartbeat row
+// is in Postgres, so GET /api/v1/runner never flashes online=false, starting=false.
+func TestRunnerOnHeartbeatClearsStartingAfterRegistration(t *testing.T) {
+	e := setup(t)
+	var starting atomic.Bool
+	starting.Store(true)
+	cleaning := make(chan struct{})
+	release := make(chan struct{})
+	e.runner.Backend = &blockingCleanupBackend{Backend: e.runner.Backend, cleaning: cleaning, release: release}
+	e.runner.OnHeartbeat = func() { starting.Store(false) }
+
+	ctx, cancel := context.WithCancel(e.ctx)
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- e.runner.Run(ctx) }()
+
+	<-cleaning
+	if !starting.Load() {
+		t.Fatal("starting cleared before first heartbeat")
+	}
+	if rs, err := e.q.LiveRunners(e.ctx); err != nil || len(rs) != 0 {
+		t.Fatalf("live runners before heartbeat = %d err=%v", len(rs), err)
+	}
+
+	close(release)
+	deadline := time.Now().Add(5 * time.Second)
+	for starting.Load() {
+		if time.Now().After(deadline) {
+			t.Fatal("OnHeartbeat was not called after Cleanup finished")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	rs, err := e.q.LiveRunners(e.ctx)
+	if err != nil || len(rs) != 1 || rs[0].ID != "test-runner" {
+		t.Fatalf("live runners right after OnHeartbeat = %+v err=%v", rs, err)
+	}
+
+	cancel()
+	if err := <-errCh; err != nil {
+		t.Fatalf("runner.Run exit: %v", err)
 	}
 }

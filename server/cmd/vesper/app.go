@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -233,6 +234,12 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 	appCfg.PublicURL = baseURL
 	appCfg.WebURL = baseURL
 
+	var runnerStarting atomic.Bool
+	disableRunner := os.Getenv("VESPER_APP_DISABLE_RUNNER") == "1"
+	if !disableRunner {
+		runnerStarting.Store(true)
+	}
+
 	version := appCfg.Version
 	srv := &httpapi.Server{
 		AnonymousAPI: false,
@@ -264,6 +271,7 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 		Usage:          &usage.Service{Q: q, Log: log, Queued: true},
 		Exporter:       exporter(appCfg, pool, log),
 		DriveBackups:   driveBackupRunner(appCfg, pool, box, apiHolder(), log),
+		RunnerStarting: runnerStarting.Load,
 	}
 	go srv.Wiki.RunVaultWorker(ctx, log)
 	if appCfg.PRSyncInterval > 0 {
@@ -290,10 +298,13 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 	go func() { errc <- hs.Serve(ln) }()
 
 	var runnerDone chan error
-	if os.Getenv("VESPER_APP_DISABLE_RUNNER") != "1" {
+	if !disableRunner {
 		runnerDone = make(chan error, 1)
 		go func() {
-			runnerDone <- runAppMicroVMRunner(ctx, log, dataDir, exeDir, baseURL, designWorkerURL, designToken, pool, blobs, box, blobCfg.ArtifactBucket, appCfg, apiHandler, imgMgr)
+			defer runnerStarting.Store(false)
+			runnerDone <- runAppMicroVMRunner(ctx, log, dataDir, exeDir, baseURL, designWorkerURL, designToken, pool, blobs, box, blobCfg.ArtifactBucket, appCfg, apiHandler, imgMgr, func() {
+				runnerStarting.Store(false)
+			})
 		}()
 	}
 
@@ -391,6 +402,7 @@ func runAppMicroVMRunner(
 	cfg config.Config,
 	apiHandler http.Handler,
 	imgMgr *ImageManager,
+	onHeartbeat func(),
 ) error {
 	kernel := ResolveKernelPath(cfg.Runner.KernelPath, dataDir, exeDir)
 	if kernel == "" {
@@ -488,6 +500,7 @@ func runAppMicroVMRunner(
 			_, err := secretStore.Set(ctx, ws, by, secrets.SetInput{Name: name, Value: value})
 			return err
 		},
+		OnHeartbeat: onHeartbeat,
 	}
 	log.Info("vesper app microvm runner started", "kernel", kernel, "rootfs", rootfs)
 	return r.Run(ctx)

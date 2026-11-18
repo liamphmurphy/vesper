@@ -16,10 +16,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/liamphmurphy/vesper/server/internal/auth"
+	"github.com/liamphmurphy/vesper/server/internal/config"
 	"github.com/liamphmurphy/vesper/server/internal/db"
 	"github.com/liamphmurphy/vesper/server/internal/httpapi"
 	"github.com/liamphmurphy/vesper/server/internal/store"
@@ -265,5 +267,32 @@ func TestLoopbackHostOnly(t *testing.T) {
 		if rec.Code != want {
 			t.Errorf("Host %q: got %d, want %d", host, rec.Code, want)
 		}
+	}
+}
+
+func TestAppMicroVMRunnerClearsStartingOnEarlyExit(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dataDir := t.TempDir()
+	exeDir := t.TempDir()
+	var runnerStarting atomic.Bool
+	runnerStarting.Store(true)
+
+	done := make(chan error, 1)
+	go func() {
+		defer runnerStarting.Store(false)
+		done <- runAppMicroVMRunner(
+			context.Background(),
+			slog.New(slog.NewTextHandler(io.Discard, nil)),
+			dataDir, exeDir, "http://127.0.0.1:8080", "", "", nil, nil, nil, "artifacts",
+			config.Config{}, http.NotFoundHandler(), NewImageManager(),
+			func() { runnerStarting.Store(false) },
+		)
+	}()
+
+	if err := <-done; err != nil {
+		t.Fatalf("runAppMicroVMRunner: %v", err)
+	}
+	if runnerStarting.Load() {
+		t.Fatal("runnerStarting stayed true after runner exited without a kernel")
 	}
 }

@@ -7247,6 +7247,8 @@ export interface components {
             /** @description New runs keep their checkout in a host folder when their runner has host_workspaces_dir */
             host_folder_workspaces: boolean;
             online: boolean;
+            /** @description True while an embedded runner is still starting up before its first heartbeat */
+            starting?: boolean;
             runners: components["schemas"]["RunnerInfo"][];
             /** @description Runs the online runners take at once: each one's max_concurrent, or its slot_limit while lower */
             slots: number;
