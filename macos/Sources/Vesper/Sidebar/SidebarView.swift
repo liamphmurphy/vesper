@@ -37,7 +37,8 @@ struct SidebarView: View {
 private struct ShellSection: View {
     let shell: ShellModel
     let send: (NativeCommand) -> Void
-    @State private var appsExpanded = true
+    // Collapsed until the person opens it; remembered across launches.
+    @AppStorage("sidebar.appsExpanded") private var appsExpanded = false
 
     static let areaPrefix = "area:"
     static func areaTag(_ id: AreaId) -> String { areaPrefix + id.rawValue }
