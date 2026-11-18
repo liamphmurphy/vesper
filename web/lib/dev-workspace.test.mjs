@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   DEV_TERMINAL_SHORTCUT_GROUPS,
+  decodeOsc52,
   devTerminalShortcutGroups,
   devWorkspaceSocketUrl,
   devWorkspaceStatusLabel,
@@ -106,4 +107,17 @@ test("filterDevWorkspaceRepos matches repo_url and directory case-insensitively"
     ["https://github.com/other/alpha-service"],
   );
   assert.equal(filterDevWorkspaceRepos(repos, "missing").length, 0);
+});
+
+test("decodeOsc52 decodes clipboard writes and refuses reads", () => {
+  const b64 = (s) => Buffer.from(s, "utf8").toString("base64");
+  assert.equal(decodeOsc52(`c;${b64("hello world")}`), "hello world");
+  assert.equal(decodeOsc52(`;${b64("multi\nline")}`), "multi\nline");
+  assert.equal(decodeOsc52(`p;${b64("héllo ✓")}`), "héllo ✓");
+  assert.equal(decodeOsc52("c;?"), null);
+  assert.equal(decodeOsc52("c;"), null);
+  assert.equal(decodeOsc52("no-separator"), null);
+  assert.equal(decodeOsc52("c;not base64!"), null);
+  assert.equal(decodeOsc52(`c;${Buffer.from([0xff, 0xfe]).toString("base64")}`), null);
+  assert.equal(decodeOsc52(`c;${"A".repeat((1 << 20) + 4)}`), null);
 });

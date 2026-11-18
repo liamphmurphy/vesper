@@ -153,6 +153,30 @@ export function extractTerminalLines(buffer: TerminalBufferLike, maxLines = 120)
   return out;
 }
 
+/** Largest OSC 52 payload (base64 characters) the terminal will copy. */
+export const OSC52_MAX_PAYLOAD = 1 << 20;
+
+/**
+ * Decodes the text of an OSC 52 clipboard write (`Pc;Pd`, Pd base64), as sent
+ * by tmux and Neovim when copying. Returns null for anything that isn't a
+ * write: a "?" read request (never answered, so the container can't read the
+ * host clipboard), an empty or oversized payload, or invalid base64.
+ */
+export function decodeOsc52(data: string): string | null {
+  const sep = data.indexOf(";");
+  if (sep < 0) return null;
+  const payload = data.slice(sep + 1).replace(/\s+/g, "");
+  if (payload === "" || payload === "?" || payload.length > OSC52_MAX_PAYLOAD) return null;
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(payload)) return null;
+  try {
+    const bin = atob(payload);
+    const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
 export function terminalSnapshotFilename(at: number): string {
   const stamp = new Date(at).toISOString().slice(0, 19).replace(/[-:]/g, "").replace("T", "-");
   return `dev-terminal-${stamp}.md`;

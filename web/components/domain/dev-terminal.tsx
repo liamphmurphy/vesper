@@ -8,6 +8,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { useDevWorkspace, useDevWorkspaceAction } from "@/lib/api/dev-workspace-hooks";
 import {
+  decodeOsc52,
   DEV_FULLSCREEN_HINT,
   devTerminalShortcutGroups,
   devWorkspaceSocketUrl,
@@ -104,6 +105,14 @@ export function DevTerminal() {
       }
       return true;
     });
+    // tmux and Neovim copy through OSC 52; write it to the host clipboard.
+    const osc52 = term.parser.registerOscHandler(52, (data) => {
+      const text = decodeOsc52(data);
+      if (text !== null) {
+        void navigator.clipboard?.writeText(text).catch(() => {});
+      }
+      return true;
+    });
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(host);
@@ -152,6 +161,7 @@ export function DevTerminal() {
       ro.disconnect();
       resizeSub.dispose();
       dataSub.dispose();
+      osc52.dispose();
       sock.close();
       term.dispose();
       wsRef.current = null;
