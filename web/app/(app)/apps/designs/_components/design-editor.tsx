@@ -21,7 +21,7 @@ import { DesignError, normalize, type Design, type DesignNode, type ImageNode } 
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Banner, Skeleton } from "@/components/ui/primitives";
-import { EditorLayout, type DockTab, type EditorHeader } from "@/components/shell/editor-layout";
+import { EditorLayout, type DockTab, type EditorHeader, type NativeEditorHeader } from "@/components/shell/editor-layout";
 import { floatPanel } from "@/components/domain/pickers";
 import type { DockState } from "@/lib/editor-layout";
 import { tokensChanged } from "@/lib/designs/tokens";
@@ -29,7 +29,14 @@ import { PersonaAvatar, personaLook } from "@/app/(app)/chat/_components/persona
 import { Conversation } from "@/app/(app)/chat/_components/conversation";
 import { DesignCanvas, fitCamera, zoomAt, type Camera, type Tool } from "./design-canvas";
 import { ReviewOverlay, ReviewPanel, ReviewPill, stepChange, suggestionPages, useReview, type ReviewMode } from "./design-review";
-import { ExportMenu } from "./export-menu";
+import { ExportMenu, useDesignExport } from "./export-menu";
+import { NativeRenameDialog } from "@/components/shell/native-rename-dialog";
+import { useNativeLayers } from "./native-layers";
+import { toast } from "@/lib/toast";
+import { useIsNativeShell } from "@/lib/native-shell/hooks";
+import { buildDesignActions, buildDesignTitleMenu, type ExportScopeName } from "@/lib/native-shell/models/design-editor";
+import { navAvatar, pageOrigin } from "@/lib/native-shell/models/common";
+import { frameFor } from "@/lib/designs/export";
 import { Inspector } from "./inspector";
 import { PrototypePanel } from "./prototype-panel";
 import { InspectPanel, TokensSyncBadge } from "./library-panels";
@@ -701,6 +708,72 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
     if (v.trim() && v.trim() !== title) rename.mutate({ id, title: v.trim() });
   };
 
+  // The Share menu's state is the editor's, so the web popover and the Mac app's toolbar menu share it.
+  const exp = useDesignExport({ id, title, design, pageId: page?.id, selected, current: exportCurrent });
+  const native = useIsNativeShell();
+  const [nativeScope, setNativeScope] = useState<ExportScopeName>();
+  const expNotice = exp.notice;
+  const cancelExport = exp.cancel;
+  // The Mac app draws no Share menu in the page to show an export's progress beside, so it's a toast (with Cancel while it builds).
+  useEffect(() => {
+    if (!native || !expNotice) return;
+    toast({
+      id: "design-export",
+      title: expNotice.text,
+      tone: expNotice.tone === "error" ? "error" : expNotice.tone === "ok" ? "success" : "neutral",
+      ...(expNotice.tone === "busy" && expNotice.cancellable !== false ? { duration: 600000, action: { label: "Cancel", onClick: cancelExport } } : expNotice.tone === "busy" ? { duration: 600000 } : {}),
+      ...(expNotice.tone !== "busy" && expNotice.href ? { action: { label: "Open", onClick: () => router.push(expNotice.href!) } } : {}),
+    });
+  }, [native, expNotice, cancelExport, router]);
+  const nativeScopes = useMemo(() => {
+    if (!native || !design) return [];
+    const frame = frameFor(design, page?.id, selected);
+    return [
+      { id: "selection" as const, label: selected.length ? `Selection (${selected.length})` : "Selection", disabled: !selected.length },
+      { id: "frame" as const, label: frame ? `Frame: ${labelOf(frame.frame)}` : "Frame", disabled: !frame },
+      { id: "page" as const, label: `Page: ${page?.name ?? ""}` },
+      { id: "frames" as const, label: "All frames" },
+    ];
+  }, [native, design, page, selected]);
+  const chosenScope: ExportScopeName = nativeScope && nativeScopes.find((x) => x.id === nativeScope && !x.disabled) ? nativeScope : (nativeScopes.find((x) => !x.disabled && x.id !== "frames")?.id ?? "page");
+  const [renamingTitle, setRenamingTitle] = useState(false);
+  const nativeLayers = useNativeLayers({
+    design: shown,
+    page,
+    title,
+    selected,
+    onSelect: setSelected,
+    onPage: (pid) => {
+      setPageId(pid);
+      setSelected([]);
+      setEditing(undefined);
+    },
+    onEdit: apply,
+    readOnly,
+  });
+  const nativeHeader: NativeEditorHeader = {
+    title,
+    titleMenu: ref.data ? buildDesignTitleMenu({ duplicating: duplicate.isPending, rename: () => setRenamingTitle(true), duplicate: () => duplicate.mutate(id, { onSuccess: (d) => router.push(`/apps/designs/${d.id}`) }) }) : undefined,
+    actions: buildDesignActions({
+      save: doc ? { state: saveState.s, seq: doc.saved.seq } : undefined,
+      retry: () => void flush().catch(() => undefined),
+      presence: presence ? { label: `${persona} is editing`, avatar: navAvatar(look.name, look.color, look.avatar_url, pageOrigin()) } : undefined,
+      review: pending ? { count: pending.ops.length, label: "Review", run: startReview } : undefined,
+      canPresent: !!design,
+      present: () => void present(),
+      share: ref.data
+        ? {
+            scopes: nativeScopes,
+            scope: chosenScope,
+            busy: !design || exp.busy,
+            pick: setNativeScope,
+            download: (format, scale) => void exp.run("download", { format, scale, scope: chosenScope }),
+            toLibrary: (format, scale) => void exp.run("library", { format, scale, scope: chosenScope }),
+          }
+        : undefined,
+    }),
+  };
+
   const failed = fetchError || loadError ? (
     <div className="mx-auto w-full max-w-[720px] p-6">
       <Banner tone="blocked" title="Couldn’t open this design" actions={<Button onClick={() => router.push("/knowledge")}>Back to Knowledge</Button>}>
@@ -956,7 +1029,7 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
           <Button key="present" variant="secondary" disabled={!design} onClick={() => void present()} title="Play the prototype from the selected frame">
             ▶ Present
           </Button>,
-          <ExportMenu key="share" trigger="Share" id={id} title={title} design={design} pageId={page?.id} selected={selected} current={exportCurrent} />,
+          <ExportMenu key="share" trigger="Share" x={exp} design={design} />,
         ]
       : undefined,
     overflow: ref.data && (
@@ -1061,9 +1134,12 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
   });
 
   return (
+    <>
     <EditorLayout
       app="designs"
       header={header}
+      nativeHeader={nativeHeader}
+      nativeLeft={nativeLayers.nativeLeft}
       show={{ tab: "review", n: showReview }}
       onDockChange={setDock}
       left={
@@ -1087,9 +1163,26 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
           !failed && loading
         )
       }
-      main={failed ?? canvas ?? <div aria-busy="true" className="flex min-h-0 flex-1 p-3"><Skeleton className="flex-1" /></div>}
+      main={
+        <>
+          {/* The header's ⋯ menu (tokens out of step with tokens.css) isn't drawn in the Mac app, so its badge sits above the canvas. */}
+          {native && design && tokensChanged(design) && (
+            <div className="flex flex-none items-center gap-2 border-b border-border-subtle bg-surface px-3 py-1.5">
+              <TokensSyncBadge design={design} readOnly={readOnly} onEdit={apply} />
+            </div>
+          )}
+          {failed ?? canvas ?? <div aria-busy="true" className="flex min-h-0 flex-1 p-3"><Skeleton className="flex-1" /></div>}
+        </>
+      }
       dock={dockTabs}
     />
+    {nativeLayers.dialog}
+    <NativeRenameDialog
+      request={renamingTitle ? { heading: "Rename design", label: "Design title", value: title, maxLength: 200 } : null}
+      onClose={() => setRenamingTitle(false)}
+      onSubmit={(name) => rename.mutate({ id, title: name })}
+    />
+    </>
   );
 }
 

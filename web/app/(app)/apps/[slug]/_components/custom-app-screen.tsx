@@ -6,7 +6,8 @@ import { Conversation, type ConversationContext, type DockWelcome } from "@/app/
 import { PersonaAvatar, personaLook, useDockPersona } from "@/app/(app)/chat/_components/persona";
 import { DockChatSwitcher, type DockChatSection } from "@/components/domain/dock-chat-switcher";
 import { DockContext, dockContextChip } from "@/components/domain/dock-context";
-import { EditorLayout, type DockTab, type EditorHeader } from "@/components/shell/editor-layout";
+import { buildCustomAppActions, buildCustomAppNav, parseViewId } from "@/lib/native-shell/models/custom-app";
+import { EditorLayout, type DockTab, type EditorHeader, type NativeEditorHeader } from "@/components/shell/editor-layout";
 import { isTyping } from "@/components/shell/shortcuts";
 import { Content, TopBar } from "@/components/shell/topbar";
 import { Button, ButtonLink, IconButton } from "@/components/ui/button";
@@ -485,6 +486,11 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
     welcome: appWelcome,
   };
 
+  const reload = () => {
+    setRuntimeErrorState(null);
+    setPendingApprovals([]);
+    setReloadKey((k) => k + 1);
+  };
   const header: EditorHeader = {
     back: { href: "/apps", label: "Custom Apps" },
     name: app.name,
@@ -502,17 +508,31 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
         key="reload"
         icon="refresh"
         label="Reload app"
-        onClick={() => {
-          setRuntimeErrorState(null);
-          setPendingApprovals([]);
-          setReloadKey((k) => k + 1);
-        }}
+        onClick={reload}
       />,
       <Button key="perms" variant="outline" icon="shield" onClick={() => openDockTab("permissions")}>
         Permissions
       </Button>,
     ],
   };
+
+  const nativeHeader: NativeEditorHeader = {
+    title: app.name,
+    subtitle: `v${app.current_seq}`,
+    actions: buildCustomAppActions({ reload, permissions: () => openDockTab("permissions") }),
+  };
+  const nativeLeft =
+    navItems.length > 0
+      ? {
+          model: buildCustomAppNav({ title: app.name, items: navItems.map((n) => ({ id: n.id, label: n.label, icon: n.icon ? resolveAppIcon(n.icon) : undefined })), currentId: currentNav }),
+          onCommand: (cmd: { type: string; itemId?: string }) => {
+            const id = cmd.type === "nav.activate" && cmd.itemId ? parseViewId(cmd.itemId) : null;
+            if (!id) return;
+            setActiveNav(id);
+            postToFrame({ type: "vesper:nav-select", id });
+          },
+        }
+      : undefined;
 
   const left =
     navItems.length > 0 ? (
@@ -678,6 +698,8 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
     <EditorLayout
       app={`custom-app:${app.slug}`}
       header={header}
+      nativeHeader={nativeHeader}
+      nativeLeft={nativeLeft}
       left={left}
       main={main}
       dock={dockTabs}

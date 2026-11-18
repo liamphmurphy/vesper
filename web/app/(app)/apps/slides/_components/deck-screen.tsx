@@ -16,18 +16,24 @@ import { layoutSlide } from "@/lib/slides/layout";
 import { assetHref, useSlideFonts } from "@/lib/slides/render";
 import { mergeDecks, same } from "@/lib/slides/review";
 import { outlinePrompt } from "@/lib/slides/outline";
-import { H, THEMES, W, encodeDeck, isImageSlot, type Theme, newId, newSlide, parseDeck, relayout, textOf, type Deck, type Element, type Layout, type Paragraph, type Slide } from "@/lib/slides/schema";
+import { H, THEMES, W, encodeDeck, isImageSlot, slideTitle, type Theme, newId, newSlide, parseDeck, relayout, textOf, type Deck, type Element, type Layout, type Paragraph, type Slide } from "@/lib/slides/schema";
 import { applyStyle } from "@/lib/slides/styles";
 import { fit, flatten, groupElements, isGroup, mapDeep, removeDeep, scopeElements, ungroupElements, withFrame } from "@/lib/slides/group";
 import { Button } from "@/components/ui/button";
 import { Banner, Skeleton } from "@/components/ui/primitives";
-import { EditorLayout, type DockTab, type EditorHeader } from "@/components/shell/editor-layout";
+import { EditorLayout, type DockTab, type EditorHeader, type NativeEditorHeader } from "@/components/shell/editor-layout";
 import type { DockState } from "@/lib/editor-layout";
 import { useCompact } from "@/lib/viewport";
 import { Conversation } from "@/app/(app)/chat/_components/conversation";
 import { PersonaAvatar, personaLook } from "@/app/(app)/chat/_components/persona";
 import { DeckReview } from "./deck-review";
-import { ExportMenu } from "./export-menu";
+import { ExportMenu, PreflightDialog, useDeckExport } from "./export-menu";
+import { toast } from "@/lib/toast";
+import { useIsNativeShell } from "@/lib/native-shell/hooks";
+import { buildDeckActions, buildDeckNav, parseDeckCommand } from "@/lib/native-shell/models/deck-editor";
+import { navAvatar, pageOrigin } from "@/lib/native-shell/models/common";
+import { presenceLabel } from "@/lib/native-shell/models/editor-header";
+import { LAYOUTS } from "@/lib/slides/schema";
 import { SlideCanvas } from "./slide-canvas";
 import type { TextEditorHandle } from "./text-editor";
 import { ThemeEditor, type ThemeEditTarget } from "./theme-editor";
@@ -765,6 +771,21 @@ export function DeckScreen({ id }: { id: string }) {
   const look = personaLook(chat?.speaker ?? chat?.persona);
   const changeCount = changedSlides?.size ?? 0;
 
+  const exp = useDeckExport({ deckId: id, title, current: flush, assetUrl });
+  const native = useIsNativeShell();
+  // The Mac app draws no Share menu in the page to show an export's progress beside, so it's a toast (with Cancel while it builds).
+  const expNotice = exp.notice;
+  const cancelExport = exp.cancel;
+  useEffect(() => {
+    if (!native || !expNotice) return;
+    toast({
+      id: "deck-export",
+      title: expNotice.text,
+      tone: expNotice.tone === "error" ? "error" : expNotice.tone === "ok" ? "success" : "neutral",
+      ...(expNotice.tone === "busy" ? { duration: 600000, action: { label: "Cancel", onClick: cancelExport } } : {}),
+    });
+  }, [native, expNotice, cancelExport]);
+
   const saveBad = saveState.s === "error" || saveState.s === "conflict";
   const header: EditorHeader = {
     back: { href: "/knowledge", label: "Knowledge" },
@@ -792,24 +813,71 @@ export function DeckScreen({ id }: { id: string }) {
           <Button key="present" variant="secondary" onClick={() => void present()} disabled={!deck} hint="⌘↵">
             ▶ Present
           </Button>,
-          deck ? <ExportMenu key="share" deckId={id} title={title} current={flush} assetUrl={assetUrl} fontsReady={fonts} /> : undefined,
+          deck ? <ExportMenu key="share" exp={exp} /> : undefined,
         ]
       : undefined,
   };
+
+  const look2 = look;
+  const nativeHeader: NativeEditorHeader = {
+    title,
+    actions: buildDeckActions({
+      save: ref.data && c ? { state: saveState.s, seq: savedSeq || c.seq } : undefined,
+      retry: () => void flush().catch(() => undefined),
+      presence: ref.data ? { label: presenceLabel(persona, live, reviewing), avatar: navAvatar(look2.name, look2.color, look2.avatar_url, pageOrigin()) } : undefined,
+      canPresent: !!deck,
+      present: () => void present(),
+      share: deck
+        ? {
+            busy: expNotice?.tone === "busy",
+            pdf: () => void exp.start("pdf")(),
+            pptx: () => void exp.start("pptx")(),
+            pdfToLibrary: () => void exp.start("pdf", "library")(),
+            pptxToLibrary: () => void exp.start("pptx", "library")(),
+          }
+        : undefined,
+    }),
+  };
+  const shownDeck = reviewing && headDeck ? headDeck : deck;
+  const selectSlide = (sid: string) => {
+    setSlideId(sid);
+    setSelected([]);
+    setEditing(undefined);
+    if (reviewing && changedSlides?.has(sid)) {
+      setShowReview((n) => n + 1);
+      requestAnimationFrame(() => document.querySelector(`[data-change-slide="${CSS.escape(sid)}"]`)?.scrollIntoView({ block: "nearest" }));
+    }
+  };
+  // The slide column as the sidebar's rows (select, add with a layout, duplicate, delete, move up and down).
+  const nativeLeft = shownDeck && slide
+    ? {
+        model: buildDeckNav({
+          slides: shownDeck.slides.map((s) => ({ id: s.id, title: slideTitle(s), hidden: s.hidden })),
+          currentId: slide.id,
+          layouts: LAYOUTS,
+          overflowing: overflowingSlides,
+          changed: changedSlides,
+          persona,
+          readOnly,
+        }),
+        onCommand: (cmd: Parameters<typeof parseDeckCommand>[0]) => {
+          const c2 = parseDeckCommand(cmd, shownDeck.slides);
+          if (!c2) return;
+          if (c2.type === "select") selectSlide(c2.id);
+          else if (readOnly) return;
+          else if (c2.type === "add") addSlide(c2.layout as Layout | undefined);
+          else if (c2.type === "move") moveSlide(c2.id, c2.to);
+          else if (c2.type === "duplicate") duplicateSlide(c2.id);
+          else removeSlide(c2.id);
+        },
+      }
+    : undefined;
 
   const thumbnails = deck && slide && (
     <Thumbnails
       deck={reviewing && headDeck ? headDeck : deck}
       current={slide.id}
-      onSelect={(sid) => {
-        setSlideId(sid);
-        setSelected([]);
-        setEditing(undefined);
-        if (reviewing && changedSlides?.has(sid)) {
-          setShowReview((n) => n + 1);
-          requestAnimationFrame(() => document.querySelector(`[data-change-slide="${CSS.escape(sid)}"]`)?.scrollIntoView({ block: "nearest" }));
-        }
-      }}
+      onSelect={selectSlide}
       onMove={moveSlide}
       onDuplicate={duplicateSlide}
       onRemove={removeSlide}
@@ -1012,14 +1080,19 @@ export function DeckScreen({ id }: { id: string }) {
     });
 
   return (
+    <>
     <EditorLayout
       app="slides"
       header={header}
+      nativeHeader={nativeHeader}
+      nativeLeft={nativeLeft}
       show={{ tab: "review", n: showReview }}
       onDockChange={setDock}
       left={!compact && !loadError ? thumbnails || <div aria-busy="true" className="flex flex-col gap-3 p-3">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="aspect-video w-full" />)}</div> : undefined}
       main={main}
       dock={dockTabs}
     />
+    <PreflightDialog exp={exp} assetUrl={assetUrl} fontsReady={fonts} />
+    </>
   );
 }

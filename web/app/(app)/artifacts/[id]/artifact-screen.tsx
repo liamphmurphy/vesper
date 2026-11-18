@@ -22,7 +22,9 @@ import { ReviewChip } from "@/components/domain/mockup";
 import { MockupEditor } from "./mockup-editor";
 import { MockupReviewBanner, MockupViewer } from "./mockup-parts";
 import { wikiHref } from "@/lib/wikilinks";
-import { StartChatButton } from "@/components/domain/start-chat";
+import { StartChatButton, useStartChat } from "@/components/domain/start-chat";
+import { toast } from "@/lib/toast";
+import { buildArtifactActions } from "@/lib/native-shell/models/mockup-editor";
 import { TopBar } from "@/components/shell/topbar";
 
 function FileView({ a, versionId }: { a: Artifact; versionId: string }) {
@@ -90,6 +92,7 @@ export function ArtifactScreen({ id }: { id: string }) {
   const isMockup = a?.type === "mockup";
   const editing = isMockup && search.get("edit") === "1";
   const setEditing = (on: boolean) => router.push(on ? `/artifacts/${id}?edit=1` : `/artifacts/${id}`);
+  const chat = useStartChat({ attach: { kind: a?.type === "note" ? "page" : "artifact", id: id }, title: a ? artifactTitle(a) : "", project: a?.project?.key });
 
   // Wiki pages live at /wiki/<path>; this screen still serves their full
   // version history (?versions=1).
@@ -120,10 +123,32 @@ export function ArtifactScreen({ id }: { id: string }) {
   }
 
   const body = isOld ? old.data : a?.body_md;
+  // The Mac app's toolbar takes these; there the page draws no buttons (and so no "no harness" note, which becomes the toast).
+  const nativeActions =
+    a && viewing && !editing
+      ? buildArtifactActions({
+          isMockup,
+          canExportPdf: !isMockup && viewing.content.kind === "markdown",
+          review: () => router.push(`/artifacts/${a.id}/review${isOld ? `?version=${viewing.id}` : ""}`),
+          edit: () => setEditing(true),
+          startChat: {
+            disabled: chat.create.isPending,
+            run: () =>
+              chat.noHarness
+                ? toast({ title: "No harness is available", description: "Add a secret in Settings to start a chat.", tone: "error", action: { label: "Settings", onClick: () => router.push("/settings#secrets") } })
+                : chat.start(),
+          },
+          download: () => window.location.assign(contentUrl(a.id, viewing.id, true)),
+          exportPdf: () => window.open(printHref(a.id, isOld ? viewing.id : null), "_blank"),
+          newVersion: () => setVersioning(true),
+        })
+      : undefined;
 
   return (
     <>
       <TopBar
+        nativeActions={nativeActions}
+        nativeTitle={a && editing ? { title: artifactTitle(a), subtitle: "Editing" } : undefined}
         crumbs={
           a
             ? [

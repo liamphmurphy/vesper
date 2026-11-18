@@ -13,6 +13,8 @@ import { MockupCanvas, useSourceHistory } from "@/components/domain/mockup-canva
 import { ZoomControl } from "./mockup-parts";
 import { confirmAction } from "@/components/ui/confirm";
 import { addLeaveGuard } from "@/lib/leave-guard";
+import { useNativeActions } from "@/lib/native-shell/use-native-actions";
+import { buildMockupEditActions } from "@/lib/native-shell/models/mockup-editor";
 
 type Mode = "visual" | "source" | "split";
 const MODES = [
@@ -96,6 +98,19 @@ export function MockupEditor({ a, onDone }: { a: Artifact; onDone: () => void })
     onDone();
   }
 
+  // In the Mac app the mode switch and Cancel / Save are in the window's toolbar; the page keeps only the note field.
+  const inToolbar = useNativeActions(
+    buildMockupEditActions({
+      mode,
+      modes: MODES,
+      setMode,
+      canSave,
+      cancel: () => void cancel(),
+      saveVersion: () => void save(false),
+      saveAndApprove: () => void save(true),
+    }),
+  );
+
   const canvas = (side: boolean) => (
     <div
       className="flex min-w-0 flex-1 flex-col"
@@ -159,7 +174,7 @@ export function MockupEditor({ a, onDone }: { a: Artifact; onDone: () => void })
             <TextInput id="mockup-note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Optional note for this version" />
           </Field>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        {!inToolbar && <div className="flex flex-wrap items-center gap-2">
           <Button variant="ghost" onClick={cancel}>
             Cancel
           </Button>
@@ -169,16 +184,18 @@ export function MockupEditor({ a, onDone }: { a: Artifact; onDone: () => void })
           <Button variant="approve" icon="check" disabled={!canSave} onClick={() => save(true)}>
             Save &amp; approve
           </Button>
-        </div>
+        </div>}
       </div>
       {(error || problem) && (
         <p role="alert" className="border-b border-border-subtle px-6 py-2 text-12 text-pill-blocked-fg">
           {error ?? problem}
         </p>
       )}
-      <div className="flex items-center justify-between gap-2 px-6 pt-3">
-        <Segmented small label="Editor mode" value={mode} onChange={setMode} options={MODES} />
-      </div>
+      {!inToolbar && (
+        <div className="flex items-center justify-between gap-2 px-6 pt-3">
+          <Segmented small label="Editor mode" value={mode} onChange={setMode} options={MODES} />
+        </div>
+      )}
       {mode === "visual" && (
         <div className="flex min-h-[480px] flex-1 p-4 lg:p-6">{canvas(true)}</div>
       )}

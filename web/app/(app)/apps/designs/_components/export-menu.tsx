@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Popover } from "radix-ui";
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { downloadFile } from "@/lib/api/docs-hooks";
 import { useSaveDesignExport } from "@/lib/api/designs-hooks";
 import { cx } from "@/lib/cx";
@@ -13,7 +13,7 @@ import type { Design } from "@/lib/designs/schema";
 import { floatPanel } from "@/components/domain/pickers";
 import { Button } from "@/components/ui/button";
 
-type Notice = { tone: "ok" | "error" | "busy"; text: string; href?: string; cancellable?: boolean };
+export type DesignExportNotice = { tone: "ok" | "error" | "busy"; text: string; href?: string; cancellable?: boolean };
 type File1 = { name: string; ext: ExportFormat; blob: Blob };
 
 const FORMATS: { id: ExportFormat; label: string; detail: string }[] = [
@@ -68,14 +68,16 @@ async function renderError(r: Response): Promise<string> {
  * built in full before anything is downloaded or uploaded, so a failure
  * leaves nothing behind.
  */
-/** Export as a popover; `trigger` renames its button, e.g. the editor header's Share ▾. */
-export function ExportMenu({ id, title, design, pageId, selected, current, trigger }: { trigger?: string; id: string; title: string; design?: Design; pageId?: string; selected: string[]; current: () => Promise<Design> }) {
+/** What an export is: the web popover's choices, or the Mac app's menu entry picked directly. */
+export type ExportChoice = { format: ExportFormat; scale: number; scope: ExportScope };
+
+export function useDesignExport({ id, title, design, pageId, selected, current }: { id: string; title: string; design?: Design; pageId?: string; selected: string[]; current: () => Promise<Design> }) {
   const save = useSaveDesignExport(id);
   const [open, setOpen] = useState(false);
   const [format, setFormat] = useState<ExportFormat>("png");
   const [scale, setScale] = useState(2);
   const [picked, setScope] = useState<ExportScope>();
-  const [notice, setNotice] = useState<Notice>();
+  const [notice, setNotice] = useState<DesignExportNotice>();
   const abort = useRef<AbortController | null>(null);
   const busy = notice?.tone === "busy";
 
@@ -100,12 +102,12 @@ export function ExportMenu({ id, title, design, pageId, selected, current, trigg
   // The Library takes one file per save, so nothing is ever half saved.
   const oneFile = format === "pdf" || count === 1;
 
-  const say = (n: Notice) => {
+  const say = (n: DesignExportNotice) => {
     setNotice(n);
     if (n.tone !== "busy") setTimeout(() => setNotice((x) => (x === n ? undefined : x)), n.tone === "error" ? 10000 : 6000);
   };
 
-  async function build(signal: AbortSignal): Promise<File1[]> {
+  async function build(signal: AbortSignal, { format, scale, scope }: ExportChoice): Promise<File1[]> {
     const d = await current();
     const items = exportItems(d, scope, { page: pageId, selected });
     if (!items.length) throw new ExportError("there’s nothing to export there");
@@ -140,14 +142,15 @@ export function ExportMenu({ id, title, design, pageId, selected, current, trigg
     return [{ name, ext: "pdf", blob: new Blob([pdf as BlobPart], { type: MIME.pdf }) }];
   }
 
-  async function run(to: "download" | "library") {
+  async function run(to: "download" | "library", pick?: Partial<ExportChoice>) {
+    const choice: ExportChoice = { format, scale, scope, ...pick };
     setOpen(false);
     const ctl = new AbortController();
     abort.current = ctl;
-    const what = format.toUpperCase();
+    const what = choice.format.toUpperCase();
     say({ tone: "busy", text: `Building ${what}…` });
     try {
-      const files = await build(ctl.signal);
+      const files = await build(ctl.signal, choice);
       if (ctl.signal.aborted) return say({ tone: "ok", text: "Export cancelled" });
       if (to === "library") {
         if (files.length !== 1) throw new ExportError("the Library takes one file at a time: export one item, or a PDF");
@@ -176,13 +179,23 @@ export function ExportMenu({ id, title, design, pageId, selected, current, trigg
     }
   }
 
+  const cancel = useCallback(() => abort.current?.abort(), []);
+  return { save, open, setOpen, format, setFormat, scale, setScale, setScope, notice, busy, scopes, scope, count, oneFile, run, cancel };
+}
+
+export type DesignExport = ReturnType<typeof useDesignExport>;
+
+/** Export as a popover over `x`; `trigger` renames its button, e.g. the editor header's Share ▾. */
+export function ExportMenu({ x, design, trigger }: { x: DesignExport; design?: Design; trigger?: string }) {
+  const { save, open, setOpen, format, setFormat, scale, setScale, setScope, notice, busy, scopes, scope, count, oneFile, run, cancel } = x;
+
   return (
     <div className="flex items-center gap-2">
       {notice && (
         <span role={notice.tone === "error" ? "alert" : "status"} data-testid="design-export-notice" className={cx("max-w-[420px] truncate text-12", notice.tone === "error" ? "text-pill-blocked-fg" : "text-fg-secondary")} title={notice.text}>
           {notice.text}
           {notice.tone === "busy" && notice.cancellable !== false && (
-            <button type="button" className="ml-2 text-accent hover:underline" onClick={() => abort.current?.abort()}>
+            <button type="button" className="ml-2 text-accent hover:underline" onClick={cancel}>
               Cancel
             </button>
           )}
