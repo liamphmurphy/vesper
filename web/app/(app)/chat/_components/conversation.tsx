@@ -1270,6 +1270,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
           role="tabpanel"
           aria-label="Chat"
           hidden={view !== "chat"}
+          data-chat-scroller=""
           className="relative flex-1 overflow-y-auto px-6 py-5"
           // Only the person's input lets go of the end. A scroll event alone can't tell: the one for our
           // own scroll, or for the browser clamping it as content shrinks, may land after the content grew
@@ -1413,7 +1414,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
             </>
           )}
         </div>
-        <div className="mx-auto flex w-full max-w-[816px] flex-col gap-2 px-6 pb-3">
+        <div data-chat-dock="" className="mx-auto flex w-full max-w-[816px] flex-col gap-2 px-6 pb-3">
           {(() => {
             // Everything above the composer goes through one slot, ranked by STATUS_PRIORITY (lib/chat-status-slot).
             // The trays stay mounted while empty (present: false) so they see their first item arrive.

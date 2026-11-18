@@ -1173,7 +1173,7 @@ export function CommandMenu() {
   );
 
   const chipRow = root && (
-    <div className="flex flex-none items-center gap-2 border-b border-border px-4 py-2.5 max-md:overflow-x-auto max-md:[scrollbar-width:none]">
+    <div data-palette-chips="" className="flex flex-none items-center gap-2 border-b border-border px-4 py-2.5 max-md:overflow-x-auto max-md:[scrollbar-width:none]">
       {knowledgeMode ? (
         <>
           <div role="toolbar" aria-label="Knowledge kinds" className="flex items-center gap-2">
@@ -1326,8 +1326,9 @@ export function CommandMenu() {
   return (
     <Dialog.Root open={open} onOpenChange={close}>
       <Dialog.Portal>
-        <Dialog.Overlay className="motion-scrim fixed inset-0 z-50 bg-scrim backdrop-blur-[3px]" />
+        <Dialog.Overlay data-command-scrim="" className="motion-scrim fixed inset-0 z-50 bg-scrim backdrop-blur-[3px]" />
         <Dialog.Content
+          data-command-palette=""
           className="motion-dialog-fast fixed left-1/2 top-[12vh] z-50 flex h-[min(560px,calc(100dvh-12vh-24px))] w-[880px] max-w-[calc(100vw-24px)] -translate-x-1/2 flex-col overflow-hidden rounded-2xl border border-border-float bg-surface-raised shadow-2xl max-md:inset-0 max-md:h-dvh max-md:w-full max-md:max-w-none max-md:translate-x-0 max-md:rounded-none max-md:border-0 max-md:px-safe max-md:pt-safe max-md:pb-safe"
           aria-describedby={undefined}
           onOpenAutoFocus={(e) => {
@@ -1347,7 +1348,7 @@ export function CommandMenu() {
           {/* A hairline of the theme's accent along the top edge: the palette's only ornament. */}
           <div aria-hidden className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-accent to-transparent opacity-70" />
           <Dialog.Title className="sr-only">{dialogTitle}</Dialog.Title>
-          <div className="flex h-14 flex-none items-center gap-3 border-b border-border px-5 max-md:h-auto max-md:border-0 max-md:px-3 max-md:pb-1 max-md:pt-3">
+          <div data-palette-input-row="" className="flex h-14 flex-none items-center gap-3 border-b border-border px-5 max-md:h-auto max-md:border-0 max-md:px-3 max-md:pb-1 max-md:pt-3">
             <div className="flex min-w-0 flex-1 items-center gap-3 max-md:h-11 max-md:rounded-xl max-md:bg-surface-sunken max-md:px-3">
               <Icon name="search" size={16} className="flex-none text-fg-tertiary" />
               {mode === "projects" && (
@@ -1489,6 +1490,7 @@ export function CommandMenu() {
                       {s.label && (
                         <div
                           id={labelId}
+                          data-palette-section=""
                           role="presentation"
                           className={cx("px-3 pb-1.5 pt-3 text-11 font-semibold uppercase tracking-wide", s.tone === "human" ? "text-state-human" : "text-fg-tertiary")}
                         >
@@ -1517,7 +1519,7 @@ export function CommandMenu() {
               </div>
             )}
           </div>
-          <div className="flex h-10 flex-none items-center gap-x-5 overflow-hidden border-t border-border bg-surface-sunken px-5 text-12 text-fg-tertiary max-md:hidden">
+          <div data-palette-hints="" className="flex h-10 flex-none items-center gap-x-5 overflow-hidden border-t border-border bg-surface-sunken px-5 text-12 text-fg-tertiary max-md:hidden">
             {hints.map(([keys, what]) => (
               <span key={what} className="flex flex-none items-center gap-1.5 whitespace-nowrap">
                 <span className="text-fg-secondary">{keys}</span>
