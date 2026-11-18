@@ -1,14 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { ReactNode } from "react";
 import { cx } from "@/lib/cx";
 import { useCompact } from "@/lib/viewport";
 import { TICKETS_LAYOUTS, TICKETS_LAYOUT_LABEL, layoutSwitchHref, type TicketsLayout } from "@/lib/tickets-layout";
 import { ButtonLink } from "@/components/ui/button";
-import { ProjectPicker } from "@/components/shell/project-picker";
+import { ProjectPicker, useProjectPickerNative } from "@/components/shell/project-picker";
 import { TopBar, type Crumb } from "@/components/shell/topbar";
+import { useIsNativeShell } from "@/lib/native-shell/hooks";
+import { useNativeToolbar } from "@/lib/native-shell/use-native-toolbar";
+import { buildTicketsToolbar, parseTicketsToolbarAction } from "@/lib/native-shell/models/tickets-toolbar";
+import { PROJECT_PICKER_ACTION } from "@/lib/native-shell/models/project-picker";
+import type { ToolbarItem } from "@/lib/native-shell/protocol";
+import { useNativeTitle } from "./native-title";
 
 function LayoutSwitch({ layout, current, compact }: { layout: TicketsLayout; current: URLSearchParams; compact: boolean }) {
   return (
@@ -31,19 +37,63 @@ function LayoutSwitch({ layout, current, compact }: { layout: TicketsLayout; cur
   );
 }
 
+/** A layout's primary action: New ticket, or Open the space for an archived one. */
+export type TicketsAction = { label: string; href: string; primary: boolean };
+
 /**
  * Every Tickets layout's one top bar on wide screens: back and forward, the project as a pill in the
  * breadcrumb, then the rest of the crumbs; the layout's primary action and List · Board · Epics on
  * the right. The same bar on all three layouts, so switching layouts doesn't move the header.
+ *
+ * In the Mac app it draws no row: the last crumb is the window's title (with `subtitle`), the
+ * project, the layout switch and the action are toolbar items, and `extra` (the screen's own
+ * items, with `onExtra` for their presses) sit between the project and the layout switch.
  */
-export function TicketsTopBar({ layout, crumbs = [{ label: "Tickets" }], action }: { layout: TicketsLayout; crumbs?: Crumb[]; action?: ReactNode }) {
+export function TicketsTopBar({ layout, crumbs = [{ label: "Tickets" }], action, subtitle, extra, onExtra }: {
+  layout: TicketsLayout;
+  crumbs?: Crumb[];
+  action?: TicketsAction;
+  subtitle?: string;
+  extra?: ToolbarItem[];
+  onExtra?: (itemId: string, menuItemId?: string) => void;
+}) {
   const params = useSearchParams();
+  const router = useRouter();
+  const native = useIsNativeShell();
   const current = new URLSearchParams(params.toString());
+  // The board shows one project at a time, so it doesn't offer All projects.
+  const picker = useProjectPickerNative(layout !== "board");
+  const last = crumbs.at(-1)?.label;
+  useNativeTitle(typeof last === "string" ? last : "Tickets", subtitle);
+  useNativeToolbar({
+    items: buildTicketsToolbar({
+      space: { label: picker.action.label, menu: picker.action.menu ?? [] },
+      layout,
+      action: action && { label: action.label, primary: action.primary },
+      extra,
+    }),
+    onAction: (itemId, menuItemId) => {
+      const a = parseTicketsToolbarAction(itemId, menuItemId);
+      if (!a) return onExtra?.(itemId, menuItemId);
+      if (a.type === "space") picker.handle({ v: 1, type: "nav.action", navigatorId: "", actionId: PROJECT_PICKER_ACTION, menuItemId: a.menuItemId });
+      else if (a.type === "layout") router.push(layoutSwitchHref(a.layout, current));
+      else if (action) router.push(action.href);
+    },
+  });
+  if (native) return null;
   return (
     <TopBar
-      // The board shows one project at a time, so it doesn't offer All projects.
       crumbs={[{ label: <ProjectPicker crumb allowAll={layout !== "board"} /> }, ...crumbs]}
-      actions={<>{action}<LayoutSwitch layout={layout} current={current} compact={false} /></>}
+      actions={
+        <>
+          {action && (
+            <ButtonLink href={action.href} variant={action.primary ? "primary" : "outline"} icon={action.primary ? "plus" : undefined} hint={action.primary ? "C" : undefined}>
+              {action.label}
+            </ButtonLink>
+          )}
+          <LayoutSwitch layout={layout} current={current} compact={false} />
+        </>
+      }
     />
   );
 }

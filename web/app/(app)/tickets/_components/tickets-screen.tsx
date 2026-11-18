@@ -21,6 +21,7 @@ import { computeSidebarEpics, computeTaskQueueCounts } from "@/lib/work-overview
 import {
   GROUPS,
   GROUP_NAME,
+  viewQuery,
   applyLocalFilters,
   moveFocus,
   parseGroup,
@@ -36,10 +37,15 @@ import { AgentAvatar, UnassignedAvatar } from "@/components/domain/avatars";
 import { PriorityGlyph } from "@/components/domain/glyphs";
 import { PRIORITY_NAME } from "@/components/domain/meta";
 import { floatPanel } from "@/components/domain/pickers";
-import { SavedViewHeader, SavedViewTabs } from "@/components/domain/saved-views";
+import { SavedViewHeader, SavedViewNativeDialogs, SavedViewTabs, savedViewSubtitle, useSavedViewsNav, useSavedViewsUi } from "@/components/domain/saved-views";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { rememberProject, ProjectScopeState, projectCrumbs, useProjectScope } from "@/components/shell/project-scope";
 import { ticketsHref } from "@/lib/tickets-layout";
+import type { NativeCommand } from "@/lib/native-shell/protocol";
+import { useIsNativeShell } from "@/lib/native-shell/hooks";
+import { buildTicketsNavModel, parseTicketsRow, type TicketQueue } from "@/lib/native-shell/models/tickets";
+import { buildTicketsListExtras, parseTicketsListAction } from "@/lib/native-shell/models/tickets-toolbar";
+import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
 import {
   WorkNavHeader,
   WorkSectionLabel,
@@ -206,6 +212,9 @@ export function TicketsScreen() {
   const savedViews = useSavedViews();
   const [dispatchKeys, setDispatchKeys] = useState<string[] | null>(null);
   const savedView = svId ? savedViews.data?.find((v) => v.id === svId) : undefined;
+  // In the Mac app the header, filters and saved views are the toolbar and the sidebar (below).
+  const native = useIsNativeShell();
+  const svUi = useSavedViewsUi();
 
   // Debounced box → URL, so views are shareable. Tokens that match nothing aren't applied.
   useEffect(() => {
@@ -237,6 +246,42 @@ export function TicketsScreen() {
   }
   function setParam(k: string, v: string | null) {
     replaceParams((next) => (v ? next.set(k, v) : next.delete(k)));
+  }
+  // The queues in the sidebar, as the web's rows and the native sidebar's both set them.
+  function selectQueue(queue: TicketQueue) {
+    replaceParams((next) => {
+      next.delete("sv");
+      if (queue === "needs_you" || queue === "in_progress") {
+        next.set("view", queue === "needs_you" ? "needs_human" : "active");
+        next.delete("ready");
+        next.delete("blocked");
+      } else if (queue === "ready") {
+        next.set("view", "all");
+        next.set("ready", "true");
+        next.delete("blocked");
+      } else if (queue === "blocked") {
+        next.set("view", "all");
+        next.set("blocked", "true");
+        next.delete("ready");
+      } else {
+        next.delete("view");
+        next.delete("ready");
+        next.delete("blocked");
+        next.delete("epic");
+      }
+    });
+  }
+  function toggleEpic(id: string) {
+    replaceParams((next) => {
+      if (epic === id) next.delete("epic");
+      else next.set("epic", id);
+      next.delete("sv");
+    });
+  }
+  function pickProject(v: string) {
+    const key = v || null;
+    if (!key) rememberProject(null);
+    router.push(ticketsHref("list", { ...(key ? { project: key } : {}), ...(view && view !== "all" ? { view } : {}) }));
   }
   const href = (v: TicketView) => {
     const next = new URLSearchParams(params);
@@ -385,6 +430,12 @@ export function TicketsScreen() {
       )}
     </div>
   );
+  const onlyChips = (
+    <>
+      {blockedOnly && <FilterChip label="Only" value="Blocked ×" onClick={() => setParam("blocked", null)} title="Clear blocked filter" />}
+      {unestimated && <FilterChip label="Only" value="Unestimated ×" onClick={() => setParam("unestimated", null)} title="Clear unestimated filter" />}
+    </>
+  );
   const filterControls = (
     <>
       <button type="button" aria-pressed={ready} className={cx(`${chipH} rounded-sm border border-border-strong px-2 text-12 hover:bg-hover`, ready && "bg-selected text-accent")} onClick={() => replaceParams((next) => { if (ready) next.delete("ready"); else { next.set("ready", "true"); next.set("view", "all"); } })}>Ready to dispatch</button>
@@ -398,8 +449,7 @@ export function TicketsScreen() {
           Start ready ({readyKeys.length})
         </Button>
       )}
-      {blockedOnly && <FilterChip label="Only" value="Blocked ×" onClick={() => setParam("blocked", null)} title="Clear blocked filter" />}
-      {unestimated && <FilterChip label="Only" value="Unestimated ×" onClick={() => setParam("unestimated", null)} title="Clear unestimated filter" />}
+      {onlyChips}
       <DropdownMenu.Root>
         <DropdownMenu.Trigger asChild>
           <button
@@ -453,10 +503,53 @@ export function TicketsScreen() {
     </div>
   );
 
+  // The native sidebar's version of the column below: the same state and handlers, driven by the shell's commands.
+  const savedNav = useSavedViewsNav({ ui: svUi, current: viewQuery(new URLSearchParams(params.toString())), project });
+  const activeQueue: TicketQueue | null = svId
+    ? null
+    : view === "needs_human"
+      ? "needs_you"
+      : view === "active"
+        ? "in_progress"
+        : ready
+          ? "ready"
+          : blockedOnly
+            ? "blocked"
+            : view === "all" && !epic
+              ? "all"
+              : null;
+  const nativeModel = buildTicketsNavModel({
+    header: {
+      project,
+      projects: boot.data?.projects,
+      agents: boot.data?.agents,
+      agent: assignee ?? "",
+      counts: { tickets: queueCounts.all || undefined, epics: sidebarEpics.length || undefined },
+      hideNewTicket: true,
+      search: { value: search, placeholder: "Filter tasks… epic: agent:" },
+    },
+    counts: { needs_you: queueCounts.needs_you, in_progress: queueCounts.in_progress, ready: queueCounts.ready, blocked: queueCounts.blocked, all: queueCounts.all },
+    queue: activeQueue,
+    epics: sidebarEpics,
+    epic,
+    views: savedNav.rows,
+    viewId: svId,
+  });
+  const nativeCommand = (cmd: NativeCommand) => {
+    if (handleWorkHeaderCommand(cmd, { project, push: (href) => router.push(href), onProject: pickProject, onAgent: (v) => setParam("assignee", v || null), onSearch: setSearch })) return;
+    if (savedNav.handle(cmd)) return;
+    if (cmd.type === "nav.activate") {
+      const row = parseTicketsRow(cmd.itemId);
+      if (row?.type === "queue") selectQueue(row.queue);
+      else if (row?.type === "epic") toggleEpic(row.id);
+    }
+  };
+
   return (
     <>
+      {native && <SavedViewNativeDialogs ui={svUi} />}
       {!compact && (
-        <NavigatorPortal>
+        <NavigatorPortal native={{ model: nativeModel, onCommand: nativeCommand }}>
           <nav aria-label="Work" className="work-nav">
             <WorkNavHeader
               active="tickets"
@@ -473,16 +566,7 @@ export function TicketsScreen() {
               projects={boot.data?.projects}
               agents={boot.data?.agents}
               project={project ?? ""}
-              onProjectChange={(v) => {
-                const key = v || null;
-                if (!key) rememberProject(null);
-                router.push(
-                  ticketsHref("list", {
-                    ...(key ? { project: key } : {}),
-                    ...(view && view !== "all" ? { view } : {}),
-                  }),
-                );
-              }}
+              onProjectChange={pickProject}
               agent={assignee ?? ""}
               onAgentChange={(v) => setParam("assignee", v || null)}
             />
@@ -495,42 +579,21 @@ export function TicketsScreen() {
                   active={!svId && view === "needs_human"}
                   dotClass="bg-state-human"
                   countTone="human"
-                  onClick={() =>
-                    replaceParams((next) => {
-                      next.set("view", "needs_human");
-                      next.delete("ready");
-                      next.delete("blocked");
-                      next.delete("sv");
-                    })
-                  }
+                  onClick={() => selectQueue("needs_you")}
                 />
                 <WorkSidebarFilterRow
                   label="In progress"
                   count={queueCounts.in_progress}
                   active={!svId && view === "active"}
                   dotClass="bg-state-done"
-                  onClick={() =>
-                    replaceParams((next) => {
-                      next.set("view", "active");
-                      next.delete("ready");
-                      next.delete("blocked");
-                      next.delete("sv");
-                    })
-                  }
+                  onClick={() => selectQueue("in_progress")}
                 />
                 <WorkSidebarFilterRow
                   label="Ready to dispatch"
                   count={queueCounts.ready}
                   active={!svId && ready}
                   dotClass="bg-accent"
-                  onClick={() =>
-                    replaceParams((next) => {
-                      next.set("view", "all");
-                      next.set("ready", "true");
-                      next.delete("blocked");
-                      next.delete("sv");
-                    })
-                  }
+                  onClick={() => selectQueue("ready")}
                 />
                 <WorkSidebarFilterRow
                   label="Blocked"
@@ -538,29 +601,14 @@ export function TicketsScreen() {
                   active={!svId && blockedOnly}
                   dotClass="bg-state-blocked"
                   countTone="blocked"
-                  onClick={() =>
-                    replaceParams((next) => {
-                      next.set("view", "all");
-                      next.set("blocked", "true");
-                      next.delete("ready");
-                      next.delete("sv");
-                    })
-                  }
+                  onClick={() => selectQueue("blocked")}
                 />
                 <WorkSidebarFilterRow
                   label="All tasks"
                   count={queueCounts.all}
                   active={!svId && view === "all" && !ready && !blockedOnly && !epic}
                   dotClass="bg-fg-tertiary/60"
-                  onClick={() =>
-                    replaceParams((next) => {
-                      next.delete("view");
-                      next.delete("ready");
-                      next.delete("blocked");
-                      next.delete("epic");
-                      next.delete("sv");
-                    })
-                  }
+                  onClick={() => selectQueue("all")}
                 />
               </div>
 
@@ -574,13 +622,7 @@ export function TicketsScreen() {
                         key={e.id}
                         type="button"
                         aria-current={active ? "true" : undefined}
-                        onClick={() =>
-                          replaceParams((next) => {
-                            if (active) next.delete("epic");
-                            else next.set("epic", e.id);
-                            next.delete("sv");
-                          })
-                        }
+                        onClick={() => toggleEpic(e.id)}
                         className={cx(
                           "flex h-[26px] w-full items-center gap-2 rounded-md px-2 text-left text-12 transition-colors",
                           active
@@ -612,7 +654,7 @@ export function TicketsScreen() {
                 </div>
               )}
 
-              <SavedViewTabs project={project} vertical />
+              <SavedViewTabs project={project} vertical ui={svUi} />
             </div>
           </nav>
         </NavigatorPortal>
@@ -621,9 +663,24 @@ export function TicketsScreen() {
         layout="list"
         // The project crumb is the bar's project pill.
         crumbs={proj ? crumbs.slice(1) : crumbs}
+        subtitle={savedView ? savedViewSubtitle(savedView, new URLSearchParams(params.toString())) : undefined}
         action={
-          proj?.archived ? <ButtonLink href={workSettingsHref(proj)} variant="outline">Open the space</ButtonLink> : <ButtonLink href={`/tickets/new${project ? `?project=${project}` : ""}`} variant="primary" icon="plus" hint="C">New ticket</ButtonLink>
+          proj?.archived
+            ? { label: "Open the space", href: workSettingsHref(proj), primary: false }
+            : { label: "New ticket", href: `/tickets/new${project ? `?project=${project}` : ""}`, primary: true }
         }
+        extra={buildTicketsListExtras({
+          readyCount: proj?.archived ? 0 : readyKeys.length,
+          group,
+          groups: GROUPS.map((g) => ({ value: g, label: GROUP_NAME[g] })),
+          density,
+        })}
+        onExtra={(id, menuId) => {
+          const a = parseTicketsListAction(id, menuId);
+          if (a?.type === "startReady") setDispatchKeys(readyKeys);
+          else if (a?.type === "group") setParam("group", a.value === "status" ? null : a.value);
+          else if (a?.type === "density") setDensity(a.value);
+        }}
       />}
       <TicketsLayoutBar layout="list" />
       {proj?.archived && <div className="px-6 py-3 max-md:px-4"><Banner tone="human" title="Archived work">Tickets and history remain available. Restore the work on the space’s page to start new work.</Banner></div>}
@@ -634,6 +691,14 @@ export function TicketsScreen() {
           <SavedViewTabs project={project} />
           {filterControls}
         </ChipScroller>
+      ) : native ? (
+        // The filter box is the sidebar's search, group and density are toolbar items; what's left is what can't be one.
+        (blockedOnly || unestimated || resolved.unknown.length > 0) && (
+          <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle px-6 py-2">
+            {onlyChips}
+            {resolved.unknown.length > 0 && <span role="status" className="text-12 text-pill-blocked-fg">No match for {resolved.unknown.join(", ")}</span>}
+          </div>
+        )
       ) : (
         <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle px-6 py-2">
           {filterBox}

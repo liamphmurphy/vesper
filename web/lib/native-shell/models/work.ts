@@ -26,6 +26,8 @@ export interface WorkHeaderInput {
   noFilters?: boolean;
   /** Epics has no Persona filter. */
   noPersona?: boolean;
+  /** The screen's toolbar carries New ticket, so the sidebar header doesn't. */
+  hideNewTicket?: boolean;
   /** Present when the screen has a filter box. */
   search?: { value: string; placeholder: string };
 }
@@ -58,7 +60,7 @@ export function workHeader(input: WorkHeaderInput): WorkHeader {
   ];
   const header: WorkHeader = {
     title: "Work",
-    actions: [{ id: WORK_NEW_TICKET_ACTION, label: "New ticket", icon: "plus", accent: true }],
+    actions: input.hideNewTicket ? [] : [{ id: WORK_NEW_TICKET_ACTION, label: "New ticket", icon: "plus", accent: true }],
     filters: [
       ...(input.noFilters ? [] : [{ id: WORK_SPACE_FILTER, label: "Space", icon: "briefcase", options: space }]),
       ...(input.noPersona || input.noFilters ? [] : [{ id: WORK_AGENT_FILTER, label: "Persona", icon: "agents", options: persona }]),

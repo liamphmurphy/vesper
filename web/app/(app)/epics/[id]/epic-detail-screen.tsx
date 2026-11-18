@@ -33,6 +33,10 @@ import { WorkChat } from "@/components/domain/work-chat";
 import { WorkNavHeader, WorkSectionLabel } from "../../work/work-nav-header";
 import { buildEpicDetailNavModel } from "@/lib/native-shell/models/epic-detail";
 import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
+import { buildEpicToolbar } from "@/lib/native-shell/models/work-toolbars";
+import { useIsNativeShell } from "@/lib/native-shell/hooks";
+import { useNativeToolbar } from "@/lib/native-shell/use-native-toolbar";
+import { useNativeTitle } from "../../tickets/_components/native-title";
 
 type TicketSummary = Schemas["TicketSummary"];
 
@@ -49,6 +53,10 @@ export function EpicDetailScreen({ epicId }: { epicId: string }) {
         { label: e.epic.name },
       ]
     : [{ label: "Epics", href: ticketsHref("epics") }];
+  // In the Mac app the header row is the window title and a toolbar button.
+  const native = useIsNativeShell();
+  useNativeTitle(e?.epic.name ?? "Epics", e?.project.name);
+  useNativeToolbar({ items: e ? buildEpicToolbar() : [], onAction: () => e && router.push(boardHref(e)) });
   return (
     <>
       {!compact && (
@@ -106,14 +114,14 @@ export function EpicDetailScreen({ epicId }: { epicId: string }) {
           </nav>
         </NavigatorPortal>
       )}
-      <TopBar
+      {!native && <TopBar
         crumbs={crumbs}
         actions={e && (
           <>
             <ButtonLink variant="outline" icon="board" href={boardHref(e)}>View on board</ButtonLink>
           </>
         )}
-      />
+      />}
       <div className="flex min-h-0 flex-1">
       <div className="min-w-0 flex-1">
       <Content>

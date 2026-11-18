@@ -359,6 +359,7 @@ export function EpicsScreen() {
                 project: project || undefined,
                 projects: boot.data?.projects,
                 counts: { epics: counts.open || undefined },
+                hideNewTicket: true,
                 search: { value: search, placeholder: "Filter epics…" },
               },
               status: filters.status,
@@ -541,11 +542,7 @@ export function EpicsScreen() {
       {/* Compact: the layout bar is the header, with its own + button. */}
       {!compact && <TicketsTopBar
         layout="epics"
-        action={
-          <ButtonLink href={project ? `/tickets/new?project=${encodeURIComponent(project)}` : "/tickets/new"} variant="primary" icon="plus">
-            New ticket
-          </ButtonLink>
-        }
+        action={{ label: "New ticket", primary: true, href: project ? `/tickets/new?project=${encodeURIComponent(project)}` : "/tickets/new" }}
       />}
       <TicketsLayoutBar layout="epics" />
       <Content>

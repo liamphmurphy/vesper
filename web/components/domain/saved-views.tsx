@@ -13,6 +13,10 @@ import { Icon } from "@/components/ui/icon";
 import { floatPanel } from "./pickers";
 import { hoverReveal } from "@/lib/reveal";
 import { confirmAction } from "@/components/ui/confirm";
+import { useIsNativeShell } from "@/lib/native-shell/hooks";
+import { useNativeToolbar } from "@/lib/native-shell/use-native-toolbar";
+import { type SavedViewRow, parseSavedViewCommand, parseSavedViewTitleAction, savedViewMenu } from "@/lib/native-shell/models/saved-views";
+import type { NativeCommand, ToolbarItem } from "@/lib/native-shell/protocol";
 
 const VIEW_NAME: Record<string, string> = { all: "All tickets", active: "Active", backlog: "Backlog", agent_owned: "Agent-owned", needs_human: "Needs human" };
 export const describeView = (query: string) => describeQuery(query, { view: (v) => VIEW_NAME[v] ?? v });
@@ -42,7 +46,7 @@ function useCurrentQuery() {
  * Save view dialog: a name, what the view keeps, and suggested views that
  * fill the name and filters. Opens the new view on save.
  */
-export function SaveViewDialog({ query, open, onOpenChange }: { query: string; open: boolean; onOpenChange: (o: boolean) => void }) {
+export function SaveViewDialog({ query, open, onOpenChange, onCreated }: { query: string; open: boolean; onOpenChange: (o: boolean) => void; onCreated?: (v: SavedView) => void }) {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
@@ -51,7 +55,7 @@ export function SaveViewDialog({ query, open, onOpenChange }: { query: string; o
           aria-describedby="save-view-desc"
           className="motion-dialog fixed left-1/2 top-[14vh] z-50 w-[min(420px,calc(100%-32px))] -translate-x-1/2 rounded-xl border border-border-float bg-surface-raised p-4 shadow-[var(--shadow-float)] outline-none"
         >
-          <SaveViewForm query={query} onSaved={() => onOpenChange(false)} />
+          <SaveViewForm query={query} onSaved={() => onOpenChange(false)} onCreated={onCreated} />
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
@@ -59,7 +63,7 @@ export function SaveViewDialog({ query, open, onOpenChange }: { query: string; o
 }
 
 /** Mounted with each open, so the name, query and save error start fresh. */
-function SaveViewForm({ query, onSaved }: { query: string; onSaved: () => void }) {
+function SaveViewForm({ query, onSaved, onCreated }: { query: string; onSaved: () => void; onCreated?: (v: SavedView) => void }) {
   const create = useCreateSavedView();
   const router = useRouter();
   const search = useSearchParams();
@@ -73,7 +77,9 @@ function SaveViewForm({ query, onSaved }: { query: string; onSaved: () => void }
       {
         onSuccess: (v) => {
           onSaved();
-          router.push(savedViewHref(v, search.get("project")));
+          // A screen that keeps its own view state (Work) stays where it is.
+          if (onCreated) onCreated(v);
+          else router.push(savedViewHref(v, search.get("project")));
         },
       },
     );
@@ -119,6 +125,28 @@ function SaveViewForm({ query, onSaved }: { query: string; onSaved: () => void }
   );
 }
 
+/** Deleting a view after the confirm; by default leaves the list's open view if it was this one. */
+export function useDeleteSavedViewAction(onDeleted?: (view: SavedView) => void) {
+  const del = useDeleteSavedView();
+  const router = useRouter();
+  const search = useSearchParams();
+  return async (view: SavedView) => {
+    if (!await confirmAction({ title: `Delete the view “${view.name}”?`, body: "Tickets aren't changed.", confirmLabel: "Delete view" })) return;
+    del.mutate(view.id, {
+      onSuccess: () => {
+        if (onDeleted) return onDeleted(view);
+        if (search.get("sv") === view.id) {
+          const next = new URLSearchParams(search.toString());
+          next.delete("sv");
+          router.replace(`/tickets${next.size ? `?${next}` : ""}`);
+        }
+      },
+    });
+  };
+}
+
+const viewUrl = (view: SavedView, project: string | null) => new URL(savedViewHref(view, project), window.location.origin).toString();
+
 /** ⋯ menu for a saved view: Rename, Save as new view…, Copy link, Delete view. */
 export function SavedViewMenu({
   view,
@@ -131,8 +159,7 @@ export function SavedViewMenu({
   onSaveAs: () => void;
   children: ReactNode;
 }) {
-  const del = useDeleteSavedView();
-  const router = useRouter();
+  const remove = useDeleteSavedViewAction();
   const search = useSearchParams();
   const project = search.get("project");
   // Rename mounts an autofocused input, so it starts once the menu has closed,
@@ -160,25 +187,14 @@ export function SavedViewMenu({
           <DropdownMenu.Item className={menuItem} onSelect={onSaveAs}>Save as new view…</DropdownMenu.Item>
           <DropdownMenu.Item
             className={menuItem}
-            onSelect={() => void navigator.clipboard?.writeText(new URL(savedViewHref(view, project), window.location.origin).toString())}
+            onSelect={() => void navigator.clipboard?.writeText(viewUrl(view, project))}
           >
             Copy link
           </DropdownMenu.Item>
           <DropdownMenu.Separator className="my-1 h-px bg-border-subtle" />
           <DropdownMenu.Item
             className={cx(menuItem, "text-pill-blocked-fg")}
-            onSelect={async () => {
-              if (!await confirmAction({ title: `Delete the view “${view.name}”?`, body: "Tickets aren't changed.", confirmLabel: "Delete view" })) return;
-              del.mutate(view.id, {
-                onSuccess: () => {
-                  if (search.get("sv") === view.id) {
-                    const next = new URLSearchParams(search.toString());
-                    next.delete("sv");
-                    router.replace(`/tickets${next.size ? `?${next}` : ""}`);
-                  }
-                },
-              });
-            }}
+            onSelect={() => void remove(view)}
           >
             Delete view
           </DropdownMenu.Item>
@@ -218,14 +234,26 @@ function RenameInput({ view, onDone }: { view: SavedView; onDone: () => void }) 
   );
 }
 
+/**
+ * What the saved views' UI is doing: the view being renamed, and the query a Save view dialog is
+ * open for. A screen that describes its views to the native sidebar holds this, since the sidebar
+ * (not SavedViewTabs) is what mounts in the Mac app.
+ */
+export function useSavedViewsUi() {
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [saving, setSaving] = useState<string | null>(null);
+  return { renaming, setRenaming, saving, setSaving };
+}
+export type SavedViewsUi = ReturnType<typeof useSavedViewsUi>;
+
 /** Saved views after the list's built-in views, with + Save view. */
-export function SavedViewTabs({ project, vertical = false }: { project?: string; vertical?: boolean }) {
+export function SavedViewTabs({ project, vertical = false, ui }: { project?: string; vertical?: boolean; ui?: SavedViewsUi }) {
   const views = useSavedViews();
   const pathname = usePathname();
   const search = useSearchParams();
   const current = useCurrentQuery();
-  const [renaming, setRenaming] = useState<string | null>(null);
-  const [saving, setSaving] = useState<string | null>(null);
+  const own = useSavedViewsUi();
+  const { renaming, setRenaming, saving, setSaving } = ui ?? own;
   const active = pathname === "/tickets" ? search.get("sv") : null;
   return (
     <div
@@ -281,6 +309,102 @@ export function SavedViewTabs({ project, vertical = false }: { project?: string;
   );
 }
 
+/** Rename as a dialog, for the native shell where a row can't turn into a text field. A duplicate name shows the 409. */
+export function RenameViewDialog({ view, onClose }: { view?: SavedView; onClose: () => void }) {
+  return (
+    <Dialog.Root open={!!view} onOpenChange={(o) => !o && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="motion-scrim fixed inset-0 z-40 bg-scrim" />
+        <Dialog.Content aria-describedby={undefined} className="motion-dialog fixed left-1/2 top-[16vh] z-50 w-[min(420px,calc(100%-32px))] -translate-x-1/2 rounded-xl border border-border-float bg-surface-raised p-4 shadow-[var(--shadow-float)] outline-none">
+          {view && <RenameViewForm key={view.id} view={view} onDone={onClose} />}
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+function RenameViewForm({ view, onDone }: { view: SavedView; onDone: () => void }) {
+  const update = useUpdateSavedView();
+  const [name, setName] = useState(view.name);
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    const next = name.trim();
+    if (!next || next === view.name) return onDone();
+    update.mutate({ id: view.id, name: next }, { onSuccess: onDone });
+  }
+  return (
+    <form onSubmit={submit} className="flex flex-col gap-3">
+      <Dialog.Title className="type-heading">Rename view</Dialog.Title>
+      <input
+        autoFocus
+        aria-label={`Rename ${view.name}`}
+        value={name}
+        maxLength={80}
+        onFocus={(e) => e.currentTarget.select()}
+        onChange={(e) => { setName(e.target.value); update.reset(); }}
+        className="h-[30px] rounded-md border border-border-strong bg-surface px-2.5 text-13 text-fg outline-none focus:border-accent"
+      />
+      {update.isError && <p role="alert" className="text-12 text-pill-blocked-fg">{errorText(update.error)}</p>}
+      <div className="flex justify-end gap-2">
+        <Dialog.Close asChild><Button variant="ghost" type="button">Cancel</Button></Dialog.Close>
+        <Button type="submit" variant="primary" disabled={!name.trim() || update.isPending}>Rename</Button>
+      </div>
+    </form>
+  );
+}
+
+/**
+ * The dialogs a native-sidebar screen opens from its saved views (SavedViewTabs draws its own in a
+ * browser). `onCreated` is for a screen that opens a new view itself instead of going to /tickets.
+ */
+export function SavedViewNativeDialogs({ ui, onCreated }: { ui: SavedViewsUi; onCreated?: (v: SavedView) => void }) {
+  const views = useSavedViews();
+  return (
+    <>
+      <RenameViewDialog view={ui.renaming ? views.data?.find((v) => v.id === ui.renaming) : undefined} onClose={() => ui.setRenaming(null)} />
+      <SaveViewDialog query={ui.saving ?? ""} open={ui.saving !== null} onOpenChange={(o) => !o && ui.setSaving(null)} onCreated={onCreated} />
+    </>
+  );
+}
+
+/**
+ * The saved views as rows for a native sidebar section (buildSavedViewsSection: a menu per row,
+ * "Save view…" on the header) and the handler for its commands; `handle` returns whether the command was one of theirs.
+ * `open` opens a row for a screen whose rows carry no href; `current` is the query "Save view…" saves.
+ */
+export function useSavedViewsNav({ ui, current, project, open, onDeleted }: {
+  ui: SavedViewsUi;
+  current: string;
+  project?: string | null;
+  open?: (v: SavedView) => void;
+  onDeleted?: (v: SavedView) => void;
+}): { rows: SavedViewRow[]; handle: (cmd: NativeCommand) => boolean } {
+  const list = useSavedViews().data ?? [];
+  const remove = useDeleteSavedViewAction(onDeleted);
+  const rows = list.map((v) => ({ id: v.id, name: v.name, ...(open ? {} : { href: savedViewHref(v, project ?? null) }) }));
+  const handle = (cmd: NativeCommand) => {
+    const c = parseSavedViewCommand(cmd);
+    if (!c) return false;
+    if (c.type === "save") return ui.setSaving(current), true;
+    const view = list.find((v) => v.id === c.id);
+    if (!view) return true;
+    if (c.type === "open") open?.(view);
+    else if (c.type === "rename") ui.setRenaming(view.id);
+    else if (c.type === "saveAs") ui.setSaving(view.query);
+    else if (c.type === "copyLink") void navigator.clipboard?.writeText(viewUrl(view, project ?? null));
+    else void remove(view);
+    return true;
+  };
+  return { rows, handle };
+}
+
+/** The line under an open view's title: what it keeps, and what it was saved as once edited. */
+export function savedViewSubtitle(view: SavedView, search: URLSearchParams): string {
+  const now = viewQuery(search);
+  const saved = viewQuery(view.query);
+  return now === saved ? describeView(now) : `Edited · ${describeView(now)} · saved as ${describeView(saved)}`;
+}
+
 /**
  * Header for an open saved view: its name, an Edited badge when the list's
  * params differ, Discard / Save changes, and the ⋯ menu.
@@ -305,6 +429,41 @@ export function SavedViewHeader({ view }: { view: SavedView }) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
   const edited = now !== saved;
+  // In the Mac app the header's actions are toolbar items and its menu the title's; the screen's
+  // title carries the name and what the view keeps (savedViewSubtitle).
+  const native = useIsNativeShell();
+  const remove = useDeleteSavedViewAction();
+  const project = search.get("project");
+  const items: ToolbarItem[] = edited
+    ? [
+        { id: "sv.discard", label: "Discard", kind: "button", icon: "refresh", showsLabel: true },
+        { id: "sv.save-changes", label: "Save changes", kind: "button", icon: "check", showsLabel: true, disabled: update.isPending },
+      ]
+    : [];
+  useNativeToolbar({
+    items,
+    onAction: (id) => {
+      if (id === "sv.discard") router.replace(savedViewHref(view, project));
+      else if (id === "sv.save-changes") update.mutate({ id: view.id, query: now });
+    },
+    titleMenu: native ? savedViewMenu() : undefined,
+    onTitleAction: (id) => {
+      const a = parseSavedViewTitleAction(id);
+      if (a === "rename") setRenaming(true);
+      else if (a === "saveAs") setSaving(true);
+      else if (a === "copyLink") void navigator.clipboard?.writeText(viewUrl(view, project));
+      else if (a === "delete") void remove(view);
+    },
+  });
+  if (native) {
+    return (
+      <>
+        <RenameViewDialog view={renaming ? view : undefined} onClose={() => setRenaming(false)} />
+        <SaveViewDialog query={now} open={saving} onOpenChange={setSaving} />
+        {update.isError && <span role="alert" className="px-6 py-1 text-12 text-pill-blocked-fg">{errorText(update.error)}</span>}
+      </>
+    );
+  }
   return (
     <div className="flex min-h-10 flex-wrap items-center gap-2.5 border-b border-border-subtle px-6 py-1.5">
       <Bookmark on className="text-accent" />

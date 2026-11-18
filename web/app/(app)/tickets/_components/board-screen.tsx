@@ -10,7 +10,6 @@ import { useBoard, useBoardMoves, useTicketEditorDetail, type BoardFilters } fro
 import { BOARD_STATUSES, onlyBlocked, withBoardMoves, type Board, type BoardCard, type BoardStatus } from "@/lib/board";
 import { cx } from "@/lib/cx";
 import { useCompact } from "@/lib/viewport";
-import { ButtonLink } from "@/components/ui/button";
 import { ProjectScopeState, useProjectScope } from "@/components/shell/project-scope";
 import { PriorityGlyph, StatusGlyph } from "@/components/domain/glyphs";
 import { PRIORITY_NAME, STATUS_NAME } from "@/components/domain/meta";
@@ -22,6 +21,8 @@ import { useMotionList } from "@/components/ui/motion";
 import { Toggle } from "@/components/ui/controls";
 import { ticketsHref } from "@/lib/tickets-layout";
 import { buildBoardNavModel } from "@/lib/native-shell/models/board";
+import { buildBoardExtras, parseBoardToggle } from "@/lib/native-shell/models/tickets-toolbar";
+import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { WorkNavHeader, WorkSectionLabel, WorkSpacePersonaFilters } from "../../work/work-nav-header";
@@ -62,7 +63,8 @@ export function BoardScreen() {
     window.history.replaceState(null, "", ticketsHref("board", next));
   }
   const compact = useCompact();
-  const boardToggles = project && (
+  const native = useIsNativeShell();
+  const boardToggles = project && !native && (
     <>
       <Toggle label="Show canceled" checked={filters.include_canceled} onChange={(on) => setParam("include_canceled", on ? "true" : "")} />
       <Toggle label="Blocked only" checked={blockedOnly} onChange={(on) => setParam("blocked", on ? "true" : "")} />
@@ -90,6 +92,7 @@ export function BoardScreen() {
                 agents: bootstrap.data?.agents,
                 agent: filters.assignee ?? "",
                 allowAllProjects: false,
+                hideNewTicket: true,
               },
               epics: project ? epics : undefined,
               epic: filters.epic,
@@ -154,9 +157,15 @@ export function BoardScreen() {
           </nav>
         </NavigatorPortal>
       )}
-      {!compact && <TicketsTopBar layout="board" action={
-        <ButtonLink href={project ? `/tickets/new?project=${encodeURIComponent(project.key)}` : "/tickets/new"} variant="primary" icon="plus" hint="C">New ticket</ButtonLink>
-      } />}
+      {!compact && <TicketsTopBar layout="board"
+        action={{ label: "New ticket", primary: true, href: project ? `/tickets/new?project=${encodeURIComponent(project.key)}` : "/tickets/new" }}
+        extra={project ? buildBoardExtras({ showCanceled: !!filters.include_canceled, blockedOnly }) : undefined}
+        onExtra={(id) => {
+          const t = parseBoardToggle(id);
+          if (t?.type === "canceled") setParam("include_canceled", filters.include_canceled ? "" : "true");
+          else if (t?.type === "blocked") setParam("blocked", blockedOnly ? "" : "true");
+        }}
+      />}
       <TicketsLayoutBar layout="board" />
       {compact && compactBoardFilters && <ChipScroller label="Board filters">{compactBoardFilters}</ChipScroller>}
       {/* The board's views, with its filters at the row's end (the top bar holds only the header). */}
