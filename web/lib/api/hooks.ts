@@ -711,7 +711,9 @@ export function useRunnerStatus() {
   return useQuery({
     queryKey: ["runner"] as const,
     queryFn: () => unwrap(api.GET("/runner")),
-    refetchInterval: 15_000,
+    // Poll faster while offline or starting so the banner and status clear quickly once a runner registers.
+    staleTime: (q) => (q.state.data && !q.state.data.online ? 0 : 30_000),
+    refetchInterval: (q) => (q.state.data && !q.state.data.online ? 2_000 : 15_000),
   });
 }
 

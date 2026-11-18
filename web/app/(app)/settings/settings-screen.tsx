@@ -56,7 +56,7 @@ export function SettingsScreen() {
     { id: "secrets", label: "Provider credentials", health: !secrets.data ? "unknown" : missing || !secrets.data.key_configured ? "attention" : "ok", badge: missing ? `${missing} off` : undefined },
     { id: "images", label: "Image engine", health: "idle" },
     { id: "repositories", label: "Repository discovery", health: "idle" },
-    { id: "runners", label: "Runner backends", health: !runner.data ? "unknown" : runner.data.online ? "ok" : "attention" },
+    { id: "runners", label: "Runner backends", health: !runner.data ? "unknown" : runner.data.online ? "ok" : runner.data.starting ? "unknown" : "attention" },
     { id: "dev-workspace", label: "Dev workspace", health: "idle" },
     { id: "overrides", label: "Space overrides", health: "idle" },
     { id: "sign-in", label: "Sign-in", health: !auth.data ? "unknown" : auth.data.password_set ? "ok" : "attention" },
@@ -322,8 +322,10 @@ function RunnerSection() {
       </div>
       {r.runners.length === 0 ? (
         <Card>
-          <EmptyState icon="server" title="No runner online">
-            Dispatched work stays queued until a runner starts. Run <code>make runner</code>, or start the runner service.
+          <EmptyState icon="server" title={r.starting ? "Runner is starting" : "No runner online"}>
+            {r.starting
+              ? "The local runner is starting up and will appear here shortly."
+              : <>Dispatched work stays queued until a runner starts. Run <code>make runner</code>, or start the runner service.</>}
           </EmptyState>
         </Card>
       ) : (

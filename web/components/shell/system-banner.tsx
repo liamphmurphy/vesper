@@ -16,7 +16,7 @@ import { setStoredFlag, useHarnessHealth, useStoredFlag } from "@/components/dom
 export function SystemBanner() {
   const harness = useHarnessHealth();
   const runner = useRunnerStatus();
-  const kind = systemBanner(harness, runner.data?.online);
+  const kind = systemBanner(harness, runner.data?.online, runner.data?.starting);
   const key = kind && `la:banner:${kind}:dismissed`;
   const dismissed = useStoredFlag("session", key);
   if (!kind || !key || dismissed) return null;

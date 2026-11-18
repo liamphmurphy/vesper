@@ -36,6 +36,14 @@ function ProjectMark() {
 export function StartsLine({ p }: { p: Preview }) {
   const r = p.runner;
   if (!r.online) {
+    if (r.starting) {
+      return (
+        <span className="flex items-center gap-1.5 text-fg-secondary">
+          <span aria-hidden className="size-1.5 rounded-full bg-state-human" />
+          Runner is starting: this run will start once it finishes booting
+        </span>
+      );
+    }
     return (
       <span className="flex items-center gap-1.5 text-pill-blocked-fg">
         <span aria-hidden className="size-1.5 rounded-full bg-state-blocked" />

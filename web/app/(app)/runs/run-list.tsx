@@ -271,7 +271,13 @@ function StatusLine({ project }: { project?: string }) {
   const href = `/reports?tab=costs&range=7${project ? `&project=${encodeURIComponent(project)}` : ""}`;
   return (
     <p role="status" className="flex flex-wrap items-center gap-x-1.5 px-2.5 font-mono text-11 text-fg-tertiary">
-      {runner && <span>{runner.online ? `${runner.busy} busy · ${runner.queued} queued · ${runner.slots} slots` : `Runner offline · ${runner.queued} queued`}</span>}
+      {runner && (
+        <span>
+          {runner.online
+            ? `${runner.busy} busy · ${runner.queued} queued · ${runner.slots} slots`
+            : `${runner.starting ? "Runner starting" : "Runner offline"} · ${runner.queued} queued`}
+        </span>
+      )}
       {runner && <span aria-hidden>·</span>}
       <Link href={href} className="hover:text-fg hover:underline" title="Spend in the last 7 days, in Reports">
         {costs ? spendLabel(costs.total.cost_micros, costs.unpriced_runs) : "–"} this week
@@ -396,7 +402,10 @@ function useRunsNative(selected?: string) {
   const body = standaloneBody(data, search, query);
   const selectedNeeds = data.shownNeeds.find((i) => i.run_id === selected)?.id;
   const statusText = [
-    runner && (runner.online ? `${runner.busy} busy · ${runner.queued} queued · ${runner.slots} slots` : `Runner offline · ${runner.queued} queued`),
+    runner &&
+      (runner.online
+        ? `${runner.busy} busy · ${runner.queued} queued · ${runner.slots} slots`
+        : `${runner.starting ? "Runner starting" : "Runner offline"} · ${runner.queued} queued`),
     `${costs ? spendLabel(costs.total.cost_micros, costs.unpriced_runs) : "–"} this week`,
   ].filter(Boolean).join(" · ");
   const model = buildRunsNavModel({

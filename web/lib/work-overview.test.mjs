@@ -156,6 +156,12 @@ test("computeActivityStats derives pass rate, PR velocity, needs breakdown, and 
   assert.equal(stats.passRatePct, 75);
   assert.equal(stats.spend7dUsd, 18.42);
   assert.equal(stats.unpriced7d, 1);
+  assert.equal(stats.online, true);
+  assert.equal(stats.starting, false);
+
+  const startingStats = computeActivityStats(runs, inbox, { ...runner, online: false, starting: true }, costs7d, now);
+  assert.equal(startingStats.online, false);
+  assert.equal(startingStats.starting, true);
 });
 
 test("Task queue counts and matchesTaskQueue classify needs_you, in_progress, ready, and blocked", () => {

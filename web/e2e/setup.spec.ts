@@ -22,7 +22,7 @@ const epic = (name: string, health: S["Epic"]["health"]): S["Epic"] => ({
   criteria_total: 0, criteria_done: 0, points_total: 106, points_done: 44, tickets_total: 20, tickets_open: 11,
 });
 
-type State = { runner: boolean; runs: S["Run"][]; harness: boolean; repo: boolean; plans: number };
+type State = { runner: boolean; runnerStarting?: boolean; runs: S["Run"][]; harness: boolean; repo: boolean; plans: number };
 
 async function installSetupApi(page: Page, init: Partial<State> = {}) {
   const state: State = {
@@ -73,8 +73,8 @@ async function installSetupApi(page: Page, init: Partial<State> = {}) {
       counts: { inbox: 6, needs_you: 6, wiki_suggestions: 0, live_agents: 1 },
     });
     if (path === "/runner") return json(state.runner
-      ? { online: true, runners: [{ id: "mbp", backend: "microvm", max_concurrent: 4, running: 0, heartbeat_at: minutesAgo(0) }], slots: 4, busy: 0, live: 0, queued: 0 }
-      : { online: false, runners: [], slots: 0, busy: 0, live: 0, queued: 0 });
+      ? { online: true, runners: [{ id: "mbp", backend: "microvm", max_concurrent: 4, running: 0, heartbeat_at: minutesAgo(0) }], slots: 4, busy: 0, live: 0, queued: 0, host_folder_workspaces: false }
+      : { online: false, ...(state.runnerStarting ? { starting: true } : {}), runners: [], slots: 0, busy: 0, live: 0, queued: 0, host_folder_workspaces: false });
     if (path === "/chat-models") return json([
       { harness: "claude-code", label: "Claude Code", available: state.harness, ...(state.harness ? {} : { unavailable_reason: "no harness:anthropic secret" }), models: [{ id: "opus", label: "Opus", default: true }] },
       { harness: "codex", label: "Codex", available: false, unavailable_reason: "no harness:openai secret", models: [{ id: "gpt-5-codex", label: "gpt-5-codex", default: true }] },
@@ -137,11 +137,27 @@ test("a new workspace sees the checklist and a health banner naming missing secr
 });
 
 test("the runner banner shows when a harness works but no runner is online", async ({ page }) => {
-  await installSetupApi(page, { runner: false });
+  const api = await installSetupApi(page, { runner: false });
   await page.goto("/settings");
   const banner = page.getByRole("status", { name: "No runner online" });
   await expect(banner).toContainText("Dispatched work stays queued.");
   await expect(banner.getByRole("link", { name: "Runner backends →" })).toHaveAttribute("href", "/settings#runners");
+
+  // Polling while offline clears the banner within a few seconds once the runner registers, without reloading.
+  api.state.runner = true;
+  await expect(page.getByRole("status", { name: "No runner online" })).toHaveCount(0, { timeout: 5_000 });
+});
+
+test("a starting runner hides the offline banner and updates to online automatically", async ({ page }) => {
+  const api = await installSetupApi(page, { runner: false, runnerStarting: true });
+  await page.goto("/settings#runners");
+  await expect(page.getByRole("status", { name: "No runner online" })).toHaveCount(0);
+  await expect(page.locator("#runners")).toContainText("Runner is starting");
+
+  api.state.runner = true;
+  api.state.runnerStarting = false;
+  await expect(page.locator("#runners").getByRole("rowheader", { name: "mbp" })).toBeVisible({ timeout: 5_000 });
+  await expect(page.getByRole("status", { name: "No runner online" })).toHaveCount(0);
 });
 
 test("a complete checklist can be dismissed and doesn't come back", async ({ page }) => {

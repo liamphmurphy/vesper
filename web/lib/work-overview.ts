@@ -129,6 +129,7 @@ export type ActivityStats = {
   slotsMax: number;
   queued: number;
   online: boolean;
+  starting: boolean;
   needsYouCount: number;
   needsApprovals: number;
   needsQuestions: number;
@@ -188,6 +189,7 @@ export function computeActivityStats(
     slotsMax: runner?.slots ?? 0,
     queued: runner?.queued ?? 0,
     online: runner?.online ?? false,
+    starting: !runner?.online && !!runner?.starting,
     needsYouCount: openNeeds.length,
     needsApprovals,
     needsQuestions,

@@ -50,6 +50,7 @@ export type SetupState = {
   harnessSecret: boolean;
   harness: HarnessHealth;
   runnerOnline: boolean;
+  runnerStarting?: boolean;
   runners: { backend: string; max_concurrent: number }[];
   agents: number;
   /** The person opened the Agents page in this browser. */
@@ -87,7 +88,9 @@ export function setupChecklist(s: SetupState): SetupStep[] {
       done: s.runnerOnline,
       detail: s.runnerOnline
         ? `${s.runners.length} ${s.runners.length === 1 ? "runner" : "runners"} online · ${backends} · ${slots} ${slots === 1 ? "slot" : "slots"}`
-        : "No runner online. Dispatched work stays queued.",
+        : s.runnerStarting
+          ? "Runner is starting…"
+          : "No runner online. Dispatched work stays queued.",
     },
     {
       key: "agents",
@@ -110,8 +113,12 @@ export function setupChecklist(s: SetupState): SetupStep[] {
 }
 
 /** Which shell banner to show, if any: no harness wins over no runner. */
-export function systemBanner(harness: HarnessHealth | undefined, runnerOnline: boolean | undefined): "harness" | "runner" | undefined {
+export function systemBanner(
+  harness: HarnessHealth | undefined,
+  runnerOnline: boolean | undefined,
+  runnerStarting?: boolean,
+): "harness" | "runner" | undefined {
   if (harness && !harness.ready && !harness.checking) return "harness";
-  if (runnerOnline === false) return "runner";
+  if (runnerOnline === false && !runnerStarting) return "runner";
   return undefined;
 }
