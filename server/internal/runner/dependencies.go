@@ -17,6 +17,14 @@ func dependencySetupScript() string {
 	return "python3 -c " + shellQuote(dependencySetup) + "\n"
 }
 
+// chatDependencySetupScript leaves Playwright's browsers to the first browser
+// test: a coding chat's reply waits for its setup, a new chat's workspace
+// would download Chromium (about 700 MB) every time, and most chats never
+// open a browser. Playwright's own error names the install command.
+func chatDependencySetupScript() string {
+	return "LAZYAGENTS_PLAYWRIGHT_BROWSERS=on-demand " + dependencySetupScript()
+}
+
 // CacheBackend supplies a persistent cache shared by this runner's workspaces.
 // Package installations remain checkout-local; download, browser and Go build
 // caches are shared, so a new chat doesn't compile its dependencies from
