@@ -256,7 +256,8 @@ export type PageMessage =
 /** Shell → page. */
 export type NativeCommand =
   | { v: 1; type: "navigate"; path: string }
-  | { v: 1; type: "nav.activate"; navigatorId: string; itemId: string }
+  /** newTab: the row was ⌘-clicked; open its href in a new tab rather than here. */
+  | { v: 1; type: "nav.activate"; navigatorId: string; itemId: string; newTab?: boolean }
   | { v: 1; type: "nav.action"; navigatorId: string; actionId: string; itemId?: string; menuItemId?: string }
   | { v: 1; type: "nav.picker"; navigatorId: string; pickerId: string; value: string }
   | { v: 1; type: "nav.filter"; navigatorId: string; filterId: string; value: string; checked: boolean }

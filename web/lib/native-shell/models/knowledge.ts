@@ -1,5 +1,5 @@
 // The Knowledge explorer (knowledge/_components/shell.tsx Explorer) as a NavModel: the header
-// buttons and "+" menu, the Yours / Agent knowledge switch, pinned pages, the folder tree with
+// buttons and "+" menu, the Yours / Agent knowledge switch, Home, pinned pages, the folder tree with
 // per-row menus, and the Today / Quick capture / Import entries.
 import type { MenuItem, NavItem, NavModel } from "../protocol.ts";
 
@@ -31,6 +31,7 @@ export const K = {
   deck: (key: string) => `new:deck:${key}`,
   design: (key: string) => `new:design:${key}`,
   viewPicker: "view",
+  home: "home",
   today: "today",
   capture: "capture",
   import: "import",
@@ -40,6 +41,7 @@ export const K = {
   more: (path: string) => `more:${path}`,
   // Row menu ids
   ask: "ask",
+  openNewTab: "open-new-tab",
   pin: "pin",
   rename: "rename",
   move: "move",
@@ -60,6 +62,8 @@ export interface KnowledgeInput {
   pinned: readonly KPage[];
   pinnedIds: readonly string[];
   activeId?: string;
+  /** Knowledge's Home is showing. */
+  home?: boolean;
   open: ReadonlySet<string>;
   /** Folders whose "+ N more" was opened. */
   showAll: ReadonlySet<string>;
@@ -73,6 +77,8 @@ export interface KnowledgeInput {
 }
 
 const pageMenu = (pinned: boolean): MenuItem[] => [
+  { id: K.openNewTab, label: "Open in New Tab", icon: "plus" },
+  { id: "s0", separator: true },
   { id: K.ask, label: "Ask a Persona", icon: "msg" },
   { id: K.pin, label: pinned ? "Unpin" : "Pin to top", icon: "bookmark" },
   { id: "s1", separator: true },
@@ -140,7 +146,8 @@ export function buildKnowledgeNavModel(input: KnowledgeInput): NavModel {
     { id: K.newFolder, label: "Folder", icon: "folder" },
   ];
 
-  const sections: NavModel["sections"] = [];
+  // The Mac app has no Knowledge tab strip, so Home (the strip's first tab in the browser) leads the list.
+  const sections: NavModel["sections"] = [{ id: "home", items: [{ id: K.home, title: "Home", icon: "home", href: "/knowledge" }] }];
   if (input.loading) {
     sections.push({ id: "loading", items: [], emptyText: "Loading" });
   } else if (input.tree.count === 0) {
@@ -183,6 +190,6 @@ export function buildKnowledgeNavModel(input: KnowledgeInput): NavModel {
       ],
     },
     sections,
-    selectedId: input.activeId ? K.page(input.activeId) : null,
+    selectedId: input.activeId ? K.page(input.activeId) : input.home ? K.home : null,
   };
 }

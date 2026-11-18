@@ -137,11 +137,12 @@ type RowKeys = { approve?: () => void; deny?: () => void; reply?: () => void };
 
 function Tray({ onClose, onDispatch }: { onClose: () => void; onDispatch: (key: string) => void }) {
   const router = useRouter();
+  const qc = useQueryClient();
   const inbox = useInbox();
   const read = useReadInbox();
   const [tab, setTab] = useState<TrayTab>("needs");
   const [sel, setSel] = useState<{ id?: string; index: number }>({ index: 0 });
-  const { needs, updates, unread } = useMemo(() => trayItems(inbox.data ?? []), [inbox.data]);
+  const { needs, updates } = useMemo(() => trayItems(inbox.data ?? []), [inbox.data]);
   const list = tab === "needs" ? needs : updates;
   const ids = list.map((i) => i.id);
   const current = nextSelection(ids, sel.id, sel.index);
@@ -178,6 +179,20 @@ function Tray({ onClose, onDispatch }: { onClose: () => void; onDispatch: (key: 
     onClose();
     openHref(item.href, router.push);
   };
+  // Clearing is the Inbox's Done: the rows leave at once, and come back if the server refuses.
+  const [clearError, setClearError] = useState<Error>();
+  const clear = async (cleared: string[]) => {
+    if (!cleared.length) return;
+    setClearError(undefined);
+    const gone = new Set(cleared);
+    qc.setQueriesData<Item[]>({ queryKey: ["inbox"] }, (items) => items?.map((i) => (gone.has(i.id) ? { ...i, read: true } : i)));
+    try {
+      await Promise.all(cleared.map((id) => read.mutateAsync(id)));
+    } catch (err) {
+      setClearError(err instanceof Error ? err : new Error("Couldn’t clear"));
+      void qc.invalidateQueries({ queryKey: ["inbox"] });
+    }
+  };
 
   // On window, not the tray: focus can fall to <body> (a row or button leaves), and the keys still have to work.
   // The page's own keys (Inbox, app shell) stand down while a dialog, such as this popover, is open.
@@ -208,6 +223,11 @@ function Tray({ onClose, onDispatch }: { onClose: () => void; onDispatch: (key: 
       open(item);
       return;
     }
+    if (k === "x") {
+      e.preventDefault();
+      void clear([item.id]);
+      return;
+    }
     const run = { a: keys.current[item.id]?.approve, d: keys.current[item.id]?.deny, r: keys.current[item.id]?.reply }[k];
     if (run) {
       e.preventDefault();
@@ -219,10 +239,6 @@ function Tray({ onClose, onDispatch }: { onClose: () => void; onDispatch: (key: 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   });
-
-  const markAll = async () => {
-    await Promise.all(unread.map((id) => read.mutateAsync(id)));
-  };
 
   const tabClass = (on: boolean) =>
     cx("flex h-7 items-center gap-1.5 rounded-md px-2.5 text-13 font-medium outline-none focus-visible:ring-1 focus-visible:ring-accent", on ? "bg-selected text-fg" : "text-fg-tertiary hover:text-fg");
@@ -237,19 +253,25 @@ function Tray({ onClose, onDispatch }: { onClose: () => void; onDispatch: (key: 
           </button>
           <button type="button" role="tab" id="tray-tab-updates" aria-controls="tray-panel" aria-selected={tab === "updates"} tabIndex={tab === "updates" ? 0 : -1} onClick={() => switchTab("updates")} className={tabClass(tab === "updates")}>
             Updates
-            {unread.length > 0 && (
+            {updates.length > 0 && (
               <span data-testid="updates-dot" className="size-1.5 rounded-full bg-accent">
                 <span className="sr-only">, unread</span>
               </span>
             )}
           </button>
         </div>
-        {tab === "updates" && unread.length > 0 && (
-          <button type="button" onClick={markAll} disabled={read.isPending} className="ml-auto rounded-md px-2 py-1 text-12 font-medium text-accent hover:bg-hover disabled:opacity-60">
-            Mark all read
+        {/* Updates only: clearing every Needs you row at once would hide runs still waiting on you. */}
+        {tab === "updates" && updates.length > 0 && (
+          <button type="button" onClick={() => void clear(updates.map((i) => i.id))} className="ml-auto rounded-md px-2 py-1 text-12 font-medium text-accent hover:bg-hover">
+            Clear all
           </button>
         )}
       </div>
+      {clearError && (
+        <p role="alert" className="px-3.5 pb-2 text-12 text-pill-blocked-fg">
+          {clearError.message}
+        </p>
+      )}
       <div ref={listRef} id="tray-panel" role="tabpanel" aria-label={tab === "needs" ? "Needs you" : "Updates"} className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-1.5">
         {inbox.isPending ? (
           <div aria-busy="true" className="space-y-2 p-2">
@@ -264,7 +286,7 @@ function Tray({ onClose, onDispatch }: { onClose: () => void; onDispatch: (key: 
         ) : list.length === 0 ? (
           tab === "needs"
             ? <EmptyState compact icon="check" title="Nothing needs you right now">Approvals, questions and reviews from your runs show up here.</EmptyState>
-            : <EmptyState compact icon="inbox" title="No updates yet">Finished runs and replies show up here.</EmptyState>
+            : <EmptyState compact icon="inbox" title="You’re all caught up">Finished runs and replies show up here. Cleared ones are under Done in the Inbox.</EmptyState>
         ) : (
           <ul className="flex flex-col gap-px">
             {list.map((item) => (
@@ -274,6 +296,7 @@ function Tray({ onClose, onDispatch }: { onClose: () => void; onDispatch: (key: 
                 selected={item.id === current}
                 onSelect={() => setSel({ id: item.id, index: ids.indexOf(item.id) })}
                 onOpen={() => open(item)}
+                onClear={() => void clear([item.id])}
                 onDispatch={onDispatch}
                 register={(k) => {
                   keys.current[item.id] = k;
@@ -287,6 +310,7 @@ function Tray({ onClose, onDispatch }: { onClose: () => void; onDispatch: (key: 
         <span aria-hidden className="hidden items-center gap-2.5 min-[480px]:flex">
           <span><Kbd>J</Kbd> <Kbd>K</Kbd> move</span>
           <span><Kbd>A</Kbd> <Kbd>D</Kbd> decide</span>
+          <span><Kbd>X</Kbd> clear</span>
           <span><Kbd>←</Kbd> <Kbd>→</Kbd> switch</span>
         </span>
         <Link href="/work#needs-you" onClick={onClose} className="ml-auto font-medium text-accent hover:underline">
@@ -302,6 +326,7 @@ function Row({
   selected,
   onSelect,
   onOpen,
+  onClear,
   onDispatch,
   register,
 }: {
@@ -309,12 +334,12 @@ function Row({
   selected: boolean;
   onSelect: () => void;
   onOpen: () => void;
+  onClear: () => void;
   onDispatch: (key: string) => void;
   register: (k: RowKeys) => void;
 }) {
   const kind = KIND[item.kind] ?? { label: item.kind, tone: "info" };
   const action = item.needs_you ? trayAction(item.kind, !!item.run_id) : undefined;
-  const unread = !item.needs_you && isOpen(item);
   const meta = [item.ticket_key || item.project, item.agent?.name].filter(Boolean).join(" · ");
   return (
     <li
@@ -330,7 +355,7 @@ function Row({
         if (!(e.target as HTMLElement).closest("button,a,textarea,input,form")) onOpen();
       }}
       className={cx(
-        "relative flex cursor-pointer gap-2.5 rounded-[10px] px-2.5 py-2 outline-none",
+        "group relative flex cursor-pointer gap-2.5 rounded-[10px] py-2 pl-2.5 pr-1.5 outline-none",
         selected ? "bg-selected" : "hover:bg-row-hover",
         "focus-visible:ring-1 focus-visible:ring-accent/60",
       )}
@@ -347,8 +372,7 @@ function Row({
           <span className={cx("flex-none text-12 font-medium", kind.tone === "blocked" ? "text-pill-blocked-fg" : item.needs_you ? "text-pill-human-fg" : "text-fg-tertiary")}>
             {kind.label}
           </span>
-          <span className={cx("truncate", unread || item.needs_you ? "font-semibold text-fg" : "text-fg-secondary")}>{item.title}</span>
-          {unread && <span aria-label="unread" className="size-1.5 flex-none rounded-full bg-accent" />}
+          <span className="truncate font-semibold text-fg">{item.title}</span>
         </span>
         <span className="truncate text-12 text-fg-tertiary">
           {meta && <span className="font-mono">{meta}</span>}
@@ -373,6 +397,18 @@ function Row({
           </RowButtons>
         )}
       </div>
+      <button
+        type="button"
+        onClick={onClear}
+        aria-label={`Clear ${kind.label}: ${item.title}`}
+        title="Clear (X)"
+        className={cx(
+          "grid size-6 flex-none place-items-center rounded-md text-fg-tertiary transition-opacity hover:bg-surface hover:text-fg focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60",
+          selected ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+        )}
+      >
+        <Icon name="x" size={12} />
+      </button>
     </li>
   );
 }

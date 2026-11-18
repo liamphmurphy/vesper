@@ -198,22 +198,62 @@ type VM interface {
    Linux guest image independent of `vz` means a `driver_linux.go` driving
    `cloud-hypervisor` (hybrid vsock over Unix socket, `virtiofs`, balloon)
    drops in later with zero changes to `microvm` or the guest image.
-2. **Headless macOS guest VMs (Phase 2):** `Virtualization.framework` and
-   `Code-Hex/vz` also boot headless macOS VMs (`VZMacOSBootLoader` +
-   `VZMacPlatformConfiguration`), and Apple Silicon XNU (macOS 13+) supports
-   native `AF_VSOCK`. Keeping the vsock guest-agent RPC OS-neutral and using a
-   `BootConfig` union leaves a clean path to an opt-in `macos` guest runtime for
-   Apple-platform builds (`xcodebuild`, `make mac-dmg`):
-   - `vesper-guest-agent` cross-compiles to `darwin/arm64` and runs as a
-     `LaunchDaemon` (`launchd` owns PID 1; process-group/job cleanup replaces
-     cgroups; `pf` `rdr` + `DIOCNATLOOK` replaces `iptables`; no Linux
-     `dockerd`).
-   - Apple's kernel enforces a **hard cap of 2 concurrent macOS VMs** per Mac
-     (`VZErrorVirtualMachineLimitExceeded`), so macOS guests would sit behind a
-     dedicated `max_macos_vms <= 2` semaphore.
-   - Images cannot be redistributed; Vesper downloads Apple's `.ipsw` via
-     `VZMacOSRestoreImage` into one golden disk and clones it per run in <1 ms
-     via APFS `clonefile(2)`.
+2. **Headless macOS guest VMs:** built; see [macOS guest VMs (`mac`)](#macos-guest-vms-mac)
+   below.
+
+#### macOS guest VMs (`mac`)
+
+Personas build and test the Apple-platform parts of a repository (`macos/`,
+`xcodebuild`, `make mac-test`) in a macOS guest VM, which they reach from their
+Linux run VM with `mac COMMAND`. The harness, git, Docker and services all stay
+in the Linux VM; the macOS VM only receives files and runs commands.
+
+- **Lazy start.** Nothing macOS boots for a turn. Each turn's egress gets the
+  run's broker handler at `mac.vesper.internal` (`198.18.0.5`) and
+  `VESPER_MACOS=1`; the macOS VM boots on the run's first `mac` call
+  (`runner.MacOSGuests`), serves the run's later calls, and stops after
+  `RUNNER_MACOS_IDLE_TTL_S` (default 600) without one. A run's macOS disk (APFS
+  clone of the golden `disk.img` and `nvram.bin`, plus its own machine
+  identifier: Apple requires two running VMs not to share one) outlives the VM,
+  so `.build` and DerivedData stay warm until the run's workspace is removed.
+- **Two slots.** Apple's kernel allows 2 macOS VMs per Mac
+  (`RUNNER_MACOS_VMS`, 0–2, default 2; 0 turns `mac` off). A call that finds
+  both busy evicts the least recently used idle one; when both are in use it
+  waits and says so ("all 2 macOS VMs are busy…"). macOS VMs are never spares.
+- **Sync, not share.** The Linux workspace is an ext4 disk macOS can't mount,
+  so `mac` mirrors the git checkout it runs in: it sends a manifest of the
+  tracked and non-ignored untracked files (path, size, mode, mtime), the host
+  answers which differ from the last sync it recorded, and only those go over
+  as a tar, extracted by the build user. Files the last sync of that checkout
+  had and this one doesn't are deleted; ignored files (build output) are never
+  touched on either side. Changes made in the macOS VM come back only with
+  `mac --pull PATH`.
+- **API** (`guestproto/mac.go`, client in `internal/macclient`, CLI
+  `cmd/vesper-mac` installed as `/usr/local/bin/mac` in the rootfs):
+  `POST /v1/start` (NDJSON status), `/v1/sync/plan`, `/v1/sync/upload`,
+  `/v1/exec` and `/v1/pull` (guestproto stdout/stderr/exit frames). Hanging up
+  an exec kills its process group in the guest.
+- **Guest agent.** `vesper-guest-agent` cross-compiles to `darwin/arm64`
+  (`CGO_ENABLED=0`) and runs as the LaunchDaemon `dev.vesper.guest-agent`: no
+  init, cgroups, networking, Docker or Nix; a process group is the unit of
+  cleanup. It accepts vsock connections from the host (CID 2) only, so a build
+  command can't reach the root-run agent. Every command runs as the image's
+  user (`RUNNER_MACOS_USER`, default `admin`) except one fixed root command at
+  boot that makes `/opt/vesper/workspace` and looks the user's ids up.
+- **Trust.** The macOS VM has no NIC and no egress listeners: no network, no
+  harness, no OAuth token, no git credential, no API. Its inputs are the run's
+  own files and the commands its persona runs. SwiftPM packages that need
+  fetching therefore fail there (Vesper's `macos/` package has none).
+- **Golden image.** `deploy/microvm/macos-golden.sh` pulls a Tart image with
+  Xcode (`ghcr.io/cirruslabs/macos-sequoia-xcode` by default), installs the
+  agent and its LaunchDaemon over SSH, shuts it down and copies `disk.img`,
+  `nvram.bin` and `config.json` (Tart's layout, which `microvm.LoadMacOSImage`
+  reads) into `<data dir>/vm/macos-golden` (`RUNNER_MACOS_IMAGE_DIR`). Vesper
+  turns `mac` on at start when that image loads. Nothing is redistributed: the
+  person pulls and modifies their own copy. Runs keep their own disk clone, so
+  a new image reaches only new runs.
+- **Sizing:** `RUNNER_MACOS_CPUS` (default 4) and `RUNNER_MACOS_MEMORY_MB`
+  (default 8192, fixed: macOS guests have no balloon driver).
 
 ### 3. Guest agent (`vesper-guest-agent`)
 

@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestModelPriceConfiguration(t *testing.T) {
 	for _, tt := range []struct {
@@ -51,5 +54,33 @@ func TestSpareVMsDefaultAndBounds(t *testing.T) {
 		if _, err := Load(); err == nil {
 			t.Fatalf("RUNNER_VM_SPARES=%s loaded", bad)
 		}
+	}
+}
+
+func TestMacOSGuestsDefaultsAndBounds(t *testing.T) {
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := c.Runner.MacOS
+	if m.MaxVMs != 2 || m.IdleTTL != 10*time.Minute || m.CPUs != 4 || m.MemoryMB != 8192 || m.User != "admin" || m.ImageDir != "" {
+		t.Fatalf("defaults = %+v", m)
+	}
+	t.Setenv("RUNNER_MACOS_VMS", "0")
+	if c, err := Load(); err != nil || c.Runner.MacOS.MaxVMs != 0 {
+		t.Fatalf("off: %d %v", c.Runner.MacOS.MaxVMs, err)
+	}
+	for key, bad := range map[string]string{
+		"RUNNER_MACOS_VMS":        "3",
+		"RUNNER_MACOS_IDLE_TTL_S": "5",
+		"RUNNER_MACOS_MEMORY_MB":  "1024",
+		"RUNNER_MACOS_IMAGE_DIR":  "golden",
+	} {
+		t.Run(key, func(t *testing.T) {
+			t.Setenv(key, bad)
+			if _, err := Load(); err == nil {
+				t.Fatalf("%s=%s loaded", key, bad)
+			}
+		})
 	}
 }

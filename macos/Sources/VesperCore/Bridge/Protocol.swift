@@ -436,7 +436,8 @@ public enum ShellCommandName: String, Codable, Sendable, Hashable, CaseIterable 
 /// Shell → page. Encoded to JSON and dispatched as the detail of a "vesper-native" CustomEvent.
 public enum NativeCommand: Sendable, Equatable, Codable {
     case navigate(path: String)
-    case navActivate(navigatorId: String, itemId: String)
+    /// `newTab`: the row was ⌘-clicked, so the page opens its href in a new tab. Sent only when true.
+    case navActivate(navigatorId: String, itemId: String, newTab: Bool = false)
     case navAction(navigatorId: String, actionId: String, itemId: String? = nil, menuItemId: String? = nil)
     case navPicker(navigatorId: String, pickerId: String, value: String)
     case navFilter(navigatorId: String, filterId: String, value: String, checked: Bool)
@@ -455,7 +456,7 @@ public enum NativeCommand: Sendable, Equatable, Codable {
     case reply(requestId: String, ok: Bool, selectedId: String?? = nil, error: String? = nil)
 
     private enum Keys: String, CodingKey {
-        case v, type, path, navigatorId, itemId, actionId, menuItemId, pickerId, searchId, filterId, value, expanded, checked, name, query
+        case v, type, path, navigatorId, itemId, actionId, menuItemId, pickerId, searchId, filterId, value, expanded, checked, name, query, newTab
         case accent, mode
         case requestId, ok, selectedId, error
     }
@@ -468,7 +469,9 @@ public enum NativeCommand: Sendable, Equatable, Codable {
         let type = try c.decode(String.self, forKey: .type)
         switch type {
         case "navigate": self = .navigate(path: try c.decode(String.self, forKey: .path))
-        case "nav.activate": self = .navActivate(navigatorId: try c.decode(String.self, forKey: .navigatorId), itemId: try c.decode(String.self, forKey: .itemId))
+        case "nav.activate":
+            self = .navActivate(navigatorId: try c.decode(String.self, forKey: .navigatorId), itemId: try c.decode(String.self, forKey: .itemId),
+                                newTab: try c.decodeIfPresent(Bool.self, forKey: .newTab) ?? false)
         case "nav.action":
             self = .navAction(navigatorId: try c.decode(String.self, forKey: .navigatorId), actionId: try c.decode(String.self, forKey: .actionId),
                               itemId: try c.decodeIfPresent(String.self, forKey: .itemId), menuItemId: try c.decodeIfPresent(String.self, forKey: .menuItemId))
@@ -510,8 +513,9 @@ public enum NativeCommand: Sendable, Equatable, Codable {
         switch self {
         case .navigate(let path):
             try c.encode("navigate", forKey: .type); try c.encode(path, forKey: .path)
-        case .navActivate(let nav, let item):
+        case .navActivate(let nav, let item, let newTab):
             try c.encode("nav.activate", forKey: .type); try c.encode(nav, forKey: .navigatorId); try c.encode(item, forKey: .itemId)
+            if newTab { try c.encode(true, forKey: .newTab) }
         case .navAction(let nav, let action, let item, let menuItem):
             try c.encode("nav.action", forKey: .type); try c.encode(nav, forKey: .navigatorId); try c.encode(action, forKey: .actionId)
             try c.encodeIfPresent(item, forKey: .itemId); try c.encodeIfPresent(menuItem, forKey: .menuItemId)

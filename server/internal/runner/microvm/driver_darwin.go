@@ -32,7 +32,7 @@ func NewVZDriver() Driver {
 }
 
 func (d *VZDriver) Start(ctx context.Context, cfg VMConfig) (VM, error) {
-	if cfg.KernelPath == "" {
+	if cfg.KernelPath == "" && cfg.MacOS == nil {
 		return nil, errors.New("microvm: KernelPath is required")
 	}
 	if len(cfg.Drives) == 0 {
@@ -46,24 +46,17 @@ func (d *VZDriver) Start(ctx context.Context, cfg VMConfig) (VM, error) {
 	if mem < 256<<20 {
 		mem = 256 << 20
 	}
-	cmdLine := cfg.CommandLine
-	if cmdLine == "" {
-		cmdLine = defaultKernelCmdLine
-	}
 
-	bootLoader, err := vz.NewLinuxBootLoader(cfg.KernelPath, vz.WithCommandLine(cmdLine))
-	if err != nil {
-		return nil, fmt.Errorf("vz linux boot loader: %w", err)
+	var vmCfg *vz.VirtualMachineConfiguration
+	var err error
+	if cfg.MacOS != nil {
+		vmCfg, err = macOSMachineConfig(cfg.MacOS, uint(cpus), mem)
+	} else {
+		vmCfg, err = linuxMachineConfig(cfg, uint(cpus), mem)
 	}
-	vmCfg, err := vz.NewVirtualMachineConfiguration(bootLoader, uint(cpus), mem)
 	if err != nil {
-		return nil, fmt.Errorf("vz vm config: %w", err)
+		return nil, err
 	}
-	platform, err := vz.NewGenericPlatformConfiguration()
-	if err != nil {
-		return nil, fmt.Errorf("vz platform: %w", err)
-	}
-	vmCfg.SetPlatformVirtualMachineConfiguration(platform)
 
 	conInR, conInW, err := os.Pipe()
 	if err != nil {
@@ -141,12 +134,15 @@ func (d *VZDriver) Start(ctx context.Context, cfg VMConfig) (VM, error) {
 	}
 	vmCfg.SetSocketDevicesVirtualMachineConfiguration([]vz.SocketDeviceConfiguration{sockCfg})
 
-	balloonCfg, err := vz.NewVirtioTraditionalMemoryBalloonDeviceConfiguration()
-	if err != nil {
-		cleanupPipes()
-		return nil, fmt.Errorf("vz balloon cfg: %w", err)
+	// macOS guests have no virtio balloon driver; their memory stays fixed.
+	if cfg.MacOS == nil {
+		balloonCfg, err := vz.NewVirtioTraditionalMemoryBalloonDeviceConfiguration()
+		if err != nil {
+			cleanupPipes()
+			return nil, fmt.Errorf("vz balloon cfg: %w", err)
+		}
+		vmCfg.SetMemoryBalloonDevicesVirtualMachineConfiguration([]vz.MemoryBalloonDeviceConfiguration{balloonCfg})
 	}
-	vmCfg.SetMemoryBalloonDevicesVirtualMachineConfiguration([]vz.MemoryBalloonDeviceConfiguration{balloonCfg})
 
 	entropyCfg, err := vz.NewVirtioEntropyDeviceConfiguration()
 	if err != nil {
@@ -228,6 +224,9 @@ func (d *VZDriver) Start(ctx context.Context, cfg VMConfig) (VM, error) {
 	}
 
 	timeout := d.BootTimeout
+	if cfg.BootTimeout > 0 {
+		timeout = cfg.BootTimeout
+	}
 	if timeout <= 0 {
 		timeout = 15 * time.Second
 	}
@@ -239,6 +238,102 @@ func (d *VZDriver) Start(ctx context.Context, cfg VMConfig) (VM, error) {
 		return nil, fmt.Errorf("microvm boot ready: %w (console=%q)", err, ring.string())
 	}
 	return vm, nil
+}
+
+func linuxMachineConfig(cfg VMConfig, cpus uint, mem uint64) (*vz.VirtualMachineConfiguration, error) {
+	cmdLine := cfg.CommandLine
+	if cmdLine == "" {
+		cmdLine = defaultKernelCmdLine
+	}
+	bootLoader, err := vz.NewLinuxBootLoader(cfg.KernelPath, vz.WithCommandLine(cmdLine))
+	if err != nil {
+		return nil, fmt.Errorf("vz linux boot loader: %w", err)
+	}
+	vmCfg, err := vz.NewVirtualMachineConfiguration(bootLoader, cpus, mem)
+	if err != nil {
+		return nil, fmt.Errorf("vz vm config: %w", err)
+	}
+	platform, err := vz.NewGenericPlatformConfiguration()
+	if err != nil {
+		return nil, fmt.Errorf("vz platform: %w", err)
+	}
+	vmCfg.SetPlatformVirtualMachineConfiguration(platform)
+	return vmCfg, nil
+}
+
+// macOSMachineConfig is a headless macOS guest: Mac platform from the golden
+// image's hardware model, the VM's own NVRAM and machine identifier, and a
+// graphics device (macOS expects one even with no window showing it).
+func macOSMachineConfig(boot *MacOSBoot, cpus uint, mem uint64) (*vz.VirtualMachineConfiguration, error) {
+	hw, err := vz.NewMacHardwareModelWithData(boot.HardwareModel)
+	if err != nil {
+		return nil, fmt.Errorf("vz mac hardware model: %w", err)
+	}
+	if !hw.Supported() {
+		return nil, errors.New("microvm: this Mac can't run the golden image's macOS hardware model")
+	}
+	aux, err := vz.NewMacAuxiliaryStorage(boot.AuxStoragePath)
+	if err != nil {
+		return nil, fmt.Errorf("vz mac auxiliary storage: %w", err)
+	}
+	id, err := loadOrCreateMachineID(boot.MachineIDPath)
+	if err != nil {
+		return nil, err
+	}
+	platform, err := vz.NewMacPlatformConfiguration(
+		vz.WithMacHardwareModel(hw),
+		vz.WithMacAuxiliaryStorage(aux),
+		vz.WithMacMachineIdentifier(id),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("vz mac platform: %w", err)
+	}
+	bootLoader, err := vz.NewMacOSBootLoader()
+	if err != nil {
+		return nil, fmt.Errorf("vz macos boot loader: %w", err)
+	}
+	vmCfg, err := vz.NewVirtualMachineConfiguration(bootLoader, cpus, mem)
+	if err != nil {
+		return nil, fmt.Errorf("vz vm config: %w", err)
+	}
+	vmCfg.SetPlatformVirtualMachineConfiguration(platform)
+
+	gfx, err := vz.NewMacGraphicsDeviceConfiguration()
+	if err != nil {
+		return nil, fmt.Errorf("vz mac graphics: %w", err)
+	}
+	display, err := vz.NewMacGraphicsDisplayConfiguration(1280, 800, 80)
+	if err != nil {
+		return nil, fmt.Errorf("vz mac display: %w", err)
+	}
+	gfx.SetDisplays(display)
+	vmCfg.SetGraphicsDevicesVirtualMachineConfiguration([]vz.GraphicsDeviceConfiguration{gfx})
+	return vmCfg, nil
+}
+
+// loadOrCreateMachineID keeps one machine identifier per VM directory, so a
+// VM keeps its identity across boots and never shares it with another.
+func loadOrCreateMachineID(path string) (*vz.MacMachineIdentifier, error) {
+	if path == "" {
+		return nil, errors.New("microvm: MacOSBoot.MachineIDPath is required")
+	}
+	if data, err := os.ReadFile(path); err == nil {
+		id, err := vz.NewMacMachineIdentifierWithData(data)
+		if err != nil {
+			return nil, fmt.Errorf("vz mac machine identifier %s: %w", path, err)
+		}
+		return id, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	id, err := vz.NewMacMachineIdentifier()
+	if err != nil {
+		return nil, fmt.Errorf("vz new mac machine identifier: %w", err)
+	}
+	if err := os.WriteFile(path, id.DataRepresentation(), 0o600); err != nil {
+		return nil, err
+	}
+	return id, nil
 }
 
 func acceptLoop(ln *vz.VirtioSocketListener, handler VSockHandler) {

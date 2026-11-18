@@ -15,6 +15,11 @@ Everything in the parity checklist below is implemented, with these deliberate g
   `useNativeContextMenu` (chat messages and board cards so far); elsewhere WebKit's menu shows.
 - **Keyboard focus** between the sidebar, toolbar and page relies on AppKit's defaults; Tab
   inside the page stays inside it.
+- **Fallback column**: every screen now describes its list for the native sidebar; the fallback
+  column stays only as a safety net for a screen that doesn't.
+- **No layout signal to the page**: a page can't tell the separate layout from the compact one, so
+  anything that must show in both (Knowledge's folder path) stays in the page rather than in the
+  window subtitle, which compact hides.
 - **UI runtime**: the UI is a static Vite build that `vesper app` serves itself; the only node
   process is the design worker (`web/design-worker`).
 - **Touch ID** is strict: with the gate on and no usable sensor it asks for the
@@ -112,6 +117,10 @@ Source of truth: `web/lib/native-shell/protocol.ts`; Swift mirror
   publishes `shell` (areas, apps, current area, badges) and, when no screen claims the navigator,
   the default Chats navigator (chat history and spaces) as a `NavModel`.
 - Request/response messages (`confirmApproval`, `openWorkspaceMenu`, `contextMenu`, `confirm`) carry a
+- `nav.activate` carries `newTab: true` when the row was ⌘-clicked: the page opens the row's href
+  with `window.open` (a new tab beside this one) and leaves the current tab and its selection alone.
+  Rows without an href are activated as by a plain click.
+- Request/response messages (`confirmApproval`, `openWorkspaceMenu`, `contextMenu`) carry a
   `requestId`; the shell answers with a `reply` command.
 
 ### Security rules for the shell
@@ -158,6 +167,8 @@ What the app does, for regression testing by hand.
 - [ ] Tab titles from the page title minus a trailing " · Vesper"/" - Vesper"/" — Vesper"
 - [ ] Session restore (`session.json`: tabs, active index, bounds; http(s) tabs only; bounds ≥400×300); min size 760×540; default 1280×840
 - [ ] Link policy (above); `window.open` to Vesper/playground → new tab; external → default browser
+- [ ] ⌘-click a sidebar row with an href (a chat, a run, a Knowledge page) → it opens in a new tab; the current tab doesn't move
+- [ ] Knowledge: no Knowledge tab strip (pages are the app's tabs, named after the page); a click on a page replaces the current tab, ⌘-click or the row's Open in New Tab opens one beside it; Home is the explorer's top row; ⌘W closes the tab (⌥W does nothing); the page's Private/Shared menu, persona mode, Copy link and More are toolbar items, and its folder path sits above its title
 - [ ] Offline / stack-error state in the window with Retry, Restart Stack, Show Logs
 - [ ] Right-click on a chat message or a board card: native menu (selected text, fields and links in messages keep the system menu); right place at every zoom level
 - [ ] `confirmAction` (delete a chat, discard edits, cancel a run…) is a sheet on the window: Return confirms, Esc cancels, the custom cancel label works; page `alert`/`confirm`/`prompt` are sheets too

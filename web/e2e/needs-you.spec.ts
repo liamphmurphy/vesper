@@ -44,6 +44,7 @@ async function installTray(page: Page) {
       const { id } = request.postDataJSON() as { id: string };
       reads.push(id);
       inbox = inbox.map((i) => (i.id === id ? { ...i, read: true } : i));
+      board.counts.needs_you = needs();
       return route.fulfill({ status: 204 });
     }
     const decided = /^\/approvals\/([^/]+)\/(approve|deny)$/.exec(path);
@@ -128,7 +129,7 @@ test("approve, deny and answer from the tray, with the badge counting only Needs
   await expect(tray(page)).toHaveCount(0);
 });
 
-test("Updates: FYI items with an unread dot and no count, and Mark all read", async ({ page }) => {
+test("Updates: FYI items with a dot and no count, cleared one by one or all at once", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("lazyagents.sidebar-expanded", "1"));
   const api = await installTray(page);
   await page.goto("/tickets?layout=board&project=WEB");
@@ -143,18 +144,27 @@ test("Updates: FYI items with an unread dot and no count, and Mark all read", as
   const updates = tray(page).getByRole("tabpanel", { name: "Updates" });
   await expect(updates.locator("[data-tray-row]")).toHaveText([/Daily digest/, /Ledger partitions.*Pull request #12 merged/, /Checkout copy.*FYI shipped/]);
 
-  await tray(page).getByRole("button", { name: "Mark all read" }).click();
+  // The row's ✕ clears it (the Inbox's Done), and it leaves the list.
+  await updates.locator('[data-tray-row="merged:1"]').getByRole("button", { name: "Clear Merged: Ledger partitions" }).click();
+  await expect.poll(() => api.reads).toEqual(["merged:1"]);
+  await expect(updates.locator("[data-tray-row]")).toHaveText([/Daily digest/, /Checkout copy.*FYI shipped/]);
+  // The selection takes the cleared row's slot, focused, and X clears it.
+  await expect(selected(page)).toContainText("FYI shipped");
+  await expect(selected(page)).toBeFocused();
+  await page.keyboard.press("x");
+  await expect.poll(() => api.reads).toEqual(["merged:1", "mention:fyi"]);
+  await expect(updates.locator("[data-tray-row]")).toHaveText([/Daily digest/]);
+
+  await tray(page).getByRole("button", { name: "Clear all" }).click();
   await expect.poll(() => [...api.reads].sort()).toEqual(["mention:fyi", "merged:1", "scheduled:1"]);
+  await expect(updates.locator("[data-tray-row]")).toHaveCount(0);
+  await expect(updates.getByText("You’re all caught up")).toBeVisible();
   await expect(updatesTab.getByTestId("updates-dot")).toHaveCount(0);
-  await expect(tray(page).getByRole("button", { name: "Mark all read" })).toHaveCount(0);
-  // Read items stay listed: Updates is a feed.
-  await expect(updates.locator("[data-tray-row]")).toHaveCount(3);
+  await expect(tray(page).getByRole("button", { name: "Clear all" })).toHaveCount(0);
   // Updates never change the badge.
   await expect(pill(page)).toHaveAccessibleName("Needs you, 4 waiting");
 
-  // ← back from the list.
-  await page.keyboard.press("j");
-  await expect(selected(page)).toBeFocused();
+  // ← back, with the emptied list's focus fallen to the page.
   await page.keyboard.press("ArrowLeft");
   await expect(tray(page).getByRole("tab", { name: /^Needs you/ })).toHaveAttribute("aria-selected", "true");
   // Tab is not taken over: it moves into the selected row's buttons, so every control is reachable.
@@ -170,6 +180,47 @@ test("Updates: FYI items with an unread dot and no count, and Mark all read", as
   await expect(page).toHaveURL(/\/work(\?[^#]*)?#needs-you$/);
   await expect(tray(page)).toHaveCount(0);
   await expect(page.getByRole("complementary", { name: "Runs" }).getByRole("region", { name: "Needs you" })).toBeInViewport();
+});
+
+test("a Needs you row clears one at a time, lowering the badge, with no Clear all", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("lazyagents.sidebar-expanded", "1"));
+  const api = await installTray(page);
+  await page.goto("/tickets?layout=board&project=WEB");
+  await pill(page).click();
+  const needs = tray(page).getByRole("tabpanel", { name: "Needs you" });
+  await expect(needs.locator("[data-tray-row]")).toHaveCount(4);
+  // Bulk-clearing would hide runs still waiting: only Updates offers it.
+  await expect(tray(page).getByRole("button", { name: "Clear all" })).toHaveCount(0);
+
+  // X on the selected row; the next row takes its slot, focused, so X can keep going.
+  await expect(selected(page)).toContainText("Partition ledger entries");
+  await expect(selected(page)).toBeFocused();
+  await page.keyboard.press("x");
+  await expect.poll(() => api.reads).toEqual([`approval:${APPROVAL}`]);
+  await expect(needs.locator("[data-tray-row]")).toHaveCount(3);
+  await expect(selected(page)).toContainText("Drop old sessions");
+  await expect(selected(page)).toBeFocused();
+  await expect(pill(page)).toHaveAccessibleName("Needs you, 3 waiting");
+
+  // The row's ✕ clears it too.
+  await needs.locator('[data-tray-row="mention:ask"]').getByRole("button", { name: "Clear Mention: Checkout copy" }).click();
+  await expect.poll(() => api.reads).toEqual([`approval:${APPROVAL}`, "mention:ask"]);
+  await expect(needs.locator("[data-tray-row]")).toHaveCount(2);
+  await expect(pill(page)).toHaveAccessibleName("Needs you, 2 waiting");
+  // Clearing decided nothing: the approval itself was never sent.
+  expect(api.decisions).toEqual([]);
+});
+
+test("a clear the server refuses puts the row back and says so", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("lazyagents.sidebar-expanded", "1"));
+  await installTray(page);
+  await page.route(/\/api\/v1\/inbox\/read$/, (route) => route.fulfill({ status: 500, json: { error: { code: "internal", message: "boom" } } }));
+  await page.goto("/tickets?layout=board&project=WEB");
+  await pill(page).click();
+  await expect(selected(page)).toBeFocused();
+  await page.keyboard.press("x");
+  await expect(tray(page).getByRole("alert")).toContainText("Couldn't mark item read");
+  await expect(tray(page).getByRole("tabpanel", { name: "Needs you" }).locator("[data-tray-row]")).toHaveCount(4);
 });
 
 test("the tray opens from Chat, Tickets, Runs and an App page, on the rail too", async ({ page }) => {
@@ -198,7 +249,7 @@ test("the shortcuts sheet lists the tray keys", async ({ page }) => {
   await expect(pill(page)).toBeVisible();
   await page.keyboard.press("?");
   const sheet = page.getByRole("dialog", { name: "Keyboard shortcuts" }).getByRole("region", { name: "Needs you tray" });
-  for (const label of ["Next / previous item", "Open the item’s page", "Switch between Needs you and Updates", "Reply to the selected question", "Approve the selected approval", "Deny the selected approval (with an optional reason)", "Close the tray, or leave the reply box"]) {
+  for (const label of ["Next / previous item", "Open the item’s page", "Switch between Needs you and Updates", "Reply to the selected question", "Clear the selected item until it changes", "Approve the selected approval", "Deny the selected approval (with an optional reason)", "Close the tray, or leave the reply box"]) {
     await expect(sheet.getByText(label, { exact: true })).toBeVisible();
   }
 });

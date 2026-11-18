@@ -279,3 +279,45 @@ func newSelfSignedHTTPSServer(t *testing.T, dnsName string, h http.Handler) *htt
 	srv.StartTLS()
 	return srv
 }
+
+func TestEgressRoutesMacHostToItsHandler(t *testing.T) {
+	eg := NewEgress(EgressConfig{})
+	defer eg.Close()
+
+	resp, err := eg.HandleDNSPacket(context.Background(), makeDNSQuery(t, InternalMacHost, dnsmessage.TypeA))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hdr, ips := parseDNSResponse(t, resp); hdr.RCode != dnsmessage.RCodeSuccess || len(ips) != 1 || ips[0] != internalMacIP {
+		t.Fatalf("mac host DNS = %v %v", hdr.RCode, ips)
+	}
+
+	hc := &http.Client{Transport: &http.Transport{
+		DialContext: func(context.Context, string, string) (net.Conn, error) {
+			c, s := net.Pipe()
+			go eg.ServeTCPConn(s)
+			_ = guestproto.WriteEgressTCPHeader(c, net.IP(internalMacIP[:]), 80)
+			return c, nil
+		},
+	}}
+	get := func() (int, string) {
+		t.Helper()
+		res, err := hc.Get("http://" + InternalMacHost + "/v1/start")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		b, _ := io.ReadAll(res.Body)
+		return res.StatusCode, string(b)
+	}
+	// Off until a run's broker is attached: `mac` reads 404 as "not enabled".
+	if code, _ := get(); code != http.StatusNotFound {
+		t.Fatalf("no handler: status %d, want 404", code)
+	}
+	eg.SetMacHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "mac:"+r.URL.Path)
+	}))
+	if code, body := get(); code != 200 || body != "mac:/v1/start" {
+		t.Fatalf("with handler: %d %q", code, body)
+	}
+}

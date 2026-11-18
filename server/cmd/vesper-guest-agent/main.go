@@ -66,7 +66,7 @@ func main() {
 	}
 	defer ln.Close()
 
-	if listenUnix == "" && runtime.GOOS == "linux" {
+	if listenUnix == "" {
 		// Notify host (CID 2) on PortReady that PortRPC is listening.
 		go notifyHostReady(log)
 	}

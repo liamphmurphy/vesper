@@ -15,6 +15,8 @@ import { buildWikiNavModel } from "./models/wiki.ts";
 import { buildKeepsakesNavModel, buildProjectDocsNavModel } from "./models/library.ts";
 import { projectPickerAction } from "./models/project-picker.ts";
 import { buildKnowledgeNavModel, K } from "./models/knowledge.ts";
+import { knowledgePageActions, KP } from "./models/knowledge-page.ts";
+import { splitActions } from "./actions.ts";
 import { findNavItem } from "./nav-model.ts";
 
 const json = (m) => assert.equal(JSON.stringify(m), JSON.stringify(JSON.parse(JSON.stringify(m))));
@@ -355,10 +357,13 @@ test("knowledge: header actions, + menu, view picker, tree with menus, quick ent
   assert.deepEqual(menu.filter((i) => !i.separator).map((i) => i.id), ["new:doc", "deck", "design", "new:folder"]);
   assert.deepEqual(menu[1].children.map((c) => c.id), ["new:deck:blank", "new:deck:pitch"]);
   assert.equal(m.picker.value, "yours");
-  assert.deepEqual(m.sections.map((s) => s.id), ["pinned", "tree", "quick"]);
-  assert.equal(m.sections[0].items[0].id, "pin:p0");
-  assert.equal(m.sections[0].items[0].contextMenu.find((i) => i.id === "pin").label, "Unpin");
-  const items = m.sections[1].items;
+  assert.deepEqual(m.sections.map((s) => s.id), ["home", "pinned", "tree", "quick"]);
+  const section = (model, id) => model.sections.find((s) => s.id === id);
+  assert.deepEqual(section(m, "home").items, [{ id: "home", title: "Home", icon: "home", href: "/knowledge" }], "Home leads the list: the Mac app has no tab strip");
+  assert.equal(section(m, "pinned").items[0].id, "pin:p0");
+  assert.equal(section(m, "pinned").items[0].contextMenu.find((i) => i.id === "pin").label, "Unpin");
+  assert.equal(section(m, "pinned").items[0].contextMenu[0].id, K.openNewTab, "a page row opens in a new tab first, as Finder's and Safari's do");
+  const items = section(m, "tree").items;
   assert.equal(items[0].id, "f:Inbox", "Inbox heads the tree");
   assert.deepEqual(items[0].badge, { text: "1", tone: "accent" });
   assert.equal(items[0].children[0].status, "human");
@@ -370,13 +375,54 @@ test("knowledge: header actions, + menu, view picker, tree with menus, quick ent
   assert.deepEqual(notes.contextMenu.map((i) => i.id).filter((i) => !i.startsWith("s")), ["ask", "new-page", "new-folder", "rename", "move", "delete"]);
   assert.equal(items[2].href, "/knowledge/t1");
   assert.equal(m.selectedId, "p:p9");
-  assert.deepEqual(m.sections[2].items.map((i) => i.id), ["today", "capture", "import"]);
+  assert.deepEqual(section(m, "quick").items.map((i) => i.id), ["today", "capture", "import"]);
   const all = buildKnowledgeNavModel({ ...base, showAll: new Set(["Notes"]) });
-  assert.equal(all.sections[1].items[1].children.length, 10);
-  assert.equal(buildKnowledgeNavModel({ ...base, loading: true }).sections[0].emptyText, "Loading");
-  assert.match(buildKnowledgeNavModel({ ...base, tree: kfolder("", ""), pinned: [], view: "agent" }).sections[0].emptyText, /No agent knowledge/);
+  assert.equal(section(all, "tree").items[1].children.length, 10);
+  assert.equal(section(buildKnowledgeNavModel({ ...base, loading: true }), "loading").emptyText, "Loading");
+  assert.match(section(buildKnowledgeNavModel({ ...base, tree: kfolder("", ""), pinned: [], view: "agent" }), "empty").emptyText, /No agent knowledge/);
+  assert.equal(buildKnowledgeNavModel({ ...base, activeId: undefined, home: true }).selectedId, "home", "Home is selected while it shows");
+  assert.equal(buildKnowledgeNavModel({ ...base, activeId: undefined }).selectedId, null);
   assert.equal(K.folder("a/b"), "f:a/b");
   json(m);
+});
+
+test("knowledge page: audience, persona mode, copy link and More as toolbar items that run their handlers", () => {
+  const calls = [];
+  const input = {
+    audience: "private",
+    setAudience: (a) => calls.push(`audience:${a}`),
+    mode: { label: "Meow suggests changes", avatar: { initials: "M" }, open: () => calls.push("mode") },
+    copyLink: () => calls.push("copy"),
+    exportMarkdown: () => calls.push("export"),
+    print: () => calls.push("print"),
+    history: () => calls.push("history"),
+  };
+  const { items, dispatch } = splitActions(knowledgePageActions(input));
+  assert.deepEqual(items.map((i) => i.id), [KP.audience, KP.mode, KP.copyLink, KP.more]);
+  const audience = items[0];
+  assert.equal(audience.label, "Private");
+  assert.equal(audience.icon, "lock");
+  assert.deepEqual(audience.menu.map((m) => [m.id, !!m.checked, !!m.disabled]), [
+    ["audience:private", true, false],
+    ["audience:shared", false, false],
+    ["audience:agent", false, true],
+  ]);
+  assert.deepEqual(items[1].avatar, { initials: "M" });
+  assert.equal(items[1].showsLabel, true);
+  assert.deepEqual(items[3].menu.map((m) => m.id), ["export-md", "print", "history"]);
+  json(items);
+
+  dispatch(KP.audience, KP.audienceOption("shared"));
+  dispatch(KP.audience, KP.audienceOption("private")); // already the audience: nothing to save
+  dispatch(KP.audience, KP.audienceOption("agent")); // only agents' own pages are Agent
+  dispatch(KP.mode);
+  dispatch(KP.copyLink);
+  for (const id of ["export-md", "print", "history"]) dispatch(KP.more, id);
+  assert.deepEqual(calls, ["audience:shared", "mode", "copy", "export", "print", "history"]);
+
+  const agentPage = splitActions(knowledgePageActions({ ...input, audience: "agent", mode: { ...input.mode, avatar: undefined } })).items;
+  assert.equal(agentPage[0].label, "Agent");
+  assert.equal(agentPage[1].icon, "agents", "no face yet: the agents icon stands in");
 });
 
 test("findNavItem still finds nested wiki rows", () => {

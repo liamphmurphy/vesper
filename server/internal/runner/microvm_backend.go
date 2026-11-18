@@ -58,6 +58,9 @@ type MicroVM struct {
 	// runs to claim instead of booting their own (0 = none).
 	SpareVMs int
 	MCPURL   string
+	// MacOS, when set, gives runs `mac`: commands in a macOS guest VM that
+	// boots on a run's first call (see MacOSGuests).
+	MacOS *MacOSGuests
 
 	APIHandler      http.Handler
 	APIUpstream     string // optional http(s)://host:port used when APIHandler == nil
@@ -257,6 +260,9 @@ func (b *MicroVM) RemoveWorkspace(ctx context.Context, runID string) error {
 	defer mu.Unlock()
 
 	b.stopRunVM(ctx, runID)
+	if b.MacOS != nil {
+		b.MacOS.Stop(runID)
+	}
 	return os.RemoveAll(dir)
 }
 
@@ -719,6 +725,12 @@ func (b *MicroVM) Start(ctx context.Context, runID string, spec ExecSpec) (Proce
 		rewriteGitInsteadOfEnv(env, b.GitRewriteFrom)
 	}
 	pgProxySet := b.attachPlaygroundProxy(spec, env, rvm.egress)
+	// Only the handler is attached here; the macOS VM boots on the first
+	// `mac` call, never for a turn that doesn't make one.
+	if b.MacOS != nil && rvm.egress != nil {
+		rvm.egress.SetMacHandler(b.MacOS.Handler(runID))
+		env[MacOSEnv] = "1"
+	}
 
 	dir := spec.Dir
 	if dir == "" {
@@ -966,11 +978,17 @@ func (b *MicroVM) Cleanup(ctx context.Context) error {
 	b.cleanupPlaygrounds(ctx)
 	b.cleanupDevWorkspaces(ctx)
 	b.stopSpares()
+	if b.MacOS != nil {
+		b.MacOS.StopAll()
+	}
 	return nil
 }
 
 func (b *MicroVM) Close() error {
 	b.closeSpares()
+	if b.MacOS != nil {
+		b.MacOS.Close()
+	}
 	return b.Cleanup(context.Background())
 }
 

@@ -55,7 +55,7 @@ test("wait time reads in minutes, hours and days", () => {
   assert.equal(waited(at(60 * 50), now), "2d");
 });
 
-test("the tray splits Needs you (urgency, longest wait) from Updates (newest), and only Updates are unread news", () => {
+test("the tray splits Needs you (urgency, longest wait) from Updates (newest), and leaves cleared items out of both", () => {
   const items = [
     item("m-ask", "mention", 5, { needs_you: true }),
     item("q1", "question", 10, { needs_you: true }),
@@ -69,9 +69,11 @@ test("the tray splits Needs you (urgency, longest wait) from Updates (newest), a
   ];
   const t = trayItems(items);
   assert.deepEqual(t.needs.map((i) => i.id), ["a1", "a2", "q1", "m-ask", "gate"]);
-  assert.deepEqual(t.updates.map((i) => i.id), ["sched", "m-fyi", "pr"]);
-  assert.deepEqual(t.unread, ["sched", "m-fyi"]);
+  // A read (cleared) update leaves the tab; the limit counts only what is still listed.
+  assert.deepEqual(t.updates.map((i) => i.id), ["sched", "m-fyi"]);
   assert.deepEqual(trayItems(items, 1).updates.map((i) => i.id), ["sched"]);
+  // Cleared until it changes: the server reports it unread again, and it is back.
+  assert.deepEqual(trayItems(items.map((i) => ({ ...i, read: false }))).updates.map((i) => i.id), ["sched", "m-fyi", "pr"]);
 });
 
 test("each kind gets its inline tray action", () => {

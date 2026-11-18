@@ -383,8 +383,10 @@ func runRunner(ctx context.Context, log *slog.Logger) error {
 				log.Warn("runner: microvm cache store disabled", "err", cerr)
 			}
 		}
+		driver := microvm.NewVZDriver()
 		m := &runner.MicroVM{
-			Driver:         microvm.NewVZDriver(),
+			Driver:         driver,
+			MacOS:          macOSGuests(log, rc.MacOS, rc.VMDir, driver),
 			StateDir:       rc.VMDir,
 			KernelPath:     rc.KernelPath,
 			RootfsPath:     rc.RootfsPath,
