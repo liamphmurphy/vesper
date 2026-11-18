@@ -6,14 +6,12 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } 
 import type { Schemas } from "@/lib/api/client";
 import { useUpdateChat } from "@/lib/api/hooks";
 import { usePersonas } from "@/lib/api/persona-hooks";
-import { useChatPlayground, useCanStartSavedPlayground, usePlaygroundAction } from "@/lib/api/playground-hooks";
 import { useRepositories } from "@/lib/api/repository-hooks";
 import { canOpenWorkspaceFolder, openWorkspaceFolder } from "@/lib/desktop-bridge";
 import { buildChatTitleMenu, buildChatToolbar, parseChatAction, parseTitleAction } from "@/lib/native-shell/chat-toolbar";
 import { setTopBarTitle } from "@/lib/native-shell/title";
 import { useNativeToolbar } from "@/lib/native-shell/use-native-toolbar";
 import { inChatList, repoShortName, repositoryChoices, sameRepo } from "@/lib/persona-ui";
-import { usePlaygroundPanel } from "@/lib/use-playground-panel";
 import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import { TextInput } from "@/components/ui/primitives";
@@ -27,7 +25,7 @@ type Chat = Schemas["ChatSession"];
 
 /**
  * The chat page's header in the Mac app. It draws no row: the persona, space, repository,
- * playground, canvas and runs go to the window's toolbar, and the title's menu (rename, workspace
+ * canvas and runs go to the window's toolbar (the playground to the right rail), and the title's menu (rename, workspace
  * folder, secrets, commit email) to the chevron beside the window title. What a menu opens that
  * can't be a menu item (rename, the secrets list, the repository search box) opens here, in a dialog
  * or in the web picker. Not rendered in a browser.
@@ -52,10 +50,6 @@ export function NativeChatHeader({ chat: c, participants, fresh, running, person
   const secrets = useChatSecrets(c.id);
   const saved = useRepositories();
   const update = useUpdateChat();
-  const panel = usePlaygroundPanel();
-  const pg = useChatPlayground(c.id).data;
-  const canStart = useCanStartSavedPlayground(c.id);
-  const playground = usePlaygroundAction(c.id);
   const canvas = useCanvasEntry(c.id, running);
   const runs = useChatLiveRuns(c.id);
   const [renaming, setRenaming] = useState(false);
@@ -79,15 +73,10 @@ export function NativeChatHeader({ chat: c, participants, fresh, running, person
         personaDisabled,
         space: { current: space.current ? { id: space.current.id, name: space.current.name } : undefined, spaces: space.spaces.map((s) => ({ id: s.id, name: s.name })), locked: space.locked },
         repo: repo ? { value: c.repo_url, pending: c.pending_repo_url, choices: repoChoices, shortName: repoShortName, same: sameRepo, disabled: repo.disabled } : undefined,
-        playground: !pg && canStart
-          ? { phase: "start", pending: playground.isPending }
-          : pg
-            ? { phase: "panel", state: pg.state as "running" | "starting" | "failed" | "stopped", open: panel.open }
-            : undefined,
         canvasCount: canvas.count,
         runsActive: runs.length,
       }),
-    [c.archived, c.persona?.id, c.repo_url, c.pending_repo_url, participants, personas.data, fresh, personaDisabled, space.current, space.spaces, space.locked, repo, repoChoices, pg, canStart, playground.isPending, panel.open, canvas.count, runs.length],
+    [c.archived, c.persona?.id, c.repo_url, c.pending_repo_url, participants, personas.data, fresh, personaDisabled, space.current, space.spaces, space.locked, repo, repoChoices, canvas.count, runs.length],
   );
   const titleMenu = useMemo(
     () =>
@@ -127,9 +116,6 @@ export function NativeChatHeader({ chat: c, participants, fresh, running, person
           return repo?.onPick(a.url);
         case "searchRepos":
           return repo?.onSearch();
-        case "playground":
-          if (!pg && canStart) return playground.mutate("start", { onSuccess: panel.show, onError: (e) => toast({ title: e instanceof Error ? e.message : "Couldn’t start the playground.", tone: "error" }) });
-          return panel.open ? panel.close() : panel.show();
         case "canvas":
           return canvas.go();
         case "runs":

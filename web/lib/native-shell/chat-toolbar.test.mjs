@@ -65,14 +65,6 @@ test("the repository item appears for a coding persona, checks the current repo 
   assert.equal(r.menu.at(-1).id, "repo.search");
 });
 
-test("playground: start button, then a toggle that shows its state", () => {
-  assert.equal(byId(buildChatToolbar(base({ playground: { phase: "start", pending: false } })), "chat.playground").label, "Start playground");
-  assert.equal(byId(buildChatToolbar(base({ playground: { phase: "start", pending: true } })), "chat.playground").disabled, true);
-  const running = byId(buildChatToolbar(base({ playground: { phase: "panel", state: "running", open: true } })), "chat.playground");
-  assert.deepEqual([running.kind, running.label, running.on], ["toggle", "Playground", true]);
-  assert.equal(byId(buildChatToolbar(base({ playground: { phase: "panel", state: "failed", open: false } })), "chat.playground").label, "Playground · Failed");
-});
-
 test("runs, canvas and restore show only when there is something to show", () => {
   assert.deepEqual(buildChatToolbar(base()).map((i) => i.id), ["chat.persona", "chat.space"]);
   const all = buildChatToolbar(base({ runsActive: 2, canvasCount: 3, archived: true }));
@@ -87,7 +79,7 @@ test("actions parse back from the ids the builder made", () => {
   assert.deepEqual(parseChatAction("chat.space", "space:"), { type: "space", id: "" });
   assert.deepEqual(parseChatAction("chat.repo", "repo:https://github.com/a/b"), { type: "repo", url: "https://github.com/a/b" });
   assert.deepEqual(parseChatAction("chat.repo", "repo.search"), { type: "searchRepos" });
-  assert.deepEqual(parseChatAction("chat.playground"), { type: "playground" });
+  assert.equal(parseChatAction("chat.playground"), null, "the playground moved to the right rail");
   assert.equal(parseChatAction("chat.persona", "persona.header"), null);
   assert.equal(parseChatAction("other"), null);
 });

@@ -1,5 +1,6 @@
 // The chat page's header as native toolbar items and a title menu: who you're talking to, the
-// space, the repository, the playground and the title's own menu. Pure: the screen feeds in what
+// space, the repository and the title's own menu. The playground is on the right rail
+// (chat-panel-host's usePlaygroundStart). Pure: the screen feeds in what
 // the web header reads and acts on the decoded action. Ids are the protocol between this file's
 // builders and parsers; nothing else depends on their text.
 
@@ -24,9 +25,6 @@ export interface ChatToolbarInput {
   space: { current?: { id: string; name: string }; spaces: { id: string; name: string }[]; locked: boolean };
   /** Present for a persona that can code. */
   repo?: { value?: string; pending?: string; choices: { url: string; name: string }[]; shortName: (url: string) => string; same: (a: string, b: string) => boolean; disabled: boolean };
-  playground?:
-    | { phase: "start"; pending: boolean }
-    | { phase: "panel"; state: "running" | "starting" | "failed" | "stopped"; open: boolean };
   canvasCount: number;
   runsActive: number;
 }
@@ -37,7 +35,6 @@ export type ChatAction =
   | { type: "space"; id: string }
   | { type: "repo"; url: string }
   | { type: "searchRepos" }
-  | { type: "playground" }
   | { type: "canvas" }
   | { type: "runs" }
   | { type: "restore" };
@@ -45,10 +42,6 @@ export type ChatAction =
 const PERSONA = "chat.persona";
 const SPACE = "chat.space";
 const REPO = "chat.repo";
-
-function playgroundLabel(p: { state: string }): string {
-  return p.state === "running" ? "Playground" : `Playground · ${p.state === "starting" ? "Starting" : p.state === "failed" ? "Failed" : "Stopped"}`;
-}
 
 export function buildChatToolbar(i: ChatToolbarInput): ToolbarItem[] {
   const items: ToolbarItem[] = [];
@@ -105,12 +98,6 @@ export function buildChatToolbar(i: ChatToolbarInput): ToolbarItem[] {
   if (i.runsActive > 0) {
     items.push({ id: "chat.runs", label: `${i.runsActive} ${i.runsActive === 1 ? "run" : "runs"} active`, kind: "button", icon: "activity", showsLabel: true, accent: true });
   }
-  const pg = i.playground;
-  if (pg?.phase === "start") {
-    items.push({ id: "chat.playground", label: pg.pending ? "Starting…" : "Start playground", kind: "button", icon: "play", showsLabel: true, disabled: pg.pending });
-  } else if (pg) {
-    items.push({ id: "chat.playground", label: playgroundLabel(pg), kind: "toggle", icon: "play", showsLabel: true, on: pg.open });
-  }
   if (i.canvasCount > 0) items.push({ id: "chat.canvas", label: `Canvas ${i.canvasCount}`, kind: "button", icon: "compare", showsLabel: true });
   if (i.archived) items.push({ id: "chat.restore", label: "Restore", kind: "button", icon: "refresh", showsLabel: true });
   return items;
@@ -127,8 +114,6 @@ export function parseChatAction(itemId: string, menuItemId?: string): ChatAction
     case REPO:
       if (menuItemId === "repo.search") return { type: "searchRepos" };
       return menuItemId?.startsWith("repo:") ? { type: "repo", url: menuItemId.slice("repo:".length) } : null;
-    case "chat.playground":
-      return { type: "playground" };
     case "chat.canvas":
       return { type: "canvas" };
     case "chat.runs":
