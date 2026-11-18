@@ -23,7 +23,7 @@ export type Connection = {
   without: string;
   /** Runs need it (harness keys). Optional ones don't raise a warning. */
   required: boolean;
-  /** The provider's own sign-in can fill it in (Docker runner only). */
+  /** The provider's own sign-in can fill it in (microVM runner only). */
   signIn?: SignInProvider;
 };
 

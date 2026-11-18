@@ -54,13 +54,13 @@ final class MenuBarController {
         return image
     }
 
-    /// <bundle>/Resources/tray, or <repo>/desktop/renderer/tray when running unbundled.
+    /// <bundle>/Resources/tray, or <repo>/macos/Resources/tray when running unbundled.
     static func iconDirectory() -> URL? {
         var candidates: [URL] = []
         if let resources = Bundle.main.resourceURL { candidates.append(resources.appendingPathComponent("tray")) }
         var repo = URL(fileURLWithPath: #filePath)
         for _ in 0..<5 { repo.deleteLastPathComponent() } // MenuBar, Vesper, Sources, macos, <repo>
-        candidates.append(repo.appendingPathComponent("desktop/renderer/tray"))
+        candidates.append(repo.appendingPathComponent("macos/Resources/tray"))
         return candidates.first { FileManager.default.fileExists(atPath: $0.appendingPathComponent("trayTemplate.png").path) }
     }
 

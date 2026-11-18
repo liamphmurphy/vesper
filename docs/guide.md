@@ -11,7 +11,12 @@ directory and runs agents in Apple Virtualization microVMs
 ```sh
 make mac-app   # build the app bundle (macos/Makefile)
 make mac-run   # build and launch it
+make mac-dmg   # package macos/build/Vesper-arm64.dmg (app + Applications link)
 ```
+
+Builds are ad hoc signed and not notarised; a DMG downloaded from a release needs
+`xattr -cr /Applications/Vesper.app` once. Details: [macos/README.md](../macos/README.md),
+[updates and releases](dev/mac-updates.md).
 
 To work on Vesper itself, `make dev` runs the API and Next on the host against
 a local Postgres (see [Develop](#develop)).
@@ -370,7 +375,7 @@ vesper import vesper.zip
 ## Develop
 
 Requires Go 1.26+ and Node 24+. On macOS, `make dev-infra` runs a local Postgres
-17 from the relocatable bundle the app embeds (`desktop/resources/postgres` if
+17 from the relocatable bundle the app embeds (`macos/staged/postgres` if
 staged, else built into `.dev/` with `scripts/bundle-postgres-darwin.sh`, which
 needs nix), with data in `.dev/pgdata`.
 
@@ -379,7 +384,7 @@ make dev     # local Postgres; API on :8000 and Next on :3000 run on the host
 make runner  # optional: a runner on the host (RUNNER_BACKEND=microvm, or fake for tests)
 make gen     # after editing api/openapi.yaml or server/internal/store/queries (needs sqlc)
 make test
-make mac-app # build the macOS app
+make mac-app # build the macOS app (mac-run launches it, mac-dmg packages it)
 make help    # everything else
 ```
 

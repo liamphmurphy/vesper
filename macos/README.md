@@ -6,14 +6,18 @@ contracts and the parity checklist: [`docs/dev/native-mac-app.md`](../docs/dev/n
 ```
 make -C macos test                  # swift test (VesperCore)
 make -C macos app                   # stage resources, assemble and sign build/Vesper.app
-make -C macos app SKIP_STAGE=1      # reuse desktop/resources as it is (fast)
+make -C macos app SKIP_STAGE=1      # reuse macos/staged as it is (fast)
 make -C macos run                   # run build/Vesper.app in the foreground, output in this terminal
+make -C macos dmg                   # pack build/Vesper-arm64.dmg (+ .sha256): the app and an /Applications link
 make -C macos reinstall             # quit Vesper and replace /Applications/Vesper.app
-VESPER_STACK_IT=1 swift test --filter StackIntegrationTests   # starts the real stack (needs desktop/resources)
+VESPER_STACK_IT=1 swift test --filter StackIntegrationTests   # starts the real stack (needs macos/staged)
 ```
 
-Quit the Electron app before running this one: both use `~/Library/Application Support/vesper-desktop`
-(one Postgres data dir). `VESPER_USER_DATA_DIR` points the app somewhere else.
+The app's data is `~/Library/Application Support/vesper-desktop` (one Postgres data dir, so run one
+Vesper at a time). `VESPER_USER_DATA_DIR` points the app somewhere else.
+
+`scripts/gen-icon.mjs` and `scripts/gen-tray-icons.mjs` regenerate `Resources/AppIcon.icns` and
+`Resources/tray/` from `web/public/logo.svg` (they use `@resvg/resvg-js` from `web/node_modules`).
 
 ## Signing with a stable identity
 

@@ -1222,11 +1222,11 @@ paths:
     post:
       operationId: startSignIn
       summary: >-
-        Start a Claude, Codex, Antigravity or GitHub sign-in. The Docker runner
-        runs the provider's CLI in a throwaway container and stores the login as
+        Start a Claude, Codex, Antigravity or GitHub sign-in. A microVM runner
+        runs the provider's CLI in a throwaway guest VM and stores the login as
         harness:anthropic, harness:openai, harness:google or git:pat. Replaces a
-        sign-in already in progress for that provider. 409 without a Docker
-        runner or SECRETS_KEY.
+        sign-in already in progress for that provider. 409 without an online
+        microVM runner or SECRETS_KEY.
       tags: [secrets]
       requestBody:
         required: true
@@ -1399,7 +1399,7 @@ paths:
       description: |
         With host_folder_workspaces on, a run started afterwards keeps its
         checkout in a folder on the person's machine (under the runner's
-        RUNNER_HOST_WORKSPACES_DIR) instead of a Docker volume, so they can
+        RUNNER_HOST_WORKSPACES_DIR) instead of the run's disk image inside the microVM, so they can
         open it in their own editor. Runs that already have a workspace keep
         it where it is. The folder itself is runner configuration and can't
         be set here. Has no effect on a runner without that folder configured.
@@ -5681,7 +5681,7 @@ paths:
     get:
       operationId: listChatModels
       summary: Harnesses and models the chat picker offers
-      description: Live model catalog for all supported harnesses. Local mode queries the installed CLIs using their existing logins; Docker mode queries provider APIs using stored secrets. A harness is unavailable when discovery fails or no chat models are returned.
+      description: Live model catalog for all supported harnesses. Models are discovered from the provider APIs using the stored harness keys, or, for a saved plan login, by asking a runner. A harness is unavailable when discovery fails or no chat models are returned.
       tags: [chats]
       responses:
         "200":
@@ -7444,7 +7444,7 @@ components:
         body: { type: string, description: Markdown instructions }
     AgentService:
       type: object
-      description: A container each turn of a run can reach by name, e.g. the database its tests need. Started next to every turn on a network of that turn's own, sandboxed like the turn but with Docker's default capabilities, and removed when the turn ends.
+      description: A container each turn of a run can reach by name, e.g. the database its tests need. Started next to every turn on a network of that turn's own, sandboxed like the turn but with Docker's default capabilities, and removed when the turn ends. Services run under the Docker daemon inside the run's microVM, so they need a microVM runner.
       required: [name, image]
       properties:
         name: { type: string, description: "Hostname turns use; lowercase letters, digits, - or _" }
@@ -7496,7 +7496,7 @@ components:
         budget: { $ref: "#/components/schemas/Budget" }
         mcp_servers_add: { type: array, items: { $ref: "#/components/schemas/McpServer" } }
         setup: { type: array, items: { type: string } }
-        services: { type: array, maxItems: 5, items: { $ref: "#/components/schemas/AgentService" }, description: "What the project's tests need running (Docker runner only)" }
+        services: { type: array, maxItems: 5, items: { $ref: "#/components/schemas/AgentService" }, description: "What the project's tests need running (microVM runner only; the containers run under Docker inside the guest VM)" }
     ResolvedScope:
       type: object
       required: [scope, mode, source, enforcement, how, description]
@@ -7609,8 +7609,8 @@ components:
       properties:
         secrets: { type: array, items: { $ref: "#/components/schemas/SecretInfo" } }
         key_configured: { type: boolean, description: SECRETS_KEY is set }
-        sign_in_available: { type: boolean, description: "A Docker runner is online, so Claude, Codex and GitHub can be signed in from Settings" }
-        harness_keys_required: { type: boolean, description: "Runs authenticate with the stored harness keys (the Docker backend); false when they use the host's claude and codex sign-ins, so there is no key to paste" }
+        sign_in_available: { type: boolean, description: "A microVM runner is online, so Claude, Codex, Antigravity and GitHub can be signed in from Settings" }
+        harness_keys_required: { type: boolean, description: "Runs authenticate with the stored harness keys (the microVM backend, which isolates harnesses from the host's own sign-ins); false for the unisolated fake backend, where there is no key to paste" }
         known:
           type: array
           description: Well-known secret names and the scope each backs
@@ -7758,7 +7758,7 @@ components:
         hold_attempts: { type: integer, description: "Consecutive times this run has been held at a provider limit" }
         checkpoint_branch: { type: string, description: "Branch holding the run's unpushed work, pushed before its workspace was given up" }
         checkpoint_error: { type: string, description: "Why the last checkpoint push failed; the workspace is kept until one succeeds" }
-        workspace_path: { type: string, description: "The folder on the person's machine holding the run's checkout, while it exists; absent for a checkout in a Docker volume" }
+        workspace_path: { type: string, description: "The folder on the person's machine holding the run's checkout, while it exists; absent for a checkout on the run's disk image inside the microVM" }
         session_id: { type: string, description: The harness session turns resume }
         dispatched_by: { $ref: "#/components/schemas/UserRef" }
         wait_reason: { type: string, enum: [approval, human_reply, pause, delegation, mockup_review, checks], description: "delegation: waiting for a sub agent the run delegated to; checks: a delegated run that finished, waiting for the server to check its result; mockup_review: waiting for a person to review a UI mockup" }
@@ -8127,7 +8127,7 @@ components:
       required: [id, backend, max_concurrent, running, heartbeat_at]
       properties:
         id: { type: string }
-        backend: { type: string, enum: [docker, microvm, fake] }
+        backend: { type: string, enum: [microvm, fake] }
         max_concurrent: { type: integer }
         running: { type: integer }
         version: { type: string }
@@ -8693,7 +8693,7 @@ components:
         state: { $ref: "#/components/schemas/ChatState" }
         error: { type: string, description: Why the last turn failed, when state is failed }
         current_run_id: { type: string, format: uuid, description: The run serving the current harness segment; its events show live activity }
-        workspace_path: { type: string, description: "The folder on the person's machine holding the current run's checkout, while it exists; absent for a checkout in a Docker volume" }
+        workspace_path: { type: string, description: "The folder on the person's machine holding the current run's checkout, while it exists; absent for a checkout on the run's disk image inside the microVM" }
         persona: { $ref: "#/components/schemas/PersonaSummary" }
         participants:
           type: array

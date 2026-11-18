@@ -1,7 +1,7 @@
 import Foundation
 
 /// The files `vesper app` needs, found under a resources directory (Contents/Resources of the
-/// packaged app, or `desktop/resources` in development).
+/// packaged app, or `macos/staged` in development).
 public struct BundledResources: Sendable, Equatable {
     public var baseDir: URL
     public var vesperBin: URL
@@ -40,7 +40,7 @@ public struct BundledResources: Sendable, Equatable {
     }
 
     /// Where the resources are: `VESPER_RESOURCES_DIR`, else the packaged app's Resources, else
-    /// (not in a .app) `<repo>/desktop/resources` found by walking up from the executable and the
+    /// (not in a .app) `<repo>/macos/staged` found by walking up from the executable and the
     /// current directory.
     public static func locate(environment: [String: String] = ProcessInfo.processInfo.environment, bundle: Bundle = .main) -> URL? {
         if let override = environment["VESPER_RESOURCES_DIR"]?.trimmingCharacters(in: .whitespaces), !override.isEmpty {
@@ -51,7 +51,7 @@ public struct BundledResources: Sendable, Equatable {
         for start in starts {
             var dir = start
             for _ in 0..<12 {
-                let candidate = dir.appendingPathComponent("desktop/resources", isDirectory: true)
+                let candidate = dir.appendingPathComponent("macos/staged", isDirectory: true)
                 if FileManager.default.fileExists(atPath: candidate.appendingPathComponent("bin/vesper").path) { return candidate }
                 let parent = dir.deletingLastPathComponent()
                 if parent.path == dir.path { break }

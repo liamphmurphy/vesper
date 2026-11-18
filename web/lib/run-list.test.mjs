@@ -73,13 +73,13 @@ const ev = (seq, type, payload) => ({ seq, type, payload, at: `2026-11-03T12:00:
 
 test("runnerSlot and touchedFiles read the events", () => {
   const events = [
-    ev(1, "lifecycle", { state: "starting", runner: "runner-2", backend: "docker" }),
+    ev(1, "lifecycle", { state: "starting", runner: "runner-2", backend: "microvm" }),
     ev(2, "tool_call", { id: "a", tool: "Read", input: { file_path: "b.go" } }),
     ev(3, "tool_call", { id: "b", tool: "Edit", input: { file_path: "a.go" } }),
     ev(4, "tool_call", { id: "c", tool: "Bash", input: { command: "ls" } }),
     ev(5, "tool_call", { id: "d", tool: "Read", input: { file_path: "a.go" } }),
   ];
-  assert.deepEqual(runnerSlot(events), { runner: "runner-2", backend: "docker" });
+  assert.deepEqual(runnerSlot(events), { runner: "runner-2", backend: "microvm" });
   assert.equal(runnerSlot([]), null);
   assert.deepEqual(touchedFiles(events), [{ path: "a.go", writes: 1, reads: 1 }, { path: "b.go", writes: 0, reads: 1 }]);
 });

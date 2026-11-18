@@ -1,7 +1,8 @@
 # The native macOS app. See ../docs/dev/native-mac-app.md.
 APP := build/Vesper.app
+DMG := build/Vesper-arm64.dmg
 
-.PHONY: build test app run reinstall clean
+.PHONY: build test app dmg run reinstall clean
 
 build:
 	swift build
@@ -9,10 +10,23 @@ build:
 test:
 	swift test
 
-# Assembles and signs build/Vesper.app. SKIP_STAGE=1 reuses desktop/resources as it is;
+# Assembles and signs build/Vesper.app. SKIP_STAGE=1 reuses macos/staged as it is;
 # VESPER_CODESIGN_IDENTITY picks the signing identity (default: ad hoc).
 app:
 	./scripts/build-app.sh
+
+# Packs the signed app into build/Vesper-arm64.dmg (the app plus an /Applications link, volume "Vesper")
+# and writes build/Vesper-arm64.dmg.sha256. Builds the app first (SKIP_STAGE=1 and the signing
+# identity apply as for `app`).
+dmg: app
+	rm -rf build/dmg-root $(DMG)
+	mkdir -p build/dmg-root
+	ditto $(APP) build/dmg-root/Vesper.app
+	ln -s /Applications build/dmg-root/Applications
+	hdiutil create -volname Vesper -srcfolder build/dmg-root -fs HFS+ -format UDZO -ov $(DMG)
+	rm -rf build/dmg-root
+	cd build && shasum -a 256 Vesper-arm64.dmg > Vesper-arm64.dmg.sha256
+	@echo "Built $(DMG)"
 
 # Runs the built app in the foreground, so its output is in this terminal.
 run: $(APP)

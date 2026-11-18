@@ -12,7 +12,7 @@
     <a href="#dev-workspace">Dev workspace</a> ·
     <a href="#hand-work-to-personas">Work</a> ·
     <a href="#get-started">Get started</a> ·
-    <a href="#macos-desktop-client">macOS app</a> ·
+    <a href="#building-the-mac-app">macOS app</a> ·
     <a href="docs/guide.md">Documentation</a>
   </p>
   <p><strong>Self-hosted</strong> &nbsp; / &nbsp; Claude Code · Codex · Antigravity &nbsp; / &nbsp; Your memory, your Postgres &nbsp; / &nbsp; No lock-in</p>
@@ -146,16 +146,18 @@ To run personas with API keys, follow the **[setup guide](docs/guide.md#running-
 
 Developing Vesper? `make dev` starts a local Postgres (`make dev-infra`), the API with hot reload and the Vite dev server at **[localhost:3000](http://localhost:3000)**. See **[Develop](docs/guide.md#develop)**.
 
-### macOS desktop client
+### Building the Mac app
 
-Prefer a native macOS app over a browser tab? Build the thin Electron wrapper from a checkout on macOS:
+The app is the native Swift shell in [`macos/`](macos/README.md) (needs Xcode 16+ / Swift 6, Go, Node 24+ and Nix for the Postgres bundle; the guest kernel is cached at `~/.cache/vesper/images/vmlinux`, built by `deploy/microvm/build-images.sh --kernel`):
 
 ```sh
-make desktop-dmg            # Apple Silicon → desktop/release/Vesper-arm64.dmg
-make desktop-dmg-universal  # Universal     → desktop/release/Vesper-universal.dmg
+make mac-app   # stage resources, assemble and sign macos/build/Vesper.app
+make mac-run   # build and launch it, output in this terminal
+make mac-dmg   # macos/build/Vesper-arm64.dmg: the app plus an Applications link
+make mac-test  # swift test
 ```
 
-`Vesper.app` connects to a Vesper server with native Cocoa tabs (`⌘T`, `⌘W`, `⇧⌘T`, `⌘1`–`⌘9`), persistent cookies, multi-tab SSE `/events` multiplexing (so 6+ HTTP/1.1 tabs never stall), Dock badge **Needs you** counts, Notification Center alerts, and clean `Esc` / terminal keybindings in the **Dev workspace**. See the **[desktop guide](desktop/README.md)** for Gatekeeper first-launch instructions.
+`Vesper.app` has a native sidebar and toolbar around the web UI, native window tabs, a menu bar icon, Dock badge **Needs you** counts, Notification Center alerts with Approve / Decline, Quick Capture, Touch ID for approvals and more ([features](docs/dev/mac-native-features.md), [design](docs/dev/native-mac-app.md)). Builds are ad hoc signed and not notarised: after installing from a downloaded DMG, run `xattr -cr /Applications/Vesper.app` once (or use right-click → **Open**). Releases are published by pushing a version tag (`.github/workflows/mac-release.yml`, [updates](docs/dev/mac-updates.md)). Signing with a stable local identity: [`macos/README.md`](macos/README.md).
 
 ### Current scope
 
@@ -164,7 +166,7 @@ Vesper is designed for one person per install: the username and password chosen 
 ## Explore further
 
 - **[Running and developing](docs/guide.md)**: setup, harnesses, chat tools, Knowledge, Custom Apps, workflows, and development commands.
-- **[macOS desktop client](desktop/README.md)**: building `Vesper.dmg`, Gatekeeper setup, and keyboard shortcuts.
+- **[macOS app](macos/README.md)**: building, signing and running the native app; [design and contracts](docs/dev/native-mac-app.md).
 - **[Kanban board](docs/board.md)**: ticket statuses, estimates, epics, and work tools.
 - **[Example skills](examples/skills/)**: starter playbooks for your personas.
 - **[Project plan](docs/dev/plan.md)**: architecture and implementation details.

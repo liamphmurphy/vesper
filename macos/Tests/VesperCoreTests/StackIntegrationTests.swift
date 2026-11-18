@@ -2,7 +2,7 @@ import XCTest
 @testable import VesperCore
 
 /// Starts the real bundled stack. Opt-in: `VESPER_STACK_IT=1 swift test --filter StackIntegrationTests`.
-/// Needs `desktop/resources` staged (bin/vesper rebuilt with the sign-in-code change, postgres, web).
+/// Needs `macos/staged` populated (bin/vesper rebuilt with the sign-in-code change, postgres, web).
 @MainActor
 final class StackIntegrationTests: XCTestCase {
     func testStartSignInInboxStop() async throws {
@@ -10,7 +10,7 @@ final class StackIntegrationTests: XCTestCase {
 
         // <repo>/macos/Tests/VesperCoreTests/StackIntegrationTests.swift
         let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let resources = repo.appendingPathComponent("desktop/resources", isDirectory: true)
+        let resources = repo.appendingPathComponent("macos/staged", isDirectory: true)
         let dataDir = URL(fileURLWithPath: "/tmp").appendingPathComponent("vesper-it-\(UUID().uuidString.prefix(8))", isDirectory: true)
         try FileManager.default.createDirectory(at: dataDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dataDir) }

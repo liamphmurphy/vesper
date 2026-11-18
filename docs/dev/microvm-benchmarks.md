@@ -48,7 +48,7 @@ Finding (answers open question #1 in `microvm-architecture.md`): `virtio_balloon
 
 ### Slice 6 — Self-Contained macOS DMG & `vesper app`
 
-Measured on Apple Silicon (`darwin/arm64`) against the packaged `Vesper.app` bundle inside `desktop/release/Vesper-arm64.dmg`:
+Measured on Apple Silicon (`darwin/arm64`) against the packaged `Vesper.app` bundle inside `macos/build/Vesper-arm64.dmg`:
 
 | Artifact / Metric | Measured Value | Notes |
 |---|---|---|

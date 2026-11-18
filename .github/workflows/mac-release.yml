@@ -1,15 +1,16 @@
-name: desktop-release
+name: mac-release
 
-# Builds Vesper.app for a version tag and publishes it as a GitHub release:
-# the DMG for people to install, and agent-base.erofs, which a fresh install
-# downloads on first launch. Installed apps with Settings › Updates › "Check for
-# new versions daily" on are told about the new release (desktop/src/updates.ts).
+# Builds the native Mac app (macos/) for a version tag and publishes it as a
+# GitHub release: Vesper-arm64.dmg for people to install, and agent-base.erofs,
+# which a fresh install downloads on first launch (Updates.releaseAssetUrl).
+# Installed apps with Settings › Updates › "Check for new versions daily" on are
+# told about the new release (macos/Sources/VesperCore/Model/Updates.swift).
 #
 # Release: bump nothing, just tag and push:  git tag v0.2.0 && git push origin v0.2.0
 # The app's version comes from the tag. A tag with a suffix (v0.2.0-rc.1) is
 # published as a pre-release, which installed apps don't announce.
 #
-# Builds are ad-hoc signed and not notarised (docs/dev/desktop-updates.md), so a
+# Builds are ad-hoc signed and not notarised (docs/dev/mac-updates.md), so a
 # downloaded DMG needs `xattr -cr /Applications/Vesper.app` once.
 
 on:
@@ -25,7 +26,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: desktop-release-${{ github.event.inputs.tag || github.ref_name }}
+  group: mac-release-${{ github.event.inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -44,7 +45,7 @@ jobs:
         run: |
           tag="$REF_NAME"
           if [ "$EVENT" = "workflow_dispatch" ]; then tag="$INPUT_TAG"; fi
-          # Semver only, as desktop/src/updates.ts parses it; anything else never reaches a shell or a URL.
+          # Semver only, as Updates.swift parses it; anything else never reaches a shell or a URL.
           if ! [[ "$tag" =~ ^v[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}(-[0-9A-Za-z.-]{1,64})?$ ]]; then
             echo "::error::Tag '$tag' isn't vMAJOR.MINOR.PATCH (optionally -suffix)"
             exit 1
@@ -115,12 +116,14 @@ jobs:
 
   dmg:
     needs: [version, images]
+    # macos-15 is Apple Silicon (arm64) with Xcode 16, which macos/Package.swift (tools 6.0) needs.
     runs-on: macos-15
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.version.outputs.tag }}
+          fetch-depth: 0 # build-app.sh numbers the build by commit count
       - uses: actions/setup-go@v5
         with:
           go-version-file: server/go.mod
@@ -129,9 +132,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: |
-            web/package-lock.json
-            desktop/package-lock.json
+          cache-dependency-path: web/package-lock.json
       # scripts/bundle-postgres-darwin.sh takes Postgres 17 from nixpkgs.
       - uses: cachix/install-nix-action@v31
         with:
@@ -145,12 +146,11 @@ jobs:
       - name: Set the app version from the tag
         env:
           VERSION: ${{ needs.version.outputs.version }}
-        run: npm --prefix desktop version "$VERSION" --no-git-tag-version --allow-same-version
+        run: npm --prefix web version "$VERSION" --no-git-tag-version --allow-same-version
+      # Stages Postgres, the static web UI and the vesper binary, builds the Swift app, signs it ad hoc
+      # and packs macos/build/Vesper-arm64.dmg and its .sha256.
       - name: Build the DMG
-        run: make desktop-dmg
-      - name: Checksum
-        working-directory: desktop/release
-        run: shasum -a 256 Vesper-arm64.dmg > Vesper-arm64.dmg.sha256
+        run: make mac-dmg
       - uses: actions/upload-artifact@v4
         with:
           name: dmg
@@ -158,8 +158,8 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           path: |
-            desktop/release/Vesper-arm64.dmg
-            desktop/release/Vesper-arm64.dmg.sha256
+            macos/build/Vesper-arm64.dmg
+            macos/build/Vesper-arm64.dmg.sha256
 
   # Publishes only after every artifact built, so a release never exists without its DMG.
   publish:

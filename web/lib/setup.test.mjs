@@ -41,10 +41,10 @@ test("a new workspace has every step open, each linking to its settings section"
 test("steps tick from real state", () => {
   const steps = setupChecklist({
     ...base, repos: 1, harness: harnessHealth(groups(true, false)), runnerOnline: true,
-    runners: [{ backend: "docker", max_concurrent: 4 }], agentsReviewed: true, plans: 0,
+    runners: [{ backend: "microvm", max_concurrent: 4 }], agentsReviewed: true, plans: 0,
   });
   assert.deepEqual(steps.map((s) => s.done), [true, true, true, true, false]);
-  assert.equal(steps[2].detail, "1 runner online · docker · 4 slots");
+  assert.equal(steps[2].detail, "1 runner online · microvm · 4 slots");
   // A stored key counts even before model discovery reports the harness.
   assert.equal(setupChecklist({ ...base, harnessSecret: true })[1].done, true);
   // Agents: reviewed in this browser, or already used for a plan; never with no agents.

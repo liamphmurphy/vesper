@@ -2,18 +2,18 @@
 # Assembles and signs macos/build/Vesper.app (docs/dev/native-mac-app.md, "Processes and files").
 #
 #   make -C macos app                 stage resources (slow: web build, Postgres, vesper) then assemble
-#   make -C macos app SKIP_STAGE=1    reuse desktop/resources as it is
+#   make -C macos app SKIP_STAGE=1    reuse macos/staged as it is
 #
 # Environment:
 #   VESPER_CODESIGN_IDENTITY  a code-signing identity (see macos/README.md); default "-" (ad hoc)
-#   SKIP_STAGE=1              don't run scripts/stage-desktop-resources.sh
+#   SKIP_STAGE=1              don't run scripts/stage-mac-resources.sh
 #   NODE_VERSION              Node release to bundle (default below); cached in ~/.cache/vesper/node
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 macos_dir="$(cd "${script_dir}/.." && pwd)"
 repo_root="$(cd "${macos_dir}/.." && pwd)"
-res_src="${repo_root}/desktop/resources"
+res_src="${macos_dir}/staged"
 out_dir="${macos_dir}/build"
 app="${out_dir}/Vesper.app"
 contents="${app}/Contents"
@@ -34,8 +34,8 @@ bin_dir="$(cd "${macos_dir}" && swift build -c release --show-bin-path)"
 
 # 2. Resources (bin/vesper, postgres, web, images).
 if [[ "${SKIP_STAGE:-}" != "1" ]]; then
-  log "staging desktop resources"
-  bash "${repo_root}/scripts/stage-desktop-resources.sh"
+  log "staging resources"
+  bash "${repo_root}/scripts/stage-mac-resources.sh"
 else
   log "SKIP_STAGE=1: reusing ${res_src}"
 fi
@@ -44,7 +44,7 @@ for sub in bin postgres web images; do
 done
 [[ -x "${res_src}/bin/vesper" ]] || { echo "Missing ${res_src}/bin/vesper" >&2; exit 1; }
 
-# 3. Node 24 (the official darwin-arm64 build; Electron used itself as Node, this app has no Electron).
+# 3. Node 24 (the official darwin-arm64 build).
 mkdir -p "${node_cache}"
 node_tgz="node-${node_version}-darwin-arm64.tar.gz"
 node_bin="${node_cache}/${node_version}/node"
@@ -77,8 +77,8 @@ for sub in bin postgres web images; do
 done
 cp "${node_bin}" "${contents}/Resources/node/bin/node"
 chmod 0755 "${contents}/Resources/node/bin/node"
-cp "${repo_root}/desktop/build/icon.icns" "${contents}/Resources/AppIcon.icns"
-cp "${repo_root}/desktop/renderer/tray/"*.png "${contents}/Resources/tray/"
+cp "${macos_dir}/Resources/AppIcon.icns" "${contents}/Resources/AppIcon.icns"
+cp "${macos_dir}/Resources/tray/"*.png "${contents}/Resources/tray/"
 
 version="$(plutil -extract version raw "${repo_root}/web/package.json")"
 build="$(git -C "${repo_root}" rev-list --count HEAD 2>/dev/null || echo 1)"
@@ -86,7 +86,7 @@ sed -e "s/@VERSION@/${version}/g" -e "s/@BUILD@/${build}/g" "${macos_dir}/Resour
 plutil -lint "${contents}/Info.plist" >/dev/null
 printf 'APPL????' > "${contents}/PkgInfo"
 
-# 5. Sign inside-out, as desktop/scripts/after-pack.cjs: every Mach-O under postgres, web and node, then
+# 5. Sign inside-out, every Mach-O under postgres, web and node, then
 #    bin/vesper with the Virtualization entitlement (no hardened runtime), then the app (no --deep, so
 #    bin/vesper keeps its entitlement).
 sign() { codesign --force --timestamp=none --sign "${identity}" "$@"; }

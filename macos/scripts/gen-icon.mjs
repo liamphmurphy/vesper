@@ -1,12 +1,16 @@
+// Renders macos/Resources/AppIcon.icns from web/public/logo.svg. Run: node macos/scripts/gen-icon.mjs
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { Resvg } from "@resvg/resvg-js";
+import { createRequire } from "node:module";
+
+// @resvg/resvg-js comes from web/node_modules (run `npm ci` in web/ first).
+const { Resvg } = createRequire(import.meta.url)("../../web/node_modules/@resvg/resvg-js");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const desktopRoot = path.resolve(__dirname, "..");
-const svgPath = path.resolve(desktopRoot, "../web/public/logo.svg");
-const buildDir = path.resolve(desktopRoot, "build");
+const macosRoot = path.resolve(__dirname, "..");
+const svgPath = path.resolve(macosRoot, "../web/public/logo.svg");
+const buildDir = path.resolve(macosRoot, "Resources");
 
 // Apple .icns OSType PNG chunk types and pixel dimensions.
 const ICNS_CHUNKS = [
@@ -62,8 +66,6 @@ const icnsChunks = ICNS_CHUNKS.map(([type, size]) => ({
 }));
 
 const icnsBuffer = encodeIcns(icnsChunks);
-fs.writeFileSync(path.join(buildDir, "icon.icns"), icnsBuffer);
-fs.writeFileSync(path.join(buildDir, "icon.png"), pngCache.get(512));
+fs.writeFileSync(path.join(buildDir, "AppIcon.icns"), icnsBuffer);
 
-console.log(`Generated ${path.relative(desktopRoot, path.join(buildDir, "icon.icns"))} (${icnsBuffer.length} bytes)`);
-console.log(`Generated ${path.relative(desktopRoot, path.join(buildDir, "icon.png"))} (${pngCache.get(512).length} bytes)`);
+console.log(`Generated ${path.relative(macosRoot, path.join(buildDir, "AppIcon.icns"))} (${icnsBuffer.length} bytes)`);

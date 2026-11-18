@@ -1,26 +1,25 @@
 # Native macOS app (Swift shell)
 
-Status: proof of concept on `poc/native_ui`. Replaces the Electron app in `desktop/` once it
-reaches parity; `desktop/` stays untouched until then.
+Status: the Mac app. It replaced the earlier Electron app (`desktop/`, since removed); the person
+signed off on it against real data. Related: [mac-native-features.md](mac-native-features.md),
+[mac-power.md](mac-power.md), [mac-updates.md](mac-updates.md).
 
 ## Where it stands
 
 Everything in the parity checklist below is implemented, with these deliberate gaps:
 
-- **Screen capture in playgrounds** (`getDisplayMedia`): WKWebView exposes no `navigator.mediaDevices`
-  without private WebKit preferences; the page shows its existing "can't capture" message.
 - **Fallback column**: the tickets list and Work's Tickets/Epics views (saved views with inline
   rename) and the editors' structure panels (docs, decks, designs, custom apps) still draw their
   list in the page's fallback column instead of the native sidebar.
 - **UI runtime**: the UI is a static Vite build that `vesper app` serves itself; the only node
   process is the design worker (`web/design-worker`).
-- **Touch ID** is stricter than Electron: with the gate on and no usable sensor it asks for the
+- **Touch ID** is strict: with the gate on and no usable sensor it asks for the
   account password instead of skipping.
 
 Verified by the person, not by automation: notification banners and actions (ad hoc builds need
 notifications allowed in System Settings), the Touch ID prompt, sleep/wake pausing, Screenshot to
 Chat, the unsaved-changes alert, playground windows, and the first launch against real data
-(Keychain migration of the Electron secrets key).
+(Keychain migration of the secrets key the Electron app stored).
 
 ## Goal
 
@@ -37,7 +36,7 @@ A first-class, native-feeling Mac app that keeps every existing feature. Layout 
 - **One WKWebView per tab for the content area only**, showing the existing React UI.
 
 The Go backend is unchanged in role: the shell launches the bundled `vesper app` as a child
-process and supervises it, exactly as Electron does today.
+process and supervises it.
 
 ## Processes and files
 
@@ -47,20 +46,20 @@ Vesper.app/Contents/
   Resources/bin/vesper            Go binary, ad-hoc signed with deploy/microvm/vz.entitlements
   Resources/postgres/             relocatable Postgres 17 (scripts/bundle-postgres-darwin.sh)
   Resources/web/                  static UI (index.html, assets/) + design-worker/ (server.mjs, resvg addon)
-  Resources/node/bin/node         official Node 24 darwin-arm64 binary (Electron used itself as Node)
+  Resources/node/bin/node         official Node 24 darwin-arm64 binary (runs the design worker)
   Resources/images/vmlinux        kernel (agent-base.erofs is downloaded on first launch)
 ```
 
-Built by `macos/scripts/build-app.sh` (reuses `scripts/stage-desktop-resources.sh` for bin,
-postgres, web, images). Signing: `VESPER_CODESIGN_IDENTITY` (a self-signed code-signing cert, so
+Built by `macos/scripts/build-app.sh` (`scripts/stage-mac-resources.sh` builds bin,
+postgres, web, images into the git-ignored `macos/staged/`). Signing: `VESPER_CODESIGN_IDENTITY` (a self-signed code-signing cert, so
 Keychain and privacy grants survive rebuilds) or ad hoc (`-`) when unset.
 
 ### Data and migration (must not lose the existing instance)
 
-- Data dir: `~/Library/Application Support/vesper-desktop` (Electron's `app.name`), passed as
+- Data dir: `~/Library/Application Support/vesper-desktop` (the earlier Electron app's name, kept so existing data carries over), passed as
   `vesper app -data-dir`. Same Postgres, blobs, images, logs. Override with `VESPER_USER_DATA_DIR`.
-- Settings: the same `config.json` in the data dir, same `native` key and schema as
-  `desktop/src/settings.ts` (defaults and normalisation rules there). Tabs: same `session.json`.
+- Settings: the same `config.json` in the data dir, same `native` key and schema
+  (`VesperCore/Settings/NativeSettings.swift`: defaults and normalisation rules). Tabs: same `session.json`.
 - Secrets key: Electron stored it in `secrets-key.enc`, encrypted with `safeStorage`
   (Chromium os_crypt "v10": AES-128-CBC, IV = 16 spaces, key = PBKDF2-HMAC-SHA1(password,
   salt "saltysalt", 1003 iterations, 16 bytes), password = Keychain generic password service
@@ -68,7 +67,7 @@ Keychain and privacy grants survive rebuilds) or ad hoc (`-`) when unset.
   it once and stores the key in its own Keychain item (service `com.vesper.mac`, account
   `secrets-key:<absolute data dir path>`, so a key made for one data dir never stands in for
   another's migration). If neither exists, generate 32 random bytes (base64). Never log it.
-- Never run the Electron app and the Swift app at the same time (one Postgres data dir).
+- Never run two Vesper builds at the same time (one Postgres data dir).
 
 ## Contracts
 
@@ -117,13 +116,23 @@ Source of truth: `web/lib/native-shell/protocol.ts`; Swift mirror
   server origin (scheme, host, port). Drop everything else.
 - Playground pages (same host, ports 8090–8094) and external pages never get the bridge: they load
   in web views whose configuration has no message handler and no native-mode user script.
-- Navigation policy as `desktop/src/routing.ts`: same origin → in app; playground port → in-app
+- Navigation policy (`VesperCore/Model/Routing.swift`): same origin → in app; playground port → in-app
   window without bridge; other http(s)/mailto → `NSWorkspace.open`; everything else → cancel.
 - Workspace folders open only strictly inside the runner's `host_workspaces_dir` (realpath'd).
 - The session cookie is `HttpOnly; SameSite=Strict` (as the server sets it), installed in both the
   Vesper and the playground data store. Playground windows need it to sign in to the playground
   gateway, which strips it before proxying to the agent's app; they still get no bridge, user
   scripts or page services.
+- **Private WebKit preferences, Vesper web views only.** This macOS exposes no `navigator.mediaDevices`
+  (so no `getDisplayMedia`, used by the playground frame capture in `web/lib/frame-capture.ts`) unless
+  the private `mediaDevicesEnabled` and `screenCaptureEnabled` `WKPreferences` are on.
+  `WebViewFactory.enablePrivateMediaPreferences` sets each by KVC only when `WKPreferences` responds to
+  its private setter; otherwise it logs and skips, so a future WebKit degrades to the page's "can't
+  capture" message instead of an `NSUndefinedKeyException`. Playground and popup web views never get
+  them, and `decideMediaCapturePermissionsFor` still prompts only for the Vesper origin's main frame.
+  Screen capture goes through the system's own "Share a Window or Entire Screen" picker; verified
+  end to end (a MediaStream with one video track arrives). Screenshot to Chat's Screen Recording
+  explanation lives in `ScreenRecordingAccess` for any path that needs the permission.
 - Popups (`window.open` targets) deny media capture and show the page's host as the window
   subtitle, so an untrusted page can't pose as Vesper.
 - `file://` navigations are accepted only as a window drop (browser-initiated, main frame, source
@@ -132,13 +141,13 @@ Source of truth: `web/lib/native-shell/protocol.ts`; Swift mirror
 - Touch ID fails closed. When the gate is on but biometrics can't prompt (no sensor, none enrolled,
   lid closed), the account password is required instead of skipping.
 - A Keychain secrets key that exists but is invalid is an error, never replaced by migration or a
-  new key (`secrets-key.enc` stays, as the Electron app still reads it).
+  new key (`secrets-key.enc` stays, for a downgrade to the Electron app).
 
-## Parity checklist
+## Feature checklist
 
-Electron sources in brackets. Each item must work in the Swift app before `desktop/` is deleted.
+What the app does, for regression testing by hand.
 
-**Windows, tabs, navigation** [main.ts, routing.ts, menu.ts]
+**Windows, tabs, navigation**
 - [ ] Tab layout setting (`native.tabs.layout`, Settings › General and View › Use Compact Tab Layout): **Separate** (default) = native window tabs; **Compact** = one window whose tabs are drawn in the toolbar (each tab keeps its own web view, history, sidebar model and toolbar items). Switching rebuilds the windows by moving the tab objects, so nothing reloads; order, active tab and frames carry over. Move Tab to New Window / Merge All Windows work in both; Show All Tabs and Show/Hide Tab Bar are separate-only. Unsaved-changes check runs per tab.
 - [ ] Native window tabs (`tabbingIdentifier` "vesper"), New Tab ⌘T, New Window ⌘N, Close Tab ⌘W, Close Window ⇧⌘W, Reopen Closed Tab ⇧⌘T (stack of 25), tab 1–8 ⌘1–8, ⌘9 last, next/previous tab ⌃Tab/⌃⇧Tab and ⇧⌘]/⇧⌘[, Move Tab to New Window, Merge All Windows, Show All Tabs, Toggle Tab Bar
 - [ ] Back ⌘[ / Forward ⌘], trackpad swipe, Reload ⌘R, Force Reload ⇧⌘R, zoom in/out/actual size, full screen, Web Inspector (`isInspectable`)
@@ -148,50 +157,50 @@ Electron sources in brackets. Each item must work in the Swift app before `deskt
 - [ ] Offline / stack-error state in the window with Retry, Restart Stack, Show Logs
 - [ ] Quit confirmation when runs are active (`power.confirmQuitWithActiveRuns`)
 
-**Menus** [menu.ts]
+**Menus**
 - [ ] App: About, Check for Updates…, Settings… ⌘,, Restart Stack, Show Logs…, Services, Hide/Hide Others/Show All, Quit ⌘Q
 - [ ] File: New Tab, New Window, Reopen Closed Tab, Quick Capture…, Screenshot to Chat…, Import Backup…, Close Tab, Close Window
 - [ ] Edit (standard, incl. Find ⌘F → page find), View (Reload, Force Reload, Developer Tools, zoom, tab bar, full screen, Show/Hide Sidebar ⌃⌘S), History (Back, Forward), Window (standard + tab commands), Help (Show Logs…, Vesper Repository & Docs)
 - [ ] "Change Server URL…" and remote/Docker modes are dropped on purpose (local app only)
 
-**Stack** [stack.ts, stack-health.ts]
+**Stack**
 - [ ] Launch, readiness, sign-in, logs, stop, restart, auto-restart as in Contracts
 - [ ] Health phases: starting, downloading (run image %), running, degraded (run image unavailable, low disk < `stack.minFreeDiskGb`, runner offline), error, stopped; platform gate (arm64, macOS ≥ 15)
-- [ ] Error titles: Virtualization unavailable, Disk full, Port in use, Keychain key unavailable, Database didn't start, Stack is slow to start, Stack stopped (first match wins, regexes in stack-health.ts)
+- [ ] Error titles: Virtualization unavailable, Disk full, Port in use, Keychain key unavailable, Database didn't start, Stack is slow to start, Stack stopped (first match wins, `StackHealthLogic.swift`)
 - [ ] First-run run-image download progress (GET `/api/v1/system/vm-image`) in window, menu bar and Dock
 - [ ] Logs window: last 256 KB, Copy, Reveal in Finder, Restart Stack
 - [ ] Import Backup… (`vesper app-import`, file picker, secrets key prompt/drop secrets)
 
-**Menu bar extra** [tray-model.ts, native-tray.ts]
+**Menu bar extra**
 - [ ] Status line per phase; error next step; notices (e.g. thermal easing)
 - [ ] Needs you (N) with up to 5 items + "Show all N in Inbox…"; Running (N) non-chat runs up to 5 with "(paused)" + "Show all N runs…"
 - [ ] Open Vesper, Quick Capture…, Screenshot to Chat… (when enabled), Pause Runs (N) / Resume Runs (N), Restart Stack, Show Logs…, Settings…, Quit Vesper
 - [ ] Icon states (running, starting, error); count title ("99+"), `tray.showCount`; closing the last window: Stay in Dock / Menu bar only (hide Dock icon) / Quit
 
-**Notifications** [notifications.ts, native-notify.ts, runs.ts]
+**Notifications**
 - [ ] InboxMonitor: GET `/api/v1/inbox` now, SSE `/events` (reconnect 5 s), poll 30 s; refresh on reset/inbox.*/run.*/approval.*/ticket.*/workflow.*; first poll is a baseline; dedupe `id:created_at`
-- [ ] 13 kinds with switches (settings.ts `NOTIFICATION_KINDS`); any `needs_you` item alerts; quiet hours; sound; group by ticket/run
+- [ ] 13 kinds with switches (`NativeSettings.swift`); any `needs_you` item alerts; quiet hours; sound; group by ticket/run
 - [ ] Approve/Decline actions (POST `/api/v1/approvals/{id}/approve|deny`, `/api/v1/connector-approvals/{id}` `{decision}`, `/api/v1/api-secret-approvals/{id}` `{decision}`), Touch ID first when enabled for the scope
 - [ ] Inline Reply on questions (POST `/api/v1/tickets/{KEY}/comments` `{body_md}`, prefix "@handle ")
 - [ ] Run finished/blocked/failed once per run (RunMonitor: `/api/v1/runs?state=live` every 20 s, then `state=all`)
 - [ ] Click opens the item's href in a window
 
-**Dock** [dock-model.ts]
+**Dock**
 - [ ] Badge = unresolved unread needs-you count ("99+"); cleared on 401/403
 - [ ] Dock menu: Needs you (N) + up to 5 + Show all; New Chat; New Chat with <persona> (up to 6); Quick Capture…; Screenshot to Chat…
 - [ ] Run-image download progress on the Dock icon (`dock.progress`)
 
-**Quick Capture, Screenshot, Show/Hide** [capture.ts, screenshot.ts]
+**Quick Capture, Screenshot, Show/Hide**
 - [ ] Global shortcuts (defaults ⌥⇧Space, ⌥⇧S, ⌥⇧V; off by default), validation and system-conflict list
 - [ ] Capture panel: Note (POST `/api/v1/knowledge/capture`), Message (POST `/api/v1/chats`), Ticket (POST `/api/v1/tickets`, first line title ≤300); persona/project lists refreshed every 10 min; ≤100k chars; Esc closes, ⌘↩ saves; result link opens
 - [ ] Screenshot: `screencapture -i -x -t png`, Screen Recording permission check and pane link, then the send picker
 - [ ] Show/Hide toggles the app
 
-**Files in** [drop.ts, services.ts]
+**Files in**
 - [ ] Drop on Dock icon/window, Open With (file types pdf png jpg jpeg gif webp txt md markdown csv json zip), ≤25 MB, ≤5 files; send picker (new chat with persona / existing chat); upload POST `/api/v1/chat-attachments`; send POST `/api/v1/chats` or `/api/v1/chats/{id}/messages`
 - [ ] Quick Actions "Send to Vesper" / "Send Text to Vesper" install/uninstall
 
-**Settings** [settings.ts, renderer/preferences.*] — sections General, Notifications, Shortcuts, Files & Links, Workspaces, Power & Stack, Backups, Security, Updates; every key and default in `defaultNativeSettings`; persisted to `config.json` `native`; test notification, test Touch ID, open data dir
+**Settings** — sections General, Notifications, Shortcuts, Files & Links, Workspaces, Power & Stack, Backups, Security, Updates; every key and default in `defaultNativeSettings`; persisted to `config.json` `native`; test notification, test Touch ID, open data dir
 
 **Power, backups, updates, workspaces, login**
 - [ ] Keep awake while runs are active; on sleep pause (POST `/api/v1/runs/{id}/pause`), resume on wake only runs Vesper paused; battery warning once per battery session
@@ -201,7 +210,7 @@ Electron sources in brackets. Each item must work in the Swift app before `deskt
 - [ ] Open at login (`SMAppService.mainApp`), start in menu bar
 - [ ] Open workspace folder menu (Finder / terminal app / editor app or terminal command), roots from GET `/api/v1/runner` `host_workspaces_dir`
 - [ ] Touch ID for approvals (scopes run_approvals, push_requests, connector_approvals, secret_approvals)
-- [ ] `vesper://` links: run/<uuid>, ticket/<KEY-n>, epic/<uuid>, page/<uuid>, chat/<uuid>, inbox, capture (strict validation as deeplink.ts)
+- [ ] `vesper://` links: run/<uuid>, ticket/<KEY-n>, epic/<uuid>, page/<uuid>, chat/<uuid>, inbox, capture (strict validation as `DeepLinks.swift`)
 
 ## Layout of `macos/`
 
@@ -223,13 +232,18 @@ macos/Sources/Vesper/               the app (AppKit + SwiftUI)
 macos/Tests/VesperCoreTests/        XCTest, incl. bridge fixture decoding
 macos/scripts/build-app.sh          assemble + sign Vesper.app
 macos/Resources/                    Info.plist template, icons, tray images
-macos/Makefile                      build, test, run, reinstall
+macos/scripts/gen-icon.mjs, gen-tray-icons.mjs   regenerate Resources/AppIcon.icns and tray/ from web/public/logo.svg
+macos/Makefile                      build, test, app, dmg, run, reinstall
+macos/staged/                       staged resources (git-ignored; scripts/stage-mac-resources.sh)
 ```
 
 ## Build and test
 
 - `make -C macos test` → `swift test` (VesperCore).
-- `make -C macos app` → `macos/build/Vesper.app`; `make -C macos run` launches it with logs to the
-  terminal; `make -C macos reinstall` replaces `/Applications/Vesper.app`.
+- `make -C macos app` (or `make mac-app`) → `macos/build/Vesper.app`; `make -C macos run` launches
+  it with logs to the terminal; `make -C macos dmg` (`make mac-dmg`) packs the signed app into
+  `macos/build/Vesper-arm64.dmg` (app plus an Applications link, volume "Vesper") with a `.sha256`;
+  `make -C macos reinstall` replaces `/Applications/Vesper.app`. `SKIP_STAGE=1` reuses `macos/staged`.
+- Releases: `.github/workflows/mac-release.yml` on a `vX.Y.Z` tag (see [mac-updates.md](mac-updates.md)).
 - Web: `npm --prefix web test`, `npm --prefix web run lint`, `npx --prefix web tsc --noEmit -p web`.
 - Server: see AGENTS.md "Running the server tests".

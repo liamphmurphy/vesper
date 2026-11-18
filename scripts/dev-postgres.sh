@@ -10,7 +10,7 @@
 # Env:
 #   DEV_PG_DIR     where pgdata/ and postgres.log live (default <repo>/.dev)
 #   DEV_PG_PORT    TCP port on 127.0.0.1 (default 5432)
-#   DEV_PG_BUNDLE  the bundle to run (default desktop/resources/postgres if
+#   DEV_PG_BUNDLE  the bundle to run (default macos/staged/postgres if
 #                  it's staged, else <repo>/.dev/postgres, built on first use)
 # Trust auth on a loopback port: for disposable local data only.
 set -euo pipefail
@@ -25,8 +25,8 @@ PGDB=lazyagents
 bundle() {
   if [[ -n "${DEV_PG_BUNDLE:-}" ]]; then
     echo "$DEV_PG_BUNDLE"
-  elif [[ -x "$ROOT/desktop/resources/postgres/bin/postgres" ]]; then
-    echo "$ROOT/desktop/resources/postgres"
+  elif [[ -x "$ROOT/macos/staged/postgres/bin/postgres" ]]; then
+    echo "$ROOT/macos/staged/postgres"
   else
     echo "$ROOT/.dev/postgres"
   fi

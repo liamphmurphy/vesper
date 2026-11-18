@@ -3,7 +3,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/.." && pwd)"
-res_dir="${repo_root}/desktop/resources"
+res_dir="${repo_root}/macos/staged"
 img_cache="${VESPER_IMAGES_DIR:-${HOME}/.cache/vesper/images}"
 
 mkdir -p "${res_dir}/bin" "${res_dir}/images"
@@ -45,5 +45,5 @@ if [[ -f "${img_cache}/agent-base.erofs.sha256" ]]; then
   cp -f "${img_cache}/agent-base.erofs.sha256" "${res_dir}/images/agent-base.erofs.sha256"
 fi
 
-echo "Staged desktop resources:"
+echo "Staged macOS app resources:"
 du -sh "${res_dir}/bin" "${res_dir}/postgres" "${res_dir}/images" "${res_dir}/web"

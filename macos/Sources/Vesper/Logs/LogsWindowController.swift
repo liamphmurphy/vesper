@@ -2,7 +2,7 @@ import AppKit
 import VesperCore
 
 /// "Vesper Logs": the last 256 KB of `<data>/logs/vesper-app.log`, refreshed every 2 s while the
-/// window is visible (desktop/renderer/logs.*). Copy, Reveal in Finder, Restart Stack.
+/// window is visible (the earlier Electron logs page). Copy, Reveal in Finder, Restart Stack.
 @MainActor
 final class LogsWindowController: NSWindowController, NSWindowDelegate {
     private let textView = NSTextView()

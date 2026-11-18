@@ -3,7 +3,7 @@
 # web app on the host against a local Postgres for hot-reload development.
 SHELL := /bin/bash
 
-.PHONY: help signin dev-infra dev-infra-stop stop-dev dev api web web-deps runner gen gen-check test test-server test-web lint build reset desktop-deps desktop-dev desktop-test desktop-dmg desktop-dmg-universal desktop-reinstall mac-app mac-test mac-run mac-reinstall
+.PHONY: help signin dev-infra dev-infra-stop stop-dev dev api web web-deps runner gen gen-check test test-server test-web lint build reset mac-app mac-test mac-run mac-dmg mac-reinstall
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-13s %s\n", $$1, $$2}'
@@ -92,32 +92,6 @@ reset: ## Stop the dev Postgres and delete all local dev data (.dev/pgdata, blob
 	-@scripts/dev-postgres.sh stop
 	rm -rf .dev/pgdata .dev/postgres.log server/.lazyagents/blobs
 
-DESKTOP_DEPS := desktop/node_modules/.package-lock.json
-
-$(DESKTOP_DEPS): desktop/package-lock.json
-	cd desktop && npm ci
-	@touch $@
-
-desktop-deps: $(DESKTOP_DEPS) ## Install desktop Electron dependencies if the lockfile changed
-
-desktop-dev: desktop-deps ## Build and launch the Electron desktop client
-	cd desktop && npm run start
-
-desktop-test: desktop-deps ## Typecheck and run desktop unit tests
-	cd desktop && npm run typecheck && npm test
-
-desktop-dmg: desktop-deps ## Package self-contained macOS Apple Silicon Vesper.dmg (run on macOS)
-	bash scripts/stage-desktop-resources.sh
-	cd desktop && npm run dmg
-
-desktop-dmg-universal: desktop-deps ## Package macOS universal Vesper.dmg (run on macOS)
-	cd desktop && npm run dmg:universal
-
-desktop-reinstall: desktop-deps ## Rebuild VM image + DMG, replace /Applications/Vesper.app, relaunch (SKIP_IMAGES=1 skips the image)
-	@if [ "$(SKIP_IMAGES)" != 1 ]; then deploy/microvm/build-images.sh --rootfs; fi
-	$(MAKE) desktop-dmg
-	bash scripts/reinstall-desktop.sh
-
 # The native macOS app lives in macos/ and has its own Makefile.
 mac-app: ## Build the macOS app bundle (macos/Makefile)
 	$(MAKE) -C macos app
@@ -127,6 +101,9 @@ mac-test: ## Run the macOS app tests (macos/Makefile)
 
 mac-run: ## Build and launch the macOS app (macos/Makefile)
 	$(MAKE) -C macos run
+
+mac-dmg: ## Build macos/build/Vesper-arm64.dmg (macos/Makefile)
+	$(MAKE) -C macos dmg
 
 mac-reinstall: ## Rebuild and replace the installed macOS app (macos/Makefile)
 	$(MAKE) -C macos reinstall

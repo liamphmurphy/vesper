@@ -61,7 +61,7 @@ public struct StackSession: Sendable, Equatable {
 
 /// Knobs for the controller. The defaults are what the app uses; tests and the integration test override them.
 public struct StackOptions: Sendable {
-    /// The resources directory. nil: `BundledResources.locate()` (VESPER_RESOURCES_DIR, the app bundle, or the repo's desktop/resources).
+    /// The resources directory. nil: `BundledResources.locate()` (VESPER_RESOURCES_DIR, the app bundle, or the repo's macos/staged).
     public var resourcesDirectory: URL?
     public var port: Int
     /// Supplies SECRETS_KEY. nil: the Keychain (`SecretsKeyStore`).

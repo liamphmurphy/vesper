@@ -7,8 +7,7 @@ server/.lazyagents/blobs/
 # Claude Code agent worktrees (separate checkouts, never commit)
 .claude/worktrees/
 
-# Packaged desktop artifacts & staged binaries
-desktop/resources/
-desktop/release/
-desktop/dist/
+# Staged macOS app resources (scripts/stage-mac-resources.sh); the app bundle is macos/build/
+macos/staged/
+macos/build/
 .dev/

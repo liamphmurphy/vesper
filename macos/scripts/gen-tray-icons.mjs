@@ -1,14 +1,17 @@
-// Renders the menu bar (tray) icons into renderer/tray/, which electron-builder
-// packs into the app (build/ is not packed). The star is the Vesper logo's
+// Renders the menu bar (tray) icons into macos/Resources/tray/, which build-app.sh
+// copies into the app. The star is the Vesper logo's
 // sparkle. "Template" icons are black-on-transparent so macOS tints them for
 // light/dark menu bars; the error icon is not a template so its red dot shows.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { Resvg } from "@resvg/resvg-js";
+import { createRequire } from "node:module";
+
+// @resvg/resvg-js comes from web/node_modules (run `npm ci` in web/ first).
+const { Resvg } = createRequire(import.meta.url)("../../web/node_modules/@resvg/resvg-js");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const outDir = path.resolve(__dirname, "..", "renderer", "tray");
+const outDir = path.resolve(__dirname, "..", "Resources", "tray");
 
 const STAR = "M11 2.2c.5 3.7 1.4 4.6 5.1 5.1-3.7.5-4.6 1.4-5.1 5.1-.5-3.7-1.4-4.6-5.1-5.1 3.7-.5 4.6-1.4 5.1-5.1Z";
 const HORIZON = "M2 18.5c3-1.6 6-2.3 9-2.3s6 .7 9 2.3";
