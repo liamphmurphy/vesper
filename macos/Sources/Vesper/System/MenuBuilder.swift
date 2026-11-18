@@ -14,6 +14,14 @@ enum MenuBuilder {
 
     static func build(_ items: [TrayMenuItem], onAction: @escaping (TrayAction) -> Void) -> NSMenu {
         let menu = NSMenu()
+        populate(menu, items, onAction: onAction)
+        return menu
+    }
+
+    /// Replaces `menu`'s items in place, so a menu that something else holds (a status item) keeps
+    /// its identity.
+    static func populate(_ menu: NSMenu, _ items: [TrayMenuItem], onAction: @escaping (TrayAction) -> Void) {
+        menu.removeAllItems()
         menu.autoenablesItems = false
         for model in items {
             switch model {
@@ -36,7 +44,6 @@ enum MenuBuilder {
                 menu.addItem(item)
             }
         }
-        return menu
     }
 
     /// "Alt+Shift+Space" as a key and modifiers, for display beside the item.

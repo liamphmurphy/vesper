@@ -56,17 +56,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     // MARK: Lifecycle
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        vlog("quit: asked to terminate")
         Task {
             for window in app.windows where !(await window.confirmLeavingUnsavedChanges()) {
+                vlog("quit: cancelled for unsaved changes")
                 Self.replyToTerminate(false)
                 return
             }
             guard await app.system.confirmQuit() else {
+                vlog("quit: cancelled for active runs")
                 Self.replyToTerminate(false)
                 return
             }
             app.saveSessionNow()
+            vlog("quit: stopping the stack")
             if let stack = app.stack { await stack.stop() }
+            vlog("quit: replying yes")
             Self.replyToTerminate(true)
         }
         return .terminateLater

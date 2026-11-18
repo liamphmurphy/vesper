@@ -206,7 +206,9 @@ final class SystemServices {
         case .restartStack: app.actions.restartStack()
         case .showLogs: showLogs()
         case .preferences: app.actions.openSettings()
-        case .quit: NSApp.terminate(nil)
+        case .quit:
+            vlog("quit: chosen from the menu bar or Dock")
+            NSApp.terminate(nil)
         }
     }
 
