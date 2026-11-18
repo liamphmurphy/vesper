@@ -27,6 +27,7 @@ import (
 
 	"github.com/liamphmurphy/vesper/server/internal/agents"
 	"github.com/liamphmurphy/vesper/server/internal/artifacts"
+	"github.com/liamphmurphy/vesper/server/internal/auth"
 	"github.com/liamphmurphy/vesper/server/internal/blob"
 	"github.com/liamphmurphy/vesper/server/internal/chatmodels"
 	"github.com/liamphmurphy/vesper/server/internal/config"
@@ -280,7 +281,9 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 
 	imgMgr := NewImageManager()
 	apiHandler := srv.Handler()
-	topHandler := buildAppMux(apiHandler, webProxy, imgMgr)
+	// Only the outer listener checks Host: microVMs reach apiHandler in-process as
+	// api.vesper.internal, which is not a loopback name.
+	topHandler := loopbackHostOnly(buildAppMux(apiHandler, webProxy, imgMgr), ln.Addr().(*net.TCPAddr).Port)
 
 	hs := &http.Server{
 		Handler:           topHandler,
@@ -297,6 +300,15 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 		}()
 	}
 
+	// The native shell asks for a one-time sign-in code on stdout (its own pipe), so it can
+	// sign its web view in without reading runtime.json or running sign-in-link.
+	if os.Getenv("VESPER_APP_SIGN_IN_CODE") == "stdout" {
+		code, cerr := auth.NewSignInCode(ctx, q)
+		if cerr != nil {
+			return fmt.Errorf("sign-in code: %w", cerr)
+		}
+		fmt.Printf("VESPER_SIGN_IN_CODE=%s\n", code)
+	}
 	fmt.Printf("VESPER_READY_URL=%s\n", baseURL)
 	log.Info("vesper app ready", "url", baseURL, "data_dir", dataDir, "web_dir", webDistDir)
 
@@ -349,6 +361,25 @@ func buildAppMux(apiHandler, webProxy http.Handler, imgMgr *ImageManager) http.H
 			return
 		}
 		http.NotFound(w, r)
+	})
+}
+
+// loopbackHostOnly refuses requests whose Host isn't a loopback name for this
+// listener's port. A page on another site that rebinds its DNS to 127.0.0.1
+// still sends its own Host, so it can't reach the API or the UI through it.
+func loopbackHostOnly(next http.Handler, port int) http.Handler {
+	p := strconv.Itoa(port)
+	allowed := map[string]bool{
+		net.JoinHostPort("127.0.0.1", p): true,
+		net.JoinHostPort("localhost", p): true,
+		net.JoinHostPort("::1", p):       true,
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !allowed[strings.ToLower(r.Host)] {
+			http.Error(w, "unknown host", http.StatusMisdirectedRequest)
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 

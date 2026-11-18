@@ -1,0 +1,13 @@
+[
+  { "v": 1, "type": "navigate", "path": "/runs/0b5c9a6e-0000-4000-8000-000000000001" },
+  { "v": 1, "type": "nav.activate", "navigatorId": "knowledge", "itemId": "p2" },
+  { "v": 1, "type": "nav.action", "navigatorId": "knowledge", "actionId": "new", "menuItemId": "new-doc" },
+  { "v": 1, "type": "nav.action", "navigatorId": "knowledge", "actionId": "rename", "itemId": "p2" },
+  { "v": 1, "type": "nav.picker", "navigatorId": "knowledge", "pickerId": "view", "value": "agent" },
+  { "v": 1, "type": "nav.search", "navigatorId": "knowledge", "searchId": "filter", "value": "shell" },
+  { "v": 1, "type": "nav.toggle", "navigatorId": "knowledge", "itemId": "p1", "expanded": false },
+  { "v": 1, "type": "toolbar.action", "itemId": "more", "menuItemId": "copy-link" },
+  { "v": 1, "type": "command", "name": "openCommandMenu" },
+  { "v": 1, "type": "reply", "requestId": "r1", "ok": true },
+  { "v": 1, "type": "reply", "requestId": "r3", "ok": true, "selectedId": null }
+]

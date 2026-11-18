@@ -242,3 +242,28 @@ func TestAppPlaygroundDefaults(t *testing.T) {
 		}
 	}
 }
+
+func TestLoopbackHostOnly(t *testing.T) {
+	h := loopbackHostOnly(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}), 8080)
+	for host, want := range map[string]int{
+		"127.0.0.1:8080":         http.StatusNoContent,
+		"localhost:8080":         http.StatusNoContent,
+		"LOCALHOST:8080":         http.StatusNoContent,
+		"[::1]:8080":             http.StatusNoContent,
+		"127.0.0.1:9999":         http.StatusMisdirectedRequest,
+		"evil.example:8080":      http.StatusMisdirectedRequest,
+		"api.vesper.internal":    http.StatusMisdirectedRequest,
+		"127.0.0.1":              http.StatusMisdirectedRequest,
+		"localhost.evil.example": http.StatusMisdirectedRequest,
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+		req.Host = host
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != want {
+			t.Errorf("Host %q: got %d, want %d", host, rec.Code, want)
+		}
+	}
+}
