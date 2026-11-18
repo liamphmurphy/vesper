@@ -23,7 +23,7 @@ final class RailMenuPopover: NSObject, NSPopoverDelegate {
     /// Shows `item`'s menu beside `button`; `choose` gets the picked entry's id.
     func show(_ item: RailItem, relativeTo button: NSView, choose: @escaping (String) -> Void) {
         itemId = item.id
-        let view = RailMenuView(title: item.label, items: item.menu ?? []) { [weak self] id in
+        let view = RailMenuView(title: item.label, character: item.character, usage: item.usage ?? [], items: item.menu ?? []) { [weak self] id in
             self?.popover.performClose(nil)
             choose(id)
         }
@@ -38,12 +38,31 @@ final class RailMenuPopover: NSObject, NSPopoverDelegate {
 
 private struct RailMenuView: View {
     let title: String
+    var character: RailCharacter?
+    var usage: [RailUsage] = []
     let items: [MenuItem]
     let choose: (String) -> Void
 
+    private var kind: HarnessCharacterView.Kind? { character.flatMap { HarnessCharacterView.kind(for: $0.harness) } }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(title).font(.headline).padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 6)
+            if let kind, let character {
+                HStack(spacing: 10) {
+                    HarnessCharacterView(kind: kind, working: character.working, size: 40)
+                    Text(title).font(.headline).lineLimit(2)
+                }
+                .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 6)
+            } else {
+                Text(title).font(.headline).padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 6)
+            }
+            if !usage.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(usage) { UsageRowView(row: $0) }
+                }
+                .padding(.horizontal, 14).padding(.bottom, 8)
+                if !items.isEmpty { Divider().padding(.horizontal, 8).padding(.bottom, 4) }
+            }
             ScrollView {
                 VStack(alignment: .leading, spacing: 1) {
                     ForEach(items) { item in entry(item, indent: 0) }
@@ -53,7 +72,7 @@ private struct RailMenuView: View {
             }
             .frame(maxHeight: 420)
         }
-        .frame(width: 280)
+        .frame(width: usage.isEmpty ? 280 : 256)
     }
 
     @ViewBuilder private func entry(_ item: MenuItem, indent: CGFloat) -> some View {
@@ -107,5 +126,75 @@ private struct MenuRow: View {
         if !enabled { return .secondary }
         if hovering { return .white }
         return item.destructive == true ? .red : .primary
+    }
+}
+
+/// One usage reading, like the web bubble's row: heading and big value, a bar, meta and sub lines.
+struct UsageRowView: View {
+    let row: RailUsage
+
+    private var tint: Color {
+        switch row.tone ?? .normal {
+        case .normal: .accentColor
+        case .warn: .orange
+        case .limited: .red
+        }
+    }
+    private var emphasis: Color? { row.tone == nil || row.tone == .normal ? nil : tint }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(row.title).font(.system(size: 12, weight: .medium))
+                Spacer(minLength: 0)
+                if let value = row.value {
+                    Text(value).font(.system(size: 18)).tracking(-0.6).foregroundStyle(emphasis ?? .primary)
+                }
+            }
+            UsageTrack(fraction: row.unavailable == true ? nil : row.fraction, tint: tint)
+                .frame(height: 4).padding(.top, 7).padding(.bottom, 8)
+            if let meta = row.meta, let left = meta.first {
+                HStack(spacing: 5) {
+                    Text(left)
+                    Spacer(minLength: 0)
+                    if meta.count > 1 { Text(meta[1]) }
+                }
+                .font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+            if let sub = row.sub, !sub.isEmpty {
+                Text(sub).font(.system(size: 11)).foregroundStyle(row.tone == .limited ? Color.red : Color(nsColor: .tertiaryLabelColor))
+                    .fixedSize(horizontal: false, vertical: true).padding(.top, 5)
+            }
+            if let note = row.footnote, !note.isEmpty {
+                Text(note).font(.system(size: 11)).foregroundStyle(.secondary).padding(.top, 6)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// The bar: a rounded track with a tinted fill; with no fraction, the web's striped "unavailable" look.
+private struct UsageTrack: View {
+    let fraction: Double?
+    let tint: Color
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                if let fraction {
+                    Capsule().fill(Color.primary.opacity(0.12))
+                    Capsule().fill(tint).frame(width: geo.size.width * min(max(fraction, 0), 1))
+                } else {
+                    Canvas { ctx, size in
+                        var x = 0.0
+                        while x < size.width {
+                            ctx.fill(Path(CGRect(x: x, y: 0, width: 2, height: size.height)), with: .color(Color(nsColor: .tertiaryLabelColor)))
+                            x += 7
+                        }
+                    }
+                }
+            }
+            .clipShape(Capsule())
+        }
     }
 }

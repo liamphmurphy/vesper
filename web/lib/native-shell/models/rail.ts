@@ -2,7 +2,7 @@
 // the React side (components/shell/companion.tsx) feeds it what the web rail's buttons read and
 // runs the actions it names. `node --test` covers it (lib/native-shell/rail.test.mjs).
 
-import type { Avatar, MenuItem, RailItem, RailModel } from "../protocol.ts";
+import type { Avatar, MenuItem, RailItem, RailModel, RailUsage } from "../protocol.ts";
 
 // MARK: Item ids
 
@@ -141,9 +141,11 @@ export interface HarnessRailInput {
   /** Two letters on the avatar. */
   initials: string;
   color: string;
+  /** The label under the character on the web rail. */
+  name: string;
   state: "idle" | "working" | "limited";
-  /** What the usage bubble says, one line each (allowance, state, when it was checked). */
-  lines: readonly string[];
+  /** The usage bubble's reading (the same row the web bubble shows; `footnote` is when it was checked). */
+  usage: RailUsage;
 }
 
 export interface RailInput {
@@ -197,12 +199,9 @@ function harnessItem(h: HarnessRailInput): RailItem {
     id: RAIL_HARNESS + h.harness,
     label: `${h.label}, ${h.state}`,
     avatar,
-    menu: [
-      { id: "h.title", label: h.label, disabled: true },
-      ...h.lines.map((line, i): MenuItem => ({ id: `h.line${i}`, label: line, disabled: true })),
-      { id: "h.sep", separator: true },
-      { id: RAIL_HARNESS_USAGE, label: "Usage settings…", icon: "gear" },
-    ],
+    character: { harness: h.harness, working: h.state === "working", name: h.name },
+    usage: [h.usage],
+    menu: [{ id: RAIL_HARNESS_USAGE, label: "Usage settings…", icon: "gear" }],
   };
   if (h.state === "working") item.status = "done";
   else if (h.state === "limited") item.status = "warning";

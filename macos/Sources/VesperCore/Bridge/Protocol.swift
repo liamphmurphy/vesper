@@ -270,11 +270,57 @@ public struct RailItem: Codable, Sendable, Hashable, Identifiable {
     public var kind: RailItemKind?
     public var menu: [MenuItem]?
     public var disabled: Bool?
+    /// An agent harness's animated character; the shell draws it in the button.
+    public var character: RailCharacter?
+    /// Usage rows the shell draws above `menu` in the item's popover.
+    public var usage: [RailUsage]?
 
     public init(id: String, label: String, icon: String? = nil, avatar: Avatar? = nil, badge: AreaBadge? = nil, status: Tone? = nil,
-                active: Bool? = nil, kind: RailItemKind? = nil, menu: [MenuItem]? = nil, disabled: Bool? = nil) {
+                active: Bool? = nil, kind: RailItemKind? = nil, menu: [MenuItem]? = nil, disabled: Bool? = nil,
+                character: RailCharacter? = nil, usage: [RailUsage]? = nil) {
         self.id = id; self.label = label; self.icon = icon; self.avatar = avatar; self.badge = badge; self.status = status
         self.active = active; self.kind = kind; self.menu = menu; self.disabled = disabled
+        self.character = character; self.usage = usage
+    }
+}
+
+public struct RailCharacter: Codable, Sendable, Hashable {
+    /// "claude-code", "codex" or "antigravity"; any other name has no character.
+    public var harness: String
+    public var working: Bool
+    /// The small label under the character.
+    public var name: String?
+
+    public init(harness: String, working: Bool, name: String? = nil) { self.harness = harness; self.working = working; self.name = name }
+}
+
+public enum UsageTone: String, Codable, Sendable, Hashable {
+    case normal, warn, limited
+
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = UsageTone(rawValue: raw) ?? .normal
+    }
+}
+
+/// One usage reading in a rail popover (protocol.ts RailUsage).
+public struct RailUsage: Codable, Sendable, Hashable, Identifiable {
+    public var id: String
+    public var title: String
+    public var value: String?
+    /// Bar fill, 0...1.
+    public var fraction: Double?
+    public var tone: UsageTone?
+    public var unavailable: Bool?
+    /// The line under the bar: left text, optional right text.
+    public var meta: [String]?
+    public var sub: String?
+    public var footnote: String?
+
+    public init(id: String, title: String, value: String? = nil, fraction: Double? = nil, tone: UsageTone? = nil,
+                unavailable: Bool? = nil, meta: [String]? = nil, sub: String? = nil, footnote: String? = nil) {
+        self.id = id; self.title = title; self.value = value; self.fraction = fraction; self.tone = tone
+        self.unavailable = unavailable; self.meta = meta; self.sub = sub; self.footnote = footnote
     }
 }
 

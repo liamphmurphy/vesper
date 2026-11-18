@@ -186,6 +186,35 @@ export interface RailItem {
   kind?: "button" | "needsYou";
   menu?: MenuItem[];
   disabled?: boolean;
+  /** An agent harness's animated character (the shell draws it in the button; an unknown harness keeps the avatar). */
+  character?: RailCharacter;
+  /** Usage rows the shell draws above `menu` in the item's popover. */
+  usage?: RailUsage[];
+}
+
+export interface RailCharacter {
+  /** "claude-code", "codex" or "antigravity"; any other name has no character. */
+  harness: string;
+  working: boolean;
+  /** The small label under the character (the web rail's: the harness's name, "AG" for Antigravity). */
+  name?: string;
+}
+
+/** One usage reading in a rail popover (the web's harness bubble). */
+export interface RailUsage {
+  id: string;
+  title: string;
+  /** The big number, e.g. "42%". */
+  value?: string;
+  /** Bar fill, 0...1; absent with `unavailable` (the bar shows as striped). */
+  fraction?: number;
+  tone?: "normal" | "warn" | "limited";
+  unavailable?: boolean;
+  /** The line under the bar: left text, optional right text. */
+  meta?: [string, string?];
+  sub?: string;
+  /** Small print at the foot (when it was last checked). */
+  footnote?: string;
 }
 
 /** The right rail, top to bottom: the page's dock controls, then status, then links. */

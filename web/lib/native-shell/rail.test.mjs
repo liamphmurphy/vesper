@@ -69,12 +69,16 @@ test("PR review requests: count badge and a menu of the PRs", () => {
 });
 
 test("harnesses: avatar, status tone and a usage menu", () => {
-  const h = (state) => ({ harness: "codex", label: "Codex", initials: "CX", color: "#B09AEF", state, lines: ["42% allowance used"] });
+  const h = (state) => ({ harness: "codex", label: "Codex", initials: "CX", color: "#B09AEF", name: "Codex", state, usage: { id: "usage", title: "Codex", value: "42%", fraction: 0.42, tone: "normal", meta: ["Session allowance used", "Idle"], sub: "5h" } });
   const [working] = buildRailModel({ ...base, harnesses: [h("working")] }).middle.slice(2);
   assert.equal(working.id, "harness:codex");
   assert.equal(working.status, "done");
   assert.deepEqual(working.avatar, { initials: "CX", color: "#B09AEF" });
   assert.ok(working.menu.at(-1).id === "usage");
+  assert.deepEqual(working.character, { harness: "codex", working: true, name: "Codex" });
+  assert.equal(working.usage[0].fraction, 0.42);
+  assert.equal(buildRailModel({ ...base, harnesses: [h("idle")] }).middle[2].character.working, false);
+  assert.equal(buildRailModel({ ...base, harnesses: [h("limited")] }).middle[2].character.working, false);
   assert.equal(buildRailModel({ ...base, harnesses: [h("limited")] }).middle[2].status, "warning");
   assert.equal(buildRailModel({ ...base, harnesses: [h("idle")] }).middle[2].status, undefined);
   assert.equal(buildRailModel({ ...base, harnesses: null }).middle.length, 2);

@@ -132,6 +132,11 @@ final class RailButton: NSButton {
     private var avatarTask: Task<Void, Never>?
 
     static let size: CGFloat = 32
+    /// A harness character's button, like the web rail's (34x36: the character and its name).
+    static let characterSize = CGSize(width: 34, height: 36)
+    private var widthConstraint: NSLayoutConstraint?
+    private var heightConstraint: NSLayoutConstraint?
+    private var characterHost: ClickThroughHostingView<RailCharacterContent>?
 
     init(onClick: @escaping (RailButton) -> Void) {
         self.onClick = onClick
@@ -142,11 +147,14 @@ final class RailButton: NSButton {
         title = ""
         wantsLayer = true
         layer?.cornerRadius = 7
+        clipsToBounds = false
         target = self
         action = #selector(fire)
         translatesAutoresizingMaskIntoConstraints = false
-        widthAnchor.constraint(equalToConstant: Self.size).isActive = true
-        heightAnchor.constraint(equalToConstant: Self.size).isActive = true
+        widthConstraint = widthAnchor.constraint(equalToConstant: Self.size)
+        heightConstraint = heightAnchor.constraint(equalToConstant: Self.size)
+        widthConstraint?.isActive = true
+        heightConstraint?.isActive = true
         for sub in [badgeView, statusView] {
             sub.translatesAutoresizingMaskIntoConstraints = false
             addSubview(sub)
@@ -171,10 +179,21 @@ final class RailButton: NSButton {
         isEnabled = item.disabled != true
         alphaValue = isEnabled ? 1 : 0.4
         badgeView.configure(item.badge)
-        statusView.configure(item.status)
-        if let avatar = item.avatar {
+        let character = item.character.flatMap { c in HarnessCharacterView.kind(for: c.harness).map { (c, $0) } }
+        statusView.configure(character == nil ? item.status : nil)
+        let size = character == nil ? CGSize(width: Self.size, height: Self.size) : Self.characterSize
+        widthConstraint?.constant = size.width
+        heightConstraint?.constant = size.height
+        if let (c, kind) = character {
+            // The rail button is 34pt wide: "Claude Code" would be clipped, so show its first word
+            // ("Claude"); the full name stays in the tooltip and the popover.
+            let short = c.name.map { name in name.count > 7 ? String(name.split(separator: " ").first ?? Substring(name)) : name }
+            showCharacter(RailCharacterContent(kind: kind, working: c.working, name: short))
+        } else if let avatar = item.avatar {
+            hideCharacter()
             showAvatar(avatar)
         } else {
+            hideCharacter()
             avatarTask?.cancel()
             avatarKey = nil
             let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .regular)
@@ -182,6 +201,30 @@ final class RailButton: NSButton {
             image?.isTemplate = true
         }
         updateAppearance()
+    }
+
+    private func showCharacter(_ content: RailCharacterContent) {
+        avatarTask?.cancel()
+        avatarKey = nil
+        image = nil
+        if let host = characterHost {
+            host.rootView = content
+            return
+        }
+        let host = ClickThroughHostingView(rootView: content)
+        host.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(host, positioned: .below, relativeTo: badgeView)
+        NSLayoutConstraint.activate([
+            // Wider than the button, so a long name ("Claude Code") isn't clipped (the web's overflows too).
+            host.centerXAnchor.constraint(equalTo: centerXAnchor), host.widthAnchor.constraint(equalToConstant: RailBarView.width),
+            host.topAnchor.constraint(equalTo: topAnchor), host.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        characterHost = host
+    }
+
+    private func hideCharacter() {
+        characterHost?.removeFromSuperview()
+        characterHost = nil
     }
 
     private func showAvatar(_ avatar: Avatar) {

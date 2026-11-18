@@ -441,7 +441,38 @@
             "initials": "C",
             "color": "#D97757"
           },
-          "status": "done"
+          "status": "done",
+          "character": {
+            "harness": "claude-code",
+            "working": true,
+            "name": "Claude Code"
+          },
+          "usage": [
+            {
+              "id": "usage",
+              "title": "Claude Code",
+              "value": "86%",
+              "fraction": 0.86,
+              "tone": "warn",
+              "meta": ["Session allowance used", "1 working"],
+              "sub": "5h · resets 9:20 PM · weekly 40%",
+              "footnote": "checked 40s ago"
+            },
+            {
+              "id": "usage2",
+              "title": "Antigravity",
+              "value": "—",
+              "unavailable": true,
+              "meta": ["Allowance not reported"],
+              "sub": "Usage unknown"
+            }
+          ],
+          "menu": [
+            {
+              "id": "usage",
+              "label": "Usage settings…"
+            }
+          ]
         }
       ],
       "foot": [

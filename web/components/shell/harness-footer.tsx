@@ -16,6 +16,12 @@ const NATIVE_LOOK: Record<string, { initials: string; color: string }> = {
   antigravity: { initials: "AG", color: "#78BFDE" },
 };
 
+const TONE = { ok: "normal", warn: "warn", limited: "limited" } as const;
+
+/** The left meta line under the bar (shared with the web bubble). */
+const usageAllowance = (h: HarnessActivity, primary: { label: string } | undefined) =>
+  primary ? `${primary.label} allowance used` : h.usage_checking ? "Checking usage…" : h.harness === ANTIGRAVITY ? "Allowance not reported" : "Usage unavailable";
+
 /** The harnesses as the Mac app's native rail shows them: an avatar, a state and the usage bubble's lines. */
 export function harnessRailInputs(harnesses: HarnessActivity[]): HarnessRailInput[] {
   return harnesses.map((h) => {
@@ -26,15 +32,18 @@ export function harnessRailInputs(harnesses: HarnessActivity[]): HarnessRailInpu
       harness: h.harness,
       label: h.label,
       ...look,
+      name: h.harness === ANTIGRAVITY ? "AG" : h.label,
       state: status(h),
-      lines: [
-        pct === null
-          ? primary ? `${primary.label} allowance used` : h.usage_checking ? "Checking usage…" : h.harness === ANTIGRAVITY ? "Allowance not reported" : "Usage unavailable"
-          : `${pct}% ${primary ? `${primary.label} allowance` : "allowance"} used`,
-        h.limited_until ? "Limited" : harnessWorking(h) ? `${h.running} working` : "Idle",
-        usageSub(h, harnesses),
-        checkedAgo([h]),
-      ].filter(Boolean),
+      usage: {
+        id: "usage",
+        title: h.label,
+        value: pct === null ? (h.usage_checking ? "…" : "—") : `${pct}%`,
+        ...(pct === null ? { unavailable: true } : { fraction: Math.max(0, Math.min(100, pct)) / 100 }),
+        tone: TONE[usageTone(h)],
+        meta: [usageAllowance(h, primary), h.limited_until ? "Limited" : harnessWorking(h) ? `${h.running} working` : "Idle"],
+        sub: usageSub(h, harnesses),
+        footnote: checkedAgo([h]),
+      },
     };
   });
 }
@@ -56,7 +65,7 @@ function UsageBubble({ h, all, onNavigate }: { h: HarnessActivity; all: HarnessA
         {pct !== null && <i style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />}
       </div>
       <div className="harness-usage-meta">
-        <span>{primary ? `${primary.label} allowance used` : h.usage_checking ? "Checking usage…" : h.harness === ANTIGRAVITY ? "Allowance not reported" : "Usage unavailable"}</span>
+        <span>{usageAllowance(h, primary)}</span>
         <span>{h.limited_until ? "Limited" : working ? `${h.running} working` : "Idle"}</span>
       </div>
       <p className="harness-usage-sub">{usageSub(h, all)}</p>

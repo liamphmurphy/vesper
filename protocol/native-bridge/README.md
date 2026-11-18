@@ -34,4 +34,8 @@ in the same commit.
 Toolbar items may show their label (`showsLabel`), an `avatar`, and sit next to the title
 (`placement: "leading"`) or before the shell's own items (default). A `title` message may carry a
 `menu`, answered with `title.action`. The right rail (`rail` message, `rail.action` command) has
-three groups; an item of kind `needsYou` opens the shell's own Needs-you popover.
+three groups; an item of kind `needsYou` opens the shell's own Needs-you popover. A rail item may
+carry a `character` (`{harness, working, name?}`: the shell draws the harness's animated character for
+`claude-code`, `codex` or `antigravity`, and keeps the avatar for any other name) and `usage` rows
+(`title`, `value`, `fraction` 0...1, `tone` normal/warn/limited, `unavailable`, `meta` as
+`[left, right?]`, `sub`, `footnote`) that its popover draws above the `menu` entries.
