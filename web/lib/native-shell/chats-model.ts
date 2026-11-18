@@ -174,7 +174,8 @@ export function buildChatsNavModel(input: ChatsModelInput): NavModel {
       sections[sections.length - 1].items.push({ id: `${START_WITH_PREFIX}${input.filteredTo.id}`, title: `New chat with ${input.filteredTo.name}`, icon: "plus" });
     }
   }
-  const newChat: NavAction = { id: NEW_CHAT_ACTION, label: "New chat", icon: "plus", accent: true };
+  // The sidebar's only New Chat button (the toolbar has none): labelled, with the compose icon.
+  const newChat: NavAction = { id: NEW_CHAT_ACTION, label: "New Chat", icon: "compose", showsLabel: true };
   // NavAction can't be disabled, so without a ready harness the action is left out.
   if (!input.newChatDisabled) sections[0].actions = [newChat];
   const spaces = (input.spaces ?? []).filter((s) => !s.work?.archived);

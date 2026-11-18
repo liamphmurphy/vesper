@@ -55,7 +55,7 @@ test("the Chats model: new chat action, selection, spaces, persona picker", () =
   });
   assert.equal(m.id, "chats");
   assert.equal(m.selectedId, "c2");
-  assert.deepEqual(m.sections[0].actions, [{ id: "new-chat", label: "New chat", icon: "plus", accent: true }]);
+  assert.deepEqual(m.sections[0].actions, [{ id: "new-chat", label: "New Chat", icon: "compose", showsLabel: true }]);
   assert.deepEqual(m.sections[0].items.map((i) => i.id), ["c1", "c2"]);
   assert.deepEqual(m.sections[1].items.map((i) => [i.id, i.href, i.trailing]), [["space:s1", "/spaces/s1", "4"]]);
   assert.equal(m.picker.value, "all");

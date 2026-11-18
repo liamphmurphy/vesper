@@ -2,14 +2,14 @@ import AppKit
 import VesperCore
 
 /// The unified toolbar: sidebar toggle, back/forward (navigational, so they sit before the window
-/// title), the title's own menu, the page's items, then New Chat, companion toggle and search.
+/// title), the title's own menu, the page's items, then the companion toggle and search. New Chat
+/// lives in the sidebar, on the first day's header in Chats.
 /// Title and subtitle are the window's.
 @MainActor
 final class ToolbarController: NSObject, NSToolbarDelegate {
     private static let nav = NSToolbarItem.Identifier("vesper.nav")
     private static let tabStrip = NSToolbarItem.Identifier("vesper.tabs")
     private static let search = NSToolbarItem.Identifier("vesper.search")
-    private static let newChat = NSToolbarItem.Identifier("vesper.newChat")
     private static let companion = NSToolbarItem.Identifier("vesper.companion")
     private static let titleMenu = NSToolbarItem.Identifier("vesper.titleMenu")
     private static let titleLabel = NSToolbarItem.Identifier("vesper.titleLabel")
@@ -56,14 +56,14 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
             self.rebuildPageItems()
         }
         track({ [weak owner] in owner?.kind == .vesper }) { [weak self] isVesper in
-            // A playground page has no bridge: New Chat, the companion and search have nobody to talk to.
+            // A playground page has no bridge: the companion and search have nobody to talk to.
             self?.pageOnlyItemsEnabled = isVesper
         }
     }
 
     private var pageOnlyItemsEnabled = true {
         didSet {
-            for item in toolbar.items where [Self.newChat, Self.companion, Self.search].contains(item.itemIdentifier) {
+            for item in toolbar.items where [Self.companion, Self.search].contains(item.itemIdentifier) {
                 item.isEnabled = pageOnlyItemsEnabled
             }
         }
@@ -94,9 +94,9 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         if owner?.compact == true {
-            return [Self.newChat, .toggleSidebar, .sidebarTrackingSeparator, Self.nav, Self.tabStrip, Self.companion, Self.search]
+            return [.toggleSidebar, .sidebarTrackingSeparator, Self.nav, Self.tabStrip, Self.companion, Self.search]
         }
-        return [Self.newChat, .toggleSidebar, .sidebarTrackingSeparator, Self.nav, .flexibleSpace, Self.companion, Self.search]
+        return [.toggleSidebar, .sidebarTrackingSeparator, Self.nav, .flexibleSpace, Self.companion, Self.search]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -125,8 +125,6 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
             return makeTitleMenuItem(identifier)
         case Self.titleLabel:
             return makeTitleLabelItem(identifier)
-        case Self.newChat:
-            return button(identifier, label: "New Chat", symbol: "square.and.pencil", tip: "New Chat", action: #selector(newChatTapped))
         case Self.companion:
             return button(identifier, label: "Companion", symbol: "sidebar.right", tip: "Toggle companion", action: #selector(companionTapped))
         default:
@@ -161,14 +159,13 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
     /// ⌥⌘F and the toolbar button both open the page's command palette (⌘K).
     func focusSearch() { searchTapped() }
     @objc private func searchTapped() { owner?.send(.command(.openCommandMenu)) }
-    @objc private func newChatTapped() { owner?.send(.command(.newChat)) }
     @objc private func companionTapped() { owner?.send(.command(.toggleCompanion)) }
 
 
     // MARK: Title menu and page-contributed items
 
     /// Replaces the title menu and the page's items. Order: [..., nav, (flexible space), title menu,
-    /// leading items, ... trailing items, New Chat, companion, search]; in Compact the leading items
+    /// leading items, ... trailing items, companion, search]; in Compact the leading items
     /// follow the tab strip. Leading items sit right after the title because the title is placed
     /// after the navigational group and everything else follows it.
     private func rebuildPageItems() {

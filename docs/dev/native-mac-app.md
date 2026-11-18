@@ -38,7 +38,8 @@ A first-class, native-feeling Mac app that keeps every existing feature. Layout 
   (areas, Apps); its middle is the current screen's list, which the page *describes* as data
   (`NavModel`) and the shell draws as a native source list.
 - **Native unified toolbar** over the content: back/forward, title and subtitle, search (opens the
-  page's ⌘K menu), new chat, companion toggle, plus items the page contributes.
+  page's ⌘K menu), companion toggle, plus items the page contributes. New Chat sits in the
+  sidebar instead, on the first day's header in Chats (a labelled section action).
 - **Native menus, context menus, windows and system surfaces**: menu bar extra, notifications with
   actions, Dock badge and menu, Quick Capture, Settings, Screenshot to Chat, files in, Touch ID,
   power, backups, updates, deep links, logs.
