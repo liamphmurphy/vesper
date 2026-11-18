@@ -71,6 +71,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         app.system.shouldTerminateAfterLastWindowClosed()
     }
 
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? { app.system.dockMenu() }
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag { app.newWindow() }
         return true
