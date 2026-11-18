@@ -101,7 +101,7 @@ func (r *Runner) chatTestEnvironmentScript(ctx context.Context, c runCtx) string
 			if !found {
 				infer = testFilesScript()
 			}
-			return "(cd " + shellQuote(repo.Directory) + "\n" + dependencySetupScript() + "\n" + recipe.NixInstallScript() + infer + ")\n"
+			return "(cd " + shellQuote(repo.Directory) + "\n" + chatDependencySetupScript() + "\n" + recipe.NixInstallScript() + infer + ")\n"
 		}
 	}
 	return ""

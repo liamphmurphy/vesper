@@ -115,11 +115,16 @@ def main():
         for dependency in sorted(direct)[:200]:
             version = locked.get('node_modules/' + dependency, {}).get('version', direct[dependency])
             report['packages'].append({'project': name, 'ecosystem': 'npm', 'name': dependency, 'version': version})
+    browsers_on_demand = os.environ.get('LAZYAGENTS_PLAYWRIGHT_BROWSERS') == 'on-demand'
     for name in values('playwright'):
         directory_path = directory(name)
         cli = directory_path / 'node_modules' / 'playwright' / 'cli.js'
         if not cli.is_file():
             raise ValueError('Playwright must be a locked npm dependency in ' + name)
+        if browsers_on_demand:
+            print('→ dependencies: Playwright browsers install on first use in ' + name +
+                  ' (npx playwright install chromium)', flush=True)
+            continue
         # Playwright skips browser revisions already in the shared cache.
         run(['node', str(cli), 'install', 'chromium'], directory_path)
     report['status'] = 'ready'

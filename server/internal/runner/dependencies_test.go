@@ -131,3 +131,53 @@ func TestLocalDependencyCachesAreSharedAcrossWorkspaces(t *testing.T) {
 		}
 	}
 }
+
+// A coding chat's setup leaves Playwright's browsers to the first browser
+// test; other setups (tickets, delegated worktrees) still install them.
+func TestChatDependencySetupLeavesBrowsersToFirstUse(t *testing.T) {
+	root := t.TempDir()
+	bin := filepath.Join(root, "bin")
+	cli := filepath.Join(root, "web", "node_modules", "playwright")
+	for _, dir := range []string{bin, cli} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write := func(name, content string, mode os.FileMode) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("bin/node", "#!/bin/sh\nif [ \"$1\" = --version ]; then echo v24; else echo \"$2 $3\" >> \"$BROWSER_LOG\"; fi\n", 0o755)
+	write("bin/npm", "#!/bin/sh\necho 11\n", 0o755)
+	write("web/package.json", `{}`, 0o644)
+	write("web/package-lock.json", `{}`, 0o644)
+	write("web/node_modules/playwright/cli.js", "", 0o644)
+	write(".lazyagents-deps.json", `{"version":1,"npm_projects":["web"],"playwright":["web"]}`, 0o644)
+	browserLog := filepath.Join(root, "browsers")
+	run := func(script string) string {
+		t.Helper()
+		cmd := exec.Command("sh", "-c", script)
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "BROWSER_LOG="+browserLog)
+		out, err := cmd.CombinedOutput()
+		if err != nil || !strings.Contains(string(out), "dependencies ready") {
+			t.Fatalf("%v %s", err, out)
+		}
+		return string(out)
+	}
+
+	out := run(chatDependencySetupScript())
+	if _, err := os.Stat(browserLog); err == nil {
+		t.Fatal("a chat's setup installed Playwright's browsers")
+	}
+	if !strings.Contains(out, "npx playwright install chromium") {
+		t.Fatalf("setup log doesn't say how to install the browsers: %s", out)
+	}
+
+	run(dependencySetupScript())
+	if b, _ := os.ReadFile(browserLog); string(b) != "install chromium\n" {
+		t.Fatalf("other setups' browser installs: %q", b)
+	}
+}
