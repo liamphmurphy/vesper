@@ -88,7 +88,7 @@ export function initials(name: string): string {
   return letters.map((w) => [...w][0]?.toUpperCase() ?? "").join("") || "?";
 }
 
-function avatar(name: string, color: string | undefined, imageUrl: string | undefined, origin: string | undefined): Avatar {
+export function avatar(name: string, color: string | undefined, imageUrl: string | undefined, origin: string | undefined): Avatar {
   const a: Avatar = { initials: initials(name) };
   // var(--accent) and other non-literal colors mean nothing to the shell.
   if (color && /^#|^rgb|^hsl/i.test(color)) a.color = color;

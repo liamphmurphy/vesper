@@ -412,9 +412,14 @@ export function ChatTicketRunTray({ chatId, scene, persona }: { chatId: string; 
 }
 
 /** The chat header's run status: how many of this chat's ticket runs are going, opening the run (or all runs). */
-export function ChatRunsPill({ chatId }: { chatId: string }) {
+/** This chat's ticket runs that are going; the pill and its native twin read it. */
+export function useChatLiveRuns(chatId: string) {
   const runs = useChatTicketRuns(chatId);
-  const live = (runs.data?.runs ?? []).filter((r) => !runEnded(r.state));
+  return (runs.data?.runs ?? []).filter((r) => !runEnded(r.state));
+}
+
+export function ChatRunsPill({ chatId }: { chatId: string }) {
+  const live = useChatLiveRuns(chatId);
   if (live.length === 0) return null;
   const label = `${live.length} ${live.length === 1 ? "run" : "runs"} active`;
   return (

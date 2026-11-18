@@ -102,6 +102,8 @@ import { ChatCostChip } from "@/components/domain/cost-chip";
 import { unavailableReason } from "@/lib/setup";
 import { ChatSpacePicker } from "./chat-space";
 import { CompactChatHeader } from "./compact-chat-header";
+import { NativeChatHeader } from "./native-chat-header";
+import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { useCompact } from "@/lib/viewport";
 import { composerOptions } from "@/lib/composer-options";
 import { CommitEmailPicker } from "./commit-email";
@@ -590,6 +592,8 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   const [tab, setTab] = useState<"chat" | "activity">("chat");
   const compact = useCompact();
   const dockActivity = activityInDock && !compact;
+  // In the Mac app the chat page's header lives in the window's toolbar (NativeChatHeader), so the page keeps the row's height.
+  const nativeHeader = useIsNativeShell() && dockActivity && !docked && !headerSlot;
   const view = dockActivity ? "chat" : tab;
   // "View reasoning" on a chat step: Activity opens on that step (the compact tab, or the dock's tab).
   const [traceFocus, setTraceFocus] = useState<{ key: string; at: number }>();
@@ -1183,6 +1187,19 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
             running={running}
             canCode={!!(c.speaker ?? c.persona)?.capabilities?.code}
             onRepository={() => { setTab("chat"); setSheetSignal((n) => n + 1); }}
+            onRestored={restored}
+          />
+        ) : nativeHeader ? (
+          <NativeChatHeader
+            chat={c}
+            participants={participants}
+            fresh={fresh}
+            running={running}
+            personaDisabled={locked || create.isPending}
+            onSwitchPersona={switchPersona}
+            repo={canCode ? { onPick: (r) => selectRepo.mutate(r), onSearch: () => setRepoSignal((n) => n + 1), disabled: c.archived || selectRepo.isPending, personaRepos: personas.data?.personas.find((p) => p.id === (c.speaker ?? c.persona)?.id)?.repos, picker: repoPicker } : undefined}
+            commitEmail={c.repo_url && c.commit_email && myEmails.length > 1 ? c.commit_email : undefined}
+            onCommitEmail={() => setCommitPickerOpen((o) => !o)}
             onRestored={restored}
           />
         ) : (
