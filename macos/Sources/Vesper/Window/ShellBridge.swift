@@ -10,6 +10,8 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
     /// The Vesper server origin; messages from anywhere else are dropped. Set on connect.
     var baseURL: URL?
     weak var webView: WKWebView?
+    /// The app's system services, for requests that need them (Touch ID, the workspace menu).
+    static weak var services: SystemServices?
     /// Called when the route changes (session saving).
     var onRouteChange: (() -> Void)?
 
@@ -52,12 +54,17 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
         case .navigator(let model): state.navigator = model
         case .navigatorFallback(let active): state.navigatorFallback = active
         case .toolbar(let items): state.toolbarItems = items
-        case .confirmApproval(let requestId, _):
-            // INTEGRATE: Touch ID (LocalAuthentication) per scope; fail closed (ok:false) when it fails.
-            send(.reply(requestId: requestId, ok: true))
-        case .openWorkspaceMenu(let requestId, _):
-            // INTEGRATE: workspace menu (Finder / terminal / editor), strictly inside host_workspaces_dir.
-            send(.reply(requestId: requestId, ok: false, error: "not implemented"))
+        case .confirmApproval(let requestId, let scope):
+            Task { [weak self] in
+                let ok = await Self.services?.confirmApproval(scope: scope) ?? false
+                self?.send(.reply(requestId: requestId, ok: ok))
+            }
+        case .openWorkspaceMenu(let requestId, let folder):
+            Task { [weak self] in
+                guard let view = self?.webView else { return }
+                let ok = await Self.services?.showWorkspaceMenu(folder: folder, in: view) ?? false
+                self?.send(.reply(requestId: requestId, ok: ok))
+            }
         case .contextMenu(let requestId, let items, let x, let y):
             showContextMenu(requestId: requestId, items: items, x: x, y: y)
         }

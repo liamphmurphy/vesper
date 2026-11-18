@@ -24,13 +24,20 @@ final class AppModel {
     @ObservationIgnored private var cookieInstalledFor: Connection?
     @ObservationIgnored private var restoringSession = false
     @ObservationIgnored var playgroundPorts = defaultPlaygroundPorts
-    /// Menu/tray/Dock actions. Later agents replace this with their implementation.
+    /// Menu/tray/Dock actions; they forward to `system` and `aux`.
     @ObservationIgnored lazy var actions: AppActions = DefaultAppActions(app: self)
+    /// Native settings (config.json "native"), shared by every subsystem.
+    let settings: SettingsStore
+    /// Menu bar, notifications, Dock, power, Touch ID, workspace menu, logs, quit policy.
+    @ObservationIgnored lazy var system = SystemServices(app: self)
+    /// Settings, Quick Capture, Screenshot, files in, Import Backup, backups, updates, login item.
+    @ObservationIgnored lazy var aux = AuxWindows(app: self)
 
     var sessionFileURL: URL { SessionStore.fileURL(dataDirectory: dataDirectory) }
 
     init(dataDirectory: URL, stack: StackController?, devConnection: Connection?) {
         self.dataDirectory = dataDirectory
+        self.settings = SettingsStore(dataDirectory: dataDirectory)
         self.stack = stack
         self.connection = devConnection
         if let stack {

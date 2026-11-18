@@ -25,8 +25,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         app = AppModel(dataDirectory: dataDir, stack: stack, devConnection: dev)
         NSApp.mainMenu = MainMenu.build(delegate: self)
+        ShellBridge.services = app.system
+        app.system.start()
+        app.aux.start()
 
-        if let stack { Task { await stack.start() } }
+        if let stack {
+            stack.apply(app.settings.settings.stack)
+            Task { await stack.start() }
+        }
         launched = true
         if let dev {
             Task {
@@ -43,30 +49,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     /// ~/Library/Application Support/vesper-desktop (Electron's userData), or VESPER_USER_DATA_DIR.
     static func resolveDataDirectory(_ env: [String: String]) -> URL {
-        // INTEGRATE: use StackController.defaultDataDirectory() once it exists.
-        if let override = env["VESPER_USER_DATA_DIR"], !override.isEmpty {
-            return URL(fileURLWithPath: (override as NSString).expandingTildeInPath).standardizedFileURL
-        }
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        return support.appendingPathComponent("vesper-desktop")
+        StackController.defaultDataDirectory(environment: env).standardizedFileURL
     }
 
     // MARK: Lifecycle
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        // INTEGRATE: confirm quit when runs are active (power.confirmQuitWithActiveRuns).
-        app.saveSessionNow()
-        guard let stack = app.stack else { return .terminateNow }
         Task {
-            await stack.stop()
+            guard await app.system.confirmQuit() else {
+                NSApp.reply(toApplicationShouldTerminate: false)
+                return
+            }
+            app.saveSessionNow()
+            if let stack = app.stack { await stack.stop() }
             NSApp.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        // INTEGRATE: tray.closeLastWindow setting (stay in Dock / menu bar only / quit).
-        false
+        app.system.shouldTerminateAfterLastWindowClosed()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -77,8 +79,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     // MARK: Deep links
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        // INTEGRATE: also route dropped/opened files (drop.ts) here.
-        pendingLinks += urls
+        let files = urls.filter(\.isFileURL)
+        if !files.isEmpty { app.aux.openFiles(files) }
+        pendingLinks += urls.filter { !$0.isFileURL }
         if launched && !app.windows.isEmpty { drainPendingLinks() }
     }
 
