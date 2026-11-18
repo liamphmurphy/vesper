@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -13,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -95,12 +97,16 @@ func setupWith(t *testing.T, mk backendFor) env {
 
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "fake-claude")
-	build := exec.Command("go", "build", "-o", bin, "github.com/liamphmurphy/vesper/server/cmd/fake-harness")
+	built := hostHarness
 	if mk != nil { // the binary runs inside a Linux container
-		build.Env = append(os.Environ(), "GOOS=linux", "CGO_ENABLED=0")
+		built = linuxHarness
 	}
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build fake harness: %v\n%s", err, out)
+	src, err := built()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := linkOrCopy(src, bin); err != nil {
+		t.Fatal(err)
 	}
 	// Belt and braces: only the fake can be found as claude or codex, so a
 	// bug in binary substitution can't reach a real, logged-in CLI.
@@ -137,8 +143,72 @@ func setupWith(t *testing.T, mk backendFor) env {
 		Backend: backend,
 		Secrets: sec, Tracker: tr, Log: logger,
 	}
+	// Let in-flight turns finish before their workspaces are removed: a turn
+	// still writing there fails TempDir's cleanup.
+	t.Cleanup(func() {
+		done := make(chan struct{})
+		go func() { r.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(30 * time.Second):
+			t.Error("runner work still running 30s after the test ended")
+		}
+	})
 	atlas, _ := q.GetAgentByHandle(ctx, store.GetAgentByHandleParams{WorkspaceID: ws, Handle: "atlas"})
 	return env{t, ctx, pool, q, ws, me, rs, tr, r, dir, atlas}
+}
+
+// fakeHarnessDir holds the fake harness, built once per test binary for each
+// platform; TestMain removes it.
+var fakeHarnessDir string
+
+var (
+	hostHarness  = sync.OnceValues(func() (string, error) { return buildFakeHarness("host") })
+	linuxHarness = sync.OnceValues(func() (string, error) { return buildFakeHarness("linux") })
+)
+
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "vesper-fake-harness-")
+	if err != nil {
+		panic(err)
+	}
+	fakeHarnessDir = dir
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
+}
+
+func buildFakeHarness(platform string) (string, error) {
+	bin := filepath.Join(fakeHarnessDir, "fake-harness-"+platform)
+	build := exec.Command("go", "build", "-o", bin, "github.com/liamphmurphy/vesper/server/cmd/fake-harness")
+	if platform == "linux" {
+		build.Env = append(os.Environ(), "GOOS=linux", "CGO_ENABLED=0")
+	}
+	if out, err := build.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("build fake harness: %v\n%s", err, out)
+	}
+	return bin, nil
+}
+
+// linkOrCopy puts the shared fake harness at dst, hard-linked when it can be.
+func linkOrCopy(src, dst string) error {
+	if os.Link(src, dst) == nil {
+		return nil
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o755)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 func (e env) run(key string) store.Run {

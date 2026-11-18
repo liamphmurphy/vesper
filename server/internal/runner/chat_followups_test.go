@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -20,11 +21,18 @@ func (e env) holdChat() (store.ChatSession, func()) {
 	e.t.Setenv("FAKE_HARNESS_HOLD", hold)
 	chat := e.startChat("held")
 	e.tickUntil("the held reply to start", func() bool { _, err := os.Stat(hold + ".started"); return err == nil })
-	return chat, func() {
-		if err := os.WriteFile(hold, nil, 0o644); err != nil {
-			e.t.Fatal(err)
-		}
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			if err := os.WriteFile(hold, nil, 0o644); err != nil {
+				e.t.Error(err)
+			}
+		})
 	}
+	// Released before setup's cleanup waits for the runner, so a test that
+	// ends mid-reply doesn't leave the reply holding forever.
+	e.t.Cleanup(release)
+	return chat, release
 }
 
 func (e env) messages(chatID uuid.UUID) []store.ChatMessage {
