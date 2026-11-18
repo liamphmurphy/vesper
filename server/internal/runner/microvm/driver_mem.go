@@ -27,6 +27,14 @@ func (d *MemDriver) Start(ctx context.Context, cfg VMConfig) (VM, error) {
 	}, nil
 }
 
+// Configs is a copy of the configs VMs were started with, safe to call while
+// other goroutines start VMs.
+func (d *MemDriver) Configs() []VMConfig {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]VMConfig(nil), d.Started...)
+}
+
 // MemVM is an in-memory VM implementing VM for fast host tests.
 type MemVM struct {
 	mu      sync.Mutex

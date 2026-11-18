@@ -435,6 +435,7 @@ func runAppMicroVMRunner(
 		MemoryMB:       cfg.Runner.MemoryMB,
 		PidsLimit:      cfg.Runner.PidsLimit,
 		WarmTTL:        cfg.Runner.WarmTTL,
+		SpareVMs:       cfg.Runner.SpareVMs,
 		MCPURL:         "http://" + microvm.InternalAPIHost + "/mcp",
 		APIHandler:     apiHandler,
 		APIUpstream:    baseURL,

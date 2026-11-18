@@ -162,6 +162,9 @@ func (r *Runner) Run(ctx context.Context) error {
 	if err := r.Recover(ctx); err != nil {
 		return err
 	}
+	if w, ok := r.Backend.(SpareWarmer); ok {
+		w.WarmSpares() // after Recover, which clears spares a previous runner left
+	}
 	r.expireModelListings(ctx)
 	r.ServePlaygrounds(ctx)
 	r.InitDevWorkspaces(ctx)

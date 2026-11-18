@@ -111,6 +111,13 @@ Instead, v1 uses a simpler two-tier memory policy:
    while keeping `workspace.ext4` and `home.ext4` on disk, and cold-boot in
    ~200–300 ms on the next message. Host RAM drops to zero with no `.vzvmsave`
    disk bloat.
+3. **Spare VM:** the runner keeps `RUNNER_VM_SPARES` (default 1, `0` turns it
+   off) VMs booted ahead of new runs, on fresh disks under `spares/`, ballooned
+   down to `IdleMemoryMB` (192 MiB). A new run's first `EnsureWorkspace` renames
+   a spare's directory to the run's and takes its VM, then boots a replacement.
+   A run with a host-folder workspace (its share is fixed at boot), or a spare
+   booted with older cache EROFS drives, boots its own VM as before. Spares
+   aren't runner slots; `ActiveVMCount` includes them.
 
 `Suspend` / `Restore` remains an optional `Driver` capability for Phase 2
 (specifically valuable for macOS guests, where `saveMachineStateTo` avoids a

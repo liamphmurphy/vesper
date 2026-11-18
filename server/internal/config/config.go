@@ -74,12 +74,15 @@ type Runner struct {
 	// it Antigravity is simply unavailable on that instance.
 	AntigravityBin string
 	// MicroVM settings (RUNNER_VM_DIR, RUNNER_KERNEL_PATH, RUNNER_ROOTFS_PATH,
-	// RUNNER_CPUS, RUNNER_VM_WARM_TTL_S).
+	// RUNNER_CPUS, RUNNER_VM_WARM_TTL_S, RUNNER_VM_SPARES).
 	VMDir      string
 	KernelPath string
 	RootfsPath string
 	CPUs       int
 	WarmTTL    time.Duration
+	// SpareVMs is how many VMs stay booted ahead of new runs, so a new
+	// chat's first turn doesn't wait for one (0 turns it off).
+	SpareVMs int
 	// ChatIdleTTL is how long an idle Personal Assistant chat keeps its run
 	// and workspace (RUNNER_CHAT_IDLE_TTL_S).
 	ChatIdleTTL time.Duration
@@ -195,6 +198,12 @@ func Load() (Config, error) {
 		return c, fmt.Errorf("config: RUNNER_VM_WARM_TTL_S must be at least 10")
 	}
 	r.WarmTTL = time.Duration(warmTTL) * time.Second
+	if r.SpareVMs, err = intEnv("RUNNER_VM_SPARES", 1); err != nil {
+		return c, err
+	}
+	if r.SpareVMs < 0 || r.SpareVMs > 4 {
+		return c, fmt.Errorf("config: RUNNER_VM_SPARES must be 0–4")
+	}
 	memory, err := intEnv("RUNNER_MEMORY_MB", 8192)
 	if err != nil {
 		return c, err

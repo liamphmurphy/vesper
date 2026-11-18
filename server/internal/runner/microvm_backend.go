@@ -54,7 +54,10 @@ type MicroVM struct {
 	IdleMemoryMB   int64 // target balloon memory between turns when activeTurns == 0 (default 192 MiB)
 	PidsLimit      int64
 	WarmTTL        time.Duration
-	MCPURL         string
+	// SpareVMs is how many VMs stay booted, idle at IdleMemoryMB, for new
+	// runs to claim instead of booting their own (0 = none).
+	SpareVMs int
+	MCPURL   string
 
 	APIHandler      http.Handler
 	APIUpstream     string // optional http(s)://host:port used when APIHandler == nil
@@ -89,6 +92,14 @@ type MicroVM struct {
 	semOnce     sync.Once
 	listSem     chan struct{}
 	usageSem    chan struct{}
+
+	spareMu       sync.Mutex
+	spares        []*spareVM
+	sparesBooting int
+	sparesClosed  bool
+	spareCtx      context.Context
+	spareCancel   context.CancelFunc
+	spareWG       sync.WaitGroup
 }
 
 type runVM struct {
@@ -160,6 +171,12 @@ func (b *MicroVM) EnsureWorkspace(ctx context.Context, runID string) error {
 	mu.Lock()
 	defer mu.Unlock()
 
+	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
+		// A new run: take a booted spare's disks and VM when there is one.
+		// Host-folder runs already have their dir (EnsureHostWorkspace).
+		b.claimSpare(runID, dir)
+		b.WarmSpares()
+	}
 	if err := b.createDisks(ctx, dir); err != nil {
 		return err
 	}
@@ -504,16 +521,10 @@ func (b *MicroVM) releaseVM(rvm *runVM) {
 	_ = vm.Client().SyncAndDropCaches(dctx)
 	cancel()
 
-	idleMB := b.IdleMemoryMB
-	if idleMB <= 0 {
-		idleMB = 192
-	}
+	idleMB := b.idleMemoryMB()
 	memMB := b.MemoryMB
 	if memMB <= 0 {
 		memMB = 2048
-	}
-	if idleMB > memMB {
-		idleMB = memMB
 	}
 
 	rvm.mu.Lock()
@@ -554,7 +565,8 @@ func (b *MicroVM) armIdleTimer(rvm *runVM, gen uint64) {
 	})
 }
 
-// ActiveVMCount reports how many microVMs currently have a booted hypervisor instance.
+// ActiveVMCount reports how many microVMs currently have a booted hypervisor
+// instance, spares included.
 func (b *MicroVM) ActiveVMCount() int {
 	b.runsMu.Lock()
 	list := make([]*runVM, 0, len(b.vms))
@@ -570,7 +582,7 @@ func (b *MicroVM) ActiveVMCount() int {
 		}
 		rvm.mu.Unlock()
 	}
-	return n
+	return n + b.spareCount()
 }
 
 func (b *MicroVM) stopRunVM(ctx context.Context, runID string) {
@@ -953,10 +965,14 @@ func (b *MicroVM) Cleanup(ctx context.Context) error {
 	}
 	b.cleanupPlaygrounds(ctx)
 	b.cleanupDevWorkspaces(ctx)
+	b.stopSpares()
 	return nil
 }
 
-func (b *MicroVM) Close() error { return b.Cleanup(context.Background()) }
+func (b *MicroVM) Close() error {
+	b.closeSpares()
+	return b.Cleanup(context.Background())
+}
 
 func (b *MicroVM) cacheHandler() http.Handler {
 	if b.CacheHandler != nil {
