@@ -8,7 +8,13 @@ private func ok(_ r: Result<APICall, CaptureError>) -> APICall? { try? r.get() }
 final class CaptureTests: XCTestCase {
     func testBuildsTheExistingAPICallForEachKind() {
         XCTAssertEqual(ok(Capture.buildCaptureRequest(CaptureInput(kind: .note, text: "  buy milk \r\n"))),
-                       APICall(path: "/api/v1/knowledge/capture", body: ["body_md": "buy milk"]))
+                       APICall(path: "/api/v1/knowledge/capture", body: ["title": "buy milk", "body_md": ""]))
+        // The server requires a title: first line (≤120) is the title, the rest the body.
+        XCTAssertEqual(ok(Capture.buildCaptureRequest(CaptureInput(kind: .note, text: "Ferry\nArrives at dawn")))?.body,
+                       ["title": "Ferry", "body_md": "Arrives at dawn"])
+        let long = String(repeating: "x", count: 130)
+        XCTAssertEqual(ok(Capture.buildCaptureRequest(CaptureInput(kind: .note, text: long)))?.body,
+                       ["title": .string(String(long.prefix(120))), "body_md": .string(long)])
         XCTAssertEqual(ok(Capture.buildCaptureRequest(CaptureInput(kind: .message, text: "hi", personaId: UUID1)))?.body,
                        ["persona_id": .string(UUID1), "message": ["body": "hi"]])
         XCTAssertEqual(ok(Capture.buildCaptureRequest(CaptureInput(kind: .message, text: "hi")))?.body, ["message": ["body": "hi"]], "default persona")

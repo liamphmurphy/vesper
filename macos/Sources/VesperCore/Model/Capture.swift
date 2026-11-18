@@ -22,6 +22,7 @@ public struct CaptureInput: Sendable {
 public enum Capture {
     static let maxText = 100_000
     static let ticketTitleMax = 300
+    static let noteTitleMax = 120
 
     /// The existing API call for a capture, or a message to show.
     public static func buildCaptureRequest(_ input: CaptureInput) -> Result<APICall, CaptureError> {
@@ -30,7 +31,15 @@ public enum Capture {
         if text.utf16.count > maxText { return .failure(CaptureError("That's too long for a quick capture.")) }
         switch input.kind {
         case .note:
-            return .success(APICall(path: "/api/v1/knowledge/capture", body: ["body_md": .string(text)]))
+            // The server needs a title (it files the note in Inbox). Same split as the web's capture box:
+            // the first line (≤120) is the title; the rest is the body, or the whole text when the first line is long.
+            let lines = text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
+            let first = String(lines[0])
+            let rest = lines.count > 1 ? String(lines[1]).trimmingCharacters(in: .whitespacesAndNewlines) : ""
+            let body = lines.count > 1 ? rest : (first.count > noteTitleMax ? text : "")
+            return .success(APICall(path: "/api/v1/knowledge/capture", body: [
+                "title": .string(String(first.prefix(noteTitleMax))), "body_md": .string(body),
+            ]))
         case .message:
             let persona = (input.personaId ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             if !persona.isEmpty && persona.range(of: uuidPattern, options: .regularExpression) == nil {
@@ -123,7 +132,7 @@ public enum Capture {
         (["Command"], "W", "Close"),
     ]
 
-    static func canonicalModifier(_ m: String) -> String {
+    public static func canonicalModifier(_ m: String) -> String {
         switch m {
         case "Cmd", "CommandOrControl", "CmdOrCtrl", "Super", "Meta": return "Command"
         case "Ctrl": return "Control"
