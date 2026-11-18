@@ -96,6 +96,11 @@ private struct NavHeader: View {
     @State private var search = ""
     @State private var debounce: Task<Void, Never>?
 
+    /// At most three choices whose labels add up to about the sidebar's width.
+    static func fitsSegmented(_ labels: [String]) -> Bool {
+        labels.count <= 3 && labels.reduce(0) { $0 + $1.count } <= 24
+    }
+
     @ViewBuilder private var actionButtons: some View {
         ForEach(nav.actions ?? []) { action in
             ActionButton(action: action) { menuId in
@@ -130,11 +135,29 @@ private struct NavHeader: View {
                 }
             }
             if let picker = nav.picker {
-                Picker(picker.id, selection: Binding(get: { picker.value }, set: { send(.navPicker(navigatorId: nav.id, pickerId: picker.id, value: $0)) })) {
-                    ForEach(picker.options, id: \.value) { Text($0.label).tag($0.value) }
+                let selection = Binding(get: { picker.value }, set: { send(.navPicker(navigatorId: nav.id, pickerId: picker.id, value: $0)) })
+                // A segmented control only fits a few short choices (e.g. Yours / Agent knowledge);
+                // more (one per persona) become a pop-up menu that can't overflow the sidebar.
+                if Self.fitsSegmented(picker.options.map(\.label)) {
+                    Picker(picker.id, selection: selection) {
+                        ForEach(picker.options, id: \.value) { Text($0.label).tag($0.value) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                } else {
+                    Picker(picker.id, selection: selection) {
+                        ForEach(picker.options, id: \.value) { option in
+                            if let icon = option.icon {
+                                Label(option.label, systemImage: SidebarIcons.symbolName(icon)).tag(option.value)
+                            } else {
+                                Text(option.label).tag(option.value)
+                            }
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
             }
             if let s = nav.search {
                 TextField(s.placeholder, text: $search)
