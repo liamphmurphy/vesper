@@ -241,8 +241,12 @@ export type PageMessage =
   /** True while the page shows a screen's list in its own fallback column (not yet described). */
   | { v: 1; type: "navigatorFallback"; active: boolean }
   | { v: 1; type: "toolbar"; items: ToolbarItem[] }
-  /** The page's effective color mode, whenever it changes; the shell matches each window's appearance to it. */
-  | { v: 1; type: "appearance"; mode: ColorMode }
+  /**
+   * The page's effective color mode, whenever it changes; the shell matches each window's appearance to it.
+   * background: the palette's page colour ("#RRGGBB"), which the shell shows past the page's edges
+   * (overscroll) and behind a tab that hasn't painted yet.
+   */
+  | { v: 1; type: "appearance"; mode: ColorMode; background?: string }
   | { v: 1; type: "confirmApproval"; requestId: string; scope: ApprovalScope }
   | { v: 1; type: "openWorkspaceMenu"; requestId: string; folder: string }
   | { v: 1; type: "contextMenu"; requestId: string; items: MenuItem[]; x: number; y: number }

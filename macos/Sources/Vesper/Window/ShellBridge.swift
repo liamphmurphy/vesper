@@ -70,7 +70,12 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
         case .navigator(let model): state.navigator = model
         case .navigatorFallback(let active): state.navigatorFallback = active
         case .toolbar(let items): state.toolbarItems = items
-        case .appearance(let mode): state.pageMode = mode
+        case .appearance(let mode, let background):
+            state.pageMode = mode
+            if let color = NSColor.fromCSS(background) {
+                webView?.underPageBackgroundColor = color
+                WebViewFactory.lastPageBackground = color
+            }
         case .confirmApproval(let requestId, let scope):
             Task { [weak self] in
                 let ok = await Self.services?.confirmApproval(scope: scope) ?? false
@@ -163,7 +168,7 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
         case .navigator(let n): "navigator \(n?.id ?? "nil") selected=\(n?.selectedId ?? "nil") rows=\(n?.sections.flatMap { $0.items.map(\.id) }.prefix(12).joined(separator: ",") ?? "")"
         case .navigatorFallback(let a): "navigatorFallback \(a)"
         case .toolbar(let i): "toolbar \(i.count) items"
-        case .appearance(let m): "appearance \(m.rawValue)"
+        case .appearance(let m, _): "appearance \(m.rawValue)"
         case .confirmApproval(let r, let s): "confirmApproval \(r) \(s.rawValue)"
         case .openWorkspaceMenu(let r, _): "openWorkspaceMenu \(r)"
         case .contextMenu(let r, let i, _, _): "contextMenu \(r) \(i.count) items"

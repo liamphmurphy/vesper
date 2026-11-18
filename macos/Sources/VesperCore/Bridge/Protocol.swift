@@ -360,7 +360,8 @@ public enum PageMessage: Sendable, Equatable, Decodable {
     case navigator(NavModel?)
     case navigatorFallback(active: Bool)
     case toolbar([ToolbarItem])
-    case appearance(mode: ColorMode)
+    /// background: the page's "#RRGGBB" colour, shown past its edges and behind an unpainted tab.
+    case appearance(mode: ColorMode, background: String? = nil)
     case confirmApproval(requestId: String, scope: ApprovalScope)
     case openWorkspaceMenu(requestId: String, folder: String)
     case contextMenu(requestId: String, items: [MenuItem], x: Double, y: Double)
@@ -369,7 +370,7 @@ public enum PageMessage: Sendable, Equatable, Decodable {
 
     private enum Keys: String, CodingKey {
         case v, type, path, area, title, subtitle, model, active, items, requestId, scope, folder, x, y, mode, menu
-        case body, confirmLabel, cancelLabel, destructive
+        case body, confirmLabel, cancelLabel, destructive, background
     }
 
     public init(from decoder: Decoder) throws {
@@ -398,7 +399,7 @@ public enum PageMessage: Sendable, Equatable, Decodable {
         case "toolbar":
             self = .toolbar(try c.decode([ToolbarItem].self, forKey: .items))
         case "appearance":
-            self = .appearance(mode: try c.decode(ColorMode.self, forKey: .mode))
+            self = .appearance(mode: try c.decode(ColorMode.self, forKey: .mode), background: try c.decodeIfPresent(String.self, forKey: .background))
         case "confirmApproval":
             self = .confirmApproval(requestId: try c.decode(String.self, forKey: .requestId), scope: try c.decode(ApprovalScope.self, forKey: .scope))
         case "openWorkspaceMenu":

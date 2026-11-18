@@ -282,7 +282,8 @@
   {
     "v": 1,
     "type": "appearance",
-    "mode": "light"
+    "mode": "light",
+    "background": "#f5f5f7"
   },
   {
     "v": 1,

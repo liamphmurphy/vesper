@@ -14,6 +14,10 @@ enum WebViewFactory {
 
     private static let playgroundStore = WKWebsiteDataStore.nonPersistent()
 
+    /// The Vesper page's own background colour, last reported by any tab. WebKit draws it past the
+    /// page's edges (overscroll), so a new tab starts with it rather than white until its page reports.
+    static var lastPageBackground: NSColor?
+
     private static let nativeModeScript = """
     window.__VESPER_NATIVE__ = {v:1, platform:"macos"};
     document.documentElement.classList.add("native-mac");
@@ -39,6 +43,7 @@ enum WebViewFactory {
         webView.isInspectable = true
         webView.allowsBackForwardNavigationGestures = true
         webView.allowsMagnification = true
+        if kind == .vesper, let background = lastPageBackground { webView.underPageBackgroundColor = background }
         return webView
     }
 

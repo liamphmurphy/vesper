@@ -42,7 +42,7 @@ final class BridgeProtocolTests: XCTestCase {
         XCTAssertEqual(nav.filters?[1].multiple, true)
         XCTAssertEqual(nav.sections[0].badge, NavBadge(text: "3", tone: .neutral))
         XCTAssertTrue(all.contains(.appearance(mode: .dark)))
-        XCTAssertTrue(all.contains(.appearance(mode: .light)))
+        XCTAssertTrue(all.contains(.appearance(mode: .light, background: "#f5f5f7")))
         XCTAssertEqual(nav.sections[0].items[1].avatar?.color, "#9B8CFF")
         XCTAssertTrue(all.contains(.confirm(requestId: "r4", title: "Delete \u{201C}Weekly plan\u{201D}?", body: "This can\u{2019}t be undone.",
                                             confirmLabel: "Delete", cancelLabel: "Keep", destructive: true)))
