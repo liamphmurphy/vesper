@@ -136,6 +136,8 @@ export interface NativeSettings {
     autoRestart: boolean;
     /** Warn below this much free disk space in the data directory, in GB. */
     minFreeDiskGb: number;
+    /** How many runs the local runner executes at once (1–32). Applies when the local stack restarts. */
+    runnerSlots: number;
   };
   files: {
     /** Accept files dropped on the Dock icon or opened with Vesper. */
@@ -185,7 +187,7 @@ export function defaultNativeSettings(): NativeSettings {
       confirmQuitWithActiveRuns: true,
       easeOffWhenHot: true,
     },
-    stack: { autoRestart: true, minFreeDiskGb: 10 },
+    stack: { autoRestart: true, minFreeDiskGb: 10, runnerSlots: 2 },
     files: { dockDrop: true },
     touchId: {
       enabled: false,
@@ -355,6 +357,7 @@ export function normalizeNativeSettings(raw: unknown, base: NativeSettings = def
     stack: {
       autoRestart: bool(stack.autoRestart, base.stack.autoRestart),
       minFreeDiskGb: Number.isFinite(minDisk) && minDisk >= 1 && minDisk <= 1000 ? Math.round(minDisk) : base.stack.minFreeDiskGb,
+      runnerSlots: intIn(stack.runnerSlots, 1, 32, base.stack.runnerSlots),
     },
     files: { dockDrop: bool(files.dockDrop, base.files.dockDrop) },
     touchId: {

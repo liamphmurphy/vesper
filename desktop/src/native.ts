@@ -53,7 +53,7 @@ import {
   type InboxItemSummary,
 } from "./notifications";
 import { batteryWarning, prunePausedSet, runsToPauseOnSleep, runsToResume, shouldConfirmQuit, wantsSleepBlocker } from "./power";
-import { pausableRuns, RunMonitor, shouldRefreshRunsForSseEvent, type RunSummary } from "./runs";
+import { isActive, pausableRuns, RunMonitor, shouldRefreshRunsForSseEvent, type RunSummary } from "./runs";
 import { appBundlePath, installServices, servicesInstalled, uninstallServices } from "./services";
 import { applyNativeSettingsPatch, type NativeSettings, type TouchIdScope } from "./settings";
 import {
@@ -976,6 +976,8 @@ export class NativeFeatures {
   }
 
   async restartStack(): Promise<void> {
+    // The new runner may have a different slot count; learn it again from the next poll.
+    this.runnerMaxSlots = 0;
     try {
       await this.ctx.restartStack();
     } finally {
@@ -1210,6 +1212,8 @@ export class NativeFeatures {
         servicesAvailable: Boolean(appBundlePath(process.execPath)),
         lastUpdateCheckAt: this.appState.lastUpdateCheckAt ?? null,
         localStack: this.ctx.stackMode() === "local",
+        runnerSlotsRunning: this.runnerMaxSlots > 0 ? this.runnerMaxSlots : null,
+        runnerSlotsFromEnv: Boolean(process.env.RUNNER_MAX_CONCURRENT?.trim()),
         dataDir: app.getPath("userData"),
       },
     };
@@ -1322,6 +1326,24 @@ export class NativeFeatures {
     handle("vesper:prefs-export-now", async () => {
       const result = await this.exportNow();
       return { ...result, state: this.prefsState() };
+    });
+    handle("vesper:prefs-restart-stack", async (event) => {
+      if (this.runs.some(isActive)) {
+        const win = BrowserWindow.fromWebContents(event.sender) ?? this.prefsWin ?? undefined;
+        const opts: Electron.MessageBoxOptions = {
+          type: "warning",
+          buttons: ["Restart Anyway", "Cancel"],
+          defaultId: 1,
+          cancelId: 1,
+          message: "Runs are still working.",
+          detail: "Restarting the local stack interrupts them.",
+        };
+        const res = win && !win.isDestroyed() ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
+        if (res.response !== 0) return { ok: false, error: "Restart cancelled.", state: this.prefsState() };
+      }
+      await this.restartStack();
+      await this.pollHealth().catch(() => undefined);
+      return { ok: true, state: this.prefsState() };
     });
     handle("vesper:open-data-dir", () => void shell.openPath(app.getPath("userData")));
 

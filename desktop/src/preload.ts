@@ -106,6 +106,7 @@ const api = {
   openServerSettings: (): Promise<void> => ipcRenderer.invoke("vesper:open-server-settings"),
   openDataDir: (): Promise<void> => ipcRenderer.invoke("vesper:open-data-dir"),
   pickExportFolder: (): Promise<unknown> => ipcRenderer.invoke("vesper:prefs-pick-export-folder"),
+  restartStackForPreferences: (): Promise<unknown> => ipcRenderer.invoke("vesper:prefs-restart-stack"),
   exportNow: (): Promise<unknown> => ipcRenderer.invoke("vesper:prefs-export-now"),
 
   /** Quick capture (renderer/capture.html). */

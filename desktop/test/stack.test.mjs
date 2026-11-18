@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  buildStackEnv,
   ensureAuthenticatedSession,
   ensureSecretsKey,
   hasActiveRuns,
@@ -216,4 +217,18 @@ exit 1
   );
 
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("buildStackEnv sets RUNNER_MAX_CONCURRENT from runnerSlots unless the environment already does", () => {
+  const opts = {
+    resources: { vesperBin: "/x/vesper", postgresBinDir: "/x/pg" },
+    userDataDir: "/data",
+    secretsKey: "k",
+    runnerSlots: 6,
+  };
+  assert.equal(buildStackEnv(opts, "127.0.0.1:8080", {}).RUNNER_MAX_CONCURRENT, "6");
+  const unset = buildStackEnv({ ...opts, runnerSlots: undefined }, "127.0.0.1:8080", {});
+  assert.equal("RUNNER_MAX_CONCURRENT" in unset, false);
+  assert.equal(buildStackEnv(opts, "127.0.0.1:8080", { RUNNER_MAX_CONCURRENT: "9" }).RUNNER_MAX_CONCURRENT, "9");
+  assert.equal(buildStackEnv(opts, "127.0.0.1:8080", { RUNNER_MAX_CONCURRENT: "  " }).RUNNER_MAX_CONCURRENT, "6");
 });

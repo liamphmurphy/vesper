@@ -1137,6 +1137,7 @@ async function startBundledStackIfLocalhost(): Promise<void> {
       port: targetPort,
       nodeBin: process.execPath,
       nodeRunAsNode: true,
+      runnerSlots: currentConfig.native.stack.runnerSlots,
       onLog: (chunk) => {
         for (const win of BrowserWindow.getAllWindows()) {
           if (!win.isDestroyed()) {

@@ -120,6 +120,29 @@
     if (Number.isFinite(n) && n >= 1 && n <= 1000) void save({ stack: { minFreeDiskGb: Math.round(n) } });
   });
 
+  // Runner slots
+  const runnerSlots = document.getElementById("runner-slots");
+  const runnerSlotsRestart = document.getElementById("runner-slots-restart");
+  runnerSlots.addEventListener("change", function () {
+    const n = Number(runnerSlots.value);
+    if (Number.isInteger(n) && n >= 1 && n <= 32) void save({ stack: { runnerSlots: n } });
+  });
+  runnerSlotsRestart.addEventListener("click", function () {
+    runnerSlotsRestart.disabled = true;
+    void api
+      .restartStackForPreferences()
+      .then(function (res) {
+        if (res && res.state) {
+          state = res.state;
+          render();
+        }
+        if (res && !res.ok) globalError.textContent = res.error || "The restart failed.";
+      })
+      .finally(function () {
+        runnerSlotsRestart.disabled = false;
+      });
+  });
+
   // Shortcut recorders (Quick Capture, Screenshot to Chat)
   const SYMBOLS = { Command: "⌘", Control: "⌃", Alt: "⌥", Shift: "⇧" };
   let recording = null;
@@ -328,6 +351,15 @@
     quietEnd.value = s.notifications.quietHours.end;
     quietStart.disabled = quietEnd.disabled = !s.notifications.enabled;
     minDisk.value = String(s.stack.minFreeDiskGb);
+    runnerSlots.value = String(s.stack.runnerSlots);
+    runnerSlots.disabled = st.runnerSlotsFromEnv;
+    const slotsStale = !st.runnerSlotsFromEnv && typeof st.runnerSlotsRunning === "number" && st.runnerSlotsRunning !== s.stack.runnerSlots;
+    document.getElementById("runner-slots-status").textContent = st.runnerSlotsFromEnv
+      ? "Set by RUNNER_MAX_CONCURRENT in the environment."
+      : slotsStale
+        ? "The runner is using " + st.runnerSlotsRunning + ". Restart the stack to use " + s.stack.runnerSlots + "."
+        : "";
+    runnerSlotsRestart.classList.toggle("hidden", !slotsStale);
     document.getElementById("data-dir").textContent = st.dataDir;
 
     const shortcutInput = document.getElementById("shortcut-input");
