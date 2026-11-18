@@ -62,6 +62,16 @@ final class SecretsKeyTests: XCTestCase {
         XCTAssertTrue(kc.writes.isEmpty)
     }
 
+    func testInvalidKeychainItemThrowsAndIsNotReplaced() throws {
+        let dir = try tempDir()
+        let id = FakeKeychain.id(SecretsKeyStore.service, SecretsKeyStore.account(for: dir))
+        let kc = FakeKeychain([FakeKeychain.id(SecretsKeyStore.legacyService, SecretsKeyStore.legacyAccount): password, id: Data("garbage".utf8)])
+        XCTAssertThrowsError(try SecretsKeyStore(dataDirectory: dir, keychain: kc).load()) {
+            XCTAssertEqual($0 as? SecretsKeyError, .storedKeyInvalid)
+        }
+        XCTAssertTrue(kc.writes.isEmpty)
+    }
+
     func testMigratesElectronFileIntoOwnItem() throws {
         let dir = try tempDir()
         let enc = try XCTUnwrap(SafeStorageCrypto.encryptV10(Data(knownKey.utf8), password: password))

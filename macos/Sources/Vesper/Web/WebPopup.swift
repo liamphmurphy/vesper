@@ -10,6 +10,7 @@ final class WebPopup: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDele
     private let window: NSWindow
     private let webView: WKWebView
     private var titleObservation: NSKeyValueObservation?
+    private var urlObservation: NSKeyValueObservation?
 
     /// `configuration` is the one WebKit hands to createWebViewWith (it ties the popup to its
     /// opener); its content controller is replaced so the popup never reaches the bridge.
@@ -42,10 +43,15 @@ final class WebPopup: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDele
         titleObservation = webView.observe(\.title, options: [.new]) { [weak self] wv, _ in
             MainActor.assumeIsolated { self?.window.title = wv.title ?? "" }
         }
+        // The page's host is always visible, so an untrusted page can't pose as Vesper.
+        urlObservation = webView.observe(\.url, options: [.initial, .new]) { [weak self] wv, _ in
+            MainActor.assumeIsolated { self?.window.subtitle = wv.url?.host ?? "" }
+        }
     }
 
     private func close() {
         titleObservation = nil
+        urlObservation = nil
         webView.navigationDelegate = nil
         webView.uiDelegate = nil
         window.delegate = nil
@@ -60,6 +66,11 @@ final class WebPopup: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDele
         if navigationAction.shouldPerformDownload { return .download }
         guard let scheme = navigationAction.request.url?.scheme?.lowercased() else { return .cancel }
         return ["http", "https", "blob", "data", "about"].contains(scheme) ? .allow : .cancel
+    }
+
+    func webView(_ webView: WKWebView, decideMediaCapturePermissionsFor origin: WKSecurityOrigin,
+                 initiatedBy frame: WKFrameInfo, type: WKMediaCaptureType) async -> WKPermissionDecision {
+        .deny
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse) async -> WKNavigationResponsePolicy {

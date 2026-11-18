@@ -186,11 +186,12 @@ final class BiometricsTests: XCTestCase {
         on.scopes["push_requests"] = false
         XCTAssertEqual(Biometrics.touchIdDecision(on, scope: "run_approvals", canPrompt: true), .prompt)
         XCTAssertEqual(Biometrics.touchIdDecision(on, scope: "push_requests", canPrompt: true), .skip)
-        XCTAssertEqual(Biometrics.touchIdDecision(on, scope: "run_approvals", canPrompt: false), .skip, "no sensor falls back to the click flow")
+        XCTAssertEqual(Biometrics.touchIdDecision(on, scope: "run_approvals", canPrompt: false), .promptWithPassword, "no sensor: account password, not a skip")
+        XCTAssertEqual(Biometrics.touchIdDecision(on, scope: "push_requests", canPrompt: false), .skip, "scope off stays off")
         var disabled = on; disabled.enabled = false
         XCTAssertEqual(Biometrics.touchIdDecision(disabled, scope: "run_approvals", canPrompt: true), .skip)
-        XCTAssertEqual(Biometrics.touchIdDecision(on, scope: "everything", canPrompt: true), .skip)
-        XCTAssertEqual(Biometrics.touchIdDecision(on, scope: nil, canPrompt: true), .skip)
+        XCTAssertEqual(Biometrics.touchIdDecision(on, scope: "everything", canPrompt: true), .prompt, "unknown scope still gated")
+        XCTAssertEqual(Biometrics.touchIdDecision(on, scope: nil, canPrompt: false), .promptWithPassword)
         XCTAssertEqual(Biometrics.touchIdDecision(on, scope: .secretApprovals, canPrompt: true), .prompt)
         XCTAssertEqual(Biometrics.touchIdReason(.pushRequests), "approve a push and pull request")
     }

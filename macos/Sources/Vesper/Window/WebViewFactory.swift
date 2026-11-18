@@ -51,10 +51,17 @@ enum WebViewFactory {
             .path: "/",
             .expires: Date().addingTimeInterval(365 * 24 * 3600),
             HTTPCookiePropertyKey("HttpOnly"): "TRUE",
+            .sameSitePolicy: HTTPCookieStringPolicy.sameSiteStrict,
         ]
         if baseURL.scheme == "https" { props[.secure] = "TRUE" }
         guard let cookie = HTTPCookie(properties: props) else { return }
-        await WKWebsiteDataStore.default().httpCookieStore.setCookie(cookie)
-        vlog("session cookie set for host \(host)")
+        // Both stores: the playground gateway needs the session to let a window in, and strips
+        // the cookie before proxying to the agent's app. Playground web views still get no
+        // bridge, scripts or page services.
+        for store in [WKWebsiteDataStore.default(), playgroundStore] {
+            await store.httpCookieStore.setCookie(cookie)
+            let stored = await store.httpCookieStore.allCookies().first { $0.name == StackSession.cookieName }
+            vlog("session cookie set for host \(host): httpOnly=\(stored?.isHTTPOnly ?? false) sameSite=\(stored?.sameSitePolicy?.rawValue ?? "none")")
+        }
     }
 }

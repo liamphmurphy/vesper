@@ -185,9 +185,12 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
         if navigationAction.shouldPerformDownload { return .download }
         guard let url = navigationAction.request.url else { return .cancel }
         // A file dropped on the window that the page didn't take: offer it to a chat, as the
-        // Electron app did (drop.ts), instead of navigating to file://.
+        // Electron app did (drop.ts), instead of navigating to file://. Only a browser-initiated
+        // main-frame navigation counts: a page's own link, redirect or subframe never reaches a chat.
         if url.isFileURL {
-            if navigationAction.navigationType == .other || navigationAction.navigationType == .linkActivated {
+            if navigationAction.navigationType == .other,
+               navigationAction.targetFrame?.isMainFrame == true,
+               navigationAction.sourceFrame.isMainFrame {
                 app.aux.openFiles([url])
             }
             return .cancel
@@ -236,7 +239,7 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
 
     /// Screen/camera/microphone capture (getDisplayMedia in the frame-capture feature): only the
     /// Vesper origin's main frame is offered the system prompt; everything else is refused.
-    func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo,
+    func webView(_ webView: WKWebView, decideMediaCapturePermissionsFor origin: WKSecurityOrigin, initiatedBy frame: WKFrameInfo,
                  type: WKMediaCaptureType) async -> WKPermissionDecision {
         guard kind == .vesper, frame.isMainFrame, let base = app.connection?.baseURL ?? base,
               BridgeOrigin.matches(scheme: origin.protocol, host: origin.host, port: origin.port, base: base) else {

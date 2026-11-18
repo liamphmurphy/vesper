@@ -11,6 +11,7 @@ public enum SecretsKeyError: Error, Equatable, CustomStringConvertible {
     case invalidFormat
     case decryptFailed
     case randomFailed
+    case storedKeyInvalid
 
     public var description: String {
         switch self {
@@ -18,6 +19,7 @@ public enum SecretsKeyError: Error, Equatable, CustomStringConvertible {
         case .invalidFormat: return "SECRETS_KEY must be a 32-byte base64 string."
         case .decryptFailed: return "The old safeStorage secrets key couldn't be decrypted."
         case .randomFailed: return "Couldn't generate a secrets key."
+        case .storedKeyInvalid: return "The secrets key stored in the Keychain is invalid; it was left untouched."
         }
     }
 }
@@ -143,9 +145,13 @@ public struct SecretsKeyStore: Sendable {
 
     /// The key: our Keychain item, else the Electron file migrated into it, else a new random one.
     public func load() throws -> String {
-        if let data = try keychain.read(service: Self.service, account: account),
-           let text = String(data: data, encoding: .utf8), let valid = try? Self.validate(text)
-        {
+        if let data = try keychain.read(service: Self.service, account: account) {
+            // The item exists: never replace it by migrating or generating (that would orphan the
+            // encrypted secrets). secrets-key.enc is deliberately left in place: the Electron app
+            // still reads it as its fallback.
+            guard let text = String(data: data, encoding: .utf8), let valid = try? Self.validate(text) else {
+                throw SecretsKeyError.storedKeyInvalid
+            }
             return valid
         }
         if let migrated = try migrateLegacyFile() {

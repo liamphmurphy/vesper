@@ -101,7 +101,19 @@ Source of truth: `web/lib/native-shell/protocol.ts`; Swift mirror
 - Navigation policy as `desktop/src/routing.ts`: same origin → in app; playground port → in-app
   window without bridge; other http(s)/mailto → `NSWorkspace.open`; everything else → cancel.
 - Workspace folders open only strictly inside the runner's `host_workspaces_dir` (realpath'd).
-- Touch ID fails closed.
+- The session cookie is `HttpOnly; SameSite=Strict` (as the server sets it), installed in both the
+  Vesper and the playground data store. Playground windows need it to sign in to the playground
+  gateway, which strips it before proxying to the agent's app; they still get no bridge, user
+  scripts or page services.
+- Popups (`window.open` targets) deny media capture and show the page's host as the window
+  subtitle, so an untrusted page can't pose as Vesper.
+- `file://` navigations are accepted only as a window drop (browser-initiated, main frame, source
+  frame the main frame); every other `file://` navigation is cancelled.
+- The clipboard fallback writes only for the key window of the active app.
+- Touch ID fails closed. When the gate is on but biometrics can't prompt (no sensor, none enrolled,
+  lid closed), the account password is required instead of skipping.
+- A Keychain secrets key that exists but is invalid is an error, never replaced by migration or a
+  new key (`secrets-key.enc` stays, as the Electron app still reads it).
 
 ## Parity checklist
 

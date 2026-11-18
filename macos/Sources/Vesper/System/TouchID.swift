@@ -11,11 +11,12 @@ enum TouchID {
         return LAContext().canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error)
     }
 
-    static func authenticate(reason: String) async -> Bool {
+    static func authenticate(reason: String, passwordFallback: Bool = false) async -> Bool {
         let context = LAContext()
-        context.localizedFallbackTitle = ""
+        let policy: LAPolicy = passwordFallback ? .deviceOwnerAuthentication : .deviceOwnerAuthenticationWithBiometrics
+        if !passwordFallback { context.localizedFallbackTitle = "" }
         do {
-            return try await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason)
+            return try await context.evaluatePolicy(policy, localizedReason: reason)
         } catch {
             vlog("touch id not confirmed: \(error.localizedDescription)")
             return false
@@ -25,11 +26,13 @@ enum TouchID {
     /// Prompts when `settings` ask for it in `scope`. true = go ahead (not needed, or confirmed).
     static func confirm(_ settings: NativeSettings.TouchId, scope: TouchIdScope?) async -> Bool {
         guard settings.enabled else { return true }
-        guard let scope else {
-            // A scope this build doesn't know: if the gate is on, it still has to pass.
-            return canPrompt() ? await authenticate(reason: "approve a request") : true
+        // A scope this build doesn't know: if the gate is on, it still has to pass.
+        let decision = Biometrics.touchIdDecision(settings, scope: scope?.rawValue, canPrompt: canPrompt())
+        let reason = scope.map(Biometrics.touchIdReason) ?? "approve a request"
+        switch decision {
+        case .skip: return true
+        case .prompt: return await authenticate(reason: reason)
+        case .promptWithPassword: return await authenticate(reason: reason, passwordFallback: true)
         }
-        guard Biometrics.touchIdDecision(settings, scope: scope, canPrompt: canPrompt()) == .prompt else { return true }
-        return await authenticate(reason: Biometrics.touchIdReason(scope))
     }
 }

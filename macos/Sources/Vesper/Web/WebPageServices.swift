@@ -87,6 +87,12 @@ final class WebPageServices: NSObject, WKScriptMessageHandler {
                 vlog("clipboard: refused message")
                 return
             }
+            // Only the focused window of the active app may write: a background page can't
+            // overwrite the clipboard.
+            guard message.webView?.window?.isKeyWindow == true, NSApp.isActive else {
+                vlog("clipboard: dropped write from a window that isn't key")
+                return
+            }
             let pb = NSPasteboard.general
             pb.clearContents()
             pb.setString(text, forType: .string)
