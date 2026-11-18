@@ -106,6 +106,8 @@ public final class StackController {
     public private(set) var runImage: RootfsStatus?
     /// Whether the server's runner is connected (nil: unknown).
     public private(set) var runnerOnline: Bool?
+    /// Whether the server's embedded runner is still starting up before its first heartbeat.
+    public private(set) var runnerStarting = false
     /// The runner's own max_concurrent and its current slot limit, from the last poll (0 / nil: unknown).
     public private(set) var runnerMaxSlots = 0
     public private(set) var runnerSlotLimit: Int?
@@ -189,6 +191,7 @@ public final class StackController {
         lastExit = nil
         runImage = nil
         runnerOnline = nil
+        runnerStarting = false
         runnerMaxSlots = 0
         recomputeHealth()
         do {
@@ -410,7 +413,7 @@ public final class StackController {
         healthTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.pollOnce()
-                let fast = self?.health.phase == .downloading
+                let fast = self?.health.phase == .downloading || self?.health.phase == .starting || self?.runnerOnline == false
                 try? await Task.sleep(for: fast ? .seconds(2) : interval)
             }
         }
@@ -425,6 +428,7 @@ public final class StackController {
         guard isProcessRunning, session != nil else { return }
         runImage = img
         runnerOnline = run?.online
+        runnerStarting = run?.starting == true
         if let first = run?.runners?.first {
             runnerMaxSlots = first.maxConcurrent ?? 0
             runnerSlotLimit = first.slotLimit
@@ -443,7 +447,8 @@ public final class StackController {
             freeDiskBytes: StackHealthLogic.freeDiskBytes(at: dataDirectory),
             minFreeDiskGb: minFreeDiskGb,
             image: runImage,
-            runnerOnline: runnerOnline
+            runnerOnline: runnerOnline,
+            runnerStarting: runnerStarting
         )
         let next = StackHealthLogic.derive(input)
         if next != health { health = next }

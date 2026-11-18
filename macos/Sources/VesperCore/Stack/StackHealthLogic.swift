@@ -29,11 +29,12 @@ public struct StackHealthInput: Sendable {
     public var minFreeDiskGb: Int
     public var image: RootfsStatus?
     public var runnerOnline: Bool?
+    public var runnerStarting: Bool
 
     public init(
         arch: String = "arm64", darwinMajor: Int? = 24, starting: Bool = false, processRunning: Bool = true,
         startError: String? = nil, exit: StackExitInfo? = nil, freeDiskBytes: Int64? = nil, minFreeDiskGb: Int = 10,
-        image: RootfsStatus? = nil, runnerOnline: Bool? = nil
+        image: RootfsStatus? = nil, runnerOnline: Bool? = nil, runnerStarting: Bool = false
     ) {
         self.arch = arch
         self.darwinMajor = darwinMajor
@@ -45,6 +46,7 @@ public struct StackHealthInput: Sendable {
         self.minFreeDiskGb = minFreeDiskGb
         self.image = image
         self.runnerOnline = runnerOnline
+        self.runnerStarting = runnerStarting
     }
 }
 
@@ -174,6 +176,12 @@ public enum StackHealthLogic {
             )
         }
         if input.runnerOnline == false {
+            if input.runnerStarting {
+                return StackHealth(
+                    phase: .starting, title: "Starting runner…",
+                    message: "The server is up; waiting for the runner to finish starting.", actions: [.logs]
+                )
+            }
             return StackHealth(
                 phase: .degraded, title: "Runner offline", message: "The server is up but its runner isn't, so runs won't start.",
                 nextStep: "Restart the stack. If it stays offline, open the logs.", actions: [.restart, .logs]
