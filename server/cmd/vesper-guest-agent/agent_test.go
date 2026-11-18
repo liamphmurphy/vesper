@@ -109,9 +109,6 @@ func TestAgentExecPipes(t *testing.T) {
 }
 
 func TestDockerContainerCreateGuard(t *testing.T) {
-	if !isContainerCreatePath("/v1.47/containers/create") || !isContainerCreatePath("/containers/create") {
-		t.Fatal("expected container create path match")
-	}
 	allowed := []string{
 		`{"HostConfig":{"Binds":["/workspace/src:/app","/tmp/scratch:/work"]}}`,
 		`{"HostConfig":{"Binds":["/var/run/docker.sock:/var/run/docker.sock"]}}`,

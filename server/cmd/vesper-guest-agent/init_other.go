@@ -50,6 +50,12 @@ func ensureDockerd(context.Context, *slog.Logger, *execTracker, string) error {
 	return errors.New("dockerd is only supported inside Linux guest VM")
 }
 
+func openDockerGuard(string) (string, error) {
+	return "", errors.New("dockerd is only supported inside Linux guest VM")
+}
+
+func closeDockerGuard(context.Context, string) error { return nil }
+
 func ensureNixDaemon(context.Context, *execTracker) error {
 	return errors.New("nix-daemon is only supported inside Linux guest VM")
 }

@@ -19,8 +19,6 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/runner/microvm"
 )
 
-const inGuestDockerGuardedSock = "/var/run/docker.sock"
-
 var (
 	_ ServiceBackend = (*MicroVM)(nil)
 	_ ProxyBackend   = (*MicroVM)(nil)
@@ -123,33 +121,36 @@ func (b *MicroVM) StartDockerProxy(ctx context.Context, runID, _, key string) (*
 	_, _, nerr := b.dockerDo(ctx, hc, http.MethodPost, "/networks/create", map[string]any{
 		"Name":   netName,
 		"Driver": "bridge",
-		"Labels": map[string]string{proxyLabelKey: key},
+		"Labels": map[string]string{guestproto.DockerGuardLabel: key},
 	}, nil)
 	if nerr != nil && !strings.Contains(nerr.Error(), "already exists") {
 		releaseOnce()
 		return nil, nerr
 	}
 
+	client := rvm.vm.Client()
+	sock, err := client.OpenDockerGuard(ctx, key)
+	if err != nil {
+		releaseOnce()
+		return nil, fmt.Errorf("open the turn's docker guard: %w", err)
+	}
+
 	var stopOnce sync.Once
 	stop := func() {
 		stopOnce.Do(func() {
 			defer releaseOnce()
-			sctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			sctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			filters, _ := json.Marshal(map[string][]string{"label": {proxyLabelKey + "=" + key}})
-			var containers []struct {
-				ID string `json:"Id"`
+			// The guest removes everything carrying the turn's label, the
+			// network above included.
+			if err := client.CloseDockerGuard(sctx, key); err != nil {
+				b.logger().Warn("close turn docker guard", "run", runID, "key", key, "err", err)
 			}
-			_, _, _ = b.dockerDo(sctx, hc, http.MethodGet, "/containers/json?all=1&filters="+url.QueryEscape(string(filters)), nil, &containers)
-			for _, c := range containers {
-				_, _, _ = b.dockerDo(sctx, hc, http.MethodDelete, "/containers/"+url.PathEscape(c.ID)+"?force=true&v=true", nil, nil)
-			}
-			_, _, _ = b.dockerDo(sctx, hc, http.MethodDelete, "/networks/"+url.PathEscape(netName), nil, nil)
 		})
 	}
 	return &TurnDocker{
 		Network: netName,
-		Env:     map[string]string{"DOCKER_HOST": "unix://" + inGuestDockerGuardedSock},
+		Env:     map[string]string{"DOCKER_HOST": "unix://" + sock},
 		Stop:    stop,
 	}, nil
 }

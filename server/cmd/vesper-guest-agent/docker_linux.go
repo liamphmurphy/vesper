@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,9 +11,9 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/http/httputil"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -23,9 +22,8 @@ import (
 )
 
 const (
-	dockerRawSock   = "/var/run/docker-raw.sock"
-	dockerGuardSock = "/var/run/docker.sock"
-	containerdSock  = "/run/containerd/containerd.sock"
+	dockerRawSock  = "/var/run/docker-raw.sock"
+	containerdSock = "/run/containerd/containerd.sock"
 )
 
 var (
@@ -109,9 +107,6 @@ func ensureDockerd(ctx context.Context, log *slog.Logger, execs *execTracker, re
 	}
 
 	if !dockerStarted {
-		if err := startDockerGuardProxy(log); err != nil {
-			return fmt.Errorf("docker guard proxy: %w", err)
-		}
 		if err := startDockerVSockBridge(log); err != nil {
 			return fmt.Errorf("docker vsock bridge: %w", err)
 		}
@@ -170,54 +165,74 @@ func waitForFile(ctx context.Context, p string, d time.Duration) error {
 	return fmt.Errorf("timed out waiting for %s", p)
 }
 
-func startDockerGuardProxy(log *slog.Logger) error {
-	_ = os.Remove(dockerGuardSock)
-	ln, err := net.Listen("unix", dockerGuardSock)
-	if err != nil {
-		return err
-	}
-	if err := os.Chmod(dockerGuardSock, 0o666); err != nil {
-		_ = ln.Close()
-		return err
-	}
+// dockerGuardDir holds one socket per turn. It is traversable but not
+// listable, so a process can open only a socket whose name it was given.
+const dockerGuardDir = "/run/vesper-docker"
 
-	rawTransport := &http.Transport{
+var (
+	guardsMu sync.Mutex
+	guards   = map[string]*http.Server{}
+)
+
+func rawDockerTransport() http.RoundTripper {
+	return &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, "unix", dockerRawSock)
 		},
 	}
-	rp := &httputil.ReverseProxy{
-		Rewrite: func(pr *httputil.ProxyRequest) {
-			pr.Out.URL.Scheme = "http"
-			pr.Out.URL.Host = "docker"
-		},
-		Transport:     rawTransport,
-		FlushInterval: -1,
-	}
+}
 
-	srv := &http.Server{
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method == http.MethodPost && isContainerCreatePath(r.URL.Path) {
-				body, err := io.ReadAll(io.LimitReader(r.Body, 4<<20))
-				if err != nil {
-					http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
-					return
-				}
-				if reason := validateDockerContainerCreate(body); reason != "" {
-					log.Warn("blocked unsafe container create inside guest", "reason", reason)
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusForbidden)
-					_ = json.NewEncoder(w).Encode(map[string]string{"message": reason})
-					return
-				}
-				r.Body = io.NopCloser(bytes.NewReader(body))
-				r.ContentLength = int64(len(body))
-			}
-			rp.ServeHTTP(w, r)
-		}),
+// openDockerGuard serves the turn's Docker API on its own socket. Opening a
+// key that is already open returns the same socket.
+func openDockerGuard(key string) (string, error) {
+	if !guardKeyRe.MatchString(key) {
+		return "", fmt.Errorf("invalid docker guard key %q", key)
 	}
+	sock := filepath.Join(dockerGuardDir, key+".sock")
+	guardsMu.Lock()
+	defer guardsMu.Unlock()
+	if _, ok := guards[key]; ok {
+		return sock, nil
+	}
+	if err := os.MkdirAll(dockerGuardDir, 0o711); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(dockerGuardDir, 0o711); err != nil {
+		return "", err
+	}
+	_ = os.Remove(sock)
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		return "", err
+	}
+	// Turns run as uid 1000.
+	if err := os.Chmod(sock, 0o666); err != nil {
+		_ = ln.Close()
+		return "", err
+	}
+	srv := &http.Server{Handler: newDockerGuard(key, rawDockerTransport()), ReadHeaderTimeout: 30 * time.Second}
+	guards[key] = srv
 	go func() { _ = srv.Serve(ln) }()
-	return nil
+	return sock, nil
+}
+
+// closeDockerGuard stops the turn's socket, then removes what it created.
+func closeDockerGuard(ctx context.Context, key string) error {
+	if !guardKeyRe.MatchString(key) {
+		return fmt.Errorf("invalid docker guard key %q", key)
+	}
+	guardsMu.Lock()
+	srv := guards[key]
+	delete(guards, key)
+	guardsMu.Unlock()
+	if srv != nil {
+		_ = srv.Close()
+	}
+	_ = os.Remove(filepath.Join(dockerGuardDir, key+".sock"))
+	if !pingUnixSocketExists(dockerRawSock) {
+		return nil // dockerd never started: nothing to remove
+	}
+	return cleanupDockerTurn(ctx, rawDockerTransport(), key)
 }
 
 func startDockerVSockBridge(log *slog.Logger) error {
