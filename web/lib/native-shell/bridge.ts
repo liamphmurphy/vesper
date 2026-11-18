@@ -67,6 +67,8 @@ const TIMEOUT_MS: Record<RequestMessage["type"], number> = {
   confirmApproval: 60_000,
   openWorkspaceMenu: 60_000,
   contextMenu: 60_000,
+  // A sheet waits for the person however long they take; this only stops a lost reply leaking.
+  confirm: 3_600_000,
 };
 const DEFAULT_TIMEOUT_MS = 10_000;
 
@@ -92,6 +94,20 @@ export function request(msg: DistributiveOmit<RequestMessage, "requestId" | "v">
     });
     post({ ...msg, v: PROTOCOL_VERSION, requestId } as PageMessage);
   });
+}
+
+/**
+ * Asks "Are you sure?" as a sheet on the window. Resolves true only for the confirm button; false
+ * when cancelled, on error, or outside the native shell (callers check isNativeShell first).
+ */
+export async function nativeConfirm(options: { title: string; body?: string; confirmLabel: string; cancelLabel?: string; destructive: boolean }): Promise<boolean> {
+  if (!isNativeShell()) return false;
+  try {
+    const reply = await request({ type: "confirm", ...options });
+    return reply.ok;
+  } catch {
+    return false;
+  }
 }
 
 /**

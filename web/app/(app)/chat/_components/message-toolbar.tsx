@@ -1,10 +1,11 @@
 "use client";
 
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useRef, useState, type ReactNode } from "react";
 import { DropdownMenu } from "radix-ui";
 import type { Harness, Schemas } from "@/lib/api/client";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { cx } from "@/lib/cx";
+import { useNativeContextMenu } from "@/lib/native-shell/hooks";
 import { SaveDialogs, type SaveMode } from "./save-actions";
 import { SecondOpinionMenu, type SecondOpinionPick } from "./second-opinion-menu";
 
@@ -81,9 +82,27 @@ export function MessageToolbar({
       { icon: "artifacts" as const, label: "Save as artifact", onSelect: () => setSave("artifact") },
     ] : []),
   ];
+  const reply = actions ? () => actions.reply(body, mine ? undefined : authorId, mine ? undefined : author) : undefined;
+  const copy = () => {
+    void navigator.clipboard?.writeText(body).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+  // In the Mac app, right-clicking the message offers the same actions as an AppKit menu.
+  const toolbar = useRef<HTMLDivElement>(null);
+  useNativeContextMenu(toolbar, () => [
+    ...(reply ? [{ id: "reply", label: "Reply", icon: "msg", onSelect: reply }] : []),
+    ...(actions?.thread ? [{ id: "thread", label: "Start a thread", icon: "branch", onSelect: () => actions.thread!(messageId) }] : []),
+    { id: "copy", label: "Copy", icon: "link", onSelect: copy },
+    ...(onEdit ? [{ id: "edit", label: "Edit", icon: "edit", onSelect: onEdit }] : []),
+    { id: "sep", separator: true },
+    ...more.map((m) => ({ id: `more:${m.label}`, label: m.label, icon: m.icon, destructive: m.danger, onSelect: m.onSelect })),
+  ], { target: (el) => el.closest<HTMLElement>("[data-message-id]") });
   return (
     <>
       <div
+        ref={toolbar}
         role="toolbar"
         aria-label="Message actions"
         data-testid={testId}
@@ -96,7 +115,7 @@ export function MessageToolbar({
         )}
       >
         {actions && (
-          <ToolButton icon="msg" label="Reply" onClick={() => actions.reply(body, mine ? undefined : authorId, mine ? undefined : author)}>
+          <ToolButton icon="msg" label="Reply" onClick={reply!}>
             <svg aria-hidden viewBox="0 0 16 16" width={14} height={14} fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
               <path d="M6.5 4 3 7.5 6.5 11M3.5 7.5H10a3 3 0 0 1 3 3V12" />
             </svg>
@@ -115,12 +134,7 @@ export function MessageToolbar({
         <ToolButton
           icon={copied ? "check" : "link"}
           label={copied ? "Copied" : "Copy"}
-          onClick={() => {
-            void navigator.clipboard?.writeText(body).then(() => {
-              setCopied(true);
-              setTimeout(() => setCopied(false), 1500);
-            });
-          }}
+          onClick={copy}
         />
         {onEdit && <ToolButton icon="edit" label="Edit" onClick={onEdit} />}
         {more.length > 0 && (

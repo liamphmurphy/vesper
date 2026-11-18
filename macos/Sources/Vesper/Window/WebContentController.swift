@@ -367,7 +367,7 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo) async {
         let alert = NSAlert()
         alert.messageText = message
-        alert.runModal()
+        _ = await presentDialog(alert)
     }
 
     func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo) async -> Bool {
@@ -375,7 +375,7 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
         alert.messageText = message
         alert.addButton(withTitle: "OK")
         alert.addButton(withTitle: "Cancel")
-        return alert.runModal() == .alertFirstButtonReturn
+        return await presentDialog(alert) == .alertFirstButtonReturn
     }
 
     func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo) async -> String? {
@@ -386,7 +386,16 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
         field.stringValue = defaultText ?? ""
         alert.accessoryView = field
-        return alert.runModal() == .alertFirstButtonReturn ? field.stringValue : nil
+        alert.window.initialFirstResponder = field
+        return await presentDialog(alert) == .alertFirstButtonReturn ? field.stringValue : nil
+    }
+
+    /// A page's dialog as a sheet on its own window, so it blocks that tab rather than the whole
+    /// app; app-modal only when the tab has no window or one already shows a sheet.
+    private func presentDialog(_ alert: NSAlert) async -> NSApplication.ModalResponse {
+        guard let window = ownerWindow, window.attachedSheet == nil else { return alert.runModal() }
+        window.makeKeyAndOrderFront(nil)
+        return await alert.beginSheetModal(for: window)
     }
 
     func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo) async -> [URL]? {

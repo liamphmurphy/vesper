@@ -8,6 +8,13 @@ signed off on it against real data. Related: [mac-native-features.md](mac-native
 
 Everything in the parity checklist below is implemented, with these deliberate gaps:
 
+- **Fallback column**: every screen's list now publishes a `NavModel` (Work's Activity, Tickets
+  and Epics with saved views, the editors' structure panels, and the rest), so the fallback column
+  is only a safety net for a screen that publishes none.
+- **Right-click menus** in the content area are native only where a screen asks for one with
+  `useNativeContextMenu` (chat messages and board cards so far); elsewhere WebKit's menu shows.
+- **Keyboard focus** between the sidebar, toolbar and page relies on AppKit's defaults; Tab
+  inside the page stays inside it.
 - **Fallback column**: every screen now describes its list for the native sidebar; the fallback
   column stays only as a safety net for a screen that doesn't.
 - **No layout signal to the page**: a page can't tell the separate layout from the compact one, so
@@ -109,6 +116,7 @@ Source of truth: `web/lib/native-shell/protocol.ts`; Swift mirror
 - The web's own left column (search, area icons, chats) is not rendered in native mode; the page
   publishes `shell` (areas, apps, current area, badges) and, when no screen claims the navigator,
   the default Chats navigator (chat history and spaces) as a `NavModel`.
+- Request/response messages (`confirmApproval`, `openWorkspaceMenu`, `contextMenu`, `confirm`) carry a
 - `nav.activate` carries `newTab: true` when the row was ⌘-clicked: the page opens the row's href
   with `window.open` (a new tab beside this one) and leaves the current tab and its selection alone.
   Rows without an href are activated as by a plain click.
@@ -162,6 +170,9 @@ What the app does, for regression testing by hand.
 - [ ] ⌘-click a sidebar row with an href (a chat, a run, a Knowledge page) → it opens in a new tab; the current tab doesn't move
 - [ ] Knowledge: no Knowledge tab strip (pages are the app's tabs, named after the page); a click on a page replaces the current tab, ⌘-click or the row's Open in New Tab opens one beside it; Home is the explorer's top row; ⌘W closes the tab (⌥W does nothing); the page's Private/Shared menu, persona mode, Copy link and More are toolbar items, and its folder path sits above its title
 - [ ] Offline / stack-error state in the window with Retry, Restart Stack, Show Logs
+- [ ] Right-click on a chat message or a board card: native menu (selected text, fields and links in messages keep the system menu); right place at every zoom level
+- [ ] `confirmAction` (delete a chat, discard edits, cancel a run…) is a sheet on the window: Return confirms, Esc cancels, the custom cancel label works; page `alert`/`confirm`/`prompt` are sheets too
+- [ ] Overscroll past the top/bottom of a page shows the palette's background (dark, Gruvbox), not white
 - [ ] Quit confirmation when runs are active (`power.confirmQuitWithActiveRuns`)
 
 **Menus**

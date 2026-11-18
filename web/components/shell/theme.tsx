@@ -53,7 +53,7 @@ function apply() {
   // Print views keep the default size so paper looks the same whoever prints it.
   root.dataset.textSize = printing ? "default" : settings.textSize ?? "default";
   // The Mac app matches its window to the page's effective mode (Dark forced in Vesper on a Light Mac).
-  postDeduped({ v: 1, type: "appearance", mode });
+  postDeduped({ v: 1, type: "appearance", mode, ...(/^#[\da-f]{6}$/i.test(colors.bg ?? "") ? { background: colors.bg } : {}) });
 }
 
 /** The Mac app's accent colour ("#RRGGBB"): re-tints the macOS palette. */

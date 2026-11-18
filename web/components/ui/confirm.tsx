@@ -1,7 +1,8 @@
 "use client";
 
 import { AlertDialog } from "radix-ui";
-import { useSyncExternalStore, type ReactNode } from "react";
+import { useSyncExternalStore } from "react";
+import { isNativeShell, nativeConfirm } from "@/lib/native-shell/bridge";
 import { buttonClass } from "./button";
 
 /**
@@ -9,10 +10,11 @@ import { buttonClass } from "./button";
  * restore, cancelling a run, discarding unsaved edits). `await confirmAction(...)` resolves true
  * only when the person chooses the confirm button; Esc, Cancel and the scrim resolve false.
  * Something cheap to restore should use `undoable` (lib/toast.ts) instead of asking first.
+ * In the Mac app it's a sheet on the window instead, so title and body are plain text.
  */
 export type ConfirmOptions = {
-  title: ReactNode;
-  body?: ReactNode;
+  title: string;
+  body?: string;
   /** The confirm button: a verb for what happens ("Delete", "Discard"). */
   confirmLabel: string;
   cancelLabel?: string;
@@ -28,6 +30,10 @@ const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((l) => l());
 
 export function confirmAction(options: ConfirmOptions): Promise<boolean> {
+  if (isNativeShell()) {
+    const { tone, ...rest } = options;
+    return nativeConfirm({ ...rest, destructive: (tone ?? "destructive") === "destructive" });
+  }
   current?.resolve(false);
   return new Promise((resolve) => {
     current = { ...options, resolve };

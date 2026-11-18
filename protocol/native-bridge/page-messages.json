@@ -282,7 +282,8 @@
   {
     "v": 1,
     "type": "appearance",
-    "mode": "light"
+    "mode": "light",
+    "background": "#f5f5f7"
   },
   {
     "v": 1,
@@ -308,6 +309,24 @@
         "label": "Archive"
       }
     ]
+  },
+  {
+    "v": 1,
+    "type": "confirm",
+    "requestId": "r4",
+    "title": "Delete \u201cWeekly plan\u201d?",
+    "body": "This can\u2019t be undone.",
+    "confirmLabel": "Delete",
+    "cancelLabel": "Keep",
+    "destructive": true
+  },
+  {
+    "v": 1,
+    "type": "confirm",
+    "requestId": "r5",
+    "title": "Approve all 3 requests?",
+    "confirmLabel": "Approve all",
+    "destructive": false
   },
   {
     "v": 1,

@@ -70,7 +70,12 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
         case .navigator(let model): state.navigator = model
         case .navigatorFallback(let active): state.navigatorFallback = active
         case .toolbar(let items): state.toolbarItems = items
-        case .appearance(let mode): state.pageMode = mode
+        case .appearance(let mode, let background):
+            state.pageMode = mode
+            if let color = NSColor.fromCSS(background) {
+                webView?.underPageBackgroundColor = color
+                WebViewFactory.lastPageBackground = color
+            }
         case .confirmApproval(let requestId, let scope):
             Task { [weak self] in
                 let ok = await Self.services?.confirmApproval(scope: scope) ?? false
@@ -84,7 +89,30 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
             }
         case .contextMenu(let requestId, let items, let x, let y):
             showContextMenu(requestId: requestId, items: items, x: x, y: y)
+        case .confirm(let requestId, let title, let body, let confirmLabel, let cancelLabel, let destructive):
+            Task { [weak self] in
+                guard let self else { return }
+                let ok = await self.confirmSheet(title: title, body: body, confirmLabel: confirmLabel, cancelLabel: cancelLabel, destructive: destructive)
+                self.send(.reply(requestId: requestId, ok: ok))
+            }
         }
+    }
+
+    /// The page's confirmAction as a sheet on its window: Return confirms, Esc cancels.
+    private func confirmSheet(title: String, body: String?, confirmLabel: String, cancelLabel: String?, destructive: Bool) async -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = destructive ? .warning : .informational
+        alert.messageText = title
+        alert.informativeText = body ?? ""
+        let confirm = alert.addButton(withTitle: confirmLabel)
+        confirm.hasDestructiveAction = destructive
+        // NSAlert only gives Esc to a button titled "Cancel"; the page may name it "Keep editing".
+        alert.addButton(withTitle: cancelLabel ?? "Cancel").keyEquivalent = "\u{1b}"
+        guard let window = webView?.window else { return alert.runModal() == .alertFirstButtonReturn }
+        // A sheet already up (another confirm, the unsaved-changes alert) would make this one queue
+        // invisibly; answer no instead, as the in-app dialog does when replaced.
+        guard window.attachedSheet == nil else { return false }
+        return await alert.beginSheetModal(for: window) == .alertFirstButtonReturn
     }
 
     private func showContextMenu(requestId: String, items: [MenuItem], x: Double, y: Double) {
@@ -94,8 +122,10 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
         }
         var selected: String?
         let menu = MenuBuilder.menu(from: items) { selected = $0 }
-        // The page's y grows downward; AppKit's y grows upward unless the view is flipped.
-        let point = NSPoint(x: x, y: webView.isFlipped ? y : webView.bounds.height - y)
+        // The page sends CSS pixels, which View › Zoom scales into view points. Its y grows
+        // downward; AppKit's y grows upward unless the view is flipped.
+        let px = x * webView.pageZoom, py = y * webView.pageZoom
+        let point = NSPoint(x: px, y: webView.isFlipped ? py : webView.bounds.height - py)
         menu.popUp(positioning: nil, at: point, in: webView)
         send(.reply(requestId: requestId, ok: true, selectedId: .some(selected)))
     }
@@ -138,10 +168,11 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
         case .navigator(let n): "navigator \(n?.id ?? "nil") selected=\(n?.selectedId ?? "nil") rows=\(n?.sections.flatMap { $0.items.map(\.id) }.prefix(12).joined(separator: ",") ?? "")"
         case .navigatorFallback(let a): "navigatorFallback \(a)"
         case .toolbar(let i): "toolbar \(i.count) items"
-        case .appearance(let m): "appearance \(m.rawValue)"
+        case .appearance(let m, _): "appearance \(m.rawValue)"
         case .confirmApproval(let r, let s): "confirmApproval \(r) \(s.rawValue)"
         case .openWorkspaceMenu(let r, _): "openWorkspaceMenu \(r)"
         case .contextMenu(let r, let i, _, _): "contextMenu \(r) \(i.count) items"
+        case .confirm(let r, _, _, _, _, _): "confirm \(r)"
         }
     }
 }
