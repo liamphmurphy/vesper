@@ -54,6 +54,11 @@ container is the boundary.
 
 **Resume (verified):** `--conversation ID` with `-p` continues the conversation
 under the same id. The model receives the earlier turns, and `num_turns` counts up.
+agy reads the conversation from `~/.gemini/antigravity-cli/` (`conversations/`,
+`brain/`, `implicit/`, `conversation_summaries.db` in 1.5.9), so that state
+must outlive the turn: the microVM backend's login sweep spares it
+(`agySweepPaths`). When it was swept, the next chat turn ran without the
+earlier turns and agy reported no error, so the runner can't tell.
 
 **Exit code:** 0 for a successful turn. 3 when the turn fails with no response
 (an HTTP error such as a 404 or a 429 with a `RetryInfo`). **A turn can also
