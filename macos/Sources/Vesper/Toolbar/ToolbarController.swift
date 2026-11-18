@@ -204,7 +204,9 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
             toolbar.insertItem(withItemIdentifier: Self.titleLabel, at: at)
             at += 1
         }
-        if shownTitleMenu != nil {
+        // Separate: the title itself opens its menu (a small chevron inside the title label).
+        // Compact: the tabs replace the title, so the menu hangs off a "⋯" item.
+        if shownTitleMenu != nil, owner?.compact == true {
             toolbar.insertItem(withItemIdentifier: Self.titleMenu, at: at)
             at += 1
         }
@@ -231,13 +233,39 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
         subtitle.isHidden = subtitle.stringValue.isEmpty
         titleField = title
         subtitleField = subtitle
-        let stack = NSStackView(views: [title, subtitle])
+        // With a title menu, a small chevron follows the title and clicking the title opens the menu,
+        // like a document title in other Mac apps.
+        var titleRow: NSView = title
+        if shownTitleMenu != nil {
+            let chevron = NSImageView(image: NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "Title menu")?
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 9, weight: .bold)) ?? NSImage())
+            chevron.contentTintColor = .secondaryLabelColor
+            chevron.setContentHuggingPriority(.required, for: .horizontal)
+            let row = NSStackView(views: [title, chevron])
+            row.orientation = .horizontal
+            row.alignment = .centerY
+            row.spacing = 4
+            titleRow = row
+        }
+        let stack = TitleMenuStack(views: [titleRow, subtitle])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 0
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.widthAnchor.constraint(greaterThanOrEqualToConstant: 60).isActive = true
         stack.widthAnchor.constraint(lessThanOrEqualToConstant: 320).isActive = true
+        if shownTitleMenu != nil {
+            stack.onClick = { [weak self, weak stack] in
+                guard let self, let stack, let items = self.shownTitleMenu else { return }
+                let menu = MenuBuilder.menu(from: items) { [weak self] menuItemId in
+                    self?.owner?.send(.titleAction(menuItemId: menuItemId))
+                }
+                menu.popUp(positioning: nil, at: NSPoint(x: 0, y: -4), in: stack)
+            }
+            stack.toolTip = "Actions for this page’s title"
+            stack.setAccessibilityRole(.popUpButton)
+            stack.setAccessibilityLabel(title.stringValue)
+        }
         item.view = stack
         return item
     }
@@ -345,5 +373,20 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
         } else if let item = sender as? NSToolbarItem, let id = itemIds[ObjectIdentifier(item)] {
             owner?.send(.toolbarAction(itemId: id))
         }
+    }
+}
+
+/// The toolbar's own title; when it has a menu, a click anywhere on it opens the menu.
+private final class TitleMenuStack: NSStackView {
+    var onClick: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        if let onClick { onClick() } else { super.mouseDown(with: event) }
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        // Labels and the chevron would swallow the click; the whole title is the button.
+        guard onClick != nil else { return super.hitTest(point) }
+        return frame.contains(point) ? self : nil
     }
 }

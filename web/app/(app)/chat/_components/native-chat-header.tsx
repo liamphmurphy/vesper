@@ -2,7 +2,7 @@
 
 import { Dialog } from "radix-ui";
 import { useRouter } from "next/navigation";
-import { useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import type { Schemas } from "@/lib/api/client";
 import { useUpdateChat } from "@/lib/api/hooks";
 import { usePersonas } from "@/lib/api/persona-hooks";
@@ -10,6 +10,7 @@ import { useChatPlayground, useCanStartSavedPlayground, usePlaygroundAction } fr
 import { useRepositories } from "@/lib/api/repository-hooks";
 import { canOpenWorkspaceFolder, openWorkspaceFolder } from "@/lib/desktop-bridge";
 import { buildChatTitleMenu, buildChatToolbar, parseChatAction, parseTitleAction } from "@/lib/native-shell/chat-toolbar";
+import { setTopBarTitle } from "@/lib/native-shell/title";
 import { useNativeToolbar } from "@/lib/native-shell/use-native-toolbar";
 import { inChatList, repoShortName, repositoryChoices, sameRepo } from "@/lib/persona-ui";
 import { usePlaygroundPanel } from "@/lib/use-playground-panel";
@@ -100,6 +101,15 @@ export function NativeChatHeader({ chat: c, participants, fresh, running, person
       }),
     [c.archived, c.workspace_path, secrets.any, secrets.label, commitEmail, participants],
   );
+
+  // The toolbar's title is the chat's own title, as the web header shows it (not the page's "Chat").
+  const titleToken = useRef(Symbol("chat-title"));
+  const chatTitle = c.title?.trim() || "New chat";
+  useEffect(() => {
+    const token = titleToken.current;
+    setTopBarTitle(token, { title: chatTitle });
+    return () => setTopBarTitle(token, null);
+  }, [chatTitle]);
 
   useNativeToolbar({
     items,
