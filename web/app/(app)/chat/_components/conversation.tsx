@@ -103,6 +103,7 @@ import { unavailableReason } from "@/lib/setup";
 import { ChatSpacePicker } from "./chat-space";
 import { CompactChatHeader } from "./compact-chat-header";
 import { NativeChatHeader } from "./native-chat-header";
+import { trackDockHeight } from "@/lib/dock-height";
 import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { useCompact } from "@/lib/viewport";
 import { composerOptions } from "@/lib/composer-options";
@@ -593,7 +594,15 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   const compact = useCompact();
   const dockActivity = activityInDock && !compact;
   // In the Mac app the chat page's header lives in the window's toolbar (NativeChatHeader), so the page keeps the row's height.
-  const nativeHeader = useIsNativeShell() && dockActivity && !docked && !headerSlot;
+  const native = useIsNativeShell();
+  const nativeHeader = native && dockActivity && !docked && !headerSlot;
+  // Native only: the floating composer's real height drives the overlap and the transcript's bottom padding (native-mac.css).
+  // A callback ref: the dock mounts only once the chat has loaded.
+  const stopDockTrack = useRef<(() => void) | undefined>(undefined);
+  const dockRef = useCallback((el: HTMLDivElement | null) => {
+    stopDockTrack.current?.();
+    stopDockTrack.current = native && el ? trackDockHeight(el) : undefined;
+  }, [native]);
   const view = dockActivity ? "chat" : tab;
   // "View reasoning" on a chat step: Activity opens on that step (the compact tab, or the dock's tab).
   const [traceFocus, setTraceFocus] = useState<{ key: string; at: number }>();
@@ -1414,7 +1423,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
             </>
           )}
         </div>
-        <div data-chat-dock="" className="mx-auto flex w-full max-w-[816px] flex-col gap-2 px-6 pb-3">
+        <div ref={dockRef} data-chat-dock="" className="mx-auto flex w-full max-w-[816px] flex-col gap-2 px-6 pb-3">
           {(() => {
             // Everything above the composer goes through one slot, ranked by STATUS_PRIORITY (lib/chat-status-slot).
             // The trays stay mounted while empty (present: false) so they see their first item arrive.

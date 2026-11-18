@@ -186,14 +186,14 @@ html.native-mac [data-composer-frame] button[data-tone] {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
 }
 
-/* The transcript scrolls under the capsule: the dock overlaps the scroller's bottom edge. */
+/* The transcript scrolls under the capsule: the dock overlaps the scroller's bottom edge by its measured height (--chat-dock-h, set by lib/dock-height). */
 html.native-mac [data-chat-scroller] {
-  padding-bottom: 104px;
+  padding-bottom: calc(var(--chat-dock-h, 88px) + 16px);
 }
 html.native-mac [data-chat-dock] {
   position: relative;
   z-index: 10;
-  margin-top: -88px;
+  margin-top: calc(-1 * var(--chat-dock-h, 88px));
   pointer-events: none;
 }
 html.native-mac [data-chat-dock] > * {

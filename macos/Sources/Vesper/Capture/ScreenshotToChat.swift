@@ -13,11 +13,7 @@ final class ScreenshotToChat {
 
     func start() {
         guard !running, let aux else { return }
-        guard CGPreflightScreenCaptureAccess() else {
-            _ = CGRequestScreenCaptureAccess()
-            showDenied()
-            return
-        }
+        guard ScreenRecordingAccess.ensure(what: "take screenshots") else { return }
         running = true
         Task {
             defer { running = false }
@@ -30,22 +26,10 @@ final class ScreenshotToChat {
             let size = (try? FileManager.default.attributesOfItem(atPath: file))?[.size] as? NSNumber
             guard let size, size.intValue > 0 else {
                 try? FileManager.default.removeItem(at: dir)
-                if !CGPreflightScreenCaptureAccess() { showDenied() }
+                if !CGPreflightScreenCaptureAccess() { ScreenRecordingAccess.showDenied(what: "take screenshots") }
                 return
             }
             aux.files.offer([file], cleanup: { try? FileManager.default.removeItem(at: dir) })
-        }
-    }
-
-    private func showDenied() {
-        NSApp.activate()
-        let alert = NSAlert()
-        alert.messageText = "Vesper can't take screenshots"
-        alert.informativeText = "Allow Vesper under System Settings › Privacy & Security › Screen & System Audio Recording, then try again."
-        alert.addButton(withTitle: "Open Screen Recording Settings")
-        alert.addButton(withTitle: "Cancel")
-        if alert.runModal() == .alertFirstButtonReturn, let url = URL(string: Screenshot.privacyPaneURL) {
-            NSWorkspace.shared.open(url)
         }
     }
 }

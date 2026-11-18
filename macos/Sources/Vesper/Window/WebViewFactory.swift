@@ -30,6 +30,7 @@ enum WebViewFactory {
             let script = WKUserScript(source: nativeModeScript, injectionTime: .atDocumentStart, forMainFrameOnly: true)
             config.userContentController.addUserScript(script)
             if let bridge { config.userContentController.add(bridge, name: handlerName) }
+            enablePrivateMediaPreferences(config.preferences)
             if let services { WebPageServices.install(on: config.userContentController, services: services) }
         case .playground:
             config.websiteDataStore = playgroundStore
@@ -39,6 +40,20 @@ enum WebViewFactory {
         webView.allowsBackForwardNavigationGestures = true
         webView.allowsMagnification = true
         return webView
+    }
+
+    /// Private WebKit preferences without which this macOS exposes no navigator.mediaDevices (so no
+    /// getDisplayMedia). Vesper pages only. Each is set only if WKPreferences answers its private
+    /// setter, so a WebKit that drops one is logged and skipped rather than raising
+    /// NSUndefinedKeyException.
+    private static func enablePrivateMediaPreferences(_ prefs: WKPreferences) {
+        for (key, setter) in [("mediaDevicesEnabled", "_setMediaDevicesEnabled:"), ("screenCaptureEnabled", "_setScreenCaptureEnabled:")] {
+            guard WKPreferences.instancesRespond(to: NSSelectorFromString(setter)) else {
+                vlog("private WebKit preference \(key) unavailable; skipped")
+                continue
+            }
+            prefs.setValue(true, forKey: key)
+        }
     }
 
     /// Puts the session cookie into the data store and waits until it is stored.
