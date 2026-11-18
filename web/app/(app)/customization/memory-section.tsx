@@ -244,7 +244,8 @@ function download(name: string, type: string, text: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function ExportMenu() {
+/** Downloads every memory as JSON or Markdown; `err` is the last failure, for the caller to show. */
+export function useMemoryExport() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   async function run(format: "json" | "md") {
@@ -261,6 +262,11 @@ export function ExportMenu() {
       setBusy(false);
     }
   }
+  return { busy, err, run };
+}
+
+export function ExportMenu() {
+  const { busy, err, run } = useMemoryExport();
   return (
     <details className="relative">
       <summary className="inline-flex h-[30px] cursor-pointer list-none items-center gap-1.5 rounded-md border border-btn-secondary-border bg-btn-secondary px-3 text-13 text-fg hover:bg-hover">

@@ -4,7 +4,7 @@ import { HistoryNav } from "@/components/shell/history-nav";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Dialog, DropdownMenu } from "radix-ui";
-import { useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { api, unwrap } from "@/lib/api/client";
 import { useChatModels } from "@/lib/api/hooks";
 import { usePersonas } from "@/lib/api/persona-hooks";
@@ -12,6 +12,9 @@ import { useDeleteSpace, useSpace, useSpaceChats, useSpaceSources, useStopWork, 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { chatTitle } from "@/lib/chat-ui";
 import { cx } from "@/lib/cx";
+import { useIsNativeShell } from "@/lib/native-shell/hooks";
+import { setTopBarTitle } from "@/lib/native-shell/title";
+import { useNativeActions } from "@/lib/native-shell/use-native-actions";
 import { shortAgo } from "@/lib/format";
 import { formatTokens, sortSpaceChats, SOURCE_KIND_LABEL, sourceName, SPACE_PAGE_CHATS, spaceSubtitle, spaceUses, suggestWorkKey, WORK_KEY, type ChatSort, type SourceKind, type SpaceColor } from "@/lib/spaces";
 import { ticketsHref } from "@/lib/tickets-layout";
@@ -692,6 +695,23 @@ export function SpaceScreen({ id }: { id: string }) {
   const [sources, setSources] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const space = q.data;
+  // The Mac app's toolbar carries the header's Settings and "more" menu, and the window's title is the space's name.
+  const inToolbar = useNativeActions(space && !editing ? [
+    { id: "space.settings", label: "Settings", kind: "button", icon: "gear", showsLabel: true, run: () => setEditing(true) },
+    { id: "space.more", label: "More for this space", kind: "menu", icon: "dots", menu: [
+      { id: "space.sources", label: "Manage sources", icon: "artifacts", run: () => setSources(true) },
+      { id: "space.delete", label: "Delete space…", icon: "trash", destructive: true, run: () => setDeleting(true) },
+    ] },
+  ] : undefined);
+  const native = useIsNativeShell();
+  const titleToken = useRef(Symbol("space-title"));
+  const spaceName = space?.name;
+  useEffect(() => {
+    if (!native || !spaceName) return;
+    const token = titleToken.current;
+    setTopBarTitle(token, { title: spaceName });
+    return () => setTopBarTitle(token, null);
+  }, [native, spaceName]);
   if (q.isError) {
     return (
       <div className="p-8">
@@ -710,9 +730,11 @@ export function SpaceScreen({ id }: { id: string }) {
   return (
     <div className="h-app overflow-y-auto">
       {/* No bar of its own, but back and forward still lead the page, where a bar's would be. */}
-      <div className="flex h-[44px] items-center pl-3">
-        <HistoryNav />
-      </div>
+      {!native && (
+        <div className="flex h-[44px] items-center pl-3">
+          <HistoryNav />
+        </div>
+      )}
       <div className="mx-auto flex w-full max-w-[1048px] flex-col pb-[48px] pl-[48px] pr-[40px] pt-[4px] max-md:px-[20px]">
         <header className="flex items-start gap-[12px]">
           {editing ? (
@@ -727,8 +749,8 @@ export function SpaceScreen({ id }: { id: string }) {
                 </h1>
                 <p className="truncate text-13 text-fg-tertiary">{spaceSubtitle(space)}</p>
               </div>
-              <Button variant="secondary" onClick={() => setEditing(true)}>Settings</Button>
-              <DropdownMenu.Root>
+              {!inToolbar && <Button variant="secondary" onClick={() => setEditing(true)}>Settings</Button>}
+              {!inToolbar && <DropdownMenu.Root>
                 <DropdownMenu.Trigger asChild>
                   <button type="button" aria-label="More for this space" className="grid size-[30px] place-items-center rounded-md border border-btn-secondary-border bg-btn-secondary text-fg hover:bg-hover">
                     <Icon name="dots" size={14} />
@@ -744,7 +766,7 @@ export function SpaceScreen({ id }: { id: string }) {
                     </DropdownMenu.Item>
                   </DropdownMenu.Content>
                 </DropdownMenu.Portal>
-              </DropdownMenu.Root>
+              </DropdownMenu.Root>}
             </>
           )}
         </header>

@@ -422,6 +422,11 @@ function Canvas({ workflow, chatId, onChatId, personaId, onPersonaId, onApplied,
       )}
       <TopBar
         crumbs={[{ label: "Workflows", href: "/workflows" }, { label: workflow.name }]}
+        nativeTitle={{
+          title: workflow.name,
+          subtitle: `${workflow.published_version > 0 ? `v${workflow.published_version}${workflow.unpublished_changes ? " · edited" : ""}` : "Draft"} · ${save.isPending ? "Saving…" : "Saved"}`,
+        }}
+        nativeActions={[{ id: "workflow.publish", label: "Publish", kind: "button", icon: "upload", showsLabel: true, accent: true, disabled: issues.length > 0 || publish.isPending || !!preview || !workflow.unpublished_changes, run: flushAndPublish }]}
         actions={
           <>
             <span className="font-mono text-12 text-fg-tertiary">{workflow.published_version > 0 ? `v${workflow.published_version}${workflow.unpublished_changes ? " · edited" : ""}` : "Draft"}</span>

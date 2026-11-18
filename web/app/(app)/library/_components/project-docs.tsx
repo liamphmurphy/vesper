@@ -170,6 +170,10 @@ export function ProjectDocs() {
       )}
       <TopBar
         crumbs={[{ label: "Library", href: "/library" }, { label: "From spaces" }]}
+        nativeActions={[
+          { id: "docs.mockup", label: "New mockup", kind: "button", icon: "plus", showsLabel: true, run: () => setMockup(true) },
+          { id: "docs.upload", label: "Upload", kind: "button", icon: "upload", showsLabel: true, accent: true, run: () => setUpload({ files: [] }) },
+        ]}
         actions={
           <>
             <Button variant="outline" icon="plus" onClick={() => setMockup(true)}>

@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { Dialog, DropdownMenu } from "radix-ui";
 import { useRouter, useSearchParams } from "next/navigation";
+import { isNativeShell } from "@/lib/native-shell/bridge";
 import { buildKeepsakesNavModel, LIBRARY_SOURCE_PICKER, librarySourceHref, type LibrarySourceValue } from "@/lib/native-shell/models/library";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { libraryItemUrl } from "@/lib/api/client";
 import {
   useClearLibraryReference,
@@ -481,8 +482,9 @@ function ItemTile({ item, openItem }: { item: LibraryItem; openItem?: string | n
 }
 
 /** Adds a file of the person's own: an image (e.g. a photo to use as their reference), audio, or any other file. */
-function UploadButton() {
-  const input = useRef<HTMLInputElement>(null);
+/** Picking and uploading a file; the input is drawn once by `UploadInput`, the buttons only call `pick`. */
+function useLibraryUpload() {
+  const [input, setInput] = useState<HTMLInputElement | null>(null);
   const upload = useUploadLibraryItem();
   const [error, setError] = useState<string | null>(null);
   function take(files: FileList | null) {
@@ -493,21 +495,30 @@ function UploadButton() {
     setError(null);
     upload.mutate(f, { onError: (e) => setError(e.message || "Couldn’t upload the file.") });
   }
+  return { setInput, take, pending: upload.isPending, error, pick: () => input?.click() };
+}
+
+function UploadInput({ up: { setInput, take } }: { up: ReturnType<typeof useLibraryUpload> }) {
+  return (
+    <input
+      ref={setInput}
+      type="file"
+      hidden
+      aria-label="File to upload"
+      onChange={(e) => {
+        take(e.target.files);
+        e.target.value = "";
+      }}
+    />
+  );
+}
+
+function UploadButton({ up }: { up: ReturnType<typeof useLibraryUpload> }) {
   return (
     <div className="flex shrink-0 items-center gap-2">
-      {error && <span className="text-12 text-pill-blocked-fg">{error}</span>}
-      <input
-        ref={input}
-        type="file"
-        hidden
-        aria-label="File to upload"
-        onChange={(e) => {
-          take(e.target.files);
-          e.target.value = "";
-        }}
-      />
-      <Button variant="secondary" icon="upload" disabled={upload.isPending} onClick={() => input.current?.click()}>
-        {upload.isPending ? "Uploading…" : "Upload"}
+      {up.error && <span className="text-12 text-pill-blocked-fg">{up.error}</span>}
+      <Button variant="secondary" icon="upload" disabled={up.pending} onClick={up.pick}>
+        {up.pending ? "Uploading…" : "Upload"}
       </Button>
     </div>
   );
@@ -597,6 +608,7 @@ const KEEPSAKE_TABS = [
 function Keepsakes() {
   // A chat's "Open in Library" lands on the item: ?tab=videos&item=<id>.
   const compact = useCompact();
+  const up = useLibraryUpload();
   const params = useSearchParams();
   const router = useRouter();
   const [tab, setTab] = useState(() => params.get("tab") ?? "images");
@@ -646,10 +658,13 @@ function Keepsakes() {
           <PageHeader
             title="Library"
             description="Private keepsakes from your chats: generated media, saved files, exports, diagrams, references, and links."
-            actions={<UploadButton />}
+            actions={<UploadButton up={up} />}
+            nativeActions={[{ id: "library.upload", label: up.pending ? "Uploading…" : "Upload", kind: "button", icon: "upload", showsLabel: true, disabled: up.pending, run: up.pick }]}
           >
             {compact && <LibrarySourceSwitch source="yours" />}
           </PageHeader>
+          <UploadInput up={up} />
+          {up.error && isNativeShell() && <p role="alert" className="text-12 text-pill-blocked-fg">{up.error}</p>}
           {compact && <Tabs label="Library" value={tab} onChange={setTab} items={[...KEEPSAKE_TABS]} />}
           {tab === "fridge" ? <Fridge /> : tab === "links" ? <Links /> : <Items kind={KINDS[tab] ?? "image"} openItem={openItem} />}
         </div>

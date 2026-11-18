@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { useEffect, useSyncExternalStore, type ReactNode } from "react";
 import { useBootstrap, useRunnerStatus, useSecrets, useUpdateRunnerSettings } from "@/lib/api/hooks";
 import type { Schemas } from "@/lib/api/client";
@@ -35,6 +37,8 @@ const noSubscribe = () => () => {};
  * leaves the others usable, and each says what breaks when something is missing.
  */
 export function SettingsScreen() {
+  const router = useRouter();
+  const native = useIsNativeShell();
   const compact = useCompact();
   const secrets = useSecrets();
   const runner = useRunnerStatus();
@@ -108,11 +112,20 @@ export function SettingsScreen() {
       {!compact && (
         <NavigatorPortal native={{ model: buildSettingsNavModel(nav), onCommand: jumpToSection }}>{sectionNav}</NavigatorPortal>
       )}
-      <PageHeader title="Settings" description="Everything runs depend on. Each section says what breaks when something is missing.">
-        <span className="flex gap-4 text-14">
-          <Link href="/chat?new&setup" className="text-accent hover:underline">Run setup again →</Link>
-          <Link href="/setup" className="text-accent hover:underline">Open setup checklist →</Link>
-        </span>
+      <PageHeader
+        title="Settings"
+        description="Everything runs depend on. Each section says what breaks when something is missing."
+        nativeActions={[
+          { id: "settings.setup", label: "Run setup again", kind: "button", showsLabel: true, run: () => router.push("/chat?new&setup") },
+          { id: "settings.checklist", label: "Open setup checklist", kind: "button", showsLabel: true, run: () => router.push("/setup") },
+        ]}
+      >
+        {!native && (
+          <span className="flex gap-4 text-14">
+            <Link href="/chat?new&setup" className="text-accent hover:underline">Run setup again →</Link>
+            <Link href="/setup" className="text-accent hover:underline">Open setup checklist →</Link>
+          </span>
+        )}
       </PageHeader>
       <SetupChecklist className="max-w-[1020px]" />
       {compact && sectionNav}

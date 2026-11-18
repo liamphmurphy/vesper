@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useClaimCompanion } from "@/components/shell/companion";
 import { Button } from "@/components/ui/button";
 import { confirmAction } from "@/components/ui/confirm";
@@ -10,6 +10,9 @@ import { Icon } from "@/components/ui/icon";
 import { EmptyState, Skeleton, TextArea, TextInput } from "@/components/ui/primitives";
 import { toast } from "@/components/ui/toast";
 import { cx } from "@/lib/cx";
+import { useIsNativeShell } from "@/lib/native-shell/hooks";
+import { setTopBarTitle } from "@/lib/native-shell/title";
+import { useNativeActions } from "@/lib/native-shell/use-native-actions";
 import {
   useCreateHttpFolder,
   useCreateHttpRequest,
@@ -471,10 +474,59 @@ export function HttpWorkbench() {
     );
   };
 
+  const deleteCurrentWorkspace = async () => {
+    if (!bundle) return;
+    const ok = await confirmAction({
+      title: `Delete workspace "${bundle.workspace.name}"?`,
+      body: "This deletes all folders, requests, environments, and execution history in this workspace.",
+      confirmLabel: "Delete",
+    });
+    if (ok) void deleteWorkspace.mutateAsync(bundle.workspace.id).then(() => setSelectedWsId(null));
+  };
+  // In the Mac app the utility bar's controls are the window's toolbar items and the bar is not drawn.
+  const inToolbar = useNativeActions([
+    ...(workspaces.length > 0
+      ? [{
+          id: "http.workspace", label: workspaces.find((w) => w.id === effectiveWsId)?.name ?? "Workspace", kind: "menu" as const, icon: "server", showsLabel: true, placement: "leading" as const,
+          menu: workspaces.map((w) => ({
+            id: `ws:${w.id}`, label: w.name, checked: w.id === effectiveWsId,
+            run: () => { setSelectedWsId(w.id); setSelectedReqId(null); setSelectedFolderId(null); },
+          })),
+        }]
+      : []),
+    { id: "http.newWorkspace", label: "New workspace", kind: "button" as const, icon: "plus", showsLabel: true, placement: "leading" as const, run: () => setNewWsOpen((v) => !v) },
+    ...(bundle
+      ? [
+          { id: "http.deleteWorkspace", label: "Delete workspace", kind: "button" as const, icon: "trash", run: () => void deleteCurrentWorkspace() },
+          {
+            id: "http.env", label: activeEnv ? activeEnv.name : "No environment", kind: "menu" as const, icon: "sliders", showsLabel: true,
+            menu: [
+              { id: "env:", label: "No environment", checked: !bundle.workspace.active_environment_id, run: () => setActiveEnv.mutate({ workspaceId: bundle.workspace.id, environmentId: null }) },
+              ...bundle.environments.map((env) => ({
+                id: `env:${env.id}`, label: env.name, checked: env.id === bundle.workspace.active_environment_id,
+                run: () => setActiveEnv.mutate({ workspaceId: bundle.workspace.id, environmentId: env.id }),
+              })),
+            ],
+          },
+          { id: "http.import", label: "Import", kind: "button" as const, icon: "upload", showsLabel: true, run: () => setShowImport({ folder: null, tab: "bru" }) },
+          { id: "http.authEnv", label: "Auth & Env", kind: "toggle" as const, icon: "sliders", showsLabel: true, on: viewMode === "auth-env", run: () => setViewMode((m) => (m === "auth-env" ? "requests" : "auth-env")) },
+        ]
+      : []),
+  ]);
+  const titleToken = useRef(Symbol("http-title"));
+  const native = useIsNativeShell();
+  const httpTitle = bundle?.workspace.name;
+  useEffect(() => {
+    if (!native) return;
+    const token = titleToken.current;
+    setTopBarTitle(token, { title: "HTTP client", ...(httpTitle ? { subtitle: httpTitle } : {}) });
+    return () => setTopBarTitle(token, null);
+  }, [native, httpTitle]);
+
   return (
     <div className="flex h-dvh min-h-0 flex-1 flex-col bg-bg text-fg">
       {/* Top utility bar */}
-      <header className="flex h-[48px] flex-none items-center justify-between gap-3 border-b border-border-subtle bg-sidebar px-3">
+      <header className={cx(inToolbar ? "hidden" : "flex", "h-[48px] flex-none items-center justify-between gap-3 border-b border-border-subtle bg-sidebar px-3")}>
         <div className="flex min-w-0 items-center gap-2">
           <Button
             variant="outline"

@@ -235,6 +235,8 @@ function DesktopInbox() {
   return (
     <>
       <TopBar
+        nativeTitle={{ title: "Inbox", subtitle: openCount ? `${openCount} waiting on you` : "Nothing waiting on you" }}
+        nativeActions={[{ id: "inbox.shortcuts", label: "Shortcuts", kind: "button", icon: "bolt", showsLabel: true, run: openShortcuts }]}
         crumbs={[
           {
             label: (

@@ -56,6 +56,7 @@ export function AppsHome() {
     <>
       <TopBar
         crumbs={[{ label: "Custom Apps" }]}
+        nativeActions={[{ id: "apps.new", label: "New app", kind: "button", icon: "plus", showsLabel: true, accent: true, run: () => openNew("blank") }]}
         actions={
           <Button variant="primary" icon="plus" onClick={() => openNew("blank")}>
             New app

@@ -141,6 +141,7 @@ export function ScheduledScreen() {
               title="Scheduled tasks"
               description="Prompts and workflows that run on their own. Results and approvals show up in Needs you."
               actions={<Button variant="primary" icon="plus" onClick={() => setOpen("new")}>New task</Button>}
+              nativeActions={[{ id: "scheduled.new", label: "New task", kind: "button", icon: "plus", showsLabel: true, accent: true, run: () => setOpen("new") }]}
             />
             {compact && (
               <Segmented label="Show tasks" value={filter} onChange={setFilter} small options={[{ value: "all", label: `All ${all.length}` }, { value: "active", label: `Active ${count(true)}` }, { value: "paused", label: `Paused ${count(false)}` }]} />

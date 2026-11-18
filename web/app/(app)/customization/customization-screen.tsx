@@ -1,7 +1,9 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { isNativeShell } from "@/lib/native-shell/bridge";
+import { toast } from "@/lib/toast";
 import { useBootstrap, useMemories } from "@/lib/api/hooks";
 import { usePersonas, type Persona } from "@/lib/api/persona-hooks";
 import { MAX_PERSONAS, sortPersonas } from "@/lib/persona-ui";
@@ -18,7 +20,7 @@ import { Icon } from "@/components/ui/icon";
 import { Banner, Skeleton } from "@/components/ui/primitives";
 import { PersonaAvatar } from "../chat/_components/persona";
 import { PersonaEditor } from "../chat/_components/persona-editor";
-import { ExportMenu, ImportView, MemorySection } from "./memory-section";
+import { ExportMenu, ImportView, MemorySection, useMemoryExport } from "./memory-section";
 import { DefaultBadge, DeleteDialog, PersonaProfile } from "./persona-profile";
 import { ProfileSection } from "./profile-section";
 import { ApiSecretsSection } from "./api-secrets-section";
@@ -87,6 +89,11 @@ export function CustomizationScreen() {
   const [editing, setEditing] = useState<Persona | "new" | null>(null);
   const [deleting, setDeleting] = useState<Persona | null>(null);
   const [importing, setImporting] = useState(false);
+  const memoryExport = useMemoryExport();
+  const exportError = memoryExport.err;
+  useEffect(() => {
+    if (exportError && isNativeShell()) toast({ title: exportError, tone: "error" });
+  }, [exportError]);
   const [editingProfile, setEditingProfile] = useState(false);
   const total = count.data?.total;
   const pick = (v: string) => {
@@ -193,6 +200,14 @@ export function CustomizationScreen() {
       )}
       <TopBar
         crumbs={[{ label: "Customization" }]}
+        nativeTitle={{ title: "Customization", subtitle: total !== undefined ? `${total} entries` : undefined }}
+        nativeActions={[
+          { id: "custom.import", label: "Import", kind: "toggle", icon: "upload", showsLabel: true, on: importing, run: () => setImporting((v) => !v) },
+          { id: "custom.export", label: "Export", kind: "menu", icon: "download", showsLabel: true, disabled: memoryExport.busy, menu: [
+            { id: "export.json", label: "JSON (all entries)", run: () => void memoryExport.run("json") },
+            { id: "export.md", label: "Markdown (all entries)", run: () => void memoryExport.run("md") },
+          ] },
+        ]}
         actions={
           <>
             {total !== undefined && <span className="text-12 text-fg-tertiary">{total} entries</span>}

@@ -4,7 +4,7 @@ import "@xyflow/react/dist/style.css";
 
 import { Background, ReactFlow, ReactFlowProvider } from "@xyflow/react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 import { useStopWorkflowRun, useWorkflowRun, type WorkflowRun } from "@/lib/api/workflow-hooks";
 import { Content, TopBar } from "@/components/shell/topbar";
@@ -12,11 +12,12 @@ import { Button } from "@/components/ui/button";
 import { Banner, Skeleton } from "@/components/ui/primitives";
 import { Markdown } from "@/components/domain/markdown";
 import { RunStatePill, WorkflowGatePanel, WorkflowImages } from "@/components/domain/workflow-cards";
-import { imagesByAttempt, runActive, type Graph } from "@/lib/workflows";
+import { RUN_STATE_LABEL, imagesByAttempt, runActive, type Graph } from "@/lib/workflows";
 import { FLOW_STYLE, NODE_TYPES, toFlowEdges, toFlowNodes, type StepStatus } from "./flow";
 
 function RunView({ run }: { run: WorkflowRun }) {
   const stop = useStopWorkflowRun(run.id);
+  const router = useRouter();
   const [selected, setSelected] = useState<string | null>(null);
   const graph = run.graph as Graph;
   const status = (id: string) => run.steps.find((s) => s.node_id === id)?.state as StepStatus;
@@ -30,6 +31,11 @@ function RunView({ run }: { run: WorkflowRun }) {
     <>
       <TopBar
         crumbs={[{ label: "Workflows", href: "/workflows" }, { label: run.name }]}
+        nativeTitle={{ title: run.name, subtitle: `v${run.version} · ${RUN_STATE_LABEL[run.state] ?? run.state}` }}
+        nativeActions={[
+          ...(runActive(run.state) ? [{ id: "wfrun.stop", label: "Stop", kind: "button" as const, icon: "pause", showsLabel: true, disabled: stop.isPending, run: () => stop.mutate() }] : []),
+          { id: "wfrun.chat", label: "Open chat", kind: "button" as const, icon: "msg", showsLabel: true, run: () => router.push(`/chat/${run.chat_id}`) },
+        ]}
         actions={
           <>
             <span className="font-mono text-12 text-fg-tertiary">v{run.version}</span>

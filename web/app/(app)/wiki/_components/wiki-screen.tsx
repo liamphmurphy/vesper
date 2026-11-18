@@ -27,7 +27,8 @@ import { LinkEditor } from "@/components/domain/link-editor";
 import { LocalGraph } from "@/components/domain/local-graph";
 import { Markdown } from "@/components/domain/markdown";
 import { TargetMark } from "@/components/domain/wikilink";
-import { StartChatButton } from "@/components/domain/start-chat";
+import { StartChatButton, useStartChat } from "@/components/domain/start-chat";
+import type { NativeAction } from "@/lib/native-shell/actions";
 import { TopBar, type Crumb } from "@/components/shell/topbar";
 import { pageHeader, parseCompare } from "@/lib/wiki";
 import { ADRIndex } from "./adr-index";
@@ -53,12 +54,14 @@ function WikiLayout({
   index,
   crumbs,
   actions,
+  nativeActions,
   children,
 }: {
   current: string;
   index?: WikiIndex;
   crumbs: Crumb[];
   actions?: ReactNode;
+  nativeActions?: NativeAction[];
   children: ReactNode;
 }) {
   const tree = useWikiTree();
@@ -67,7 +70,7 @@ function WikiLayout({
   const wikiNative = useWikiNative(tree.data?.pages, current, index);
   return (
     <>
-      <TopBar crumbs={crumbs} actions={actions} />
+      <TopBar crumbs={crumbs} actions={actions} nativeActions={nativeActions} />
       <div className="flex flex-1 flex-wrap">
         {/* The tree is the left column's list, not a second sidebar; phones have no column, so it sits in the page. */}
         {compact ? (
@@ -215,6 +218,7 @@ function WikiIndexView({ index }: { index: WikiIndex }) {
       current=""
       index={index}
       crumbs={[{ label: "Wiki", href: "/wiki" }, { label: index === "patterns" ? "Patterns" : "Architecture" }, { label }]}
+      nativeActions={[{ id: "wiki.new", label: "New page", kind: "button", icon: "plus", showsLabel: true, accent: true, run: () => setCreating(true) }]}
       actions={
         <Button variant="primary" icon="plus" onClick={() => setCreating(true)}>
           New page
@@ -229,6 +233,14 @@ function WikiIndexView({ index }: { index: WikiIndex }) {
   );
 }
 
+/** The Export vault link, followed from the window's toolbar. */
+function downloadVault() {
+  const a = document.createElement("a");
+  a.href = "/api/v1/wiki/export";
+  a.download = "";
+  a.click();
+}
+
 function WikiHome() {
   const tree = useWikiTree();
   const sugg = useWikiSuggestions();
@@ -240,6 +252,10 @@ function WikiHome() {
     <WikiLayout
       current=""
       crumbs={[{ label: "Wiki" }]}
+      nativeActions={[
+        { id: "wiki.export", label: "Export vault", kind: "button", icon: "download", showsLabel: true, run: downloadVault },
+        { id: "wiki.new", label: "New page", kind: "button", icon: "plus", showsLabel: true, accent: true, run: () => setCreating(true) },
+      ]}
       actions={
         <>
           <ButtonLink href="/api/v1/wiki/export" variant="outline" icon="download" prefetch={false}>
@@ -450,6 +466,7 @@ function PageView({ path }: { path: string }) {
 
   const missing = isError && error instanceof ApiError && error.status === 404;
   const compare = parseCompare(search.get("compare"));
+  const startChat = useStartChat({ attach: { kind: "page", id: page?.id ?? "" }, title: page?.title ?? "", project: page?.project?.key });
   const header = pageHeader(page?.body_md ?? "");
   const folder = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
 
@@ -457,6 +474,15 @@ function PageView({ path }: { path: string }) {
     <WikiLayout
       current={page?.path ?? path}
       crumbs={crumbsFor(page?.path ?? path)}
+      nativeActions={[
+        { id: "wiki.new", label: "New page", kind: "button", icon: "plus", showsLabel: true, run: () => setCreating(true) },
+        ...(page && !editing
+          ? [
+              { id: "wiki.chat", label: "Start chat", kind: "button" as const, icon: "msg", showsLabel: true, disabled: startChat.disabled, run: startChat.start },
+              { id: "wiki.edit", label: "Edit", kind: "button" as const, icon: "edit", showsLabel: true, accent: true, run: () => setEditing(true) },
+            ]
+          : []),
+      ]}
       actions={
         <>
           <Button variant="outline" icon="plus" onClick={() => setCreating(true)}>

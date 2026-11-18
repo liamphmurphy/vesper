@@ -958,6 +958,7 @@ function PlanRow({ plan, active }: { plan: Plan; active: boolean }) {
 }
 
 export function PlansScreen() {
+  const router = useRouter();
   const search = useSearchParams();
   const id = search.get("id");
   const bootstrap = useBootstrap();
@@ -985,6 +986,7 @@ export function PlansScreen() {
           id ? bootstrap.data?.projects.find((p) => p.key === detail.data?.project) : scoped,
           "Plans",
         )}
+        nativeActions={[{ id: "plans.new", label: "New plan", kind: "button", icon: "plus", showsLabel: true, run: () => router.push("/plans") }]}
         actions={
           <ButtonLink href="/plans" variant="outline">
             New plan

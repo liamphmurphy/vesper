@@ -226,6 +226,11 @@ export function AgentScreen({ handle }: { handle: string }) {
     <>
       <TopBar
         crumbs={[...AGENTS_CRUMBS, detail ? { label: detail.agent.name, href: personaHref(detail.agent.id) } : { label: `@${handle}` }, { label: "Work" }]}
+        nativeTitle={{ title: detail ? `${detail.agent.name} · Work` : "Work", subtitle: dirty ? `${changes} unsaved change${changes === 1 ? "" : "s"}` : undefined }}
+        nativeActions={detail ? [
+          ...(dirty ? [{ id: "agent.discard", label: "Discard", kind: "button" as const, showsLabel: true, run: () => setDraft(null) }] : []),
+          { id: "agent.review", label: "Review changes", kind: "button" as const, accent: true, showsLabel: true, disabled: !dirty, run: review },
+        ] : undefined}
         actions={
           detail && (
             <>
