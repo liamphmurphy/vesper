@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -684,7 +685,7 @@ func (b *MicroVM) Start(ctx context.Context, runID string, spec ExecSpec) (Proce
 		path.Join(homePath, claudeAuthPath),
 		path.Join(homePath, codexAuthPath),
 		path.Join(homePath, ".config/antigravity"),
-		path.Join(homePath, ".gemini"),
+		agyHome, // all but its conversation state: agySweepPaths
 		path.Join(homePath, ".ssh"),
 	)
 
@@ -899,9 +900,62 @@ func (b *MicroVM) releaseCredentials(rvm *runVM, held, sweep []string) {
 	// A fresh budget: the caller's may be spent on refresh saves or the lock.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := vm.Client().UnlinkPaths(ctx, unlink, true); err != nil {
+	client := vm.Client()
+	if i := slices.Index(unlink, agyHome); i >= 0 {
+		if entries, err := client.WalkDir(ctx, agyHome, 2); err != nil {
+			b.logger().Warn("microvm: list agy home; removing all of it", "run", rvm.runID, "err", err)
+		} else {
+			unlink = slices.Concat(unlink[:i], agySweepPaths(entries), unlink[i+1:])
+		}
+	}
+	if err := client.UnlinkPaths(ctx, unlink, true); err != nil {
 		b.logger().Warn("microvm: remove credentials", "run", rvm.runID, "err", err)
 	}
+}
+
+// agyHome is Antigravity's home, which holds its login and its conversations.
+const agyHome = homePath + "/.gemini"
+
+// agyConversationState are the entries under agyHome that `agy --conversation
+// ID` resumes a conversation from (agy 1.5.9). The run's home persists between
+// turns, as Claude Code's ~/.claude/projects and Codex's ~/.codex/sessions do.
+var agyConversationState = map[string]bool{
+	"antigravity-cli/conversations":                 true,
+	"antigravity-cli/brain":                         true,
+	"antigravity-cli/implicit":                      true,
+	"antigravity-cli/annotations":                   true,
+	"antigravity-cli/conversation_summaries.db":     true,
+	"antigravity-cli/conversation_summaries.db-wal": true,
+	"antigravity-cli/conversation_summaries.db-shm": true,
+}
+
+// agySweepPaths narrows the sweep of agyHome to everything but its
+// conversation state: without it, the next turn's --conversation silently
+// starts a fresh conversation. Removing every other entry, rather than a list
+// of known login files, keeps a login file Vesper doesn't know of from
+// outliving the turn.
+// entries is agyHome walked two deep; with no state among them (none listed,
+// or agyHome isn't a directory) the whole of agyHome goes, as before.
+func agySweepPaths(entries []guestproto.DirEntry) []string {
+	var sweep []string
+	kept := false
+	for _, e := range entries {
+		top, rest, nested := strings.Cut(e.Rel, "/")
+		switch {
+		case agyConversationState[e.Rel]:
+			kept = true
+		case !nested && top == "antigravity-cli" && e.IsDir:
+			// Its entries are swept one by one below.
+		case !nested:
+			sweep = append(sweep, path.Join(agyHome, e.Rel))
+		case top == "antigravity-cli" && !strings.Contains(rest, "/"):
+			sweep = append(sweep, path.Join(agyHome, e.Rel))
+		}
+	}
+	if !kept {
+		return []string{agyHome}
+	}
+	return sweep
 }
 
 // releaseHolds drops one hold per path in held and returns the sweep paths

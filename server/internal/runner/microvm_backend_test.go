@@ -3,12 +3,15 @@ package runner
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -299,6 +302,169 @@ func TestVZCredentialSweepSparesRunningTurn(t *testing.T) {
 	_, _ = io.Copy(io.Discard, after.Stdout())
 	if code, err := after.Wait(); err != nil || code != 0 {
 		t.Fatalf("Claude login left in /home/node after its last holder exited: code=%d err=%v", code, err)
+	}
+}
+
+// An agy turn's conversation outlives the turn, so the next one can resume it
+// with --conversation, while its login and the MCP token in its config don't.
+func TestVZAgySweepKeepsConversation(t *testing.T) {
+	kernel, rootfs := requireRunnerVZImages(t)
+	b := &MicroVM{
+		Driver:             microvm.NewVZDriver(),
+		StateDir:           t.TempDir(),
+		KernelPath:         kernel,
+		RootfsPath:         rootfs,
+		CPUs:               2,
+		MemoryMB:           512,
+		PidsLimit:          256,
+		TestWorkspaceBytes: 64 << 20,
+		TestHomeBytes:      32 << 20,
+		TestDockerBytes:    32 << 20,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	defer func() { _ = b.Cleanup(context.Background()) }()
+	const runID = "agy-sweep"
+	if err := b.EnsureWorkspace(ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+	run := func(name string, env map[string]string, script string) {
+		t.Helper()
+		p, err := b.Start(ctx, runID, ExecSpec{Name: name + "-" + runID, Argv: []string{"sh", "-c", "exec 2>&1; " + script}, Env: env})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, _ := io.ReadAll(p.Stdout())
+		if code, err := p.Wait(); err != nil || code != 0 {
+			t.Fatalf("%s: code=%d err=%v out=%q", name, code, err, out)
+		}
+	}
+	const cli = "/home/node/.gemini/antigravity-cli"
+	run("lazyagents-turn", map[string]string{AntigravityAuthEnv: `{"v":1,"files":{".gemini/antigravity-cli/oauth_creds.json":"login"}}`},
+		`test -s `+cli+`/oauth_creds.json && mkdir -p `+cli+`/conversations `+cli+`/brain/c1 /home/node/.gemini/config && `+
+			`echo turn1 > `+cli+`/conversations/c1.pb && echo plan > `+cli+`/brain/c1/task.md && echo db > `+cli+`/conversation_summaries.db && `+
+			`echo token > /home/node/.gemini/config/mcp_config.json && echo unknown > `+cli+`/new_login.bin`)
+	run("after", nil, `grep -q turn1 `+cli+`/conversations/c1.pb && test -f `+cli+`/brain/c1/task.md && test -f `+cli+`/conversation_summaries.db && `+
+		`test ! -e `+cli+`/oauth_creds.json && test ! -e `+cli+`/new_login.bin && test ! -e /home/node/.gemini/config`)
+}
+
+// After a process exits, the guest is asked to remove agy's login and config
+// but not its conversations; if it can't list them, all of agy's home goes.
+func TestMicroVMSweepKeepsAgyConversation(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		listFails  bool
+		mustRemove []string
+		mustKeep   []string
+	}{
+		{name: "listed",
+			mustRemove: []string{agyHome + "/config", agyHome + "/antigravity-cli/oauth_creds.bin", homePath + "/" + claudeAuthPath},
+			mustKeep:   []string{agyHome, agyHome + "/antigravity-cli/conversations", agyHome + "/antigravity-cli/brain"}},
+		{name: "listing fails", listFails: true, mustRemove: []string{agyHome}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var removed []string
+			drv := &microvm.MemDriver{Handler: func(_ context.Context, conn net.Conn) {
+				f, err := guestproto.ReadFrame(conn)
+				if err != nil {
+					return
+				}
+				var req guestproto.Request
+				_ = json.Unmarshal(f.Data, &req)
+				resp := guestproto.Response{ID: f.ID}
+				switch req.Op {
+				case guestproto.OpWalkDir:
+					var in guestproto.WalkDirReq
+					_ = json.Unmarshal(req.V, &in)
+					if tc.listFails || in.Root != agyHome {
+						resp.Err = "walk failed"
+						break
+					}
+					resp.V, _ = json.Marshal(guestproto.WalkDirResp{Entries: []guestproto.DirEntry{
+						{Rel: "config", IsDir: true}, {Rel: "config/mcp_config.json"},
+						{Rel: "antigravity-cli", IsDir: true}, {Rel: "antigravity-cli/oauth_creds.bin"},
+						{Rel: "antigravity-cli/conversations", IsDir: true}, {Rel: "antigravity-cli/brain", IsDir: true},
+					}})
+				case guestproto.OpUnlinkPaths:
+					var in guestproto.UnlinkPathsReq
+					_ = json.Unmarshal(req.V, &in)
+					mu.Lock()
+					removed = append(removed, in.Paths...)
+					mu.Unlock()
+				}
+				raw, _ := json.Marshal(resp)
+				_ = guestproto.WriteFrame(conn, guestproto.Frame{Type: guestproto.FrameResp, ID: f.ID, Data: raw})
+				if req.Op == guestproto.OpExecStart {
+					ex, _ := json.Marshal(guestproto.ExecExit{Code: 0})
+					_ = guestproto.WriteFrame(conn, guestproto.Frame{Type: guestproto.FrameExecExit, ID: f.ID, Data: ex})
+				}
+			}}
+			b := &MicroVM{Driver: drv, StateDir: t.TempDir(), KernelPath: "/k", RootfsPath: "/r", MemoryMB: 512,
+				TestWorkspaceBytes: 2 << 20, TestHomeBytes: 2 << 20, TestDockerBytes: 2 << 20}
+			t.Cleanup(func() { _ = b.Close() })
+
+			runTrue(t, b, "agy-turn")
+
+			mu.Lock()
+			defer mu.Unlock()
+			for _, p := range tc.mustRemove {
+				if !slices.Contains(removed, p) {
+					t.Errorf("%s not removed; removed %v", p, removed)
+				}
+			}
+			for _, p := range tc.mustKeep {
+				if slices.Contains(removed, p) {
+					t.Errorf("%s removed; removed %v", p, removed)
+				}
+			}
+		})
+	}
+}
+
+func TestAgySweepPaths(t *testing.T) {
+	// ~/.gemini after an agy 1.5.9 turn, walked two deep.
+	home := []guestproto.DirEntry{
+		{Rel: "config", IsDir: true},
+		{Rel: "config/config.json"},
+		{Rel: "config/mcp_config.json"},
+		{Rel: "config/hooks.json"},
+		{Rel: "config/projects", IsDir: true},
+		{Rel: "oauth_creds.json"},
+		{Rel: "antigravity-cli", IsDir: true},
+		{Rel: "antigravity-cli/oauth_creds.bin"},
+		{Rel: "antigravity-cli/settings.json"},
+		{Rel: "antigravity-cli/jetski_state.pbtxt"},
+		{Rel: "antigravity-cli/builtin", IsDir: true},
+		{Rel: "antigravity-cli/conversations", IsDir: true},
+		{Rel: "antigravity-cli/brain", IsDir: true},
+		{Rel: "antigravity-cli/implicit", IsDir: true},
+		{Rel: "antigravity-cli/conversation_summaries.db"},
+		{Rel: "antigravity-cli/conversation_summaries.db-wal"},
+	}
+	want := []string{
+		agyHome + "/config",
+		agyHome + "/oauth_creds.json",
+		agyHome + "/antigravity-cli/oauth_creds.bin",
+		agyHome + "/antigravity-cli/settings.json",
+		agyHome + "/antigravity-cli/jetski_state.pbtxt",
+		agyHome + "/antigravity-cli/builtin",
+	}
+	if got := agySweepPaths(home); !slices.Equal(got, want) {
+		t.Fatalf("sweep = %v\nwant    %v", got, want)
+	}
+
+	// Nothing to keep (no conversation yet, no listing, or ~/.gemini isn't a
+	// directory, which a walk reports as no entries): all of it goes.
+	for _, entries := range [][]guestproto.DirEntry{
+		nil,
+		{{Rel: "config", IsDir: true}, {Rel: "config/mcp_config.json"}},
+		// A link where the state would be isn't walked into.
+		{{Rel: "antigravity-cli"}},
+	} {
+		if got := agySweepPaths(entries); !slices.Equal(got, []string{agyHome}) {
+			t.Fatalf("sweep of %v = %v, want all of %s", entries, got, agyHome)
+		}
 	}
 }
 
