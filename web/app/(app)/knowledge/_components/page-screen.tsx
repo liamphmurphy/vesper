@@ -29,6 +29,11 @@ import { ReviewBar, ReviewList, undecided } from "./page-review";
 import { QueryTable } from "./query-table";
 import { useKnowledgeTab } from "./shell";
 import { useKnowledgeChat } from "./chat-context";
+import { useNativeTitle } from "../../tickets/_components/native-title";
+import { useNativeActions } from "@/lib/native-shell/use-native-actions";
+import { knowledgePageActions } from "@/lib/native-shell/models/knowledge-page";
+import { navAvatar, pageOrigin } from "@/lib/native-shell/models/common";
+import { useIsNativeShell } from "@/lib/native-shell/hooks";
 
 const SAVE_LABEL: Record<SaveState, string> = { saved: "Saved", unsaved: "Unsaved changes", saving: "Saving…", conflict: "Changed elsewhere", error: "Not saved" };
 const item = "flex cursor-default select-none items-start gap-2.5 rounded-md px-2 py-2 outline-none data-[highlighted]:bg-hover data-[disabled]:opacity-50";
@@ -173,12 +178,32 @@ function Loaded({ page: p }: { page: Page }) {
   const crumbs = (p.path ?? p.title).split("/");
   const body = p.body_md ?? "";
   const modeLabel = p.paused ? "Persona edits paused" : p.direct ? `${persona} edits directly` : `${persona} suggests changes`;
+  const look = personaLook(chat?.speaker ?? chat?.persona);
+  const copyLink = () => void navigator.clipboard?.writeText(`[[${p.path ?? p.title}]]`);
+
+  // In the Mac app the header row's controls are window toolbar items and the page is the window's
+  // (and so its tab's) title; the folder path moves into the page, above the title.
+  const native = useIsNativeShell();
+  useNativeTitle(p.title || "Untitled");
+  const inToolbar = useNativeActions(
+    native
+      ? knowledgePageActions({
+          audience: p.audience,
+          setAudience: (audience) => save.mutate({ audience }),
+          mode: { label: modeLabel, avatar: navAvatar(look.name, look.color, look.avatar_url, pageOrigin()), open: () => openPanel("history") },
+          copyLink,
+          exportMarkdown: () => exportMarkdown(p),
+          print: () => window.print(),
+          history: () => openPanel("history"),
+        })
+      : undefined,
+  );
 
   return (
     <div className="flex min-h-0 flex-1">
       {[...inlinePreviews.values()].map(({ dom, embed, key }) => createPortal(<EmbedPreview embed={embed} />, dom, key))}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-12 flex-none items-center gap-2 px-6">
+        {!inToolbar && <header className="flex h-12 flex-none items-center gap-2 px-6">
           <nav aria-label="Folder" className="flex min-w-0 flex-1 items-center gap-1.5 text-12 text-fg-tertiary">
             {crumbs.map((c, i) => (
               <span key={i} className="flex min-w-0 items-center gap-1.5">
@@ -189,22 +214,27 @@ function Loaded({ page: p }: { page: Page }) {
           </nav>
           <AudienceMenu audience={p.audience} onChange={(audience) => save.mutate({ audience })} />
           <button onClick={() => openPanel("history")} className="flex h-[26px] items-center gap-2 rounded-full border border-border bg-surface pl-1.5 pr-3 text-12 font-medium text-fg-secondary hover:border-border-strong">
-            <PersonaAvatar persona={personaLook(chat?.speaker ?? chat?.persona)} size={16} />
+            <PersonaAvatar persona={look} size={16} />
             {modeLabel}
           </button>
           <button
             aria-label="Copy link"
             title="Copy [[link]]"
-            onClick={() => void navigator.clipboard?.writeText(`[[${p.path ?? p.title}]]`)}
+            onClick={copyLink}
             className="grid size-7 place-items-center rounded-md text-fg-tertiary hover:bg-hover"
           >
             <Icon name="link" size={15} />
           </button>
           <MoreMenu page={p} onHistory={() => openPanel("history")} />
-        </header>
+        </header>}
         <ReviewBar page={p} persona={persona} direct={p.direct} />
         <div className="min-h-0 flex-1 overflow-y-auto">
           <article className="mx-auto w-full max-w-[720px] px-8 pb-24 pt-8">
+            {inToolbar && crumbs.length > 1 && (
+              <nav aria-label="Folder" className="mb-2 truncate text-12 text-fg-tertiary">
+                {crumbs.slice(0, -1).join("  /  ")}
+              </nav>
+            )}
             <TitleField key={p.title} title={p.title} onRename={rename} />
             <PropertiesBlock properties={p.properties} onChange={setProps} />
             {!!p.properties.query && (
@@ -446,11 +476,13 @@ function AudienceMenu({ audience, onChange }: { audience: Audience; onChange: (a
   );
 }
 
+/** The page as a Markdown file, its properties as front matter. */
+function exportMarkdown(page: Page) {
+  const front = Object.keys(page.properties).length ? `---\n${Object.entries(page.properties).map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join("\n")}\n---\n\n` : "";
+  downloadFile(page.title, "md", new Blob([front + (page.body_md ?? "")], { type: "text/markdown" }));
+}
+
 function MoreMenu({ page, onHistory }: { page: Page; onHistory: () => void }) {
-  const exportMd = () => {
-    const front = Object.keys(page.properties).length ? `---\n${Object.entries(page.properties).map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join("\n")}\n---\n\n` : "";
-    downloadFile(page.title, "md", new Blob([front + (page.body_md ?? "")], { type: "text/markdown" }));
-  };
   const row = "flex h-8 cursor-default select-none items-center gap-2.5 rounded-md px-2 outline-none data-[highlighted]:bg-hover";
   return (
     <DropdownMenu.Root>
@@ -459,7 +491,7 @@ function MoreMenu({ page, onHistory }: { page: Page; onHistory: () => void }) {
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content align="end" sideOffset={6} className={cx(floatPanel, "min-w-[200px]")}>
-          <DropdownMenu.Item className={row} onSelect={exportMd}>
+          <DropdownMenu.Item className={row} onSelect={() => exportMarkdown(page)}>
             <Icon name="download" size={14} /> Export Markdown
           </DropdownMenu.Item>
           <DropdownMenu.Item className={row} onSelect={() => window.print()}>

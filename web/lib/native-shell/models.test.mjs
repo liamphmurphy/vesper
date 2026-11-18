@@ -83,6 +83,23 @@ test("nav.activate pushes the item's href; other navigators' commands are ignore
   assert.deepEqual(pushed, ["/chat/c1"]);
 });
 
+test("nav.activate with newTab (⌘-click) opens the item's href in a new tab and leaves this one alone", () => {
+  const m = buildChatsNavModel({ chats: [chat()], viewedChatId: null, now: NOW });
+  const pushed = [];
+  const opened = [];
+  const handled = [];
+  const route = (cmd) => routeNavCommand(m, cmd, (h) => pushed.push(h), (c) => handled.push(c.type), (h) => opened.push(h));
+  assert.equal(route({ v: 1, type: "nav.activate", navigatorId: "chats", itemId: "c1", newTab: true }), true);
+  assert.deepEqual(opened, ["/chat/c1"]);
+  assert.deepEqual(pushed, [], "the current tab stays where it is");
+  assert.deepEqual(handled, [], "the screen doesn't treat it as selecting the row");
+  // A row with no href has nothing to open, so ⌘-click activates it as a click would.
+  const noHref = { ...m, sections: [{ id: "x", items: [{ id: "a", title: "A" }] }] };
+  routeNavCommand(noHref, { v: 1, type: "nav.activate", navigatorId: "chats", itemId: "a", newTab: true }, (h) => pushed.push(h), (c) => handled.push(c.type), (h) => opened.push(h));
+  assert.deepEqual(handled, ["nav.activate"]);
+  assert.deepEqual(opened, ["/chat/c1"]);
+});
+
 test("findNavItem looks in children", () => {
   const m = { id: "k", sections: [{ id: "s", items: [{ id: "a", title: "A", children: [{ id: "b", title: "B", href: "/b" }] }] }] };
   assert.equal(findNavItem(m, "b").href, "/b");

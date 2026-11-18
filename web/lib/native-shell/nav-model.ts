@@ -21,7 +21,8 @@ export function findNavItem(model: NavModel, id: string): NavItem | undefined {
 /**
  * Routes a command to the navigator it names: nav.* commands whose navigatorId is `model.id` go to
  * `onCommand`; nav.activate on an item with an href also navigates, whether or not there is an
- * `onCommand` (so rows with an href need no handler).
+ * `onCommand` (so rows with an href need no handler). A ⌘-clicked row with an href (newTab) opens in
+ * a new tab instead, and neither navigates nor reaches `onCommand`: this tab's selection stays put.
  * Returns whether the command was for this navigator.
  */
 export function routeNavCommand(
@@ -29,8 +30,16 @@ export function routeNavCommand(
   cmd: NativeCommand,
   push: (href: string) => void,
   onCommand?: (cmd: NativeCommand) => void,
+  openInNewTab?: (href: string) => void,
 ): boolean {
   if (!cmd.type.startsWith("nav.") || !("navigatorId" in cmd) || cmd.navigatorId !== model.id) return false;
+  if (cmd.type === "nav.activate" && cmd.newTab && openInNewTab) {
+    const href = findNavItem(model, cmd.itemId)?.href;
+    if (href) {
+      openInNewTab(href);
+      return true;
+    }
+  }
   onCommand?.(cmd);
   if (cmd.type === "nav.activate") {
     const href = findNavItem(model, cmd.itemId)?.href;

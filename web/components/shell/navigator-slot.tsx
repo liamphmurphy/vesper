@@ -10,6 +10,11 @@ import { routeNavCommand } from "@/lib/native-shell/nav-model";
 import { publisher } from "@/lib/native-shell/publisher";
 import type { NativeCommand, NavModel } from "@/lib/native-shell/protocol";
 
+/** A new tab in the Mac app: the shell opens a link with no target window as a tab beside this one. */
+export function openInNewTab(href: string) {
+  window.open(href, "_blank", "noopener");
+}
+
 /** A screen's list described as data for the native sidebar, with a handler for its commands. */
 export type NativeNavigator = { model: NavModel; onCommand?: (cmd: NativeCommand) => void };
 
@@ -42,7 +47,7 @@ export function NavigatorPortal({ children, native }: { children?: ReactNode; na
     const token = Symbol("navigator");
     const parsed = JSON.parse(json) as NavModel;
     publisher.setScreen(token, parsed);
-    const off = onCommand((cmd) => routeNavCommand(parsed, cmd, (href) => router.push(href), handler.current));
+    const off = onCommand((cmd) => routeNavCommand(parsed, cmd, (href) => router.push(href), handler.current, openInNewTab));
     return () => {
       off();
       publisher.setScreen(token, null);
