@@ -58,18 +58,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         Task {
             for window in app.windows where !(await window.confirmLeavingUnsavedChanges()) {
-                NSApp.reply(toApplicationShouldTerminate: false)
+                Self.replyToTerminate(false)
                 return
             }
             guard await app.system.confirmQuit() else {
-                NSApp.reply(toApplicationShouldTerminate: false)
+                Self.replyToTerminate(false)
                 return
             }
             app.saveSessionNow()
             if let stack = app.stack { await stack.stop() }
-            NSApp.reply(toApplicationShouldTerminate: true)
+            Self.replyToTerminate(true)
         }
         return .terminateLater
+    }
+
+    /// Answers `.terminateLater`, then wakes AppKit's wait for it. While the reply is pending AppKit
+    /// blocks in nextEventMatchingMask (NSModalPanelRunLoopMode) and only checks the reply when an
+    /// event arrives. ⌘Q is followed by its key-up, but Quit from the menu bar extra or the Dock
+    /// leaves no event behind, so the app sat there until the next click (a second Quit).
+    private static func replyToTerminate(_ shouldTerminate: Bool) {
+        NSApp.reply(toApplicationShouldTerminate: shouldTerminate)
+        if let wake = NSEvent.otherEvent(with: .applicationDefined, location: .zero, modifierFlags: [], timestamp: 0,
+                                         windowNumber: 0, context: nil, subtype: 0, data1: 0, data2: 0) {
+            NSApp.postEvent(wake, atStart: false)
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
