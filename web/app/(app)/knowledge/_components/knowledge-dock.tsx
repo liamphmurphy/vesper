@@ -248,28 +248,29 @@ function ChatBody({ chatId, page, screen, loadingPage, onGeneral }: { chatId?: s
     const suffix = `${KNOWLEDGE_CONTEXT_MARKER}${blocks.join("\n\n")}`;
     return blocks.length && !body.endsWith(suffix) ? `${body}${suffix}` : body;
   };
+  const renderContext = (className?: string) => (
+    <DockContext persona={persona} label="Knowledge context" className={className}>
+      {page && <span className={dockContextChip} title={page.path ?? page.title}><Icon name="wiki" size={12} className="flex-none text-fg-tertiary" /><span className="min-w-0 truncate">Viewing: {page.title}</span></span>}
+      {!page && screen && <span className={dockContextChip}>On: {screen}</span>}
+      {folders.map((f) => (
+        <span key={f.key} className={dockContextChip} title={f.path}>
+          <Icon name="folder" size={12} className="flex-none" />
+          <span className="min-w-0 truncate">{f.path}/</span>
+          <button aria-label={`Remove folder ${f.path}`} onClick={() => remove([f.key])} className="grid size-4 flex-none place-items-center rounded hover:bg-hover"><Icon name="x" size={11} /></button>
+        </span>
+      ))}
+      {pages.map((a) => (
+        <span key={a.key} className={dockContextChip} title={a.quote ?? a.path ?? a.title}>
+          <Icon name={a.quote === undefined ? "wiki" : "msg"} size={12} className="flex-none" />
+          <span className="min-w-0 truncate">{a.title}{a.quote === undefined ? "" : " · selection"}</span>
+          <button aria-label={`Remove ${a.quote === undefined ? a.title : `selection from ${a.title}`}`} onClick={() => remove([a.key])} className="grid size-4 flex-none place-items-center rounded hover:bg-hover"><Icon name="x" size={11} /></button>
+        </span>
+      ))}
+    </DockContext>
+  );
   const context: ConversationContext = {
     hidden: true,
-    composer: (
-      <DockContext persona={persona} label="Knowledge context">
-        {page && <span className={dockContextChip} title={page.path ?? page.title}><Icon name="wiki" size={12} className="flex-none text-fg-tertiary" /><span className="truncate">Viewing: {page.title}</span></span>}
-        {!page && screen && <span className={dockContextChip}>On: {screen}</span>}
-        {folders.map((f) => (
-          <span key={f.key} className={dockContextChip} title={f.path}>
-            <Icon name="folder" size={12} />
-            <span className="truncate">{f.path}/</span>
-            <button aria-label={`Remove folder ${f.path}`} onClick={() => remove([f.key])} className="grid size-4 flex-none place-items-center rounded hover:bg-hover"><Icon name="x" size={11} /></button>
-          </span>
-        ))}
-        {pages.map((a) => (
-          <span key={a.key} className={dockContextChip} title={a.quote ?? a.path ?? a.title}>
-            <Icon name={a.quote === undefined ? "wiki" : "msg"} size={12} />
-            <span className="truncate">{a.title}{a.quote === undefined ? "" : " · selection"}</span>
-            <button aria-label={`Remove ${a.quote === undefined ? a.title : `selection from ${a.title}`}`} onClick={() => remove([a.key])} className="grid size-4 flex-none place-items-center rounded hover:bg-hover"><Icon name="x" size={11} /></button>
-          </span>
-        ))}
-      </DockContext>
-    ),
+    composer: renderContext(),
     prepare: async (input) => {
       const draft = page && readDraft(page.id);
       const unsaved = page && draft !== undefined && draft.trim() !== (page.body_md ?? "").trim()
@@ -294,17 +295,17 @@ function ChatBody({ chatId, page, screen, loadingPage, onGeneral }: { chatId?: s
 
   if (loadingPage) return <div className="p-4"><Skeleton className="h-4 w-2/3" /></div>;
   if (id) return (
-    <div ref={host} className="flex min-h-0 flex-1 flex-col">
+    <div ref={host} className="flex min-h-0 min-w-0 flex-1 flex-col">
       {attach.error && <p role="alert" className="p-2 text-12 text-state-blocked">Couldn’t link this chat to the page. <button className="underline" onClick={() => attach.mutate(id)}>Retry</button></p>}
       <Conversation key={id} id={id} docked hideTitle onNew={start} onReplace={selectChat} context={context} actions={switcher} />
     </div>
   );
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
     {known.length > 0 && switcher}
-    <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+    <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
       <Icon name="msg" size={22} className="text-fg-tertiary" />
-      {context.composer}
+      {renderContext("justify-center")}
       <p className="text-13 text-fg-secondary">
         {page ? "Talk to a persona about this page. It can read it, link it and edit it with you." : "Talk to a persona about your notes. It can search, link and write pages with you."}
       </p>

@@ -308,7 +308,7 @@ export function dockPanels(uid: string, tabs: DockTab[], activeId: string | unde
       aria-label={labelled ? undefined : t.label}
       data-dock-panel={`${uid}:${t.id}`}
       hidden={t.id !== activeId}
-      className="flex min-h-0 flex-1 flex-col"
+      className="flex min-h-0 min-w-0 flex-1 flex-col"
     >
       <DockTabContext.Provider value={t.id}>{t.content}</DockTabContext.Provider>
     </div>
@@ -433,7 +433,7 @@ export function Dock({
         aria-label="Panel"
         hidden={!shown}
         className={cx(
-          "flex flex-none flex-col border-l border-border-subtle bg-surface",
+          "flex min-w-0 flex-none flex-col border-l border-border-subtle bg-surface",
           active?.wide === "max"
             ? "w-[min(984px,calc(100vw-692px))] min-w-[360px] max-xl:w-[min(984px,calc(100vw-96px))]"
             : active?.wide
