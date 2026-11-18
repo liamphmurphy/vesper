@@ -334,6 +334,12 @@ the same VM. Three controls preserve turn-to-turn integrity from day 1:
    `~/.codex/auth.json`, and Antigravity auth files are injected immediately
    before the harness launches, read back for token refresh immediately after
    it exits, and **unlinked from `$HOME` before turn cleanup returns**.
+   Harness session state stays in the run's `home.ext4`, so the next turn can
+   resume it: Claude Code's `~/.claude/projects` and Codex's `~/.codex/sessions`
+   lie outside the swept files. For Antigravity every entry under `~/.gemini`
+   is unlinked except its conversation state
+   (`antigravity-cli/{conversations,brain,implicit,annotations,conversation_summaries.db}`,
+   `agySweepPaths`); if `~/.gemini` can't be listed, all of it goes.
 
 ### 5. Networking: NIC-less guest, host `Egress`, synthetic DNS & `dockerd` routing
 
