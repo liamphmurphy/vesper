@@ -252,9 +252,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         app.scheduleSessionSave()
     }
 
-    /// Closes one tab after the unsaved-changes check; the window's last tab closes the window.
+    /// Closes one tab after the unsaved-changes check. A window's last tab closes the window, unless
+    /// it is the app's only tab: then a new chat with the default persona takes its place, so ⌘W
+    /// never quits Vesper.
     func closeTab(_ tab: WebContentController) {
-        guard compact else { window?.performClose(nil); return }
+        if !compact && closeOutcome != .openNewChat { window?.performClose(nil); return }
         Task { @MainActor [weak self] in
             guard let self, self.tabs.list.items.contains(where: { $0 === tab }) else { return }
             if self.compact { self.selectTab(tab) }
@@ -286,15 +288,41 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    /// What closing one of this window's tabs does now. In the separate layout every tab is a
+    /// window, so the other windows include this tab's siblings.
+    private var closeOutcome: TabCloseOutcome {
+        TabCloseOutcome.decide(tabsInWindow: tabs.list.count,
+                               otherWindows: app.windows.filter { $0 !== self && !$0.retired }.count)
+    }
+
     private func removeConfirmed(_ tab: WebContentController) {
-        if tabs.list.count <= 1 {
+        switch closeOutcome {
+        case .removeTab: remove(tab)
+        case .closeWindow:
+            closeConfirmed = true
+            window?.close()
+        case .openNewChat: replaceWithNewChat(tab)
+        }
+    }
+
+    private func remove(_ tab: WebContentController) {
+        guard detachTab(tab) != nil else { return }
+        app.recordClosed(url: tab.currentURLString)
+        tab.teardown()
+    }
+
+    private func replaceWithNewChat(_ tab: WebContentController) {
+        let path = DockModel.newChatHref()
+        // A separate-layout playground window has no sidebar or toolbar to show Vesper in, so the
+        // chat opens in a Vesper window (tabbed onto this one) and this one closes.
+        guard hasSidebar else {
+            app.openVesperTab(path: path, nextTo: window)
             closeConfirmed = true
             window?.close()
             return
         }
-        guard detachTab(tab) != nil else { return }
-        app.recordClosed(url: tab.currentURLString)
-        tab.teardown()
+        addTab(app.makeTab(kind: .vesper, path: path))
+        remove(tab)
     }
 
 }

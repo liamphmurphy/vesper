@@ -121,9 +121,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     @objc func newWindowForTab(_ sender: Any?) { app.openNewTab(from: NSApp.keyWindow) }
     @objc func newWindowAction(_ sender: Any?) { app.newWindow() }
     @objc func reopenClosedTab(_ sender: Any?) { app.reopenClosedTab(nextTo: NSApp.keyWindow) }
-    /// ⌘W: the tab in a compact window (its last tab closes the window), else the key window.
+    /// ⌘W: the active tab of a Vesper window (a window's last tab closes it, the app's only tab
+    /// becomes a new chat), else the key window (Settings, a popup).
     @objc func closeTab(_ sender: Any?) {
-        if let c = compactController { c.closeActiveTab() } else { NSApp.keyWindow?.performClose(nil) }
+        if let c = NSApp.keyWindow?.windowController as? MainWindowController, !c.retired {
+            c.closeActiveTab()
+        } else {
+            NSApp.keyWindow?.performClose(nil)
+        }
     }
     /// ⇧⌘W: the window with all its tabs.
     @objc func closeAllTabs(_ sender: Any?) {
