@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import { api, unwrap, type Schemas } from "@/lib/api/client";
@@ -30,11 +31,14 @@ import { CompanionDock } from "@/components/shell/companion";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { WorkChat } from "@/components/domain/work-chat";
 import { WorkNavHeader, WorkSectionLabel } from "../../work/work-nav-header";
+import { buildEpicDetailNavModel } from "@/lib/native-shell/models/epic-detail";
+import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
 
 type TicketSummary = Schemas["TicketSummary"];
 
 export function EpicDetailScreen({ epicId }: { epicId: string }) {
   const compact = useCompact();
+  const router = useRouter();
   const query = useEpicOverviews();
   const e = query.data?.find((x) => x.epic.id === epicId);
   const siblingEpics = (query.data ?? []).filter((x) => !e || x.project.key === e.project.key);
@@ -48,7 +52,17 @@ export function EpicDetailScreen({ epicId }: { epicId: string }) {
   return (
     <>
       {!compact && (
-        <NavigatorPortal>
+        <NavigatorPortal
+          native={{
+            model: buildEpicDetailNavModel({
+              project: e?.project.key,
+              projectName: e?.project.name,
+              epics: siblingEpics.map((x) => ({ id: x.epic.id, name: x.epic.name, done: x.epic.tickets_total - x.epic.tickets_open, total: x.epic.tickets_total })),
+              epicId,
+            }),
+            onCommand: (cmd) => handleWorkHeaderCommand(cmd, { project: e?.project.key, push: (href) => router.push(href), onProject: () => {}, onAgent: () => {} }),
+          }}
+        >
           <nav aria-label="Work" className="work-nav">
             <WorkNavHeader active="epics" project={e?.project.key} />
             <div className="work-nav-list">

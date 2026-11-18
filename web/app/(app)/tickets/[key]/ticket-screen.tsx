@@ -36,6 +36,8 @@ import { CompanionDock } from "@/components/shell/companion";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { WorkChat, WorkChatSheet } from "@/components/domain/work-chat";
 import { WorkNavHeader } from "../../work/work-nav-header";
+import { buildTicketNavModel } from "@/lib/native-shell/models/ticket";
+import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
 
 function TitleEditor({ t, save }: { t: Ticket; save: SaveTicket }) {
   const [editing, setEditing] = useState(false);
@@ -384,7 +386,12 @@ export function TicketScreen({ ticketKey }: { ticketKey: string }) {
 
   return (
     <>
-      <NavigatorPortal>
+      <NavigatorPortal
+        native={{
+          model: buildTicketNavModel({ project: t?.project.key, siblings: pager.tickets, statusNames: STATUS_NAME, ticketKey }),
+          onCommand: (cmd) => handleWorkHeaderCommand(cmd, { project: t?.project.key, push: (href) => router.push(href), onProject: () => {}, onAgent: () => {} }),
+        }}
+      >
         <nav aria-label="Work" className="work-nav">
           <WorkNavHeader active="tickets" project={t?.project.key} />
           <div className="work-nav-list">

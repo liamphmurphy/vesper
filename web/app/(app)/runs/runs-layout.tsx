@@ -7,8 +7,7 @@
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { useCompact } from "@/lib/viewport";
-import { NavigatorPortal } from "@/components/shell/navigator-slot";
-import { RunList } from "./run-list";
+import { RunList, RunsNavigator } from "./run-list";
 
 export function RunsLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname();
@@ -18,9 +17,7 @@ export function RunsLayout({ children }: { children: ReactNode }) {
   // The run list is the left column's list on Runs screens, not a second column beside it.
   return (
     <div className="flex min-h-0 flex-1">
-      <NavigatorPortal>
-        <RunList selected={id} />
-      </NavigatorPortal>
+      <RunsNavigator selected={id} />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
     </div>
   );

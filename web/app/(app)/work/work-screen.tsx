@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState, type MouseEvent } from "react";
 import type { TicketStatus } from "@/lib/api/client";
 import {
@@ -39,8 +39,13 @@ import {
 } from "./work-details";
 import { WorkNavHeader, WorkSpacePersonaFilters } from "./work-nav-header";
 import { BoardView } from "../tickets/_components/board-screen";
-import { RunList, useRunList } from "../runs/run-list";
+import { activityNativeBody, RunList, useActivityLists, useRunList } from "../runs/run-list";
+import { itemHref } from "@/lib/run-list";
+import { listQuery } from "../runs/run-list";
+import { buildWorkActivityNavModel, RUN_LOAD_MORE, RUN_RETRY, RUN_VIEW_ACTION, type ActivityFilter } from "@/lib/native-shell/models/runs";
+import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
 import { ticketsHref } from "@/lib/tickets-layout";
+import type { NativeCommand } from "@/lib/native-shell/protocol";
 import "./work.css";
 
 export function WorkScreen() {
@@ -185,6 +190,87 @@ export function WorkScreen() {
   const openTicketsCount = tickets.data?.filter(
     (t) => t.status !== "done" && t.status !== "canceled",
   ).length;
+  // The Activity list in the native sidebar. The Tickets and Epics lists (with saved views) stay in the page's fallback column.
+  const pathname = usePathname();
+  const [nowDate] = useState(() => new Date());
+  const activityFilterNow = parseActivityFilter(params.get("filter"), params.get("done"));
+  const activityLists = useActivityLists(runs, search, activityFilterNow, nowDate);
+  const goActivity = () => go({ view: "activity", context: null, companion: null, list: null, layout: null });
+  const openWorkPath = (path: string) => {
+    const url = new URL(path, window.location.href);
+    const href = workTarget(
+      url.pathname,
+      new URLSearchParams(workHref(new URLSearchParams(window.location.search), { ...(runId ? { run: runId } : {}) }).split("?")[1]),
+    );
+    if (href) window.history.pushState(null, "", href);
+    else router.push(path);
+  };
+  const activityNative =
+    view === "activity"
+      ? {
+          model: buildWorkActivityNavModel({
+            header: {
+              active: "activity",
+              project,
+              projects: boot.data?.projects,
+              agents: boot.data?.agents,
+              agent: agent ?? "",
+              counts: {
+                activity: runs.needs.length + runs.runs.filter((r) => r.state === "running" || r.state === "queued").length || undefined,
+                tickets: openTicketsCount || undefined,
+                epics: openEpicsCount || undefined,
+              },
+              search: { value: search, placeholder: "Filter work…" },
+            },
+            body: {
+              ...activityNativeBody(runs, activityLists, { search, query: listQuery(params), now: nowDate }),
+              hasMore: runs.hasMore && activityFilterNow === "all",
+            },
+            filter: activityFilterNow as ActivityFilter,
+            counts: {
+              all: activityLists.viewCounts.all,
+              needs_you: Math.max(activityLists.viewCounts.needs_you, runs.shownNeeds.length),
+              active: activityLists.viewCounts.active,
+              failed: activityLists.viewCounts.failed,
+            },
+            selectedId: runs.shownNeeds.find((i) => i.run_id === runId && activityLists.nonRunNeeds.some((n) => n.id === i.id))
+              ? `needs:${runs.shownNeeds.find((i) => i.run_id === runId)!.id}`
+              : runId
+                ? `run:${runId}`
+                : null,
+          }),
+          onCommand: (cmd: NativeCommand) => {
+            const handled = handleWorkHeaderCommand(cmd, {
+              project,
+              push: (href) => router.push(href),
+              onProject: (v) => go({ project: v, ticket: null, epic: null }),
+              onAgent: (v) => go({ agent: v || null }),
+              onSearch: (q) => {
+                setSearch(q);
+                updateWorkUrl({ q: q || null }, true);
+              },
+              onActivity: goActivity,
+            });
+            if (handled) return;
+            if (cmd.type === "nav.action" && cmd.actionId === RUN_VIEW_ACTION && cmd.menuItemId?.startsWith("view:")) {
+              const next = cmd.menuItemId.slice(5);
+              const q = new URLSearchParams(params);
+              q.delete("done");
+              if (next === "all") q.delete("filter");
+              else q.set("filter", next);
+              router.replace(`${pathname}${q.size ? `?${q}` : ""}`, { scroll: false });
+            } else if (cmd.type === "nav.activate") {
+              if (cmd.itemId === RUN_LOAD_MORE) runs.loadMore();
+              else if (cmd.itemId === RUN_RETRY) runs.retry();
+              else if (cmd.itemId.startsWith("run:")) openWorkPath(`/runs/${cmd.itemId.slice(4)}`);
+              else if (cmd.itemId.startsWith("needs:")) {
+                const item = runs.shownNeeds.find((i) => i.id === cmd.itemId.slice(6));
+                if (item) openWorkPath(itemHref(item, listQuery(params)));
+              }
+            }
+          },
+        }
+      : undefined;
   const nav = (
     <nav aria-label="Work" className="work-nav">
       <WorkNavHeader
@@ -299,7 +385,7 @@ export function WorkScreen() {
   const showActivityOverview = view === "activity" && !compact && !showBrief;
   return (
     <div className="work-page" onClickCapture={intercept}>
-      {!compact && <NavigatorPortal>{nav}</NavigatorPortal>}
+      {!compact && <NavigatorPortal native={activityNative}>{nav}</NavigatorPortal>}
       <TopBar
         crumbs={[
           { label: "Work", href: "/work" },

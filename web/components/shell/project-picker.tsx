@@ -10,9 +10,37 @@ import { currentProject, pickerHref } from "@/lib/project-scope";
 import { Icon } from "@/components/ui/icon";
 import { floatPanel } from "@/components/domain/pickers";
 import { rememberProject, useRememberedProject } from "./project-scope";
+import { PROJECT_PICKER_ACTION, PROJECT_PICKER_OPEN, projectPickerAction } from "@/lib/native-shell/models/project-picker";
+import type { NativeCommand } from "@/lib/native-shell/protocol";
 
 const menuItem =
   "flex h-8 cursor-default select-none items-center gap-2.5 rounded-md px-2 outline-none data-[highlighted]:bg-hover";
+
+/** The picker for the native sidebar: a header action with a menu, and what a chosen menu item does. */
+export function useProjectPickerNative(allowAll = true) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const search = useSearchParams();
+  const remembered = useRememberedProject();
+  const projects = useBootstrap().data?.projects ?? [];
+  const active = projects.filter((p) => !p.archived);
+  const current = currentProject(pathname, search, remembered, projects);
+  const action = projectPickerAction({ projects: active, current, allowAll });
+  /** Handles nav.action commands for the picker; returns whether it was one. */
+  const handle = (cmd: NativeCommand): boolean => {
+    if (cmd.type !== "nav.action" || cmd.actionId !== PROJECT_PICKER_ACTION || !cmd.menuItemId) return false;
+    if (cmd.menuItemId === PROJECT_PICKER_OPEN) {
+      router.push(workSettingsHref(current));
+      return true;
+    }
+    const key = cmd.menuItemId.replace(/^space:/, "") || null;
+    const href = pickerHref(pathname, new URLSearchParams(search.toString()), key);
+    if (!href || !key) rememberProject(key);
+    if (href) router.push(href);
+    return true;
+  };
+  return { action, handle };
+}
 
 /**
  * The project a page shows, in its header: projects are context, not a

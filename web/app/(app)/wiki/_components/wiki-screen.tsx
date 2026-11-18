@@ -32,7 +32,7 @@ import { TopBar, type Crumb } from "@/components/shell/topbar";
 import { pageHeader, parseCompare } from "@/lib/wiki";
 import { ADRIndex } from "./adr-index";
 import { CitedBy, History, LinkedTickets, PanelSection, TagsSection } from "./page-rail";
-import { PageTree, type WikiIndex } from "./page-tree";
+import { PageTree, useWikiNative, type WikiIndex } from "./page-tree";
 import { PatternsFinder } from "./patterns-finder";
 import { VersionDiff } from "./version-diff";
 import { SuggestionCard } from "./suggestions";
@@ -64,6 +64,7 @@ function WikiLayout({
   const tree = useWikiTree();
   const compact = useCompact();
   const pages = <PageTree pages={tree.data?.pages} current={current} index={index} />;
+  const wikiNative = useWikiNative(tree.data?.pages, current, index);
   return (
     <>
       <TopBar crumbs={crumbs} actions={actions} />
@@ -72,7 +73,7 @@ function WikiLayout({
         {compact ? (
           <aside className="flex-[1_1_220px] border-r border-border-subtle bg-sidebar px-2 py-4">{pages}</aside>
         ) : (
-          <NavigatorPortal>
+          <NavigatorPortal native={wikiNative}>
             <aside aria-label="Wiki pages" className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">{pages}</aside>
           </NavigatorPortal>
         )}

@@ -13,6 +13,8 @@ import { Toggle } from "@/components/ui/controls";
 import { Banner, Card, EmptyState, Skeleton } from "@/components/ui/primitives";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { useCompact } from "@/lib/viewport";
+import { buildSettingsNavModel } from "@/lib/native-shell/models/settings";
+import type { NativeCommand } from "@/lib/native-shell/protocol";
 import { AppearanceSection } from "./appearance-section";
 import { BackupSection } from "./backup-section";
 import { DevWorkspaceSection } from "./dev-workspace-section";
@@ -58,6 +60,13 @@ export function SettingsScreen() {
     { id: "appearance", label: "Appearance", health: "idle" },
   ];
 
+  // The native sidebar's rows scroll to the section, as the web nav's #links do.
+  const jumpToSection = (cmd: NativeCommand) => {
+    if (cmd.type !== "nav.activate") return;
+    window.location.hash = cmd.itemId;
+    document.getElementById(cmd.itemId)?.scrollIntoView();
+  };
+
   if (!mounted) {
     return (
       <div aria-busy className="flex flex-col gap-6">
@@ -96,7 +105,9 @@ export function SettingsScreen() {
   );
   return (
     <div className="flex flex-col gap-6">
-      {!compact && <NavigatorPortal>{sectionNav}</NavigatorPortal>}
+      {!compact && (
+        <NavigatorPortal native={{ model: buildSettingsNavModel(nav), onCommand: jumpToSection }}>{sectionNav}</NavigatorPortal>
+      )}
       <PageHeader title="Settings" description="Everything runs depend on. Each section says what breaks when something is missing.">
         <span className="flex gap-4 text-14">
           <Link href="/chat?new&setup" className="text-accent hover:underline">Run setup again →</Link>

@@ -21,6 +21,8 @@ import { DependencyMap } from "@/components/domain/dependency-map";
 import { useMotionList } from "@/components/ui/motion";
 import { Toggle } from "@/components/ui/controls";
 import { ticketsHref } from "@/lib/tickets-layout";
+import { buildBoardNavModel } from "@/lib/native-shell/models/board";
+import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { WorkNavHeader, WorkSectionLabel, WorkSpacePersonaFilters } from "../../work/work-nav-header";
 import { ChipScroller, TicketsLayoutBar, TicketsTopBar } from "./layout-bar";
@@ -78,7 +80,32 @@ export function BoardScreen() {
   return (
     <div data-testid="board-screen" className="flex min-h-0 flex-1 flex-col">
       {!compact && (
-        <NavigatorPortal>
+        <NavigatorPortal
+          native={{
+            model: buildBoardNavModel({
+              header: {
+                active: "tickets",
+                project: project?.key,
+                projects: bootstrap.data?.projects,
+                agents: bootstrap.data?.agents,
+                agent: filters.assignee ?? "",
+                allowAllProjects: false,
+              },
+              epics: project ? epics : undefined,
+              epic: filters.epic,
+            }),
+            onCommand: (cmd) => {
+              const ctx = {
+                project: project?.key,
+                push: (href: string) => router.push(href),
+                onProject: (v: string) => router.push(ticketsHref("board", v ? { project: v } : undefined)),
+                onAgent: (v: string) => setParam("assignee", v),
+              };
+              if (handleWorkHeaderCommand(cmd, ctx)) return;
+              if (cmd.type === "nav.activate") setParam("epic", cmd.itemId.startsWith("epic:") ? cmd.itemId.slice(5) : "");
+            },
+          }}
+        >
           <nav aria-label="Work" className="work-nav">
             <WorkNavHeader active="tickets" project={project?.key} />
             <WorkSpacePersonaFilters

@@ -20,7 +20,8 @@ import {
 import { useCompact } from "@/lib/viewport";
 import { isTyping } from "./shortcuts";
 import { HistoryNav } from "./history-nav";
-import { NavigatorPortal } from "./navigator-slot";
+import { NavigatorPortal, type NativeNavigator } from "./navigator-slot";
+import { useRouter } from "next/navigation";
 import { CompanionPortal, RightRailPortal } from "./companion";
 
 /** A tab in the right dock. `busy` pulses its ring, `unread` adds a dot (Chat uses both for the persona). */
@@ -68,6 +69,9 @@ export function useReadingFocus(): boolean {
   return useSyncExternalStore(subscribeReadingFocus, readingFocusActive, () => false);
 }
 
+/** The header action that returns to the app, added to an editor's native structure. */
+export const EDITOR_BACK_ACTION = "editor-back";
+
 const COMPOSER = "[data-dock-composer], textarea, [contenteditable='true'], input:not([type='hidden'])";
 
 /**
@@ -87,11 +91,17 @@ export function EditorLayout({
   show,
   onDockChange,
   defaultOpen = true,
+  nativeLeft,
 }: {
   /** Key for the remembered dock state, e.g. "designs". */
   app: string;
   header: EditorHeader;
   left?: ReactNode;
+  /**
+   * `left` as a NavModel for the native sidebar. The layout adds the way back (and the document's name as the title);
+   * the editor handles its own rows' commands. Without it the structure stays in the page (the fallback column).
+   */
+  nativeLeft?: NativeNavigator;
   main: ReactNode;
   dock: DockTab[];
   chatTab?: string;
@@ -104,8 +114,20 @@ export function EditorLayout({
 }) {
   const uid = useId();
   const compact = useCompact();
+  const router = useRouter();
   const embed = useContext(EditorEmbedContext);
   const back = embed?.back ?? header.back;
+  const nativeNav: NativeNavigator | undefined = nativeLeft && {
+    model: {
+      ...nativeLeft.model,
+      title: header.name ?? nativeLeft.model.title,
+      actions: [{ id: EDITOR_BACK_ACTION, label: back.label, icon: "chev" }, ...(nativeLeft.model.actions ?? [])],
+    },
+    onCommand: (cmd) => {
+      if (cmd.type === "nav.action" && cmd.actionId === EDITOR_BACK_ACTION) router.push(back.href);
+      else nativeLeft.onCommand?.(cmd);
+    },
+  };
   const tabIds = dock.map((t) => t.id).join("\n");
   const [state, setState] = useState<DockState>({ open: defaultOpen, tab: dock[0]?.id ?? "", hidden: false });
   const [loaded, setLoaded] = useState(false);
@@ -197,7 +219,7 @@ export function EditorLayout({
       <div className="relative flex min-h-0 flex-1">
         {/* The structure is the left column's list, under the way back to the app and the document's name. */}
         {showLeft && (
-          <NavigatorPortal>
+          <NavigatorPortal native={nativeNav}>
             <aside aria-label="Structure" className="flex min-h-0 flex-1 flex-col">
               <div className="flex flex-none flex-col gap-0.5 px-4 pb-2">
                 <Link href={back.href} className="text-11 text-fg-tertiary hover:text-fg-secondary">‹ {back.label}</Link>

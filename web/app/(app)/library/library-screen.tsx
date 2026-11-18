@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { Dialog, DropdownMenu } from "radix-ui";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { buildKeepsakesNavModel, LIBRARY_SOURCE_PICKER, librarySourceHref, type LibrarySourceValue } from "@/lib/native-shell/models/library";
 import { useRef, useState } from "react";
 import { libraryItemUrl } from "@/lib/api/client";
 import {
@@ -600,12 +601,21 @@ function Keepsakes() {
   // A chat's "Open in Library" lands on the item: ?tab=videos&item=<id>.
   const compact = useCompact();
   const params = useSearchParams();
+  const router = useRouter();
   const [tab, setTab] = useState(() => params.get("tab") ?? "images");
   const openItem = params.get("item");
   return (
     <>
       {!compact && (
-        <NavigatorPortal>
+        <NavigatorPortal
+          native={{
+            model: buildKeepsakesNavModel({ tabs: KEEPSAKE_TABS, tab }),
+            onCommand: (cmd) => {
+              if (cmd.type === "nav.activate") setTab(cmd.itemId);
+              else if (cmd.type === "nav.picker" && cmd.pickerId === LIBRARY_SOURCE_PICKER) router.push(librarySourceHref(cmd.value as LibrarySourceValue));
+            },
+          }}
+        >
           <nav aria-label="Library" className="flex min-h-0 flex-1 flex-col gap-3 px-2.5 pt-4 pb-3">
             <div className="px-1">
               <LibrarySourceSwitch source="yours" />

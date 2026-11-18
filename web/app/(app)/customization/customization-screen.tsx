@@ -10,6 +10,9 @@ import { HumanAvatar } from "@/components/domain/avatars";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { Content, TopBar } from "@/components/shell/topbar";
 import { useCompact } from "@/lib/viewport";
+import { pageOrigin } from "@/lib/native-shell/models/common";
+import { spaceHex } from "@/lib/spaces";
+import { buildCustomizationNavModel, NEW_PERSONA_ACTION, RETRY_PERSONAS_ACTION } from "@/lib/native-shell/models/customization";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Banner, Skeleton } from "@/components/ui/primitives";
@@ -155,7 +158,39 @@ export function CustomizationScreen() {
   );
   return (
     <section aria-label="Customization">
-      {!compact && <NavigatorPortal>{customizeNav}</NavigatorPortal>}
+      {!compact && (
+        <NavigatorPortal
+          native={{
+            model: buildCustomizationNavModel({
+              me,
+              personas: personas.map((p) => ({ id: p.id, name: p.name, color: p.color, avatar_url: p.avatar_url, is_default: p.is_default })),
+              personasState: list.isError ? "error" : !list.data ? "loading" : "ready",
+              spaces: (spaces.data?.spaces ?? []).map((sp) => ({ id: sp.id, name: sp.name, color: spaceHex(sp.color), memory_count: sp.memory_count })),
+              who,
+              whose,
+              spaceParam,
+              canAddPersona: all.length < MAX_PERSONAS,
+              origin: pageOrigin(),
+            }),
+            onCommand: (cmd) => {
+              if (cmd.type === "nav.action") {
+                if (cmd.actionId === NEW_PERSONA_ACTION) setEditing("new");
+                else if (cmd.actionId === RETRY_PERSONAS_ACTION) void list.refetch();
+                return;
+              }
+              if (cmd.type !== "nav.activate") return;
+              const id = cmd.itemId;
+              if (id === "everything") pick("");
+              else if (id === "all-personas") pick("personas");
+              else if (id.startsWith("persona:")) pick(id.slice("persona:".length));
+              else if (id.startsWith("space:")) pickSpace(id.slice("space:".length));
+              else if (id === "person" || id === "connectors" || id === "secrets") pick(id);
+            },
+          }}
+        >
+          {customizeNav}
+        </NavigatorPortal>
+      )}
       <TopBar
         crumbs={[{ label: "Customization" }]}
         actions={

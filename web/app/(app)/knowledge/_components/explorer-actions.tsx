@@ -154,6 +154,56 @@ export function RenameField({
   );
 }
 
+/** Rename as a dialog, for the native sidebar where rows can't turn into a text field. */
+export function RenameDialog({
+  initial,
+  error,
+  pending,
+  onCommit,
+  onCancel,
+}: {
+  initial: string;
+  error?: string;
+  pending: boolean;
+  onCommit: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState(initial);
+  const bad = name.trim() !== initial && name ? nameError(name.trim()) : undefined;
+  const save = () => {
+    const next = name.trim();
+    if (next === initial) return onCancel();
+    if (!nameError(next)) onCommit(next);
+  };
+  return (
+    <Modal open onOpenChange={(o) => !o && onCancel()} title={`Rename “${initial}”`} className="top-[24vh] w-[min(440px,calc(100vw-32px))]">
+      <div className="px-5 pt-3">
+        <input
+          autoFocus
+          aria-label={`Rename ${initial}`}
+          value={name}
+          disabled={pending}
+          onFocus={(e) => e.currentTarget.select()}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && save()}
+          className="h-8 w-full rounded-md border border-border-subtle bg-surface-sunken px-2.5 text-13 text-fg outline-none focus:border-accent"
+        />
+      </div>
+      <div className="pt-2">
+        <ErrorLine message={bad ?? error} />
+      </div>
+      <div className="flex justify-end gap-2 px-5 pb-4 pt-2">
+        <Button variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button variant="primary" disabled={pending || !name.trim() || !!nameError(name.trim())} onClick={save}>
+          {pending ? "Renaming…" : "Rename"}
+        </Button>
+      </div>
+    </Modal>
+  );
+}
+
 function ErrorLine({ message }: { message?: string }) {
   return message ? (
     <p className="px-5 pb-1 text-12 text-pill-blocked-fg">{message}</p>

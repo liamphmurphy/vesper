@@ -15,6 +15,8 @@ import { LessonVisual } from "@/components/domain/visuals";
 import { Button } from "@/components/ui/button";
 import { Segmented } from "@/components/ui/controls";
 import { Banner, TextArea } from "@/components/ui/primitives";
+import { buildStudyNavModel, STUDY_BACK, STUDY_DELETE, STUDY_PLAN_NEXT, STUDY_STOP_BUILD } from "@/lib/native-shell/models/study";
+import type { NativeCommand } from "@/lib/native-shell/protocol";
 
 /** Markdown links, so a citation sits at the end of its paragraph. */
 const cites = (ns?: number[]) => (ns ?? []).map((n) => ` [\\[${n}\\]](#source-${n})`).join("");
@@ -249,9 +251,49 @@ export function StudyView({ course, onDelete }: { course: Course; onDelete: () =
         ))}
       </nav>
   );
+  // The native sidebar's version of the lessons list and the next-part panel (<NextPart>).
+  const nextMut = useNextPart(id);
+  const stopMut = useStopCourse(id);
+  const building = summary.state !== "ready";
+  const partN = building ? summary.part : summary.part + 1;
+  const showNext = summary.parts >= 2 && !(!building && partN >= summary.parts);
+  const nativeModel = buildStudyNavModel({
+    topic: summary.topic,
+    complete: summary.complete,
+    total: summary.lessons,
+    solid: summary.solid,
+    nextPart: showNext
+      ? {
+          part: partN + 1,
+          parts: summary.parts,
+          title: course.outline?.parts?.[partN]?.title,
+          state: summary.state,
+          building: courseBuilding(summary.state),
+          error: summary.state === "ready" ? summary.error : null,
+          buildNote: summary.build_note,
+          planPending: nextMut.isPending,
+          stopPending: stopMut.isPending,
+          actionError: (nextMut.error ?? stopMut.error)?.message,
+          courseId: id,
+        }
+      : null,
+    lessons: course.lessons.map((l) => ({ key: l.key, title: l.title, unit: l.unit_title, done: l.progress !== "new" || l.status === "known", status: l.status })),
+    currentKey: key,
+    courseId: id,
+  });
+  const nativeCommand = (cmd: NativeCommand) => {
+    if (cmd.type === "nav.action") {
+      if (cmd.actionId === STUDY_BACK) router.push("/learn");
+      else if (cmd.actionId === STUDY_DELETE) onDelete();
+    } else if (cmd.type === "nav.activate") {
+      if (cmd.itemId === STUDY_PLAN_NEXT) nextMut.mutate();
+      else if (cmd.itemId === STUDY_STOP_BUILD) stopMut.mutate();
+      else if (course.lessons.some((l) => l.key === cmd.itemId)) router.push(`/learn/${id}?lesson=${cmd.itemId}`);
+    }
+  };
   return (
     <div className="grid min-h-0 flex-1 lg:h-[100dvh] lg:grid-cols-[minmax(0,1fr)_340px]">
-      {compact ? lessons : <NavigatorPortal>{lessons}</NavigatorPortal>}
+      {compact ? lessons : <NavigatorPortal native={{ model: nativeModel, onCommand: nativeCommand }}>{lessons}</NavigatorPortal>}
       <div ref={scroller} className="min-w-0 overflow-y-auto">
         <div className="flex h-[52px] items-center justify-between border-b border-border-subtle pl-3 pr-6">
           <span className="flex min-w-0 items-center gap-2">
