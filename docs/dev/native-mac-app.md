@@ -3,6 +3,25 @@
 Status: proof of concept on `poc/native_ui`. Replaces the Electron app in `desktop/` once it
 reaches parity; `desktop/` stays untouched until then.
 
+## Where it stands
+
+Everything in the parity checklist below is implemented, with these deliberate gaps:
+
+- **Screen capture in playgrounds** (`getDisplayMedia`): WKWebView exposes no `navigator.mediaDevices`
+  without private WebKit preferences; the page shows its existing "can't capture" message.
+- **Fallback column**: the tickets list and Work's Tickets/Epics views (saved views with inline
+  rename) and the editors' structure panels (docs, decks, designs, custom apps) still draw their
+  list in the page's fallback column instead of the native sidebar.
+- **UI runtime**: the Next.js standalone server still serves the UI (a static build is a separate
+  spike).
+- **Touch ID** is stricter than Electron: with the gate on and no usable sensor it asks for the
+  account password instead of skipping.
+
+Verified by the person, not by automation: notification banners and actions (ad hoc builds need
+notifications allowed in System Settings), the Touch ID prompt, sleep/wake pausing, Screenshot to
+Chat, the unsaved-changes alert, playground windows, and the first launch against real data
+(Keychain migration of the Electron secrets key).
+
 ## Goal
 
 A first-class, native-feeling Mac app that keeps every existing feature. Layout like Apple Mail:
