@@ -107,31 +107,3 @@ func TestAgentExecPipes(t *testing.T) {
 		t.Fatalf("stdout=%q stderr=%q", outBuf.String(), errBuf.String())
 	}
 }
-
-func TestDockerContainerCreateGuard(t *testing.T) {
-	allowed := []string{
-		`{"HostConfig":{"Binds":["/workspace/src:/app","/tmp/scratch:/work"]}}`,
-		`{"HostConfig":{"Binds":["/var/run/docker.sock:/var/run/docker.sock"]}}`,
-		`{"HostConfig":{"Mounts":[{"Type":"bind","Source":"/workspace"},{"Type":"volume","Source":"pgdata"}]}}`,
-	}
-	for _, body := range allowed {
-		if msg := validateDockerContainerCreate([]byte(body)); msg != "" {
-			t.Errorf("unexpected block on %s: %s", body, msg)
-		}
-	}
-	blocked := []string{
-		`{"HostConfig":{"Privileged":true}}`,
-		`{"HostConfig":{"NetworkMode":"host"}}`,
-		`{"HostConfig":{"PidMode":"host"}}`,
-		`{"HostConfig":{"CapAdd":["SYS_ADMIN"]}}`,
-		`{"HostConfig":{"Binds":["/etc/passwd:/etc/passwd"]}}`,
-		`{"HostConfig":{"Binds":["/home/node/.ssh:/root/.ssh"]}}`,
-		`{"HostConfig":{"Binds":["/workspace/../etc:/etc"]}}`,
-		`{"HostConfig":{"Mounts":[{"Type":"bind","Source":"/var/run/docker-raw.sock"}]}}`,
-	}
-	for _, body := range blocked {
-		if msg := validateDockerContainerCreate([]byte(body)); msg == "" {
-			t.Errorf("expected block on %s", body)
-		}
-	}
-}

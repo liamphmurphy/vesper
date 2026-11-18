@@ -151,6 +151,11 @@ if docker run --rm -v /etc:/hostetc vesper-tiny:test /bin/tiny 2>/tmp/bind.err; 
 fi
 grep -qi "vesper guard" /tmp/bind.err
 
+if docker run --rm --security-opt seccomp=unconfined vesper-tiny:test /bin/tiny 2>/tmp/seccomp.err; then
+  echo "ERROR: seccomp=unconfined unexpectedly succeeded" >&2; exit 1
+fi
+grep -qi "vesper guard" /tmp/seccomp.err
+
 # Left running on purpose: closing the turn must remove it.
 docker run -d --name leftover vesper-tiny:test /bin/tiny srv >/dev/null
 echo "DOCKERD_AND_GUARD_OK"

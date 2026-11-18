@@ -150,8 +150,16 @@ func (b *MicroVM) StartDockerProxy(ctx context.Context, runID, _, key string) (*
 	}
 	return &TurnDocker{
 		Network: netName,
-		Env:     map[string]string{"DOCKER_HOST": "unix://" + sock},
-		Stop:    stop,
+		Env: map[string]string{
+			"DOCKER_HOST": "unix://" + sock,
+			// Ryuk reaps containers by mounting the Docker socket, which the
+			// guard refuses; closing the turn removes them instead.
+			"TESTCONTAINERS_RYUK_DISABLED": "true",
+			// The guard only accepts classic builds: BuildKit's session and
+			// gRPC streams can't be inspected.
+			"DOCKER_BUILDKIT": "0",
+		},
+		Stop: stop,
 	}, nil
 }
 
