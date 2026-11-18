@@ -33,9 +33,22 @@ struct SidebarView: View {
     /// The selected row: the screen's selected nav row, else the current area (so an area looks like
     /// a native source-list selection). Setting it is a user click: the page navigates, the shell only
     /// reports. Areas navigate from their own tap (so re-clicking the current area works too).
+    static func contains(_ id: String, in nav: NavModel) -> Bool {
+        func walk(_ items: [NavItem]) -> Bool { items.contains { $0.id == id || walk($0.children ?? []) } }
+        return nav.sections.contains { walk($0.items) }
+    }
+
     private var navSelection: Binding<String?> {
         Binding(
-            get: { state.navigator?.selectedId ?? (state.shell ?? ShellState.fallbackShell).currentArea.map { ShellSection.areaTag($0) } },
+            get: {
+                // Report a nav selection only once its row exists: a page may name the selection before
+                // the row loads (a saved view), and the List won't re-apply an unchanged value when the
+                // row appears later. Going from nil to the id makes it select the row.
+                if let nav = state.navigator, let selected = nav.selectedId {
+                    return Self.contains(selected, in: nav) ? selected : nil
+                }
+                return (state.shell ?? ShellState.fallbackShell).currentArea.map { ShellSection.areaTag($0) }
+            },
             set: { id in
                 guard let id, !id.hasPrefix(ShellSection.areaPrefix), let nav = state.navigator, id != nav.selectedId else { return }
                 state.noteActivate(id)
@@ -99,6 +112,10 @@ private struct NavContent: View {
         ForEach(nav.sections) { section in
             NavSectionView(nav: nav, section: section, state: state, send: send)
         }
+        // The List never draws the selection on the rows of its last section (a screen's saved views
+        // stayed unselected while the queues above them highlighted). A section after them, with an
+        // unselectable 1pt row, makes them selectable. Verified by hand: removing it brings the bug back.
+        Section { Color.clear.frame(height: 1).selectionDisabled().accessibilityHidden(true) }
     }
 }
 

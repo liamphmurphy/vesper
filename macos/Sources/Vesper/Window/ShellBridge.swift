@@ -135,7 +135,7 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
         case .title(let t, _, _): "title \(t)"
         case .rail(let m): "rail \(m == nil ? "none" : "items")"
         case .shell(let s): "shell areas=\(s.areas.count) apps=\(s.apps.count)"
-        case .navigator(let n): "navigator \(n?.id ?? "nil")"
+        case .navigator(let n): "navigator \(n?.id ?? "nil") selected=\(n?.selectedId ?? "nil") rows=\(n?.sections.flatMap { $0.items.map(\.id) }.prefix(12).joined(separator: ",") ?? "")"
         case .navigatorFallback(let a): "navigatorFallback \(a)"
         case .toolbar(let i): "toolbar \(i.count) items"
         case .appearance(let m): "appearance \(m.rawValue)"
