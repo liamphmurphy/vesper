@@ -362,6 +362,7 @@ test("knowledge: header actions, + menu, view picker, tree with menus, quick ent
   assert.deepEqual(section(m, "home").items, [{ id: "home", title: "Home", icon: "home", href: "/knowledge" }], "Home leads the list: the Mac app has no tab strip");
   assert.equal(section(m, "pinned").items[0].id, "pin:p0");
   assert.equal(section(m, "pinned").items[0].contextMenu.find((i) => i.id === "pin").label, "Unpin");
+  assert.equal(section(m, "pinned").items[0].contextMenu[0].id, K.openNewTab, "a page row opens in a new tab first, as Finder's and Safari's do");
   const items = section(m, "tree").items;
   assert.equal(items[0].id, "f:Inbox", "Inbox heads the tree");
   assert.deepEqual(items[0].badge, { text: "1", tone: "accent" });

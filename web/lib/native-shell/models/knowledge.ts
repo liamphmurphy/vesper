@@ -41,6 +41,7 @@ export const K = {
   more: (path: string) => `more:${path}`,
   // Row menu ids
   ask: "ask",
+  openNewTab: "open-new-tab",
   pin: "pin",
   rename: "rename",
   move: "move",
@@ -76,6 +77,8 @@ export interface KnowledgeInput {
 }
 
 const pageMenu = (pinned: boolean): MenuItem[] => [
+  { id: K.openNewTab, label: "Open in New Tab", icon: "plus" },
+  { id: "s0", separator: true },
   { id: K.ask, label: "Ask a Persona", icon: "msg" },
   { id: K.pin, label: pinned ? "Unpin" : "Pin to top", icon: "bookmark" },
   { id: "s1", separator: true },

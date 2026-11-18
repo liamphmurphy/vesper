@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import VesperCore
 
@@ -52,7 +53,9 @@ struct SidebarView: View {
             set: { id in
                 guard let id, !id.hasPrefix(ShellSection.areaPrefix), let nav = state.navigator, id != nav.selectedId else { return }
                 state.noteActivate(id)
-                send(.navActivate(navigatorId: nav.id, itemId: id))
+                // ⌘-click opens the row in a new tab (as in Safari); the page decides, since it knows the href.
+                let newTab = NSApp.currentEvent?.modifierFlags.contains(.command) == true
+                send(.navActivate(navigatorId: nav.id, itemId: id, newTab: newTab))
             })
     }
 }

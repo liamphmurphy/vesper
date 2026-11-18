@@ -16,7 +16,7 @@ import { useCreateDesign, type DesignStarter } from "@/lib/api/designs-hooks";
 import { Kbd, Skeleton } from "@/components/ui/primitives";
 import { useToday } from "./kit";
 import { isTyping } from "@/components/shell/shortcuts";
-import { NavigatorPortal } from "@/components/shell/navigator-slot";
+import { NavigatorPortal, openInNewTab } from "@/components/shell/navigator-slot";
 import { TopBar } from "@/components/shell/topbar";
 import { EditorEmbedContext, type EditorEmbed } from "@/components/shell/editor-layout";
 import { openCommandPalette } from "@/components/shell/command-menu";
@@ -692,7 +692,8 @@ function Explorer({ pathname }: { pathname: string }) {
       const id = itemId.slice(itemId.indexOf(":") + 1);
       const p = rows.find((r) => r.id === id);
       if (!p) return;
-      if (a === K.ask) chat.ask(p);
+      if (a === K.openNewTab) openInNewTab(pageHref(p.id, p.title));
+      else if (a === K.ask) chat.ask(p);
       else if (a === K.pin) togglePin(p.id);
       else if (a === K.rename) startRename(`p:${p.id}`);
       else if (a === K.move) openDialog({ kind: "move", target: { kind: "page", page: p } });
