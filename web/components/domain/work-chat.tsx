@@ -30,14 +30,14 @@ const chipButton = "grid size-4 flex-none place-items-center rounded-xs text-fg-
  * Whom the next message goes to and what it carries: the persona, the item in the main pane, and
  * the item you pinned, which stays attached as you move between runs and tickets until you unpin it.
  */
-function Chips({ persona, subject, pinned, onPin }: { persona?: string; subject?: WorkSubject; pinned?: WorkSubject; onPin: (s: WorkSubject | undefined) => void }) {
+function Chips({ persona, subject, pinned, onPin, className }: { persona?: string; subject?: WorkSubject; pinned?: WorkSubject; onPin: (s: WorkSubject | undefined) => void; className?: string }) {
   const viewingIsPinned = !!pinned && !!subject && sameSubject(pinned, subject);
   return (
-    <DockContext persona={persona} label="Message context">
+    <DockContext persona={persona} label="Message context" className={className}>
       {pinned && (
         <span data-testid="work-chat-pinned" className={dockContextChip} title={`Pinned: ${workSubjectLabel(pinned)}`}>
           <Icon name="bookmark" size={12} className="flex-none text-accent" />
-          <span className="truncate">Pinned: {workSubjectLabel(pinned)}</span>
+          <span className="min-w-0 truncate">Pinned: {workSubjectLabel(pinned)}</span>
           <button type="button" aria-label={`Unpin ${workSubjectLabel(pinned)}`} onClick={() => onPin(undefined)} className={chipButton}>
             <Icon name="x" size={11} />
           </button>
@@ -46,7 +46,7 @@ function Chips({ persona, subject, pinned, onPin }: { persona?: string; subject?
       {subject && !viewingIsPinned && (
         <span data-testid="work-chat-subject" className={dockContextChip} title={workSubjectLabel(subject)}>
           <Icon name={subjectIcon(subject)} size={12} className="flex-none text-fg-tertiary" />
-          <span className="truncate">Viewing: {workSubjectLabel(subject)}</span>
+          <span className="min-w-0 truncate">Viewing: {workSubjectLabel(subject)}</span>
           <button type="button" aria-label={`Pin ${workSubjectLabel(subject)}`} title="Pin: keep it attached as you move to other runs and tickets" onClick={() => onPin(subject)} className={chipButton}>
             <Icon name="bookmark" size={11} />
           </button>
@@ -186,16 +186,16 @@ export function WorkChat({ subject }: { subject?: WorkSubject }) {
   if (!loaded) return null;
   if (id)
     return (
-      <div className="flex min-h-0 flex-1 flex-col" data-testid="work-chat">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="work-chat">
         <Conversation key={id} id={id} docked hideTitle onNew={start} onReplace={async (next) => select(next)} context={context} actions={switcher} />
       </div>
     );
   return (
-    <div className="flex min-h-0 flex-1 flex-col" data-testid="work-chat">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="work-chat">
       {chats.length > 0 && switcher}
-      <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+      <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
         <Icon name="msg" size={22} className="text-fg-tertiary" />
-        <Chips persona={persona} subject={subject} pinned={pinned} onPin={pin} />
+        <Chips persona={persona} subject={subject} pinned={pinned} onPin={pin} className="justify-center" />
         <p className="text-13 text-fg-secondary">
           {subject
             ? `Talk it through with a persona. It can read the ${subject.kind} and its ticket; replies to the agent stay in the main pane.`

@@ -1183,7 +1183,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   );
   return (
     <Tooltip.Provider delayDuration={200}>
-      <section aria-label={chatTitle(c)} className="relative flex min-h-0 flex-1 flex-col" {...drop.props}>
+      <section aria-label={chatTitle(c)} className="relative flex min-h-0 min-w-0 flex-1 flex-col" {...drop.props}>
         <DropOverlay over={drop.over} />
         {/* Sized by its own width: a panel beside the chat can leave it narrow on a wide screen. */}
         {/* The page's only header: who you're talking to, the title, then the chat's context. */}
@@ -1423,7 +1423,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
             </>
           )}
         </div>
-        <div ref={dockRef} data-chat-dock="" className="mx-auto flex w-full max-w-[816px] flex-col gap-2 px-6 pb-3">
+        <div ref={dockRef} data-chat-dock="" className="mx-auto flex w-full min-w-0 max-w-[816px] flex-col gap-2 px-6 pb-3">
           {(() => {
             // Everything above the composer goes through one slot, ranked by STATUS_PRIORITY (lib/chat-status-slot).
             // The trays stay mounted while empty (present: false) so they see their first item arrive.

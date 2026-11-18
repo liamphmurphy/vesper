@@ -454,16 +454,18 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
     ],
   };
 
+  const renderContext = (className?: string) => (
+    <DockContext persona={personaName} label="Custom app context" className={className}>
+      <span className={dockContextChip} title={`/apps/${app.slug}`}>
+        <Icon name={resolveAppIcon(app.icon)} size={12} className="flex-none text-fg-tertiary" />
+        <span className="min-w-0 truncate">Viewing: {app.name} · v{app.current_seq}</span>
+      </span>
+    </DockContext>
+  );
+
   const conversationContext: ConversationContext = {
     hidden: true,
-    composer: (
-      <DockContext persona={personaName} label="Custom app context">
-        <span className={dockContextChip} title={`/apps/${app.slug}`}>
-          <Icon name={resolveAppIcon(app.icon)} size={12} className="flex-none text-fg-tertiary" />
-          <span className="truncate">Viewing: {app.name} · v{app.current_seq}</span>
-        </span>
-      </DockContext>
-    ),
+    composer: renderContext(),
     prepare: async (input) => ({
       ...input,
       body: withCustomAppContext(input.body, {
@@ -663,11 +665,11 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
           actions={switcher}
         />
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {knownChats.length > 0 && switcher}
-          <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+          <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
             <Icon name="msg" size={22} className="text-fg-tertiary" />
-            {conversationContext.composer}
+            {renderContext("justify-center")}
             <p className="max-w-[260px] text-13 text-fg-secondary">
               Talk to a persona about <span className="font-medium text-fg">{app.name}</span>. It can read its files, run SQLite queries, and ship new versions with you.
             </p>
