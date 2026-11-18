@@ -10,6 +10,9 @@ export const RAIL_DOCK_TOGGLE = "dock.toggle";
 export const RAIL_DOCK_TAB = "dock.tab:";
 export const RAIL_PR = "pr";
 export const RAIL_PR_OPEN = "pr:";
+export const RAIL_PR_DISMISS = "pr.dismiss:";
+export const RAIL_PR_CLEAR = "pr.clear";
+export const RAIL_PR_RESTORE = "pr.restore";
 export const RAIL_PR_REFRESH = "pr.refresh";
 export const RAIL_PR_DIRECT = "pr.direct";
 export const RAIL_PR_TEAM = "pr.team";
@@ -133,6 +136,8 @@ export interface ReviewRailInput {
   approved: number;
   prefs: { direct: boolean; team: boolean };
   counts: { direct: number; team: number };
+  /** Requests matching the active filter that were dismissed locally until updated on GitHub. */
+  dismissed?: number;
 }
 
 export interface HarnessRailInput {
@@ -186,6 +191,21 @@ function reviewItem(r: ReviewRailInput): RailItem {
     menu.push({ id: RAIL_PR_TEAM, label: `Requested of a team (${r.counts.team})`, checked: r.prefs.team });
     menu.push({ id: "pr.sep2", separator: true });
     menu.push({ id: RAIL_PR_REFRESH, label: "Refresh", icon: "refresh" });
+    if (n > 0) {
+      menu.push({ id: RAIL_PR_CLEAR, label: "Clear all", icon: "x" });
+      menu.push({ id: "pr.sep3", separator: true });
+      menu.push({
+        id: "pr.dismiss",
+        label: "Dismiss",
+        children: r.requests.slice(0, MAX_PRS).map((pr) => ({
+          id: RAIL_PR_DISMISS + pr.id,
+          label: shorten(`${pr.repository} #${pr.number}  ${pr.title}`, 56),
+          icon: "x",
+        })),
+      });
+    } else if (r.dismissed && r.dismissed > 0) {
+      menu.push({ id: RAIL_PR_RESTORE, label: `Restore dismissed (${r.dismissed})`, icon: "history" });
+    }
   }
   const item: RailItem = { id: RAIL_PR, label: parts.join(", "), icon: "pr", menu };
   if (waiting > 0) item.badge = { text: count(waiting), tone: "accent" };
@@ -256,6 +276,9 @@ export type RailEffect =
   | { type: "toggle"; path: string }
   | { type: "open"; url: string }
   | { type: "refreshReviews" }
+  | { type: "clearReviews" }
+  | { type: "dismissReview"; id: string }
+  | { type: "restoreReviews" }
   | { type: "reviewPrefs"; key: "direct" | "team" }
   | null;
 
@@ -278,8 +301,14 @@ export function railEffect(
     case RAIL_PR: {
       if (menuItemId === "pr.setup") return { type: "navigate", path: "/settings" };
       if (menuItemId === RAIL_PR_REFRESH) return { type: "refreshReviews" };
+      if (menuItemId === RAIL_PR_CLEAR) return { type: "clearReviews" };
+      if (menuItemId === RAIL_PR_RESTORE) return { type: "restoreReviews" };
       if (menuItemId === RAIL_PR_DIRECT) return { type: "reviewPrefs", key: "direct" };
       if (menuItemId === RAIL_PR_TEAM) return { type: "reviewPrefs", key: "team" };
+      if (menuItemId?.startsWith(RAIL_PR_DISMISS)) {
+        const id = menuItemId.slice(RAIL_PR_DISMISS.length);
+        return id ? { type: "dismissReview", id } : null;
+      }
       if (menuItemId?.startsWith(RAIL_PR_OPEN)) {
         const url = ctx.reviewUrl(menuItemId.slice(RAIL_PR_OPEN.length));
         return url ? { type: "open", url } : null;
