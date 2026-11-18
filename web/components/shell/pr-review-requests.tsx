@@ -2,10 +2,15 @@
 
 import Link from "next/link";
 import { Popover } from "radix-ui";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Schemas } from "@/lib/api/client";
 import { useInbox, useReadInbox } from "@/lib/api/hooks";
-import { useGitHubReviewRequests, useRefreshGitHubReviewRequests } from "@/lib/api/github-reviews-hooks";
+import {
+  useDismissedReviewRequests,
+  useGitHubReviewRequests,
+  useRefreshGitHubReviewRequests,
+  useReviewFilterPrefs,
+} from "@/lib/api/github-reviews-hooks";
 import { Button } from "@/components/ui/button";
 import { Toggle } from "@/components/ui/controls";
 import { Icon } from "@/components/ui/icon";
@@ -16,10 +21,10 @@ import { cx } from "@/lib/cx";
 import {
   authorInitials,
   countReviewRequests,
+  excludeDismissedReviewRequests,
   filterReviewRequests,
-  loadReviewFilterPrefs,
+  isReviewRequestDismissed,
   relativeAge,
-  saveReviewFilterPrefs,
   type ReviewFilterPrefs,
 } from "@/lib/github-reviews";
 import { isOpen, nextSelection, step } from "@/lib/inbox";
@@ -37,17 +42,19 @@ function prRowEl(id: string) {
  */
 export function PrReviewRequests() {
   const [open, setOpen] = useState(false);
-  const [prefs, setPrefs] = useState<ReviewFilterPrefs>({ direct: true, team: true });
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- reading browser-only storage after hydration
-    setPrefs(loadReviewFilterPrefs(window.localStorage));
-  }, []);
+  const [prefs, setPrefs] = useReviewFilterPrefs();
+  const { dismissed, dismiss, clearAll, restore } = useDismissedReviewRequests();
 
   const query = useGitHubReviewRequests();
   const refresh = useRefreshGitHubReviewRequests();
   const allItems = useMemo(() => query.data?.items ?? [], [query.data?.items]);
-  const filtered = useMemo(() => filterReviewRequests(allItems, prefs), [allItems, prefs]);
-  const counts = useMemo(() => countReviewRequests(allItems), [allItems]);
+  const activeItems = useMemo(() => excludeDismissedReviewRequests(allItems, dismissed), [allItems, dismissed]);
+  const filtered = useMemo(() => filterReviewRequests(activeItems, prefs), [activeItems, prefs]);
+  const counts = useMemo(() => countReviewRequests(activeItems), [activeItems]);
+  const hidden = useMemo(
+    () => filterReviewRequests(allItems, prefs).filter((item) => isReviewRequestDismissed(item, dismissed)),
+    [allItems, prefs, dismissed],
+  );
 
   // Approvals of PRs you authored arrive as inbox items (kind pr_approved); the unread ones are the green badge.
   const inbox = useInbox();
@@ -67,11 +74,6 @@ export function PrReviewRequests() {
   ]
     .filter(Boolean)
     .join(", ");
-
-  const updatePrefs = useCallback((next: ReviewFilterPrefs) => {
-    setPrefs(next);
-    saveReviewFilterPrefs(window.localStorage, next);
-  }, []);
 
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
@@ -133,8 +135,12 @@ export function PrReviewRequests() {
             isRefreshing={refresh.isPending}
             items={filtered}
             counts={counts}
+            hiddenCount={hidden.length}
             prefs={prefs}
-            onChangePrefs={updatePrefs}
+            onChangePrefs={setPrefs}
+            onDismiss={dismiss}
+            onClearReviews={() => clearAll(filtered)}
+            onRestore={() => restore(hidden)}
             onRetry={() => void query.refetch()}
             onRefresh={() => refresh.mutate()}
             approved={approved}
@@ -157,8 +163,12 @@ function FeedTray({
   isRefreshing,
   items,
   counts,
+  hiddenCount,
   prefs,
   onChangePrefs,
+  onDismiss,
+  onClearReviews,
+  onRestore,
   onRetry,
   onRefresh,
   approved,
@@ -178,8 +188,12 @@ function FeedTray({
   isRefreshing: boolean;
   items: ReviewItem[];
   counts: { direct: number; team: number };
+  hiddenCount: number;
   prefs: ReviewFilterPrefs;
   onChangePrefs: (next: ReviewFilterPrefs) => void;
+  onDismiss: (item: ReviewItem) => void;
+  onClearReviews: () => void;
+  onRestore: () => void;
   onRetry: () => void;
   onRefresh: () => void;
   onClose: () => void;
@@ -213,6 +227,14 @@ function FeedTray({
         select(step(ids, current, k === "j" || k === "ArrowDown" ? 1 : -1));
         return;
       }
+      if (k === "x" && current) {
+        const item = items.find((i) => i.id === current);
+        if (item) {
+          e.preventDefault();
+          onDismiss(item);
+        }
+        return;
+      }
       if (k === "r") {
         e.preventDefault();
         onRefresh();
@@ -238,6 +260,15 @@ function FeedTray({
         )}
         <div className="ml-auto flex items-center gap-2">
           {syncedText && <span className="text-11 text-fg-tertiary">Synced {syncedText}</span>}
+          {configured && items.length > 0 && (
+            <button
+              type="button"
+              onClick={onClearReviews}
+              className="rounded-md px-2 py-1 text-12 font-medium text-accent hover:bg-hover"
+            >
+              Clear all
+            </button>
+          )}
           <button
             type="button"
             onClick={onRefresh}
@@ -361,11 +392,20 @@ function FeedTray({
           </EmptyState>
         ) : items.length === 0 ? (
           <EmptyState compact icon="check" title="No PRs waiting for your review">
-            {prefs.direct && !prefs.team
-              ? "No direct review requests right now."
-              : !prefs.direct && prefs.team
-                ? "No team review requests right now."
-                : "You’re all caught up on GitHub."}
+            {hiddenCount > 0 ? (
+              <>
+                {hiddenCount} {hiddenCount === 1 ? "request" : "requests"} cleared locally (returns if updated).{" "}
+                <button type="button" onClick={onRestore} className="font-medium text-accent hover:underline">
+                  Restore
+                </button>
+              </>
+            ) : prefs.direct && !prefs.team ? (
+              "No direct review requests right now."
+            ) : !prefs.direct && prefs.team ? (
+              "No team review requests right now."
+            ) : (
+              "You’re all caught up on GitHub."
+            )}
           </EmptyState>
         ) : (
           <ul className="flex flex-col gap-px">
@@ -376,6 +416,7 @@ function FeedTray({
                 selected={item.id === current}
                 onSelect={() => setSel({ id: item.id, index: ids.indexOf(item.id) })}
                 onOpen={onClose}
+                onDismiss={() => onDismiss(item)}
               />
             ))}
           </ul>
@@ -383,12 +424,15 @@ function FeedTray({
       </div>
 
       <div className="flex items-center gap-3 border-t border-border-subtle px-3.5 py-2 text-12 text-fg-tertiary">
-        <span aria-hidden className="hidden items-center gap-2.5 min-[480px]:flex">
+        <span aria-hidden className="hidden items-center gap-2 min-[480px]:flex">
           <span>
             <Kbd>J</Kbd> <Kbd>K</Kbd> move
           </span>
           <span>
             <Kbd>Enter</Kbd> open
+          </span>
+          <span>
+            <Kbd>X</Kbd> dismiss
           </span>
           <span>
             <Kbd>R</Kbd> refresh
@@ -413,15 +457,23 @@ function ReviewRow({
   selected,
   onSelect,
   onOpen,
+  onDismiss,
 }: {
   item: ReviewItem;
   selected: boolean;
   onSelect: () => void;
   onOpen: () => void;
+  onDismiss: () => void;
 }) {
   const age = relativeAge(item.updated_at);
   return (
-    <li>
+    <li
+      onMouseEnter={onSelect}
+      className={cx(
+        "group flex items-center gap-1 rounded-[9px] pr-1.5 transition-colors",
+        selected ? "bg-selected" : "hover:bg-hover",
+      )}
+    >
       <a
         href={item.url}
         target="_blank"
@@ -429,12 +481,8 @@ function ReviewRow({
         data-pr-row={item.id}
         aria-current={selected || undefined}
         onFocus={onSelect}
-        onMouseEnter={onSelect}
         onClick={onOpen}
-        className={cx(
-          "group flex items-start gap-2.5 rounded-[9px] px-2.5 py-2 outline-none transition-colors",
-          selected ? "bg-selected" : "hover:bg-hover",
-        )}
+        className="flex min-w-0 flex-1 items-start gap-2.5 rounded-[9px] py-2 pl-2.5 pr-1 outline-none focus-visible:ring-1 focus-visible:ring-accent/60"
       >
         {item.author_avatar_url ? (
           // external GitHub avatar URL
@@ -487,6 +535,19 @@ function ReviewRow({
           </div>
         </div>
       </a>
+      <button
+        type="button"
+        onFocus={onSelect}
+        onClick={onDismiss}
+        aria-label={`Dismiss ${item.repository} #${item.number}`}
+        title="Dismiss (X)"
+        className={cx(
+          "grid size-6 flex-none place-items-center rounded-md text-fg-tertiary transition-opacity hover:bg-surface hover:text-fg focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60",
+          selected ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+        )}
+      >
+        <Icon name="x" size={12} />
+      </button>
     </li>
   );
 }

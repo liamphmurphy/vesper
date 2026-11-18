@@ -53,14 +53,25 @@ test("Needs you carries its kind and a count badge", () => {
   assert.equal(buildRailModel(base).middle.find((i) => i.id === "needsYou").badge, undefined);
 });
 
-test("PR review requests: count badge and a menu of the PRs", () => {
+test("PR review requests: count badge, PR menu, Clear all and per-PR Dismiss", () => {
   const requests = [{ id: "a", number: 7, title: "Fix the thing", repository: "o/r" }];
   const m = buildRailModel({ ...base, review: { ...review, requests, counts: { direct: 1, team: 0 } } });
   const pr = m.middle[0];
   assert.deepEqual(pr.badge, { text: "1", tone: "accent" });
   assert.equal(pr.menu[0].id, "pr:a");
   assert.ok(pr.menu.some((x) => x.id === "pr.refresh"));
+  assert.ok(pr.menu.some((x) => x.id === "pr.clear"));
+  const dismissGroup = pr.menu.find((x) => x.id === "pr.dismiss");
+  assert.ok(dismissGroup);
+  assert.deepEqual(dismissGroup.children.map((c) => c.id), ["pr.dismiss:a"]);
   assert.equal(pr.menu.find((x) => x.id === "pr.direct").checked, true);
+
+  const cleared = buildRailModel({ ...base, review: { ...review, dismissed: 2 } }).middle[0];
+  assert.equal(cleared.badge, undefined);
+  assert.equal(cleared.menu.some((x) => x.id === "pr.clear"), false);
+  assert.equal(cleared.menu.some((x) => x.id === "pr.dismiss"), false);
+  assert.equal(cleared.menu.find((x) => x.id === "pr.restore").label, "Restore dismissed (2)");
+
   const approved = buildRailModel({ ...base, review: { ...review, approved: 2 } }).middle[0];
   assert.deepEqual(approved.badge, { text: "2", tone: "done" });
   const unconfigured = buildRailModel({ ...base, review: { ...review, configured: false } }).middle[0];
@@ -91,6 +102,10 @@ test("rail.action resolves to the web's own actions", () => {
   assert.deepEqual(railEffect("settings", undefined, ctx), { type: "navigate", path: "/settings" });
   assert.deepEqual(railEffect("pr", "pr:a", ctx), { type: "open", url: "https://github.com/o/r/pull/7" });
   assert.equal(railEffect("pr", "pr:zzz", ctx), null);
+  assert.deepEqual(railEffect("pr", "pr.dismiss:a", ctx), { type: "dismissReview", id: "a" });
+  assert.equal(railEffect("pr", "pr.dismiss:", ctx), null);
+  assert.deepEqual(railEffect("pr", "pr.clear", ctx), { type: "clearReviews" });
+  assert.deepEqual(railEffect("pr", "pr.restore", ctx), { type: "restoreReviews" });
   assert.deepEqual(railEffect("pr", "pr.team", ctx), { type: "reviewPrefs", key: "team" });
   assert.deepEqual(railEffect("harness:codex", "usage", ctx), { type: "navigate", path: "/settings/runner" });
   assert.equal(railEffect("nope", undefined, ctx), null);

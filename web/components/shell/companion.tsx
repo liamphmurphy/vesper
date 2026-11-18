@@ -8,14 +8,14 @@ import { WorkChat } from "@/components/domain/work-chat";
 import { Icon } from "@/components/ui/icon";
 import { useNavCounts } from "@/lib/use-nav-counts";
 import { useDevWorkspace } from "@/lib/api/dev-workspace-hooks";
-import { useGitHubReviewRequests, useRefreshGitHubReviewRequests } from "@/lib/api/github-reviews-hooks";
+import { useDismissedReviewRequests, useGitHubReviewRequests, useRefreshGitHubReviewRequests, useReviewFilterPrefs } from "@/lib/api/github-reviews-hooks";
 import { useInbox, usePersonaDock } from "@/lib/api/hooks";
 import { COMPANION_OPEN_EVENT } from "@/lib/dev-workspace";
 import { claimCompanion, companionClaimed, companionSlot, rightRailSlot, setCompanionSlot, setRightRailSlot, subscribeCompanion } from "@/lib/companion";
 import { cx } from "@/lib/cx";
 import { actOnDock, dockReducer, dockShortcut, loadDock, saveDock, type DockAction, type DockState } from "@/lib/editor-layout";
 import { connectedHarnesses } from "@/lib/harness-activity";
-import { countReviewRequests, filterReviewRequests, loadReviewFilterPrefs, saveReviewFilterPrefs, type ReviewFilterPrefs } from "@/lib/github-reviews";
+import { countReviewRequests, excludeDismissedReviewRequests, filterReviewRequests, isReviewRequestDismissed } from "@/lib/github-reviews";
 import { isOpen } from "@/lib/inbox";
 import { postDeduped } from "@/lib/native-shell/bridge";
 import { useIsNativeShell, useNativeCommand } from "@/lib/native-shell/hooks";
@@ -221,15 +221,17 @@ function NativeRail() {
   const router = useRouter();
   const devWorkspace = useDevWorkspace();
   const dock = useSyncExternalStore(dockRail.subscribe, dockRail.items, () => []);
-  const [prefs, setPrefs] = useState<ReviewFilterPrefs>({ direct: true, team: true });
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- reading browser-only storage after hydration
-    setPrefs(loadReviewFilterPrefs(window.localStorage));
-  }, []);
+  const [prefs, setPrefs] = useReviewFilterPrefs();
+  const { dismissed, dismiss: dismissReview, clearAll: clearReviews, restore: restoreReviews } = useDismissedReviewRequests();
   const reviews = useGitHubReviewRequests();
   const refreshReviews = useRefreshGitHubReviewRequests();
   const allReviews = useMemo(() => reviews.data?.items ?? [], [reviews.data?.items]);
-  const requests = useMemo(() => filterReviewRequests(allReviews, prefs), [allReviews, prefs]);
+  const activeReviews = useMemo(() => excludeDismissedReviewRequests(allReviews, dismissed), [allReviews, dismissed]);
+  const requests = useMemo(() => filterReviewRequests(activeReviews, prefs), [activeReviews, prefs]);
+  const hiddenReviews = useMemo(
+    () => filterReviewRequests(allReviews, prefs).filter((r) => isReviewRequestDismissed(r, dismissed)),
+    [allReviews, prefs, dismissed],
+  );
   const inbox = useInbox();
   const approved = useMemo(() => (inbox.data ?? []).filter((i) => i.kind === "pr_approved" && isOpen(i)).length, [inbox.data]);
   const readings = usePersonaDock().data?.harnesses;
@@ -246,14 +248,15 @@ function NativeRail() {
           requests: requests.map((r) => ({ id: r.id, number: r.number, title: r.title, repository: r.repository, draft: r.draft })),
           approved,
           prefs,
-          counts: countReviewRequests(allReviews),
+          counts: countReviewRequests(activeReviews),
+          dismissed: hiddenReviews.length,
         },
         needsYou: counts.inbox,
         harnesses: showHarness ? harnessRailInputs(harnesses) : null,
         devWorkspace: !!devWorkspace.data?.enabled,
         settingsNeedYou: counts.settings > 0,
       }),
-    [dock, pathname, reviews.data?.configured, requests, approved, prefs, allReviews, counts.inbox, counts.settings, showHarness, harnesses, devWorkspace.data?.enabled],
+    [dock, pathname, reviews.data?.configured, requests, approved, prefs, activeReviews, hiddenReviews.length, counts.inbox, counts.settings, showHarness, harnesses, devWorkspace.data?.enabled],
   );
   useEffect(() => {
     postDeduped({ v: 1, type: "rail", model });
@@ -288,12 +291,20 @@ function NativeRail() {
       case "refreshReviews":
         refreshReviews.mutate();
         break;
-      case "reviewPrefs": {
-        const next = { ...prefs, [effect.key]: !prefs[effect.key] };
-        setPrefs(next);
-        saveReviewFilterPrefs(window.localStorage, next);
+      case "clearReviews":
+        clearReviews(requests);
+        break;
+      case "dismissReview": {
+        const item = allReviews.find((r) => r.id === effect.id);
+        if (item) dismissReview(item);
         break;
       }
+      case "restoreReviews":
+        restoreReviews(hiddenReviews);
+        break;
+      case "reviewPrefs":
+        setPrefs({ ...prefs, [effect.key]: !prefs[effect.key] });
+        break;
     }
   });
   return null;
