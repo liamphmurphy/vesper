@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"time"
 
 	"github.com/liamphmurphy/vesper/server/internal/agentdef"
@@ -75,4 +76,58 @@ func (r *Runner) startDockerProxy(ctx context.Context, c runCtx, turn store.RunT
 		env[k] = v
 	}
 	return []string{td.Network}, td.Stop
+}
+
+// turnEnvironment is a turn's services and Docker API, started in the
+// background so a coding chat's checkout is prepared meanwhile: on a cold VM
+// each takes seconds (dockerd and a database becoming healthy; a clone and
+// package installs), and neither needs the other.
+type turnEnvironment struct {
+	cancel   context.CancelFunc
+	done     chan struct{}
+	exposed  map[string]string // written only before done closes
+	networks []string
+	stops    []func()
+	failure  string
+}
+
+func (r *Runner) startTurnEnvironment(ctx context.Context, c runCtx, turn store.RunTurn) *turnEnvironment {
+	ctx, cancel := context.WithCancel(ctx)
+	te := &turnEnvironment{cancel: cancel, done: make(chan struct{}), exposed: map[string]string{}}
+	go func() {
+		defer close(te.done)
+		networks, stopServices, failure := r.startServices(ctx, c, turn, te.exposed)
+		if failure != "" {
+			te.failure = failure
+			return
+		}
+		dockerNetworks, stopDocker := r.startDockerProxy(ctx, c, turn, te.exposed)
+		// Stopped in reverse: the Docker API before the services.
+		te.stops = []func(){stopDocker, stopServices}
+		te.networks = append(networks, dockerNetworks...)
+	}()
+	return te
+}
+
+// wait blocks until the environment is up, then adds what it exposes to env
+// and returns the networks the turn joins, or a failure for the run.
+func (te *turnEnvironment) wait(env map[string]string) ([]string, string) {
+	<-te.done
+	maps.Copy(env, te.exposed)
+	return te.networks, te.failure
+}
+
+// stop removes what started, first abandoning a start still in progress
+// (when the turn ends before waiting, e.g. its setup failed).
+func (te *turnEnvironment) stop() {
+	select {
+	case <-te.done:
+	default:
+		te.cancel()
+		<-te.done
+	}
+	for _, stop := range te.stops {
+		stop()
+	}
+	te.cancel()
 }

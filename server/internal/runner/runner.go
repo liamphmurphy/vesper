@@ -1442,7 +1442,14 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 		_ = agents.RevokeToken(qctx, q, c.agent.ID, tok.ID)
 	}()
 
+	var environment *turnEnvironment
 	if c.run.Purpose == "chat" && allowedScope(c.spec, "repo:write") && c.chatRepoAtStart != nil && *c.chatRepoAtStart != "" {
+		// A repository without a recipe yet gets one inferred from this
+		// setup's output, so only a known recipe's services start alongside it.
+		if _, known := r.loadTestEnv(ctx, c, testEnvRepo(ctx, q, c)); known {
+			environment = r.startTurnEnvironment(ctx, c, turn)
+			defer environment.stop()
+		}
 		script, err := chatSetupScript(ctx, q, c)
 		if err != nil {
 			r.failChat(ctx, c, "Could not prepare attached repositories.")
@@ -1693,7 +1700,11 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 		codeBase = r.workspaceBase(ctx, wsID(c.run))
 		repositoryBases = r.chatRepositoryBases(ctx, c)
 	}
-	networks, stopServices, failure := r.startServices(ctx, c, turn, env)
+	if environment == nil {
+		environment = r.startTurnEnvironment(ctx, c, turn)
+		defer environment.stop()
+	}
+	networks, failure := environment.wait(env)
 	if failure != "" {
 		if ctx.Err() != nil {
 			return // shutting down: the turn re-runs on the next runner start
@@ -1706,10 +1717,6 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 		r.end(ctx, c, "failed", failure, runs.VerbRunFailed)
 		return
 	}
-	defer stopServices()
-	dockerNetworks, stopDocker := r.startDockerProxy(ctx, c, turn, env)
-	defer stopDocker()
-	networks = append(networks, dockerNetworks...)
 	networks = append(networks, r.turnPlayground(ctx, c, env, sensitive)...)
 	r.event(ctx, c.run.ID, "lifecycle", map[string]any{"state": "turn_started", "turn": turn.Seq, "trigger": turn.Trigger,
 		"harness": c.spec.Harness, "resume": session != ""})
