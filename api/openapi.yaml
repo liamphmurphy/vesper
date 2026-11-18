@@ -8184,6 +8184,7 @@ components:
       properties:
         host_folder_workspaces: { type: boolean, description: "New runs keep their checkout in a host folder when their runner has host_workspaces_dir" }
         online: { type: boolean }
+        starting: { type: boolean, description: "True while an embedded runner is still starting up before its first heartbeat" }
         runners: { type: array, items: { $ref: "#/components/schemas/RunnerInfo" } }
         slots: { type: integer, description: "Runs the online runners take at once: each one's max_concurrent, or its slot_limit while lower" }
         busy: { type: integer, description: Runner slots in use, Personal Assistant chat turns included }

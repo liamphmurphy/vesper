@@ -105,10 +105,10 @@ export function ActivityOverview({
             <span
               className={cx(
                 "font-mono text-10",
-                stats.online ? "text-state-done" : "text-pill-blocked-fg",
+                stats.online ? "text-state-done" : stats.starting ? "text-fg-tertiary" : "text-pill-blocked-fg",
               )}
             >
-              {stats.online ? "online" : "offline"}
+              {stats.online ? "online" : stats.starting ? "starting" : "offline"}
             </span>
           </div>
           <div className="flex items-baseline gap-2">

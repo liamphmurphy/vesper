@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"net/http"
+	"sync/atomic"
 	"testing"
 )
 
@@ -84,5 +85,39 @@ func TestHostFolderWorkspaces(t *testing.T) {
 	}
 	if got, ok := e.want("GET", "/chats/"+chat["id"].(string), nil, http.StatusOK)["workspace_path"]; ok {
 		t.Fatalf("removed chat workspace_path = %v", got)
+	}
+}
+
+func TestRunnerStatusReportsStartingUntilRunnerRegisters(t *testing.T) {
+	var starting atomic.Bool
+	starting.Store(true)
+	e := newChatEnvServer(t, nil, func(s *Server) {
+		s.RunnerStarting = starting.Load
+	})
+
+	out := e.want("GET", "/runner", nil, http.StatusOK)
+	if out["online"] != false || out["starting"] != true {
+		t.Fatalf("starting status = %+v, want online=false starting=true", out)
+	}
+	dash := e.want("GET", "/dashboard", nil, http.StatusOK)["runner"].(map[string]any)
+	if dash["online"] != false || dash["starting"] != true {
+		t.Fatalf("dashboard starting runner = %+v, want online=false starting=true", dash)
+	}
+
+	// If startup exits without registering, starting drops and offline surfaces.
+	starting.Store(false)
+	out = e.want("GET", "/runner", nil, http.StatusOK)
+	if out["online"] != false || out["starting"] != nil {
+		t.Fatalf("failed-start status = %+v, want online=false starting omitted", out)
+	}
+
+	// Once a runner heartbeats, online wins even if the startup flag were still set.
+	starting.Store(true)
+	if _, err := e.pool.Exec(context.Background(), `INSERT INTO runners (id, backend, max_concurrent) VALUES ('app-runner', 'microvm', 4)`); err != nil {
+		t.Fatal(err)
+	}
+	out = e.want("GET", "/runner", nil, http.StatusOK)
+	if out["online"] != true || out["starting"] != nil {
+		t.Fatalf("online status = %+v, want online=true starting omitted", out)
 	}
 }

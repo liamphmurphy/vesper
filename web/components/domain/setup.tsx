@@ -100,6 +100,7 @@ export function useSetupChecklist(): { steps?: SetupStep[]; workspace?: string }
     harnessSecret: !!secrets.data?.secrets.some((s) => s.name.startsWith("harness:") && !s.project),
     harness,
     runnerOnline: !!runner.data?.online,
+    runnerStarting: !!runner.data?.starting,
     runners: runner.data?.runners ?? [],
     agents: boot.data.agents.length,
     agentsReviewed: reviewed,

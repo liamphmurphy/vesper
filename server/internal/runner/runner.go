@@ -123,6 +123,9 @@ type Runner struct {
 	// StoreSecret saves logins from sign-ins started in Settings; nil leaves
 	// them to another runner.
 	StoreSecret SecretStorer
+	// OnHeartbeat runs after a heartbeat succeeds; vesper app uses it to
+	// clear its startup flag once the runner is visible in LiveRunners.
+	OnHeartbeat func()
 	Log         *slog.Logger
 
 	mu     sync.Mutex
@@ -299,6 +302,9 @@ func (r *Runner) heartbeat(ctx context.Context) {
 			r.Log.Warn("heartbeat", "err", err)
 		}
 		return
+	}
+	if r.OnHeartbeat != nil {
+		r.OnHeartbeat()
 	}
 	limit, err := r.q().RunnerSlotLimit(ctx, r.Cfg.ID)
 	if err != nil {

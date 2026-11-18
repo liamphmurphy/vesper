@@ -79,6 +79,9 @@ type Server struct {
 	// api.github.com when empty (tests point elsewhere).
 	GitHubAPIURL string
 	GitHubPR     *githubpr.Service
+	// RunnerStarting reports whether an in-process runner (vesper app) is
+	// still initializing before its first heartbeat.
+	RunnerStarting func() bool
 
 	logins       loginLimiter
 	apiOnce      sync.Once

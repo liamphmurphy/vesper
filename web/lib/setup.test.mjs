@@ -70,3 +70,12 @@ test("pending discovery is distinct from an unavailable harness", () => {
   assert.equal(systemBanner(health, true), undefined);
   assert.equal(systemBanner(health, false), "runner");
 });
+
+test("a starting runner suppresses the offline banner and shows a starting checklist detail", () => {
+  const ready = harnessHealth(groups(true, false));
+  assert.equal(systemBanner(ready, false, true), undefined);
+  assert.equal(systemBanner(ready, false, false), "runner");
+  const steps = setupChecklist({ ...base, runnerOnline: false, runnerStarting: true });
+  assert.equal(steps[2].done, false);
+  assert.equal(steps[2].detail, "Runner is starting…");
+});

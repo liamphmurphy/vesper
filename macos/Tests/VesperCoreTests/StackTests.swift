@@ -57,6 +57,24 @@ final class StackHealthTests: XCTestCase {
         XCTAssertEqual(TrayModel.iconState(h.phase), .starting)
     }
 
+    func testRunnerStartingStaysInStartingPhaseUntilOnlineOrOffline() throws {
+        let starting = StackHealthLogic.derive(base { $0.runnerOnline = false; $0.runnerStarting = true })
+        XCTAssertEqual(starting.phase, .starting)
+        XCTAssertEqual(starting.title, "Starting runner…")
+        XCTAssertEqual(TrayModel.iconState(starting.phase), .starting)
+
+        let offline = StackHealthLogic.derive(base { $0.runnerOnline = false; $0.runnerStarting = false })
+        XCTAssertEqual(offline.phase, .degraded)
+        XCTAssertEqual(offline.title, "Runner offline")
+
+        let decodedStarting = try JSONDecoder().decode(RunnerStatus.self, from: Data(#"{"online":false,"starting":true,"runners":[]}"#.utf8))
+        XCTAssertEqual(decodedStarting.online, false)
+        XCTAssertEqual(decodedStarting.starting, true)
+        let decodedLegacy = try JSONDecoder().decode(RunnerStatus.self, from: Data(#"{"online":false,"runners":[]}"#.utf8))
+        XCTAssertEqual(decodedLegacy.online, false)
+        XCTAssertNil(decodedLegacy.starting)
+    }
+
     func testStoppedWhenNoProcessAndNoError() {
         let h = StackHealthLogic.derive(base { $0.processRunning = false })
         XCTAssertEqual(h.phase, .stopped)

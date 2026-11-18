@@ -233,9 +233,11 @@ public struct RunnerStatus: Sendable, Codable, Equatable {
     }
     public var online: Bool?
     public var runners: [Runner]?
-    public init(online: Bool? = nil, runners: [Runner]? = nil) {
+    public var starting: Bool?
+    public init(online: Bool? = nil, runners: [Runner]? = nil, starting: Bool? = nil) {
         self.online = online
         self.runners = runners
+        self.starting = starting
     }
 }
 

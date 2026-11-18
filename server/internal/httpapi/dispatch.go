@@ -53,6 +53,10 @@ func (s *Server) runnerStatus(ctx context.Context) (api.RunnerStatus, error) {
 		out.Busy += int(r.Running)
 	}
 	out.Online = len(rs) > 0
+	if !out.Online && s.RunnerStarting != nil && s.RunnerStarting() {
+		starting := true
+		out.Starting = &starting
+	}
 	live, err := s.Q.LiveWorkRunsCount(ctx)
 	if err != nil {
 		return out, err
