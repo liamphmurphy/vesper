@@ -13,6 +13,7 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
     let kind: WindowKind
     let state: ShellState
     let bridge: ShellBridge?
+    let services: WebPageServices?
     let webView: WKWebView
     weak var host: MainWindowController?
 
@@ -31,10 +32,14 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
         if kind == .vesper {
             let bridge = ShellBridge(state: state)
             self.bridge = bridge
-            self.webView = WebViewFactory.makeWebView(kind: .vesper, bridge: bridge)
+            let services = WebPageServices()
+            self.services = services
+            self.webView = WebViewFactory.makeWebView(kind: .vesper, bridge: bridge, services: services)
             bridge.webView = webView
+            services.webView = webView
         } else {
             self.bridge = nil
+            self.services = nil
             self.webView = WebViewFactory.makeWebView(kind: .playground, bridge: nil)
             self.playgroundURL = URL(string: path)
         }
@@ -98,6 +103,7 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
         let sameServer = base == conn.baseURL
         base = conn.baseURL
         bridge?.baseURL = conn.baseURL
+        services?.baseURL = conn.baseURL
         state.loadError = nil
         if sameServer, webView.url != nil {
             webView.reload()
@@ -139,6 +145,7 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
 
     func teardown() {
         bridge?.teardown(from: webView.configuration.userContentController)
+        services?.teardown(from: webView.configuration.userContentController)
         webView.navigationDelegate = nil
         webView.uiDelegate = nil
         observations.removeAll()
@@ -173,9 +180,15 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
+        // <a download>, including blob: and data: URLs, goes to ~/Downloads (before any link routing,
+        // which would hand a blob: URL to the workspace).
+        if navigationAction.shouldPerformDownload { return .download }
+        guard let url = navigationAction.request.url else { return .cancel }
+        let scheme = url.scheme?.lowercased() ?? ""
+        // The page's own blob:/data:/about: documents open in a popup (target=_blank) or here.
+        if ["blob", "data", "about"].contains(scheme) && kind == .vesper { return .allow }
         // Subframes (e.g. embedded previews) are governed by the page's own policy.
         guard navigationAction.targetFrame?.isMainFrame ?? true else { return .allow }
-        guard let url = navigationAction.request.url else { return .cancel }
         if navigationAction.targetFrame == nil {
             _ = route(url, openingTab: true)
             return .cancel
@@ -183,10 +196,47 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
         return route(url, openingTab: false) ? .allow : .cancel
     }
 
+    func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse) async -> WKNavigationResponsePolicy {
+        WebNavigationPolicy.shouldDownload(navigationResponse) ? .download : .allow
+    }
+
+    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
+        WebDownloads.shared.adopt(download, in: webView)
+    }
+
+    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
+        WebDownloads.shared.adopt(download, in: webView)
+    }
+
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction,
                  windowFeatures: WKWindowFeatures) -> WKWebView? {
-        if let url = navigationAction.request.url { _ = route(url, openingTab: true) }
+        let url = navigationAction.request.url
+        let scheme = url?.scheme?.lowercased() ?? ""
+        vlog("createWebView url=\(url?.absoluteString ?? "nil")")
+        // window.open("") / about:blank and blob:/data: targets need a real window the opener can
+        // write to or navigate later (connector sign-in); links to pages open as tabs.
+        if kind == .vesper, url == nil || url?.absoluteString.isEmpty == true || ["about", "blob", "data"].contains(scheme) {
+            return WebPopup.make(configuration: configuration, features: windowFeatures, parent: view.window)
+        }
+        if let url { _ = route(url, openingTab: true) }
         return nil
+    }
+
+    func webViewDidClose(_ webView: WKWebView) {
+        view.window?.performClose(nil)
+    }
+
+    /// Screen/camera/microphone capture (getDisplayMedia in the frame-capture feature): only the
+    /// Vesper origin's main frame is offered the system prompt; everything else is refused.
+    func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo,
+                 type: WKMediaCaptureType) async -> WKPermissionDecision {
+        guard kind == .vesper, frame.isMainFrame, let base = app.connection?.baseURL ?? base,
+              BridgeOrigin.matches(scheme: origin.protocol, host: origin.host, port: origin.port, base: base) else {
+            vlog("media capture denied for \(origin.protocol)://\(origin.host)")
+            return .deny
+        }
+        vlog("media capture prompt for type \(type.rawValue)")
+        return .prompt
     }
 
     // MARK: Navigation results
@@ -197,6 +247,17 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
         app.scheduleSessionSave()
         if debugLoggingEnabled, ProcessInfo.processInfo.environment["VESPER_DEBUG_SELFTEST"] == "1", kind == .vesper {
             runBridgeSelfTest()
+        }
+        runDebugScript()
+    }
+
+    /// Debug only: VESPER_DEBUG_JS=<file> runs that file's JavaScript (as an async function body) after
+    /// each load and logs the result, to exercise WebKit behaviour without the page's help.
+    private func runDebugScript() {
+        guard debugLoggingEnabled, kind == .vesper, let path = ProcessInfo.processInfo.environment["VESPER_DEBUG_JS"],
+              let source = try? String(contentsOfFile: path, encoding: .utf8) else { return }
+        webView.callAsyncJavaScript(source, arguments: [:], in: nil, in: .page) { result in
+            MainActor.assumeIsolated { vlog("debug js: \(result)") }
         }
     }
 
@@ -272,6 +333,7 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = parameters.allowsMultipleSelection
         panel.canChooseDirectories = parameters.allowsDirectories
+        panel.canChooseFiles = true
         return panel.runModal() == .OK ? panel.urls : nil
     }
 }

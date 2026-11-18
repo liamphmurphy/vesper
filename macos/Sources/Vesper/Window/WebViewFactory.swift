@@ -19,15 +19,18 @@ enum WebViewFactory {
     document.documentElement.classList.add("native-mac");
     """
 
-    static func makeWebView(kind: WebViewKind, bridge: WKScriptMessageHandler?) -> WKWebView {
+    static func makeWebView(kind: WebViewKind, bridge: WKScriptMessageHandler?, services: WebPageServices? = nil) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.applicationNameForUserAgent = userAgentSuffix
+        // element.requestFullscreen (slides/designs present, video, dev terminal).
+        config.preferences.isElementFullscreenEnabled = true
         switch kind {
         case .vesper:
             config.websiteDataStore = WKWebsiteDataStore.default()
             let script = WKUserScript(source: nativeModeScript, injectionTime: .atDocumentStart, forMainFrameOnly: true)
             config.userContentController.addUserScript(script)
             if let bridge { config.userContentController.add(bridge, name: handlerName) }
+            if let services { WebPageServices.install(on: config.userContentController, services: services) }
         case .playground:
             config.websiteDataStore = playgroundStore
         }
