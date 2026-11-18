@@ -95,17 +95,28 @@ private struct NavHeader: View {
     @State private var search = ""
     @State private var debounce: Task<Void, Never>?
 
+    @ViewBuilder private var actionButtons: some View {
+        ForEach(nav.actions ?? []) { action in
+            ActionButton(action: action) { menuId in
+                send(.navAction(navigatorId: nav.id, actionId: action.id, itemId: nil, menuItemId: menuId))
+            }
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if nav.title != nil || !(nav.actions ?? []).isEmpty {
+            if let title = nav.title, (nav.actions ?? []).count > 2 {
+                // Many actions would squeeze the title to "Know…": title on its own line, actions below.
+                Text(title).font(.title3.weight(.semibold)).lineLimit(1)
+                HStack(spacing: 2) {
+                    actionButtons
+                    Spacer(minLength: 0)
+                }
+            } else if nav.title != nil || !(nav.actions ?? []).isEmpty {
                 HStack {
-                    if let title = nav.title { Text(title).font(.title3.weight(.semibold)) }
-                    Spacer()
-                    ForEach(nav.actions ?? []) { action in
-                        ActionButton(action: action) { menuId in
-                            send(.navAction(navigatorId: nav.id, actionId: action.id, itemId: nil, menuItemId: menuId))
-                        }
-                    }
+                    if let title = nav.title { Text(title).font(.title3.weight(.semibold)).lineLimit(1).layoutPriority(1) }
+                    Spacer(minLength: 4)
+                    actionButtons
                 }
             }
             if let filters = nav.filters, !filters.isEmpty {
@@ -154,14 +165,15 @@ private struct ActionButton: View {
 
     @ViewBuilder private var content: some View {
         if let menu = action.menu, !menu.isEmpty {
-            Menu {
-                MenuItems(items: menu) { onChoose($0) }
+            // A plain button that pops up an NSMenu: SwiftUI's Menu collapses to zero width in a
+            // sidebar header row, which hid Knowledge's + (New) menu.
+            Button {
+                let ns = MenuBuilder.menu(from: menu) { onChoose($0) }
+                ns.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
             } label: {
-                Image(systemName: SidebarIcons.symbolName(action.icon))
+                Image(systemName: SidebarIcons.symbolName(action.icon)).foregroundStyle(action.accent == true ? Color.accentColor : .secondary)
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
+            .buttonStyle(.borderless)
             .help(action.label)
         } else {
             Button { onChoose(nil) } label: {
@@ -275,7 +287,8 @@ private struct NavSectionView: View {
     @ViewBuilder private var rows: some View {
         if section.items.isEmpty {
             if let empty = section.emptyText {
-                Text(empty).font(.callout).foregroundStyle(.secondary).selectionDisabled()
+                Text(empty).font(.callout).foregroundStyle(.secondary)
+                    .lineLimit(nil).fixedSize(horizontal: false, vertical: true).selectionDisabled()
             }
         } else {
             ForEach(section.items) { item in
