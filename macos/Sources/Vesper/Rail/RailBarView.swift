@@ -16,6 +16,7 @@ final class RailBarView: NSVisualEffectView {
     private let footStack = RailBarView.makeStack()
     private var buttons: [String: RailButton] = [:]
     private var needsYou: NeedsYouPopover?
+    private let menuPopover = RailMenuPopover()
 
     init(send: @escaping (NativeCommand) -> Void, services: @escaping () -> SystemServices?) {
         self.send = send
@@ -103,10 +104,16 @@ final class RailBarView: NSVisualEffectView {
             needsYou = popover
             popover.toggle(relativeTo: button)
         } else if let menu = item.menu, !menu.isEmpty {
-            var chosen: String?
-            let nsMenu = MenuBuilder.menu(from: menu) { chosen = $0 }
-            nsMenu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height + 4), in: button)
-            if let chosen { send(.railAction(itemId: item.id, menuItemId: chosen)) }
+            // A popover that flies out to the left like Needs-you; clicking the same button again closes it.
+            if menuPopover.isShown {
+                let same = menuPopover.itemId == item.id
+                menuPopover.close()
+                if same { return }
+            }
+            let itemId = item.id
+            menuPopover.show(item, relativeTo: button) { [weak self] chosen in
+                self?.send(.railAction(itemId: itemId, menuItemId: chosen))
+            }
         } else {
             send(.railAction(itemId: item.id, menuItemId: nil))
         }
