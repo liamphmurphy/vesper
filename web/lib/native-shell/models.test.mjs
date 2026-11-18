@@ -17,6 +17,8 @@ test("initials", () => {
 
 test("a chat row: title, href, persona avatar, age", () => {
   const item = chatItem(chat({ persona: { name: "Ada Lovelace", color: "#9B8CFF", avatar_url: "/api/v1/personas/p/avatar?v=1" } }), null, "http://localhost:8080", NOW);
+  assert.deepEqual(item.contextMenu.map((m) => m.id), ["rename", "archive", "sep", "delete"]);
+  delete item.contextMenu;
   assert.deepEqual(item, {
     id: "c1",
     title: "Plan",
