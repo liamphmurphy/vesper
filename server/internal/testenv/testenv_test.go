@@ -26,7 +26,7 @@ func TestInferFromVespersCI(t *testing.T) {
 		t.Fatalf("healthcheck = %q", s.Healthcheck)
 	}
 	want := "postgres://lazyagents:lazyagents@postgres:5432/lazyagents?sslmode=disable"
-	if s.Expose["TEST_DATABASE_URL"] != want || s.Expose["E2E_DATABASE_URL"] != want {
+	if s.Expose["TEST_DATABASE_URL"] != want {
 		t.Fatalf("expose = %v, want TEST_DATABASE_URL=%s", s.Expose, want)
 	}
 }

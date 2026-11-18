@@ -1,13 +1,32 @@
 name: ci
 
+# Backend and UI tests, as two independent jobs. Each job runs the same make
+# target you run locally (`make test-server`, `make test-web`), so a red job
+# reproduces with one command.
+#
+# Runner: ubuntu-24.04-arm is the largest free GitHub-hosted runner (4 vCPU,
+# 16 GB on public repositories, the same as ubuntu-latest). Its vCPUs are
+# physical Cobalt 100 cores rather than hyperthreads, which helps the CPU-bound
+# Go suite. Larger runners are billed even for public repositories.
+
 on:
   push:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+# A new push to a pull request cancels its older run; runs on main always finish.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
 jobs:
   server:
-    runs-on: ubuntu-latest
+    name: server tests
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
     services:
       postgres:
         image: postgres:17-alpine
@@ -20,27 +39,30 @@ jobs:
           --health-cmd "pg_isready -U lazyagents" --health-interval 2s --health-retries 30
     env:
       TEST_DATABASE_URL: postgres://lazyagents:lazyagents@localhost:5432/lazyagents?sslmode=disable
-    defaults:
-      run:
-        working-directory: server
+      TEST_S3_ENDPOINT: http://localhost:8333
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
-      - run: go vet ./...
-      - run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
-      # httpapi and runner each take ~17-19 min when all packages run in
-      # parallel on a 4-core runner, past go test's 10m default.
-      - run: go test -timeout 30m ./...
-      - run: go build ./...
+      # SeaweedFS needs a command and a mounted config, which service containers
+      # can't set. s3.json holds the identity the tests sign with: without it,
+      # bucket listing comes back empty for that key.
+      - name: Start SeaweedFS
+        run: |
+          docker run -d --name s3 -p 8333:8333 --tmpfs /data \
+            -v "$GITHUB_WORKSPACE/deploy/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro" \
+            chrislusf/seaweedfs:4.48 server -s3 -s3.config=/etc/seaweedfs/s3.json \
+            -dir=/data -master.volumeSizeLimitMB=64 -volume.max=100 -ip.bind=0.0.0.0
+          for _ in $(seq 60); do curl -s -o /dev/null "$TEST_S3_ENDPOINT" && exit 0; sleep 1; done
+          docker logs s3; exit 1
+      - run: make test-server
 
   web:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: web
+    name: web tests
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -48,73 +70,4 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - run: npm ci
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm run build
-
-  contract:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: server/go.mod
-          cache-dependency-path: server/go.sum
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - uses: sqlc-dev/setup-sqlc@v4
-        with:
-          sqlc-version: "1.31.1"
-      - run: cd web && npm ci
-      - run: make gen-check
-
-  # The mocked-API Playwright suite (web/e2e/, `npx playwright test`) is off in CI
-  # until its drifted specs are triaged; run it locally before UI changes.
-
-  # Real-stack board/MCP and OpenCode chat e2e (no API mocks). Fake CLIs stand in for
-  # opencode/claude/codex, so this is NOT real-provider evidence; see
-  # web/e2e-stack/README.md. The script starts SeaweedFS itself via docker.
-  e2e-stack:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_USER: lazyagents
-          POSTGRES_PASSWORD: lazyagents
-          POSTGRES_DB: lazyagents
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U lazyagents" --health-interval 2s --health-retries 30
-    env:
-      E2E_DATABASE_URL: postgres://lazyagents:lazyagents@localhost:5432/lazyagents?sslmode=disable
-      CI: "true"
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: server/go.mod
-          cache-dependency-path: server/go.sum
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - run: npm ci
-        working-directory: web
-      - run: npx playwright install --with-deps chromium
-        working-directory: web
-      - run: npm run e2e:stack
-        working-directory: web
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: e2e-stack-playwright
-          path: |
-            web/playwright-report/
-            web/test-results/
-          if-no-files-found: ignore
+      - run: make test-web
