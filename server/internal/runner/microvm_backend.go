@@ -658,13 +658,14 @@ func (b *MicroVM) Start(ctx context.Context, runID string, spec ExecSpec) (Proce
 	}
 	gitProxySet := false
 	for k, v := range spec.Env {
-		if k == ClaudeAuthEnv || k == ClaudeAuthScopeEnv || k == CodexAuthEnv || k == CodexAuthScopeEnv || k == AntigravityAuthEnv ||
-			k == "GH_TOKEN" || k == "GITHUB_TOKEN" || k == envName("git:pat") {
+		if hostOnlyEnv(k) {
 			continue
 		}
 		env[k] = v
 	}
-	if gitPAT != "" || b.GitUpstreamBase != "" {
+	// An SSH-URL checkout fetches through the same host proxy as an HTTPS
+	// one (rewriteGitInsteadOfEnv), so the deploy key never enters the VM.
+	if gitPAT != "" || spec.Env[SSHKeyEnv] != "" || b.GitUpstreamBase != "" {
 		if rvm.egress != nil {
 			rvm.egress.SetGitHandler(newGitUploadProxy(b.GitUpstreamBase, gitPAT))
 			gitProxySet = true
@@ -795,6 +796,18 @@ func (p *microvmProc) Wait() (int, error) {
 		return 1, errors.New(ex.Error)
 	}
 	return ex.Code, nil
+}
+
+// hostOnlyEnv reports whether an env var holds a credential that stays on
+// the host: logins are written as files the run holds, and git credentials
+// are used by the host's fetch proxy and pushes.
+func hostOnlyEnv(k string) bool {
+	switch k {
+	case ClaudeAuthEnv, ClaudeAuthScopeEnv, CodexAuthEnv, CodexAuthScopeEnv, AntigravityAuthEnv,
+		"GH_TOKEN", "GITHUB_TOKEN", envName("git:pat"), SSHKeyEnv:
+		return true
+	}
+	return false
 }
 
 func formatMemLimit(mb int64) string {

@@ -377,7 +377,10 @@ func TestVZHostGitCloneAndBundlePushNoTokenInVM(t *testing.T) {
 	cloneAndCommit := `set -eu
 test -z "${GH_TOKEN:-}"
 test -z "${GITHUB_TOKEN:-}"
+test -z "${LAZYAGENTS_SSH_KEY:-}"
 ! tr '\0' '\n' < /proc/self/environ | grep -q "` + wantToken + `"
+# An SSH remote fetches through the host proxy too, with no key in the VM.
+git clone -q git@github.com:org/repo.git /workspace/repo-ssh
 git config --global user.name Agent
 git config --global user.email agent@example.com
 git clone https://github.com/org/repo.git /workspace/repo
@@ -393,7 +396,7 @@ fi
 `
 	code, out, stderr := runVMTurn(t, b, "git-run", ExecSpec{
 		Argv: []string{"/bin/sh", "-c", cloneAndCommit},
-		Env:  map[string]string{"GH_TOKEN": wantToken},
+		Env:  map[string]string{"GH_TOKEN": wantToken, SSHKeyEnv: "not-a-real-ssh-key"},
 	})
 	if code != 0 {
 		t.Fatalf("clone/commit turn failed code=%d out=%q err=%q", code, out, stderr)
