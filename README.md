@@ -129,22 +129,22 @@ When a job is bigger than a single chat turn, ask your persona to plan tickets o
 
 ## Get started
 
-You need Docker (Docker Desktop or OrbStack on macOS/Windows, or Docker Engine on Linux).
+Vesper ships as a macOS app (Apple Silicon): it embeds Postgres, stores files in a local directory and runs agents in Apple Virtualization microVMs.
 
 ```sh
 git clone https://github.com/liamphmurphy/Vesper.git
 cd Vesper
-cp .env.example .env
-docker compose up --build
+make mac-app   # build the app bundle (macos/Makefile)
+make mac-run   # build and launch it
 ```
 
-Open **[localhost:8080](http://localhost:8080)** and choose a username and password: the first browser to arrive claims the install, and other devices sign in with those credentials. Locked out? `make signin` prints a one-time sign-in link.
+The first browser to arrive claims the install by choosing a username and password. Locked out? `make signin` prints a one-time sign-in link for a `make dev` database.
 
 The first boot creates an empty workspace and a default **Assistant** with all persona capabilities enabled. After sign-in, the Assistant's **Welcome Wizard** asks for your name and what you do, connects **Claude Code**, **Codex**, or **Antigravity**, and drafts your first persona. (`Settings → Run setup again` restarts it at any time, and `SEED=true` opts into the Northwind Labs demo dataset.)
 
-To run personas with API keys, set `SECRETS_KEY` in `.env`, then follow the **[setup guide](docs/guide.md#running-agents)** to add provider credentials (`harness:anthropic` for Claude Code, `harness:openai` for Codex, or `harness:google` for Antigravity).
+To run personas with API keys, follow the **[setup guide](docs/guide.md#running-agents)** to add provider credentials (`harness:anthropic` for Claude Code, `harness:openai` for Codex, or `harness:google` for Antigravity).
 
-Developing Vesper or running it from a checkout? `make start` does everything in one command: it creates `.env`, builds the hardened agent image, signs in to your **Claude and ChatGPT subscriptions** so chats and runs can use the plans you already have, and starts the workbench at **[localhost:3000](http://localhost:3000)**.
+Developing Vesper? `make dev` starts a local Postgres (`make dev-infra`), the API with hot reload and Next at **[localhost:3000](http://localhost:3000)**. See **[Develop](docs/guide.md#develop)**.
 
 ### macOS desktop client
 
@@ -155,11 +155,11 @@ make desktop-dmg            # Apple Silicon → desktop/release/Vesper-arm64.dmg
 make desktop-dmg-universal  # Universal     → desktop/release/Vesper-universal.dmg
 ```
 
-`Vesper.app` connects to your local OrbStack/Docker stack (`http://localhost:8080`) or a remote Tailscale host with native Cocoa tabs (`⌘T`, `⌘W`, `⇧⌘T`, `⌘1`–`⌘9`), persistent cookies, multi-tab SSE `/events` multiplexing (so 6+ HTTP/1.1 tabs never stall), Dock badge **Needs you** counts, Notification Center alerts, one-click `docker compose up -d` startup, and clean `Esc` / terminal keybindings in the **Dev workspace**. See the **[desktop guide](desktop/README.md)** for Gatekeeper first-launch instructions.
+`Vesper.app` connects to a Vesper server with native Cocoa tabs (`⌘T`, `⌘W`, `⇧⌘T`, `⌘1`–`⌘9`), persistent cookies, multi-tab SSE `/events` multiplexing (so 6+ HTTP/1.1 tabs never stall), Dock badge **Needs you** counts, Notification Center alerts, and clean `Esc` / terminal keybindings in the **Dev workspace**. See the **[desktop guide](desktop/README.md)** for Gatekeeper first-launch instructions.
 
 ### Current scope
 
-Vesper is designed for one person per install: the username and password chosen on first visit sign in as the workspace owner. The app binds to `127.0.0.1` by default unless you set `LAZYAGENTS_BIND`, and the Docker runner mounts the host Docker socket to launch sandboxed agent containers. On a remote host, keep Vesper on a private network (such as Tailscale) or behind an authenticating proxy, and only run repositories you trust. Read the **[guide](docs/guide.md)** before deploying.
+Vesper is designed for one person per install: the username and password chosen on first visit sign in as the workspace owner. The app binds to `127.0.0.1`, and agents run in sandboxed microVMs. On a remote host, keep Vesper on a private network (such as Tailscale) or behind an authenticating proxy, and only run repositories you trust. Read the **[guide](docs/guide.md)** before deploying.
 
 ## Explore further
 

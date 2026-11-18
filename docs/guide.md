@@ -4,14 +4,17 @@
 
 ## Run locally
 
-Requires Docker (Docker Desktop on a laptop).
+Vesper ships as the macOS app: it embeds Postgres, keeps blobs in a local
+directory and runs agents in Apple Virtualization microVMs
+([native app notes](dev/native-mac-app.md)).
 
 ```sh
-cp .env.example .env
-docker compose up --build      # → http://localhost:8080
+make mac-app   # build the app bundle (macos/Makefile)
+make mac-run   # build and launch it
 ```
 
-For a native macOS desktop window with Cocoa tabs, Dock badges, and macOS notifications, see the [macOS Electron desktop client guide](../desktop/README.md).
+To work on Vesper itself, `make dev` runs the API and Next on the host against
+a local Postgres (see [Develop](#develop)).
 
 The first boot creates an empty workspace with one local user and an Assistant
 with all persona permissions enabled. A signed-in browser acts as that user.
@@ -37,8 +40,8 @@ signs in with the owner's password or a one-time link.
 **First run.** A fresh install is unclaimed: open it and the sign-in page asks
 for a username and password. The first browser to set them claims the install
 for good and stays signed in for a year (an HttpOnly, `SameSite=Strict`
-cookie). Until then whoever reaches the port could claim it, which is why
-compose publishes it on `127.0.0.1` unless you set `LAZYAGENTS_BIND`. Installs
+cookie). Until then whoever reaches the port could claim it, which is why the
+app listens on loopback only. Installs
 from before passwords existed stay claimed; add a password in Settings → Sign-in.
 
 **Other devices** sign in with the username and password. Ten wrong guesses
@@ -47,33 +50,31 @@ in 15 minutes pause password sign-in until the window passes.
 **Locked out**, or no password yet:
 
 ```sh
-make signin    # → http://localhost:8080/api/v1/sign-in?code=…
+make signin    # → http://localhost:3000/…/sign-in?code=…
 ```
 
 Open it within 15 minutes. It works once and drops you into the app. The API
 also logs a link at startup while a claimed install has no password and no
-signed-in browser. `make signin` asks the full
-stack's API when it's running (`docker compose exec api vesper sign-in-link`)
-and otherwise reads the dev database, linking to Next on `WEB_URL`
-(`http://localhost:3000`). Agents are unaffected: they use bearer tokens on
+signed-in browser. `make signin` reads the dev database (`make dev`),
+linking to Next on `WEB_URL` (`http://localhost:3000`). Agents are unaffected: they use bearer tokens on
 `/mcp` and `/api/v1/agent/`.
 
 ### Running agents
 
-Assign a ticket to an agent, then **Review & dispatch** it. The `runner`
-service runs each turn in a container from `vesper/agent-base` (built by
-compose, with Claude Code, Codex and Antigravity installed). Before dispatching:
+Assign a ticket to an agent, then **Review & dispatch** it. The runner
+runs each turn in a microVM booted from the agent image
+([`deploy/agent-base`](../deploy/agent-base/Dockerfile), with Claude Code, Codex
+and Antigravity installed). Before dispatching:
 
-- set `SECRETS_KEY` in `.env` (`openssl rand -base64 32`);
+- under `make dev`, set `SECRETS_KEY` in `.env` (`openssl rand -base64 32`); the app manages its own;
 - add or sign in to the harness credentials in **Settings → Connections & secrets**: `harness:anthropic`
   for Claude Code, `harness:openai` for Codex, and `harness:google` (via Google Antigravity sign-in)
-  for Antigravity. Use **Sign in** in Settings or `make start` from a checkout to sign in directly;
+  for Antigravity. Use **Sign in** in Settings to sign in directly;
 - add `git:pat` (a GitHub token) and a repo URL for the project, if agents should
   clone, push and open PRs. Open PRs are polled every 60s: merged → Done.
 
-> **Security:** the runner mounts the Docker socket, which is root-equivalent on
-> the host. v1 is meant for a single developer laptop. Works with Docker Desktop
-> and OrbStack.
+> **Security:** each turn runs in its own microVM with no mounts from your
+> machine. v1 is meant for a single developer laptop.
 
 ### Personas that do the work
 
@@ -91,7 +92,7 @@ Keep the running dependency list in Git:
 
 - Shared tools: [`deploy/agent-base/Dockerfile`](../deploy/agent-base/Dockerfile)
   installs the toolchains and pinned harness CLIs, Go, sqlc, and Chromium system
-  libraries once per image build. Rebuild with `docker compose build agent-base`.
+  libraries once per image build. Rebuild the guest images with `deploy/microvm/build-images.sh`.
 - Project libraries: add `.lazyagents-deps.json` to the repository root. The
   manifest lists tool requirements and directories; exact library versions stay
   in `go.mod`/`go.sum` and `package-lock.json`. This repository includes an example:
@@ -116,7 +117,7 @@ existing setup behavior. Agent/project setup commands run after dependency setup
 Changes take effect after updating the API/runner binaries; repository manifests
 must be on the branch that new runs clone. Existing workspaces are not rewritten.
 
-Docker runs share the named volume `lazyagents-dependency-cache` at `/cache`; workspace
+Runs share a persistent dependency cache at `/cache`; workspace
 cleanup preserves it. It holds Go modules, npm downloads, Playwright browsers
 and the Go build cache (`/cache/go-build`), so a new chat doesn't compile its
 dependencies from scratch. Each checkout owns its own `node_modules`. Codex grants cache writes to
@@ -149,21 +150,18 @@ packages or start agent work.
 
 ### Open a run's code
 
-By default a run's checkout lives in a Docker volume, which you can't open from
+By default a run's checkout lives inside its VM's disk, which you can't open from
 your machine. To work in it alongside the agent (in Neovim, an IDE, a second
 terminal), keep checkouts in a folder on your machine instead:
 
-1. Set `VESPER_WORKSPACES_DIR` in `.env` to an absolute path, such as
-   `/Users/you/vesper/workspaces`.
-2. Restart the runner. `make start` and `make runner` add
-   `docker-compose.workspaces.yml` on their own. For the full stack, also set
-   `COMPOSE_FILE=docker-compose.yml:docker-compose.workspaces.yml` in `.env`.
-3. Turn on **Settings → Runner backends → Host folders**.
+1. Set `RUNNER_HOST_WORKSPACES_DIR` to an absolute path, such as
+   `/Users/you/vesper/workspaces`, and restart the runner.
+2. Turn on **Settings → Runner backends → Host folders**.
 
 New runs then check out into `<folder>/<run id>`. The chat header and the run
 page show that folder with a button to copy the path. The agent still sees it at
-`/workspace` in its container, nothing else of your machine is mounted, and its
-home directory (harness sessions, the SSH key) stays in a volume.
+`/workspace` in its VM, nothing else of your machine is mounted, and its
+home directory (harness sessions, the SSH key) stays in the VM's disk.
 
 - **Only new runs change.** A run that already has a workspace keeps it, and
   turning the setting off leaves existing folders where they are.
@@ -177,10 +175,8 @@ home directory (harness sessions, the SSH key) stays in a volume.
 - **Let the agent push.** The checkout's git config points push credentials at
   paths inside the container, so `git push` from your machine fails. Reading,
   editing and committing locally all work.
-- **File ownership.** Turns run as uid 1000. Docker Desktop and OrbStack map
-  that to you. On a Linux host, files belong to uid 1000, so give your user
-  write access if it's a different uid.
-- Don't remove `VESPER_WORKSPACES_DIR` while runs use their folders: the runner
+- **File ownership.** Turns run as uid 1000; the shared folder maps that to you.
+- Don't remove `RUNNER_HOST_WORKSPACES_DIR` while runs use their folders: the runner
   then can't find those checkouts, and a chat starts over in a fresh one.
 
 ### Chat
@@ -233,9 +229,8 @@ ticket, its plan, git and the delegation report, so a long run stops re-reading
 its whole history on every call. It fires only when a lead's delegations finish
 (the agent is woken with their results) and its last reported context is at
 least `ROLLOVER_CONTEXT_TOKENS`; a run that never delegates never rolls over,
-and Codex runs, which don't report context, never do. The compose files default
-it to `150000`, chosen from measured runs; set it to `0` in `.env` to turn
-rollover off (outside compose the default is `0`).
+and Codex runs, which don't report context, never do. It's off (`0`) by
+default; `150000` was chosen from measured runs.
 
 Managed `claim_ticket` responses include the ticket (`ticket_details`, same as `get_ticket`) but no longer repeat instructions and memory already
 available in the workspace. Agents are instructed to read only relevant context
@@ -337,28 +332,24 @@ See [the board guide](board.md) for estimates, statuses and the agent MCP tools.
 ### Move Vesper to another machine
 
 `vesper export` writes the whole instance to one zip archive: every Postgres
-table and every object in the S3 store. `vesper import` loads it into another
-instance. Both run inside the `api` container, which holds the credentials.
+table and every object in the blob store. `vesper import` loads it into another
+instance. Both read `DATABASE_URL` and `BLOB_DIR`.
 Export is also a button, **Settings → Backup & move → Export everything**, which
 downloads the same archive from the running server. Import is only a command:
 it needs an empty instance, stopped, with the same `SECRETS_KEY`.
 
 ```sh
 # old machine
-docker compose exec -T api vesper export -o - > vesper.zip
-# new machine: set the same SECRETS_KEY in .env, then
-docker compose up -d postgres seaweedfs                    # not api yet
-docker compose run --rm -T api import - < vesper.zip
-docker compose up -d
+vesper export -o vesper.zip
+# new machine: same SECRETS_KEY, empty database and blob directory, API stopped
+vesper import vesper.zip
 ```
 
-The image has no shell and runs as a non-root user, so `-` reads or writes the
-archive on stdin and stdout; progress goes to stderr. Outside Docker, pass a
-file path instead.
+`-` reads or writes the archive on stdin and stdout; progress goes to stderr.
 
 - **Same `SECRETS_KEY`.** Stored secrets are sealed with it. The archive carries
   only a fingerprint, and import refuses a different key before changing anything.
-- **Import into a fresh instance.** Start only Postgres and the object store, so
+- **Import into a fresh instance.** Start only Postgres, so
   the target has no data. If it does, import refuses; `--replace` discards what
   the exported tables hold. A target that has never been migrated is migrated to
   the archive's schema version, loaded, then upgraded to the running version.
@@ -368,11 +359,8 @@ file path instead.
   playgrounds and provider usage caches. Each excluded table and its reason is
   in `server/internal/transfer/schema.go`.
 - **Tables and buckets are discovered, not listed.** Export reads the Postgres
-  catalog and the bucket listing, so a table or bucket added later is included
-  without touching the exporter. The configured `S3_BUCKETS` are always
-  included, since some stores (SeaweedFS without credentials) list no buckets.
-  Export lists *every* bucket the S3 credential can see, so give Vesper its own
-  credential on a shared S3 account.
+  catalog and the blob directory's buckets (one subdirectory each), so a table or
+  bucket added later is included without touching the exporter.
 - **Quiet the instance first.** The database is read in one snapshot, objects a
   moment later. Runs still in flight when you export come back as they were,
   with nobody working on them.
@@ -381,48 +369,36 @@ file path instead.
 
 ## Develop
 
-Requires Go 1.26+, Node 24+ and Docker for Postgres and SeaweedFS.
+Requires Go 1.26+ and Node 24+. On macOS, `make dev-infra` runs a local Postgres
+17 from the relocatable bundle the app embeds (`desktop/resources/postgres` if
+staged, else built into `.dev/` with `scripts/bundle-postgres-darwin.sh`, which
+needs nix), with data in `.dev/pgdata`.
 
 ```sh
-make start   # everything: .env, agent image, sign-in, infra, API, web and hardened runner
-make dev     # infra in Docker; API on :8000 and Next on :3000 run on the host
-make runner  # optional: (re)start the hardened runner, a dev compose container
+make dev     # local Postgres; API on :8000 and Next on :3000 run on the host
+make runner  # optional: a runner on the host (RUNNER_BACKEND=microvm, or fake for tests)
 make gen     # after editing api/openapi.yaml or server/internal/store/queries (needs sqlc)
 make test
+make mac-app # build the macOS app
 make help    # everything else
 ```
 
-Agents only run in Docker (`RUNNER_BACKEND=docker`, the default). Each turn runs in a
-container with no capabilities, `no-new-privileges`, memory and process limits
-(`RUNNER_MEMORY_MB`, `RUNNER_PIDS_LIMIT`), and no mounts from your machine. The
-container is Codex's sandbox there, because Docker blocks the namespaces its own
-sandbox needs, so read-only Codex turns rely on the policy hook. A stray write
-only reaches that run's disposable volumes.
+Blobs live under `BLOB_DIR` (default `.lazyagents/blobs`, one subdirectory per
+bucket). Agents run only in microVMs (`RUNNER_BACKEND=microvm`, the default):
+each turn gets its own VM with memory and process limits (`RUNNER_MEMORY_MB`,
+`RUNNER_PIDS_LIMIT`) and no mounts from your machine.
 
-Agent containers can still reach your API and the internet, but not the
-stack's Postgres or SeaweedFS: turns run on an `agents` network that has only
-the API on it (`lazyagents_agents` for `make up`). Under `make start` the dev
-stack publishes Postgres and SeaweedFS on the host's loopback, which Docker
-Desktop and OrbStack may let containers reach through `host.docker.internal`, so
-there the separate network keeps them off the compose names only.
-
-The runner itself runs as the `runner` service of `docker-compose.dev.yml`
-(`--profile runner`), from your checkout's source. Every `make start` or
-`make runner` replaces it, so a runner from an earlier session can't keep
-claiming runs with stale code, and stopping `make start` stops it. Its turn
-containers join the dev stack's `agents` network and reach the API on the host
-as `host.docker.internal`. Each install labels its containers with `RUNNER_STACK`
-(`lazyagents-dev` here, `lazyagents` for `make up`), so two installs on one
-Docker daemon never clean up each other's turns.
+Headless Linux (CI, agent playgrounds) runs `vesper serve` against
+`DATABASE_URL` and `vesper runner` with `RUNNER_BACKEND=fake`, using stand-in
+harnesses: see the playground config in `AGENTS.md`.
 
 ### Test environments
 
 A repository needs no Vesper file for its tests to run in a turn. Three things
 make that work, and none of them gives an agent the host's Docker socket.
 
-**Docker, sandboxed per turn.** Each Docker turn gets its own Docker API
-(`DOCKER_HOST`), served by the runner on a socket in a directory turns mount
-read-only and can't list (`RUNNER_DOCKER_PROXY_DIR`, `RUNNER_DOCKER_PROXY_VOLUME`).
+**Docker, sandboxed per turn.** Each turn gets its own Docker API
+(`DOCKER_HOST`), served inside the turn's VM by the guest agent.
 `docker run` and Testcontainers in any language work through it, with any
 image. Every container it creates is rebuilt into a sandbox: privileged mode,
 added capabilities, devices, host namespaces, host paths, other runs' volumes
@@ -443,17 +419,9 @@ no others. Swarm and plugins aren't available. Ryuk is turned off
 (`TESTCONTAINERS_RYUK_DISABLED`), because cleanup is the runner's job. A stack
 lasts one turn; one that stays up between messages is still to come.
 
-**Nix, without root.** The agent image ships Nix pointed at the runner's
-`nix-daemon`, which owns a store every turn shares (`RUNNER_NIX_VOLUME`). An
-agent installs a missing tool with `nix profile install nixpkgs#protobuf`; it's
-on `PATH` for the rest of the run and a cache hit for every later run. To move
-to a newer Nix, remove the store volume and the
-`lazyagents-nix-daemon-<stack>` container; the next runner start recreates
-both from the image. At startup the runner checks the daemon with a real
-store query, restarting it once if it doesn't answer. If it still doesn't,
-turns run without the store, so `nix` fails at once instead of hanging, and
-the probe, the daemon's log tail and diagnostics are in
-`/run/lazyagents-docker/nix-status.json`, which any turn can read.
+**Nix, without root.** The agent image ships Nix. An agent installs a missing
+tool with `nix profile install nixpkgs#protobuf`; it's on `PATH` for the rest of
+the run.
 
 **A remembered recipe per repository.** On a repository's first run the runner
 reads its CI workflows and compose files: GitHub Actions service containers
@@ -491,32 +459,23 @@ Database-backed Go tests skip without `TEST_DATABASE_URL` when you run them,
 but fail inside a Vesper run (`LAZYAGENTS_RUN_ID`) or on CI, so "tests pass"
 from an agent means they reached a database.
 
-`make start` signs Vesper in to Claude and Codex the first time. `make login`
-redoes it. Both store plan logins in the `harness:anthropic` and `harness:openai`
+Claude, Codex and GitHub sign-ins are stored as the `harness:anthropic`, `harness:openai` and `git:pat`
 secrets. Vesper keeps its own Codex login, because a copy of `~/.codex/auth.json`
-and the original would invalidate each other when one refreshes. If device
-sign-in is off for your ChatGPT account, enable it or run
-`CODEX_AUTH_FILE=~/.codex/auth.json make codex-login` and sign in again on this
-machine afterwards if the CLI complains. Listing models with a plan login uses
-the `claude` and `codex` CLIs on the API host.
+and the original would invalidate each other when one refreshes. The `git:pat`
+token is what agents need to push to `https://` repositories and to open pull
+requests with `gh`; a `git:ssh` key alone doesn't cover that. A token added later
+takes effect on the next turn, including in chats that already have a workspace.
 
-Both also offer your GitHub CLI token (`gh auth token`) as the `git:pat`
-secret, which agents need to push to `https://` repositories and to open pull
-requests with `gh`. A `git:ssh` key alone doesn't cover that. `make
-github-login` stores or replaces just that token. A token added later takes
-effect on the next turn, including in chats that already have a workspace.
-
-You can also sign in from **Settings → Connections & secrets** instead of the
-terminal. While a Docker runner is online, Anthropic, OpenAI and the GitHub
+Sign in from **Settings → Connections & secrets**. While a runner is online, Anthropic, OpenAI and the GitHub
 token show a **Sign in** button until they're set. The runner starts the
 provider's own CLI (`claude setup-token`, `codex login --device-auth` or
-`gh auth login --web`) in a throwaway container from the agent image, with no
-volumes. Settings shows the link to open and, for Codex and GitHub, the
+`gh auth login --web`) in a throwaway VM from the agent image, with no
+shared folders. Settings shows the link to open and, for Codex and GitHub, the
 one-time code to enter there. Claude's page shows a code that you paste back
 into Settings. The runner stores the result as the usual secret, so the login
 never passes through the browser. A sign-in gives up after 15 minutes, and
 starting another for the same provider replaces it. To replace a key that's
-already set, use **Replace** or the `make` targets above.
+already set, use **Replace**.
 
 Upgrading from the removed `local` backend keeps your chats. A chat whose
 session was there continues on Docker in a new session with its recent messages (the last 40, up to
@@ -569,7 +528,7 @@ screen like a canvas.
   the chat's current workspace.
 
 The runner serves each playground on a port of its own on Vesper's host
-(`RUNNER_PLAYGROUND_PORTS`, `8090-8094` in both compose files; one playground
+(`RUNNER_PLAYGROUND_PORTS`, `8090-8094` by default; one playground
 per port) and admits only a browser signed in to Vesper there: same host, so
 the browser sends the Vesper session, which the runner checks and never passes
 on to the app. A playground stops after `RUNNER_PLAYGROUND_IDLE_S` unused (30
@@ -588,13 +547,13 @@ trade-offs.
 | `api/openapi.yaml` | REST contract. Go server interfaces and the TS client are generated from it. |
 | `server/` | Go module: the `vesper` binary (`serve`, `runner`, `migrate`) |
 | `server/internal/harness/` | Claude Code, Codex and Antigravity adapters: invocation and stream parsing |
-| `server/internal/runner/` | Queue, workspaces (Docker or local), turns, guards |
+| `server/internal/runner/` | Queue, workspaces (microVM or fake), turns, guards |
 | `deploy/agent-base/` | The image managed runs execute in |
 | `server/migrations/` | goose SQL, embedded and applied on boot |
 | `server/internal/store/queries/` | SQL for sqlc. `internal/store` is generated. |
 | `server/internal/tracker/` | Ticket domain service; every change writes its activity event in the same transaction |
 | `web/` | Next.js app: a pure UI client of the API |
-| `deploy/` | Caddy and SeaweedFS config |
+| `deploy/` | Guest image builds (`agent-base`, `microvm`) |
 
 Agents can continue automatically when a provider's usage or rate limit is
 reached. Add an ordered list under **Usage fallbacks** in the agent definition
@@ -636,7 +595,7 @@ It also checks that the hook is loaded and refuses to run if another
 active hook is unreviewed. Only then does it use Codex's automation hook-trust
 flag. It does not disable the sandbox or shell approval policy. Like the CLI's
 own tool rules, hooks provide best-effort enforcement, not isolation from a
-malicious program; Docker remains the isolation boundary. `python3` is required by both adapters and is
+malicious program; the microVM remains the isolation boundary. `python3` is required by both adapters and is
 included in the runner image.
 
 Antigravity has no hook-listing command to preflight with. Its turns fail closed a

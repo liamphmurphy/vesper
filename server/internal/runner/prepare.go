@@ -84,7 +84,7 @@ github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAA
 `
 
 // SSHDirEnv overrides where sshSetup keeps the key and known_hosts. The
-// Docker backend points it at the run's home volume, so a key never lands in
+// microVM backend points it at the run's home directory, so a key never lands in
 // a checkout that may be a folder on the person's machine; the fake backend
 // leaves it unset.
 const SSHDirEnv = "LAZYAGENTS_SSH_DIR"
@@ -362,14 +362,14 @@ var HarnessKeys = map[string]struct {
 const (
 	ClaudeOAuthEnv = "CLAUDE_CODE_OAUTH_TOKEN"
 	// ClaudeAuthEnv and ClaudeAuthScopeEnv only travel from SecretEnv to the
-	// backend: Docker turns them into ~/.claude/.credentials.json.
+	// backend: the microVM turns them into ~/.claude/.credentials.json.
 	ClaudeAuthEnv      = "LAZYAGENTS_CLAUDE_AUTH"
 	ClaudeAuthScopeEnv = "LAZYAGENTS_CLAUDE_AUTH_SCOPE"
 	// CodexAuthEnv and CodexAuthScopeEnv only travel from SecretEnv to the
-	// backend: Docker turns them into ~/.codex/auth.json.
+	// backend: the microVM turns them into ~/.codex/auth.json.
 	CodexAuthEnv      = "LAZYAGENTS_CODEX_AUTH"
 	CodexAuthScopeEnv = "LAZYAGENTS_CODEX_AUTH_SCOPE"
-	// AntigravityAuthEnv only travels from SecretEnv to the Docker backend,
+	// AntigravityAuthEnv only travels from SecretEnv to the microVM backend,
 	// which unpacks its credential files into $HOME.
 	AntigravityAuthEnv = "LAZYAGENTS_ANTIGRAVITY_AUTH"
 )

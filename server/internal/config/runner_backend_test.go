@@ -2,7 +2,7 @@ package config
 
 import "testing"
 
-// Only isolating backends (docker, microvm) run real harnesses. The fake backend runs
+// Only the isolating backend (microvm) runs real harnesses. The fake backend runs
 // on the host with no isolation, so it's accepted only with a stand-in for
 // every harness; "local" (real CLIs on the host) is gone.
 func TestRunnerBackendIsIsolatingOrFake(t *testing.T) {
@@ -12,7 +12,7 @@ func TestRunnerBackendIsIsolatingOrFake(t *testing.T) {
 		wantMCP                string
 		wantIsolates           bool
 	}{
-		{"docker", "", "", true, "http://api:8000/mcp", true},
+		{"docker", "", "", false, "", false},
 		{"microvm", "", "", true, "http://api.vesper.internal/mcp", true},
 		{"fake", "/fake/claude", "/fake/codex", true, "http://localhost:8000/mcp", false},
 		{"fake", "/fake/claude", "", false, "", false},
@@ -50,7 +50,7 @@ func TestBlobDirLoaded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.S3.Dir != "/tmp/vesper-blobs" {
-		t.Fatalf("S3.Dir = %q, want /tmp/vesper-blobs", cfg.S3.Dir)
+	if cfg.Blob.Dir != "/tmp/vesper-blobs" {
+		t.Fatalf("Blob.Dir = %q, want /tmp/vesper-blobs", cfg.Blob.Dir)
 	}
 }

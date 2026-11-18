@@ -13,10 +13,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
-	"net/http/httptest"
-	"os"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -33,34 +30,16 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/store"
 )
 
-// flakyS3 is fakeS3 with switchable failures, for the partial-failure paths.
-type flakyS3 struct {
-	*fakeS3
-	failPut, failDelete atomic.Bool
-}
-
-func (f *flakyS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if (r.Method == http.MethodPut && f.failPut.Load()) || (r.Method == http.MethodDelete && f.failDelete.Load()) {
-		w.Header().Set("Content-Type", "application/xml")
-		w.WriteHeader(http.StatusForbidden) // not retried by the SDK
-		fmt.Fprint(w, `<?xml version="1.0" encoding="UTF-8"?><Error><Code>AccessDenied</Code><Message>no</Message></Error>`)
-		return
-	}
-	f.fakeS3.ServeHTTP(w, r)
-}
-
 type slidesEnv struct {
 	*chatEnv
-	s3    *flakyS3
+	s3    *fakeBlobs
 	blobs *blob.Store
 }
 
 func newSlidesEnv(t *testing.T) *slidesEnv {
 	t.Helper()
-	f := &flakyS3{fakeS3: &fakeS3{objs: map[string]fakeObject{}}}
-	ts := httptest.NewServer(f)
-	t.Cleanup(ts.Close)
-	blobs := blob.New(config.S3{Endpoint: ts.URL, Region: "us-east-1", AccessKey: "test", SecretKey: "test-secret", UsePathStyle: true})
+	f := newFakeBlobs(t)
+	blobs := f.Store
 	e := newChatEnvServer(t, nil, func(s *Server) {
 		s.Blobs = blobs
 		s.ArtifactBucket = avatarBucket
@@ -714,17 +693,11 @@ func TestSlidesMigrationsRollBackAndReapply(t *testing.T) {
 	}
 }
 
-// The sweep against a real S3 gateway (TEST_S3_ENDPOINT: dev compose
-// SeaweedFS, or CI): a released image shared with a copy survives, and is
-// deleted from storage once nothing uses it.
+// The sweep against a local-directory store: a released image shared with a
+// copy survives, and is deleted from storage once nothing uses it.
 func TestDeckImageSweepRealStore(t *testing.T) {
-	ep := os.Getenv("TEST_S3_ENDPOINT")
-	if ep == "" {
-		t.Skip("TEST_S3_ENDPOINT not set")
-	}
 	const bucket = "test-artifacts"
-	blobs := blob.New(config.S3{Endpoint: ep, Region: "us-east-1", AccessKey: "lazyagents", SecretKey: "lazyagents-secret",
-		Buckets: []string{bucket}, UsePathStyle: true})
+	blobs := blob.New(config.Blob{Dir: t.TempDir(), Buckets: []string{bucket}})
 	ctx := t.Context()
 	if err := blobs.EnsureBuckets(ctx); err != nil {
 		t.Fatal(err)

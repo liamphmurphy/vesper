@@ -83,8 +83,8 @@ func TestAppImportInspectSecretPreserveAndDropSecrets(t *testing.T) {
 		_ = srcPG.Stop(ctx)
 		t.Fatalf("db.Migrate source: %v", err)
 	}
-	srcS3 := config.S3{Dir: filepath.Join(srcDir, "blobs"), ArtifactBucket: "artifacts", Buckets: []string{"artifacts", "run-logs"}}
-	srcBlobs := blob.New(srcS3)
+	srcBlobCfg := config.Blob{Dir: filepath.Join(srcDir, "blobs"), ArtifactBucket: "artifacts", Buckets: []string{"artifacts", "run-logs"}}
+	srcBlobs := blob.New(srcBlobCfg)
 	if err := srcBlobs.EnsureBuckets(ctx); err != nil {
 		srcPool.Close()
 		_ = srcPG.Stop(ctx)
@@ -125,7 +125,7 @@ func TestAppImportInspectSecretPreserveAndDropSecrets(t *testing.T) {
 		Blobs:        srcBlobs,
 		AppVersion:   "test-1.0",
 		SecretsKey:   srcKey,
-		KnownBuckets: srcS3.Buckets,
+		KnownBuckets: srcBlobCfg.Buckets,
 		Log:          log,
 	}).Export(ctx, af); err != nil {
 		_ = af.Close()
@@ -372,8 +372,8 @@ func TestAppImportFinderNestedZipAndSafariUnpackedDir(t *testing.T) {
 		_ = srcPG.Stop(ctx)
 		t.Fatal(err)
 	}
-	srcS3 := config.S3{Dir: filepath.Join(srcDir, "blobs"), ArtifactBucket: "artifacts", Buckets: []string{"artifacts", "run-logs"}}
-	srcBlobs := blob.New(srcS3)
+	srcBlobCfg := config.Blob{Dir: filepath.Join(srcDir, "blobs"), ArtifactBucket: "artifacts", Buckets: []string{"artifacts", "run-logs"}}
+	srcBlobs := blob.New(srcBlobCfg)
 	if err := srcBlobs.EnsureBuckets(ctx); err != nil {
 		srcPool.Close()
 		_ = srcPG.Stop(ctx)
@@ -398,7 +398,7 @@ func TestAppImportFinderNestedZipAndSafariUnpackedDir(t *testing.T) {
 		Blobs:        srcBlobs,
 		AppVersion:   "test-1.0",
 		SecretsKey:   srcKey,
-		KnownBuckets: srcS3.Buckets,
+		KnownBuckets: srcBlobCfg.Buckets,
 		Log:          log,
 	}).Export(ctx, fzip); err != nil {
 		_ = fzip.Close()

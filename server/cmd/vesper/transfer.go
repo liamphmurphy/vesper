@@ -85,8 +85,8 @@ func exportData(ctx context.Context, log *slog.Logger, args []string) error {
 
 func exporter(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger) *transfer.Exporter {
 	return &transfer.Exporter{
-		Pool: pool, Blobs: blob.New(cfg.S3), AppVersion: cfg.Version,
-		SecretsKey: cfg.SecretsKey, KnownBuckets: cfg.S3.Buckets, Log: log,
+		Pool: pool, Blobs: blob.New(cfg.Blob), AppVersion: cfg.Version,
+		SecretsKey: cfg.SecretsKey, KnownBuckets: cfg.Blob.Buckets, Log: log,
 	}
 }
 
@@ -159,7 +159,7 @@ func importData(ctx context.Context, log *slog.Logger, args []string) error {
 
 	start := time.Now()
 	if err := (&transfer.Importer{
-		Pool: pool, Blobs: blob.New(cfg.S3), SecretsKey: cfg.SecretsKey, Replace: *replace, Log: log,
+		Pool: pool, Blobs: blob.New(cfg.Blob), SecretsKey: cfg.SecretsKey, Replace: *replace, Log: log,
 	}).Import(ctx, &zr.Reader); err != nil {
 		return err
 	}

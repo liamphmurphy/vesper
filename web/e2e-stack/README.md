@@ -56,12 +56,11 @@ The design worker token (`DESIGN_WORKER_TOKEN`) is set for the API and web.
 Everything lives under a fresh temp dir and is torn down on exit (success,
 failure or Ctrl-C):
 
-- **Postgres** `postgres:17-alpine` via `docker run --rm` on a free port, or
-  `E2E_DATABASE_URL` (CI service container; must be disposable, it is
-  migrated and written to). `vesper serve` runs migrations and first-boot
-  seed (`SEED=false`).
-- **SeaweedFS** (S3, required by the API) via `docker run --rm` on a free port,
-  or `E2E_S3_ENDPOINT`.
+- **Postgres** a local Postgres 17 from the macOS app's bundle
+  (`scripts/dev-postgres.sh`, macOS) on a free port, or `E2E_DATABASE_URL` (CI
+  service container; must be disposable, it is migrated and written to).
+  `vesper serve` runs migrations and first-boot seed (`SEED=false`).
+- **Blobs** a local directory (`BLOB_DIR`) under the temp dir.
 - **Fixtures**: a project and a main agent, created through the real API.
 - **API + runner**: built binaries, `RUNNER_MCP_URL` and `PUBLIC_URL` on the
   free ports.
@@ -81,7 +80,7 @@ answering `agy models`.
 
 ## Run locally
 
-Needs Docker, Go, Node 24 and Chromium (`npx playwright install chromium`).
+Needs Go, Node 24, Chromium (`npx playwright install chromium`), and either macOS (for the bundled Postgres) or `E2E_DATABASE_URL`.
 
 ```sh
 cd web

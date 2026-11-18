@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -14,11 +15,9 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
-	"net/http/httptest"
 	"net/textproto"
-	"strconv"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -30,107 +29,74 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/store"
 )
 
-// fakeS3 is an in-memory, path-style S3 gateway with just PutObject,
-// GetObject and DeleteObject, so the avatar handlers run against the real
-// blob client.
-type fakeS3 struct {
-	mu   sync.Mutex
-	objs map[string]fakeObject // "bucket/key"
+// fakeBlobs is a local-directory blob store (the one the app uses) with
+// helpers to see what a handler stored and to make writes fail, so the
+// handlers run against the real blob client.
+type fakeBlobs struct {
+	*blob.Store
+	failPut, failDelete atomic.Bool
 }
 
-type fakeObject struct {
-	body []byte
-	ct   string
+func newFakeBlobs(t *testing.T) *fakeBlobs {
+	t.Helper()
+	f := &fakeBlobs{Store: blob.New(config.Blob{Dir: t.TempDir()})}
+	f.SetFault(func(op, _, _ string) error {
+		if (op == "put" && f.failPut.Load()) || (op == "delete" && f.failDelete.Load()) {
+			return errors.New("blob: injected failure")
+		}
+		return nil
+	})
+	return f
 }
 
-func newFakeS3(t *testing.T) (*fakeS3, *httptest.Server) {
-	f := &fakeS3{objs: map[string]fakeObject{}}
-	ts := httptest.NewServer(f)
-	t.Cleanup(ts.Close)
-	return f, ts
-}
-
-func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	key := strings.TrimPrefix(r.URL.Path, "/")
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	switch r.Method {
-	case http.MethodPut:
-		b, err := io.ReadAll(r.Body)
-		if err != nil {
-			http.Error(w, err.Error(), 500)
-			return
-		}
-		if strings.Contains(r.Header.Get("Content-Encoding"), "aws-chunked") || r.Header.Get("X-Amz-Decoded-Content-Length") != "" {
-			b = decodeAWSChunked(b)
-		}
-		f.objs[key] = fakeObject{body: b, ct: r.Header.Get("Content-Type")}
-		w.Header().Set("ETag", `"x"`)
-		w.WriteHeader(http.StatusOK)
-	case http.MethodGet:
-		o, ok := f.objs[key]
-		if !ok {
-			w.Header().Set("Content-Type", "application/xml")
-			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprint(w, `<?xml version="1.0" encoding="UTF-8"?><Error><Code>NoSuchKey</Code><Message>missing</Message></Error>`)
-			return
-		}
-		w.Header().Set("Content-Type", o.ct)
-		// ServeContent answers a Range with 206, as S3 does.
-		http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(o.body))
-	case http.MethodDelete:
-		delete(f.objs, key)
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
+// keys lists the stored "bucket/key" names under prefix.
+func (f *fakeBlobs) keys(prefix string) []string {
+	ctx := context.Background()
+	buckets, err := f.ListBuckets(ctx)
+	if err != nil {
+		return nil
 	}
-}
-
-// decodeAWSChunked unwraps an aws-chunked body: <hex size>[;ext]\r\n<data>\r\n ... 0\r\n<trailers>.
-func decodeAWSChunked(b []byte) []byte {
-	var out []byte
-	for {
-		i := bytes.Index(b, []byte("\r\n"))
-		if i < 0 {
-			return out
-		}
-		size, _, _ := strings.Cut(string(b[:i]), ";")
-		n, err := strconv.ParseInt(strings.TrimSpace(size), 16, 64)
-		if err != nil || n == 0 {
-			return out
-		}
-		b = b[i+2:]
-		out = append(out, b[:n]...)
-		b = b[n+2:]
-	}
-}
-
-// keys lists the stored keys under prefix.
-func (f *fakeS3) keys(prefix string) []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	var out []string
-	for k := range f.objs {
-		if strings.HasPrefix(k, prefix) {
-			out = append(out, k)
-		}
+	for _, b := range buckets {
+		_ = f.List(ctx, b, func(i blob.Info) error {
+			if k := b + "/" + i.Key; strings.HasPrefix(k, prefix) {
+				out = append(out, k)
+			}
+			return nil
+		})
 	}
 	return out
 }
 
-func (f *fakeS3) put(key string, body []byte, ct string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.objs[key] = fakeObject{body: body, ct: ct}
+// body is the content stored at "bucket/key".
+func (f *fakeBlobs) body(key string) []byte {
+	bucket, k, _ := strings.Cut(key, "/")
+	o, err := f.Get(context.Background(), bucket, k)
+	if err != nil {
+		return nil
+	}
+	defer o.Body.Close()
+	b, _ := io.ReadAll(o.Body)
+	return b
+}
+
+func (f *fakeBlobs) put(key string, body []byte, ct string) {
+	bucket, k, _ := strings.Cut(key, "/")
+	if err := f.EnsureBucket(context.Background(), bucket); err != nil {
+		panic(err)
+	}
+	if err := f.Put(context.Background(), bucket, k, bytes.NewReader(body), int64(len(body)), ct); err != nil {
+		panic(err)
+	}
 }
 
 const avatarBucket = "test-artifacts"
 
-func newAvatarEnv(t *testing.T) (*chatEnv, *fakeS3) {
+func newAvatarEnv(t *testing.T) (*chatEnv, *fakeBlobs) {
 	t.Helper()
-	fake, s3 := newFakeS3(t)
+	fake := newFakeBlobs(t)
 	e := newChatEnvServer(t, nil, func(s *Server) {
-		s.Blobs = blob.New(config.S3{Endpoint: s3.URL, Region: "us-east-1", AccessKey: "test", SecretKey: "test-secret", UsePathStyle: true})
+		s.Blobs = fake.Store
 		s.ArtifactBucket = avatarBucket
 	})
 	return e, fake

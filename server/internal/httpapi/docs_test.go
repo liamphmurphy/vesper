@@ -103,7 +103,7 @@ func TestSaveDocToLibrary(t *testing.T) {
 	}
 	var bodies []string
 	for _, k := range fake.keys(avatarBucket + "/library-exports/") {
-		bodies = append(bodies, string(fake.objs[k].body))
+		bodies = append(bodies, string(fake.body(k)))
 	}
 	if len(bodies) != 2 || !slices.Contains(bodies, "# Trip / plan\n") || !slices.Contains(bodies, "# Trip / plan\n\nDay one.\n") {
 		t.Fatalf("stored %q", bodies)

@@ -14,9 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/liamphmurphy/vesper/server/internal/blob"
 	"github.com/liamphmurphy/vesper/server/internal/canvas"
-	"github.com/liamphmurphy/vesper/server/internal/config"
 	"github.com/liamphmurphy/vesper/server/internal/designs"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/store"
@@ -94,10 +92,8 @@ func (w *stubWorker) set(down bool) { w.mu.Lock(); w.down = down; w.mu.Unlock() 
 // newDesignToolsEnv is a designs environment whose API reaches a stub worker.
 func newDesignToolsEnv(t *testing.T) (*designsEnv, *stubWorker) {
 	t.Helper()
-	f := &flakyS3{fakeS3: &fakeS3{objs: map[string]fakeObject{}}}
-	ts := httptest.NewServer(f)
-	t.Cleanup(ts.Close)
-	blobs := blob.New(config.S3{Endpoint: ts.URL, Region: "us-east-1", AccessKey: "test", SecretKey: "test-secret", UsePathStyle: true})
+	f := newFakeBlobs(t)
+	blobs := f.Store
 	stub := &stubWorker{}
 	ws := httptest.NewServer(stub)
 	t.Cleanup(ws.Close)

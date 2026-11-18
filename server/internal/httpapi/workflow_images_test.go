@@ -9,9 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/liamphmurphy/vesper/server/internal/blob"
 	"github.com/liamphmurphy/vesper/server/internal/chatmodels"
-	"github.com/liamphmurphy/vesper/server/internal/config"
 	"github.com/liamphmurphy/vesper/server/internal/personas"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/store"
@@ -98,7 +96,7 @@ func TestWorkflowImageSettingIsValidated(t *testing.T) {
 }
 
 // generatedStep starts an image step, stores an image against it, and finishes it.
-func (e *chatEnv) generatedStep(t *testing.T, blobs *fakeS3, wf, chat string) (string, store.WorkflowStepImage) {
+func (e *chatEnv) generatedStep(t *testing.T, blobs *fakeBlobs, wf, chat string) (string, store.WorkflowStepImage) {
 	t.Helper()
 	run := e.want("POST", "/chats/"+chat+"/workflows", map[string]any{"workflow_id": wf, "input": "A cave"}, http.StatusCreated)
 	id := run["id"].(string)
@@ -122,10 +120,10 @@ func (e *chatEnv) generatedStep(t *testing.T, blobs *fakeS3, wf, chat string) (s
 	return id, im
 }
 
-func newImageOutputsEnv(t *testing.T) (*chatEnv, *fakeS3) {
+func newImageOutputsEnv(t *testing.T) (*chatEnv, *fakeBlobs) {
 	t.Helper()
-	fake, s3 := newFakeS3(t)
-	store := blob.New(config.S3{Endpoint: s3.URL, Region: "us-east-1", AccessKey: "test", SecretKey: "test-secret", UsePathStyle: true})
+	fake := newFakeBlobs(t)
+	store := fake.Store
 	e := newChatEnvServer(t, func(s *runs.Service) { s.Artifacts.Blobs, s.Artifacts.Bucket = store, avatarBucket }, func(s *Server) { s.Blobs, s.ArtifactBucket = store, avatarBucket })
 	return e, fake
 }

@@ -26,7 +26,7 @@ import (
 
 // Sign-ins started from Settings: the provider's own CLI runs in a throwaway
 // container, the runner relays its link and code to the person, and the login
-// it produces is stored as the provider's secret. Only the Docker backend can
+// it produces is stored as the provider's secret. Only the microVM backend can
 // do this.
 
 // LoginStarter starts the containers sign-ins run in.
@@ -345,7 +345,7 @@ func outputTail(out string) string {
 // pasteSubmitDelay separates a pasted code from the Enter that submits it.
 // Claude's Ink prompt reads the terminal raw and treats a chunk of input as a
 // paste, Enter included: code+"\r" in one write lands as text in the box and
-// is never submitted. Locally 20ms is enough; the margin covers the Docker
+// is never submitted. Locally 20ms is enough; the margin covers the VM
 // attach stream.
 var pasteSubmitDelay = 300 * time.Millisecond
 

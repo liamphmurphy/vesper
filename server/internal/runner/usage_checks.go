@@ -3,7 +3,6 @@ package runner
 import (
 	"context"
 	"errors"
-	"io"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -15,7 +14,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/usage"
 )
 
-// UsageProber reads a plan login's allowance. The Docker API image has no
+// UsageProber reads a plan login's allowance. The API image has no
 // harness CLI, so the runner does it for the API (tickUsageChecks).
 type UsageProber interface {
 	// claim names the check's container; login is the saved harness secret;
@@ -30,34 +29,6 @@ const (
 	// maxConcurrentUsageChecks caps the throwaway containers checking at once.
 	maxConcurrentUsageChecks = 2
 )
-
-// ProbeUsage asks the harness CLI for its allowance in a throwaway container
-// with the sign-in sandbox and the saved login, as ListModels does. Like the
-// local check it sends no prompt and spends no tokens.
-func (d *Docker) ProbeUsage(ctx context.Context, claim, harness, login, codexScope string) (usage.Snapshot, error) {
-	argv, err := usage.Argv(harness)
-	if err != nil {
-		return usage.Snapshot{}, err
-	}
-	timeout := d.UsageTimeout
-	if timeout <= 0 {
-		timeout = probeUsageTimeout
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	var snap usage.Snapshot
-	var answer error
-	err = d.converseCLI(ctx, "usage", claim, harness, login, codexScope, argv, func(in io.Writer, out io.Reader) error {
-		snap, answer = usage.Converse(harness, in, out)
-		return nil
-	})
-	if err != nil {
-		return usage.Snapshot{}, err
-	}
-	// The CLI's own answer, such as ErrSignedOut, comes back as it is so
-	// usage.Service.Settle can tell it from a container that failed.
-	return snap, answer
-}
 
 // tickUsageChecks answers the usage checks the API queued while someone
 // watches the activity orb. Like sign-ins they take no run slot.

@@ -2,6 +2,7 @@
 .DS_Store
 server/tmp/
 server/.lazyagents/runs/
+server/.lazyagents/blobs/
 
 # Claude Code agent worktrees (separate checkouts, never commit)
 .claude/worktrees/
@@ -10,3 +11,4 @@ server/.lazyagents/runs/
 desktop/resources/
 desktop/release/
 desktop/dist/
+.dev/

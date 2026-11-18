@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"os"
 	"slices"
 	"sort"
 	"strings"
@@ -504,80 +503,8 @@ func corruptEntry(t *testing.T, archive []byte, name string) *zip.Reader {
 	return bad
 }
 
-// The same round trip against a real S3 gateway (TEST_S3_ENDPOINT: dev compose
-// SeaweedFS, or CI), covering listing, paging and streaming uploads that the
-// in-memory store can't.
-func TestRoundTripRealStore(t *testing.T) {
-	ep := os.Getenv("TEST_S3_ENDPOINT")
-	if ep == "" {
-		t.Skip("TEST_S3_ENDPOINT not set")
-	}
-	newStore := func() *blob.Store {
-		return blob.New(config.S3{Endpoint: ep, Region: "us-east-1", AccessKey: "lazyagents", SecretKey: "lazyagents-secret", UsePathStyle: true})
-	}
-	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
-	srcBucket := "xfer-src-" + suffix
-	store := newStore()
-	ctx := t.Context()
-	if err := store.EnsureBucket(ctx, srcBucket); err != nil {
-		t.Fatal(err)
-	}
-	big := bytes.Repeat([]byte("0123456789abcdef"), 1<<16) // 1 MiB
-	for k, body := range map[string][]byte{"dir/a.txt": []byte("alpha"), "b.bin": big, "with space/ü.txt": []byte("unicode key")} {
-		if err := store.Put(ctx, srcBucket, k, bytes.NewReader(body), int64(len(body)), "application/octet-stream"); err != nil {
-			t.Fatal(err)
-		}
-	}
-	t.Cleanup(func() {
-		for _, k := range []string{"dir/a.txt", "b.bin", "with space/ü.txt"} {
-			_ = store.Delete(context.Background(), srcBucket, k)
-		}
-	})
-
-	src := testdb.New(t)
-	seed(t, src)
-	var buf bytes.Buffer
-	m, err := (&transfer.Exporter{Pool: src, Blobs: store, KnownBuckets: []string{"configured-but-absent-" + suffix}}).Export(ctx, &buf)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var exported *transfer.BucketEntry
-	for i := range m.Buckets {
-		if m.Buckets[i].Name == srcBucket {
-			exported = &m.Buckets[i]
-		}
-	}
-	if exported == nil || len(exported.Objects) != 3 {
-		t.Fatalf("export of %s = %+v, want 3 objects; buckets: %+v", srcBucket, exported, m.Buckets)
-	}
-
-	// Import into a second, empty set of objects: drop the bucket's contents first.
-	for _, o := range exported.Objects {
-		_ = store.Delete(ctx, srcBucket, o.Key)
-	}
-	zr, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := (&transfer.Importer{Pool: testdb.NewUnmigrated(t), Blobs: store}).Import(ctx, zr); err != nil {
-		t.Fatalf("import: %v", err)
-	}
-	for _, o := range exported.Objects {
-		g, err := store.Get(ctx, srcBucket, o.Key)
-		if err != nil {
-			t.Fatalf("%s missing after import: %v", o.Key, err)
-		}
-		body, _ := io.ReadAll(g.Body)
-		g.Body.Close()
-		sum := sha256.Sum256(body)
-		if hex.EncodeToString(sum[:]) != o.SHA256 {
-			t.Errorf("%s changed in transit", o.Key)
-		}
-	}
-}
-
-// hidingBlobs is a store whose ListBuckets returns nothing, as SeaweedFS does
-// without credentials.
+// hidingBlobs is a store whose ListBuckets returns nothing, as a store that
+// won't list buckets does.
 type hidingBlobs struct{ *memBlobs }
 
 func (hidingBlobs) ListBuckets(context.Context) ([]string, error) { return nil, nil }
@@ -600,7 +527,7 @@ func TestRoundTripLocalBlobStore(t *testing.T) {
 	src := testdb.New(t)
 	seed(t, src)
 	srcDir := t.TempDir()
-	srcBlobs := blob.New(config.S3{Dir: srcDir, Buckets: []string{"artifacts", "run-logs"}})
+	srcBlobs := blob.New(config.Blob{Dir: srcDir, Buckets: []string{"artifacts", "run-logs"}})
 	ctx := t.Context()
 	if err := srcBlobs.EnsureBuckets(ctx); err != nil {
 		t.Fatal(err)

@@ -44,8 +44,8 @@ type bindPolicy struct {
 	uid     int
 }
 
-// dockerGuard is one turn's Docker API, modelled on the Docker backend's
-// turn proxy (internal/runner/docker_proxy.go). It forwards an allowlist of
+// dockerGuard is one turn's Docker API, modelled on the former host Docker backend's
+// turn proxy. It forwards an allowlist of
 // Engine calls to the in-guest dockerd, rebuilds every container create into
 // a sandbox (no privileges, host namespaces, devices or mounts beyond the
 // turn's own paths and volumes), lets the turn touch only objects it created,

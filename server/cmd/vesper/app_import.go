@@ -212,11 +212,11 @@ func populateStagedImport(ctx context.Context, log *slog.Logger, pgBinDir, stage
 	}
 	defer pool.Close()
 
-	s3Cfg := config.S3{
+	blobCfg := config.Blob{
 		Dir:            stageBlobs,
-		ArtifactBucket: envOr("S3_ARTIFACT_BUCKET", "artifacts"),
+		ArtifactBucket: envOr("BLOB_ARTIFACT_BUCKET", "artifacts"),
 	}
-	stageBlobsStore := blob.New(s3Cfg)
+	stageBlobsStore := blob.New(blobCfg)
 	if err := stageBlobsStore.EnsureBuckets(ctx); err != nil {
 		return err
 	}

@@ -204,7 +204,7 @@ func (r *Runner) markProviderLimited(ctx context.Context, c runCtx, msg string) 
 
 // recordUsage saves the plan windows a turn's rate-limit events reported,
 // the latest event per window winning, so the activity orb shows them even
-// where the API can't check the CLI itself (the Docker backend). Best effort.
+// where the API can't check the CLI itself (the microVM backend). Best effort.
 func (r *Runner) recordUsage(ctx context.Context, c runCtx, infos []json.RawMessage) {
 	var windows []usage.Window
 	for _, info := range infos {

@@ -26,7 +26,7 @@ type ExecSpec struct {
 	Dir   string
 	Files map[string][]byte // written relative to the working directory before start
 	// Networks the process joins besides the backend's own: a turn's service
-	// network (ServiceBackend). Only the Docker backend has networks.
+	// network (ServiceBackend). Only the microVM backend has networks.
 	Networks []string
 }
 
@@ -69,7 +69,7 @@ type Backend interface {
 
 // HostFolders is a backend that can keep a run's checkout in a folder on the
 // person's machine, so they can open it in their own editor while the agent
-// works (the Docker backend with RUNNER_HOST_WORKSPACES_DIR set).
+// works (the microVM backend with RUNNER_HOST_WORKSPACES_DIR set).
 type HostFolders interface {
 	// HostWorkspacesDir is where those folders go; "" when not configured.
 	HostWorkspacesDir() string
@@ -83,7 +83,7 @@ type HostFolders interface {
 
 // Fake runs turns as host processes in a directory per run, with every
 // harness replaced by a stand-in binary (cmd/fake-harness). It's for tests
-// and disposable instances (the e2e stack, playgrounds) that have no Docker:
+// and disposable instances (the e2e stack, playgrounds) that have no VM support:
 // there is no isolation, so it refuses to start a harness it has no
 // stand-in for rather than fall through to a real, logged-in CLI on PATH.
 type Fake struct {

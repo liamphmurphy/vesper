@@ -2,10 +2,8 @@ package runner
 
 import (
 	"context"
-	"errors"
 	"io"
 	"log/slog"
-	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -16,91 +14,6 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/store"
 	"github.com/liamphmurphy/vesper/server/internal/testdb"
 )
-
-type interceptTransport func(*http.Request) (*http.Response, error)
-
-func (f interceptTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-
-func TestDockerAttachHonorsCancellation(t *testing.T) {
-	_, d := startFakeEngine(t)
-	base := d.http().Transport
-	reached, release := make(chan struct{}), make(chan struct{})
-	defer close(release)
-	d.client.Transport = interceptTransport(func(r *http.Request) (*http.Response, error) {
-		if strings.HasSuffix(r.URL.Path, "/attach") {
-			close(reached)
-			select {
-			case <-r.Context().Done():
-				return nil, r.Context().Err()
-			case <-release:
-			}
-		}
-		return base.RoundTrip(r)
-	})
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() {
-		_, err := d.Start(ctx, "test", ExecSpec{Name: "test", Argv: []string{"true"}})
-		done <- err
-	}()
-	<-reached
-	cancel()
-	select {
-	case err := <-done:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("Start returned %v, want cancellation", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("cancelled Start remained blocked attaching to Docker")
-	}
-}
-
-func TestDockerFiniteRequestsHaveDeadlines(t *testing.T) {
-	_, d := startFakeEngine(t)
-	d.RequestTimeout = 50 * time.Millisecond
-	d.client = &http.Client{Transport: interceptTransport(func(r *http.Request) (*http.Response, error) {
-		<-r.Context().Done()
-		return nil, r.Context().Err()
-	})}
-	for _, path := range []string{"/containers/c1/kill", "/containers/c1", "/containers/c1/json"} {
-		start := time.Now()
-		_, err := d.do(context.Background(), "DELETE", path, nil, "", nil)
-		if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > time.Second {
-			t.Fatalf("unbounded Docker request %s: %v", path, err)
-		}
-	}
-}
-
-func TestDockerKillUnblocksLostWait(t *testing.T) {
-	_, d := startFakeEngine(t)
-	base := d.http().Transport
-	reached := make(chan struct{})
-	d.client.Transport = interceptTransport(func(r *http.Request) (*http.Response, error) {
-		if strings.HasSuffix(r.URL.Path, "/wait") {
-			close(reached)
-			<-r.Context().Done()
-			return nil, r.Context().Err()
-		}
-		return base.RoundTrip(r)
-	})
-	p := &dockerProc{d: d, id: "c1"}
-	defer p.Close()
-	done := make(chan error, 1)
-	go func() { _, err := p.Wait(); done <- err }()
-	<-reached
-	if err := p.Kill(); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case err := <-done:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("Wait returned %v", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("Kill did not release the lost wait connection")
-	}
-}
 
 func TestOversizedHarnessLineFailsWithoutBlockingWriter(t *testing.T) {
 	for _, tc := range []struct{ stream, command string }{

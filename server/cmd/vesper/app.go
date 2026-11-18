@@ -140,16 +140,16 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 		return err
 	}
 
-	s3Cfg := config.S3{
+	blobCfg := config.Blob{
 		Dir:            filepath.Join(dataDir, "blobs"),
-		ArtifactBucket: envOr("S3_ARTIFACT_BUCKET", "artifacts"),
+		ArtifactBucket: envOr("BLOB_ARTIFACT_BUCKET", "artifacts"),
 	}
-	blobs := blob.New(s3Cfg)
+	blobs := blob.New(blobCfg)
 	if err := blobs.EnsureBuckets(ctx); err != nil {
 		return err
 	}
 
-	arts := &artifacts.Service{Pool: pool, Blobs: blobs, Bucket: s3Cfg.ArtifactBucket}
+	arts := &artifacts.Service{Pool: pool, Blobs: blobs, Bucket: blobCfg.ArtifactBucket}
 	localName := envOr("LOCAL_USER_NAME", "Local user")
 	localEmail := envOr("LOCAL_USER_EMAIL", "me@localhost")
 	if _, err := seed.Run(ctx, pool, seed.Options{
@@ -231,7 +231,7 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 	}
 	appCfg := cfg
 	appCfg.DatabaseURL = pgCluster.DSN()
-	appCfg.S3 = s3Cfg
+	appCfg.Blob = blobCfg
 	appCfg.SecretsKey = secretsKey
 	appCfg.PublicURL = baseURL
 	appCfg.WebURL = baseURL
@@ -261,7 +261,7 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 		Wiki:           &wiki.Service{Pool: pool, Artifacts: arts, Tracker: trackerSvc},
 		PublicURL:      baseURL,
 		Blobs:          blobs,
-		ArtifactBucket: s3Cfg.ArtifactBucket,
+		ArtifactBucket: blobCfg.ArtifactBucket,
 		DesignWorker:   &designs.Worker{URL: designWorkerURL, Token: designToken},
 		Log:            log,
 		Usage:          &usage.Service{Q: q, Log: log, Queued: true},
@@ -296,7 +296,7 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 	if os.Getenv("VESPER_APP_DISABLE_RUNNER") != "1" {
 		runnerDone = make(chan error, 1)
 		go func() {
-			runnerDone <- runAppMicroVMRunner(ctx, log, dataDir, exeDir, baseURL, designWorkerURL, designToken, pool, blobs, box, s3Cfg.ArtifactBucket, appCfg, apiHandler, imgMgr)
+			runnerDone <- runAppMicroVMRunner(ctx, log, dataDir, exeDir, baseURL, designWorkerURL, designToken, pool, blobs, box, blobCfg.ArtifactBucket, appCfg, apiHandler, imgMgr)
 		}()
 	}
 

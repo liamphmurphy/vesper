@@ -29,7 +29,7 @@ func (w *captureWriter) Write(p []byte) (int, error) {
 }
 
 // drainProcess allows trailing output to arrive after exit, but closes streams
-// if a detached child or a lost Docker attach connection keeps them open.
+// if a detached child or a lost attach connection keeps them open.
 func drainProcess(proc Process, readers *sync.WaitGroup, cancelReads context.CancelFunc) error {
 	done := make(chan struct{})
 	go func() { readers.Wait(); close(done) }()

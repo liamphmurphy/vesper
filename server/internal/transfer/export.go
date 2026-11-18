@@ -29,8 +29,7 @@ type Exporter struct {
 	// fingerprint of it goes in the archive.
 	SecretsKey string
 	// KnownBuckets are the buckets the server is configured to use. They are
-	// exported even when the store doesn't list them: SeaweedFS without
-	// credentials, and S3 policies that deny ListBuckets, return nothing.
+	// exported even when the store doesn't list them.
 	KnownBuckets []string
 	Log          *slog.Logger
 }
