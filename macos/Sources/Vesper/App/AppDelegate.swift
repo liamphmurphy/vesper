@@ -147,7 +147,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var web: WKWebView? { app.keyController?.webView }
 
     @objc func find(_ sender: Any?) { app.keyController?.send(.command(.find)) }
-    @objc func focusSearch(_ sender: Any?) { app.keyController?.focusSearch() }
+    /// ⌥⌘F: opens the page's command palette, like the toolbar's search button.
+    @objc func focusSearch(_ sender: Any?) { app.keyController?.send(.command(.openCommandMenu)) }
     @objc func toggleSidebarAction(_ sender: Any?) { app.keyController?.split.toggleSidebar(sender) }
     @objc func reload(_ sender: Any?) { web?.reload() }
     @objc func forceReload(_ sender: Any?) { web?.reloadFromOrigin() }
