@@ -1710,18 +1710,24 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 		environment = r.startTurnEnvironment(ctx, c, turn)
 		defer environment.stop()
 	}
-	networks, failure := environment.wait(env)
-	if failure != "" {
-		if ctx.Err() != nil {
-			return // shutting down: the turn re-runs on the next runner start
-		}
-		if c.run.Purpose == "chat" {
-			r.failChat(ctx, c, failure)
+	var networks []string
+	if gateEnv, closeGate, gated := r.gateTurn(ctx, c, turn, environment); gated {
+		defer closeGate()
+		maps.Copy(env, gateEnv)
+	} else {
+		var failure string
+		if networks, failure = environment.wait(env); failure != "" {
+			if ctx.Err() != nil {
+				return // shutting down: the turn re-runs on the next runner start
+			}
+			if c.run.Purpose == "chat" {
+				r.failChat(ctx, c, failure)
+				return
+			}
+			_ = q.FinishTurn(ctx, store.FinishTurnParams{ID: turn.ID, Usage: []byte("{}")})
+			r.end(ctx, c, "failed", failure, runs.VerbRunFailed)
 			return
 		}
-		_ = q.FinishTurn(ctx, store.FinishTurnParams{ID: turn.ID, Usage: []byte("{}")})
-		r.end(ctx, c, "failed", failure, runs.VerbRunFailed)
-		return
 	}
 	networks = append(networks, r.turnPlayground(ctx, c, env, sensitive)...)
 	r.event(ctx, c.run.ID, "lifecycle", map[string]any{"state": "turn_started", "turn": turn.Seq, "trigger": turn.Trigger,

@@ -254,7 +254,7 @@ func TestCodingChatStartsServicesDuringSetup(t *testing.T) {
 	b := &overlapBackend{svcBackend: &svcBackend{Fake: e.runner.Backend.(*runner.Fake)}, servicesCalled: make(chan struct{})}
 	e.runner.Backend = b
 
-	e.say(chat, "hello")
+	reply := e.postSh(chat, gatedEcho)
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -264,8 +264,102 @@ func TestCodingChatStartsServicesDuringSetup(t *testing.T) {
 	if len(b.started) != 1 || b.stopped != 1 {
 		t.Fatalf("services started %v, stopped %d times", b.started, b.stopped)
 	}
-	if b.turnEnv["TEST_DATABASE_URL"] != "postgres://postgres@postgres:5432/postgres" || len(b.turnNets) != 1 || b.turnNets[0] != "net-"+b.started[0] {
-		t.Fatalf("turn env %q networks %v", b.turnEnv["TEST_DATABASE_URL"], b.turnNets)
+	if !strings.Contains(reply, "db=postgres://postgres@postgres:5432/postgres") {
+		t.Fatalf("the turn's shell didn't get its services' env: %s", reply)
+	}
+}
+
+// gatedEcho is a shell command a gated turn's bash runs once its services
+// are up (sh doesn't read BASH_ENV; the harnesses run bash).
+const gatedEcho = `bash -c 'echo db=$TEST_DATABASE_URL'`
+
+// slowServicesBackend is svcBackend whose services start only once the
+// turn's harness has (or after a while), or never, recording which.
+type slowServicesBackend struct {
+	*svcBackend
+	harnessStarted chan struct{}
+	once           sync.Once
+	harnessFirst   bool
+	never          bool // block until the turn gives up on the services
+}
+
+func (b *slowServicesBackend) StartServices(ctx context.Context, runID, key string, services []agentdef.Service) (string, func(), error) {
+	if b.never {
+		<-ctx.Done()
+		return "", nil, ctx.Err()
+	}
+	select {
+	case <-b.harnessStarted:
+		b.mu.Lock()
+		b.harnessFirst = true
+		b.mu.Unlock()
+	case <-time.After(5 * time.Second):
+	}
+	return b.svcBackend.StartServices(ctx, runID, key, services)
+}
+
+func (b *slowServicesBackend) Start(ctx context.Context, runID string, spec runner.ExecSpec) (runner.Process, error) {
+	if strings.HasPrefix(spec.Name, "lazyagents-turn-") {
+		b.once.Do(func() { close(b.harnessStarted) })
+	}
+	return b.svcBackend.Start(ctx, runID, spec)
+}
+
+// A chat turn's persona starts while its services are still starting; its
+// shell commands wait for them and then see what they expose.
+func TestChatHarnessStartsBeforeServicesAreReady(t *testing.T) {
+	e := setup(t)
+	t.Setenv("FAKE_HARNESS_MODE", "chat")
+	chat := codingChatWithRecipe(e, bareRepo(t))
+	b := &slowServicesBackend{svcBackend: &svcBackend{Fake: e.runner.Backend.(*runner.Fake)}, harnessStarted: make(chan struct{})}
+	e.runner.Backend = b
+
+	reply := e.postSh(chat, gatedEcho)
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.harnessFirst {
+		t.Fatal("the turn waited for its services before starting the harness")
+	}
+	if !strings.Contains(reply, "db=postgres://postgres@postgres:5432/postgres") {
+		t.Fatalf("the shell command didn't wait for the services' env: %s", reply)
+	}
+	if len(b.started) != 1 || b.stopped != 1 {
+		t.Fatalf("services started %v, stopped %d times", b.started, b.stopped)
+	}
+}
+
+// Services that fail don't fail a gated turn: its shell commands say why.
+func TestGatedChatTurnSurvivesFailedServices(t *testing.T) {
+	e := setup(t)
+	t.Setenv("FAKE_HARNESS_MODE", "chat")
+	chat := codingChatWithRecipe(e, bareRepo(t))
+	b := &svcBackend{Fake: e.runner.Backend.(*runner.Fake), fail: errors.New("service postgres: exited with code 1")}
+	e.runner.Backend = b
+
+	reply := e.postSh(chat, gatedEcho)
+
+	if !strings.Contains(reply, "this turn's services didn't start: Couldn't start the run's services: service postgres: exited with code 1") || !strings.Contains(reply, "err=<nil>") {
+		t.Fatalf("reply: %s", reply)
+	}
+	if evs := e.eventTypes(e.chatRun(chat).ID); !strings.Contains(evs, "lifecycle:services_failed") {
+		t.Fatalf("no services_failed event: %s", evs)
+	}
+}
+
+// A turn that ends before its services are up doesn't wait for them, and
+// abandoning them isn't reported as their failure.
+func TestQuickChatTurnDoesNotWaitForServices(t *testing.T) {
+	e := setup(t)
+	t.Setenv("FAKE_HARNESS_MODE", "chat")
+	chat := codingChatWithRecipe(e, bareRepo(t))
+	b := &slowServicesBackend{svcBackend: &svcBackend{Fake: e.runner.Backend.(*runner.Fake)}, harnessStarted: make(chan struct{}), never: true}
+	e.runner.Backend = b
+
+	e.say(chat, "hello")
+
+	if evs := e.eventTypes(e.chatRun(chat).ID); strings.Contains(evs, "lifecycle:services_failed") {
+		t.Fatalf("abandoned services reported as failed: %s", evs)
 	}
 }
 
