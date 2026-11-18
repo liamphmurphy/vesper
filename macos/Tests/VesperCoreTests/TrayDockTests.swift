@@ -153,3 +153,49 @@ final class DockModelTests: XCTestCase {
         XCTAssertEqual(DockModel.showHideAction(appFocused: true, visibleWindows: 0), .show)
     }
 }
+
+// Mirrors web/lib/inbox.test.mjs's tray cases.
+final class InboxTrayTests: XCTestCase {
+    private func at(_ min: Int) -> String {
+        let base = Date(timeIntervalSince1970: 1_794_052_800)  // fixed
+        return ISO8601DateFormatter().string(from: base.addingTimeInterval(Double(-min * 60)))
+    }
+    private func item(_ id: String, _ kind: String, _ min: Int, needs: Bool = true, resolved: Bool = false, read: Bool = false) -> InboxItem {
+        InboxItem(id: id, kind: kind, title: id, createdAt: at(min), resolved: resolved, read: read, needsYou: needs)
+    }
+
+    func testTrayItemsSplitAndOrder() {
+        let items = [
+            item("a2", "approval", 30), item("a1", "approval", 60), item("q1", "question", 10),
+            item("m-ask", "mention", 5), item("gate", "workflow_gate", 2), item("done", "approval", 90, resolved: true),
+            item("m-fyi", "mention", 20, needs: false), item("pr", "pr_approved", 50, needs: false, read: true),
+            item("sched", "scheduled", 1, needs: false),
+        ]
+        let t = InboxTray.items(items)
+        XCTAssertEqual(t.needs.map(\.id), ["a1", "a2", "q1", "m-ask", "gate"])
+        XCTAssertEqual(t.updates.map(\.id), ["sched", "m-fyi", "pr"])
+        XCTAssertEqual(t.unread, ["sched", "m-fyi"])
+        XCTAssertEqual(InboxTray.items(items, updatesLimit: 1).updates.map(\.id), ["sched"])
+    }
+
+    func testActions() {
+        XCTAssertEqual(InboxTray.action(kind: "approval"), .approve)
+        XCTAssertEqual(InboxTray.action(kind: "question"), .reply)
+        XCTAssertEqual(InboxTray.action(kind: "question", hasRun: false), .open(label: "Open"))
+        XCTAssertEqual(InboxTray.action(kind: "dispatch"), .dispatch)
+        XCTAssertEqual(InboxTray.action(kind: "review"), .open(label: "Open review"))
+        XCTAssertEqual(InboxTray.action(kind: "planning"), .open(label: "Review plan"))
+        XCTAssertEqual(InboxTray.action(kind: "pr_approved"), .open(label: "Open on GitHub"))
+        XCTAssertEqual(InboxTray.action(kind: "stalled"), .open(label: "Open run"))
+    }
+
+    func testExternalHrefAndReadRules() {
+        XCTAssertTrue(InboxTray.isExternalHref("https://github.com/o/r/pull/1"))
+        XCTAssertFalse(InboxTray.isExternalHref("/tickets/WEB-4"))
+        XCTAssertTrue(InboxTray.shouldMarkRead(item("u", "merged", 1, needs: false)))
+        XCTAssertFalse(InboxTray.shouldMarkRead(item("u", "merged", 1, needs: false, read: true)))
+        XCTAssertFalse(InboxTray.shouldMarkRead(item("n", "approval", 1)))
+        XCTAssertTrue(InboxTray.shouldMarkRead(item("n", "mention", 1)))
+        XCTAssertEqual(InboxTray.readRequest("x").path, "/api/v1/inbox/read")
+    }
+}

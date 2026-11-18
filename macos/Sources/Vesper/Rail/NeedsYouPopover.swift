@@ -2,8 +2,8 @@ import AppKit
 import SwiftUI
 import VesperCore
 
-/// The Needs-you popover, anchored to the rail's button: the inbox items that wait on the person,
-/// newest first, with Approve/Decline, Reply and Open on each. It reads the same inbox the
+/// The Needs-you popover, anchored to the rail's button: the web tray's two tabs (Needs you, and
+/// Updates that ask nothing), with Approve/Decline, Reply and a labelled Open per kind. It reads the same inbox the
 /// notifications and the Dock badge do, so it updates live while it is open.
 @MainActor
 final class NeedsYouPopover: NSObject, NSPopoverDelegate {
@@ -25,9 +25,10 @@ final class NeedsYouPopover: NSObject, NSPopoverDelegate {
         guard let services = services() else { return }
         let root = NeedsYouContent(
             inbox: services.railInbox, services: services,
-            open: { [weak self] href in
+            open: { [weak self] item in
                 self?.close()
-                self?.navigate(href)
+                if InboxTray.shouldMarkRead(item) { self?.services()?.railMarkRead(item.id) }
+                self?.go(item.href.isEmpty ? "/inbox" : item.href)
             },
             showAll: { [weak self] in
                 self?.close()
@@ -40,6 +41,11 @@ final class NeedsYouPopover: NSObject, NSPopoverDelegate {
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minX)
     }
 
+    /// An app route navigates in the window; a GitHub URL opens in the default browser.
+    private func go(_ href: String) {
+        if InboxTray.isExternalHref(href), let url = URL(string: href) { NSWorkspace.shared.open(url) } else { navigate(href) }
+    }
+
     func close() {
         if popover.isShown { popover.performClose(nil) }
     }
@@ -48,10 +54,11 @@ final class NeedsYouPopover: NSObject, NSPopoverDelegate {
 private struct NeedsYouContent: View {
     let inbox: RailInbox
     let services: SystemServices
-    let open: (String) -> Void
+    let open: (InboxItem) -> Void
     let showAll: () -> Void
     let close: () -> Void
 
+    @State private var tab: InboxTrayTab = .needs
     @State private var selection: String?
     @State private var busy: Set<String> = []
     @State private var messages: [String: String] = [:]
@@ -60,25 +67,29 @@ private struct NeedsYouContent: View {
 
     private static let width: CGFloat = 380
 
+    private var list: [InboxItem] { tab == .needs ? inbox.tray.needs : inbox.tray.updates }
+
     var body: some View {
-        let items = inbox.needsYou
+        let items = list
         VStack(spacing: 0) {
-            HStack {
-                Text("Needs you").font(.headline)
-                if !items.isEmpty {
-                    Text("\(items.count)").font(.caption2.weight(.semibold)).foregroundStyle(.white)
-                        .padding(.horizontal, 6).padding(.vertical, 1).background(Capsule().fill(Tone.human.color))
-                }
+            HStack(spacing: 4) {
+                tabButton(.needs, "Needs you")
+                tabButton(.updates, "Updates")
                 Spacer()
+                if tab == .updates && !inbox.tray.unread.isEmpty {
+                    Button("Mark all read") { inbox.tray.unread.forEach(services.railMarkRead) }
+                        .buttonStyle(.plain).font(.caption.weight(.medium)).foregroundStyle(Color.accentColor)
+                }
             }
-            .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 8)
+            .padding(.horizontal, 10).padding(.top, 10).padding(.bottom, 8)
             Divider()
             if items.isEmpty {
                 VStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle").font(.system(size: 26)).foregroundStyle(.secondary)
-                    Text("Nothing needs you").foregroundStyle(.secondary)
+                    Image(systemName: tab == .needs ? "checkmark.circle" : "tray").font(.system(size: 26)).foregroundStyle(.secondary)
+                    Text(tab == .needs ? "Nothing needs you" : "No updates yet — finished runs and replies show up here")
+                        .foregroundStyle(.secondary).multilineTextAlignment(.center)
                 }
-                .frame(maxWidth: .infinity).padding(.vertical, 36)
+                .frame(maxWidth: .infinity).padding(.vertical, 36).padding(.horizontal, 20)
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -112,34 +123,86 @@ private struct NeedsYouContent: View {
         .focusEffectDisabled()
         .onAppear {
             listFocused = true
-            if selection == nil { selection = inbox.needsYou.first?.id }
+            if selection == nil { selection = list.first?.id }
         }
-        .onChange(of: inbox.needsYou.map(\.id)) { _, ids in
+        .onChange(of: list.map(\.id)) { _, ids in
             if let selection, !ids.contains(selection) { self.selection = ids.first }
         }
         .onKeyPress(.upArrow) { move(-1); return .handled }
         .onKeyPress(.downArrow) { move(1); return .handled }
+        .onKeyPress(.leftArrow) { switchTab(); return .handled }
+        .onKeyPress(.rightArrow) { switchTab(); return .handled }
         .onKeyPress(.return) {
-            guard let item = inbox.needsYou.first(where: { $0.id == selection }) else { return .ignored }
-            open(item.href.isEmpty ? "/inbox" : item.href)
+            guard let item = list.first(where: { $0.id == selection }) else { return .ignored }
+            open(item)
             return .handled
         }
         .onKeyPress(.escape) { close(); return .handled }
+        .onKeyPress(characters: CharacterSet(charactersIn: "jkad")) { press in
+            switch press.characters {
+            case "j": move(1)
+            case "k": move(-1)
+            default:
+                guard let item = list.first(where: { $0.id == selection }), RailItemActions.canDecide(item) else { return .ignored }
+                decide(item, approve: press.characters == "a")
+            }
+            return .handled
+        }
     }
 
+    private func tabButton(_ target: InboxTrayTab, _ title: String) -> some View {
+        let on = tab == target
+        return Button {
+            select(target)
+        } label: {
+            HStack(spacing: 5) {
+                Text(title).font(.system(size: 13, weight: .medium))
+                if target == .needs {
+                    Text("\(inbox.tray.needs.count)").font(.caption.monospacedDigit())
+                        .foregroundStyle(inbox.tray.needs.isEmpty ? Color.secondary : Tone.human.color)
+                } else {
+                    Text("\(inbox.tray.updates.count)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    if !inbox.tray.unread.isEmpty { Circle().fill(Color.accentColor).frame(width: 6, height: 6) }
+                }
+            }
+            .padding(.horizontal, 9).padding(.vertical, 4)
+            .background(RoundedRectangle(cornerRadius: 6).fill(on ? Color.primary.opacity(0.1) : .clear))
+            .foregroundStyle(on ? Color.primary : Color.secondary)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(on ? .isSelected : [])
+    }
+
+    private func select(_ target: InboxTrayTab) {
+        tab = target
+        selection = (target == .needs ? inbox.tray.needs : inbox.tray.updates).first?.id
+        listFocused = true
+    }
+
+    private func switchTab() { select(tab == .needs ? .updates : .needs) }
+
+    /// Up and down wrap around, as the web's step does.
     private func move(_ delta: Int) {
-        let ids = inbox.needsYou.map(\.id)
+        let ids = list.map(\.id)
         guard !ids.isEmpty else { return }
-        let current = selection.flatMap { ids.firstIndex(of: $0) } ?? (delta > 0 ? -1 : ids.count)
-        selection = ids[min(max(current + delta, 0), ids.count - 1)]
+        guard let current = selection.flatMap({ ids.firstIndex(of: $0) }) else {
+            selection = delta > 0 ? ids.first : ids.last
+            return
+        }
+        selection = ids[(current + delta + ids.count) % ids.count]
     }
 
     @ViewBuilder
     private func row(_ item: InboxItem) -> some View {
         let isBusy = busy.contains(item.id)
+        let unread = !item.needsYou && InboxTray.isOpen(item)
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(item.title).font(.system(size: 13, weight: .semibold)).lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
+                if unread { Circle().fill(Color.accentColor).frame(width: 6, height: 6).accessibilityLabel("unread") }
+                Text(item.title).font(.system(size: 13, weight: unread || item.needsYou ? .semibold : .regular))
+                    .foregroundStyle(unread || item.needsYou ? Color.primary : Color.secondary)
+                    .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
                 Text(RailItemActions.age(item.createdAt)).font(.caption).foregroundStyle(.secondary)
             }
             let subtitle = RailItemActions.subtitle(item)
@@ -152,17 +215,7 @@ private struct NeedsYouContent: View {
                 Text(summary).font(.caption).foregroundStyle(.secondary).lineLimit(2)
             }
             if RailItemActions.canReply(item) { replyField(item, disabled: isBusy) }
-            HStack(spacing: 8) {
-                if RailItemActions.canDecide(item) {
-                    Button("Approve") { decide(item, approve: true) }.buttonStyle(.borderedProminent).tint(.green)
-                    Button("Decline") { decide(item, approve: false) }.buttonStyle(.bordered)
-                }
-                Button("Open") { open(item.href.isEmpty ? "/inbox" : item.href) }.buttonStyle(.bordered)
-                if isBusy { ProgressView().controlSize(.small) }
-                Spacer()
-            }
-            .controlSize(.small)
-            .disabled(isBusy)
+            actions(item, isBusy: isBusy)
             if let message = messages[item.id] {
                 Text(message).font(.caption).foregroundStyle(.red)
             }
@@ -171,7 +224,38 @@ private struct NeedsYouContent: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 8).fill(selection == item.id ? Color.primary.opacity(0.08) : .clear))
         .contentShape(Rectangle())
-        .onTapGesture { selection = item.id }
+        .onTapGesture {
+            selection = item.id
+            open(item)
+        }
+    }
+
+    /// The buttons per the web's trayAction. Updates have none: the row itself opens.
+    @ViewBuilder
+    private func actions(_ item: InboxItem, isBusy: Bool) -> some View {
+        if let action = RailItemActions.action(item) {
+            HStack(spacing: 8) {
+                if RailItemActions.canDecide(item) {
+                    Button("Approve") { decide(item, approve: true) }.buttonStyle(.borderedProminent).tint(.green)
+                    Button("Decline") { decide(item, approve: false) }.buttonStyle(.bordered)
+                } else {
+                    Button(openLabel(action)) { open(item) }.buttonStyle(.bordered)
+                }
+                if isBusy { ProgressView().controlSize(.small) }
+                Spacer()
+            }
+            .controlSize(.small)
+            .disabled(isBusy)
+        }
+    }
+
+    /// Reply and approve that can't be done inline fall back to a plain Open, like a kind with no inline action.
+    private func openLabel(_ action: InboxTrayAction) -> String {
+        switch action {
+        case .dispatch: return "Start"
+        case .open(let label): return label
+        case .approve, .reply: return "Open"
+        }
     }
 
     private func replyField(_ item: InboxItem, disabled: Bool) -> some View {

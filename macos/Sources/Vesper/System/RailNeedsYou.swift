@@ -8,10 +8,10 @@ import VesperCore
 @Observable
 final class RailInbox {
     var items: [InboxItem] = [] {
-        didSet { needsYou = TrayModel.newestNeedsYou(items) }
+        didSet { tray = InboxTray.items(items) }
     }
-    /// Open, unread items that need the person, newest first.
-    private(set) var needsYou: [InboxItem] = []
+    /// The two tabs' lists, grouped and ordered as the web tray does.
+    private(set) var tray = InboxTrayItems(needs: [], updates: [], unread: [])
 }
 
 /// What the Needs-you popover can do with an item.
@@ -25,14 +25,19 @@ enum RailItemActions {
             agentHandle: item.agent?.handle.flatMap { $0.isEmpty ? nil : $0 })
     }
 
-    /// Approve and Decline: only for the kinds the notification actions cover.
-    static func canDecide(_ item: InboxItem) -> Bool {
-        NotificationLogic.decisionRequest(alert(for: item), .approve) != nil
+    /// What a row offers inline, per the web's trayAction. Updates carry no action.
+    static func action(_ item: InboxItem) -> InboxTrayAction? {
+        item.needsYou ? InboxTray.action(kind: item.kind, hasRun: !(item.runId ?? "").isEmpty) : nil
     }
 
-    /// A reply field: a question on a ticket from a named agent.
+    /// Approve and Decline: an approval the notification actions can decide.
+    static func canDecide(_ item: InboxItem) -> Bool {
+        action(item) == .approve && NotificationLogic.decisionRequest(alert(for: item), .approve) != nil
+    }
+
+    /// A reply field: a question the notification reply can post (a ticket and a named agent).
     static func canReply(_ item: InboxItem) -> Bool {
-        NotificationLogic.replyRequest(alert(for: item), "x") != nil
+        action(item) == .reply && NotificationLogic.replyRequest(alert(for: item), "x") != nil
     }
 
     static func replyPlaceholder(_ item: InboxItem) -> String {
@@ -70,6 +75,11 @@ extension SystemServices {
         } catch {
             return (error as? APIError)?.userMessage ?? "Couldn't \(approve ? "approve" : "decline")."
         }
+    }
+
+    /// Marks an inbox item read (POST /inbox/read, as the web's useReadInbox does). Fire and forget.
+    func railMarkRead(_ id: String) {
+        Task { try? await sendRailCall(InboxTray.readRequest(id)) }
     }
 
     /// Reply to a question from the popover (a ticket comment mentioning the agent). nil on success.
