@@ -82,3 +82,23 @@ table or bucket is exported with no code change**. Don't add it to a list.
   finds it on stores that won't list buckets.
 - The real-store test runs when `TEST_S3_ENDPOINT` is set (dev compose
   SeaweedFS); the rest run on `TEST_DATABASE_URL` alone.
+
+## Running the server tests
+
+Database tests need `TEST_DATABASE_URL` (a Postgres server they may create
+databases on); inside a Vesper run or on CI they fail without it rather than
+skip.
+
+- The whole server suite (`go test ./...` in `server`) takes about 4–5
+  minutes on a laptop, almost all of it in `internal/runner` and
+  `internal/httpapi`. While iterating, run only the package you changed,
+  narrowed with `-run` in those two:
+  `go test ./internal/runner -run 'TestChatAside'`. Run the full suite once,
+  at the end.
+- `testdb.New` clones a database migrated once per test binary, so a new
+  migration needs no test changes. Use `testdb.NewUnmigrated` for a test that
+  runs migrations itself.
+- Runner tests get the fake harness from `setup`, built once per test binary.
+  Don't `go build` it in a test.
+- A runner test that leaves a turn running (e.g. a held chat) must release it:
+  `setup`'s cleanup waits up to 30s for in-flight turns, then fails the test.
