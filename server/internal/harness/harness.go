@@ -604,7 +604,7 @@ func epicReviewSection(r *agentdef.Repository) string {
 }
 
 // testServices says where tests get the services they need, for every run that tests.
-const testServices = "If `TEST_DATABASE_URL` is set, database tests use it: don't start your own database. If `DOCKER_HOST` is set, start what your tests need that isn't installed (a database, a queue, a cloud emulator) with `docker` or Testcontainers: containers run sandboxed (no host mounts, privileges or host network), their published ports are reachable at `$TESTCONTAINERS_HOST_OVERRIDE`, and everything is removed when the turn ends."
+const testServices = "If `TEST_DATABASE_URL` is set, database tests use it: don't start your own database. If `DOCKER_HOST` is set, start what your tests need that isn't installed (a database, a queue, a cloud emulator) with `docker` or Testcontainers: containers run sandboxed (no host mounts, privileges or host network), their published ports are reachable at `$TESTCONTAINERS_HOST_OVERRIDE`, and everything is removed when the turn ends. If `VESPER_MACOS` is set, `mac COMMAND` runs a command in a macOS VM for what Linux can't build or test (Swift with AppKit or SwiftUI, `xcodebuild`, e.g. `mac make -C macos mac-test`): it mirrors your git checkout there first, runs in the matching directory and exits with the command's code. The first `mac` in a run boots macOS, which can take a minute or two, so give it a long timeout; the VM has no network, and `mac --help` lists its options."
 
 // delegationSection tells a main agent it can hand work to sub agents.
 func delegationSection(spec agentdef.Resolved) string {

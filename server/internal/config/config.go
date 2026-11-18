@@ -106,6 +106,25 @@ type Runner struct {
 	// PlaygroundIdleTTL stops a playground unused this long
 	// (RUNNER_PLAYGROUND_IDLE_S).
 	PlaygroundIdleTTL time.Duration
+	// MacOS configures the macOS guest VMs behind `mac` (microvm).
+	MacOS MacOSGuests
+}
+
+// MacOSGuests configures the macOS guest VMs runs reach with `mac`. They're on
+// when a golden image is set up (see docs/dev/microvm-architecture.md).
+type MacOSGuests struct {
+	// ImageDir holds the golden image (RUNNER_MACOS_IMAGE_DIR); empty means
+	// macos-golden in the runner's VM directory.
+	ImageDir string
+	// MaxVMs is how many may run at once (RUNNER_MACOS_VMS, 0–2, default 2;
+	// Apple allows 2 per Mac). 0 turns macOS guests off.
+	MaxVMs int
+	// IdleTTL stops a run's macOS VM unused this long (RUNNER_MACOS_IDLE_TTL_S).
+	IdleTTL  time.Duration
+	CPUs     int   // RUNNER_MACOS_CPUS
+	MemoryMB int64 // RUNNER_MACOS_MEMORY_MB
+	// User is the image's account commands run as (RUNNER_MACOS_USER).
+	User string
 }
 
 // IsolatesBackend reports whether backend runs harnesses inside an isolated
@@ -164,6 +183,9 @@ func Load() (Config, error) {
 	}
 	if r.HostWorkspaces = env("RUNNER_HOST_WORKSPACES_DIR", ""); r.HostWorkspaces != "" && !filepath.IsAbs(r.HostWorkspaces) {
 		return c, fmt.Errorf("config: RUNNER_HOST_WORKSPACES_DIR=%q must be an absolute path", r.HostWorkspaces)
+	}
+	if r.MacOS, err = loadMacOSGuests(); err != nil {
+		return c, err
 	}
 	switch r.Backend {
 	case "microvm":
@@ -336,6 +358,46 @@ func portList(v string) ([]int, error) {
 		return nil, bad
 	}
 	return ports, nil
+}
+
+func loadMacOSGuests() (MacOSGuests, error) {
+	m := MacOSGuests{ImageDir: env("RUNNER_MACOS_IMAGE_DIR", ""), User: env("RUNNER_MACOS_USER", "admin")}
+	if m.ImageDir != "" && !filepath.IsAbs(m.ImageDir) {
+		return m, fmt.Errorf("config: RUNNER_MACOS_IMAGE_DIR=%q must be an absolute path", m.ImageDir)
+	}
+	var err error
+	if m.MaxVMs, err = intEnv("RUNNER_MACOS_VMS", 2); err != nil {
+		return m, err
+	}
+	if m.MaxVMs < 0 || m.MaxVMs > 2 {
+		return m, fmt.Errorf("config: RUNNER_MACOS_VMS must be 0–2 (Apple allows 2 macOS VMs per Mac)")
+	}
+	idle, err := intEnv("RUNNER_MACOS_IDLE_TTL_S", 600)
+	if err != nil {
+		return m, err
+	}
+	if idle < 30 {
+		return m, fmt.Errorf("config: RUNNER_MACOS_IDLE_TTL_S must be at least 30")
+	}
+	m.IdleTTL = time.Duration(idle) * time.Second
+	if m.CPUs, err = intEnv("RUNNER_MACOS_CPUS", 4); err != nil {
+		return m, err
+	}
+	if m.CPUs < 2 || m.CPUs > 32 {
+		return m, fmt.Errorf("config: RUNNER_MACOS_CPUS must be 2–32")
+	}
+	mem, err := intEnv("RUNNER_MACOS_MEMORY_MB", 8192)
+	if err != nil {
+		return m, err
+	}
+	if mem < 4096 {
+		return m, fmt.Errorf("config: RUNNER_MACOS_MEMORY_MB must be at least 4096")
+	}
+	m.MemoryMB = int64(mem)
+	if m.User == "" {
+		return m, fmt.Errorf("config: RUNNER_MACOS_USER can't be empty")
+	}
+	return m, nil
 }
 
 func intEnv(key string, def int) (int, error) {

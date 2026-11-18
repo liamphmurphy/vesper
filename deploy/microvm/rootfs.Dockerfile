@@ -25,4 +25,6 @@ RUN mkdir -p /dev /proc /sys /tmp /run /mnt \
  && chown 1000:1000 /workspace /home/node
 
 COPY vesper-guest-agent /sbin/init
-RUN chmod 0755 /sbin/init
+# `mac`: runs a command in the run's macOS guest VM (cmd/vesper-mac).
+COPY mac /usr/local/bin/mac
+RUN chmod 0755 /sbin/init /usr/local/bin/mac

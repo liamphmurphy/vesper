@@ -425,8 +425,10 @@ func runAppMicroVMRunner(
 
 	secretStore := &secrets.Service{Q: store.New(pool), Box: box}
 	saveClaude, saveCodex := buildAuthSavers(secretStore)
+	driver := microvm.NewVZDriver()
 	m := &runner.MicroVM{
-		Driver:         microvm.NewVZDriver(),
+		Driver:         driver,
+		MacOS:          macOSGuests(log, cfg.Runner.MacOS, vmDir, driver),
 		StateDir:       vmDir,
 		KernelPath:     kernel,
 		RootfsPath:     rootfs,

@@ -63,6 +63,10 @@ if [[ "${build_rootfs}" = true ]]; then
   GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
     go -C "${repo_root}/server" build -trimpath -ldflags="-s -w" \
     -o "${tmpdir}/vesper-guest-agent" ./cmd/vesper-guest-agent
+  echo "Cross-compiling mac (linux/arm64)..."
+  GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
+    go -C "${repo_root}/server" build -trimpath -ldflags="-s -w" \
+    -o "${tmpdir}/mac" ./cmd/vesper-mac
 
   echo "Building rootfs stage image..."
   docker build \
