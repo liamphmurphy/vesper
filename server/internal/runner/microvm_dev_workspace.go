@@ -189,6 +189,7 @@ func (b *MicroVM) devShellEnv() map[string]string {
 		"USER":       "node",
 		"LOGNAME":    "node",
 		"TMPDIR":     "/tmp",
+		"LANG":       devTerminalLang,
 		"NIX_REMOTE": "daemon",
 		"PATH":       devworkspace.ProfilePath + "/bin:" + homePath + "/.nix-profile/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/nix/var/nix/profiles/default/bin",
 	}
@@ -300,7 +301,7 @@ func (b *MicroVM) OpenDevWorkspacePTY(ctx context.Context, workspaceID uuid.UUID
 	envMap := b.devShellEnv()
 	envMap["TERM"] = "xterm-256color"
 
-	cmd := "if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s main; fi; exec bash -l"
+	cmd := "if command -v tmux >/dev/null 2>&1; then exec tmux -u new-session -A -s main; fi; exec bash -l"
 	rp, err := dvm.vm.Client().StartExec(ctx, guestproto.ExecReq{
 		Argv: []string{"sh", "-c", cmd},
 		Env:  envMap,

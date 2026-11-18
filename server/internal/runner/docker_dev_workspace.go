@@ -269,7 +269,7 @@ func (d *Docker) OpenDevWorkspacePTY(ctx context.Context, workspaceID uuid.UUID,
 	var created struct{ ID string }
 	// Use `sh -c` (not `-lc`) so Debian's /etc/profile does not overwrite the
 	// Nix profile PATH before tmux/nvim/zsh are resolved.
-	cmd := `if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s dev -c /workspace 'if command -v nvim >/dev/null 2>&1; then nvim .; fi; if command -v zsh >/dev/null 2>&1; then exec zsh; else exec bash; fi'; elif command -v zsh >/dev/null 2>&1; then exec zsh; else exec bash; fi`
+	cmd := `if command -v tmux >/dev/null 2>&1; then exec tmux -u new-session -A -s dev -c /workspace 'if command -v nvim >/dev/null 2>&1; then nvim .; fi; if command -v zsh >/dev/null 2>&1; then exec zsh; else exec bash; fi'; elif command -v zsh >/dev/null 2>&1; then exec zsh; else exec bash; fi`
 	if _, err := d.do(ctx, "POST", "/containers/"+url.PathEscape(containerID)+"/exec", jsonBody(map[string]any{
 		"Cmd":          []string{"sh", "-c", cmd},
 		"User":         "1000",
@@ -283,6 +283,7 @@ func (d *Docker) OpenDevWorkspacePTY(ctx context.Context, workspaceID uuid.UUID,
 			"NIX_REMOTE=daemon",
 			"TERM=xterm-256color",
 			"COLORTERM=truecolor",
+			"LANG=" + devTerminalLang,
 			"SHELL=" + devworkspace.ProfilePath + "/bin/zsh",
 			"PATH=" + devworkspace.ProfilePath + "/bin:" + homePath + "/.nix-profile/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/nix/var/nix/profiles/default/bin",
 		},
