@@ -26,6 +26,8 @@ const (
 	InternalCacheHost      = "cache.vesper.internal"
 	InternalGitHost        = "git.vesper.internal"
 	InternalPlaygroundHost = "playground.vesper.internal"
+	// InternalMacHost is the run's macOS guest broker, behind `mac`.
+	InternalMacHost = "mac.vesper.internal"
 )
 
 var (
@@ -33,6 +35,7 @@ var (
 	internalCacheIP      = [4]byte{198, 18, 0, 2}
 	internalGitIP        = [4]byte{198, 18, 0, 3}
 	internalPlaygroundIP = [4]byte{198, 18, 0, 4}
+	internalMacIP        = [4]byte{198, 18, 0, 5}
 )
 
 var reservedHostToIP = map[string][4]byte{
@@ -40,6 +43,7 @@ var reservedHostToIP = map[string][4]byte{
 	InternalCacheHost:      internalCacheIP,
 	InternalGitHost:        internalGitIP,
 	InternalPlaygroundHost: internalPlaygroundIP,
+	InternalMacHost:        internalMacIP,
 }
 
 var reservedIPToHost = map[[4]byte]string{
@@ -47,6 +51,7 @@ var reservedIPToHost = map[[4]byte]string{
 	internalCacheIP:      InternalCacheHost,
 	internalGitIP:        InternalGitHost,
 	internalPlaygroundIP: InternalPlaygroundHost,
+	internalMacIP:        InternalMacHost,
 }
 
 var deniedIPv4CIDRs = mustParseCIDRs(
@@ -221,6 +226,7 @@ type Egress struct {
 	cacheHandler      http.Handler
 	gitHandler        http.Handler
 	playgroundHandler http.Handler
+	macHandler        http.Handler
 
 	servers   []*http.Server
 	listeners []*memListener
@@ -265,6 +271,11 @@ func NewEgress(cfg EgressConfig) *Egress {
 		defer e.dynMu.RUnlock()
 		return e.playgroundHandler
 	})
+	e.mountDynamicHTTPService(internalMacIP, func() http.Handler {
+		e.dynMu.RLock()
+		defer e.dynMu.RUnlock()
+		return e.macHandler
+	})
 	return e
 }
 
@@ -277,6 +288,14 @@ func (e *Egress) SetGitHandler(h http.Handler) {
 func (e *Egress) SetPlaygroundHandler(h http.Handler) {
 	e.dynMu.Lock()
 	e.playgroundHandler = h
+	e.dynMu.Unlock()
+}
+
+// SetMacHandler serves mac.vesper.internal; nil answers 404, which `mac`
+// reports as macOS guests being off.
+func (e *Egress) SetMacHandler(h http.Handler) {
+	e.dynMu.Lock()
+	e.macHandler = h
 	e.dynMu.Unlock()
 }
 
@@ -504,6 +523,8 @@ func (e *Egress) handleInternalTCP(conn net.Conn, ip [4]byte, port uint16) bool 
 		idx = 2
 	case internalPlaygroundIP:
 		idx = 3
+	case internalMacIP:
+		idx = 4
 	default:
 		return false
 	}
