@@ -193,16 +193,33 @@ final class AppModel {
         if !compactLayout { controller.window?.tabbingMode = .preferred }
     }
 
-    func duplicateTab(_ tab: WebContentController, in host: MainWindowController) {
-        let copy: WebContentController
-        switch tab.kind {
-        case .vesper: copy = makeTab(kind: .vesper, path: tab.pendingPath)
-        case .playground:
-            guard let url = tab.currentURLString else { return }
-            copy = makeTab(kind: .playground, path: url)
+    /// ⌘T and the tab bars' +: a new tab at the page the current tab shows (a Knowledge page, a
+    /// chat, a filtered list), so the person carries on from where they are. Home only when no
+    /// window is open to copy from.
+    func openNewTab(from window: NSWindow?) {
+        let current = ((window ?? NSApp.keyWindow)?.windowController as? MainWindowController)?.content
+        if let current, let copy = makeCopy(of: current) {
+            place(copy, nextTo: window)
+        } else {
+            openVesperTab(path: "/", nextTo: window)
         }
-        guard let index = host.tabs.list.items.firstIndex(where: { $0 === tab }) else { return }
+    }
+
+    func duplicateTab(_ tab: WebContentController, in host: MainWindowController) {
+        guard let copy = makeCopy(of: tab),
+              let index = host.tabs.list.items.firstIndex(where: { $0 === tab }) else { return }
         host.addTab(copy, at: index + 1)
+    }
+
+    /// A fresh tab at `tab`'s page: its Vesper path with the query, or its playground URL.
+    /// Nil for a playground that never loaded.
+    private func makeCopy(of tab: WebContentController) -> WebContentController? {
+        switch tab.kind {
+        case .vesper: return makeTab(kind: .vesper, path: tab.pendingPath)
+        case .playground:
+            guard let url = tab.currentURLString else { return nil }
+            return makeTab(kind: .playground, path: url)
+        }
     }
 
     /// Compact layout: the tab, page and all, becomes its own window.
