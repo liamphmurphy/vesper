@@ -552,7 +552,7 @@ trade-offs.
 | `server/migrations/` | goose SQL, embedded and applied on boot |
 | `server/internal/store/queries/` | SQL for sqlc. `internal/store` is generated. |
 | `server/internal/tracker/` | Ticket domain service; every change writes its activity event in the same transaction |
-| `web/` | Next.js app: a pure UI client of the API |
+| `web/` | The UI: a static React SPA (Vite) and the design worker, a pure client of the API |
 | `deploy/` | Guest image builds (`agent-base`, `microvm`) |
 
 Agents can continue automatically when a provider's usage or rate limit is

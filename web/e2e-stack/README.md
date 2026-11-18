@@ -64,7 +64,7 @@ failure or Ctrl-C):
 - **Fixtures**: a project and a main agent, created through the real API.
 - **API + runner**: built binaries, `RUNNER_MCP_URL` and `PUBLIC_URL` on the
   free ports.
-- **Next**: `npm run build` then `next start` with `API_INTERNAL_URL` set.
+- **Web**: `npm run build`, then `design-worker/server.mjs` serving `dist/` with `API_INTERNAL_URL` set (it proxies `/api`, `/mcp` and `/events`).
 
 ### Fake harness and the PATH guard
 

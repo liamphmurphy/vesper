@@ -36,7 +36,7 @@ stop-dev: ## Kill whatever is listening on the API and web dev ports (left over 
 	  kill -9 $$(lsof -nP -tiTCP:$$port -sTCP:LISTEN 2>/dev/null) 2>/dev/null || true; \
 	done
 
-dev: dev-infra stop-dev ## Local Postgres, API (hot reload) + Next dev on the host → http://localhost:3000 (replaces any API/web already on those ports)
+dev: dev-infra stop-dev ## Local Postgres, API (hot reload) + Vite dev server on the host → http://localhost:3000 (replaces any API/web already on those ports)
 	@trap 'kill 0' EXIT; \
 	  $(MAKE) --no-print-directory api & \
 	  $(MAKE) --no-print-directory web & \

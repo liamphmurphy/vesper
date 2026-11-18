@@ -1,18 +1,18 @@
 // next/navigation for the static app, on React Router's data router.
 import { createContext, useContext, useMemo } from "react";
-import { useLocation, useMatches } from "react-router";
-import { appRouter } from "./router";
+import { useMatches } from "react-router";
+import { appRouter, useLiveLocation } from "./router";
 
 export const useRouter = () => appRouter;
 
 export function usePathname(): string {
-  return useLocation().pathname;
+  return useLiveLocation().pathname;
 }
 
 export type ReadonlyURLSearchParams = URLSearchParams;
 
 export function useSearchParams(): ReadonlyURLSearchParams {
-  const { search } = useLocation();
+  const { search } = useLiveLocation();
   return useMemo(() => new URLSearchParams(search), [search]);
 }
 
@@ -41,7 +41,7 @@ export function paramsFor(pattern: string[], pathname: string): Record<string, s
 }
 
 export function useParams<T extends Record<string, string | string[] | undefined> = Record<string, string | string[] | undefined>>(): T {
-  const { pathname } = useLocation();
+  const { pathname } = useLiveLocation();
   const matches = useMatches();
   const pattern = (matches[matches.length - 1]?.handle as RoutePattern | undefined)?.pattern;
   return useMemo(() => (pattern ? paramsFor(pattern, pathname) : {}) as T, [pattern, pathname]);
@@ -51,7 +51,7 @@ export function useParams<T extends Record<string, string | string[] | undefined
 export const LayoutDepthContext = createContext(0);
 
 export function useSelectedLayoutSegments(): string[] {
-  const { pathname } = useLocation();
+  const { pathname } = useLiveLocation();
   const depth = useContext(LayoutDepthContext);
   return useMemo(() => pathname.split("/").filter(Boolean).slice(depth), [pathname, depth]);
 }

@@ -2,8 +2,8 @@
 /* Copied verbatim from docs/design-system/tokens.css. Edit the design copy first. */
 @import "../styles/tokens.css";
 
-/* next/font self-hosts Inter and JetBrains Mono under hashed family names,
-   so point the token font stacks at the variables it sets on <html>. */
+/* styles/fonts.css self-hosts Inter and JetBrains Mono and defines --font-inter and
+   --font-jetbrains-mono; point the token font stacks at them. */
 :root {
   --font-sans: var(--font-inter), "Inter", system-ui, -apple-system, sans-serif;
   --font-mono: var(--font-jetbrains-mono), "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;

@@ -2,9 +2,9 @@
 // with Next's conventions: (route groups), [dynamic], [...catch-all], [[...optional]],
 // nested layout.tsx, and page.tsx. Pages are code-split; layouts are bundled with the shell.
 import { Component, createElement, useEffect, useMemo, type ComponentType, type ReactNode } from "react";
-import { Outlet, createBrowserRouter, redirect as routerRedirect, useLocation, useRouteError, type RouteObject } from "react-router";
+import { Outlet, createBrowserRouter, redirect as routerRedirect, useRouteError, type RouteObject } from "react-router";
 import { LayoutDepthContext, paramsFor, signalOf, type RoutePattern } from "./navigation";
-import { appRouter, setDataRouter } from "./router";
+import { appRouter, setDataRouter, useLiveLocation, useOverrideJanitor } from "./router";
 import { redirectFor } from "./redirects";
 
 type PageModule = { default: ComponentType<Record<string, unknown>>; metadata?: { title?: string } };
@@ -28,7 +28,7 @@ function queryObject(search: string) {
 }
 
 function PageHost({ Page, pattern, title }: { Page: PageModule["default"]; pattern: string[]; title?: string }) {
-  const { pathname, search } = useLocation();
+  const { pathname, search } = useLiveLocation();
   const params = useMemo(() => settled(paramsFor(pattern, pathname)), [pattern, pathname]);
   const searchParams = useMemo(() => settled(queryObject(search)), [search]);
   useEffect(() => {
@@ -134,7 +134,8 @@ function Redirect({ to }: { to: string }) {
 
 /** redirect() and notFound(), thrown from a page or layout as in Next, end up here. */
 function NavigationBoundary({ children }: { children: ReactNode }) {
-  const { pathname, search } = useLocation();
+  useOverrideJanitor();
+  const { pathname, search } = useLiveLocation();
   return <NavigationBoundaryImpl loc={pathname + search}>{children}</NavigationBoundaryImpl>;
 }
 
