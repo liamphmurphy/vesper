@@ -254,6 +254,24 @@ func TestVZDevWorkspacePTYResize(t *testing.T) {
 		t.Fatalf("expected resized TTY size '43 132', got %q", seen)
 	}
 
+	// Split so the echoed command line can't satisfy the check.
+	if _, err := io.WriteString(pty, "printf 'LOC''ALE=%s\\n' \"$LANG\"\r"); err != nil {
+		t.Fatalf("Write to PTY: %v", err)
+	}
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		seen = ptyBuf.String()
+		mu.Unlock()
+		if strings.Contains(seen, "LOCALE=C.UTF-8") {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !strings.Contains(seen, "LOCALE=C.UTF-8") {
+		t.Fatalf("expected the dev terminal to run in C.UTF-8, got %q", seen)
+	}
+
 	if err := b.StopDevWorkspaceContainer(ctx, wsID); err != nil {
 		t.Fatalf("StopDevWorkspaceContainer: %v", err)
 	}

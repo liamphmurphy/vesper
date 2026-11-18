@@ -21,6 +21,12 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/store"
 )
 
+// devTerminalLang is the Dev workspace terminal's locale. Without a UTF-8
+// one, tmux draws every non-ASCII character as "_" (box drawing, prompt
+// glyphs, Claude Code's logo) and CLIs fall back to ASCII. The PTY's tmux is
+// also started with -u, in case a user's shell config overrides LANG.
+const devTerminalLang = "C.UTF-8"
+
 func (r *Runner) devWorkspaceBackend() (DevWorkspaceBackend, bool) {
 	db, ok := r.Backend.(DevWorkspaceBackend)
 	return db, ok
