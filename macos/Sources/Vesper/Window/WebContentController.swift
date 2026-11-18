@@ -1,0 +1,277 @@
+import AppKit
+import SwiftUI
+import VesperCore
+import WebKit
+
+enum WindowKind { case vesper, playground }
+
+/// The content area of one window/tab: one WKWebView, the offline/error overlay, and the
+/// navigation policy (routing.ts: same origin stays, playground and external leave).
+@MainActor
+final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDelegate {
+    let app: AppModel
+    let kind: WindowKind
+    let state: ShellState
+    let bridge: ShellBridge?
+    let webView: WKWebView
+    weak var host: MainWindowController?
+
+    /// Path (vesper) or full URL (playground) to load first.
+    private(set) var pendingPath: String
+    private var base: URL?
+    private var playgroundURL: URL?
+    private var observations: [NSKeyValueObservation] = []
+    private var overlay: NSHostingView<OfflineView>?
+
+    init(app: AppModel, kind: WindowKind, state: ShellState, path: String) {
+        self.app = app
+        self.kind = kind
+        self.state = state
+        self.pendingPath = path
+        if kind == .vesper {
+            let bridge = ShellBridge(state: state)
+            self.bridge = bridge
+            self.webView = WebViewFactory.makeWebView(kind: .vesper, bridge: bridge)
+            bridge.webView = webView
+        } else {
+            self.bridge = nil
+            self.webView = WebViewFactory.makeWebView(kind: .playground, bridge: nil)
+            self.playgroundURL = URL(string: path)
+        }
+        super.init(nibName: nil, bundle: nil)
+        webView.navigationDelegate = self
+        webView.uiDelegate = self
+        observations = [
+            webView.observe(\.canGoBack, options: [.initial, .new]) { [weak self] wv, _ in MainActor.assumeIsolated { self?.state.canGoBack = wv.canGoBack } },
+            webView.observe(\.canGoForward, options: [.initial, .new]) { [weak self] wv, _ in MainActor.assumeIsolated { self?.state.canGoForward = wv.canGoForward } },
+            webView.observe(\.isLoading, options: [.initial, .new]) { [weak self] wv, _ in MainActor.assumeIsolated { self?.state.isLoading = wv.isLoading } },
+            webView.observe(\.title, options: [.new]) { [weak self] _, _ in MainActor.assumeIsolated { self?.host?.webTitleChanged() } },
+            webView.observe(\.url, options: [.new]) { [weak self] _, _ in MainActor.assumeIsolated { self?.urlChanged() } },
+        ]
+        if kind == .playground { webView.load(URLRequest(url: playgroundURL ?? URL(string: "about:blank")!)) }
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override func loadView() {
+        let container = NSView()
+        webView.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(webView)
+        // Content starts below the unified toolbar (the window extends under it).
+        NSLayoutConstraint.activate([
+            webView.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor),
+            webView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            webView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        let overlay = NSHostingView(rootView: OfflineView(
+            app: app, state: state, kind: kind,
+            retry: { [weak self] in self?.retry() },
+            restartStack: { [weak self] in self?.app.actions.restartStack() },
+            showLogs: { [weak self] in self?.app.actions.showLogs() }))
+        overlay.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(overlay)
+        NSLayoutConstraint.activate([
+            overlay.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor),
+            overlay.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            overlay.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            overlay.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        self.overlay = overlay
+        view = container
+        track({ [weak self] in
+            guard let self else { return false }
+            return self.overlayVisible
+        }, apply: { [weak overlay] visible in overlay?.isHidden = !visible })
+    }
+
+    private var overlayVisible: Bool {
+        if state.loadError != nil { return true }
+        return kind == .vesper && app.connection == nil
+    }
+
+    // MARK: Loading
+
+    /// Called once the server is reachable and signed in (and again after a stack restart).
+    func connect(_ conn: Connection) {
+        guard kind == .vesper else { return }
+        let sameServer = base == conn.baseURL
+        base = conn.baseURL
+        bridge?.baseURL = conn.baseURL
+        state.loadError = nil
+        if sameServer, webView.url != nil {
+            webView.reload()
+        } else if let url = URL(string: pendingPath, relativeTo: conn.baseURL)?.absoluteURL {
+            vlog("loading \(url.path)")
+            webView.load(URLRequest(url: url))
+        }
+    }
+
+    func navigate(path: String) {
+        guard kind == .vesper else { return }
+        if state.ready {
+            bridge?.send(.navigate(path: path))
+        } else if let base, let url = URL(string: path, relativeTo: base)?.absoluteURL {
+            webView.load(URLRequest(url: url))
+        }
+    }
+
+    func retry() {
+        state.loadError = nil
+        if webView.url != nil { webView.reload() } else if let conn = app.connection { connect(conn) }
+    }
+
+    /// The URL this tab would restore to.
+    var currentURLString: String? {
+        if let url = webView.url, url.scheme == "http" || url.scheme == "https" { return url.absoluteString }
+        if kind == .vesper, let base, let url = URL(string: pendingPath, relativeTo: base) { return url.absoluteURL.absoluteString }
+        return nil
+    }
+
+    private func urlChanged() {
+        if kind == .vesper, let url = webView.url, let base, BridgeOrigin.matches(url: url, base: base) {
+            var path = url.path.isEmpty ? "/" : url.path
+            if let q = url.query { path += "?" + q }
+            pendingPath = path
+        }
+        app.scheduleSessionSave()
+    }
+
+    func teardown() {
+        bridge?.teardown(from: webView.configuration.userContentController)
+        webView.navigationDelegate = nil
+        webView.uiDelegate = nil
+        observations.removeAll()
+        webView.stopLoading()
+    }
+
+    // MARK: Link policy
+
+    /// What to do with a link from this view. Returns true when it should load here.
+    private func route(_ url: URL, openingTab: Bool) -> Bool {
+        guard let base = app.connection?.baseURL ?? base else { return false }
+        let target = url.absoluteString
+        if kind == .playground, let own = playgroundURL, classifyNavigation(target, serverURL: own.absoluteString, playgroundPorts: []) == .vesper {
+            if openingTab { app.openPlayground(url: url, nextTo: view.window) }
+            return !openingTab
+        }
+        switch classifyNavigation(target, serverURL: base.absoluteString, playgroundPorts: app.playgroundPorts) {
+        case .vesper:
+            if kind == .vesper && !openingTab { return true }
+            var path = url.path.isEmpty ? "/" : url.path
+            if let q = url.query { path += "?" + q }
+            if let f = url.fragment { path += "#" + f }
+            app.openVesperTab(path: path, nextTo: view.window)
+        case .playground:
+            app.openPlayground(url: url, nextTo: view.window)
+        case .external:
+            NSWorkspace.shared.open(url)
+        case .ignore:
+            break
+        }
+        return false
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
+        // Subframes (e.g. embedded previews) are governed by the page's own policy.
+        guard navigationAction.targetFrame?.isMainFrame ?? true else { return .allow }
+        guard let url = navigationAction.request.url else { return .cancel }
+        if navigationAction.targetFrame == nil {
+            _ = route(url, openingTab: true)
+            return .cancel
+        }
+        return route(url, openingTab: false) ? .allow : .cancel
+    }
+
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction,
+                 windowFeatures: WKWindowFeatures) -> WKWebView? {
+        if let url = navigationAction.request.url { _ = route(url, openingTab: true) }
+        return nil
+    }
+
+    // MARK: Navigation results
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        state.loadError = nil
+        vlog("didFinish \(webView.url?.path ?? "?")")
+        app.scheduleSessionSave()
+        if debugLoggingEnabled, ProcessInfo.processInfo.environment["VESPER_DEBUG_SELFTEST"] == "1", kind == .vesper {
+            runBridgeSelfTest()
+        }
+    }
+
+    /// Debug only: posts messages as a page would and answers the first command, to exercise the
+    /// bridge when the web side does not speak it yet.
+    private func runBridgeSelfTest() {
+        let js = """
+        const post = (m) => window.webkit.messageHandlers.vesper.postMessage(m);
+        window.addEventListener("vesper-native", (e) => post({v:1, type:"title", title:"got " + e.detail.type}));
+        post({v:1, type:"ready", path:"/chat"});
+        post({v:1, type:"route", path:"/chat", area:"chat"});
+        post({v:1, type:"shell", model:{areas:[{id:"chat",label:"Chat",icon:"msg",href:"/chat"}], apps:[], currentArea:"chat"}});
+        post({v:1, type:"bogus"});
+        """
+        webView.evaluateJavaScript(js) { [weak self] _, error in
+            MainActor.assumeIsolated {
+                vlog("selftest injected error=\(String(describing: error))")
+                self?.bridge?.send(.command(.find))
+            }
+        }
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        fail(error)
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        fail(error)
+    }
+
+    private func fail(_ error: Error) {
+        let ns = error as NSError
+        // Cancelled loads and policy-cancelled navigations ("Frame load interrupted") are not failures.
+        if ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled { return }
+        if ns.domain == "WebKitErrorDomain" && ns.code == 102 { return }
+        vlog("navigation failed: \(ns.domain) \(ns.code)")
+        state.loadError = ns.localizedDescription
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        vlog("web content process terminated")
+        webView.reload()
+    }
+
+    // MARK: JavaScript dialogs and file pickers
+
+    func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo) async {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.runModal()
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo) async -> Bool {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo) async -> String? {
+        let alert = NSAlert()
+        alert.messageText = prompt
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.stringValue = defaultText ?? ""
+        alert.accessoryView = field
+        return alert.runModal() == .alertFirstButtonReturn ? field.stringValue : nil
+    }
+
+    func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo) async -> [URL]? {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+        panel.canChooseDirectories = parameters.allowsDirectories
+        return panel.runModal() == .OK ? panel.urls : nil
+    }
+}
