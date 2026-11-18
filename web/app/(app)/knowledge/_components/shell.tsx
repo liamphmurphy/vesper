@@ -163,6 +163,9 @@ export function KnowledgeShell({ children }: { children: ReactNode }) {
   // dock is the companion, and its actions sit in this bar (EditorEmbedContext).
   const activeKind = tabs.find((t) => t.id === active)?.kind;
   const editorOpen = activeKind === "deck" || activeKind === "design";
+  // The Mac app opens pages as its own window tabs, so Knowledge draws no tab strip there (and its
+  // screens put their actions in the window's toolbar).
+  const native = useIsNativeShell();
   const [barActions, setBarActions] = useState<HTMLElement | null>(null);
   const embed = useMemo<EditorEmbed>(() => ({ actions: barActions, back: { href: "/knowledge", label: "Knowledge" } }), [barActions]);
   const [capture, setCapture] = useState(false);
@@ -228,7 +231,7 @@ export function KnowledgeShell({ children }: { children: ReactNode }) {
       } else if (mod && e.key.toLowerCase() === "d" && !isTyping(e.target)) {
         e.preventDefault();
         openToday();
-      } else if (!mod && e.altKey && isW && !isFormField(e.target) && !hasOpenOverlay()) {
+      } else if (!native && !mod && e.altKey && isW && !isFormField(e.target) && !hasOpenOverlay()) {
         e.preventDefault();
         if (e.shiftKey) {
           closeAll();
@@ -239,7 +242,7 @@ export function KnowledgeShell({ children }: { children: ReactNode }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, close, closeAll, openSwitcher, openToday]);
+  }, [active, close, closeAll, native, openSwitcher, openToday]);
 
   const registerTab = useCallback((tab: Tab) => {
     const cur = tabsStore.get();
@@ -255,11 +258,12 @@ export function KnowledgeShell({ children }: { children: ReactNode }) {
       const left = cur.filter((t) => !gone.has(t.id));
       if (left.length !== cur.length) tabsStore.set(left);
       if (active && gone.has(active)) {
-        const next = left.at(-1);
+        // In the Mac app the hidden tab list isn't what the person sees, so fall back to Home.
+        const next = native ? undefined : left.at(-1);
         router.push(next ? tabHref(next) : "/knowledge");
       }
     },
-    [active, router],
+    [active, native, router],
   );
 
   const retitleTab = useCallback((id: string, title: string) => {
@@ -287,19 +291,21 @@ export function KnowledgeShell({ children }: { children: ReactNode }) {
         {!editorOpen && <Explorer pathname={pathname} />}
         <div className="flex min-w-0 flex-1 flex-col">
           {/* The shared top bar, with the open pages as its tabs: the same height and back button as every page. */}
-          <TopBar
-            tabs={
-              <TabStrip
-                tabs={tabs}
-                active={active}
-                onClose={close}
-                onCloseOthers={closeOthers}
-                onCloseRight={closeRight}
-                onCloseAll={closeAll}
-              />
-            }
-            actions={<div ref={setBarActions} className="contents" />}
-          />
+          {!native && (
+            <TopBar
+              tabs={
+                <TabStrip
+                  tabs={tabs}
+                  active={active}
+                  onClose={close}
+                  onCloseOthers={closeOthers}
+                  onCloseRight={closeRight}
+                  onCloseAll={closeAll}
+                />
+              }
+              actions={<div ref={setBarActions} className="contents" />}
+            />
+          )}
           <EditorEmbedContext.Provider value={embed}>
             <div className="flex min-h-0 flex-1 flex-col">{children}</div>
           </EditorEmbedContext.Provider>
@@ -429,6 +435,7 @@ const pageIdOf = (pathname: string) => /^\/knowledge\/([0-9a-f-]{36})/.exec(path
 
 function Explorer({ pathname }: { pathname: string }) {
   const k = useKnowledge();
+  const search = useSearchParams();
   const chat = useKnowledgeChat();
   const today = useToday();
   const router = useRouter();
@@ -629,6 +636,7 @@ function Explorer({ pathname }: { pathname: string }) {
     pinned,
     pinnedIds,
     activeId,
+    home: activeTab(pathname, search.get("kind")) === HOME_TAB.id,
     open,
     showAll,
     pageHref: (p) => pageHref(p.id, p.title),
