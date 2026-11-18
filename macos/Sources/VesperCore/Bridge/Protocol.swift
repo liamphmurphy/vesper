@@ -302,12 +302,13 @@ public enum NativeCommand: Sendable, Equatable, Codable {
     case navSearch(navigatorId: String, searchId: String, value: String)
     case navToggle(navigatorId: String, itemId: String, expanded: Bool)
     case toolbarAction(itemId: String, menuItemId: String? = nil)
-    case command(ShellCommandName)
+    /// `query` only means something for openCommandMenu: the text to open the palette with.
+    case command(ShellCommandName, query: String? = nil)
     /// `selectedId`: `nil` omits the field, `.some(nil)` sends JSON null (menu dismissed), `.some("x")` a value.
     case reply(requestId: String, ok: Bool, selectedId: String?? = nil, error: String? = nil)
 
     private enum Keys: String, CodingKey {
-        case v, type, path, navigatorId, itemId, actionId, menuItemId, pickerId, searchId, value, expanded, name
+        case v, type, path, navigatorId, itemId, actionId, menuItemId, pickerId, searchId, value, expanded, name, query
         case requestId, ok, selectedId, error
     }
 
@@ -331,7 +332,7 @@ public enum NativeCommand: Sendable, Equatable, Codable {
             self = .navToggle(navigatorId: try c.decode(String.self, forKey: .navigatorId), itemId: try c.decode(String.self, forKey: .itemId), expanded: try c.decode(Bool.self, forKey: .expanded))
         case "toolbar.action":
             self = .toolbarAction(itemId: try c.decode(String.self, forKey: .itemId), menuItemId: try c.decodeIfPresent(String.self, forKey: .menuItemId))
-        case "command": self = .command(try c.decode(ShellCommandName.self, forKey: .name))
+        case "command": self = .command(try c.decode(ShellCommandName.self, forKey: .name), query: try c.decodeIfPresent(String.self, forKey: .query))
         case "reply":
             let selected: String??
             if c.contains(.selectedId) {
@@ -365,8 +366,9 @@ public enum NativeCommand: Sendable, Equatable, Codable {
             try c.encode("nav.toggle", forKey: .type); try c.encode(nav, forKey: .navigatorId); try c.encode(item, forKey: .itemId); try c.encode(expanded, forKey: .expanded)
         case .toolbarAction(let item, let menuItem):
             try c.encode("toolbar.action", forKey: .type); try c.encode(item, forKey: .itemId); try c.encodeIfPresent(menuItem, forKey: .menuItemId)
-        case .command(let name):
+        case .command(let name, let query):
             try c.encode("command", forKey: .type); try c.encode(name, forKey: .name)
+            try c.encodeIfPresent(query, forKey: .query)
         case .reply(let requestId, let ok, let selected, let error):
             try c.encode("reply", forKey: .type); try c.encode(requestId, forKey: .requestId); try c.encode(ok, forKey: .ok)
             if let selected { try c.encode(selected, forKey: .selectedId) }

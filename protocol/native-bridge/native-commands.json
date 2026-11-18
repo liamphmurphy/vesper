@@ -8,6 +8,7 @@
   { "v": 1, "type": "nav.toggle", "navigatorId": "knowledge", "itemId": "p1", "expanded": false },
   { "v": 1, "type": "toolbar.action", "itemId": "more", "menuItemId": "copy-link" },
   { "v": 1, "type": "command", "name": "openCommandMenu" },
+  { "v": 1, "type": "command", "name": "openCommandMenu", "query": "VES-4" },
   { "v": 1, "type": "reply", "requestId": "r1", "ok": true },
   { "v": 1, "type": "reply", "requestId": "r3", "ok": true, "selectedId": null }
 ]

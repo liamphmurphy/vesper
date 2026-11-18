@@ -147,7 +147,7 @@ export function NativeShellHost() {
     if (cmd.type === "navigate") router.push(cmd.path);
     if (cmd.type !== "command") return;
     const run: Record<ShellCommandName, () => void> = {
-      openCommandMenu: () => openCommandPalette(),
+      openCommandMenu: () => openCommandPalette(typeof cmd.query === "string" ? { query: cmd.query } : undefined),
       newChat: () => conversation.disabled || conversation.start(),
       toggleCompanion,
       showShortcuts: openShortcuts,

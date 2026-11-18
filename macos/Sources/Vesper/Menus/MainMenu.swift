@@ -77,6 +77,7 @@ enum MainMenu {
             item("Select All", #selector(NSText.selectAll(_:)), "a", target: nil),
             sep(),
             item("Find…", #selector(AppDelegate.find(_:)), "f"),
+            item("Search…", #selector(AppDelegate.focusSearch(_:)), "f", [.command, .option]),
         ])
 
         // View

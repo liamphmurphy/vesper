@@ -163,7 +163,8 @@ export type NativeCommand =
   | { v: 1; type: "nav.search"; navigatorId: string; searchId: string; value: string }
   | { v: 1; type: "nav.toggle"; navigatorId: string; itemId: string; expanded: boolean }
   | { v: 1; type: "toolbar.action"; itemId: string; menuItemId?: string }
-  | { v: 1; type: "command"; name: ShellCommandName }
+  /** query only applies to openCommandMenu: the text to open the palette with (the toolbar search field). */
+  | { v: 1; type: "command"; name: ShellCommandName; query?: string }
   | { v: 1; type: "reply"; requestId: string; ok: boolean; selectedId?: string | null; error?: string };
 
 export type ShellCommandName =
@@ -208,6 +209,6 @@ export function isPageMessage(v: unknown): v is PageMessage {
 export function isNativeCommand(v: unknown): v is NativeCommand {
   if (!isObj(v) || v.v !== PROTOCOL_VERSION || typeof v.type !== "string" || !COMMAND_TYPES.has(v.type)) return false;
   if (v.type === "navigate") return typeof v.path === "string" && v.path.startsWith("/") && !v.path.startsWith("//");
-  if (v.type === "command") return SHELL_COMMANDS.includes(v.name as ShellCommandName);
+  if (v.type === "command") return SHELL_COMMANDS.includes(v.name as ShellCommandName) && (v.query === undefined || typeof v.query === "string");
   return true;
 }

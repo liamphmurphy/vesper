@@ -4,7 +4,7 @@ import VesperCore
 /// The unified toolbar: sidebar toggle, back/forward, then search, New Chat, companion toggle and
 /// whatever items the page contributes (`toolbar` message). Title and subtitle are the window's.
 @MainActor
-final class ToolbarController: NSObject, NSToolbarDelegate {
+final class ToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
     private static let nav = NSToolbarItem.Identifier("vesper.nav")
     private static let search = NSToolbarItem.Identifier("vesper.search")
     private static let newChat = NSToolbarItem.Identifier("vesper.newChat")
@@ -14,6 +14,7 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
     private weak var owner: MainWindowController?
     let toolbar: NSToolbar
     private var navItem: NSToolbarItemGroup?
+    private var searchItem: NSSearchToolbarItem?
     private var pageItems: [String: ToolbarItem] = [:]
     private var generation = 0
 
@@ -37,7 +38,7 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
     // MARK: NSToolbarDelegate
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, Self.nav, .flexibleSpace, Self.search, Self.newChat, Self.companion]
+        [.toggleSidebar, .sidebarTrackingSeparator, Self.nav, .flexibleSpace, Self.newChat, Self.companion, Self.search]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -57,7 +58,18 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
             navItem = group
             return group
         case Self.search:
-            return button(identifier, label: "Search", symbol: "magnifyingglass", tip: "Search (⌘K)", action: #selector(searchTapped))
+            let item = NSSearchToolbarItem(itemIdentifier: identifier)
+            item.label = "Search"
+            item.paletteLabel = "Search"
+            item.toolTip = "Search or jump to (⌘K)"
+            item.preferredWidthForSearchField = 220
+            item.searchField.placeholderString = "Search or jump to"
+            item.searchField.sendsSearchStringImmediately = false
+            item.searchField.delegate = self
+            item.searchField.target = self
+            item.searchField.action = #selector(searchSubmitted(_:))
+            searchItem = item
+            return item
         case Self.newChat:
             return button(identifier, label: "New Chat", symbol: "square.and.pencil", tip: "New Chat", action: #selector(newChatTapped))
         case Self.companion:
@@ -91,7 +103,30 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
         if sender.selectedIndex == 0 { web?.goBack() } else { web?.goForward() }
     }
 
-    @objc private func searchTapped() { owner?.send(.command(.openCommandMenu)) }
+    // The search field is the toolbar's door into the page's command palette (⌘K): the first
+    // keystroke (or Return on an empty field) opens the palette with the text so far and hands
+    // the keyboard to the page, where the person keeps typing.
+    func controlTextDidChange(_ note: Notification) {
+        guard let field = note.object as? NSSearchField, field === searchItem?.searchField, !field.stringValue.isEmpty else { return }
+        openPalette(query: field.stringValue)
+    }
+
+    @objc private func searchSubmitted(_ sender: NSSearchField) {
+        openPalette(query: sender.stringValue)
+    }
+
+    private func openPalette(query: String) {
+        guard let owner else { return }
+        searchItem?.searchField.stringValue = ""
+        searchItem?.endSearchInteraction()
+        owner.window?.makeFirstResponder(owner.content.webView)
+        owner.send(.command(.openCommandMenu, query: query.isEmpty ? nil : query))
+    }
+
+    /// ⌥⌘F: put the cursor in the toolbar search field.
+    func focusSearch() {
+        searchItem?.beginSearchInteraction()
+    }
     @objc private func newChatTapped() { owner?.send(.command(.newChat)) }
     @objc private func companionTapped() { owner?.send(.command(.toggleCompanion)) }
 
@@ -103,10 +138,12 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
         }
         generation += 1
         pageItems = [:]
+        // Page items go before New Chat, companion and search, which stay rightmost.
+        let anchor = toolbar.items.firstIndex { $0.itemIdentifier == Self.newChat } ?? toolbar.items.count
         for (i, item) in items.enumerated() {
             let id = "\(Self.pagePrefix)\(generation).\(i)"
             pageItems[id] = item
-            toolbar.insertItem(withItemIdentifier: NSToolbarItem.Identifier(id), at: toolbar.items.count)
+            toolbar.insertItem(withItemIdentifier: NSToolbarItem.Identifier(id), at: anchor + i)
         }
     }
 

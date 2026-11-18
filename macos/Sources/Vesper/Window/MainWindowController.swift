@@ -17,6 +17,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     let split = NSSplitViewController()
     private var toolbarController: ToolbarController?
 
+    /// ⌥⌘F: the toolbar's search field, which opens the page's command palette.
+    func focusSearch() {
+        toolbarController?.focusSearch()
+    }
+
     var currentURLString: String? { content.currentURLString }
 
     init(app: AppModel, kind: WindowKind, path: String) {

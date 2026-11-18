@@ -270,6 +270,8 @@ function messageRows(c: ChatMatch): Row[] {
 export type OpenPaletteDetail = {
   scope?: PageScope | "all" | "page";
   includeAgent?: boolean;
+  /** Text to start with, e.g. what was typed into the Mac app's toolbar search field. */
+  query?: string;
 };
 
 /** Opens the command palette globally or scoped to the current page / Knowledge. */
@@ -974,7 +976,8 @@ export function CommandMenu() {
         }
       }
       setIncludeAgent(nextAgent);
-      if (!openRef.current) setQuery("");
+      if (detail?.query !== undefined) setQuery(detail.query);
+      else if (!openRef.current) setQuery("");
       setMode("root");
       setActive(0);
       setChip(nextScope?.kind === "type" ? nextScope.type : undefined);
