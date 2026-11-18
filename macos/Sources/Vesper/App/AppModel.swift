@@ -194,15 +194,20 @@ final class AppModel {
     }
 
     func duplicateTab(_ tab: WebContentController, in host: MainWindowController) {
-        let copy: WebContentController
-        switch tab.kind {
-        case .vesper: copy = makeTab(kind: .vesper, path: tab.pendingPath)
-        case .playground:
-            guard let url = tab.currentURLString else { return }
-            copy = makeTab(kind: .playground, path: url)
-        }
-        guard let index = host.tabs.list.items.firstIndex(where: { $0 === tab }) else { return }
+        guard let copy = makeCopy(of: tab),
+              let index = host.tabs.list.items.firstIndex(where: { $0 === tab }) else { return }
         host.addTab(copy, at: index + 1)
+    }
+
+    /// A fresh tab at `tab`'s page: its Vesper path with the query, or its playground URL.
+    /// Nil for a playground that never loaded.
+    private func makeCopy(of tab: WebContentController) -> WebContentController? {
+        switch tab.kind {
+        case .vesper: return makeTab(kind: .vesper, path: tab.pendingPath)
+        case .playground:
+            guard let url = tab.currentURLString else { return nil }
+            return makeTab(kind: .playground, path: url)
+        }
     }
 
     /// Compact layout: the tab, page and all, becomes its own window.
