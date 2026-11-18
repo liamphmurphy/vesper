@@ -3,6 +3,7 @@ import { Inter, JetBrains_Mono } from "next/font/google";
 import { Providers } from "./providers";
 import { themeScript } from "@/lib/appearance-script";
 import "./globals.css";
+import "../styles/native-mac.css";
 
 const inter = Inter({
   variable: "--font-inter",

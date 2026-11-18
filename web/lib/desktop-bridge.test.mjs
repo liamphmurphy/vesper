@@ -40,3 +40,23 @@ test("workspace folders open through the desktop menu, with errors passed back",
   assert.equal(await openWorkspaceFolder("/w", broken), "Couldn't open the folder.");
   assert.equal(await openWorkspaceFolder("/w", () => undefined), "Opening folders needs the Vesper desktop app.");
 });
+
+test("in the native shell approvals go through the shell and fail closed", async () => {
+  const asked = [];
+  const native = (reply) => ({ active: () => true, request: async (m) => (asked.push(m), reply()) });
+  await confirmApprovalLocally("run_approvals", () => undefined, native(() => ({ ok: true })));
+  assert.deepEqual(asked, [{ type: "confirmApproval", scope: "run_approvals" }]);
+  await assert.rejects(confirmApprovalLocally("push_requests", () => undefined, native(() => ({ ok: false }))), ApprovalNotConfirmedError);
+  await assert.rejects(confirmApprovalLocally("push_requests", () => undefined, native(() => { throw new Error("timeout"); })), ApprovalNotConfirmedError);
+});
+
+test("in the native shell workspace folders open through its menu", async () => {
+  const { canOpenWorkspaceFolder, openWorkspaceFolder } = await import("./desktop-bridge.ts");
+  const asked = [];
+  const native = (res) => ({ active: () => true, request: async (m) => (asked.push(m), res()) });
+  assert.equal(canOpenWorkspaceFolder(() => undefined, native(() => ({ ok: true }))), true);
+  assert.equal(await openWorkspaceFolder("/w/run-1", () => undefined, native(() => ({ ok: true }))), null);
+  assert.deepEqual(asked, [{ type: "openWorkspaceMenu", folder: "/w/run-1" }]);
+  assert.equal(await openWorkspaceFolder("/etc", () => undefined, native(() => ({ ok: false, error: "Not allowed." }))), "Not allowed.");
+  assert.equal(await openWorkspaceFolder("/w", () => undefined, native(() => { throw new Error("x"); })), "Couldn't open the folder.");
+});

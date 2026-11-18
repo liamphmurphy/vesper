@@ -18,7 +18,7 @@ import { AppsMenu } from "./apps-menu";
 import { useReadingFocus } from "./editor-layout";
 
 /** The areas on the icon row, in order; Apps (the flyout of Custom Apps and tools) follows them. */
-const AREAS: { area: Exclude<Area, "apps">; href: string; label: string; icon: IconName; badge?: NavBadge }[] = [
+export const AREAS: { area: Exclude<Area, "apps" | "runs" | "tickets">; href: string; label: string; icon: IconName; badge?: NavBadge }[] = [
   { area: "chat", href: "/chat", label: "Chat", icon: "msg" },
   { area: "work", href: "/work", label: "Work", icon: "tickets", badge: "runs" },
   { area: "knowledge", href: "/knowledge", label: "Knowledge", icon: "wiki", badge: "wiki" },

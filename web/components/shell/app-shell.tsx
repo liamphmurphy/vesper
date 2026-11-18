@@ -3,7 +3,8 @@
 import { useRouter, useSelectedLayoutSegment } from "next/navigation";
 import { Suspense, useEffect, type ReactNode } from "react";
 import { useBootstrap } from "@/lib/api/hooks";
-import { currentArea } from "@/lib/navigator";
+import { currentArea, NAVIGATOR_WIDTH, setFallbackSlot } from "@/lib/navigator";
+import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { useCompact } from "@/lib/viewport";
 import { Skeleton } from "@/components/ui/primitives";
 import { LiveUpdates } from "./live-updates";
@@ -12,6 +13,7 @@ import { CommandMenu } from "./command-menu";
 import { CompanionColumn } from "./companion";
 import { DocumentTitle } from "./document-title";
 import { shortcutBlocked, ShortcutsDialog } from "./shortcuts";
+import { NativeShellHost } from "./native-shell";
 import { Sidebar } from "./sidebar";
 import { SystemBanner } from "./system-banner";
 import { TabBar } from "./tab-bar";
@@ -98,6 +100,7 @@ function SectionFade({ children }: { children: ReactNode }) {
 export function AppShell({ children }: { children: ReactNode }) {
   const { data } = useBootstrap();
   const compact = useCompact();
+  const native = useIsNativeShell();
   useShortcuts();
   return (
     <div className={compact ? "flex min-h-dvh flex-col bg-bg text-fg" : "flex min-h-dvh bg-bg text-fg"}>
@@ -112,7 +115,20 @@ export function AppShell({ children }: { children: ReactNode }) {
       <Suspense fallback={null}>
         <ViewedChatReader />
       </Suspense>
-      {compact ? null : data ? (
+      {native && (
+        <Suspense fallback={null}>
+          <NativeShellHost />
+        </Suspense>
+      )}
+      {native ? (
+        // The shell draws the left column. A screen that hasn't described its list as a NavModel
+        // renders it here instead (NavigatorPortal); the column is hidden while it is empty.
+        <div
+          ref={setFallbackSlot}
+          data-navigator-fallback
+          className={`${NAVIGATOR_WIDTH} flex-none flex-col border-r border-border-subtle bg-sidebar empty:hidden flex min-[612px]:sticky min-[612px]:top-0 min-[612px]:h-dvh`}
+        />
+      ) : compact ? null : data ? (
         <Suspense fallback={<SidebarSkeleton />}>
           <Sidebar />
         </Suspense>

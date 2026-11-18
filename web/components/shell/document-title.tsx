@@ -2,6 +2,8 @@
 
 import { usePathname } from "next/navigation";
 import { useEffect } from "react";
+import { isNativeShell } from "@/lib/native-shell/bridge";
+import { publishTitle } from "@/lib/native-shell/title";
 import { cleanHeadingTitle, formatDocumentTitle, routeFallbackTitle } from "@/lib/document-title";
 
 function readActiveTitle(pathname: string): string {
@@ -20,6 +22,8 @@ export function DocumentTitle() {
     const apply = () => {
       const next = readActiveTitle(pathname);
       if (document.title !== next) document.title = next;
+      // The native shell shows the title itself (minus the suffix); it dedupes unchanged ones.
+      if (isNativeShell()) publishTitle();
     };
     apply();
 

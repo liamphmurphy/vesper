@@ -1,0 +1,35 @@
+/*
+ * Look and feel adjustments for the page inside the native Mac shell. The shell's user script adds
+ * `native-mac` to <html> at document start, so every rule here is scoped to it and the browser is
+ * unchanged. Content (the editor, transcripts, docs) stays selectable; only app chrome changes.
+ */
+
+/* Mac controls show the arrow, not the pointing hand. */
+html.native-mac :is(button, [role="button"], [role="tab"], [role="menuitem"], summary, select),
+html.native-mac :is(header, nav, aside, [role="toolbar"], [role="tablist"], [role="menu"], [data-navigator-fallback]) a {
+  cursor: default;
+}
+
+/* Disabled controls keep their not-allowed cursor. */
+html.native-mac :is(button, [role="button"]):disabled {
+  cursor: not-allowed;
+}
+
+/* Chrome is not selectable: toolbars, headers, tab strips, navigation and list rows. */
+html.native-mac :is(header, nav, [role="toolbar"], [role="tablist"], [role="tab"], [role="menu"], [role="menuitem"], [role="listbox"], [role="option"], [data-navigator-fallback]),
+html.native-mac :is(button, [role="button"]) {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* ...but headers and navs inside content (articles, the editor, the transcript) are still text. */
+html.native-mac :is([contenteditable="true"], .ProseMirror, article, [data-selectable], pre, code, textarea, input) :is(header, nav, button) {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Focus rings use the system accent colour. */
+html.native-mac :focus-visible {
+  outline-color: Highlight;
+  outline-color: -apple-system-control-accent;
+}

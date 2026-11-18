@@ -79,3 +79,16 @@ export function subscribeNavigator(l: () => void): () => void {
     listeners.delete(l);
   };
 }
+
+// In the native shell the left column is drawn by the shell, so a screen that hasn't described its
+// list as a NavModel draws it in a fallback column inside the content area instead.
+let fallbackSlotEl: HTMLElement | null = null;
+
+/** The element the fallback column's content renders into, set by the app shell in native mode. */
+export function setFallbackSlot(el: HTMLElement | null): void {
+  if (el === fallbackSlotEl) return;
+  fallbackSlotEl = el;
+  notify();
+}
+
+export const fallbackSlot = () => fallbackSlotEl;

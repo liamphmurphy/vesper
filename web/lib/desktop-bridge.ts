@@ -1,8 +1,18 @@
+import { isNativeShell, request } from "./native-shell/bridge.ts";
+
 /**
- * The macOS desktop app's preload bridge (desktop/src/preload.ts), when this
- * page runs inside it. Feature-detected: in a browser, or a desktop build
- * without a feature, every helper here falls back to doing nothing.
+ * The macOS desktop app's bridge, when this page runs inside it: the native Mac shell's message
+ * bridge (lib/native-shell), or the Electron app's preload bridge (desktop/src/preload.ts).
+ * Feature-detected: in a browser, or a build without a feature, every helper here falls back to
+ * doing nothing.
  */
+
+/** The native shell's side, injectable for tests. */
+export interface NativeApi {
+  active: () => boolean;
+  request: (msg: { type: "confirmApproval"; scope: ApprovalScope } | { type: "openWorkspaceMenu"; folder: string }) => Promise<{ ok: boolean; error?: string }>;
+}
+const nativeApi: NativeApi = { active: isNativeShell, request };
 
 export type ApprovalScope = "run_approvals" | "push_requests" | "connector_approvals" | "secret_approvals";
 
@@ -29,7 +39,13 @@ export class ApprovalNotConfirmedError extends Error {
  * ApprovalNotConfirmedError when they cancel, so the mutation fails and
  * nothing is sent. A local gate only: the server never sees it.
  */
-export async function confirmApprovalLocally(scope: ApprovalScope, getBridge: () => DesktopBridge | undefined = bridge): Promise<void> {
+export async function confirmApprovalLocally(scope: ApprovalScope, getBridge: () => DesktopBridge | undefined = bridge, native: NativeApi = nativeApi): Promise<void> {
+  if (native.active()) {
+    // The shell asks for Touch ID (or doesn't, per the person's setting) and answers; no answer fails closed.
+    const reply = await native.request({ type: "confirmApproval", scope }).catch(() => undefined);
+    if (!reply?.ok) throw new ApprovalNotConfirmedError();
+    return;
+  }
   const confirmApproval = getBridge()?.confirmApproval;
   if (typeof confirmApproval !== "function") return;
   let result: { ok: boolean } | undefined;
@@ -43,7 +59,8 @@ export async function confirmApprovalLocally(scope: ApprovalScope, getBridge: ()
 }
 
 /** Whether this page runs in a desktop build that can open workspace folders. */
-export function canOpenWorkspaceFolder(getBridge: () => DesktopBridge | undefined = bridge): boolean {
+export function canOpenWorkspaceFolder(getBridge: () => DesktopBridge | undefined = bridge, native: NativeApi = nativeApi): boolean {
+  if (native.active()) return true;
   return typeof getBridge()?.openWorkspaceMenu === "function";
 }
 
@@ -53,7 +70,19 @@ export function canOpenWorkspaceFolder(getBridge: () => DesktopBridge | undefine
  * showed. The desktop only opens folders inside a runner's host workspaces
  * directory.
  */
-export async function openWorkspaceFolder(folder: string, getBridge: () => DesktopBridge | undefined = bridge): Promise<string | null> {
+export async function openWorkspaceFolder(
+  folder: string,
+  getBridge: () => DesktopBridge | undefined = bridge,
+  native: NativeApi = nativeApi,
+): Promise<string | null> {
+  if (native.active()) {
+    try {
+      const res = await native.request({ type: "openWorkspaceMenu", folder });
+      return res.ok ? null : (res.error ?? "Couldn't open the folder.");
+    } catch {
+      return "Couldn't open the folder.";
+    }
+  }
   const open = getBridge()?.openWorkspaceMenu;
   if (typeof open !== "function") return "Opening folders needs the Vesper desktop app.";
   try {
