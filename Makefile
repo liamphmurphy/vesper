@@ -2,7 +2,7 @@
 SHELL := /bin/bash
 COMPOSE_DEV := docker compose -f docker-compose.dev.yml
 
-.PHONY: help up down start setup signin login claude-login codex-login github-login stop-dev dev dev-infra api web web-deps runner stop-host-runners gen gen-check test lint build reset desktop-deps desktop-dev desktop-test desktop-dmg desktop-dmg-universal desktop-reinstall
+.PHONY: help up down start setup signin login claude-login codex-login github-login stop-dev dev dev-infra api web web-deps runner stop-host-runners gen gen-check test test-server test-web lint build reset desktop-deps desktop-dev desktop-test desktop-dmg desktop-dmg-universal desktop-reinstall
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-13s %s\n", $$1, $$2}'
@@ -103,9 +103,15 @@ gen-check: gen ## Fail if generated code is out of date
 	@git diff --exit-code -- server/internal/api server/internal/store web/lib/api || \
 	  (echo "generated code is stale: run 'make gen' and commit" && exit 1)
 
-test: web-deps ## Run Go and web tests
-	cd server && go test ./...
+test: test-server test-web ## Run backend and UI tests
+
+# httpapi and runner take ~17-19 min on a 4-core machine, past go test's 10m default.
+test-server: ## Run Go tests (database tests need TEST_DATABASE_URL; S3 tests need TEST_S3_ENDPOINT)
+	cd server && go test -timeout 30m ./...
+
+test-web: web-deps ## Typecheck the web app and run its unit tests
 	cd web && npm run typecheck
+	cd web && npm run test:unit
 
 lint: web-deps ## Vet Go, lint web
 	cd server && go vet ./... && test -z "$$(gofmt -l .)"
