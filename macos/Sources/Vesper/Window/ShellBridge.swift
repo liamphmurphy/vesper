@@ -94,8 +94,10 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
         }
         var selected: String?
         let menu = MenuBuilder.menu(from: items) { selected = $0 }
-        // The page's y grows downward; AppKit's y grows upward unless the view is flipped.
-        let point = NSPoint(x: x, y: webView.isFlipped ? y : webView.bounds.height - y)
+        // The page sends CSS pixels, which View › Zoom scales into view points. Its y grows
+        // downward; AppKit's y grows upward unless the view is flipped.
+        let px = x * webView.pageZoom, py = y * webView.pageZoom
+        let point = NSPoint(x: px, y: webView.isFlipped ? py : webView.bounds.height - py)
         menu.popUp(positioning: nil, at: point, in: webView)
         send(.reply(requestId: requestId, ok: true, selectedId: .some(selected)))
     }

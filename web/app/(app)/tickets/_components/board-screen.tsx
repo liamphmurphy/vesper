@@ -22,7 +22,8 @@ import { Toggle } from "@/components/ui/controls";
 import { ticketsHref } from "@/lib/tickets-layout";
 import { buildBoardNavModel } from "@/lib/native-shell/models/board";
 import { buildBoardExtras, parseBoardToggle } from "@/lib/native-shell/models/tickets-toolbar";
-import { useIsNativeShell } from "@/lib/native-shell/hooks";
+import { useIsNativeShell, useNativeContextMenu } from "@/lib/native-shell/hooks";
+import { toast } from "@/lib/toast";
 import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { WorkNavHeader, WorkSectionLabel, WorkSpacePersonaFilters } from "../../work/work-nav-header";
@@ -294,7 +295,21 @@ function TicketCard({ card, needs, showEpic, statuses, pending, onOpen, onMove, 
   const href = `/tickets/${encodeURIComponent(card.key)}`;
   // Plain clicks open the editor; modified clicks keep normal link behavior.
   const open = (e: MouseEvent) => { if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; e.preventDefault(); onOpen(); };
-  return <article tabIndex={0} data-ticket-key={card.key} data-motion-key={card.key} data-needs-you={needs ? true : undefined} aria-label={`Ticket ${card.key}`} aria-busy={pending} draggable={!pending}
+  // In the Mac app, right-clicking the card (its links included) shows its actions as an AppKit menu.
+  const self = useRef<HTMLElement>(null);
+  const copy = (text: string, title: string) => { void navigator.clipboard?.writeText(text).then(() => toast({ title, tone: "success" })); };
+  useNativeContextMenu(self, () => [
+    { id: "open", label: "Open", onSelect: onOpen },
+    { id: "open-tab", label: "Open in new tab", onSelect: () => window.open(href, "_blank") },
+    { id: "sep-move", separator: true },
+    { id: "move", label: "Move to", disabled: pending, children: statuses.map((status) => ({
+      id: `move:${status}`, label: STATUS_NAME[status], checked: status === card.status, disabled: status === card.status, onSelect: () => onMove(status),
+    })) },
+    { id: "sep-copy", separator: true },
+    { id: "copy-link", label: "Copy link", icon: "link", onSelect: () => copy(new URL(href, window.location.href).href, "Link copied") },
+    { id: "copy-key", label: `Copy ${card.key}`, onSelect: () => copy(card.key, `${card.key} copied`) },
+  ], { links: "menu" });
+  return <article ref={self} tabIndex={0} data-ticket-key={card.key} data-motion-key={card.key} data-needs-you={needs ? true : undefined} aria-label={`Ticket ${card.key}`} aria-busy={pending} draggable={!pending}
     onDragStart={(e) => { e.dataTransfer.setData("text/plain", card.key); e.dataTransfer.effectAllowed = "move"; onDragStart(); requestAnimationFrame(() => setLifted(true)); /* After the browser captures the drag image. */ }} onDragEnd={() => { setLifted(false); onDragEnd(); }}
     onClick={(e) => { if (!(e.target as HTMLElement).closest("a,button,[role=menu]")) onOpen(); }}
     onKeyDown={(e) => { if (e.target === e.currentTarget && !pending) {
