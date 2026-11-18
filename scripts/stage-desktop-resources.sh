@@ -15,19 +15,17 @@ else
   echo "Using existing staged PostgreSQL bundle at ${res_dir}/postgres"
 fi
 
-echo "Building Next.js standalone web bundle..."
+echo "Building the static web UI and the design worker..."
 if [[ ! -d "${repo_root}/web/node_modules" ]]; then
   npm --prefix "${repo_root}/web" ci
 fi
 npm --prefix "${repo_root}/web" run build
 
+# web/dist is the whole UI: index.html and assets/ (served by `vesper app` itself), fonts/, and
+# design-worker/ (server.mjs plus the resvg native addon; run with the bundled node).
 rm -rf "${res_dir}/web"
-mkdir -p "${res_dir}/web/.next"
-cp -R "${repo_root}/web/.next/standalone/." "${res_dir}/web/"
-cp -R "${repo_root}/web/.next/static" "${res_dir}/web/.next/static"
-if [[ -d "${repo_root}/web/public" ]]; then
-  cp -R "${repo_root}/web/public" "${res_dir}/web/public"
-fi
+mkdir -p "${res_dir}/web"
+cp -R "${repo_root}/web/dist/." "${res_dir}/web/"
 
 echo "Building vesper (darwin/arm64) binary..."
 CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 \

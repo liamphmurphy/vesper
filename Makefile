@@ -58,7 +58,7 @@ $(WEB_DEPS): web/package-lock.json
 
 web-deps: $(WEB_DEPS) ## Install web dependencies if the lockfile changed
 
-web: web-deps ## Run Next dev server
+web: web-deps ## Run the Vite dev server
 	cd web && DESIGN_WORKER_TOKEN=$${DESIGN_WORKER_TOKEN:-vesper-local-design-worker} npm run dev
 
 gen: web-deps ## Regenerate API code (Go + TS) and sqlc queries. Needs sqlc 1.31+ on PATH.

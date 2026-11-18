@@ -39,7 +39,6 @@ function LinkCard({ item }: { item: LibraryItem }) {
         image && (
           <a href={url} target="_blank" rel="noopener noreferrer" className="relative block aspect-video bg-surface-sunken">
             {/* A same-origin, private URL: next/image would only add a proxy hop. */}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={image} alt="" loading="lazy" className="absolute inset-0 size-full object-cover" />
           </a>
         )

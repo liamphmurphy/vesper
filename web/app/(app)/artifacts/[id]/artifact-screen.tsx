@@ -31,7 +31,7 @@ function FileView({ a, versionId }: { a: Artifact; versionId: string }) {
   const src = contentUrl(a.id, v.id);
   if (c.content_type.startsWith("image/")) {
     return (
-      // eslint-disable-next-line @next/next/no-img-element -- user uploads, served by the API
+      // user uploads, served by the API
       <img src={src} alt={a.title} className="max-h-[70vh] w-full rounded-xl border border-border bg-surface object-contain" />
     );
   }

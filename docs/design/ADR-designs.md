@@ -215,7 +215,7 @@ Asset      { mime: "image/png"|"image/jpeg", w, h, alt? }    // bytes in the blo
 - **Overflow** is reported, never hidden, as in Slides.
 - **One family: Inter 4.1** (rsms/inter, SIL OFL 1.1, free to bundle and embed).
   - We ship the **static** faces Regular, Medium, SemiBold and Bold, roman and italic (8 faces), not the variable font. Static faces measure identically everywhere, and resvg and jsPDF handle them without variation support.
-  - The app UI's own `next/font` Inter (variable, with `cv11`/`ss01`/`ss03`) is separate. Designs draw default glyphs, so a design looks the same on every machine.
+  - The app UI's own self-hosted Inter (`web/styles/fonts.css`) (variable, with `cv11`/`ss01`/`ss03`) is separate. Designs draw default glyphs, so a design looks the same on every machine.
 - **Bundling:**
   - `web/public/fonts/designs/Inter-<Face>.woff2`: the editor loads these with `FontFace` before the first layout. They're also embedded in SVG export.
   - `web/public/fonts/designs/Inter-<Face>.ttf`: the design worker passes these to resvg as `fontFiles`, with `loadSystemFonts: false`. jsPDF embeds them in PDF export.
@@ -347,13 +347,13 @@ design_proposals(id uuid PK, canvas_id → chat_canvases ON DELETE CASCADE, chat
 - **Renderers, all drawing the same ops:**
   - `<DesignSvg>` (React): editor canvas, thumbnails, review, Present, and the Design card. Selection handles, pins, prototype wires and presence are overlays on top, not ops.
   - `toSvg(ops)` (string): SVG export, and the worker's input.
-  - **The design worker:** `web/app/internal/designs/{render,layout,import}/route.ts`, Node runtime.
-    - It's called by the Go API with `Authorization: Bearer $DESIGN_WORKER_TOKEN` (a new env var shared by api and web) at `DESIGN_WORKER_URL` (default `http://web:3000/internal/designs`).
+  - **The design worker:** `web/design-worker/` (`handler.ts` maps `POST /internal/designs/{render,layout,inspect,import}` onto `web/lib/designs/worker.ts`), a standalone Node process bundled to `dist/design-worker/server.mjs`.
+    - It's called by the Go API with `Authorization: Bearer $DESIGN_WORKER_TOKEN` (a new env var shared by api and the worker) at `DESIGN_WORKER_URL` (`vesper app` starts the worker on a free loopback port and points the API at it).
     - It isn't routed publicly: the gateway's `/api`, `/events` and `/mcp` go to Go, and `/internal/*` is refused by middleware unless the token matches.
     - The input is body JSON, a node id and a scale. The output is a PNG.
     - Asset bytes are posted with the request as data URIs by Go, which owns the blob store. The worker has no database or storage access.
     - Resource limits: 4096 px longest edge, scale ≤ 3, at most 4 renders at a time (others get 503 and are retried), and a 10 s timeout.
-    - `next.config` lists `@resvg/resvg-js` in `serverExternalPackages`. It ships musl prebuilds for the alpine image.
+    - `@resvg/resvg-js` is the one native module: `web/scripts/build-design-worker.mjs` leaves it external and copies it, with its platform binding, next to the bundle.
 - **Pan/zoom** (proven in §5.2):
   - The camera is a `transform` attribute on the root `<g>`, updated per frame.
   - Viewport culling of top-level nodes (skip those whose box is off-screen by more than one screen) is required in the editor.
@@ -463,7 +463,7 @@ At most 10 frames. A render failure becomes a note in the `.md` file and doesn't
   - `server/internal/httpapi/designs.go`;
   - `web/lib/designs/*`;
   - `web/app/(app)/apps/designs/**`;
-  - `web/app/internal/designs/*`;
+  - `web/design-worker/*` and `web/app/internal/designs/preview` (the render-parity page);
   - `web/public/fonts/designs/*`;
   - migration 00113.
 - **Docs and Slides regressions:** neither code path changes except the per-kind body cap. `web/e2e/docs-app.spec.ts` and the Slides specs must stay green (epic criterion 8).

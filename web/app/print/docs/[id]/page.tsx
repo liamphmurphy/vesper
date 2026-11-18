@@ -1,8 +1,8 @@
-import { Suspense } from "react";
+import { Suspense, use } from "react";
 import { PrintDoc } from "./print-doc";
 
-async function Loader({ params }: { params: PageProps<"/print/docs/[id]">["params"] }) {
-  const { id } = await params;
+function Loader({ params }: { params: PageProps<"/print/docs/[id]">["params"] }) {
+  const { id } = use(params);
   return <PrintDoc id={id} />;
 }
 

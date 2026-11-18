@@ -61,7 +61,6 @@ export function MermaidFence({ code, info }: { code: string; info?: string }) {
       {showCode ? (
         <CodeFence code={code} info={info} />
       ) : (
-        // eslint-disable-next-line @next/next/no-img-element
         <img src={svgDataUrl(current.svg!)} alt="Diagram" className="max-h-[480px] w-auto max-w-full self-start rounded-lg border border-border bg-surface object-contain p-2" />
       )}
       <button type="button" onClick={() => setShowCode((v) => !v)} className="self-start text-12 text-fg-tertiary hover:text-fg print:hidden">{showCode ? "Show diagram" : "Show code"}</button>

@@ -23,7 +23,7 @@ const checker =
  */
 function DrawingImage({ d, view }: { d: Drawing; view: View }) {
   return (
-    // eslint-disable-next-line @next/next/no-img-element -- data: URL of user SVG source, never injected into the DOM
+    // data: URL of user SVG source, never injected into the DOM
     <img
       src={d.url}
       alt={d.alt}

@@ -1,8 +1,8 @@
-import { Suspense } from "react";
+import { Suspense, use } from "react";
 import { SignInPanel } from "./sign-in-panel";
 
-async function Panel({ searchParams }: { searchParams: PageProps<"/sign-in">["searchParams"] }) {
-  const { error } = await searchParams;
+function Panel({ searchParams }: { searchParams: PageProps<"/sign-in">["searchParams"] }) {
+  const { error } = use(searchParams);
   return <SignInPanel linkFailed={Boolean(error)} />;
 }
 

@@ -142,7 +142,7 @@ done
 # --- Web ---------------------------------------------------------------------------
 echo ">> building and starting web on :$WEB_PORT"
 (cd "$WEB" && API_INTERNAL_URL="$API_URL" DESIGN_WORKER_TOKEN="$DESIGN_WORKER_TOKEN" npm run build >"$TMP/logs/web-build.log" 2>&1)
-(cd "$WEB" && exec env API_INTERNAL_URL="$API_URL" DESIGN_WORKER_TOKEN="$DESIGN_WORKER_TOKEN" npx next start -p "$WEB_PORT" -H 127.0.0.1) >"$TMP/logs/web.log" 2>&1 &
+(cd "$WEB" && exec env API_INTERNAL_URL="$API_URL" DESIGN_WORKER_TOKEN="$DESIGN_WORKER_TOKEN" STATIC_DIR=dist PORT="$WEB_PORT" HOSTNAME=127.0.0.1 node dist/design-worker/server.mjs) >"$TMP/logs/web.log" 2>&1 &
 PIDS+=($!)
 wait_for "$WEB_URL/chat" web 60
 

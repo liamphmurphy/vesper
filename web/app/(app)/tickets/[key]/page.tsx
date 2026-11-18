@@ -1,8 +1,8 @@
-import { Suspense } from "react";
+import { Suspense, use } from "react";
 import { TicketScreen } from "./ticket-screen";
 
-async function Loader({ params }: { params: PageProps<"/tickets/[key]">["params"] }) {
-  const { key } = await params;
+function Loader({ params }: { params: PageProps<"/tickets/[key]">["params"] }) {
+  const { key } = use(params);
   return <TicketScreen ticketKey={decodeURIComponent(key).toUpperCase()} />;
 }
 

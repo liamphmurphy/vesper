@@ -204,7 +204,6 @@ function VideoTile({ item, initiallyOpen }: { item: LibraryItem; initiallyOpen: 
             {hover ? (
               <video src={url} poster={poster} muted autoPlay loop playsInline preload="metadata" className="size-full object-cover" />
             ) : poster ? (
-              // eslint-disable-next-line @next/next/no-img-element
               <img src={poster} alt="" loading="lazy" className="size-full object-cover" />
             ) : (
               <span className="grid size-full place-items-center text-fg-tertiary"><Icon name="film" size={22} /></span>
@@ -468,13 +467,11 @@ function ItemTile({ item, openItem }: { item: LibraryItem; openItem?: string | n
             className="relative aspect-square overflow-hidden rounded-lg border border-border bg-selected outline-none focus-visible:ring-2 focus-visible:ring-accent"
           >
             {/* A same-origin, private URL: next/image would only add a proxy hop. */}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={url} alt={item.title} loading="lazy" className={cx("size-full", diagram ? "bg-white object-contain p-2" : "object-cover")} />
             <ReferenceBadge item={item} />
           </button>
         }
       >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={url} alt={item.title} className={cx("min-h-0 max-h-[80vh] w-full object-contain", diagram && "bg-white")} />
       </ItemDialog>
       <span className="truncate text-13 text-fg">{item.title}</span>

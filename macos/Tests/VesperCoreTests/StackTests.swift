@@ -137,7 +137,7 @@ final class StackLaunchTests: XCTestCase {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("vesper-res-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
         XCTAssertNil(BundledResources.resolve(baseDir: dir))
-        for p in ["bin/vesper", "postgres/bin/postgres", "images/vmlinux", "web/server.js"] {
+        for p in ["bin/vesper", "postgres/bin/postgres", "images/vmlinux", "web/index.html"] {
             let url = dir.appendingPathComponent(p)
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             FileManager.default.createFile(atPath: url.path, contents: Data("x".utf8))

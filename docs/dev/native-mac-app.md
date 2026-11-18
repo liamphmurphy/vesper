@@ -12,8 +12,8 @@ Everything in the parity checklist below is implemented, with these deliberate g
 - **Fallback column**: the tickets list and Work's Tickets/Epics views (saved views with inline
   rename) and the editors' structure panels (docs, decks, designs, custom apps) still draw their
   list in the page's fallback column instead of the native sidebar.
-- **UI runtime**: the Next.js standalone server still serves the UI (a static build is a separate
-  spike).
+- **UI runtime**: the UI is a static Vite build that `vesper app` serves itself; the only node
+  process is the design worker (`web/design-worker`).
 - **Touch ID** is stricter than Electron: with the gate on and no usable sensor it asks for the
   account password instead of skipping.
 
@@ -46,7 +46,7 @@ Vesper.app/Contents/
   MacOS/Vesper                    Swift app (macos/)
   Resources/bin/vesper            Go binary, ad-hoc signed with deploy/microvm/vz.entitlements
   Resources/postgres/             relocatable Postgres 17 (scripts/bundle-postgres-darwin.sh)
-  Resources/web/                  Next standalone (server.js) until the UI is static
+  Resources/web/                  static UI (index.html, assets/) + design-worker/ (server.mjs, resvg addon)
   Resources/node/bin/node         official Node 24 darwin-arm64 binary (Electron used itself as Node)
   Resources/images/vmlinux        kernel (agent-base.erofs is downloaded on first launch)
 ```
@@ -77,7 +77,7 @@ Keychain and privacy grants survive rebuilds) or ad hoc (`-`) when unset.
 - Command: `<Resources>/bin/vesper app -data-dir <dataDir> -addr 127.0.0.1:<port>` (port 8080).
 - Env: inherit, then set `SECRETS_KEY`, `VESPER_APP_DATA_DIR`, `VESPER_APP_ADDR`,
   `VESPER_POSTGRES_BIN_DIR=<Resources>/postgres/bin`, `VESPER_KERNEL_PATH` (if present),
-  `VESPER_WEB_DIST_DIR=<Resources>/web` (if `server.js` exists), `VESPER_NODE_BIN=<Resources>/node/bin/node`,
+  `VESPER_WEB_DIST_DIR=<Resources>/web` (if `index.html` exists), `VESPER_NODE_BIN=<Resources>/node/bin/node`,
   `VESPER_ROOTFS_URL` (packaged builds, if unset), `RUNNER_MAX_CONCURRENT` (from settings, if
   unset), `VESPER_APP_SIGN_IN_CODE=stdout`; remove `VESPER_NO_SIGNIN`.
 - Stdout lines: `VESPER_SIGN_IN_CODE=<code>` then `VESPER_READY_URL=<url>` (30 s timeout). Never

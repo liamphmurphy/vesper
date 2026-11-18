@@ -482,11 +482,12 @@ opens Vesper, already signed in.
   verification.
 - **Single origin without Caddy:** `deploy/Caddyfile` routes `/api/*`, `/mcp`,
   `/mcp/*`, and `/events` to Go, returns `404` for external `/internal/*`, and
-  proxies the rest to Next. `vesper app` serves `/api/*`, `/mcp*`, `/events`
-  **in-process** (zero extra loopback proxy hop or SSE/MCP buffering), rejects
-  external `/internal/*` with `404`, points `DESIGN_WORKER_URL` at Next's
-  internal `127.0.0.1:<next-port>/internal/designs`, and reverse-proxies UI
-  routes to Next.
+  proxies the rest to the web container. `vesper app` serves `/api/*`, `/mcp*`,
+  `/events` **in-process** (zero extra loopback proxy hop or SSE/MCP buffering),
+  rejects external `/internal/*` with `404`, serves the UI's static build itself
+  (a real file, else `index.html`, so client routes load; `server/cmd/vesper/static.go`),
+  and points `DESIGN_WORKER_URL` at the design worker, a node process it starts
+  on `127.0.0.1:<port>/internal/designs` (`web/design-worker`).
 - **Blobs without SeaweedFS:** `blob.Store` (`server/internal/blob/blob.go:26`)
   gains a local-directory backend (`BLOB_DIR=<userData>/blobs`). I verified
   `server/` uses **zero** presigned URLs, so storing `<bucket>/<key>` with

@@ -12,7 +12,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/exec"
@@ -187,20 +186,18 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 
 	designToken := randomHex16()
 	webDistDir := resolveWebDistDir(exeDir)
-	var webProxy http.Handler
+	var webHandler http.Handler
 	var designWorkerURL string
-	var stopNext func()
 	if webDistDir != "" {
-		nextPort, stopFn, werr := startNextStandalone(ctx, log, webDistDir, baseURL, designToken, filepath.Join(dataDir, "logs", "next.log"))
+		// The UI is a static build Go serves itself; node runs only the design worker beside it.
+		webHandler = staticSPAHandler(webDistDir)
+		workerPort, stopFn, werr := startDesignWorker(ctx, log, webDistDir, designToken, filepath.Join(dataDir, "logs", "design-worker.log"))
 		if werr != nil {
 			_ = ln.Close()
-			return fmt.Errorf("start web standalone: %w", werr)
+			return fmt.Errorf("start design worker: %w", werr)
 		}
-		stopNext = stopFn
-		defer stopNext()
-		nextURL, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", nextPort))
-		webProxy = httputil.NewSingleHostReverseProxy(nextURL)
-		designWorkerURL = fmt.Sprintf("http://127.0.0.1:%d/internal/designs", nextPort)
+		defer stopFn()
+		designWorkerURL = fmt.Sprintf("http://127.0.0.1:%d/internal/designs", workerPort)
 	}
 
 	jobs, err := metrics.NewClient(pool, log)
@@ -283,7 +280,7 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 	apiHandler := srv.Handler()
 	// Only the outer listener checks Host: microVMs reach apiHandler in-process as
 	// api.vesper.internal, which is not a loopback name.
-	topHandler := loopbackHostOnly(buildAppMux(apiHandler, webProxy, imgMgr), ln.Addr().(*net.TCPAddr).Port)
+	topHandler := loopbackHostOnly(buildAppMux(apiHandler, webHandler, imgMgr), ln.Addr().(*net.TCPAddr).Port)
 
 	hs := &http.Server{
 		Handler:           topHandler,
@@ -340,7 +337,7 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 	return serveErr
 }
 
-func buildAppMux(apiHandler, webProxy http.Handler, imgMgr *ImageManager) http.Handler {
+func buildAppMux(apiHandler, webHandler http.Handler, imgMgr *ImageManager) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
 		if p == "/internal" || strings.HasPrefix(p, "/internal/") {
@@ -356,8 +353,8 @@ func buildAppMux(apiHandler, webProxy http.Handler, imgMgr *ImageManager) http.H
 			apiHandler.ServeHTTP(w, r)
 			return
 		}
-		if webProxy != nil {
-			webProxy.ServeHTTP(w, r)
+		if webHandler != nil {
+			webHandler.ServeHTTP(w, r)
 			return
 		}
 		http.NotFound(w, r)
@@ -496,7 +493,9 @@ func runAppMicroVMRunner(
 	return r.Run(ctx)
 }
 
-func startNextStandalone(ctx context.Context, log *slog.Logger, webDir, apiURL, designToken, logPath string) (int, func(), error) {
+// startDesignWorker runs the bundled design worker (web/design-worker/server.mjs, bundled by
+// web/scripts/build-design-worker.mjs) on a free loopback port with node, and waits until it listens.
+func startDesignWorker(ctx context.Context, log *slog.Logger, webDir, designToken, logPath string) (int, func(), error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return 0, nil, err
@@ -513,7 +512,7 @@ func startNextStandalone(ctx context.Context, log *slog.Logger, webDir, apiURL, 
 		}
 	}
 
-	serverJS := filepath.Join(webDir, "server.js")
+	serverJS := filepath.Join(webDir, "design-worker", "server.mjs")
 	cmd := exec.Command(nodeBin, serverJS)
 	cmd.Dir = webDir
 	cmd.Env = []string{
@@ -522,7 +521,6 @@ func startNextStandalone(ctx context.Context, log *slog.Logger, webDir, apiURL, 
 		"NODE_ENV=production",
 		"HOSTNAME=127.0.0.1",
 		"PORT=" + strconv.Itoa(port),
-		"API_INTERNAL_URL=" + apiURL,
 		"DESIGN_WORKER_TOKEN=" + designToken,
 	}
 	if os.Getenv("VESPER_NODE_RUN_AS_NODE") == "1" {
@@ -568,10 +566,10 @@ func startNextStandalone(ctx context.Context, log *slog.Logger, webDir, apiURL, 
 		}
 		select {
 		case <-done:
-			return 0, nil, errors.New("next standalone server exited prematurely")
+			return 0, nil, errors.New("design worker exited prematurely")
 		case <-wctx.Done():
 			_ = cmd.Process.Kill()
-			return 0, nil, fmt.Errorf("next standalone server did not listen: %w", wctx.Err())
+			return 0, nil, fmt.Errorf("design worker did not listen: %w", wctx.Err())
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
@@ -603,7 +601,7 @@ func resolveWebDistDir(exeDir string) string {
 		)
 	}
 	for _, c := range cands {
-		if st, err := os.Stat(filepath.Join(c, "server.js")); err == nil && !st.IsDir() {
+		if st, err := os.Stat(filepath.Join(c, "index.html")); err == nil && !st.IsDir() {
 			return c
 		}
 	}

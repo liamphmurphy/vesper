@@ -29,7 +29,7 @@ playground gateway keeps the `vesper_session` cookie for the outer Vesper.
                "RUNNER_CLAUDE_BIN": "/workspace/.lazyagents/pgbin/claude", "RUNNER_CODEX_BIN": "/workspace/.lazyagents/pgbin/codex",
                "RUNNER_ANTIGRAVITY_BIN": "/workspace/.lazyagents/pgbin/agy",
                "FAKE_HARNESS_MODE": "chat-read" } },
-    { "name": "web", "dir": "web", "port": 3000, "command": "npm run dev -- -H 0.0.0.0 -p 3000",
+    { "name": "web", "dir": "web", "port": 3000, "command": "npm run dev -- --host 0.0.0.0 --port 3000",
       "env": { "API_INTERNAL_URL": "http://api:8000" } }
   ],
   "routes": [
@@ -59,8 +59,8 @@ playground gateway keeps the `vesper_session` cookie for the outer Vesper.
 - Wrap each setup command in `( … )` so a `cd` stays inside it, and keep each
   process's `dir` one that already exists: Docker creates a missing one as
   root, and nothing can write there afterwards.
-- The first start compiles the API and starts `next dev`, which takes a few
-  minutes. Call `playground_status` until it's running, and read `log` if it
+- The first start compiles the API and starts the Vite dev server, which takes a
+  minute. Call `playground_status` until it's running, and read `log` if it
   failed.
 
 ## Headless mode

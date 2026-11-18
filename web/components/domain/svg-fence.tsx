@@ -67,7 +67,7 @@ export function DiagramVisual({ source, captions = [], alt, label = "SVG image",
   const stage = (zoomed: boolean) => (
     <div className={cx("grid overflow-auto p-2", themed ? "bg-surface" : "bg-white")}>
       {urls.map((url, i) => (
-        // eslint-disable-next-line @next/next/no-img-element -- a data: URL; next/image adds nothing here
+        // a data: URL; next/image adds nothing here
         <img key={i} src={url} alt={i === at ? frameAlt : ""} aria-hidden={i === at ? undefined : true} className={cx("col-start-1 row-start-1 mx-auto block h-auto max-w-full", zoomed ? "max-h-[78vh] w-full" : "max-h-[720px]", i !== at && "invisible")} onError={() => setFailedUrl(urls[0])} />
       ))}
     </div>

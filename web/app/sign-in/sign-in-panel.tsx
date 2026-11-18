@@ -7,7 +7,6 @@ import { EmptyState, Skeleton } from "@/components/ui/primitives";
 
 /** A full load: the app was refused before, and needs nothing from this page. */
 function enterApp() {
-  // eslint-disable-next-line @next/next/no-location-assign-relative-destination
   window.location.assign("/");
 }
 

@@ -1,8 +1,8 @@
-import { Suspense } from "react";
+import { Suspense, use } from "react";
 import { ReviewScreen } from "./review-screen";
 
-async function Loader({ params }: { params: PageProps<"/artifacts/[id]/review">["params"] }) {
-  const { id } = await params;
+function Loader({ params }: { params: PageProps<"/artifacts/[id]/review">["params"] }) {
+  const { id } = use(params);
   return <ReviewScreen id={id} />;
 }
 

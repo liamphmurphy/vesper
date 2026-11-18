@@ -144,7 +144,7 @@ The first boot creates an empty workspace and a default **Assistant** with all p
 
 To run personas with API keys, follow the **[setup guide](docs/guide.md#running-agents)** to add provider credentials (`harness:anthropic` for Claude Code, `harness:openai` for Codex, or `harness:google` for Antigravity).
 
-Developing Vesper? `make dev` starts a local Postgres (`make dev-infra`), the API with hot reload and Next at **[localhost:3000](http://localhost:3000)**. See **[Develop](docs/guide.md#develop)**.
+Developing Vesper? `make dev` starts a local Postgres (`make dev-infra`), the API with hot reload and the Vite dev server at **[localhost:3000](http://localhost:3000)**. See **[Develop](docs/guide.md#develop)**.
 
 ### macOS desktop client
 

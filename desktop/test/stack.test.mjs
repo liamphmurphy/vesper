@@ -51,7 +51,7 @@ test("resolveBundledResources detects staged binary, postgres, kernel, and web s
   fs.writeFileSync(path.join(dir, "bin", "vesper"), "", "utf8");
   fs.writeFileSync(path.join(dir, "postgres", "bin", "postgres"), "", "utf8");
   fs.writeFileSync(path.join(dir, "images", "vmlinux"), "", "utf8");
-  fs.writeFileSync(path.join(dir, "web", "server.js"), "", "utf8");
+  fs.writeFileSync(path.join(dir, "web", "index.html"), "", "utf8");
 
   const resolved = resolveBundledResources(dir);
   assert.ok(resolved);

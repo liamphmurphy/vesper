@@ -45,7 +45,7 @@ export function DesignCard({ id, title }: { id: string; title: string }) {
         className="relative block h-[104px] overflow-hidden border-b border-border-subtle bg-surface-sunken p-2 [background-image:radial-gradient(var(--color-border-subtle)_1px,transparent_1px)] [background-size:16px_16px]"
       >
         {seq && failed !== seq ? (
-          // eslint-disable-next-line @next/next/no-img-element -- a PNG from the design renderer, keyed by version
+          // a PNG from the design renderer, keyed by version
           <img data-testid="design-card-thumb" src={`/api/v1/designs/${id}/render?v=${seq}`} alt={`First page of ${name}`} className="mx-auto block h-full w-auto max-w-full object-contain" onError={() => setFailed(seq)} />
         ) : body ? (
           <DesignSvg design={body} assetUrl={(a) => designAssetHref(id, a)} className="block h-full w-full" title={`First page of ${name}`} pad={4} />

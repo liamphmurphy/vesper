@@ -1,8 +1,8 @@
-import { Suspense } from "react";
+import { Suspense, use } from "react";
 import { PageScreen } from "../../_components/page-screen";
 
-async function Loader({ params }: { params: PageProps<"/knowledge/[id]/[[...slug]]">["params"] }) {
-  const { id } = await params;
+function Loader({ params }: { params: PageProps<"/knowledge/[id]/[[...slug]]">["params"] }) {
+  const { id } = use(params);
   return <PageScreen id={id} />;
 }
 

@@ -41,7 +41,7 @@ export function resolveBundledResources(baseDir: string): BundledResources | nul
     vesperBin,
     postgresBinDir: path.join(baseDir, "postgres", "bin"),
     ...(fs.existsSync(kernelCandidate) ? { kernelPath: kernelCandidate } : {}),
-    ...(fs.existsSync(path.join(webCandidate, "server.js")) ? { webDistDir: webCandidate } : {}),
+    ...(fs.existsSync(path.join(webCandidate, "index.html")) ? { webDistDir: webCandidate } : {}),
   };
 }
 

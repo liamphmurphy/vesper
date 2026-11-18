@@ -1,8 +1,8 @@
-import { Suspense } from "react";
+import { Suspense, use } from "react";
 import { ArtifactScreen } from "./artifact-screen";
 
-async function Loader({ params }: { params: PageProps<"/artifacts/[id]">["params"] }) {
-  const { id } = await params;
+function Loader({ params }: { params: PageProps<"/artifacts/[id]">["params"] }) {
+  const { id } = use(params);
   return <ArtifactScreen id={id} />;
 }
 

@@ -23,7 +23,7 @@ export function PersonaAvatar({
 }) {
   const box = { width: size, height: size };
   if (src)
-    // eslint-disable-next-line @next/next/no-img-element -- same-origin API image or a local preview blob
+    // same-origin API image or a local preview blob
     return <img src={src} alt="" aria-hidden style={box} className={cx("flex-none rounded-full object-cover", className)} />;
   return (
     <span

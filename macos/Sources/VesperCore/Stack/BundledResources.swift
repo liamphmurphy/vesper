@@ -34,7 +34,7 @@ public struct BundledResources: Sendable, Equatable {
             vesperBin: vesper,
             postgresBinDir: baseDir.appendingPathComponent("postgres/bin"),
             kernelPath: fm.fileExists(atPath: kernel.path) ? kernel : nil,
-            webDistDir: fm.fileExists(atPath: web.appendingPathComponent("server.js").path) ? web : nil,
+            webDistDir: fm.fileExists(atPath: web.appendingPathComponent("index.html").path) ? web : nil,
             nodeBin: fm.isExecutableFile(atPath: node.path) ? node : nil
         )
     }

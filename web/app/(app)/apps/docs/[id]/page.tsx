@@ -1,9 +1,9 @@
-import { Suspense } from "react";
+import { Suspense, use } from "react";
 import { LegacyRedirect } from "../../../knowledge/_components/legacy-redirect";
 import { DocScreen } from "../_components/doc-screen";
 
-async function Loader({ params }: { params: PageProps<"/apps/docs/[id]">["params"] }) {
-  const { id } = await params;
+function Loader({ params }: { params: PageProps<"/apps/docs/[id]">["params"] }) {
+  const { id } = use(params);
   // A Doc moved into Knowledge opens there; a canvas that never was a Doc still opens here.
   return <LegacyRedirect from={`/apps/docs/${id}`} fallback={<DocScreen id={id} />} />;
 }

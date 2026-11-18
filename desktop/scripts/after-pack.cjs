@@ -61,7 +61,7 @@ exports.default = async function afterSign(context) {
   }
 
   // electron-builder strips top-level node_modules when copying extraResources; restore the full
-  // Next.js standalone tree before signing native .node addons inside web/.
+  // web tree (the design worker's node_modules) before signing native .node addons inside web/.
   const stagedWebDir = path.join(projectResourcesDir, "web");
   const packagedWebDir = path.join(resourcesDir, "web");
   if (fs.existsSync(stagedWebDir)) {
@@ -69,7 +69,7 @@ exports.default = async function afterSign(context) {
     fs.cpSync(stagedWebDir, packagedWebDir, { recursive: true, verbatimSymlinks: true });
   }
 
-  // 1. Inside-out ad-hoc signing for bundled PostgreSQL 17 binaries/dylibs and Next native addons.
+  // 1. Inside-out ad-hoc signing for bundled PostgreSQL 17 binaries/dylibs and the design worker's native addon.
   for (const sub of ["postgres", "web"]) {
     const targetDir = path.join(resourcesDir, sub);
     for (const file of walkMachOs(targetDir)) {
