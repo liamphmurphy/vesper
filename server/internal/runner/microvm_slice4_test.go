@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -100,13 +101,13 @@ func TestVZDockerdRootfsGuardAndServices(t *testing.T) {
 	}
 	defer func() { _ = b.Cleanup(ctx) }()
 
-	// 1. StartDockerProxy starts in-guest dockerd + /var/run/docker.sock guard.
+	// 1. StartDockerProxy starts in-guest dockerd and the turn's own guard socket.
 	td, err := b.StartDockerProxy(ctx, "dkr-run", "dkr-run", "turn-1")
 	if err != nil {
 		t.Fatalf("StartDockerProxy: %v", err)
 	}
 	defer td.Stop()
-	if td.Env["DOCKER_HOST"] != "unix:///var/run/docker.sock" {
+	if td.Env["DOCKER_HOST"] != "unix:///run/vesper-docker/turn-1.sock" {
 		t.Fatalf("DOCKER_HOST = %q", td.Env["DOCKER_HOST"])
 	}
 
@@ -149,6 +150,14 @@ if docker run --rm -v /etc:/hostetc vesper-tiny:test /bin/tiny 2>/tmp/bind.err; 
   echo "ERROR: /etc bind unexpectedly succeeded" >&2; exit 1
 fi
 grep -qi "vesper guard" /tmp/bind.err
+
+if docker run --rm --security-opt seccomp=unconfined vesper-tiny:test /bin/tiny 2>/tmp/seccomp.err; then
+  echo "ERROR: seccomp=unconfined unexpectedly succeeded" >&2; exit 1
+fi
+grep -qi "vesper guard" /tmp/seccomp.err
+
+# Left running on purpose: closing the turn must remove it.
+docker run -d --name leftover vesper-tiny:test /bin/tiny srv >/dev/null
 echo "DOCKERD_AND_GUARD_OK"
 `
 	code, out, stderr := runVMTurn(t, b, "dkr-run", ExecSpec{
@@ -157,6 +166,25 @@ echo "DOCKERD_AND_GUARD_OK"
 	})
 	if code != 0 || !strings.Contains(out, "DOCKERD_AND_GUARD_OK") {
 		t.Fatalf("dockerd/guard turn failed code=%d out=%q err=%q", code, out, stderr)
+	}
+
+	// Closing the turn removes the containers it started: they run outside
+	// the turn's cgroup and would otherwise see the next turn's files.
+	held, err := b.acquireVM(ctx, "dkr-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	td.Stop()
+	filters := url.QueryEscape(`{"name":["leftover"]}`)
+	var left []struct {
+		ID string `json:"Id"`
+	}
+	if _, _, err := b.dockerDo(ctx, b.vmDockerHTTP(held), http.MethodGet, "/containers/json?all=1&filters="+filters, nil, &left); err != nil {
+		t.Fatal(err)
+	}
+	b.releaseVM(held)
+	if len(left) != 0 {
+		t.Fatalf("turn container outlived its turn: %+v", left)
 	}
 
 	// 2. StartServices runs a container and registers bridge IP in guest DNS (10.255.255.1:53)
@@ -349,7 +377,10 @@ func TestVZHostGitCloneAndBundlePushNoTokenInVM(t *testing.T) {
 	cloneAndCommit := `set -eu
 test -z "${GH_TOKEN:-}"
 test -z "${GITHUB_TOKEN:-}"
+test -z "${LAZYAGENTS_SSH_KEY:-}"
 ! tr '\0' '\n' < /proc/self/environ | grep -q "` + wantToken + `"
+# An SSH remote fetches through the host proxy too, with no key in the VM.
+git clone -q git@github.com:org/repo.git /workspace/repo-ssh
 git config --global user.name Agent
 git config --global user.email agent@example.com
 git clone https://github.com/org/repo.git /workspace/repo
@@ -365,7 +396,7 @@ fi
 `
 	code, out, stderr := runVMTurn(t, b, "git-run", ExecSpec{
 		Argv: []string{"/bin/sh", "-c", cloneAndCommit},
-		Env:  map[string]string{"GH_TOKEN": wantToken},
+		Env:  map[string]string{"GH_TOKEN": wantToken, SSHKeyEnv: "not-a-real-ssh-key"},
 	})
 	if code != 0 {
 		t.Fatalf("clone/commit turn failed code=%d out=%q err=%q", code, out, stderr)

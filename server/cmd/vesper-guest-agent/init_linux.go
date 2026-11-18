@@ -141,7 +141,10 @@ func mountCoreFS() error {
 	if err := ensureMount("tmpfs", "/dev/shm", "tmpfs", unix.MS_NOSUID|unix.MS_NODEV, "mode=1777", 0o1777); err != nil {
 		return fmt.Errorf("/dev/shm: %w", err)
 	}
-	if err := ensureMount("tmpfs", "/tmp", "tmpfs", 0, "mode=1777", 0o1777); err != nil {
+	// /tmp and /workspace are where turn containers may bind from (see
+	// docker_guard.go), and root in a container could leave a setuid or
+	// file-capability binary there for the uid-1000 turn to run.
+	if err := ensureMount("tmpfs", "/tmp", "tmpfs", unix.MS_NOSUID|unix.MS_NODEV, "mode=1777", 0o1777); err != nil {
 		return fmt.Errorf("/tmp: %w", err)
 	}
 	if err := ensureMount("tmpfs", "/run", "tmpfs", unix.MS_NOSUID|unix.MS_NODEV, "mode=0755", 0o755); err != nil {
@@ -194,10 +197,13 @@ func enableControllers(cgDir string) {
 	}
 }
 
+// workspaceMountFlags: see the /tmp mount in mountCoreFS.
+const workspaceMountFlags = unix.MS_NOSUID | unix.MS_NODEV
+
 func mountAttachedDisks() error {
 	// Optional HostFolders shared workspace over virtiofs (tag "workspace").
 	_ = os.MkdirAll("/workspace", 0o777)
-	hasVirtioWorkspace := unix.Mount("workspace", "/workspace", "virtiofs", 0, "") == nil
+	hasVirtioWorkspace := unix.Mount("workspace", "/workspace", "virtiofs", workspaceMountFlags, "") == nil
 
 	blocks, err := filepath.Glob("/dev/vd[b-z]")
 	if err != nil {
@@ -241,7 +247,11 @@ func mountAttachedDisks() error {
 				continue
 			}
 			_ = os.MkdirAll(target, 0o755)
-			if err := unix.Mount(dev, target, "ext4", unix.MS_NOATIME, ""); err != nil {
+			flags := uintptr(unix.MS_NOATIME)
+			if target == "/workspace" {
+				flags |= workspaceMountFlags
+			}
+			if err := unix.Mount(dev, target, "ext4", flags, ""); err != nil {
 				return fmt.Errorf("mount %s (%s) on %s: %w", dev, label, target, err)
 			}
 			if chownNode {

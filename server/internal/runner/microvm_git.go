@@ -96,9 +96,14 @@ func rewriteGitInsteadOfEnv(env map[string]string, rewriteFrom string) {
 			idx = n
 		}
 	}
-	env[fmt.Sprintf("GIT_CONFIG_KEY_%d", idx)] = "url.http://" + microvm.InternalGitHost + "/github/.insteadOf"
-	env[fmt.Sprintf("GIT_CONFIG_VALUE_%d", idx)] = rewriteFrom
-	env["GIT_CONFIG_COUNT"] = strconv.Itoa(idx + 1)
+	// SSH remotes on github.com go through the proxy too: the VM has no
+	// SSH key (pushes happen on the host, over HTTPS with the PAT).
+	for _, from := range []string{rewriteFrom, "git@github.com:", "ssh://git@github.com/", "ssh://git@github.com:22/"} {
+		env[fmt.Sprintf("GIT_CONFIG_KEY_%d", idx)] = "url.http://" + microvm.InternalGitHost + "/github/.insteadOf"
+		env[fmt.Sprintf("GIT_CONFIG_VALUE_%d", idx)] = from
+		idx++
+	}
+	env["GIT_CONFIG_COUNT"] = strconv.Itoa(idx)
 }
 
 func (r *Runner) usesHostGitAuth() bool {

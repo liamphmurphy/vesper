@@ -75,6 +75,20 @@ func (c *Client) StartDockerd(ctx context.Context, registryMirror string) error 
 	return c.callUnary(ctx, OpStartDockerd, StartDockerdReq{RegistryMirror: registryMirror}, nil)
 }
 
+// OpenDockerGuard serves a Docker API for one turn (dockerd must be started)
+// and returns its unix socket path inside the guest.
+func (c *Client) OpenDockerGuard(ctx context.Context, key string) (string, error) {
+	var out OpenDockerGuardResp
+	err := c.callUnary(ctx, OpOpenDockerGuard, DockerGuardReq{Key: key}, &out)
+	return out.Socket, err
+}
+
+// CloseDockerGuard stops a turn's Docker guard and removes the containers,
+// networks and volumes the turn created. Closing an unknown key cleans up too.
+func (c *Client) CloseDockerGuard(ctx context.Context, key string) error {
+	return c.callUnary(ctx, OpCloseDockerGuard, DockerGuardReq{Key: key}, nil)
+}
+
 func (c *Client) EnsureBridgeAliases(ctx context.Context, aliases map[string]string) error {
 	return c.callUnary(ctx, OpEnsureBridgeAliases, EnsureBridgeAliasesReq{Aliases: aliases}, nil)
 }

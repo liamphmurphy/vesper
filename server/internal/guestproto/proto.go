@@ -51,6 +51,8 @@ const (
 	OpUnlinkPaths         = "unlink_paths"
 	OpSyncAndDropCaches   = "sync_drop_caches"
 	OpStartDockerd        = "start_dockerd"
+	OpOpenDockerGuard     = "open_docker_guard"
+	OpCloseDockerGuard    = "close_docker_guard"
 	OpStartNixDaemon      = "start_nix_daemon"
 	OpEnsureBridgeAliases = "ensure_bridge_aliases"
 	OpCheckTCPPort        = "check_tcp_port"
@@ -152,6 +154,20 @@ type UnlinkPathsReq struct {
 
 type StartDockerdReq struct {
 	RegistryMirror string `json:"registry_mirror,omitempty"`
+}
+
+// DockerGuardLabel marks everything a turn creates through its Docker guard;
+// its value is the turn's key. It matches the Docker backend's proxy label.
+const DockerGuardLabel = "dev.lazyagents.proxy"
+
+// DockerGuardReq names a turn's Docker guard by the turn's key.
+type DockerGuardReq struct {
+	Key string `json:"key"`
+}
+
+// OpenDockerGuardResp is where the turn's guarded Docker socket listens.
+type OpenDockerGuardResp struct {
+	Socket string `json:"socket"`
 }
 
 type EnsureBridgeAliasesReq struct {

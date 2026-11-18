@@ -205,6 +205,29 @@ func (s *agentServer) handleConn(ctx context.Context, conn net.Conn) {
 			return
 		}
 		_ = writeRPCOK(conn, f.ID, nil)
+	case guestproto.OpOpenDockerGuard:
+		var in guestproto.DockerGuardReq
+		if err := json.Unmarshal(req.V, &in); err != nil {
+			_ = writeRPCError(conn, f.ID, err.Error())
+			return
+		}
+		sock, err := openDockerGuard(in.Key)
+		if err != nil {
+			_ = writeRPCError(conn, f.ID, err.Error())
+			return
+		}
+		_ = writeRPCOK(conn, f.ID, guestproto.OpenDockerGuardResp{Socket: sock})
+	case guestproto.OpCloseDockerGuard:
+		var in guestproto.DockerGuardReq
+		if err := json.Unmarshal(req.V, &in); err != nil {
+			_ = writeRPCError(conn, f.ID, err.Error())
+			return
+		}
+		if err := closeDockerGuard(ctx, in.Key); err != nil {
+			_ = writeRPCError(conn, f.ID, err.Error())
+			return
+		}
+		_ = writeRPCOK(conn, f.ID, nil)
 	case guestproto.OpStartNixDaemon:
 		if err := ensureNixDaemon(ctx, s.execs); err != nil {
 			_ = writeRPCError(conn, f.ID, err.Error())

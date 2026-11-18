@@ -248,8 +248,10 @@ guest boots `dockerd` + `containerd` + `runc` + `BuildKit` (Apache-2.0) and sets
 - **The VM is the host boundary.** Escaping requires a hypervisor bug, not a
   container or proxy bug. The host no longer needs the 849-line `HostConfig`
   rewriter in `runner/docker_proxy.go:440-495` to protect the Mac.
-- **Previously blocked features now work:** BuildKit, Testcontainers Ryuk,
-  `docker compose build`, and non-upgraded attach streams (`test-environments.md`).
+- **Same Docker API as the Docker backend:** turns get the guard's allowlist
+  (below), so classic builds (`DOCKER_BUILDKIT=0`) and no Ryuk
+  (`TESTCONTAINERS_RYUK_DISABLED`), as before. Unlocking BuildKit means
+  inspecting its session and gRPC streams first.
 - **Codex's own sandbox works again:** Docker on the host blocked the user
   namespaces Codex needs (`docs/guide.md`, "read-only Codex turns rely on the
   policy hook"); inside a microVM, turns can be granted unprivileged user
@@ -267,12 +269,20 @@ the same VM. Three controls preserve turn-to-turn integrity from day 1:
 1. **Locked-down guest kernel:** Built with `CONFIG_MODULES=n`, `CONFIG_KEXEC=n`,
    `CONFIG_HIBERNATION=n`, and `/dev/mem` / `/dev/kmem` disabled — even guest
    `root` cannot patch the running kernel.
-2. **Immutable rootfs & bind-mount guard:** `/` is mounted from a read-only
-   `EROFS` block device (`overlayfs` upper state on a per-turn/resettable
-   layer), `/var/lib/docker` lives on its own scratch block device, and a thin
-   guest-side `dockerd` authorization plugin (or proxy) retains per-turn cleanup
-   labels and blocks container binds onto system binaries (`/`, `/usr`, `/bin`,
-   `/sbin`, `/etc`) and `$HOME` auth directories.
+2. **Immutable rootfs & a per-turn Docker guard:** `/` is mounted from a
+   read-only `EROFS` block device (`overlayfs` upper state on a
+   per-turn/resettable layer), and `/var/lib/docker` lives on its own scratch
+   block device. Turns never see `dockerd`'s socket: each turn gets its own
+   guard socket (`/run/vesper-docker/<key>.sock`,
+   `cmd/vesper-guest-agent/docker_guard.go`) that ports the Docker backend's
+   turn proxy: an allowlist of Engine endpoints, container creates rebuilt
+   without privileges, host namespaces, devices or SecurityOpt beyond
+   `no-new-privileges`, binds only from `/workspace` or the turn's own files
+   under `/tmp` (resolved through symlinks), and calls scoped to objects
+   carrying the turn's label. Closing the turn removes everything with that
+   label: those containers run outside the turn's cgroup. `/workspace` and
+   `/tmp` are mounted `nosuid,nodev`, so root in a container can't leave a
+   setuid binary for the turn.
 3. **Just-in-time OAuth injection & wipe:** `~/.claude/.credentials.json`,
    `~/.codex/auth.json`, and Antigravity auth files are injected immediately
    before the harness launches, read back for token refresh immediately after
@@ -436,7 +446,7 @@ a trust domain (user, project, run), and every crossing passes an explicit gate:
 |---|---|
 | **Network** | NIC-less VM → guest `iptables` + `10.255.255.1:53` DNS → `198.18.0.0/15` synthetic IP + TLS SNI check → host `Egress` blocking loopback, RFC1918 LAN, IMDS (`169.254/16`), Tailscale (`100.64/10`), ULA, multicast; `/mcp` routed in-process |
 | **Caches** | Strictly downward `EROFS` generations built only from host pull-through verified stores; disposable per-VM overlays deleted on exit; `GOCACHE` scoped per project |
-| **Git credentials (`git:pat`)** | **Never enters the run VM.** `BundleScript` (`runner/push_staging.go:45`) runs unauthenticated inside the VM; `.lazyagents/push/<id>.bundle` streams out over `vsock`; `PushBundleScript` (`push_staging.go:65`) runs with `$GH_TOKEN` in a clean bare repository on the host (or utility VM) |
+| **Git credentials (`git:pat`, `git:ssh`)** | **Never enter the run VM.** Fetches of `https://github.com/` and `git@github.com:` remotes go through the host's read-only proxy with the PAT (an SSH key alone reaches public repositories only). `BundleScript` (`runner/push_staging.go:45`) runs unauthenticated inside the VM; `.lazyagents/push/<id>.bundle` streams out over `vsock`; `PushBundleScript` (`push_staging.go:65`) runs with `$GH_TOKEN` in a clean bare repository on the host (or utility VM) |
 | **Provider logins / API keys** | v1: injected into `$HOME` right before turn start, rotated tokens read back at exit, and files **unlinked immediately** before turn cleanup finishes. Phase 2: per-run CA + TLS termination in host `Egress` swaps dummy placeholders in the VM for real credentials kept in Keychain/host memory |
 | **Host files (`HostFolders`)** | Opt-in per workspace, `virtiofs` scoped to that checkout only, hook protections + UI warning |
 
@@ -553,7 +563,7 @@ logs/                       vesper, Postgres, Next, guest serial consoles
 | Sign-ins, model listings, usage probes | Throwaway containers with saved login | Shared short-lived utility VM or warm pool |
 | Design renderer, images, video, audio | Processes inside turn containers | Same, inside run VM; streamed out over `vsock` |
 | Turn services (`docker_services.go`) | Sibling containers on turn network | Containers via in-guest `dockerd` + loopback-excluded bridge |
-| Turn Docker API (`docker_proxy.go`) | 849-line rewriting proxy on host engine | Real `dockerd` in run VM (+ rootfs bind guard; BuildKit/Ryuk work) |
+| Turn Docker API (`docker_proxy.go`) | 849-line rewriting proxy on host engine | Real `dockerd` in run VM behind a per-turn guard with the same rules |
 | Playgrounds (`docker_playground.go`) | Own network; runner joins via `selfID` | Dedicated VM (no `home.ext4`); gateway forwards HTTP over `vsock` |
 | Nix (`docker_nix.go`) | Shared RW store volume + `nix-daemon` | Read-only `EROFS` base + disposable overlay + host Nix substituter proxy |
 | Dependency caches (`dependencies.go`) | Shared RW `/cache` volume | Read-only `EROFS` bases + host `GOPROXY`/npm/OCI pull-through + per-project `GOCACHE` |
