@@ -311,6 +311,24 @@
   },
   {
     "v": 1,
+    "type": "confirm",
+    "requestId": "r4",
+    "title": "Delete \u201cWeekly plan\u201d?",
+    "body": "This can\u2019t be undone.",
+    "confirmLabel": "Delete",
+    "cancelLabel": "Keep",
+    "destructive": true
+  },
+  {
+    "v": 1,
+    "type": "confirm",
+    "requestId": "r5",
+    "title": "Approve all 3 requests?",
+    "confirmLabel": "Approve all",
+    "destructive": false
+  },
+  {
+    "v": 1,
     "type": "title",
     "title": "Harness credentials in Dev playground",
     "menu": [

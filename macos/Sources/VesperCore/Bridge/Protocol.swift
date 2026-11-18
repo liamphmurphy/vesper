@@ -364,9 +364,12 @@ public enum PageMessage: Sendable, Equatable, Decodable {
     case confirmApproval(requestId: String, scope: ApprovalScope)
     case openWorkspaceMenu(requestId: String, folder: String)
     case contextMenu(requestId: String, items: [MenuItem], x: Double, y: Double)
+    /// An "Are you sure?" shown as a sheet on the window; reply ok only for the confirm button.
+    case confirm(requestId: String, title: String, body: String?, confirmLabel: String, cancelLabel: String?, destructive: Bool)
 
     private enum Keys: String, CodingKey {
         case v, type, path, area, title, subtitle, model, active, items, requestId, scope, folder, x, y, mode, menu
+        case body, confirmLabel, cancelLabel, destructive
     }
 
     public init(from decoder: Decoder) throws {
@@ -403,6 +406,11 @@ public enum PageMessage: Sendable, Equatable, Decodable {
         case "contextMenu":
             self = .contextMenu(requestId: try c.decode(String.self, forKey: .requestId), items: try c.decode([MenuItem].self, forKey: .items),
                                 x: try c.decode(Double.self, forKey: .x), y: try c.decode(Double.self, forKey: .y))
+        case "confirm":
+            self = .confirm(requestId: try c.decode(String.self, forKey: .requestId), title: try c.decode(String.self, forKey: .title),
+                            body: try c.decodeIfPresent(String.self, forKey: .body), confirmLabel: try c.decode(String.self, forKey: .confirmLabel),
+                            cancelLabel: try c.decodeIfPresent(String.self, forKey: .cancelLabel),
+                            destructive: try c.decodeIfPresent(Bool.self, forKey: .destructive) ?? true)
         default:
             throw DecodingError.dataCorruptedError(forKey: .type, in: c, debugDescription: "unknown page message type \(type)")
         }

@@ -6,6 +6,7 @@ import { Markdown } from "@tiptap/markdown";
 import { Placeholder } from "@tiptap/extensions";
 import type { EditorView } from "@tiptap/pm/view";
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { Popover } from "radix-ui";
 import { docExtensions, parseDoc, serializeDoc } from "@/lib/doc-markdown";
 import { setHighlight } from "@/lib/canvas-dom";
 import { cx } from "@/lib/cx";
@@ -245,12 +246,15 @@ function Toolbar({ editor, disabled }: { editor: Editor; disabled: boolean }) {
     }),
   });
   const run = () => editor.chain().focus();
-  const link = () => {
-    const prev = editor.getAttributes("link").href as string | undefined;
-    const href = window.prompt("Link address", prev ?? "https://");
-    if (href === null) return;
-    if (!href.trim()) run().extendMarkRange("link").unsetLink().run();
-    else run().extendMarkRange("link").setLink({ href: href.trim() }).run();
+  // The link's address is edited in a popover on the button, not window.prompt, which the Mac app
+  // shows as a bare system dialog. Saving it empty removes the link.
+  const [linkDraft, setLinkDraft] = useState<string | null>(null);
+  const link = () => setLinkDraft((editor.getAttributes("link").href as string | undefined) ?? "https://");
+  const applyLink = () => {
+    const href = linkDraft?.trim() ?? "";
+    setLinkDraft(null);
+    if (!href) run().extendMarkRange("link").unsetLink().run();
+    else run().extendMarkRange("link").setLink({ href }).run();
   };
   const b = (label: string, on: boolean, act: () => void, glyph: ReactNode, off = false) => (
     <button
@@ -280,7 +284,19 @@ function Toolbar({ editor, disabled }: { editor: Editor; disabled: boolean }) {
       {b("Italic", s.italic, () => run().toggleItalic().run(), <i className="font-serif">I</i>)}
       {b("Strikethrough", s.strike, () => run().toggleStrike().run(), <s>S</s>)}
       {b("Inline code", s.code, () => run().toggleCode().run(), <span className="font-mono text-12">{"<>"}</span>)}
-      {b("Link", s.link, link, "🔗")}
+      <Popover.Root open={linkDraft !== null} onOpenChange={(open) => { if (!open) setLinkDraft(null); }}>
+        <Popover.Anchor asChild>{b("Link", s.link, link, "🔗")}</Popover.Anchor>
+        <Popover.Portal>
+          <Popover.Content align="start" sideOffset={6} onCloseAutoFocus={(e) => { e.preventDefault(); run().run(); }}
+            className="z-50 flex w-72 items-center gap-1.5 rounded-[10px] border border-border-float bg-surface-raised p-1.5 shadow-[var(--shadow-float)]">
+            <form className="contents" onSubmit={(e) => { e.preventDefault(); applyLink(); }}>
+              <input autoFocus aria-label="Link address" value={linkDraft ?? ""} onChange={(e) => setLinkDraft(e.target.value)} onFocus={(e) => e.currentTarget.select()}
+                className="h-7 min-w-0 flex-1 rounded-md border border-border bg-bg px-2 text-13 text-fg outline-none focus:border-accent" />
+              <button type="submit" className="h-7 rounded-md bg-accent px-2.5 text-12 font-semibold text-on-accent hover:brightness-110">{linkDraft?.trim() ? "Apply" : "Remove"}</button>
+            </form>
+          </Popover.Content>
+        </Popover.Portal>
+      </Popover.Root>
       {sep}
       {b("Bulleted list", s.bullet, () => run().toggleBulletList().run(), "•≡")}
       {b("Numbered list", s.ordered, () => run().toggleOrderedList().run(), "1≡")}

@@ -1,6 +1,6 @@
 import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { isNativeShell, nativeContextMenu, onCommand, post, postDeduped, request, resetDedupe } from "./bridge.ts";
+import { isNativeShell, nativeConfirm, nativeContextMenu, onCommand, post, postDeduped, request, resetDedupe } from "./bridge.ts";
 
 let posted;
 let win;
@@ -93,4 +93,19 @@ test("nativeContextMenu gives the chosen id, null when dismissed or outside the 
   assert.equal(await q, null);
   install({ native: false });
   assert.equal(await nativeContextMenu([], 0, 0), null);
+});
+
+test("nativeConfirm asks for a sheet and is true only when the person confirms", async () => {
+  const p = nativeConfirm({ title: "Delete it?", body: "Gone for good.", confirmLabel: "Delete", destructive: true });
+  assert.deepEqual(
+    { type: posted[0].type, title: posted[0].title, body: posted[0].body, confirmLabel: posted[0].confirmLabel, destructive: posted[0].destructive },
+    { type: "confirm", title: "Delete it?", body: "Gone for good.", confirmLabel: "Delete", destructive: true },
+  );
+  send({ v: 1, type: "reply", requestId: posted[0].requestId, ok: true });
+  assert.equal(await p, true);
+  const q = nativeConfirm({ title: "Delete it?", confirmLabel: "Delete", destructive: true });
+  send({ v: 1, type: "reply", requestId: posted[1].requestId, ok: false });
+  assert.equal(await q, false);
+  install({ native: false });
+  assert.equal(await nativeConfirm({ title: "x", confirmLabel: "y", destructive: false }), false);
 });

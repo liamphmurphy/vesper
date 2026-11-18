@@ -84,7 +84,30 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
             }
         case .contextMenu(let requestId, let items, let x, let y):
             showContextMenu(requestId: requestId, items: items, x: x, y: y)
+        case .confirm(let requestId, let title, let body, let confirmLabel, let cancelLabel, let destructive):
+            Task { [weak self] in
+                guard let self else { return }
+                let ok = await self.confirmSheet(title: title, body: body, confirmLabel: confirmLabel, cancelLabel: cancelLabel, destructive: destructive)
+                self.send(.reply(requestId: requestId, ok: ok))
+            }
         }
+    }
+
+    /// The page's confirmAction as a sheet on its window: Return confirms, Esc cancels.
+    private func confirmSheet(title: String, body: String?, confirmLabel: String, cancelLabel: String?, destructive: Bool) async -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = destructive ? .warning : .informational
+        alert.messageText = title
+        alert.informativeText = body ?? ""
+        let confirm = alert.addButton(withTitle: confirmLabel)
+        confirm.hasDestructiveAction = destructive
+        // NSAlert only gives Esc to a button titled "Cancel"; the page may name it "Keep editing".
+        alert.addButton(withTitle: cancelLabel ?? "Cancel").keyEquivalent = "\u{1b}"
+        guard let window = webView?.window else { return alert.runModal() == .alertFirstButtonReturn }
+        // A sheet already up (another confirm, the unsaved-changes alert) would make this one queue
+        // invisibly; answer no instead, as the in-app dialog does when replaced.
+        guard window.attachedSheet == nil else { return false }
+        return await alert.beginSheetModal(for: window) == .alertFirstButtonReturn
     }
 
     private func showContextMenu(requestId: String, items: [MenuItem], x: Double, y: Double) {
@@ -144,6 +167,7 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
         case .confirmApproval(let r, let s): "confirmApproval \(r) \(s.rawValue)"
         case .openWorkspaceMenu(let r, _): "openWorkspaceMenu \(r)"
         case .contextMenu(let r, let i, _, _): "contextMenu \(r) \(i.count) items"
+        case .confirm(let r, _, _, _, _, _): "confirm \(r)"
         }
     }
 }

@@ -44,6 +44,10 @@ final class BridgeProtocolTests: XCTestCase {
         XCTAssertTrue(all.contains(.appearance(mode: .dark)))
         XCTAssertTrue(all.contains(.appearance(mode: .light)))
         XCTAssertEqual(nav.sections[0].items[1].avatar?.color, "#9B8CFF")
+        XCTAssertTrue(all.contains(.confirm(requestId: "r4", title: "Delete \u{201C}Weekly plan\u{201D}?", body: "This can\u{2019}t be undone.",
+                                            confirmLabel: "Delete", cancelLabel: "Keep", destructive: true)))
+        XCTAssertTrue(all.contains(.confirm(requestId: "r5", title: "Approve all 3 requests?", body: nil,
+                                            confirmLabel: "Approve all", cancelLabel: nil, destructive: false)))
     }
 
     func testEveryCommandFixtureRoundTrips() throws {
