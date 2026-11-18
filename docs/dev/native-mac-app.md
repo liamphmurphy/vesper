@@ -8,9 +8,13 @@ signed off on it against real data. Related: [mac-native-features.md](mac-native
 
 Everything in the parity checklist below is implemented, with these deliberate gaps:
 
-- **Fallback column**: the tickets list and Work's Tickets/Epics views (saved views with inline
-  rename) and the editors' structure panels (docs, decks, designs, custom apps) still draw their
-  list in the page's fallback column instead of the native sidebar.
+- **Fallback column**: every screen's list now publishes a `NavModel` (Work's Activity, Tickets
+  and Epics with saved views, the editors' structure panels, and the rest), so the fallback column
+  is only a safety net for a screen that publishes none.
+- **Right-click menus** in the content area are native only where a screen asks for one with
+  `useNativeContextMenu` (chat messages and board cards so far); elsewhere WebKit's menu shows.
+- **Keyboard focus** between the sidebar, toolbar and page relies on AppKit's defaults; Tab
+  inside the page stays inside it.
 - **UI runtime**: the UI is a static Vite build that `vesper app` serves itself; the only node
   process is the design worker (`web/design-worker`).
 - **Touch ID** is strict: with the gate on and no usable sensor it asks for the
@@ -107,7 +111,7 @@ Source of truth: `web/lib/native-shell/protocol.ts`; Swift mirror
 - The web's own left column (search, area icons, chats) is not rendered in native mode; the page
   publishes `shell` (areas, apps, current area, badges) and, when no screen claims the navigator,
   the default Chats navigator (chat history and spaces) as a `NavModel`.
-- Request/response messages (`confirmApproval`, `openWorkspaceMenu`, `contextMenu`) carry a
+- Request/response messages (`confirmApproval`, `openWorkspaceMenu`, `contextMenu`, `confirm`) carry a
   `requestId`; the shell answers with a `reply` command.
 
 ### Security rules for the shell
@@ -155,6 +159,9 @@ What the app does, for regression testing by hand.
 - [ ] Session restore (`session.json`: tabs, active index, bounds; http(s) tabs only; bounds ≥400×300); min size 760×540; default 1280×840
 - [ ] Link policy (above); `window.open` to Vesper/playground → new tab; external → default browser
 - [ ] Offline / stack-error state in the window with Retry, Restart Stack, Show Logs
+- [ ] Right-click on a chat message or a board card: native menu (selected text, fields and links in messages keep the system menu); right place at every zoom level
+- [ ] `confirmAction` (delete a chat, discard edits, cancel a run…) is a sheet on the window: Return confirms, Esc cancels, the custom cancel label works; page `alert`/`confirm`/`prompt` are sheets too
+- [ ] Overscroll past the top/bottom of a page shows the palette's background (dark, Gruvbox), not white
 - [ ] Quit confirmation when runs are active (`power.confirmQuitWithActiveRuns`)
 
 **Menus**
