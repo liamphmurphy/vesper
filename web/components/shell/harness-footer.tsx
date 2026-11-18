@@ -5,9 +5,39 @@ import { Popover } from "radix-ui";
 import { useState } from "react";
 import { usePersonaDock } from "@/lib/api/hooks";
 import { ANTIGRAVITY, checkedAgo, connectedHarnesses, harnessWorking, sessionPercent, usageSub, usageTone, type HarnessActivity } from "@/lib/harness-activity";
+import type { HarnessRailInput } from "@/lib/native-shell/models/rail";
 import { HarnessCharacter } from "./harness-character";
 
 const status = (h: HarnessActivity) => (h.limited_until ? "limited" : harnessWorking(h) ? "working" : "idle");
+
+const NATIVE_LOOK: Record<string, { initials: string; color: string }> = {
+  "claude-code": { initials: "CC", color: "#F2A97E" },
+  codex: { initials: "CX", color: "#B09AEF" },
+  antigravity: { initials: "AG", color: "#78BFDE" },
+};
+
+/** The harnesses as the Mac app's native rail shows them: an avatar, a state and the usage bubble's lines. */
+export function harnessRailInputs(harnesses: HarnessActivity[]): HarnessRailInput[] {
+  return harnesses.map((h) => {
+    const pct = sessionPercent(h);
+    const primary = h.usage_available ? h.windows.find((w) => w.kind === "session") ?? h.windows[0] : undefined;
+    const look = NATIVE_LOOK[h.harness] ?? { initials: h.label.slice(0, 2).toUpperCase(), color: "#8A8F98" };
+    return {
+      harness: h.harness,
+      label: h.label,
+      ...look,
+      state: status(h),
+      lines: [
+        pct === null
+          ? primary ? `${primary.label} allowance used` : h.usage_checking ? "Checking usage…" : h.harness === ANTIGRAVITY ? "Allowance not reported" : "Usage unavailable"
+          : `${pct}% ${primary ? `${primary.label} allowance` : "allowance"} used`,
+        h.limited_until ? "Limited" : harnessWorking(h) ? `${h.running} working` : "Idle",
+        usageSub(h, harnesses),
+        checkedAgo([h]),
+      ].filter(Boolean),
+    };
+  });
+}
 
 /** One harness's reading, shown in a bubble beside its character. */
 function UsageBubble({ h, all, onNavigate }: { h: HarnessActivity; all: HarnessActivity[]; onNavigate: () => void }) {

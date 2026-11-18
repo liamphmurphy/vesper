@@ -412,7 +412,7 @@ export function Dock({
             {railControls}
           </nav>
         ) : (
-          <RightRailPortal>
+          <RightRailPortal native={{ tabs, activeId: active?.id, expanded, dispatch }}>
             <nav aria-label="Panel rail" className="flex w-full flex-col items-center gap-2">
               {railControls}
             </nav>

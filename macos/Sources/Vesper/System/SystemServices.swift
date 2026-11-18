@@ -19,6 +19,8 @@ final class SystemServices {
     private var monitoredConnection: Connection?
 
     private(set) var items: [InboxItem] = []
+    /// The inbox as the right rail's Needs-you popover reads it (observable; `items` isn't).
+    let railInbox = RailInbox()
     private(set) var liveRuns: [RunSummary] = []
     private(set) var badgeCount = 0
     private(set) var pausedByVesper = Set<String>()
@@ -44,6 +46,14 @@ final class SystemServices {
     }
 
     private var settings: NativeSettings { app?.settings.settings ?? NativeSettings() }
+    var nativeSettings: NativeSettings { settings }
+
+    /// Sends an API call as the signed-in user, then refreshes the inbox (the right rail's popover).
+    func sendRailCall(_ call: APICall) async throws {
+        guard let client else { throw APIError.unreachable }
+        _ = try await client.send(call)
+        await inboxMonitor.refreshNow()
+    }
 
     // MARK: Start
 
@@ -71,6 +81,7 @@ final class SystemServices {
         }
         inboxMonitor.onItems = { [weak self] items in
             self?.items = items
+            self?.railInbox.items = items
             self?.refreshTray()
         }
         inboxMonitor.onAlert = { [weak self] alert in self?.showAlert(alert) }
@@ -116,6 +127,7 @@ final class SystemServices {
         dock.stopPersonaRefresh()
         power.reset()
         items = []
+        railInbox.items = []
         liveRuns = []
         badgeCount = 0
         dock.setBadge("")

@@ -68,6 +68,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
             sidebarItem = item
         }
         split.addSplitViewItem(NSSplitViewItem(viewController: container))
+        container.installRail(
+            tabs: tabs, send: { [weak self] in self?.send($0) },
+            services: { [weak app] in app?.system })
         window.contentViewController = split
         window.setContentSize(Self.defaultSize)
         window.center()
