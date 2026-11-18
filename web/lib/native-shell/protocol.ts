@@ -159,6 +159,40 @@ export interface ToolbarItem {
   on?: boolean;
   disabled?: boolean;
   accent?: boolean;
+  /** Show the label as text next to the icon or avatar (e.g. "Start playground", a repo name). */
+  showsLabel?: boolean;
+  /** A picture or initials instead of the icon (e.g. the chat's persona). */
+  avatar?: Avatar;
+  /** "leading": right after the title (or the tabs); "trailing" (default): before the shell's own items. */
+  placement?: "leading" | "trailing";
+}
+
+/** One button in the right rail. */
+export interface RailItem {
+  id: string;
+  label: string;
+  icon?: IconRef;
+  avatar?: Avatar;
+  /** A count or a dot. */
+  badge?: { text?: string; tone?: Tone };
+  /** A status dot on the icon (e.g. the agent harness's health). */
+  status?: Tone;
+  /** Selected (an open dock tab, the current page's link). */
+  active?: boolean;
+  /**
+   * "needsYou": the shell shows its own Needs-you popover (the inbox it already monitors) instead
+   * of sending rail.action. Everything else sends rail.action, or opens `menu` when it has one.
+   */
+  kind?: "button" | "needsYou";
+  menu?: MenuItem[];
+  disabled?: boolean;
+}
+
+/** The right rail, top to bottom: the page's dock controls, then status, then links. */
+export interface RailModel {
+  top: RailItem[];
+  middle: RailItem[];
+  foot: RailItem[];
 }
 
 export type ApprovalScope = "run_approvals" | "push_requests" | "connector_approvals" | "secret_approvals";
@@ -169,7 +203,10 @@ export type ColorMode = "dark" | "light";
 export type PageMessage =
   | { v: 1; type: "ready"; path: string }
   | { v: 1; type: "route"; path: string; area: AreaId | null }
-  | { v: 1; type: "title"; title: string; subtitle?: string }
+  /** menu: the title's own menu (rename, archive…), shown on a chevron next to the title. */
+  | { v: 1; type: "title"; title: string; subtitle?: string; menu?: MenuItem[] }
+  /** The right rail; null: the page has none (the shell hides its rail). */
+  | { v: 1; type: "rail"; model: RailModel | null }
   | { v: 1; type: "shell"; model: ShellModel }
   | { v: 1; type: "navigator"; model: NavModel | null }
   /** True while the page shows a screen's list in its own fallback column (not yet described). */
@@ -191,6 +228,8 @@ export type NativeCommand =
   | { v: 1; type: "nav.search"; navigatorId: string; searchId: string; value: string }
   | { v: 1; type: "nav.toggle"; navigatorId: string; itemId: string; expanded: boolean }
   | { v: 1; type: "toolbar.action"; itemId: string; menuItemId?: string }
+  | { v: 1; type: "title.action"; menuItemId: string }
+  | { v: 1; type: "rail.action"; itemId: string; menuItemId?: string }
   /** macOS's accent colour ("#RRGGBB") and effective appearance; sent when the page is ready and whenever either changes. */
   | { v: 1; type: "appearance"; accent: string; mode: ColorMode }
   /** query only applies to openCommandMenu: the text to open the palette with (the toolbar search field). */
@@ -218,6 +257,7 @@ const PAGE_TYPES = new Set([
   "ready",
   "route",
   "title",
+  "rail",
   "shell",
   "navigator",
   "navigatorFallback",
@@ -227,7 +267,7 @@ const PAGE_TYPES = new Set([
   "openWorkspaceMenu",
   "contextMenu",
 ]);
-const COMMAND_TYPES = new Set(["navigate", "nav.activate", "nav.action", "nav.picker", "nav.filter", "nav.search", "nav.toggle", "toolbar.action", "command", "reply", "appearance"]);
+const COMMAND_TYPES = new Set(["navigate", "nav.activate", "nav.action", "nav.picker", "nav.filter", "nav.search", "nav.toggle", "toolbar.action", "title.action", "rail.action", "command", "reply", "appearance"]);
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 

@@ -19,6 +19,10 @@ final class ShellState {
     /// The web view's own document title, used until the page sends its `title` message.
     var documentTitle: String?
     var subtitle: String?
+    /// The title's own menu (rename, archive…), from the page's `title` message.
+    var titleMenu: [MenuItem]?
+    /// The right rail the page describes; nil when it has none.
+    var rail: RailModel?
     var route: String?
     var area: AreaId?
     /// The page has sent `ready`: commands will be heard.

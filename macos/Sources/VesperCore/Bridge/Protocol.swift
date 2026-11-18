@@ -237,11 +237,59 @@ public struct ToolbarItem: Codable, Sendable, Hashable, Identifiable {
     public var on: Bool?
     public var disabled: Bool?
     public var accent: Bool?
+    /// Show the label as text next to the icon or avatar.
+    public var showsLabel: Bool?
+    /// A picture or initials instead of the icon.
+    public var avatar: Avatar?
+    /// Right after the title (or tabs), or (default) before the shell's own items.
+    public var placement: ToolbarPlacement?
 
     public init(id: String, label: String, icon: String? = nil, kind: ToolbarItemKind, menu: [MenuItem]? = nil,
-                on: Bool? = nil, disabled: Bool? = nil, accent: Bool? = nil) {
+                on: Bool? = nil, disabled: Bool? = nil, accent: Bool? = nil, showsLabel: Bool? = nil,
+                avatar: Avatar? = nil, placement: ToolbarPlacement? = nil) {
         self.id = id; self.label = label; self.icon = icon; self.kind = kind; self.menu = menu
         self.on = on; self.disabled = disabled; self.accent = accent
+        self.showsLabel = showsLabel; self.avatar = avatar; self.placement = placement
+    }
+}
+
+public enum ToolbarPlacement: String, Codable, Sendable, Hashable {
+    case leading, trailing
+}
+
+/// One button in the right rail (protocol.ts RailItem).
+public struct RailItem: Codable, Sendable, Hashable, Identifiable {
+    public var id: String
+    public var label: String
+    public var icon: String?
+    public var avatar: Avatar?
+    public var badge: AreaBadge?
+    public var status: Tone?
+    public var active: Bool?
+    /// .needsYou: the shell shows its own Needs-you popover instead of sending rail.action.
+    public var kind: RailItemKind?
+    public var menu: [MenuItem]?
+    public var disabled: Bool?
+
+    public init(id: String, label: String, icon: String? = nil, avatar: Avatar? = nil, badge: AreaBadge? = nil, status: Tone? = nil,
+                active: Bool? = nil, kind: RailItemKind? = nil, menu: [MenuItem]? = nil, disabled: Bool? = nil) {
+        self.id = id; self.label = label; self.icon = icon; self.avatar = avatar; self.badge = badge; self.status = status
+        self.active = active; self.kind = kind; self.menu = menu; self.disabled = disabled
+    }
+}
+
+public enum RailItemKind: String, Codable, Sendable, Hashable {
+    case button, needsYou
+}
+
+/// The right rail, top to bottom: the page's dock controls, then status, then links.
+public struct RailModel: Codable, Sendable, Hashable {
+    public var top: [RailItem]
+    public var middle: [RailItem]
+    public var foot: [RailItem]
+
+    public init(top: [RailItem] = [], middle: [RailItem] = [], foot: [RailItem] = []) {
+        self.top = top; self.middle = middle; self.foot = foot
     }
 }
 
@@ -258,7 +306,10 @@ public enum ApprovalScope: String, Codable, Sendable, Hashable {
 public enum PageMessage: Sendable, Equatable, Decodable {
     case ready(path: String)
     case route(path: String, area: AreaId?)
-    case title(title: String, subtitle: String?)
+    /// `menu`: the title's own menu (rename, archive…), on a chevron next to the title.
+    case title(title: String, subtitle: String?, menu: [MenuItem]? = nil)
+    /// The right rail; nil: the page has none.
+    case rail(RailModel?)
     case shell(ShellModel)
     case navigator(NavModel?)
     case navigatorFallback(active: Bool)
@@ -269,7 +320,7 @@ public enum PageMessage: Sendable, Equatable, Decodable {
     case contextMenu(requestId: String, items: [MenuItem], x: Double, y: Double)
 
     private enum Keys: String, CodingKey {
-        case v, type, path, area, title, subtitle, model, active, items, requestId, scope, folder, x, y, mode
+        case v, type, path, area, title, subtitle, model, active, items, requestId, scope, folder, x, y, mode, menu
     }
 
     public init(from decoder: Decoder) throws {
@@ -285,7 +336,10 @@ public enum PageMessage: Sendable, Equatable, Decodable {
         case "route":
             self = .route(path: try c.decode(String.self, forKey: .path), area: try c.decodeIfPresent(AreaId.self, forKey: .area))
         case "title":
-            self = .title(title: try c.decode(String.self, forKey: .title), subtitle: try c.decodeIfPresent(String.self, forKey: .subtitle))
+            self = .title(title: try c.decode(String.self, forKey: .title), subtitle: try c.decodeIfPresent(String.self, forKey: .subtitle),
+                          menu: try c.decodeIfPresent([MenuItem].self, forKey: .menu))
+        case "rail":
+            self = .rail(try c.decodeIfPresent(RailModel.self, forKey: .model))
         case "shell":
             self = .shell(try c.decode(ShellModel.self, forKey: .model))
         case "navigator":
@@ -334,6 +388,10 @@ public enum NativeCommand: Sendable, Equatable, Codable {
     case navSearch(navigatorId: String, searchId: String, value: String)
     case navToggle(navigatorId: String, itemId: String, expanded: Bool)
     case toolbarAction(itemId: String, menuItemId: String? = nil)
+    /// An item chosen from the title's menu.
+    case titleAction(menuItemId: String)
+    /// A right-rail button, or an item from its menu.
+    case railAction(itemId: String, menuItemId: String? = nil)
     /// macOS's accent colour ("#RRGGBB") and effective appearance.
     case appearance(accent: String, mode: ColorMode)
     /// `query` only means something for openCommandMenu: the text to open the palette with.
@@ -372,6 +430,10 @@ public enum NativeCommand: Sendable, Equatable, Codable {
             self = .navToggle(navigatorId: try c.decode(String.self, forKey: .navigatorId), itemId: try c.decode(String.self, forKey: .itemId), expanded: try c.decode(Bool.self, forKey: .expanded))
         case "toolbar.action":
             self = .toolbarAction(itemId: try c.decode(String.self, forKey: .itemId), menuItemId: try c.decodeIfPresent(String.self, forKey: .menuItemId))
+        case "title.action":
+            self = .titleAction(menuItemId: try c.decode(String.self, forKey: .menuItemId))
+        case "rail.action":
+            self = .railAction(itemId: try c.decode(String.self, forKey: .itemId), menuItemId: try c.decodeIfPresent(String.self, forKey: .menuItemId))
         case "command": self = .command(try c.decode(ShellCommandName.self, forKey: .name), query: try c.decodeIfPresent(String.self, forKey: .query))
         case "reply":
             let selected: String??
@@ -411,6 +473,10 @@ public enum NativeCommand: Sendable, Equatable, Codable {
             try c.encode("nav.toggle", forKey: .type); try c.encode(nav, forKey: .navigatorId); try c.encode(item, forKey: .itemId); try c.encode(expanded, forKey: .expanded)
         case .toolbarAction(let item, let menuItem):
             try c.encode("toolbar.action", forKey: .type); try c.encode(item, forKey: .itemId); try c.encodeIfPresent(menuItem, forKey: .menuItemId)
+        case .titleAction(let menuItem):
+            try c.encode("title.action", forKey: .type); try c.encode(menuItem, forKey: .menuItemId)
+        case .railAction(let item, let menuItem):
+            try c.encode("rail.action", forKey: .type); try c.encode(item, forKey: .itemId); try c.encodeIfPresent(menuItem, forKey: .menuItemId)
         case .command(let name, let query):
             try c.encode("command", forKey: .type); try c.encode(name, forKey: .name)
             try c.encodeIfPresent(query, forKey: .query)

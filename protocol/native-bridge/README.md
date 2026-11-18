@@ -30,3 +30,8 @@ in the same commit.
   applies the accent to its macOS palette. Page → shell `appearance {mode}` is the page's effective
   colour mode, sent whenever it changes; the shell sets the window's appearance to match (and
   leaves the window on the system appearance when they agree).
+
+Toolbar items may show their label (`showsLabel`), an `avatar`, and sit next to the title
+(`placement: "leading"`) or before the shell's own items (default). A `title` message may carry a
+`menu`, answered with `title.action`. The right rail (`rail` message, `rail.action` command) has
+three groups; an item of kind `needsYou` opens the shell's own Needs-you popover.

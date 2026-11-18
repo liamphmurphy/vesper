@@ -61,9 +61,11 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
             state.route = path
             state.area = area
             onRouteChange?()
-        case .title(let title, let subtitle):
+        case .title(let title, let subtitle, let menu):
             state.title = title
             state.subtitle = subtitle
+            state.titleMenu = menu
+        case .rail(let model): state.rail = model
         case .shell(let model): state.shell = model
         case .navigator(let model): state.navigator = model
         case .navigatorFallback(let active): state.navigatorFallback = active
@@ -130,7 +132,8 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
         switch m {
         case .ready(let p): "ready \(p)"
         case .route(let p, let a): "route \(p) area=\(a?.rawValue ?? "nil")"
-        case .title(let t, _): "title \(t)"
+        case .title(let t, _, _): "title \(t)"
+        case .rail(let m): "rail \(m == nil ? "none" : "items")"
         case .shell(let s): "shell areas=\(s.areas.count) apps=\(s.apps.count)"
         case .navigator(let n): "navigator \(n?.id ?? "nil")"
         case .navigatorFallback(let a): "navigatorFallback \(a)"
