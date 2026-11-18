@@ -334,7 +334,9 @@ function WebRail() {
 /**
  * The shell's right-hand column (wide screens): the page's own dock when it has one, else the
  * default companion, alongside the permanent right rail. Sticky to the viewport like the left
- * column, and the positioning context a narrow window's overlaid dock floats from.
+ * column, and the positioning context a narrow window's overlaid dock floats from. Being sticky,
+ * it is also the stacking context that dock's z-index lives in, so the column itself sits above
+ * the page: else the Mac app's floating composer (z-index 10, native-mac.css) draws over the dock.
  */
 export function CompanionColumn() {
   const claimed = useSyncExternalStore(subscribeCompanion, companionClaimed, () => false);
@@ -343,7 +345,7 @@ export function CompanionColumn() {
     <div
       data-companion-column
       className={cx(
-        "relative flex min-h-0 flex-none min-[612px]:sticky min-[612px]:top-0 min-[612px]:h-dvh",
+        "relative z-20 flex min-h-0 flex-none min-[612px]:sticky min-[612px]:top-0 min-[612px]:h-dvh",
         readingFocus && "hidden",
       )}
     >
