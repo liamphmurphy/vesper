@@ -49,7 +49,6 @@ function redirectIfSignedOut(response: Response) {
   if (response.status === 401 && typeof window !== "undefined" && window.location.pathname !== SIGN_IN_PAGE) {
     // A full load on purpose: this runs outside React, and the page needs
     // nothing from the signed-out app.
-    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
     window.location.assign(SIGN_IN_PAGE);
   }
 }

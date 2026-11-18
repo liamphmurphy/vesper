@@ -1,8 +1,8 @@
-import { Suspense } from "react";
+import { Suspense, use } from "react";
 import { SpaceScreen } from "../_components/space-screen";
 
-async function Loader({ params }: { params: PageProps<"/spaces/[id]">["params"] }) {
-  const { id } = await params;
+function Loader({ params }: { params: PageProps<"/spaces/[id]">["params"] }) {
+  const { id } = use(params);
   return <SpaceScreen id={decodeURIComponent(id)} />;
 }
 

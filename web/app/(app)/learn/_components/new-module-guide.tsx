@@ -113,7 +113,7 @@ function focusStep(layer?: HTMLElement) {
 }
 
 /** The New Learning Module button and the guided steps it opens. */
-export function NewModuleGuide() {
+export function NewModuleGuide({ open: openProp, onOpenChange, hideTrigger }: { open?: boolean; onOpenChange?: (open: boolean) => void; hideTrigger?: boolean } = {}) {
   const router = useRouter();
   const search = useSearchParams();
   const boot = useBootstrap();
@@ -121,7 +121,10 @@ export function NewModuleGuide() {
   const personas = usePersonas();
   const models = useChatModels();
   const create = useCreateCourse();
-  const [open, setOpen] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
+  // The page may hold the open state (the Mac app opens it from the window's toolbar).
+  const open = openProp ?? ownOpen;
+  const setOpen = onOpenChange ?? setOwnOpen;
   const [step, setStep] = useState(0);
   const [leaving, setLeaving] = useState<number | null>(null);
   const [direction, setDirection] = useState<"forward" | "back">("forward");
@@ -226,9 +229,11 @@ export function NewModuleGuide() {
 
   return (
     <Dialog.Root open={open} onOpenChange={(o) => { setOpen(o); setLeaving(null); }}>
-      <Dialog.Trigger asChild>
-        <Button variant="primary" icon="plus">New Learning Module</Button>
-      </Dialog.Trigger>
+      {!hideTrigger && (
+        <Dialog.Trigger asChild>
+          <Button variant="primary" icon="plus">New Learning Module</Button>
+        </Dialog.Trigger>
+      )}
       <Dialog.Portal>
         <Dialog.Overlay className="motion-scrim fixed inset-0 z-40 bg-scrim" />
         <Dialog.Content

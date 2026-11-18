@@ -29,7 +29,7 @@ function Thumbnail({ a }: { a: Artifact }) {
   const c = a.current_version.content;
   if (a.type === "mockup" || (c.kind === "file" && c.content_type.startsWith("image/"))) {
     return (
-      // eslint-disable-next-line @next/next/no-img-element -- user uploads, served by the API
+      // user uploads, served by the API
       <img
         src={contentUrl(a.id, a.current_version.id)}
         alt={`Preview of ${a.title}`}

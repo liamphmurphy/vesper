@@ -132,7 +132,6 @@ function StillGrid({ chatId, v, dim }: { chatId: string; v: ChatVideo; dim?: boo
       {stills.map((f) => (
         <div key={f.idx} className="relative aspect-video overflow-hidden rounded-md bg-surface-sunken">
           {/* A same-origin, private URL: next/image would only add a proxy hop. */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={frameUrl(chatId, v, "still", f.idx)} alt={`Frame ${f.idx}`} className="block size-full object-cover" />
           <span className="absolute bottom-1 left-1.5 text-10 text-[#fff] [text-shadow:0_1px_2px_#000]">frame {f.idx}</span>
           {!dim && <span className="absolute right-1.5 top-1 text-11 text-[#fff] [text-shadow:0_1px_2px_#000]" aria-hidden>✓</span>}
@@ -187,7 +186,6 @@ function Rendering({ chatId, v, onStop }: { chatId: string; v: ChatVideo; onStop
   return (
     <div className="p-3">
       <div className="relative aspect-video overflow-hidden rounded-lg bg-[#000]">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
         {src ? <img src={src} alt="The latest rendered frame" className="block size-full object-cover" /> : <div className="video-shimmer size-full" />}
         <span className="absolute left-2 top-2 rounded bg-[rgb(0_0_0/0.65)] px-1.5 py-0.5 text-11 text-[#fff]"><span className="video-blink text-state-blocked">●</span> {badge}</span>
         {v.frames_total > 0 && <span className="absolute right-2 top-2 rounded bg-[rgb(0_0_0/0.65)] px-1.5 py-0.5 font-mono text-11 text-[#fff]" data-testid="video-frames">{v.frames_done} / {v.frames_total}</span>}
@@ -208,7 +206,6 @@ function Rendering({ chatId, v, onStop }: { chatId: string; v: ChatVideo; onStop
       <div className="mt-2.5 grid grid-cols-[repeat(30,minmax(0,1fr))] gap-0.5" data-testid="video-strip" aria-label="Filmstrip">
         {Array.from({ length: 30 }, (_, i) => (
           <div key={i} className="aspect-video overflow-hidden rounded-[2px] bg-surface-sunken">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
             {cells.has(i) && <img src={frameUrl(chatId, v, "strip", i)} alt="" className="block size-full object-cover" />}
           </div>
         ))}

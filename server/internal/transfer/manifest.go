@@ -1,5 +1,5 @@
 // Package transfer moves a whole Vesper instance between machines: every
-// Postgres table and every object in the S3 store, in one zip archive.
+// Postgres table and every object in the blob store, in one zip archive.
 //
 // Nothing here lists tables or buckets by hand. Export reads the catalog and
 // the bucket listing, so a table or bucket added later travels automatically;
@@ -67,7 +67,7 @@ type ObjectEntry struct {
 	Entry       string `json:"entry"`
 }
 
-// Blobs is the object store the archive reads from and writes to (blob.Store).
+// Blobs is the blob store the archive reads from and writes to (blob.Store).
 type Blobs interface {
 	ListBuckets(ctx context.Context) ([]string, error)
 	List(ctx context.Context, bucket string, fn func(blob.Info) error) error

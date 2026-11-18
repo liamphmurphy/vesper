@@ -13,10 +13,7 @@ playground gateway keeps the `vesper_session` cookie for the outer Vesper.
   "services": [
     { "name": "postgres", "image": "postgres:17-alpine",
       "env": { "POSTGRES_USER": "lazyagents", "POSTGRES_PASSWORD": "lazyagents", "POSTGRES_DB": "lazyagents" },
-      "healthcheck": ["CMD-SHELL", "pg_isready -U lazyagents -d lazyagents"] },
-    { "name": "s3", "image": "chrislusf/seaweedfs:4.48",
-      "command": ["server", "-s3", "-dir=/data", "-ip.bind=0.0.0.0", "-master.volumeSizeLimitMB=64"],
-      "tmpfs": ["/data"], "healthcheck": ["CMD-SHELL", "nc -z 127.0.0.1 8333"] }
+      "healthcheck": ["CMD-SHELL", "pg_isready -U lazyagents -d lazyagents"] }
   ],
   "setup": [
     "(cd web && { [ -d node_modules ] || npm ci; })",
@@ -27,12 +24,12 @@ playground gateway keeps the `vesper_session` cookie for the outer Vesper.
     { "name": "api", "dir": "server", "port": 8000,
       "command": "(until curl -sf http://localhost:8000/api/v1/health >/dev/null; do sleep 1; done; exec /workspace/.lazyagents/pgbin/vesper runner) & exec /workspace/.lazyagents/pgbin/vesper serve",
       "env": { "DATABASE_URL": "postgres://lazyagents:lazyagents@postgres:5432/lazyagents?sslmode=disable",
-               "S3_ENDPOINT": "http://s3:8333", "API_ADDR": "0.0.0.0:8000", "VESPER_NO_SIGNIN": "1",
+               "BLOB_DIR": "/tmp/blobs", "API_ADDR": "0.0.0.0:8000", "VESPER_NO_SIGNIN": "1",
                "RUNNER_BACKEND": "fake", "RUNNER_MCP_URL": "http://localhost:8000/mcp", "RUNNER_DATA_DIR": "/tmp/runs",
                "RUNNER_CLAUDE_BIN": "/workspace/.lazyagents/pgbin/claude", "RUNNER_CODEX_BIN": "/workspace/.lazyagents/pgbin/codex",
                "RUNNER_ANTIGRAVITY_BIN": "/workspace/.lazyagents/pgbin/agy",
                "FAKE_HARNESS_MODE": "chat-read" } },
-    { "name": "web", "dir": "web", "port": 3000, "command": "npm run dev -- -H 0.0.0.0 -p 3000",
+    { "name": "web", "dir": "web", "port": 3000, "command": "npm run dev -- --host 0.0.0.0 --port 3000",
       "env": { "API_INTERNAL_URL": "http://api:8000" } }
   ],
   "routes": [
@@ -62,14 +59,27 @@ playground gateway keeps the `vesper_session` cookie for the outer Vesper.
 - Wrap each setup command in `( … )` so a `cd` stays inside it, and keep each
   process's `dir` one that already exists: Docker creates a missing one as
   root, and nothing can write there afterwards.
-- The first start compiles the API and starts `next dev`, which takes a few
-  minutes. Call `playground_status` until it's running, and read `log` if it
+- The first start compiles the API and starts the Vite dev server, which takes a
+  minute. Call `playground_status` until it's running, and read `log` if it
   failed.
+
+## Headless mode
+
+Vesper ships as the native Swift macOS app in `macos/` (`make mac-app`, `mac-run`,
+`mac-dmg`, `mac-test`; see `docs/dev/native-mac-app.md`). It supervises `vesper app`:
+embedded Postgres, a local-directory blob store, microVM runner. Staged resources
+live in the git-ignored `macos/staged/` (`scripts/stage-mac-resources.sh`). Never
+run `make -C macos reinstall` or touch `/Applications/Vesper.app` or the real data
+dir from an agent run. CI and the playground run it headless instead:
+`vesper serve` (the API, against `DATABASE_URL`) and `vesper runner` with
+`RUNNER_BACKEND=fake`, blobs in `BLOB_DIR`. There is no Docker or S3 way to run
+it. The dev database for `make dev` is `make dev-infra` (a local Postgres 17
+from the app's bundle).
 
 ## Export and import (adding tables and buckets)
 
 `vesper export` / `vesper import` (`server/internal/transfer`) move a whole
-instance. They read the Postgres catalog and the S3 bucket listing, so **a new
+instance. They read the Postgres catalog and the blob store's buckets (one directory each), so **a new
 table or bucket is exported with no code change**. Don't add it to a list.
 
 - To keep a table out (a cache, a session, anything tied to this machine), add
@@ -78,10 +88,9 @@ table or bucket is exported with no code change**. Don't add it to a list.
 - Foreign-key cycles are handled by deferring one key; a new cycle needs nothing.
 - A migration that rewrites existing rows works on imported data too: import
   loads rows at the archive's schema version, then runs the newer migrations.
-- A new bucket needs nothing, but add it to the `S3_BUCKETS` default so export
-  finds it on stores that won't list buckets.
-- The real-store test runs when `TEST_S3_ENDPOINT` is set (dev compose
-  SeaweedFS); the rest run on `TEST_DATABASE_URL` alone.
+- A new bucket needs nothing for export; add it to the `BLOB_BUCKETS` default
+  so it's created at startup.
+- The transfer tests run on `TEST_DATABASE_URL` alone.
 
 ## Running the server tests
 

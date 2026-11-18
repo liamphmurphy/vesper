@@ -1,9 +1,9 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { PALETTES, COLOR_KEYS, DEFAULT_APPEARANCE, contrast, paletteTokens, parseAppearance, type ColorMode, type Tokens } from "@/lib/palettes";
+import { PALETTES, COLOR_KEYS, contrast, paletteTokens, parseAppearance, type ColorMode, type Tokens } from "@/lib/palettes";
 import { hexToHsl, hslToHex } from "@/lib/persona-ui";
-import { ThemeSwitch, useAppearance, useAppearanceStorage } from "@/components/shell/theme";
+import { defaultAppearance, ThemeSwitch, useAppearance, useAppearanceStorage } from "@/components/shell/theme";
 import { ColorWheel } from "@/components/ui/color-wheel";
 import { Button } from "@/components/ui/button";
 import { Card, TextInput } from "@/components/ui/primitives";
@@ -89,7 +89,7 @@ export function AppearanceSection() {
         {!custom && <Button onClick={() => update({ ...settings, palette: "custom", custom: { base: settings.palette, dark: {}, light: {} } })}>Customize this palette</Button>}
         <Button variant="outline" onClick={exportSettings}>Export palette</Button>
         <Button variant="outline" onClick={() => upload.current?.click()}>Import palette</Button>
-        <Button variant="ghost" onClick={() => { update({ ...DEFAULT_APPEARANCE, showHarnessActivity: settings.showHarnessActivity, textSize: settings.textSize }); setMessage("Palette reset to Neutral."); }}>Reset palette</Button>
+        <Button variant="ghost" onClick={() => { const reset = defaultAppearance(); update({ ...reset, showHarnessActivity: settings.showHarnessActivity, textSize: settings.textSize }); setMessage(`Palette reset to ${PALETTES.find((p) => p.id === reset.palette)?.name ?? "the default"}.`); }}>Reset palette</Button>
         <input ref={upload} aria-label="Palette JSON file" type="file" accept=".json,application/json" className="sr-only" onChange={async (e) => {
           const file = e.target.files?.[0];
           e.target.value = "";

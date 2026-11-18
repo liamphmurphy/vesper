@@ -1,8 +1,8 @@
-import { Suspense } from "react";
+import { Suspense, use } from "react";
 import { PresentDesign } from "./present-design";
 
-async function Loader({ params }: { params: PageProps<"/present/designs/[id]">["params"] }) {
-  const { id } = await params;
+function Loader({ params }: { params: PageProps<"/present/designs/[id]">["params"] }) {
+  const { id } = use(params);
   return <PresentDesign id={id} />;
 }
 

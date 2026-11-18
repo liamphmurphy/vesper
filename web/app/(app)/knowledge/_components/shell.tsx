@@ -23,8 +23,11 @@ import { openCommandPalette } from "@/components/shell/command-menu";
 import { CaptureDialog } from "./capture";
 import { ImportDialog } from "./import-dialog";
 import { KnowledgeDock } from "./knowledge-dock";
+import { buildKnowledgeNavModel, K } from "@/lib/native-shell/models/knowledge";
+import { useIsNativeShell } from "@/lib/native-shell/hooks";
+import type { NativeCommand } from "@/lib/native-shell/protocol";
 import { KnowledgeChatProvider, useKnowledgeChat } from "./chat-context";
-import { DeleteDialog, ExplorerMenu, MoveDialog, NewFolderDialog, RenameField, type ExplorerTarget, type MenuEntry } from "./explorer-actions";
+import { DeleteDialog, ExplorerMenu, MoveDialog, NewFolderDialog, RenameDialog, RenameField, type ExplorerTarget, type MenuEntry } from "./explorer-actions";
 
 type View = "yours" | "agent";
 
@@ -608,9 +611,104 @@ function Explorer({ pathname }: { pathname: string }) {
   };
 
 
+  // The native sidebar's version of this list: the same state and handlers, driven by the shell's commands.
+  const native = useIsNativeShell();
+  const deck = useNewDeck();
+  const design = useCreateDesign();
+  const starters = useSlideStarters();
+  const [showAll, setShowAll] = useState<Set<string>>(new Set());
+  const rows = (pages.data ?? []) as TreeRow[];
+  const findFolder = (path: string): TreeFolder | undefined => {
+    const walk = (f: TreeFolder): TreeFolder | undefined => (f.path === path ? f : f.folders.map(walk).find(Boolean));
+    return walk(tree);
+  };
+  const nativeModel = buildKnowledgeNavModel({
+    view: k.view,
+    loading: pages.isPending,
+    tree,
+    pinned,
+    pinnedIds,
+    activeId,
+    open,
+    showAll,
+    pageHref: (p) => pageHref(p.id, p.title),
+    pageIcon: (p) => pageIcon(p as TreeRow),
+    deckStarters: starters.data ?? [],
+    designStarters: DESIGN_STARTERS,
+    busy: deck.pending || design.isPending,
+    todayLabel: today?.toLocaleDateString("en", { weekday: "short", month: "short", day: "numeric" }),
+  });
+  const nativeCommand = (cmd: NativeCommand) => {
+    if (cmd.type === "nav.picker" && cmd.pickerId === K.viewPicker) return k.setView(cmd.value as View);
+    if (cmd.type === "nav.toggle" && cmd.itemId.startsWith("f:")) {
+      const path = cmd.itemId.slice(2);
+      if (open.has(path) !== cmd.expanded) toggle(path);
+      return;
+    }
+    if (cmd.type === "nav.activate") {
+      const id = cmd.itemId;
+      if (id === K.today) k.openToday();
+      else if (id === K.capture) k.openCapture();
+      else if (id === K.import) k.openImport();
+      else if (id.startsWith("more:")) setShowAll((s) => new Set([...s, id.slice(5)]));
+      else if (id.startsWith("f:")) toggle(id.slice(2));
+      return;
+    }
+    if (cmd.type !== "nav.action") return;
+    const a = cmd.actionId;
+    if (!cmd.itemId) {
+      if (a === K.graph) router.push("/knowledge/graph");
+      else if (a === K.connect) router.push("/knowledge/connect");
+      else if (a === K.collapse) collapseAll();
+      else if (a === K.search) k.openSwitcher();
+      else if (a === K.newMenu && cmd.menuItemId) {
+        const m = cmd.menuItemId;
+        if (m === K.newDoc) newPage();
+        else if (m === K.newFolder) openDialog({ kind: "folder", parent: "" });
+        else if (m.startsWith("new:deck:")) {
+          const key = m.slice("new:deck:".length);
+          if (key === "blank") deck.start();
+          else deck.start(key as StarterKey);
+        } else if (m.startsWith("new:design:")) {
+          design.mutate(
+            { starter: m.slice("new:design:".length) as DesignStarter, title: "" },
+            { onSuccess: (d) => router.push(`/apps/designs/${d.id}`), onError: (e) => toast({ id: "new-design", tone: "error", title: "Couldn’t make the design", description: e.message }) },
+          );
+        }
+      }
+      return;
+    }
+    // A row's context menu: the action id is the menu item, the item id is the row.
+    const itemId = cmd.itemId;
+    if (itemId.startsWith("p:") || itemId.startsWith("pin:")) {
+      const id = itemId.slice(itemId.indexOf(":") + 1);
+      const p = rows.find((r) => r.id === id);
+      if (!p) return;
+      if (a === K.ask) chat.ask(p);
+      else if (a === K.pin) togglePin(p.id);
+      else if (a === K.rename) startRename(`p:${p.id}`);
+      else if (a === K.move) openDialog({ kind: "move", target: { kind: "page", page: p } });
+      else if (a === K.copyLink) void navigator.clipboard?.writeText(`[[${p.title}]]`);
+      else if (a === K.newBeside) newPageIn(parentOf(p.path));
+      else if (a === K.del) openDialog({ kind: "delete", target: { kind: "page", page: p } });
+    } else if (itemId.startsWith("f:")) {
+      const f = findFolder(itemId.slice(2));
+      if (!f) return;
+      if (a === K.ask) chat.askFolder({ path: f.path, pages: pagePaths(f, FOLDER_CONTEXT_PAGES), count: f.count });
+      else if (a === K.newPageIn) newPageIn(f.path);
+      else if (a === K.newFolderIn) openDialog({ kind: "folder", parent: f.path });
+      else if (a === K.rename) startRename(`f:${f.path}`);
+      else if (a === K.move) openDialog({ kind: "move", target: { kind: "folder", folder: f } });
+      else if (a === K.del) openDialog({ kind: "delete", target: { kind: "folder", folder: f } });
+    }
+  };
+  const renamingPage = renaming?.startsWith("p:") ? rows.find((r) => r.id === renaming.slice(2)) : undefined;
+  const renamingFolder = renaming?.startsWith("f:") ? findFolder(renaming.slice(2)) : undefined;
+
   return (
-    // The explorer is the left column's list on Knowledge screens, not a second sidebar beside it.
-    <NavigatorPortal>
+    <>
+    {/* The explorer is the left column's list on Knowledge screens, not a second sidebar beside it. */}
+    <NavigatorPortal native={{ model: nativeModel, onCommand: nativeCommand }}>
     <aside aria-label="Knowledge explorer" className="flex min-h-0 flex-1 flex-col">
       <div className="flex h-8 flex-none items-center gap-1 pl-4 pr-2.5">
         <span className="flex-1 text-13 font-semibold text-fg">Knowledge</span>
@@ -693,6 +791,8 @@ function Explorer({ pathname }: { pathname: string }) {
           Import Obsidian vault
         </button>
       </div>
+    </aside>
+    </NavigatorPortal>
       {dialog?.kind === "move" && (
         <MoveDialog
           target={dialog.target}
@@ -713,8 +813,13 @@ function Explorer({ pathname }: { pathname: string }) {
         />
       )}
       {dialog?.kind === "folder" && <NewFolderDialog parent={dialog.parent} pending={create.isPending} error={create.error?.message} onCreate={(n) => newFolder(dialog.parent, n)} onClose={closeDialog} />}
-    </aside>
-    </NavigatorPortal>
+      {native && renamingPage && (
+        <RenameDialog initial={renamingPage.title} error={movePage.error?.message} pending={movePage.isPending} onCommit={(name) => renamePage(renamingPage, name)} onCancel={() => setRenaming(null)} />
+      )}
+      {native && renamingFolder && (
+        <RenameDialog initial={renamingFolder.name} error={moveFolder.error?.message} pending={moveFolder.isPending} onCommit={(name) => renameFolder(renamingFolder, name)} onCancel={() => setRenaming(null)} />
+      )}
+    </>
   );
 }
 

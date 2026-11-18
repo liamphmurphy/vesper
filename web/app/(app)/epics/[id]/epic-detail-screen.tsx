@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import { api, unwrap, type Schemas } from "@/lib/api/client";
@@ -30,11 +31,18 @@ import { CompanionDock } from "@/components/shell/companion";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { WorkChat } from "@/components/domain/work-chat";
 import { WorkNavHeader, WorkSectionLabel } from "../../work/work-nav-header";
+import { buildEpicDetailNavModel } from "@/lib/native-shell/models/epic-detail";
+import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
+import { buildEpicToolbar } from "@/lib/native-shell/models/work-toolbars";
+import { useIsNativeShell } from "@/lib/native-shell/hooks";
+import { useNativeToolbar } from "@/lib/native-shell/use-native-toolbar";
+import { useNativeTitle } from "../../tickets/_components/native-title";
 
 type TicketSummary = Schemas["TicketSummary"];
 
 export function EpicDetailScreen({ epicId }: { epicId: string }) {
   const compact = useCompact();
+  const router = useRouter();
   const query = useEpicOverviews();
   const e = query.data?.find((x) => x.epic.id === epicId);
   const siblingEpics = (query.data ?? []).filter((x) => !e || x.project.key === e.project.key);
@@ -45,10 +53,24 @@ export function EpicDetailScreen({ epicId }: { epicId: string }) {
         { label: e.epic.name },
       ]
     : [{ label: "Epics", href: ticketsHref("epics") }];
+  // In the Mac app the header row is the window title and a toolbar button.
+  const native = useIsNativeShell();
+  useNativeTitle(e?.epic.name ?? "Epics", e?.project.name);
+  useNativeToolbar({ items: e ? buildEpicToolbar() : [], onAction: () => e && router.push(boardHref(e)) });
   return (
     <>
       {!compact && (
-        <NavigatorPortal>
+        <NavigatorPortal
+          native={{
+            model: buildEpicDetailNavModel({
+              project: e?.project.key,
+              projectName: e?.project.name,
+              epics: siblingEpics.map((x) => ({ id: x.epic.id, name: x.epic.name, done: x.epic.tickets_total - x.epic.tickets_open, total: x.epic.tickets_total })),
+              epicId,
+            }),
+            onCommand: (cmd) => handleWorkHeaderCommand(cmd, { project: e?.project.key, push: (href) => router.push(href), onProject: () => {}, onAgent: () => {} }),
+          }}
+        >
           <nav aria-label="Work" className="work-nav">
             <WorkNavHeader active="epics" project={e?.project.key} />
             <div className="work-nav-list">
@@ -92,14 +114,14 @@ export function EpicDetailScreen({ epicId }: { epicId: string }) {
           </nav>
         </NavigatorPortal>
       )}
-      <TopBar
+      {!native && <TopBar
         crumbs={crumbs}
         actions={e && (
           <>
             <ButtonLink variant="outline" icon="board" href={boardHref(e)}>View on board</ButtonLink>
           </>
         )}
-      />
+      />}
       <div className="flex min-h-0 flex-1">
       <div className="min-w-0 flex-1">
       <Content>

@@ -196,7 +196,7 @@ type VM interface {
    `VZMacPlatformConfiguration`), and Apple Silicon XNU (macOS 13+) supports
    native `AF_VSOCK`. Keeping the vsock guest-agent RPC OS-neutral and using a
    `BootConfig` union leaves a clean path to an opt-in `macos` guest runtime for
-   Apple-platform builds (`xcodebuild`, `make desktop-dmg`):
+   Apple-platform builds (`xcodebuild`, `make mac-dmg`):
    - `vesper-guest-agent` cross-compiles to `darwin/arm64` and runs as a
      `LaunchDaemon` (`launchd` owns PID 1; process-group/job cleanup replaces
      cgroups; `pf` `rdr` + `DIOCNATLOOK` replaces `iptables`; no Linux
@@ -457,11 +457,11 @@ and the runner container holds the host's Docker socket (`docker-compose.yml:108
 `docker-compose.dev.yml:79`). The desktop app (`desktop/src/main.ts:49, 663`) is
 a thin client pointed at `http://localhost:8080` that asks for a Vesper
 checkout containing `docker-compose.yml` and runs `docker compose up -d`
-(`desktop/src/docker.ts:105`). `make desktop-dmg` builds an unsigned arm64 DMG
-via `electron-builder` (`desktop/electron-builder.yml`, `desktop/package.json`).
+(`desktop/src/docker.ts:105`). `make mac-dmg` builds an unsigned arm64 DMG
+via `make mac-dmg` (`macos/Makefile`).
 
 **Target:** `vesper` must run natively on macOS to hold
-`com.apple.security.virtualization`, and `make desktop-dmg` builds a
+`com.apple.security.virtualization`, and `make mac-dmg` builds a
 **self-contained `Vesper.app`** carrying the whole local stack. Install is drag
 to Applications; first launch downloads `agent-base.erofs` (with progress) and
 opens Vesper, already signed in.
@@ -470,7 +470,7 @@ opens Vesper, already signed in.
 
 | Component in bundle | What it is | Replaces |
 |---|---|---|
-| **Electron shell** | Window, native tabs, notifications, menu bar tray (`desktop/`) | Thin client only |
+| **Mac shell** | Window, native tabs, notifications, menu bar tray (`macos/`; was Electron, see native-mac-app.md) | Thin client only |
 | **Next standalone server** | `web` built with `output: "standalone"` + `.next/static` + `public`, run via `ELECTRON_RUN_AS_NODE=1` (or utility process), preserving arm64 `@resvg/resvg-js` and `./public/fonts/designs/*.ttf` (`web/next.config.ts:8-10`); `API_INTERNAL_URL` pointed at `vesper app`'s loopback port | The `web` container |
 | **`vesper app` (`darwin/arm64`)** | Combined mode running `serve`, `runner`, `microvm` (`vz`) driver, Postgres supervisor, and single-origin HTTP mux in one process | `api`, `runner`, `Caddyfile` |
 | **Postgres 17 binaries (`darwin/arm64`)** | Relocatable `initdb` + `postgres` + `contrib` (`pg_trgm` is the sole extension in `server/migrations/00040_baseline.sql:19`), listening **only on a Unix domain socket** (`-k <userData>/postgres/run -h ""`) to avoid `:5432` conflicts and TCP SSRF | The `postgres` container |
@@ -482,11 +482,12 @@ opens Vesper, already signed in.
   verification.
 - **Single origin without Caddy:** `deploy/Caddyfile` routes `/api/*`, `/mcp`,
   `/mcp/*`, and `/events` to Go, returns `404` for external `/internal/*`, and
-  proxies the rest to Next. `vesper app` serves `/api/*`, `/mcp*`, `/events`
-  **in-process** (zero extra loopback proxy hop or SSE/MCP buffering), rejects
-  external `/internal/*` with `404`, points `DESIGN_WORKER_URL` at Next's
-  internal `127.0.0.1:<next-port>/internal/designs`, and reverse-proxies UI
-  routes to Next.
+  proxies the rest to the web container. `vesper app` serves `/api/*`, `/mcp*`,
+  `/events` **in-process** (zero extra loopback proxy hop or SSE/MCP buffering),
+  rejects external `/internal/*` with `404`, serves the UI's static build itself
+  (a real file, else `index.html`, so client routes load; `server/cmd/vesper/static.go`),
+  and points `DESIGN_WORKER_URL` at the design worker, a node process it starts
+  on `127.0.0.1:<port>/internal/designs` (`web/design-worker`).
 - **Blobs without SeaweedFS:** `blob.Store` (`server/internal/blob/blob.go:26`)
   gains a local-directory backend (`BLOB_DIR=<userData>/blobs`). I verified
   `server/` uses **zero** presigned URLs, so storing `<bucket>/<key>` with
@@ -552,7 +553,7 @@ logs/                       vesper, Postgres, Next, guest serial consoles
   2. Ad-hoc sign bundled Postgres Mach-O binaries/dylibs.
   3. Ad-hoc sign the outer `Vesper.app` bundle.
   Local builds launch directly; DMGs downloaded from elsewhere require
-  `xattr -cr /Applications/Vesper.app` once (`desktop/README.md`).
+  `xattr -cr /Applications/Vesper.app` once (`macos/README.md`).
 
 ## Feature mapping
 
@@ -679,7 +680,7 @@ this branch (build + sign helper on macOS:
   wire Electron stack supervision, Keychain `SECRETS_KEY`, automatic
   `sign-in-link`, menu bar tray lifecycle, `session.setDisplayMediaRequestHandler`,
   first-launch `agent-base.erofs` downloader, and inside-out DMG signing via
-  `make desktop-dmg`.
+  `make mac-dmg`.
 
 ## Remaining open questions
 

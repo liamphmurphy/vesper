@@ -10,6 +10,7 @@ import { docExtensions, parseDoc, serializeDoc } from "@/lib/doc-markdown";
 import { setHighlight } from "@/lib/canvas-dom";
 import { cx } from "@/lib/cx";
 import { ApiError } from "@/lib/api/client";
+import { addLeaveGuard } from "@/lib/leave-guard";
 
 export type SaveState = "saved" | "unsaved" | "saving" | "conflict" | "error";
 
@@ -198,9 +199,9 @@ export const DocEditor = forwardRef<DocEditorHandle, {
       void save();
       e.preventDefault();
     };
-    window.addEventListener("beforeunload", leave);
+    const removeLeave = addLeaveGuard(leave);
     return () => {
-      window.removeEventListener("beforeunload", leave);
+      removeLeave();
       if (edits.current) void save();
     };
     // save reads refs only.

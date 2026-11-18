@@ -1,0 +1,385 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { buildSettingsNavModel } from "./models/settings.ts";
+import { buildScheduledNavModel } from "./models/scheduled.ts";
+import { buildWorkflowsNavModel, buildWorkflowPaletteNavModel } from "./models/workflows.ts";
+import { buildCustomizationNavModel } from "./models/customization.ts";
+import { handleWorkHeaderCommand, workHeader, workTabHref } from "./models/work.ts";
+import { buildBoardNavModel } from "./models/board.ts";
+import { buildEpicsNavModel } from "./models/epics.ts";
+import { buildTicketNavModel } from "./models/ticket.ts";
+import { buildEpicDetailNavModel } from "./models/epic-detail.ts";
+import { buildRunsNavModel, buildWorkActivityNavModel } from "./models/runs.ts";
+import { buildStudyNavModel } from "./models/study.ts";
+import { buildWikiNavModel } from "./models/wiki.ts";
+import { buildKeepsakesNavModel, buildProjectDocsNavModel } from "./models/library.ts";
+import { projectPickerAction } from "./models/project-picker.ts";
+import { buildKnowledgeNavModel, K } from "./models/knowledge.ts";
+import { findNavItem } from "./nav-model.ts";
+
+const json = (m) => assert.equal(JSON.stringify(m), JSON.stringify(JSON.parse(JSON.stringify(m))));
+
+test("settings: health becomes a status, a missing credential a badge", () => {
+  const m = buildSettingsNavModel([
+    { id: "workspace", label: "Workspace", health: "ok" },
+    { id: "secrets", label: "Provider credentials", health: "attention", badge: "2 off" },
+    { id: "images", label: "Image engine", health: "idle" },
+  ]);
+  const items = m.sections[0].items;
+  assert.deepEqual(items.map((i) => [i.id, i.status]), [["workspace", "done"], ["secrets", "human"], ["images", undefined]]);
+  assert.deepEqual(items[1].badge, { text: "2 off", tone: "human" });
+  json(m);
+});
+
+test("scheduled: picker carries the counts, rows follow the filter, + creates", () => {
+  const all = [
+    { id: "a", name: "Brief", enabled: true, schedule: "Daily 08:00" },
+    { id: "b", name: "Digest", enabled: false, schedule: "Weekly" },
+  ];
+  const m = buildScheduledNavModel({ all, filter: "paused", open: "b" });
+  assert.deepEqual(m.picker.options.map((o) => o.label), ["All 2", "Active 1", "Paused 1"]);
+  assert.deepEqual(m.sections[0].items.map((i) => i.id), ["b"]);
+  assert.equal(m.selectedId, "b");
+  assert.equal(m.actions[0].id, "new-task");
+  assert.equal(buildScheduledNavModel({ all, filter: "all", open: "new" }).selectedId, null);
+  assert.equal(buildScheduledNavModel({ all: [], filter: "all", open: null }).sections[0].emptyText, "No scheduled tasks yet");
+  assert.equal(m.sections[0].items[0].status, undefined);
+  assert.equal(buildScheduledNavModel({ all, filter: "all", open: null }).sections[0].items[0].status, "done");
+});
+
+test("workflows list and the node palette", () => {
+  const m = buildWorkflowsNavModel({ workflows: [{ id: "w1", name: "Triage", published_version: 2 }, { id: "w2", name: "New", published_version: 0 }], runs: [{ id: "r1", name: "Triage" }] });
+  assert.deepEqual(m.sections[0].items.map((i) => [i.href, i.trailing]), [["/workflows/w1", "v2"], ["/workflows/w2", "Draft"]]);
+  assert.equal(m.sections[1].items[0].href, "/workflows/runs/r1");
+  assert.equal(buildWorkflowsNavModel({ workflows: [], runs: [] }).sections.length, 1);
+  const p = buildWorkflowPaletteNavModel({ palette: [{ group: "Steps", items: [{ type: "agent", label: "Agent step" }] }], disabled: true });
+  assert.deepEqual(p.sections[0].items[0], { id: "agent", title: "Agent step", icon: "plus", disabled: true });
+});
+
+test("customization: rail rows, selection, persona + space rows, new persona", () => {
+  const input = {
+    me: { name: "Liam Murphy" },
+    personas: [{ id: "p1", name: "Ada", color: "#9B8CFF", is_default: true }],
+    personasState: "ready",
+    spaces: [{ id: "s1", name: "Home", color: "#34D399", memory_count: 4 }],
+    who: "",
+    whose: "",
+    spaceParam: "",
+    canAddPersona: true,
+  };
+  const m = buildCustomizationNavModel(input);
+  assert.equal(m.selectedId, "everything");
+  assert.deepEqual(m.sections[0].items.map((i) => i.id), ["everything", "person", "connectors", "secrets"]);
+  assert.equal(m.sections[1].actions[0].id, "new-persona");
+  assert.deepEqual(m.sections[1].items[1].badge, { text: "Default", tone: "accent" });
+  assert.equal(m.sections[2].items[0].trailing, "4");
+  assert.equal(buildCustomizationNavModel({ ...input, whose: "p1" }).selectedId, "persona:p1");
+  assert.equal(buildCustomizationNavModel({ ...input, who: "personas" }).selectedId, "all-personas");
+  assert.equal(buildCustomizationNavModel({ ...input, who: "secrets" }).selectedId, "secrets");
+  assert.equal(buildCustomizationNavModel({ ...input, whose: "space:s1", spaceParam: "s1" }).selectedId, "space:s1");
+  assert.equal(buildCustomizationNavModel({ ...input, canAddPersona: false }).sections[1].actions, undefined);
+  assert.equal(buildCustomizationNavModel({ ...input, personasState: "error" }).sections[1].actions[0].id, "retry-personas");
+  json(m);
+});
+
+const projects = [{ key: "VES", name: "Vesper" }, { key: "OLD", name: "Old", archived: true }];
+const agents = [{ handle: "ada", name: "Ada" }];
+
+test("work header: new ticket, space and persona menus, tab picker with counts, search", () => {
+  const h = workHeader({ active: "tickets", project: "VES", projects, agents, agent: "ada", counts: { activity: 3, tickets: 12 }, search: { value: "x", placeholder: "Filter" } });
+  assert.deepEqual(h.actions.map((a) => a.id), ["new-ticket"]);
+  assert.deepEqual(h.filters.map((f) => f.id), ["filter-space", "filter-agent"]);
+  assert.deepEqual(h.filters[0].options.map((o) => [o.value, o.checked]), [["", false], ["VES", true]]);
+  assert.deepEqual(h.filters[1].options.map((o) => [o.value, o.checked]), [["", false], ["ada", true]]);
+  assert.deepEqual(h.picker.options.map((o) => o.label), ["Activity 3", "Tasks 12", "Epics"]);
+  assert.equal(h.picker.value, "tickets");
+  assert.equal(h.search.value, "x");
+  assert.deepEqual(workHeader({ active: "epics", agent: "", allowAllProjects: false, projects }).filters[0].options.map((i) => i.value), ["VES"]);
+  assert.deepEqual(workHeader({ active: "epics", agent: "", noFilters: true }).filters, []);
+  assert.equal(workHeader({ active: "epics", agent: "" }).search, undefined);
+});
+
+test("work header commands call the screen's handlers", () => {
+  const calls = [];
+  const ctx = { project: "VES", push: (h) => calls.push(["push", h]), onProject: (v) => calls.push(["project", v]), onAgent: (v) => calls.push(["agent", v]), onSearch: (v) => calls.push(["search", v]) };
+  const nav = (o) => ({ v: 1, navigatorId: "x", ...o });
+  assert.ok(handleWorkHeaderCommand(nav({ type: "nav.action", actionId: "new-ticket" }), ctx));
+  assert.ok(handleWorkHeaderCommand(nav({ type: "nav.filter", filterId: "filter-space", value: "", checked: true }), ctx));
+  assert.ok(handleWorkHeaderCommand(nav({ type: "nav.filter", filterId: "filter-agent", value: "ada", checked: true }), ctx));
+  assert.ok(!handleWorkHeaderCommand(nav({ type: "nav.filter", filterId: "other", value: "x", checked: true }), ctx));
+  assert.ok(handleWorkHeaderCommand(nav({ type: "nav.picker", pickerId: "work-view", value: "epics" }), ctx));
+  assert.ok(handleWorkHeaderCommand(nav({ type: "nav.search", searchId: "work-search", value: "q" }), ctx));
+  assert.ok(!handleWorkHeaderCommand(nav({ type: "nav.activate", itemId: "i" }), ctx));
+  assert.deepEqual(calls, [["push", "/tickets/new?project=VES"], ["project", ""], ["agent", "ada"], ["push", "/tickets?layout=epics&project=VES"], ["search", "q"]]);
+  assert.equal(workTabHref("activity", "VES"), "/work?view=activity&project=VES");
+  assert.equal(workTabHref("activity"), "/work");
+  let act = 0;
+  handleWorkHeaderCommand(nav({ type: "nav.picker", pickerId: "work-view", value: "activity" }), { ...ctx, onActivity: () => act++ });
+  assert.equal(act, 1);
+});
+
+test("board: By epic with All epics first, selection follows the epic filter", () => {
+  const header = { active: "tickets", project: "VES", projects, agents, agent: "", allowAllProjects: false };
+  const m = buildBoardNavModel({ header, epics: [{ id: "e1", name: "Launch" }], epic: "e1" });
+  assert.deepEqual(m.sections[0].items.map((i) => i.id), ["all-epics", "epic:e1"]);
+  assert.equal(m.selectedId, "epic:e1");
+  assert.equal(buildBoardNavModel({ header, epics: [] }).selectedId, "all-epics");
+  assert.deepEqual(buildBoardNavModel({ header }).sections, []);
+});
+
+test("epics: status and health menus, grouped rows with progress", () => {
+  const m = buildEpicsNavModel({
+    header: { project: "VES", projects, search: { value: "", placeholder: "Filter epics…" } },
+    status: "open",
+    counts: { open: 2, done: 1, all: 3 },
+    health: "at_risk",
+    healthOptions: [{ value: "any", label: "Any" }, { value: "at_risk", label: "At risk" }],
+    atRiskCount: 1,
+    groups: [{ key: "VES", label: "Vesper", epics: [{ id: "e1", name: "Launch", health: "at_risk", done: 1, total: 4 }] }],
+    selectedEpicId: "e1",
+  });
+  const byId = Object.fromEntries(m.filters.map((f) => [f.id, f]));
+  assert.deepEqual(byId["epic-status"].options.map((i) => [i.value, i.label, i.checked]), [["open", "Active epics (2)", true], ["done", "Done (1)", false], ["all", "All epics (3)", false]]);
+  assert.deepEqual(byId["epic-health"].options.map((i) => [i.value, i.label, i.checked]), [["any", "Any", false], ["at_risk", "At risk (1)", true]]);
+  assert.equal(byId["filter-agent"], undefined);
+  assert.deepEqual(m.sections[0].items[0], { id: "e1", title: "Launch", status: "human", trailing: "1/4" });
+  assert.equal(m.search.placeholder, "Filter epics…");
+  assert.equal(m.selectedId, "e1");
+  const empty = buildEpicsNavModel({ header: {}, status: "open", counts: { open: 0, done: 0, all: 0 }, health: "any", healthOptions: [], atRiskCount: 0, groups: [] });
+  assert.equal(empty.sections[0].emptyText, "No epics match.");
+});
+
+test("ticket and epic detail pages list siblings with the Work header", () => {
+  const t = buildTicketNavModel({ project: "VES", siblings: [{ key: "VES-1", title: "A", status: "in_progress" }], statusNames: { in_progress: "In progress" }, ticketKey: "VES-1" });
+  assert.deepEqual(t.sections[0].items[0], { id: "VES-1", title: "A", subtitle: "VES-1 · In progress", href: "/tickets/VES-1", status: "accent" });
+  assert.equal(t.selectedId, "VES-1");
+  assert.deepEqual(t.actions.map((a) => a.id), ["new-ticket"]);
+  const e = buildEpicDetailNavModel({ project: "VES", projectName: "Vesper", epics: [{ id: "e1", name: "Launch", done: 1, total: 2 }], epicId: "e1" });
+  assert.equal(e.sections[0].title, "Vesper");
+  assert.deepEqual(e.sections[0].badge, { text: "1" });
+  assert.deepEqual(e.sections[0].items[0], { id: "e1", title: "Launch", href: "/epics/e1", trailing: "1/2" });
+  assert.equal(e.picker.value, "epics");
+});
+
+const body = (o = {}) => ({
+  needs: [],
+  needsLabel: "Needs you",
+  groups: [],
+  loading: false,
+  error: null,
+  hasMore: false,
+  loadingMore: false,
+  emptyText: "No runs",
+  withHref: true,
+  ...o,
+});
+const run = { id: "r1", href: "/runs/r1?agent=ada", title: "Fix bug", subtitle: "VES-1 · Ada", agentName: "Ada", agentColor: "#A3A6FF", trailing: "4m", dot: "running" };
+
+test("runs: status line, filter menu, needs you and groups, selection", () => {
+  const m = buildRunsNavModel({
+    body: body({
+      needs: [{ id: "n1", href: "/runs/r9", title: "Approve", subtitle: "Approval · VES", trailing: "1h", tone: "human" }],
+      groups: [{ key: "running", label: "Running", count: 1, runs: [run] }],
+      hasMore: true,
+    }),
+    filters: { project: "VES", hideDone: true, projects, agents },
+    search: "bug",
+    statusLine: { text: "1 busy · $2 this week", href: "/reports" },
+    selectedId: "run:r1",
+  });
+  assert.deepEqual(m.sections.map((s) => s.id), ["status", "needs-you", "runs-running", "more"]);
+  assert.equal(m.sections[1].title, "Needs you");
+  assert.deepEqual(m.sections[1].badge, { text: "1" });
+  assert.equal(m.sections[2].title, "Running");
+  assert.deepEqual(m.sections[2].badge, { text: "1" });
+  assert.deepEqual(m.sections[2].items[0], { id: "run:r1", title: "Fix bug", trailing: "4m", href: "/runs/r1?agent=ada", subtitle: "VES-1 · Ada", avatar: { initials: "A", color: "#A3A6FF" }, status: "done" });
+  assert.equal(m.sections[3].items[0].id, "load-more");
+  assert.equal(m.actions, undefined);
+  assert.deepEqual(m.filters.map((f) => f.id), ["run-options", "run-space", "run-agent"]);
+  assert.deepEqual(m.filters[0], { id: "run-options", label: "View", icon: "sliders", multiple: true, options: [{ value: "hide-done", label: "Hide done", checked: true }] });
+  assert.deepEqual(m.filters[1].options.map((o) => [o.value, o.checked]), [["", false], ["VES", true], ["OLD", false]]);
+  assert.equal(m.search.value, "bug");
+  assert.equal(m.selectedId, "run:r1");
+  json(m);
+});
+
+test("runs: loading, error with retry and empty states", () => {
+  const f = { hideDone: false, projects: [], agents: [] };
+  assert.equal(buildRunsNavModel({ body: body({ loading: true }), filters: f, search: "" }).sections[0].emptyText, "Loading");
+  const err = buildRunsNavModel({ body: body({ error: "boom" }), filters: f, search: "" });
+  assert.equal(err.sections[0].items[0].id, "retry");
+  assert.equal(buildRunsNavModel({ body: body(), filters: f, search: "" }).sections[0].emptyText, "No runs");
+});
+
+test("work activity: header, View menu with counts, runs without hrefs, waiting after active", () => {
+  const m = buildWorkActivityNavModel({
+    header: { active: "activity", project: "VES", projects, agents, agent: "", search: { value: "", placeholder: "Filter work…" } },
+    body: body({
+      withHref: false,
+      needsLabel: "Waiting",
+      needsAfterGroups: true,
+      needs: [{ id: "n1", href: "/inbox", title: "Review", trailing: "2h", tone: "human" }],
+      groups: [{ key: "Active", label: "Active", count: 1, runs: [{ ...run, dot: "human", trailing: "wait" }] }],
+    }),
+    filter: "needs_you",
+    counts: { all: 5, needs_you: 2, active: 1, failed: 0 },
+    selectedId: "run:r1",
+  });
+  assert.deepEqual(m.actions.map((a) => a.id), ["new-ticket"]);
+  assert.deepEqual(m.filters.map((f) => f.id), ["filter-space", "filter-agent", "view"]);
+  const view = m.filters[2];
+  assert.deepEqual(view.options.map((i) => [i.value, i.label, i.checked]), [
+    ["all", "All activity (5)", false],
+    ["needs_you", "Needs you (2)", true],
+    ["active", "Running & queued (1)", false],
+    ["failed", "Failed today (0)", false],
+  ]);
+  assert.deepEqual(m.sections.map((s) => s.title), ["Active", "Waiting"]);
+  assert.deepEqual(m.sections.map((s) => s.badge), [{ text: "1" }, { text: "1" }]);
+  assert.equal(m.sections[0].items[0].href, undefined);
+  assert.equal(m.sections[1].items[0].icon, "inbox");
+  assert.equal(m.picker.value, "activity");
+});
+
+test("study: progress, next part actions, lessons by unit", () => {
+  const lessons = [
+    { key: "a", title: "Intro", unit: "U1", done: true, status: "verified" },
+    { key: "b", title: "Deep", unit: "U1", done: false, status: "flagged" },
+    { key: "c", title: "Known", unit: "U2", done: true, status: "known" },
+  ];
+  const m = buildStudyNavModel({
+    topic: "Rust",
+    complete: 1,
+    total: 3,
+    solid: 1,
+    lessons,
+    currentKey: "b",
+    courseId: "c1",
+    nextPart: { part: 2, parts: 3, title: "Async", state: "ready", building: false, planPending: false, stopPending: false, courseId: "c1" },
+  });
+  assert.equal(m.title, "Rust");
+  assert.deepEqual(m.actions.map((a) => a.id), ["back", "delete"]);
+  assert.equal(m.sections[0].items[0].title, "1 of 3 complete · 1 solid");
+  assert.equal(m.sections[1].title, "Part 2 of 3 · Async");
+  assert.equal(m.sections[1].items[0].id, "plan-next");
+  assert.deepEqual(m.sections.slice(2).map((s) => s.title), ["U1", "U2"]);
+  assert.deepEqual(m.sections[2].items[0], { id: "a", title: "Intro", icon: "check" });
+  assert.deepEqual(m.sections[2].items[1], { id: "b", title: "Deep", status: "human", subtitle: "Flagged: see reviewer note" });
+  assert.equal(m.sections[3].items[0].disabled, true);
+  assert.equal(m.selectedId, "b");
+  const review = buildStudyNavModel({ topic: "T", complete: 0, total: 0, solid: 0, lessons: [], courseId: "c1", nextPart: { part: 1, parts: 2, state: "outline_ready", building: false, planPending: false, stopPending: false, courseId: "c1" } });
+  assert.equal(review.sections[1].items[0].href, "/learn/c1?review=1");
+  const building = buildStudyNavModel({ topic: "T", complete: 0, total: 0, solid: 0, lessons: [], courseId: "c1", nextPart: { part: 1, parts: 2, state: "building", building: true, buildNote: "Unit 2", planPending: false, stopPending: true, courseId: "c1", actionError: "nope" } });
+  assert.deepEqual(building.sections[1].items.map((i) => i.id), ["building", "stop-build", "next-error"]);
+  assert.equal(building.sections[1].items[1].disabled, true);
+});
+
+const page = (id, path, extra = {}) => ({ id, path, title: path.split("/").pop(), suggestions: 0, ...extra });
+const folder = (name, path, folders = [], pages = [], pg) => ({ name, path, folders: new Map(folders.map((f) => [f.name.toLowerCase(), f])), pages, page: pg, count: pages.length + folders.reduce((n, f) => n + f.count, 0) });
+
+test("wiki: namespaces with index rows, open state, suggestions, reports, selection", () => {
+  const adr = page("1", "Architecture/ADR-1", { suggestions: 2 });
+  const arch = folder("Architecture", "Architecture", [], [adr]);
+  const other = folder("", "", [folder("Payments", "Payments", [], [page("2", "Payments/Ledger")])], [page("3", "Home")]);
+  const m = buildWikiNavModel({
+    loaded: true,
+    current: "architecture/adr-1",
+    architecture: arch,
+    memory: folder("", "", [], []),
+    other,
+    reports: { state: "ready", list: [{ id: "r1", title: "Report", updated_at: "2026-01-02T00:00:00Z", project: { key: "VES" } }], total: 7 },
+    open: new Set(["payments"]),
+    forced: new Set(["architecture"]),
+  });
+  const ns = m.sections[0].items;
+  assert.deepEqual(ns.map((i) => i.id), ["f:architecture", "f:patterns", "f:agents", "f:ns:reports"]);
+  assert.equal(ns[0].expanded, true);
+  assert.deepEqual(ns[0].children.map((c) => c.id), ["index:adrs", "p:Architecture/ADR-1"]);
+  assert.deepEqual(ns[0].children[1].badge, { text: "2", tone: "human" });
+  assert.equal(m.selectedId, "p:Architecture/ADR-1");
+  assert.equal(ns[2].children[0].disabled, true);
+  assert.equal(ns[3].children.at(-1).title, "All 7 reports →");
+  assert.equal(ns[3].children[0].href, "/artifacts/r1");
+  const payments = m.sections[1].items.find((i) => i.id === "f:payments");
+  assert.equal(payments.expanded, true);
+  assert.equal(payments.trailing, "1");
+  assert.equal(m.sections[1].items.at(-1).href, "/wiki/Home");
+  assert.equal(buildWikiNavModel({ loaded: false, current: "", memory: other, other, reports: { state: "loading", list: [], total: 0 }, open: new Set(), forced: new Set() }).sections[0].emptyText, "Loading");
+  json(m);
+});
+
+test("library: keepsake tabs and the project documents' filters", () => {
+  const k = buildKeepsakesNavModel({ tabs: [{ key: "images", label: "Images" }, { key: "links", label: "Links" }], tab: "links" });
+  assert.equal(k.picker.value, "yours");
+  assert.equal(k.selectedId, "links");
+  const action = projectPickerAction({ projects: projects.filter((x) => !x.archived), current: projects[0] });
+  const p = buildProjectDocsNavModel({
+    tabs: [{ key: "all", label: "All", href: "/library?source=projects" }, { key: "prd", label: "PRDs", href: "/library?type=prd&source=projects" }],
+    type: "prd",
+    counts: { all: 9, prd: 3 },
+    search: "q",
+    projectAction: action,
+  });
+  assert.equal(p.picker.value, "projects");
+  assert.deepEqual(p.sections[0].items.map((i) => [i.id, i.trailing, i.href]), [["all", "9", "/library?source=projects"], ["prd", "3", "/library?type=prd&source=projects"]]);
+  assert.equal(p.search.value, "q");
+  assert.equal(action.label, "Space: Vesper");
+  assert.deepEqual(action.menu.map((i) => i.id), ["space:", "sep-all", "space:VES", "sep-open", "space-open"]);
+  assert.equal(action.menu.at(-1).label, "Open Vesper");
+  assert.equal(projectPickerAction({ projects, current: null }).menu.at(-1).label, "New space");
+});
+
+const kpage = (id, path, extra = {}) => ({ id, path, title: path.split("/").pop(), ...extra });
+const kfolder = (name, path, folders = [], pages = []) => ({ name, path, folders, pages, count: pages.length + folders.reduce((n, f) => n + f.count, 0) });
+
+test("knowledge: header actions, + menu, view picker, tree with menus, quick entries", () => {
+  const many = Array.from({ length: 10 }, (_, i) => kpage(`p${i}`, `Notes/Note ${i}`));
+  const tree = kfolder("", "", [kfolder("Notes", "Notes", [], many), kfolder("Inbox", "Inbox", [], [kpage("i1", "Inbox/Idea", { pending: 1 })])], [kpage("t1", "Top")]);
+  const base = {
+    view: "yours",
+    loading: false,
+    tree,
+    pinned: [many[0]],
+    pinnedIds: ["p0"],
+    activeId: "p9",
+    open: new Set(["Notes"]),
+    showAll: new Set(),
+    pageHref: (p) => `/knowledge/${p.id}`,
+    pageIcon: () => "artifacts",
+    deckStarters: [{ key: "pitch", name: "Pitch", slide_count: 8 }],
+    designStarters: [{ key: "blank", label: "Blank" }],
+  };
+  const m = buildKnowledgeNavModel(base);
+  assert.deepEqual(m.actions.map((a) => a.id), ["search", "graph", "connect", "collapse-all", "new"]);
+  const menu = m.actions[4].menu;
+  assert.deepEqual(menu.filter((i) => !i.separator).map((i) => i.id), ["new:doc", "deck", "design", "new:folder"]);
+  assert.deepEqual(menu[1].children.map((c) => c.id), ["new:deck:blank", "new:deck:pitch"]);
+  assert.equal(m.picker.value, "yours");
+  assert.deepEqual(m.sections.map((s) => s.id), ["pinned", "tree", "quick"]);
+  assert.equal(m.sections[0].items[0].id, "pin:p0");
+  assert.equal(m.sections[0].items[0].contextMenu.find((i) => i.id === "pin").label, "Unpin");
+  const items = m.sections[1].items;
+  assert.equal(items[0].id, "f:Inbox", "Inbox heads the tree");
+  assert.deepEqual(items[0].badge, { text: "1", tone: "accent" });
+  assert.equal(items[0].children[0].status, "human");
+  const notes = items[1];
+  assert.equal(notes.expanded, true);
+  assert.equal(notes.children.length, 10, "8 pages, the open one past the cut, and + more");
+  assert.equal(notes.children.at(-1).title, "+ 1 more");
+  assert.ok(notes.children.some((c) => c.id === "p:p9"));
+  assert.deepEqual(notes.contextMenu.map((i) => i.id).filter((i) => !i.startsWith("s")), ["ask", "new-page", "new-folder", "rename", "move", "delete"]);
+  assert.equal(items[2].href, "/knowledge/t1");
+  assert.equal(m.selectedId, "p:p9");
+  assert.deepEqual(m.sections[2].items.map((i) => i.id), ["today", "capture", "import"]);
+  const all = buildKnowledgeNavModel({ ...base, showAll: new Set(["Notes"]) });
+  assert.equal(all.sections[1].items[1].children.length, 10);
+  assert.equal(buildKnowledgeNavModel({ ...base, loading: true }).sections[0].emptyText, "Loading");
+  assert.match(buildKnowledgeNavModel({ ...base, tree: kfolder("", ""), pinned: [], view: "agent" }).sections[0].emptyText, /No agent knowledge/);
+  assert.equal(K.folder("a/b"), "f:a/b");
+  json(m);
+});
+
+test("findNavItem still finds nested wiki rows", () => {
+  const m = buildWikiNavModel({ loaded: true, current: "", architecture: folder("Architecture", "Architecture", [], [page("1", "Architecture/A")]), memory: folder("", "", [], []), other: folder("", "", [], []), reports: { state: "ready", list: [], total: 0 }, open: new Set(), forced: new Set() });
+  assert.equal(findNavItem(m, "p:Architecture/A").href, "/wiki/Architecture/A");
+});

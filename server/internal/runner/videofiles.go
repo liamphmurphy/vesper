@@ -173,7 +173,7 @@ func (l *Fake) OpenWorkspaceFile(_ context.Context, runID, rel string, limit int
 	return f, fi.Size(), nil
 }
 
-// videoFilesScript lists a job's files inside a start-only backend (Docker),
+// videoFilesScript lists a job's files inside a start-only backend (the microVM),
 // with the same rules as Fake.ReadVideoFiles in the shell's own tests (which
 // don't follow links): "$1" is the job's directory, "$2" the script ("" for
 // none), then known stamps as path=stamp. It tars the changed files and
@@ -214,14 +214,6 @@ fi
 [ -n "$files" ] || exit 0
 printf '%s\n' "$files" | sed '/^$/d' | tar -cf - -T -
 `
-
-func (d *Docker) ReadVideoFiles(ctx context.Context, runID string, req VideoFilesRequest) ([]VideoFile, error) {
-	return readVideoFilesExec(ctx, d, runID, req)
-}
-
-func (d *Docker) OpenWorkspaceFile(ctx context.Context, runID, rel string, limit int64) (io.ReadCloser, int64, error) {
-	return openWorkspaceFileExec(ctx, d, runID, rel, limit)
-}
 
 func readVideoFilesExec(ctx context.Context, b Backend, runID string, req VideoFilesRequest) ([]VideoFile, error) {
 	argv := []string{"sh", "-c", videoFilesScript, "video-files", req.Dir, req.Script}

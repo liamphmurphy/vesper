@@ -21,6 +21,10 @@ import { ReviewChip, reviewLabel } from "@/components/domain/mockup";
 import { floatPanel } from "@/components/domain/pickers";
 import { Pane, type ChangeView, type Drawing, type Pin, type Tool } from "./review-canvas";
 import { ReviewPanel, type Decision } from "./review-panel";
+import { useNativeActions } from "@/lib/native-shell/use-native-actions";
+import { useIsNativeShell } from "@/lib/native-shell/hooks";
+import { buildReviewActions, type ReviewActionsInput } from "@/lib/native-shell/models/mockup-editor";
+import { setTopBarTitle } from "@/lib/native-shell/title";
 
 type Version = Artifact["versions"][number];
 type Mode = "single" | "side" | "swipe";
@@ -203,6 +207,17 @@ function enteredInApp(): boolean {
   return first.pathname + first.search !== window.location.pathname + window.location.search;
 }
 
+/** Publishes the review's header row (versions, compare, Close) and title to the Mac app's toolbar. Draws nothing. */
+function NativeReviewBar({ title, input }: { title: string; input: ReviewActionsInput }) {
+  useNativeActions(buildReviewActions(input));
+  useEffect(() => {
+    const token = Symbol("review-title");
+    setTopBarTitle(token, { title, subtitle: "Review" });
+    return () => setTopBarTitle(token, null);
+  }, [title]);
+  return null;
+}
+
 function Workspace({ a, initialVersion, initialTicket }: { a: Artifact; initialVersion: string | null; initialTicket: string | null }) {
   const router = useRouter();
   const titleId = useId();
@@ -292,6 +307,10 @@ function Workspace({ a, initialVersion, initialTicket }: { a: Artifact; initialV
     if (enteredInApp()) router.back();
     else router.push(ticketKey ? `/tickets/${ticketKey}` : `/artifacts/${a.id}`);
   }, [router, ticketKey, a.id]);
+
+  // In the Mac app the header row is the window's toolbar (versions, compare, Close) and title; NativeReviewBar publishes them.
+  const inToolbar = useIsNativeShell();
+  const nativeTitle = artifactTitle(a);
 
   // Take focus so the canvas shortcuts work straight away.
   useEffect(() => rootRef.current?.focus(), []);
@@ -392,7 +411,29 @@ function Workspace({ a, initialVersion, initialTicket }: { a: Artifact; initialV
 
   return (
     <div ref={rootRef} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} onKeyDown={onKeyDown} className={cx(shell, "outline-none")}>
-      <header className="flex h-14 flex-none items-center gap-3 border-b border-border bg-surface px-4">
+      {inToolbar && (
+        <>
+          <h1 id={titleId} className="sr-only">{nativeTitle}</h1>
+          <NativeReviewBar
+            title={nativeTitle}
+            input={{
+              versions,
+              primaryId: primary.id,
+              currentId: current.id,
+              pickVersion,
+              modes: versions.length > 1 ? [...MODES] : undefined,
+              mode: shown,
+              setMode,
+              others: compare ? others : undefined,
+              withId: compare?.id,
+              setWith: setWithId,
+              ticket: ticketKey ? { key: ticketKey, run: () => router.push(`/tickets/${ticketKey}`) } : undefined,
+              close,
+            }}
+          />
+        </>
+      )}
+      {!inToolbar && <header className="flex h-14 flex-none items-center gap-3 border-b border-border bg-surface px-4">
         <button type="button" onClick={close} aria-label="Back" title="Back" className="grid size-7 flex-none place-items-center rounded-md bg-surface-sunken text-fg hover:bg-hover">
           <Icon name="chevr" size={16} className="rotate-180" />
         </button>
@@ -420,7 +461,7 @@ function Workspace({ a, initialVersion, initialTicket }: { a: Artifact; initialV
         <Button variant="outline" onClick={close} hint="Esc" className="ml-2">
           Close
         </Button>
-      </header>
+      </header>}
 
       <div className="flex min-h-0 flex-1">
         <div className="relative flex min-w-0 flex-1 flex-col">

@@ -87,7 +87,7 @@ func PushBundleScript(bundle, bare, url, dest string, base, isolate bool) string
 }
 
 // isolatedGitConfig ignores the home volume's and the image's git config,
-// which the persona can write on the Docker backend. The fake backend's is the
+// which the persona can write on the microVM backend. The fake backend's is the
 // runner host's own (tests rewrite URLs with it), so it is left alone there.
 const isolatedGitConfig = "export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 HOME=/tmp\n"
 

@@ -49,7 +49,7 @@ type Config struct {
 	AttachmentBucket string
 	Version          string
 	// RequireHarnessKey refuses to start a run without the harness's API
-	// key secret. Docker runs need it; local runs can use the host's login.
+	// key secret. MicroVM runs need it; local runs can use the host's login.
 	RequireHarnessKey bool
 	ModelPrices       map[string]harness.Price
 	// ChatIdleTTL ends a chat segment idle this long so its workspace is
@@ -64,7 +64,7 @@ type Config struct {
 	MaxHold         time.Duration
 	MaxHoldAttempts int
 	HoldBackoff     time.Duration
-	// Playgrounds serves chats' playgrounds (Docker backend only).
+	// Playgrounds serves chats' playgrounds (microVM backend only).
 	Playgrounds PlaygroundConfig
 	// RolloverContextTokens continues a main agent whose context is at least
 	// this many tokens in a fresh session at a delegation wake (rollover.go).

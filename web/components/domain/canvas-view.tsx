@@ -40,24 +40,30 @@ const QUICK = [
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong. Please try again.");
 
-/** Header entry point, once the chat has a canvas: goes to the newest card, or fullscreen if it has none. */
-export function CanvasButton({ chatId, live }: { chatId: string; live: boolean }) {
+/** The chat's canvases and the jump to the newest card (or fullscreen when it has none): the header button and its native twin. */
+export function useCanvasEntry(chatId: string, live: boolean) {
   const panel = useCanvasPanel();
   // Designs have their own cards and open beside the chat.
   const canvases = (useChatCanvases(chatId, live).data?.canvases ?? []).filter((c) => c.kind !== "design");
-  if (!canvases.length) return null;
   const go = () => {
     const card = Array.from(document.querySelectorAll<HTMLElement>("[data-canvas-card]")).at(-1);
     const id = card?.dataset.canvasCard;
     if (card && id) {
       panel.show(id);
       card.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    } else panel.openFull(canvases[canvases.length - 1].id);
+    } else if (canvases.length) panel.openFull(canvases[canvases.length - 1].id);
   };
+  return { count: canvases.length, go };
+}
+
+/** Header entry point, once the chat has a canvas: goes to the newest card, or fullscreen if it has none. */
+export function CanvasButton({ chatId, live }: { chatId: string; live: boolean }) {
+  const { count, go } = useCanvasEntry(chatId, live);
+  if (!count) return null;
   return (
-    <button type="button" aria-label={`Canvas, ${canvases.length} open`} onClick={go} className="inline-flex h-[30px] flex-none items-center gap-1.5 rounded-md border border-btn-secondary-border bg-btn-secondary px-3 text-13 text-fg transition-colors hover:bg-hover">
+    <button type="button" aria-label={`Canvas, ${count} open`} onClick={go} className="inline-flex h-[30px] flex-none items-center gap-1.5 rounded-md border border-btn-secondary-border bg-btn-secondary px-3 text-13 text-fg transition-colors hover:bg-hover">
       Canvas
-      <span className="text-fg-tertiary">{canvases.length}</span>
+      <span className="text-fg-tertiary">{count}</span>
     </button>
   );
 }

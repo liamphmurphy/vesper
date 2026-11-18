@@ -72,7 +72,6 @@ export function PersonaAvatar({ persona, size = 20, className }: { persona: Pers
   if (src && broken !== src) {
     return (
       // A same-origin, private, cache-busted URL: next/image would only add a proxy hop.
-      // eslint-disable-next-line @next/next/no-img-element
       <img src={src} alt="" aria-hidden onError={() => setBroken(src)} className={cx("flex-none rounded-full object-cover", className)} style={style} />
     );
   }

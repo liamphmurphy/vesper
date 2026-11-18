@@ -230,7 +230,7 @@ export function OverrideDialog({
             <Field
               label="Test services"
               htmlFor="ov-services"
-              hint="JSON array. Each turn gets these containers on a network of its own, sandboxed like the turn, and loses them when it ends. Docker runner only."
+              hint="JSON array. Each turn gets these containers on a network of its own, sandboxed like the turn, and loses them when it ends."
             >
               <TextArea id="ov-services" mono rows={4} value={servicesText} aria-invalid={!services.ok} onChange={(e) => setServicesText(e.target.value)} placeholder={SERVICES_EXAMPLE} />
             </Field>

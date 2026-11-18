@@ -20,7 +20,8 @@ import { DocTypeTag } from "@/components/domain/labels";
 import { ReviewChip } from "@/components/domain/mockup";
 import { TopBar } from "@/components/shell/topbar";
 import { ProjectScopeState, useProjectScope } from "@/components/shell/project-scope";
-import { ProjectPicker } from "@/components/shell/project-picker";
+import { ProjectPicker, useProjectPickerNative } from "@/components/shell/project-picker";
+import { buildProjectDocsNavModel, LIBRARY_SEARCH, LIBRARY_SOURCE_PICKER, librarySourceHref, type LibrarySourceValue } from "@/lib/native-shell/models/library";
 import { LibrarySourceSwitch } from "./source-switch";
 import { ArtifactPreview } from "./preview";
 import { PageHeader } from "@/components/ui/page-header";
@@ -107,11 +108,27 @@ export function ProjectDocs() {
     return `/library?${next}`;
   };
   const artifacts = list.data?.artifacts ?? [];
+  const picker = useProjectPickerNative();
 
   return (
     <>
       {!compact && (
-        <NavigatorPortal>
+        <NavigatorPortal
+          native={{
+            model: buildProjectDocsNavModel({
+              tabs: TABS.map((t) => ({ key: t.key, label: t.label, href: tabHref(t.key) })),
+              type: type ?? "all",
+              counts,
+              search,
+              projectAction: picker.action,
+            }),
+            onCommand: (cmd) => {
+              if (picker.handle(cmd)) return;
+              if (cmd.type === "nav.search" && cmd.searchId === LIBRARY_SEARCH) setSearch(cmd.value);
+              else if (cmd.type === "nav.picker" && cmd.pickerId === LIBRARY_SOURCE_PICKER) router.push(librarySourceHref(cmd.value as LibrarySourceValue));
+            },
+          }}
+        >
           <nav aria-label="Library" className="flex min-h-0 flex-1 flex-col gap-3 px-2.5 pt-4 pb-3">
             <div className="flex flex-col gap-2 px-1">
               <LibrarySourceSwitch source="projects" />
@@ -153,6 +170,10 @@ export function ProjectDocs() {
       )}
       <TopBar
         crumbs={[{ label: "Library", href: "/library" }, { label: "From spaces" }]}
+        nativeActions={[
+          { id: "docs.mockup", label: "New mockup", kind: "button", icon: "plus", showsLabel: true, run: () => setMockup(true) },
+          { id: "docs.upload", label: "Upload", kind: "button", icon: "upload", showsLabel: true, accent: true, run: () => setUpload({ files: [] }) },
+        ]}
         actions={
           <>
             <Button variant="outline" icon="plus" onClick={() => setMockup(true)}>

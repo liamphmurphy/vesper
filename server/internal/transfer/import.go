@@ -427,8 +427,7 @@ func (i *Importer) importObject(ctx context.Context, bucket string, o ObjectEntr
 		return err
 	}
 	defer rc.Close()
-	// The S3 client needs a seekable body to sign an upload, so the object is
-	// read through once here. That also checks it before anything is stored.
+	// The object is read through once here, spooled so it can be re-read. That also checks it before anything is stored.
 	body, cleanup, err := spool(rc, o.Size)
 	if err != nil {
 		return fmt.Errorf("transfer: read %s/%s from the archive: %w", bucket, o.Key, err)

@@ -1,56 +1,30 @@
 # Vesper developer tasks. `make help` lists them.
+# Vesper ships as the macOS app (`make mac-app`); `make dev` runs the API and
+# web app on the host against a local Postgres for hot-reload development.
 SHELL := /bin/bash
-COMPOSE_DEV := docker compose -f docker-compose.dev.yml
 
-.PHONY: help up down start setup signin login claude-login codex-login github-login stop-dev dev dev-infra api web web-deps runner stop-host-runners gen gen-check test test-server test-web lint build reset desktop-deps desktop-dev desktop-test desktop-dmg desktop-dmg-universal desktop-reinstall
+.PHONY: help signin dev-infra dev-infra-stop stop-dev dev api web web-deps runner gen gen-check test test-server test-web lint build reset mac-app mac-test mac-run mac-dmg mac-reinstall
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-13s %s\n", $$1, $$2}'
 
-up: ## Full stack in Docker → http://localhost:8080
-	docker compose build --no-cache api web
-	docker compose up --build --force-recreate
+dev-infra: ## Start a local Postgres 17 (bundled build, data in .dev/pgdata) on :5432
+	@scripts/dev-postgres.sh start
 
-down: ## Stop the full stack
-	docker compose down
-
-dev-infra: ## Start postgres + seaweedfs only
-	$(COMPOSE_DEV) up -d --wait
+dev-infra-stop: ## Stop the local dev Postgres (data is kept)
+	@scripts/dev-postgres.sh stop
 
 API_PORT ?= 8000
 WEB_PORT ?= 3000
-# Host-folder workspaces (docs/guide.md, "Open a run's code"): set in the environment or .env.
-VESPER_WORKSPACES_DIR ?= $(shell sed -n 's/^VESPER_WORKSPACES_DIR=//p' .env 2>/dev/null)
-export VESPER_WORKSPACES_DIR
-# The hardened runner is a dev compose service (docker-compose.dev.yml).
-RUNNER_COMPOSE := $(COMPOSE_DEV) $(if $(VESPER_WORKSPACES_DIR),-f docker-compose.workspaces.yml) --profile runner
-# A key in the environment wins over .env (`make setup` creates that one).
+# A key in the environment wins over .env.
 SECRETS_KEY ?= $(shell sed -n 's/^SECRETS_KEY=//p' .env 2>/dev/null)
 export SECRETS_KEY
 # Processes the runner runs at once; delegated runs and resumed turns share these slots.
 RUNNER_MAX_CONCURRENT ?= 8
 export RUNNER_MAX_CONCURRENT API_PORT
 
-start: ## One command for everything: set up, sign in if needed, run the app and hardened runner → http://localhost:3000
-	@API_PORT=$(API_PORT) scripts/vesper-setup.sh start
-
-setup: ## Create .env with a SECRETS_KEY and build the agent image
-	@scripts/vesper-setup.sh setup
-
-signin: ## Print a one-time link that signs a browser in to Vesper (the full stack's API if it's up, else the dev database)
-	@if [ -n "$$(docker compose ps -q api 2>/dev/null)" ]; then docker compose exec -T api vesper sign-in-link; \
-	else cd server && WEB_URL=$${WEB_URL:-http://localhost:$(WEB_PORT)} go run ./cmd/vesper sign-in-link; fi
-
-login: claude-login codex-login github-login ## Sign Vesper in to Claude, Codex and GitHub (needs the API running)
-
-claude-login: ## Store a Claude plan login for agent containers (needs the API running)
-	@API_PORT=$(API_PORT) scripts/vesper-setup.sh login-claude
-
-codex-login: ## Store a Codex plan login; CODEX_AUTH_FILE=~/.codex/auth.json copies an existing one (needs the API running)
-	@API_PORT=$(API_PORT) scripts/vesper-setup.sh login-codex
-
-github-login: ## Store your GitHub CLI token as git:pat so agents can push and open PRs (needs the API running)
-	@API_PORT=$(API_PORT) scripts/vesper-setup.sh login-github
+signin: ## Print a one-time link that signs a browser in to Vesper (against the dev database)
+	cd server && WEB_URL=$${WEB_URL:-http://localhost:$(WEB_PORT)} go run ./cmd/vesper sign-in-link
 
 stop-dev: ## Kill whatever is listening on the API and web dev ports (left over from an earlier run)
 	@for port in $(API_PORT) $(WEB_PORT); do \
@@ -62,7 +36,7 @@ stop-dev: ## Kill whatever is listening on the API and web dev ports (left over 
 	  kill -9 $$(lsof -nP -tiTCP:$$port -sTCP:LISTEN 2>/dev/null) 2>/dev/null || true; \
 	done
 
-dev: dev-infra stop-dev ## Infra in Docker, API (hot reload) + Next dev on the host → http://localhost:3000 (replaces any API/web already on those ports)
+dev: dev-infra stop-dev ## Local Postgres, API (hot reload) + Vite dev server on the host → http://localhost:3000 (replaces any API/web already on those ports)
 	@trap 'kill 0' EXIT; \
 	  $(MAKE) --no-print-directory api & \
 	  $(MAKE) --no-print-directory web & \
@@ -73,15 +47,8 @@ api: ## Run the API (hot reload if air is installed: go install github.com/air-v
 	  DESIGN_WORKER_TOKEN=$${DESIGN_WORKER_TOKEN:-vesper-local-design-worker} DESIGN_WORKER_URL=$${DESIGN_WORKER_URL:-http://localhost:$(WEB_PORT)/internal/designs}; \
 	  if command -v air >/dev/null; then air; else go run ./cmd/vesper serve; fi
 
-runner: stop-host-runners ## Run dispatched tickets in hardened containers; replaces any runner already running
-	$(RUNNER_COMPOSE) up -d --force-recreate runner
-	@trap '$(RUNNER_COMPOSE) stop runner >/dev/null 2>&1' EXIT; $(RUNNER_COMPOSE) logs -f --no-log-prefix runner
-
-stop-host-runners: ## Stop runners an older `make start` left on the host: they claim runs with stale code
-	@for pid in $$(pgrep -f 'vesper runner$$' 2>/dev/null); do \
-	  echo "stopping host runner $$pid — $$(ps -o command= -p $$pid)"; \
-	  kill $$pid 2>/dev/null; \
-	done; true
+runner: ## Run a runner on the host (RUNNER_BACKEND=microvm needs the app's kernel and rootfs; =fake needs RUNNER_CLAUDE_BIN/RUNNER_CODEX_BIN)
+	cd server && RUNNER_MCP_URL=$${RUNNER_MCP_URL:-http://localhost:$(API_PORT)/mcp} go run ./cmd/vesper runner
 
 WEB_DEPS := web/node_modules/.package-lock.json
 
@@ -91,7 +58,7 @@ $(WEB_DEPS): web/package-lock.json
 
 web-deps: $(WEB_DEPS) ## Install web dependencies if the lockfile changed
 
-web: web-deps ## Run Next dev server
+web: web-deps ## Run the Vite dev server
 	cd web && DESIGN_WORKER_TOKEN=$${DESIGN_WORKER_TOKEN:-vesper-local-design-worker} npm run dev
 
 gen: web-deps ## Regenerate API code (Go + TS) and sqlc queries. Needs sqlc 1.31+ on PATH.
@@ -106,7 +73,7 @@ gen-check: gen ## Fail if generated code is out of date
 test: test-server test-web ## Run backend and UI tests
 
 # httpapi and runner take ~17-19 min on a 4-core machine, past go test's 10m default.
-test-server: ## Run Go tests (database tests need TEST_DATABASE_URL; S3 tests need TEST_S3_ENDPOINT)
+test-server: ## Run Go tests (database tests need TEST_DATABASE_URL)
 	cd server && go test -timeout 30m ./...
 
 test-web: web-deps ## Typecheck the web app and run its unit tests
@@ -114,39 +81,29 @@ test-web: web-deps ## Typecheck the web app and run its unit tests
 	cd web && npm run test:unit
 
 lint: web-deps ## Vet Go, lint web
-	cd server && go vet ./... && test -z "$$(gofmt -l .)"
+	cd server && go vet ./... && test -z "$$(gofmt -l cmd internal)"
 	cd web && npm run lint
 
 build: web-deps ## Build both apps
 	cd server && go build ./...
 	cd web && npm run build
 
-reset: ## Delete dev volumes (all local data)
-	$(RUNNER_COMPOSE) down -v
-	docker compose down -v
+reset: ## Stop the dev Postgres and delete all local dev data (.dev/pgdata, blobs)
+	-@scripts/dev-postgres.sh stop
+	rm -rf .dev/pgdata .dev/postgres.log server/.lazyagents/blobs
 
-DESKTOP_DEPS := desktop/node_modules/.package-lock.json
+# The native macOS app lives in macos/ and has its own Makefile.
+mac-app: ## Build the macOS app bundle (macos/Makefile)
+	$(MAKE) -C macos app
 
-$(DESKTOP_DEPS): desktop/package-lock.json
-	cd desktop && npm ci
-	@touch $@
+mac-test: ## Run the macOS app tests (macos/Makefile)
+	$(MAKE) -C macos test
 
-desktop-deps: $(DESKTOP_DEPS) ## Install desktop Electron dependencies if the lockfile changed
+mac-run: ## Build and launch the macOS app (macos/Makefile)
+	$(MAKE) -C macos run
 
-desktop-dev: desktop-deps ## Build and launch the Electron desktop client
-	cd desktop && npm run start
+mac-dmg: ## Build macos/build/Vesper-arm64.dmg (macos/Makefile)
+	$(MAKE) -C macos dmg
 
-desktop-test: desktop-deps ## Typecheck and run desktop unit tests
-	cd desktop && npm run typecheck && npm test
-
-desktop-dmg: desktop-deps ## Package self-contained macOS Apple Silicon Vesper.dmg (run on macOS)
-	bash scripts/stage-desktop-resources.sh
-	cd desktop && npm run dmg
-
-desktop-dmg-universal: desktop-deps ## Package macOS universal Vesper.dmg (run on macOS)
-	cd desktop && npm run dmg:universal
-
-desktop-reinstall: desktop-deps ## Rebuild VM image + DMG, replace /Applications/Vesper.app, relaunch (SKIP_IMAGES=1 skips the image)
-	@if [ "$(SKIP_IMAGES)" != 1 ]; then deploy/microvm/build-images.sh --rootfs; fi
-	$(MAKE) desktop-dmg
-	bash scripts/reinstall-desktop.sh
+mac-reinstall: ## Rebuild and replace the installed macOS app (macos/Makefile)
+	$(MAKE) -C macos reinstall

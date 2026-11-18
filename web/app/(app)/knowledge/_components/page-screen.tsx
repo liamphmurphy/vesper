@@ -391,7 +391,7 @@ function PropValue({ v }: { v: unknown }) {
 /** A resolved ![[…]] preview, mounted at its position inside the editor. */
 function EmbedPreview({ embed: e }: { embed: Embed }) {
   if (e.url && (e.kind === "image" || e.content_type?.startsWith("image/"))) {
-    // eslint-disable-next-line @next/next/no-img-element -- an attachment served by the API, sized by the page
+    // an attachment served by the API, sized by the page
     return <img src={e.url} alt={e.title ?? ""} className="max-h-[420px] max-w-full rounded-lg object-contain" />;
   }
   return (

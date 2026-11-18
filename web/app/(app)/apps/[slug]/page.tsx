@@ -1,8 +1,8 @@
-import { Suspense } from "react";
+import { Suspense, use } from "react";
 import { CustomAppScreen } from "./_components/custom-app-screen";
 
-async function Loader({ params }: { params: PageProps<"/apps/[slug]">["params"] }) {
-  const { slug } = await params;
+function Loader({ params }: { params: PageProps<"/apps/[slug]">["params"] }) {
+  const { slug } = use(params);
   return <CustomAppScreen slug={decodeURIComponent(slug)} />;
 }
 

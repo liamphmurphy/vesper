@@ -29,7 +29,7 @@ export class WorkerError extends Error {
 /** Replaceable in tests (to hold a render open). */
 export const deps = {
   rasterize: async (svg: string, width: number, signal: AbortSignal): Promise<{ png: Buffer; width: number; height: number }> => {
-    const dir = join(process.cwd(), "public", "fonts", "designs");
+    const dir = process.env.DESIGN_FONT_DIR ?? join(process.cwd(), "public", "fonts", "designs");
     const img = await renderAsync(
       svg,
       {

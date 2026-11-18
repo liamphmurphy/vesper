@@ -6,7 +6,7 @@ const runId = "00000000-0000-4000-8000-000000000101";
 const otherId = "00000000-0000-4000-8000-000000000102";
 const at = "2026-11-06T22:00:00Z";
 const snapshot: Schemas["EnvironmentSnapshot"] = {
-  run_id: runId, runner_id: "mac-local", backend: "docker", recorded_at: at,
+  run_id: runId, runner_id: "mac-local", backend: "microvm", recorded_at: at,
   ticket_key: "WEB-1", project_key: "WEB", project_name: "Web app",
   report: {
     status: "ready", manifest: ".lazyagents-deps.json", go_modules: ["server"], npm_projects: ["web"], playwright: ["web"],
@@ -17,8 +17,8 @@ const snapshot: Schemas["EnvironmentSnapshot"] = {
   },
 };
 const environment: Schemas["RunnerEnvironment"] = {
-  runner: { online: true, runners: [{ id: "mac-local", backend: "docker", heartbeat_at: at, max_concurrent: 2, running: 1 }], slots: 2, busy: 1, live: 1, queued: 0, host_folder_workspaces: false },
-  snapshots: [snapshot, { ...snapshot, run_id: otherId, runner_id: "docker-offline", backend: "docker", report: { ...snapshot.report, status: "failed", error: "missing required tool: sqlc", tools: [{ name: "sqlc", available: false }] } }],
+  runner: { online: true, runners: [{ id: "mac-local", backend: "microvm", heartbeat_at: at, max_concurrent: 2, running: 1 }], slots: 2, busy: 1, live: 1, queued: 0, host_folder_workspaces: false },
+  snapshots: [snapshot, { ...snapshot, run_id: otherId, runner_id: "docker-offline", backend: "microvm", report: { ...snapshot.report, status: "failed", error: "missing required tool: sqlc", tools: [{ name: "sqlc", available: false }] } }],
 };
 
 test("environment shows measured tools, project libraries, caches and setup failures", async ({ page }) => {

@@ -19,7 +19,7 @@ import (
 type Config struct {
 	Addr        string // HTTP listen address, e.g. ":8000"
 	DatabaseURL string
-	S3          S3
+	Blob        Blob
 	Seed        bool
 	Version     string
 
@@ -62,15 +62,11 @@ type Config struct {
 // Runner configures `vesper runner` (docs/dev/plan.md §6.5).
 type Runner struct {
 	ModelPrices   map[string]harness.Price
-	Backend       string // docker, microvm, or fake (stand-in harnesses on the host, for tests)
+	Backend       string // microvm, or fake (stand-in harnesses on the host, for tests)
 	MaxConcurrent int
 	MCPURL        string // how turns reach the API's /mcp
-	Image         string // docker
-	Network       string // docker
-	DockerSocket  string // docker
-	Stack         string // docker / microvm: the install whose workloads this runner owns (RUNNER_STACK)
-	MemoryMB      int64  // docker / microvm: per-container / per-VM memory limit, 0 = none (docker)
-	PidsLimit     int64  // docker / microvm: per-container / per-cgroup process limit, 0 = none
+	MemoryMB      int64  // microvm: per-VM memory limit
+	PidsLimit     int64  // microvm: per-VM process limit, 0 = none
 	DataDir       string // fake: run workspaces
 	ClaudeBin     string // fake: stand-in for `claude`
 	CodexBin      string // fake: stand-in for `codex`
@@ -96,18 +92,9 @@ type Runner struct {
 	RepoMap bool
 
 	// HostWorkspaces is the absolute folder that checkouts go in when a person
-	// turns on host-folder workspaces (RUNNER_HOST_WORKSPACES_DIR, docker and
-	// microvm). The runner and the container/VM must both see it at that path.
+	// turns on host-folder workspaces (RUNNER_HOST_WORKSPACES_DIR, microvm).
+	// The runner and the VM must both see it at that path.
 	HostWorkspaces string
-	// DockerProxyDir is where the runner serves each turn's sandboxed Docker
-	// API socket, and DockerProxyVolume the Docker volume mounted there, which
-	// turns mount read-only (RUNNER_DOCKER_PROXY_DIR and
-	// RUNNER_DOCKER_PROXY_VOLUME, docker only). Unset, turns get no Docker.
-	DockerProxyDir, DockerProxyVolume string
-	// NixVolume is the Docker volume holding the Nix store turns share
-	// through the runner's nix-daemon (RUNNER_NIX_VOLUME, docker only).
-	// Unset, turns have no Nix.
-	NixVolume string
 	// PlaygroundPorts are where the runner serves chats' playgrounds, one
 	// each (RUNNER_PLAYGROUND_PORTS, e.g. 8090-8094). The browser reaches them
 	// on Vesper's host, so publish them there. Unset, chats can't start
@@ -119,19 +106,15 @@ type Runner struct {
 }
 
 // IsolatesBackend reports whether backend runs harnesses inside an isolated
-// sandbox (Docker container or MicroVM) rather than unisolated host fake mode.
+// sandbox (a microVM) rather than unisolated host fake mode.
 func IsolatesBackend(backend string) bool {
-	return backend == "docker" || backend == "microvm"
+	return backend == "microvm"
 }
 
-type S3 struct {
-	Dir          string // local directory backend (BLOB_DIR), bypassing S3 when set
-	Endpoint     string // e.g. http://seaweedfs:8333
-	Region       string
-	AccessKey    string
-	SecretKey    string
-	Buckets      []string
-	UsePathStyle bool
+// Blob configures the local-directory blob store: one subdirectory per bucket.
+type Blob struct {
+	Dir     string // BLOB_DIR: the store's root directory
+	Buckets []string
 	// ArtifactBucket holds uploaded artifact files (one of Buckets).
 	ArtifactBucket string
 }
@@ -141,15 +124,10 @@ func Load() (Config, error) {
 	c := Config{
 		Addr:        env("API_ADDR", ":8000"),
 		DatabaseURL: env("DATABASE_URL", "postgres://lazyagents:lazyagents@localhost:5432/lazyagents?sslmode=disable"),
-		S3: S3{
-			Dir:            env("BLOB_DIR", ""),
-			Endpoint:       env("S3_ENDPOINT", "http://localhost:8333"),
-			Region:         env("S3_REGION", "us-east-1"),
-			AccessKey:      env("S3_ACCESS_KEY", "lazyagents"),
-			SecretKey:      env("S3_SECRET_KEY", "lazyagents-secret"),
-			Buckets:        splitList(env("S3_BUCKETS", "artifacts,run-logs")),
-			UsePathStyle:   true,
-			ArtifactBucket: env("S3_ARTIFACT_BUCKET", "artifacts"),
+		Blob: Blob{
+			Dir:            env("BLOB_DIR", ".lazyagents/blobs"),
+			Buckets:        splitList(env("BLOB_BUCKETS", "artifacts,run-logs")),
+			ArtifactBucket: env("BLOB_ARTIFACT_BUCKET", "artifacts"),
 		},
 		Version:        env("LAZYAGENTS_VERSION", "dev"),
 		LocalUserName:  env("LOCAL_USER_NAME", "Local user"),
@@ -172,11 +150,7 @@ func Load() (Config, error) {
 		return c, fmt.Errorf("config: VESPER_NO_SIGNIN lets anyone who reaches the API act as you; it's only for a local instance, and PUBLIC_URL=%q isn't a loopback address", c.PublicURL)
 	}
 	r := Runner{
-		Backend:        env("RUNNER_BACKEND", "docker"),
-		Image:          env("RUNNER_IMAGE", "vesper/agent-base:latest"),
-		Network:        env("RUNNER_NETWORK", "lazyagents_agents"),
-		DockerSocket:   env("DOCKER_SOCKET", "/var/run/docker.sock"),
-		Stack:          env("RUNNER_STACK", "default"),
+		Backend:        env("RUNNER_BACKEND", "microvm"),
 		DataDir:        env("RUNNER_DATA_DIR", ".lazyagents/runs"),
 		VMDir:          env("RUNNER_VM_DIR", ".lazyagents/vm"),
 		KernelPath:     env("RUNNER_KERNEL_PATH", ""),
@@ -184,19 +158,12 @@ func Load() (Config, error) {
 		ClaudeBin:      env("RUNNER_CLAUDE_BIN", ""),
 		CodexBin:       env("RUNNER_CODEX_BIN", ""),
 		AntigravityBin: env("RUNNER_ANTIGRAVITY_BIN", ""),
-
-		DockerProxyDir:    env("RUNNER_DOCKER_PROXY_DIR", ""),
-		DockerProxyVolume: env("RUNNER_DOCKER_PROXY_VOLUME", ""),
-		NixVolume:         env("RUNNER_NIX_VOLUME", ""),
-	}
-	if (r.DockerProxyDir == "") != (r.DockerProxyVolume == "") {
-		return c, fmt.Errorf("config: set both RUNNER_DOCKER_PROXY_DIR and RUNNER_DOCKER_PROXY_VOLUME, or neither")
 	}
 	if r.HostWorkspaces = env("RUNNER_HOST_WORKSPACES_DIR", ""); r.HostWorkspaces != "" && !filepath.IsAbs(r.HostWorkspaces) {
-		return c, fmt.Errorf("config: RUNNER_HOST_WORKSPACES_DIR=%q must be an absolute path: Docker resolves it on the host", r.HostWorkspaces)
+		return c, fmt.Errorf("config: RUNNER_HOST_WORKSPACES_DIR=%q must be an absolute path", r.HostWorkspaces)
 	}
 	switch r.Backend {
-	case "docker", "microvm":
+	case "microvm":
 	case "fake":
 		// Fake turns run on the host with no isolation, so they may only ever
 		// start stand-in harnesses, never a real CLI found on PATH.
@@ -204,7 +171,7 @@ func Load() (Config, error) {
 			return c, fmt.Errorf("config: RUNNER_BACKEND=fake needs RUNNER_CLAUDE_BIN and RUNNER_CODEX_BIN set to fake harness binaries")
 		}
 	default:
-		return c, fmt.Errorf("config: RUNNER_BACKEND=%q must be docker, microvm (or fake, for tests and playgrounds)", r.Backend)
+		return c, fmt.Errorf("config: RUNNER_BACKEND=%q must be microvm (or fake, for tests and playgrounds)", r.Backend)
 	}
 	defMCP := "http://api:8000/mcp"
 	switch r.Backend {

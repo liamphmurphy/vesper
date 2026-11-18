@@ -1,8 +1,8 @@
-import { Suspense } from "react";
+import { Suspense, use } from "react";
 import { ChatScreen } from "../_components/chat-screen";
 
-async function Loader({ params }: { params: PageProps<"/chat/[id]">["params"] }) {
-  const { id } = await params;
+function Loader({ params }: { params: PageProps<"/chat/[id]">["params"] }) {
+  const { id } = use(params);
   return <ChatScreen id={decodeURIComponent(id)} />;
 }
 

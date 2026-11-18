@@ -1,0 +1,201 @@
+/*
+ * Look and feel adjustments for the page inside the native Mac shell. The shell's user script adds
+ * `native-mac` to <html> at document start, so every rule here is scoped to it and the browser is
+ * unchanged. Content (the editor, transcripts, docs) stays selectable; only app chrome changes.
+ */
+
+/* Mac controls show the arrow, not the pointing hand. */
+html.native-mac :is(button, [role="button"], [role="tab"], [role="menuitem"], summary, select),
+html.native-mac :is(header, nav, aside, [role="toolbar"], [role="tablist"], [role="menu"], [data-navigator-fallback]) a {
+  cursor: default;
+}
+
+/* Disabled controls keep their not-allowed cursor. */
+html.native-mac :is(button, [role="button"]):disabled {
+  cursor: not-allowed;
+}
+
+/* Chrome is not selectable: toolbars, headers, tab strips, navigation and list rows. */
+html.native-mac :is(header, nav, [role="toolbar"], [role="tablist"], [role="tab"], [role="menu"], [role="menuitem"], [role="listbox"], [role="option"], [data-navigator-fallback]),
+html.native-mac :is(button, [role="button"]) {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* ...but headers and navs inside content (articles, the editor, the transcript) are still text. */
+html.native-mac :is([contenteditable="true"], .ProseMirror, article, [data-selectable], pre, code, textarea, input) :is(header, nav, button) {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Focus rings use the system accent colour. */
+html.native-mac :focus-visible {
+  outline-color: Highlight;
+  outline-color: -apple-system-control-accent;
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * Command palette: a Spotlight-style panel. Hooks are data attributes set in
+ * components/shell/command-menu.tsx; the browser never matches `html.native-mac`.
+ * Surfaces derive from the palette tokens with a neutral blur tint, so every palette and both
+ * modes work.
+ * ---------------------------------------------------------------------------------------------- */
+@keyframes native-palette-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes native-palette-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+/* Spotlight dims nothing heavy: a faint wash, no blur. */
+html.native-mac [data-command-scrim] {
+  background: color-mix(in srgb, var(--scrim) 22%, transparent);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+@media (min-width: 768px) {
+  html.native-mac [data-command-palette] {
+    top: 14vh;
+    height: min(560px, calc(100dvh - 14vh - 24px));
+    font-family: -apple-system, system-ui, "SF Pro Text", sans-serif;
+    border-radius: 12px;
+    border: 0.5px solid color-mix(in srgb, var(--text) 16%, transparent);
+    background: color-mix(in srgb, var(--surface-raised) 74%, transparent);
+    -webkit-backdrop-filter: blur(40px) saturate(180%);
+    backdrop-filter: blur(40px) saturate(180%);
+    box-shadow: 0 22px 70px rgba(0, 0, 0, 0.32), 0 0 0 0.5px rgba(0, 0, 0, 0.12), inset 0 0.5px 0 rgba(255, 255, 255, 0.12);
+    animation: none;
+  }
+  html.native-mac [data-command-palette][data-state="open"] { animation: native-palette-in 140ms ease-out both; }
+  html.native-mac [data-command-palette][data-state="closed"] { animation: native-palette-out 90ms ease-in both; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.native-mac [data-command-palette][data-state] { animation: none; }
+}
+
+html.native-mac [data-command-palette] > div[aria-hidden="true"]:first-child { display: none; } /* the accent hairline */
+
+/* Large borderless search field. */
+html.native-mac [data-palette-input-row] {
+  height: 56px;
+  border-bottom-color: color-mix(in srgb, var(--text) 10%, transparent);
+}
+html.native-mac [data-palette-input-row] input[role="combobox"] {
+  font-size: 20px;
+  font-weight: 300;
+  letter-spacing: -0.01em;
+  border: 0;
+  box-shadow: none;
+}
+
+/* Chips, hints and dividers go quieter. */
+html.native-mac [data-palette-chips],
+html.native-mac [data-palette-hints] {
+  border-color: color-mix(in srgb, var(--text) 10%, transparent);
+}
+html.native-mac [data-palette-hints] {
+  background: color-mix(in srgb, var(--surface-sunken) 45%, transparent);
+}
+html.native-mac [data-command-palette] [data-palette-section] {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  padding-top: 10px;
+  padding-bottom: 3px;
+  color: var(--text-tertiary);
+}
+
+/* Key equivalents, as in a menu: no box, a quiet glyph. */
+html.native-mac [data-command-palette] kbd {
+  border: 0;
+  background: transparent;
+  font-family: -apple-system, system-ui, sans-serif;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+  min-width: 0;
+  padding: 0 2px;
+}
+
+/* Rows: rounded highlights; the selected one is the accent with white text, like a menu. */
+html.native-mac [data-command-palette] [role="option"] {
+  border-radius: 6px;
+  min-height: 36px;
+  transition: none;
+}
+html.native-mac [data-command-palette] [role="option"][aria-selected="true"] {
+  background: var(--accent);
+  color: var(--text-on-accent);
+}
+html.native-mac [data-command-palette] [role="option"][aria-selected="true"] :is(span, kbd, svg, button) {
+  color: inherit;
+}
+html.native-mac [data-command-palette] [role="option"][aria-selected="true"] :is(.text-fg-tertiary, kbd) {
+  opacity: 0.8;
+}
+html.native-mac [data-command-palette] [role="option"][aria-selected="true"] span[aria-hidden="true"] {
+  background: transparent;
+}
+html.native-mac [data-command-palette] [role="option"][aria-selected="true"] > span[aria-hidden="true"]:first-child:not(.size-7) {
+  display: none; /* the accent edge bar */
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * Chat composer: a floating capsule over the transcript.
+ * ---------------------------------------------------------------------------------------------- */
+html.native-mac [data-composer-frame] {
+  font-family: -apple-system, system-ui, "SF Pro Text", sans-serif;
+  border-radius: 14px;
+  border: 0.5px solid color-mix(in srgb, var(--text) 16%, transparent);
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  -webkit-backdrop-filter: blur(24px) saturate(170%);
+  backdrop-filter: blur(24px) saturate(170%);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.14), 0 1px 3px rgba(0, 0, 0, 0.1);
+  transition: box-shadow 120ms ease-out, border-color 120ms ease-out;
+}
+/* A 3px soft ring in the accent, like a macOS text field (replaces the web's 2px ring). */
+html.native-mac [data-composer-frame]:focus-within {
+  border-color: var(--accent);
+  --tw-ring-shadow: 0 0 #0000;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent), 0 6px 24px rgba(0, 0, 0, 0.14);
+}
+html.native-mac [data-composer-frame][class*="state-review"]:focus-within,
+html.native-mac [data-composer-frame]:has(button[data-tone="aside"]):focus-within {
+  border-color: var(--state-review);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--state-review) 35%, transparent), 0 6px 24px rgba(0, 0, 0, 0.14);
+}
+html.native-mac [data-composer-frame]:has(button[data-tone="interrupt"]):focus-within {
+  border-color: var(--state-human);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--state-human) 35%, transparent), 0 6px 24px rgba(0, 0, 0, 0.14);
+}
+html.native-mac [data-composer-frame] :is(textarea, button, input) { font-family: inherit; }
+
+/* Borderless, circular controls with a soft hover fill. */
+html.native-mac [data-composer-frame] button:not([data-tone]) {
+  border-color: transparent;
+}
+html.native-mac [data-composer-frame] button:not([data-tone]):hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+}
+html.native-mac [data-composer-frame] button[data-tone] {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+/* The transcript scrolls under the capsule: the dock overlaps the scroller's bottom edge by its measured height (--chat-dock-h, set by lib/dock-height). */
+html.native-mac [data-chat-scroller] {
+  padding-bottom: calc(var(--chat-dock-h, 88px) + 16px);
+}
+html.native-mac [data-chat-dock] {
+  position: relative;
+  z-index: 10;
+  margin-top: calc(-1 * var(--chat-dock-h, 88px));
+  pointer-events: none;
+}
+html.native-mac [data-chat-dock] > * {
+  pointer-events: auto;
+}

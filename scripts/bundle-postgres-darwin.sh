@@ -3,7 +3,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/.." && pwd)"
-out_dir="${1:-${repo_root}/desktop/resources/postgres}"
+out_dir="${1:-${repo_root}/macos/staged/postgres}"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "bundle-postgres-darwin.sh only runs on macOS" >&2

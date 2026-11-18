@@ -96,6 +96,33 @@ function preset(id: string, name: string, description: string, source: string | 
   return { id, name, description, ...(source ? { source } : {}), dark: tokens(dark, "dark"), light: tokens(light, "light") };
 }
 
+/**
+ * "macOS": AppKit's system colours, so the page sits flush against the native sidebar. Window and
+ * content backgrounds, separators and label greys follow NSColor; the accent is a placeholder for
+ * the person's system accent, which the Mac app sends at runtime (withSystemAccent).
+ */
+function macos(): Palette {
+  const base = preset("macos", "macOS", "Matches your Mac · follows its accent in the Mac app", undefined,
+    ["#1e1e1e", "#262626", "#e8e8e8", "#0a84ff", "#0a84ff", "#ff9f0a", "#30d158", "#ffd60a", "#ff375f", "#64d2ff", "#bf5af2", "#ff453a"],
+    ["#ffffff", "#f5f5f5", "#262626", "#007aff", "#007aff", "#ff9500", "#34c759", "#ffcc00", "#ff2d55", "#32ade6", "#af52de", "#ff3b30"]);
+  // NSColor.separatorColor is label at 10-15% opacity; the derived mixes are close but not equal.
+  Object.assign(base.dark, { border: "#3a3a3a", "border-subtle": "#303030", "border-row": "#2b2b2b", "border-strong": "#4d4d4d", "bg-sidebar": "#232323", "bg-panel": "#222222" });
+  Object.assign(base.light, { border: "#d9d9d9", "border-subtle": "#e4e4e4", "border-row": "#ececec", "border-strong": "#c4c4c4", "bg-sidebar": "#f7f7f7", "bg-panel": "#fafafa" });
+  return base;
+}
+
+/**
+ * The macOS palette with the system accent applied: accent, its soft tint, the selection tints and
+ * the text on accent. `accent` is "#RRGGBB" (NSColor.controlAccentColor).
+ */
+export function withSystemAccent(t: Tokens, accent: string, mode: ColorMode): Tokens {
+  if (!/^#[\da-f]{6}$/i.test(accent)) return t;
+  const grounds = [t.bg, t.surface, t["surface-raised"]];
+  const a = readable(accent, grounds, 3);
+  const selected = mix(t.surface, accent, mode === "dark" ? 0.2 : 0.14);
+  return { ...t, accent: a, "accent-soft": a + "26", selected, "segment-on": selected, "command-on": selected, "text-on-accent": readable(t.bg, [a]) };
+}
+
 // Adaptations for Vesper: secondary surfaces and contrast are derived, not exact editor ports.
 export const PALETTES: readonly Palette[] = [
   preset("neutral", "Neutral", "Balanced grays · Vesper default", undefined,
@@ -144,6 +171,7 @@ export const PALETTES: readonly Palette[] = [
   preset("monokai-pro", "Monokai Pro", "Warm charcoal and vivid accents", "https://monokai.pro/",
     ["#2d2a2e", "#383539", "#fcfcfa", "#ffd866", "#78dce8", "#fc9867", "#a9dc76", "#ffd866", "#ff6188", "#78dce8", "#ab9df2", "#ff6188"],
     ["#faf4f2", "#ffffff", "#29242a", "#e16032", "#1c8ca8", "#e16032", "#569c31", "#b58900", "#d6336c", "#1c8ca8", "#7a5af5", "#d6336c"]),
+  macos(),
   preset("high-contrast", "High Contrast", "Maximum contrast · Dark / Light", undefined,
     ["#000000", "#141416", "#ffffff", "#6cb6ff", "#6cb6ff", "#ffb757", "#56d364", "#f2cc60", "#ff9bce", "#76e3ea", "#d2a8ff", "#ff7b72"],
     ["#f2f2f5", "#ffffff", "#000000", "#0055cc", "#0055cc", "#b34700", "#116329", "#7a5200", "#9e1c64", "#006875", "#5e2ca5", "#b91c1c"]),
@@ -153,8 +181,8 @@ export const COLOR_KEYS = Object.keys(DUSK.dark).filter((key) => /^#[\da-f]{6}(?
 /** Settings → Text size; each sets --type-scale in styles/tokens.css. */
 export const TEXT_SIZES = ["small", "default", "large", "larger"] as const;
 export type TextSize = (typeof TEXT_SIZES)[number];
-export type Appearance = { version: 1; palette: string; custom: { base: string; dark: Tokens; light: Tokens }; showHarnessActivity?: boolean; textSize?: TextSize };
-export const DEFAULT_APPEARANCE: Appearance = { version: 1, palette: "neutral", custom: { base: "neutral", dark: {}, light: {} }, showHarnessActivity: true, textSize: "default" };
+export type Appearance = { version: 1; palette: string; /** Palette the Mac app uses while nothing is saved (read by resolvePalette, so the pre-paint script needs no change). */ nativeDefault?: string; custom: { base: string; dark: Tokens; light: Tokens }; showHarnessActivity?: boolean; textSize?: TextSize };
+export const DEFAULT_APPEARANCE: Appearance = { version: 1, palette: "neutral", nativeDefault: "macos", custom: { base: "neutral", dark: {}, light: {} }, showHarnessActivity: true, textSize: "default" };
 export const textSizeOf = (value: unknown): TextSize => TEXT_SIZES.includes(value as TextSize) ? value as TextSize : "default";
 
 /** Only known color tokens and opaque hex enter inline CSS, including imported JSON. */
@@ -194,7 +222,10 @@ export function resolvePalette(settings: Appearance, mode: ColorMode, palettes: 
     }
     return target;
   }
-  const base = palettes.find((p) => p.id === (settings.palette === "custom" ? settings.custom.base : settings.palette)) ?? palettes[0];
+  // In the Mac app (its user script sets __VESPER_NATIVE__ before this runs) an unsaved appearance is the macOS palette.
+  const native = typeof window !== "undefined" && !!(window as unknown as { __VESPER_NATIVE__?: unknown }).__VESPER_NATIVE__;
+  const id = settings.palette === "custom" ? settings.custom.base : native && settings.nativeDefault ? settings.nativeDefault : settings.palette;
+  const base = palettes.find((p) => p.id === id) ?? palettes[0];
   const t = { ...base[mode] };
   if (settings.palette !== "custom") return t;
   const overrides = settings.custom[mode];

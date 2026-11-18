@@ -954,7 +954,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Start a Claude, Codex, Antigravity or GitHub sign-in. The Docker runner runs the provider's CLI in a throwaway container and stores the login as harness:anthropic, harness:openai, harness:google or git:pat. Replaces a sign-in already in progress for that provider. 409 without a Docker runner or SECRETS_KEY. */
+        /** Start a Claude, Codex, Antigravity or GitHub sign-in. A microVM runner runs the provider's CLI in a throwaway guest VM and stores the login as harness:anthropic, harness:openai, harness:google or git:pat. Replaces a sign-in already in progress for that provider. 409 without an online microVM runner or SECRETS_KEY. */
         post: operations["startSignIn"];
         delete?: never;
         options?: never;
@@ -1088,7 +1088,7 @@ export interface paths {
          * Turn host-folder workspaces on or off
          * @description With host_folder_workspaces on, a run started afterwards keeps its
          *     checkout in a folder on the person's machine (under the runner's
-         *     RUNNER_HOST_WORKSPACES_DIR) instead of a Docker volume, so they can
+         *     RUNNER_HOST_WORKSPACES_DIR) instead of the run's disk image inside the microVM, so they can
          *     open it in their own editor. Runs that already have a workspace keep
          *     it where it is. The folder itself is runner configuration and can't
          *     be set here. Has no effect on a runner without that folder configured.
@@ -4732,7 +4732,7 @@ export interface paths {
         };
         /**
          * Harnesses and models the chat picker offers
-         * @description Live model catalog for all supported harnesses. Local mode queries the installed CLIs using their existing logins; Docker mode queries provider APIs using stored secrets. A harness is unavailable when discovery fails or no chat models are returned.
+         * @description Live model catalog for all supported harnesses. Models are discovered from the provider APIs using the stored harness keys, or, for a saved plan login, by asking a runner. A harness is unavailable when discovery fails or no chat models are returned.
          */
         get: operations["listChatModels"];
         put?: never;
@@ -6379,7 +6379,7 @@ export interface components {
             /** @description Markdown instructions */
             body: string;
         };
-        /** @description A container each turn of a run can reach by name, e.g. the database its tests need. Started next to every turn on a network of that turn's own, sandboxed like the turn but with Docker's default capabilities, and removed when the turn ends. */
+        /** @description A container each turn of a run can reach by name, e.g. the database its tests need. Started next to every turn on a network of that turn's own, sandboxed like the turn but with Docker's default capabilities, and removed when the turn ends. Services run under the Docker daemon inside the run's microVM, so they need a microVM runner. */
         AgentService: {
             /** @description Hostname turns use; lowercase letters, digits, - or _ */
             name: string;
@@ -6449,7 +6449,7 @@ export interface components {
             budget?: components["schemas"]["Budget"];
             mcp_servers_add?: components["schemas"]["McpServer"][];
             setup?: string[];
-            /** @description What the project's tests need running (Docker runner only) */
+            /** @description What the project's tests need running (microVM runner only; the containers run under Docker inside the guest VM) */
             services?: components["schemas"]["AgentService"][];
         };
         ResolvedScope: {
@@ -6557,9 +6557,9 @@ export interface components {
             secrets: components["schemas"]["SecretInfo"][];
             /** @description SECRETS_KEY is set */
             key_configured: boolean;
-            /** @description A Docker runner is online, so Claude, Codex and GitHub can be signed in from Settings */
+            /** @description A microVM runner is online, so Claude, Codex, Antigravity and GitHub can be signed in from Settings */
             sign_in_available: boolean;
-            /** @description Runs authenticate with the stored harness keys (the Docker backend); false when they use the host's claude and codex sign-ins, so there is no key to paste */
+            /** @description Runs authenticate with the stored harness keys (the microVM backend, which isolates harnesses from the host's own sign-ins); false for the unisolated fake backend, where there is no key to paste */
             harness_keys_required?: boolean;
             /** @description Well-known secret names and the scope each backs */
             known: {
@@ -6747,7 +6747,7 @@ export interface components {
             checkpoint_branch?: string;
             /** @description Why the last checkpoint push failed; the workspace is kept until one succeeds */
             checkpoint_error?: string;
-            /** @description The folder on the person's machine holding the run's checkout, while it exists; absent for a checkout in a Docker volume */
+            /** @description The folder on the person's machine holding the run's checkout, while it exists; absent for a checkout on the run's disk image inside the microVM */
             workspace_path?: string;
             /** @description The harness session turns resume */
             session_id?: string;
@@ -7174,7 +7174,7 @@ export interface components {
         RunnerInfo: {
             id: string;
             /** @enum {string} */
-            backend: "docker" | "microvm" | "fake";
+            backend: "microvm" | "fake";
             max_concurrent: number;
             running: number;
             version?: string;
@@ -7780,7 +7780,7 @@ export interface components {
              * @description The run serving the current harness segment; its events show live activity
              */
             current_run_id?: string;
-            /** @description The folder on the person's machine holding the current run's checkout, while it exists; absent for a checkout in a Docker volume */
+            /** @description The folder on the person's machine holding the current run's checkout, while it exists; absent for a checkout on the run's disk image inside the microVM */
             workspace_path?: string;
             persona?: components["schemas"]["PersonaSummary"];
             /** @description Every persona in the chat: the host first, then the ones mentioned in (by @name or an approved proposal), in the order they joined */

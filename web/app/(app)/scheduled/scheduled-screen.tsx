@@ -9,6 +9,7 @@ import { useWorkflows } from "@/lib/api/workflow-hooks";
 import { cx } from "@/lib/cx";
 import { hoverReveal } from "@/lib/reveal";
 import { useCompact } from "@/lib/viewport";
+import { buildScheduledNavModel, SCHEDULED_FILTER_PICKER, SCHEDULED_NEW_ACTION } from "@/lib/native-shell/models/scheduled";
 import { describeSchedule, moneyLabel, RUN_LABEL } from "@/lib/schedule-ui";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { Content, TopBar } from "@/components/shell/topbar";
@@ -71,7 +72,16 @@ export function ScheduledScreen() {
   return (
     <section aria-label="Scheduled tasks">
       {!compact && (
-        <NavigatorPortal>
+        <NavigatorPortal
+          native={{
+            model: buildScheduledNavModel({ all: all.map((t) => ({ id: t.id, name: t.name, enabled: t.enabled, schedule: describeSchedule(t) })), filter, open }),
+            onCommand: (cmd) => {
+              if (cmd.type === "nav.action" && cmd.actionId === SCHEDULED_NEW_ACTION) setOpen("new");
+              else if (cmd.type === "nav.activate") setOpen(cmd.itemId);
+              else if (cmd.type === "nav.picker" && cmd.pickerId === SCHEDULED_FILTER_PICKER) setFilter(cmd.value as typeof filter);
+            },
+          }}
+        >
           <nav aria-label="Scheduled tasks" className="flex min-h-0 flex-1 flex-col gap-3 px-2.5 pt-4 pb-3">
             <div className="flex items-center justify-between px-1.5">
               <h2 className="text-16 font-semibold text-fg">Scheduled</h2>
@@ -131,6 +141,7 @@ export function ScheduledScreen() {
               title="Scheduled tasks"
               description="Prompts and workflows that run on their own. Results and approvals show up in Needs you."
               actions={<Button variant="primary" icon="plus" onClick={() => setOpen("new")}>New task</Button>}
+              nativeActions={[{ id: "scheduled.new", label: "New task", kind: "button", icon: "plus", showsLabel: true, accent: true, run: () => setOpen("new") }]}
             />
             {compact && (
               <Segmented label="Show tasks" value={filter} onChange={setFilter} small options={[{ value: "all", label: `All ${all.length}` }, { value: "active", label: `Active ${count(true)}` }, { value: "paused", label: `Paused ${count(false)}` }]} />

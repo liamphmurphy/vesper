@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { useEffect, useSyncExternalStore, type ReactNode } from "react";
 import { useBootstrap, useRunnerStatus, useSecrets, useUpdateRunnerSettings } from "@/lib/api/hooks";
 import type { Schemas } from "@/lib/api/client";
@@ -13,6 +15,8 @@ import { Toggle } from "@/components/ui/controls";
 import { Banner, Card, EmptyState, Skeleton } from "@/components/ui/primitives";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { useCompact } from "@/lib/viewport";
+import { buildSettingsNavModel } from "@/lib/native-shell/models/settings";
+import type { NativeCommand } from "@/lib/native-shell/protocol";
 import { AppearanceSection } from "./appearance-section";
 import { BackupSection } from "./backup-section";
 import { DevWorkspaceSection } from "./dev-workspace-section";
@@ -33,6 +37,8 @@ const noSubscribe = () => () => {};
  * leaves the others usable, and each says what breaks when something is missing.
  */
 export function SettingsScreen() {
+  const router = useRouter();
+  const native = useIsNativeShell();
   const compact = useCompact();
   const secrets = useSecrets();
   const runner = useRunnerStatus();
@@ -57,6 +63,13 @@ export function SettingsScreen() {
     { id: "backup", label: "Backup & move", health: "idle" },
     { id: "appearance", label: "Appearance", health: "idle" },
   ];
+
+  // The native sidebar's rows scroll to the section, as the web nav's #links do.
+  const jumpToSection = (cmd: NativeCommand) => {
+    if (cmd.type !== "nav.activate") return;
+    window.location.hash = cmd.itemId;
+    document.getElementById(cmd.itemId)?.scrollIntoView();
+  };
 
   if (!mounted) {
     return (
@@ -96,12 +109,23 @@ export function SettingsScreen() {
   );
   return (
     <div className="flex flex-col gap-6">
-      {!compact && <NavigatorPortal>{sectionNav}</NavigatorPortal>}
-      <PageHeader title="Settings" description="Everything runs depend on. Each section says what breaks when something is missing.">
-        <span className="flex gap-4 text-14">
-          <Link href="/chat?new&setup" className="text-accent hover:underline">Run setup again →</Link>
-          <Link href="/setup" className="text-accent hover:underline">Open setup checklist →</Link>
-        </span>
+      {!compact && (
+        <NavigatorPortal native={{ model: buildSettingsNavModel(nav), onCommand: jumpToSection }}>{sectionNav}</NavigatorPortal>
+      )}
+      <PageHeader
+        title="Settings"
+        description="Everything runs depend on. Each section says what breaks when something is missing."
+        nativeActions={[
+          { id: "settings.setup", label: "Run setup again", kind: "button", showsLabel: true, run: () => router.push("/chat?new&setup") },
+          { id: "settings.checklist", label: "Open setup checklist", kind: "button", showsLabel: true, run: () => router.push("/setup") },
+        ]}
+      >
+        {!native && (
+          <span className="flex gap-4 text-14">
+            <Link href="/chat?new&setup" className="text-accent hover:underline">Run setup again →</Link>
+            <Link href="/setup" className="text-accent hover:underline">Open setup checklist →</Link>
+          </span>
+        )}
       </PageHeader>
       <SetupChecklist className="max-w-[1020px]" />
       {compact && sectionNav}

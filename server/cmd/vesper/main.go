@@ -135,7 +135,7 @@ func serve(ctx context.Context, log *slog.Logger) error {
 	defer pool.Close()
 	log.Info("migrations applied")
 
-	blobs := blob.New(cfg.S3)
+	blobs := blob.New(cfg.Blob)
 	bctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	err = blobs.EnsureBuckets(bctx)
 	cancel()
@@ -143,7 +143,7 @@ func serve(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 
-	arts := &artifacts.Service{Pool: pool, Blobs: blobs, Bucket: cfg.S3.ArtifactBucket}
+	arts := &artifacts.Service{Pool: pool, Blobs: blobs, Bucket: cfg.Blob.ArtifactBucket}
 	res, err := seed.Run(ctx, pool, seed.Options{Demo: cfg.Seed, UserName: cfg.LocalUserName, UserEmail: cfg.LocalUserEmail, Artifacts: arts})
 	if err != nil {
 		return fmt.Errorf("seed: %w", err)
@@ -195,7 +195,7 @@ func serve(ctx context.Context, log *slog.Logger) error {
 		Wiki:           &wiki.Service{Pool: pool, Artifacts: arts, Tracker: trackerSvc},
 		PublicURL:      cfg.PublicURL,
 		Blobs:          blobs,
-		ArtifactBucket: cfg.S3.ArtifactBucket,
+		ArtifactBucket: cfg.Blob.ArtifactBucket,
 		DesignWorker:   &designs.Worker{URL: cfg.DesignWorkerURL, Token: cfg.DesignWorkerToken},
 		Log:            log,
 		Usage:          &usage.Service{Q: q, Log: log},
@@ -366,28 +366,6 @@ func runRunner(ctx context.Context, log *slog.Logger) error {
 	rc := cfg.Runner
 	var backend runner.Backend
 	switch rc.Backend {
-	case "docker":
-		d := &runner.Docker{Socket: rc.DockerSocket, Image: rc.Image, Network: rc.Network, Stack: rc.Stack, MemoryMB: rc.MemoryMB, PidsLimit: rc.PidsLimit, HostWorkspaces: rc.HostWorkspaces,
-			ProxyDir: rc.DockerProxyDir, ProxyVolume: rc.DockerProxyVolume, NixVolume: rc.NixVolume}
-		if err := d.PrepareDockerProxy(); err != nil {
-			return fmt.Errorf("runner: %w", err)
-		}
-		pctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		err := d.Ping(pctx)
-		cancel()
-		if err != nil {
-			return fmt.Errorf("runner: docker: %w", err)
-		}
-		// Without the daemon turns still run; nix commands in them say they
-		// can't reach it.
-		nctx, cancel := context.WithTimeout(ctx, time.Minute)
-		if err := d.EnsureNixDaemon(nctx); err != nil {
-			log.Warn("runner: turns won't have Nix", "err", err)
-		} else if st, err := d.CheckNixDaemon(nctx); err != nil {
-			log.Warn("runner: turns won't have Nix", "err", err, "probe", st.Probe, "daemon_log", st.DaemonLog)
-		}
-		cancel()
-		backend = d
 	case "microvm":
 		apiUpstream := os.Getenv("API_INTERNAL_URL")
 		if apiUpstream == "" {
@@ -431,23 +409,20 @@ func runRunner(ctx context.Context, log *slog.Logger) error {
 		backend = &runner.Fake{Dir: rc.DataDir, Bins: bins}
 	}
 	host, _ := os.Hostname()
-	blobs := blob.New(cfg.S3)
+	blobs := blob.New(cfg.Blob)
 	secretStore := &secrets.Service{Q: store.New(pool), Box: box}
 	saveClaude, saveCodex := buildAuthSavers(secretStore)
-	if d, ok := backend.(*runner.Docker); ok {
-		d.SaveClaudeAuth = saveClaude
-		d.SaveCodexAuth = saveCodex
-	} else if m, ok := backend.(*runner.MicroVM); ok {
+	if m, ok := backend.(*runner.MicroVM); ok {
 		m.SaveClaudeAuth = saveClaude
 		m.SaveCodexAuth = saveCodex
 	}
-	workflows := runs.NewWorkflowEngine(pool, &artifacts.Service{Pool: pool, Blobs: blobs, Bucket: cfg.S3.ArtifactBucket}, &tracker.Service{Pool: pool})
+	workflows := runs.NewWorkflowEngine(pool, &artifacts.Service{Pool: pool, Blobs: blobs, Bucket: cfg.Blob.ArtifactBucket}, &tracker.Service{Pool: pool})
 	workflows.Catalog = chatmodels.Catalog{RequireKey: config.IsolatesBackend(rc.Backend), Secrets: secretStore, PlanModels: planModels(rc.Backend, pool)}
 	r := &runner.Runner{
 		Cfg: runner.Config{
 			ModelPrices: rc.ModelPrices,
 			ID:          fmt.Sprintf("%s-%d", host, os.Getpid()), MaxConcurrent: rc.MaxConcurrent, MCPURL: rc.MCPURL,
-			Grace: 30 * time.Second, LogBucket: "run-logs", AttachmentBucket: cfg.S3.ArtifactBucket, Version: cfg.Version, RequireHarnessKey: config.IsolatesBackend(rc.Backend),
+			Grace: 30 * time.Second, LogBucket: "run-logs", AttachmentBucket: cfg.Blob.ArtifactBucket, Version: cfg.Version, RequireHarnessKey: config.IsolatesBackend(rc.Backend),
 			ChatIdleTTL: rc.ChatIdleTTL, MaxHold: rc.MaxHold, MaxHoldAttempts: rc.MaxHoldAttempts, RolloverContextTokens: int64(cfg.RolloverContextTokens),
 			RepoMap:     rc.RepoMap,
 			Playgrounds: runner.PlaygroundConfig{Ports: rc.PlaygroundPorts, IdleTTL: rc.PlaygroundIdleTTL, Origins: origins(cfg.WebURL, cfg.PublicURL)},
@@ -455,8 +430,8 @@ func runRunner(ctx context.Context, log *slog.Logger) error {
 		Pool: pool, Backend: backend, Secrets: secretStore,
 		Tracker: &tracker.Service{Pool: pool}, Blobs: blobs, Attachments: blobs, Log: log,
 		Workflows:    workflows,
-		Designs:      &designs.Service{Pool: pool, Worker: &designs.Worker{URL: cfg.DesignWorkerURL, Token: cfg.DesignWorkerToken}, Blobs: blobs, Bucket: cfg.S3.ArtifactBucket},
-		Scheduled:    &runs.Service{Pool: pool, Secrets: secretStore, Tracker: &tracker.Service{Pool: pool}, Artifacts: &artifacts.Service{Pool: pool, Blobs: blobs, Bucket: cfg.S3.ArtifactBucket}, RequireHarnessKey: config.IsolatesBackend(rc.Backend), PlanModels: planModels(rc.Backend, pool), RolloverContextTokens: int64(cfg.RolloverContextTokens)},
+		Designs:      &designs.Service{Pool: pool, Worker: &designs.Worker{URL: cfg.DesignWorkerURL, Token: cfg.DesignWorkerToken}, Blobs: blobs, Bucket: cfg.Blob.ArtifactBucket},
+		Scheduled:    &runs.Service{Pool: pool, Secrets: secretStore, Tracker: &tracker.Service{Pool: pool}, Artifacts: &artifacts.Service{Pool: pool, Blobs: blobs, Bucket: cfg.Blob.ArtifactBucket}, RequireHarnessKey: config.IsolatesBackend(rc.Backend), PlanModels: planModels(rc.Backend, pool), RolloverContextTokens: int64(cfg.RolloverContextTokens)},
 		DriveBackups: driveBackupRunner(cfg, pool, box, fmt.Sprintf("%s-%d", host, os.Getpid()), log),
 		StoreSecret: func(ctx context.Context, ws, by uuid.UUID, name, value string) error {
 			_, err := secretStore.Set(ctx, ws, by, secrets.SetInput{Name: name, Value: value})
@@ -489,7 +464,7 @@ func origins(urls ...string) []string {
 }
 
 // planModels lists plan-login models through a runner in isolated modes
-// (Docker, microVM) where the API lacks direct sandbox CLIs; nil elsewhere.
+// (microVM) where the API lacks direct sandbox CLIs; nil elsewhere.
 func planModels(backend string, pool *pgxpool.Pool) func(context.Context, uuid.UUID, string, bool) ([]chatmodels.Model, error) {
 	if !config.IsolatesBackend(backend) {
 		return nil

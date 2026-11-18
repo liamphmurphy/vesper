@@ -102,6 +102,9 @@ import { ChatCostChip } from "@/components/domain/cost-chip";
 import { unavailableReason } from "@/lib/setup";
 import { ChatSpacePicker } from "./chat-space";
 import { CompactChatHeader } from "./compact-chat-header";
+import { NativeChatHeader } from "./native-chat-header";
+import { trackDockHeight } from "@/lib/dock-height";
+import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { useCompact } from "@/lib/viewport";
 import { composerOptions } from "@/lib/composer-options";
 import { CommitEmailPicker } from "./commit-email";
@@ -590,6 +593,16 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   const [tab, setTab] = useState<"chat" | "activity">("chat");
   const compact = useCompact();
   const dockActivity = activityInDock && !compact;
+  // In the Mac app the chat page's header lives in the window's toolbar (NativeChatHeader), so the page keeps the row's height.
+  const native = useIsNativeShell();
+  const nativeHeader = native && dockActivity && !docked && !headerSlot;
+  // Native only: the floating composer's real height drives the overlap and the transcript's bottom padding (native-mac.css).
+  // A callback ref: the dock mounts only once the chat has loaded.
+  const stopDockTrack = useRef<(() => void) | undefined>(undefined);
+  const dockRef = useCallback((el: HTMLDivElement | null) => {
+    stopDockTrack.current?.();
+    stopDockTrack.current = native && el ? trackDockHeight(el) : undefined;
+  }, [native]);
   const view = dockActivity ? "chat" : tab;
   // "View reasoning" on a chat step: Activity opens on that step (the compact tab, or the dock's tab).
   const [traceFocus, setTraceFocus] = useState<{ key: string; at: number }>();
@@ -1185,6 +1198,19 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
             onRepository={() => { setTab("chat"); setSheetSignal((n) => n + 1); }}
             onRestored={restored}
           />
+        ) : nativeHeader ? (
+          <NativeChatHeader
+            chat={c}
+            participants={participants}
+            fresh={fresh}
+            running={running}
+            personaDisabled={locked || create.isPending}
+            onSwitchPersona={switchPersona}
+            repo={canCode ? { onPick: (r) => selectRepo.mutate(r), onSearch: () => setRepoSignal((n) => n + 1), disabled: c.archived || selectRepo.isPending, personaRepos: personas.data?.personas.find((p) => p.id === (c.speaker ?? c.persona)?.id)?.repos, picker: repoPicker } : undefined}
+            commitEmail={c.repo_url && c.commit_email && myEmails.length > 1 ? c.commit_email : undefined}
+            onCommitEmail={() => setCommitPickerOpen((o) => !o)}
+            onRestored={restored}
+          />
         ) : (
         <InSlot slot={headerSlot}>
         <div data-testid="chat-header" className={cx(
@@ -1253,6 +1279,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
           role="tabpanel"
           aria-label="Chat"
           hidden={view !== "chat"}
+          data-chat-scroller=""
           className="relative flex-1 overflow-y-auto px-6 py-5"
           // Only the person's input lets go of the end. A scroll event alone can't tell: the one for our
           // own scroll, or for the browser clamping it as content shrinks, may land after the content grew
@@ -1396,7 +1423,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
             </>
           )}
         </div>
-        <div className="mx-auto flex w-full max-w-[816px] flex-col gap-2 px-6 pb-3">
+        <div ref={dockRef} data-chat-dock="" className="mx-auto flex w-full max-w-[816px] flex-col gap-2 px-6 pb-3">
           {(() => {
             // Everything above the composer goes through one slot, ranked by STATUS_PRIORITY (lib/chat-status-slot).
             // The trays stay mounted while empty (present: false) so they see their first item arrive.

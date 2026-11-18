@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// The chat spec mocks the REST API (e2e/mock-chat-api.ts), so only the Next
-// app needs to run. Set E2E_BASE_URL to run against an already running stack.
+// The chat spec mocks the REST API (e2e/mock-chat-api.ts), so only the static
+// app (served by design-worker/server.ts) needs to run. Set E2E_BASE_URL to run against an already running stack.
 const external = process.env.E2E_BASE_URL;
 
 export default defineConfig({
@@ -26,7 +26,8 @@ export default defineConfig({
   webServer: external
     ? undefined
     : {
-        command: "npm run build && npx next start -p 3100",
+        command: "npm run build && node dist/design-worker/server.mjs",
+        env: { STATIC_DIR: "dist", PORT: "3100" },
         url: "http://localhost:3100",
         reuseExistingServer: !process.env.CI,
         timeout: 240_000,

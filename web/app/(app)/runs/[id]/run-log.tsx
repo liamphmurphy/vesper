@@ -512,6 +512,20 @@ export function RunLogScreen({ id }: { id: string }) {
     <div className="flex min-h-0 flex-1 flex-col">
       <TopBar
         crumbs={crumbs}
+        nativeActions={[
+          ...(mode !== "simple" ? [{ id: "run.thread", label: "Back to thread", kind: "button" as const, icon: "chev", showsLabel: true, run: () => switchMode("simple") }] : []),
+          ...(live && run.mode === "managed"
+            ? [run.state === "paused"
+              ? { id: "run.resume", label: "Resume", kind: "button" as const, icon: "play", showsLabel: true, disabled: control.isPending, run: () => control.mutate("resume") }
+              : { id: "run.pause", label: "Pause", kind: "button" as const, icon: "pause", showsLabel: true, disabled: control.isPending || run.state === "queued", run: () => control.mutate("pause") }]
+            : []),
+          ...((run.state === "failed" || run.state === "cancelled") && run.ticket_key && !run.parent_run_id
+            ? [{ id: "run.retry", label: "Retry run", kind: "button" as const, icon: "refresh", showsLabel: true, accent: true, disabled: control.isPending, run: () => control.mutate("retry", { onSuccess: (r) => router.push(`/runs/${r.id}`) }) }]
+            : []),
+          ...(live
+            ? [{ id: "run.cancel", label: "Cancel run", kind: "button" as const, icon: "x", showsLabel: true, disabled: control.isPending, run: async () => { if (await confirmCancel(run.agent.name)) control.mutate("cancel"); } }]
+            : []),
+        ]}
         actions={
           <>
             {mode !== "simple" && <Button variant="ghost" icon="chev" className="[&_svg]:rotate-90" onClick={() => switchMode("simple")}>Back to thread</Button>}

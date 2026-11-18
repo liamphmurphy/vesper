@@ -12,8 +12,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/liamphmurphy/vesper/server/internal/agents"
-	"github.com/liamphmurphy/vesper/server/internal/blob"
-	"github.com/liamphmurphy/vesper/server/internal/config"
 	"github.com/liamphmurphy/vesper/server/internal/designs"
 	"github.com/liamphmurphy/vesper/server/internal/links"
 	"github.com/liamphmurphy/vesper/server/internal/store"
@@ -26,10 +24,8 @@ import (
 // Knowledge attachments stored in the same fake bucket the API serves from.
 func newKnowledgeAssetsEnv(t *testing.T) (*designsEnv, *Server) {
 	t.Helper()
-	f := &flakyS3{fakeS3: &fakeS3{objs: map[string]fakeObject{}}}
-	ts := httptest.NewServer(f)
-	t.Cleanup(ts.Close)
-	blobs := blob.New(config.S3{Endpoint: ts.URL, Region: "us-east-1", AccessKey: "test", SecretKey: "test-secret", UsePathStyle: true})
+	f := newFakeBlobs(t)
+	blobs := f.Store
 	ws := httptest.NewServer(&stubWorker{})
 	t.Cleanup(ws.Close)
 	var srv *Server
@@ -179,15 +175,7 @@ func (e *designsEnv) uploadAsset(name string, data []byte) (int, map[string]any)
 }
 
 func (e *designsEnv) assetObjects() []string {
-	e.s3.mu.Lock()
-	defer e.s3.mu.Unlock()
-	var keys []string
-	for k := range e.s3.objs {
-		if strings.Contains(k, "knowledge-assets/") {
-			keys = append(keys, k)
-		}
-	}
-	return keys
+	return e.s3.keys(avatarBucket + "/knowledge-assets/")
 }
 
 // Criterion 4: attachments are stored by content hash, an identical upload

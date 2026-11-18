@@ -1,9 +1,9 @@
-import { Suspense } from "react";
+import { Suspense, use } from "react";
 import { CanvasPageRedirect } from "@/components/domain/canvas-page-redirect";
 
 // Every deck is a Knowledge page (LAZYAGENTS-212): the old address opens it there.
-async function Loader({ params }: { params: PageProps<"/apps/slides/[id]">["params"] }) {
-  const { id } = await params;
+function Loader({ params }: { params: PageProps<"/apps/slides/[id]">["params"] }) {
+  const { id } = use(params);
   return <CanvasPageRedirect canvasId={id} what="deck" />;
 }
 

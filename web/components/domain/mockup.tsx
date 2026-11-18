@@ -60,7 +60,7 @@ export function MockupImage({
   return (
     <div className={cx("overflow-auto rounded-xl border border-border", checker, className)}>
       {url && (
-        // eslint-disable-next-line @next/next/no-img-element -- data: URL of user SVG source
+        // data: URL of user SVG source
         <img
           src={url}
           alt={alt}

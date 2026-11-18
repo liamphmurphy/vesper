@@ -66,7 +66,7 @@ export function WorkflowImages({ runId, images }: { runId: string; images: Schem
     <div className="flex flex-wrap gap-2" data-testid="workflow-images">
       {images.map((im) => (
         <a key={im.id} href={workflowImageUrl(runId, im.id)} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-lg border border-border-subtle">
-          {/* eslint-disable-next-line @next/next/no-img-element -- same-origin, authorized API image */}
+          {/* same-origin, authorized API image */}
           <img src={workflowImageUrl(runId, im.id)} alt={im.filename} className="max-h-72 max-w-full object-contain" />
         </a>
       ))}

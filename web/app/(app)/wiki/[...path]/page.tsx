@@ -1,4 +1,4 @@
-import { Suspense } from "react";
+import { Suspense, use } from "react";
 import { LegacyRedirect } from "../../knowledge/_components/legacy-redirect";
 import { WikiScreen } from "../_components/wiki-screen";
 
@@ -11,8 +11,8 @@ function decode(s: string) {
   }
 }
 
-async function Loader({ params }: { params: PageProps<"/wiki/[...path]">["params"] }) {
-  const { path } = await params;
+function Loader({ params }: { params: PageProps<"/wiki/[...path]">["params"] }) {
+  const { path } = use(params);
   const full = path.map(decode).join("/");
   // Wiki pages live in Knowledge now; the old screen only shows for a path nothing holds.
   return <LegacyRedirect from={`/wiki/${path.join("/")}`} fallback={<WikiScreen path={full} />} />;

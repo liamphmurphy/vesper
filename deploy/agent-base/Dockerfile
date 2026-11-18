@@ -8,8 +8,7 @@ RUN git clone --depth 1 --branch v1.31.1 https://github.com/sqlc-dev/sqlc.git /t
  && cd /tmp/sqlc && go build -o /go/bin/sqlc ./cmd/sqlc
 
 # Nix lets a turn install any tool it needs without root (nix profile
-# install nixpkgs#protobuf): the runner's nix-daemon owns the store, shared by
-# every turn through the lazyagents-nix volume (see runner/docker_nix.go).
+# install nixpkgs#protobuf).
 FROM nixos/nix:2.24.10 AS nix
 
 FROM node:24-bookworm-slim

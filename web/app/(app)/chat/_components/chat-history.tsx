@@ -68,7 +68,7 @@ export function NewConversationButton({ id, rail }: { id?: string; rail?: boolea
  * conversation, unless the open one is already with it. A persona with no chats
  * shows "Start one" in the list instead.
  */
-function usePersonaNav(id: string | undefined) {
+export function usePersonaNav(id: string | undefined) {
   const router = useRouter();
   const pathname = usePathname();
   const search = useSearchParams();
@@ -286,13 +286,8 @@ function ChatSearchResults({ query, onPick }: { query: string; onPick: () => voi
   );
 }
 
-/**
- * The conversation history at the top of the menu: persona strip, then Active by day or
- * Archived (kept in ?view= on the chat page). `between` goes under the persona strip (the
- * history drawer's spaces); `fill` drops the narrow-screen height cap for a drawer of its own and
- * puts a Search chats box on top, where a phone has no room to tuck it into a heading.
- */
-export function ChatHistory({ id, viewed, between, fill, action }: { id?: string; viewed: string | null; between?: ReactNode; fill?: boolean; action?: ReactNode }) {
+/** Active or Archived, kept in ?view= on the chat page; setView moves there from any other screen. */
+export function useChatListView(): { view: "active" | "archived"; setView: (v: "active" | "archived") => void } {
   const router = useRouter();
   const pathname = usePathname();
   const search = useSearchParams();
@@ -305,6 +300,18 @@ export function ChatHistory({ id, viewed, between, fill, action }: { id?: string
     if (onChat) router.replace(`${pathname}?${q.toString()}`);
     else router.push(`/chat?${q.toString()}`);
   };
+  return { view, setView };
+}
+
+/**
+ * The conversation history at the top of the menu: persona strip, then Active by day or
+ * Archived (kept in ?view= on the chat page). `between` goes under the persona strip (the
+ * history drawer's spaces); `fill` drops the narrow-screen height cap for a drawer of its own and
+ * puts a Search chats box on top, where a phone has no room to tuck it into a heading.
+ */
+export function ChatHistory({ id, viewed, between, fill, action }: { id?: string; viewed: string | null; between?: ReactNode; fill?: boolean; action?: ReactNode }) {
+  const router = useRouter();
+  const { view, setView } = useChatListView();
   const { filter, active, pick, create, startWith } = usePersonaNav(id);
   const activity = usePersonaActivity(viewed);
   const all = filter.query === "all";

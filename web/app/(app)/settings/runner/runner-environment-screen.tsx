@@ -37,7 +37,9 @@ export function RunnerEnvironmentScreen() {
   ] : [];
 
   return <>
-    <TopBar crumbs={[{ label: "Settings", href: "/settings" }, { label: "Runner environment" }]} actions={
+    <TopBar crumbs={[{ label: "Settings", href: "/settings" }, { label: "Runner environment" }]} nativeActions={[
+      { id: "runner.refresh", label: query.isFetching ? "Refreshing…" : "Refresh", kind: "button", icon: "refresh", showsLabel: true, disabled: query.isFetching, run: () => void query.refetch() },
+    ]} actions={
       <Button variant="outline" disabled={query.isFetching} onClick={() => void query.refetch()}>{query.isFetching ? "Refreshing…" : "Refresh"}</Button>
     } />
     <Content>

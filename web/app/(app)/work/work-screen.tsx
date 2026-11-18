@@ -1,11 +1,13 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState, type MouseEvent } from "react";
 import type { TicketStatus } from "@/lib/api/client";
 import {
   useBootstrap,
   useEpicOverviews,
+  useRunLog,
+  useTicket,
   useTickets,
   type TicketView,
 } from "@/lib/api/hooks";
@@ -39,9 +41,52 @@ import {
 } from "./work-details";
 import { WorkNavHeader, WorkSpacePersonaFilters } from "./work-nav-header";
 import { BoardView } from "../tickets/_components/board-screen";
-import { RunList, useRunList } from "../runs/run-list";
+import { activityNativeBody, RunList, useActivityLists, useRunList } from "../runs/run-list";
+import { itemHref } from "@/lib/run-list";
+import { listQuery } from "../runs/run-list";
+import { buildWorkActivityNavModel, RUN_LOAD_MORE, RUN_RETRY, RUN_VIEW_FILTER, type ActivityFilter } from "@/lib/native-shell/models/runs";
+import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
+import { buildWorkEpicsNavModel, buildWorkTicketsNavModel, WORK_LAYOUT_FILTER } from "@/lib/native-shell/models/work-lists";
+import { workViewPatch, workViewQuery } from "@/lib/native-shell/models/saved-views";
+import { buildWorkToolbar, parseWorkToolbarAction } from "@/lib/native-shell/models/work-toolbars";
+import { useIsNativeShell } from "@/lib/native-shell/hooks";
+import { useNativeToolbar } from "@/lib/native-shell/use-native-toolbar";
+import { SavedViewNativeDialogs, useSavedViewsNav, useSavedViewsUi } from "@/components/domain/saved-views";
+import { useNativeTitle } from "../tickets/_components/native-title";
 import { ticketsHref } from "@/lib/tickets-layout";
+import type { NativeCommand } from "@/lib/native-shell/protocol";
 import "./work.css";
+
+/** The Work top bar in the Mac app: the view as the window's title, and what needs you as a toolbar button. */
+function NativeWorkHeader({ title, needs, onNeeds }: { title: string; needs: number; onNeeds: () => void }) {
+  useNativeTitle(title);
+  useNativeToolbar({
+    items: buildWorkToolbar({ needs }),
+    onAction: (id) => {
+      if (parseWorkToolbarAction(id) === "needs") onNeeds();
+    },
+  });
+  return null;
+}
+
+/** The open run's links (its ticket, its epic, Details, Run details) as toolbar items. */
+function NativeRunLinks({ id, context, navigate }: { id: string; context: string | null; navigate: Navigate }) {
+  const router = useRouter();
+  const run = useRunLog(id).data?.run;
+  const ticketKey = run?.ticket_key ?? null;
+  const epic = useTicket(ticketKey ?? "").data?.epic;
+  useNativeToolbar({
+    items: run ? buildWorkToolbar({ needs: 0, run: { ticketKey, epic, context } }) : [],
+    onAction: (item) => {
+      const a = parseWorkToolbarAction(item);
+      if (a === "ticket" && ticketKey) navigate({ ticket: ticketKey, context: "ticket" });
+      else if (a === "epic" && epic) navigate({ epic: epic.id, context: "epic" });
+      else if (a === "details" && ticketKey) navigate({ ticket: ticketKey, context: context === "ticket" ? null : "ticket" });
+      else if (a === "run") router.push(`/runs/${id}?view=details`);
+    },
+  });
+  return null;
+}
 
 export function WorkScreen() {
   const params = useSearchParams();
@@ -185,6 +230,151 @@ export function WorkScreen() {
   const openTicketsCount = tickets.data?.filter(
     (t) => t.status !== "done" && t.status !== "canceled",
   ).length;
+  // The Activity list in the native sidebar; the Tickets and Epics lists are listNative, below.
+  const pathname = usePathname();
+  const [nowDate] = useState(() => new Date());
+  const activityFilterNow = parseActivityFilter(params.get("filter"), params.get("done"));
+  const activityLists = useActivityLists(runs, search, activityFilterNow, nowDate);
+  const goActivity = () => go({ view: "activity", context: null, companion: null, list: null, layout: null });
+  const openWorkPath = (path: string) => {
+    const url = new URL(path, window.location.href);
+    const href = workTarget(
+      url.pathname,
+      new URLSearchParams(workHref(new URLSearchParams(window.location.search), { ...(runId ? { run: runId } : {}) }).split("?")[1]),
+    );
+    if (href) window.history.pushState(null, "", href);
+    else router.push(path);
+  };
+  const activityNative =
+    view === "activity"
+      ? {
+          model: buildWorkActivityNavModel({
+            header: {
+              active: "activity",
+              project,
+              projects: boot.data?.projects,
+              agents: boot.data?.agents,
+              agent: agent ?? "",
+              counts: {
+                activity: runs.needs.length + runs.runs.filter((r) => r.state === "running" || r.state === "queued").length || undefined,
+                tickets: openTicketsCount || undefined,
+                epics: openEpicsCount || undefined,
+              },
+              search: { value: search, placeholder: "Filter work…" },
+            },
+            body: {
+              ...activityNativeBody(runs, activityLists, { search, query: listQuery(params), now: nowDate }),
+              hasMore: runs.hasMore && activityFilterNow === "all",
+            },
+            filter: activityFilterNow as ActivityFilter,
+            counts: {
+              all: activityLists.viewCounts.all,
+              needs_you: Math.max(activityLists.viewCounts.needs_you, runs.shownNeeds.length),
+              active: activityLists.viewCounts.active,
+              failed: activityLists.viewCounts.failed,
+            },
+            selectedId: runs.shownNeeds.find((i) => i.run_id === runId && activityLists.nonRunNeeds.some((n) => n.id === i.id))
+              ? `needs:${runs.shownNeeds.find((i) => i.run_id === runId)!.id}`
+              : runId
+                ? `run:${runId}`
+                : null,
+          }),
+          onCommand: (cmd: NativeCommand) => {
+            const handled = handleWorkHeaderCommand(cmd, {
+              project,
+              push: (href) => router.push(href),
+              onProject: (v) => go({ project: v, ticket: null, epic: null }),
+              onAgent: (v) => go({ agent: v || null }),
+              onSearch: (q) => {
+                setSearch(q);
+                updateWorkUrl({ q: q || null }, true);
+              },
+              onActivity: goActivity,
+            });
+            if (handled) return;
+            if (cmd.type === "nav.filter" && cmd.filterId === RUN_VIEW_FILTER) {
+              const next = cmd.value;
+              const q = new URLSearchParams(params);
+              q.delete("done");
+              if (next === "all") q.delete("filter");
+              else q.set("filter", next);
+              router.replace(`${pathname}${q.size ? `?${q}` : ""}`, { scroll: false });
+            } else if (cmd.type === "nav.activate") {
+              if (cmd.itemId === RUN_LOAD_MORE) runs.loadMore();
+              else if (cmd.itemId === RUN_RETRY) runs.retry();
+              else if (cmd.itemId.startsWith("run:")) openWorkPath(`/runs/${cmd.itemId.slice(4)}`);
+              else if (cmd.itemId.startsWith("needs:")) {
+                const item = runs.shownNeeds.find((i) => i.id === cmd.itemId.slice(6));
+                if (item) openWorkPath(itemHref(item, listQuery(params)));
+              }
+            }
+          },
+        }
+      : undefined;
+  // The Tickets and Epics lists beside a focused ticket or epic, with the saved views.
+  const native = useIsNativeShell();
+  const svUi = useSavedViewsUi();
+  const savedNav = useSavedViewsNav({
+    ui: svUi,
+    current: workViewQuery(params),
+    project,
+    open: (v) => updateWorkUrl(workViewPatch(v.id, v.query)),
+    onDeleted: (v) => {
+      if (params.get("saved") === v.id) updateWorkUrl({ saved: null });
+    },
+  });
+  const listHeader = {
+    project,
+    projects: boot.data?.projects,
+    agents: boot.data?.agents,
+    agent: agent ?? "",
+    counts: { tickets: openTicketsCount || undefined, epics: openEpicsCount || undefined },
+    search: { value: search, placeholder: "Filter work…" },
+  };
+  const headerCommand = (cmd: NativeCommand) =>
+    handleWorkHeaderCommand(cmd, {
+      project,
+      push: (href) => router.push(href),
+      onProject: (v) => go({ project: v, ticket: null, epic: null }),
+      onAgent: (v) => go({ agent: v || null }),
+      onSearch: (q) => {
+        setSearch(q);
+        updateWorkUrl({ q: q || null }, true);
+      },
+      onActivity: goActivity,
+    });
+  const listNative =
+    view === "tickets"
+      ? {
+          model: buildWorkTicketsNavModel({
+            header: listHeader,
+            board: params.get("layout") === "board",
+            tickets: shownTickets.map((t) => ({ key: t.key, title: t.title, status: t.status, blocked: t.unmet_dependencies > 0 })),
+            statusNames: STATUS_NAME,
+            views: savedNav.rows,
+            loading: tickets.isPending,
+            selectedKey: ticketKey,
+          }),
+          onCommand: (cmd: NativeCommand) => {
+            if (headerCommand(cmd) || savedNav.handle(cmd)) return;
+            if (cmd.type === "nav.filter" && cmd.filterId === WORK_LAYOUT_FILTER) go({ layout: cmd.value === "board" ? "board" : null });
+            else if (cmd.type === "nav.activate" && cmd.itemId.startsWith("ticket:")) go({ ticket: cmd.itemId.slice(7), context: null, list: null });
+          },
+        }
+      : view === "epics"
+        ? {
+            model: buildWorkEpicsNavModel({
+              header: listHeader,
+              epics: shownEpics.map((e) => ({ id: e.epic.id, name: e.epic.name, done: e.counts.done, total: e.counts.total })),
+              loading: epics.isPending,
+              selectedId: epicId,
+            }),
+            onCommand: (cmd: NativeCommand) => {
+              if (headerCommand(cmd)) return;
+              if (cmd.type === "nav.activate" && cmd.itemId.startsWith("epic:")) go({ epic: cmd.itemId.slice(5), context: null, list: null });
+            },
+          }
+        : undefined;
   const nav = (
     <nav aria-label="Work" className="work-nav">
       <WorkNavHeader
@@ -299,33 +489,41 @@ export function WorkScreen() {
   const showActivityOverview = view === "activity" && !compact && !showBrief;
   return (
     <div className="work-page" onClickCapture={intercept}>
-      {!compact && <NavigatorPortal>{nav}</NavigatorPortal>}
-      <TopBar
-        crumbs={[
-          { label: "Work", href: "/work" },
-          { label: view[0].toUpperCase() + view.slice(1) },
-        ]}
-        actions={
-          <>
-            {compact && (
-              <Button onClick={() => go({ list: "show" })}>Browse work</Button>
-            )}
-            {!companion && !mobileList && runs.needs.length > 0 && (
-              <button
-                type="button"
-                onClick={() => go({ filter: "needs_you", context: null })}
-                className="hidden items-center gap-1.5 rounded-md border border-pill-human-bg/80 bg-pill-human-bg px-2 py-1 text-11 font-medium text-pill-human-fg hover:brightness-105 md:inline-flex"
-              >
-                <span aria-hidden className="size-1.5 rounded-full bg-state-human" />
-                Needs you · {runs.needs.length}
-              </button>
-            )}
-            {!companion && !mobileList && runId && (
-              <WorkTopRunLinks id={runId} context={context} navigate={go} />
-            )}
-          </>
-        }
-      />
+      {!compact && <NavigatorPortal native={activityNative ?? listNative}>{nav}</NavigatorPortal>}
+      {native && <SavedViewNativeDialogs ui={svUi} onCreated={(v) => updateWorkUrl({ saved: v.id })} />}
+      {native ? (
+        <>
+          <NativeWorkHeader title={view[0].toUpperCase() + view.slice(1)} needs={!companion && !mobileList ? runs.needs.length : 0} onNeeds={() => go({ filter: "needs_you", context: null })} />
+          {!companion && !mobileList && runId && <NativeRunLinks id={runId} context={context} navigate={go} />}
+        </>
+      ) : (
+        <TopBar
+          crumbs={[
+            { label: "Work", href: "/work" },
+            { label: view[0].toUpperCase() + view.slice(1) },
+          ]}
+          actions={
+            <>
+              {compact && (
+                <Button onClick={() => go({ list: "show" })}>Browse work</Button>
+              )}
+              {!companion && !mobileList && runs.needs.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => go({ filter: "needs_you", context: null })}
+                  className="hidden items-center gap-1.5 rounded-md border border-pill-human-bg/80 bg-pill-human-bg px-2 py-1 text-11 font-medium text-pill-human-fg hover:brightness-105 md:inline-flex"
+                >
+                  <span aria-hidden className="size-1.5 rounded-full bg-state-human" />
+                  Needs you · {runs.needs.length}
+                </button>
+              )}
+              {!companion && !mobileList && runId && (
+                <WorkTopRunLinks id={runId} context={context} navigate={go} />
+              )}
+            </>
+          }
+        />
+      )}
       {mobileList && nav}
       <div
         className={cx(

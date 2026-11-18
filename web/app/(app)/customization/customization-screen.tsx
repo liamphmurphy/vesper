@@ -1,7 +1,9 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { isNativeShell } from "@/lib/native-shell/bridge";
+import { toast } from "@/lib/toast";
 import { useBootstrap, useMemories } from "@/lib/api/hooks";
 import { usePersonas, type Persona } from "@/lib/api/persona-hooks";
 import { MAX_PERSONAS, sortPersonas } from "@/lib/persona-ui";
@@ -10,12 +12,15 @@ import { HumanAvatar } from "@/components/domain/avatars";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { Content, TopBar } from "@/components/shell/topbar";
 import { useCompact } from "@/lib/viewport";
+import { pageOrigin } from "@/lib/native-shell/models/common";
+import { spaceHex } from "@/lib/spaces";
+import { buildCustomizationNavModel, NEW_PERSONA_ACTION, RETRY_PERSONAS_ACTION } from "@/lib/native-shell/models/customization";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Banner, Skeleton } from "@/components/ui/primitives";
 import { PersonaAvatar } from "../chat/_components/persona";
 import { PersonaEditor } from "../chat/_components/persona-editor";
-import { ExportMenu, ImportView, MemorySection } from "./memory-section";
+import { ExportMenu, ImportView, MemorySection, useMemoryExport } from "./memory-section";
 import { DefaultBadge, DeleteDialog, PersonaProfile } from "./persona-profile";
 import { ProfileSection } from "./profile-section";
 import { ApiSecretsSection } from "./api-secrets-section";
@@ -84,6 +89,11 @@ export function CustomizationScreen() {
   const [editing, setEditing] = useState<Persona | "new" | null>(null);
   const [deleting, setDeleting] = useState<Persona | null>(null);
   const [importing, setImporting] = useState(false);
+  const memoryExport = useMemoryExport();
+  const exportError = memoryExport.err;
+  useEffect(() => {
+    if (exportError && isNativeShell()) toast({ title: exportError, tone: "error" });
+  }, [exportError]);
   const [editingProfile, setEditingProfile] = useState(false);
   const total = count.data?.total;
   const pick = (v: string) => {
@@ -155,9 +165,49 @@ export function CustomizationScreen() {
   );
   return (
     <section aria-label="Customization">
-      {!compact && <NavigatorPortal>{customizeNav}</NavigatorPortal>}
+      {!compact && (
+        <NavigatorPortal
+          native={{
+            model: buildCustomizationNavModel({
+              me,
+              personas: personas.map((p) => ({ id: p.id, name: p.name, color: p.color, avatar_url: p.avatar_url, is_default: p.is_default })),
+              personasState: list.isError ? "error" : !list.data ? "loading" : "ready",
+              spaces: (spaces.data?.spaces ?? []).map((sp) => ({ id: sp.id, name: sp.name, color: spaceHex(sp.color), memory_count: sp.memory_count })),
+              who,
+              whose,
+              spaceParam,
+              canAddPersona: all.length < MAX_PERSONAS,
+              origin: pageOrigin(),
+            }),
+            onCommand: (cmd) => {
+              if (cmd.type === "nav.action") {
+                if (cmd.actionId === NEW_PERSONA_ACTION) setEditing("new");
+                else if (cmd.actionId === RETRY_PERSONAS_ACTION) void list.refetch();
+                return;
+              }
+              if (cmd.type !== "nav.activate") return;
+              const id = cmd.itemId;
+              if (id === "everything") pick("");
+              else if (id === "all-personas") pick("personas");
+              else if (id.startsWith("persona:")) pick(id.slice("persona:".length));
+              else if (id.startsWith("space:")) pickSpace(id.slice("space:".length));
+              else if (id === "person" || id === "connectors" || id === "secrets") pick(id);
+            },
+          }}
+        >
+          {customizeNav}
+        </NavigatorPortal>
+      )}
       <TopBar
         crumbs={[{ label: "Customization" }]}
+        nativeTitle={{ title: "Customization", subtitle: total !== undefined ? `${total} entries` : undefined }}
+        nativeActions={[
+          { id: "custom.import", label: "Import", kind: "toggle", icon: "upload", showsLabel: true, on: importing, run: () => setImporting((v) => !v) },
+          { id: "custom.export", label: "Export", kind: "menu", icon: "download", showsLabel: true, disabled: memoryExport.busy, menu: [
+            { id: "export.json", label: "JSON (all entries)", run: () => void memoryExport.run("json") },
+            { id: "export.md", label: "Markdown (all entries)", run: () => void memoryExport.run("md") },
+          ] },
+        ]}
         actions={
           <>
             {total !== undefined && <span className="text-12 text-fg-tertiary">{total} entries</span>}

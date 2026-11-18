@@ -6,6 +6,8 @@ import { BUILD_STEPS, COURSE_STATE_LABELS, buildStepIndex, type BuildState } fro
 import { cx } from "@/lib/cx";
 import { Content, TopBar } from "@/components/shell/topbar";
 import { Banner, EmptyState, Skeleton } from "@/components/ui/primitives";
+import { useState } from "react";
+import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { NewModuleGuide } from "./new-module-guide";
 import { PageHeader } from "@/components/ui/page-header";
 
@@ -68,9 +70,16 @@ export function LearnScreen() {
   // A module built in parts stays with the person's modules while its next part is built.
   const building = all.filter((c) => !c.studyable);
   const ready = all.filter((c) => c.studyable);
+  const native = useIsNativeShell();
+  const [guideOpen, setGuideOpen] = useState(false);
   return (
     <>
-      <TopBar crumbs={[{ label: "Learn" }]} actions={<NewModuleGuide />} />
+      <TopBar
+        crumbs={[{ label: "Learn" }]}
+        actions={native ? undefined : <NewModuleGuide open={guideOpen} onOpenChange={setGuideOpen} />}
+        nativeActions={[{ id: "learn.new", label: "New Learning Module", kind: "button", icon: "plus", showsLabel: true, accent: true, run: () => setGuideOpen(true) }]}
+      />
+      {native && <NewModuleGuide open={guideOpen} onOpenChange={setGuideOpen} hideTrigger />}
       <Content>
         <div className="flex flex-col gap-6">
           <PageHeader title="Learn" description="Turn a topic into a sourced, properly ordered module, then work through it with a tutor." />

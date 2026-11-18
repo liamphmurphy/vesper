@@ -28,7 +28,6 @@ func (l *Fake) DependencyCacheDir() string {
 	dir, _ := filepath.Abs(filepath.Join(l.Dir, "cache"))
 	return dir
 }
-func (d *Docker) DependencyCacheDir() string { return "/cache" }
 
 func dependencyEnv(cache, workspace string) map[string]string {
 	return map[string]string{

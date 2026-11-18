@@ -19,7 +19,7 @@ import (
 
 func TestLocalDirRoundTripAndEdgeCases(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "blobs")
-	s := blob.New(config.S3{Dir: dir, Buckets: []string{"artifacts", "run-logs"}})
+	s := blob.New(config.Blob{Dir: dir, Buckets: []string{"artifacts", "run-logs"}})
 	ctx := context.Background()
 
 	if err := s.EnsureBuckets(ctx); err != nil {

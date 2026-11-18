@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useCreateSavedView, useSavedViews } from "@/lib/api/hooks";
 import { updateWorkUrl } from "@/lib/work-navigation";
+import { workViewPatch, workViewQuery } from "@/lib/native-shell/models/saved-views";
 import { FilterMenu } from "@/components/domain/pickers";
 import { Button } from "@/components/ui/button";
 import { TextInput } from "@/components/ui/primitives";
@@ -17,37 +18,7 @@ export function WorkSavedViews() {
   function apply(id: string) {
     const v = views.data?.find((v) => v.id === id);
     if (!v) return;
-    const patch: Record<string, string | null> = { saved: id };
-    for (const key of [
-      "status",
-      "label",
-      "q",
-      "filter_epic",
-      "agent",
-      "ticket_view",
-      "ready",
-      "blocked",
-      "unestimated",
-    ])
-      patch[key] = null;
-    for (const [key, value] of new URLSearchParams(v.query)) {
-      if (key === "view") patch.ticket_view = value;
-      else if (key === "assignee") patch.agent = value;
-      else if (key === "epic") patch.filter_epic = value;
-      else if (
-        [
-          "status",
-          "label",
-          "q",
-          "layout",
-          "ready",
-          "blocked",
-          "unestimated",
-        ].includes(key)
-      )
-        patch[key] = value;
-    }
-    updateWorkUrl(patch);
+    updateWorkUrl(workViewPatch(id, v.query));
   }
   return (
     <div className="flex flex-wrap items-center gap-1 text-11">
@@ -80,23 +51,9 @@ export function WorkSavedViews() {
           onSubmit={(e) => {
             e.preventDefault();
             if (!name.trim() || create.isPending) return;
-            const q = new URLSearchParams();
-            for (const key of [
-              "status",
-              "label",
-              "q",
-              "layout",
-              "ready",
-              "blocked",
-              "unestimated",
-            ])
-              if (params.has(key)) q.set(key, params.get(key)!);
-            if (params.has("filter_epic"))
-              q.set("epic", params.get("filter_epic")!);
-            if (params.has("agent")) q.set("assignee", params.get("agent")!);
-            q.set("view", params.get("ticket_view") ?? "all");
+            const q = workViewQuery(params);
             create.mutate(
-              { name: name.trim(), query: q.toString() },
+              { name: name.trim(), query: q },
               {
                 onSuccess: () => {
                   setSaving(false);

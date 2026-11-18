@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Real-stack e2e: Go API + runner (RUNNER_BACKEND=fake) +
-# Postgres + SeaweedFS (S3) + Next, with the deterministic fake-harness binary
+# Postgres + a local blob directory + Next, with the deterministic fake-harness binary
 # standing in for `claude`, `codex` and `agy`. See README.md.
 #
 # Usage: web/e2e-stack/run.sh [playwright args...]
 # Env:   E2E_DATABASE_URL  use this (disposable!) Postgres instead of starting one
-#        E2E_S3_ENDPOINT   use this S3 instead of starting SeaweedFS
+#                          (default: a local Postgres 17 from the app's bundle, scripts/dev-postgres.sh)
 #        E2E_STACK_SETUP_ONLY=1  start the stack, print URLs, wait (no Playwright)
 #        E2E_FAKE_HARNESS_MODE   the fake CLIs' mode for the whole run (default chat-read). A run
 #                          with no mode and no playwright args also restarts the runner in
@@ -17,7 +17,7 @@ WEB="$(cd "$HERE/.." && pwd)"
 REPO="$(cd "$WEB/.." && pwd)"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/vesper-e2e-stack.XXXXXX")"
 PIDS=()
-CONTAINERS=()
+PG_STARTED=
 
 cleanup() {
   local code=$?
@@ -25,7 +25,7 @@ cleanup() {
   for pid in "${PIDS[@]:-}"; do [ -n "$pid" ] && kill "$pid" 2>/dev/null; done
   sleep 1
   for pid in "${PIDS[@]:-}"; do [ -n "$pid" ] && kill -9 "$pid" 2>/dev/null; done
-  for c in "${CONTAINERS[@]:-}"; do [ -n "$c" ] && docker rm -f "$c" >/dev/null 2>&1; done
+  [ -n "$PG_STARTED" ] && DEV_PG_DIR="$TMP/pg" DEV_PG_PORT="$PG_PORT" "$REPO/scripts/dev-postgres.sh" stop >/dev/null 2>&1
   if [ $code -ne 0 ] && [ -d "$TMP/logs" ]; then
     echo "--- stack failed (exit $code); log tails from $TMP/logs ---" >&2
     for f in "$TMP"/logs/*.log; do echo "== $f" >&2; tail -n 25 "$f" >&2; done
@@ -68,31 +68,16 @@ for cli in claude codex agy; do
   fi
 done
 
-# --- Postgres and S3 ---------------------------------------------------------
+# --- Postgres ----------------------------------------------------------------
 if [ -n "${E2E_DATABASE_URL:-}" ]; then
   DATABASE_URL="$E2E_DATABASE_URL"
 else
   PG_PORT="$(free_port)"
   echo ">> starting disposable postgres on :$PG_PORT"
-  CID="$(docker run -d --rm -e POSTGRES_USER=lazyagents -e POSTGRES_PASSWORD=lazyagents -e POSTGRES_DB=lazyagents \
-    -p "127.0.0.1:$PG_PORT:5432" postgres:17-alpine)"
-  CONTAINERS+=("$CID")
-  PG_CID="$CID"
-  for i in $(seq 1 60); do docker exec "$CID" pg_isready -U lazyagents -d lazyagents >/dev/null 2>&1 && break; sleep 1; done
-  docker exec "$CID" pg_isready -U lazyagents -d lazyagents >/dev/null
-  DATABASE_URL="postgres://lazyagents:lazyagents@127.0.0.1:$PG_PORT/lazyagents?sslmode=disable"
-fi
-if [ -n "${E2E_S3_ENDPOINT:-}" ]; then
-  S3_ENDPOINT="$E2E_S3_ENDPOINT"
-else
-  S3_PORT="$(free_port)"
-  echo ">> starting disposable seaweedfs on :$S3_PORT"
-  CID="$(docker run -d --rm -p "127.0.0.1:$S3_PORT:8333" -v "$REPO/deploy/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro" \
-    chrislusf/seaweedfs:4.48 server -s3 -s3.config=/etc/seaweedfs/s3.json -dir=/data \
-    -master.volumeSizeLimitMB=1024 -volume.max=100 -ip=127.0.0.1 -ip.bind=0.0.0.0)"
-  CONTAINERS+=("$CID")
-  S3_ENDPOINT="http://127.0.0.1:$S3_PORT"
-  wait_for "$S3_ENDPOINT" seaweedfs 90
+  export DEV_PG_DIR="$TMP/pg" DEV_PG_PORT="$PG_PORT"
+  PG_STARTED=1
+  "$REPO/scripts/dev-postgres.sh" start >/dev/null
+  DATABASE_URL="$("$REPO/scripts/dev-postgres.sh" url)"
 fi
 
 # --- API and runner -------------------------------------------------------------
@@ -103,7 +88,7 @@ SECRETS_KEY="$(head -c 32 /dev/urandom | base64)"
 stack_env() {
   exec env -i HOME="$TMP/home" PATH="$SAFE_PATH" TMPDIR="$TMP" \
     API_ADDR="127.0.0.1:$API_PORT" DATABASE_URL="$DATABASE_URL" \
-    S3_ENDPOINT="$S3_ENDPOINT" SEED=false PR_SYNC_INTERVAL_S=0 \
+    BLOB_DIR="$TMP/blobs" SEED=false PR_SYNC_INTERVAL_S=0 \
     SECRETS_KEY="$SECRETS_KEY" PUBLIC_URL="$WEB_URL" \
     RUNNER_BACKEND=fake RUNNER_DATA_DIR="$TMP/runs" RUNNER_MCP_URL="$API_URL/mcp" \
     RUNNER_CLAUDE_BIN="$TMP/bin/claude" RUNNER_CODEX_BIN="$TMP/bin/codex" RUNNER_ANTIGRAVITY_BIN="$TMP/bin/agy" \
@@ -144,9 +129,8 @@ curl -fsS "${SIGNED_IN[@]}" -X POST "$API_URL/api/v1/agents" -H 'content-type: a
 # create_epic), so this row is the only fixture written straight to Postgres;
 # its criteria, tickets, estimates and status all go through the real API/MCP.
 psql_run() {
-  if [ -n "${PG_CID:-}" ]; then docker exec -i "$PG_CID" psql -U lazyagents -d lazyagents -v ON_ERROR_STOP=1 -qtA "$@"
-  elif command -v psql >/dev/null; then psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -qtA "$@"
-  else docker run --rm -i --network host postgres:17-alpine psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -qtA "$@"; fi
+  if [ -n "$PG_STARTED" ]; then "$REPO/scripts/dev-postgres.sh" psql -v ON_ERROR_STOP=1 -qtA "$@"
+  else psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -qtA "$@"; fi
 }
 psql_run -c "INSERT INTO epics (workspace_id, project_id, name, objective, health)
   SELECT workspace_id, id, 'Board e2e epic', 'Verify the Kanban flow end to end', 'on_track' FROM projects WHERE key = 'E2E'" >/dev/null
@@ -158,7 +142,7 @@ done
 # --- Web ---------------------------------------------------------------------------
 echo ">> building and starting web on :$WEB_PORT"
 (cd "$WEB" && API_INTERNAL_URL="$API_URL" DESIGN_WORKER_TOKEN="$DESIGN_WORKER_TOKEN" npm run build >"$TMP/logs/web-build.log" 2>&1)
-(cd "$WEB" && exec env API_INTERNAL_URL="$API_URL" DESIGN_WORKER_TOKEN="$DESIGN_WORKER_TOKEN" npx next start -p "$WEB_PORT" -H 127.0.0.1) >"$TMP/logs/web.log" 2>&1 &
+(cd "$WEB" && exec env API_INTERNAL_URL="$API_URL" DESIGN_WORKER_TOKEN="$DESIGN_WORKER_TOKEN" STATIC_DIR=dist PORT="$WEB_PORT" HOSTNAME=127.0.0.1 node dist/design-worker/server.mjs) >"$TMP/logs/web.log" 2>&1 &
 PIDS+=($!)
 wait_for "$WEB_URL/chat" web 60
 

@@ -437,7 +437,7 @@ function ReviewRow({
         )}
       >
         {item.author_avatar_url ? (
-          // eslint-disable-next-line @next/next/no-img-element -- external GitHub avatar URL
+          // external GitHub avatar URL
           <img
             src={item.author_avatar_url}
             alt=""

@@ -14,6 +14,7 @@ import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { TopBar } from "@/components/shell/topbar";
 import { WorkChat } from "@/components/domain/work-chat";
 import { useCompact } from "@/lib/viewport";
+import { buildWorkflowPaletteNavModel } from "@/lib/native-shell/models/workflows";
 import { Button } from "@/components/ui/button";
 import { Banner, Skeleton, TextArea, TextInput } from "@/components/ui/primitives";
 import { Markdown } from "@/components/domain/markdown";
@@ -386,7 +387,20 @@ function Canvas({ workflow, chatId, onChatId, personaId, onPersonaId, onApplied,
   );
   return (
     <>
-      {!compact && <NavigatorPortal>{nodePalette}</NavigatorPortal>}
+      {!compact && (
+        <NavigatorPortal
+          native={{
+            model: buildWorkflowPaletteNavModel({ palette: PALETTE, disabled: !!preview }),
+            onCommand: (cmd) => {
+              if (cmd.type !== "nav.activate" || preview) return;
+              const item = PALETTE.flatMap((g) => g.items).find((i) => i.type === cmd.itemId);
+              if (item) addNode(item.type, item.label);
+            },
+          }}
+        >
+          {nodePalette}
+        </NavigatorPortal>
+      )}
       {!compact && (
         <CompanionDock
           app="workflows"
@@ -408,6 +422,11 @@ function Canvas({ workflow, chatId, onChatId, personaId, onPersonaId, onApplied,
       )}
       <TopBar
         crumbs={[{ label: "Workflows", href: "/workflows" }, { label: workflow.name }]}
+        nativeTitle={{
+          title: workflow.name,
+          subtitle: `${workflow.published_version > 0 ? `v${workflow.published_version}${workflow.unpublished_changes ? " · edited" : ""}` : "Draft"} · ${save.isPending ? "Saving…" : "Saved"}`,
+        }}
+        nativeActions={[{ id: "workflow.publish", label: "Publish", kind: "button", icon: "upload", showsLabel: true, accent: true, disabled: issues.length > 0 || publish.isPending || !!preview || !workflow.unpublished_changes, run: flushAndPublish }]}
         actions={
           <>
             <span className="font-mono text-12 text-fg-tertiary">{workflow.published_version > 0 ? `v${workflow.published_version}${workflow.unpublished_changes ? " · edited" : ""}` : "Draft"}</span>

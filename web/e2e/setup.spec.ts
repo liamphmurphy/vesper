@@ -73,7 +73,7 @@ async function installSetupApi(page: Page, init: Partial<State> = {}) {
       counts: { inbox: 6, needs_you: 6, wiki_suggestions: 0, live_agents: 1 },
     });
     if (path === "/runner") return json(state.runner
-      ? { online: true, runners: [{ id: "mbp", backend: "docker", max_concurrent: 4, running: 0, heartbeat_at: minutesAgo(0) }], slots: 4, busy: 0, live: 0, queued: 0 }
+      ? { online: true, runners: [{ id: "mbp", backend: "microvm", max_concurrent: 4, running: 0, heartbeat_at: minutesAgo(0) }], slots: 4, busy: 0, live: 0, queued: 0 }
       : { online: false, runners: [], slots: 0, busy: 0, live: 0, queued: 0 });
     if (path === "/chat-models") return json([
       { harness: "claude-code", label: "Claude Code", available: state.harness, ...(state.harness ? {} : { unavailable_reason: "no harness:anthropic secret" }), models: [{ id: "opus", label: "Opus", default: true }] },

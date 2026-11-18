@@ -110,7 +110,7 @@ func (l *Fake) RemoveOutbox(_ context.Context, runID string, names []string) err
 	return errors.Join(errs...)
 }
 
-// outboxScript runs inside a backend that can only start processes (Docker):
+// outboxScript runs inside a backend that can only start processes (the microVM):
 // it tars the outbox's regular files, applying the same limits as ReadOutbox
 // with the shell's own tests (which don't follow links), and reports what it
 // skipped on stderr as "skip<TAB>name<TAB>reason". The tar's headers are
@@ -221,14 +221,6 @@ func outboxExec(ctx context.Context, b Backend, runID string, argv ...string) (s
 		err = fmt.Errorf("exit %d: %s", code, strings.TrimSpace(string(errB)))
 	}
 	return outB, errB, err
-}
-
-func (d *Docker) ReadOutbox(ctx context.Context, runID string) ([]OutboxFile, []string, error) {
-	return readOutboxExec(ctx, d, runID)
-}
-
-func (d *Docker) RemoveOutbox(ctx context.Context, runID string, names []string) error {
-	return removeOutboxExec(ctx, d, runID, names)
 }
 
 func readOutboxExec(ctx context.Context, b Backend, runID string) ([]OutboxFile, []string, error) {

@@ -8,6 +8,9 @@ import { cx } from "@/lib/cx";
 import { timelineTime } from "@/lib/format";
 import { ancestors, buildTree, type Folder } from "@/lib/wiki";
 import { wikiHref } from "@/lib/wikilinks";
+import { findNavItem } from "@/lib/native-shell/nav-model";
+import { buildWikiNavModel } from "@/lib/native-shell/models/wiki";
+import type { NativeCommand } from "@/lib/native-shell/protocol";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/primitives";
 
@@ -67,6 +70,51 @@ function useOpenFolders() {
     [open],
   );
   return { open, toggle };
+}
+
+function splitPages(pages: WikiPageSummary[] | undefined) {
+  const published = (pages ?? []).filter((p) => p.published);
+  const isMemory = (p: WikiPageSummary) => p.path.toLowerCase().startsWith("agents/");
+  return { team: buildTree(published.filter((p) => !isMemory(p))), memory: buildTree(published.filter(isMemory), "agents/") };
+}
+
+function forcedFolders(current: string, index?: WikiIndex) {
+  const s = new Set(current ? ancestors(current) : []);
+  if (index === "patterns") s.add("patterns");
+  if (index === "adrs") s.add("architecture");
+  return s;
+}
+
+/** The wiki tree for the native sidebar: the same folders, open state and Reports as <PageTree>, and the commands the shell sends. */
+export function useWikiNative(pages: WikiPageSummary[] | undefined, current: string, index?: WikiIndex) {
+  const { open, toggle } = useOpenFolders();
+  const { team, memory } = useMemo(() => splitPages(pages), [pages]);
+  const forced = useMemo(() => forcedFolders(current, index), [current, index]);
+  const reports = useArtifacts({ type: "report" });
+  const list = reports.data?.artifacts ?? [];
+  const other = { ...team, folders: new Map([...team.folders].filter(([k]) => k !== "architecture" && k !== "patterns")) };
+  const model = buildWikiNavModel({
+    loaded: !!pages,
+    current,
+    index,
+    architecture: team.folders.get("architecture"),
+    patterns: team.folders.get("patterns"),
+    memory,
+    other,
+    reports: { state: reports.isError ? "error" : !reports.data ? "loading" : "ready", list, total: reports.data?.counts.report ?? list.length },
+    open,
+    forced,
+  });
+  const onCommand = (cmd: NativeCommand) => {
+    if (cmd.type !== "nav.toggle" && cmd.type !== "nav.activate") return;
+    if (!cmd.itemId.startsWith("f:")) return;
+    const key = cmd.itemId.slice(2);
+    if (forced.has(key)) return;
+    // A folder row without a page toggles on click, as in the page.
+    if (cmd.type === "nav.toggle") toggle(key, cmd.expanded);
+    else if (!findNavItem(model, cmd.itemId)?.href) toggle(key, !open.has(key));
+  };
+  return { model, onCommand };
 }
 
 type TreeCtx = { current: string; forced: Set<string>; open: Set<string>; toggle: (key: string, next: boolean) => void };
@@ -302,17 +350,8 @@ function Reports({ depth, ctx }: { depth: number; ctx: TreeCtx }) {
  */
 export function PageTree({ pages, current, index }: { pages: WikiPageSummary[] | undefined; current: string; index?: WikiIndex }) {
   const { open, toggle } = useOpenFolders();
-  const { team, memory } = useMemo(() => {
-    const published = (pages ?? []).filter((p) => p.published);
-    const isMemory = (p: WikiPageSummary) => p.path.toLowerCase().startsWith("agents/");
-    return { team: buildTree(published.filter((p) => !isMemory(p))), memory: buildTree(published.filter(isMemory), "agents/") };
-  }, [pages]);
-  const forced = useMemo(() => {
-    const s = new Set(current ? ancestors(current) : []);
-    if (index === "patterns") s.add("patterns");
-    if (index === "adrs") s.add("architecture");
-    return s;
-  }, [current, index]);
+  const { team, memory } = useMemo(() => splitPages(pages), [pages]);
+  const forced = useMemo(() => forcedFolders(current, index), [current, index]);
 
   if (!pages) {
     return (

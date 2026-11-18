@@ -2,20 +2,28 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useCallback, useEffect, useId, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { WorkChat } from "@/components/domain/work-chat";
 import { Icon } from "@/components/ui/icon";
 import { useNavCounts } from "@/lib/use-nav-counts";
 import { useDevWorkspace } from "@/lib/api/dev-workspace-hooks";
+import { useGitHubReviewRequests, useRefreshGitHubReviewRequests } from "@/lib/api/github-reviews-hooks";
+import { useInbox, usePersonaDock } from "@/lib/api/hooks";
 import { COMPANION_OPEN_EVENT } from "@/lib/dev-workspace";
 import { claimCompanion, companionClaimed, companionSlot, rightRailSlot, setCompanionSlot, setRightRailSlot, subscribeCompanion } from "@/lib/companion";
 import { cx } from "@/lib/cx";
 import { actOnDock, dockReducer, dockShortcut, loadDock, saveDock, type DockAction, type DockState } from "@/lib/editor-layout";
+import { connectedHarnesses } from "@/lib/harness-activity";
+import { countReviewRequests, filterReviewRequests, loadReviewFilterPrefs, saveReviewFilterPrefs, type ReviewFilterPrefs } from "@/lib/github-reviews";
+import { isOpen } from "@/lib/inbox";
+import { postDeduped } from "@/lib/native-shell/bridge";
+import { useIsNativeShell, useNativeCommand } from "@/lib/native-shell/hooks";
+import { buildRailModel, dockRail, dockRailAction, dockRailItems, railEffect, type DockRailTab } from "@/lib/native-shell/models/rail";
 import { isActive } from "@/lib/project-scope";
 import { useCompact } from "@/lib/viewport";
 import { Dock, useReadingFocus, type DockTab } from "./editor-layout";
-import { HarnessFooter } from "./harness-footer";
+import { HarnessFooter, harnessRailInputs } from "./harness-footer";
 import { NeedsYou } from "./needs-you";
 import { PrReviewRequests } from "./pr-review-requests";
 import { isTyping } from "./shortcuts";
@@ -109,9 +117,41 @@ function DefaultCompanion() {
   return <Dock uid={uid} tabs={tabs} state={state} dispatch={dispatch} panels={state.open ? undefined : null} />;
 }
 
-/** Puts a Dock's rail controls into the permanent right rail's top dynamic slot on wide screens. */
-export function RightRailPortal({ children }: { children: ReactNode }) {
+/**
+ * Puts a Dock's rail controls into the permanent right rail's top dynamic slot on wide screens. In
+ * the Mac app the shell draws the rail, so the dock describes its controls as data (`native`)
+ * instead and the shell's `rail.action` runs the same dispatches the buttons do.
+ */
+export function RightRailPortal({
+  children,
+  native,
+}: {
+  children: ReactNode;
+  native?: { tabs: readonly DockRailTab[]; activeId: string | undefined; expanded: boolean; dispatch: (a: DockAction) => void };
+}) {
   const slot = useSyncExternalStore(subscribeCompanion, rightRailSlot, () => null);
+  const isNative = useIsNativeShell();
+  const registered = isNative && !!native;
+  const items = useMemo(
+    () => (native ? dockRailItems(native.tabs, native.activeId, native.expanded) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the tabs' content is by id; their description is what matters
+    [native && JSON.stringify([native.tabs.map((t) => [t.id, t.label, t.icon, t.busy, t.unread]), native.activeId, native.expanded])],
+  );
+  const latest = useRef(native);
+  useEffect(() => {
+    latest.current = native;
+  });
+  useEffect(() => {
+    if (!registered) return;
+    const token = Symbol("dock-rail");
+    dockRail.set(token, items, (itemId) => {
+      const n = latest.current;
+      const action = n && dockRailAction(itemId, n.tabs, n.activeId, n.expanded);
+      if (action) n.dispatch(action);
+    });
+    return () => dockRail.clear(token);
+  }, [registered, items]);
+  if (isNative) return null;
   return slot ? createPortal(children, slot) : null;
 }
 
@@ -173,11 +213,102 @@ function RailFootLinks({ settingsNeedYou }: { settingsNeedYou: boolean }) {
   );
 }
 
+/** What the page tells the Mac shell about the rail: the page's dock, then reviews, Needs you, harnesses and links. */
+function NativeRail() {
+  const counts = useNavCounts();
+  const [appearance] = useAppearance();
+  const pathname = usePathname();
+  const router = useRouter();
+  const devWorkspace = useDevWorkspace();
+  const dock = useSyncExternalStore(dockRail.subscribe, dockRail.items, () => []);
+  const [prefs, setPrefs] = useState<ReviewFilterPrefs>({ direct: true, team: true });
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reading browser-only storage after hydration
+    setPrefs(loadReviewFilterPrefs(window.localStorage));
+  }, []);
+  const reviews = useGitHubReviewRequests();
+  const refreshReviews = useRefreshGitHubReviewRequests();
+  const allReviews = useMemo(() => reviews.data?.items ?? [], [reviews.data?.items]);
+  const requests = useMemo(() => filterReviewRequests(allReviews, prefs), [allReviews, prefs]);
+  const inbox = useInbox();
+  const approved = useMemo(() => (inbox.data ?? []).filter((i) => i.kind === "pr_approved" && isOpen(i)).length, [inbox.data]);
+  const readings = usePersonaDock().data?.harnesses;
+  const harnesses = useMemo(() => connectedHarnesses(readings ?? []), [readings]);
+  const showHarness = appearance.showHarnessActivity !== false;
+
+  const model = useMemo(
+    () =>
+      buildRailModel({
+        dock,
+        pathname,
+        review: {
+          configured: !!reviews.data?.configured,
+          requests: requests.map((r) => ({ id: r.id, number: r.number, title: r.title, repository: r.repository, draft: r.draft })),
+          approved,
+          prefs,
+          counts: countReviewRequests(allReviews),
+        },
+        needsYou: counts.inbox,
+        harnesses: showHarness ? harnessRailInputs(harnesses) : null,
+        devWorkspace: !!devWorkspace.data?.enabled,
+        settingsNeedYou: counts.settings > 0,
+      }),
+    [dock, pathname, reviews.data?.configured, requests, approved, prefs, allReviews, counts.inbox, counts.settings, showHarness, harnesses, devWorkspace.data?.enabled],
+  );
+  useEffect(() => {
+    postDeduped({ v: 1, type: "rail", model });
+  }, [model]);
+  // The column unmounting (a narrow window, reading focus) means no rail.
+  useEffect(() => () => postDeduped({ v: 1, type: "rail", model: null }), []);
+
+  const back = () => {
+    if (window.history.length > 1) router.back();
+    else router.push("/");
+  };
+  useNativeCommand("rail.action", (cmd) => {
+    const effect = railEffect(cmd.itemId, cmd.menuItemId, { reviewUrl: (id) => allReviews.find((r) => r.id === id)?.url });
+    if (!effect) return;
+    switch (effect.type) {
+      case "dock":
+        dockRail.act(effect.itemId);
+        break;
+      case "navigate":
+        router.push(effect.path);
+        break;
+      case "toggle":
+        if (isActive(pathname, effect.path)) back();
+        else router.push(effect.path);
+        break;
+      case "open":
+        // A command from the shell carries no click, so WebKit would block window.open. A main-frame
+        // navigation to another site goes through the shell's link policy instead: it opens in the
+        // default browser and this page stays put.
+        window.location.assign(effect.url);
+        break;
+      case "refreshReviews":
+        refreshReviews.mutate();
+        break;
+      case "reviewPrefs": {
+        const next = { ...prefs, [effect.key]: !prefs[effect.key] };
+        setPrefs(next);
+        saveReviewFilterPrefs(window.localStorage, next);
+        break;
+      }
+    }
+  });
+  return null;
+}
+
 /**
  * The permanent 44px right rail on every desktop screen: dynamic page controls (Dock rail) at the
  * top, and persistent utilities (Needs you, harnesses, Customization, Settings) anchored at the bottom.
  */
 function RightRail() {
+  const native = useIsNativeShell();
+  return native ? <NativeRail /> : <WebRail />;
+}
+
+function WebRail() {
   const counts = useNavCounts();
   const [appearance] = useAppearance();
   const harness = appearance.showHarnessActivity !== false;

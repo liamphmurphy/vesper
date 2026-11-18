@@ -138,7 +138,6 @@ function ImagePreview({ item, onRemove }: { item: Item; onRemove: () => void }) 
   return (
     <li data-testid="attachment-chip" data-status={item.status} title={item.name} className="relative size-14 overflow-hidden rounded-md border border-border bg-surface">
       {/* A local blob: URL, which next/image can't optimize. */}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={item.preview} alt={item.name} data-testid="attachment-preview" className="size-full object-cover" />
       <button
         type="button"
@@ -227,7 +226,6 @@ function ImageThumb({ a, compact }: { a: Attachment; compact?: boolean }) {
       <Dialog.Trigger asChild>
         <button type="button" aria-label={`Open ${a.filename}`} data-testid="image-attachment" className="cursor-zoom-in rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-accent">
           {/* A same-origin, private URL: next/image would only add a proxy hop. */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={url}
             alt={a.filename}
@@ -261,7 +259,6 @@ function ImageThumb({ a, compact }: { a: Attachment; compact?: boolean }) {
               </button>
             </Dialog.Close>
           </div>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={url} alt={a.filename} className="min-h-0 max-h-[80vh] w-full object-contain" />
         </Dialog.Content>
       </Dialog.Portal>

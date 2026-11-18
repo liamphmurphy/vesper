@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCourse, useDeleteCourse, useStopCourse } from "@/lib/api/learning-hooks";
 import { COURSE_STATE_LABELS, courseBuilding, type BuildState } from "@/lib/learning";
+import type { NativeAction } from "@/lib/native-shell/actions";
 import { Content, TopBar } from "@/components/shell/topbar";
 import { Button } from "@/components/ui/button";
 import { Banner, Skeleton } from "@/components/ui/primitives";
@@ -35,11 +36,20 @@ export function CourseScreen({ id }: { id: string }) {
       <Button variant="outline" disabled={del.isPending} onClick={discard}>Delete</Button>
     </>
   ));
+  const nativeActions: NativeAction[] | undefined = c && (laterPart
+    ? [
+        { id: "course.back", label: "Back to studying", kind: "button", showsLabel: true, run: () => router.push(`/learn/${id}`) },
+        { id: "course.discard", label: "Discard this part", kind: "button", showsLabel: true, disabled: stop.isPending, run: () => stop.mutate(undefined, { onSuccess: () => router.push(`/learn/${id}`) }) },
+      ]
+    : [
+        ...(courseBuilding(c.summary.state) ? [{ id: "course.stop", label: "Stop", kind: "button" as const, icon: "pause", showsLabel: true, disabled: stop.isPending, run: () => stop.mutate() }] : []),
+        { id: "course.delete", label: "Delete", kind: "button" as const, icon: "trash", showsLabel: true, disabled: del.isPending, run: discard },
+      ]);
   const crumbs = [{ label: "Learn", href: "/learn" }, { label: c?.summary.topic ?? "Module" }];
   if (c && c.summary.studyable && !(search.get("review") === "1" && state === "outline_ready")) return <StudyView course={c} onDelete={discard} />;
   return (
     <>
-      <TopBar crumbs={crumbs} actions={actions} />
+      <TopBar crumbs={crumbs} actions={actions} nativeActions={nativeActions} />
       <Content>
         <div className="flex flex-col gap-5">
           {course.error && <Banner tone="blocked" title={course.error.message} />}

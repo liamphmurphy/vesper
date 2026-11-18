@@ -31,6 +31,8 @@ import { StackedBar } from "@/components/domain/data";
 import { cx } from "@/lib/cx";
 import { FilterMenu } from "@/components/domain/pickers";
 import { ticketsHref } from "@/lib/tickets-layout";
+import { buildEpicsNavModel, EPICS_HEALTH_FILTER, EPICS_STATUS_FILTER } from "@/lib/native-shell/models/epics";
+import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
 import { EpicBrief } from "../../work/work-details";
 import { WorkNavHeader, WorkSectionLabel, WorkSpaceFilter } from "../../work/work-nav-header";
 import { TicketsLayoutBar, TicketsTopBar } from "./layout-bar";
@@ -350,7 +352,48 @@ export function EpicsScreen() {
   return (
     <>
       {!compact && (
-        <NavigatorPortal>
+        <NavigatorPortal
+          native={{
+            model: buildEpicsNavModel({
+              header: {
+                project: project || undefined,
+                projects: boot.data?.projects,
+                counts: { epics: counts.open || undefined },
+                hideNewTicket: true,
+                search: { value: search, placeholder: "Filter epics…" },
+              },
+              status: filters.status,
+              counts,
+              health: filters.health,
+              healthOptions: HEALTH_OPTIONS.map((h) => ({ value: h, label: h === "any" ? "Any" : HEALTH_LABEL[h] })),
+              atRiskCount,
+              groups: epicsBySpace.map(([key, g]) => ({
+                key,
+                label: g.label,
+                epics: g.epics.map((e) => ({ id: e.epic.id, name: e.epic.name, health: e.epic.health, done: e.counts.done, total: e.counts.total })),
+              })),
+              selectedEpicId: activeFeaturedEpic?.epic.id,
+              loading: query.isLoading,
+            }),
+            onCommand: (cmd) => {
+              const handled = handleWorkHeaderCommand(cmd, {
+                project: project || undefined,
+                push: (href) => router.push(href),
+                onProject: (v) => {
+                  if (!v) rememberProject(null);
+                  setFilters({}, v);
+                },
+                onAgent: () => {},
+                onSearch: setSearch,
+              });
+              if (handled) return;
+              if (cmd.type === "nav.filter") {
+                if (cmd.filterId === EPICS_STATUS_FILTER) setFilters({ status: cmd.value as EpicFilters["status"] });
+                else if (cmd.filterId === EPICS_HEALTH_FILTER) setFilters({ health: cmd.value as EpicHealthFilter });
+              } else if (cmd.type === "nav.activate") openEpic(cmd.itemId);
+            },
+          }}
+        >
           <nav aria-label="Work" className="work-nav">
             <WorkNavHeader
               active="epics"
@@ -499,11 +542,7 @@ export function EpicsScreen() {
       {/* Compact: the layout bar is the header, with its own + button. */}
       {!compact && <TicketsTopBar
         layout="epics"
-        action={
-          <ButtonLink href={project ? `/tickets/new?project=${encodeURIComponent(project)}` : "/tickets/new"} variant="primary" icon="plus">
-            New ticket
-          </ButtonLink>
-        }
+        action={{ label: "New ticket", primary: true, href: project ? `/tickets/new?project=${encodeURIComponent(project)}` : "/tickets/new" }}
       />}
       <TicketsLayoutBar layout="epics" />
       <Content>

@@ -69,7 +69,6 @@ export function VideoFrame({ embed, title, image, videoId }: { embed: string; ti
       ) : (
         <button type="button" aria-label={`Play ${title}`} onClick={() => setPlaying(true)} className="group absolute inset-0 grid place-items-center">
           {/* A same-origin, private URL: next/image would only add a proxy hop. */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
           {image && <img src={image} alt="" className="absolute inset-0 size-full object-cover" />}
           <Badge>Video</Badge>
           <span aria-hidden className="relative grid size-14 place-items-center rounded-full shadow-md transition-transform group-hover:scale-105" style={{ background: "rgb(255 255 255 / 0.95)", color: "#17171c" }}>
@@ -177,7 +176,6 @@ function SiteCard({ url, preview, note, actions }: { url: string; preview: Schem
     <Shell kind="site">
       <a href={url} target="_blank" rel="noopener noreferrer" className="block">
         <span className="relative block aspect-video bg-surface-sunken">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={preview.image_url} alt="" onError={() => setBroken(true)} className="absolute inset-0 size-full object-cover" />
           <Badge>Website</Badge>
         </span>

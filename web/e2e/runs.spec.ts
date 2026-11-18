@@ -40,7 +40,7 @@ const approval = (id: string, action: string): Schemas["Approval"] => ({
 
 const ev = (seq: number, type: Schemas["RunEvent"]["type"], payload: Record<string, unknown>, m: number): Schemas["RunEvent"] => ({ seq, type, payload, at: minutesAgo(m) });
 const atlasEvents = [
-  ev(1, "lifecycle", { state: "starting", runner: "runner-2", backend: "docker" }, 11),
+  ev(1, "lifecycle", { state: "starting", runner: "runner-2", backend: "microvm" }, 11),
   ev(2, "lifecycle", { state: "turn_started", turn: 1 }, 10),
   ev(3, "message", { text: "I wrote **0042_partition_ledger_entries** and checked it locally." }, 10),
   ev(4, "tool_call", { id: "t1", tool: "Edit", input: { file_path: "db/migrations/0042_partition.sql" } }, 9),

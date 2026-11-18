@@ -1,8 +1,8 @@
-import { Suspense } from "react";
+import { Suspense, use } from "react";
 import { PrintArtifact } from "./print-artifact";
 
-async function Loader({ params }: { params: PageProps<"/print/artifacts/[id]">["params"] }) {
-  const { id } = await params;
+function Loader({ params }: { params: PageProps<"/print/artifacts/[id]">["params"] }) {
+  const { id } = use(params);
   return <PrintArtifact id={id} />;
 }
 

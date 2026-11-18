@@ -54,7 +54,7 @@ func (r *Runner) startServices(ctx context.Context, c runCtx, turn store.RunTurn
 }
 
 // startDockerProxy gives the turn its own sandboxed Docker API (see
-// docker_proxy.go) and puts how to reach it into env. A runner without one,
+// microvm_docker.go) and puts how to reach it into env. A runner without one,
 // or one that fails to start, leaves the turn without Docker rather than
 // failing it: most turns never need it, and tests that do say so.
 func (r *Runner) startDockerProxy(ctx context.Context, c runCtx, turn store.RunTurn, env map[string]string) ([]string, func()) {

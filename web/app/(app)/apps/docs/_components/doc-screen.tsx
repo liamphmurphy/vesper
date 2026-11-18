@@ -12,13 +12,18 @@ import type { DockState } from "@/lib/editor-layout";
 import { cx } from "@/lib/cx";
 import { Button } from "@/components/ui/button";
 import { Banner, Skeleton } from "@/components/ui/primitives";
-import { EditorLayout, type DockTab, type EditorHeader } from "@/components/shell/editor-layout";
+import { EditorLayout, type DockTab, type EditorHeader, type NativeEditorHeader } from "@/components/shell/editor-layout";
 import { CanvasView, Rail, type Target } from "@/components/domain/canvas-view";
 import { Conversation } from "@/app/(app)/chat/_components/conversation";
 import { PersonaAvatar, personaLook } from "@/app/(app)/chat/_components/persona";
+import { toast } from "@/lib/toast";
+import { useIsNativeShell } from "@/lib/native-shell/hooks";
+import { buildDocActions, buildDocOutlineNav, parseHeadingId } from "@/lib/native-shell/models/doc-editor";
+import { navAvatar, pageOrigin } from "@/lib/native-shell/models/common";
+import { presenceLabel } from "@/lib/native-shell/models/editor-header";
 import { DocEditor, type DocEditorHandle, type Picked, type SaveState } from "./doc-editor";
 import { DocReview, DocReviewList, useDocReview } from "./doc-review";
-import { ExportMenu } from "./export-menu";
+import { ExportMenu, useDocExports } from "./export-menu";
 
 type Comment = Schemas["ChatCanvasComment"];
 
@@ -171,6 +176,15 @@ export function DocScreen({ id }: { id: string }) {
   const showRail = !reviewing && editable && (open.length > 0 || resolved.length > 0 || !!target);
   const saveBad = saveState.s === "error" || saveState.s === "conflict";
 
+  const exports = useDocExports({ id, title, current: async () => (await flushed()).body });
+  // The Mac app has no Share menu in the page to show an export's outcome beside, so it's a toast.
+  const native = useIsNativeShell();
+  const exportNotice = exports.notice;
+  useEffect(() => {
+    if (!native || !exportNotice) return;
+    toast({ id: "doc-export", title: exportNotice.text, tone: exportNotice.tone === "error" ? "error" : "success", ...(exportNotice.href ? { action: { label: "Open", onClick: () => router.push(exportNotice.href!) } } : {}) });
+  }, [native, exportNotice, router]);
+
   const header: EditorHeader = {
     back: { href: "/apps/docs", label: "Docs" },
     name: title,
@@ -186,7 +200,32 @@ export function DocScreen({ id }: { id: string }) {
         {live ? `${persona} is editing…` : reviewing ? `${persona} suggested changes` : `${persona} can edit`}
       </span>
     ),
-    actions: doc.data ? [<ExportMenu key="share" trigger="Share" id={id} title={title} current={async () => (await flushed()).body} />] : undefined,
+    actions: doc.data ? [<ExportMenu key="share" trigger="Share" exports={exports} />] : undefined,
+  };
+  const nativeHeader: NativeEditorHeader = {
+    title,
+    actions: buildDocActions({
+      save: c ? { state: saveState.s, seq: c.seq } : undefined,
+      presence: doc.data ? { label: presenceLabel(persona, live, reviewing), avatar: navAvatar(look.name, look.color, look.avatar_url, pageOrigin()) } : undefined,
+      canShare: !!doc.data,
+      pdf: exports.pdf,
+      word: exports.word,
+      markdown: exports.markdown,
+      copy: exports.copy,
+      saveToLibrary: exports.save,
+      promote: exports.publish,
+      libraryPending: exports.libraryPending,
+      promotePending: exports.promotePending,
+    }),
+  };
+  // The outline is always in the sidebar (the web's collapsible panel is for the page's narrow column).
+  const nativeLeft = {
+    model: buildDocOutlineNav({ outline }),
+    onCommand: (cmd: { type: string; itemId?: string }) => {
+      if (cmd.type !== "nav.activate" || !cmd.itemId) return;
+      const i = parseHeadingId(cmd.itemId);
+      if (i !== null && outline[i]) jumpTo(i);
+    },
   };
 
   const failed = doc.isError || head.isError ? (
@@ -202,7 +241,7 @@ export function DocScreen({ id }: { id: string }) {
     </div>
   ) : (
     <div data-testid="doc-page" className="relative flex min-h-0 min-w-0 flex-1">
-      {!outlineOpen && outline.length > 0 && (
+      {!native && !outlineOpen && outline.length > 0 && (
         <Button variant="secondary" className="absolute left-3 top-[52px] z-20 max-md:hidden" aria-label="Show outline" title="Show outline" onClick={() => setOutlineOpen(true)}>
           <span aria-hidden>☰</span>
           <span className="max-xl:hidden">Outline</span>
@@ -332,5 +371,5 @@ export function DocScreen({ id }: { id: string }) {
       content: <DocReviewList review={review} persona={persona} busy={reviewBusy} error={reviewError} />,
     });
 
-  return <EditorLayout app="docs" header={header} left={left} main={failed ?? main} dock={dockTabs} show={show} onDockChange={setDock} />;
+  return <EditorLayout app="docs" header={header} nativeHeader={nativeHeader} left={left} nativeLeft={nativeLeft} main={failed ?? main} dock={dockTabs} show={show} onDockChange={setDock} />;
 }

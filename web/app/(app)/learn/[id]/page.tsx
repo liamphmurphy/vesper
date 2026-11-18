@@ -1,8 +1,8 @@
-import { Suspense } from "react";
+import { Suspense, use } from "react";
 import { CourseScreen } from "../_components/course-screen";
 
-async function Loader({ params }: { params: PageProps<"/learn/[id]">["params"] }) {
-  const { id } = await params;
+function Loader({ params }: { params: PageProps<"/learn/[id]">["params"] }) {
+  const { id } = use(params);
   return <CourseScreen id={decodeURIComponent(id)} />;
 }
 

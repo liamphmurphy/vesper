@@ -16,22 +16,22 @@ import { confirmAction } from "@/components/ui/confirm";
 const item = "flex cursor-pointer select-none flex-col rounded-md px-2.5 py-1.5 text-13 text-fg outline-none data-[highlighted]:bg-hover";
 const detail = "text-11 text-fg-tertiary";
 
-type Notice = { tone: "ok" | "error"; text: string; href?: string };
+export type ExportNotice = { tone: "ok" | "error"; text: string; href?: string };
 
 /**
- * Every way a document leaves Vesper. `current` saves pending edits first and
- * returns the text as saved, so an export never misses the last few words.
- * `trigger` renames its button, e.g. the editor header's Share ▾.
+ * Every way a document leaves Vesper, as functions, with the notice each one leaves. `current` saves
+ * pending edits first and returns the text as saved, so an export never misses the last few words.
+ * The web's Share menu and the Mac app's toolbar menu both run these.
  */
-export function ExportMenu({ id, title, current, trigger }: { id: string; title: string; current: () => Promise<string>; trigger?: string }) {
+export function useDocExports({ id, title, current }: { id: string; title: string; current: () => Promise<string> }) {
   const library = useSaveDocToLibrary(id);
   const promote = usePromoteDocToWiki(id);
-  const [notice, setNotice] = useState<Notice>();
-  const say = (n: Notice) => {
+  const [notice, setNotice] = useState<ExportNotice>();
+  const say = (n: ExportNotice) => {
     setNotice(n);
     setTimeout(() => setNotice((x) => (x === n ? undefined : x)), 4000);
   };
-  const attempt = (what: string, fn: () => Promise<Notice | void>) => () =>
+  const attempt = (what: string, fn: () => Promise<ExportNotice | void>) => () =>
     void fn()
       .then((n) => n && say(n))
       .catch((e: unknown) => say({ tone: "error", text: `${what} failed: ${e instanceof Error ? e.message : "try again"}` }));
@@ -61,7 +61,7 @@ export function ExportMenu({ id, title, current, trigger }: { id: string; title:
   // A copy for agents to read, so it asks before replacing a page that exists.
   const publish = attempt("Publishing to the wiki", async () => {
     await current();
-    const done = (r: { path: string }): Notice => ({ tone: "ok", text: `Published to the wiki as ${r.path}`, href: wikiHref(r.path) });
+    const done = (r: { path: string }): ExportNotice => ({ tone: "ok", text: `Published to the wiki as ${r.path}`, href: wikiHref(r.path) });
     try {
       return done(await promote.mutateAsync(false));
     } catch (e) {
@@ -70,6 +70,16 @@ export function ExportMenu({ id, title, current, trigger }: { id: string; title:
     }
   });
 
+  return { notice, pdf, word, markdown, copy, save, publish, libraryPending: library.isPending, promotePending: promote.isPending };
+}
+
+export type DocExports = ReturnType<typeof useDocExports>;
+
+/** The web's Share / Export menu over `exports`. `trigger` renames its button, e.g. the editor header's Share ▾. */
+export function ExportMenu({ exports: x, trigger }: { exports: DocExports; trigger?: string }) {
+  const { notice, pdf, word, markdown, copy, save, publish } = x;
+  const library = { isPending: x.libraryPending };
+  const promote = { isPending: x.promotePending };
   return (
     <div className="flex items-center gap-2">
       {notice && (

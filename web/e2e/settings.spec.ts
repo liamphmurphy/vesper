@@ -77,7 +77,7 @@ async function installSettingsApi(page: Page, opts: { runners?: boolean; secrets
       ? { online: false, runners: [], slots: 0, busy: 0, live: 0, queued: 3, host_folder_workspaces: hostFolders }
       : {
           online: true,
-          runners: [{ id: "mbp-4242", backend: "docker", max_concurrent: 4, running: 2, version: "0.9.1", heartbeat_at: new Date().toISOString(), ...(opts.hostDir ? { host_workspaces_dir: opts.hostDir } : {}) }],
+          runners: [{ id: "mbp-4242", backend: "microvm", max_concurrent: 4, running: 2, version: "0.9.1", heartbeat_at: new Date().toISOString(), ...(opts.hostDir ? { host_workspaces_dir: opts.hostDir } : {}) }],
           slots: 4, busy: 2, live: 2, queued: 3, host_folder_workspaces: hostFolders,
         };
   await page.route("**/api/v1/runner", (route) => route.fulfill({ json: runnerStatus() }));

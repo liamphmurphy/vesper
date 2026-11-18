@@ -1,8 +1,8 @@
-import { Suspense } from "react";
+import { Suspense, use } from "react";
 import { EpicDetailScreen } from "./epic-detail-screen";
 
-async function Loader({ params }: { params: PageProps<"/epics/[id]">["params"] }) {
-  const { id } = await params;
+function Loader({ params }: { params: PageProps<"/epics/[id]">["params"] }) {
+  const { id } = use(params);
   return <EpicDetailScreen epicId={decodeURIComponent(id)} />;
 }
 

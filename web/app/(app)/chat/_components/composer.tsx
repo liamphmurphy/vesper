@@ -306,7 +306,7 @@ export function Composer({
           }}
           onClosed={() => inputRef.current?.focus()}
         />
-        <div ref={frame} className={composerFrameFor(send.tone)}>
+        <div ref={frame} data-composer-frame="" className={composerFrameFor(send.tone)}>
           <div className="relative">
             {commandItems.length > 0 && (
               <ul

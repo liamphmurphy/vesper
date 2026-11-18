@@ -7,7 +7,12 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, ViewTransition } from "react";
 import type { Bootstrap, Ticket } from "@/lib/api/client";
 import { useCompact } from "@/lib/viewport";
-import { useActivity, useBootstrap, useTicket, useTickets, hasLiveRun } from "@/lib/api/hooks";
+import { useActivity, useBootstrap, useCosts, useTicket, useTickets, hasLiveRun } from "@/lib/api/hooks";
+import { spendLabel } from "@/lib/costs";
+import { useIsNativeShell } from "@/lib/native-shell/hooks";
+import { useNativeToolbar } from "@/lib/native-shell/use-native-toolbar";
+import { buildTicketToolbar, parseTicketToolbarAction } from "@/lib/native-shell/models/work-toolbars";
+import { useNativeTitle } from "../_components/native-title";
 import { Button, ButtonLink, IconButton } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Banner, EmptyState, Skeleton, TextArea } from "@/components/ui/primitives";
@@ -36,6 +41,8 @@ import { CompanionDock } from "@/components/shell/companion";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { WorkChat, WorkChatSheet } from "@/components/domain/work-chat";
 import { WorkNavHeader } from "../../work/work-nav-header";
+import { buildTicketNavModel } from "@/lib/native-shell/models/ticket";
+import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
 
 function TitleEditor({ t, save }: { t: Ticket; save: SaveTicket }) {
   const [editing, setEditing] = useState(false);
@@ -318,6 +325,32 @@ export function TicketScreen({ ticketKey }: { ticketKey: string }) {
   const [editing, setEditing] = useState(false);
   const saver = useTicketSave(t);
 
+  // In the Mac app the header row is the window title and toolbar (the web's top bar, below, isn't drawn).
+  const native = useIsNativeShell();
+  const cost = useCosts({ ticket: ticketKey }, native).data;
+  const copyLink = () => {
+    void navigator.clipboard.writeText(window.location.href);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  useNativeTitle(ticketKey, t ? [t.project.name, t.epic?.name].filter(Boolean).join(" · ") : undefined);
+  useNativeToolbar({
+    items: buildTicketToolbar({
+      cost: cost && cost.total.runs > 0 ? spendLabel(cost.total.cost_micros, cost.unpriced_runs) : undefined,
+      pager: { index: pager.index, total: pager.total },
+      hasPrev: !!pager.prev,
+      hasNext: !!pager.next,
+      copied,
+    }),
+    onAction: (id) => {
+      const a = parseTicketToolbarAction(id);
+      if (a === "prev" && pager.prev) router.push(`/tickets/${pager.prev}`);
+      else if (a === "next" && pager.next) router.push(`/tickets/${pager.next}`);
+      else if (a === "copy") copyLink();
+      else if (a === "cost" && t) router.push(`/reports?tab=costs&project=${encodeURIComponent(t.project.key)}`);
+    },
+  });
+
   // J/K step through the project's tickets; E opens the editor.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -339,7 +372,7 @@ export function TicketScreen({ ticketKey }: { ticketKey: string }) {
     const missing = "status" in ticket.error && ticket.error.status === 404;
     return (
       <>
-        <TopBar crumbs={[{ label: "Tickets", href: "/tickets" }, { label: ticketKey, mono: true }]} />
+        {!native && <TopBar crumbs={[{ label: "Tickets", href: "/tickets" }, { label: ticketKey, mono: true }]} />}
         {missing ? (
           <EmptyState icon="tickets" title={`${ticketKey} doesn't exist`} actions={<ButtonLink href="/tickets" variant="outline">All tickets</ButtonLink>}>
             It may have been moved, or the link has a typo.
@@ -354,12 +387,6 @@ export function TicketScreen({ ticketKey }: { ticketKey: string }) {
       </>
     );
   }
-
-  const copyLink = () => {
-    void navigator.clipboard.writeText(window.location.href);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
 
   if (compact) {
     return (
@@ -384,7 +411,12 @@ export function TicketScreen({ ticketKey }: { ticketKey: string }) {
 
   return (
     <>
-      <NavigatorPortal>
+      <NavigatorPortal
+        native={{
+          model: buildTicketNavModel({ project: t?.project.key, siblings: pager.tickets, statusNames: STATUS_NAME, ticketKey }),
+          onCommand: (cmd) => handleWorkHeaderCommand(cmd, { project: t?.project.key, push: (href) => router.push(href), onProject: () => {}, onAgent: () => {} }),
+        }}
+      >
         <nav aria-label="Work" className="work-nav">
           <WorkNavHeader active="tickets" project={t?.project.key} />
           <div className="work-nav-list">
@@ -404,7 +436,7 @@ export function TicketScreen({ ticketKey }: { ticketKey: string }) {
           </div>
         </nav>
       </NavigatorPortal>
-      <TopBar
+      {!native && <TopBar
         crumbs={
           t
             ? [
@@ -435,7 +467,7 @@ export function TicketScreen({ ticketKey }: { ticketKey: string }) {
             />
           </>
         }
-      />
+      />}
       {!t || !boot.data ? (
         <DetailSkeleton />
       ) : (

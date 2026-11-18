@@ -1,8 +1,8 @@
-import { Suspense } from "react";
+import { Suspense, use } from "react";
 import { PresentDeck } from "./present-deck";
 
-async function Loader({ params }: { params: PageProps<"/present/slides/[id]">["params"] }) {
-  const { id } = await params;
+function Loader({ params }: { params: PageProps<"/present/slides/[id]">["params"] }) {
+  const { id } = use(params);
   return <PresentDeck id={id} />;
 }
 

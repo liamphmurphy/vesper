@@ -1,0 +1,506 @@
+[
+  {
+    "v": 1,
+    "type": "ready",
+    "path": "/work"
+  },
+  {
+    "v": 1,
+    "type": "route",
+    "path": "/tickets/VES-412",
+    "area": "work"
+  },
+  {
+    "v": 1,
+    "type": "route",
+    "path": "/settings",
+    "area": null
+  },
+  {
+    "v": 1,
+    "type": "title",
+    "title": "VES-412",
+    "subtitle": "Close the API port behind a launch token"
+  },
+  {
+    "v": 1,
+    "type": "shell",
+    "model": {
+      "areas": [
+        {
+          "id": "chat",
+          "label": "Chat",
+          "icon": "msg",
+          "href": "/chat"
+        },
+        {
+          "id": "work",
+          "label": "Work",
+          "icon": "tickets",
+          "href": "/work",
+          "badge": {
+            "tone": "done"
+          }
+        },
+        {
+          "id": "knowledge",
+          "label": "Knowledge",
+          "icon": "wiki",
+          "href": "/knowledge",
+          "badge": {
+            "text": "3",
+            "tone": "accent"
+          }
+        },
+        {
+          "id": "library",
+          "label": "Library",
+          "icon": "library",
+          "href": "/library"
+        }
+      ],
+      "apps": [
+        {
+          "id": "app-budget",
+          "label": "Budget",
+          "icon": "dollar",
+          "href": "/apps/budget"
+        }
+      ],
+      "currentArea": "work"
+    }
+  },
+  {
+    "v": 1,
+    "type": "navigator",
+    "model": {
+      "id": "knowledge",
+      "title": "Knowledge",
+      "actions": [
+        {
+          "id": "graph",
+          "label": "Graph view",
+          "icon": "graph"
+        },
+        {
+          "id": "export",
+          "label": "Export",
+          "icon": "download",
+          "disabled": true
+        },
+        {
+          "id": "new",
+          "label": "New",
+          "icon": "plus",
+          "accent": true,
+          "menu": [
+            {
+              "id": "new-doc",
+              "label": "Document",
+              "icon": "doc"
+            },
+            {
+              "id": "sep",
+              "separator": true
+            },
+            {
+              "id": "new-deck",
+              "label": "Deck",
+              "icon": "slides",
+              "shortcut": "⌘⇧D"
+            }
+          ]
+        }
+      ],
+      "picker": {
+        "id": "view",
+        "value": "yours",
+        "options": [
+          {
+            "value": "yours",
+            "label": "Yours"
+          },
+          {
+            "value": "agent",
+            "label": "Agent knowledge",
+            "icon": "agents"
+          }
+        ]
+      },
+      "filters": [
+        {
+          "id": "space",
+          "label": "Space",
+          "icon": "briefcase",
+          "options": [
+            {
+              "value": "",
+              "label": "All spaces",
+              "checked": false
+            },
+            {
+              "value": "VES",
+              "label": "Vesper",
+              "checked": true
+            }
+          ]
+        },
+        {
+          "id": "options",
+          "label": "View",
+          "multiple": true,
+          "options": [
+            {
+              "value": "hide-done",
+              "label": "Hide done",
+              "checked": true
+            }
+          ]
+        }
+      ],
+      "search": {
+        "id": "filter",
+        "placeholder": "Filter pages",
+        "value": ""
+      },
+      "sections": [
+        {
+          "id": "pages",
+          "title": "Pages",
+          "badge": {
+            "text": "3",
+            "tone": "neutral"
+          },
+          "collapsible": true,
+          "collapsed": false,
+          "items": [
+            {
+              "id": "p1",
+              "title": "Architecture",
+              "icon": "folder",
+              "expanded": true,
+              "children": [
+                {
+                  "id": "p2",
+                  "title": "Native shell",
+                  "icon": "doc",
+                  "href": "/knowledge/2b1f0d5e-0000-4000-8000-000000000002",
+                  "contextMenu": [
+                    {
+                      "id": "rename",
+                      "label": "Rename"
+                    },
+                    {
+                      "id": "delete",
+                      "label": "Delete",
+                      "destructive": true
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "p3",
+              "title": "Ada",
+              "subtitle": "Tech lead",
+              "avatar": {
+                "initials": "A",
+                "color": "#9B8CFF"
+              },
+              "status": "done",
+              "trailing": "4m",
+              "badge": {
+                "text": "2",
+                "tone": "accent"
+              }
+            }
+          ]
+        },
+        {
+          "id": "empty",
+          "title": "Pinned",
+          "items": [],
+          "emptyText": "Nothing pinned yet",
+          "actions": [
+            {
+              "id": "pin",
+              "label": "Pin",
+              "icon": "pin"
+            }
+          ]
+        }
+      ],
+      "selectedId": "p2"
+    }
+  },
+  {
+    "v": 1,
+    "type": "navigator",
+    "model": null
+  },
+  {
+    "v": 1,
+    "type": "navigatorFallback",
+    "active": true
+  },
+  {
+    "v": 1,
+    "type": "toolbar",
+    "items": [
+      {
+        "id": "open-run",
+        "label": "Open run",
+        "icon": "play",
+        "kind": "button"
+      },
+      {
+        "id": "more",
+        "label": "More",
+        "icon": "more",
+        "kind": "menu",
+        "menu": [
+          {
+            "id": "copy-link",
+            "label": "Copy link"
+          }
+        ]
+      },
+      {
+        "id": "companion",
+        "label": "Companion",
+        "icon": "panel-right",
+        "kind": "toggle",
+        "on": true
+      }
+    ]
+  },
+  {
+    "v": 1,
+    "type": "appearance",
+    "mode": "dark"
+  },
+  {
+    "v": 1,
+    "type": "appearance",
+    "mode": "light"
+  },
+  {
+    "v": 1,
+    "type": "confirmApproval",
+    "requestId": "r1",
+    "scope": "push_requests"
+  },
+  {
+    "v": 1,
+    "type": "openWorkspaceMenu",
+    "requestId": "r2",
+    "folder": "/Users/me/Vesper Workspaces/run-1"
+  },
+  {
+    "v": 1,
+    "type": "contextMenu",
+    "requestId": "r3",
+    "x": 120.5,
+    "y": 48,
+    "items": [
+      {
+        "id": "a",
+        "label": "Archive"
+      }
+    ]
+  },
+  {
+    "v": 1,
+    "type": "title",
+    "title": "Harness credentials in Dev playground",
+    "menu": [
+      {
+        "id": "rename",
+        "label": "Rename…"
+      },
+      {
+        "id": "sep",
+        "separator": true
+      },
+      {
+        "id": "archive",
+        "label": "Archive",
+        "destructive": true
+      }
+    ]
+  },
+  {
+    "v": 1,
+    "type": "toolbar",
+    "items": [
+      {
+        "id": "persona",
+        "label": "Meow",
+        "kind": "menu",
+        "placement": "leading",
+        "showsLabel": true,
+        "avatar": {
+          "initials": "M",
+          "color": "#9B8CFF",
+          "imageUrl": "http://127.0.0.1:8080/api/v1/personas/0b5c9a6e-0000-4000-8000-000000000001/avatar?v=3"
+        },
+        "menu": [
+          {
+            "id": "persona:a",
+            "label": "Meow",
+            "checked": true
+          },
+          {
+            "id": "persona:b",
+            "label": "Laura"
+          }
+        ]
+      },
+      {
+        "id": "space",
+        "label": "Space",
+        "icon": "plus",
+        "kind": "button",
+        "placement": "leading",
+        "showsLabel": true
+      },
+      {
+        "id": "repo",
+        "label": "liamphmurphy/vesper",
+        "icon": "branch",
+        "kind": "menu",
+        "showsLabel": true,
+        "menu": [
+          {
+            "id": "repo:1",
+            "label": "liamphmurphy/vesper",
+            "checked": true
+          },
+          {
+            "id": "repo:search",
+            "label": "Search repos…"
+          }
+        ]
+      },
+      {
+        "id": "playground",
+        "label": "Start playground",
+        "icon": "play",
+        "kind": "button",
+        "showsLabel": true
+      }
+    ]
+  },
+  {
+    "v": 1,
+    "type": "rail",
+    "model": {
+      "top": [
+        {
+          "id": "dock:facts",
+          "label": "Facts",
+          "icon": "info",
+          "active": true
+        },
+        {
+          "id": "dock:chat",
+          "label": "Chat",
+          "icon": "msg"
+        }
+      ],
+      "middle": [
+        {
+          "id": "prs",
+          "label": "Pull requests to review",
+          "icon": "branch",
+          "badge": {
+            "text": "2",
+            "tone": "accent"
+          },
+          "menu": [
+            {
+              "id": "pr:1",
+              "label": "Fix the build"
+            }
+          ]
+        },
+        {
+          "id": "needs-you",
+          "label": "Needs you",
+          "icon": "inbox",
+          "kind": "needsYou",
+          "badge": {
+            "text": "1",
+            "tone": "warning"
+          }
+        },
+        {
+          "id": "harness",
+          "label": "Claude",
+          "avatar": {
+            "initials": "C",
+            "color": "#D97757"
+          },
+          "status": "done",
+          "character": {
+            "harness": "claude-code",
+            "working": true,
+            "name": "Claude Code"
+          },
+          "usage": [
+            {
+              "id": "usage",
+              "title": "Claude Code",
+              "value": "86%",
+              "fraction": 0.86,
+              "tone": "warn",
+              "meta": ["Session allowance used", "1 working"],
+              "sub": "5h · resets 9:20 PM · weekly 40%",
+              "footnote": "checked 40s ago"
+            },
+            {
+              "id": "usage2",
+              "title": "Antigravity",
+              "value": "—",
+              "unavailable": true,
+              "meta": ["Allowance not reported"],
+              "sub": "Usage unknown"
+            }
+          ],
+          "menu": [
+            {
+              "id": "usage",
+              "label": "Usage settings…"
+            }
+          ]
+        }
+      ],
+      "foot": [
+        {
+          "id": "http",
+          "label": "HTTP Client",
+          "icon": "code"
+        },
+        {
+          "id": "customization",
+          "label": "Customization",
+          "icon": "sliders",
+          "active": false
+        },
+        {
+          "id": "settings",
+          "label": "Settings",
+          "icon": "gear",
+          "badge": {
+            "tone": "danger"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "v": 1,
+    "type": "rail",
+    "model": null
+  }
+]

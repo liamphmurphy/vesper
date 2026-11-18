@@ -186,7 +186,6 @@ function AboutYou({ onNext }: { onNext: () => void }) {
           <span aria-hidden className="text-26 font-semibold text-[#FFF6DD]">{initialOf(name)}</span>
           {shown && (
             // A local object URL or the private avatar route: next/image adds nothing.
-            // eslint-disable-next-line @next/next/no-img-element
             <img key={shown} src={shown} alt="Your profile photo" className="wizard-photo absolute inset-0 size-full rounded-full object-cover" />
           )}
           <span aria-hidden className="absolute -bottom-0.5 -right-0.5 grid size-[22px] place-items-center rounded-full bg-accent text-14 font-bold text-on-accent shadow-[0_0_0_3px_var(--surface)]">＋</span>

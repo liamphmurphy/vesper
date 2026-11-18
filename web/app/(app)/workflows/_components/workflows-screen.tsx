@@ -7,6 +7,7 @@ import { useCreateWorkflow, useDeleteWorkflow, useWorkflowRuns, useWorkflows } f
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { Content, TopBar } from "@/components/shell/topbar";
 import { useCompact } from "@/lib/viewport";
+import { buildWorkflowsNavModel } from "@/lib/native-shell/models/workflows";
 import { Button } from "@/components/ui/button";
 import { Banner, Card, EmptyState, Skeleton, TextInput } from "@/components/ui/primitives";
 import { RunStatePill } from "@/components/domain/workflow-cards";
@@ -33,7 +34,7 @@ export function WorkflowsScreen() {
   return (
     <>
       {!compact && (
-        <NavigatorPortal>
+        <NavigatorPortal native={{ model: buildWorkflowsNavModel({ workflows: list, runs: recentRuns }) }}>
           <nav aria-label="Workflows" className="flex min-h-0 flex-1 flex-col gap-3 px-2.5 pt-4 pb-3">
             <h2 className="px-1.5 text-16 font-semibold text-fg">Workflows</h2>
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto">
