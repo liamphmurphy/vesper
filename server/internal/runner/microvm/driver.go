@@ -5,6 +5,7 @@ package microvm
 import (
 	"context"
 	"net"
+	"time"
 
 	"github.com/liamphmurphy/vesper/server/internal/guestproto"
 )
@@ -26,17 +27,38 @@ type VirtioFSSpec struct {
 // Ownership of conn passes to the handler, which must close it when done.
 type VSockHandler func(conn net.Conn)
 
+// MacOSBoot boots a macOS guest from an installed disk instead of a Linux
+// kernel. Its first drive is the macOS disk.
+type MacOSBoot struct {
+	// HardwareModel is VZMacHardwareModel's data representation, from the
+	// golden image the disk was installed with.
+	HardwareModel []byte
+	// AuxStoragePath is the VM's own copy of the golden image's auxiliary
+	// storage (NVRAM). The VM writes to it.
+	AuxStoragePath string
+	// MachineIDPath holds VZMacMachineIdentifier's data representation; the
+	// driver creates a new identifier there when the file doesn't exist. Two
+	// VMs running at once must not share one.
+	MachineIDPath string
+}
+
 // VMConfig defines the virtual hardware and boot configuration for a microVM.
 // MicroVMs deliberately attach zero VirtioNetworkDeviceConfigurations; all
 // external communication passes over AF_VSOCK.
 type VMConfig struct {
 	KernelPath  string
 	CommandLine string
+	// MacOS, when set, boots a macOS guest; KernelPath and CommandLine are
+	// then unused.
+	MacOS       *MacOSBoot
 	CPUs        int
 	MemoryBytes uint64
 	Drives      []DriveSpec
 	Shares      []VirtioFSSpec
 	Listeners   map[uint32]VSockHandler
+	// BootTimeout bounds the wait for the guest agent; 0 is the driver's
+	// default.
+	BootTimeout time.Duration
 }
 
 // VM represents a running microVM instance.
