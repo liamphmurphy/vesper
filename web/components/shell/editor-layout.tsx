@@ -41,6 +41,11 @@ export type DockTab = {
   /** Needs the room of a document or a running app rather than a side conversation: the dock widens while it shows. "max" leaves the content beside it only 400px (a design under review). */
   wide?: boolean | "max";
   content: ReactNode;
+  /**
+   * A rail button that does this instead of showing a panel (the Mac app's Start playground). It has no
+   * panel or header and is never the active tab; `content` is ignored.
+   */
+  run?: () => void;
 };
 
 export type EditorHeader = {
@@ -349,7 +354,8 @@ export function Dock({
   /** Phones: only the rail, whose icons open the owner's sheet. */
   railOnly?: boolean;
 }) {
-  const active = tabs.find((t) => t.id === state.tab) ?? tabs[0];
+  const panelTabs = tabs.filter((t) => !t.run);
+  const active = panelTabs.find((t) => t.id === state.tab) ?? panelTabs[0];
   const [slots, setSlots] = useState<Record<string, HTMLElement | null>>({});
   // One stable ref callback per tab: a new function each render would detach and reattach the slot,
   // setting state on every render.
@@ -367,8 +373,16 @@ export function Dock({
   const shown = state.open && !state.hidden;
   const expanded = !railOnly && shown;
   const renderTab = (t: DockTab) => {
+    if (t.run) {
+      return (
+        <button key={t.id} type="button" aria-label={t.label} title={t.label} onClick={t.run}
+          className="relative grid size-8 place-items-center rounded-full text-fg-secondary hover:bg-hover hover:text-fg">
+          <TabIcon tab={t} size={16} />
+        </button>
+      );
+    }
     const selected = expanded && t.id === active?.id;
-    const asTab = expanded && tabs.length > 1;
+    const asTab = expanded && panelTabs.length > 1;
     const status = `${t.busy ? ", working" : ""}${t.unread ? ", unread" : ""}`;
     return (
       <button
@@ -404,7 +418,7 @@ export function Dock({
       >
         <span aria-hidden>{expanded ? "⇥" : "⇤"}</span>
       </button>
-      {expanded && tabs.length > 1 ? (
+      {expanded && panelTabs.length > 1 ? (
         <div role="tablist" aria-label="Panel tabs" aria-orientation="vertical" className="flex flex-col items-center gap-2">
           {tabs.map(renderTab)}
         </div>
@@ -435,7 +449,7 @@ export function Dock({
             Chat; else the tab's name). Its controls stay in the right rail. */}
         <div data-testid="dock-header" className="flex h-[44px] flex-none items-center gap-1 border-b border-border-subtle bg-surface pl-1 pr-2">
           <div className="flex min-w-0 flex-1 items-center">
-            {tabs.map((t) => (
+            {panelTabs.map((t) => (
               <div key={t.id} ref={slotRef(t.id)} data-dock-header={t.id} hidden={t.id !== active?.id}
                 className={cx("min-w-0 flex-1 items-center", t.id === active?.id && "peer flex empty:hidden")} />
             ))}
@@ -443,7 +457,7 @@ export function Dock({
           </div>
         </div>
         <DockSlotsContext.Provider value={slots}>
-        {panels === undefined ? dockPanels(uid, tabs, active?.id) : panels}
+        {panels === undefined ? dockPanels(uid, panelTabs, active?.id) : panels}
         </DockSlotsContext.Provider>
       </aside>}
       {!state.hidden && (

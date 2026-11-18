@@ -12,7 +12,7 @@ enum SidebarIcons {
         "expand": "arrow.up.left.and.arrow.down.right", "shrink": "arrow.down.right.and.arrow.up.left", "chevronUp": "chevron.up",
         "check": "checkmark", "gear": "gearshape", "branch": "arrow.triangle.branch", "pr": "arrow.triangle.pull",
         "lock": "lock", "key": "key", "code": "chevron.left.forwardslash.chevron.right", "terminal": "terminal",
-        "msg": "bubble.left", "bolt": "bolt", "play": "play.fill", "dollar": "dollarsign.circle", "pause": "pause.fill",
+        "msg": "bubble.left", "bolt": "bolt", "play": "play.fill", "playLeft": "arrowtriangle.left.fill", "dollar": "dollarsign.circle", "pause": "pause.fill",
         "download": "square.and.arrow.down", "upload": "square.and.arrow.up", "printer": "printer", "at": "at",
         "server": "server.rack", "users": "person.2", "sliders": "slider.horizontal.3", "folder": "folder", "github": "network",
         "shield": "shield", "refresh": "arrow.clockwise", "link": "link", "dots": "ellipsis", "alert": "exclamationmark.triangle",

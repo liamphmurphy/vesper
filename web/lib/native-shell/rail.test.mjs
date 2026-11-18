@@ -32,6 +32,14 @@ test("dock rail actions match the web buttons", () => {
   assert.equal(dockRailAction("settings", tabs, "chat", true), null);
 });
 
+test("an action tab (Start playground) is never active and runs instead of opening", () => {
+  const withStart = [{ id: "playground", label: "Start playground", icon: "playLeft", action: true }, ...tabs];
+  const items = dockRailItems(withStart, "playground", true);
+  assert.deepEqual(items.map((i) => [i.id, i.icon, i.active]), [["dock.toggle", "panel-right", true], ["dock.tab:playground", "playLeft", false], ["dock.tab:facts", "doc", false], ["dock.tab:chat", "msg", false]]);
+  assert.deepEqual(dockRailAction("dock.tab:playground", withStart, "chat", true), { type: "run", tab: "playground" });
+  assert.deepEqual(dockRailAction("dock.tab:playground", withStart, "chat", false), { type: "run", tab: "playground" });
+});
+
 test("the foot: links, current page active, Settings carries the attention dot", () => {
   const m = buildRailModel({ ...base, pathname: "/settings/runner", settingsNeedYou: true, devWorkspace: true });
   assert.deepEqual(m.foot.map((i) => i.id), ["http", "dev", "customization", "settings"]);

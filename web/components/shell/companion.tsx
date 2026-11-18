@@ -127,15 +127,15 @@ export function RightRailPortal({
   native,
 }: {
   children: ReactNode;
-  native?: { tabs: readonly DockRailTab[]; activeId: string | undefined; expanded: boolean; dispatch: (a: DockAction) => void };
+  native?: { tabs: readonly (Omit<DockRailTab, "action"> & { run?: () => void })[]; activeId: string | undefined; expanded: boolean; dispatch: (a: DockAction) => void };
 }) {
   const slot = useSyncExternalStore(subscribeCompanion, rightRailSlot, () => null);
   const isNative = useIsNativeShell();
   const registered = isNative && !!native;
   const items = useMemo(
-    () => (native ? dockRailItems(native.tabs, native.activeId, native.expanded) : []),
+    () => (native ? dockRailItems(railTabs(native.tabs), native.activeId, native.expanded) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the tabs' content is by id; their description is what matters
-    [native && JSON.stringify([native.tabs.map((t) => [t.id, t.label, t.icon, t.busy, t.unread]), native.activeId, native.expanded])],
+    [native && JSON.stringify([native.tabs.map((t) => [t.id, t.label, t.icon, t.busy, t.unread, !!t.run]), native.activeId, native.expanded])],
   );
   const latest = useRef(native);
   useEffect(() => {
@@ -146,14 +146,20 @@ export function RightRailPortal({
     const token = Symbol("dock-rail");
     dockRail.set(token, items, (itemId) => {
       const n = latest.current;
-      const action = n && dockRailAction(itemId, n.tabs, n.activeId, n.expanded);
-      if (action) n.dispatch(action);
+      const action = n && dockRailAction(itemId, railTabs(n.tabs), n.activeId, n.expanded);
+      if (!action) return;
+      if (action.type === "run") n.tabs.find((t) => t.id === action.tab)?.run?.();
+      else n.dispatch(action);
     });
     return () => dockRail.clear(token);
   }, [registered, items]);
   if (isNative) return null;
   return slot ? createPortal(children, slot) : null;
 }
+
+/** A dock's tabs as the rail model sees them: a tab with `run` is an action button. */
+const railTabs = (tabs: readonly (Omit<DockRailTab, "action"> & { run?: () => void })[]): DockRailTab[] =>
+  tabs.map(({ run, ...t }) => (run ? { ...t, action: true } : t));
 
 function RailFootLinks({ settingsNeedYou }: { settingsNeedYou: boolean }) {
   const pathname = usePathname();
