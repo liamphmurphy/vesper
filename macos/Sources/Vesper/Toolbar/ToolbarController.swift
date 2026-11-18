@@ -77,7 +77,7 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
         let actions = TabStripActions(
             select: { [weak host] in host?.selectTab($0) },
             close: { [weak host] in host?.closeTab($0) },
-            newTab: { [weak host] in host?.app.openVesperTab(path: "/", nextTo: host?.window) },
+            newTab: { [weak host] in host?.app.openNewTab(from: host?.window) },
             closeOthers: { [weak host] in host?.closeOtherTabs(than: $0) },
             closeToTheRight: { [weak host] in host?.closeTabsToTheRight(of: $0) },
             moveToNewWindow: { [weak host] tab in if let host { host.app.moveTabToNewWindow(tab, from: host) } },

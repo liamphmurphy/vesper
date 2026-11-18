@@ -117,7 +117,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     // MARK: File / app menu actions
 
-    @objc func newWindowForTab(_ sender: Any?) { app.openVesperTab(path: "/", nextTo: NSApp.keyWindow) }
+    /// ⌘T and the system tab bar's +.
+    @objc func newWindowForTab(_ sender: Any?) { app.openNewTab(from: NSApp.keyWindow) }
     @objc func newWindowAction(_ sender: Any?) { app.newWindow() }
     @objc func reopenClosedTab(_ sender: Any?) { app.reopenClosedTab(nextTo: NSApp.keyWindow) }
     /// ⌘W: the tab in a compact window (its last tab closes the window), else the key window.

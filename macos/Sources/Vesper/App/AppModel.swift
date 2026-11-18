@@ -193,6 +193,18 @@ final class AppModel {
         if !compactLayout { controller.window?.tabbingMode = .preferred }
     }
 
+    /// ⌘T and the tab bars' +: a new tab at the page the current tab shows (a Knowledge page, a
+    /// chat, a filtered list), so the person carries on from where they are. Home only when no
+    /// window is open to copy from.
+    func openNewTab(from window: NSWindow?) {
+        let current = ((window ?? NSApp.keyWindow)?.windowController as? MainWindowController)?.content
+        if let current, let copy = makeCopy(of: current) {
+            place(copy, nextTo: window)
+        } else {
+            openVesperTab(path: "/", nextTo: window)
+        }
+    }
+
     func duplicateTab(_ tab: WebContentController, in host: MainWindowController) {
         guard let copy = makeCopy(of: tab),
               let index = host.tabs.list.items.firstIndex(where: { $0 === tab }) else { return }
