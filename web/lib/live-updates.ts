@@ -31,6 +31,8 @@ const prefixes: Record<string, string[]> = {
   push_request: ["push-requests"],
   // A persona edit changes the name, color and avatar every chat using it embeds.
   persona: ["personas", "chats", "dock"],
+  // A Safari tab shared with a chat: started, re-snapshotted, read by a persona or stopped.
+  browser_share: ["browser-shares"],
   // User-built custom apps refresh their launcher and active editor state.
   custom_app: ["custom-apps"],
 };
@@ -39,7 +41,7 @@ const prefixes: Record<string, string[]> = {
 export function invalidatedBy(type: string): string[] {
   if (type === "run.events") return ["runs"];
   const keys = prefixes[type.split(".")[0]] ?? [];
-  const quiet = ["video.updated", "audio.updated", "code_review.updated", "push_request.updated", "custom_app.updated"];
+  const quiet = ["video.updated", "audio.updated", "code_review.updated", "push_request.updated", "custom_app.updated", "browser_share.updated"];
   return quiet.includes(type) ? keys : [...keys, "dashboard", "epics", "agent-overviews"];
 }
 

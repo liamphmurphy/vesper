@@ -95,6 +95,7 @@ func (s *Server) mountAPIRoutes(mux *http.ServeMux) {
 	s.knowledgeRoutes(mux)
 	s.dockChatRoutes(mux)
 	s.httpClientRoutes(mux)
+	s.browserExtensionRoutes(mux)
 	strict := api.NewStrictHandlerWithOptions(s, nil, api.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
 			writeError(w, http.StatusBadRequest, api.Invalid, err.Error(), "")
@@ -163,6 +164,9 @@ func personFacing(path string) bool {
 	case !strings.HasPrefix(path, "/api/"):
 		return false
 	case path == "/api/v1/health", path == SignInPath, path == AuthStatusPath, path == AuthSetupPath, path == AuthLoginPath, path == connectors.CallbackPath, strings.HasPrefix(path, "/api/v1/agent/"):
+		return false
+	case strings.HasPrefix(path, browserExtensionPrefix):
+		// The Safari extension: its own bearer token (browserExtensionAuth), not a session.
 		return false
 	}
 	return true

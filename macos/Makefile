@@ -2,13 +2,17 @@
 APP := build/Vesper.app
 DMG := build/Vesper-arm64.dmg
 
-.PHONY: build test app dmg run reinstall clean
+.PHONY: build test safari-test app dmg run reinstall clean
 
 build:
 	swift build
 
 test:
 	swift test
+
+# Vesper for Safari's JavaScript (no browser needed). The Swift bridge is covered by `test`.
+safari-test:
+	node --test SafariExtension/tests/lib.test.cjs
 
 # Assembles and signs build/Vesper.app. SKIP_STAGE=1 reuses macos/staged as it is;
 # VESPER_CODESIGN_IDENTITY picks the signing identity (default: ad hoc).

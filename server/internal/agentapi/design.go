@@ -26,6 +26,8 @@ import (
 type imageResult struct {
 	PNG  []byte
 	Meta any
+	// JPEG, when set instead of PNG, is sent as image/jpeg (a shared Safari tab's screenshot).
+	JPEG []byte
 }
 
 func (r *imageResult) MarshalJSON() ([]byte, error) {
@@ -35,7 +37,11 @@ func (r *imageResult) MarshalJSON() ([]byte, error) {
 	}
 	m := map[string]any{}
 	_ = json.Unmarshal(raw, &m)
-	m["image_png_base64"] = r.PNG
+	if r.JPEG != nil {
+		m["image_jpeg_base64"] = r.JPEG
+	} else {
+		m["image_png_base64"] = r.PNG
+	}
 	return json.Marshal(m)
 }
 
@@ -44,7 +50,11 @@ func (r *imageResult) mcpResult() (*mcp.CallToolResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.ImageContent{Data: r.PNG, MIMEType: "image/png"}, &mcp.TextContent{Text: string(meta)}}}, nil
+	img := &mcp.ImageContent{Data: r.PNG, MIMEType: "image/png"}
+	if r.JPEG != nil {
+		img = &mcp.ImageContent{Data: r.JPEG, MIMEType: "image/jpeg"}
+	}
+	return &mcp.CallToolResult{Content: []mcp.Content{img, &mcp.TextContent{Text: string(meta)}}}, nil
 }
 
 // designTarget checks that the canvas is a design in this chat and returns it

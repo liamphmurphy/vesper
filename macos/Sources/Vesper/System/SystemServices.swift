@@ -143,6 +143,7 @@ final class SystemServices {
         inboxMonitor.start(client: client)
         runMonitor.start(client: client)
         dock.startPersonaRefresh(client: client)
+        SafariExtensionLink.refresh(client: client)
         power.applyThermal()
         refreshTray()
     }
