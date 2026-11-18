@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template for Vesper.app/Contents/Info.plist. scripts/build-app.sh fills @VERSION@ and @BUILD@. -->
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>Vesper</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.vesper.mac</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Vesper</string>
+	<key>CFBundleDisplayName</key>
+	<string>Vesper</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>@VERSION@</string>
+	<key>CFBundleVersion</key>
+	<string>@BUILD@</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>15.0</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.developer-tools</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<!-- Alerts (not banners) by default, so Approve/Decline and Reply buttons show. -->
+	<key>NSUserNotificationAlertStyle</key>
+	<string>alert</string>
+	<!-- The app talks to its own server on http://127.0.0.1. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<!-- "Open in editor" opens a terminal command through Terminal. -->
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Vesper opens a run's workspace folder in Terminal when you ask it to.</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>Vesper</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>vesper</string>
+			</array>
+		</dict>
+	</array>
+	<!-- Files dropped on the Dock icon or opened with Vesper go to a chat. Alternate: Vesper shows in
+	     Open With but never becomes the default app for these types. -->
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Vesper attachment</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>pdf</string>
+				<string>png</string>
+				<string>jpg</string>
+				<string>jpeg</string>
+				<string>gif</string>
+				<string>webp</string>
+				<string>txt</string>
+				<string>md</string>
+				<string>markdown</string>
+				<string>csv</string>
+				<string>json</string>
+				<string>zip</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>
