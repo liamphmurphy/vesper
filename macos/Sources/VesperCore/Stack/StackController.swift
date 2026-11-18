@@ -150,6 +150,14 @@ public final class StackController {
         return support.appendingPathComponent("vesper-desktop", isDirectory: true)
     }
 
+    /// For scratch runs only: VESPER_SCRATCH_SECRETS_KEY is honoured when VESPER_USER_DATA_DIR is set
+    /// too, so a test launch never reads or writes the Keychain and can't touch the real instance.
+    nonisolated static func scratchSecretsKey(environment env: [String: String]) -> String? {
+        guard let dir = env["VESPER_USER_DATA_DIR"], !dir.isEmpty,
+              let key = env["VESPER_SCRATCH_SECRETS_KEY"], !key.isEmpty else { return nil }
+        return key
+    }
+
     /// `<dataDir>/logs/vesper-app.log`.
     public var logFileURL: URL { dataDirectory.appendingPathComponent("logs/vesper-app.log") }
 
@@ -214,7 +222,9 @@ public final class StackController {
 
         let secretsKey: String
         do {
-            secretsKey = try options.secretsKey?() ?? SecretsKeyStore(dataDirectory: dataDirectory).load()
+            secretsKey = try options.secretsKey?()
+                ?? Self.scratchSecretsKey(environment: options.environment ?? ProcessInfo.processInfo.environment)
+                ?? SecretsKeyStore(dataDirectory: dataDirectory).load()
         } catch {
             throw StackStartError("SECRETS_KEY unavailable from the Keychain: \(error)")
         }

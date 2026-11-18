@@ -202,4 +202,10 @@ final class StackLaunchTests: XCTestCase {
         XCTAssertEqual(StackController.defaultDataDirectory(environment: ["VESPER_USER_DATA_DIR": "/tmp/vd"]).path, "/tmp/vd")
         XCTAssertTrue(StackController.defaultDataDirectory(environment: [:]).path.hasSuffix("Library/Application Support/vesper-desktop"))
     }
+
+    func testScratchSecretsKeyNeedsAScratchDataDir() {
+        XCTAssertNil(StackController.scratchSecretsKey(environment: ["VESPER_SCRATCH_SECRETS_KEY": "k"]))
+        XCTAssertNil(StackController.scratchSecretsKey(environment: ["VESPER_USER_DATA_DIR": "/x"]))
+        XCTAssertEqual(StackController.scratchSecretsKey(environment: ["VESPER_USER_DATA_DIR": "/x", "VESPER_SCRATCH_SECRETS_KEY": "k"]), "k")
+    }
 }
