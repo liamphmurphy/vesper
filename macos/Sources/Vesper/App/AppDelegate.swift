@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         ShellBridge.services = app.system
         app.system.start()
         app.aux.start()
+        app.startHidden = app.aux.shouldStartHidden()
 
         if let stack {
             stack.apply(app.settings.settings.stack)
@@ -56,6 +57,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         Task {
+            for window in app.windows where !(await window.confirmLeavingUnsavedChanges()) {
+                NSApp.reply(toApplicationShouldTerminate: false)
+                return
+            }
             guard await app.system.confirmQuit() else {
                 NSApp.reply(toApplicationShouldTerminate: false)
                 return

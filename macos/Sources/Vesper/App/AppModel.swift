@@ -68,9 +68,14 @@ final class AppModel {
 
     // MARK: Windows
 
+    /// Login launch with "start in the menu bar": the first automatic window open is skipped; the
+    /// menu bar item, the Dock and deep links still open windows.
+    @ObservationIgnored var startHidden = false
+
     /// At launch: restore session.json tabs, or one window at "/".
     func restoreOrOpenFirstWindow() {
         guard windows.isEmpty else { return }
+        if startHidden { return }
         let saved = SessionStore.load(from: sessionFileURL)
         restoringSession = true
         defer { restoringSession = false }
@@ -113,6 +118,7 @@ final class AppModel {
 
     @discardableResult
     func makeVesperWindow(path: String) -> MainWindowController {
+        startHidden = false
         let controller = MainWindowController(app: self, kind: .vesper, path: path)
         register(controller)
         return controller

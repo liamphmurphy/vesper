@@ -25,6 +25,7 @@ import { ReviewDialog } from "./review-dialog";
 import { ScopesTab } from "./scopes-tab";
 import { SkillsTab } from "./skills-tab";
 import { TokensTab } from "./tokens-tab";
+import { addLeaveGuard } from "@/lib/leave-guard";
 
 const TABS = ["overview", "scopes", "skills", "memory", "activity", "settings", "tokens"] as const;
 type Tab = (typeof TABS)[number];
@@ -201,8 +202,7 @@ export function AgentScreen({ handle }: { handle: string }) {
   useEffect(() => {
     if (!dirty) return;
     const onBeforeUnload = (e: BeforeUnloadEvent) => e.preventDefault();
-    window.addEventListener("beforeunload", onBeforeUnload);
-    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+    return addLeaveGuard(onBeforeUnload);
   }, [dirty]);
 
   if (isError) {

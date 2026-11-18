@@ -134,6 +134,51 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     func windowDidResize(_ notification: Notification) { app.scheduleSessionSave() }
     func windowDidBecomeKey(_ notification: Notification) { app.scheduleSessionSave() }
 
+    /// Set once the person agreed to close despite unsaved changes (or there were none).
+    private var closeConfirmed = false
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        if closeConfirmed { return true }
+        Task { @MainActor [weak self] in
+            guard let self, await self.confirmLeavingUnsavedChanges() else { return }
+            self.closeConfirmed = true
+            sender.close()
+        }
+        return false
+    }
+
+    /// Whether the page reports unsaved changes (web/lib/leave-guard.ts). WKWebView never runs
+    /// beforeunload prompts, so the shell asks. A page that doesn't answer within a second counts
+    /// as having none, so a hung page can always be closed.
+    func hasUnsavedChanges() async -> Bool {
+        let web = content.webView
+        let check = Task { @MainActor () -> Bool in
+            let result = try? await web.callAsyncJavaScript(
+                "return typeof window.__vesperHasUnsavedChanges === 'function' && window.__vesperHasUnsavedChanges() === true;",
+                contentWorld: .page)
+            return (result as? Bool) ?? false
+        }
+        let timeout = Task { try? await Task.sleep(for: .seconds(1)); check.cancel() }
+        let value = await check.value
+        timeout.cancel()
+        return value
+    }
+
+    /// Asks "Leave without saving?" when the page has unsaved changes. true = go ahead.
+    func confirmLeavingUnsavedChanges() async -> Bool {
+        guard await hasUnsavedChanges() else { return true }
+        let alert = NSAlert()
+        alert.messageText = "Leave without saving?"
+        alert.informativeText = "Changes you made on this page may not be saved."
+        alert.addButton(withTitle: "Leave")
+        alert.addButton(withTitle: "Stay")
+        if let window {
+            window.makeKeyAndOrderFront(nil)
+            return await alert.beginSheetModal(for: window) == .alertFirstButtonReturn
+        }
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
     func windowWillClose(_ notification: Notification) {
         let url = currentURLString
         content.teardown()

@@ -12,6 +12,7 @@ import { MockupImage } from "@/components/domain/mockup";
 import { MockupCanvas, useSourceHistory } from "@/components/domain/mockup-canvas";
 import { ZoomControl } from "./mockup-parts";
 import { confirmAction } from "@/components/ui/confirm";
+import { addLeaveGuard } from "@/lib/leave-guard";
 
 type Mode = "visual" | "source" | "split";
 const MODES = [
@@ -62,8 +63,7 @@ export function MockupEditor({ a, onDone }: { a: Artifact; onDone: () => void })
   useEffect(() => {
     if (!dirty) return;
     const warn = (e: BeforeUnloadEvent) => e.preventDefault();
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
+    return addLeaveGuard(warn);
   }, [dirty]);
 
   async function save(approve: boolean) {

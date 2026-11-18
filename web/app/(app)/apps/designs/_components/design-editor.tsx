@@ -34,6 +34,7 @@ import { Inspector } from "./inspector";
 import { PrototypePanel } from "./prototype-panel";
 import { InspectPanel, TokensSyncBadge } from "./library-panels";
 import { LayersPanel } from "./layers-panel";
+import { addLeaveGuard } from "@/lib/leave-guard";
 
 type SaveState = "saved" | "unsaved" | "saving" | "conflict" | "error";
 const SAVE_LABEL: Record<SaveState, string> = { saved: "Saved", unsaved: "Unsaved changes", saving: "Saving…", conflict: "Not saved", error: "Not saved" };
@@ -311,10 +312,10 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
       if (dirty()) e.preventDefault();
     };
     document.addEventListener("visibilitychange", hide);
-    window.addEventListener("beforeunload", leave);
+    const removeLeave = addLeaveGuard(leave);
     return () => {
       document.removeEventListener("visibilitychange", hide);
-      window.removeEventListener("beforeunload", leave);
+      removeLeave();
       if (dirty()) void flushRef.current().catch(() => undefined);
     };
   }, []);

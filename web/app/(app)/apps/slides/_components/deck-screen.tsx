@@ -35,6 +35,7 @@ import { Thumbnails } from "./thumbnails";
 import type { StylePatch } from "./style-menus";
 import { Toolbar, type TextFormat, type ToolbarActions } from "./toolbar";
 import { confirmAction } from "@/components/ui/confirm";
+import { addLeaveGuard } from "@/lib/leave-guard";
 
 type SaveState = "saved" | "unsaved" | "saving" | "conflict" | "error";
 const SAVE_LABEL: Record<SaveState, string> = { saved: "Saved", unsaved: "Unsaved changes", saving: "Saving…", conflict: "Not saved", error: "Not saved" };
@@ -317,10 +318,10 @@ export function DeckScreen({ id }: { id: string }) {
       if (dirty.current) e.preventDefault();
     };
     document.addEventListener("visibilitychange", hide);
-    window.addEventListener("beforeunload", leave);
+    const removeLeave = addLeaveGuard(leave);
     return () => {
       document.removeEventListener("visibilitychange", hide);
-      window.removeEventListener("beforeunload", leave);
+      removeLeave();
       if (dirty.current) void flushRef.current().catch(() => undefined);
     };
   }, []);

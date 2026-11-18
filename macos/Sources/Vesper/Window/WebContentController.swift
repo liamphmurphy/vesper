@@ -184,6 +184,14 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
         // which would hand a blob: URL to the workspace).
         if navigationAction.shouldPerformDownload { return .download }
         guard let url = navigationAction.request.url else { return .cancel }
+        // A file dropped on the window that the page didn't take: offer it to a chat, as the
+        // Electron app did (drop.ts), instead of navigating to file://.
+        if url.isFileURL {
+            if navigationAction.navigationType == .other || navigationAction.navigationType == .linkActivated {
+                app.aux.openFiles([url])
+            }
+            return .cancel
+        }
         let scheme = url.scheme?.lowercased() ?? ""
         // The page's own blob:/data:/about: documents open in a popup (target=_blank) or here.
         if ["blob", "data", "about"].contains(scheme) && kind == .vesper { return .allow }
