@@ -160,6 +160,22 @@ func (b *MicroVM) EnsureWorkspace(ctx context.Context, runID string) error {
 	mu.Lock()
 	defer mu.Unlock()
 
+	if err := b.createDisks(ctx, dir); err != nil {
+		return err
+	}
+	metaPath := filepath.Join(dir, "meta.json")
+	if _, err := os.Stat(metaPath); os.IsNotExist(err) {
+		meta, _ := json.Marshal(map[string]any{"run_id": runID, "created_at": time.Now().UTC()})
+		if err := os.WriteFile(metaPath, meta, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// createDisks gives dir the disks a run's VM boots on, cloned from the
+// formatted templates, keeping any it already has.
+func (b *MicroVM) createDisks(ctx context.Context, dir string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
@@ -197,13 +213,6 @@ func (b *MicroVM) EnsureWorkspace(ctx context.Context, runID string) error {
 		}
 		if err := cloneFile(tmpl, dst); err != nil {
 			return fmt.Errorf("clone %s: %w", s.file, err)
-		}
-	}
-	metaPath := filepath.Join(dir, "meta.json")
-	if _, err := os.Stat(metaPath); os.IsNotExist(err) {
-		meta, _ := json.Marshal(map[string]any{"run_id": runID, "created_at": time.Now().UTC()})
-		if err := os.WriteFile(metaPath, meta, 0o644); err != nil {
-			return err
 		}
 	}
 	return nil
@@ -398,12 +407,32 @@ func (b *MicroVM) acquireVM(ctx context.Context, runID string) (*runVM, error) {
 		return rvm, nil
 	}
 
-	if b.Driver == nil {
-		return nil, errors.New("microvm: Driver is required")
-	}
 	dir, err := b.runDir(runID)
 	if err != nil {
 		return nil, err
+	}
+	hostDir, _ := b.hostWorkspacePath(runID)
+	vm, eg, _, err := b.bootVM(ctx, dir, hostDir)
+	if err != nil {
+		return nil, err
+	}
+	rvm.egress = eg
+	rvm.vm = vm
+	rvm.vmGen++
+	rvm.activeTurns++
+	return rvm, nil
+}
+
+// bootVM boots a VM on the disks in dir, with hostDir (when set) shared as
+// its workspace instead of dir's workspace disk, and the cache drives that
+// are current now, which it returns.
+func (b *MicroVM) bootVM(ctx context.Context, dir, hostDir string) (microvm.VM, *microvm.Egress, []microvm.DriveSpec, error) {
+	if b.Driver == nil {
+		return nil, nil, nil, errors.New("microvm: Driver is required")
+	}
+	memMB := b.MemoryMB
+	if memMB <= 0 {
+		memMB = 2048
 	}
 	cpus := b.CPUs
 	if cpus <= 0 {
@@ -426,7 +455,7 @@ func (b *MicroVM) acquireVM(ctx context.Context, runID string) (*runVM, error) {
 		{Path: b.RootfsPath, ReadOnly: true},
 	}
 	var shares []microvm.VirtioFSSpec
-	if hostDir, isHost := b.hostWorkspacePath(runID); isHost {
+	if hostDir != "" {
 		shares = append(shares, microvm.VirtioFSSpec{Tag: "workspace", HostDir: hostDir, ReadOnly: false})
 	} else {
 		drives = append(drives, microvm.DriveSpec{Path: filepath.Join(dir, "workspace.ext4"), ReadOnly: false})
@@ -435,8 +464,10 @@ func (b *MicroVM) acquireVM(ctx context.Context, runID string) (*runVM, error) {
 		microvm.DriveSpec{Path: filepath.Join(dir, "home.ext4"), ReadOnly: false},
 		microvm.DriveSpec{Path: filepath.Join(dir, "docker.ext4"), ReadOnly: false},
 	)
+	var cache []microvm.DriveSpec
 	if b.CacheStore != nil {
-		drives = append(drives, b.CacheStore.LatestEROFSDrives()...)
+		cache = b.CacheStore.LatestEROFSDrives()
+		drives = append(drives, cache...)
 	}
 	vm, err := b.Driver.Start(ctx, microvm.VMConfig{
 		KernelPath:  b.KernelPath,
@@ -448,13 +479,9 @@ func (b *MicroVM) acquireVM(ctx context.Context, runID string) (*runVM, error) {
 	})
 	if err != nil {
 		_ = eg.Close()
-		return nil, err
+		return nil, nil, nil, err
 	}
-	rvm.egress = eg
-	rvm.vm = vm
-	rvm.vmGen++
-	rvm.activeTurns++
-	return rvm, nil
+	return vm, eg, cache, nil
 }
 
 func (b *MicroVM) releaseVM(rvm *runVM) {
@@ -497,27 +524,34 @@ func (b *MicroVM) releaseVM(rvm *runVM) {
 	if idleMB < memMB {
 		_ = rvm.vm.SetMemoryTarget(uint64(idleMB) << 20)
 	}
-	if b.WarmTTL > 0 {
-		if rvm.idleTimer != nil {
-			rvm.idleTimer.Stop()
-		}
-		rvm.idleTimer = time.AfterFunc(b.WarmTTL, func() {
-			rvm.mu.Lock()
-			defer rvm.mu.Unlock()
-			if rvm.activeTurns != 0 || rvm.vm == nil || rvm.vmGen != gen {
-				return
-			}
-			sctx, scancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer scancel()
-			_ = rvm.vm.Stop(sctx)
-			if rvm.egress != nil {
-				_ = rvm.egress.Close()
-			}
-			rvm.vm = nil
-			rvm.egress = nil
-			rvm.idleTimer = nil
-		})
+	b.armIdleTimer(rvm, gen)
+}
+
+// armIdleTimer stops rvm's VM (generation gen) once it has sat idle for
+// WarmTTL. Call it with rvm.mu held.
+func (b *MicroVM) armIdleTimer(rvm *runVM, gen uint64) {
+	if b.WarmTTL <= 0 {
+		return
 	}
+	if rvm.idleTimer != nil {
+		rvm.idleTimer.Stop()
+	}
+	rvm.idleTimer = time.AfterFunc(b.WarmTTL, func() {
+		rvm.mu.Lock()
+		defer rvm.mu.Unlock()
+		if rvm.activeTurns != 0 || rvm.vm == nil || rvm.vmGen != gen {
+			return
+		}
+		sctx, scancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer scancel()
+		_ = rvm.vm.Stop(sctx)
+		if rvm.egress != nil {
+			_ = rvm.egress.Close()
+		}
+		rvm.vm = nil
+		rvm.egress = nil
+		rvm.idleTimer = nil
+	})
 }
 
 // ActiveVMCount reports how many microVMs currently have a booted hypervisor instance.
