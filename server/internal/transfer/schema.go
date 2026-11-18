@@ -13,18 +13,20 @@ import (
 // table is exported unless it is listed here, so a migration needs no change to
 // this package. TestEveryTableIsExportedOrExcluded keeps the list honest.
 var excluded = map[string]string{
-	"goose_db_version":       "migration history: the target's own migrations rebuild it",
-	"browser_sessions":       "sign-in sessions: people sign in again on the new machine",
-	"browser_sign_in_codes":  "one-time sign-in codes",
-	"sign_ins":               "pending harness sign-in flows, tied to a runner on the old machine",
-	"runners":                "runner registrations: a runner on the new machine registers itself",
-	"playgrounds":            "live playground stacks, tied to a runner and ports on the old machine",
-	"harness_usage_checks":   "runner-claimed jobs that refresh provider usage",
-	"harness_model_listings": "cache of the models each harness login offers; the runner refills it",
-	"provider_usage":         "observed provider usage, refreshed by the runner",
-	"provider_limits":        "observed provider rate limits, refreshed by the runner",
-	"metric_snapshots":       "cached dashboard metrics, recomputed on demand",
-	"drive_backup_locks":     "the lease on a Drive backup in progress on the old machine",
+	"goose_db_version":          "migration history: the target's own migrations rebuild it",
+	"browser_sessions":          "sign-in sessions: people sign in again on the new machine",
+	"browser_sign_in_codes":     "one-time sign-in codes",
+	"sign_ins":                  "pending harness sign-in flows, tied to a runner on the old machine",
+	"runners":                   "runner registrations: a runner on the new machine registers itself",
+	"playgrounds":               "live playground stacks, tied to a runner and ports on the old machine",
+	"harness_usage_checks":      "runner-claimed jobs that refresh provider usage",
+	"harness_model_listings":    "cache of the models each harness login offers; the runner refills it",
+	"provider_usage":            "observed provider usage, refreshed by the runner",
+	"provider_limits":           "observed provider rate limits, refreshed by the runner",
+	"metric_snapshots":          "cached dashboard metrics, recomputed on demand",
+	"drive_backup_locks":        "the lease on a Drive backup in progress on the old machine",
+	"browser_extension_tokens":  "the Safari extension's credential: the Mac app mints a new one at launch",
+	"browser_share_screenshots": "the latest screenshot of a shared Safari tab, replaced at every snapshot",
 }
 
 // excludedPrefixes are table-name prefixes owned by a library with its own

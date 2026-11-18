@@ -176,11 +176,55 @@ type ArtifactVersion struct {
 	SourceCanvasVersionID *uuid.UUID
 }
 
+type BrowserExtensionToken struct {
+	UserID    uuid.UUID
+	TokenHash []byte
+	CreatedAt time.Time
+}
+
+type BrowserNeverShare struct {
+	UserID    uuid.UUID
+	Host      string
+	CreatedAt time.Time
+}
+
 type BrowserSession struct {
 	TokenHash  []byte
 	ExpiresAt  time.Time
 	CreatedAt  time.Time
 	LastUsedAt time.Time
+}
+
+type BrowserShare struct {
+	ID                uuid.UUID
+	WorkspaceID       uuid.UUID
+	UserID            uuid.UUID
+	ChatID            uuid.UUID
+	TabID             string
+	StartUrl          string
+	Until             string
+	IncludeScreenshot bool
+	Url               string
+	Title             string
+	PageText          string
+	SnapshotAt        *time.Time
+	StartedAt         time.Time
+	StoppedAt         *time.Time
+	StopReason        string
+}
+
+type BrowserShareRead struct {
+	ID        uuid.UUID
+	ShareID   uuid.UUID
+	ChatID    uuid.UUID
+	PersonaID *uuid.UUID
+	Url       string
+	ReadAt    time.Time
+}
+
+type BrowserShareScreenshot struct {
+	ShareID uuid.UUID
+	Jpeg    []byte
 }
 
 type BrowserSignInCode struct {
