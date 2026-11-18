@@ -127,8 +127,9 @@ export const kindRank = (k: string) => RANK.get(k) ?? GROUPS.length;
 
 /**
  * Needs you: open items the server marks needs_you, in the Inbox's urgency
- * order and longest wait first. Updates: the rest, newest first, read or not
- * (the tab is a feed), with `unread` for the tab's dot.
+ * order and longest wait first. Updates: the rest still open, newest first.
+ * Clearing a row is the Inbox's Done (read), so a cleared item leaves both
+ * tabs until it changes, as a dismissed GitHub review request does.
  */
 export function trayItems<T extends TrayItem>(items: readonly T[], updatesLimit = 30) {
   const age = (i: T) => Date.parse(i.created_at);
@@ -136,10 +137,10 @@ export function trayItems<T extends TrayItem>(items: readonly T[], updatesLimit 
     .filter((i) => i.needs_you && isOpen(i))
     .sort((a, b) => kindRank(a.kind) - kindRank(b.kind) || age(a) - age(b) || a.id.localeCompare(b.id));
   const updates = items
-    .filter((i) => !i.needs_you)
+    .filter((i) => !i.needs_you && isOpen(i))
     .sort((a, b) => age(b) - age(a) || a.id.localeCompare(b.id))
     .slice(0, updatesLimit);
-  return { needs, updates, unread: updates.filter(isOpen).map((i) => i.id) };
+  return { needs, updates };
 }
 
 /** What a tray row offers inline: approve/deny, a reply box, or a labelled link. */

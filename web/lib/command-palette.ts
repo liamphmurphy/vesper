@@ -637,6 +637,7 @@ export const SHORTCUTS: { section: string; items: { label: string; keys: string[
       { label: "Approve the selected approval", keys: ["A"] },
       { label: "Deny the selected approval (with an optional reason)", keys: ["D"] },
       { label: "Reply to the selected question", keys: ["R"] },
+      { label: "Clear the selected item until it changes", keys: ["X"] },
       { label: "Close the tray, or leave the reply box", keys: ["Esc"] },
     ],
   },
