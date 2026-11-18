@@ -85,9 +85,12 @@ public struct NavAction: Codable, Sendable, Hashable, Identifiable {
     public var accent: Bool?
     public var disabled: Bool?
     public var menu: [MenuItem]?
+    public var showsLabel: Bool?
 
-    public init(id: String, label: String, icon: String, accent: Bool? = nil, disabled: Bool? = nil, menu: [MenuItem]? = nil) {
+    public init(id: String, label: String, icon: String, accent: Bool? = nil, disabled: Bool? = nil, menu: [MenuItem]? = nil,
+                showsLabel: Bool? = nil) {
         self.id = id; self.label = label; self.icon = icon; self.accent = accent; self.disabled = disabled; self.menu = menu
+        self.showsLabel = showsLabel
     }
 }
 

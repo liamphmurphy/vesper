@@ -83,6 +83,8 @@ export interface NavAction {
   disabled?: boolean;
   /** When set, the button opens this menu instead of sending nav.action directly. */
   menu?: MenuItem[];
+  /** Show the label as text next to the icon (e.g. "New Chat" on the first day's header). */
+  showsLabel?: boolean;
 }
 
 export interface NavPicker {

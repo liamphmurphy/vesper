@@ -22,6 +22,7 @@ enum SidebarIcons {
         "dumbbell": "dumbbell", "audio": "waveform", "film": "film", "library": "photo.on.rectangle", "compare": "rectangle.split.2x1",
         // Names pages use that are not in icon.tsx yet.
         "doc": "doc.text", "pin": "pin", "more": "ellipsis", "panel-right": "sidebar.right", "star": "star", "home": "house",
+        "compose": "square.and.pencil",
     ]
 
     static func symbolName(_ icon: String) -> String { table[icon] ?? "circle" }
