@@ -11,10 +11,20 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
 fi
 
 echo "Resolving nixpkgs#postgresql_17 via nix..."
-mapfile -t store_paths < <(
+# A read loop rather than mapfile: macOS ships bash 3.2, which has no mapfile,
+# and CI's macOS runners use it.
+store_paths=()
+while IFS= read -r p; do
+  [[ -n "${p}" ]] && store_paths+=("${p}")
+done < <(
   nix build --no-link --print-out-paths nixpkgs#postgresql_17 nixpkgs#postgresql_17.lib 2>/dev/null \
     || nix build --no-link --print-out-paths nixpkgs#postgresql_17
 )
+# A failed nix build inside the process substitution doesn't trip set -e.
+if [[ ${#store_paths[@]} -eq 0 ]]; then
+  echo "nix build nixpkgs#postgresql_17 printed no store paths" >&2
+  exit 1
+fi
 
 tmp_stage="${out_dir}.stage.$$"
 rm -rf "${tmp_stage}"
