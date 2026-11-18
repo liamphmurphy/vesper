@@ -47,7 +47,8 @@ Keychain and privacy grants survive rebuilds) or ad hoc (`-`) when unset.
   salt "saltysalt", 1003 iterations, 16 bytes), password = Keychain generic password service
   `vesper-desktop Safe Storage`, account `vesper-desktop Key`). On first launch the shell decrypts
   it once and stores the key in its own Keychain item (service `com.vesper.mac`, account
-  `secrets-key`). If neither exists, generate 32 random bytes (base64). Never log it.
+  `secrets-key:<absolute data dir path>`, so a key made for one data dir never stands in for
+  another's migration). If neither exists, generate 32 random bytes (base64). Never log it.
 - Never run the Electron app and the Swift app at the same time (one Postgres data dir).
 
 ## Contracts

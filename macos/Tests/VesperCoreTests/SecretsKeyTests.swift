@@ -56,8 +56,9 @@ final class SecretsKeyTests: XCTestCase {
     }
 
     func testLoadsExistingKeychainItem() throws {
-        let kc = FakeKeychain([FakeKeychain.id(SecretsKeyStore.service, SecretsKeyStore.account): Data(knownKey.utf8)])
-        XCTAssertEqual(try SecretsKeyStore(dataDirectory: try tempDir(), keychain: kc).load(), knownKey)
+        let dir = try tempDir()
+        let kc = FakeKeychain([FakeKeychain.id(SecretsKeyStore.service, SecretsKeyStore.account(for: dir)): Data(knownKey.utf8)])
+        XCTAssertEqual(try SecretsKeyStore(dataDirectory: dir, keychain: kc).load(), knownKey)
         XCTAssertTrue(kc.writes.isEmpty)
     }
 
@@ -68,7 +69,7 @@ final class SecretsKeyTests: XCTestCase {
         let kc = FakeKeychain([FakeKeychain.id(SecretsKeyStore.legacyService, SecretsKeyStore.legacyAccount): password])
         let store = SecretsKeyStore(dataDirectory: dir, keychain: kc)
         XCTAssertEqual(try store.load(), knownKey)
-        XCTAssertEqual(kc.writes, [FakeKeychain.id(SecretsKeyStore.service, SecretsKeyStore.account)])
+        XCTAssertEqual(kc.writes, [FakeKeychain.id(SecretsKeyStore.service, SecretsKeyStore.account(for: dir))])
         XCTAssertEqual(try store.load(), knownKey, "second load comes from the new item")
         XCTAssertEqual(kc.writes.count, 1)
     }
@@ -79,6 +80,18 @@ final class SecretsKeyTests: XCTestCase {
         let kc = FakeKeychain([FakeKeychain.id(SecretsKeyStore.legacyService, SecretsKeyStore.legacyAccount): password])
         XCTAssertThrowsError(try SecretsKeyStore(dataDirectory: dir, keychain: kc).load())
         XCTAssertTrue(kc.writes.isEmpty)
+    }
+
+    func testKeyMadeForAnotherDataDirectoryNeverPreemptsMigration() throws {
+        // A test run against a scratch directory generates and stores a key...
+        let kc = FakeKeychain([FakeKeychain.id(SecretsKeyStore.legacyService, SecretsKeyStore.legacyAccount): password])
+        let scratch = try SecretsKeyStore(dataDirectory: try tempDir(), keychain: kc).load()
+        // ...and the real data directory still migrates its own Electron key.
+        let real = try tempDir()
+        let enc = try XCTUnwrap(SafeStorageCrypto.encryptV10(Data(knownKey.utf8), password: password))
+        try enc.write(to: real.appendingPathComponent("secrets-key.enc"))
+        XCTAssertNotEqual(scratch, knownKey)
+        XCTAssertEqual(try SecretsKeyStore(dataDirectory: real, keychain: kc).load(), knownKey)
     }
 
     func testGeneratesAndSavesWhenNothingExists() throws {

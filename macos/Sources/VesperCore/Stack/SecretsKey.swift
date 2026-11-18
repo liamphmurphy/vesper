@@ -109,7 +109,17 @@ public enum SafeStorageCrypto {
 
 public struct SecretsKeyStore: Sendable {
     public static let service = "com.vesper.mac"
-    public static let account = "secrets-key"
+    /// The account prefix; the full account names the data directory, so a key made for one
+    /// directory (a test run, VESPER_USER_DATA_DIR) is never used for, and never pre-empts the
+    /// migration of, another.
+    public static let accountPrefix = "secrets-key:"
+
+    /// `secrets-key:<absolute data directory path>`.
+    public static func account(for dataDirectory: URL) -> String {
+        accountPrefix + dataDirectory.standardizedFileURL.resolvingSymlinksInPath().path
+    }
+
+    var account: String { Self.account(for: dataDirectory) }
     /// The Keychain item Chromium's safeStorage keeps its password in, for the Electron app.
     public static let legacyService = "vesper-desktop Safe Storage"
     public static let legacyAccount = "vesper-desktop Key"
@@ -133,24 +143,24 @@ public struct SecretsKeyStore: Sendable {
 
     /// The key: our Keychain item, else the Electron file migrated into it, else a new random one.
     public func load() throws -> String {
-        if let data = try keychain.read(service: Self.service, account: Self.account),
+        if let data = try keychain.read(service: Self.service, account: account),
            let text = String(data: data, encoding: .utf8), let valid = try? Self.validate(text)
         {
             return valid
         }
         if let migrated = try migrateLegacyFile() {
-            try keychain.write(service: Self.service, account: Self.account, data: Data(migrated.utf8))
+            try keychain.write(service: Self.service, account: account, data: Data(migrated.utf8))
             return migrated
         }
         let fresh = try Self.generate()
-        try keychain.write(service: Self.service, account: Self.account, data: Data(fresh.utf8))
+        try keychain.write(service: Self.service, account: account, data: Data(fresh.utf8))
         return fresh
     }
 
     /// Replaces the stored key (after an import brings its own).
     public func save(_ key: String) throws -> String {
         let valid = try Self.validate(key)
-        try keychain.write(service: Self.service, account: Self.account, data: Data(valid.utf8))
+        try keychain.write(service: Self.service, account: account, data: Data(valid.utf8))
         return valid
     }
 
