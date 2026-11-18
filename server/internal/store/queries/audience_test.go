@@ -61,6 +61,7 @@ var audienceExceptions = map[string]string{
 	"LinksFromSource":             "read_page and run context check source visibility first; expose only raw text, never target metadata",
 	"DecideVersion":               "write after visible suggestion lock",
 	"DeleteArtifact":              "delete after visible artifact lookup",
+	"UnresolveLinksTo":            "page delete after a visible artifact lock; rewrites only links into that page and returns nothing",
 	"RelabelVersion":              "suggestion publishing after visible artifact lock",
 	"NoteLinksTo":                 "bookkeeping inside the agent's own visible memory namespace",
 	"LinksFromTicket":             "run context resolves each target through a visible artifact lookup; raw text is ticket-authored",
