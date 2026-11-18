@@ -225,7 +225,8 @@
             {
               "id": "pin",
               "label": "Pin",
-              "icon": "pin"
+              "icon": "pin",
+              "showsLabel": true
             }
           ]
         }

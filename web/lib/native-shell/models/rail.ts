@@ -34,10 +34,12 @@ export interface DockRailTab {
   icon: string;
   busy?: boolean;
   unread?: boolean;
+  /** A button that runs an action (e.g. Start playground) instead of showing a panel: never active. */
+  action?: boolean;
 }
 
-/** What a dock's rail buttons dispatch (the same actions the web buttons do). */
-export type DockRailAction = { type: "collapse" } | { type: "open"; tab: string } | { type: "select"; tab: string };
+/** What a dock's rail buttons dispatch (the same actions the web buttons do); `run` is an action tab's own. */
+export type DockRailAction = { type: "collapse" } | { type: "open"; tab: string } | { type: "select"; tab: string } | { type: "run"; tab: string };
 
 /** A dock's rail controls as items: fold or unfold, then one per tab. */
 export function dockRailItems(tabs: readonly DockRailTab[], activeId: string | undefined, expanded: boolean): RailItem[] {
@@ -55,7 +57,7 @@ export function dockRailItems(tabs: readonly DockRailTab[], activeId: string | u
       id: RAIL_DOCK_TAB + t.id,
       label: t.busy ? `${t.label} (working)` : t.unread ? `${t.label} (unread)` : t.label,
       icon: t.icon,
-      active: expanded && t.id === activeId,
+      active: !t.action && expanded && t.id === activeId,
     };
     if (t.unread) item.badge = { tone: "human" };
     if (t.busy) item.status = "accent";
@@ -69,7 +71,9 @@ export function dockRailAction(itemId: string, tabs: readonly DockRailTab[], act
   if (itemId === RAIL_DOCK_TOGGLE) return expanded ? { type: "collapse" } : { type: "open", tab: activeId ?? tabs[0]?.id ?? "" };
   if (!itemId.startsWith(RAIL_DOCK_TAB)) return null;
   const tab = itemId.slice(RAIL_DOCK_TAB.length);
-  if (!tabs.some((t) => t.id === tab)) return null;
+  const target = tabs.find((t) => t.id === tab);
+  if (!target) return null;
+  if (target.action) return { type: "run", tab };
   return { type: expanded ? "select" : "open", tab };
 }
 

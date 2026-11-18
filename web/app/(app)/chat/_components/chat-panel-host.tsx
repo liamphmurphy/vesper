@@ -3,7 +3,7 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { useCanvasComments, useChatCanvases } from "@/lib/api/canvas-hooks";
-import { useChatPlayground } from "@/lib/api/playground-hooks";
+import { useCanStartSavedPlayground, useChatPlayground, usePlaygroundAction } from "@/lib/api/playground-hooks";
 import { useDesignProposals } from "@/lib/api/designs-hooks";
 import { useChat, useChatRunEvents } from "@/lib/api/hooks";
 import { activePanel, closeItem, closePanel, closeThread, itemOf, itemParam, dockOpen, dockTab, dragCloses, hideSheet, openPanels, openThreads, PANELS, setDock, sheetHidden, switchPanel, threadOf, type ChatPanel, type DockTabId, type PanelLayout } from "@/lib/chat-panels";
@@ -15,6 +15,9 @@ import { Dock, type DockTab } from "@/components/shell/editor-layout";
 import { ItemPanel } from "./item-panel";
 import { cx } from "@/lib/cx";
 import { useCanvasPanel } from "@/lib/use-canvas-panel";
+import { useIsNativeShell } from "@/lib/native-shell/hooks";
+import { usePlaygroundPanel } from "@/lib/use-playground-panel";
+import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { CanvasDock, CanvasFullscreen } from "@/components/domain/canvas-view";
@@ -75,7 +78,7 @@ export function ChatPanelHost({ chatId, live, readOnly, agent, activity, layout 
   return <PanelSheet chatId={chatId} live={live} readOnly={readOnly} agent={agent} panels={panels} />;
 }
 
-const ICONS: Record<DockTabId, IconName> = { design: "designs", canvas: "artifacts", playground: "play", code: "code", thread: "branch", item: "link", activity: "history" };
+const ICONS: Record<DockTabId, IconName> = { design: "designs", canvas: "artifacts", playground: "playLeft", code: "code", thread: "branch", item: "link", activity: "history" };
 
 /**
  * Which tabs changed since they last showed: a tab is unread once its `sig` moves on from what it
@@ -196,7 +199,16 @@ function ChatDock({ chatId, live, readOnly, agent, activity, panels }: { chatId:
     activity,
   };
   const busy: Partial<Record<DockTabId, boolean>> = { design: designBusy, playground: pgBusy, code: !!code?.some((r) => r.live), activity: live };
-  const tabs: DockTab[] = [...open, ...(hasCodeTab && !open.includes("code") ? ["code" as const] : []), ...(thread ? ["thread" as const] : []), ...(item ? ["item" as const] : []), "activity" as const].map((id) => ({
+  // The playground and Code sit together, the playground just above.
+  const ids: DockTabId[] = [
+    ...open.filter((p) => p !== "playground" && p !== "code"),
+    ...(open.includes("playground") ? ["playground" as const] : []),
+    ...(hasCodeTab || open.includes("code") ? ["code" as const] : []),
+    ...(thread ? ["thread" as const] : []),
+    ...(item ? ["item" as const] : []),
+    "activity" as const,
+  ];
+  const tabs: DockTab[] = ids.map((id) => ({
     id,
     label: LABELS[id],
     icon: ICONS[id],
@@ -207,6 +219,8 @@ function ChatDock({ chatId, live, readOnly, agent, activity, panels }: { chatId:
     wide: id === "design" && canvasPanel.reviewing ? "max" : id !== "activity" && id !== "thread" && id !== "item",
     content: content[id],
   }));
+  const start = usePlaygroundStart(chatId);
+  if (start) tabs.splice(tabs.findIndex((t) => t.id === "code" || t.id === "thread" || t.id === "item" || t.id === "activity"), 0, start);
 
   return (
     <>
@@ -217,6 +231,37 @@ function ChatDock({ chatId, live, readOnly, agent, activity, panels }: { chatId:
       {canvasPanel.maximized && open.includes("canvas") ? <CanvasFullscreen chatId={chatId} live={live} readOnly={readOnly} agent={agent} /> : null}
     </>
   );
+}
+
+/**
+ * The Mac app's playground button on the rail, where the window toolbar had it (the browser keeps
+ * the chat header's PlaygroundButton): Start playground while the chat has none but can start the
+ * repository's saved one, else Playground to open its closed panel. Null once the panel is open (it is
+ * a tab then) or when there is nothing to start.
+ */
+function usePlaygroundStart(chatId: string): DockTab | null {
+  const native = useIsNativeShell();
+  const pg = useChatPlayground(chatId).data;
+  const canStart = useCanStartSavedPlayground(chatId);
+  const act = usePlaygroundAction(chatId);
+  const panel = usePlaygroundPanel();
+  if (!native || panel.open) return null;
+  if (!pg && canStart) {
+    return {
+      id: "playground",
+      label: act.isPending ? "Starting playground…" : "Start playground",
+      icon: "playLeft",
+      busy: act.isPending,
+      content: null,
+      run: () => {
+        if (act.isPending) return;
+        act.mutate("start", { onSuccess: panel.show, onError: (e) => toast({ title: e instanceof Error ? e.message : "Couldn’t start the playground.", tone: "error" }) });
+      },
+    };
+  }
+  if (!pg) return null;
+  const state = pg.state === "running" ? "" : pg.state === "starting" ? " (starting)" : pg.state === "failed" ? " (failed)" : " (stopped)";
+  return { id: "playground", label: `Playground${state}`, icon: "playLeft", busy: pg.state === "starting", content: null, run: panel.show };
 }
 
 function PanelSheet({ chatId, live, readOnly, agent, panels }: { chatId: string; live: boolean; readOnly: boolean; agent: string; panels: ReturnType<typeof useChatPanels> }) {

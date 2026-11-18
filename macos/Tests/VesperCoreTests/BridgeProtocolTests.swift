@@ -41,6 +41,8 @@ final class BridgeProtocolTests: XCTestCase {
         XCTAssertEqual(nav.filters?[0].options[1].checked, true)
         XCTAssertEqual(nav.filters?[1].multiple, true)
         XCTAssertEqual(nav.sections[0].badge, NavBadge(text: "3", tone: .neutral))
+        XCTAssertEqual(nav.sections[1].actions?[0].showsLabel, true)
+        XCTAssertNil(nav.actions?[0].showsLabel)
         XCTAssertTrue(all.contains(.appearance(mode: .dark)))
         XCTAssertTrue(all.contains(.appearance(mode: .light, background: "#f5f5f7")))
         XCTAssertEqual(nav.sections[0].items[1].avatar?.color, "#9B8CFF")

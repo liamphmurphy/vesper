@@ -32,6 +32,7 @@ const paths = {
   msg: <path d="M3 3.5h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H7l-3 2.5V11.5H3a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1z" />,
   bolt: <path d="M9 2 4 9h4l-1 5 5-7H8z" />,
   play: <path d="M5 3.5v9l7-4.5z" />,
+  playLeft: <path d="M11 3.5v9L4 8z" />,
   dollar: <><circle cx="8" cy="8" r="5.5" /><path d="M9.8 6.2c-.3-.6-1-1-1.8-1-1 0-1.8.5-1.8 1.3 0 1.8 3.7 1 3.7 2.9 0 .8-.8 1.4-1.9 1.4-.9 0-1.6-.4-1.9-1M8 4.2v1M8 10.8v1" /></>,
   pause: <path d="M5.5 3.5v9M10.5 3.5v9" />,
   download: <path d="M8 3v8M4.5 7.5 8 11l3.5-3.5M3 13.5h10" />,

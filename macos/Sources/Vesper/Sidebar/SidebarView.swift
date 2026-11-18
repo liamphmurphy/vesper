@@ -226,17 +226,23 @@ private struct ActionButton: View {
             Button {
                 let ns = MenuBuilder.menu(from: menu) { onChoose($0) }
                 ns.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
-            } label: {
-                Image(systemName: SidebarIcons.symbolName(action.icon)).foregroundStyle(action.accent == true ? Color.accentColor : .secondary)
-            }
+            } label: { buttonFace }
             .buttonStyle(.borderless)
             .help(action.label)
         } else {
-            Button { onChoose(nil) } label: {
-                Image(systemName: SidebarIcons.symbolName(action.icon)).foregroundStyle(action.accent == true ? Color.accentColor : .secondary)
-            }
+            Button { onChoose(nil) } label: { buttonFace }
             .buttonStyle(.borderless)
             .help(action.label)
+        }
+    }
+
+    @ViewBuilder private var buttonFace: some View {
+        let symbol = SidebarIcons.symbolName(action.icon)
+        let tint = action.accent == true ? Color.accentColor : .secondary
+        if action.showsLabel == true {
+            Label(action.label, systemImage: symbol).labelStyle(.titleAndIcon).lineLimit(1).foregroundStyle(tint)
+        } else {
+            Image(systemName: symbol).foregroundStyle(tint)
         }
     }
 }
