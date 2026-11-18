@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template for Vesper.app/Contents/PlugIns/VesperSafari.appex/Contents/Info.plist.
+     scripts/build-app.sh fills @VERSION@ and @BUILD@. See docs/dev/safari-extension.md. -->
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>VesperSafari</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.vesper.mac.safari-extension</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Vesper for Safari</string>
+	<key>CFBundleDisplayName</key>
+	<string>Vesper</string>
+	<key>CFBundlePackageType</key>
+	<string>XPC!</string>
+	<key>CFBundleShortVersionString</key>
+	<string>@VERSION@</string>
+	<key>CFBundleVersion</key>
+	<string>@BUILD@</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>15.0</string>
+	<key>NSHumanReadableDescription</key>
+	<string>Share a Safari tab with a Vesper persona, ask about a page, and save pages to Vesper.</string>
+	<!-- The handler talks to the Vesper app's own server on http://127.0.0.1. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.Safari.web-extension</string>
+		<key>NSExtensionPrincipalClass</key>
+		<string>SafariWebExtensionHandler</string>
+	</dict>
+</dict>
+</plist>

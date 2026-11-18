@@ -32,6 +32,19 @@ log "swift build -c release"
 bin_dir="$(cd "${macos_dir}" && swift build -c release --show-bin-path)"
 [[ -x "${bin_dir}/Vesper" ]] || { echo "Missing ${bin_dir}/Vesper" >&2; exit 1; }
 
+# 1b. Vesper for Safari (docs/dev/safari-extension.md): the Safari web extension's handler. SwiftPM
+#     can't build an app extension, so compile it here: the shared bridge plus the principal class,
+#     with NSExtensionMain as the entry point (what Xcode links an app extension with).
+safari_src="${macos_dir}/SafariExtension"
+safari_bin="${out_dir}/VesperSafari"
+log "building Vesper for Safari"
+mkdir -p "${out_dir}"
+xcrun swiftc -O -swift-version 5 -module-name VesperSafari \
+  -target arm64-apple-macos15.0 -application-extension -parse-as-library \
+  -Xlinker -e -Xlinker _NSExtensionMain \
+  "${safari_src}"/Bridge/*.swift "${safari_src}"/Handler/*.swift \
+  -o "${safari_bin}"
+
 # 2. Resources (bin/vesper, postgres, web, images).
 if [[ "${SKIP_STAGE:-}" != "1" ]]; then
   log "staging resources"
@@ -86,9 +99,18 @@ sed -e "s/@VERSION@/${version}/g" -e "s/@BUILD@/${build}/g" "${macos_dir}/Resour
 plutil -lint "${contents}/Info.plist" >/dev/null
 printf 'APPL????' > "${contents}/PkgInfo"
 
+# The extension: its handler, Info.plist and the web extension itself (manifest, scripts, icons).
+appex="${contents}/PlugIns/VesperSafari.appex"
+mkdir -p "${appex}/Contents/MacOS" "${appex}/Contents/Resources"
+cp "${safari_bin}" "${appex}/Contents/MacOS/VesperSafari"
+chmod 0755 "${appex}/Contents/MacOS/VesperSafari"
+ditto "${safari_src}/Resources" "${appex}/Contents/Resources"
+sed -e "s/@VERSION@/${version}/g" -e "s/@BUILD@/${build}/g" "${safari_src}/Info.plist" > "${appex}/Contents/Info.plist"
+plutil -lint "${appex}/Contents/Info.plist" >/dev/null
+
 # 5. Sign inside-out, every Mach-O under postgres, web and node, then
-#    bin/vesper with the Virtualization entitlement (no hardened runtime), then the app (no --deep, so
-#    bin/vesper keeps its entitlement).
+#    bin/vesper with the Virtualization entitlement (no hardened runtime), then the Safari extension
+#    with its sandbox entitlements, then the app (no --deep, so both keep their entitlements).
 sign() { codesign --force --timestamp=none --sign "${identity}" "$@"; }
 if [[ "${identity}" == "-" ]]; then
   log "signing ad hoc (set VESPER_CODESIGN_IDENTITY for a stable identity)"
@@ -104,6 +126,8 @@ for sub in postgres web node; do
 done
 log "signed ${count} Mach-O files"
 sign --entitlements "${entitlements}" "${contents}/Resources/bin/vesper" 2>&1 | grep -v 'replacing existing signature' || true
+# Safari only loads a sandboxed extension; sign it with its entitlements before the app seals it.
+sign --entitlements "${safari_src}/VesperSafari.entitlements" "${appex}" 2>&1 | grep -v 'replacing existing signature' || true
 sign "${app}" 2>&1 | grep -v 'replacing existing signature' || true
 
 log "built ${app}"

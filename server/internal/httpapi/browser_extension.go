@@ -25,11 +25,10 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/wiki"
 )
 
-// The Safari extension's API (docs/dev/safari-extension.md,
-// api/browser-extension.openapi.yaml). /api/v1/browser-extension/* takes the
-// extension's bearer token instead of a browser session, and nothing else
-// takes that token. The Mac app mints it through the session-authenticated
-// POST /api/v1/browser-extension-token.
+// The Safari extension's API (docs/dev/safari-extension.md has every route).
+// /api/v1/browser-extension/* takes the extension's bearer token instead of a
+// browser session, and nothing else takes that token. The Mac app mints it
+// through the session-authenticated POST /api/v1/browser-extension-token.
 const browserExtensionPrefix = "/api/v1/browser-extension/"
 
 // clippingsFolder is where pages clipped from Safari land in Knowledge.
