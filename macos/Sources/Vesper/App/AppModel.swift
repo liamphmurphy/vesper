@@ -40,6 +40,7 @@ final class AppModel {
         self.settings = SettingsStore(dataDirectory: dataDirectory)
         self.stack = stack
         self.connection = devConnection
+        AvatarImages.shared.connection = devConnection
         if let stack {
             track({ stack.session }, apply: { [weak self] session in
                 self?.setConnection(session.map { Connection(baseURL: $0.baseURL, sessionToken: $0.sessionToken) })
@@ -52,6 +53,7 @@ final class AppModel {
     private func setConnection(_ new: Connection?) {
         guard new != connection else { return }
         connection = new
+        AvatarImages.shared.connection = new
         guard let new else { return }
         Task {
             await installCookieIfNeeded(new)

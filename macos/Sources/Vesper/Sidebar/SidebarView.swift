@@ -367,14 +367,25 @@ private struct NavRowLabel: View {
 
 private struct AvatarView: View {
     let avatar: Avatar
+    @State private var picture: NSImage?
 
     var body: some View {
         let fill = Color(cssHex: avatar.color) ?? .gray
         ZStack {
-            Circle().fill(fill)
-            Text(avatar.initials.prefix(2)).font(.system(size: 10, weight: .semibold)).foregroundStyle(.white)
+            if let picture {
+                Image(nsImage: picture).resizable().scaledToFill()
+            } else {
+                Circle().fill(fill)
+                Text(avatar.initials.prefix(2)).font(.system(size: 10, weight: .semibold)).foregroundStyle(.white)
+            }
         }
         .frame(width: 22, height: 22)
+        .clipShape(Circle())
+        .task(id: avatar.imageUrl) {
+            picture = nil
+            guard let url = avatar.imageUrl else { return }
+            picture = await AvatarImages.shared.image(for: url)
+        }
     }
 }
 
