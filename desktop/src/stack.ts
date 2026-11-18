@@ -188,6 +188,8 @@ export interface LocalStackOptions {
    * environment still wins.
    */
   rootfsUrl?: string;
+  /** Runs the local runner executes at once (RUNNER_MAX_CONCURRENT). The variable in the environment still wins. */
+  runnerSlots?: number;
 }
 
 export interface StackExit {
@@ -209,6 +211,7 @@ export function buildStackEnv(opts: LocalStackOptions, addr: string, base: NodeJ
     ...(opts.nodeBin ? { VESPER_NODE_BIN: opts.nodeBin } : {}),
     ...(opts.nodeRunAsNode ? { VESPER_NODE_RUN_AS_NODE: "1" } : {}),
     ...(opts.rootfsUrl && !base.VESPER_ROOTFS_URL?.trim() ? { VESPER_ROOTFS_URL: opts.rootfsUrl } : {}),
+    ...(opts.runnerSlots && !base.RUNNER_MAX_CONCURRENT?.trim() ? { RUNNER_MAX_CONCURRENT: String(opts.runnerSlots) } : {}),
   };
   delete env.VESPER_NO_SIGNIN;
   return env;

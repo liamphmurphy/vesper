@@ -85,3 +85,12 @@ test("native settings round-trip through config.json, and old configs get defaul
   assert.equal(again.native.quickCapture.shortcut, "CommandOrControl+Shift+K");
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test("stack.runnerSlots defaults to 2, keeps 1-32, and falls back otherwise", () => {
+  assert.equal(defaultNativeSettings().stack.runnerSlots, 2);
+  for (const ok of [1, 32, 8]) assert.equal(normalizeNativeSettings({ stack: { runnerSlots: ok } }).stack.runnerSlots, ok);
+  for (const bad of [0, 33, 2.5, "abc", null]) assert.equal(normalizeNativeSettings({ stack: { runnerSlots: bad } }).stack.runnerSlots, 2, String(bad));
+  const next = applyNativeSettingsPatch(normalizeNativeSettings({}), { stack: { runnerSlots: 6 } });
+  assert.equal(next.stack.runnerSlots, 6);
+  assert.equal(next.stack.minFreeDiskGb, 10, "other stack settings are kept");
+});

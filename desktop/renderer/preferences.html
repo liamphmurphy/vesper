@@ -405,6 +405,17 @@
           </div>
         </div>
         <div class="row" data-local-only>
+          <div class="text">
+            <span class="label">Runs at once</span>
+            <span class="hint">How many runs the local runner works on at the same time. More runs use more memory and CPU.</span>
+            <span class="hint" id="runner-slots-status"></span>
+          </div>
+          <div class="inline">
+            <button type="button" id="runner-slots-restart" class="hidden">Restart Now</button>
+            <input type="number" id="runner-slots" min="1" max="32" step="1" style="width: 72px" aria-label="Runs at once" />
+          </div>
+        </div>
+        <div class="row" data-local-only>
           <div class="text"><span class="label">Stack</span><span class="hint" id="data-dir"></span></div>
           <div class="inline">
             <button type="button" id="logs-btn">Show Logs…</button>

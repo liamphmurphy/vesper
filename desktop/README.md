@@ -23,6 +23,7 @@ Everything below has its own switch in **Vesper › Settings… (⌘,)**. Detail
 - **Screenshot to Chat** (opt-in, default ⌥⇧S): capture a region with the macOS picker, then pick a chat to send it to.
 - **Backups**: VM disks, caches and downloaded images are kept out of Time Machine; optionally save a whole-instance export to a folder (iCloud Drive, a NAS…) on a schedule, keeping the newest N.
 - **Ease off when hot**: in Low Power Mode or under thermal pressure the local runner takes fewer runs at once; running work finishes.
+- **Runs at once** (Power & Stack): how many runs the local runner works on together (1–32, default 2). It applies when the local stack restarts; `RUNNER_MAX_CONCURRENT` in the environment still wins.
 - **Open workspace folders**: with host-folder workspaces on, a run's or chat's folder opens in Finder, your terminal, or your editor (`nvim` in Terminal by default).
 - **Dock**: right-click the Dock icon for what needs you, a new chat with any persona, Quick Capture and Screenshot to Chat; the icon shows the run image download's progress on first launch.
 - **Show/Hide shortcut** (opt-in, default ⌥⇧V): bring Vesper forward from any app, or hide it when it's in front.
