@@ -129,4 +129,18 @@ final class TabListTests: XCTestCase {
         XCTAssertEqual(sessionState(urls: ["a", nil], activeIndex: 1, bounds: nil)?.activeIndex, 0)
         XCTAssertNil(sessionState(urls: [nil, nil], activeIndex: 0, bounds: nil))
     }
+
+    func testClosingTheAppsOnlyTabOpensANewChatInsteadOfClosingTheWindow() {
+        XCTAssertEqual(TabCloseOutcome.decide(tabsInWindow: 1, otherWindows: 0), .openNewChat)
+    }
+
+    func testClosingAWindowsLastTabClosesItWhileAnotherWindowIsOpen() {
+        // Separate layout: a sibling tab is another window.
+        XCTAssertEqual(TabCloseOutcome.decide(tabsInWindow: 1, otherWindows: 1), .closeWindow)
+    }
+
+    func testClosingOneOfSeveralTabsRemovesOnlyThatTab() {
+        XCTAssertEqual(TabCloseOutcome.decide(tabsInWindow: 2, otherWindows: 0), .removeTab)
+        XCTAssertEqual(TabCloseOutcome.decide(tabsInWindow: 3, otherWindows: 2), .removeTab)
+    }
 }

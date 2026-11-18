@@ -99,6 +99,24 @@ public struct TabList<Element> {
     }
 }
 
+/// What closing one tab does. Closing the app's only tab leaves Vesper open on a new chat with the
+/// default persona instead of closing its last window, which can quit the app.
+public enum TabCloseOutcome: Equatable, Sendable {
+    /// Take the tab out; its window keeps its other tabs.
+    case removeTab
+    /// The window's last tab, with another window still open: close the window.
+    case closeWindow
+    /// The app's only tab: put a new chat with the default persona in its place.
+    case openNewChat
+
+    /// `tabsInWindow`: tabs in the closing tab's window. `otherWindows`: the app's other open
+    /// windows (in the separate layout each tab is a window, so this counts its sibling tabs too).
+    public static func decide(tabsInWindow: Int, otherWindows: Int) -> TabCloseOutcome {
+        if tabsInWindow > 1 { return .removeTab }
+        return otherWindows > 0 ? .closeWindow : .openNewChat
+    }
+}
+
 /// session.json for one window's tabs: the tabs that can be restored (their URLs; nil for a tab
 /// that can't, such as a playground), the active one among them, and the window's bounds. nil when
 /// there is nothing to save. An active tab that can't be saved is replaced by the next saved one.
