@@ -122,6 +122,18 @@ struct SettingsDetail: View {
             }
             Toggle("Show the Needs-you count beside the icon", isOn: bind(\.tray.showCount)).disabled(!s.tray.enabled)
         }
+        Section("Tabs") {
+            Picker(selection: bind(\.tabs.layout)) {
+                Text("Separate").tag(TabLayout.separate)
+                Text("Compact").tag(TabLayout.compact)
+            } label: {
+                Text("Tab layout")
+                Text(s.tabs.layout == .compact
+                     ? "Tabs sit in the toolbar of one window, like Safari's compact tabs."
+                     : "Each tab is its own window under the system tab bar.")
+            }
+            .pickerStyle(.segmented)
+        }
         Section("Windows and Dock") {
             Picker(selection: bind(\.tray.onLastWindowClose)) {
                 Text("Stay in Dock").tag(LastWindowPolicy.dock)

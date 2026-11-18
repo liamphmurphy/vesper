@@ -50,13 +50,28 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
             webView.observe(\.canGoBack, options: [.initial, .new]) { [weak self] wv, _ in MainActor.assumeIsolated { self?.state.canGoBack = wv.canGoBack } },
             webView.observe(\.canGoForward, options: [.initial, .new]) { [weak self] wv, _ in MainActor.assumeIsolated { self?.state.canGoForward = wv.canGoForward } },
             webView.observe(\.isLoading, options: [.initial, .new]) { [weak self] wv, _ in MainActor.assumeIsolated { self?.state.isLoading = wv.isLoading } },
-            webView.observe(\.title, options: [.new]) { [weak self] _, _ in MainActor.assumeIsolated { self?.host?.webTitleChanged() } },
+            webView.observe(\.title, options: [.new]) { [weak self] _, _ in MainActor.assumeIsolated { self?.documentTitleChanged() } },
             webView.observe(\.url, options: [.new]) { [weak self] _, _ in MainActor.assumeIsolated { self?.urlChanged() } },
         ]
         if kind == .playground { webView.load(URLRequest(url: playgroundURL ?? URL(string: "about:blank")!)) }
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
+
+    /// The window this tab is in (a background tab's view is detached, so ask the host).
+    var ownerWindow: NSWindow? { host?.window ?? (isViewLoaded ? view.window : nil) }
+
+    /// What the tab strip and the window title show: the page's title, else the document's.
+    var displayTitle: String {
+        if let title = state.title { return cleanTabTitle(title) }
+        if let doc = state.documentTitle, !doc.isEmpty { return cleanTabTitle(doc) }
+        return kind == .playground ? "Playground" : "Vesper"
+    }
+
+    private func documentTitleChanged() {
+        state.documentTitle = webView.title
+        host?.tabTitleChanged(self)
+    }
 
     override func loadView() {
         let container = NSView()
@@ -159,7 +174,7 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
         guard let base = app.connection?.baseURL ?? base else { return false }
         let target = url.absoluteString
         if kind == .playground, let own = playgroundURL, classifyNavigation(target, serverURL: own.absoluteString, playgroundPorts: []) == .vesper {
-            if openingTab { app.openPlayground(url: url, nextTo: view.window) }
+            if openingTab { app.openPlayground(url: url, nextTo: ownerWindow) }
             return !openingTab
         }
         switch classifyNavigation(target, serverURL: base.absoluteString, playgroundPorts: app.playgroundPorts) {
@@ -168,9 +183,9 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
             var path = url.path.isEmpty ? "/" : url.path
             if let q = url.query { path += "?" + q }
             if let f = url.fragment { path += "#" + f }
-            app.openVesperTab(path: path, nextTo: view.window)
+            app.openVesperTab(path: path, nextTo: ownerWindow)
         case .playground:
-            app.openPlayground(url: url, nextTo: view.window)
+            app.openPlayground(url: url, nextTo: ownerWindow)
         case .external:
             NSWorkspace.shared.open(url)
         case .ignore:
@@ -227,14 +242,48 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
         // window.open("") / about:blank and blob:/data: targets need a real window the opener can
         // write to or navigate later (connector sign-in); links to pages open as tabs.
         if kind == .vesper, url == nil || url?.absoluteString.isEmpty == true || ["about", "blob", "data"].contains(scheme) {
-            return WebPopup.make(configuration: configuration, features: windowFeatures, parent: view.window)
+            return WebPopup.make(configuration: configuration, features: windowFeatures, parent: ownerWindow)
         }
         if let url { _ = route(url, openingTab: true) }
         return nil
     }
 
     func webViewDidClose(_ webView: WKWebView) {
-        view.window?.performClose(nil)
+        if let host { host.closeTab(self) } else { ownerWindow?.performClose(nil) }
+    }
+
+    // MARK: Unsaved changes
+
+    /// Whether the page reports unsaved changes (web/lib/leave-guard.ts). WKWebView never runs
+    /// beforeunload prompts, so the shell asks. A page that doesn't answer within a second counts
+    /// as having none, so a hung page can always be closed.
+    func hasUnsavedChanges() async -> Bool {
+        let web = webView
+        let check = Task { @MainActor () -> Bool in
+            let result = try? await web.callAsyncJavaScript(
+                "return typeof window.__vesperHasUnsavedChanges === 'function' && window.__vesperHasUnsavedChanges() === true;",
+                contentWorld: .page)
+            return (result as? Bool) ?? false
+        }
+        let timeout = Task { try? await Task.sleep(for: .seconds(1)); check.cancel() }
+        let value = await check.value
+        timeout.cancel()
+        return value
+    }
+
+    /// Asks "Leave without saving?" when the page has unsaved changes. true = go ahead.
+    func confirmLeavingUnsavedChanges() async -> Bool {
+        guard await hasUnsavedChanges() else { return true }
+        let alert = NSAlert()
+        alert.messageText = "Leave without saving?"
+        alert.informativeText = "Changes you made on this page may not be saved."
+        alert.addButton(withTitle: "Leave")
+        alert.addButton(withTitle: "Stay")
+        if let window = ownerWindow {
+            window.makeKeyAndOrderFront(nil)
+            return await alert.beginSheetModal(for: window) == .alertFirstButtonReturn
+        }
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     /// Screen/camera/microphone capture (getDisplayMedia in the frame-capture feature): only the

@@ -6,6 +6,7 @@ import VesperCore
 @MainActor
 final class ToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDelegate {
     private static let nav = NSToolbarItem.Identifier("vesper.nav")
+    private static let tabStrip = NSToolbarItem.Identifier("vesper.tabs")
     private static let search = NSToolbarItem.Identifier("vesper.search")
     private static let newChat = NSToolbarItem.Identifier("vesper.newChat")
     private static let companion = NSToolbarItem.Identifier("vesper.companion")
@@ -20,25 +21,61 @@ final class ToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDelegat
 
     init(owner: MainWindowController) {
         self.owner = owner
-        toolbar = NSToolbar(identifier: "vesper.main")
+        toolbar = NSToolbar(identifier: owner.compact ? "vesper.compact" : "vesper.main")
         super.init()
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = false
         toolbar.autosavesConfiguration = false
 
-        let state = owner.state
-        track({ (state.canGoBack, state.canGoForward) }) { [weak self] back, forward in
+        // Everything follows the window's active tab: switching tabs rebinds the toolbar to its state.
+        track({ [weak owner] in (owner?.state.canGoBack ?? false, owner?.state.canGoForward ?? false) }) { [weak self] back, forward in
             self?.navItem?.subitems.first?.isEnabled = back
             self?.navItem?.subitems.last?.isEnabled = forward
         }
-        track({ state.toolbarItems }) { [weak self] items in self?.applyPageItems(items) }
+        track({ [weak owner] in owner?.state.toolbarItems ?? [] }) { [weak self] items in self?.applyPageItems(items) }
+        track({ [weak owner] in owner?.kind == .vesper }) { [weak self] isVesper in
+            // A playground page has no bridge: New Chat, the companion and search have nobody to talk to.
+            self?.pageOnlyItemsEnabled = isVesper
+        }
+    }
+
+    private var pageOnlyItemsEnabled = true {
+        didSet {
+            for item in toolbar.items where [Self.newChat, Self.companion, Self.search].contains(item.itemIdentifier) {
+                item.isEnabled = pageOnlyItemsEnabled
+            }
+        }
+    }
+
+    private var tabStripItem: NSToolbarItem {
+        let item = NSToolbarItem(itemIdentifier: Self.tabStrip)
+        item.label = "Tabs"
+        item.paletteLabel = "Tabs"
+        let host = owner
+        let actions = TabStripActions(
+            select: { [weak host] in host?.selectTab($0) },
+            close: { [weak host] in host?.closeTab($0) },
+            newTab: { [weak host] in host?.app.openVesperTab(path: "/", nextTo: host?.window) },
+            closeOthers: { [weak host] in host?.closeOtherTabs(than: $0) },
+            closeToTheRight: { [weak host] in host?.closeTabsToTheRight(of: $0) },
+            moveToNewWindow: { [weak host] tab in if let host { host.app.moveTabToNewWindow(tab, from: host) } },
+            duplicate: { [weak host] tab in if let host { host.app.duplicateTab(tab, in: host) } },
+            reopenClosed: { [weak host] in host?.app.reopenClosedTab(nextTo: host?.window) },
+            canReopen: { [weak host] in host?.app.canReopenClosedTab ?? false },
+            move: { [weak host] in host?.moveTab(from: $0, to: $1) })
+        item.view = TabStripView.hostView(model: owner?.tabs ?? TabsModel(), actions: actions)
+        item.visibilityPriority = .high
+        return item
     }
 
     // MARK: NSToolbarDelegate
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.toggleSidebar, .sidebarTrackingSeparator, Self.nav, .flexibleSpace, Self.newChat, Self.companion, Self.search]
+        if owner?.compact == true {
+            return [.toggleSidebar, .sidebarTrackingSeparator, Self.nav, Self.tabStrip, Self.newChat, Self.companion, Self.search]
+        }
+        return [.toggleSidebar, .sidebarTrackingSeparator, Self.nav, .flexibleSpace, Self.newChat, Self.companion, Self.search]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -57,6 +94,8 @@ final class ToolbarController: NSObject, NSToolbarDelegate, NSSearchFieldDelegat
             group.subitems.last?.isEnabled = owner?.state.canGoForward ?? false
             navItem = group
             return group
+        case Self.tabStrip:
+            return tabStripItem
         case Self.search:
             let item = NSSearchToolbarItem(itemIdentifier: identifier)
             item.label = "Search"

@@ -60,7 +60,7 @@ enum MainMenu {
             sep(),
             item("Import Backup…", #selector(AppDelegate.importBackup(_:))),
             sep(),
-            item("Close Tab", #selector(NSWindow.performClose(_:)), "w", target: nil),
+            item("Close Tab", #selector(AppDelegate.closeTab(_:)), "w"),
             item("Close Window", #selector(AppDelegate.closeAllTabs(_:)), "w", [.command, .shift]),
         ])
 
@@ -92,8 +92,10 @@ enum MainMenu {
             item("Zoom In", #selector(AppDelegate.zoomIn(_:)), "+"),
             item("Zoom Out", #selector(AppDelegate.zoomOut(_:)), "-"),
             sep(),
-            item("Show/Hide Tab Bar", #selector(NSWindow.toggleTabBar(_:)), target: nil),
-            item("Show All Tabs", #selector(NSWindow.toggleTabOverview(_:)), target: nil),
+            item("Use Compact Tab Layout", #selector(AppDelegate.toggleCompactLayout(_:))),
+            sep(),
+            item("Show/Hide Tab Bar", #selector(AppDelegate.toggleTabBarAction(_:))),
+            item("Show All Tabs", #selector(AppDelegate.showAllTabsAction(_:))),
             sep(),
             item("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control], target: nil),
         ])
@@ -113,8 +115,8 @@ enum MainMenu {
             item("Show Previous Tab", #selector(AppDelegate.previousTab(_:)), "\t", [.control, .shift]),
             item("Show Next Tab", #selector(AppDelegate.nextTab(_:)), "]", [.command, .shift]),
             item("Show Previous Tab", #selector(AppDelegate.previousTab(_:)), "[", [.command, .shift]),
-            item("Move Tab to New Window", #selector(NSWindow.moveTabToNewWindow(_:)), target: nil),
-            item("Merge All Windows", #selector(NSWindow.mergeAllWindows(_:)), target: nil),
+            item("Move Tab to New Window", #selector(AppDelegate.moveTabToNewWindowAction(_:))),
+            item("Merge All Windows", #selector(AppDelegate.mergeAllWindowsAction(_:))),
             sep(),
         ]
         for n in 1...9 {

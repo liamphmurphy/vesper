@@ -16,6 +16,8 @@ final class ShellState {
     var navigatorFallback = false
     var toolbarItems: [ToolbarItem] = []
     var title: String?
+    /// The web view's own document title, used until the page sends its `title` message.
+    var documentTitle: String?
     var subtitle: String?
     var route: String?
     var area: AreaId?

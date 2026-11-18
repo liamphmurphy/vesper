@@ -25,6 +25,10 @@ public enum SleepPolicy: String, Sendable, Codable, CaseIterable { case keep, pa
 /// What closing the last window does: stay in the Dock, live only in the menu bar, or quit.
 public enum LastWindowPolicy: String, Sendable, Codable, CaseIterable { case dock, menuBar, quit }
 
+/// How tabs are shown: one native window per tab under the system tab strip, or Safari-style
+/// compact tabs drawn in the toolbar of a single window.
+public enum TabLayout: String, Sendable, Codable, CaseIterable { case separate, compact }
+
 public enum EditorKind: String, Sendable, Codable, CaseIterable { case terminal, app }
 
 public let defaultQuickCaptureShortcut = "Alt+Shift+Space"
@@ -150,6 +154,11 @@ public struct NativeSettings: Sendable, Codable, Equatable {
         public init() {}
     }
 
+    public struct Tabs: Sendable, Codable, Equatable {
+        public var layout: TabLayout = .separate
+        public init() {}
+    }
+
     public var tray = Tray()
     public var login = Login()
     public var notifications = NotificationPolicy()
@@ -165,6 +174,7 @@ public struct NativeSettings: Sendable, Codable, Equatable {
     public var files = Files()
     public var touchId = TouchId()
     public var updates = Updates()
+    public var tabs = Tabs()
 
     public init() {}
 
@@ -273,6 +283,7 @@ extension NativeSettings {
         let power = obj(src["power"]), stack = obj(src["stack"]), files = obj(src["files"])
         let touch = obj(src["touchId"]), updates = obj(src["updates"]), shot = obj(src["screenshot"])
         let showHide = obj(src["showHide"]), dock = obj(src["dock"]), backups = obj(src["backups"])
+        let tabs = obj(src["tabs"])
         let exp = obj(backups["export"]), wsp = obj(src["workspaces"]), editor = obj(wsp["editor"])
 
         var out = NativeSettings()
@@ -341,6 +352,8 @@ extension NativeSettings {
 
         out.updates.checkEnabled = bool(updates["checkEnabled"], base.updates.checkEnabled)
         out.updates.feedUrl = normalizeFeedURL(updates["feedUrl"], fallback: base.updates.feedUrl)
+
+        out.tabs.layout = oneOf(tabs["layout"], base.tabs.layout)
         return out
     }
 

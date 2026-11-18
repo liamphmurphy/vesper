@@ -1,6 +1,18 @@
 import SwiftUI
 import VesperCore
 
+/// The sidebar of a window: it shows the active tab's state, so switching tabs swaps the whole list.
+struct SidebarHost: View {
+    let tabs: TabsModel
+    let send: (NativeCommand) -> Void
+
+    var body: some View {
+        if let tab = tabs.list.active {
+            SidebarView(state: tab.state, send: send).id(ObjectIdentifier(tab))
+        }
+    }
+}
+
 /// The native sidebar: the shell section (areas, Apps) on top, then the current screen's list,
 /// drawn from the `NavModel` the page describes. Everything user-driven goes out through `send`.
 struct SidebarView: View {

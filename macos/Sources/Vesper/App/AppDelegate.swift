@@ -120,9 +120,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     @objc func newWindowForTab(_ sender: Any?) { app.openVesperTab(path: "/", nextTo: NSApp.keyWindow) }
     @objc func newWindowAction(_ sender: Any?) { app.newWindow() }
     @objc func reopenClosedTab(_ sender: Any?) { app.reopenClosedTab(nextTo: NSApp.keyWindow) }
+    /// ⌘W: the tab in a compact window (its last tab closes the window), else the key window.
+    @objc func closeTab(_ sender: Any?) {
+        if let c = compactController { c.closeActiveTab() } else { NSApp.keyWindow?.performClose(nil) }
+    }
+    /// ⇧⌘W: the window with all its tabs.
     @objc func closeAllTabs(_ sender: Any?) {
         guard let window = NSApp.keyWindow else { return }
-        for w in window.tabbedWindows ?? [window] { w.close() }
+        if compactController != nil { window.performClose(nil); return }
+        // performClose runs windowShouldClose, so each tab still asks about unsaved changes.
+        for w in window.tabbedWindows ?? [window] { w.performClose(nil) }
     }
     @objc func quickCapture(_ sender: Any?) { actions.quickCapture() }
     @objc func screenshotToChat(_ sender: Any?) { actions.screenshotToChat() }
@@ -162,6 +169,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     // MARK: Tabs
 
+    /// The key window's controller when it uses the compact layout.
+    private var compactController: MainWindowController? {
+        guard let c = NSApp.keyWindow?.windowController as? MainWindowController, c.compact, !c.retired else { return nil }
+        return c
+    }
+
     private func tabs() -> (windows: [NSWindow], index: Int)? {
         guard let key = NSApp.keyWindow else { return nil }
         let all = key.tabbedWindows ?? [key]
@@ -169,22 +182,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     @objc func nextTab(_ sender: Any?) {
+        if let c = compactController { c.selectNextTab(); return }
         guard let (all, i) = tabs(), all.count > 1 else { return }
         all[(i + 1) % all.count].makeKeyAndOrderFront(nil)
     }
 
     @objc func previousTab(_ sender: Any?) {
+        if let c = compactController { c.selectPreviousTab(); return }
         guard let (all, i) = tabs(), all.count > 1 else { return }
         all[(i - 1 + all.count) % all.count].makeKeyAndOrderFront(nil)
     }
 
     /// ⌘1–8 select that tab, ⌘9 the last one.
     @objc func selectTab(_ sender: NSMenuItem) {
+        if let c = compactController { c.selectNumberedTab(sender.tag); return }
         guard let (all, _) = tabs(), !all.isEmpty else { return }
         let n = sender.tag
         let target = n == 9 ? all.count - 1 : n - 1
         guard all.indices.contains(target) else { return }
         all[target].makeKeyAndOrderFront(nil)
+    }
+
+    /// The four system tab commands: the system's in the separate layout, ours in the compact one.
+    @objc func moveTabToNewWindowAction(_ sender: Any?) {
+        if let c = compactController { app.moveTabToNewWindow(c.content, from: c) } else { forwardToWindow(#selector(NSWindow.moveTabToNewWindow(_:)), sender) }
+    }
+    @objc func mergeAllWindowsAction(_ sender: Any?) {
+        if let c = compactController { app.mergeAllWindows(into: c) } else { forwardToWindow(#selector(NSWindow.mergeAllWindows(_:)), sender) }
+    }
+    @objc func toggleTabBarAction(_ sender: Any?) { forwardToWindow(#selector(NSWindow.toggleTabBar(_:)), sender) }
+    @objc func showAllTabsAction(_ sender: Any?) { forwardToWindow(#selector(NSWindow.toggleTabOverview(_:)), sender) }
+
+    private func forwardToWindow(_ action: Selector, _ sender: Any?) {
+        NSApp.sendAction(action, to: nil, from: sender)
+    }
+
+    /// Asks the key window whether it would enable `action` (the system tab commands).
+    private func windowAllows(_ action: Selector, _ item: NSMenuItem) -> Bool {
+        guard let window = NSApp.keyWindow else { return false }
+        let probe = NSMenuItem(title: item.title, action: action, keyEquivalent: "")
+        let ok = window.validateMenuItem(probe)
+        item.title = probe.title
+        return ok
+    }
+
+    @objc func toggleCompactLayout(_ sender: Any?) {
+        app.aux.update { $0.tabs.layout = $0.tabs.layout == .compact ? .separate : .compact }
     }
 
     // MARK: Validation
@@ -195,14 +238,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         case #selector(goBack(_:)): return web?.canGoBack ?? false
         case #selector(goForward(_:)): return web?.canGoForward ?? false
         case #selector(toggleSidebarAction(_:)):
-            guard let split = app.keyController?.split, app.keyController?.kind == .vesper, let sidebar = split.splitViewItems.first else { return false }
+            guard let controller = app.keyController, controller.hasSidebar, let sidebar = controller.split.splitViewItems.first else { return false }
             item.title = sidebar.isCollapsed ? "Show Sidebar" : "Hide Sidebar"
             return true
         case #selector(find(_:)), #selector(reload(_:)), #selector(forceReload(_:)), #selector(zoomIn(_:)), #selector(zoomOut(_:)),
              #selector(zoomReset(_:)), #selector(showInspector(_:)):
             return web != nil
         case #selector(nextTab(_:)), #selector(previousTab(_:)):
+            if let c = compactController { return c.tabs.list.count > 1 }
             return (tabs()?.windows.count ?? 0) > 1
+        case #selector(toggleCompactLayout(_:)):
+            item.state = app.compactLayout ? .on : .off
+            return true
+        case #selector(moveTabToNewWindowAction(_:)):
+            if let c = compactController { return c.tabs.list.count > 1 }
+            return windowAllows(#selector(NSWindow.moveTabToNewWindow(_:)), item)
+        case #selector(mergeAllWindowsAction(_:)):
+            if let c = compactController { return c.compact && app.compactWindowCount > 1 }
+            return windowAllows(#selector(NSWindow.mergeAllWindows(_:)), item)
+        case #selector(toggleTabBarAction(_:)):
+            return compactController == nil && windowAllows(#selector(NSWindow.toggleTabBar(_:)), item)
+        case #selector(showAllTabsAction(_:)):
+            return compactController == nil && windowAllows(#selector(NSWindow.toggleTabOverview(_:)), item)
         default: return true
         }
     }

@@ -24,6 +24,9 @@ final class AppModel {
     @ObservationIgnored private var cookieInstalledFor: Connection?
     @ObservationIgnored private var restoringSession = false
     @ObservationIgnored var playgroundPorts = defaultPlaygroundPorts
+    /// The layout windows are built in right now (the setting, once applied).
+    @ObservationIgnored private(set) var compactLayout = false
+    @ObservationIgnored private weak var lastKey: MainWindowController?
     /// Menu/tray/Dock actions; they forward to `system` and `aux`.
     @ObservationIgnored lazy var actions: AppActions = DefaultAppActions(app: self)
     /// Native settings (config.json "native"), shared by every subsystem.
@@ -41,6 +44,10 @@ final class AppModel {
         self.stack = stack
         self.connection = devConnection
         AvatarImages.shared.connection = devConnection
+        compactLayout = settings.settings.tabs.layout == .compact
+        track({ [weak self] in self?.settings.settings.tabs.layout }) { [weak self] layout in
+            if let layout { self?.applyLayout(layout) }
+        }
         if let stack {
             track({ stack.session }, apply: { [weak self] session in
                 self?.setConnection(session.map { Connection(baseURL: $0.baseURL, sessionToken: $0.sessionToken) })
@@ -83,23 +90,22 @@ final class AppModel {
         defer { restoringSession = false }
         var paths = saved.tabs.compactMap(restorablePath)
         if paths.isEmpty { paths = ["/"] }
-        var first: MainWindowController?
-        var created: [MainWindowController] = []
-        for path in paths {
-            let controller = makeVesperWindow(path: path)
-            if let first {
-                first.window?.addTabbedWindow(controller.window!, ordered: .above)
-            } else {
-                first = controller
-                if let bounds = saved.bounds { controller.apply(bounds: bounds) }
-            }
-            created.append(controller)
+        let active = paths.indices.contains(saved.activeIndex) ? saved.activeIndex : 0
+        let tabs = paths.map { makeTab(kind: .vesper, path: $0) }
+        var created: [MainWindowController]
+        if compactLayout {
+            created = [makeWindow(tabs: tabs, active: active)]
+        } else {
+            created = tabs.map { makeWindow(tabs: [$0]) }
+            for (prev, c) in zip(created, created.dropFirst()) { prev.window?.addTabbedWindow(c.window!, ordered: .above) }
         }
-        let active = created.indices.contains(saved.activeIndex) ? saved.activeIndex : 0
-        for (i, c) in created.enumerated() where i != active { c.window?.orderFront(nil) }
-        created[active].showWindow(nil)
-        created[active].window?.makeKeyAndOrderFront(nil)
-        if let conn = connection { Task { await installCookieIfNeeded(conn); created.forEach { $0.connect(conn) } } }
+        if let bounds = saved.bounds { created[0].apply(bounds: bounds) }
+        let front = compactLayout ? created[0] : created[active]
+        for c in created where c !== front { c.window?.orderFront(nil) }
+        front.showWindow(nil)
+        front.window?.makeKeyAndOrderFront(nil)
+        if let conn = connection { Task { await installCookieIfNeeded(conn); tabs.forEach { $0.connect(conn) } } }
+        Task { @MainActor [weak self] in self?.debugOpenTabs() }
     }
 
     /// A saved tab URL as a path on the current server (the port may differ from Electron's).
@@ -118,48 +124,109 @@ final class AppModel {
         return path
     }
 
-    @discardableResult
-    func makeVesperWindow(path: String) -> MainWindowController {
+    /// A tab with its own page, state and bridge, not yet in any window.
+    func makeTab(kind: WindowKind, path: String) -> WebContentController {
         startHidden = false
-        let controller = MainWindowController(app: self, kind: .vesper, path: path)
-        register(controller)
-        return controller
+        let tab = WebContentController(app: self, kind: kind, state: ShellState(), path: path)
+        tab.bridge?.onRouteChange = { [weak self] in self?.scheduleSessionSave() }
+        if let conn = connection, !restoringSession { tab.connect(conn) }
+        return tab
     }
 
-    private func register(_ controller: MainWindowController) {
+    @discardableResult
+    func makeWindow(tabs: [WebContentController], active: Int = 0) -> MainWindowController {
+        let controller = MainWindowController(app: self, compact: compactLayout, tabs: tabs, activeIndex: active)
         windows.append(controller)
-        if let conn = connection, !restoringSession { controller.connect(conn) }
         scheduleSessionSave()
+        return controller
     }
 
     /// Opens a Vesper page in a new tab next to `window`, or in a new window if there is none.
     func openVesperTab(path: String, nextTo window: NSWindow?) {
-        let controller = makeVesperWindow(path: path)
-        place(controller, nextTo: window)
+        place(makeTab(kind: .vesper, path: path), nextTo: window)
     }
 
     func openPlayground(url: URL, nextTo window: NSWindow?) {
-        let controller = MainWindowController(app: self, kind: .playground, path: url.absoluteString)
-        register(controller)
-        place(controller, nextTo: window)
+        place(makeTab(kind: .playground, path: url.absoluteString), nextTo: window)
     }
 
-    private func place(_ controller: MainWindowController, nextTo window: NSWindow?) {
-        guard let new = controller.window else { return }
-        if let window = window ?? NSApp.keyWindow, window.tabbingIdentifier == new.tabbingIdentifier, window !== new {
+    /// The window a new tab joins in the compact layout: the one it was opened from, else the key one.
+    private func compactTarget(nextTo window: NSWindow?) -> MainWindowController? {
+        if let c = window?.windowController as? MainWindowController, c.compact, !c.retired { return c }
+        if let c = NSApp.keyWindow?.windowController as? MainWindowController, c.compact, !c.retired { return c }
+        return windows.last { $0.compact && !$0.retired }
+    }
+
+    private func place(_ tab: WebContentController, nextTo window: NSWindow?) {
+        if compactLayout {
+            if let target = compactTarget(nextTo: window) {
+                target.addTab(tab)
+                target.showWindow(nil)
+                target.window?.makeKeyAndOrderFront(nil)
+            } else {
+                let controller = makeWindow(tabs: [tab])
+                controller.showWindow(nil)
+                controller.window?.makeKeyAndOrderFront(nil)
+            }
+            return
+        }
+        let controller = makeWindow(tabs: [tab])
+        if let new = controller.window, let window = window ?? NSApp.keyWindow,
+           window.tabbingIdentifier == new.tabbingIdentifier, window !== new {
             window.addTabbedWindow(new, ordered: .above)
         }
         controller.showWindow(nil)
-        new.makeKeyAndOrderFront(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
     }
 
     func newWindow() {
-        let controller = makeVesperWindow(path: "/")
-        controller.window?.tabbingMode = .disallowed
+        let controller = makeWindow(tabs: [makeTab(kind: .vesper, path: "/")])
+        if compactLayout {
+            if let key = NSApp.keyWindow, key.windowController is MainWindowController, let window = controller.window {
+                window.setFrameTopLeftPoint(NSPoint(x: key.frame.minX + 28, y: key.frame.maxY - 28))
+            }
+        } else {
+            controller.window?.tabbingMode = .disallowed
+        }
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
-        controller.window?.tabbingMode = .preferred
+        if !compactLayout { controller.window?.tabbingMode = .preferred }
     }
+
+    func duplicateTab(_ tab: WebContentController, in host: MainWindowController) {
+        let copy: WebContentController
+        switch tab.kind {
+        case .vesper: copy = makeTab(kind: .vesper, path: tab.pendingPath)
+        case .playground:
+            guard let url = tab.currentURLString else { return }
+            copy = makeTab(kind: .playground, path: url)
+        }
+        guard let index = host.tabs.list.items.firstIndex(where: { $0 === tab }) else { return }
+        host.addTab(copy, at: index + 1)
+    }
+
+    /// Compact layout: the tab, page and all, becomes its own window.
+    func moveTabToNewWindow(_ tab: WebContentController, from host: MainWindowController) {
+        guard host.compact, host.tabs.list.count > 1, host.detachTab(tab) != nil else { return }
+        let controller = makeWindow(tabs: [tab])
+        if let from = host.window, let window = controller.window {
+            window.setFrame(from.frame.offsetBy(dx: 28, dy: -28), display: false)
+        }
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+    }
+
+    /// Compact layout: every other window's tabs join this window, in order.
+    func mergeAllWindows(into target: MainWindowController) {
+        guard target.compact else { return }
+        for other in windows where other !== target && other.compact && !other.retired {
+            for tab in other.detachAllTabs() { target.addTab(tab, at: target.tabs.list.count, select: false) }
+            other.retire()
+        }
+        target.window?.makeKeyAndOrderFront(nil)
+    }
+
+    var compactWindowCount: Int { windows.filter { $0.compact && !$0.retired }.count }
 
     func reopenClosedTab(nextTo window: NSWindow?) {
         guard let raw = closedTabs.pop(), let base = connection?.baseURL else { return }
@@ -181,9 +248,18 @@ final class AppModel {
             ?? windows.first
     }
 
-    func windowClosed(_ controller: MainWindowController, url: String?) {
+    func windowClosed(_ controller: MainWindowController) {
         windows.removeAll { $0 === controller }
+        scheduleSessionSave()
+    }
+
+    func recordClosed(url: String?) {
         if let url { closedTabs.push(url) }
+        scheduleSessionSave()
+    }
+
+    func noteKey(_ controller: MainWindowController) {
+        lastKey = controller
         scheduleSessionSave()
     }
 
@@ -204,14 +280,101 @@ final class AppModel {
     func saveSessionNow() {
         saveTask?.cancel()
         let ref = (NSApp.keyWindow?.windowController as? MainWindowController) ?? windows.first
-        guard let refWindow = ref?.window else { return }
-        let group = (refWindow.tabbedWindows ?? [refWindow]).compactMap { $0.windowController as? MainWindowController }
-        let tabs = group.filter { $0.kind == .vesper }
-        let pairs = tabs.compactMap { c in c.currentURLString.map { (c, $0) } }
-        let urls = pairs.map(\.1)
-        guard !urls.isEmpty else { return }
-        let activeIdx = pairs.firstIndex { $0.0 === ref } ?? 0
-        let state = SessionState(tabs: urls, activeIndex: min(activeIdx, urls.count - 1), bounds: ref?.currentBounds())
+        guard let refWindow = ref?.window, let ref else { return }
+        let urls: [String?]
+        let active: Int
+        if ref.compact {
+            let tabs = ref.tabs.list.items
+            urls = tabs.map { $0.kind == .vesper ? $0.currentURLString : nil }
+            active = ref.tabs.list.activeIndex
+        } else {
+            let group = (refWindow.tabbedWindows ?? [refWindow]).compactMap { $0.windowController as? MainWindowController }
+            urls = group.map { $0.kind == .vesper ? $0.currentURLString : nil }
+            active = group.firstIndex { $0 === ref } ?? 0
+        }
+        guard let state = sessionState(urls: urls, activeIndex: active, bounds: ref.currentBounds()) else { return }
         do { try SessionStore.save(state, to: sessionFileURL) } catch { vlog("session save failed: \(error)") }
+    }
+
+    // MARK: Layout
+
+    /// Rebuilds the open windows in the other tab layout. The tabs themselves (pages, history,
+    /// sidebar models) move to the new windows as they are, so nothing reloads; order, active tab and
+    /// window frames carry over.
+    private func applyLayout(_ layout: TabLayout) {
+        let compact = layout == .compact
+        guard compact != compactLayout else { return }
+        compactLayout = compact
+        let old = windows.filter { !$0.retired }
+        vlog("tab layout -> \(layout.rawValue), \(old.count) window(s)")
+        guard !old.isEmpty else { return }
+
+        struct Group {
+            var tabs: [WebContentController]
+            var active: Int
+            var frame: NSRect
+            var isLast: Bool
+        }
+        var groups: [Group] = []
+        let last = lastKey.flatMap { old.contains($0) ? $0 : nil } ?? old.last
+        if compact {
+            var seen = Set<ObjectIdentifier>()
+            for w in old where !seen.contains(ObjectIdentifier(w)) {
+                guard let window = w.window else { continue }
+                let members = (window.tabbedWindows ?? [window]).compactMap { $0.windowController as? MainWindowController }
+                members.forEach { seen.insert(ObjectIdentifier($0)) }
+                let selected = window.tabGroup?.selectedWindow?.windowController as? MainWindowController ?? w
+                groups.append(Group(tabs: members.map(\.content), active: members.firstIndex { $0 === selected } ?? 0,
+                                    frame: selected.window?.frame ?? window.frame, isLast: members.contains { $0 === last }))
+            }
+        } else {
+            for w in old {
+                guard let window = w.window else { continue }
+                groups.append(Group(tabs: w.tabs.list.items, active: w.tabs.list.activeIndex, frame: window.frame, isLast: w === last))
+            }
+        }
+        groups.sort { !$0.isLast && $1.isLast }
+
+        restoringSession = true
+        defer { restoringSession = false; scheduleSessionSave() }
+        old.forEach { _ = $0.detachAllTabs() }
+        var shown: [(front: MainWindowController, all: [MainWindowController])] = []
+        for g in groups {
+            if compact {
+                let c = makeWindow(tabs: g.tabs, active: g.active)
+                c.window?.setFrame(g.frame, display: false)
+                shown.append((c, [c]))
+            } else {
+                let cs = g.tabs.map { makeWindow(tabs: [$0]) }
+                for c in cs { c.window?.setFrame(g.frame, display: false) }
+                for (prev, c) in zip(cs, cs.dropFirst()) { prev.window?.addTabbedWindow(c.window!, ordered: .above) }
+                shown.append((cs[min(g.active, cs.count - 1)], cs))
+            }
+        }
+        let keyWasMain = NSApp.keyWindow?.windowController is MainWindowController
+        for (i, entry) in shown.enumerated() {
+            for c in entry.all where c !== entry.front { c.window?.orderFront(nil) }
+            entry.front.showWindow(nil)
+            if i == shown.count - 1 && keyWasMain { entry.front.window?.makeKeyAndOrderFront(nil) } else { entry.front.window?.orderFront(nil) }
+        }
+        old.forEach { $0.retire() }
+    }
+
+    // MARK: Debugging
+
+    /// Debug only (VESPER_DEBUG=1): VESPER_DEBUG_OPEN_TABS=/a,/b opens those tabs once the first window is up;
+    /// VESPER_DEBUG_LAYOUT_AFTER=<seconds> flips the tab layout setting after that long.
+    private func debugOpenTabs() {
+        guard debugLoggingEnabled else { return }
+        let env = ProcessInfo.processInfo.environment
+        if let list = env["VESPER_DEBUG_OPEN_TABS"] {
+            for path in list.split(separator: ",") { openVesperTab(path: String(path), nextTo: nil) }
+        }
+        if let secs = env["VESPER_DEBUG_LAYOUT_AFTER"].flatMap(Double.init) {
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(secs))
+                self?.aux.update { $0.tabs.layout = $0.tabs.layout == .compact ? .separate : .compact }
+            }
+        }
     }
 }
