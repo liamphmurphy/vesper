@@ -114,6 +114,8 @@ Keep the running dependency list in Git:
 
 The runner checks tools, downloads Go modules, installs locked npm packages
 (including dev dependencies), and installs Chromium before starting model work.
+Coding chats skip Chromium so a new chat answers sooner; the first browser test
+installs it with `npx playwright install chromium`, as Playwright's error says.
 It also prepares delegated worktrees, even for read-only agents. A continued
 worktree reuses npm packages when its lockfile, package manifest, and Node/npm
 versions match. A missing tool or failed install fails workspace setup with an

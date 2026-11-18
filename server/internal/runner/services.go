@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/liamphmurphy/vesper/server/internal/agentdef"
@@ -75,4 +78,114 @@ func (r *Runner) startDockerProxy(ctx context.Context, c runCtx, turn store.RunT
 		env[k] = v
 	}
 	return []string{td.Network}, td.Stop
+}
+
+// turnEnvironment is a turn's services and Docker API, started in the
+// background so a coding chat's checkout is prepared meanwhile, and a gated
+// chat turn's harness runs meanwhile (gateTurn): on a cold VM each takes
+// seconds (dockerd and a database becoming healthy; a clone and package
+// installs), and none needs the others to begin.
+type turnEnvironment struct {
+	cancel    context.CancelFunc
+	done      chan struct{}
+	exposed   map[string]string // written only before done closes
+	networks  []string
+	stops     []func()
+	failure   string
+	stopOnce  sync.Once
+	abandoned atomic.Bool // stopped before it was up: its failure is ours, not the turn's
+}
+
+func (r *Runner) startTurnEnvironment(ctx context.Context, c runCtx, turn store.RunTurn) *turnEnvironment {
+	ctx, cancel := context.WithCancel(ctx)
+	te := &turnEnvironment{cancel: cancel, done: make(chan struct{}), exposed: map[string]string{}}
+	go func() {
+		defer close(te.done)
+		networks, stopServices, failure := r.startServices(ctx, c, turn, te.exposed)
+		if failure != "" {
+			te.failure = failure
+			return
+		}
+		dockerNetworks, stopDocker := r.startDockerProxy(ctx, c, turn, te.exposed)
+		// Stopped in reverse: the Docker API before the services.
+		te.stops = []func(){stopDocker, stopServices}
+		te.networks = append(networks, dockerNetworks...)
+	}()
+	return te
+}
+
+// wait blocks until the environment is up, then adds what it exposes to env
+// and returns the networks the turn joins, or a failure for the run.
+func (te *turnEnvironment) wait(env map[string]string) ([]string, string) {
+	<-te.done
+	maps.Copy(env, te.exposed)
+	return te.networks, te.failure
+}
+
+// stop removes what started, first abandoning a start still in progress
+// (when the turn ends before waiting, e.g. its setup failed).
+func (te *turnEnvironment) stop() {
+	te.stopOnce.Do(func() {
+		select {
+		case <-te.done:
+		default:
+			te.abandoned.Store(true)
+			te.cancel()
+			<-te.done
+		}
+		for _, stop := range te.stops {
+			stop()
+		}
+		te.cancel()
+	})
+}
+
+// gateTurn lets a chat turn's harness start before its environment is up,
+// when the backend can gate the turn's shell commands instead (see
+// TurnGateBackend). It returns the env that installs the gate and a close to
+// defer, or gated false when the turn should wait for the environment.
+//
+// A gated turn whose services fail keeps running: its shell commands say
+// why, which beats failing a turn that may never have needed them.
+func (r *Runner) gateTurn(ctx context.Context, c runCtx, turn store.RunTurn, environment *turnEnvironment) (env map[string]string, closeGate func(), gated bool) {
+	gb, ok := r.Backend.(TurnGateBackend)
+	if c.run.Purpose != "chat" || !ok {
+		return nil, nil, false
+	}
+	_, services := r.Backend.(ServiceBackend)
+	_, proxy := r.Backend.(ProxyBackend)
+	if !services && !proxy {
+		return nil, nil, false // the environment is always empty: nothing to wait for
+	}
+	ws, key := wsID(c.run), fmt.Sprintf("%s-%d", c.run.ID, turn.Seq)
+	env, err := gb.OpenTurnGate(ctx, ws, key)
+	if err != nil {
+		r.Log.Warn("turn gate; waiting for the environment instead", "run", c.run.ID, "err", err)
+		return nil, nil, false
+	}
+	released := make(chan struct{})
+	go func() {
+		defer close(released)
+		exposed := map[string]string{}
+		_, failure := environment.wait(exposed)
+		if environment.abandoned.Load() {
+			return // the turn ended first: nobody is waiting
+		}
+		if failure != "" {
+			r.event(ctx, c.run.ID, "lifecycle", map[string]any{"state": "services_failed", "reason": failure})
+		}
+		if err := gb.ReleaseTurnGate(ctx, ws, key, exposed, failure); err != nil {
+			r.Log.Warn("release turn gate", "run", c.run.ID, "err", err)
+		}
+	}()
+	closeGate = func() {
+		// Abandon a start still in progress, so a quick reply doesn't wait
+		// for services it never used.
+		environment.stop()
+		<-released
+		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), controlTimeout)
+		defer cancel()
+		gb.CloseTurnGate(cctx, ws, key)
+	}
+	return env, closeGate, true
 }

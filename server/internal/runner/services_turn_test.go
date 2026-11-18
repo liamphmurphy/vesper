@@ -10,9 +10,13 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/liamphmurphy/vesper/server/internal/agentdef"
 	"github.com/liamphmurphy/vesper/server/internal/runner"
+	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 	"github.com/liamphmurphy/vesper/server/internal/testenv"
 )
@@ -178,5 +182,207 @@ func TestTestEnvironmentIsInferredUsedAndLearned(t *testing.T) {
 		if !strings.Contains(evs, want) {
 			t.Fatalf("no %s event: %s", want, evs)
 		}
+	}
+}
+
+// overlapBackend is svcBackend whose chat setup waits a while for the
+// services to be started, recording whether they were.
+type overlapBackend struct {
+	*svcBackend
+	servicesCalled chan struct{}
+	once           sync.Once
+	overlapped     bool
+	failSetup      bool
+}
+
+func (b *overlapBackend) StartServices(ctx context.Context, runID, key string, services []agentdef.Service) (string, func(), error) {
+	b.once.Do(func() { close(b.servicesCalled) })
+	return b.svcBackend.StartServices(ctx, runID, key, services)
+}
+
+func (b *overlapBackend) Start(ctx context.Context, runID string, spec runner.ExecSpec) (runner.Process, error) {
+	if strings.HasPrefix(spec.Name, "chat-repositories-") {
+		select {
+		case <-b.servicesCalled:
+			b.mu.Lock()
+			b.overlapped = true
+			b.mu.Unlock()
+		case <-time.After(5 * time.Second):
+		}
+		if b.failSetup {
+			return nil, errors.New("setup could not start")
+		}
+	}
+	return b.svcBackend.Start(ctx, runID, spec)
+}
+
+// codingChatWithRecipe is a coding chat on repo, whose test environment
+// recipe (one Postgres service) is already known.
+func codingChatWithRecipe(e env, repo string) uuid.UUID {
+	e.t.Helper()
+	if err := e.setOverride(agentdef.Override{Harness: agentdef.HarnessClaudeCode, Model: "opus-5.5"}); err != nil {
+		e.t.Fatal(err)
+	}
+	p := e.persona("Pair", true, false, "https://github.com/acme/app")
+	chat, err := e.runs.StartChat(e.ctx, e.ws, e.me.ID, runs.ChatInput{Project: "PAY", Title: "Code", PersonaID: &p.ID})
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	if _, err := e.pool.Exec(e.ctx, `WITH attached AS (UPDATE chat_repositories SET repo_url=$2 WHERE chat_id=$1) UPDATE chat_sessions SET repo_url=$2 WHERE id=$1`, chat.ID, repo); err != nil {
+		e.t.Fatal(err)
+	}
+	if _, err := e.pool.Exec(e.ctx, `UPDATE personas SET repos=ARRAY[$2]::text[] WHERE id=$1`, p.ID, repo); err != nil {
+		e.t.Fatal(err)
+	}
+	recipe, _ := json.Marshal(testenv.Recipe{Services: []agentdef.Service{{Name: "postgres", Image: "postgres:17-alpine",
+		Expose: map[string]string{"TEST_DATABASE_URL": "postgres://postgres@postgres:5432/postgres"}}}})
+	if err := e.q.CreateInferredTestEnvironment(e.ctx, store.CreateInferredTestEnvironmentParams{
+		WorkspaceID: e.ws, Repo: testenv.RepoKey(repo), Recipe: recipe, InferredFrom: []string{".github/workflows/ci.yml"},
+	}); err != nil {
+		e.t.Fatal(err)
+	}
+	return chat.ID
+}
+
+// A coding chat whose repository has a known recipe starts the turn's
+// services while its checkout is prepared rather than after, and the turn
+// still runs with them up.
+func TestCodingChatStartsServicesDuringSetup(t *testing.T) {
+	e := setup(t)
+	t.Setenv("FAKE_HARNESS_MODE", "chat")
+	chat := codingChatWithRecipe(e, bareRepo(t))
+	b := &overlapBackend{svcBackend: &svcBackend{Fake: e.runner.Backend.(*runner.Fake)}, servicesCalled: make(chan struct{})}
+	e.runner.Backend = b
+
+	reply := e.postSh(chat, gatedEcho)
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.overlapped {
+		t.Fatal("the chat's setup ran before its services were started")
+	}
+	if len(b.started) != 1 || b.stopped != 1 {
+		t.Fatalf("services started %v, stopped %d times", b.started, b.stopped)
+	}
+	if !strings.Contains(reply, "db=postgres://postgres@postgres:5432/postgres") {
+		t.Fatalf("the turn's shell didn't get its services' env: %s", reply)
+	}
+}
+
+// gatedEcho is a shell command a gated turn's bash runs once its services
+// are up (sh doesn't read BASH_ENV; the harnesses run bash).
+const gatedEcho = `bash -c 'echo db=$TEST_DATABASE_URL'`
+
+// slowServicesBackend is svcBackend whose services start only once the
+// turn's harness has (or after a while), or never, recording which.
+type slowServicesBackend struct {
+	*svcBackend
+	harnessStarted chan struct{}
+	once           sync.Once
+	harnessFirst   bool
+	never          bool // block until the turn gives up on the services
+}
+
+func (b *slowServicesBackend) StartServices(ctx context.Context, runID, key string, services []agentdef.Service) (string, func(), error) {
+	if b.never {
+		<-ctx.Done()
+		return "", nil, ctx.Err()
+	}
+	select {
+	case <-b.harnessStarted:
+		b.mu.Lock()
+		b.harnessFirst = true
+		b.mu.Unlock()
+	case <-time.After(5 * time.Second):
+	}
+	return b.svcBackend.StartServices(ctx, runID, key, services)
+}
+
+func (b *slowServicesBackend) Start(ctx context.Context, runID string, spec runner.ExecSpec) (runner.Process, error) {
+	if strings.HasPrefix(spec.Name, "lazyagents-turn-") {
+		b.once.Do(func() { close(b.harnessStarted) })
+	}
+	return b.svcBackend.Start(ctx, runID, spec)
+}
+
+// A chat turn's persona starts while its services are still starting; its
+// shell commands wait for them and then see what they expose.
+func TestChatHarnessStartsBeforeServicesAreReady(t *testing.T) {
+	e := setup(t)
+	t.Setenv("FAKE_HARNESS_MODE", "chat")
+	chat := codingChatWithRecipe(e, bareRepo(t))
+	b := &slowServicesBackend{svcBackend: &svcBackend{Fake: e.runner.Backend.(*runner.Fake)}, harnessStarted: make(chan struct{})}
+	e.runner.Backend = b
+
+	reply := e.postSh(chat, gatedEcho)
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.harnessFirst {
+		t.Fatal("the turn waited for its services before starting the harness")
+	}
+	if !strings.Contains(reply, "db=postgres://postgres@postgres:5432/postgres") {
+		t.Fatalf("the shell command didn't wait for the services' env: %s", reply)
+	}
+	if len(b.started) != 1 || b.stopped != 1 {
+		t.Fatalf("services started %v, stopped %d times", b.started, b.stopped)
+	}
+}
+
+// Services that fail don't fail a gated turn: its shell commands say why.
+func TestGatedChatTurnSurvivesFailedServices(t *testing.T) {
+	e := setup(t)
+	t.Setenv("FAKE_HARNESS_MODE", "chat")
+	chat := codingChatWithRecipe(e, bareRepo(t))
+	b := &svcBackend{Fake: e.runner.Backend.(*runner.Fake), fail: errors.New("service postgres: exited with code 1")}
+	e.runner.Backend = b
+
+	reply := e.postSh(chat, gatedEcho)
+
+	if !strings.Contains(reply, "this turn's services didn't start: Couldn't start the run's services: service postgres: exited with code 1") || !strings.Contains(reply, "err=<nil>") {
+		t.Fatalf("reply: %s", reply)
+	}
+	if evs := e.eventTypes(e.chatRun(chat).ID); !strings.Contains(evs, "lifecycle:services_failed") {
+		t.Fatalf("no services_failed event: %s", evs)
+	}
+}
+
+// A turn that ends before its services are up doesn't wait for them, and
+// abandoning them isn't reported as their failure.
+func TestQuickChatTurnDoesNotWaitForServices(t *testing.T) {
+	e := setup(t)
+	t.Setenv("FAKE_HARNESS_MODE", "chat")
+	chat := codingChatWithRecipe(e, bareRepo(t))
+	b := &slowServicesBackend{svcBackend: &svcBackend{Fake: e.runner.Backend.(*runner.Fake)}, harnessStarted: make(chan struct{}), never: true}
+	e.runner.Backend = b
+
+	e.say(chat, "hello")
+
+	if evs := e.eventTypes(e.chatRun(chat).ID); strings.Contains(evs, "lifecycle:services_failed") {
+		t.Fatalf("abandoned services reported as failed: %s", evs)
+	}
+}
+
+// Services started alongside a checkout that then fails are removed with
+// the failed turn, which never runs the harness.
+func TestCodingChatStopsServicesWhenSetupFails(t *testing.T) {
+	e := setup(t)
+	t.Setenv("FAKE_HARNESS_MODE", "chat")
+	chat := codingChatWithRecipe(e, bareRepo(t))
+	b := &overlapBackend{svcBackend: &svcBackend{Fake: e.runner.Backend.(*runner.Fake)}, servicesCalled: make(chan struct{}), failSetup: true}
+	e.runner.Backend = b
+
+	if _, err := e.runs.PostChatMessage(e.ctx, e.ws, e.me.ID, chat, runs.ChatMessageInput{Body: "hello"}); err != nil {
+		t.Fatal(err)
+	}
+	e.until("the failed turn", func() bool { return e.chat(chat).State != "running" })
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.turnEnv != nil {
+		t.Fatal("the harness ran after its checkout failed")
+	}
+	if len(b.started) != 1 || b.stopped != 1 {
+		t.Fatalf("services started %v, stopped %d times", b.started, b.stopped)
 	}
 }

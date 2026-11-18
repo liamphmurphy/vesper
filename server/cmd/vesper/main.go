@@ -393,6 +393,7 @@ func runRunner(ctx context.Context, log *slog.Logger) error {
 			MemoryMB:       rc.MemoryMB,
 			PidsLimit:      rc.PidsLimit,
 			WarmTTL:        rc.WarmTTL,
+			SpareVMs:       rc.SpareVMs,
 			MCPURL:         rc.MCPURL,
 			APIUpstream:    apiUpstream,
 			CacheStore:     cacheStore,

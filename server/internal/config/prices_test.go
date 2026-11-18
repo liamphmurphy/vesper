@@ -36,3 +36,20 @@ func TestHostWorkspacesMustBeAbsolute(t *testing.T) {
 		t.Fatalf("absolute path: %q %v", c.Runner.HostWorkspaces, err)
 	}
 }
+
+func TestSpareVMsDefaultAndBounds(t *testing.T) {
+	c, err := Load()
+	if err != nil || c.Runner.SpareVMs != 1 {
+		t.Fatalf("default: %d %v", c.Runner.SpareVMs, err)
+	}
+	t.Setenv("RUNNER_VM_SPARES", "0")
+	if c, err := Load(); err != nil || c.Runner.SpareVMs != 0 {
+		t.Fatalf("off: %d %v", c.Runner.SpareVMs, err)
+	}
+	for _, bad := range []string{"-1", "5", "many"} {
+		t.Setenv("RUNNER_VM_SPARES", bad)
+		if _, err := Load(); err == nil {
+			t.Fatalf("RUNNER_VM_SPARES=%s loaded", bad)
+		}
+	}
+}

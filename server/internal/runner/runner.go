@@ -162,6 +162,9 @@ func (r *Runner) Run(ctx context.Context) error {
 	if err := r.Recover(ctx); err != nil {
 		return err
 	}
+	if w, ok := r.Backend.(SpareWarmer); ok {
+		w.WarmSpares() // after Recover, which clears spares a previous runner left
+	}
 	r.expireModelListings(ctx)
 	r.ServePlaygrounds(ctx)
 	r.InitDevWorkspaces(ctx)
@@ -1448,7 +1451,14 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 		_ = agents.RevokeToken(qctx, q, c.agent.ID, tok.ID)
 	}()
 
+	var environment *turnEnvironment
 	if c.run.Purpose == "chat" && allowedScope(c.spec, "repo:write") && c.chatRepoAtStart != nil && *c.chatRepoAtStart != "" {
+		// A repository without a recipe yet gets one inferred from this
+		// setup's output, so only a known recipe's services start alongside it.
+		if _, known := r.loadTestEnv(ctx, c, testEnvRepo(ctx, q, c)); known {
+			environment = r.startTurnEnvironment(ctx, c, turn)
+			defer environment.stop()
+		}
 		script, err := chatSetupScript(ctx, q, c)
 		if err != nil {
 			r.failChat(ctx, c, "Could not prepare attached repositories.")
@@ -1699,23 +1709,29 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 		codeBase = r.workspaceBase(ctx, wsID(c.run))
 		repositoryBases = r.chatRepositoryBases(ctx, c)
 	}
-	networks, stopServices, failure := r.startServices(ctx, c, turn, env)
-	if failure != "" {
-		if ctx.Err() != nil {
-			return // shutting down: the turn re-runs on the next runner start
-		}
-		if c.run.Purpose == "chat" {
-			r.failChat(ctx, c, failure)
+	if environment == nil {
+		environment = r.startTurnEnvironment(ctx, c, turn)
+		defer environment.stop()
+	}
+	var networks []string
+	if gateEnv, closeGate, gated := r.gateTurn(ctx, c, turn, environment); gated {
+		defer closeGate()
+		maps.Copy(env, gateEnv)
+	} else {
+		var failure string
+		if networks, failure = environment.wait(env); failure != "" {
+			if ctx.Err() != nil {
+				return // shutting down: the turn re-runs on the next runner start
+			}
+			if c.run.Purpose == "chat" {
+				r.failChat(ctx, c, failure)
+				return
+			}
+			_ = q.FinishTurn(ctx, store.FinishTurnParams{ID: turn.ID, Usage: []byte("{}")})
+			r.end(ctx, c, "failed", failure, runs.VerbRunFailed)
 			return
 		}
-		_ = q.FinishTurn(ctx, store.FinishTurnParams{ID: turn.ID, Usage: []byte("{}")})
-		r.end(ctx, c, "failed", failure, runs.VerbRunFailed)
-		return
 	}
-	defer stopServices()
-	dockerNetworks, stopDocker := r.startDockerProxy(ctx, c, turn, env)
-	defer stopDocker()
-	networks = append(networks, dockerNetworks...)
 	networks = append(networks, r.turnPlayground(ctx, c, env, sensitive)...)
 	r.event(ctx, c.run.ID, "lifecycle", map[string]any{"state": "turn_started", "turn": turn.Seq, "trigger": turn.Trigger,
 		"harness": c.spec.Harness, "resume": session != ""})
