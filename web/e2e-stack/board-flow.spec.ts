@@ -60,7 +60,8 @@ test("Kanban: agent estimates via MCP, board shows it live, person edits to done
   await page.goto(`/board?project=E2E&epic=${epic.id}`);
   const card = page.getByRole("article", { name: `Ticket ${target.key}` });
   await expect(page.getByTestId("column-todo").getByRole("article", { name: `Ticket ${target.key}` })).toBeVisible();
-  await expect(card).toContainText("unestimated");
+  // An unestimated card shows no points (it no longer says "unestimated").
+  await expect(card).not.toContainText(/\d+ pt/);
 
   // --- Agent: claim its own ticket, estimate a sibling, tick epic criterion 1
   const call = await mcpSession(request, token);
@@ -102,6 +103,15 @@ test("Kanban: agent estimates via MCP, board shows it live, person edits to done
   await expect(page.getByRole("list", { name: "Unchecked criteria" })).toContainText("2. A person confirms the flow");
   const refused = await request.patch(`${API}/api/v1/epics/${epic.id}`, { data: { status: "done" } });
   expect(refused.status()).toBe(409);
+
+  // Finishing the epic's last ticket made its final review ticket, which holds the gate shut
+  // until it finishes too. The POST is idempotent: it returns that ticket, not a new one.
+  await expect(page.getByTestId("column-todo").getByRole("article").filter({ hasText: "Final review" })).toBeVisible();
+  const finalReview = await api("POST", `/epics/${epic.id}/review`);
+  expect(finalReview).toMatchObject({ epic_review: true, status: "todo" });
+  await expect(page.getByRole("list", { name: "Open tickets" })).toContainText(finalReview.key);
+  await api("PATCH", `/tickets/${finalReview.key}`, { status: "done" });
+  await expect(page.getByRole("list", { name: "Open tickets" })).toHaveCount(0);
 
   await page.getByLabel("Criterion 2 met").check();
   await expect(page.getByText("Ready to mark done")).toBeVisible();

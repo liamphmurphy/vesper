@@ -97,7 +97,7 @@ test("approve, deny and answer a waiting run from the Needs you tray", async ({ 
   expect(JSON.stringify(signal)).toContain("eu-west-1, please.");
   await expect(question).toHaveCount(0);
 
-  // The tray's Open all link reaches the Runs page, with Needs you in view.
+  // The tray's Open all link reaches the Work page, with Needs you in view.
   await tray(page).getByRole("link", { name: "Open all →" }).click();
-  await expect(page).toHaveURL(/\/runs(\/[^#]+)?#needs-you$/);
+  await expect(page).toHaveURL(/\/work(\?[^#]*)?#needs-you$/);
 });
