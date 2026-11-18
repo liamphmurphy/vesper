@@ -3,14 +3,22 @@ import VesperCore
 
 /// The menu bar extra (desktop/src/native-tray.ts): a template icon per stack state, the Needs-you
 /// count beside it, and the menu from `TrayModel`.
+///
+/// The status item keeps one menu for its whole life, refilled just before it opens. The monitors
+/// re-render every few seconds; swapping in a new NSMenu while the old one was open released the
+/// item being clicked (and its target), so the click did nothing and Quit Vesper needed a second try.
 @MainActor
-final class MenuBarController {
+final class MenuBarController: NSObject, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private var icons: [String: NSImage] = [:]
     private let onAction: (TrayAction) -> Void
+    private let menu = NSMenu()
+    private var model: [TrayMenuItem] = []
 
     init(onAction: @escaping (TrayAction) -> Void) {
         self.onAction = onAction
+        super.init()
+        menu.delegate = self
     }
 
     var isActive: Bool { statusItem != nil }
@@ -21,6 +29,7 @@ final class MenuBarController {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.image = icon(.running)
         item.button?.imagePosition = .imageLeading
+        item.menu = menu
         statusItem = item
     }
 
@@ -37,7 +46,12 @@ final class MenuBarController {
             string: title.isEmpty ? "" : " " + title,
             attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)])
         button.toolTip = TrayModel.trayTooltip(input.health, count: count)
-        statusItem.menu = MenuBuilder.build(TrayModel.buildTrayMenu(input), onAction: onAction)
+        model = TrayModel.buildTrayMenu(input)
+    }
+
+    /// Called just before the menu opens, never while it's open.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        MenuBuilder.populate(menu, model, onAction: onAction)
     }
 
     // MARK: Icons
