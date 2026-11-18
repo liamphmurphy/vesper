@@ -38,6 +38,7 @@ import { buildCompareOptions, type SecondOpinionPick } from "./second-opinion-me
 import { RepositoryPicker } from "./repository-picker";
 import { useRepositories, useSetChatRepository } from "@/lib/api/repository-hooks";
 import { usePushRequests, type PushRequest } from "@/lib/api/code-review-hooks";
+import { useBrowserShare } from "@/lib/api/browser-share-hooks";
 import { placePushRequests } from "@/lib/code-review";
 import { usePersonas } from "@/lib/api/persona-hooks";
 import { useChatWorkflowRuns, useWorkflows, type Workflow } from "@/lib/api/workflow-hooks";
@@ -97,6 +98,7 @@ import { ConnectorRequests } from "./connector-requests";
 import { SecretRequests } from "./secret-requests";
 import { TicketChangeRequests } from "./ticket-change-requests";
 import { PushRequests } from "./push-requests";
+import { BrowserShareBanner } from "./browser-share";
 import { ChatTitleMenu } from "./title-menu";
 import { ChatCostChip } from "@/components/domain/cost-chip";
 import { unavailableReason } from "@/lib/setup";
@@ -704,6 +706,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   };
   const list = messages.data?.messages;
   const pushRequests = usePushRequests(c?.id, running);
+  const browserShare = useBrowserShare(c?.id);
   const placedPushes = useMemo(
     () =>
       placePushRequests(pushRequests.data?.requests ?? [], list ?? [], {
@@ -1469,6 +1472,15 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
                     {unavailable.checking ? "This updates automatically when the model list is ready." : `${unavailableReason(unavailable)}. Pick another model or add the key.`}
                   </Banner>
                 ),
+              });
+            }
+            const shared = browserShare.data;
+            if (shared && !shared.stopped_at) {
+              status.push({
+                key: "browser-share",
+                kind: "live",
+                label: "Sharing a Safari tab",
+                node: <BrowserShareBanner chatId={c.id} share={shared} disabled={c.archived} />,
               });
             }
             if (!c.archived && workflowCard) {

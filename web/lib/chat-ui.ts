@@ -460,6 +460,8 @@ export function chatStatusOf(call: { tool: string; input: unknown }): ChatStatus
     case "WebFetch":
     case "webfetch":
       return status("web-page", "reading a page");
+    case "browser_snapshot":
+      return status("web-page", "reading the Safari tab you shared");
     case "list_saved_links":
       return status("saved-links", "checking your saved links");
     case "save_link":
@@ -935,6 +937,9 @@ export function stepDetail(call: { tool: string; input: unknown }, names: Map<st
       return named("Scheduling", o.name);
     case "update_scheduled_task":
       return named("Changing", known(o.task_id));
+    case "browser_snapshot":
+      // The page is untrusted: the persona got it fenced as data (browserext.Untrusted), and the step says so.
+      return "Reading your shared Safari tab · untrusted page";
     case "save_link":
       return named("Saving", o.title || hostOf(str(o.url)));
     case "save_file":
