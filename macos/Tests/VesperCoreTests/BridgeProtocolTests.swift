@@ -36,6 +36,14 @@ final class BridgeProtocolTests: XCTestCase {
         XCTAssertEqual(nav.sections[0].items[0].children?.first?.contextMenu?.count, 2)
         XCTAssertEqual(nav.selectedId, "p2")
         XCTAssertEqual(all[6], .navigator(nil))
+        XCTAssertEqual(nav.actions?[1].disabled, true)
+        XCTAssertEqual(nav.filters?.count, 2)
+        XCTAssertEqual(nav.filters?[0].options[1].checked, true)
+        XCTAssertEqual(nav.filters?[1].multiple, true)
+        XCTAssertEqual(nav.sections[0].badge, NavBadge(text: "3", tone: .neutral))
+        XCTAssertTrue(all.contains(.appearance(mode: .dark)))
+        XCTAssertTrue(all.contains(.appearance(mode: .light)))
+        XCTAssertEqual(nav.sections[0].items[1].avatar?.color, "#9B8CFF")
     }
 
     func testEveryCommandFixtureRoundTrips() throws {
@@ -52,6 +60,15 @@ final class BridgeProtocolTests: XCTestCase {
     func testRejectsUnknownTypeAndVersion() {
         XCTAssertThrowsError(try PageMessage.decode(fromJSONObject: ["v": 1, "type": "nope"]))
         XCTAssertThrowsError(try PageMessage.decode(fromJSONObject: ["v": 2, "type": "ready", "path": "/"]))
+    }
+
+    func testFilterAndAppearanceCommandsEncode() throws {
+        let filter = try NativeCommand.navFilter(navigatorId: "work", filterId: "space", value: "VES", checked: true).jsonString()
+        XCTAssertTrue(filter.contains("\"type\":\"nav.filter\""))
+        XCTAssertTrue(filter.contains("\"checked\":true"))
+        let appearance = try NativeCommand.appearance(accent: "#0A84FF", mode: .dark).jsonString()
+        XCTAssertTrue(appearance.contains("\"accent\":\"#0A84FF\""))
+        XCTAssertTrue(appearance.contains("\"mode\":\"dark\""))
     }
 
     func testReplyEncodesNullSelection() throws {

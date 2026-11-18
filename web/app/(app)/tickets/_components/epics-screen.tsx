@@ -31,7 +31,7 @@ import { StackedBar } from "@/components/domain/data";
 import { cx } from "@/lib/cx";
 import { FilterMenu } from "@/components/domain/pickers";
 import { ticketsHref } from "@/lib/tickets-layout";
-import { buildEpicsNavModel, EPICS_HEALTH_ACTION, EPICS_STATUS_ACTION } from "@/lib/native-shell/models/epics";
+import { buildEpicsNavModel, EPICS_HEALTH_FILTER, EPICS_STATUS_FILTER } from "@/lib/native-shell/models/epics";
 import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
 import { EpicBrief } from "../../work/work-details";
 import { WorkNavHeader, WorkSectionLabel, WorkSpaceFilter } from "../../work/work-nav-header";
@@ -386,9 +386,9 @@ export function EpicsScreen() {
                 onSearch: setSearch,
               });
               if (handled) return;
-              if (cmd.type === "nav.action" && cmd.menuItemId) {
-                if (cmd.actionId === EPICS_STATUS_ACTION) setFilters({ status: cmd.menuItemId.replace(/^status:/, "") as EpicFilters["status"] });
-                else if (cmd.actionId === EPICS_HEALTH_ACTION) setFilters({ health: cmd.menuItemId.replace(/^health:/, "") as EpicHealthFilter });
+              if (cmd.type === "nav.filter") {
+                if (cmd.filterId === EPICS_STATUS_FILTER) setFilters({ status: cmd.value as EpicFilters["status"] });
+                else if (cmd.filterId === EPICS_HEALTH_FILTER) setFilters({ health: cmd.value as EpicHealthFilter });
               } else if (cmd.type === "nav.activate") openEpic(cmd.itemId);
             },
           }}

@@ -1,10 +1,10 @@
 // The Epics list screen's left column (tickets/_components/epics-screen.tsx) as a NavModel.
-import type { MenuItem, NavModel, Tone } from "../protocol.ts";
+import type { NavFilterMenu, NavModel, Tone } from "../protocol.ts";
 import { workHeader, type WorkHeaderInput } from "./work.ts";
 
 export const EPICS_NAV_ID = "epics";
-export const EPICS_STATUS_ACTION = "epic-status";
-export const EPICS_HEALTH_ACTION = "epic-health";
+export const EPICS_STATUS_FILTER = "epic-status";
+export const EPICS_HEALTH_FILTER = "epic-health";
 
 const HEALTH_TONE: Record<string, Tone> = { on_track: "done", at_risk: "human", off_track: "blocked" };
 
@@ -32,18 +32,16 @@ export function buildEpicsNavModel(input: EpicsNavInput): NavModel {
     { value: "done", label: "Done", n: input.counts.done },
     { value: "all", label: "All epics", n: input.counts.all },
   ];
-  const statusMenu: MenuItem[] = statusOptions.map((o) => ({ id: `status:${o.value}`, label: `${o.label} (${o.n})`, checked: input.status === o.value }));
-  const healthMenu: MenuItem[] = input.healthOptions.map((h) => ({
-    id: `health:${h.value}`,
+  const statusMenu: NavFilterMenu["options"] = statusOptions.map((o) => ({ value: o.value, label: `${o.label} (${o.n})`, checked: input.status === o.value }));
+  const healthMenu: NavFilterMenu["options"] = input.healthOptions.map((h) => ({
+    value: h.value,
     label: h.value === "at_risk" && input.atRiskCount > 0 ? `${h.label} (${input.atRiskCount})` : h.label,
     checked: input.health === h.value,
   }));
   const head = workHeader({ ...input.header, active: "epics", agent: "", noPersona: true });
-  const statusLabel = statusOptions.find((o) => o.value === input.status)?.label ?? "Active epics";
-  const healthLabel = input.healthOptions.find((h) => h.value === input.health)?.label ?? "Any";
-  head.actions.push(
-    { id: EPICS_STATUS_ACTION, label: `View: ${statusLabel}`, icon: "sliders", menu: statusMenu },
-    { id: EPICS_HEALTH_ACTION, label: `Health: ${healthLabel}`, icon: "activity", menu: healthMenu },
+  head.filters.push(
+    { id: EPICS_STATUS_FILTER, label: "Status", icon: "sliders", options: statusMenu },
+    { id: EPICS_HEALTH_FILTER, label: "Health", icon: "activity", options: healthMenu },
   );
   const sections: NavModel["sections"] = input.groups.map((g) => ({
     id: `space:${g.key}`,

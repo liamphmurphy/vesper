@@ -15,6 +15,10 @@ public enum Tone: String, Codable, Sendable, Hashable {
     }
 }
 
+public enum ColorMode: String, Codable, Sendable, Hashable {
+    case dark, light
+}
+
 public struct MenuItem: Codable, Sendable, Hashable, Identifiable {
     public var id: String
     public var label: String?
@@ -79,10 +83,11 @@ public struct NavAction: Codable, Sendable, Hashable, Identifiable {
     public var label: String
     public var icon: String
     public var accent: Bool?
+    public var disabled: Bool?
     public var menu: [MenuItem]?
 
-    public init(id: String, label: String, icon: String, accent: Bool? = nil, menu: [MenuItem]? = nil) {
-        self.id = id; self.label = label; self.icon = icon; self.accent = accent; self.menu = menu
+    public init(id: String, label: String, icon: String, accent: Bool? = nil, disabled: Bool? = nil, menu: [MenuItem]? = nil) {
+        self.id = id; self.label = label; self.icon = icon; self.accent = accent; self.disabled = disabled; self.menu = menu
     }
 }
 
@@ -93,12 +98,13 @@ public struct NavSection: Codable, Sendable, Hashable, Identifiable {
     public var actions: [NavAction]?
     public var collapsible: Bool?
     public var collapsed: Bool?
+    public var badge: NavBadge?
     public var emptyText: String?
 
     public init(id: String, title: String? = nil, items: [NavItem], actions: [NavAction]? = nil,
-                collapsible: Bool? = nil, collapsed: Bool? = nil, emptyText: String? = nil) {
+                collapsible: Bool? = nil, collapsed: Bool? = nil, badge: NavBadge? = nil, emptyText: String? = nil) {
         self.id = id; self.title = title; self.items = items; self.actions = actions
-        self.collapsible = collapsible; self.collapsed = collapsed; self.emptyText = emptyText
+        self.collapsible = collapsible; self.collapsed = collapsed; self.badge = badge; self.emptyText = emptyText
     }
 }
 
@@ -118,6 +124,27 @@ public struct NavPicker: Codable, Sendable, Hashable {
     public init(id: String, value: String, options: [NavPickerOption]) { self.id = id; self.value = value; self.options = options }
 }
 
+public struct NavFilterOption: Codable, Sendable, Hashable {
+    public var value: String
+    public var label: String
+    public var checked: Bool
+
+    public init(value: String, label: String, checked: Bool) { self.value = value; self.label = label; self.checked = checked }
+}
+
+/// A pull-down with check marks in the header row; choosing an option sends `nav.filter`.
+public struct NavFilterMenu: Codable, Sendable, Hashable, Identifiable {
+    public var id: String
+    public var label: String
+    public var icon: String?
+    public var options: [NavFilterOption]
+    public var multiple: Bool?
+
+    public init(id: String, label: String, icon: String? = nil, options: [NavFilterOption], multiple: Bool? = nil) {
+        self.id = id; self.label = label; self.icon = icon; self.options = options; self.multiple = multiple
+    }
+}
+
 public struct NavSearch: Codable, Sendable, Hashable {
     public var id: String
     public var placeholder: String
@@ -131,13 +158,14 @@ public struct NavModel: Codable, Sendable, Hashable, Identifiable {
     public var title: String?
     public var actions: [NavAction]?
     public var picker: NavPicker?
+    public var filters: [NavFilterMenu]?
     public var search: NavSearch?
     public var sections: [NavSection]
     public var selectedId: String?
 
     public init(id: String, title: String? = nil, actions: [NavAction]? = nil, picker: NavPicker? = nil,
-                search: NavSearch? = nil, sections: [NavSection], selectedId: String? = nil) {
-        self.id = id; self.title = title; self.actions = actions; self.picker = picker; self.search = search
+                filters: [NavFilterMenu]? = nil, search: NavSearch? = nil, sections: [NavSection], selectedId: String? = nil) {
+        self.id = id; self.title = title; self.actions = actions; self.picker = picker; self.filters = filters; self.search = search
         self.sections = sections; self.selectedId = selectedId
     }
 }
@@ -235,12 +263,13 @@ public enum PageMessage: Sendable, Equatable, Decodable {
     case navigator(NavModel?)
     case navigatorFallback(active: Bool)
     case toolbar([ToolbarItem])
+    case appearance(mode: ColorMode)
     case confirmApproval(requestId: String, scope: ApprovalScope)
     case openWorkspaceMenu(requestId: String, folder: String)
     case contextMenu(requestId: String, items: [MenuItem], x: Double, y: Double)
 
     private enum Keys: String, CodingKey {
-        case v, type, path, area, title, subtitle, model, active, items, requestId, scope, folder, x, y
+        case v, type, path, area, title, subtitle, model, active, items, requestId, scope, folder, x, y, mode
     }
 
     public init(from decoder: Decoder) throws {
@@ -265,6 +294,8 @@ public enum PageMessage: Sendable, Equatable, Decodable {
             self = .navigatorFallback(active: try c.decode(Bool.self, forKey: .active))
         case "toolbar":
             self = .toolbar(try c.decode([ToolbarItem].self, forKey: .items))
+        case "appearance":
+            self = .appearance(mode: try c.decode(ColorMode.self, forKey: .mode))
         case "confirmApproval":
             self = .confirmApproval(requestId: try c.decode(String.self, forKey: .requestId), scope: try c.decode(ApprovalScope.self, forKey: .scope))
         case "openWorkspaceMenu":
@@ -299,16 +330,20 @@ public enum NativeCommand: Sendable, Equatable, Codable {
     case navActivate(navigatorId: String, itemId: String)
     case navAction(navigatorId: String, actionId: String, itemId: String? = nil, menuItemId: String? = nil)
     case navPicker(navigatorId: String, pickerId: String, value: String)
+    case navFilter(navigatorId: String, filterId: String, value: String, checked: Bool)
     case navSearch(navigatorId: String, searchId: String, value: String)
     case navToggle(navigatorId: String, itemId: String, expanded: Bool)
     case toolbarAction(itemId: String, menuItemId: String? = nil)
+    /// macOS's accent colour ("#RRGGBB") and effective appearance.
+    case appearance(accent: String, mode: ColorMode)
     /// `query` only means something for openCommandMenu: the text to open the palette with.
     case command(ShellCommandName, query: String? = nil)
     /// `selectedId`: `nil` omits the field, `.some(nil)` sends JSON null (menu dismissed), `.some("x")` a value.
     case reply(requestId: String, ok: Bool, selectedId: String?? = nil, error: String? = nil)
 
     private enum Keys: String, CodingKey {
-        case v, type, path, navigatorId, itemId, actionId, menuItemId, pickerId, searchId, value, expanded, name, query
+        case v, type, path, navigatorId, itemId, actionId, menuItemId, pickerId, searchId, filterId, value, expanded, checked, name, query
+        case accent, mode
         case requestId, ok, selectedId, error
     }
 
@@ -326,6 +361,11 @@ public enum NativeCommand: Sendable, Equatable, Codable {
                               itemId: try c.decodeIfPresent(String.self, forKey: .itemId), menuItemId: try c.decodeIfPresent(String.self, forKey: .menuItemId))
         case "nav.picker":
             self = .navPicker(navigatorId: try c.decode(String.self, forKey: .navigatorId), pickerId: try c.decode(String.self, forKey: .pickerId), value: try c.decode(String.self, forKey: .value))
+        case "nav.filter":
+            self = .navFilter(navigatorId: try c.decode(String.self, forKey: .navigatorId), filterId: try c.decode(String.self, forKey: .filterId),
+                              value: try c.decode(String.self, forKey: .value), checked: try c.decode(Bool.self, forKey: .checked))
+        case "appearance":
+            self = .appearance(accent: try c.decode(String.self, forKey: .accent), mode: try c.decode(ColorMode.self, forKey: .mode))
         case "nav.search":
             self = .navSearch(navigatorId: try c.decode(String.self, forKey: .navigatorId), searchId: try c.decode(String.self, forKey: .searchId), value: try c.decode(String.self, forKey: .value))
         case "nav.toggle":
@@ -360,6 +400,11 @@ public enum NativeCommand: Sendable, Equatable, Codable {
             try c.encodeIfPresent(item, forKey: .itemId); try c.encodeIfPresent(menuItem, forKey: .menuItemId)
         case .navPicker(let nav, let picker, let value):
             try c.encode("nav.picker", forKey: .type); try c.encode(nav, forKey: .navigatorId); try c.encode(picker, forKey: .pickerId); try c.encode(value, forKey: .value)
+        case .navFilter(let nav, let filter, let value, let checked):
+            try c.encode("nav.filter", forKey: .type); try c.encode(nav, forKey: .navigatorId); try c.encode(filter, forKey: .filterId)
+            try c.encode(value, forKey: .value); try c.encode(checked, forKey: .checked)
+        case .appearance(let accent, let mode):
+            try c.encode("appearance", forKey: .type); try c.encode(accent, forKey: .accent); try c.encode(mode, forKey: .mode)
         case .navSearch(let nav, let search, let value):
             try c.encode("nav.search", forKey: .type); try c.encode(nav, forKey: .navigatorId); try c.encode(search, forKey: .searchId); try c.encode(value, forKey: .value)
         case .navToggle(let nav, let item, let expanded):

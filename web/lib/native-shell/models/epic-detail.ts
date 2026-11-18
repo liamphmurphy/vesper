@@ -14,7 +14,8 @@ export function buildEpicDetailNavModel(input: {
     [
       {
         id: "epics",
-        title: `${input.projectName ?? "Epics"} ${input.epics.length}`,
+        title: input.projectName ?? "Epics",
+        badge: { text: String(input.epics.length) },
         items: input.epics.map((e) => ({ id: e.id, title: e.name, href: `/epics/${encodeURIComponent(e.id)}`, trailing: `${e.done}/${e.total}` })),
       },
     ],

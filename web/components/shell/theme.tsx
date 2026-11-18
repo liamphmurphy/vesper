@@ -2,7 +2,8 @@
 
 import { useEffect, useSyncExternalStore } from "react";
 import { Segmented } from "@/components/ui/controls";
-import { DEFAULT_APPEARANCE, paletteTokens, parseAppearance, type Appearance, type ThemePref } from "@/lib/palettes";
+import { DEFAULT_APPEARANCE, paletteTokens, parseAppearance, withSystemAccent, type Appearance, type ThemePref } from "@/lib/palettes";
+import { isNativeShell, postDeduped } from "@/lib/native-shell/bridge";
 export type { ThemePref } from "@/lib/palettes";
 
 const MODE_KEY = "la-theme";
@@ -11,13 +12,24 @@ const listeners = new Set<() => void>();
 let settings = DEFAULT_APPEARANCE;
 let pref: ThemePref = "system";
 let initialized = false;
+/** macOS's accent colour, sent by the Mac app; applied to the macOS palette only. */
+let systemAccent: string | null = null;
+const ACCENT_KEY = "la-system-accent";
 let storageAvailable = true;
+
+/** What an unset or reset appearance is: Neutral in a browser, macOS in the Mac app. */
+export function defaultAppearance(): Appearance {
+  return isNativeShell() ? { ...DEFAULT_APPEARANCE, palette: "macos" } : DEFAULT_APPEARANCE;
+}
 
 function load() {
   try {
     const mode = localStorage.getItem(MODE_KEY);
     pref = mode === "dark" || mode === "light" ? mode : "system";
-    settings = parseAppearance(localStorage.getItem(PALETTE_KEY));
+    const raw = localStorage.getItem(PALETTE_KEY);
+    settings = raw === null ? defaultAppearance() : parseAppearance(raw);
+    const accent = localStorage.getItem(ACCENT_KEY);
+    if (accent && /^#[\da-f]{6}$/i.test(accent)) systemAccent = accent;
   } catch { storageAvailable = false; }
 }
 
@@ -30,7 +42,9 @@ function apply() {
   const root = document.documentElement;
   // Print views own the root temporarily, so saved preferences never change paper.
   const printing = root.hasAttribute("data-print-theme");
-  const colors = paletteTokens(printing ? DEFAULT_APPEARANCE : settings, effectiveMode());
+  const mode = effectiveMode();
+  let colors = paletteTokens(printing ? DEFAULT_APPEARANCE : settings, mode);
+  if (!printing && settings.palette === "macos" && systemAccent && isNativeShell()) colors = withSystemAccent(colors, systemAccent, mode);
   for (const [key, value] of Object.entries(colors)) {
     if (root.style.getPropertyValue(`--${key}`) !== value) root.style.setProperty(`--${key}`, value);
   }
@@ -38,6 +52,18 @@ function apply() {
   root.dataset.harnessActivity = settings.showHarnessActivity === false ? "hidden" : "visible";
   // Print views keep the default size so paper looks the same whoever prints it.
   root.dataset.textSize = printing ? "default" : settings.textSize ?? "default";
+  // The Mac app matches its window to the page's effective mode (Dark forced in Vesper on a Light Mac).
+  postDeduped({ v: 1, type: "appearance", mode });
+}
+
+/** The Mac app's accent colour ("#RRGGBB"): re-tints the macOS palette. */
+export function setSystemAccent(accent: string) {
+  if (!/^#[\da-f]{6}$/i.test(accent)) return;
+  initialize();
+  systemAccent = accent.toLowerCase();
+  try { localStorage.setItem(ACCENT_KEY, systemAccent); } catch { /* the accent is re-sent on every launch */ }
+  apply();
+  notify();
 }
 
 function notify() { listeners.forEach((l) => l()); }

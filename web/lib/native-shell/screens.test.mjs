@@ -87,15 +87,15 @@ const agents = [{ handle: "ada", name: "Ada" }];
 
 test("work header: new ticket, space and persona menus, tab picker with counts, search", () => {
   const h = workHeader({ active: "tickets", project: "VES", projects, agents, agent: "ada", counts: { activity: 3, tickets: 12 }, search: { value: "x", placeholder: "Filter" } });
-  assert.deepEqual(h.actions.map((a) => a.id), ["new-ticket", "filter-space", "filter-agent"]);
-  const space = h.actions[1].menu;
-  assert.deepEqual(space.map((i) => [i.id, i.checked]), [["space:", false], ["space:VES", true]]);
-  assert.deepEqual(h.actions[2].menu.map((i) => [i.id, i.checked]), [["agent:", false], ["agent:ada", true]]);
+  assert.deepEqual(h.actions.map((a) => a.id), ["new-ticket"]);
+  assert.deepEqual(h.filters.map((f) => f.id), ["filter-space", "filter-agent"]);
+  assert.deepEqual(h.filters[0].options.map((o) => [o.value, o.checked]), [["", false], ["VES", true]]);
+  assert.deepEqual(h.filters[1].options.map((o) => [o.value, o.checked]), [["", false], ["ada", true]]);
   assert.deepEqual(h.picker.options.map((o) => o.label), ["Activity 3", "Tasks 12", "Epics"]);
   assert.equal(h.picker.value, "tickets");
   assert.equal(h.search.value, "x");
-  assert.deepEqual(workHeader({ active: "epics", agent: "", allowAllProjects: false, projects }).actions[1].menu.map((i) => i.id), ["space:VES"]);
-  assert.deepEqual(workHeader({ active: "epics", agent: "", noFilters: true }).actions.map((a) => a.id), ["new-ticket"]);
+  assert.deepEqual(workHeader({ active: "epics", agent: "", allowAllProjects: false, projects }).filters[0].options.map((i) => i.value), ["VES"]);
+  assert.deepEqual(workHeader({ active: "epics", agent: "", noFilters: true }).filters, []);
   assert.equal(workHeader({ active: "epics", agent: "" }).search, undefined);
 });
 
@@ -104,8 +104,9 @@ test("work header commands call the screen's handlers", () => {
   const ctx = { project: "VES", push: (h) => calls.push(["push", h]), onProject: (v) => calls.push(["project", v]), onAgent: (v) => calls.push(["agent", v]), onSearch: (v) => calls.push(["search", v]) };
   const nav = (o) => ({ v: 1, navigatorId: "x", ...o });
   assert.ok(handleWorkHeaderCommand(nav({ type: "nav.action", actionId: "new-ticket" }), ctx));
-  assert.ok(handleWorkHeaderCommand(nav({ type: "nav.action", actionId: "filter-space", menuItemId: "space:" }), ctx));
-  assert.ok(handleWorkHeaderCommand(nav({ type: "nav.action", actionId: "filter-agent", menuItemId: "agent:ada" }), ctx));
+  assert.ok(handleWorkHeaderCommand(nav({ type: "nav.filter", filterId: "filter-space", value: "", checked: true }), ctx));
+  assert.ok(handleWorkHeaderCommand(nav({ type: "nav.filter", filterId: "filter-agent", value: "ada", checked: true }), ctx));
+  assert.ok(!handleWorkHeaderCommand(nav({ type: "nav.filter", filterId: "other", value: "x", checked: true }), ctx));
   assert.ok(handleWorkHeaderCommand(nav({ type: "nav.picker", pickerId: "work-view", value: "epics" }), ctx));
   assert.ok(handleWorkHeaderCommand(nav({ type: "nav.search", searchId: "work-search", value: "q" }), ctx));
   assert.ok(!handleWorkHeaderCommand(nav({ type: "nav.activate", itemId: "i" }), ctx));
@@ -137,9 +138,9 @@ test("epics: status and health menus, grouped rows with progress", () => {
     groups: [{ key: "VES", label: "Vesper", epics: [{ id: "e1", name: "Launch", health: "at_risk", done: 1, total: 4 }] }],
     selectedEpicId: "e1",
   });
-  const byId = Object.fromEntries(m.actions.map((a) => [a.id, a]));
-  assert.deepEqual(byId["epic-status"].menu.map((i) => [i.label, i.checked]), [["Active epics (2)", true], ["Done (1)", false], ["All epics (3)", false]]);
-  assert.deepEqual(byId["epic-health"].menu.map((i) => [i.label, i.checked]), [["Any", false], ["At risk (1)", true]]);
+  const byId = Object.fromEntries(m.filters.map((f) => [f.id, f]));
+  assert.deepEqual(byId["epic-status"].options.map((i) => [i.value, i.label, i.checked]), [["open", "Active epics (2)", true], ["done", "Done (1)", false], ["all", "All epics (3)", false]]);
+  assert.deepEqual(byId["epic-health"].options.map((i) => [i.value, i.label, i.checked]), [["any", "Any", false], ["at_risk", "At risk (1)", true]]);
   assert.equal(byId["filter-agent"], undefined);
   assert.deepEqual(m.sections[0].items[0], { id: "e1", title: "Launch", status: "human", trailing: "1/4" });
   assert.equal(m.search.placeholder, "Filter epics…");
@@ -154,7 +155,8 @@ test("ticket and epic detail pages list siblings with the Work header", () => {
   assert.equal(t.selectedId, "VES-1");
   assert.deepEqual(t.actions.map((a) => a.id), ["new-ticket"]);
   const e = buildEpicDetailNavModel({ project: "VES", projectName: "Vesper", epics: [{ id: "e1", name: "Launch", done: 1, total: 2 }], epicId: "e1" });
-  assert.equal(e.sections[0].title, "Vesper 1");
+  assert.equal(e.sections[0].title, "Vesper");
+  assert.deepEqual(e.sections[0].badge, { text: "1" });
   assert.deepEqual(e.sections[0].items[0], { id: "e1", title: "Launch", href: "/epics/e1", trailing: "1/2" });
   assert.equal(e.picker.value, "epics");
 });
@@ -171,7 +173,7 @@ const body = (o = {}) => ({
   withHref: true,
   ...o,
 });
-const run = { id: "r1", href: "/runs/r1?agent=ada", title: "Fix bug", subtitle: "VES-1 · Ada", agentName: "Ada", trailing: "4m", dot: "running" };
+const run = { id: "r1", href: "/runs/r1?agent=ada", title: "Fix bug", subtitle: "VES-1 · Ada", agentName: "Ada", agentColor: "#A3A6FF", trailing: "4m", dot: "running" };
 
 test("runs: status line, filter menu, needs you and groups, selection", () => {
   const m = buildRunsNavModel({
@@ -186,13 +188,16 @@ test("runs: status line, filter menu, needs you and groups, selection", () => {
     selectedId: "run:r1",
   });
   assert.deepEqual(m.sections.map((s) => s.id), ["status", "needs-you", "runs-running", "more"]);
-  assert.equal(m.sections[1].title, "Needs you 1");
-  assert.equal(m.sections[2].title, "Running 1");
-  assert.deepEqual(m.sections[2].items[0], { id: "run:r1", title: "Fix bug", trailing: "4m", href: "/runs/r1?agent=ada", subtitle: "VES-1 · Ada", avatar: { initials: "A" }, status: "done" });
+  assert.equal(m.sections[1].title, "Needs you");
+  assert.deepEqual(m.sections[1].badge, { text: "1" });
+  assert.equal(m.sections[2].title, "Running");
+  assert.deepEqual(m.sections[2].badge, { text: "1" });
+  assert.deepEqual(m.sections[2].items[0], { id: "run:r1", title: "Fix bug", trailing: "4m", href: "/runs/r1?agent=ada", subtitle: "VES-1 · Ada", avatar: { initials: "A", color: "#A3A6FF" }, status: "done" });
   assert.equal(m.sections[3].items[0].id, "load-more");
-  const menu = m.actions[0].menu;
-  assert.equal(menu[0].checked, true);
-  assert.deepEqual(menu[2].children.map((c) => [c.id, c.checked]), [["space:", false], ["space:VES", true], ["space:OLD", false]]);
+  assert.equal(m.actions, undefined);
+  assert.deepEqual(m.filters.map((f) => f.id), ["run-options", "run-space", "run-agent"]);
+  assert.deepEqual(m.filters[0], { id: "run-options", label: "View", icon: "sliders", multiple: true, options: [{ value: "hide-done", label: "Hide done", checked: true }] });
+  assert.deepEqual(m.filters[1].options.map((o) => [o.value, o.checked]), [["", false], ["VES", true], ["OLD", false]]);
   assert.equal(m.search.value, "bug");
   assert.equal(m.selectedId, "run:r1");
   json(m);
@@ -220,16 +225,17 @@ test("work activity: header, View menu with counts, runs without hrefs, waiting 
     counts: { all: 5, needs_you: 2, active: 1, failed: 0 },
     selectedId: "run:r1",
   });
-  assert.deepEqual(m.actions.map((a) => a.id), ["new-ticket", "filter-space", "filter-agent", "view"]);
-  const view = m.actions[3];
-  assert.equal(view.label, "View: Needs you");
-  assert.deepEqual(view.menu.map((i) => [i.id, i.label, i.checked]), [
-    ["view:all", "All activity (5)", false],
-    ["view:needs_you", "Needs you (2)", true],
-    ["view:active", "Running & queued (1)", false],
-    ["view:failed", "Failed today (0)", false],
+  assert.deepEqual(m.actions.map((a) => a.id), ["new-ticket"]);
+  assert.deepEqual(m.filters.map((f) => f.id), ["filter-space", "filter-agent", "view"]);
+  const view = m.filters[2];
+  assert.deepEqual(view.options.map((i) => [i.value, i.label, i.checked]), [
+    ["all", "All activity (5)", false],
+    ["needs_you", "Needs you (2)", true],
+    ["active", "Running & queued (1)", false],
+    ["failed", "Failed today (0)", false],
   ]);
-  assert.deepEqual(m.sections.map((s) => s.title), ["Active 1", "Waiting 1"]);
+  assert.deepEqual(m.sections.map((s) => s.title), ["Active", "Waiting"]);
+  assert.deepEqual(m.sections.map((s) => s.badge), [{ text: "1" }, { text: "1" }]);
   assert.equal(m.sections[0].items[0].href, undefined);
   assert.equal(m.sections[1].items[0].icon, "inbox");
   assert.equal(m.picker.value, "activity");

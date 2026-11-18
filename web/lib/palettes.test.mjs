@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { COLOR_KEYS, DEFAULT_APPEARANCE, PALETTES, contrast, paletteTokens, parseAppearance, resolvePalette } from "./palettes.ts";
+import { COLOR_KEYS, DEFAULT_APPEARANCE, PALETTES, contrast, paletteTokens, parseAppearance, resolvePalette, withSystemAccent } from "./palettes.ts";
 
-test("Neutral default, Dusk, and fifteen named palettes cover the complete token contract in both modes", () => {
+test("Neutral default, Dusk, macOS and fifteen named palettes cover the complete token contract in both modes", () => {
   assert.equal(PALETTES[0].id, "neutral");
   assert.equal(DEFAULT_APPEARANCE.palette, "neutral");
-  assert.equal(PALETTES.length, 17);
-  assert.equal(new Set(PALETTES.map((p) => p.id)).size, 17);
+  assert.equal(PALETTES.length, 18);
+  assert.equal(new Set(PALETTES.map((p) => p.id)).size, 18);
   const keys = Object.keys(PALETTES[0].dark).sort();
   for (const p of PALETTES) for (const mode of ["light", "dark"]) {
     const t = paletteTokens({ ...DEFAULT_APPEARANCE, palette: p.id }, mode);
@@ -73,5 +73,35 @@ test("serialized resolver matches runtime custom and preset colors", () => {
 test("switching to Custom without overrides preserves the selected base exactly", () => {
   for (const p of PALETTES) for (const mode of ["light", "dark"]) {
     assert.deepEqual(paletteTokens({ version: 1, palette: "custom", custom: { base: p.id, dark: {}, light: {} } }, mode), p[mode]);
+  }
+});
+
+test("macOS palette: AppKit backgrounds in both modes, and an accent that follows the system", () => {
+  const mac = PALETTES.find((p) => p.id === "macos");
+  assert.equal(mac.dark.bg, "#1e1e1e");
+  assert.equal(mac.light.bg, "#ffffff");
+  for (const mode of ["dark", "light"]) {
+    const t = withSystemAccent(mac[mode], "#ff9500", mode);
+    assert.ok(contrast(t.accent, t.bg) >= 3, `${mode} accent`);
+    assert.equal(t["accent-soft"], t.accent + "26");
+    assert.equal(t["segment-on"], t.selected);
+    assert.notEqual(t.selected, mac[mode].selected);
+    assert.ok(contrast(t["text-on-accent"], t.accent) >= 4.5);
+    assert.equal(t.bg, mac[mode].bg);
+  }
+  assert.equal(withSystemAccent(mac.dark, "orange", "dark"), mac.dark);
+});
+
+test("an unsaved appearance is the macOS palette only inside the Mac app", () => {
+  assert.equal(DEFAULT_APPEARANCE.palette, "neutral");
+  const neutral = PALETTES.find((p) => p.id === "neutral"), mac = PALETTES.find((p) => p.id === "macos");
+  assert.deepEqual(resolvePalette(DEFAULT_APPEARANCE, "dark", PALETTES), neutral.dark);
+  globalThis.window = { __VESPER_NATIVE__: { v: 1 } };
+  try {
+    assert.deepEqual(resolvePalette(DEFAULT_APPEARANCE, "dark", PALETTES), mac.dark);
+    // A saved choice always wins.
+    assert.deepEqual(resolvePalette(parseAppearance(JSON.stringify({ version: 1, palette: "neutral" })), "dark", PALETTES), neutral.dark);
+  } finally {
+    delete globalThis.window;
   }
 });

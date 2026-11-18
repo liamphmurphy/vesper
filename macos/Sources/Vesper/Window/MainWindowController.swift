@@ -60,6 +60,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         if kind == .vesper {
             toolbarController = ToolbarController(owner: self)
             window.toolbar = toolbarController?.toolbar
+            track({ [weak self] in self?.state.pageMode }) { [weak self] mode in self?.applyPageMode(mode) }
             track({ [weak self] in (self?.state.title, self?.state.subtitle) }) { [weak self] title, subtitle in
                 guard let self, let title else { return }
                 self.window?.title = cleanTabTitle(title)
@@ -79,6 +80,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         } else {
             content.bridge?.send(command)
         }
+    }
+
+    /// Match the window to the page's effective mode, so a person who forces Dark in Vesper while macOS is
+    /// Light gets a consistent window. When they agree the window follows the system (no override).
+    private func applyPageMode(_ mode: ColorMode?) {
+        guard let window else { return }
+        guard let mode, mode != AppearanceMonitor.current().mode else { window.appearance = nil; return }
+        window.appearance = NSAppearance(named: mode == .dark ? .darkAqua : .aqua)
     }
 
     func connect(_ conn: Connection) { content.connect(conn) }

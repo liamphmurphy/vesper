@@ -36,7 +36,9 @@ import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import {
   buildRunsNavModel,
   needsItemId,
-  RUN_FILTER_ACTION,
+  RUN_AGENT_FILTER,
+  RUN_OPTIONS_FILTER,
+  RUN_SPACE_FILTER,
   RUN_HIDE_DONE,
   RUN_LOAD_MORE,
   RUN_RETRY,
@@ -45,6 +47,7 @@ import {
   type NeedsRowData,
   type RunListBody,
 } from "@/lib/native-shell/models/runs";
+import { agentAvatarColor } from "@/lib/native-shell/models/common";
 import type { NativeCommand } from "@/lib/native-shell/protocol";
 
 type Run = Schemas["Run"];
@@ -342,6 +345,7 @@ function standaloneBody(data: RunListData, search: string, query: string): RunLi
         title: i.title,
         subtitle: [kind.label, i.ticket_key || i.project, i.agent?.name].filter(Boolean).join(" · "),
         agentName: i.agent?.name,
+        agentColor: i.agent ? agentAvatarColor(i.agent.color_index) : undefined,
         trailing: waited(i.created_at),
         tone: kind.tone === "blocked" ? "blocked" : "human",
       };
@@ -357,6 +361,7 @@ function standaloneBody(data: RunListData, search: string, query: string): RunLi
         title: runTitle(r),
         subtitle: runLine(r),
         agentName: r.agent.name,
+        agentColor: agentAvatarColor(r.agent.color_index),
         trailing: ago(r.started_at),
         dot: runDot(r),
       })),
@@ -409,11 +414,10 @@ function useRunsNative(selected?: string) {
   });
   const onCommand = (cmd: NativeCommand) => {
     if (cmd.type === "nav.search" && cmd.searchId === RUN_SEARCH) setSearch(cmd.value);
-    else if (cmd.type === "nav.action" && cmd.actionId === RUN_FILTER_ACTION && cmd.menuItemId) {
-      const id = cmd.menuItemId;
-      if (id === RUN_HIDE_DONE) set("done", data.hideDone ? undefined : "hide");
-      else if (id.startsWith("space:")) set("project", id.slice(6));
-      else if (id.startsWith("agent:")) set("agent", id.slice(6) || undefined);
+    else if (cmd.type === "nav.filter") {
+      if (cmd.filterId === RUN_OPTIONS_FILTER && cmd.value === RUN_HIDE_DONE) set("done", cmd.checked ? "hide" : undefined);
+      else if (cmd.filterId === RUN_SPACE_FILTER) set("project", cmd.value);
+      else if (cmd.filterId === RUN_AGENT_FILTER) set("agent", cmd.value || undefined);
     } else if (cmd.type === "nav.activate") {
       if (cmd.itemId === RUN_LOAD_MORE) data.loadMore();
       else if (cmd.itemId === RUN_RETRY) data.retry();
@@ -462,6 +466,7 @@ export function activityNativeBody(
           href: `/runs/${r.id}${opts.query ? `?${opts.query}` : ""}`,
           title: runTitle(r),
           agentName: r.agent.name,
+          agentColor: agentAvatarColor(r.agent.color_index),
           trailing: compactRunTime(r, dot, opts.now),
           dot,
         };

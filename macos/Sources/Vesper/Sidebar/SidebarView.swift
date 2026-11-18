@@ -18,12 +18,15 @@ struct SidebarView: View {
         .listStyle(.sidebar)
     }
 
-    /// The selected nav row. Setting it is a user click: the page navigates, the shell only reports.
+    /// The selected row: the screen's selected nav row, else the current area (so an area looks like
+    /// a native source-list selection). Setting it is a user click: the page navigates, the shell only
+    /// reports. Areas navigate from their own tap (so re-clicking the current area works too).
     private var navSelection: Binding<String?> {
         Binding(
-            get: { state.navigator?.selectedId },
+            get: { state.navigator?.selectedId ?? (state.shell ?? ShellState.fallbackShell).currentArea.map { ShellSection.areaTag($0) } },
             set: { id in
-                guard let id, let nav = state.navigator, id != nav.selectedId else { return }
+                guard let id, !id.hasPrefix(ShellSection.areaPrefix), let nav = state.navigator, id != nav.selectedId else { return }
+                state.noteActivate(id)
                 send(.navActivate(navigatorId: nav.id, itemId: id))
             })
     }
@@ -36,22 +39,20 @@ private struct ShellSection: View {
     let send: (NativeCommand) -> Void
     @State private var appsExpanded = true
 
+    static let areaPrefix = "area:"
+    static func areaTag(_ id: AreaId) -> String { areaPrefix + id.rawValue }
+
     var body: some View {
         Section {
             ForEach(shell.areas) { area in
-                let current = shell.currentArea == area.id
-                Button { send(.navigate(path: area.href)) } label: {
-                    HStack {
-                        Label(area.label, systemImage: SidebarIcons.symbolName(area.icon))
-                            .fontWeight(current ? .semibold : .regular)
-                        Spacer()
-                        if let badge = area.badge { BadgeView(text: badge.text, tone: badge.tone) }
-                    }
-                    .contentShape(Rectangle())
+                HStack {
+                    Label(area.label, systemImage: SidebarIcons.symbolName(area.icon))
+                    Spacer()
+                    if let badge = area.badge { BadgeView(text: badge.text, tone: badge.tone) }
                 }
-                .buttonStyle(.plain)
-                .listRowBackground(current ? RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.22)).padding(.horizontal, 4) : nil)
-                .selectionDisabled()
+                .contentShape(Rectangle())
+                .simultaneousGesture(TapGesture().onEnded { send(.navigate(path: area.href)) })
+                .tag(Self.areaTag(area.id))
             }
             if !shell.apps.isEmpty {
                 DisclosureGroup(isExpanded: $appsExpanded) {
@@ -107,6 +108,15 @@ private struct NavHeader: View {
                     }
                 }
             }
+            if let filters = nav.filters, !filters.isEmpty {
+                FlowLayout(spacing: 6) {
+                    ForEach(filters) { filter in
+                        FilterMenu(filter: filter) { value, checked in
+                            send(.navFilter(navigatorId: nav.id, filterId: filter.id, value: value, checked: checked))
+                        }
+                    }
+                }
+            }
             if let picker = nav.picker {
                 Picker(picker.id, selection: Binding(get: { picker.value }, set: { send(.navPicker(navigatorId: nav.id, pickerId: picker.id, value: $0)) })) {
                     ForEach(picker.options, id: \.value) { Text($0.label).tag($0.value) }
@@ -139,6 +149,10 @@ private struct ActionButton: View {
     let onChoose: (String?) -> Void
 
     var body: some View {
+        content.disabled(action.disabled == true)
+    }
+
+    @ViewBuilder private var content: some View {
         if let menu = action.menu, !menu.isEmpty {
             Menu {
                 MenuItems(items: menu) { onChoose($0) }
@@ -156,6 +170,68 @@ private struct ActionButton: View {
             .buttonStyle(.borderless)
             .help(action.label)
         }
+    }
+}
+
+/// A pull-down with check marks: a filter in the header row.
+private struct FilterMenu: View {
+    let filter: NavFilterMenu
+    let onChoose: (String, Bool) -> Void
+
+    private var title: String {
+        if filter.multiple == true { return filter.label }
+        let checked = filter.options.first { $0.checked }?.label
+        return checked.map { "\(filter.label): \($0)" } ?? filter.label
+    }
+
+    var body: some View {
+        Menu {
+            ForEach(filter.options, id: \.value) { option in
+                Toggle(option.label, isOn: Binding(
+                    get: { option.checked },
+                    // A single-choice option stays selected when chosen again.
+                    set: { onChoose(option.value, filter.multiple == true ? $0 : true) }))
+            }
+        } label: {
+            HStack(spacing: 4) {
+                if let icon = filter.icon { Image(systemName: SidebarIcons.symbolName(icon)) }
+                Text(title).lineLimit(1)
+            }
+        }
+        .menuStyle(.button)
+        .controlSize(.small)
+        .fixedSize()
+        .help(filter.label)
+    }
+}
+
+/// Lays children out left to right, wrapping to a new line when the row is full.
+private struct FlowLayout: Layout {
+    var spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        arrange(width: proposal.width ?? .infinity, subviews: subviews).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let result = arrange(width: bounds.width, subviews: subviews)
+        for (index, origin) in result.origins.enumerated() {
+            subviews[index].place(at: CGPoint(x: bounds.minX + origin.x, y: bounds.minY + origin.y), proposal: .unspecified)
+        }
+    }
+
+    private func arrange(width: CGFloat, subviews: Subviews) -> (size: CGSize, origins: [CGPoint]) {
+        var origins: [CGPoint] = []
+        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, maxX: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > width { x = 0; y += rowHeight + spacing; rowHeight = 0 }
+            origins.append(CGPoint(x: x, y: y))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+            maxX = max(maxX, x - spacing)
+        }
+        return (CGSize(width: maxX, height: y + rowHeight), origins)
     }
 }
 
@@ -179,13 +255,14 @@ private struct NavSectionView: View {
         if section.collapsible == true, section.title != nil {
             Section(isExpanded: expanded) { rows } header: { header }
         } else {
-            Section { rows } header: { if section.title != nil || !(section.actions ?? []).isEmpty { header } }
+            Section { rows } header: { if section.title != nil || !(section.actions ?? []).isEmpty || section.badge != nil { header } }
         }
     }
 
     private var header: some View {
         HStack {
             Text(section.title ?? "")
+            if let badge = section.badge { BadgeView(text: badge.text, tone: badge.tone) }
             Spacer()
             ForEach(section.actions ?? []) { action in
                 ActionButton(action: action) { menuId in
@@ -218,8 +295,11 @@ private struct NavRow: View {
         Binding(
             get: { state.expandedOverrides[item.id] ?? item.expanded ?? false },
             set: { open in
+                // A click on the row's title activates it (nav.activate); only the disclosure triangle
+                // toggles. If the title click also flips the disclosure, the activation wins.
+                if state.recentlyActivated(item.id) { return }
                 state.expandedOverrides[item.id] = open
-                send(.navToggle(navigatorId: nav.id, itemId: item.id, expanded: open))
+                state.scheduleToggle(item.id) { send(.navToggle(navigatorId: nav.id, itemId: item.id, expanded: open)) }
             })
     }
 

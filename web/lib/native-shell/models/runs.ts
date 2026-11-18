@@ -1,6 +1,6 @@
 // The Runs list as a NavModel: the standalone list (/runs) and the compact one in Work's Activity
 // view (app/(app)/runs/run-list.tsx).
-import type { Avatar, MenuItem, NavAction, NavItem, NavModel, NavPicker, NavSearch, Tone } from "../protocol.ts";
+import type { Avatar, NavFilterMenu, NavItem, NavModel, NavPicker, NavSearch, Tone } from "../protocol.ts";
 import { workHeader, type WorkHeaderInput } from "./work.ts";
 
 export type RunDot = "human" | "running" | "queued" | "done" | "failed" | "idle";
@@ -13,6 +13,8 @@ export interface RunRowData {
   title: string;
   subtitle?: string;
   agentName?: string;
+  /** The persona's literal identity color (common.ts agentAvatarColor), for the avatar. */
+  agentColor?: string;
   trailing: string;
   dot: RunDot;
 }
@@ -22,6 +24,7 @@ export interface NeedsRowData {
   title: string;
   subtitle?: string;
   agentName?: string;
+  agentColor?: string;
   trailing: string;
   /** Blocked kinds read as failures. */
   tone: "human" | "blocked";
@@ -38,21 +41,25 @@ export const RUNS_NAV_ID = "runs";
 export const RUN_LOAD_MORE = "load-more";
 export const RUN_RETRY = "retry";
 export const RUN_HIDE_DONE = "hide-done";
-export const RUN_FILTER_ACTION = "filter";
+/** Filters on the standalone /runs list: the options (Hide done), Space and Persona. */
+export const RUN_OPTIONS_FILTER = "run-options";
+export const RUN_SPACE_FILTER = "run-space";
+export const RUN_AGENT_FILTER = "run-agent";
 export const RUN_SEARCH = "run-search";
-export const RUN_VIEW_ACTION = "view";
+/** Work's Activity view filter. */
+export const RUN_VIEW_FILTER = "view";
 export const RUN_STATUS_ITEM = "status";
 
 export const runItemId = (id: string) => `run:${id}`;
 export const needsItemId = (id: string) => `needs:${id}`;
 
-const initial = (name: string): Avatar => ({ initials: name.trim().slice(0, 1).toUpperCase() || "?" });
+const initial = (name: string, color?: string): Avatar => ({ initials: name.trim().slice(0, 1).toUpperCase() || "?", ...(color ? { color } : {}) });
 
 function runItem(r: RunRowData, withHref: boolean): NavItem {
   const item: NavItem = { id: runItemId(r.id), title: r.title, trailing: r.trailing };
   if (withHref) item.href = r.href;
   if (r.subtitle) item.subtitle = r.subtitle;
-  if (r.agentName) item.avatar = initial(r.agentName);
+  if (r.agentName) item.avatar = initial(r.agentName, r.agentColor);
   const tone = DOT_TONE[r.dot];
   if (tone) item.status = tone;
   return item;
@@ -62,7 +69,7 @@ function needsItem(n: NeedsRowData, withHref: boolean): NavItem {
   const item: NavItem = { id: needsItemId(n.id), title: n.title, trailing: n.trailing, status: n.tone };
   if (withHref) item.href = n.href;
   if (n.subtitle) item.subtitle = n.subtitle;
-  if (n.agentName) item.avatar = initial(n.agentName);
+  if (n.agentName) item.avatar = initial(n.agentName, n.agentColor);
   else item.icon = "inbox";
   return item;
 }
@@ -83,9 +90,9 @@ export interface RunListBody {
 }
 
 function bodySections(b: RunListBody): NavModel["sections"] {
-  const titled = (label: string, count?: number) => (count != null ? `${label} ${count}` : label);
+  const counted = (count?: number) => (count != null ? { badge: { text: String(count) } } : {});
   const needs: NavModel["sections"] = b.needs.length
-    ? [{ id: "needs-you", title: titled(b.needsLabel, b.needs.length), items: b.needs.map((n) => needsItem(n, b.withHref)) }]
+    ? [{ id: "needs-you", title: b.needsLabel, ...counted(b.needs.length), items: b.needs.map((n) => needsItem(n, b.withHref)) }]
     : [];
   const tail: NavItem[] = [];
   if (b.error) tail.push({ id: RUN_RETRY, title: `Couldn’t load runs. ${b.error}`, subtitle: "Retry", icon: "refresh" });
@@ -94,7 +101,8 @@ function bodySections(b: RunListBody): NavModel["sections"] {
   if (b.loading) return [...needs, { id: "loading", items: [], emptyText: "Loading" }];
   const groups = b.groups.map((g) => ({
     id: `runs-${g.key}`,
-    title: titled(g.label, g.count),
+    title: g.label,
+    ...counted(g.count),
     items: g.runs.map((r) => runItem(r, b.withHref)),
   }));
   if (groups.length === 0 && b.needs.length === 0) return [{ id: "empty", items: [], emptyText: b.emptyText }];
@@ -121,18 +129,19 @@ export function buildRunsNavModel(input: {
   selectedId?: string | null;
 }): NavModel {
   const f = input.filters;
-  const menu: MenuItem[] = [
-    { id: RUN_HIDE_DONE, label: "Hide done", checked: f.hideDone },
-    { id: "sep", separator: true },
+  const filters: NavFilterMenu[] = [
+    { id: RUN_OPTIONS_FILTER, label: "View", icon: "sliders", multiple: true, options: [{ value: RUN_HIDE_DONE, label: "Hide done", checked: f.hideDone }] },
     {
-      id: "space-menu",
+      id: RUN_SPACE_FILTER,
       label: "Space",
-      children: [{ id: "space:", label: "All spaces", checked: !f.project }, ...f.projects.map((p) => ({ id: `space:${p.key}`, label: p.name, checked: f.project === p.key }))],
+      icon: "briefcase",
+      options: [{ value: "", label: "All spaces", checked: !f.project }, ...f.projects.map((p) => ({ value: p.key, label: p.name, checked: f.project === p.key }))],
     },
     {
-      id: "agent-menu",
+      id: RUN_AGENT_FILTER,
       label: "Persona",
-      children: [{ id: "agent:", label: "All personas", checked: !f.agent }, ...f.agents.map((a) => ({ id: `agent:${a.handle}`, label: a.name, checked: f.agent === a.handle }))],
+      icon: "agents",
+      options: [{ value: "", label: "All personas", checked: !f.agent }, ...f.agents.map((a) => ({ value: a.handle, label: a.name, checked: f.agent === a.handle }))],
     },
   ];
   const sections = bodySections(input.body);
@@ -142,7 +151,7 @@ export function buildRunsNavModel(input: {
   return {
     id: RUNS_NAV_ID,
     title: "Runs",
-    actions: [{ id: RUN_FILTER_ACTION, label: "Filter runs", icon: "sliders", menu }],
+    filters,
     search: { id: RUN_SEARCH, placeholder: "Search runs", value: input.search },
     sections,
     selectedId: input.selectedId ?? null,
@@ -166,16 +175,16 @@ export function buildWorkActivityNavModel(input: {
     { value: "active", label: "Running & queued" },
     { value: "failed", label: "Failed today" },
   ];
-  const actions: NavAction[] = [
-    ...head.actions,
+  const filters: NavFilterMenu[] = [
+    ...head.filters,
     {
-      id: RUN_VIEW_ACTION,
-      label: `View: ${options.find((o) => o.value === input.filter)?.label ?? "All activity"}`,
+      id: RUN_VIEW_FILTER,
+      label: "View",
       icon: "activity",
-      menu: options.map((o) => ({ id: `view:${o.value}`, label: `${o.label} (${input.counts[o.value]})`, checked: input.filter === o.value })),
+      options: options.map((o) => ({ value: o.value, label: `${o.label} (${input.counts[o.value]})`, checked: input.filter === o.value })),
     },
   ];
   const picker: NavPicker = head.picker;
   const search: NavSearch | undefined = head.search;
-  return { id: "work-activity", title: head.title, actions, picker, ...(search ? { search } : {}), sections: bodySections(input.body), selectedId: input.selectedId ?? null };
+  return { id: "work-activity", title: head.title, actions: head.actions, filters, picker, ...(search ? { search } : {}), sections: bodySections(input.body), selectedId: input.selectedId ?? null };
 }

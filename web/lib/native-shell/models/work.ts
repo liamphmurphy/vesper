@@ -2,7 +2,7 @@
 // app/(app)/work/work-nav-header.tsx) as NavModel parts, used by the Activity, Tasks, Epics and
 // Board screens. Pure: the screens add their own sections.
 import { ticketsHref } from "../../tickets-layout.ts";
-import type { MenuItem, NativeCommand, NavAction, NavModel, NavPicker, NavSearch } from "../protocol.ts";
+import type { NativeCommand, NavAction, NavFilterMenu, NavModel, NavPicker, NavSearch } from "../protocol.ts";
 
 export type WorkTab = "activity" | "tickets" | "epics";
 
@@ -33,6 +33,7 @@ export interface WorkHeaderInput {
 export interface WorkHeader {
   title: string;
   actions: NavAction[];
+  filters: NavFilterMenu[];
   picker: NavPicker;
   search?: NavSearch;
 }
@@ -47,24 +48,20 @@ export const workNewTicketHref = (project?: string) => (project ? `/tickets/new?
 const withCount = (label: string, n?: number) => (n != null && n > 0 ? `${label} ${n}` : label);
 
 export function workHeader(input: WorkHeaderInput): WorkHeader {
-  const space: MenuItem[] = [
-    ...(input.allowAllProjects === false ? [] : [{ id: "space:", label: "All spaces", checked: !input.project }]),
-    ...(input.projects ?? []).filter((p) => !p.archived).map((p) => ({ id: `space:${p.key}`, label: p.name, checked: input.project === p.key })),
+  const space: NavFilterMenu["options"] = [
+    ...(input.allowAllProjects === false ? [] : [{ value: "", label: "All spaces", checked: !input.project }]),
+    ...(input.projects ?? []).filter((p) => !p.archived).map((p) => ({ value: p.key, label: p.name, checked: input.project === p.key })),
   ];
-  const persona: MenuItem[] = [
-    { id: "agent:", label: "All personas", checked: !input.agent },
-    ...(input.agents ?? []).map((a) => ({ id: `agent:${a.handle}`, label: a.name, checked: input.agent === a.handle })),
+  const persona: NavFilterMenu["options"] = [
+    { value: "", label: "All personas", checked: !input.agent },
+    ...(input.agents ?? []).map((a) => ({ value: a.handle, label: a.name, checked: input.agent === a.handle })),
   ];
-  const spaceName = input.projects?.find((p) => p.key === input.project)?.name;
-  const agentName = input.agents?.find((a) => a.handle === input.agent)?.name;
   const header: WorkHeader = {
     title: "Work",
-    actions: [
-      { id: WORK_NEW_TICKET_ACTION, label: "New ticket", icon: "plus", accent: true },
-      ...(input.noFilters ? [] : [{ id: WORK_SPACE_FILTER, label: `Space: ${spaceName ?? (input.project ? input.project : "All spaces")}`, icon: "briefcase", menu: space }]),
-      ...(input.noPersona || input.noFilters
-        ? []
-        : [{ id: WORK_AGENT_FILTER, label: `Persona: ${agentName ?? (input.agent ? input.agent : "All personas")}`, icon: "agents", menu: persona }]),
+    actions: [{ id: WORK_NEW_TICKET_ACTION, label: "New ticket", icon: "plus", accent: true }],
+    filters: [
+      ...(input.noFilters ? [] : [{ id: WORK_SPACE_FILTER, label: "Space", icon: "briefcase", options: space }]),
+      ...(input.noPersona || input.noFilters ? [] : [{ id: WORK_AGENT_FILTER, label: "Persona", icon: "agents", options: persona }]),
     ],
     picker: {
       id: WORK_VIEW_PICKER,
@@ -99,8 +96,12 @@ export interface WorkCommandContext {
 export function handleWorkHeaderCommand(cmd: NativeCommand, ctx: WorkCommandContext): boolean {
   if (cmd.type === "nav.action") {
     if (cmd.actionId === WORK_NEW_TICKET_ACTION) ctx.push(workNewTicketHref(ctx.project));
-    else if (cmd.actionId === WORK_SPACE_FILTER && cmd.menuItemId?.startsWith("space:")) ctx.onProject(cmd.menuItemId.slice(6));
-    else if (cmd.actionId === WORK_AGENT_FILTER && cmd.menuItemId?.startsWith("agent:")) ctx.onAgent(cmd.menuItemId.slice(6));
+    else return false;
+    return true;
+  }
+  if (cmd.type === "nav.filter") {
+    if (cmd.filterId === WORK_SPACE_FILTER) ctx.onProject(cmd.value);
+    else if (cmd.filterId === WORK_AGENT_FILTER) ctx.onAgent(cmd.value);
     else return false;
     return true;
   }

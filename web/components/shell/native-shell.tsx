@@ -21,6 +21,7 @@ import { useHarnessHealth } from "@/components/domain/setup";
 import { useChatListView, useNewConversation, usePersonaNav } from "@/app/(app)/chat/_components/chat-history";
 import { NewSpaceDialog } from "@/app/(app)/spaces/_components/new-space-dialog";
 import { openCommandPalette } from "./command-menu";
+import { setSystemAccent } from "./theme";
 import { openShortcuts } from "./shortcuts";
 import { useNativeChatActions } from "./native-chat-actions";
 import { AREAS } from "./sidebar";
@@ -176,6 +177,8 @@ export function NativeShellHost() {
   // Page-level commands.
   useAnyNativeCommand((cmd: NativeCommand) => {
     if (cmd.type === "navigate") router.push(cmd.path);
+    // macOS's accent colour (and mode, which the page already follows) for the macOS palette.
+    if (cmd.type === "appearance") setSystemAccent(cmd.accent);
     if (cmd.type !== "command") return;
     const run: Record<ShellCommandName, () => void> = {
       openCommandMenu: () => openCommandPalette(typeof cmd.query === "string" ? { query: cmd.query } : undefined),

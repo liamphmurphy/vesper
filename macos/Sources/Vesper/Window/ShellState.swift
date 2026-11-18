@@ -8,8 +8,10 @@ import VesperCore
 final class ShellState {
     var shell: ShellModel?
     var navigator: NavModel? {
-        didSet { expandedOverrides = [:]; collapsedOverrides = [:] }
+        didSet { dropStaleOverrides(old: oldValue, new: navigator) }
     }
+    /// The page's effective color mode (it may differ from macOS's when the person forces Dark or Light).
+    var pageMode: ColorMode?
     /// True while the page draws a screen's list in its own fallback column.
     var navigatorFallback = false
     var toolbarItems: [ToolbarItem] = []
@@ -27,9 +29,55 @@ final class ShellState {
     /// A failed navigation, shown over the page with Retry.
     var loadError: String?
 
-    // Local expand/collapse taps, until the page sends a new model.
+    // Local expand/collapse taps, until the page's own value for that row or section changes
+    // (a page-driven "Collapse all" must win over an earlier tap).
     var expandedOverrides: [String: Bool] = [:]
     var collapsedOverrides: [String: Bool] = [:]
+
+    // One click, one command: a row click activates; the triangle alone toggles.
+    private var lastActivate: (id: String, at: Date)?
+    private var pendingToggles: [String: Task<Void, Never>] = [:]
+
+    func noteActivate(_ id: String) {
+        lastActivate = (id, Date())
+        if pendingToggles.removeValue(forKey: id).map({ $0.cancel() }) != nil { expandedOverrides[id] = nil }
+    }
+
+    func recentlyActivated(_ id: String) -> Bool {
+        guard let last = lastActivate, last.id == id else { return false }
+        return Date().timeIntervalSince(last.at) < 0.35
+    }
+
+    /// Sends the toggle shortly after the click, so a title click that also flips the disclosure can cancel it.
+    func scheduleToggle(_ id: String, send: @escaping @MainActor () -> Void) {
+        pendingToggles[id]?.cancel()
+        pendingToggles[id] = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+            self?.pendingToggles[id] = nil
+            send()
+        }
+    }
+
+    private func dropStaleOverrides(old: NavModel?, new: NavModel?) {
+        guard let new, old?.id == new.id, let old else { expandedOverrides = [:]; collapsedOverrides = [:]; return }
+        let before = Self.expandedValues(old), after = Self.expandedValues(new)
+        expandedOverrides = expandedOverrides.filter { before[$0.key] == after[$0.key] }
+        let oldSections = Dictionary(old.sections.map { ($0.id, $0.collapsed ?? false) }, uniquingKeysWith: { a, _ in a })
+        let newSections = Dictionary(new.sections.map { ($0.id, $0.collapsed ?? false) }, uniquingKeysWith: { a, _ in a })
+        collapsedOverrides = collapsedOverrides.filter { oldSections[$0.key] == newSections[$0.key] }
+    }
+
+    private static func expandedValues(_ nav: NavModel) -> [String: Bool] {
+        var out: [String: Bool] = [:]
+        func walk(_ items: [NavItem]) {
+            for item in items {
+                if let children = item.children, !children.isEmpty { out[item.id] = item.expanded ?? false; walk(children) }
+            }
+        }
+        for section in nav.sections { walk(section.items) }
+        return out
+    }
 
     /// Fixed top of the sidebar until the page describes its own.
     static let fallbackShell = ShellModel(

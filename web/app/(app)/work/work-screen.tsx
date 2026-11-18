@@ -42,7 +42,7 @@ import { BoardView } from "../tickets/_components/board-screen";
 import { activityNativeBody, RunList, useActivityLists, useRunList } from "../runs/run-list";
 import { itemHref } from "@/lib/run-list";
 import { listQuery } from "../runs/run-list";
-import { buildWorkActivityNavModel, RUN_LOAD_MORE, RUN_RETRY, RUN_VIEW_ACTION, type ActivityFilter } from "@/lib/native-shell/models/runs";
+import { buildWorkActivityNavModel, RUN_LOAD_MORE, RUN_RETRY, RUN_VIEW_FILTER, type ActivityFilter } from "@/lib/native-shell/models/runs";
 import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
 import { ticketsHref } from "@/lib/tickets-layout";
 import type { NativeCommand } from "@/lib/native-shell/protocol";
@@ -252,8 +252,8 @@ export function WorkScreen() {
               onActivity: goActivity,
             });
             if (handled) return;
-            if (cmd.type === "nav.action" && cmd.actionId === RUN_VIEW_ACTION && cmd.menuItemId?.startsWith("view:")) {
-              const next = cmd.menuItemId.slice(5);
+            if (cmd.type === "nav.filter" && cmd.filterId === RUN_VIEW_FILTER) {
+              const next = cmd.value;
               const q = new URLSearchParams(params);
               q.delete("done");
               if (next === "all") q.delete("filter");

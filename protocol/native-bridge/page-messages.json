@@ -18,6 +18,7 @@
       "title": "Knowledge",
       "actions": [
         { "id": "graph", "label": "Graph view", "icon": "graph" },
+        { "id": "export", "label": "Export", "icon": "download", "disabled": true },
         { "id": "new", "label": "New", "icon": "plus", "accent": true, "menu": [
           { "id": "new-doc", "label": "Document", "icon": "doc" },
           { "id": "sep", "separator": true },
@@ -25,9 +26,13 @@
         ] }
       ],
       "picker": { "id": "view", "value": "yours", "options": [ { "value": "yours", "label": "Yours" }, { "value": "agent", "label": "Agent knowledge", "icon": "agents" } ] },
+      "filters": [
+        { "id": "space", "label": "Space", "icon": "briefcase", "options": [ { "value": "", "label": "All spaces", "checked": false }, { "value": "VES", "label": "Vesper", "checked": true } ] },
+        { "id": "options", "label": "View", "multiple": true, "options": [ { "value": "hide-done", "label": "Hide done", "checked": true } ] }
+      ],
       "search": { "id": "filter", "placeholder": "Filter pages", "value": "" },
       "sections": [
-        { "id": "pages", "title": "Pages", "collapsible": true, "collapsed": false, "items": [
+        { "id": "pages", "title": "Pages", "badge": { "text": "3", "tone": "neutral" }, "collapsible": true, "collapsed": false, "items": [
           { "id": "p1", "title": "Architecture", "icon": "folder", "expanded": true, "children": [
             { "id": "p2", "title": "Native shell", "icon": "doc", "href": "/knowledge/2b1f0d5e-0000-4000-8000-000000000002",
               "contextMenu": [ { "id": "rename", "label": "Rename" }, { "id": "delete", "label": "Delete", "destructive": true } ] }
@@ -45,6 +50,8 @@
       { "id": "more", "label": "More", "icon": "more", "kind": "menu", "menu": [ { "id": "copy-link", "label": "Copy link" } ] },
       { "id": "companion", "label": "Companion", "icon": "panel-right", "kind": "toggle", "on": true }
   ] },
+  { "v": 1, "type": "appearance", "mode": "dark" },
+  { "v": 1, "type": "appearance", "mode": "light" },
   { "v": 1, "type": "confirmApproval", "requestId": "r1", "scope": "push_requests" },
   { "v": 1, "type": "openWorkspaceMenu", "requestId": "r2", "folder": "/Users/me/Vesper Workspaces/run-1" },
   { "v": 1, "type": "contextMenu", "requestId": "r3", "x": 120.5, "y": 48, "items": [ { "id": "a", "label": "Archive" } ] }
