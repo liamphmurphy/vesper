@@ -23,10 +23,43 @@ public enum InspectorLogic {
         return tab.kind != .web
     }
 
-    /// True when `tabId` exists in `model` and is rendered inside the native inspector (`native` or `companion`).
+    /// True when `tabId` exists in `model` and is rendered inside the native inspector (`native`, `companion`, or `panel`).
     public static func isNativeTab(_ tabId: String, in model: InspectorModel?) -> Bool {
         guard let tab = model?.tabs.first(where: { $0.id == tabId }) else { return false }
         return tab.kind != .web
+    }
+
+    public struct InspectorThickness: Equatable, Sendable {
+        public let min: Double
+        public let max: Double
+        public let preferred: Double
+
+        public init(min: Double, max: Double, preferred: Double) {
+            self.min = min; self.max = max; self.preferred = preferred
+        }
+    }
+
+    public static func thickness(for width: InspectorWidth?) -> InspectorThickness {
+        switch width ?? .regular {
+        case .regular: InspectorThickness(min: 280, max: 640, preferred: 360)
+        case .wide:    InspectorThickness(min: 360, max: 960, preferred: 540)
+        case .max:     InspectorThickness(min: 420, max: 1120, preferred: 760)
+        }
+    }
+
+    public static func popoutSize(for width: InspectorWidth?) -> (width: Double, height: Double) {
+        switch width ?? .regular {
+        case .regular: (380, 680)
+        case .wide:    (560, 740)
+        case .max:     (740, 780)
+        }
+    }
+
+    /// Computes a desired inspector width clamped to `[spec.min, spec.max]` while preserving `minContentWidth` for the main pane.
+    public static func desiredWidth(for width: InspectorWidth?, availableWidth: Double, minContentWidth: Double = 380) -> Double {
+        let spec = thickness(for: width)
+        let maxBySpace = Swift.max(spec.min, availableWidth - minContentWidth)
+        return Swift.min(spec.preferred, Swift.min(spec.max, maxBySpace))
     }
 
     /// The `NSSplitView` divider index separating main content from the trailing inspector.

@@ -16,6 +16,8 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
     var onRouteChange: (() -> Void)?
     /// Called when the page (or companion) asks to open an in-app path in the main pane.
     var onOpenInMain: ((String, Bool) -> Void)?
+    /// Called when an embedded panel asks to forward an event back to the main page.
+    var onPanelEvent: ((String, String, String?) -> Void)?
 
     private var appearanceMonitor: AppearanceMonitor?
 
@@ -69,6 +71,7 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
             state.titleMenu = menu
         case .rail(let model): state.rail = model
         case .inspector(let model): state.inspector = model
+        case .panelEvent(let tabId, let event, let payloadJson): onPanelEvent?(tabId, event, payloadJson)
         case .openInMain(let path, let newTab): onOpenInMain?(path, newTab)
         case .shell(let model): state.shell = model
         case .navigator(let model): state.navigator = model
@@ -182,6 +185,7 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
         case .title(let t, _, _): "title \(t)"
         case .rail(let m): "rail \(m == nil ? "none" : "items")"
         case .inspector(let m): "inspector \(m == nil ? "none" : "\(m!.id) open=\(m!.open) tab=\(m!.activeTabId)")"
+        case .panelEvent(let tabId, let event, _): "panelEvent \(tabId).\(event)"
         case .openInMain(let p, let newTab): "openInMain \(p) newTab=\(newTab)"
         case .shell(let s): "shell areas=\(s.areas.count) apps=\(s.apps.count)"
         case .navigator(let n): "navigator \(n?.id ?? "nil") selected=\(n?.selectedId ?? "nil") rows=\(n?.sections.flatMap { $0.items.map(\.id) }.prefix(12).joined(separator: ",") ?? "")"
