@@ -6,7 +6,6 @@ import type { Avatar, MenuItem, RailItem, RailModel, RailUsage } from "../protoc
 
 // MARK: Item ids
 
-export const RAIL_DOCK_TOGGLE = "dock.toggle";
 export const RAIL_DOCK_TAB = "dock.tab:";
 export const RAIL_PR = "pr";
 export const RAIL_PR_OPEN = "pr:";
@@ -37,19 +36,14 @@ export interface DockRailTab {
 }
 
 /** What a dock's rail buttons dispatch (the same actions the web buttons do); `run` is an action tab's own. */
-export type DockRailAction = { type: "collapse" } | { type: "open"; tab: string } | { type: "select"; tab: string } | { type: "run"; tab: string };
+export type DockRailAction = { type: "open"; tab: string } | { type: "select"; tab: string } | { type: "run"; tab: string };
 
-/** A dock's rail controls as items: fold or unfold, then one per tab. */
+/**
+ * A dock's rail controls as items: one per tab. Folding the dock is the window toolbar's inspector
+ * toggle (and ⌘\), so the rail has no fold button of its own.
+ */
 export function dockRailItems(tabs: readonly DockRailTab[], activeId: string | undefined, expanded: boolean): RailItem[] {
-  if (!tabs.length) return [];
-  const items: RailItem[] = [
-    {
-      id: RAIL_DOCK_TOGGLE,
-      label: expanded ? "Collapse panel" : "Expand panel",
-      icon: "panel-right",
-      active: expanded,
-    },
-  ];
+  const items: RailItem[] = [];
   for (const t of tabs) {
     const item: RailItem = {
       id: RAIL_DOCK_TAB + t.id,
@@ -66,7 +60,6 @@ export function dockRailItems(tabs: readonly DockRailTab[], activeId: string | u
 
 /** What the rail button `itemId` does for this dock; null for an id that isn't one of its buttons. */
 export function dockRailAction(itemId: string, tabs: readonly DockRailTab[], activeId: string | undefined, expanded: boolean): DockRailAction | null {
-  if (itemId === RAIL_DOCK_TOGGLE) return expanded ? { type: "collapse" } : { type: "open", tab: activeId ?? tabs[0]?.id ?? "" };
   if (!itemId.startsWith(RAIL_DOCK_TAB)) return null;
   const tab = itemId.slice(RAIL_DOCK_TAB.length);
   const target = tabs.find((t) => t.id === tab);
@@ -273,7 +266,7 @@ export function railEffect(
   menuItemId: string | undefined,
   ctx: { reviewUrl: (id: string) => string | undefined },
 ): RailEffect {
-  if (itemId === RAIL_DOCK_TOGGLE || itemId.startsWith(RAIL_DOCK_TAB)) return { type: "dock", itemId };
+  if (itemId.startsWith(RAIL_DOCK_TAB)) return { type: "dock", itemId };
   switch (itemId) {
     case RAIL_SETTINGS:
       return { type: "navigate", path: "/settings" };
