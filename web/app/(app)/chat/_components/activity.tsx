@@ -13,7 +13,8 @@ import { ActivityScene, useHeldScene } from "./activity-scene";
 import { ConnectorApprovalCards } from "./connector-requests";
 import { SecretApprovalCards } from "./secret-requests";
 import { StepGlyph } from "./step-glyph";
-import { PersonaAvatar, PersonaName, type PersonaLook } from "./persona";
+import { PersonaAvatar, PersonaName, usePersonaCharacterSvg, type PersonaLook } from "./persona";
+import { characterStateForStatus } from "@/lib/persona-character";
 import { Spinner } from "@/components/ui/loading";
 
 const str = (v: unknown) => (v == null ? "" : typeof v === "string" ? v : JSON.stringify(v));
@@ -260,19 +261,29 @@ export function ChatStatus({ chatId, disabled, runId, since, persona, stopping, 
   const newest = calls.at(-1);
   // What the folded strip names: the step under way, else the last one that ran.
   const current = steps.find((s) => s.state === "active") ?? steps.findLast((s) => s.state !== "planned");
+  const characterSvg = usePersonaCharacterSvg(persona);
+  const characterState = characterStateForStatus(scene.current, { awaiting, stopping });
   return (
     <div data-testid="chat-status-card" data-folded={collapsed || undefined} data-awaiting={awaiting || undefined} data-quiet={quiet || undefined}
       className={`@container w-full max-w-[min(540px,100%)] overflow-hidden rounded-[13px] border bg-surface transition-[border-color,box-shadow] duration-(--motion-slow) ${awaiting ? "border-pill-human-fg/60 shadow-[0_0_0_3px_var(--pill-human-bg)]" : quiet ? "border-[var(--state-progress)]/50" : "border-border"}`}>
       <div className="flex items-center gap-3.5 px-3 py-2.5">
         {awaiting ? (
-          <span aria-hidden className="grid h-[54px] w-[112px] flex-none place-items-center rounded-[9px] border border-pill-human-fg/50 bg-pill-human-bg/50 text-pill-human-fg motion-safe:animate-pulse @max-[380px]:h-[46px] @max-[380px]:w-[92px] @max-[280px]:hidden">
-            <Icon name="shield" size={20} />
+          <span className="flex flex-none items-center gap-2 @max-[280px]:hidden">
+            {characterSvg && <PersonaAvatar persona={persona} size={40} state="needs_you" framed={false} className="@max-[380px]:!size-8" />}
+            <span aria-hidden className="grid h-[54px] w-[112px] flex-none place-items-center rounded-[9px] border border-pill-human-fg/50 bg-pill-human-bg/50 text-pill-human-fg motion-safe:animate-pulse @max-[380px]:h-[46px] @max-[380px]:w-[92px]">
+              <Icon name="shield" size={20} />
+            </span>
+          </span>
+        ) : characterSvg ? (
+          <span className="flex flex-none items-center gap-2 @max-[280px]:hidden">
+            <PersonaAvatar persona={persona} size={44} state={characterState} framed={false} className="@max-[380px]:!size-9" />
+            <ActivityScene current={scene.current} previous={scene.previous} stopping={stopping} />
           </span>
         ) : (
           <ActivityScene current={scene.current} previous={scene.previous} stopping={stopping} />
         )}
         <span className="hidden flex-none @max-[280px]:inline-flex">
-          <PersonaAvatar persona={persona} size={24} />
+          <PersonaAvatar persona={persona} size={24} state={characterState} />
         </span>
         <div className="flex min-w-0 flex-1 flex-col justify-center gap-1">
           <p role="status" aria-live="polite" className={`truncate text-14 font-medium leading-[1.2] ${awaiting ? "text-pill-human-fg" : "text-fg"}`} data-testid="chat-status">

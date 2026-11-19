@@ -132,10 +132,31 @@ ON CONFLICT DO NOTHING RETURNING *;
 SELECT pg_notify('lazyagents_changes', json_build_object('type', 'chat.updated', 'ids', sqlc.arg(ids)::text[])::text);
 
 -- name: SetPersonaAvatar :one
--- Points the persona at a stored avatar, or clears it with both args null.
+-- Points the persona at a stored avatar, or clears it (and any SVG character) with both args null.
 UPDATE personas SET
   avatar_key = sqlc.narg(avatar_key)::text,
   avatar_content_type = sqlc.narg(avatar_content_type)::text,
+  character_svg = NULL,
+  revision = revision + 1, updated_at = now()
+WHERE id = sqlc.arg(id) AND workspace_id = sqlc.arg(workspace_id) AND user_id = sqlc.arg(user_id)
+RETURNING *;
+
+-- name: SetPersonaCharacter :one
+-- Sets the persona's animated SVG character and optionally updates or clears its fallback raster avatar.
+UPDATE personas SET
+  character_svg = sqlc.arg(character_svg)::text,
+  avatar_key = CASE WHEN sqlc.arg(set_avatar)::bool THEN sqlc.narg(avatar_key)::text ELSE avatar_key END,
+  avatar_content_type = CASE WHEN sqlc.arg(set_avatar)::bool THEN sqlc.narg(avatar_content_type)::text ELSE avatar_content_type END,
+  revision = revision + 1, updated_at = now()
+WHERE id = sqlc.arg(id) AND workspace_id = sqlc.arg(workspace_id) AND user_id = sqlc.arg(user_id)
+RETURNING *;
+
+-- name: ClearPersonaCharacter :one
+-- Clears the persona's SVG character and its fallback avatar blob pointers.
+UPDATE personas SET
+  character_svg = NULL,
+  avatar_key = NULL,
+  avatar_content_type = NULL,
   revision = revision + 1, updated_at = now()
 WHERE id = sqlc.arg(id) AND workspace_id = sqlc.arg(workspace_id) AND user_id = sqlc.arg(user_id)
 RETURNING *;

@@ -13,6 +13,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/apperr"
 	"github.com/liamphmurphy/vesper/server/internal/auth"
 	"github.com/liamphmurphy/vesper/server/internal/harness"
+	"github.com/liamphmurphy/vesper/server/internal/personas"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 )
@@ -687,7 +688,7 @@ func (s *Server) toProposals(ctx context.Context, rows []store.PersonaProposal) 
 	for _, r := range rows {
 		item := api.PersonaProposal{
 			Id: r.ID, ChatId: r.ChatID, Name: r.Name, Tone: api.PersonaTone(r.Tone), Color: r.Color, CustomInstructions: r.CustomInstructions,
-			Reason: r.Reason, State: api.PersonaProposalState(r.State), CreatedAt: r.CreatedAt, DecidedAt: r.DecidedAt,
+			Reason: r.Reason, State: api.PersonaProposalState(r.State), CharacterSvg: r.CharacterSvg, CreatedAt: r.CreatedAt, DecidedAt: r.DecidedAt,
 		}
 		if p, ok := byID[deref(r.ProposedBy)]; ok {
 			item.ProposedBy = toPersonaSummary(p)
@@ -720,7 +721,15 @@ func (s *Server) DecidePersonaProposal(ctx context.Context, req api.DecidePerson
 	if req.Body == nil || !req.Body.Decision.Valid() {
 		return nil, apperr.Invalid("decision", "must be approve or decline")
 	}
-	d, err := s.Runs.DecidePersonaProposal(ctx, ws, u.ID, req.Id, req.ProposalId, req.Body.Decision == api.Approve)
+	var pngBytes []byte
+	var pngCT string
+	if req.Body.Decision == api.DecidePersonaProposalJSONBodyDecisionApprove && req.Body.FallbackPngBase64 != nil {
+		var err error
+		if pngBytes, pngCT, err = decodeFallbackPNG(req.Body.FallbackPngBase64); err != nil {
+			return nil, err
+		}
+	}
+	d, err := s.Runs.DecidePersonaProposal(ctx, ws, u.ID, req.Id, req.ProposalId, req.Body.Decision == api.DecidePersonaProposalJSONBodyDecisionApprove)
 	if err != nil {
 		return nil, err
 	}
@@ -731,10 +740,94 @@ func (s *Server) DecidePersonaProposal(ctx context.Context, req api.DecidePerson
 		if err := s.avatarFromAttachment(ctx, personaOwner(ctx), *d.Proposal.PersonaID, *d.Avatar); err != nil {
 			s.Log.Warn("proposed persona avatar", "proposal", d.Proposal.ID, "err", err)
 		}
+	} else if d.Proposal.CharacterSvg != nil && d.Proposal.PersonaID != nil && len(pngBytes) > 0 {
+		if err := s.storeCharacterFallback(ctx, personaOwner(ctx), *d.Proposal.PersonaID, pngBytes, pngCT); err != nil {
+			s.Log.Warn("proposed persona character fallback", "proposal", d.Proposal.ID, "err", err)
+		}
 	}
 	out, err := s.toProposals(ctx, []store.PersonaProposal{d.Proposal})
 	if err != nil {
 		return nil, err
 	}
 	return api.DecidePersonaProposal200JSONResponse(out[0]), nil
+}
+
+func (s *Server) toCharacterProposals(ctx context.Context, rows []store.PersonaCharacterProposal) ([]api.PersonaCharacterProposal, error) {
+	u, _, ws := me(ctx)
+	var ids []uuid.UUID
+	for _, r := range rows {
+		if r.ProposedBy != nil && !slices.Contains(ids, *r.ProposedBy) {
+			ids = append(ids, *r.ProposedBy)
+		}
+		if !slices.Contains(ids, r.TargetPersonaID) {
+			ids = append(ids, r.TargetPersonaID)
+		}
+	}
+	byID := map[uuid.UUID]store.Persona{}
+	if len(ids) > 0 {
+		ps, err := s.Q.PersonasByIDs(ctx, store.PersonasByIDsParams{Ids: ids, WorkspaceID: ws, UserID: u.ID})
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range ps {
+			byID[p.ID] = p
+		}
+	}
+	out := make([]api.PersonaCharacterProposal, 0, len(rows))
+	for _, r := range rows {
+		target := api.PersonaSummary{Id: r.TargetPersonaID, Name: "Persona", Color: personas.DefaultColor}
+		if p, ok := byID[r.TargetPersonaID]; ok {
+			target = *toPersonaSummary(p)
+		}
+		item := api.PersonaCharacterProposal{
+			Id: r.ID, ChatId: r.ChatID, TargetPersona: target, CharacterSvg: r.CharacterSvg,
+			Summary: r.Summary, State: api.PersonaCharacterProposalState(r.State),
+			CreatedAt: r.CreatedAt, DecidedAt: r.DecidedAt,
+		}
+		if p, ok := byID[deref(r.ProposedBy)]; ok {
+			item.ProposedBy = toPersonaSummary(p)
+		}
+		out = append(out, item)
+	}
+	return out, nil
+}
+
+func (s *Server) ListPersonaCharacterProposals(ctx context.Context, req api.ListPersonaCharacterProposalsRequestObject) (api.ListPersonaCharacterProposalsResponseObject, error) {
+	u, _, ws := me(ctx)
+	rows, err := s.Runs.ListPersonaCharacterProposals(ctx, ws, u.ID, req.Id)
+	if err != nil {
+		return nil, err
+	}
+	out, err := s.toCharacterProposals(ctx, rows)
+	return api.ListPersonaCharacterProposals200JSONResponse{Proposals: out}, err
+}
+
+func (s *Server) DecidePersonaCharacterProposal(ctx context.Context, req api.DecidePersonaCharacterProposalRequestObject) (api.DecidePersonaCharacterProposalResponseObject, error) {
+	u, _, ws := me(ctx)
+	if req.Body == nil || !req.Body.Decision.Valid() {
+		return nil, apperr.Invalid("decision", "must be approve or decline")
+	}
+	var pngBytes []byte
+	var pngCT string
+	if req.Body.Decision == api.DecidePersonaCharacterProposalJSONBodyDecisionApprove && req.Body.FallbackPngBase64 != nil {
+		var err error
+		if pngBytes, pngCT, err = decodeFallbackPNG(req.Body.FallbackPngBase64); err != nil {
+			return nil, err
+		}
+	}
+	d, err := s.Runs.DecidePersonaCharacterProposal(ctx, ws, u.ID, req.Id, req.ProposalId, req.Body.Decision == api.DecidePersonaCharacterProposalJSONBodyDecisionApprove)
+	if err != nil {
+		return nil, err
+	}
+	s.deleteAvatarBlob(ctx, d.OldAvatarKey)
+	if d.Proposal.State == "approved" && len(pngBytes) > 0 {
+		if err := s.storeCharacterFallback(ctx, personaOwner(ctx), d.Target.ID, pngBytes, pngCT); err != nil {
+			s.Log.Warn("approved persona character fallback", "proposal", d.Proposal.ID, "err", err)
+		}
+	}
+	out, err := s.toCharacterProposals(ctx, []store.PersonaCharacterProposal{d.Proposal})
+	if err != nil {
+		return nil, err
+	}
+	return api.DecidePersonaCharacterProposal200JSONResponse(out[0]), nil
 }

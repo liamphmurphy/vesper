@@ -1121,6 +1121,7 @@ export const chatKeys = {
   detail: (id: string) => ["chats", "detail", id] as const,
   messages: (id: string) => ["chats", "messages", id] as const,
   proposals: (id: string) => ["chats", "proposals", id] as const,
+  characterProposals: (id: string) => ["chats", "character-proposals", id] as const,
   models: ["chats", "models"] as const,
   suggestions: ["chats", "suggestions"] as const,
 };
@@ -1248,8 +1249,27 @@ export function usePersonaProposals(id?: string) {
 export function useDecidePersonaProposal(chatId: string) {
   const done = useChatInvalidate();
   return useMutation({
-    mutationFn: (v: { id: string; decision: "approve" | "decline" }) =>
-      unwrap(api.POST("/chats/{id}/persona-proposals/{proposal_id}", { params: { path: { id: chatId, proposal_id: v.id } }, body: { decision: v.decision } })),
+    mutationFn: (v: { id: string; decision: "approve" | "decline"; fallback_png_base64?: string }) =>
+      unwrap(api.POST("/chats/{id}/persona-proposals/{proposal_id}", { params: { path: { id: chatId, proposal_id: v.id } }, body: { decision: v.decision, fallback_png_base64: v.fallback_png_base64 } })),
+    onSettled: done,
+  });
+}
+
+/** Animated SVG character drafts proposed in this chat; pending ones wait for the person's approval. */
+export function usePersonaCharacterProposals(id?: string) {
+  return useQuery({
+    enabled: !!id,
+    queryKey: chatKeys.characterProposals(id ?? ""),
+    queryFn: () => unwrap(api.GET("/chats/{id}/persona-character-proposals", { params: { path: { id: id! } } })),
+  });
+}
+
+/** Approving updates the target persona's SVG character and refreshes personas and chats. */
+export function useDecidePersonaCharacterProposal(chatId: string) {
+  const done = useChatInvalidate();
+  return useMutation({
+    mutationFn: (v: { id: string; decision: "approve" | "decline"; fallback_png_base64?: string }) =>
+      unwrap(api.POST("/chats/{id}/persona-character-proposals/{proposal_id}", { params: { path: { id: chatId, proposal_id: v.id } }, body: { decision: v.decision, fallback_png_base64: v.fallback_png_base64 } })),
     onSettled: done,
   });
 }

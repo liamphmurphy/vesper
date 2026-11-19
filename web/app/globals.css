@@ -1312,6 +1312,55 @@ details[open]::details-content { height: auto; }
   .harness-usage-track i { transition: none; }
 }
 
+/* Persona animated SVG characters (components/domain/persona-character.tsx) */
+.persona-character svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.persona-character[data-pc-clipped="true"] svg { overflow: hidden; }
+.persona-character svg * {
+  transform-box: view-box;
+  transform-origin: 32px 34px;
+  transition: opacity 180ms ease;
+}
+.persona-character[data-pc-state="static"] svg * { animation: none !important; }
+.persona-character [data-pc-motion="breathe"] { animation: pc-breathe calc(4.2s * var(--pc-speed, 1)) ease-in-out infinite; }
+.persona-character [data-pc-motion="float"] { animation: pc-float calc(3.8s * var(--pc-speed, 1)) ease-in-out infinite; }
+.persona-character [data-pc-motion="blink"] { animation: pc-blink calc(5.5s * var(--pc-speed, 1)) infinite; }
+.persona-character [data-pc-motion="glance"] { animation: pc-glance calc(2.6s * var(--pc-speed, 1)) ease-in-out infinite; }
+.persona-character [data-pc-motion="tilt"] { animation: pc-tilt calc(3.2s * var(--pc-speed, 1)) ease-in-out infinite; }
+.persona-character [data-pc-motion="nod"] { animation: pc-nod calc(1.8s * var(--pc-speed, 1)) ease-in-out infinite; }
+.persona-character [data-pc-motion="sway"] { animation: pc-sway calc(3.4s * var(--pc-speed, 1)) ease-in-out infinite; }
+.persona-character [data-pc-motion="wag"] { animation: pc-wag calc(2.4s * var(--pc-speed, 1)) ease-in-out infinite; }
+.persona-character [data-pc-motion="wag-fast"] { animation: pc-wag-fast calc(0.65s * var(--pc-speed, 1)) ease-in-out infinite; }
+.persona-character [data-pc-motion="tap"] { animation: pc-tap calc(0.7s * var(--pc-speed, 1)) ease-in-out infinite; }
+.persona-character [data-pc-motion="type"] { animation: pc-type calc(0.42s * var(--pc-speed, 1)) ease-in-out infinite; }
+.persona-character [data-pc-motion="bounce"] { animation: pc-bounce calc(0.95s * var(--pc-speed, 1)) ease-in-out infinite; }
+.persona-character [data-pc-motion="wave"] { animation: pc-wave calc(1.1s * var(--pc-speed, 1)) ease-in-out infinite; }
+.persona-character [data-pc-motion="scan"] { animation: pc-scan calc(1.7s * var(--pc-speed, 1)) ease-in-out infinite; }
+.persona-character [data-pc-motion="orbit"] { animation: pc-orbit calc(2.4s * var(--pc-speed, 1)) linear infinite; }
+.persona-character [data-pc-motion="spark"] { animation: pc-spark calc(1.2s * var(--pc-speed, 1)) ease-in-out infinite; }
+.persona-character [data-pc-motion="pulse"] { animation: pc-pulse calc(1.8s * var(--pc-speed, 1)) ease-in-out infinite; }
+.persona-character [data-pc-motion="shadow"] { animation: pc-shadow calc(4.2s * var(--pc-speed, 1)) ease-in-out infinite; }
+@keyframes pc-breathe { 50% { transform: translateY(-1.2px) scaleY(1.02); } }
+@keyframes pc-float { 50% { transform: translateY(-3px) rotate(1.5deg); } }
+@keyframes pc-blink { 0%, 44%, 48%, 100% { transform: scaleY(1); opacity: 1; } 46% { transform: scaleY(0.12); opacity: 0.25; } }
+@keyframes pc-glance { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-2px); } 70% { transform: translateX(2px); } }
+@keyframes pc-tilt { 0%, 100% { transform: rotate(0deg); } 40%, 60% { transform: rotate(-7deg) translateY(-1px); } }
+@keyframes pc-nod { 0%, 100% { transform: translateY(0) rotate(0deg); } 35% { transform: translateY(1.8px) rotate(4deg); } 65% { transform: translateY(-0.5px) rotate(-1deg); } }
+@keyframes pc-sway { 0%, 100% { transform: rotate(0deg); } 35% { transform: rotate(-4deg); } 75% { transform: rotate(4deg); } }
+@keyframes pc-wag { 0%, 100% { transform: rotate(-6deg); } 50% { transform: rotate(8deg); } }
+@keyframes pc-wag-fast { 0%, 100% { transform: rotate(-14deg); } 50% { transform: rotate(16deg); } }
+@keyframes pc-tap { 25%, 75% { transform: translateY(-2px) rotate(-2deg); } 50% { transform: translateY(0) rotate(2deg); } }
+@keyframes pc-type { 0%, 100% { transform: translateY(0); } 25% { transform: translateY(-1.6px) rotate(-1.5deg); } 75% { transform: translateY(-1.2px) rotate(1.5deg); } }
+@keyframes pc-bounce { 0%, 100% { transform: translateY(0) scale(1); } 45% { transform: translateY(-3.5px) scale(1.03); } }
+@keyframes pc-wave { 0%, 100% { transform: rotate(0deg); } 25% { transform: rotate(-14deg); } 65% { transform: rotate(10deg); } }
+@keyframes pc-scan { 0%, 100% { transform: translateX(-2.5px); } 50% { transform: translateX(2.5px); } }
+@keyframes pc-orbit { to { transform: rotate(360deg); } }
+@keyframes pc-spark { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.75) rotate(15deg); } }
+@keyframes pc-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.65; transform: scale(1.07); } }
+@keyframes pc-shadow { 50% { opacity: 0.3; transform: scaleX(0.84); } }
+@media (prefers-reduced-motion: reduce) {
+  .persona-character *, .persona-character svg * { animation: none !important; transition: none !important; }
+}
+
 /*
  * Export PDF (app/print/artifacts): the browser's print engine lays the page out.
  * Keep backgrounds (code, charts), keep headings with what follows, and don't split visuals.

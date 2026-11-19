@@ -33,7 +33,12 @@ func personaAvatarURL(p store.Persona) *string {
 }
 
 func toPersonaSummary(p store.Persona) *api.PersonaSummary {
-	return &api.PersonaSummary{Id: p.ID, Name: p.Name, Color: p.Color, AvatarUrl: personaAvatarURL(p), Capabilities: toPersonaCapabilities(p)}
+	var hasChar *bool
+	if p.CharacterSvg != nil {
+		t := true
+		hasChar = &t
+	}
+	return &api.PersonaSummary{Id: p.ID, Name: p.Name, Color: p.Color, AvatarUrl: personaAvatarURL(p), HasCharacter: hasChar, Capabilities: toPersonaCapabilities(p)}
 }
 
 func toPersonaCapabilities(p store.Persona) *api.PersonaCapabilities {
@@ -98,7 +103,7 @@ func (s *Server) toPersonas(ctx context.Context, rows []store.Persona) ([]api.Pe
 	}
 	for _, p := range rows {
 		item := api.Persona{
-			Id: p.ID, Name: p.Name, Tone: api.PersonaTone(p.Tone), Color: p.Color, AvatarUrl: personaAvatarURL(p),
+			Id: p.ID, Name: p.Name, Tone: api.PersonaTone(p.Tone), Color: p.Color, AvatarUrl: personaAvatarURL(p), CharacterSvg: p.CharacterSvg,
 			CustomInstructions: p.CustomInstructions, Capabilities: *toPersonaCapabilities(p), Repos: reposOrEmpty(p.Repos), IsDefault: p.IsDefault, ChatCount: n[p.ID], LastUsedAt: p.LastUsedAt,
 			InChatList: p.InChatList, Work: api.PersonaWork(personas.WorkNone),
 			Revision: int(p.Revision), CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,

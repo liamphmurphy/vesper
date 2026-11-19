@@ -94,6 +94,7 @@ import { HarnessSwitchDialog } from "./switch-dialog";
 import { UsageTag } from "./usage-tag";
 import { HeaderPersona, PersonaAvatar, PersonaGreeting, PersonaName, PersonaStack, PersonaSwitcher, personaLook, toneLabel, type PersonaLook } from "./persona";
 import { PersonaProposals } from "./persona-proposals";
+import { PersonaCharacterProposals } from "./persona-character-proposals";
 import { ConnectorRequests } from "./connector-requests";
 import { SecretRequests } from "./secret-requests";
 import { TicketChangeRequests } from "./ticket-change-requests";
@@ -1222,7 +1223,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
         )}>
           {/* Back and forward lead the page; a dock's chat sits beside a page that has its own. */}
           {!docked && <HistoryNav />}
-          {group ? <PersonaStack personas={participants} size={22} /> : <HeaderPersona persona={persona} personaId={c.persona?.id} fresh={fresh} onSwitch={switchPersona} disabled={locked || create.isPending} compact={docked} />}
+          {group ? <PersonaStack personas={participants} size={22} /> : <HeaderPersona persona={persona} personaId={c.persona?.id} fresh={fresh} onSwitch={switchPersona} disabled={locked || create.isPending} compact={docked} working={running} />}
           {/* The title over a live line, as a messaging app shows who's typing; the line goes when the reply ends.
               Docks with an inline switcher already name and switch the conversation in Switch chat, avoiding 1-letter crushed title stubs. */}
           <div className="flex min-w-0 flex-1 flex-col items-start justify-center">
@@ -1371,6 +1372,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
                 </li>
               )}
               <PersonaProposals chatId={c.id} disabled={c.archived} />
+              <PersonaCharacterProposals chatId={c.id} disabled={c.archived} />
               <ConnectorRequests chatId={c.id} disabled={c.archived} />
               <SecretRequests chatId={c.id} disabled={c.archived} />
               <TicketChangeRequests chatId={c.id} disabled={c.archived} />

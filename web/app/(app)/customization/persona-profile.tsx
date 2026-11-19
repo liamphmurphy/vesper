@@ -84,8 +84,15 @@ export function DeleteDialog({ persona, all, onClose }: { persona: Persona; all:
   );
 }
 
-/** The profile picture, ringed in the persona's color. */
-function Portrait({ persona }: { persona: { name: string; color: string; avatar_url?: string } }) {
+/** The profile picture or animated SVG character, ringed when using a photo/initials. */
+function Portrait({ persona }: { persona: Persona }) {
+  if (persona.character_svg) {
+    return (
+      <span className="flex flex-none items-center justify-center rounded-full p-1" style={{ background: `radial-gradient(circle, color-mix(in srgb, ${persona.color} 18%, transparent) 0%, transparent 72%)` }}>
+        <PersonaAvatar persona={persona} size={76} state="idle" framed={false} />
+      </span>
+    );
+  }
   return (
     <span className="flex flex-none rounded-full p-1" style={{ boxShadow: `inset 0 0 0 2px color-mix(in srgb, ${persona.color} 45%, transparent)` }}>
       <PersonaAvatar persona={persona} size={72} />

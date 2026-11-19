@@ -485,6 +485,8 @@ export function chatStatusOf(call: { tool: string; input: unknown }): ChatStatus
       return status("inbox", "checking what needs you");
     case "propose_persona":
       return status("persona", "sketching a new persona");
+    case "propose_persona_character":
+      return status("persona", "designing an animated character");
     case "create_space":
       return status("space", "setting up a space");
     case "create_scheduled_task":
@@ -1193,6 +1195,8 @@ export function stepDetail(call: { tool: string; input: unknown }, names: Map<st
       return named("Creating", o.prompt);
     case "propose_persona":
       return named("Sketching", o.name);
+    case "propose_persona_character":
+      return o.persona ? named("Designing character for", o.persona) : o.summary ? `Designing character: ${clip(str(o.summary))}` : general;
     case "create_space":
       return named("Setting up", o.name);
     case "list_custom_apps":

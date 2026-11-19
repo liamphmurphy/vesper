@@ -842,6 +842,17 @@ func (q *Queries) CountChatHistory(ctx context.Context, sessionID uuid.UUID) (in
 	return column_1, err
 }
 
+const countPendingPersonaCharacterProposals = `-- name: CountPendingPersonaCharacterProposals :one
+SELECT count(*)::int FROM persona_character_proposals WHERE chat_id = $1 AND state = 'pending'
+`
+
+func (q *Queries) CountPendingPersonaCharacterProposals(ctx context.Context, chatID uuid.UUID) (int32, error) {
+	row := q.db.QueryRow(ctx, countPendingPersonaCharacterProposals, chatID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countPendingPersonaProposals = `-- name: CountPendingPersonaProposals :one
 SELECT count(*)::int FROM persona_proposals WHERE chat_id = $1 AND state = 'pending'
 `
@@ -1069,9 +1080,48 @@ func (q *Queries) CreateGeneratedChatAttachment(ctx context.Context, arg CreateG
 	return i, err
 }
 
+const createPersonaCharacterProposal = `-- name: CreatePersonaCharacterProposal :one
+INSERT INTO persona_character_proposals (chat_id, run_id, proposed_by, target_persona_id, character_svg, summary)
+VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, chat_id, run_id, proposed_by, target_persona_id, character_svg, summary, state, created_at, decided_at
+`
+
+type CreatePersonaCharacterProposalParams struct {
+	ChatID          uuid.UUID
+	RunID           *uuid.UUID
+	ProposedBy      *uuid.UUID
+	TargetPersonaID uuid.UUID
+	CharacterSvg    string
+	Summary         string
+}
+
+func (q *Queries) CreatePersonaCharacterProposal(ctx context.Context, arg CreatePersonaCharacterProposalParams) (PersonaCharacterProposal, error) {
+	row := q.db.QueryRow(ctx, createPersonaCharacterProposal,
+		arg.ChatID,
+		arg.RunID,
+		arg.ProposedBy,
+		arg.TargetPersonaID,
+		arg.CharacterSvg,
+		arg.Summary,
+	)
+	var i PersonaCharacterProposal
+	err := row.Scan(
+		&i.ID,
+		&i.ChatID,
+		&i.RunID,
+		&i.ProposedBy,
+		&i.TargetPersonaID,
+		&i.CharacterSvg,
+		&i.Summary,
+		&i.State,
+		&i.CreatedAt,
+		&i.DecidedAt,
+	)
+	return i, err
+}
+
 const createPersonaProposal = `-- name: CreatePersonaProposal :one
-INSERT INTO persona_proposals (chat_id, run_id, proposed_by, name, tone, color, custom_instructions, reason, avatar_job_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, chat_id, run_id, proposed_by, name, tone, color, custom_instructions, reason, state, persona_id, created_at, decided_at, avatar_job_id
+INSERT INTO persona_proposals (chat_id, run_id, proposed_by, name, tone, color, custom_instructions, reason, avatar_job_id, character_svg)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id, chat_id, run_id, proposed_by, name, tone, color, custom_instructions, reason, state, persona_id, created_at, decided_at, avatar_job_id, character_svg
 `
 
 type CreatePersonaProposalParams struct {
@@ -1084,6 +1134,7 @@ type CreatePersonaProposalParams struct {
 	CustomInstructions string
 	Reason             string
 	AvatarJobID        *uuid.UUID
+	CharacterSvg       *string
 }
 
 func (q *Queries) CreatePersonaProposal(ctx context.Context, arg CreatePersonaProposalParams) (PersonaProposal, error) {
@@ -1097,6 +1148,7 @@ func (q *Queries) CreatePersonaProposal(ctx context.Context, arg CreatePersonaPr
 		arg.CustomInstructions,
 		arg.Reason,
 		arg.AvatarJobID,
+		arg.CharacterSvg,
 	)
 	var i PersonaProposal
 	err := row.Scan(
@@ -1114,13 +1166,42 @@ func (q *Queries) CreatePersonaProposal(ctx context.Context, arg CreatePersonaPr
 		&i.CreatedAt,
 		&i.DecidedAt,
 		&i.AvatarJobID,
+		&i.CharacterSvg,
+	)
+	return i, err
+}
+
+const decidePersonaCharacterProposal = `-- name: DecidePersonaCharacterProposal :one
+UPDATE persona_character_proposals SET state = $1, decided_at = now()
+WHERE id = $2 RETURNING id, chat_id, run_id, proposed_by, target_persona_id, character_svg, summary, state, created_at, decided_at
+`
+
+type DecidePersonaCharacterProposalParams struct {
+	State string
+	ID    uuid.UUID
+}
+
+func (q *Queries) DecidePersonaCharacterProposal(ctx context.Context, arg DecidePersonaCharacterProposalParams) (PersonaCharacterProposal, error) {
+	row := q.db.QueryRow(ctx, decidePersonaCharacterProposal, arg.State, arg.ID)
+	var i PersonaCharacterProposal
+	err := row.Scan(
+		&i.ID,
+		&i.ChatID,
+		&i.RunID,
+		&i.ProposedBy,
+		&i.TargetPersonaID,
+		&i.CharacterSvg,
+		&i.Summary,
+		&i.State,
+		&i.CreatedAt,
+		&i.DecidedAt,
 	)
 	return i, err
 }
 
 const decidePersonaProposal = `-- name: DecidePersonaProposal :one
 UPDATE persona_proposals SET state = $1, persona_id = $2, decided_at = now()
-WHERE id = $3 RETURNING id, chat_id, run_id, proposed_by, name, tone, color, custom_instructions, reason, state, persona_id, created_at, decided_at, avatar_job_id
+WHERE id = $3 RETURNING id, chat_id, run_id, proposed_by, name, tone, color, custom_instructions, reason, state, persona_id, created_at, decided_at, avatar_job_id, character_svg
 `
 
 type DecidePersonaProposalParams struct {
@@ -1147,6 +1228,7 @@ func (q *Queries) DecidePersonaProposal(ctx context.Context, arg DecidePersonaPr
 		&i.CreatedAt,
 		&i.DecidedAt,
 		&i.AvatarJobID,
+		&i.CharacterSvg,
 	)
 	return i, err
 }
@@ -1853,8 +1935,43 @@ func (q *Queries) ListChatsForUser(ctx context.Context, arg ListChatsForUserPara
 	return items, nil
 }
 
+const listPersonaCharacterProposals = `-- name: ListPersonaCharacterProposals :many
+SELECT id, chat_id, run_id, proposed_by, target_persona_id, character_svg, summary, state, created_at, decided_at FROM persona_character_proposals WHERE chat_id = $1 ORDER BY created_at, id
+`
+
+func (q *Queries) ListPersonaCharacterProposals(ctx context.Context, chatID uuid.UUID) ([]PersonaCharacterProposal, error) {
+	rows, err := q.db.Query(ctx, listPersonaCharacterProposals, chatID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PersonaCharacterProposal{}
+	for rows.Next() {
+		var i PersonaCharacterProposal
+		if err := rows.Scan(
+			&i.ID,
+			&i.ChatID,
+			&i.RunID,
+			&i.ProposedBy,
+			&i.TargetPersonaID,
+			&i.CharacterSvg,
+			&i.Summary,
+			&i.State,
+			&i.CreatedAt,
+			&i.DecidedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPersonaProposals = `-- name: ListPersonaProposals :many
-SELECT id, chat_id, run_id, proposed_by, name, tone, color, custom_instructions, reason, state, persona_id, created_at, decided_at, avatar_job_id FROM persona_proposals WHERE chat_id = $1 ORDER BY created_at, id
+SELECT id, chat_id, run_id, proposed_by, name, tone, color, custom_instructions, reason, state, persona_id, created_at, decided_at, avatar_job_id, character_svg FROM persona_proposals WHERE chat_id = $1 ORDER BY created_at, id
 `
 
 func (q *Queries) ListPersonaProposals(ctx context.Context, chatID uuid.UUID) ([]PersonaProposal, error) {
@@ -1881,6 +1998,7 @@ func (q *Queries) ListPersonaProposals(ctx context.Context, chatID uuid.UUID) ([
 			&i.CreatedAt,
 			&i.DecidedAt,
 			&i.AvatarJobID,
+			&i.CharacterSvg,
 		); err != nil {
 			return nil, err
 		}
@@ -2071,8 +2189,35 @@ func (q *Queries) LockChatTicketRun(ctx context.Context, arg LockChatTicketRunPa
 	return i, err
 }
 
+const lockPersonaCharacterProposal = `-- name: LockPersonaCharacterProposal :one
+SELECT id, chat_id, run_id, proposed_by, target_persona_id, character_svg, summary, state, created_at, decided_at FROM persona_character_proposals WHERE id = $1 AND chat_id = $2 FOR UPDATE
+`
+
+type LockPersonaCharacterProposalParams struct {
+	ID     uuid.UUID
+	ChatID uuid.UUID
+}
+
+func (q *Queries) LockPersonaCharacterProposal(ctx context.Context, arg LockPersonaCharacterProposalParams) (PersonaCharacterProposal, error) {
+	row := q.db.QueryRow(ctx, lockPersonaCharacterProposal, arg.ID, arg.ChatID)
+	var i PersonaCharacterProposal
+	err := row.Scan(
+		&i.ID,
+		&i.ChatID,
+		&i.RunID,
+		&i.ProposedBy,
+		&i.TargetPersonaID,
+		&i.CharacterSvg,
+		&i.Summary,
+		&i.State,
+		&i.CreatedAt,
+		&i.DecidedAt,
+	)
+	return i, err
+}
+
 const lockPersonaProposal = `-- name: LockPersonaProposal :one
-SELECT id, chat_id, run_id, proposed_by, name, tone, color, custom_instructions, reason, state, persona_id, created_at, decided_at, avatar_job_id FROM persona_proposals WHERE id = $1 AND chat_id = $2 FOR UPDATE
+SELECT id, chat_id, run_id, proposed_by, name, tone, color, custom_instructions, reason, state, persona_id, created_at, decided_at, avatar_job_id, character_svg FROM persona_proposals WHERE id = $1 AND chat_id = $2 FOR UPDATE
 `
 
 type LockPersonaProposalParams struct {
@@ -2098,6 +2243,7 @@ func (q *Queries) LockPersonaProposal(ctx context.Context, arg LockPersonaPropos
 		&i.CreatedAt,
 		&i.DecidedAt,
 		&i.AvatarJobID,
+		&i.CharacterSvg,
 	)
 	return i, err
 }
@@ -2278,6 +2424,9 @@ WITH candidates AS (
   SELECT pp.chat_id AS id FROM persona_proposals pp
   WHERE pp.state = 'pending'
   UNION
+  SELECT pcp.chat_id AS id FROM persona_character_proposals pcp
+  WHERE pcp.state = 'pending'
+  UNION
   SELECT tc.chat_id AS id FROM ticket_change_requests tc
   WHERE tc.state = 'pending'
   UNION
@@ -2296,6 +2445,7 @@ FROM candidates cand
 JOIN chat_sessions c ON c.id = cand.id
 CROSS JOIN LATERAL (SELECT count(*)::int AS unread FROM chat_messages m WHERE m.session_id = c.id AND m.role = 'assistant' AND m.seq > c.last_read_seq) u
 CROSS JOIN LATERAL (SELECT coalesce(EXISTS(SELECT 1 FROM persona_proposals pp WHERE pp.chat_id = c.id AND pp.state = 'pending')
+  OR EXISTS(SELECT 1 FROM persona_character_proposals pcp WHERE pcp.chat_id = c.id AND pcp.state = 'pending')
   OR EXISTS(SELECT 1 FROM ticket_change_requests tc WHERE tc.chat_id = c.id AND tc.state = 'pending')
   OR EXISTS(SELECT 1 FROM chat_ticket_runs ctr JOIN runs r ON r.id = ctr.run_id
     WHERE ctr.chat_id = c.id AND r.state = 'waiting' AND r.wait_reason IN ('human_reply', 'approval')), false)::bool AS waiting_approval) p
@@ -2329,7 +2479,7 @@ type PersonaDockChatsRow struct {
 }
 
 // A person's chats with live or unread activity, newest first.
-// waiting_approval: a persona or ticket change proposal to decide, or a run this chat started waiting on the person.
+// waiting_approval: a persona, character or ticket change proposal to decide, or a run this chat started waiting on the person.
 func (q *Queries) PersonaDockChats(ctx context.Context, arg PersonaDockChatsParams) ([]PersonaDockChatsRow, error) {
 	rows, err := q.db.Query(ctx, personaDockChats, arg.WorkspaceID, arg.CreatedBy)
 	if err != nil {
@@ -3336,6 +3486,22 @@ func (q *Queries) SetChatTitle(ctx context.Context, arg SetChatTitleParams) (Cha
 		&i.LastAssistantSeq,
 	)
 	return i, err
+}
+
+const supersedePendingCharacterProposals = `-- name: SupersedePendingCharacterProposals :exec
+UPDATE persona_character_proposals
+SET state = 'superseded', decided_at = now()
+WHERE chat_id = $1 AND target_persona_id = $2 AND state = 'pending'
+`
+
+type SupersedePendingCharacterProposalsParams struct {
+	ChatID          uuid.UUID
+	TargetPersonaID uuid.UUID
+}
+
+func (q *Queries) SupersedePendingCharacterProposals(ctx context.Context, arg SupersedePendingCharacterProposalsParams) error {
+	_, err := q.db.Exec(ctx, supersedePendingCharacterProposals, arg.ChatID, arg.TargetPersonaID)
+	return err
 }
 
 const updateChatTitleArchived = `-- name: UpdateChatTitleArchived :one

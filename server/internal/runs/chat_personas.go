@@ -36,6 +36,8 @@ const (
 	MaxRelayLimit = 50
 	// MaxPendingPersonaProposals bounds proposals waiting in one chat.
 	MaxPendingPersonaProposals = 3
+	// MaxPendingCharacterProposals bounds character proposals waiting across targets in one chat.
+	MaxPendingCharacterProposals = 10
 	// MaxProposalReasonRunes bounds why a persona proposes another.
 	MaxProposalReasonRunes = 500
 )
@@ -262,6 +264,7 @@ func GroupNote(ctx context.Context, q *store.Queries, chat store.ChatSession) (s
 		if canPicture {
 			b.WriteString("- Give it a face: pass avatar_prompt, describing a portrait of it, and the image becomes its profile picture and reference likeness once the person approves.\n")
 		}
+		b.WriteString("- Or give it an animated 64×64 SVG character with character_svg instead (read the vesper-persona-character skill first).\n")
 	}
 	return b.String(), nil
 }
@@ -338,10 +341,11 @@ func RelayChat(ctx context.Context, q *store.Queries, chatID uuid.UUID, reply st
 }
 
 // PersonaProposalInput is what propose_persona asks for: a voice, and
-// optionally a picture to make for it (AvatarPrompt).
+// optionally a picture (AvatarPrompt) or an animated SVG character (CharacterSVG).
 type PersonaProposalInput struct {
 	Name, Tone, Color, Instructions, Reason string
 	AvatarPrompt                            string
+	CharacterSVG                            string
 }
 
 // Where a proposed persona's picture stands (PersonaProposalAvatars).
@@ -381,8 +385,21 @@ func (s *Service) ProposePersona(ctx context.Context, ws, runID uuid.UUID, in Pe
 	if utf8.RuneCountInString(reason) > MaxProposalReasonRunes {
 		return out, apperr.Invalid("reason", "must be at most %d characters", MaxProposalReasonRunes)
 	}
+	hasPrompt := strings.TrimSpace(in.AvatarPrompt) != ""
+	hasChar := strings.TrimSpace(in.CharacterSVG) != ""
+	if hasPrompt && hasChar {
+		return out, apperr.Invalid("character_svg", "provide either avatar_prompt or character_svg, not both")
+	}
+	var charSVG *string
+	if hasChar {
+		checked, err := personas.CheckCharacterSVG(in.CharacterSVG)
+		if err != nil {
+			return out, err
+		}
+		charSVG = &checked
+	}
 	var avatar *chatImageRequest
-	if strings.TrimSpace(in.AvatarPrompt) != "" {
+	if hasPrompt {
 		req, err := s.prepareProposalAvatar(ctx, ws, runID, in.AvatarPrompt)
 		if err != nil {
 			return out, err
@@ -441,7 +458,7 @@ func (s *Service) ProposePersona(ctx context.Context, ws, runID uuid.UUID, in Pe
 			}
 			jobID = &job.ID
 		}
-		out, err = q.CreatePersonaProposal(ctx, store.CreatePersonaProposalParams{ChatID: chat.ID, RunID: &run.ID, ProposedBy: &p.ID, Name: d.Name, Tone: d.Tone, Color: d.Color, CustomInstructions: d.Instructions, Reason: reason, AvatarJobID: jobID})
+		out, err = q.CreatePersonaProposal(ctx, store.CreatePersonaProposalParams{ChatID: chat.ID, RunID: &run.ID, ProposedBy: &p.ID, Name: d.Name, Tone: d.Tone, Color: d.Color, CustomInstructions: d.Instructions, Reason: reason, AvatarJobID: jobID, CharacterSvg: charSVG})
 		if err != nil {
 			return err
 		}
@@ -546,7 +563,7 @@ func (s *Service) DecidePersonaProposal(ctx context.Context, ws, user, chatID, i
 		if hasAvatar && avatar.AvatarState == ProposalAvatarPending {
 			return apperr.Conflict("%s's picture is still being made; approve again in a moment, or decline.", prop.Name)
 		}
-		created, err := personas.CreateLocked(ctx, q, o, personas.NewInput{Name: prop.Name, Tone: &prop.Tone, Color: &prop.Color, Instructions: &prop.CustomInstructions})
+		created, err := personas.CreateLocked(ctx, q, o, personas.NewInput{Name: prop.Name, Tone: &prop.Tone, Color: &prop.Color, Instructions: &prop.CustomInstructions, CharacterSVG: prop.CharacterSvg})
 		if err != nil {
 			return err
 		}
@@ -637,4 +654,200 @@ func introduce(ctx context.Context, q *store.Queries, chat store.ChatSession, p 
 	body := fmt.Sprintf("(Vesper: the person just approved you, %s, a new persona %s proposed. Introduce yourself in a sentence or two, in your own voice, and say how you can help with the conversation so far.)", strings.TrimSpace(p.Name), by)
 	_, _, _, err = startChatTurn(ctx, q, chat, proj.Key, body, "low", true, 0)
 	return err
+}
+
+// PersonaCharacterProposalInput is what propose_persona_character submits.
+type PersonaCharacterProposalInput struct {
+	PersonaName string
+	SVG         string
+	Summary     string
+}
+
+// PersonaCharacterDecision holds the decided character proposal and any
+// replaced avatar blob key the caller should remove after commit.
+type PersonaCharacterDecision struct {
+	Proposal     store.PersonaCharacterProposal
+	Target       store.Persona
+	OldAvatarKey *string
+}
+
+func resolveCharacterTarget(ps []store.Persona, chat store.ChatSession, personaName string) (store.Persona, error) {
+	if name := strings.TrimSpace(personaName); name != "" {
+		for _, p := range ps {
+			if strings.EqualFold(strings.TrimSpace(p.Name), name) {
+				return p, nil
+			}
+		}
+		return store.Persona{}, apperr.Invalid("persona", "no persona named %q; pick one of your personas", name)
+	}
+	if id := ChatSpeakerID(chat); id != nil {
+		for _, p := range ps {
+			if p.ID == *id {
+				return p, nil
+			}
+		}
+	}
+	if len(ps) == 0 {
+		return store.Persona{}, apperr.Conflict("there are no personas yet; create or propose a persona first")
+	}
+	return store.Persona{}, apperr.Invalid("persona", "specify which persona this character is for (pass persona)")
+}
+
+// ProposePersonaCharacter validates and records an animated SVG character
+// proposal for a persona. Re-proposing for the same target persona supersedes
+// any earlier pending proposal in the same chat so iterative tweaking keeps one
+// active preview card.
+func (s *Service) ProposePersonaCharacter(ctx context.Context, ws, runID uuid.UUID, in PersonaCharacterProposalInput) (store.PersonaCharacterProposal, store.Persona, error) {
+	var out store.PersonaCharacterProposal
+	var target store.Persona
+	svg, err := personas.CheckCharacterSVG(in.SVG)
+	if err != nil {
+		return out, target, err
+	}
+	summary := strings.TrimSpace(in.Summary)
+	if utf8.RuneCountInString(summary) > MaxProposalReasonRunes {
+		return out, target, apperr.Invalid("summary", "must be at most %d characters", MaxProposalReasonRunes)
+	}
+	err = s.tx(ctx, func(q *store.Queries) error {
+		run, err := q.GetRun(ctx, store.GetRunParams{ID: runID, WorkspaceID: ws})
+		if err != nil {
+			return err
+		}
+		if run.Purpose != "chat" || run.State != "running" {
+			return apperr.Conflict("propose_persona_character only works while you are answering a message in a chat")
+		}
+		found, err := q.ChatSessionForRun(ctx, &run.ID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return apperr.Conflict("this chat run is no longer attached to a chat")
+		}
+		if err != nil {
+			return err
+		}
+		chat, err := q.LockChatSession(ctx, store.LockChatSessionParams{ID: found.ID, WorkspaceID: ws})
+		if err != nil {
+			return err
+		}
+		ps, err := ownerPersonas(ctx, q, chat)
+		if err != nil {
+			return err
+		}
+		target, err = resolveCharacterTarget(ps, chat, in.PersonaName)
+		if err != nil {
+			return err
+		}
+		if err := q.SupersedePendingCharacterProposals(ctx, store.SupersedePendingCharacterProposalsParams{
+			ChatID: chat.ID, TargetPersonaID: target.ID,
+		}); err != nil {
+			return err
+		}
+		n, err := q.CountPendingPersonaCharacterProposals(ctx, chat.ID)
+		if err != nil {
+			return err
+		}
+		if n >= MaxPendingCharacterProposals {
+			return apperr.Conflict("%d character proposals are already waiting for the person; ask them to decide those first.", n)
+		}
+		var proposedBy *uuid.UUID
+		if speaker := ChatSpeakerID(chat); speaker != nil {
+			if slices.ContainsFunc(ps, func(p store.Persona) bool { return p.ID == *speaker }) {
+				proposedBy = speaker
+			}
+		}
+		out, err = q.CreatePersonaCharacterProposal(ctx, store.CreatePersonaCharacterProposalParams{
+			ChatID: chat.ID, RunID: &run.ID, ProposedBy: proposedBy, TargetPersonaID: target.ID,
+			CharacterSvg: svg, Summary: summary,
+		})
+		if err != nil {
+			return err
+		}
+		_, err = q.BumpChatRevision(ctx, chat.ID)
+		return err
+	})
+	return out, target, err
+}
+
+// ListPersonaCharacterProposals returns a chat's character proposals, oldest first.
+func (s *Service) ListPersonaCharacterProposals(ctx context.Context, ws, user, chatID uuid.UUID) ([]store.PersonaCharacterProposal, error) {
+	q := store.New(s.Pool)
+	chat, err := q.GetChatSession(ctx, store.GetChatSessionParams{ID: chatID, WorkspaceID: ws})
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && chat.CreatedBy != user) {
+		return nil, apperr.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return q.ListPersonaCharacterProposals(ctx, chat.ID)
+}
+
+// DecidePersonaCharacterProposal approves or declines a pending character
+// proposal. Approving updates the target persona's character_svg and notifies
+// its chats; any replaced avatar blob key is returned for post-commit cleanup.
+func (s *Service) DecidePersonaCharacterProposal(ctx context.Context, ws, user, chatID, id uuid.UUID, approve bool) (PersonaCharacterDecision, error) {
+	var out PersonaCharacterDecision
+	o := personas.Owner{WorkspaceID: ws, UserID: user}
+	err := s.tx(ctx, func(q *store.Queries) error {
+		if err := personas.LockOwner(ctx, q, o); err != nil {
+			return err
+		}
+		chat, err := lockChat(ctx, q, ws, user, chatID)
+		if err != nil {
+			return err
+		}
+		prop, err := q.LockPersonaCharacterProposal(ctx, store.LockPersonaCharacterProposalParams{ID: id, ChatID: chat.ID})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return apperr.ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if prop.State != "pending" {
+			return apperr.Conflict("this character proposal was already %s", prop.State)
+		}
+		target, err := q.GetPersona(ctx, store.GetPersonaParams{ID: prop.TargetPersonaID, WorkspaceID: ws, UserID: user})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return apperr.Conflict("that persona no longer exists")
+		}
+		if err != nil {
+			return err
+		}
+		if !approve {
+			if out.Proposal, err = q.DecidePersonaCharacterProposal(ctx, store.DecidePersonaCharacterProposalParams{ID: prop.ID, State: "declined"}); err != nil {
+				return err
+			}
+			out.Target = target
+			if _, err = q.AppendChatMessage(ctx, store.AppendChatMessageParams{
+				SessionID: chat.ID, Role: "system",
+				BodyMd:      fmt.Sprintf("You declined the proposed animated character for %s.", target.Name),
+				ContextRefs: []byte("[]"), Citations: []byte("[]"),
+			}); err != nil {
+				return err
+			}
+			_, err = q.BumpChatRevision(ctx, chat.ID)
+			return err
+		}
+		if out.Proposal, err = q.DecidePersonaCharacterProposal(ctx, store.DecidePersonaCharacterProposalParams{ID: prop.ID, State: "approved"}); err != nil {
+			return err
+		}
+		out.OldAvatarKey = target.AvatarKey
+		out.Target, err = q.SetPersonaCharacter(ctx, store.SetPersonaCharacterParams{
+			ID: target.ID, WorkspaceID: ws, UserID: user,
+			CharacterSvg: prop.CharacterSvg, SetAvatar: true, AvatarKey: nil, AvatarContentType: nil,
+		})
+		if err != nil {
+			return err
+		}
+		if err := personas.NotifyChats(ctx, q, target.ID); err != nil {
+			return err
+		}
+		if _, err = q.AppendChatMessage(ctx, store.AppendChatMessageParams{
+			SessionID: chat.ID, Role: "system",
+			BodyMd:      fmt.Sprintf("You updated %s's animated character.", target.Name),
+			ContextRefs: []byte("[]"), Citations: []byte("[]"),
+		}); err != nil {
+			return err
+		}
+		_, err = q.BumpChatRevision(ctx, chat.ID)
+		return err
+	})
+	return out, err
 }

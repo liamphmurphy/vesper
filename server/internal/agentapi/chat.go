@@ -3,6 +3,7 @@ package agentapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
@@ -296,6 +297,7 @@ type ProposePersonaIn struct {
 	Instructions string `json:"instructions,omitempty" jsonschema:"Its style and focus, at most 2000 characters, written to it in the second person"`
 	Reason       string `json:"reason,omitempty" jsonschema:"One sentence for the person on why it helps, at most 500 characters"`
 	AvatarPrompt string `json:"avatar_prompt,omitempty" jsonschema:"A detailed prompt for its profile picture, a portrait of it, at most 4000 characters. Needs your image permission. Once the person approves, the image becomes its avatar and its reference likeness"`
+	CharacterSVG string `json:"character_svg,omitempty" jsonschema:"Optional animated 64x64 SVG character instead of avatar_prompt (mutually exclusive with avatar_prompt). Read the vesper-persona-character skill first"`
 }
 
 // proposePersona asks the person to approve a new persona (see
@@ -308,13 +310,43 @@ func proposePersona(ctx context.Context, d Deps, c agents.Caller, in ProposePers
 	if s == nil {
 		return nil, apperr.Conflict("propose_persona only works in a chat with a person")
 	}
-	p, err := d.Runs.ProposePersona(ctx, c.Agent.WorkspaceID, *c.RunID, runs.PersonaProposalInput{Name: in.Name, Tone: in.Tone, Color: in.Color, Instructions: in.Instructions, Reason: in.Reason, AvatarPrompt: in.AvatarPrompt})
+	p, err := d.Runs.ProposePersona(ctx, c.Agent.WorkspaceID, *c.RunID, runs.PersonaProposalInput{Name: in.Name, Tone: in.Tone, Color: in.Color, Instructions: in.Instructions, Reason: in.Reason, AvatarPrompt: in.AvatarPrompt, CharacterSVG: in.CharacterSVG})
 	if err != nil {
 		return nil, err
 	}
 	tell := "Proposed. The person sees Approve and Decline in the chat; " + p.Name + " is only created if they approve. Don't describe it as created yet."
 	if p.AvatarJobID != nil {
 		tell += " Its picture is made right after your reply and shows on the proposal; it may still fail. Don't describe the picture: you'll see it in a follow-up turn."
+	} else if p.CharacterSvg != nil {
+		tell += " Its animated character preview shows on the proposal card in chat."
 	}
 	return map[string]any{"proposal_id": p.ID, "name": p.Name, "state": p.State, "tell_the_person": tell}, nil
+}
+
+type ProposePersonaCharacterIn struct {
+	Persona string `json:"persona,omitempty" jsonschema:"Name of the persona to update (defaults to you if you are a persona, or the chat's host)"`
+	SVG     string `json:"svg" jsonschema:"Complete 64x64 SVG document (<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\">...</svg>) using whitelisted elements and data-motion-* / data-show attributes, at most 32 KB"`
+	Summary string `json:"summary,omitempty" jsonschema:"Short summary of the character design or what changed in this revision, at most 500 characters"`
+}
+
+func proposePersonaCharacter(ctx context.Context, d Deps, c agents.Caller, in ProposePersonaCharacterIn) (any, error) {
+	s, err := chatScopeFor(ctx, d, c)
+	if err != nil {
+		return nil, err
+	}
+	if s == nil {
+		return nil, apperr.Conflict("propose_persona_character only works in a chat with a person")
+	}
+	prop, target, err := d.Runs.ProposePersonaCharacter(ctx, c.Agent.WorkspaceID, *c.RunID, runs.PersonaCharacterProposalInput{
+		PersonaName: in.Persona, SVG: in.SVG, Summary: in.Summary,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"proposal_id":     prop.ID,
+		"target_persona":  target.Name,
+		"state":           prop.State,
+		"tell_the_person": fmt.Sprintf("Proposed an animated character preview for %s. The person can test its Idle/Working/Action states and sizes on the card and click Use for %s or ask for changes. Nothing is applied until they approve.", target.Name, target.Name),
+	}, nil
 }

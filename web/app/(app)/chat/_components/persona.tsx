@@ -8,7 +8,9 @@ import { usePersonaDock } from "@/lib/api/hooks";
 import { usePersonas } from "@/lib/api/persona-hooks";
 import { cx } from "@/lib/cx";
 import { DOCK_STATE_LABEL, dockEntries, type DockState } from "@/lib/persona-dock";
+import { characterStateForDock, type CharacterState } from "@/lib/persona-character";
 import { inChatList } from "@/lib/persona-ui";
+import { PersonaCharacterView } from "@/components/domain/persona-character";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { floatPanel } from "@/components/domain/pickers";
 
@@ -18,7 +20,15 @@ import { floatPanel } from "@/components/domain/pickers";
 type Persona = Schemas["Persona"];
 type Summary = Schemas["PersonaSummary"];
 /** What a chat needs to show who it is talking to; a null persona is the built-in Assistant. */
-export type PersonaLook = { id?: string; name: string; color: string; avatar_url?: string };
+export type PersonaLook = { id?: string; name: string; color: string; avatar_url?: string; character_svg?: string; has_character?: boolean };
+
+/** Resolves a persona's animated SVG character from the look itself or the cached personas list. */
+export function usePersonaCharacterSvg(persona: PersonaLook): string | undefined {
+  const q = usePersonas();
+  if (persona.character_svg) return persona.character_svg;
+  if (!persona.id) return undefined;
+  return q.data?.personas.find((p) => p.id === persona.id)?.character_svg;
+}
 
 /** The built-in Assistant: chats without a persona, or whose persona was deleted. */
 export const BUILTIN: PersonaLook = { name: "Assistant", color: "var(--accent)" };
@@ -63,11 +73,29 @@ export function CapabilityBadges({ capabilities, className }: { capabilities?: S
   );
 }
 
-/** Avatar image cropped to a circle, or the initial on a tint of the persona color. */
-export function PersonaAvatar({ persona, size = 20, className }: { persona: PersonaLook; size?: number; className?: string }) {
+/** Animated SVG character (when present), avatar image cropped to a circle, or the initial on a tint of the persona color. */
+export function PersonaAvatar({
+  persona,
+  size = 20,
+  state = "static",
+  framed = true,
+  clipped = false,
+  className,
+}: {
+  persona: PersonaLook;
+  size?: number;
+  state?: CharacterState;
+  framed?: boolean;
+  clipped?: boolean;
+  className?: string;
+}) {
+  const characterSvg = usePersonaCharacterSvg(persona);
   const style: CSSProperties = { width: size, height: size };
   // An avatar that fails to load (removed, stale ?v=) falls back to the initial.
   const [broken, setBroken] = useState<string>();
+  if (characterSvg) {
+    return <PersonaCharacterView svg={characterSvg} color={persona.color} size={size} state={state} framed={framed} clipped={clipped} className={className} />;
+  }
   const src = avatarSrc(persona);
   if (src && broken !== src) {
     return (
@@ -98,7 +126,7 @@ export function PersonaStack({ personas, size = 16 }: { personas: PersonaLook[];
     <span className="flex flex-none items-center" data-testid="persona-stack">
       {personas.map((p, i) => (
         <span key={p.id ?? p.name} className="rounded-full ring-2 ring-surface" style={{ marginLeft: i ? -Math.round(size / 3) : 0, zIndex: personas.length - i }}>
-          <PersonaAvatar persona={p} size={size} />
+          <PersonaAvatar persona={p} size={size} clipped />
         </span>
       ))}
     </span>
@@ -270,7 +298,7 @@ export function PersonaFilter({ filter, activity, trailing }: { filter: PersonaF
   const row = (key: string, look: PersonaLook, count: number | undefined, state: DockState | undefined, tag?: string) => (
     <DropdownMenu.RadioItem key={key} value={key} className={item}>
       <span className="relative flex-none">
-        <PersonaAvatar persona={look} />
+        <PersonaAvatar persona={look} state={characterStateForDock(state)} />
         {state && <span aria-hidden className={cx("absolute -right-0.5 -top-0.5 size-2 rounded-full ring-2 ring-surface-raised", ACTIVITY_DOT[state])} />}
       </span>
       <span className="min-w-0 flex-1 truncate">{look.name}{tag && <span className="ml-1.5 text-12 text-fg-tertiary">{tag}</span>}</span>
@@ -410,7 +438,7 @@ export function PersonaSwitcher({
  * pill does; once the conversation has started it starts a new chat with another persona, since a
  * conversation keeps the persona it began with.
  */
-export function HeaderPersona({ persona, personaId, fresh, onSwitch, disabled, compact = false }: {
+export function HeaderPersona({ persona, personaId, fresh, onSwitch, disabled, compact = false, working = false }: {
   persona: PersonaLook;
   /** The chat's persona id, or undefined for the built-in Assistant. */
   personaId?: string;
@@ -420,12 +448,14 @@ export function HeaderPersona({ persona, personaId, fresh, onSwitch, disabled, c
   disabled?: boolean;
   /** In a narrow dock: the avatar and ▾ only, leaving the row to the title. */
   compact?: boolean;
+  /** Whether the persona is currently running a turn. */
+  working?: boolean;
 }) {
   const router = useRouter();
   const manage = useOpenPersonaManager();
   const q = usePersonas();
   const personas = inChatList(q.data?.personas ?? [], personaId);
-  const avatar = <PersonaAvatar persona={persona} size={22} />;
+  const avatar = <PersonaAvatar persona={persona} size={22} state={working ? "working" : "idle"} />;
   // No personas to pick from: the avatar alone says who it is.
   if (!personas.length)
     return <span title={persona.name} className="flex-none">{avatar}<span className="sr-only">Persona: {persona.name}</span></span>;
@@ -467,6 +497,7 @@ export function HeaderPersona({ persona, personaId, fresh, onSwitch, disabled, c
 /** A persona's portrait on a soft glow of its color: the welcome's centrepiece and an empty chat's greeting. */
 export function PersonaPortrait({ persona, size = 92, breathe }: { persona: PersonaLook; size?: number; breathe?: boolean }) {
   const glow = Math.round(size * 1.9);
+  const characterSvg = usePersonaCharacterSvg(persona);
   return (
     <span className="relative grid flex-none place-items-center" style={{ width: size + 8, height: size + 8 }} data-testid="persona-portrait">
       <span
@@ -474,9 +505,13 @@ export function PersonaPortrait({ persona, size = 92, breathe }: { persona: Pers
         className={cx("pointer-events-none absolute rounded-full", breathe && "wizard-breathe")}
         style={{ width: glow, height: glow, background: `radial-gradient(circle, color-mix(in srgb, ${persona.color} 20%, transparent) 0%, transparent 68%)` }}
       />
-      <span className="relative rounded-full p-[3px]" style={{ boxShadow: `0 0 0 2px color-mix(in srgb, ${persona.color} 60%, transparent)` }}>
-        <PersonaAvatar persona={persona} size={size} />
-      </span>
+      {characterSvg ? (
+        <PersonaAvatar persona={persona} size={size} state="idle" framed={false} className="relative" />
+      ) : (
+        <span className="relative rounded-full p-[3px]" style={{ boxShadow: `0 0 0 2px color-mix(in srgb, ${persona.color} 60%, transparent)` }}>
+          <PersonaAvatar persona={persona} size={size} />
+        </span>
+      )}
     </span>
   );
 }

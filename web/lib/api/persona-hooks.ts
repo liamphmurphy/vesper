@@ -118,3 +118,20 @@ export function useDeletePersonaAvatar() {
     onSettled: done,
   });
 }
+
+export function useSetPersonaCharacter() {
+  const done = usePersonaInvalidate();
+  return useMutation({
+    mutationFn: (v: { id: string; character_svg: string; fallback_png_base64?: string }) =>
+      unwrap(api.PUT("/personas/{id}/character", { params: { path: { id: v.id } }, body: { character_svg: v.character_svg, fallback_png_base64: v.fallback_png_base64 } })),
+    onSettled: done,
+  });
+}
+
+export function useDeletePersonaCharacter() {
+  const done = usePersonaInvalidate();
+  return useMutation({
+    mutationFn: (id: string) => unwrap(api.DELETE("/personas/{id}/character", { params: { path: { id } } })),
+    onSettled: done,
+  });
+}

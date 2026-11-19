@@ -1225,6 +1225,20 @@ type Persona struct {
 	DefaultHarness      string
 	DefaultModel        string
 	DefaultEffort       string
+	CharacterSvg        *string
+}
+
+type PersonaCharacterProposal struct {
+	ID              uuid.UUID
+	ChatID          uuid.UUID
+	RunID           *uuid.UUID
+	ProposedBy      *uuid.UUID
+	TargetPersonaID uuid.UUID
+	CharacterSvg    string
+	Summary         string
+	State           string
+	CreatedAt       time.Time
+	DecidedAt       *time.Time
 }
 
 type PersonaProposal struct {
@@ -1242,6 +1256,7 @@ type PersonaProposal struct {
 	CreatedAt          time.Time
 	DecidedAt          *time.Time
 	AvatarJobID        *uuid.UUID
+	CharacterSvg       *string
 }
 
 type PlanStep struct {
