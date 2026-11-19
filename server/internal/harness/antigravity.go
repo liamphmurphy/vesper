@@ -218,6 +218,7 @@ type agyStep struct {
 	StepType       string       `json:"step_type"`
 	ToolName       string       `json:"tool_name"`
 	TextDelta      string       `json:"text_delta"`
+	ThinkingDelta  string       `json:"thinking_delta"`
 	ToolInfo       *agyToolInfo `json:"tool_info"`
 	// Usage is set on each finished agent_response step: one model request.
 	Usage        *agyUsage `json:"usage"`
@@ -261,6 +262,9 @@ type agyParser struct {
 	// it exists: it is cumulative over a resumed conversation.
 	stepUsage *agyUsage
 	context   int64 // prompt size of the latest request
+	reply     replyScanner
+	replyStep int
+	activity  activityTracker
 }
 
 var agyImagePath = regexp.MustCompile(`(/[^\s"'<>` + "`" + `\\]+\.(?:png|jpe?g|webp|gif))`)
@@ -328,8 +332,47 @@ func (p *agyParser) step(s agyStep) []Event {
 			p.order = append(p.order, s.StepIndex)
 		}
 		p.text[s.StepIndex].WriteString(s.TextDelta)
-		if ended {
+		if !ended {
+			if s.StepIndex != p.replyStep {
+				p.reply = replyScanner{}
+				p.replyStep = s.StepIndex
+				p.activity.resetText()
+			}
+			if s.ThinkingDelta != "" {
+				out = append(out, p.activity.thinkingDelta(s.ThinkingDelta)...)
+			}
+			if s.TextDelta != "" {
+				blocks := p.reply.feed(s.TextDelta)
+				if len(blocks) > 0 {
+					p.activity.touch()
+					out = append(out, blocks...)
+				}
+				if !p.reply.inFence {
+					out = append(out, p.activity.textDelta(s.TextDelta)...)
+				} else if len(blocks) == 0 {
+					out = append(out, p.activity.heartbeatIfDue("writing_reply")...)
+				}
+			} else if s.ThinkingDelta == "" {
+				out = append(out, p.activity.thinkingStart()...)
+			}
+		} else {
+			p.reply = replyScanner{}
+			p.activity.reset()
 			out = append(out, p.flush(s.StepIndex)...)
+		}
+	case "thinking", "thought":
+		if !ended {
+			delta := s.ThinkingDelta
+			if delta == "" {
+				delta = s.TextDelta
+			}
+			if delta != "" {
+				out = append(out, p.activity.thinkingDelta(delta)...)
+			} else {
+				out = append(out, p.activity.thinkingStart()...)
+			}
+		} else {
+			p.activity.reset()
 		}
 	case "tool", "subagent":
 		name := s.ToolName
@@ -367,10 +410,12 @@ func (p *agyParser) step(s agyStep) []Event {
 		tool = strings.TrimPrefix(strings.TrimPrefix(tool, "mcp__"+lazyagentsServer+"_"), "_") // Vesper's own tools read as in Codex's events
 		if !p.called[s.StepIndex] && (s.ToolInfo != nil || ended) {
 			p.called[s.StepIndex] = true
+			p.activity.reset()
 			p.res.Usage.ToolCalls++
 			out = append(out, Event{"tool_call", map[string]any{"id": id, "tool": tool, "input": canon}})
 		}
 		if ended && s.ToolInfo != nil {
+			p.activity.reset()
 			output := rawText(s.ToolInfo.Output)
 			isErr := s.ToolInfo.Error != nil
 			if isErr {
@@ -518,7 +563,11 @@ func antigravityTool(name string, args map[string]any) (string, map[string]any) 
 	// internal names (init's tool list), kept in case a step reports one.
 	switch name {
 	case "run_command":
-		return "Bash", map[string]any{"command": str("CommandLine", "command", "cmd")}
+		out := map[string]any{"command": str("CommandLine", "command", "cmd")}
+		if desc := str("toolSummary", "description"); desc != "" {
+			out["description"] = desc
+		}
+		return "Bash", out
 	case "read_file", "view_file", "view_file_outline":
 		return "Read", map[string]any{"file_path": str(pathKeys...)}
 	case "write_file", "write_to_file", "create_file":

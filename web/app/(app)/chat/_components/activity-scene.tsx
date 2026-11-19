@@ -104,7 +104,7 @@ const shelfTile = (x: number, y: number, thumb: ReactNode) => (
 );
 
 /** Kinds split off a broader one keep its scene: the step rail's glyph is what tells them apart. */
-type SplitKind = "image-view" | "design-view";
+type SplitKind = "writing-reply" | "image-view" | "design-view";
 
 const SCENES: Record<Exclude<ChatStatusKind, SplitKind>, ReactNode> = {
   thinking: (
@@ -995,6 +995,7 @@ const SCENES: Record<Exclude<ChatStatusKind, SplitKind>, ReactNode> = {
 };
 
 const SCENE_OF: Record<SplitKind, Exclude<ChatStatusKind, SplitKind>> = {
+  "writing-reply": "writing-code",
   "image-view": "image",
   // Design reads share the design scene, like image-view (ADR-designs §3.9).
   "design-view": "design",

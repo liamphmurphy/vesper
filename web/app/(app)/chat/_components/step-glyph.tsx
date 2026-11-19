@@ -47,6 +47,13 @@ const GLYPHS: Record<ChatStatusKind, ReactNode> = {
       <rect className="glyph-a glyph-caret glyph-live" x="10" y="10" width="1.3" height="4" fill="currentColor" />
     </>
   ),
+  "writing-reply": (
+    <>
+      <path className="glyph-s" d="M2.5 3.5A1.5 1.5 0 0 1 4 2h8a1.5 1.5 0 0 1 1.5 1.5v6A1.5 1.5 0 0 1 12 11H6.5L4 13.5V11a1.5 1.5 0 0 1-1.5-1.5v-6z" />
+      <path className="glyph-s" d="M5 5.5h6" strokeWidth="1.2" />
+      <path className="glyph-s glyph-a glyph-draw" pathLength={1} d="M5 8h4.5" strokeWidth="1.2" />
+    </>
+  ),
   tests: [3.5, 8, 12.5].map((cx, i) => (
     <g key={cx}>
       <circle className="glyph-s" cx={cx} cy="8" r="2.2" strokeWidth="1.1" />

@@ -250,6 +250,7 @@ export function groupByDay<T extends { last_message_at?: string | null; created_
 export type ChatStatusKind =
   | "thinking"
   | "next-step"
+  | "writing-reply"
   | "connector"
   | "secret"
   | "wiki"
@@ -702,21 +703,109 @@ export function chatStatusOf(call: { tool: string; input: unknown }): ChatStatus
   }
 }
 
-const NEXT_STEP = status("next-step", "working out the next step");
+const WRITING_REPLY = status("writing-reply", "drafting a reply");
+
+/** Contextual between-steps phrases derived from the kind of step that just finished. */
+const AFTER_KIND_PHRASE: Partial<Record<ChatStatusKind, string>> = {
+  tests: "reviewing the test results",
+  build: "checking the build output",
+  install: "checking the install output",
+  "reading-code": "reviewing the code",
+  "searching-code": "reviewing what it found",
+  terminal: "checking the command output",
+  "repo-history": "reviewing the repository state",
+  web: "reviewing the search results",
+  "web-page": "reviewing the page",
+  wiki: "reviewing the notes",
+  "ticket-lookup": "reviewing the tickets",
+  runs: "reviewing the run details",
+};
+
+function nextStepStatus(lastKind?: ChatStatusKind): ChatStatusInfo {
+  return status("next-step", (lastKind && AFTER_KIND_PHRASE[lastKind]) ?? "planning the next step");
+}
+
+/** Live streaming phase from harness activity heartbeats (or a trailing thinking block). */
+export type TurnActivityPhase = "thinking" | "writing_reply";
+export type TurnActivity = { phase: TurnActivityPhase; detail?: string; at: number };
+
+/** Mirrors Go harness.thinkingHeading for non-streaming thinking blocks (e.g. completed Codex reasoning). */
+function thinkingHeading(text: string): string | undefined {
+  let latest: string | undefined;
+  for (const raw of text.split("\n")) {
+    const s = raw.trim();
+    if (!s) continue;
+    let candidate = "";
+    if (s.startsWith("**") && s.endsWith("**") && s.length > 4) {
+      const inner = s.slice(2, -2);
+      if (inner.includes("**")) continue;
+      candidate = inner;
+    } else {
+      const m = /^#{1,3}[ \t]+(.+)$/.exec(s);
+      if (!m) continue;
+      candidate = m[1];
+    }
+    candidate = candidate.replace(/`/g, "").replace(/\s+/g, " ").trim().replace(/[:.]+$/, "").trim();
+    if (candidate.length < 3 || candidate.length > 90) continue;
+    if (/:\/\/|=|\/(?:Users|home|etc|var|tmp)\//.test(candidate)) continue;
+    latest = clip(candidate, 64);
+  }
+  return latest;
+}
+
+/**
+ * The newest live phase since the last tool call or reply: thinking (with optional safe heading)
+ * or writing_reply. Cleared once a tool call, rich reply block, or finished assistant text lands.
+ */
+export function turnActivity(events: RunEventLike[] | undefined, since?: string, until?: string): TurnActivity | undefined {
+  const t = since ? Date.parse(since) : 0;
+  const hi = until ? Date.parse(until) : Infinity;
+  let activity: TurnActivity | undefined;
+  for (const e of events ?? []) {
+    const at = Date.parse(e.at);
+    if (at < t || at > hi) continue;
+    const p = e.payload;
+    if (e.type === "tool_call" || e.type === "tool_result") {
+      activity = undefined;
+    } else if (e.type === "lifecycle" && p.state === REPLY_BLOCK) {
+      activity = undefined;
+    } else if (e.type === "lifecycle" && p.state === "activity" && (p.phase === "thinking" || p.phase === "writing_reply")) {
+      const phase = p.phase as TurnActivityPhase;
+      const raw = typeof p.detail === "string" ? p.detail.trim() : "";
+      const detail = phase === "thinking" ? raw || (activity?.phase === "thinking" ? activity.detail : undefined) : undefined;
+      activity = { phase, ...(detail ? { detail } : {}), at };
+    } else if (e.type === "message" && p.kind === "thinking") {
+      const detail = thinkingHeading(str(p.text));
+      activity = { phase: "thinking", ...(detail ? { detail } : {}), at };
+    } else if (e.type === "message" && p.role === "assistant" && !p.kind) {
+      activity = undefined;
+    }
+  }
+  return activity;
+}
 
 /**
  * The chat tab's status for a running turn: the newest call's, or "thinking" before any tool runs.
- * `between` (from turnPulse) means that call finished a while ago, so its phrase would be stale.
+ * `between` (from turnPulse) means that call finished a while ago, so its phrase would be stale;
+ * `activity` carries live streaming phases (thinking with optional heading, or drafting a reply).
  */
-export function chatStatus(calls: { tool: string; input: unknown }[], between = false): ChatStatusInfo {
-  if (between) return NEXT_STEP;
-  return calls.length ? chatStatusOf(calls[calls.length - 1]) : status("thinking", "thinking");
+export function chatStatus(calls: { tool: string; input: unknown; done?: boolean }[], between = false, activity?: TurnActivity): ChatStatusInfo {
+  const newest = calls.at(-1);
+  if (newest?.tool === REPLY_BLOCK) return chatStatusOf(newest);
+  if (newest && newest.done === false) return chatStatusOf(newest);
+  if (activity?.phase === "writing_reply") return WRITING_REPLY;
+  if (!calls.length) return status("thinking", "thinking");
+  if (between || (activity?.phase === "thinking" && !!activity.detail)) {
+    const lastWork = calls.filter((c) => !BOOKKEEPING.has(bareTool(c.tool))).at(-1);
+    return nextStepStatus(lastWork ? chatStatusOf(lastWork).kind : undefined);
+  }
+  return chatStatusOf(calls[calls.length - 1]);
 }
 
 // ---- the status card's clock: is the turn alive, and how long has each step taken ----
 
-/** How long after the newest call finishes before the card stops naming it: quick calls in a row shouldn't flicker. */
-export const NEXT_STEP_AFTER_MS = 4_000;
+/** How long after the newest call finishes before the card stops naming it: normal round-trips shouldn't flicker. */
+export const NEXT_STEP_AFTER_MS = 8_000;
 /** No events for this long reads as quiet: still running, but worth a check-in. */
 export const QUIET_AFTER_MS = 2 * 60_000;
 /** The same while a call is still running, since tests or a build can legitimately take minutes. */
@@ -891,10 +980,147 @@ function hostOf(raw: string): string {
   }
 }
 
+/** Rejects model-authored shell summaries that look like raw commands, URLs, secrets or host paths. */
+function cleanShellSummary(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  const s = raw.replace(/\s+/g, " ").trim().replace(/\.+$/, "");
+  if (!s) return "";
+  if (/:\/\/|[A-Z_][A-Z0-9_]*=|--?(?:token|secret|password|key|auth)\b|\/(?:Users|home|etc|var|tmp)\//i.test(s)) return "";
+  return clip(s, 60);
+}
+
+const GIT_SUBCOMMAND_DETAIL: Record<string, string> = {
+  status: "Checking git status",
+  diff: "Checking git diff",
+  log: "Checking git log",
+  branch: "Checking branches",
+  checkout: "Switching branches",
+  switch: "Switching branches",
+  fetch: "Syncing with origin",
+  pull: "Syncing with origin",
+  rebase: "Updating branch",
+  merge: "Updating branch",
+  show: "Inspecting a commit",
+  stash: "Managing git stash",
+  add: "Staging changes",
+  blame: "Checking git blame",
+};
+
+const GO_TEST_VALUE_FLAGS = new Set(["-run", "-skip", "-bench", "-count", "-timeout", "-tags", "-parallel", "-cpu", "-coverprofile", "-coverpkg", "-o", "-fuzz", "-fuzztime", "-ldflags", "-gcflags"]);
+
+/**
+ * Coarse, secret-free target extracted from common shell commands (e.g. Codex command_execution,
+ * which carries no description field). Never echoes env vars, credentials, URLs, or arbitrary args.
+ */
+function shellTarget(command: string, kind: ChatStatusKind): string {
+  let c = command.trim().replace(/^(\S*\/)?(ba|z)?sh\s+-l?c\s+/, "");
+  if ((c.startsWith("'") && c.endsWith("'")) || (c.startsWith("\"") && c.endsWith("\""))) c = c.slice(1, -1).trim();
+  if (c.startsWith("(") && c.endsWith(")")) c = c.slice(1, -1).trim();
+  let dir = "";
+  const cd = /^cd\s+([^\s;&|]+)\s*(?:&&|;)\s*/.exec(c);
+  if (cd) {
+    const rawDir = cd[1].replace(/^['"]|['"]$/g, "");
+    const base = basename(rawDir);
+    if (/^[A-Za-z0-9._-]+$/.test(base) && base !== "." && base !== "..") dir = base;
+    c = c.slice(cd[0].length).trim();
+  }
+  // Drop leading env assignments so secrets never reach the label.
+  c = c.replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S+)\s+)+/, "");
+  const head = c.split(/\s*(?:&&|\|\||;|\|)\s*/)[0]?.trim() ?? "";
+  if (!head) return "";
+
+  if (kind === "tests") {
+    const goTest = /^go\s+test\b(.*)$/.exec(head);
+    if (goTest) {
+      const tokens = goTest[1].trim().split(/\s+/).filter(Boolean);
+      for (let i = 0; i < tokens.length; i++) {
+        const tok = tokens[i];
+        if (GO_TEST_VALUE_FLAGS.has(tok)) {
+          i++;
+          continue;
+        }
+        if (tok.startsWith("-")) continue;
+        if (/^\.\/[A-Za-z0-9_./-]+$/.test(tok) && tok !== "./...") return `Testing ${clip(tok, 48)}`;
+      }
+      return dir ? `Testing ${dir}` : "";
+    }
+    const jsTest = /^(?:npm|pnpm|yarn)\s+(?:run\s+)?(test(?::[A-Za-z0-9_-]+)?)\b/.exec(head);
+    if (jsTest) {
+      const script = jsTest[1];
+      if (script !== "test") return dir ? `Running ${dir} ${script}` : `Running ${script}`;
+      return dir ? `Running ${dir} tests` : "";
+    }
+    const runnerTest = /^(?:npx\s+)?(?:pytest|jest|vitest|playwright\s+test|rspec)\b(.*)$/.exec(head);
+    if (runnerTest) {
+      const tokens = runnerTest[1].trim().split(/\s+/).filter(Boolean);
+      for (const tok of tokens) {
+        if (tok.startsWith("-") || tok === "run") continue;
+        if (/^[A-Za-z0-9_./-]+\.[A-Za-z0-9]+$/.test(tok)) return `Testing ${clip(basename(tok), 48)}`;
+      }
+      return dir ? `Running ${dir} tests` : "";
+    }
+    const cargoTest = /^cargo\s+test\b(.*)$/.exec(head);
+    if (cargoTest) {
+      const tokens = cargoTest[1].trim().split(/\s+/).filter(Boolean);
+      for (let i = 0; i < tokens.length; i++) {
+        const tok = tokens[i];
+        if (tok === "-p" || tok === "--package") {
+          const pkg = tokens[++i];
+          if (pkg && /^[A-Za-z0-9_.-]+$/.test(pkg)) return `Testing ${clip(pkg, 48)}`;
+          continue;
+        }
+        if (tok.startsWith("-")) continue;
+        if (/^[A-Za-z0-9_:-]+$/.test(tok)) return `Testing ${clip(tok, 48)}`;
+      }
+      return dir ? `Running ${dir} tests` : "";
+    }
+    if (/^make\s+test\b/.test(head) && dir) return `Running ${dir} tests`;
+    return "";
+  }
+
+  if (kind === "build") {
+    const goBuild = /^go\s+(build|vet)\b(.*)$/.exec(head);
+    if (goBuild) {
+      const verb = goBuild[1] === "vet" ? "Vetting" : "Building";
+      const tokens = goBuild[2].trim().split(/\s+/).filter(Boolean);
+      for (let i = 0; i < tokens.length; i++) {
+        const tok = tokens[i];
+        if (tok === "-o" || tok === "-tags" || tok === "-ldflags") {
+          i++;
+          continue;
+        }
+        if (tok.startsWith("-")) continue;
+        if (/^\.\/[A-Za-z0-9_./-]+$/.test(tok) && tok !== "./...") return `${verb} ${clip(tok, 48)}`;
+      }
+      return `${verb} ${dir || "Go packages"}`;
+    }
+    const jsBuild = /^(?:npm|pnpm|yarn)\s+(?:run\s+)?(build|lint|typecheck)\b/.exec(head);
+    if (jsBuild) {
+      const verb = jsBuild[1] === "lint" ? "Linting" : jsBuild[1] === "typecheck" ? "Type-checking" : "Building";
+      return dir ? `${verb} ${dir}` : `${verb} ${jsBuild[1] === "build" ? "project" : "code"}`;
+    }
+    if (/^(?:npx\s+)?tsc\b/.test(head)) return dir ? `Type-checking ${dir}` : "Type-checking";
+    if (/^(?:npx\s+)?eslint\b/.test(head)) return dir ? `Linting ${dir}` : "Linting code";
+    if (/^gofmt\b/.test(head)) return "Formatting Go code";
+    const cargo = /^cargo\s+(build|check|clippy)\b/.exec(head);
+    if (cargo) return cargo[1] === "clippy" ? "Running clippy" : cargo[1] === "check" ? "Checking Rust build" : "Building Rust";
+    return "";
+  }
+
+  if (kind === "repo-history") {
+    const m = new RegExp(`^${GIT}(${Object.keys(GIT_SUBCOMMAND_DETAIL).join("|")})\\b`, "i").exec(head);
+    if (m) return GIT_SUBCOMMAND_DETAIL[m[1].toLowerCase()] ?? "";
+    return "";
+  }
+
+  if (kind === "install" && dir) return `Installing ${dir} dependencies`;
+  return "";
+}
+
 /**
  * What a step is doing right now, safe for the chat tab: a file's name but not its path,
- * search terms, page names and sites. A shell command stays its kind of work ("Running tests"),
- * since commands are long and can carry secrets. Memory stays general because it's private.
+ * search terms, page names and sites. Shell commands use their model-authored summary or a
+ * coarse, secret-free target rather than the raw command. Memory stays general because it's private.
  * Tools that take only an id use `names`, what earlier calls in the turn said it's called.
  */
 export function stepDetail(call: { tool: string; input: unknown }, names: Map<string, string> = new Map()): string {
@@ -1020,6 +1246,16 @@ export function stepDetail(call: { tool: string; input: unknown }, names: Map<st
       return known(o.id) ? `Checking ${known(o.id)}` : general;
     case "list_runs":
       return o.ticket || o.agent ? `Checking runs of ${clip(str(o.ticket || o.agent))}` : general;
+    case "Bash":
+    case "bash":
+    case "shell":
+    case "exec_command":
+    case "shell_command": {
+      const summary = cleanShellSummary(o.description ?? o.toolSummary);
+      if (summary) return summary;
+      const cmd = typeof o.command === "string" ? o.command : typeof o.cmd === "string" ? o.cmd : "";
+      return shellTarget(cmd, kind) || general;
+    }
     case "get_video_transcript":
       return typeof o.from_seconds === "number" && o.from_seconds > 0 ? `Watching from ${Math.floor(o.from_seconds / 60)}:${String(Math.floor(o.from_seconds % 60)).padStart(2, "0")}` : general;
   }
@@ -1116,8 +1352,8 @@ function withDetail(steps: ChatStep[], calls: ToolCall[]): ChatStep[] {
  * work began. Otherwise its consecutive tool calls with the same description as one step, newest active, in the same
  * high-level wording as the status line.
  */
-export function chatSteps(calls: ToolCall[], notes?: TurnNote[], opts: { between?: boolean; clock?: TurnClock } = {}): { steps: ChatStep[]; planned: boolean } {
-  const { steps, planned, owner } = buildSteps(calls, opts.between);
+export function chatSteps(calls: ToolCall[], notes?: TurnNote[], opts: { between?: boolean; clock?: TurnClock; activity?: TurnActivity } = {}): { steps: ChatStep[]; planned: boolean } {
+  const { steps, planned, owner } = buildSteps(calls, opts.between, opts.activity);
   if (opts.clock) stampTimes(steps, calls, owner, opts.clock);
   if (notes?.length) {
     const byKey = new Map(steps.map((st) => [st.key, st]));
@@ -1147,14 +1383,15 @@ function stampTimes(steps: ChatStep[], calls: ToolCall[], owner: (string | undef
   }
   const next = byKey.get(NEXT_STEP_KEY);
   const newest = calls.at(-1);
-  if (next && newest) next.startedAt = clock.calls.get(newest.key)?.doneAt;
+  if (next) next.startedAt = newest ? clock.calls.get(newest.key)?.doneAt : clock.started;
 }
 
 /**
  * The steps, and for each call the key of the step it was part of (none for bookkeeping, or work before the plan started).
- * `between`: a planless turn's newest step is finished, and a stand-in "Working out the next step" is under way instead.
+ * `between`: a planless turn's newest step is finished, and a contextual stand-in step is under way instead.
+ * `activity`: live harness phase (thinking heading or drafting a reply) between tool calls.
  */
-function buildSteps(calls: ToolCall[], between = false): { steps: ChatStep[]; planned: boolean; owner: (string | undefined)[] } {
+function buildSteps(calls: ToolCall[], between = false, activity?: TurnActivity): { steps: ChatStep[]; planned: boolean; owner: (string | undefined)[] } {
   const owner: (string | undefined)[] = new Array(calls.length).fill(undefined);
   const versions = planVersions(calls);
   const latest = versions[versions.length - 1]?.items;
@@ -1184,7 +1421,15 @@ function buildSteps(calls: ToolCall[], between = false): { steps: ChatStep[]; pl
       steps.push({ key: String(call.key), title: phrase[0].toUpperCase() + phrase.slice(1), state: call === newest ? "active" : "done", kind });
       owner[i] = String(call.key);
     }
-    return { steps: withDetail(steps, calls), planned: true, owner };
+    const detailed = withDetail(steps, calls);
+    if (activity && (!newest || (newest.done && newest.tool !== REPLY_BLOCK))) {
+      const active = detailed.find((s) => s.state === "active");
+      if (active) {
+        if (activity.phase === "writing_reply") active.detail = "Drafting a reply";
+        else if (activity.detail) active.detail = activity.detail;
+      }
+    }
+    return { steps: detailed, planned: true, owner };
   }
   const steps: ChatStep[] = [];
   let last: string | undefined;
@@ -1202,14 +1447,36 @@ function buildSteps(calls: ToolCall[], between = false): { steps: ChatStep[]; pl
     steps.push({ key: String(call.key), title: phrase[0].toUpperCase() + phrase.slice(1), state: failed ? "failed" : "done", kind });
     owner[i] = String(call.key);
   }
-  if (!steps.length) return { steps, planned: false, owner };
+  if (!steps.length) {
+    if (activity?.phase === "writing_reply") {
+      steps.push({ key: NEXT_STEP_KEY, title: "Drafting a reply", state: "active", kind: "writing-reply" });
+    } else if (activity?.phase === "thinking" && activity.detail) {
+      steps.push({ key: NEXT_STEP_KEY, title: "Thinking", state: "active", kind: "thinking", detail: activity.detail });
+    }
+    return { steps, planned: false, owner };
+  }
   const newest = steps[steps.length - 1];
   const finished = newest.state;
   newest.state = "active";
   withDetail(steps, calls);
-  if (between) {
+  const lastCall = calls.at(-1);
+  const callRunning = !!lastCall && !lastCall.done;
+  const replyBlockActive = lastCall?.tool === REPLY_BLOCK;
+  const showPostTool = !callRunning && !replyBlockActive && (activity?.phase === "writing_reply" || between || (activity?.phase === "thinking" && !!activity.detail));
+  if (showPostTool) {
     newest.state = finished;
-    steps.push({ key: NEXT_STEP_KEY, title: "Working out the next step", state: "active", kind: "next-step" });
+    if (activity?.phase === "writing_reply") {
+      steps.push({ key: NEXT_STEP_KEY, title: "Drafting a reply", state: "active", kind: "writing-reply" });
+    } else {
+      const { phrase } = nextStepStatus(newest.kind);
+      steps.push({
+        key: NEXT_STEP_KEY,
+        title: phrase[0].toUpperCase() + phrase.slice(1),
+        state: "active",
+        kind: "next-step",
+        ...(activity?.detail ? { detail: activity.detail } : {}),
+      });
+    }
   }
   return { steps, planned: false, owner };
 }
