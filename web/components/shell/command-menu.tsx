@@ -452,10 +452,16 @@ export function CommandMenu() {
       window.open(row.href, "_blank", "noopener");
       return;
     }
+    if (row.href) returnFocus.current = null;
     close(false);
     if (row.recent) remember(row.recent);
     if (row.perform) row.perform();
-    else if (row.href) router.push(row.href);
+    else if (row.href) {
+      router.push(row.href);
+      if (row.href.startsWith("/knowledge/")) {
+        window.dispatchEvent(new CustomEvent("la:knowledge-reveal", { detail: { href: row.href } }));
+      }
+    }
   };
 
   /** ⌥↵: a new chat with the row attached, as "New chat with … attached" does for the page you're on. */
@@ -1338,11 +1344,10 @@ export function CommandMenu() {
           }}
           onCloseAutoFocus={(e) => {
             // Back to whatever had focus before ⌘K (Radix would pick the body when opened by keyboard).
+            // Cleared on navigation so returning focus to a previously clicked sidebar row can't yank scroll back.
+            e.preventDefault();
             const el = returnFocus.current;
-            if (el?.isConnected) {
-              e.preventDefault();
-              el.focus();
-            }
+            if (el?.isConnected) el.focus();
           }}
         >
           {/* A hairline of the theme's accent along the top edge: the palette's only ornament. */}
