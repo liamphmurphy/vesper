@@ -281,9 +281,9 @@ export function EditorLayout({
           <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-auto bg-bg">{main}</div>
         </div>
         {/* The dock is the companion: in the shell's right-hand column on wide screens, here on phones.
-            An app's panels unmount while the dock is collapsed, as they always have. */}
+            An app's panels unmount once the dock finishes collapsing, as they always have. */}
         <CompanionPortal>
-          {docked && <Dock uid={uid} tabs={dock} state={state} dispatch={dispatch} panels={state.open && !state.hidden ? panels : null} railOnly={compact} />}
+          {docked && <Dock uid={uid} tabs={dock} state={state} dispatch={dispatch} unmountWhenClosed railOnly={compact} />}
         </CompanionPortal>
       </div>
       {compact && docked && (
@@ -341,6 +341,7 @@ export function Dock({
   state,
   dispatch,
   panels,
+  unmountWhenClosed = false,
   overlay = "xl",
   railOnly = false,
 }: {
@@ -350,6 +351,8 @@ export function Dock({
   dispatch: (a: DockAction) => void;
   /** The tab panels, if not the default dockPanels; null renders none (they unmount while collapsed). */
   panels?: ReactNode;
+  /** Unmount tab panels once the collapse animation finishes (keeps them visible during the slide; ⌘. hiding keeps them mounted). */
+  unmountWhenClosed?: boolean;
   overlay?: "xl" | "lg";
   /** Phones: only the rail, whose icons open the owner's sheet. */
   railOnly?: boolean;
@@ -368,10 +371,34 @@ export function Dock({
     }
     return ref;
   };
-  if (!tabs.length) return null;
-  // ⌘. hides the dock but keeps its panels mounted (the owner passes null panels to unmount them).
+  // ⌘. hides the dock but keeps its panels mounted (the owner passes null panels or unmountWhenClosed to unmount them).
   const shown = state.open && !state.hidden;
   const expanded = !railOnly && shown;
+  const [phase, setPhase] = useState<"idle" | "opening" | "closing">("idle");
+  const [wasShown, setWasShown] = useState(shown);
+  if (shown !== wasShown) {
+    setWasShown(shown);
+    setPhase(shown ? "opening" : "closing");
+  }
+  useEffect(() => {
+    if (phase === "idle") return;
+    // Settle even when transitionend doesn't fire (hidden ancestor, zero-width viewport, JSDOM).
+    const id = window.setTimeout(() => setPhase("idle"), 300);
+    return () => window.clearTimeout(id);
+  }, [phase]);
+  if (!tabs.length) return null;
+  const visible = shown || phase === "closing";
+  const animating = phase !== "idle";
+  const widthClass =
+    active?.wide === "max"
+      ? "[--dock-w:clamp(360px,calc(100vw-692px),984px)] max-xl:[--dock-w:min(984px,calc(100vw-96px))]"
+      : active?.wide
+        ? overlay === "xl"
+          ? "[--dock-w:min(540px,50vw)] max-xl:[--dock-w:min(540px,calc(100vw-96px))]"
+          : "[--dock-w:min(540px,50vw)] max-lg:[--dock-w:min(540px,calc(100vw-96px))]"
+        : overlay === "xl"
+          ? "[--dock-w:360px] max-xl:[--dock-w:min(360px,calc(100vw-96px))]"
+          : "[--dock-w:360px] max-lg:[--dock-w:min(360px,calc(100vw-96px))]";
   const renderTab = (t: DockTab) => {
     if (t.run) {
       return (
@@ -431,34 +458,37 @@ export function Dock({
     <>
       {!railOnly && <aside
         aria-label="Panel"
-        hidden={!shown}
+        hidden={!visible}
+        data-open={shown}
+        onTransitionEnd={(e) => {
+          if (e.target === e.currentTarget && e.propertyName === "width") setPhase("idle");
+        }}
         className={cx(
-          "flex min-w-0 flex-none flex-col border-l border-border-subtle bg-surface",
-          active?.wide === "max"
-            ? "w-[min(984px,calc(100vw-692px))] min-w-[360px] max-xl:w-[min(984px,calc(100vw-96px))]"
-            : active?.wide
-              ? "w-[min(540px,50vw)]"
-              : "w-[360px]",
+          "flex min-w-0 flex-none flex-col border-l border-border-subtle bg-surface w-(--dock-w)",
+          widthClass,
           overlay === "xl"
-            ? "max-xl:absolute max-xl:inset-y-0 max-xl:right-0 max-xl:z-20 max-xl:max-w-[calc(100vw-96px)] max-xl:shadow-[var(--shadow-float)]"
-            : "max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:z-20 max-lg:max-w-[calc(100vw-96px)] max-lg:shadow-[var(--shadow-float)]",
-          !shown && "hidden",
+            ? "max-xl:absolute max-xl:inset-y-0 max-xl:right-0 max-xl:z-20 max-xl:shadow-[var(--shadow-float)]"
+            : "max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:z-20 max-lg:shadow-[var(--shadow-float)]",
+          animating && "motion-dock",
+          !visible && "hidden",
         )}
       >
-        {/* One row, as tall as the page's top bar it continues: the active tab's header (the chat's, for
-            Chat; else the tab's name). Its controls stay in the right rail. */}
-        <div data-testid="dock-header" className="flex h-[44px] flex-none items-center gap-1 border-b border-border-subtle bg-surface pl-1 pr-2">
-          <div className="flex min-w-0 flex-1 items-center">
-            {panelTabs.map((t) => (
-              <div key={t.id} ref={slotRef(t.id)} data-dock-header={t.id} hidden={t.id !== active?.id}
-                className={cx("min-w-0 flex-1 items-center", t.id === active?.id && "peer flex empty:hidden")} />
-            ))}
-            <span className="hidden min-w-0 flex-1 truncate px-2 text-13 font-semibold text-fg peer-empty:block">{active?.label}</span>
+        <div className="flex min-h-0 flex-1 flex-col w-(--dock-w)">
+          {/* One row, as tall as the page's top bar it continues: the active tab's header (the chat's, for
+              Chat; else the tab's name). Its controls stay in the right rail. */}
+          <div data-testid="dock-header" className="flex h-[44px] flex-none items-center gap-1 border-b border-border-subtle bg-surface pl-1 pr-2">
+            <div className="flex min-w-0 flex-1 items-center">
+              {panelTabs.map((t) => (
+                <div key={t.id} ref={slotRef(t.id)} data-dock-header={t.id} hidden={t.id !== active?.id}
+                  className={cx("min-w-0 flex-1 items-center", t.id === active?.id && "peer flex empty:hidden")} />
+              ))}
+              <span className="hidden min-w-0 flex-1 truncate px-2 text-13 font-semibold text-fg peer-empty:block">{active?.label}</span>
+            </div>
           </div>
+          <DockSlotsContext.Provider value={slots}>
+          {panels !== undefined ? panels : unmountWhenClosed && !state.open && phase !== "closing" ? null : dockPanels(uid, panelTabs, active?.id)}
+          </DockSlotsContext.Provider>
         </div>
-        <DockSlotsContext.Provider value={slots}>
-        {panels === undefined ? dockPanels(uid, panelTabs, active?.id) : panels}
-        </DockSlotsContext.Provider>
       </aside>}
       {!state.hidden && (
         railOnly ? (

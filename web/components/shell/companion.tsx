@@ -114,7 +114,7 @@ function DefaultCompanion() {
     window.addEventListener(COMPANION_OPEN_EVENT, onOpen);
     return () => window.removeEventListener(COMPANION_OPEN_EVENT, onOpen);
   }, [dispatch]);
-  return <Dock uid={uid} tabs={tabs} state={state} dispatch={dispatch} panels={state.open ? undefined : null} />;
+  return <Dock uid={uid} tabs={tabs} state={state} dispatch={dispatch} unmountWhenClosed />;
 }
 
 /**
