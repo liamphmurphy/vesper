@@ -681,33 +681,6 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
         }
       : undefined;
 
-  const left =
-    navItems.length > 0 ? (
-      <nav aria-label="App views" className="flex flex-col gap-0.5 p-2">
-        {navItems.map((item) => {
-          const selected = item.id === currentNav;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => {
-                setActiveNav(item.id);
-                postToFrame({ type: "vesper:nav-select", id: item.id });
-              }}
-              aria-current={selected ? "page" : undefined}
-              className={cx(
-                "flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-left text-13 transition-colors",
-                selected ? "bg-selected font-medium text-fg" : "text-fg-secondary hover:bg-hover hover:text-fg",
-              )}
-            >
-              {item.icon && <Icon name={resolveAppIcon(item.icon)} size={14} className="flex-none" />}
-              <span className="truncate">{item.label}</span>
-            </button>
-          );
-        })}
-      </nav>
-    ) : undefined;
-
   const main = (
     <div className="flex min-h-0 flex-1 flex-col">
       {(headApproval || runtimeError) && (
@@ -931,7 +904,6 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
       header={header}
       nativeHeader={nativeHeader}
       nativeLeft={nativeLeft}
-      left={left}
       main={main}
       dock={dockTabs}
       show={show}

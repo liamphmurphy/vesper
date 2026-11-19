@@ -6,14 +6,14 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { cx } from "@/lib/cx";
 import { HOME_TAB, START_TAB, ancestors, buildTree, closeOtherTabs, closeTab, closeTabsToRight, folderPaths, isoDay, joinPath, kindHref, movedPath, nameOf, openTab, pageHref, pageIcon, parentOf, parseKind, startTabKind, type Tab, type TreeFolder, type TreeRow } from "@/lib/knowledge";
 import { useAllPages, useCreatePage, useDaily, useDeleteFolder, useDeletePage, useMoveFolder, useMovePage, usePage } from "@/lib/api/knowledge-hooks";
-import { ContextMenu, DropdownMenu } from "radix-ui";
+import { ContextMenu } from "radix-ui";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { floatPanel } from "@/components/domain/pickers";
 import { useSlideStarters, type StarterKey } from "@/lib/api/slides-hooks";
 import { useNewDeck } from "@/components/domain/use-new-deck";
 import { toast } from "@/lib/toast";
 import { useCreateDesign, type DesignStarter } from "@/lib/api/designs-hooks";
-import { Kbd, Skeleton } from "@/components/ui/primitives";
+import { Kbd } from "@/components/ui/primitives";
 import { useToday } from "./kit";
 import { isTyping } from "@/components/shell/shortcuts";
 import { NavigatorPortal, openInNewTab } from "@/components/shell/navigator-slot";
@@ -27,7 +27,7 @@ import { buildKnowledgeNavModel, K } from "@/lib/native-shell/models/knowledge";
 import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import type { NativeCommand } from "@/lib/native-shell/protocol";
 import { KnowledgeChatProvider, useKnowledgeChat } from "./chat-context";
-import { DeleteDialog, ExplorerMenu, MoveDialog, NewFolderDialog, RenameDialog, RenameField, type ExplorerTarget, type MenuEntry } from "./explorer-actions";
+import { DeleteDialog, MoveDialog, NewFolderDialog, RenameDialog, type ExplorerTarget } from "./explorer-actions";
 
 type View = "yours" | "agent";
 
@@ -113,8 +113,6 @@ const viewStore = localStore<View>(VIEW_KEY, "yours");
 const openStore = localStore<string[]>(OPEN_KEY, DEFAULT_OPEN);
 const NO_PINS: string[] = [];
 const pinnedStore = localStore<string[]>(PINNED_KEY, NO_PINS);
-// A folder lists this many pages until "+ N more", so one big folder can't bury the rest of the tree.
-const FOLDER_PAGES = 8;
 
 /** The tab a Knowledge address shows; ?kind= on Knowledge's own address is a kind's start page. */
 function activeTab(pathname: string, kind: string | null): string | undefined {
@@ -481,38 +479,16 @@ function Explorer({ pathname }: { pathname: string }) {
     const wantView: View = current.audience === "agent" ? "agent" : "yours";
     if (viewStore.get() !== wantView) viewStore.set(wantView);
   }, [activeId, current]);
-  // Reveal and scroll the left file tree to the opened page (e.g. from the command palette or a wiki link).
-  const navRef = useRef<HTMLElement>(null);
-  const scrolledFor = useRef<string | undefined>(undefined);
-  const [revealTick, setRevealTick] = useState(0);
+  // Reveal the opened page's folders in the file tree.
   useEffect(() => {
     const onReveal = (e: Event) => {
       const href = e instanceof CustomEvent ? (e.detail as { href?: string } | undefined)?.href : undefined;
       if (href && !href.startsWith("/knowledge/")) return;
       setClosed(() => new Set());
-      setRevealTick((n) => n + 1);
     };
     window.addEventListener("la:knowledge-reveal", onReveal);
     return () => window.removeEventListener("la:knowledge-reveal", onReveal);
   }, [setClosed]);
-  useEffect(() => {
-    if (!activeId) {
-      scrolledFor.current = undefined;
-      return;
-    }
-    const key = `${activeId}:${revealTick}`;
-    if (scrolledFor.current === key) return;
-    const nav = navRef.current;
-    const el = nav?.querySelector<HTMLElement>(`[data-tree-page="${activeId}"]`);
-    if (!nav || !el) return;
-    scrolledFor.current = key;
-    const navRect = nav.getBoundingClientRect();
-    const elRect = el.getBoundingClientRect();
-    const inView = elRect.top >= navRect.top && elRect.bottom <= navRect.bottom;
-    if (!inView && typeof el.scrollIntoView === "function") {
-      el.scrollIntoView({ block: "center", behavior: "smooth" });
-    }
-  }, [activeId, open, tree, revealTick]);
   const toggle = (path: string) => {
     if (open.has(path)) {
       openStore.set(stored.filter((f) => f !== path));
@@ -634,45 +610,7 @@ function Explorer({ pathname }: { pathname: string }) {
     );
   };
 
-  const blankMenu: MenuEntry[] = [
-    { icon: "edit", label: "New page", onSelect: () => newPageIn("") },
-    { icon: "folder", label: "New folder", onSelect: () => openDialog({ kind: "folder", parent: "" }) },
-  ];
-  const actions: TreeActions = {
-    renaming,
-    renameError: (renaming?.startsWith("p:") ? movePage.error : moveFolder.error)?.message,
-    renamePending: movePage.isPending || moveFolder.isPending,
-    cancelRename: () => setRenaming(null),
-    renamePage,
-    renameFolder,
-    pageMenu: (p) => [
-      { icon: "msg", label: "Ask a Persona", onSelect: () => chat.ask(p) },
-      { icon: "bookmark", label: pinnedIds.includes(p.id) ? "Unpin" : "Pin to top", onSelect: () => togglePin(p.id) },
-      "separator",
-      { icon: "edit", label: "Rename", onSelect: () => startRename(`p:${p.id}`) },
-      { icon: "folder", label: "Move to…", onSelect: () => openDialog({ kind: "move", target: { kind: "page", page: p } }) },
-      { icon: "link", label: "Copy link", onSelect: () => void navigator.clipboard?.writeText(`[[${p.title}]]`) },
-      "separator",
-      { icon: "plus", label: "New page beside it", onSelect: () => newPageIn(parentOf(p.path)) },
-      "separator",
-      { icon: "trash", label: "Delete", danger: true, onSelect: () => openDialog({ kind: "delete", target: { kind: "page", page: p } }) },
-    ],
-    folderMenu: (f) => [
-      { icon: "msg", label: "Ask a Persona", onSelect: () => chat.askFolder({ path: f.path, pages: pagePaths(f, FOLDER_CONTEXT_PAGES), count: f.count }) },
-      "separator",
-      { icon: "plus", label: "New page", onSelect: () => newPageIn(f.path) },
-      { icon: "folder", label: "New folder", onSelect: () => openDialog({ kind: "folder", parent: f.path }) },
-      "separator",
-      { icon: "edit", label: "Rename", onSelect: () => startRename(`f:${f.path}`) },
-      { icon: "folder", label: "Move to…", onSelect: () => openDialog({ kind: "move", target: { kind: "folder", folder: f } }) },
-      "separator",
-      { icon: "trash", label: "Delete folder", danger: true, onSelect: () => openDialog({ kind: "delete", target: { kind: "folder", folder: f } }) },
-    ],
-  };
-
-
   // The native sidebar's version of this list: the same state and handlers, driven by the shell's commands.
-  const native = useIsNativeShell();
   const deck = useNewDeck();
   const design = useCreateDesign();
   const starters = useSlideStarters();
@@ -768,92 +706,7 @@ function Explorer({ pathname }: { pathname: string }) {
 
   return (
     <>
-    {/* The explorer is the left column's list on Knowledge screens, not a second sidebar beside it. */}
-    <NavigatorPortal native={{ model: nativeModel, onCommand: nativeCommand }}>
-    <aside aria-label="Knowledge explorer" className="flex min-h-0 flex-1 flex-col">
-      <div className="flex h-8 flex-none items-center gap-1 pl-4 pr-2.5">
-        <span className="flex-1 text-13 font-semibold text-fg">Knowledge</span>
-        <ExplorerButton icon="graph" label="Graph view" href="/knowledge/graph" />
-        <ExplorerButton icon="link" label="Keep notes connected" href="/knowledge/connect" />
-        <ExplorerButton icon="shrink" label="Collapse all folders" onClick={collapseAll} />
-        {/* Last and in the accent, like Chats' New chat: every list in the column ends its title row with its own +. */}
-        <NewPageMenu onDocument={newPage} />
-      </div>
-      <div role="radiogroup" aria-label="Which knowledge" className="mx-3 flex h-7 flex-none rounded-md border border-border-subtle bg-surface-sunken p-0.5">
-        {(
-          [
-            ["yours", "Yours", undefined],
-            ["agent", "Agent knowledge", "agents"],
-          ] as const
-        ).map(([v, label, icon]) => (
-          <button
-            key={v}
-            role="radio"
-            aria-checked={k.view === v}
-            onClick={() => k.setView(v)}
-            className={cx("flex items-center justify-center gap-1.5 whitespace-nowrap rounded text-12 font-medium", v === "yours" ? "w-[72px] flex-none" : "flex-1", k.view === v ? "bg-selected text-fg" : "text-fg-tertiary hover:text-fg-secondary")}
-          >
-            {icon && <Icon name={icon} size={12} />}
-            {label}
-          </button>
-        ))}
-      </div>
-      <button
-        onClick={k.openSwitcher}
-        className="mx-3 mt-2.5 flex h-[30px] flex-none items-center gap-2 rounded-md border border-border bg-surface px-2.5 text-left text-12 text-fg-tertiary hover:border-border-strong"
-      >
-        <Icon name="search" size={13} />
-        <span className="flex-1 truncate">Search pages and #tags</span>
-        <Kbd>⌘⇧K</Kbd>
-      </button>
-      <nav ref={navRef} aria-label="Pages" className="mt-3 min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-        {pages.isPending ? (
-          <div className="space-y-2 px-2">
-            {Array.from({ length: 8 }, (_, i) => (
-              <Skeleton key={i} className="h-4" style={{ width: `${50 + ((i * 17) % 40)}%` }} />
-            ))}
-          </div>
-        ) : tree.count === 0 ? (
-          <p className="px-2 py-3 text-12 leading-relaxed text-fg-tertiary">{agent ? "No agent knowledge yet. Runs write their memory and proposed patterns here." : "No pages yet. Create one, capture a thought, or import your Obsidian vault."}</p>
-        ) : (
-          <ExplorerMenu entries={blankMenu} className="min-h-full">
-            {pinned.length > 0 && (
-              <section aria-label="Pinned" className="mb-3">
-                <h3 className="px-2 pb-1 text-10 font-bold uppercase tracking-[0.06em] text-fg-tertiary">Pinned</h3>
-                <ul className="space-y-px">
-                  {pinned.map((p) => (
-                    <li key={p.id}>
-                      <ExplorerMenu entries={actions.pageMenu(p)} className={menuRow}>
-                        <TreeLink href={pageHref(p.id, p.title)} icon="bookmark" label={p.title} depth={-1} active={p.id === activeId} />
-                      </ExplorerMenu>
-                    </li>
-                  ))}
-                </ul>
-                <h3 className="px-2 pb-1 pt-3 text-10 font-bold uppercase tracking-[0.06em] text-fg-tertiary">Folders</h3>
-              </section>
-            )}
-            <FolderItems folder={tree} depth={0} open={open} toggle={toggle} activeId={activeId} actions={actions} />
-          </ExplorerMenu>
-        )}
-      </nav>
-      <div className="flex-none border-t border-border-subtle px-2 py-2">
-        <button onClick={k.openToday} className="flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-13 font-medium text-fg-2 hover:bg-hover">
-          <Icon name="clock" size={14} className="text-fg-secondary" />
-          Today
-          <span className="text-12 font-normal text-fg-tertiary">{today?.toLocaleDateString("en", { weekday: "short", month: "short", day: "numeric" })}</span>
-        </button>
-        <button onClick={k.openCapture} className="flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-13 font-medium text-fg-2 hover:bg-hover">
-          <Icon name="inbox" size={14} className="text-fg-secondary" />
-          Quick capture
-          <Kbd className="ml-auto">⌥⌘N</Kbd>
-        </button>
-        <button onClick={k.openImport} className="flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-13 font-medium text-fg-2 hover:bg-hover">
-          <Icon name="upload" size={14} className="text-fg-secondary" />
-          Import Obsidian vault
-        </button>
-      </div>
-    </aside>
-    </NavigatorPortal>
+    <NavigatorPortal native={{ model: nativeModel, onCommand: nativeCommand }} />
       {dialog?.kind === "move" && (
         <MoveDialog
           target={dialog.target}
@@ -874,29 +727,15 @@ function Explorer({ pathname }: { pathname: string }) {
         />
       )}
       {dialog?.kind === "folder" && <NewFolderDialog parent={dialog.parent} pending={create.isPending} error={create.error?.message} onCreate={(n) => newFolder(dialog.parent, n)} onClose={closeDialog} />}
-      {native && renamingPage && (
+      {renamingPage && (
         <RenameDialog initial={renamingPage.title} error={movePage.error?.message} pending={movePage.isPending} onCommit={(name) => renamePage(renamingPage, name)} onCancel={() => setRenaming(null)} />
       )}
-      {native && renamingFolder && (
+      {renamingFolder && (
         <RenameDialog initial={renamingFolder.name} error={moveFolder.error?.message} pending={moveFolder.isPending} onCommit={(name) => renameFolder(renamingFolder, name)} onCancel={() => setRenaming(null)} />
       )}
     </>
   );
 }
-
-type TreeActions = {
-  renaming: string | null;
-  renameError?: string;
-  renamePending: boolean;
-  cancelRename: () => void;
-  renamePage: (p: TreeRow, name: string) => void;
-  renameFolder: (f: TreeFolder, name: string) => void;
-  pageMenu: (p: TreeRow) => MenuEntry[];
-  folderMenu: (f: TreeFolder) => MenuEntry[];
-};
-
-// The row whose menu is open stays highlighted, as in Obsidian.
-const menuRow = "rounded-md data-[state=open]:bg-hover";
 
 const DESIGN_STARTERS: { key: DesignStarter; label: string }[] = [
   { key: "blank", label: "Blank" },
@@ -905,163 +744,3 @@ const DESIGN_STARTERS: { key: DesignStarter; label: string }[] = [
   { key: "diagram", label: "Diagram" },
   { key: "wireframe", label: "Wireframe" },
 ];
-const newItem = "flex h-8 cursor-default select-none items-center gap-2 rounded-md px-2 text-13 outline-none data-[highlighted]:bg-hover data-[disabled]:opacity-50";
-
-/**
- * The explorer's +: a document, a deck or a design (LAZYAGENTS-212). A deck or design is made with
- * its own chat and gets its page as it's made; its old address finds that page and opens it here.
- */
-function NewPageMenu({ onDocument }: { onDocument: () => void }) {
-  const router = useRouter();
-  const deck = useNewDeck();
-  const design = useCreateDesign();
-  const starters = useSlideStarters();
-  const busy = deck.pending || design.isPending;
-  return (
-    <DropdownMenu.Root>
-      <DropdownMenu.Trigger asChild>
-        <button type="button" aria-label="New page" title="New page, deck or design" disabled={busy}
-          className="grid size-7 place-items-center rounded-md text-accent hover:bg-hover disabled:opacity-50">
-          <Icon name="plus" size={14} />
-        </button>
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Portal>
-        <DropdownMenu.Content align="start" sideOffset={4} className={cx(floatPanel, "w-[200px]")}>
-          <DropdownMenu.Item className={newItem} onSelect={onDocument}>
-            <Icon name="artifacts" size={13} className="text-fg-tertiary" />Document
-          </DropdownMenu.Item>
-          <DropdownMenu.Sub>
-            <DropdownMenu.SubTrigger className={newItem}>
-              <Icon name="slides" size={13} className="text-fg-tertiary" />
-              <span className="flex-1">Deck</span>
-              <Icon name="chevr" size={12} className="text-fg-tertiary" />
-            </DropdownMenu.SubTrigger>
-            <DropdownMenu.Portal>
-              <DropdownMenu.SubContent sideOffset={4} className={cx(floatPanel, "w-[200px]")}>
-                <DropdownMenu.Item className={newItem} onSelect={() => deck.start()}>Blank</DropdownMenu.Item>
-                {(starters.data ?? []).map((st) => (
-                  <DropdownMenu.Item key={st.key} className={newItem} title={st.description} onSelect={() => deck.start(st.key as StarterKey)}>
-                    <span className="min-w-0 flex-1 truncate">{st.name}</span>
-                    <span className="flex-none font-mono text-11 text-fg-tertiary">{st.slide_count}</span>
-                  </DropdownMenu.Item>
-                ))}
-              </DropdownMenu.SubContent>
-            </DropdownMenu.Portal>
-          </DropdownMenu.Sub>
-          <DropdownMenu.Sub>
-            <DropdownMenu.SubTrigger className={newItem}>
-              <Icon name="designs" size={13} className="text-fg-tertiary" />
-              <span className="flex-1">Design</span>
-              <Icon name="chevr" size={12} className="text-fg-tertiary" />
-            </DropdownMenu.SubTrigger>
-            <DropdownMenu.Portal>
-              <DropdownMenu.SubContent sideOffset={4} className={cx(floatPanel, "w-[160px]")}>
-                {DESIGN_STARTERS.map((st) => (
-                  <DropdownMenu.Item key={st.key} className={newItem}
-                    onSelect={() => design.mutate({ starter: st.key, title: "" }, { onSuccess: (d) => router.push(`/apps/designs/${d.id}`), onError: (e) => toast({ id: "new-design", tone: "error", title: "Couldn’t make the design", description: e.message }) })}>
-                    {st.label}
-                  </DropdownMenu.Item>
-                ))}
-              </DropdownMenu.SubContent>
-            </DropdownMenu.Portal>
-          </DropdownMenu.Sub>
-        </DropdownMenu.Content>
-      </DropdownMenu.Portal>
-    </DropdownMenu.Root>
-  );
-}
-
-function ExplorerButton({ icon, label, onClick, href, accent }: { icon: IconName; label: string; onClick?: () => void; href?: string; accent?: boolean }) {
-  const cls = cx("grid size-7 place-items-center rounded-md hover:bg-hover", accent ? "text-accent" : "text-fg-tertiary hover:text-fg-secondary");
-  return href ? (
-    <Link href={href} aria-label={label} title={label} className={cls}>
-      <Icon name={icon} size={14} />
-    </Link>
-  ) : (
-    <button type="button" aria-label={label} title={label} onClick={onClick} className={cls}>
-      <Icon name={icon} size={14} />
-    </button>
-  );
-}
-
-function FolderItems({ folder, depth, open, toggle, activeId, actions }: { folder: TreeFolder; depth: number; open: Set<string>; toggle: (p: string) => void; activeId?: string; actions: TreeActions }) {
-  const [all, setAll] = useState(false);
-  // The open page always shows, even past the cut.
-  const cut = all ? folder.pages : folder.pages.filter((p, i) => i < FOLDER_PAGES || p.id === activeId);
-  const hidden = folder.pages.length - cut.length;
-  return (
-    <ul role={depth ? "group" : "tree"} className="space-y-px">
-      {/* Inbox heads the tree, as the place new captures land. */}
-      {[...folder.folders].sort((a, b) => (depth === 0 ? Number(b.name === "Inbox") - Number(a.name === "Inbox") : 0)).map((f) => {
-        const isOpen = open.has(f.path);
-        return (
-          <li key={f.path} role="treeitem" aria-expanded={isOpen} aria-selected={false}>
-            {actions.renaming === `f:${f.path}` ? (
-              <RenameField initial={f.name} icon="folder" indent={24 + depth * 16} error={actions.renameError} pending={actions.renamePending} onCommit={(name) => actions.renameFolder(f, name)} onCancel={actions.cancelRename} />
-            ) : (
-              <ExplorerMenu entries={actions.folderMenu(f)} className={menuRow}>
-                <button
-                  onClick={() => toggle(f.path)}
-                  style={{ paddingLeft: 6 + depth * 16 }}
-                  className="flex h-[26px] w-full items-center gap-1.5 rounded-md pr-2 text-13 font-medium text-fg-2 hover:bg-hover"
-                >
-                  <Icon name={isOpen ? "chev" : "chevr"} size={12} className="text-fg-tertiary" />
-                  <Icon name={depth === 0 && f.name === "Inbox" ? "inbox" : "folder"} size={14} className="text-fg-secondary" />
-                  <span className="min-w-0 flex-1 truncate text-left">{f.name}</span>
-                  {((depth === 0 && f.name === "Inbox") || f.name === "Proposed") && <span className="rounded-full bg-accent-soft px-1.5 text-10 font-semibold text-accent">{f.count}</span>}
-                </button>
-              </ExplorerMenu>
-            )}
-            {isOpen && <FolderItems folder={f} depth={depth + 1} open={open} toggle={toggle} activeId={activeId} actions={actions} />}
-          </li>
-        );
-      })}
-      {cut.map((p) => (
-        <li key={p.id} role="treeitem" aria-selected={p.id === activeId}>
-          {actions.renaming === `p:${p.id}` ? (
-            <RenameField initial={p.title} icon={pageIcon(p)} indent={24 + depth * 16} error={actions.renameError} pending={actions.renamePending} onCommit={(name) => actions.renamePage(p, name)} onCancel={actions.cancelRename} />
-          ) : (
-            <ExplorerMenu entries={actions.pageMenu(p)} className={menuRow}>
-              <TreeLink
-                href={pageHref(p.id, p.title)}
-                icon={pageIcon(p)}
-                label={p.title}
-                depth={depth}
-                active={p.id === activeId}
-                dot={(p.pending ?? 0) > 0}
-                treePageId={p.id}
-              />
-            </ExplorerMenu>
-          )}
-        </li>
-      ))}
-      {hidden > 0 && (
-        <li>
-          <button onClick={() => setAll(true)} style={{ paddingLeft: 24 + depth * 16 }} className="flex h-[26px] w-full items-center rounded-md pr-2 text-left text-12 text-fg-tertiary hover:bg-hover hover:text-fg-secondary">
-            + {hidden} more
-          </button>
-        </li>
-      )}
-    </ul>
-  );
-}
-
-function TreeLink({ href, icon, label, depth, active, badge, dot, treePageId }: { href: string; icon: IconName; label: string; depth: number; active?: boolean; badge?: number; dot?: boolean; treePageId?: string }) {
-  return (
-    <Link
-      href={href}
-      data-tree-page={treePageId}
-      style={{ paddingLeft: 24 + depth * 16 }}
-      aria-current={active ? "page" : undefined}
-      className={cx(
-        "relative flex h-[26px] items-center gap-1.5 rounded-md pr-2 text-13",
-        active ? "bg-selected font-medium text-fg before:absolute before:left-0 before:top-1.5 before:h-3.5 before:w-0.5 before:rounded before:bg-accent" : "text-fg-secondary hover:bg-hover",
-      )}
-    >
-      <Icon name={icon} size={13} className={active ? "text-accent" : "text-fg-tertiary"} />
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      {dot && <span title="Persona changes to review" className="size-1.5 rounded-full bg-state-human" />}
-      {badge !== undefined && <span className="rounded-full bg-accent-soft px-1.5 text-10 font-semibold text-accent">{badge}</span>}
-    </Link>
-  );
-}

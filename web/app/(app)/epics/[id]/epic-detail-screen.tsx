@@ -27,12 +27,10 @@ import { EpicCompletion } from "@/components/domain/epic-completion";
 import { DependencyMap } from "@/components/domain/dependency-map";
 import { WorkDetailHeader, WorkEyebrow, WorkViewTabs } from "@/components/domain/work-detail-header";
 import { ticketsHref } from "@/lib/tickets-layout";
-import { useCompact } from "@/lib/viewport";
 import { ContextSection } from "@/components/shell/context-panel";
 import { CompanionDock } from "@/components/shell/companion";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { WorkChat } from "@/components/domain/work-chat";
-import { WorkNavHeader, WorkSectionLabel } from "../../work/work-nav-header";
 import { buildEpicDetailNavModel } from "@/lib/native-shell/models/epic-detail";
 import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
 import { buildEpicToolbar } from "@/lib/native-shell/models/work-toolbars";
@@ -43,7 +41,6 @@ import { useNativeTitle } from "../../tickets/_components/native-title";
 type TicketSummary = Schemas["TicketSummary"];
 
 export function EpicDetailScreen({ epicId }: { epicId: string }) {
-  const compact = useCompact();
   const router = useRouter();
   const query = useEpicOverviews();
   const e = query.data?.find((x) => x.epic.id === epicId);
@@ -61,61 +58,17 @@ export function EpicDetailScreen({ epicId }: { epicId: string }) {
   useNativeToolbar({ items: e ? buildEpicToolbar() : [], onAction: () => e && router.push(boardHref(e)) });
   return (
     <>
-      {!compact && (
-        <NavigatorPortal
-          native={{
-            model: buildEpicDetailNavModel({
-              project: e?.project.key,
-              projectName: e?.project.name,
-              epics: siblingEpics.map((x) => ({ id: x.epic.id, name: x.epic.name, done: x.epic.tickets_total - x.epic.tickets_open, total: x.epic.tickets_total })),
-              epicId,
-            }),
-            onCommand: (cmd) => handleWorkHeaderCommand(cmd, { project: e?.project.key, push: (href) => router.push(href), onProject: () => {}, onAgent: () => {} }),
-          }}
-        >
-          <nav aria-label="Work" className="work-nav">
-            <WorkNavHeader active="epics" project={e?.project.key} />
-            <div className="work-nav-list">
-              <WorkSectionLabel count={siblingEpics.length}>
-                {e?.project.name ?? "Epics"}
-              </WorkSectionLabel>
-              {siblingEpics.map((item) => {
-                const done = item.epic.tickets_total - item.epic.tickets_open;
-                const total = item.epic.tickets_total;
-                const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-                const active = item.epic.id === epicId;
-                return (
-                  <Link
-                    key={item.epic.id}
-                    href={`/epics/${encodeURIComponent(item.epic.id)}`}
-                    aria-current={active ? "true" : undefined}
-                    className={cx(
-                      "flex h-[26px] items-center gap-2 rounded-md px-2 text-12 transition-colors",
-                      active
-                        ? "bg-selected font-medium text-fg"
-                        : "text-fg-secondary hover:bg-hover hover:text-fg",
-                    )}
-                  >
-                    <span className="min-w-0 flex-1 truncate">{item.epic.name}</span>
-                    <span
-                      aria-hidden
-                      className="h-1 w-6 flex-none overflow-hidden rounded-full bg-surface-sunken"
-                    >
-                      <span
-                        className="block h-full rounded-full bg-accent"
-                        style={{ width: `${pct}%` }}
-                      />
-                    </span>
-                    <span className="flex-none font-mono text-10 text-fg-tertiary">
-                      {done}/{total}
-                    </span>
-                  </Link>
-                );
-              })}
-            </div>
-          </nav>
-        </NavigatorPortal>
-      )}
+      <NavigatorPortal
+        native={{
+          model: buildEpicDetailNavModel({
+            project: e?.project.key,
+            projectName: e?.project.name,
+            epics: siblingEpics.map((x) => ({ id: x.epic.id, name: x.epic.name, done: x.epic.tickets_total - x.epic.tickets_open, total: x.epic.tickets_total })),
+            epicId,
+          }),
+          onCommand: (cmd) => handleWorkHeaderCommand(cmd, { project: e?.project.key, push: (href) => router.push(href), onProject: () => {}, onAgent: () => {} }),
+        }}
+      />
       {!native && <TopBar
         crumbs={crumbs}
         actions={e && (

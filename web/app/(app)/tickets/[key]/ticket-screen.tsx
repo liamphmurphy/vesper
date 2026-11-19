@@ -46,7 +46,6 @@ import { Composer, Timeline } from "./timeline";
 import { CompanionDock } from "@/components/shell/companion";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { WorkChat, WorkChatSheet } from "@/components/domain/work-chat";
-import { WorkNavHeader } from "../../work/work-nav-header";
 import { buildTicketNavModel } from "@/lib/native-shell/models/ticket";
 import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
 
@@ -499,26 +498,7 @@ export function TicketScreen({ ticketKey }: { ticketKey: string }) {
           model: buildTicketNavModel({ project: t?.project.key, siblings: pager.tickets, statusNames: STATUS_NAME, ticketKey }),
           onCommand: (cmd) => handleWorkHeaderCommand(cmd, { project: t?.project.key, push: (href) => router.push(href), onProject: () => {}, onAgent: () => {} }),
         }}
-      >
-        <nav aria-label="Work" className="work-nav">
-          <WorkNavHeader active="tickets" project={t?.project.key} />
-          <div className="work-nav-list">
-            {pager.tickets.map((sib) => (
-              <Link
-                key={sib.key}
-                href={`/tickets/${encodeURIComponent(sib.key)}`}
-                aria-current={sib.key === ticketKey ? "true" : undefined}
-              >
-                <strong className="flex items-center gap-1.5 truncate">
-                  <StatusGlyph state={sib.status} label={false} />
-                  <span className="font-mono text-11 text-fg-tertiary">{sib.key}</span>
-                  <span className="truncate">{sib.title}</span>
-                </strong>
-              </Link>
-            ))}
-          </div>
-        </nav>
-      </NavigatorPortal>
+      />
       {!native && <TopBar
         crumbs={
           t

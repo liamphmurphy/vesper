@@ -1088,7 +1088,6 @@ export function DeckScreen({ id }: { id: string }) {
       nativeLeft={nativeLeft}
       show={{ tab: "review", n: showReview }}
       onDockChange={setDock}
-      left={!compact && !loadError ? thumbnails || <div aria-busy="true" className="flex flex-col gap-3 p-3">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="aspect-video w-full" />)}</div> : undefined}
       main={main}
       dock={dockTabs}
     />

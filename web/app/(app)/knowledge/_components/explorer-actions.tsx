@@ -1,158 +1,16 @@
 "use client";
 
-import { ContextMenu } from "radix-ui";
-import { useMemo, useRef, useState, type ReactNode } from "react";
-import { cx } from "@/lib/cx";
+import { useMemo, useState } from "react";
 import { moveTargets, nameError, type TreeFolder, type TreeRow } from "@/lib/knowledge";
-import { floatPanel } from "@/components/domain/pickers";
 import { Button } from "@/components/ui/button";
-import { Icon, type IconName } from "@/components/ui/icon";
+import { Icon } from "@/components/ui/icon";
 import { Modal } from "./kit";
 
-// The explorer's right-click menu and what it opens: inline rename, Move to…,
-// New folder and the delete confirmation. Folders are path prefixes, so a
-// folder action acts on every page under it.
+// The explorer's dialogs: Move to…, New folder and the delete confirmation,
+// plus RenameDialog. Folders are path prefixes, so a folder action acts on every page under it.
 
 export type ExplorerTarget =
   { kind: "page"; page: TreeRow } | { kind: "folder"; folder: TreeFolder };
-
-export type MenuEntry =
-  | { icon: IconName; label: string; onSelect: () => void; danger?: boolean }
-  | "separator";
-
-const itemCls =
-  "flex h-8 cursor-default select-none items-center gap-2.5 rounded-md px-2 outline-none data-[highlighted]:bg-hover data-[disabled]:opacity-50";
-
-/** Right-click on children opens this menu instead of the browser's. */
-export function ExplorerMenu({
-  entries,
-  children,
-  className,
-}: {
-  entries: MenuEntry[];
-  children: ReactNode;
-  className?: string;
-}) {
-  return (
-    <ContextMenu.Root>
-      <ContextMenu.Trigger asChild>
-        <div className={className}>{children}</div>
-      </ContextMenu.Trigger>
-      <ContextMenu.Portal>
-        {/* Focus stays where the chosen action puts it (the rename field, a dialog), not back on the row. */}
-        <ContextMenu.Content
-          collisionPadding={8}
-          onCloseAutoFocus={(e) => e.preventDefault()}
-          className={cx(floatPanel, "min-w-[200px]")}
-        >
-          {entries.map((e, i) =>
-            e === "separator" ? (
-              <ContextMenu.Separator
-                key={`sep-${i}`}
-                className="mx-1 my-1 h-px bg-border-subtle"
-              />
-            ) : (
-              <ContextMenu.Item
-                key={e.label}
-                onSelect={e.onSelect}
-                className={cx(itemCls, e.danger && "text-pill-blocked-fg")}
-              >
-                <Icon
-                  name={e.icon}
-                  size={14}
-                  className={e.danger ? undefined : "text-fg-secondary"}
-                />
-                {e.label}
-              </ContextMenu.Item>
-            ),
-          )}
-        </ContextMenu.Content>
-      </ContextMenu.Portal>
-    </ContextMenu.Root>
-  );
-}
-
-/**
- * A tree row turned into a text field, as Obsidian renames in place: Enter or
- * leaving the field saves, Escape cancels. A refused name keeps it open with
- * the reason.
- */
-export function RenameField({
-  initial,
-  icon,
-  indent,
-  error,
-  pending,
-  onCommit,
-  onCancel,
-}: {
-  initial: string;
-  icon: IconName;
-  indent: number;
-  error?: string;
-  pending: boolean;
-  onCommit: (name: string) => void;
-  onCancel: () => void;
-}) {
-  const [name, setName] = useState(initial);
-  const [local, setLocal] = useState<string>();
-  // Enter then blur (as the field unmounts) would otherwise save twice.
-  const done = useRef(false);
-  const finish = (save: boolean) => {
-    if (done.current || pending) return;
-    const next = name.trim();
-    if (!save || next === initial) {
-      done.current = true;
-      onCancel();
-      return;
-    }
-    const bad = nameError(next);
-    if (bad) {
-      setLocal(bad);
-      return;
-    }
-    onCommit(next);
-  };
-  const shown = local ?? error;
-  return (
-    <div style={{ paddingLeft: indent }} className="pr-1">
-      <div className="flex h-[26px] items-center gap-1.5">
-        <Icon name={icon} size={13} className="flex-none text-fg-tertiary" />
-        <input
-          autoFocus
-          aria-label={`Rename ${initial}`}
-          aria-invalid={!!shown}
-          value={name}
-          disabled={pending}
-          onFocus={(e) => e.currentTarget.select()}
-          onChange={(e) => {
-            setName(e.target.value);
-            setLocal(undefined);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              finish(true);
-            } else if (e.key === "Escape") {
-              e.preventDefault();
-              finish(false);
-            }
-          }}
-          onBlur={() => finish(true)}
-          className={cx(
-            "h-[24px] min-w-0 flex-1 rounded border bg-surface px-1.5 text-13 text-fg outline-none",
-            shown ? "border-state-blocked" : "border-accent",
-          )}
-        />
-      </div>
-      {shown && (
-        <p className="py-1 pl-5 text-11 leading-snug text-pill-blocked-fg">
-          {shown}
-        </p>
-      )}
-    </div>
-  );
-}
 
 /** Rename as a dialog, for the native sidebar where rows can't turn into a text field. */
 export function RenameDialog({

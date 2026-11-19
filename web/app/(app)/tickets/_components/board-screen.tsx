@@ -26,7 +26,6 @@ import { useIsNativeShell, useNativeContextMenu } from "@/lib/native-shell/hooks
 import { toast } from "@/lib/toast";
 import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
-import { WorkNavHeader, WorkSectionLabel, WorkSpacePersonaFilters } from "../../work/work-nav-header";
 import { ChipScroller, TicketsLayoutBar, TicketsTopBar } from "./layout-bar";
 import { AssigneeAvatar, EpicChip, StateText } from "./ticket-row";
 
@@ -82,82 +81,33 @@ export function BoardScreen() {
   );
   return (
     <div data-testid="board-screen" className="flex min-h-0 flex-1 flex-col">
-      {!compact && (
-        <NavigatorPortal
-          native={{
-            model: buildBoardNavModel({
-              header: {
-                active: "tickets",
-                project: project?.key,
-                projects: bootstrap.data?.projects,
-                agents: bootstrap.data?.agents,
-                agent: filters.assignee ?? "",
-                allowAllProjects: false,
-                hideNewTicket: true,
-              },
-              epics: project ? epics : undefined,
-              epic: filters.epic,
-            }),
-            onCommand: (cmd) => {
-              const ctx = {
-                project: project?.key,
-                push: (href: string) => router.push(href),
-                onProject: (v: string) => router.push(ticketsHref("board", v ? { project: v } : undefined)),
-                onAgent: (v: string) => setParam("assignee", v),
-              };
-              if (handleWorkHeaderCommand(cmd, ctx)) return;
-              if (cmd.type === "nav.activate") setParam("epic", cmd.itemId.startsWith("epic:") ? cmd.itemId.slice(5) : "");
+      <NavigatorPortal
+        native={{
+          model: buildBoardNavModel({
+            header: {
+              active: "tickets",
+              project: project?.key,
+              projects: bootstrap.data?.projects,
+              agents: bootstrap.data?.agents,
+              agent: filters.assignee ?? "",
+              allowAllProjects: false,
+              hideNewTicket: true,
             },
-          }}
-        >
-          <nav aria-label="Work" className="work-nav">
-            <WorkNavHeader active="tickets" project={project?.key} />
-            <WorkSpacePersonaFilters
-              projects={bootstrap.data?.projects}
-              agents={bootstrap.data?.agents}
-              project={project?.key ?? ""}
-              onProjectChange={(v) =>
-                router.push(ticketsHref("board", v ? { project: v } : undefined))
-              }
-              allowAllProjects={false}
-              agent={filters.assignee ?? ""}
-              onAgentChange={(v) => setParam("assignee", v)}
-            />
-            <div className="work-nav-list">
-              {project && (
-                <div role="group" aria-label="Board epics" className="flex flex-col gap-0.5">
-                  <WorkSectionLabel count={epics.length}>By epic</WorkSectionLabel>
-                  <button
-                    type="button"
-                    aria-current={!filters.epic ? "true" : undefined}
-                    onClick={() => setParam("epic", "")}
-                    className={cx(
-                      "flex h-[26px] items-center rounded-md px-2 text-left text-12",
-                      !filters.epic ? "bg-selected font-medium text-fg" : "text-fg-secondary hover:bg-hover hover:text-fg",
-                    )}
-                  >
-                    All epics
-                  </button>
-                  {epics.map((e) => (
-                    <button
-                      key={e.id}
-                      type="button"
-                      aria-current={filters.epic === e.id ? "true" : undefined}
-                      onClick={() => setParam("epic", e.id)}
-                      className={cx(
-                        "flex h-[26px] items-center truncate rounded-md px-2 text-left text-12",
-                        filters.epic === e.id ? "bg-selected font-medium text-fg" : "text-fg-secondary hover:bg-hover hover:text-fg",
-                      )}
-                    >
-                      {e.name}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </nav>
-        </NavigatorPortal>
-      )}
+            epics: project ? epics : undefined,
+            epic: filters.epic,
+          }),
+          onCommand: (cmd) => {
+            const ctx = {
+              project: project?.key,
+              push: (href: string) => router.push(href),
+              onProject: (v: string) => router.push(ticketsHref("board", v ? { project: v } : undefined)),
+              onAgent: (v: string) => setParam("assignee", v),
+            };
+            if (handleWorkHeaderCommand(cmd, ctx)) return;
+            if (cmd.type === "nav.activate") setParam("epic", cmd.itemId.startsWith("epic:") ? cmd.itemId.slice(5) : "");
+          },
+        }}
+      />
       {!compact && <TicketsTopBar layout="board"
         action={{ label: "New ticket", primary: true, href: project ? `/tickets/new?project=${encodeURIComponent(project.key)}` : "/tickets/new" }}
         extra={project ? buildBoardExtras({ showCanceled: !!filters.include_canceled, blockedOnly }) : undefined}

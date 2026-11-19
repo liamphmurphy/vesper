@@ -46,12 +46,6 @@ import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { buildTicketsNavModel, parseTicketsRow, type TicketQueue } from "@/lib/native-shell/models/tickets";
 import { buildTicketsListExtras, parseTicketsListAction } from "@/lib/native-shell/models/tickets-toolbar";
 import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
-import {
-  WorkNavHeader,
-  WorkSectionLabel,
-  WorkSidebarFilterRow,
-  WorkSpacePersonaFilters,
-} from "../../work/work-nav-header";
 import { BulkBar, BulkResultPanel } from "./bulk-bar";
 import { CompactTicketRow, TicketRow, type Density } from "./ticket-row";
 import { ChipScroller, TicketsLayoutBar, TicketsTopBar } from "./layout-bar";
@@ -548,117 +542,7 @@ export function TicketsScreen() {
   return (
     <>
       {native && <SavedViewNativeDialogs ui={svUi} />}
-      {!compact && (
-        <NavigatorPortal native={{ model: nativeModel, onCommand: nativeCommand }}>
-          <nav aria-label="Work" className="work-nav">
-            <WorkNavHeader
-              active="tickets"
-              project={project}
-              search={search}
-              onSearchChange={setSearch}
-              searchPlaceholder="Filter tasks… epic: agent:"
-              counts={{
-                tickets: queueCounts.all || undefined,
-                epics: sidebarEpics.length || undefined,
-              }}
-            />
-            <WorkSpacePersonaFilters
-              projects={boot.data?.projects}
-              agents={boot.data?.agents}
-              project={project ?? ""}
-              onProjectChange={pickProject}
-              agent={assignee ?? ""}
-              onAgentChange={(v) => setParam("assignee", v || null)}
-            />
-            <div className="work-nav-list">
-              <div role="group" aria-label="Ticket views" className="flex flex-col gap-0.5">
-                <WorkSectionLabel>Queues</WorkSectionLabel>
-                <WorkSidebarFilterRow
-                  label="Needs you"
-                  count={queueCounts.needs_you}
-                  active={!svId && view === "needs_human"}
-                  dotClass="bg-state-human"
-                  countTone="human"
-                  onClick={() => selectQueue("needs_you")}
-                />
-                <WorkSidebarFilterRow
-                  label="In progress"
-                  count={queueCounts.in_progress}
-                  active={!svId && view === "active"}
-                  dotClass="bg-state-done"
-                  onClick={() => selectQueue("in_progress")}
-                />
-                <WorkSidebarFilterRow
-                  label="Ready to dispatch"
-                  count={queueCounts.ready}
-                  active={!svId && ready}
-                  dotClass="bg-accent"
-                  onClick={() => selectQueue("ready")}
-                />
-                <WorkSidebarFilterRow
-                  label="Blocked"
-                  count={queueCounts.blocked}
-                  active={!svId && blockedOnly}
-                  dotClass="bg-state-blocked"
-                  countTone="blocked"
-                  onClick={() => selectQueue("blocked")}
-                />
-                <WorkSidebarFilterRow
-                  label="All tasks"
-                  count={queueCounts.all}
-                  active={!svId && view === "all" && !ready && !blockedOnly && !epic}
-                  dotClass="bg-fg-tertiary/60"
-                  onClick={() => selectQueue("all")}
-                />
-              </div>
-
-              {sidebarEpics.length > 0 && (
-                <div role="group" aria-label="By epic" className="mt-1 flex flex-col gap-0.5">
-                  <WorkSectionLabel count={sidebarEpics.length}>By epic</WorkSectionLabel>
-                  {sidebarEpics.map((e) => {
-                    const active = epic === e.id;
-                    return (
-                      <button
-                        key={e.id}
-                        type="button"
-                        aria-current={active ? "true" : undefined}
-                        onClick={() => toggleEpic(e.id)}
-                        className={cx(
-                          "flex h-[26px] w-full items-center gap-2 rounded-md px-2 text-left text-12 transition-colors",
-                          active
-                            ? "bg-selected font-medium text-fg"
-                            : "text-fg-secondary hover:bg-hover hover:text-fg",
-                        )}
-                      >
-                        <Icon
-                          name={active ? "chev" : "chevr"}
-                          size={11}
-                          className="flex-none text-fg-tertiary"
-                        />
-                        <span className="min-w-0 flex-1 truncate">{e.name}</span>
-                        <span
-                          aria-hidden
-                          className="h-1 w-7 flex-none overflow-hidden rounded-full bg-surface-sunken"
-                        >
-                          <span
-                            className="block h-full rounded-full bg-accent"
-                            style={{ width: `${e.pct}%` }}
-                          />
-                        </span>
-                        <span className="flex-none font-mono text-10 text-fg-tertiary">
-                          {e.done}/{e.total}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-
-              <SavedViewTabs project={project} vertical ui={svUi} />
-            </div>
-          </nav>
-        </NavigatorPortal>
-      )}
+      <NavigatorPortal native={{ model: nativeModel, onCommand: nativeCommand }} />
       {!compact && <TicketsTopBar
         layout="list"
         // The project crumb is the bar's project pill.

@@ -17,7 +17,33 @@ import {
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/primitives";
 import { AgentOrPersonaAvatar } from "../tickets/_components/ticket-row";
-import { WorkSectionLabel } from "./work-nav-header";
+
+function WorkSectionLabel({
+  children,
+  count,
+  right,
+  tone,
+}: {
+  children: string;
+  count?: number;
+  right?: React.ReactNode;
+  tone?: "human";
+}) {
+  return (
+    <div
+      className={cx(
+        "flex items-center justify-between px-2 pt-2.5 pb-1 text-10 font-semibold tracking-[0.06em] uppercase",
+        tone === "human" ? "text-pill-human-fg" : "text-fg-tertiary",
+      )}
+    >
+      <span className="flex items-center gap-1.5">
+        <span>{children}</span>
+        {count != null && <span className="font-mono font-normal">{count}</span>}
+      </span>
+      {right}
+    </div>
+  );
+}
 
 type Run = Schemas["Run"];
 type InboxItem = Schemas["InboxItem"];

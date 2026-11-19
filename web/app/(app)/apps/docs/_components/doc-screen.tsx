@@ -83,7 +83,6 @@ export function DocScreen({ id }: { id: string }) {
 
   const editable = useMemo(() => (c ? editorKeeps(c.body) : true), [c]);
   const outline = useMemo(() => (c ? outlineOf(c.body) : []), [c]);
-  const [outlineOpen, setOutlineOpen] = useState(false);
 
   // The version the editor's text was last saved as; comments anchor to it.
   const saved = useRef<{ seq: number; body: string }>({ seq: 0, body: "" });
@@ -241,12 +240,6 @@ export function DocScreen({ id }: { id: string }) {
     </div>
   ) : (
     <div data-testid="doc-page" className="relative flex min-h-0 min-w-0 flex-1">
-      {!native && !outlineOpen && outline.length > 0 && (
-        <Button variant="secondary" className="absolute left-3 top-[52px] z-20 max-md:hidden" aria-label="Show outline" title="Show outline" onClick={() => setOutlineOpen(true)}>
-          <span aria-hidden>☰</span>
-          <span className="max-xl:hidden">Outline</span>
-        </Button>
-      )}
       <div ref={page} className="min-h-0 min-w-0 flex-1 overflow-y-auto">
         {notice && (
           <p role="alert" className="mx-auto mt-3 max-w-[720px] px-8 text-12 text-pill-blocked-fg">
@@ -316,36 +309,6 @@ export function DocScreen({ id }: { id: string }) {
     </div>
   );
 
-  const left =
-    outlineOpen && c ? (
-      <nav aria-label="Outline" className="flex min-h-0 flex-1 flex-col gap-1 p-3">
-        <div className="flex items-center justify-between px-1 pb-1">
-          <span className="text-11 font-medium uppercase tracking-wide text-fg-tertiary">Outline</span>
-          <button type="button" aria-label="Hide outline" title="Hide outline" onClick={() => setOutlineOpen(false)} className="grid size-6 place-items-center rounded-md text-fg-tertiary hover:bg-hover hover:text-fg">
-            ×
-          </button>
-        </div>
-        {outline.length ? (
-          <ol className="flex flex-col">
-            {outline.map((h, i) => (
-              <li key={i}>
-                <button
-                  type="button"
-                  onClick={() => jumpTo(i)}
-                  style={{ paddingLeft: `${8 + (h.level - Math.min(...outline.map((x) => x.level))) * 12}px` }}
-                  className={cx("w-full truncate rounded-md py-1 pr-2 text-left text-13 hover:bg-hover", h.level === 1 ? "text-fg" : "text-fg-secondary")}
-                >
-                  {h.text}
-                </button>
-              </li>
-            ))}
-          </ol>
-        ) : (
-          <p className="px-1 text-12 text-fg-tertiary">No headings yet.</p>
-        )}
-      </nav>
-    ) : undefined;
-
   const dockTabs: DockTab[] = [
     {
       id: "chat",
@@ -371,5 +334,5 @@ export function DocScreen({ id }: { id: string }) {
       content: <DocReviewList review={review} persona={persona} busy={reviewBusy} error={reviewError} />,
     });
 
-  return <EditorLayout app="docs" header={header} nativeHeader={nativeHeader} left={left} nativeLeft={nativeLeft} main={failed ?? main} dock={dockTabs} show={show} onDockChange={setDock} />;
+  return <EditorLayout app="docs" header={header} nativeHeader={nativeHeader} nativeLeft={nativeLeft} main={failed ?? main} dock={dockTabs} show={show} onDockChange={setDock} />;
 }

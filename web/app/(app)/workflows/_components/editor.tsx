@@ -378,28 +378,6 @@ function Canvas({ workflow, chatId, onChatId, personaId, onPersonaId, onApplied,
     issues,
     error: error?.message,
   });
-  const nodePalette = (
-    <aside aria-label="Node types" className="min-h-0 flex-1 overflow-y-auto px-2.5 pt-4 pb-3">
-      {PALETTE.map((g) => (
-        <div key={g.group} className="mb-4">
-          <p className="mb-1.5 px-1 text-10 font-semibold uppercase tracking-wide text-fg-tertiary">{g.group}</p>
-          {g.items.map((i) => (
-            <button
-              key={i.type}
-              type="button"
-              draggable
-              disabled={!!preview}
-              onDragStart={(e) => e.dataTransfer.setData("application/vesper-node", `${i.type}|${i.label}`)}
-              onClick={() => addNode(i.type, i.label)}
-              className="mb-1.5 block w-full rounded-md border border-border-strong bg-surface px-2.5 py-1.5 text-left text-13 text-fg-2 hover:bg-hover disabled:opacity-50"
-            >
-              {i.label}
-            </button>
-          ))}
-        </div>
-      ))}
-    </aside>
-  );
   const detailsContent = (
     <>
       {error && <Banner tone="blocked" title={error.message} />}
@@ -425,20 +403,16 @@ function Canvas({ workflow, chatId, onChatId, personaId, onPersonaId, onApplied,
   );
   return (
     <>
-      {!compact && (
-        <NavigatorPortal
-          native={{
-            model: buildWorkflowPaletteNavModel({ palette: PALETTE, disabled: !!preview }),
-            onCommand: (cmd) => {
-              if (cmd.type !== "nav.activate" || preview) return;
-              const item = PALETTE.flatMap((g) => g.items).find((i) => i.type === cmd.itemId);
-              if (item) addNode(item.type, item.label);
-            },
-          }}
-        >
-          {nodePalette}
-        </NavigatorPortal>
-      )}
+      <NavigatorPortal
+        native={{
+          model: buildWorkflowPaletteNavModel({ palette: PALETTE, disabled: !!preview }),
+          onCommand: (cmd) => {
+            if (cmd.type !== "nav.activate" || preview) return;
+            const item = PALETTE.flatMap((g) => g.items).find((i) => i.type === cmd.itemId);
+            if (item) addNode(item.type, item.label);
+          },
+        }}
+      />
       {!compact && (
         <CompanionDock
           app="workflows"

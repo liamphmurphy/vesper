@@ -627,43 +627,15 @@ function Keepsakes() {
   const openItem = params.get("item");
   return (
     <>
-      {!compact && (
-        <NavigatorPortal
-          native={{
-            model: buildKeepsakesNavModel({ tabs: KEEPSAKE_TABS, tab }),
-            onCommand: (cmd) => {
-              if (cmd.type === "nav.activate") setTab(cmd.itemId);
-              else if (cmd.type === "nav.picker" && cmd.pickerId === LIBRARY_SOURCE_PICKER) router.push(librarySourceHref(cmd.value as LibrarySourceValue));
-            },
-          }}
-        >
-          <nav aria-label="Library" className="flex min-h-0 flex-1 flex-col gap-3 px-2.5 pt-4 pb-3">
-            <div className="px-1">
-              <LibrarySourceSwitch source="yours" />
-            </div>
-            <div role="tablist" aria-label="Library" aria-orientation="vertical" className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
-              {KEEPSAKE_TABS.map((item) => {
-                const active = tab === item.key;
-                return (
-                  <button
-                    key={item.key}
-                    type="button"
-                    role="tab"
-                    aria-selected={active}
-                    onClick={() => setTab(item.key)}
-                    className={cx(
-                      "flex h-8 items-center rounded-md px-2.5 text-left text-13 transition-colors",
-                      active ? "bg-selected font-medium text-fg" : "text-fg-secondary hover:bg-hover hover:text-fg",
-                    )}
-                  >
-                    {item.label}
-                  </button>
-                );
-              })}
-            </div>
-          </nav>
-        </NavigatorPortal>
-      )}
+      <NavigatorPortal
+        native={{
+          model: buildKeepsakesNavModel({ tabs: KEEPSAKE_TABS, tab }),
+          onCommand: (cmd) => {
+            if (cmd.type === "nav.activate") setTab(cmd.itemId);
+            else if (cmd.type === "nav.picker" && cmd.pickerId === LIBRARY_SOURCE_PICKER) router.push(librarySourceHref(cmd.value as LibrarySourceValue));
+          },
+        }}
+      />
       <TopBar crumbs={[{ label: "Library" }]} />
       <Content>
         <div className="flex flex-col gap-5">

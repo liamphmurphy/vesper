@@ -37,7 +37,6 @@ import { epicHealthTone, ticketStatusTone } from "@/lib/native-shell/models/comm
 import { buildEpicsOverviewInspectorSections } from "@/lib/native-shell/models/epic-inspector";
 import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
 import { EpicBrief } from "../../work/work-details";
-import { WorkNavHeader, WorkSectionLabel, WorkSpaceFilter } from "../../work/work-nav-header";
 import { TicketsLayoutBar, TicketsTopBar } from "./layout-bar";
 
 function Timeline({
@@ -354,171 +353,48 @@ export function EpicsScreen() {
   const today = ymd(new Date());
   return (
     <>
-      {!compact && (
-        <NavigatorPortal
-          native={{
-            model: buildEpicsNavModel({
-              header: {
-                project: project || undefined,
-                projects: boot.data?.projects,
-                counts: { epics: counts.open || undefined },
-                hideNewTicket: true,
-                search: { value: search, placeholder: "Filter epics…" },
-              },
-              status: filters.status,
-              counts,
-              health: filters.health,
-              healthOptions: HEALTH_OPTIONS.map((h) => ({ value: h, label: h === "any" ? "Any" : HEALTH_LABEL[h] })),
-              atRiskCount,
-              groups: epicsBySpace.map(([key, g]) => ({
-                key,
-                label: g.label,
-                epics: g.epics.map((e) => ({ id: e.epic.id, name: e.epic.name, health: e.epic.health, done: e.counts.done, total: e.counts.total })),
-              })),
-              selectedEpicId: activeFeaturedEpic?.epic.id,
-              loading: query.isLoading,
-            }),
-            onCommand: (cmd) => {
-              const handled = handleWorkHeaderCommand(cmd, {
-                project: project || undefined,
-                push: (href) => router.push(href),
-                onProject: (v) => {
-                  if (!v) rememberProject(null);
-                  setFilters({}, v);
-                },
-                onAgent: () => {},
-                onSearch: setSearch,
-              });
-              if (handled) return;
-              if (cmd.type === "nav.filter") {
-                if (cmd.filterId === EPICS_STATUS_FILTER) setFilters({ status: cmd.value as EpicFilters["status"] });
-                else if (cmd.filterId === EPICS_HEALTH_FILTER) setFilters({ health: cmd.value as EpicHealthFilter });
-              } else if (cmd.type === "nav.activate") openEpic(cmd.itemId);
+      <NavigatorPortal
+        native={{
+          model: buildEpicsNavModel({
+            header: {
+              project: project || undefined,
+              projects: boot.data?.projects,
+              counts: { epics: counts.open || undefined },
+              hideNewTicket: true,
+              search: { value: search, placeholder: "Filter epics…" },
             },
-          }}
-        >
-          <nav aria-label="Work" className="work-nav">
-            <WorkNavHeader
-              active="epics"
-              project={project || undefined}
-              search={search}
-              onSearchChange={setSearch}
-              searchPlaceholder="Filter epics…"
-              counts={{ epics: counts.open || undefined }}
-            />
-            <div className="work-filters">
-              <WorkSpaceFilter
-                projects={boot.data?.projects}
-                project={project}
-                onProjectChange={(v) => {
-                  if (!v) rememberProject(null);
-                  setFilters({}, v);
-                }}
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <WorkSectionLabel>Views</WorkSectionLabel>
-              <div role="radiogroup" aria-label="Epic status" className="flex flex-col gap-0.5">
-                {([
-                  { key: "open", label: "Active epics", alt: "Open", dot: "bg-state-done", count: counts.open },
-                  { key: "done", label: "Done", alt: "Done", dot: "bg-fg-tertiary/60", count: counts.done },
-                  { key: "all", label: "All epics", alt: "All", dot: "bg-accent", count: counts.all },
-                ] as const).map((opt) => {
-                  const active = filters.status === opt.key;
-                  return (
-                    <button
-                      key={opt.key}
-                      type="button"
-                      role="radio"
-                      aria-checked={active}
-                      onClick={() => setFilters({ status: opt.key })}
-                      className={cx(
-                        "flex h-[26px] w-full items-center gap-2 rounded-md px-2 text-left text-12 transition-colors",
-                        active
-                          ? "bg-selected font-medium text-fg"
-                          : "text-fg-secondary hover:bg-hover hover:text-fg",
-                      )}
-                    >
-                      <span aria-hidden className={cx("size-1.5 flex-none rounded-full", opt.dot)} />
-                      <span className="min-w-0 flex-1 truncate">{opt.label}</span>
-                      <span className="font-mono text-11 text-fg-tertiary">{opt.count}</span>
-                    </button>
-                  );
-                })}
-              </div>
-              <div role="radiogroup" aria-label="Health" className="mt-1 flex flex-wrap items-center gap-1 px-1">
-                {HEALTH_OPTIONS.map((h) => (
-                  <button
-                    key={h}
-                    type="button"
-                    role="radio"
-                    aria-checked={filters.health === h}
-                    onClick={() => setFilters({ health: h })}
-                    className={cx(
-                      "flex h-6 items-center gap-1 rounded-full border px-2 text-11 transition-colors",
-                      filters.health === h
-                        ? "border-border-strong bg-selected font-medium text-fg"
-                        : "border-border text-fg-secondary hover:text-fg",
-                    )}
-                  >
-                    {h !== "any" && <span aria-hidden className={cx("size-1.5 rounded-full", HEALTH_DOT[h])} />}
-                    <span>{h === "any" ? "Any" : HEALTH_LABEL[h]}</span>
-                    {h === "at_risk" && atRiskCount > 0 && (
-                      <span aria-hidden className="font-mono text-10 text-pill-human-fg">{atRiskCount}</span>
-                    )}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="work-nav-list">
-              {epicsBySpace.map(([spaceKey, group]) => (
-                <div key={spaceKey} className="flex flex-col gap-0.5">
-                  <WorkSectionLabel count={group.epics.length}>{group.label}</WorkSectionLabel>
-                  {group.epics.map((e) => {
-                    const active = activeFeaturedEpic?.epic.id === e.epic.id;
-                    const pct = e.counts.total > 0 ? Math.round((e.counts.done / e.counts.total) * 100) : 0;
-                    return (
-                      <button
-                        key={e.epic.id}
-                        type="button"
-                        aria-current={active ? "true" : undefined}
-                        onClick={() => openEpic(e.epic.id)}
-                        className={cx(
-                          "flex h-[26px] w-full items-center gap-2 rounded-md px-2 text-left text-12 transition-colors",
-                          active
-                            ? "bg-selected font-medium text-fg"
-                            : "text-fg-secondary hover:bg-hover hover:text-fg",
-                        )}
-                      >
-                        <span
-                          aria-hidden
-                          className={cx("size-1.5 flex-none rounded-full", HEALTH_DOT[e.epic.health])}
-                        />
-                        <span className="min-w-0 flex-1 truncate">{e.epic.name}</span>
-                        <span
-                          aria-hidden
-                          className="h-1 w-6 flex-none overflow-hidden rounded-full bg-surface-sunken"
-                        >
-                          <span
-                            className="block h-full rounded-full bg-accent"
-                            style={{ width: `${pct}%` }}
-                          />
-                        </span>
-                        <span className="flex-none font-mono text-10 text-fg-tertiary">
-                          {e.counts.done}/{e.counts.total}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              ))}
-              {!query.isLoading && !shown.length && (
-                <p className="p-3 text-12 text-fg-tertiary">No epics match.</p>
-              )}
-            </div>
-          </nav>
-        </NavigatorPortal>
-      )}
+            status: filters.status,
+            counts,
+            health: filters.health,
+            healthOptions: HEALTH_OPTIONS.map((h) => ({ value: h, label: h === "any" ? "Any" : HEALTH_LABEL[h] })),
+            atRiskCount,
+            groups: epicsBySpace.map(([key, g]) => ({
+              key,
+              label: g.label,
+              epics: g.epics.map((e) => ({ id: e.epic.id, name: e.epic.name, health: e.epic.health, done: e.counts.done, total: e.counts.total })),
+            })),
+            selectedEpicId: activeFeaturedEpic?.epic.id,
+            loading: query.isLoading,
+          }),
+          onCommand: (cmd) => {
+            const handled = handleWorkHeaderCommand(cmd, {
+              project: project || undefined,
+              push: (href) => router.push(href),
+              onProject: (v) => {
+                if (!v) rememberProject(null);
+                setFilters({}, v);
+              },
+              onAgent: () => {},
+              onSearch: setSearch,
+            });
+            if (handled) return;
+            if (cmd.type === "nav.filter") {
+              if (cmd.filterId === EPICS_STATUS_FILTER) setFilters({ status: cmd.value as EpicFilters["status"] });
+              else if (cmd.filterId === EPICS_HEALTH_FILTER) setFilters({ health: cmd.value as EpicHealthFilter });
+            } else if (cmd.type === "nav.activate") openEpic(cmd.itemId);
+          },
+        }}
+      />
       {!compact && selectedEpic && (
         <CompanionDock
           app="epics-list"

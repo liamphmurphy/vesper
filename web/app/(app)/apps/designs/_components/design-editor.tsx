@@ -40,7 +40,6 @@ import { frameFor } from "@/lib/designs/export";
 import { Inspector } from "./inspector";
 import { PrototypePanel } from "./prototype-panel";
 import { InspectPanel, TokensSyncBadge } from "./library-panels";
-import { LayersPanel } from "./layers-panel";
 import { addLeaveGuard } from "@/lib/leave-guard";
 
 type SaveState = "saved" | "unsaved" | "saving" | "conflict" | "error";
@@ -1142,27 +1141,6 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
       nativeLeft={nativeLayers.nativeLeft}
       show={{ tab: "review", n: showReview }}
       onDockChange={setDock}
-      left={
-        shown && page ? (
-          <nav aria-label="Pages and layers" className="flex min-h-0 flex-1 flex-col">
-            <LayersPanel
-              design={shown}
-              page={page}
-              onPage={(pid) => {
-                setPageId(pid);
-                setSelected([]);
-                setEditing(undefined);
-              }}
-              selected={selected}
-              onSelect={setSelected}
-              onEdit={apply}
-              readOnly={readOnly}
-            />
-          </nav>
-        ) : (
-          !failed && loading
-        )
-      }
       main={
         <>
           {/* The header's ⋯ menu (tokens out of step with tokens.css) isn't drawn in the Mac app, so its badge sits above the canvas. */}

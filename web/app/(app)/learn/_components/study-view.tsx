@@ -293,7 +293,8 @@ export function StudyView({ course, onDelete }: { course: Course; onDelete: () =
   };
   return (
     <div className="grid min-h-0 flex-1 lg:h-[100dvh] lg:grid-cols-[minmax(0,1fr)_340px]">
-      {compact ? lessons : <NavigatorPortal native={{ model: nativeModel, onCommand: nativeCommand }}>{lessons}</NavigatorPortal>}
+      <NavigatorPortal native={{ model: nativeModel, onCommand: nativeCommand }} />
+      {compact && lessons}
       <div ref={scroller} className="min-w-0 overflow-y-auto">
         <div className="flex h-[52px] items-center justify-between border-b border-border-subtle pl-3 pr-6">
           <span className="flex min-w-0 items-center gap-2">

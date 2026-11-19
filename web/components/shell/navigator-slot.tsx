@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef } from "react";
 import { claimNavigator } from "@/lib/navigator";
 import { onCommand } from "@/lib/native-shell/bridge";
 import { routeNavCommand } from "@/lib/native-shell/nav-model";
@@ -22,7 +22,7 @@ export type NativeNavigator = { model: NavModel; onCommand?: (cmd: NativeCommand
  * Chats list stands down. nav.* commands for the model's id go to `native.onCommand`;
  * nav.activate on an item with an href navigates by itself.
  */
-export function NavigatorPortal({ native }: { children?: ReactNode; native?: NativeNavigator }) {
+export function NavigatorPortal({ native }: { native?: NativeNavigator }) {
   const router = useRouter();
   useEffect(() => claimNavigator(), []);
 

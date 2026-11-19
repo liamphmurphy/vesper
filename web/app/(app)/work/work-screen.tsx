@@ -28,20 +28,17 @@ import { TopBar } from "@/components/shell/topbar";
 import { useProjectScope } from "@/components/shell/project-scope";
 import { STATUS_NAME } from "@/components/domain/meta";
 import { Button } from "@/components/ui/button";
-import { WorkSavedViews } from "./work-saved-views";
 import { ActivityOverview } from "./activity-overview";
 import { parseActivityFilter } from "@/lib/work-overview";
 import {
   TicketBrief,
   EpicBrief,
   LiveRun,
-  LoadState,
   WorkTopRunLinks,
   type Navigate,
 } from "./work-details";
-import { WorkNavHeader, WorkSpacePersonaFilters } from "./work-nav-header";
 import { BoardView } from "../tickets/_components/board-screen";
-import { activityNativeBody, RunList, useActivityLists, useRunList } from "../runs/run-list";
+import { activityNativeBody, useActivityLists, useRunList } from "../runs/run-list";
 import { itemHref } from "@/lib/run-list";
 import { listQuery } from "../runs/run-list";
 import { buildWorkActivityNavModel, RUN_LOAD_MORE, RUN_RETRY, RUN_VIEW_FILTER, type ActivityFilter } from "@/lib/native-shell/models/runs";
@@ -375,126 +372,17 @@ export function WorkScreen() {
             },
           }
         : undefined;
-  const nav = (
-    <nav aria-label="Work" className="work-nav">
-      <WorkNavHeader
-        active={view}
-        project={project}
-        search={search}
-        onSearchChange={(q) => {
-          setSearch(q);
-          updateWorkUrl({ q: q || null }, true);
-        }}
-        counts={{
-          activity: runs.needs.length + runs.runs.filter((r) => r.state === "running" || r.state === "queued").length || undefined,
-          tickets: openTicketsCount || undefined,
-          epics: openEpicsCount || undefined,
-        }}
-        onActivityClick={() =>
-          go({
-            view: "activity",
-            context: null,
-            companion: null,
-            list: null,
-            layout: null,
-          })
-        }
-      />
-      <WorkSpacePersonaFilters
-        projects={boot.data?.projects}
-        agents={boot.data?.agents}
-        project={project ?? ""}
-        onProjectChange={(v) => go({ project: v, ticket: null, epic: null })}
-        agent={agent ?? ""}
-        onAgentChange={(v) => go({ agent: v || null })}
-      />
-      {view === "activity" ? (
-        <RunList selected={runId} embedded search={search} />
-      ) : (
-        <div className="work-nav-list">
-          {view === "tickets" && (
-            <>
-              <div className="work-list-controls">
-                <button
-                  aria-pressed={params.get("layout") !== "board"}
-                  onClick={() => go({ layout: null })}
-                >
-                  List
-                </button>
-                <span>/</span>
-                <button
-                  aria-pressed={params.get("layout") === "board"}
-                  onClick={() => go({ layout: "board" })}
-                >
-                  Board
-                </button>
-              </div>
-              <WorkSavedViews />
-            </>
-          )}
-          <LoadState query={view === "tickets" ? tickets : epics} />
-          {view === "tickets" ? (
-            <>
-              {shownTickets.map((t) => (
-                <button
-                  key={t.key}
-                  aria-current={ticketKey === t.key ? "page" : undefined}
-                  onClick={() =>
-                    go({ ticket: t.key, context: null, list: null })
-                  }
-                >
-                  <strong>{t.title}</strong>
-                  <small>
-                    {t.key} ·{" "}
-                    {t.unmet_dependencies ? "Blocked" : STATUS_NAME[t.status]}
-                  </small>
-                </button>
-              ))}
-              {!tickets.isPending && !shownTickets.length && (
-                <p className="p-3 text-13 text-fg-tertiary">
-                  No tickets match.
-                </p>
-              )}
-            </>
-          ) : (
-            <>
-              {shownEpics.map((e) => (
-                <button
-                  key={e.epic.id}
-                  aria-current={epicId === e.epic.id ? "page" : undefined}
-                  onClick={() =>
-                    go({ epic: e.epic.id, context: null, list: null })
-                  }
-                >
-                  <strong>{e.epic.name}</strong>
-                  <small>
-                    {e.counts.done} of {e.counts.total} tickets
-                  </small>
-                </button>
-              ))}
-              {!epics.isPending && !shownEpics.length && (
-                <p className="p-3 text-13 text-fg-tertiary">No epics match.</p>
-              )}
-            </>
-          )}
-        </div>
-      )}
-    </nav>
-  );
-  const mobileList =
-    compact &&
-    (params.get("list") === "show" || (!runId && !ticketKey && !epicId));
-  const mobileBrief = compact && (showBrief || mobileList);
+  const mobileBrief = compact && showBrief;
   const activityFilter = parseActivityFilter(params.get("filter"), params.get("done"));
   const showActivityOverview = view === "activity" && !compact && !showBrief;
   return (
     <div className="work-page" onClickCapture={intercept}>
-      {!compact && <NavigatorPortal native={activityNative ?? listNative}>{nav}</NavigatorPortal>}
+      <NavigatorPortal native={activityNative ?? listNative} />
       {native && <SavedViewNativeDialogs ui={svUi} onCreated={(v) => updateWorkUrl({ saved: v.id })} />}
       {native ? (
         <>
-          <NativeWorkHeader title={view[0].toUpperCase() + view.slice(1)} needs={!companion && !mobileList ? runs.needs.length : 0} onNeeds={() => go({ filter: "needs_you", context: null })} />
-          {!companion && !mobileList && runId && <NativeRunLinks id={runId} context={context} navigate={go} />}
+          <NativeWorkHeader title={view[0].toUpperCase() + view.slice(1)} needs={!companion ? runs.needs.length : 0} onNeeds={() => go({ filter: "needs_you", context: null })} />
+          {!companion && runId && <NativeRunLinks id={runId} context={context} navigate={go} />}
         </>
       ) : (
         <TopBar
@@ -504,10 +392,7 @@ export function WorkScreen() {
           ]}
           actions={
             <>
-              {compact && (
-                <Button onClick={() => go({ list: "show" })}>Browse work</Button>
-              )}
-              {!companion && !mobileList && runs.needs.length > 0 && (
+              {!companion && runs.needs.length > 0 && (
                 <button
                   type="button"
                   onClick={() => go({ filter: "needs_you", context: null })}
@@ -517,19 +402,17 @@ export function WorkScreen() {
                   Needs you · {runs.needs.length}
                 </button>
               )}
-              {!companion && !mobileList && runId && (
+              {!companion && runId && (
                 <WorkTopRunLinks id={runId} context={context} navigate={go} />
               )}
             </>
           }
         />
       )}
-      {mobileList && nav}
       <div
         className={cx(
           "work-body",
           companion && "work-planning",
-          mobileList && "work-hidden",
         )}
       >
         {view === "activity" && (

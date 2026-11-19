@@ -1,13 +1,37 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { ancestors, find, kids, labelOf, mapNode } from "@/lib/designs/edit";
+import { ancestors, find, kids, labelOf, mapNode, mapPage, newId } from "@/lib/designs/edit";
 import type { Design, DesignNode, Page } from "@/lib/designs/schema";
 import { buildDesignNav, parseDesignCommand, type LayerRow } from "@/lib/native-shell/models/design-editor";
 import { NativeRenameDialog } from "@/components/shell/native-rename-dialog";
-import { layerCommands } from "./layers-panel";
 
 type Edit = (fn: (d: Design) => Design, key?: string) => void;
+
+function layerCommands(design: Design, onPage: (id: string) => void, onEdit: Edit) {
+  return {
+    /** Adds a page after the others, opens it, and returns its id. */
+    addPage: (): string => {
+      const id = newId("p");
+      onEdit((d) => ({ ...d, pages: [...d.pages, { id, name: `Page ${d.pages.length + 1}`, children: [] }] }));
+      onPage(id);
+      return id;
+    },
+    removePage: (id: string) => {
+      if (design.pages.length < 2) return;
+      const i = design.pages.findIndex((p) => p.id === id);
+      onEdit((d) => ({ ...d, pages: d.pages.filter((p) => p.id !== id) }));
+      onPage(design.pages[i === 0 ? 1 : i - 1].id);
+    },
+    /** Renames a page or a layer; a blank name changes nothing. */
+    rename: (id: string, name: string) => {
+      const n = name.trim();
+      if (!n) return;
+      if (design.pages.some((p) => p.id === id)) onEdit((d) => mapPage(d, id, (p) => (p.name === n ? p : { ...p, name: n.slice(0, 200) })));
+      else onEdit((d) => mapNode(d, id, (x) => (x.name === n ? x : ({ ...x, name: n.slice(0, 200) } as DesignNode))));
+    },
+  };
+}
 
 const toRow = (n: DesignNode): LayerRow => ({
   id: n.id,

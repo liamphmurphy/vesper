@@ -126,7 +126,6 @@ const COMPOSER = "[data-dock-composer], textarea, [contenteditable='true'], inpu
 export function EditorLayout({
   app,
   header,
-  left,
   main,
   dock,
   chatTab = "chat",
@@ -139,10 +138,9 @@ export function EditorLayout({
   /** Key for the remembered dock state, e.g. "designs". */
   app: string;
   header: EditorHeader;
-  left?: ReactNode;
   /**
    * `left` as a NavModel for the native sidebar. The layout adds the way back (and the document's name as the title);
-   * the editor handles its own rows' commands. Without it the structure stays in the page (the fallback column).
+   * the editor handles its own rows' commands.
    */
   nativeLeft?: NativeNavigator;
   /** `header` as the window's title and toolbar in the Mac app, where the page draws no header row. */
@@ -275,7 +273,6 @@ export function EditorLayout({
 
   const active = dock.find((t) => t.id === state.tab) ?? dock[0];
   const hasDock = dock.length > 0;
-  const showLeft = !!left && !state.hidden;
   const docked = hasDock && !state.hidden;
 
   const panels = dockPanels(uid, dock, active?.id, compact);
@@ -283,22 +280,11 @@ export function EditorLayout({
   return (
     <div data-editor-layout={app} className={cx("flex min-h-0 min-w-0 flex-col bg-bg", embed ? "flex-1" : "h-dvh flex-none")}>
       <div className="relative flex min-h-0 flex-1">
-        {/* The structure is the left column's list, under the way back to the app and the document's name. */}
-        {(showLeft || nativeNav) && (
-          <NavigatorPortal native={nativeNav}>
-            {showLeft && <aside aria-label="Structure" className="flex min-h-0 flex-1 flex-col">
-              <div className="flex flex-none flex-col gap-0.5 px-4 pb-2">
-                <Link href={back.href} className="text-11 text-fg-tertiary hover:text-fg-secondary">‹ {back.label}</Link>
-                {header.name && <span className="truncate text-13 font-semibold text-fg">{header.name}</span>}
-              </div>
-              <div className="min-h-0 flex-1 overflow-y-auto">{left}</div>
-            </aside>}
-          </NavigatorPortal>
-        )}
+        {nativeNav && <NavigatorPortal native={nativeNav} />}
         {/* The editor's bar spans only the work; the dock is a full-height column whose own first row,
             the same height, continues the bar: its header (the chat's, for Chat) is the top of the dock. */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {nativeBar ? <h1 className="sr-only">{nativeHeader.title}</h1> : embed ? <EmbeddedBar {...header} slot={embed.actions} /> : <Header {...header} backInColumn={!!left} />}
+          {nativeBar ? <h1 className="sr-only">{nativeHeader.title}</h1> : embed ? <EmbeddedBar {...header} slot={embed.actions} /> : <Header {...header} />}
           <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-auto bg-bg">{main}</div>
         </div>
         {/* The dock is the companion: in the shell's right-hand column on wide screens, here on phones.
@@ -667,13 +653,12 @@ function EmbeddedBar({ title, titleMenu, saveState, status, presence, actions, o
   );
 }
 
-/** The editor's bar: back and forward first, as on every page, then the title; the way up to the app is in the left column when the structure is. */
-function Header({ back, title, titleMenu, saveState, status, presence, actions, overflow, backInColumn }: EditorHeader & { backInColumn: boolean }) {
+/** The editor's bar: back and forward first, as on every page, then the title; the way up to the app is in the left column. */
+function Header({ back, title, titleMenu, saveState, status, presence, actions, overflow }: EditorHeader) {
   return (
     <header className="flex h-[44px] flex-none items-center gap-3 border-b border-border-subtle bg-surface pl-3 pr-4">
       <HistoryNav className="max-md:hidden" />
-      {/* Phones have no left column, so the way up stays here for them. */}
-      <Link href={back.href} className={cx("flex flex-none items-center gap-1 text-13 text-fg-secondary hover:text-fg", backInColumn && "md:hidden")}>
+      <Link href={back.href} className="flex flex-none items-center gap-1 text-13 text-fg-secondary hover:text-fg">
         <span aria-hidden>←</span>
         {back.label}
       </Link>
