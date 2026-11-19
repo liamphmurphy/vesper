@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { claimNavigator, currentArea, isSidebarToggleShortcut, navigatorClaimed, navigatorSlot, setNavigatorSlot, subscribeNavigator } from "./navigator.ts";
+import { AREAS, claimNavigator, currentArea, navigatorClaimed, subscribeNavigator } from "./navigator.ts";
 
 test("a path selects its area on the icon row", () => {
   assert.equal(currentArea("/"), "chat");
@@ -21,7 +21,11 @@ test("a path selects its area on the icon row", () => {
   for (const p of ["/settings", "/customization", "/chatter"]) assert.equal(currentArea(p), null, p);
 });
 
-test("the column's middle is claimed while any screen holds it, and tells its listeners", () => {
+test("AREAS lists the top-level areas in order", () => {
+  assert.deepEqual(AREAS.map((a) => a.area), ["chat", "work", "knowledge", "library"]);
+});
+
+test("the navigator is claimed while any screen holds it, and tells its listeners", () => {
   let calls = 0;
   const off = subscribeNavigator(() => calls++);
   assert.equal(navigatorClaimed(), false);
@@ -32,21 +36,6 @@ test("the column's middle is claimed while any screen holds it, and tells its li
   assert.equal(navigatorClaimed(), true);
   b();
   assert.equal(navigatorClaimed(), false);
-  const el = {};
-  setNavigatorSlot(el);
-  setNavigatorSlot(el); // the same element again is no change
-  assert.equal(navigatorSlot(), el);
-  setNavigatorSlot(null);
-  assert.equal(calls, 6); // two claims, two releases, the slot set and cleared
+  assert.equal(calls, 4); // two claims and two releases
   off();
-});
-
-test("isSidebarToggleShortcut matches Cmd/Ctrl+Shift+Backslash only", () => {
-  const mk = (over = {}) => ({ key: "|", code: "Backslash", metaKey: false, ctrlKey: true, altKey: false, shiftKey: true, ...over });
-  assert.equal(isSidebarToggleShortcut(mk()), true);
-  assert.equal(isSidebarToggleShortcut(mk({ metaKey: true, ctrlKey: false, key: "\\" })), true);
-  assert.equal(isSidebarToggleShortcut(mk({ shiftKey: false, key: "\\" })), false);
-  assert.equal(isSidebarToggleShortcut(mk({ altKey: true })), false);
-  assert.equal(isSidebarToggleShortcut(mk({ metaKey: false, ctrlKey: false })), false);
-  assert.equal(isSidebarToggleShortcut(mk({ key: "k", code: "KeyK" })), false);
 });

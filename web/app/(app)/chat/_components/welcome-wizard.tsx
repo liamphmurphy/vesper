@@ -28,7 +28,6 @@ import {
   type WizardStep,
 } from "@/lib/onboarding";
 import { ROLE_MAX } from "@/lib/profile-ui";
-import { setWizardStep } from "@/components/domain/setup-progress";
 import { PersonaAvatar, PersonaPortrait, personaLook, toneLabel } from "./persona";
 import { Spinner } from "@/components/ui/loading";
 
@@ -543,10 +542,6 @@ export function WelcomeWizard({ only, onDone }: { only?: "harness"; onDone: (per
   const [verified, setVerified] = useState<HarnessId[]>([]);
   const [leaving, setLeaving] = useState(false);
   const [hour] = useState(() => new Date().getHours());
-  useEffect(() => {
-    if (!only) setWizardStep(step);
-  }, [step, only]);
-  useEffect(() => () => setWizardStep(null), []);
 
   // The card fades and lifts out, then the next one rises in.
   const go = (next: WizardStep) => {
@@ -557,7 +552,6 @@ export function WelcomeWizard({ only, onDone }: { only?: "harness"; onDone: (per
     }, reduced ? 120 : 200);
   };
   const finish = (id?: string) => {
-    if (!only) setWizardStep(4);
     onDone(id);
   };
   const line = only ? "Chats need a mind to run on again: connect Claude Code, Codex, Antigravity or any mix." : assistantLine(step, hour);

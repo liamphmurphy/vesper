@@ -22,7 +22,6 @@ import {
   queueCompanionDrop,
   terminalSnapshotFilename,
 } from "@/lib/dev-workspace";
-import { isSidebarToggleShortcut } from "@/lib/navigator";
 import { cx } from "@/lib/cx";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
@@ -100,7 +99,7 @@ export function DevTerminal() {
       allowProposedApi: true,
     });
     term.attachCustomKeyEventHandler((e) => {
-      if (isSidebarToggleShortcut(e) || isDevFullscreenShortcut(e)) {
+      if (isDevFullscreenShortcut(e)) {
         return false;
       }
       return true;

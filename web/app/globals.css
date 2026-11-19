@@ -1457,7 +1457,7 @@ details[open]::details-content { height: auto; }
 .doc-page .ProseMirror:focus-visible { outline: none; }
 
 /*
- * The Welcome Wizard (welcome-wizard.tsx, setup-progress.tsx). Cards leave by fading and lifting
+ * The Welcome Wizard (welcome-wizard.tsx). Cards leave by fading and lifting
  * 8px and arrive rising 10px on a spring; the Assistant types its line; the portrait glow breathes.
  */
 .wizard-leave { animation: wizard-out 200ms ease-in both; }
@@ -1469,12 +1469,6 @@ details[open]::details-content { height: auto; }
 .wizard-shimmer { background: linear-gradient(90deg, var(--track) 25%, color-mix(in srgb, var(--accent) 22%, var(--track)) 50%, var(--track) 75%); background-size: 200% 100%; animation: wizard-shimmer 1.2s linear infinite; }
 .wizard-stagger > * { animation: wizard-bullet 300ms var(--motion-ease) both; animation-delay: calc(60ms + var(--i, 0) * 140ms); }
 .wizard-photo { animation: wizard-photo 450ms var(--motion-spring) both; }
-.wizard-progress { transition: width var(--motion-progress) var(--motion-spring); }
-.wizard-row .wizard-dot { border-color: var(--border-strong); transition: background-color 350ms, border-color 350ms, box-shadow 350ms; }
-.wizard-row .wizard-dot svg { opacity: 0; transition: opacity 300ms; }
-.wizard-row[data-state="current"] .wizard-dot { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.wizard-row[data-state="done"] .wizard-dot { border-color: var(--accent); background: var(--accent); }
-.wizard-row[data-state="done"] .wizard-dot svg { opacity: 1; }
 .wizard-verified { border-color: color-mix(in srgb, var(--state-done) 55%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--state-done) 12%, transparent); }
 @keyframes wizard-out { to { opacity: 0; transform: translateY(-8px); } }
 @keyframes wizard-in { from { opacity: 0; transform: translateY(10px); } }
@@ -1497,9 +1491,6 @@ details[open]::details-content { height: auto; }
   .wizard-breathe,
   .wizard-shimmer { animation: none; }
   .wizard-check path { animation: none; stroke-dashoffset: 0; }
-  .wizard-progress,
-  .wizard-row .wizard-dot,
-  .wizard-row .wizard-dot svg { transition-duration: 120ms; }
 }
 
 /* Knowledge live preview (lib/knowledge-editor.ts): Obsidian syntax stays as typed, styled in place. */

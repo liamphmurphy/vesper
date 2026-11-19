@@ -6,7 +6,7 @@
 
 /* Mac controls show the arrow, not the pointing hand. */
 html.native-mac :is(button, [role="button"], [role="tab"], [role="menuitem"], summary, select),
-html.native-mac :is(header, nav, aside, [role="toolbar"], [role="tablist"], [role="menu"], [data-navigator-fallback]) a {
+html.native-mac :is(header, nav, aside, [role="toolbar"], [role="tablist"], [role="menu"]) a {
   cursor: default;
 }
 
@@ -16,7 +16,7 @@ html.native-mac :is(button, [role="button"]):disabled {
 }
 
 /* Chrome is not selectable: toolbars, headers, tab strips, navigation and list rows. */
-html.native-mac :is(header, nav, [role="toolbar"], [role="tablist"], [role="tab"], [role="menu"], [role="menuitem"], [role="listbox"], [role="option"], [data-navigator-fallback]),
+html.native-mac :is(header, nav, [role="toolbar"], [role="tablist"], [role="tab"], [role="menu"], [role="menuitem"], [role="listbox"], [role="option"]),
 html.native-mac :is(button, [role="button"]) {
   -webkit-user-select: none;
   user-select: none;

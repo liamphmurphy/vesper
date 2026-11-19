@@ -15,7 +15,6 @@ import { useCustomApps } from "@/lib/api/custom-app-hooks";
 import { useDevWorkspace } from "@/lib/api/dev-workspace-hooks";
 import { resolveAppIcon } from "@/lib/custom-app-bridge";
 import { cx } from "@/lib/cx";
-import { SIDEBAR_TOGGLE_HINT } from "@/lib/navigator";
 import { shortAgo } from "@/lib/format";
 import { approvalId, KIND as INBOX_KIND } from "@/lib/inbox";
 import { attachQuery, chipFromTarget, type ContextRef } from "@/lib/chat-context";
@@ -829,14 +828,6 @@ export function CommandMenu() {
       icon: "link",
       onDemand: true,
       perform: () => void navigator.clipboard.writeText(window.location.href).catch(failed),
-    },
-    {
-      id: "toggle-sidebar",
-      title: "Toggle left sidebar",
-      shortcut: SIDEBAR_TOGGLE_HINT,
-      icon: "sidebar",
-      onDemand: true,
-      perform: () => window.dispatchEvent(new Event("la:toggle-sidebar")),
     },
     {
       id: "shortcuts",

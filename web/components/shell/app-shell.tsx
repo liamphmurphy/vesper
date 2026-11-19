@@ -4,9 +4,7 @@ import { useRouter, useSelectedLayoutSegment } from "next/navigation";
 import { Suspense, useEffect, type ReactNode } from "react";
 import { useBootstrap } from "@/lib/api/hooks";
 import { useDevWorkspace } from "@/lib/api/dev-workspace-hooks";
-import { currentArea, NAVIGATOR_WIDTH, setFallbackSlot } from "@/lib/navigator";
-import { useIsNativeShell } from "@/lib/native-shell/hooks";
-import { Skeleton } from "@/components/ui/primitives";
+import { currentArea } from "@/lib/navigator";
 import { LiveUpdates } from "./live-updates";
 import { ViewedChatReader } from "./viewed-chat-reader";
 import { CommandMenu } from "./command-menu";
@@ -14,7 +12,6 @@ import { CompanionColumn } from "./companion";
 import { DocumentTitle } from "./document-title";
 import { shortcutBlocked, ShortcutsDialog } from "./shortcuts";
 import { NativeShellHost } from "./native-shell";
-import { Sidebar } from "./sidebar";
 import { SystemBanner } from "./system-banner";
 
 /** Global and area-scoped single-key shortcuts (DESIGN.md §6). */
@@ -62,20 +59,6 @@ function useShortcuts() {
   }, [router, devEnabled]);
 }
 
-function SidebarSkeleton() {
-  return (
-    // Matches the menu's collapsed default (a slim icon strip).
-    <aside
-      aria-busy="true"
-      className="flex w-[52px] max-md:hidden flex-none flex-col items-center gap-3 border-r border-border-subtle bg-sidebar px-1.5 pb-3.5 pt-3"
-    >
-      {[0, 1, 2, 3, 4, 5].map((i) => (
-        <Skeleton key={i} className="size-[26px]" />
-      ))}
-    </aside>
-  );
-}
-
 const PAGE = "flex min-h-0 min-w-0 flex-1 flex-col";
 
 /**
@@ -102,7 +85,6 @@ function SectionFade({ children }: { children: ReactNode }) {
  */
 export function AppShell({ children }: { children: ReactNode }) {
   const { data } = useBootstrap();
-  const native = useIsNativeShell();
   useShortcuts();
   return (
     <div className="flex min-h-dvh overflow-x-clip bg-bg text-fg">
@@ -117,26 +99,9 @@ export function AppShell({ children }: { children: ReactNode }) {
       <Suspense fallback={null}>
         <ViewedChatReader />
       </Suspense>
-      {native && (
-        <Suspense fallback={null}>
-          <NativeShellHost />
-        </Suspense>
-      )}
-      {native ? (
-        // The shell draws the left column. A screen that hasn't described its list as a NavModel
-        // renders it here instead (NavigatorPortal); the column is hidden while it is empty.
-        <div
-          ref={setFallbackSlot}
-          data-navigator-fallback
-          className={`${NAVIGATOR_WIDTH} flex-none flex-col border-r border-border-subtle bg-sidebar empty:hidden flex min-[612px]:sticky min-[612px]:top-0 min-[612px]:h-dvh`}
-        />
-      ) : data ? (
-        <Suspense fallback={<SidebarSkeleton />}>
-          <Sidebar />
-        </Suspense>
-      ) : (
-        <SidebarSkeleton />
-      )}
+      <Suspense fallback={null}>
+        <NativeShellHost />
+      </Suspense>
       <main className="flex min-w-0 flex-1 flex-col">
         {/* The segment needs a Suspense boundary for prerendering; the page still paints meanwhile. */}
         <Suspense fallback={<div className={PAGE}><SystemBanner />{children}</div>}>
