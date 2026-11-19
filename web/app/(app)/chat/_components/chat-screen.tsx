@@ -30,7 +30,6 @@ import { useNewConversation } from "./chat-history";
 import { CanvasButton } from "@/components/domain/canvas-view";
 import { ChatPanelHost } from "./chat-panel-host";
 import { useClaimCompanion } from "@/components/shell/companion";
-import { useCompact } from "@/lib/viewport";
 import { DOC_DRAFT, designRequest, type CreateKind } from "@/lib/chat-commands";
 import { PlaygroundButton } from "@/components/domain/playground";
 import { PersonaCarousel, personaLook } from "./persona";
@@ -359,8 +358,6 @@ export function ChatScreen({ id }: { id?: string }) {
   const boot = useBootstrap();
   // First run (or ?setup, from Settings): the Welcome Wizard takes the welcome's place until it hands over.
   const [arrived, setArrived] = useState<string>();
-  // Compact: the panels are one sheet over the chat (chat-panel-host); the compact header's Panels button reopens it.
-  const compact = useCompact();
   const mode = search.has("setup") ? "full" : wizardMode(boot.data?.me);
   const wizard = !id && !arrived && !!boot.data && !!mode;
   const noHarness = !!health && !health.ready && !wizard;
@@ -418,7 +415,7 @@ export function ChatScreen({ id }: { id?: string }) {
               </>
             )}
           </div>
-          {id && <ChatPanelHost key={id} chatId={id} live={turnRunning} readOnly={!!current.data?.archived} agent={current.data?.persona?.name ?? "Assistant"} activity={<ChatActivity chatId={id} />} layout={compact ? "sheet" : "side"} />}
+          {id && <ChatPanelHost key={id} chatId={id} live={turnRunning} readOnly={!!current.data?.archived} agent={current.data?.persona?.name ?? "Assistant"} activity={<ChatActivity chatId={id} />} />}
       </div>
     </div>
   );

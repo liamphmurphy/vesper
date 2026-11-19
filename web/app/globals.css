@@ -183,11 +183,8 @@
     env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
 }
 
-/* The compact shell's bottom tab bar (components/shell/tab-bar.tsx): 56px plus the home indicator while it shows, else 0.
-   The shell pads its content by it; h-app screens and the activity orb stop above it. */
-:root:has([data-tab-bar]) { --tab-bar-h: calc(56px + env(safe-area-inset-bottom, 0px)); }
-/* A screen sized to the viewport: 100dvh, less the tab bar where there is one. */
-@utility h-app { height: calc(100dvh - var(--tab-bar-h, 0px)); }
+/* A screen sized to the viewport. */
+@utility h-app { height: 100dvh; }
 
 /* Inline code inside prose and descriptions (DESIGN.md §2 Typography). */
 /* Canvas comments, painted without touching the rendered text. */

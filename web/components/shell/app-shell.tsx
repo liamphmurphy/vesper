@@ -6,7 +6,6 @@ import { useBootstrap } from "@/lib/api/hooks";
 import { useDevWorkspace } from "@/lib/api/dev-workspace-hooks";
 import { currentArea, NAVIGATOR_WIDTH, setFallbackSlot } from "@/lib/navigator";
 import { useIsNativeShell } from "@/lib/native-shell/hooks";
-import { useCompact } from "@/lib/viewport";
 import { Skeleton } from "@/components/ui/primitives";
 import { LiveUpdates } from "./live-updates";
 import { ViewedChatReader } from "./viewed-chat-reader";
@@ -17,7 +16,6 @@ import { shortcutBlocked, ShortcutsDialog } from "./shortcuts";
 import { NativeShellHost } from "./native-shell";
 import { Sidebar } from "./sidebar";
 import { SystemBanner } from "./system-banner";
-import { TabBar } from "./tab-bar";
 
 /** Global and area-scoped single-key shortcuts (DESIGN.md §6). */
 function useShortcuts() {
@@ -104,11 +102,10 @@ function SectionFade({ children }: { children: ReactNode }) {
  */
 export function AppShell({ children }: { children: ReactNode }) {
   const { data } = useBootstrap();
-  const compact = useCompact();
   const native = useIsNativeShell();
   useShortcuts();
   return (
-    <div className={compact ? "flex min-h-dvh flex-col bg-bg text-fg" : "flex min-h-dvh overflow-x-clip bg-bg text-fg"}>
+    <div className="flex min-h-dvh overflow-x-clip bg-bg text-fg">
       <LiveUpdates />
       {/* usePathname needs a Suspense boundary for prerendering. */}
       <Suspense fallback={null}>
@@ -133,28 +130,23 @@ export function AppShell({ children }: { children: ReactNode }) {
           data-navigator-fallback
           className={`${NAVIGATOR_WIDTH} flex-none flex-col border-r border-border-subtle bg-sidebar empty:hidden flex min-[612px]:sticky min-[612px]:top-0 min-[612px]:h-dvh`}
         />
-      ) : compact ? null : data ? (
+      ) : data ? (
         <Suspense fallback={<SidebarSkeleton />}>
           <Sidebar />
         </Suspense>
       ) : (
         <SidebarSkeleton />
       )}
-      <main className={compact ? "flex min-w-0 flex-1 flex-col pb-[var(--tab-bar-h,0px)]" : "flex min-w-0 flex-1 flex-col"}>
+      <main className="flex min-w-0 flex-1 flex-col">
         {/* The segment needs a Suspense boundary for prerendering; the page still paints meanwhile. */}
         <Suspense fallback={<div className={PAGE}><SystemBanner />{children}</div>}>
           <SectionFade>{children}</SectionFade>
         </Suspense>
       </main>
       {/* The companion: the page's own dock, or the work chat, in one place beside every page. */}
-      {!compact && data && (
+      {data && (
         <Suspense fallback={null}>
           <CompanionColumn />
-        </Suspense>
-      )}
-      {compact && (
-        <Suspense fallback={null}>
-          <TabBar />
         </Suspense>
       )}
     </div>

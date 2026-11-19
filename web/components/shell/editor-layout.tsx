@@ -281,7 +281,7 @@ export function EditorLayout({
   const panels = dockPanels(uid, dock, active?.id, compact);
 
   return (
-    <div data-editor-layout={app} className={cx("flex min-h-0 min-w-0 flex-col bg-bg", embed ? "flex-1" : "h-[calc(100dvh-var(--tab-bar-h,0px))] flex-none md:h-dvh")}>
+    <div data-editor-layout={app} className={cx("flex min-h-0 min-w-0 flex-col bg-bg", embed ? "flex-1" : "h-dvh flex-none")}>
       <div className="relative flex min-h-0 flex-1">
         {/* The structure is the left column's list, under the way back to the app and the document's name. */}
         {(showLeft || nativeNav) && (

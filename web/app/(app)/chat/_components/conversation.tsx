@@ -104,7 +104,6 @@ import { ChatTitleMenu } from "./title-menu";
 import { ChatCostChip } from "@/components/domain/cost-chip";
 import { unavailableReason } from "@/lib/setup";
 import { ChatSpacePicker } from "./chat-space";
-import { CompactChatHeader } from "./compact-chat-header";
 import { NativeChatHeader } from "./native-chat-header";
 import { trackDockHeight } from "@/lib/dock-height";
 import { useIsNativeShell } from "@/lib/native-shell/hooks";
@@ -580,8 +579,6 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   const create = useCreateChat();
   const selectRepo = useSetChatRepository(id);
   const [repoSignal, setRepoSignal] = useState(0);
-  // The compact composer keeps the repository picker in its options sheet: the chat menu opens that.
-  const [sheetSignal, setSheetSignal] = useState(0);
   const savedRepos = useRepositories();
   const discard = useDeleteChat();
   const qc = useQueryClient();
@@ -595,7 +592,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   // The header switches the conversation for Activity, except on the chat page's desktop dock, where Activity is a tab beside it.
   const [tab, setTab] = useState<"chat" | "activity">("chat");
   const compact = useCompact();
-  const dockActivity = activityInDock && !compact;
+  const dockActivity = activityInDock;
   // In the Mac app the chat page's header lives in the window's toolbar (NativeChatHeader), so the page keeps the row's height.
   const native = useIsNativeShell();
   const nativeHeader = native && dockActivity && !docked && !headerSlot;
@@ -1191,18 +1188,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
         <DropOverlay over={drop.over} />
         {/* Sized by its own width: a panel beside the chat can leave it narrow on a wide screen. */}
         {/* The page's only header: who you're talking to, the title, then the chat's context. */}
-        {compact ? (
-          <CompactChatHeader
-            chat={c}
-            personas={group ? participants : [persona]}
-            tab={tab}
-            onTab={setTab}
-            running={running}
-            canCode={!!(c.speaker ?? c.persona)?.capabilities?.code}
-            onRepository={() => { setTab("chat"); setSheetSignal((n) => n + 1); }}
-            onRestored={restored}
-          />
-        ) : nativeHeader ? (
+        {nativeHeader ? (
           <NativeChatHeader
             chat={c}
             participants={participants}
@@ -1598,7 +1584,6 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
             <>
             {context?.composer}
             <Composer
-              sheetSignal={sheetSignal}
               text={text}
               onText={setText}
               inputRef={area}

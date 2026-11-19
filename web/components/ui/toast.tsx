@@ -14,7 +14,7 @@ export function Toaster() {
   const items = useSyncExternalStore(subscribeToasts, currentToasts, () => NONE);
   return (
     // The live region exists before any toast does, so screen readers announce each arrival.
-    <section aria-label="Notifications" aria-live="polite" className="pointer-events-none fixed inset-x-0 z-[70] flex flex-col items-center px-4" style={{ bottom: "calc(var(--tab-bar-h, 0px) + 20px)" }}>
+    <section aria-label="Notifications" aria-live="polite" className="pointer-events-none fixed inset-x-0 bottom-5 z-[70] flex flex-col items-center px-4">
       <div className="flex w-full max-w-[420px] flex-col gap-2">
         {items.map((t) => <ToastItem key={t.id} toast={t} />)}
       </div>

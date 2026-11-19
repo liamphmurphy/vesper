@@ -287,7 +287,7 @@ export function KnowledgeShell({ children }: { children: ReactNode }) {
     <Ctx.Provider value={shell}>
       <KnowledgeChatProvider>
       {/* flex-none, as in EditorLayout: in the app shell's column a flex-1 child grows to its content and ignores h-dvh. */}
-      <div className="relative flex h-[calc(100dvh-var(--tab-bar-h,0px))] min-h-0 min-w-0 flex-none bg-bg md:h-dvh">
+      <div className="relative flex h-dvh min-h-0 min-w-0 flex-none bg-bg">
         {!editorOpen && <Explorer pathname={pathname} />}
         <div className="flex min-w-0 flex-1 flex-col">
           {/* The shared top bar, with the open pages as its tabs: the same height and back button as every page. */}
