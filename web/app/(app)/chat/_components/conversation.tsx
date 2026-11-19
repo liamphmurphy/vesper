@@ -107,12 +107,13 @@ import { ChatSpacePicker } from "./chat-space";
 import { CompactChatHeader } from "./compact-chat-header";
 import { NativeChatHeader } from "./native-chat-header";
 import { trackDockHeight } from "@/lib/dock-height";
-import { useIsNativeShell } from "@/lib/native-shell/hooks";
+import { useIsNativeShell, useNativeCommand } from "@/lib/native-shell/hooks";
 import { useCompact } from "@/lib/viewport";
 import { composerOptions } from "@/lib/composer-options";
 import { CommitEmailPicker } from "./commit-email";
 import { needsCommitEmailPick } from "@/lib/commit-email";
 import { onComposerDrop } from "@/lib/playground-report";
+import { decodeComposerDrop } from "@/lib/native-shell/panel-events";
 import { SpaceContextChips } from "@/app/(app)/spaces/_components/space-chat";
 import Link from "next/link";
 import { confirmAction } from "@/components/ui/confirm";
@@ -744,6 +745,15 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
       area.current?.focus();
     });
   }, [c?.id, c?.archived]);
+
+  useNativeCommand("panel.event", (cmd) => {
+    if (cmd.event !== "composerDrop" || !c?.id || c.archived) return;
+    const decoded = decodeComposerDrop(cmd.payloadJson);
+    if (!decoded || decoded.chatId !== c.id) return;
+    if (decoded.drop.files?.length) addFiles.current(decoded.drop.files);
+    if (decoded.drop.text) setText((t) => (t.trim() ? `${t}\n\n${decoded.drop.text}` : decoded.drop.text!));
+    area.current?.focus();
+  });
 
   useEffect(() => {
     if (!search.has("attach")) return;

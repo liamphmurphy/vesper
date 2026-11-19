@@ -33,6 +33,7 @@ import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { buildDeckActions, buildDeckNav, parseDeckCommand } from "@/lib/native-shell/models/deck-editor";
 import { navAvatar, pageOrigin } from "@/lib/native-shell/models/common";
 import { presenceLabel } from "@/lib/native-shell/models/editor-header";
+import { makePanelSpec } from "@/lib/native-shell/panel-events";
 import { LAYOUTS } from "@/lib/slides/schema";
 import { SlideCanvas } from "./slide-canvas";
 import type { TextEditorHandle } from "./text-editor";
@@ -1046,6 +1047,12 @@ export function DeckScreen({ id }: { id: string }) {
       avatar: <PersonaAvatar persona={look} size={16} />,
       busy: live,
       unread,
+      native: chatId
+        ? {
+            kind: "panel",
+            panel: makePanelSpec("editor.chat", `slides.chat:${chatId}`, { tabId: "chat", chatId }),
+          }
+        : { kind: "native", sections: [], emptyText: "Loading chat…" },
       content: <div data-deck-chat className="flex min-h-0 flex-1 flex-col">{chatId && <Conversation key={chatId} id={chatId} docked onNew={() => router.push("/knowledge")} />}</div>,
     },
   ];
@@ -1054,7 +1061,21 @@ export function DeckScreen({ id }: { id: string }) {
       id: "review",
       label: "Review",
       icon: "check",
+      wide: true,
       badge: changeCount ? <span className="rounded-full bg-pill-review-bg px-1.5 text-11 text-pill-review-fg">{changeCount}</span> : undefined,
+      native: {
+        kind: "panel",
+        width: "wide",
+        panel: makePanelSpec("slides.review", `slides.review:${id}:${base}-${c.seq}`, {
+          tabId: "review",
+          chatId,
+          docId: id,
+          baseSeq: base,
+          headSeq: c.seq,
+          persona,
+          archived,
+        }),
+      },
       content:
         baseDeck && headDeck ? (
           <DeckReview

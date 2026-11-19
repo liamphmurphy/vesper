@@ -43,6 +43,7 @@ import {
 import { cx } from "@/lib/cx";
 import type { DockState } from "@/lib/editor-layout";
 import { shortAgo } from "@/lib/format";
+import { makePanelSpec } from "@/lib/native-shell/panel-events";
 import { toast } from "@/lib/toast";
 
 const ALLOWED_FILE_EXTS = [".tsx", ".ts", ".jsx", ".js", ".css", ".sql", ".json"];
@@ -756,6 +757,27 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
       avatar: <PersonaAvatar persona={personaLookForTab} size={16} />,
       busy: running,
       unread,
+      native: {
+        kind: "panel",
+        panel: makePanelSpec("customApp.chat", `customApp.chat:${app.slug}`, {
+          tabId: "chat",
+          slug: app.slug,
+          activeNav: currentNav,
+          runtimeError,
+          chatId,
+        }),
+        onEvent: (event, payloadJson) => {
+          if (event !== "selectChat" || !payloadJson) return;
+          try {
+            const payload = JSON.parse(payloadJson) as { chatId?: string };
+            if (typeof payload.chatId === "string" && payload.chatId) {
+              selectChat(payload.chatId);
+            }
+          } catch {
+            // Ignore malformed panel event payloads.
+          }
+        },
+      },
       content: (
         <CustomAppChatPane
           app={app}
@@ -776,6 +798,14 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
       label: "Code",
       icon: "code",
       wide: true,
+      native: {
+        kind: "panel",
+        width: "wide",
+        panel: makePanelSpec("customApp.code", `customApp.code:${app.slug}`, {
+          tabId: "code",
+          slug: app.slug,
+        }),
+      },
       content: <CodeInspectorTab key={app.current.seq} app={app} />,
     },
     {

@@ -20,6 +20,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { ago, outline } from "@/lib/knowledge";
 import { buildKnowledgeHistorySections, buildKnowledgeLinksSections, buildKnowledgeOutlineSections } from "@/lib/native-shell/models/knowledge-inspector";
 import { KNOWLEDGE_CONTEXT_MARKER, refKey } from "@/lib/chat-context";
+import { makePanelSpec } from "@/lib/native-shell/panel-events";
 import { actOnDock, dockShortcut, loadDock, saveDock, type DockAction, type DockState } from "@/lib/editor-layout";
 import { isFolder, useKnowledgeChat, type Attachment, type FolderAttachment, type PageAttachment } from "./chat-context";
 import { SIDE_TABS, SidePanel } from "./page-side";
@@ -44,7 +45,7 @@ function screenOf(pathname: string): string {
  * folded in each new browser tab. On a page it is that page's chat; elsewhere one general Knowledge chat.
  */
 export function KnowledgeDock({ pageId }: { pageId?: string }) {
-  const { request, panel } = useKnowledgeChat();
+  const { attachments, request, remove, readDraft, panel } = useKnowledgeChat();
   const screen = screenOf(usePathname());
   const uid = useId();
   const page = usePage(pageId).data;
@@ -211,6 +212,12 @@ export function KnowledgeDock({ pageId }: { pageId?: string }) {
         },
       };
     }
+    if (tab === "calendar") {
+      return {
+        kind: "panel",
+        panel: makePanelSpec("knowledge.calendar", "knowledge.calendar", { tabId: "calendar" }),
+      };
+    }
     return undefined;
   };
 
@@ -222,6 +229,32 @@ export function KnowledgeDock({ pageId }: { pageId?: string }) {
       avatar: <PersonaAvatar persona={personaLook(chat?.speaker ?? chat?.persona)} size={16} />,
       busy: running,
       unread,
+      native: {
+        kind: "panel",
+        panel: makePanelSpec("knowledge.chat", `knowledge.chat:${pageId ?? "general"}`, {
+          tabId: "chat",
+          pageId,
+          screen: pageId ? undefined : screen,
+          chatId,
+          attachments,
+          request,
+          draftText: pageId ? readDraft(pageId) : undefined,
+        }),
+        onEvent: (event, payloadJson) => {
+          if (!payloadJson) return;
+          try {
+            const payload = JSON.parse(payloadJson) as { keys?: string[]; chatId?: string };
+            if (event === "removeAttachments" && Array.isArray(payload.keys)) {
+              remove(payload.keys);
+            } else if (event === "generalChat" && typeof payload.chatId === "string" && payload.chatId) {
+              window.localStorage.setItem(GENERAL_CHAT_KEY, payload.chatId);
+              setGeneral(payload.chatId);
+            }
+          } catch {
+            // Ignore malformed panel event payloads.
+          }
+        },
+      },
       content: (
         <ChatBody
           key={pageId ?? "general"}

@@ -35,8 +35,12 @@ import { useNativeLayers } from "./native-layers";
 import { toast } from "@/lib/toast";
 import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { buildDesignActions, buildDesignTitleMenu, type ExportScopeName } from "@/lib/native-shell/models/design-editor";
+import { applyDesignInspectorChange, buildDesignInspector, buildDesignReviewInspector } from "@/lib/native-shell/models/design-inspector";
 import { navAvatar, pageOrigin } from "@/lib/native-shell/models/common";
+import { makePanelSpec } from "@/lib/native-shell/panel-events";
 import { frameFor } from "@/lib/designs/export";
+import type { InspectTarget } from "@/lib/designs/inspect";
+import { addLink, removeLink } from "@/lib/designs/prototype";
 import { Inspector } from "./inspector";
 import { PrototypePanel } from "./prototype-panel";
 import { InspectPanel, TokensSyncBadge } from "./library-panels";
@@ -649,6 +653,7 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
   }, [brief, chatId, doc, id, persona, router, send]);
 
   const [tab, setTab] = useState<"Design" | "Prototype" | "Inspect">("Design");
+  const [inspectTarget, setInspectTarget] = useState<InspectTarget>("css");
   /** Present mode plays the saved design, so unsaved edits are saved first. */
   const present = async (frame?: string) => {
     try {
@@ -751,6 +756,73 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
     onEdit: apply,
     readOnly,
   });
+  const nativeCallbacks = useRef<{
+    reviewAction: (actionId: string) => void;
+    designChange: (fieldId: string, value: string) => void;
+    designAction: (actionId: string, itemId?: string) => void;
+  }>({
+    reviewAction: () => undefined,
+    designChange: () => undefined,
+    designAction: () => undefined,
+  });
+  useEffect(() => {
+    nativeCallbacks.current = {
+      reviewAction: (actionId) => {
+        if (actionId === "start_review") {
+          setReviewing(true);
+          return;
+        }
+        if (!review) return;
+        if (actionId === "done") void finishReview(review.body);
+        else if (actionId === "accept_all") void finishReview(review.restBody("accepted"));
+        else if (actionId === "reject_all") void finishReview(review.restBody("rejected"));
+        else if (actionId.startsWith("focus:")) {
+          const idx = Number(actionId.slice(6));
+          const c = review.changes.find((x) => x.i === idx);
+          if (c) focusChange(c);
+        } else if (actionId.startsWith("accept:")) {
+          review.accept(Number(actionId.slice(7)));
+        } else if (actionId.startsWith("reject:")) {
+          review.reject(Number(actionId.slice(7)));
+        }
+      },
+      designChange: (fieldId, value) => {
+        if (fieldId === "mode" && (value === "Design" || value === "Prototype" || value === "Inspect")) {
+          setTab(value);
+          return;
+        }
+        if (fieldId === "inspect:target" && (value === "css" || value === "tailwind" || value === "react")) {
+          setInspectTarget(value);
+          return;
+        }
+        apply((d) => applyDesignInspectorChange(d, selected, fieldId, value), `${selected[0] ?? "doc"}:${fieldId}`);
+      },
+      designAction: (actionId, itemId) => {
+        if (actionId === "present") void present();
+        else if (actionId === "group") group();
+        else if (actionId === "ungroup") ungroup();
+        else if (actionId === "delete") removeSelected();
+        else if (actionId === "select_node" && itemId) setSelected([itemId]);
+        else if (actionId === "proto:add_link" && selected.length === 1) {
+          apply((d) => addLink(d, selected[0])?.design ?? d);
+        } else if (actionId.startsWith("proto:remove:")) {
+          const linkId = actionId.slice("proto:remove:".length);
+          apply((d) => removeLink(d, linkId));
+        }
+      },
+    };
+  });
+
+  const handleReviewNativeAction = useCallback((actionId: string) => {
+    nativeCallbacks.current.reviewAction(actionId);
+  }, []);
+  const handleDesignNativeChange = useCallback((fieldId: string, value: string) => {
+    nativeCallbacks.current.designChange(fieldId, value);
+  }, []);
+  const handleDesignNativeAction = useCallback((actionId: string, itemId?: string) => {
+    nativeCallbacks.current.designAction(actionId, itemId);
+  }, []);
+
   const nativeHeader: NativeEditorHeader = {
     title,
     titleMenu: ref.data ? buildDesignTitleMenu({ duplicating: duplicate.isPending, rename: () => setRenamingTitle(true), duplicate: () => duplicate.mutate(id, { onSuccess: (d) => router.push(`/apps/designs/${d.id}`) }) }) : undefined,
@@ -1088,29 +1160,68 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
       {chatId && <Conversation key={chatId} id={chatId} docked actions={editMode} onNew={() => router.push("/knowledge")} />}
     </div>
   );
-  const dockTabs: DockTab[] = [
-    { id: "chat", label: "Chat", icon: "msg", avatar: <PersonaAvatar persona={look} size={16} />, busy: !!presence, unread, content: chatPanel },
-  ];
-  if (proposalCount || reviewing)
-    dockTabs.push({
-      id: "review",
-      label: "Review",
-      icon: "check",
-      badge: <span className="rounded-full bg-pill-review-bg px-1.5 text-11 text-pill-review-fg">{proposalCount}</span>,
-      content:
-        reviewing && review && shown ? (
-          <ReviewPanel review={review} design={shown} chatId={chatId} canvasId={id} seq={doc?.saved.seq ?? 0} persona={persona} error={resolveError} busy={resolving} onFocus={focusChange} onDone={(body) => void finishReview(body)} />
-        ) : (
-          <div className="flex flex-col items-start gap-3 p-4 text-13 text-fg-secondary">
-            <p>{persona} suggested {suggestions}. Nothing changes until you accept.</p>
-            <Button variant="approve" onClick={() => setReviewing(true)}>Start review</Button>
-          </div>
-        ),
-    });
-  dockTabs.push({
+  const reviewNative =
+    proposalCount || reviewing
+      ? buildDesignReviewInspector({
+          persona,
+          proposalCount,
+          reviewing: !!(reviewing && review && shown),
+          changes: review?.changes,
+          decisions: review?.decisions,
+          left: review?.left,
+          busy: resolving,
+          error: resolveError,
+        })
+      : undefined;
+
+  const designNative =
+    design && lay
+      ? buildDesignInspector({
+          design,
+          page,
+          selected,
+          lay,
+          tab,
+          inspectTarget,
+          readOnly,
+        })
+      : undefined;
+
+  const chatTab: DockTab = {
+    id: "chat",
+    label: "Chat",
+    icon: "msg",
+    avatar: <PersonaAvatar persona={look} size={16} />,
+    busy: !!presence,
+    unread,
+    native: chatId
+      ? {
+          kind: "panel",
+          panel: makePanelSpec("designs.chat", `designs.chat:${id}:${chatId}`, {
+            tabId: "chat",
+            chatId,
+            designId: id,
+            persona,
+            pageId: page?.id,
+            selected,
+          }),
+        }
+      : { kind: "native", sections: [], emptyText: "Loading chat…" },
+    content: chatPanel,
+  };
+
+  const designTab: DockTab = {
     id: "design",
     label: "Design",
     icon: "designs",
+    native: designNative
+      ? {
+          kind: "native",
+          ...designNative,
+          onChange: handleDesignNativeChange,
+          onAction: handleDesignNativeAction,
+        }
+      : { kind: "native", sections: [], emptyText: "Loading design…" },
     content: design && lay ? (
       <>
         <div role="tablist" aria-label="Inspector" className="flex flex-none gap-4 border-b border-border-subtle px-4 pt-3">
@@ -1133,7 +1244,37 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
     ) : (
       loading
     ),
-  });
+  };
+
+  const dockTabs: DockTab[] =
+    proposalCount || reviewing
+      ? [
+          chatTab,
+          {
+            id: "review",
+            label: "Review",
+            icon: "check",
+            badge: <span className="rounded-full bg-pill-review-bg px-1.5 text-11 text-pill-review-fg">{proposalCount}</span>,
+            native: reviewNative
+              ? {
+                  kind: "native",
+                  ...reviewNative,
+                  onAction: handleReviewNativeAction,
+                }
+              : undefined,
+            content:
+              reviewing && review && shown ? (
+                <ReviewPanel review={review} design={shown} chatId={chatId} canvasId={id} seq={doc?.saved.seq ?? 0} persona={persona} error={resolveError} busy={resolving} onFocus={focusChange} onDone={(body) => void finishReview(body)} />
+              ) : (
+                <div className="flex flex-col items-start gap-3 p-4 text-13 text-fg-secondary">
+                  <p>{persona} suggested {suggestions}. Nothing changes until you accept.</p>
+                  <Button variant="approve" onClick={() => setReviewing(true)}>Start review</Button>
+                </div>
+              ),
+          },
+          designTab,
+        ]
+      : [chatTab, designTab];
 
   return (
     <>
