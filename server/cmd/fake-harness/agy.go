@@ -133,7 +133,7 @@ func agyArgs(args []string) (prompt, model, conversation string) {
 		case "--conversation":
 			conversation = args[i+1]
 			i++
-		case "--output-format", "--effort", "--agent", "--print-timeout":
+		case "--output-format", "--effort", "--agent", "--print-timeout", "--settings":
 			i++
 		}
 	}

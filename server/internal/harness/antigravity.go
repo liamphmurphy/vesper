@@ -111,7 +111,7 @@ func (Antigravity) Invocation(ws Workspace, t Turn) (Invocation, error) {
 			prompt += "\n\n" + note
 		}
 	}
-	argv := []string{"python3", agyLaunchPath, "agy", "-p", prompt, "--output-format", "stream-json"}
+	argv := []string{"python3", agyLaunchPath, "agy", "-p", prompt, "--output-format", "stream-json", "--settings", agySessionSettings}
 	model := spec.Model
 	effort := spec.HarnessOptions["effort"]
 	if effort != "" {
@@ -137,6 +137,17 @@ func (Antigravity) Invocation(ws Workspace, t Turn) (Invocation, error) {
 	files[agyConfigPath] = body
 	return Invocation{Argv: argv, Env: env, Files: files}, nil
 }
+
+// agySessionSettings turns agy's terminal sandbox off for this session only.
+// The container is the boundary, as for Codex. settings.json can't do it on
+// its own: agy treats "enableTerminalSandbox": false as unset (it drops it on
+// save), so a sandbox-on value from another source, such as an OAuth account's
+// synced preferences, wins. A --settings value does override it (agy 1.5.9,
+// TestAgyProbe/sandbox_off). With the sandbox off nothing needs BypassSandbox,
+// whose presence alone sent every command through agy's safety monitor
+// (6-10s each, LAZYAGENTS-252). Default agent mode keeps Auto mode's command
+// review out of the way for the same reason; Vesper's hook decides instead.
+const agySessionSettings = `{"enableTerminalSandbox":false,"agentMode":""}`
 
 func nonNil(s []string) []string {
 	if s == nil {

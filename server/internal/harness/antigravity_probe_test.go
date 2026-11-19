@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -115,21 +116,46 @@ func TestAgyProbe(t *testing.T) {
 		}
 	})
 
-	t.Run("sandbox_bypass", func(t *testing.T) {
+	// An OAuth account's synced preferences can turn agy's terminal sandbox on
+	// whatever settings.json says. Vesper's session settings turn it off again,
+	// so commands run unsandboxed without BypassSandbox, whose presence sent each
+	// one through agy's safety monitor (LAZYAGENTS-252). agy only offers the
+	// model BypassSandbox while the sandbox is on, which is what this observes:
+	// the sandbox itself can't start in every probe environment.
+	sandboxed := func(t *testing.T, withoutSession bool) (string, agyOutcome, string) {
 		p := newAgyProbe(t, bin)
+		p.accountSettings = map[string]any{"enableTerminalSandbox": true}
+		p.withoutSessionSettings = withoutSession
 		outside := filepath.Join(t.TempDir(), "unsandboxed.txt")
 		p.gemini.script(
-			agyReply{call: agyCall("run_command", map[string]any{"CommandLine": "touch '" + outside + "' && echo BYPASS_OK", "toolSummary": "Write outside workspace", "WaitMsBeforeAsync": 5000})},
-			agyReply{text: "Ran unsandboxed."},
+			agyReply{call: agyCall("run_command", map[string]any{"CommandLine": "touch '" + outside + "' && echo RAN", "toolSummary": "Write outside workspace", "WaitMsBeforeAsync": 5000})},
+			agyReply{text: "Ran it."},
 		)
 		s := spec("tests:run", "allowed")
 		s.Harness, s.Model = agentdef.HarnessAntigravity, ""
-		out := p.runWithSettings(t, s, "", `{"modelProvider":"gemini","enableTerminalSandbox":true}`)
+		out := p.runWithSettings(t, s, "", `{"modelProvider":"gemini"}`)
+		return p.gemini.firstRequest(), out, outside
+	}
+	t.Run("sandbox_on_without_session_settings", func(t *testing.T) {
+		if first, _, _ := sandboxed(t, true); !strings.Contains(first, "BypassSandbox") {
+			t.Fatal("the account setting should turn the sandbox on: the probe no longer shows what --settings changes")
+		}
+	})
+	t.Run("sandbox_off", func(t *testing.T) {
+		first, out, outside := sandboxed(t, false)
 		if out.exit != 0 || out.res.IsError {
-			t.Fatalf("sandbox_bypass failed: exit=%d res=%+v", out.exit, out.res)
+			t.Fatalf("exit=%d res=%+v", out.exit, out.res)
+		}
+		if strings.Contains(first, "BypassSandbox") {
+			t.Error("Vesper's session settings must turn agy's terminal sandbox off")
 		}
 		if _, err := os.Stat(outside); err != nil {
-			t.Fatalf("expected run_command to bypass agy terminal sandbox and create %s: %v", outside, err)
+			t.Errorf("run_command must run unsandboxed and create %s: %v", outside, err)
+		}
+		for _, e := range out.events {
+			if e.Type == "tool_call" && strings.Contains(fmt.Sprint(e.Payload), "BypassSandbox") {
+				t.Errorf("a command ran with BypassSandbox: %v", e.Payload)
+			}
 		}
 	})
 }
@@ -146,6 +172,11 @@ type agyProbe struct {
 	policy        *agyPolicyStub
 	mcp           *agyMCPStub
 	vesperURL     string
+	// accountSettings stands in for settings Vesper doesn't write, such as an
+	// OAuth account's synced preferences: merged over the turn's settings.json.
+	accountSettings map[string]any
+	// withoutSessionSettings drops Vesper's --settings, to show what they change.
+	withoutSessionSettings bool
 }
 
 func newAgyProbe(t *testing.T, bin string) *agyProbe {
@@ -182,6 +213,16 @@ func (p *agyProbe) runWithSettings(t *testing.T, spec agentdef.Resolved, record,
 	if err != nil {
 		t.Fatal(err)
 	}
+	if p.accountSettings != nil {
+		var cfg map[string]any
+		if err := json.Unmarshal(inv.Files[agyConfigPath], &cfg); err != nil {
+			t.Fatal(err)
+		}
+		for k, v := range p.accountSettings {
+			cfg["settings"].(map[string]any)[k] = v
+		}
+		inv.Files[agyConfigPath], _ = json.Marshal(cfg)
+	}
 	for rel, body := range inv.Files {
 		path := filepath.Join(p.ws, rel)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -206,8 +247,25 @@ func (p *agyProbe) runWithSettings(t *testing.T, spec agentdef.Resolved, record,
 	defer cancel()
 	// Production runs keep modelProvider unset so agy uses the container's saved
 	// OAuth login; the probe overrides it for this process only so agy routes
-	// GEMINI_API_KEY requests to the local stub.
-	argv := append(append([]string(nil), inv.Argv[1:]...), "--settings", settingsJSON)
+	// GEMINI_API_KEY requests to the local stub. agy reads one --settings, so
+	// the probe's keys join Vesper's own session settings.
+	argv := append([]string(nil), inv.Argv[1:]...)
+	i := slices.Index(argv, "--settings")
+	if i < 0 {
+		t.Fatal("Vesper passes no --settings")
+	}
+	merged := map[string]any{}
+	for _, raw := range []string{argv[i+1], settingsJSON} {
+		if err := json.Unmarshal([]byte(raw), &merged); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if p.withoutSessionSettings {
+		merged = map[string]any{}
+		_ = json.Unmarshal([]byte(settingsJSON), &merged)
+	}
+	body, _ := json.Marshal(merged)
+	argv[i+1] = string(body)
 	cmd := exec.CommandContext(ctx, inv.Argv[0], argv...)
 	cmd.Dir, cmd.Env = p.ws, env
 	var stdout, stderr bytes.Buffer
@@ -268,6 +326,7 @@ type agyGemini struct {
 	mu      sync.Mutex
 	replies []agyReply
 	first   []byte
+	all     [][]byte
 }
 
 func (g *agyGemini) script(r ...agyReply) { g.replies = r }
@@ -284,6 +343,7 @@ func (g *agyGemini) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if g.first == nil {
 		g.first = body
 	}
+	g.all = append(g.all, body)
 	reply := agyReply{text: "done"}
 	if len(g.replies) > 0 {
 		reply, g.replies = g.replies[0], g.replies[1:]

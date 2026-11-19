@@ -159,6 +159,11 @@ func TestAntigravityInvocation(t *testing.T) {
 		flag(inv.Argv, "--model") != "gemini-3.8-flash" || flag(inv.Argv, "--effort") != "high" || flag(inv.Argv, "--conversation") != "conv-9" {
 		t.Fatalf("argv = %q", inv.Argv)
 	}
+	// The terminal sandbox is off for the session; settings.json alone can't keep it off.
+	var session map[string]any
+	if err := json.Unmarshal([]byte(flag(inv.Argv, "--settings")), &session); err != nil || session["enableTerminalSandbox"] != false || session["agentMode"] != "" {
+		t.Fatalf("--settings = %q (%v)", flag(inv.Argv, "--settings"), err)
+	}
 	// A legacy model slug carrying its own effort suffix is stripped when
 	// --effort is also passed, because agy rejects conflicting combinations.
 	sLegacy := s
@@ -347,17 +352,11 @@ func TestAgyPolicyHookAgreesWithTheParser(t *testing.T) {
 		if d["decision"] != "auto_approve" {
 			t.Errorf("%s: allow became %v", c.name, d)
 		}
-		if c.name == "run_command" {
-			ov, _ := d["overwrite"].(map[string]any)
-			if ov["BypassSandbox"] != true {
-				t.Errorf("run_command allow overwrite = %v, want BypassSandbox=true", d["overwrite"])
-			}
-		} else if _, has := d["overwrite"]; has {
+		// An injected BypassSandbox sends every command through agy's safety
+		// monitor (LAZYAGENTS-252); the sandbox is off for the session instead.
+		if _, has := d["overwrite"]; has {
 			t.Errorf("%s unexpected overwrite = %v", c.name, d["overwrite"])
 		}
-	}
-	if d := run("run_command", map[string]any{"CommandLine": "go test ./...", "BypassSandbox": true}, srv.URL); d["overwrite"] != nil {
-		t.Fatalf("run_command with BypassSandbox already true = %v", d)
 	}
 	answer = `{"decision":"deny","reason":"repo:write is denied for this run"}`
 	if d := run("write_to_file", map[string]any{"TargetFile": "x"}, srv.URL); d["decision"] != "deny" || d["reason"] != "repo:write is denied for this run" || d["overwrite"] != nil {

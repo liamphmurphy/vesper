@@ -44,13 +44,26 @@ sign-in container, or using the host's `agy` login in local/no-key mode).
 
 ```
 python3 .lazyagents/agy-launch.py agy -p "<prompt>" --output-format stream-json \
+  --settings '{"enableTerminalSandbox":false,"agentMode":""}' \
   [--model M] [--effort E] [--conversation ID]
 ```
 
-All of these flags are in `agy --help` (1.5.8). `--effort` takes
-low|medium|high|xhigh|max. `--dangerously-skip-permissions` is **never passed**,
-because it would defeat the hook and the deny rules. `--sandbox` isn't used: the
-container is the boundary.
+All of these flags are in `agy --help` (1.5.8; `--settings` checked in 1.5.9).
+`--effort` takes low|medium|high|xhigh|max. `--dangerously-skip-permissions` is
+**never passed**, because it would defeat the hook and the deny rules. `--sandbox`
+isn't used: the container is the boundary.
+
+**Terminal sandbox (verified, 1.5.9):** `--settings` holds session-only settings
+that are never saved. It turns the terminal sandbox off even when another
+source turns it on, which `settings.json` can't: agy treats
+`"enableTerminalSandbox": false` there as unset and drops it when it saves the
+file, so an OAuth account's synced preference wins. agy offers the model a
+`BypassSandbox` argument on `run_command` only while the sandbox is on
+(`TestAgyProbe/sandbox_off`). Vesper used to inject `BypassSandbox: true` from
+the policy hook instead; its presence sent every command through agy's safety
+monitor (`sir_flash_lite`, escalating to `severe_internal_risks_agy`, 6–10s per
+command). Not yet observed against a real OAuth account: whether a synced
+preference outranks `--settings` the way a `settings.json` value doesn't.
 
 **Resume (verified):** `--conversation ID` with `-p` continues the conversation
 under the same id. The model receives the earlier turns, and `num_turns` counts up.
