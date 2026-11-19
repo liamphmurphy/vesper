@@ -8,15 +8,15 @@ signed off on it against real data. Related: [mac-native-features.md](mac-native
 
 Everything in the parity checklist below is implemented, with these deliberate gaps:
 
-- **Fallback column**: every screen's list now publishes a `NavModel` (Work's Activity, Tickets
-  and Epics with saved views, the editors' structure panels, and the rest), so the fallback column
-  is only a safety net for a screen that publishes none.
+- **Web-only shell chrome removed**: `web/` no longer renders the browser left sidebar, fallback
+  column, mobile tab bar, web top bars, `HistoryNav`, right rail popovers, or web DOM fallbacks
+  for `native`/`companion` inspector tabs; the web app publishes `NavModel`, toolbar actions, rail
+  state, and `InspectorModel` directly and only renders `web`-kind inspector panels and parent
+  breadcrumbs in-page.
 - **Right-click menus** in the content area are native only where a screen asks for one with
   `useNativeContextMenu` (chat messages and board cards so far); elsewhere WebKit's menu shows.
 - **Keyboard focus** between the sidebar, toolbar and page relies on AppKit's defaults; Tab
   inside the page stays inside it.
-- **Fallback column**: every screen now describes its list for the native sidebar; the fallback
-  column stays only as a safety net for a screen that doesn't.
 - **No layout signal to the page**: a page can't tell the separate layout from the compact one, so
   anything that must show in both (Knowledge's folder path) stays in the page rather than in the
   window subtitle, which compact hides.
@@ -119,13 +119,10 @@ Source of truth: `web/lib/native-shell/protocol.ts`; Swift mirror
   `evaluateJavaScript`, with the command JSON-encoded (never string-concatenated).
 - Native mode marker: a document-start `WKUserScript` sets
   `window.__VESPER_NATIVE__ = { v: 1, platform: "macos" }` and adds class `native-mac` to `<html>`.
-- `NavigatorPortal` gets an optional `native` prop (a `NavModel`). In native mode a screen with a
-  model publishes it and renders nothing in the page; a screen without one renders its JSX in a
-  **fallback column** inside the content area (`navigatorFallback: true`), so nothing is lost
-  while screens migrate. In the browser everything renders as today.
-- The web's own left column (search, area icons, chats) is not rendered in native mode; the page
-  publishes `shell` (areas, apps, current area, badges) and, when no screen claims the navigator,
-  the default Chats navigator (chat history and spaces) as a `NavModel`.
+- `NavigatorPortal` takes `native` (a `NavModel`), publishes it to the shell, and renders
+  nothing in the page (there is no web left column or fallback column).
+- When no screen claims the navigator, the default Chats navigator (chat history and spaces) is
+  published as a `NavModel` together with `shell` (areas, apps, current area, badges).
 - Request/response messages (`confirmApproval`, `openWorkspaceMenu`, `contextMenu`, `confirm`) carry a
 - `nav.activate` carries `newTab: true` when the row was ⌘-clicked: the page opens the row's href
   with `window.open` (a new tab beside this one) and leaves the current tab and its selection alone.
