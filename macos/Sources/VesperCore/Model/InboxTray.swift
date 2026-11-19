@@ -30,7 +30,7 @@ public struct InboxTrayItems: Equatable, Sendable {
 public enum InboxTray {
     /// Kinds in the Inbox's urgency order (web GROUPS).
     private static let groups: [[String]] = [
-        ["approval", "connector_approval", "secret_approval"], ["secret_expiring"], ["drive_backup"], ["scheduled"],
+        ["approval", "connector_approval", "secret_approval"], ["secret_expiring"], ["scheduled"],
         ["question"], ["blocked", "stalled"], ["mockup"], ["planning"], ["review"], ["dispatch"], ["mention"],
         ["suggestion"], ["merged"], ["pr_approved"],
     ]
@@ -73,7 +73,7 @@ public enum InboxTray {
         let labels = [
             "review": "Open review", "mockup": "Open review", "planning": "Review plan", "suggestion": "Review edit",
             "workflow_gate": "Review", "connector_approval": "Review", "secret_approval": "Review",
-            "secret_expiring": "Replace", "drive_backup": "Open settings", "pr_approved": "Open on GitHub",
+            "secret_expiring": "Replace", "pr_approved": "Open on GitHub",
             "blocked": "Open run", "stalled": "Open run",
         ]
         return .open(label: labels[kind] ?? "Open")

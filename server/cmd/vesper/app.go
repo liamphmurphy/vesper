@@ -270,7 +270,6 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 		Log:            log,
 		Usage:          &usage.Service{Q: q, Log: log, Queued: true},
 		Exporter:       exporter(appCfg, pool, log),
-		DriveBackups:   driveBackupRunner(appCfg, pool, box, apiHolder(), log),
 		RunnerStarting: runnerStarting.Load,
 	}
 	go srv.Wiki.RunVaultWorker(ctx, log)
@@ -334,11 +333,6 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 		serveErr = serr
 	}
 	scancel()
-	bctx, bcancel := context.WithTimeout(context.Background(), 5*time.Second)
-	if berr := srv.DriveBackups.Shutdown(bctx); berr != nil {
-		log.Warn("drive backups still running at exit", "err", berr)
-	}
-	bcancel()
 	if runnerDone != nil {
 		select {
 		case <-runnerDone:
@@ -498,7 +492,6 @@ func runAppMicroVMRunner(
 			PlanModels:            (&chatmodels.QueuedListings{Pool: pool}).Models,
 			RolloverContextTokens: int64(cfg.RolloverContextTokens),
 		},
-		DriveBackups: driveBackupRunner(cfg, pool, box, fmt.Sprintf("%s-app-%d", host, os.Getpid()), log),
 		StoreSecret: func(ctx context.Context, ws, by uuid.UUID, name, value string) error {
 			_, err := secretStore.Set(ctx, ws, by, secrets.SetInput{Name: name, Value: value})
 			return err

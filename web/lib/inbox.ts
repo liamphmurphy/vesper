@@ -23,7 +23,6 @@ type Item = { id: string; kind: string; created_at: string; resolved: boolean; r
 export const GROUPS: ReadonlyArray<{ key: string; label: string; kinds: readonly string[] }> = [
   { key: "approval", label: "Approvals", kinds: ["approval", "connector_approval", "secret_approval"] },
   { key: "secrets", label: "Secrets", kinds: ["secret_expiring"] },
-  { key: "backup", label: "Backups", kinds: ["drive_backup"] },
   { key: "scheduled", label: "Scheduled tasks", kinds: ["scheduled"] },
   { key: "question", label: "Questions", kinds: ["question"] },
   { key: "runs", label: "Failed & stalled runs", kinds: ["blocked", "stalled"] },
@@ -56,7 +55,6 @@ export const KIND: Record<string, { label: string; tone: "human" | "blocked" | "
   secret_expiring: { label: "Expiring", tone: "human" },
   merged: { label: "Merged", tone: "info" },
   pr_approved: { label: "Approved", tone: "info" },
-  drive_backup: { label: "Backup failed", tone: "blocked" },
 };
 
 export type View = "open" | "done";
@@ -159,7 +157,6 @@ export function trayAction(kind: string, hasRun = true): TrayAction {
     connector_approval: "Review",
     secret_approval: "Review",
     secret_expiring: "Replace",
-    drive_backup: "Open settings",
     pr_approved: "Open on GitHub",
     blocked: "Open run",
     stalled: "Open run",

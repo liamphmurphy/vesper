@@ -24,7 +24,6 @@ var excluded = map[string]string{
 	"provider_usage":            "observed provider usage, refreshed by the runner",
 	"provider_limits":           "observed provider rate limits, refreshed by the runner",
 	"metric_snapshots":          "cached dashboard metrics, recomputed on demand",
-	"drive_backup_locks":        "the lease on a Drive backup in progress on the old machine",
 	"browser_extension_tokens":  "the Safari extension's credential: the Mac app mints a new one at launch",
 	"browser_share_screenshots": "the latest screenshot of a shared Safari tab, replaced at every snapshot",
 }
