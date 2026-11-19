@@ -373,6 +373,29 @@ test("stepDetail names files and searches but never paths or commands", () => {
   for (const [call, want] of cases) assert.equal(stepDetail(call), want, call.tool);
 });
 
+test("stepDetail surfaces safe model-authored shell summaries and coarse command targets", () => {
+  const cases = [
+    [{ tool: "Bash", input: { command: "go test ./internal/harness", description: "Run harness parser tests" } }, "Run harness parser tests"],
+    [{ tool: "Bash", input: { command: "git status", toolSummary: "Check branch state." } }, "Check branch state"],
+    // Unsafe descriptions fall back to safe target or general phrase.
+    [{ tool: "Bash", input: { command: "curl -H 'Authorization: x' host", description: "API_KEY=secret curl https://internal" } }, "Working in the terminal"],
+    [{ tool: "Bash", input: { command: "go test ./internal/harness", description: "Check /Users/me/secret" } }, "Testing ./internal/harness"],
+    // Coarse targets when no description is given (Codex command_execution).
+    [{ tool: "shell", input: { command: "/bin/bash -lc 'go test -race -run TestFoo ./internal/harness'" } }, "Testing ./internal/harness"],
+    [{ tool: "shell", input: { command: "cd server && go test ./..." } }, "Testing server"],
+    [{ tool: "shell", input: { command: "/bin/zsh -lc 'cd web && npm run test:unit'" } }, "Running web test:unit"],
+    [{ tool: "shell", input: { command: "npx playwright test e2e/chat.spec.ts" } }, "Testing chat.spec.ts"],
+    [{ tool: "shell", input: { command: "cd web && npm run build" } }, "Building web"],
+    [{ tool: "shell", input: { command: "cd server && go vet ./internal/harness" } }, "Vetting ./internal/harness"],
+    [{ tool: "shell", input: { command: "/bin/bash -lc 'git -C /repo status'" } }, "Checking git status"],
+    [{ tool: "shell", input: { command: "git diff --stat" } }, "Checking git diff"],
+    [{ tool: "shell", input: { command: "cd web && npm ci" } }, "Installing web dependencies"],
+    // Secrets in env prefixes are stripped and never echoed.
+    [{ tool: "shell", input: { command: "SECRET_TOKEN=abc123 go test ./internal/runs" } }, "Testing ./internal/runs"],
+  ];
+  for (const [call, want] of cases) assert.equal(stepDetail(call), want, JSON.stringify(call.input));
+});
+
 test("only the active step carries a detail, skipping bookkeeping and repeats", () => {
   const read = (file_path) => ({ tool: "Read", input: { file_path } });
   const todo = { tool: "TodoWrite", input: { todos: [{ content: "One", status: "completed" }, { content: "Two", status: "in_progress" }, { content: "Three", status: "pending" }] } };

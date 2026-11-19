@@ -835,10 +835,147 @@ function hostOf(raw: string): string {
   }
 }
 
+/** Rejects model-authored shell summaries that look like raw commands, URLs, secrets or host paths. */
+function cleanShellSummary(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  const s = raw.replace(/\s+/g, " ").trim().replace(/\.+$/, "");
+  if (!s) return "";
+  if (/:\/\/|[A-Z_][A-Z0-9_]*=|--?(?:token|secret|password|key|auth)\b|\/(?:Users|home|etc|var|tmp)\//i.test(s)) return "";
+  return clip(s, 60);
+}
+
+const GIT_SUBCOMMAND_DETAIL: Record<string, string> = {
+  status: "Checking git status",
+  diff: "Checking git diff",
+  log: "Checking git log",
+  branch: "Checking branches",
+  checkout: "Switching branches",
+  switch: "Switching branches",
+  fetch: "Syncing with origin",
+  pull: "Syncing with origin",
+  rebase: "Updating branch",
+  merge: "Updating branch",
+  show: "Inspecting a commit",
+  stash: "Managing git stash",
+  add: "Staging changes",
+  blame: "Checking git blame",
+};
+
+const GO_TEST_VALUE_FLAGS = new Set(["-run", "-skip", "-bench", "-count", "-timeout", "-tags", "-parallel", "-cpu", "-coverprofile", "-coverpkg", "-o", "-fuzz", "-fuzztime", "-ldflags", "-gcflags"]);
+
+/**
+ * Coarse, secret-free target extracted from common shell commands (e.g. Codex command_execution,
+ * which carries no description field). Never echoes env vars, credentials, URLs, or arbitrary args.
+ */
+function shellTarget(command: string, kind: ChatStatusKind): string {
+  let c = command.trim().replace(/^(\S*\/)?(ba|z)?sh\s+-l?c\s+/, "");
+  if ((c.startsWith("'") && c.endsWith("'")) || (c.startsWith("\"") && c.endsWith("\""))) c = c.slice(1, -1).trim();
+  if (c.startsWith("(") && c.endsWith(")")) c = c.slice(1, -1).trim();
+  let dir = "";
+  const cd = /^cd\s+([^\s;&|]+)\s*(?:&&|;)\s*/.exec(c);
+  if (cd) {
+    const rawDir = cd[1].replace(/^['"]|['"]$/g, "");
+    const base = basename(rawDir);
+    if (/^[A-Za-z0-9._-]+$/.test(base) && base !== "." && base !== "..") dir = base;
+    c = c.slice(cd[0].length).trim();
+  }
+  // Drop leading env assignments so secrets never reach the label.
+  c = c.replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S+)\s+)+/, "");
+  const head = c.split(/\s*(?:&&|\|\||;|\|)\s*/)[0]?.trim() ?? "";
+  if (!head) return "";
+
+  if (kind === "tests") {
+    const goTest = /^go\s+test\b(.*)$/.exec(head);
+    if (goTest) {
+      const tokens = goTest[1].trim().split(/\s+/).filter(Boolean);
+      for (let i = 0; i < tokens.length; i++) {
+        const tok = tokens[i];
+        if (GO_TEST_VALUE_FLAGS.has(tok)) {
+          i++;
+          continue;
+        }
+        if (tok.startsWith("-")) continue;
+        if (/^\.\/[A-Za-z0-9_./-]+$/.test(tok) && tok !== "./...") return `Testing ${clip(tok, 48)}`;
+      }
+      return dir ? `Testing ${dir}` : "";
+    }
+    const jsTest = /^(?:npm|pnpm|yarn)\s+(?:run\s+)?(test(?::[A-Za-z0-9_-]+)?)\b/.exec(head);
+    if (jsTest) {
+      const script = jsTest[1];
+      if (script !== "test") return dir ? `Running ${dir} ${script}` : `Running ${script}`;
+      return dir ? `Running ${dir} tests` : "";
+    }
+    const runnerTest = /^(?:npx\s+)?(?:pytest|jest|vitest|playwright\s+test|rspec)\b(.*)$/.exec(head);
+    if (runnerTest) {
+      const tokens = runnerTest[1].trim().split(/\s+/).filter(Boolean);
+      for (const tok of tokens) {
+        if (tok.startsWith("-") || tok === "run") continue;
+        if (/^[A-Za-z0-9_./-]+\.[A-Za-z0-9]+$/.test(tok)) return `Testing ${clip(basename(tok), 48)}`;
+      }
+      return dir ? `Running ${dir} tests` : "";
+    }
+    const cargoTest = /^cargo\s+test\b(.*)$/.exec(head);
+    if (cargoTest) {
+      const tokens = cargoTest[1].trim().split(/\s+/).filter(Boolean);
+      for (let i = 0; i < tokens.length; i++) {
+        const tok = tokens[i];
+        if (tok === "-p" || tok === "--package") {
+          const pkg = tokens[++i];
+          if (pkg && /^[A-Za-z0-9_.-]+$/.test(pkg)) return `Testing ${clip(pkg, 48)}`;
+          continue;
+        }
+        if (tok.startsWith("-")) continue;
+        if (/^[A-Za-z0-9_:-]+$/.test(tok)) return `Testing ${clip(tok, 48)}`;
+      }
+      return dir ? `Running ${dir} tests` : "";
+    }
+    if (/^make\s+test\b/.test(head) && dir) return `Running ${dir} tests`;
+    return "";
+  }
+
+  if (kind === "build") {
+    const goBuild = /^go\s+(build|vet)\b(.*)$/.exec(head);
+    if (goBuild) {
+      const verb = goBuild[1] === "vet" ? "Vetting" : "Building";
+      const tokens = goBuild[2].trim().split(/\s+/).filter(Boolean);
+      for (let i = 0; i < tokens.length; i++) {
+        const tok = tokens[i];
+        if (tok === "-o" || tok === "-tags" || tok === "-ldflags") {
+          i++;
+          continue;
+        }
+        if (tok.startsWith("-")) continue;
+        if (/^\.\/[A-Za-z0-9_./-]+$/.test(tok) && tok !== "./...") return `${verb} ${clip(tok, 48)}`;
+      }
+      return `${verb} ${dir || "Go packages"}`;
+    }
+    const jsBuild = /^(?:npm|pnpm|yarn)\s+(?:run\s+)?(build|lint|typecheck)\b/.exec(head);
+    if (jsBuild) {
+      const verb = jsBuild[1] === "lint" ? "Linting" : jsBuild[1] === "typecheck" ? "Type-checking" : "Building";
+      return dir ? `${verb} ${dir}` : `${verb} ${jsBuild[1] === "build" ? "project" : "code"}`;
+    }
+    if (/^(?:npx\s+)?tsc\b/.test(head)) return dir ? `Type-checking ${dir}` : "Type-checking";
+    if (/^(?:npx\s+)?eslint\b/.test(head)) return dir ? `Linting ${dir}` : "Linting code";
+    if (/^gofmt\b/.test(head)) return "Formatting Go code";
+    const cargo = /^cargo\s+(build|check|clippy)\b/.exec(head);
+    if (cargo) return cargo[1] === "clippy" ? "Running clippy" : cargo[1] === "check" ? "Checking Rust build" : "Building Rust";
+    return "";
+  }
+
+  if (kind === "repo-history") {
+    const m = new RegExp(`^${GIT}(${Object.keys(GIT_SUBCOMMAND_DETAIL).join("|")})\\b`, "i").exec(head);
+    if (m) return GIT_SUBCOMMAND_DETAIL[m[1].toLowerCase()] ?? "";
+    return "";
+  }
+
+  if (kind === "install" && dir) return `Installing ${dir} dependencies`;
+  return "";
+}
+
 /**
  * What a step is doing right now, safe for the chat tab: a file's name but not its path,
- * search terms, page names and sites. A shell command stays its kind of work ("Running tests"),
- * since commands are long and can carry secrets. Memory stays general because it's private.
+ * search terms, page names and sites. Shell commands use their model-authored summary or a
+ * coarse, secret-free target rather than the raw command. Memory stays general because it's private.
  * Tools that take only an id use `names`, what earlier calls in the turn said it's called.
  */
 export function stepDetail(call: { tool: string; input: unknown }, names: Map<string, string> = new Map()): string {
@@ -958,6 +1095,16 @@ export function stepDetail(call: { tool: string; input: unknown }, names: Map<st
       return known(o.id) ? `Checking ${known(o.id)}` : general;
     case "list_runs":
       return o.ticket || o.agent ? `Checking runs of ${clip(str(o.ticket || o.agent))}` : general;
+    case "Bash":
+    case "bash":
+    case "shell":
+    case "exec_command":
+    case "shell_command": {
+      const summary = cleanShellSummary(o.description ?? o.toolSummary);
+      if (summary) return summary;
+      const cmd = typeof o.command === "string" ? o.command : typeof o.cmd === "string" ? o.cmd : "";
+      return shellTarget(cmd, kind) || general;
+    }
     case "get_video_transcript":
       return typeof o.from_seconds === "number" && o.from_seconds > 0 ? `Watching from ${Math.floor(o.from_seconds / 60)}:${String(Math.floor(o.from_seconds % 60)).padStart(2, "0")}` : general;
   }
