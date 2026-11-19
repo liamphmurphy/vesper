@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { LinkTarget } from "@/lib/api/client";
 import { useChatRunEvents, useResolvedLinks } from "@/lib/api/hooks";
-import { activityOf, chatCalls, chatStatus, chatStatusOf, chatSteps, finishedTurn, foldSteps, formatSpan, interimLine, NEXT_STEP_KEY, quietFor, turnClock, turnNotes, turnPulse, turnTrace, type Activity, type ChatStep, type IntentTag, type ToolCall, type TraceStep, type TurnOutcome, type TurnPulse } from "@/lib/chat-ui";
+import { activityOf, chatCalls, chatStatus, chatStatusOf, chatSteps, finishedTurn, foldSteps, formatSpan, interimLine, NEXT_STEP_KEY, quietFor, turnActivity, turnClock, turnNotes, turnPulse, turnTrace, type Activity, type ChatStep, type IntentTag, type ToolCall, type TraceStep, type TurnOutcome, type TurnPulse } from "@/lib/chat-ui";
 import { useConnectorApprovals } from "@/lib/api/connector-hooks";
 import { useApiSecretApprovals } from "@/lib/api/secret-hooks";
 import { LinkTargets, WikiLink } from "@/components/domain/wikilink";
@@ -230,7 +230,7 @@ function StepRail({ steps, now, stopping, awaiting, onOpenStep, fold = foldSteps
  *
  * Under the headline, a pulse: how long the turn has run and how long since anything happened,
  * so a quiet stretch and a stuck one look different. Once the newest call has finished for a
- * few seconds the card says it's working out the next step instead of repeating that call; after
+ * few seconds the card switches to a contextual follow-up phase instead of repeating that call; after
  * a long silence it says so, and offers to ask what it's doing (an aside) or to stop.
  */
 export function ChatStatus({ chatId, disabled, runId, since, persona, stopping, folded = false, onOpenStep, onAsk, onStop }: { chatId: string; disabled?: boolean; runId?: string; since?: string; persona: PersonaLook; stopping?: boolean; folded?: boolean; onOpenStep?: (key: string) => void; onAsk?: () => void; onStop?: () => void }) {
@@ -238,10 +238,11 @@ export function ChatStatus({ chatId, disabled, runId, since, persona, stopping, 
   const now = useNow();
   const calls = useMemo(() => chatCalls(q.data, since), [q.data, since]);
   const clock = useMemo(() => turnClock(q.data, since), [q.data, since]);
+  const activity = useMemo(() => turnActivity(q.data, since), [q.data, since]);
   const pulse = turnPulse(calls, clock, now);
-  const status = useMemo(() => chatStatus(calls, pulse.between), [calls, pulse.between]);
+  const status = useMemo(() => chatStatus(calls, pulse.between, activity), [calls, pulse.between, activity]);
   const notes = useMemo(() => turnNotes(q.data, since), [q.data, since]);
-  const { steps, planned } = useMemo(() => chatSteps(calls, notes, { between: pulse.between, clock }), [calls, notes, pulse.between, clock]);
+  const { steps, planned } = useMemo(() => chatSteps(calls, notes, { between: pulse.between, clock, activity }), [calls, notes, pulse.between, clock, activity]);
   // A dock is narrow: its card starts as a strip (scene, status, progress and the step under way) so the conversation stays in view.
   const [collapsed, setCollapsed] = useState(folded);
   // Asking once per quiet stretch: the button comes back only after something happens.
@@ -354,7 +355,8 @@ export function ChatStatus({ chatId, disabled, runId, since, persona, stopping, 
 export function ChatPresence({ runId, since, persona, dotOnly = false, onOpen }: { runId?: string; since?: string; persona: PersonaLook; dotOnly?: boolean; onOpen?: () => void }) {
   const q = useChatRunEvents(runId);
   const calls = useMemo(() => chatCalls(q.data, since), [q.data, since]);
-  const status = useMemo(() => chatStatus(calls, false), [calls]);
+  const activity = useMemo(() => turnActivity(q.data, since), [q.data, since]);
+  const status = useMemo(() => chatStatus(calls, false, activity), [calls, activity]);
   return (
     <button type="button" onClick={onOpen} disabled={!onOpen} data-testid="chat-presence" data-dot-only={dotOnly || undefined} title={dotOnly ? `${persona.name} · ${status.phrase}… (open Activity)` : "Open Activity"}
       className="flex min-w-0 max-w-full items-center gap-1.5 truncate px-1.5 text-left text-12 text-state-progress hover:underline disabled:hover:no-underline">

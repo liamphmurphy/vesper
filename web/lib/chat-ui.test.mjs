@@ -1,7 +1,7 @@
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
-import { connectorCall, activityOf, bareTool, chatStatus, chatCalls, chatStatusOf, chatSteps, stepDetail, chatTitle, foldSteps, formatSpan, NEXT_STEP_AFTER_MS, NEXT_STEP_KEY, QUIET_AFTER_MS, QUIET_RUNNING_MS, quietFor, turnClock, turnPulse, interimLine, intentOf, linkLabel, needsSwitchConfirm, replyCost, runningSince, toolCalls, turnNotes, turnTrace, turnWindows, finishedTurn, endedTurns, groupByDay, catalogModelLabel, readableModelId, rowMark } from "./chat-ui.ts";
+import { connectorCall, activityOf, bareTool, chatStatus, chatCalls, chatStatusOf, chatSteps, stepDetail, chatTitle, foldSteps, formatSpan, NEXT_STEP_AFTER_MS, NEXT_STEP_KEY, QUIET_AFTER_MS, QUIET_RUNNING_MS, quietFor, turnActivity, turnClock, turnPulse, interimLine, intentOf, linkLabel, needsSwitchConfirm, replyCost, runningSince, toolCalls, turnNotes, turnTrace, turnWindows, finishedTurn, endedTurns, groupByDay, catalogModelLabel, readableModelId, rowMark } from "./chat-ui.ts";
 
 test("rowMark shows an unread dot until the chat is read or opened, and running wins", () => {
   assert.equal(rowMark({ state: "idle", unread: 0 }), null);
@@ -709,10 +709,70 @@ test("turnPulse goes quiet after two minutes without events, or five while a cal
   assert.equal(pulse(done, 30).elapsed, 30_000);
 });
 
-test("chatStatus says it's working out the next step, not the call that already finished", () => {
-  const calls = [{ key: 1, tool: "Edit", input: {}, done: true }];
-  assert.equal(chatStatus(calls).phrase, "writing code");
-  assert.deepEqual(chatStatus(calls, true), { kind: "next-step", phrase: "working out the next step" });
+test("chatStatus adapts the between-steps phrase to what just finished, and prefers live writing_reply", () => {
+  const edit = [{ key: 1, tool: "Edit", input: {}, done: true }];
+  assert.equal(chatStatus(edit).phrase, "writing code");
+  assert.deepEqual(chatStatus(edit, true), { kind: "next-step", phrase: "planning the next step" });
+
+  // Contextual phrases after common inspection/verification steps.
+  assert.deepEqual(chatStatus([{ key: 1, tool: "Bash", input: { command: "go test ./..." }, done: true }], true), { kind: "next-step", phrase: "reviewing the test results" });
+  assert.deepEqual(chatStatus([{ key: 1, tool: "Bash", input: { command: "npm run build" }, done: true }], true), { kind: "next-step", phrase: "checking the build output" });
+  assert.deepEqual(chatStatus([{ key: 1, tool: "Read", input: { file_path: "a.go" }, done: true }], true), { kind: "next-step", phrase: "reviewing the code" });
+  assert.deepEqual(chatStatus([{ key: 1, tool: "Grep", input: { pattern: "x" }, done: true }], true), { kind: "next-step", phrase: "reviewing what it found" });
+  assert.deepEqual(chatStatus([{ key: 1, tool: "Bash", input: { command: "pwd" }, done: true }], true), { kind: "next-step", phrase: "checking the command output" });
+
+  // Live writing_reply takes over immediately once prose streams.
+  assert.deepEqual(chatStatus(edit, false, { phase: "writing_reply", at: at(10) }), { kind: "writing-reply", phrase: "drafting a reply" });
+  assert.deepEqual(chatStatus([], false, { phase: "writing_reply", at: at(10) }), { kind: "writing-reply", phrase: "drafting a reply" });
+  // An in-flight tool call or active reply block isn't overridden by a stale activity phase.
+  assert.equal(chatStatus([{ key: 1, tool: "Bash", input: { command: "go test ./..." }, done: false }], true, { phase: "writing_reply", at: at(10) }).phrase, "running tests");
+  assert.equal(chatStatus([{ key: 1, tool: "reply_block", input: { kind: "app" }, done: true }], true, { phase: "writing_reply", at: at(10) }).phrase, "building an interactive app");
+});
+
+test("turnActivity tracks live thinking headings and writing_reply, and heartbeats prevent false quiet warnings", () => {
+  const act = (s, phase, detail) => ({ seq: s, type: "lifecycle", at: new Date(at(s)).toISOString(), payload: { state: "activity", phase, ...(detail ? { detail } : {}) } });
+  const events = [
+    call(1, "Bash", { command: "go test ./internal/harness" }),
+    result(5, "c1"),
+    act(12, "thinking", "Checking parser failure"),
+    act(110, "thinking"), // heartbeat keeps the heading and refreshes clock.last
+  ];
+  const activity = turnActivity(events, "2026-11-09T10:00:00Z");
+  assert.deepEqual(activity, { phase: "thinking", detail: "Checking parser failure", at: at(110) });
+
+  // 2m 05s after the test finished, the 110s heartbeat keeps the turn alive (not quiet).
+  const clock = turnClock(events, "2026-11-09T10:00:00Z");
+  const pulse = turnPulse(toolCalls(events), clock, at(130));
+  assert.equal(pulse.between, true);
+  assert.equal(pulse.quiet, false);
+  assert.equal(pulse.idle, 20_000);
+
+  // The stand-in step shows the contextual title plus the live thinking heading as detail.
+  const { steps } = chatSteps(toolCalls(events), [], { between: false, clock, activity });
+  assert.deepEqual(steps.map((s) => [s.title, s.state, s.detail]), [
+    ["Running tests", "done", "Testing ./internal/harness"],
+    ["Reviewing the test results", "active", "Checking parser failure"],
+  ]);
+
+  // Transitioning to writing_reply clears the thinking heading and updates the stand-in step.
+  const writing = [...events, act(135, "writing_reply")];
+  const wAct = turnActivity(writing, "2026-11-09T10:00:00Z");
+  assert.deepEqual(wAct, { phase: "writing_reply", at: at(135) });
+  const { steps: wSteps } = chatSteps(toolCalls(writing), [], { between: false, clock: turnClock(writing, "2026-11-09T10:00:00Z"), activity: wAct });
+  assert.deepEqual(wSteps.map((s) => [s.title, s.state, s.kind]), [
+    ["Running tests", "done", "tests"],
+    ["Drafting a reply", "active", "writing-reply"],
+  ]);
+
+  // A new tool call clears the activity phase; a completed non-streaming thinking block supplies its heading.
+  assert.equal(turnActivity([...writing, { seq: 140, type: "tool_call", at: new Date(at(140)).toISOString(), payload: { id: "c140", tool: "Read", input: {} } }], "2026-11-09T10:00:00Z"), undefined);
+  assert.deepEqual(
+    turnActivity([call(1, "Read"), result(2, "c1"), think(3, "**Comparing branch diff**\nLooking closely.")], "2026-11-09T10:00:00Z"),
+    { phase: "thinking", detail: "Comparing branch diff", at: at(3) },
+  );
+  // Before any tool call, a thinking heading shows on its own thinking step.
+  const preTool = chatSteps([], [], { activity: { phase: "thinking", detail: "Checking the request", at: at(2) } }).steps;
+  assert.deepEqual(preTool.map((s) => [s.title, s.kind, s.detail]), [["Thinking", "thinking", "Checking the request"]]);
 });
 
 test("between steps, the finished step keeps its detail and a stand-in next step is under way", () => {
@@ -720,7 +780,7 @@ test("between steps, the finished step keeps its detail and a stand-in next step
   const calls = toolCalls(events);
   const clock = turnClock(events, "2026-11-09T10:00:00Z");
   const { steps } = chatSteps(calls, [], { between: true, clock });
-  assert.deepEqual(steps.map((s) => [s.title, s.state]), [["Reading the code", "done"], ["Writing code", "done"], ["Working out the next step", "active"]]);
+  assert.deepEqual(steps.map((s) => [s.title, s.state]), [["Reading the code", "done"], ["Writing code", "done"], ["Planning the next step", "active"]]);
   assert.equal(steps[1].detail, "Editing runner.go");
   assert.equal(steps[2].key, NEXT_STEP_KEY);
   assert.equal(steps[2].kind, "next-step");
@@ -736,11 +796,13 @@ test("a failed step stays failed when the turn moves on to the next step", () =>
   assert.deepEqual(steps.map((s) => s.state), ["failed", "active"]);
 });
 
-test("a planned turn keeps its plan step active between calls: only the headline changes", () => {
+test("a planned turn keeps its plan step active between calls and surfaces live phase details", () => {
   const plan = { tool: "TodoWrite", input: { todos: [{ content: "Fix it", status: "in_progress" }, { content: "Test it", status: "pending" }] } };
   const { steps, planned } = chatSteps([{ key: 1, done: true, ...plan }, { key: 2, tool: "Edit", input: {}, done: true }], [], { between: true });
   assert.equal(planned, true);
   assert.deepEqual(steps.map((s) => [s.title, s.state]), [["Fix it", "active"], ["Test it", "planned"]]);
+  const withHeading = chatSteps([{ key: 1, done: true, ...plan }, { key: 2, tool: "Edit", input: {}, done: true }], [], { between: false, activity: { phase: "thinking", detail: "Double-checking edge cases", at: at(5) } }).steps;
+  assert.equal(withHeading[0].detail, "Double-checking edge cases");
 });
 
 test("formatSpan and quietFor read at a glance", () => {

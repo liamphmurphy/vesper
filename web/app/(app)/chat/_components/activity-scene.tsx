@@ -106,7 +106,7 @@ const shelfTile = (x: number, y: number, thumb: ReactNode) => (
 );
 
 /** Kinds split off a broader one keep its scene: the step rail's glyph is what tells them apart. */
-type SplitKind = "searching-code" | "web-page" | "image-view" | "memory-save" | "design-view";
+type SplitKind = "searching-code" | "writing-reply" | "web-page" | "image-view" | "memory-save" | "design-view";
 
 const SCENES: Record<Exclude<ChatStatusKind, SplitKind>, ReactNode> = {
   thinking: (
@@ -825,6 +825,7 @@ const SCENES: Record<Exclude<ChatStatusKind, SplitKind>, ReactNode> = {
 
 const SCENE_OF: Record<SplitKind, Exclude<ChatStatusKind, SplitKind>> = {
   "searching-code": "reading-code",
+  "writing-reply": "writing-code",
   "web-page": "web",
   "image-view": "image",
   "memory-save": "memory",

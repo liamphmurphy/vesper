@@ -316,8 +316,12 @@ function rowText(r: Row<RunEvent>) {
   return JSON.stringify(r.kind === "tool" ? [r.call.payload, r.result?.payload] : r.e.payload).toLowerCase();
 }
 
-/** Turn markers become group headers, so their lifecycle rows are not repeated. */
-const isTurnMarker = (r: Row<RunEvent>) => r.kind === "event" && r.e.type === "lifecycle" && ((r.e.payload as P).state === "turn_started" || (r.e.payload as P).state === "turn_ended");
+/** Turn markers become group headers and activity heartbeats drive the live card, so neither clutters the log. */
+const isTurnMarker = (r: Row<RunEvent>) => {
+  if (r.kind !== "event" || r.e.type !== "lifecycle") return false;
+  const state = (r.e.payload as P).state;
+  return state === "turn_started" || state === "turn_ended" || state === "activity";
+};
 
 function TurnGroup({ turn, t, items, open, onToggle, runId }: { turn: number; t?: Turn; items: ReactNode; open: boolean; onToggle: () => void; runId: string }) {
   const u = (t?.usage ?? {}) as P;
