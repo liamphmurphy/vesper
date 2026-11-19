@@ -792,73 +792,74 @@ func chatMemoryIndex(ctx context.Context, q *store.Queries, run store.Run) (stri
 // chat turns read the person's memory index and persona; ticket, delegated and
 // planning runs never load a persona. Errors only come from chat turns, with
 // the outcome to show in the conversation.
-func agentsSection(ctx context.Context, q *store.Queries, c runCtx, paths []string) ([]byte, string, error) {
+func agentsSection(ctx context.Context, q *store.Queries, c runCtx, paths []string) ([]byte, []agentdef.Skill, string, error) {
 	switch c.run.Purpose {
 	case "chat":
 		// Both are refreshed every turn, so memory saves and persona edits show
 		// on the next turn.
 		idx, err := chatMemoryIndex(ctx, q, c.run)
 		if err != nil {
-			return nil, "Could not load the assistant's memory index.", fmt.Errorf("chat memory index: %w", err)
+			return nil, nil, "Could not load the assistant's memory index.", fmt.Errorf("chat memory index: %w", err)
 		}
 		persona, err := chatPersona(ctx, q, c.run)
 		if err != nil {
-			return nil, "Could not load the conversation's persona.", fmt.Errorf("chat persona: %w", err)
+			return nil, nil, "Could not load the conversation's persona.", fmt.Errorf("chat persona: %w", err)
 		}
 		group, err := chatGroup(ctx, q, c.run)
 		if err != nil {
-			return nil, "Could not load the conversation's personas.", fmt.Errorf("chat group: %w", err)
+			return nil, nil, "Could not load the conversation's personas.", fmt.Errorf("chat group: %w", err)
 		}
 		chat, err := q.ChatSessionForRun(ctx, &c.run.ID)
 		if err != nil {
-			return nil, "Could not load the conversation.", fmt.Errorf("chat session: %w", err)
+			return nil, nil, "Could not load the conversation.", fmt.Errorf("chat session: %w", err)
 		}
 		space, spaceFiles, err := chatSpaceFiles(ctx, q, chat)
 		if err != nil {
-			return nil, "Could not load the conversation's space.", fmt.Errorf("chat space: %w", err)
+			return nil, nil, "Could not load the conversation's space.", fmt.Errorf("chat space: %w", err)
 		}
 		svg, err := runs.ChatCanDrawSVGs(ctx, q, chat)
 		if err != nil {
-			return nil, "Could not load the conversation's persona.", fmt.Errorf("chat svg capability: %w", err)
+			return nil, nil, "Could not load the conversation's persona.", fmt.Errorf("chat svg capability: %w", err)
 		}
 		spec := c.spec
-		spec.Instructions += agents.AssistantRecommendSection + agents.AssistantRichRepliesSection + agents.AssistantCanvasSection + agents.AssistantKnowledgeSection + agents.AssistantWorkflowSection + agents.AssistantCustomAppsSection + agents.AssistantPDFSection
+		// Canvases, Custom Apps, PDFs, workflow editing and SVG are skills.
+		spec.Instructions += agents.AssistantRecommendSection + agents.AssistantRichRepliesSection + agents.AssistantKnowledgeSection + agents.AssistantWorkflowSection
 		buildWorkflows, err := runs.SpeakerCanCreateWorkflows(ctx, q, chat)
 		if err != nil {
-			return nil, "Could not load the conversation's persona.", fmt.Errorf("chat workflow capability: %w", err)
-		}
-		if buildWorkflows {
-			spec.Instructions += agents.AssistantWorkflowBuildSection
+			return nil, nil, "Could not load the conversation's persona.", fmt.Errorf("chat workflow capability: %w", err)
 		}
 		workflows, err := runs.WorkflowNote(ctx, q, chat)
 		if err != nil {
-			return nil, "Could not load the person's workflows.", fmt.Errorf("chat workflows: %w", err)
+			return nil, nil, "Could not load the person's workflows.", fmt.Errorf("chat workflows: %w", err)
 		}
 		repoNote, err := chatRepositoryNote(ctx, q, chat)
 		if err != nil {
-			return nil, "Could not load repositories.", err
+			return nil, nil, "Could not load repositories.", err
 		}
 		spec.Instructions += repoNote
 		spec.Instructions += workflows
+		projects, err := soleProjectNote(ctx, q, chat, c.project.Key)
+		if err != nil {
+			return nil, nil, "Could not load projects.", fmt.Errorf("chat projects: %w", err)
+		}
+		spec.Instructions += projects
 		tutor, err := runs.LearningTutorNote(ctx, q, chat)
 		if err != nil {
-			return nil, "Could not load the course.", fmt.Errorf("course note: %w", err)
+			return nil, nil, "Could not load the course.", fmt.Errorf("course note: %w", err)
 		}
 		spec.Instructions += tutor
-		if svg {
-			spec.Instructions += agents.AssistantSVGSection
-		}
-		return harness.ChatAgentsMDInSpace(spec, paths, c.project.Key, idx, persona, group, runs.SpaceSection(space, spaceFiles), chat.Temporary), "", nil
+		skills := agents.AssistantSkills(spec.Mode("repo:write") == agentdef.Allowed, buildWorkflows, svg)
+		return harness.ChatAgentsMDInSpace(spec, paths, c.project.Key, idx, persona, group, runs.SpaceSection(space, spaceFiles), chat.Temporary), skills, "", nil
 	case runs.PurposeResearch, runs.PurposeWorkflow, runs.PurposeLearning:
-		return []byte(c.spec.Instructions), "", nil
+		return []byte(c.spec.Instructions), nil, "", nil
 	case "planning":
-		return []byte(c.spec.Instructions + "\nRead these context files first:\n" + strings.Join(paths, "\n")), "", nil
+		return []byte(c.spec.Instructions + "\nRead these context files first:\n" + strings.Join(paths, "\n")), nil, "", nil
 	}
 	voice, err := runVoice(ctx, q, c.run)
 	if err != nil {
-		return nil, "Could not load the persona doing this work.", fmt.Errorf("run voice: %w", err)
+		return nil, nil, "Could not load the persona doing this work.", fmt.Errorf("run voice: %w", err)
 	}
-	return harness.PersonaAgentsMD("", c.spec, paths, c.ticket.Key, c.run.ParentRunID != nil, voice), "", nil
+	return harness.PersonaAgentsMD("", c.spec, paths, c.ticket.Key, c.run.ParentRunID != nil, voice), nil, "", nil
 }
 
 // runVoice is the voice of the persona whose work record runs this ticket: its name, tone

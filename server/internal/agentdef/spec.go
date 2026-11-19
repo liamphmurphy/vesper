@@ -208,26 +208,49 @@ const OptionNoTools = "no_tools"
 // sets it, and the MCP surface it gets is read-only.
 const OptionAside = "aside"
 
-// OptionExplorer gives a Claude Code lead ticket run one read-only sub agent,
-// "explorer", that searches and reads code on a cheap model and returns
-// conclusions, keeping that output out of the lead's context. It is on unless
-// set to "false". OptionExplorerModel picks its model (default
-// DefaultExplorerModel). See ExplorerOn for when it applies.
+// OptionExplorer gives a Claude Code or Antigravity lead ticket run one
+// read-only sub agent, "explorer", that searches and reads code on a cheap
+// model and returns conclusions, keeping that output out of the lead's
+// context. It is on unless set to "false". OptionExplorerModel picks its model
+// on Claude Code (default DefaultExplorerModel); agy runs it on its flash
+// tier. Codex has none (docs/contracts/ADR-explorer.md). See ExplorerOn for
+// when it applies.
 const (
 	OptionExplorer       = "explorer"
 	OptionExplorerModel  = "explorer_model"
 	DefaultExplorerModel = "haiku-5.5"
 	// ExplorerAgent is the explorer's sub agent type.
 	ExplorerAgent = "explorer"
+	// ExplorerDescription and ExplorerPrompt are the same on every harness.
+	ExplorerDescription = "Read-only code search. Use it for any question that needs a broad grep or reading more than about three files, when you need the conclusion and not the file contents."
+	ExplorerPrompt      = "Answer the question from the code. Reply in at most 300 words with file:line references. Never paste whole files or long excerpts. Say what you could not find."
 )
 
+// EagerVesperTools are the lazyagents tools almost every chat turn or ticket run
+// calls. Harnesses that defer MCP tools until the model looks them up load these
+// up front instead, saving a discovery round-trip each: Claude Code reads the
+// MCP server's per-tool _meta "anthropic/alwaysLoad", agy reads tools.<name>.eager
+// in mcp_config.json. Codex loads every tool up front already. Each one costs its
+// schema in every prompt, so keep the list to tools a turn really starts with.
+var EagerVesperTools = []string{
+	// Chats.
+	"set_chat_title", "list_projects", "list_tickets", "get_ticket", "update_ticket", "request_push",
+	// Ticket runs.
+	"claim_ticket", "post_plan", "update_step", "check_criterion", "complete_run",
+}
+
+// BatchExplorationGuide is the one line every coding prompt (chat and ticket
+// run, on every harness) carries about exploring a codebase. Each model turn
+// costs seconds of latency, so independent lookups belong in one turn.
+const BatchExplorationGuide = "Explore in batches: make independent file reads and searches together in one turn, don't repeat a lookup you've already answered, and start editing once you know where the change goes and the local conventions."
+
 // ExplorerOn reports whether a run gets the explorer sub agent: the option
-// isn't "false", the harness is Claude Code, the run is a lead (an undelegated
-// ticket run), and the spec is neither readonly nor no_tools. Only main agents
-// run leads, so sub agents and chats never get it.
+// isn't "false", the harness is Claude Code or Antigravity, the run is a lead
+// (an undelegated ticket run), and the spec is neither readonly nor no_tools.
+// Only main agents run leads, so sub agents and chats never get it.
 func ExplorerOn(spec Resolved, lead bool) bool {
 	o := spec.HarnessOptions
-	return lead && spec.Harness == HarnessClaudeCode && o[OptionExplorer] != "false" &&
+	return lead && (spec.Harness == HarnessClaudeCode || spec.Harness == HarnessAntigravity) && o[OptionExplorer] != "false" &&
 		o["readonly"] != "true" && o[OptionNoTools] != "true"
 }
 

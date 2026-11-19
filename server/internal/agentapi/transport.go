@@ -18,6 +18,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/liamphmurphy/vesper/server/internal/agentdef"
 	"github.com/liamphmurphy/vesper/server/internal/agents"
 	"github.com/liamphmurphy/vesper/server/internal/apperr"
 	"github.com/liamphmurphy/vesper/server/internal/broker"
@@ -125,7 +126,12 @@ func define[In any](name, desc string, fn func(context.Context, Deps, agents.Cal
 			return fn(ctx, d, c, in)
 		},
 		addMCP: func(srv mcpServer, d Deps) {
-			mcp.AddTool(srv, &mcp.Tool{Name: name, Description: desc, InputSchema: inputSchema[In]()},
+			tool := &mcp.Tool{Name: name, Description: desc, InputSchema: inputSchema[In]()}
+			if slices.Contains(agentdef.EagerVesperTools, name) {
+				// Claude Code otherwise defers every MCP tool behind tool search.
+				tool.Meta = mcp.Meta{"anthropic/alwaysLoad": true}
+			}
+			mcp.AddTool(srv, tool,
 				func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
 					c, ok := callerFrom(req)
 					if !ok {

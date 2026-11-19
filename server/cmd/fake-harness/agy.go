@@ -21,10 +21,9 @@ import (
 // moderation as for the Codex step.
 
 var (
-	agy       bool
-	agyStep   int
-	agyTools  = map[string]int{} // tool_use id -> step index
-	agyPrompt = "Your instructions are in AGENTS.md in the workspace root: read it first and follow it.\n\n"
+	agy      bool
+	agyStep  int
+	agyTools = map[string]int{} // tool_use id -> step index
 )
 
 func agyLine(event string, payload map[string]any) {
@@ -124,7 +123,7 @@ func agyArgs(args []string) (prompt, model, conversation string) {
 		switch args[i] {
 		case "-p", "--print", "--prompt":
 			if i+1 < len(args) {
-				prompt = strings.TrimPrefix(args[i+1], agyPrompt)
+				prompt = args[i+1]
 				i++
 			}
 		case "--model":
@@ -133,7 +132,7 @@ func agyArgs(args []string) (prompt, model, conversation string) {
 		case "--conversation":
 			conversation = args[i+1]
 			i++
-		case "--output-format", "--effort", "--agent", "--print-timeout":
+		case "--output-format", "--effort", "--agent", "--print-timeout", "--settings":
 			i++
 		}
 	}

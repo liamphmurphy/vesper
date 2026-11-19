@@ -130,8 +130,8 @@ func (ClaudeCode) Invocation(ws Workspace, t Turn) (Invocation, error) {
 			model = agentdef.DefaultExplorerModel
 		}
 		if agents, err = json.MarshalIndent(map[string]any{agentdef.ExplorerAgent: map[string]any{
-			"description": "Read-only code search. Use it for any question that needs a broad grep or reading more than about three files, when you need the conclusion and not the file contents.",
-			"prompt":      "Answer the question from the code. Reply in at most 300 words with file:line references. Never paste whole files or long excerpts. Say what you could not find.",
+			"description": agentdef.ExplorerDescription,
+			"prompt":      agentdef.ExplorerPrompt,
 			"tools":       []string{"Read", "Grep", "Glob"},
 			"model":       AnthropicModel(model),
 		}}, "", "  "); err != nil {

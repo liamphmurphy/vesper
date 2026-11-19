@@ -159,6 +159,11 @@ func TestAntigravityInvocation(t *testing.T) {
 		flag(inv.Argv, "--model") != "gemini-3.8-flash" || flag(inv.Argv, "--effort") != "high" || flag(inv.Argv, "--conversation") != "conv-9" {
 		t.Fatalf("argv = %q", inv.Argv)
 	}
+	// The terminal sandbox is off for the session; settings.json alone can't keep it off.
+	var session map[string]any
+	if err := json.Unmarshal([]byte(flag(inv.Argv, "--settings")), &session); err != nil || session["enableTerminalSandbox"] != false || session["agentMode"] != "" {
+		t.Fatalf("--settings = %q (%v)", flag(inv.Argv, "--settings"), err)
+	}
 	// A legacy model slug carrying its own effort suffix is stripped when
 	// --effort is also passed, because agy rejects conflicting combinations.
 	sLegacy := s
@@ -166,7 +171,8 @@ func TestAntigravityInvocation(t *testing.T) {
 	if invLegacy, err := (Antigravity{}).Invocation(ws, Turn{Spec: sLegacy, Prompt: "go"}); err != nil || flag(invLegacy.Argv, "--model") != "gemini-3.8-flash" || flag(invLegacy.Argv, "--effort") != "high" {
 		t.Fatalf("legacy model+effort = %v (%q)", err, invLegacy.Argv)
 	}
-	if i := slices.Index(inv.Argv, "-p"); i < 0 || !strings.HasSuffix(inv.Argv[i+1], "go") || !strings.Contains(inv.Argv[i+1], "AGENTS.md") {
+	// agy inlines AGENTS.md and Vesper's rule files itself: asking for a read is a wasted turn.
+	if i := slices.Index(inv.Argv, "-p"); i < 0 || inv.Argv[i+1] != "go" {
 		t.Fatalf("prompt = %q", inv.Argv)
 	}
 	if slices.Contains(inv.Argv, "--dangerously-skip-permissions") {
@@ -262,6 +268,16 @@ func TestAntigravityConnectorsAndInstallInContainers(t *testing.T) {
 	if !slices.Contains(rules(cfg, "allow"), "mcp(github/*)") || !slices.Contains(rules(cfg, "allow"), "mcp(docs/*)") {
 		t.Fatalf("allow = %v", rules(cfg, "allow"))
 	}
+	// Vesper's core tools load up front; connectors stay lazy (TestAgyProbe/turn).
+	tools, _ := cfg.MCPServers[lazyagentsServer].(map[string]any)["tools"].(map[string]any)
+	for _, name := range agentdef.EagerVesperTools {
+		if tl, _ := tools[name].(map[string]any); tl["eager"] != true {
+			t.Errorf("%s isn't eager: %v", name, tools)
+		}
+	}
+	if gh["tools"] != nil || docs["tools"] != nil {
+		t.Errorf("only Vesper's own server marks eager tools: github=%v docs=%v", gh["tools"], docs["tools"])
+	}
 }
 
 func TestAntigravityReferenceImagesAreNamedInThePrompt(t *testing.T) {
@@ -347,17 +363,11 @@ func TestAgyPolicyHookAgreesWithTheParser(t *testing.T) {
 		if d["decision"] != "auto_approve" {
 			t.Errorf("%s: allow became %v", c.name, d)
 		}
-		if c.name == "run_command" {
-			ov, _ := d["overwrite"].(map[string]any)
-			if ov["BypassSandbox"] != true {
-				t.Errorf("run_command allow overwrite = %v, want BypassSandbox=true", d["overwrite"])
-			}
-		} else if _, has := d["overwrite"]; has {
+		// An injected BypassSandbox sends every command through agy's safety
+		// monitor (LAZYAGENTS-252); the sandbox is off for the session instead.
+		if _, has := d["overwrite"]; has {
 			t.Errorf("%s unexpected overwrite = %v", c.name, d["overwrite"])
 		}
-	}
-	if d := run("run_command", map[string]any{"CommandLine": "go test ./...", "BypassSandbox": true}, srv.URL); d["overwrite"] != nil {
-		t.Fatalf("run_command with BypassSandbox already true = %v", d)
 	}
 	answer = `{"decision":"deny","reason":"repo:write is denied for this run"}`
 	if d := run("write_to_file", map[string]any{"TargetFile": "x"}, srv.URL); d["decision"] != "deny" || d["reason"] != "repo:write is denied for this run" || d["overwrite"] != nil {

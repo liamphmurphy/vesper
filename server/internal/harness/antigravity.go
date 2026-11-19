@@ -79,6 +79,13 @@ func (Antigravity) Invocation(ws Workspace, t Turn) (Invocation, error) {
 	}
 	if !noTools {
 		addServer(lazyagentsServer, ws.MCPURL, true, 0)
+		// agy lists MCP tools lazily (the model reads a schema file before its
+		// first call); the ones nearly every turn starts with load up front.
+		eager := map[string]any{}
+		for _, name := range agentdef.EagerVesperTools {
+			eager[name] = map[string]any{"eager": true}
+		}
+		servers[lazyagentsServer].(map[string]any)["tools"] = eager
 	}
 	for _, m := range spec.MCPServers {
 		if m.Connector {
@@ -103,15 +110,16 @@ func (Antigravity) Invocation(ws Workspace, t Turn) (Invocation, error) {
 		return Invocation{}, err
 	}
 
+	// agy loads AGENTS.md and the always-on rules InstructionFiles writes into
+	// its prompt itself (agy 1.5.9 docs/rules.md, TestAgyProbe/instructions),
+	// so the prompt no longer asks for a read_file of AGENTS.md first.
 	prompt := t.Prompt
 	if !noTools {
-		// agy has no documented AGENTS.md convention; say where the instructions are.
-		prompt = "Your instructions are in AGENTS.md in the workspace root: read it first and follow it.\n\n" + prompt
 		if note := agyImageNote(t.Images); note != "" {
 			prompt += "\n\n" + note
 		}
 	}
-	argv := []string{"python3", agyLaunchPath, "agy", "-p", prompt, "--output-format", "stream-json"}
+	argv := []string{"python3", agyLaunchPath, "agy", "-p", prompt, "--output-format", "stream-json", "--settings", agySessionSettings}
 	model := spec.Model
 	effort := spec.HarnessOptions["effort"]
 	if effort != "" {
@@ -132,11 +140,36 @@ func (Antigravity) Invocation(ws Workspace, t Turn) (Invocation, error) {
 	}
 
 	files := SkillFilesFor(spec.Skills, agentdef.HarnessAntigravity) // agy 1.5.8 lists .agents/skills/*/SKILL.md to the model
+	if agentdef.ExplorerOn(spec, t.Lead) {
+		files[agyExplorerPath] = agyExplorerAgent
+		files[SkillsExcludeFile] = append(files[SkillsExcludeFile], []byte("/"+agyExplorerPath+"\n")...)
+	}
 	files[agyPolicyPath] = agyPolicyHook
 	files[agyLaunchPath] = agyLauncher
 	files[agyConfigPath] = body
 	return Invocation{Argv: argv, Env: env, Files: files}, nil
 }
+
+// agyExplorerAgent is the explorer as an agy custom agent (agy 1.5.9,
+// TestAgyProbe/explorer): a subagent only, on agy's flash tier, with read-only
+// tools and none of the run's MCP servers. The lead calls it with
+// invoke_subagent, whose TypeName the policy hook sends as subagent_type, so
+// runs.CheckTool allows it exactly as it does Claude Code's explorer.
+const agyExplorerPath = ".agents/agents/" + agentdef.ExplorerAgent + ".md"
+
+var agyExplorerAgent = []byte("---\nname: " + agentdef.ExplorerAgent + "\ndescription: " + strconv.Quote(agentdef.ExplorerDescription) +
+	"\nsubagent: true\nmainAgent: false\ninheritMcp: false\nmodel: flash\ntools: [read_file]\n---\n\n# Explorer\n\n" + agentdef.ExplorerPrompt + "\n")
+
+// agySessionSettings turns agy's terminal sandbox off for this session only.
+// The container is the boundary, as for Codex. settings.json can't do it on
+// its own: agy treats "enableTerminalSandbox": false as unset (it drops it on
+// save), so a sandbox-on value from another source, such as an OAuth account's
+// synced preferences, wins. A --settings value does override it (agy 1.5.9,
+// TestAgyProbe/sandbox_off). With the sandbox off nothing needs BypassSandbox,
+// whose presence alone sent every command through agy's safety monitor
+// (6-10s each, LAZYAGENTS-252). Default agent mode keeps Auto mode's command
+// review out of the way for the same reason; Vesper's hook decides instead.
+const agySessionSettings = `{"enableTerminalSandbox":false,"agentMode":""}`
 
 func nonNil(s []string) []string {
 	if s == nil {
@@ -582,8 +615,8 @@ func antigravityTool(name string, args map[string]any) (string, map[string]any) 
 		input, _ := args["Arguments"].(map[string]any)
 		return "mcp__" + server + "__" + tool, input
 	case "invoke_subagent", "define_subagent", "manage_subagents", "swarm", "send_message":
-		// Other agents, which Vesper's policy refuses as it does Claude Code's
-		// (only its explorer, which agy doesn't have), except image-generator in image steps.
+		// Other agents, which Vesper's policy refuses as it does Claude Code's:
+		// only a lead's explorer, and image-generator in image steps.
 		out := map[string]any{"description": str("Role", "Name", "TypeName", "action")}
 		if name == "invoke_subagent" {
 			if st := str("TypeName"); st != "" {

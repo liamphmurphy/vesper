@@ -10,6 +10,13 @@ INSERT INTO tickets (
 -- name: GetTicketByKey :one
 SELECT * FROM tickets WHERE workspace_id = $1 AND key = $2;
 
+-- name: TicketKeysByNumber :many
+-- A bare ticket number ("251") resolved across the workspace's active projects.
+SELECT t.key, p.key AS project_key
+FROM tickets t JOIN projects p ON p.id = t.project_id
+WHERE t.workspace_id = $1 AND t.number = $2 AND NOT p.archived
+ORDER BY p.key;
+
 -- name: LockTicketByKey :one
 SELECT * FROM tickets WHERE workspace_id = $1 AND key = $2 FOR UPDATE;
 
@@ -61,6 +68,7 @@ WHERE t.workspace_id = sqlc.arg(workspace_id)
   AND (sqlc.narg(q)::text IS NULL
        OR t.search @@ websearch_to_tsquery('english', sqlc.narg(q))
        OR t.key ILIKE sqlc.narg(q) || '%'
+       OR t.number::text = ltrim(sqlc.narg(q), '#')
        OR t.title ILIKE '%' || sqlc.narg(q) || '%')
 ORDER BY
   CASE t.status WHEN 'in_progress' THEN 0 WHEN 'in_review' THEN 1 WHEN 'todo' THEN 2 WHEN 'backlog' THEN 3 ELSE 4 END,

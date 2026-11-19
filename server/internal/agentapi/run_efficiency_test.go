@@ -1,9 +1,13 @@
 package agentapi
 
 import (
+	"bufio"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/liamphmurphy/vesper/server/internal/harness"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 )
 
@@ -45,5 +49,72 @@ func TestSummariseRunEfficiency(t *testing.T) {
 	empty := summariseRunEfficiency([]store.RunEfficiencyEventsRow{ev(0, "tool_call", "", "a", "Grep", "", 0)})
 	if empty.CallsBeforeFirstEdit != -1 || empty.PeakContext != 0 || empty.ContextCrossed != nil || empty.Setups != 0 {
 		t.Errorf("empty = %+v", empty)
+	}
+}
+
+// The latency metrics mean the same on every harness: each recorded stream
+// (internal/harness/testdata) goes through its own parser, then through the
+// columns RunEfficiencyEvents selects, one second per event (LAZYAGENTS-257).
+func TestRunEfficiencyAcrossHarnesses(t *testing.T) {
+	t0 := time.Date(2026, 11, 19, 9, 0, 0, 0, time.UTC)
+	rows := func(h harness.Harness, fixture string) []store.RunEfficiencyEventsRow {
+		t.Helper()
+		f, err := os.Open(filepath.Join("..", "harness", "testdata", fixture))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		out := []store.RunEfficiencyEventsRow{{Type: "lifecycle", State: "turn_started", At: t0, InstructionBytes: 30_000}}
+		p := h.NewParser("")
+		sc := bufio.NewScanner(f)
+		sc.Buffer(make([]byte, 1<<20), 8<<20)
+		for sc.Scan() {
+			for _, e := range p.Line(sc.Bytes()) {
+				if e.Type != "tool_call" && e.Type != "tool_result" {
+					continue
+				}
+				in, _ := e.Payload["input"].(map[string]any)
+				str := func(m map[string]any, k string) string { s, _ := m[k].(string); return s }
+				out = append(out, store.RunEfficiencyEventsRow{Type: e.Type, At: t0.Add(time.Duration(len(out)) * time.Second),
+					CallID: str(e.Payload, "id"), Tool: str(e.Payload, "tool"), Command: str(in, "command"), FilePath: str(in, "file_path")})
+			}
+		}
+		return out
+	}
+	for _, c := range []struct {
+		name    string
+		h       harness.Harness
+		fixture string
+		want    runEfficiency
+	}{
+		// claim_ticket, then two shell commands, one at a time; no edit.
+		{"claude", harness.ClaudeCode{}, "claude-turn.jsonl", runEfficiency{ToolCalls: 3, ModelTurns: 3, SingleCallTurns: 3, CallsBeforeFirstEdit: -1, MsToFirstEdit: -1}},
+		// claim_ticket, a shell command, then apply_patch (the 5th event).
+		{"codex", harness.Codex{}, "codex-turn.jsonl", runEfficiency{ToolCalls: 3, ModelTurns: 3, SingleCallTurns: 3, CallsBeforeFirstEdit: 2, MsToFirstEdit: 5_000}},
+		// list_tickets, Read, Bash, then Write (the 7th event), then Agent.
+		{"antigravity", harness.Antigravity{}, "antigravity-turn.jsonl", runEfficiency{ToolCalls: 5, ModelTurns: 5, SingleCallTurns: 5, CallsBeforeFirstEdit: 3, MsToFirstEdit: 7_000}},
+	} {
+		got := summariseRunEfficiency(rows(c.h, c.fixture))
+		if got.ToolCalls != c.want.ToolCalls || got.ModelTurns != c.want.ModelTurns || got.SingleCallTurns != c.want.SingleCallTurns ||
+			got.CallsBeforeFirstEdit != c.want.CallsBeforeFirstEdit || got.MsToFirstEdit != c.want.MsToFirstEdit || got.DiscoveryCalls != 0 || got.InstructionBytes != 30_000 {
+			t.Errorf("%s: %+v, want %+v", c.name, got, c.want)
+		}
+	}
+
+	// Calls made together are one model turn; finding a tool is a discovery call.
+	at := func(s int) time.Time { return t0.Add(time.Duration(s) * time.Second) }
+	got := summariseRunEfficiency([]store.RunEfficiencyEventsRow{
+		{Type: "lifecycle", State: "turn_started", At: at(0), InstructionBytes: 50_000},
+		{Type: "tool_call", At: at(1), CallID: "a", Tool: "ToolSearch"},
+		{Type: "tool_result", At: at(2), CallID: "a", Tool: "ToolSearch"},
+		{Type: "tool_call", At: at(3), CallID: "b", Tool: "Read", FilePath: "/home/agent/.gemini/antigravity-cli/mcp/lazyagents/get_ticket.json"},
+		{Type: "tool_call", At: at(3), CallID: "c", Tool: "Read", FilePath: "/workspace/server/main.go"},
+		{Type: "tool_call", At: at(3), CallID: "d", Tool: "Grep"},
+		{Type: "tool_result", At: at(4), CallID: "b"}, {Type: "tool_result", At: at(4), CallID: "c"}, {Type: "tool_result", At: at(4), CallID: "d"},
+		{Type: "lifecycle", State: "turn_started", At: at(60), InstructionBytes: 20_000},
+		{Type: "tool_call", At: at(70), CallID: "e", Tool: "Edit"},
+	})
+	if got.ModelTurns != 3 || got.SingleCallTurns != 2 || got.DiscoveryCalls != 2 || got.MsToFirstEdit != 70_000 || got.InstructionBytes != 50_000 {
+		t.Errorf("batched: %+v", got)
 	}
 }

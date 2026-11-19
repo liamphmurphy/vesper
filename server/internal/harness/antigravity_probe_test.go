@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -65,6 +66,11 @@ func TestAgyProbe(t *testing.T) {
 		spec.Skills = []agentdef.Skill{{Name: "probe-skill", Description: "Zebra-unicorn probe skill.", Body: "Say zebra."}}
 		out := p.run(t, spec, "antigravity-turn.jsonl")
 
+		// Vesper's eager tools are declared to the model up front; the rest of
+		// the server stays lazy, behind a schema read (LAZYAGENTS-254).
+		if first := p.gemini.firstRequest(); !strings.Contains(first, `"name":"mcp_lazyagents_list_tickets"`) || strings.Contains(first, "zebra_ref") {
+			t.Error("list_tickets (eager) must be declared to the model and read_page (lazy) must not")
+		}
 		if !strings.Contains(p.gemini.firstRequest(), "probe-skill (") || !strings.Contains(p.gemini.firstRequest(), "Zebra-unicorn probe skill.") {
 			t.Error("agy must list the skill Vesper wrote under .agents/skills to the model")
 		}
@@ -115,21 +121,145 @@ func TestAgyProbe(t *testing.T) {
 		}
 	})
 
-	t.Run("sandbox_bypass", func(t *testing.T) {
+	// agy caps each rule file at 24,000 bytes and cut the repository's AGENTS.md
+	// off behind Vesper's section. Placed by InstructionFiles, a section well
+	// past the cap and the repository's file both reach the model whole, with
+	// no read_file of AGENTS.md (LAZYAGENTS-253). agy also has a ~20k-token
+	// budget for all rules together (about 60 KB in 1.5.9): past it, it shows
+	// whole rule files as paths to read instead, starting from vesper-01.
+	t.Run("instructions", func(t *testing.T) {
 		p := newAgyProbe(t, bin)
+		var section strings.Builder
+		section.WriteString("# Vesper chat\n\nSECTION_HEAD\n")
+		// About a heavy chat's size once its playbooks are skills (~40 KB).
+		for i := range 22 {
+			fmt.Fprintf(&section, "\n## Part %d\n\n%s\n", i, strings.Repeat("Guidance for this part of the chat. ", 50))
+		}
+		section.WriteString("\nSECTION_TAIL\n")
+		files, _ := InstructionFiles(agentdef.HarnessAntigravity, []byte(section.String()))
+		for rel, body := range files {
+			if rel == AgentsSectionPath {
+				continue
+			}
+			if err := os.MkdirAll(filepath.Join(p.ws, filepath.Dir(rel)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(p.ws, rel), body, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		repo := "# Repository\n\nREPO_HEAD\n" + strings.Repeat("Repository convention line.\n", 300) + "REPO_TAIL\n"
+		if err := os.WriteFile(filepath.Join(p.ws, "AGENTS.md"), []byte("\n"+repo), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		p.gemini.script(agyReply{text: "Done."})
+		p.run(t, readOnlyChat(), "")
+		first := p.gemini.firstRequest()
+		if section.Len() < 2*24000*3/4 {
+			t.Fatalf("the section is only %d bytes", section.Len())
+		}
+		for _, want := range []string{"SECTION_HEAD", "Part 21", "SECTION_TAIL", "REPO_HEAD", "REPO_TAIL"} {
+			if !strings.Contains(first, want) {
+				t.Errorf("%s didn't reach the model", want)
+			}
+		}
+		if strings.Contains(first, "<truncated") || strings.Contains(first, "\\u003ctruncated") {
+			t.Error("agy truncated an instruction file")
+		}
+		if strings.Contains(first, "read it first") {
+			t.Error("the prompt still asks for a read of AGENTS.md")
+		}
+	})
+
+	// A lead run gets the read-only explorer as an agy custom agent: the lead
+	// sees it in its subagent roster, invoke_subagent reaches Vesper's policy
+	// as Agent/explorer, and the explorer runs on the flash tier with read_file
+	// and none of the lead's write, shell or MCP tools (LAZYAGENTS-258).
+	t.Run("explorer", func(t *testing.T) {
+		p := newAgyProbe(t, bin)
+		p.lead = true
+		p.gemini.script(
+			agyReply{call: agyCall("invoke_subagent", map[string]any{"TypeName": "explorer", "Role": "explorer", "Prompt": "Where is the greeting?"})},
+			agyReply{text: "notes.txt:1"},
+			agyReply{text: "Done."},
+		)
+		s := spec("repo:read", "allowed", "repo:write", "allowed", "tests:run", "allowed")
+		s.Harness, s.Model = agentdef.HarnessAntigravity, ""
+		out := p.run(t, s, "")
+		// The explorer runs asynchronously, so how many turns the lead takes
+		// to finish varies; that it finished is what counts.
+		if out.exit != 0 || out.res.IsError {
+			t.Fatalf("exit=%d result=%+v", out.exit, out.res)
+		}
+		if !strings.Contains(p.gemini.firstRequest(), agentdef.ExplorerDescription) {
+			t.Error("the lead must see the explorer in its subagent roster")
+		}
+		if got := p.policy.tools(); !slices.Equal(got, []string{"Agent"}) || p.policy.input(0)["subagent_type"] != agentdef.ExplorerAgent {
+			t.Errorf("policy saw %v %v", got, p.policy.input(0))
+		}
+		explorer := -1
+		for i, body := range p.gemini.all {
+			if strings.Contains(string(body), agentdef.ExplorerPrompt) {
+				explorer = i
+			}
+		}
+		if explorer < 0 {
+			t.Fatal("the explorer never ran")
+		}
+		body, path := string(p.gemini.all[explorer]), p.gemini.paths[explorer]
+		if !strings.Contains(path, "flash") || strings.Contains(p.gemini.paths[0], "flash") {
+			t.Errorf("explorer on %s, lead on %s: the explorer runs on the flash tier", path, p.gemini.paths[0])
+		}
+		if !strings.Contains(body, `"name":"read_file"`) {
+			t.Error("the explorer must be able to read")
+		}
+		for _, tool := range []string{"run_command", "write_file", "edit_file", "mcp_lazyagents_list_tickets", "call_mcp_tool", "invoke_subagent"} {
+			if strings.Contains(body, `"name":"`+tool+`"`) {
+				t.Errorf("the explorer was given %s", tool)
+			}
+		}
+	})
+
+	// An OAuth account's synced preferences can turn agy's terminal sandbox on
+	// whatever settings.json says. Vesper's session settings turn it off again,
+	// so commands run unsandboxed without BypassSandbox, whose presence sent each
+	// one through agy's safety monitor (LAZYAGENTS-252). agy only offers the
+	// model BypassSandbox while the sandbox is on, which is what this observes:
+	// the sandbox itself can't start in every probe environment.
+	sandboxed := func(t *testing.T, withoutSession bool) (string, agyOutcome, string) {
+		p := newAgyProbe(t, bin)
+		p.accountSettings = map[string]any{"enableTerminalSandbox": true}
+		p.withoutSessionSettings = withoutSession
 		outside := filepath.Join(t.TempDir(), "unsandboxed.txt")
 		p.gemini.script(
-			agyReply{call: agyCall("run_command", map[string]any{"CommandLine": "touch '" + outside + "' && echo BYPASS_OK", "toolSummary": "Write outside workspace", "WaitMsBeforeAsync": 5000})},
-			agyReply{text: "Ran unsandboxed."},
+			agyReply{call: agyCall("run_command", map[string]any{"CommandLine": "touch '" + outside + "' && echo RAN", "toolSummary": "Write outside workspace", "WaitMsBeforeAsync": 5000})},
+			agyReply{text: "Ran it."},
 		)
 		s := spec("tests:run", "allowed")
 		s.Harness, s.Model = agentdef.HarnessAntigravity, ""
-		out := p.runWithSettings(t, s, "", `{"modelProvider":"gemini","enableTerminalSandbox":true}`)
+		out := p.runWithSettings(t, s, "", `{"modelProvider":"gemini"}`)
+		return p.gemini.firstRequest(), out, outside
+	}
+	t.Run("sandbox_on_without_session_settings", func(t *testing.T) {
+		if first, _, _ := sandboxed(t, true); !strings.Contains(first, "BypassSandbox") {
+			t.Fatal("the account setting should turn the sandbox on: the probe no longer shows what --settings changes")
+		}
+	})
+	t.Run("sandbox_off", func(t *testing.T) {
+		first, out, outside := sandboxed(t, false)
 		if out.exit != 0 || out.res.IsError {
-			t.Fatalf("sandbox_bypass failed: exit=%d res=%+v", out.exit, out.res)
+			t.Fatalf("exit=%d res=%+v", out.exit, out.res)
+		}
+		if strings.Contains(first, "BypassSandbox") {
+			t.Error("Vesper's session settings must turn agy's terminal sandbox off")
 		}
 		if _, err := os.Stat(outside); err != nil {
-			t.Fatalf("expected run_command to bypass agy terminal sandbox and create %s: %v", outside, err)
+			t.Errorf("run_command must run unsandboxed and create %s: %v", outside, err)
+		}
+		for _, e := range out.events {
+			if e.Type == "tool_call" && strings.Contains(fmt.Sprint(e.Payload), "BypassSandbox") {
+				t.Errorf("a command ran with BypassSandbox: %v", e.Payload)
+			}
 		}
 	})
 }
@@ -146,6 +276,12 @@ type agyProbe struct {
 	policy        *agyPolicyStub
 	mcp           *agyMCPStub
 	vesperURL     string
+	// accountSettings stands in for settings Vesper doesn't write, such as an
+	// OAuth account's synced preferences: merged over the turn's settings.json.
+	accountSettings map[string]any
+	// withoutSessionSettings drops Vesper's --settings, to show what they change.
+	withoutSessionSettings bool
+	lead                   bool // a lead ticket run's turn
 }
 
 func newAgyProbe(t *testing.T, bin string) *agyProbe {
@@ -178,9 +314,19 @@ func (p *agyProbe) run(t *testing.T, spec agentdef.Resolved, record string) agyO
 func (p *agyProbe) runWithSettings(t *testing.T, spec agentdef.Resolved, record, settingsJSON string) agyOutcome {
 	t.Helper()
 	inv, err := (Antigravity{}).Invocation(Workspace{Dir: p.ws, MCPURL: p.vesperURL + "/mcp", Token: "probe-token", TokenEnv: "LAZYAGENTS_TOKEN", ContainerSandbox: true},
-		Turn{Spec: spec, Prompt: "Do the probe task."})
+		Turn{Spec: spec, Prompt: "Do the probe task.", Lead: p.lead})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if p.accountSettings != nil {
+		var cfg map[string]any
+		if err := json.Unmarshal(inv.Files[agyConfigPath], &cfg); err != nil {
+			t.Fatal(err)
+		}
+		for k, v := range p.accountSettings {
+			cfg["settings"].(map[string]any)[k] = v
+		}
+		inv.Files[agyConfigPath], _ = json.Marshal(cfg)
 	}
 	for rel, body := range inv.Files {
 		path := filepath.Join(p.ws, rel)
@@ -206,8 +352,25 @@ func (p *agyProbe) runWithSettings(t *testing.T, spec agentdef.Resolved, record,
 	defer cancel()
 	// Production runs keep modelProvider unset so agy uses the container's saved
 	// OAuth login; the probe overrides it for this process only so agy routes
-	// GEMINI_API_KEY requests to the local stub.
-	argv := append(append([]string(nil), inv.Argv[1:]...), "--settings", settingsJSON)
+	// GEMINI_API_KEY requests to the local stub. agy reads one --settings, so
+	// the probe's keys join Vesper's own session settings.
+	argv := append([]string(nil), inv.Argv[1:]...)
+	i := slices.Index(argv, "--settings")
+	if i < 0 {
+		t.Fatal("Vesper passes no --settings")
+	}
+	merged := map[string]any{}
+	for _, raw := range []string{argv[i+1], settingsJSON} {
+		if err := json.Unmarshal([]byte(raw), &merged); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if p.withoutSessionSettings {
+		merged = map[string]any{}
+		_ = json.Unmarshal([]byte(settingsJSON), &merged)
+	}
+	body, _ := json.Marshal(merged)
+	argv[i+1] = string(body)
 	cmd := exec.CommandContext(ctx, inv.Argv[0], argv...)
 	cmd.Dir, cmd.Env = p.ws, env
 	var stdout, stderr bytes.Buffer
@@ -268,6 +431,8 @@ type agyGemini struct {
 	mu      sync.Mutex
 	replies []agyReply
 	first   []byte
+	all     [][]byte
+	paths   []string
 }
 
 func (g *agyGemini) script(r ...agyReply) { g.replies = r }
@@ -284,6 +449,8 @@ func (g *agyGemini) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if g.first == nil {
 		g.first = body
 	}
+	g.all = append(g.all, body)
+	g.paths = append(g.paths, r.URL.Path)
 	reply := agyReply{text: "done"}
 	if len(g.replies) > 0 {
 		reply, g.replies = g.replies[0], g.replies[1:]
@@ -315,6 +482,7 @@ type agyPolicyStub struct {
 	mu     sync.Mutex
 	denied []string
 	seen   []string
+	inputs []map[string]any
 }
 
 func (s *agyPolicyStub) deny(tools ...string) { s.denied = tools }
@@ -325,13 +493,24 @@ func (s *agyPolicyStub) tools() []string {
 	return append([]string(nil), s.seen...)
 }
 
+func (s *agyPolicyStub) input(i int) map[string]any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if i >= len(s.inputs) {
+		return nil
+	}
+	return s.inputs[i]
+}
+
 func (s *agyPolicyStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Tool string `json:"tool"`
+		Tool  string         `json:"tool"`
+		Input map[string]any `json:"input"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&in)
 	s.mu.Lock()
 	s.seen = append(s.seen, in.Tool)
+	s.inputs = append(s.inputs, in.Input)
 	s.mu.Unlock()
 	decision := map[string]string{"decision": "allow"}
 	for _, d := range s.denied {
@@ -397,7 +576,10 @@ func (s *agyMCPStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "initialize":
 		result = map[string]any{"protocolVersion": msg.Params.ProtocolVersion, "capabilities": map[string]any{"tools": map[string]any{}}, "serverInfo": map[string]any{"name": "probe", "version": "1"}}
 	case "tools/list":
-		result = map[string]any{"tools": []any{map[string]any{"name": "list_tickets", "description": "List tickets", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"q": map[string]any{"type": "string"}}}}}}
+		result = map[string]any{"tools": []any{
+			map[string]any{"name": "list_tickets", "description": "List tickets", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"q": map[string]any{"type": "string"}}}},
+			map[string]any{"name": "read_page", "description": "Read a page", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"zebra_ref": map[string]any{"type": "string"}}}},
+		}}
 	case "tools/call":
 		result = map[string]any{"content": []any{map[string]any{"type": "text", "text": "LAZYAGENTS-1 probe ticket"}}}
 	}

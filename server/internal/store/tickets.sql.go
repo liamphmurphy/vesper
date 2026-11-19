@@ -701,6 +701,7 @@ WHERE t.workspace_id = $1
   AND ($10::text IS NULL
        OR t.search @@ websearch_to_tsquery('english', $10)
        OR t.key ILIKE $10 || '%'
+       OR t.number::text = ltrim($10, '#')
        OR t.title ILIKE '%' || $10 || '%')
 ORDER BY
   CASE t.status WHEN 'in_progress' THEN 0 WHEN 'in_review' THEN 1 WHEN 'todo' THEN 2 WHEN 'backlog' THEN 3 ELSE 4 END,
@@ -972,6 +973,44 @@ func (q *Queries) SetTicketCode(ctx context.Context, arg SetTicketCodeParams) er
 		arg.PrDeletions,
 	)
 	return err
+}
+
+const ticketKeysByNumber = `-- name: TicketKeysByNumber :many
+SELECT t.key, p.key AS project_key
+FROM tickets t JOIN projects p ON p.id = t.project_id
+WHERE t.workspace_id = $1 AND t.number = $2 AND NOT p.archived
+ORDER BY p.key
+`
+
+type TicketKeysByNumberParams struct {
+	WorkspaceID uuid.UUID
+	Number      int32
+}
+
+type TicketKeysByNumberRow struct {
+	Key        string
+	ProjectKey string
+}
+
+// A bare ticket number ("251") resolved across the workspace's active projects.
+func (q *Queries) TicketKeysByNumber(ctx context.Context, arg TicketKeysByNumberParams) ([]TicketKeysByNumberRow, error) {
+	rows, err := q.db.Query(ctx, ticketKeysByNumber, arg.WorkspaceID, arg.Number)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TicketKeysByNumberRow{}
+	for rows.Next() {
+		var i TicketKeysByNumberRow
+		if err := rows.Scan(&i.Key, &i.ProjectKey); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const ticketProjectID = `-- name: TicketProjectID :one

@@ -19,7 +19,7 @@ import (
 func TestAgentsSectionPlanningLoadsNoPersona(t *testing.T) {
 	spec := agentdef.Resolved{Harness: agentdef.HarnessClaudeCode, Model: "opus-5.5", Instructions: "Be careful."}
 	paths := []string{".lazyagents/context/adr.md"}
-	got, _, err := agentsSection(context.Background(), nil, runCtx{run: store.Run{Purpose: "planning"}, spec: spec}, append([]string{}, paths...))
+	got, _, _, err := agentsSection(context.Background(), nil, runCtx{run: store.Run{Purpose: "planning"}, spec: spec}, append([]string{}, paths...))
 	if want := "Be careful.\nRead these context files first:\n.lazyagents/context/adr.md"; err != nil || string(got) != want {
 		t.Fatalf("err=%v\n%s", err, got)
 	}
@@ -55,7 +55,7 @@ func TestAgentsSectionTicketRunVoice(t *testing.T) {
 	parent := uuid.New()
 	section := func(agent uuid.UUID, parentRun *uuid.UUID) string {
 		t.Helper()
-		got, _, err := agentsSection(ctx, q, runCtx{run: store.Run{Purpose: "ticket", WorkspaceID: ws, AgentID: agent, ParentRunID: parentRun}, ticket: store.Ticket{Key: "PAY-1"}, spec: spec}, append([]string{}, paths...))
+		got, _, _, err := agentsSection(ctx, q, runCtx{run: store.Run{Purpose: "ticket", WorkspaceID: ws, AgentID: agent, ParentRunID: parentRun}, ticket: store.Ticket{Key: "PAY-1"}, spec: spec}, append([]string{}, paths...))
 		if err != nil {
 			t.Fatal(err)
 		}

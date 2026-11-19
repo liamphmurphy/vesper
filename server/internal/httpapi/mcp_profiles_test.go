@@ -15,6 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/liamphmurphy/vesper/server/internal/agentapi"
+	"github.com/liamphmurphy/vesper/server/internal/agentdef"
 	"github.com/liamphmurphy/vesper/server/internal/agents"
 	"github.com/liamphmurphy/vesper/server/internal/artifacts"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
@@ -121,6 +122,35 @@ func TestMCPProfiles(t *testing.T) {
 	check("subagent", sub, subTools)
 	check("lead", leadSess, without("submit_outline", "submit_lesson", "submit_review", "submit_workflow_output", "list_workflows", "read_workflow", "propose_workflow_edit", "submit_findings", "submit_research_report", "list_saved_links", "save_link", "browser_snapshot", "search_library", "read_library_item", "list_inbox", "report_usage", "next_ticket", "save_memory", "update_memory", "forget_memory", "search_chats", "read_chat", "search_repositories", "use_repository", "request_push", "set_chat_title", "list_tickets", "list_projects", "list_runs", "get_run", "generate_image", "start_video", "update_video", "finish_video", "fail_video", "start_audio", "update_audio", "finish_audio", "fail_audio", "save_file", "render_pdf", "start_playground", "playground_status", "stop_playground", "set_playground_openapi", "get_video_transcript", "propose_persona", "canvas_create", "canvas_patch", "canvas_read", "canvas_list", "canvas_comment", "canvas_reply", "design_list", "design_outline", "design_read", "design_render", "design_patch", "design_import", "design_comments", "design_comment", "design_reply", "design_create", "list_connectors", "list_secret_names", "create_space", "create_scheduled_task", "list_scheduled_tasks", "update_scheduled_task", "delete_scheduled_task", "create_learning_module", "list_learning_modules", "get_learning_progress", "design_flows", "design_components", "design_tokens", "design_inspect", "design_link_ticket", "list_custom_apps", "get_custom_app", "create_custom_app", "update_custom_app", "delete_custom_app", "custom_app_sql", "http_list_workspaces", "http_get_workspace", "http_save_request", "http_run_request"))
 	check("chat", connect(mkRun(nil, nil, "chat")), chatTools)
+	// Claude Code defers MCP tools behind tool search unless the server marks
+	// them alwaysLoad: the tools nearly every turn starts with are marked, and
+	// nothing else, so they're callable with no discovery round-trip (LAZYAGENTS-254).
+	alwaysLoad := func(sess *mcp.ClientSession) []string {
+		t.Helper()
+		res, err := sess.ListTools(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, tl := range res.Tools {
+			if tl.Meta["anthropic/alwaysLoad"] == true {
+				out = append(out, tl.Name)
+			}
+		}
+		slices.Sort(out)
+		return out
+	}
+	for _, name := range agentdef.EagerVesperTools {
+		if !slices.Contains(all, name) {
+			t.Errorf("eager tool %s isn't a Vesper tool", name)
+		}
+	}
+	if got, want := alwaysLoad(connect(mkRun(nil, nil, "chat"))), []string{"get_ticket", "list_projects", "list_tickets", "request_push", "set_chat_title", "update_ticket"}; !slices.Equal(got, want) {
+		t.Errorf("chat alwaysLoad tools = %v, want %v", got, want)
+	}
+	if got := alwaysLoad(leadSess); !slices.Contains(got, "claim_ticket") || !slices.Contains(got, "complete_run") || slices.Contains(got, "read_page") {
+		t.Errorf("lead alwaysLoad tools = %v", got)
+	}
 	check("planning", connect(mkRun(nil, nil, "planning")), planTools)
 	check("course run", connect(mkRun(nil, nil, "learning")), []string{"submit_outline", "submit_lesson", "submit_review"})
 	check("workflow step", connect(mkRun(nil, nil, "workflow")), []string{"submit_workflow_output", "search_knowledge", "read_page", "read_artifact", "get_ticket", "get_backlinks"})

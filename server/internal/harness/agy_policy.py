@@ -80,14 +80,10 @@ def main():
         with urllib.request.build_opener(NoRedirect).open(request, timeout=15) as response:
             decision = json.load(response)
         if decision.get("decision") == "allow":
-            out = {"decision": "auto_approve"}
-            # In OAuth sessions, agy's synced account preferences can leave the
-            # terminal sandbox enabled even when settings.json sets it to false.
-            # Vesper's container is already the sandbox, so force BypassSandbox
-            # on approved run_command calls.
-            if call["name"] == "run_command" and not (isinstance(args, dict) and args.get("BypassSandbox") is True):
-                out["overwrite"] = {"BypassSandbox": True}
-            print(json.dumps(out))
+            # The terminal sandbox is off for the session (--settings), so
+            # commands run as they are: adding BypassSandbox here would send
+            # each one through agy's safety monitor.
+            print(json.dumps({"decision": "auto_approve"}))
             return
         reason = decision.get("reason", "Vesper denied the tool")
     except Exception:
