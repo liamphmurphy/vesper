@@ -176,6 +176,7 @@ test("each tool call maps to the kind of scene it shows", () => {
     [{ tool: "finish_video", input: {} }, "video-render"],
     [{ tool: "fail_video", input: {} }, "video-render"],
     [{ tool: "save_file", input: {} }, "library"],
+    [{ tool: "render_pdf", input: {} }, "library"],
     [{ tool: "start_audio", input: {} }, "audio-render"],
     [{ tool: "update_audio", input: {} }, "audio-render"],
     [{ tool: "finish_audio", input: {} }, "audio-render"],

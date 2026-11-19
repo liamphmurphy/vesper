@@ -776,6 +776,112 @@ func (q *Queries) GetLibraryItem(ctx context.Context, arg GetLibraryItemParams) 
 	return i, err
 }
 
+const getLibraryItemDetail = `-- name: GetLibraryItemDetail :one
+SELECT l.id, l.workspace_id, l.user_id, l.kind, l.title, l.filename, l.content_type, l.size_bytes, l.blob_key, l.chat_id, l.message_id, l.persona_id, l.created_at, l.reference, l.reference_persona_id, l.source, l.url, l.note, l.site, l.video_id, l.link_status, l.summary, l.duration_ms, l.width, l.height, l.poster_key, l.peaks, l.method, l.detail, l.source_id, l.source_stamp, c.title AS chat_title, p.name AS persona_name, pr.key AS project_key, rp.name AS reference_persona_name,
+  sc.title AS source_title, sc.kind AS source_kind, sc.updated_at AS source_updated_at
+FROM library_items l
+LEFT JOIN chat_canvases sc ON sc.id = l.source_id
+LEFT JOIN chat_sessions c ON c.id = l.chat_id
+LEFT JOIN personas p ON p.id = l.persona_id
+LEFT JOIN personas rp ON rp.id = l.reference_persona_id
+LEFT JOIN projects pr ON pr.id = c.project_id
+WHERE l.id = $1 AND l.workspace_id = $2 AND l.user_id = $3
+`
+
+type GetLibraryItemDetailParams struct {
+	ID          uuid.UUID
+	WorkspaceID uuid.UUID
+	UserID      uuid.UUID
+}
+
+type GetLibraryItemDetailRow struct {
+	ID                   uuid.UUID
+	WorkspaceID          uuid.UUID
+	UserID               uuid.UUID
+	Kind                 string
+	Title                string
+	Filename             string
+	ContentType          string
+	SizeBytes            int64
+	BlobKey              string
+	ChatID               *uuid.UUID
+	MessageID            *uuid.UUID
+	PersonaID            *uuid.UUID
+	CreatedAt            time.Time
+	Reference            *string
+	ReferencePersonaID   *uuid.UUID
+	Source               string
+	Url                  string
+	Note                 string
+	Site                 string
+	VideoID              string
+	LinkStatus           string
+	Summary              string
+	DurationMs           *int32
+	Width                *int32
+	Height               *int32
+	PosterKey            *string
+	Peaks                []byte
+	Method               string
+	Detail               string
+	SourceID             *uuid.UUID
+	SourceStamp          *time.Time
+	ChatTitle            *string
+	PersonaName          *string
+	ProjectKey           *string
+	ReferencePersonaName *string
+	SourceTitle          *string
+	SourceKind           *string
+	SourceUpdatedAt      *time.Time
+}
+
+// One item of the caller's with its joined chat, persona and export source fields.
+func (q *Queries) GetLibraryItemDetail(ctx context.Context, arg GetLibraryItemDetailParams) (GetLibraryItemDetailRow, error) {
+	row := q.db.QueryRow(ctx, getLibraryItemDetail, arg.ID, arg.WorkspaceID, arg.UserID)
+	var i GetLibraryItemDetailRow
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.Kind,
+		&i.Title,
+		&i.Filename,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.BlobKey,
+		&i.ChatID,
+		&i.MessageID,
+		&i.PersonaID,
+		&i.CreatedAt,
+		&i.Reference,
+		&i.ReferencePersonaID,
+		&i.Source,
+		&i.Url,
+		&i.Note,
+		&i.Site,
+		&i.VideoID,
+		&i.LinkStatus,
+		&i.Summary,
+		&i.DurationMs,
+		&i.Width,
+		&i.Height,
+		&i.PosterKey,
+		&i.Peaks,
+		&i.Method,
+		&i.Detail,
+		&i.SourceID,
+		&i.SourceStamp,
+		&i.ChatTitle,
+		&i.PersonaName,
+		&i.ProjectKey,
+		&i.ReferencePersonaName,
+		&i.SourceTitle,
+		&i.SourceKind,
+		&i.SourceUpdatedAt,
+	)
+	return i, err
+}
+
 const getLibraryLink = `-- name: GetLibraryLink :one
 SELECT id, workspace_id, user_id, kind, title, filename, content_type, size_bytes, blob_key, chat_id, message_id, persona_id, created_at, reference, reference_persona_id, source, url, note, site, video_id, link_status, summary, duration_ms, width, height, poster_key, peaks, method, detail, source_id, source_stamp FROM library_items WHERE workspace_id = $1 AND user_id = $2 AND url = $3 AND kind = 'link'
 `

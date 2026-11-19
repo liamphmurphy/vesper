@@ -350,6 +350,7 @@ const REPLY_BLOCK_STATUS: Record<string, ChatStatusInfo> = {
   choices: status("choices", "laying out your options"),
   "workflow-run": status("workflow", "lining up a workflow"),
   recommend: status("web", "picking something for you to look at"),
+  pdf: status("library", "attaching a PDF"),
 };
 
 /** The running turn's tool calls and the rich blocks written between them, in order, for the chat tab. */
@@ -470,6 +471,8 @@ export function chatStatusOf(call: { tool: string; input: unknown }): ChatStatus
       return status("library", "looking through your Library");
     case "save_file":
       return status("library", "saving a file to your Library");
+    case "render_pdf":
+      return status("library", "creating a PDF");
     case "read_library_item":
       return status("library", "opening something from your Library");
     case "list_inbox":
@@ -944,6 +947,8 @@ export function stepDetail(call: { tool: string; input: unknown }, names: Map<st
       return named("Saving", o.title || hostOf(str(o.url)));
     case "save_file":
       return named("Saving", o.title || str(o.filename));
+    case "render_pdf":
+      return named("Rendering PDF", o.title || str(o.filename));
     case "search_library":
       return o.q ? `Searching “${clip(str(o.q))}”` : general;
     case "read_library_item":

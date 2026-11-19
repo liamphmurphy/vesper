@@ -21,6 +21,12 @@ import (
 // The design_* tools (ADR-designs §3.9). All of them take the canvas_id of a
 // design canvas in this chat, and refuse anything else.
 
+// mcpResultProvider lets a tool return rich MCP content (such as one or more
+// preview PNGs alongside JSON metadata).
+type mcpResultProvider interface {
+	mcpResult() (*mcp.CallToolResult, error)
+}
+
 // imageResult is a tool result with a PNG: over MCP it's image content plus
 // the meta as text; over REST, the meta with the PNG as base64.
 type imageResult struct {

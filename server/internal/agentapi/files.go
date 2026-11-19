@@ -17,6 +17,7 @@ import (
 // it, since it holds the object store the Library's files live in.
 type FileKeeper interface {
 	KeepChatFile(ctx context.Context, userID, ws uuid.UUID, chatID, personaID *uuid.UUID, title, filename string, data []byte) (store.LibraryItem, error)
+	KeepChatFileWithDetail(ctx context.Context, userID, ws uuid.UUID, chatID, personaID *uuid.UUID, title, filename, detail string, data []byte) (store.LibraryItem, error)
 }
 
 type SaveFileIn struct {

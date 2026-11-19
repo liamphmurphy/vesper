@@ -33,4 +33,14 @@ for (const name of readdirSync(scope)) {
   }
 }
 if (!existsSync(join(out, "node_modules", "@resvg", "resvg-js"))) throw new Error("@resvg/resvg-js isn't installed");
+
+// Copy pdfjs-dist runtime files for offline PDF page preview rasterisation inside the worker.
+const pdfjsSrc = join(web, "node_modules", "pdfjs-dist", "build");
+const pdfjsDst = join(out, "pdfjs");
+mkdirSync(pdfjsDst, { recursive: true });
+for (const file of ["pdf.min.mjs", "pdf.worker.min.mjs"]) {
+  const src = join(pdfjsSrc, file);
+  if (!existsSync(src)) throw new Error(`missing ${src}`);
+  cpSync(src, join(pdfjsDst, file));
+}
 console.log("design worker bundled:", join("dist", "design-worker", "server.mjs"));

@@ -41,6 +41,18 @@ LIMIT sqlc.arg(row_limit) OFFSET sqlc.arg(row_offset);
 -- name: GetLibraryItem :one
 SELECT * FROM library_items WHERE id = $1 AND workspace_id = $2 AND user_id = $3;
 
+-- name: GetLibraryItemDetail :one
+-- One item of the caller's with its joined chat, persona and export source fields.
+SELECT l.*, c.title AS chat_title, p.name AS persona_name, pr.key AS project_key, rp.name AS reference_persona_name,
+  sc.title AS source_title, sc.kind AS source_kind, sc.updated_at AS source_updated_at
+FROM library_items l
+LEFT JOIN chat_canvases sc ON sc.id = l.source_id
+LEFT JOIN chat_sessions c ON c.id = l.chat_id
+LEFT JOIN personas p ON p.id = l.persona_id
+LEFT JOIN personas rp ON rp.id = l.reference_persona_id
+LEFT JOIN projects pr ON pr.id = c.project_id
+WHERE l.id = $1 AND l.workspace_id = $2 AND l.user_id = $3;
+
 -- name: DeleteLibraryItem :one
 -- Removes one of the caller's items. orphaned says no chat attachment,
 -- workflow image, chat video or other item still uses its object, so the

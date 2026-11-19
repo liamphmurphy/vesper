@@ -33,6 +33,7 @@ func (s *Server) agentDeps() agentapi.Deps {
 			return s.dispatchCustomAppAPI(ctx, user, method, cleaned, body)
 		},
 		Files: s,
+		PDF:   s.DesignWorker,
 	}
 }
 

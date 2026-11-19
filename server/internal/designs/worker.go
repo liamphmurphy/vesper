@@ -3,6 +3,7 @@ package designs
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -231,4 +232,86 @@ func (w *Worker) Import(ctx context.Context, in ImportRequest) (Imported, error)
 		return out, fmt.Errorf("%w: unreadable import reply", ErrUnavailable)
 	}
 	return out, nil
+}
+
+// PDFWorkerTimeout bounds one HTML/CSS -> PDF render call (including page preview rasterisation).
+const PDFWorkerTimeout = 35 * time.Second
+
+// PDFRenderRequest is what the PDF renderer turns into a PDF document.
+type PDFRenderRequest struct {
+	HTML            string `json:"html"`
+	CSS             string `json:"css,omitempty"`
+	PageSize        any    `json:"page_size,omitempty"`
+	Orientation     string `json:"orientation,omitempty"`
+	Margins         any    `json:"margins,omitempty"`
+	HeaderHTML      string `json:"header_html,omitempty"`
+	FooterHTML      string `json:"footer_html,omitempty"`
+	PrintBackground *bool  `json:"print_background,omitempty"`
+	PreviewPages    []int  `json:"preview_pages,omitempty"`
+}
+
+// PDFPreview is one rasterised page of a rendered PDF for visual inspection.
+type PDFPreview struct {
+	Page   int
+	Width  int
+	Height int
+	PNG    []byte
+}
+
+// PDFRendered is the rendered PDF bytes, page count, page size label, and preview PNGs.
+type PDFRendered struct {
+	PDF      []byte
+	Pages    int
+	PageSize string
+	Previews []PDFPreview
+}
+
+// RenderPDF renders HTML+CSS to a PDF via the Node worker's /pdf endpoint.
+func (w *Worker) RenderPDF(ctx context.Context, in PDFRenderRequest) (PDFRendered, error) {
+	if !w.Available() {
+		return PDFRendered{}, ErrUnavailable
+	}
+	// Use a generous client timeout for headless Chromium rendering when no custom client is injected.
+	ww := *w
+	if ww.Client == nil {
+		ww.Client = &http.Client{Timeout: PDFWorkerTimeout}
+	}
+	res, raw, err := ww.post(ctx, "/pdf", in)
+	if err != nil {
+		return PDFRendered{}, err
+	}
+	if res.StatusCode != http.StatusOK {
+		return PDFRendered{}, failure(res, raw)
+	}
+	var wire struct {
+		PDFBase64 string `json:"pdf_base64"`
+		Pages     int    `json:"pages"`
+		PageSize  string `json:"page_size"`
+		Previews  []struct {
+			Page      int    `json:"page"`
+			Width     int    `json:"width"`
+			Height    int    `json:"height"`
+			PNGBase64 string `json:"png_base64"`
+		} `json:"previews"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil || wire.PDFBase64 == "" {
+		return PDFRendered{}, fmt.Errorf("%w: unreadable PDF reply", ErrUnavailable)
+	}
+	pdfBytes, err := base64.StdEncoding.DecodeString(wire.PDFBase64)
+	if err != nil {
+		return PDFRendered{}, fmt.Errorf("%w: invalid PDF bytes", ErrUnavailable)
+	}
+	previews := make([]PDFPreview, 0, len(wire.Previews))
+	for _, p := range wire.Previews {
+		pngBytes, derr := base64.StdEncoding.DecodeString(p.PNGBase64)
+		if derr != nil {
+			continue
+		}
+		previews = append(previews, PDFPreview{Page: p.Page, Width: p.Width, Height: p.Height, PNG: pngBytes})
+	}
+	pages := wire.Pages
+	if pages < 1 {
+		pages = 1
+	}
+	return PDFRendered{PDF: pdfBytes, Pages: pages, PageSize: wire.PageSize, Previews: previews}, nil
 }
