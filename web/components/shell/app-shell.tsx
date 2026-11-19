@@ -87,7 +87,7 @@ const PAGE = "flex min-h-0 min-w-0 flex-1 flex-col";
 function SectionFade({ children }: { children: ReactNode }) {
   const section = useSelectedLayoutSegment();
   // Work screens scroll within the viewport, with room for the banner and tab bar.
-  const work = section === "work" || section === "runs" || section === "tickets";
+  const work = section === "work" || section === "runs" || section === "tickets" || section === "epics";
   return (
     <div key={section} className={`motion-page ${work ? "flex h-app min-h-0 min-w-0 flex-none flex-col overflow-hidden" : PAGE}`}>
       <SystemBanner />
