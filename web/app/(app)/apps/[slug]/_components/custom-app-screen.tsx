@@ -8,7 +8,7 @@ import { PersonaAvatar, personaLook, useDockPersona } from "@/app/(app)/chat/_co
 import { DockChatSwitcher, type DockChatSection } from "@/components/domain/dock-chat-switcher";
 import { DockContext, dockContextChip } from "@/components/domain/dock-context";
 import { buildCustomAppActions, buildCustomAppNav, parseViewId } from "@/lib/native-shell/models/custom-app";
-import { buildCustomAppInspectorSections } from "@/lib/native-shell/models/custom-app-inspector";
+import { buildCustomAppCapabilities, buildCustomAppInspectorSections } from "@/lib/native-shell/models/custom-app-inspector";
 import { EditorLayout, type DockTab, type EditorHeader, type NativeEditorHeader } from "@/components/shell/editor-layout";
 import { isTyping } from "@/components/shell/shortcuts";
 import { Content, TopBar } from "@/components/shell/topbar";
@@ -18,6 +18,7 @@ import { Icon } from "@/components/ui/icon";
 import { Banner, EmptyState, Field, Skeleton, TextArea, TextInput } from "@/components/ui/primitives";
 import { api, ApiError, unwrap, type Schemas } from "@/lib/api/client";
 import { useConnectors } from "@/lib/api/connector-hooks";
+import { useApiSecrets } from "@/lib/api/secret-hooks";
 import {
   customAppKeys,
   invokeCustomApp,
@@ -1025,59 +1026,26 @@ function CodeInspectorTab({ app }: { app: CustomAppDetail }) {
 function useCustomAppPermissions(app: CustomAppDetail) {
   const update = useUpdateCustomApp(app.slug);
   const connectors = useConnectors();
-
-  const connectorRows = useMemo(() => {
-    const rows = connectors.data?.connectors ?? [];
-    return rows.map((c) => ({
-      key: `mcp:${c.slug}:*`,
-      label: `MCP · ${c.name}`,
-      hint: `${c.tools.length} tool${c.tools.length === 1 ? "" : "s"} · ${c.status.replaceAll("_", " ")}`,
-    }));
-  }, [connectors.data?.connectors]);
-
-  const knownKeys = useMemo(() => {
-    const keys = new Set<string>(["vesper.api:read", "vesper.api:write", "app.http:outbound"]);
-    for (const c of connectorRows) keys.add(c.key);
-    for (const k of Object.keys(app.manifest.requested_capabilities ?? {})) {
-      if (!k.startsWith("app.sql:")) keys.add(k);
-    }
-    for (const k of Object.keys(app.capabilities ?? {})) {
-      if (!k.startsWith("app.sql:")) keys.add(k);
-    }
-    return [...keys];
-  }, [connectorRows, app.manifest.requested_capabilities, app.capabilities]);
-
-  const connectorMap = useMemo(() => new Map(connectorRows.map((c) => [c.key, c])), [connectorRows]);
+  const apiSecrets = useApiSecrets();
 
   const capabilities = useMemo(
     () =>
-      knownKeys.map((capKey) => {
-        const cInfo = connectorMap.get(capKey);
-        const label =
-          capKey === "vesper.api:read"
-            ? "Vesper API · Read"
-            : capKey === "vesper.api:write"
-              ? "Vesper API · Write"
-              : capKey === "app.http:outbound"
-                ? "Outbound HTTPS"
-                : capKey.startsWith("secret:")
-                  ? `Secret · ${capKey.slice("secret:".length)}`
-                  : cInfo?.label ?? capKey;
-        const hint =
-          capKey === "vesper.api:read"
-            ? "GET requests to Vesper REST APIs"
-            : capKey === "vesper.api:write"
-              ? "POST, PATCH, PUT, DELETE requests to Vesper APIs"
-              : capKey === "app.http:outbound"
-                ? "Public HTTPS fetches from the app's MCP server and remote image proxy"
-                : capKey.startsWith("secret:")
-                  ? "Authenticated secretFetch calls using this Vesper secret"
-                  : cInfo?.hint ?? "Requested by app manifest";
-        const mode: CustomAppCapabilityMode = app.capabilities[capKey] ?? "denied";
-        const requested = app.manifest.requested_capabilities?.[capKey];
-        return { key: capKey, label, hint, mode, requested };
+      buildCustomAppCapabilities({
+        connectors: (connectors.data?.connectors ?? []).map((c) => ({
+          slug: c.slug,
+          name: c.name,
+          toolCount: c.tools.length,
+          status: c.status,
+        })),
+        secrets: (apiSecrets.data?.secrets ?? []).map((s) => ({
+          handle: s.handle,
+          name: s.name,
+          allowedHosts: s.allowed_hosts,
+        })),
+        requestedCapabilities: app.manifest.requested_capabilities,
+        grantedCapabilities: app.capabilities,
       }),
-    [knownKeys, connectorMap, app.capabilities, app.manifest.requested_capabilities],
+    [connectors.data?.connectors, apiSecrets.data?.secrets, app.manifest.requested_capabilities, app.capabilities],
   );
 
   const versions = useMemo(() => [...app.versions].sort((a, b) => b.seq - a.seq), [app.versions]);
