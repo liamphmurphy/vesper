@@ -27,8 +27,8 @@ func TestInstructionFiles(t *testing.T) {
 	b.WriteString("\n## Wall\n\n" + strings.Repeat("é", 12000) + "\n")
 	big := b.String()
 	files, exclude := InstructionFiles(agentdef.HarnessAntigravity, []byte(big))
-	if len(files[AgentsSectionPath]) != 0 {
-		t.Fatal("agy's AGENTS.md keeps only the repository's file")
+	if string(files[AgentsSectionPath]) != agyRulesPointer {
+		t.Fatalf("agy's AGENTS.md keeps only a pointer and the repository's file: %q", files[AgentsSectionPath])
 	}
 	var joined strings.Builder
 	for i := 1; i <= agyRuleSlots; i++ {

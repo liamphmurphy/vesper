@@ -23,6 +23,7 @@ const (
 	agyRuleSlots    = 6
 	agyRuleMaxBytes = 22000 // under agy's 24,000-byte cap, with the frontmatter
 	agyRuleHeader   = "---\ntrigger: always_on\n---\n\n"
+	agyRulesPointer = "<!-- Vesper's instructions for this turn are in .agents/rules/vesper-*.md -->\n"
 )
 
 // InstructionFiles places a turn's generated instructions for its harness.
@@ -31,7 +32,9 @@ func InstructionFiles(harnessName string, section []byte) (files map[string][]by
 	if harnessName != agentdef.HarnessAntigravity {
 		return map[string][]byte{AgentsSectionPath: section}, nil
 	}
-	files = map[string][]byte{AgentsSectionPath: nil}
+	// Never empty: the turn wrapper cats it into AGENTS.md, and a backend
+	// needn't create a zero-length file.
+	files = map[string][]byte{AgentsSectionPath: []byte(agyRulesPointer)}
 	chunks := splitRule(string(section), agyRuleMaxBytes)
 	if len(chunks) > agyRuleSlots {
 		// Past ~130 KB agy truncates the last file rather than losing it.
