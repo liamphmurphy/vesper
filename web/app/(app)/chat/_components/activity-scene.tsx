@@ -106,7 +106,7 @@ const shelfTile = (x: number, y: number, thumb: ReactNode) => (
 );
 
 /** Kinds split off a broader one keep its scene: the step rail's glyph is what tells them apart. */
-type SplitKind = "searching-code" | "web-page" | "image-view" | "memory-save" | "design-view";
+type SplitKind = "image-view" | "design-view";
 
 const SCENES: Record<Exclude<ChatStatusKind, SplitKind>, ReactNode> = {
   thinking: (
@@ -183,6 +183,19 @@ const SCENES: Record<Exclude<ChatStatusKind, SplitKind>, ReactNode> = {
     <>
       <path className="scene-line" d={CODE_LINES} />
       <rect className="scene-accent scene-scan" x="14" y="23" width="104" height="10" rx="2" opacity="0.25" />
+    </>
+  ),
+  // A lens sweeps across the code and locks onto the matched token.
+  "searching-code": (
+    <>
+      <rect className="scene-paper" x="18" y="4" width="96" height="48" rx="4" />
+      <path className="scene-line" strokeWidth="1.6" d="M28 14H66 M34 24H98 M34 34H84 M28 44H74" />
+      <rect className="scene-accent scene-story scene-sc-hit" x="48" y="19.5" width="32" height="9" rx="2" opacity="0.32" />
+      <path className="scene-line-accent scene-story scene-sc-match" strokeWidth="1.8" d="M52 24H76" />
+      <g className="scene-story scene-sc-lens">
+        <circle cx="64" cy="24" r="8.5" fill="var(--surface)" fillOpacity="0.35" stroke="var(--accent)" strokeWidth="2" />
+        <path className="scene-line-accent" d="M70 30l6 6" />
+      </g>
     </>
   ),
   "writing-code": (
@@ -316,6 +329,28 @@ const SCENES: Record<Exclude<ChatStatusKind, SplitKind>, ReactNode> = {
       </g>
     </>
   ),
+  // A browser page scrolls past while a reader highlight sweeps down the article.
+  "web-page": (
+    <>
+      <rect className="scene-paper" x="22" y="4" width="88" height="48" rx="4" />
+      <path className="scene-line" strokeWidth="1" opacity="0.45" d="M22 14H110" />
+      {[28, 33, 38].map((cx) => (
+        <circle key={cx} className="scene-muted" cx={cx} cy="9" r="1.4" />
+      ))}
+      <rect className="scene-empty" x="45" y="6.8" width="44" height="4.4" rx="2" strokeWidth="1" opacity="0.6" />
+      <svg x="28" y="17" width="76" height="31" viewBox="0 0 76 31">
+        <g className="scene-wp-scroll">
+          <rect className="scene-accent" opacity="0.24" x="0" y="2" width="26" height="13" rx="2" />
+          <path className="scene-line-accent" strokeWidth="1.6" d="M32 5H68" />
+          <path className="scene-line" strokeWidth="1.5" d="M32 11H62 M0 21H70 M0 28H54" />
+          <rect className="scene-accent" opacity="0.24" x="0" y="36" width="26" height="13" rx="2" />
+          <path className="scene-line-accent" strokeWidth="1.6" d="M32 39H68" />
+          <path className="scene-line" strokeWidth="1.5" d="M32 45H62 M0 55H70 M0 62H54" />
+        </g>
+      </svg>
+      <rect className="scene-accent scene-wp-scan" x="26" y="24" width="80" height="7" rx="1.5" opacity="0.18" />
+    </>
+  ),
   video: (
     <>
       <rect className="scene-paper" x="40" y="3" width="52" height="31" rx="4" />
@@ -414,6 +449,20 @@ const SCENES: Record<Exclude<ChatStatusKind, SplitKind>, ReactNode> = {
       <circle className="scene-accent scene-box scene-node" cx="84" cy="32" r="4" style={delay(0.6)} />
       <circle className="scene-warm scene-box scene-node" cx="106" cy="10" r="5" style={delay(0.9)} />
       <circle className="scene-accent scene-box scene-node" cx="72" cy="50" r="3" style={delay(1.2)} />
+    </>
+  ),
+  // A new memory star lands beside the constellation, wires in, and sparkles.
+  "memory-save": (
+    <>
+      <path className="scene-line" strokeWidth="1.4" opacity="0.45" d="M26 42L48 18L72 36L50 48Z" />
+      <circle className="scene-accent" opacity="0.7" cx="26" cy="42" r="3.2" />
+      <circle className="scene-accent" opacity="0.85" cx="48" cy="18" r="4" />
+      <circle className="scene-accent" opacity="0.75" cx="72" cy="36" r="3.8" />
+      <circle className="scene-accent" opacity="0.6" cx="50" cy="48" r="2.8" />
+      <path className="scene-line-accent scene-dash scene-story scene-ms-link0" strokeWidth="1.6" pathLength={1} d="M48 18L98 18" />
+      <path className="scene-line-accent scene-dash scene-story scene-ms-link1" strokeWidth="1.6" pathLength={1} d="M72 36L98 18" />
+      <circle className="scene-warm scene-story scene-ms-node" cx="98" cy="18" r="6" />
+      <path className="scene-warm scene-story scene-ms-spark" d={sparkle(112, 10, 5)} />
     </>
   ),
   // The app's containers stack up (a database, its setup, a process), a link
@@ -821,13 +870,99 @@ const SCENES: Record<Exclude<ChatStatusKind, SplitKind>, ReactNode> = {
       </g>
     </>
   ),
+  // A custom app shell fills with modular panels, then goes live.
+  "custom-app": (
+    <>
+      <rect className="scene-paper" x="20" y="4" width="92" height="48" rx="4" />
+      <path className="scene-line" strokeWidth="1" opacity="0.45" d="M20 13H112" />
+      {[26, 31, 36].map((cx) => (
+        <circle key={cx} className="scene-muted" cx={cx} cy="8.5" r="1.3" />
+      ))}
+      <rect className="scene-empty scene-story scene-ca-nav" x="25" y="17" width="18" height="30" rx="2" />
+      <rect className="scene-accent scene-story scene-ca-a" opacity="0.28" x="47" y="17" width="28" height="13" rx="2" />
+      <rect className="scene-empty scene-story scene-ca-b" x="79" y="17" width="28" height="13" rx="2" />
+      <rect className="scene-empty scene-story scene-ca-c" x="47" y="34" width="60" height="13" rx="2" />
+      <path className="scene-line-accent scene-story scene-ca-c" strokeWidth="1.5" d="M52 40.5H82" />
+      <circle className="scene-done scene-story scene-ca-live" cx="105" cy="8.5" r="2.3" />
+    </>
+  ),
+  // A database cylinder scans and populates rows in a result table.
+  database: (
+    <>
+      <g>
+        <path className="scene-paper" d="M16 15v26c0 3.3 8 6 18 6s18-2.7 18-6V15z" />
+        <ellipse className="scene-paper" cx="34" cy="15" rx="18" ry="5.5" />
+        <path className="scene-line" strokeWidth="1.3" opacity="0.55" d="M16 24c0 3 8 5.5 18 5.5S52 27 52 24 M16 33c0 3 8 5.5 18 5.5S52 36 52 33" />
+        <ellipse className="scene-accent scene-story scene-db-scan" cx="34" cy="24" rx="15" ry="3.5" opacity="0.35" />
+      </g>
+      <path className="scene-line-accent scene-dash scene-story scene-db-link" strokeWidth="1.6" pathLength={1} d="M54 28H68" />
+      <rect className="scene-paper" x="70" y="9" width="46" height="38" rx="3" />
+      <path className="scene-line-accent" strokeWidth="1.5" d="M75 16H111" opacity="0.65" />
+      {[24, 32, 40].map((y, i) => (
+        <g key={y} className={`scene-story scene-db-r${i}`}>
+          <circle className={i === 0 ? "scene-accent" : "scene-done"} cx="77" cy={y} r="1.8" />
+          <path className="scene-line" strokeWidth="1.5" d={`M83 ${y}H${[108, 102, 106][i]}`} />
+        </g>
+      ))}
+    </>
+  ),
+  // A request fires left-to-right to an endpoint and a green response bounces back.
+  http: (
+    <>
+      <rect className="scene-paper" x="12" y="14" width="28" height="28" rx="4" />
+      <path className="scene-line-accent" strokeWidth="1.6" d="M18 24H30" />
+      <path className="scene-line" strokeWidth="1.5" d="M18 31H34" />
+      <path className="scene-line" strokeWidth="1.3" strokeDasharray="2 3" opacity="0.45" d="M43 22H89 M43 34H89" />
+      <rect className="scene-accent scene-story scene-http-req" x="44" y="19" width="12" height="6" rx="3" />
+      <rect className="scene-done scene-story scene-http-res" x="76" y="31" width="12" height="6" rx="3" />
+      <g className="scene-story scene-http-srv">
+        <rect className="scene-paper" x="92" y="14" width="28" height="28" rx="4" />
+        <path className="scene-line" strokeWidth="1.5" d="M98 23H114 M98 29H110 M98 35H114" />
+      </g>
+      <g className="scene-story scene-http-ok">{doneBadge(118, 15)}</g>
+    </>
+  ),
+  // A document lays out its pages, gets a PDF stamp, and finishes with a check.
+  pdf: (
+    <>
+      <path className="scene-paper" strokeLinejoin="round" d="M38 4h38l12 12v36H38z" />
+      <path className="scene-line" strokeWidth="1.3" strokeLinejoin="round" d="M76 4v12h12" />
+      <path className="scene-line-accent scene-story scene-pdf-l0" strokeWidth="1.8" d="M46 15H68" />
+      <path className="scene-line scene-story scene-pdf-l1" strokeWidth="1.5" d="M46 23H80 M46 29H74" />
+      <path className="scene-line scene-story scene-pdf-l2" strokeWidth="1.5" d="M46 35H78" />
+      <g className="scene-story scene-pdf-tag">
+        <rect className="scene-warm" x="45" y="40" width="24" height="9" rx="2" />
+        <text x="57" y="47" textAnchor="middle" fontSize="6.5" fontWeight="700" fontFamily="system-ui" fill="var(--surface)">
+          PDF
+        </text>
+      </g>
+      <g className="scene-story scene-pdf-done">{doneBadge(88, 46)}</g>
+    </>
+  ),
+  // A parent agent dispatches work to two helper nodes, which complete and check in.
+  subagent: (
+    <>
+      <path className="scene-line" strokeWidth="1.3" strokeDasharray="2.5 2.5" opacity="0.45" d="M34 28C56 28 62 15 92 15 M34 28C56 28 62 41 92 41" />
+      <path className="scene-line-accent scene-dash scene-story scene-sa-out0" strokeWidth="1.8" pathLength={1} d="M34 28C56 28 62 15 92 15" />
+      <path className="scene-line-accent scene-dash scene-story scene-sa-out1" strokeWidth="1.8" pathLength={1} d="M34 28C56 28 62 41 92 41" />
+      <circle className="scene-paper" cx="25" cy="28" r="9.5" stroke="var(--accent)" strokeWidth="1.6" />
+      <circle className="scene-accent" cx="25" cy="28" r="3.6" />
+      <g className="scene-story scene-sa-h0">
+        <circle className="scene-paper" cx="100" cy="15" r="7.5" stroke="var(--accent)" strokeWidth="1.5" />
+        <circle className="scene-accent" cx="100" cy="15" r="2.6" />
+      </g>
+      <g className="scene-story scene-sa-h1">
+        <circle className="scene-paper" cx="100" cy="41" r="7.5" stroke="var(--accent)" strokeWidth="1.5" />
+        <circle className="scene-accent" cx="100" cy="41" r="2.6" />
+      </g>
+      <g className="scene-story scene-sa-ok0">{doneBadge(111, 12)}</g>
+      <g className="scene-story scene-sa-ok1">{doneBadge(111, 44)}</g>
+    </>
+  ),
 };
 
 const SCENE_OF: Record<SplitKind, Exclude<ChatStatusKind, SplitKind>> = {
-  "searching-code": "reading-code",
-  "web-page": "web",
   "image-view": "image",
-  "memory-save": "memory",
   // Design reads share the design scene, like image-view (ADR-designs §3.9).
   "design-view": "design",
 };
