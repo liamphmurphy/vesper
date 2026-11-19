@@ -105,13 +105,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             inspectorItem = inspItem
             inspectorController = inspector
 
-            inspectorCollapseObservation = inspItem.observe(\.isCollapsed, options: [.new]) { [weak self] item, _ in
+            inspectorCollapseObservation = inspItem.observe(\.isCollapsed, options: [.new]) { [weak self] _, change in
+                // Take the Sendable Bool from the change rather than capturing the (non-Sendable) split item.
+                let newCollapsed = change.newValue
                 MainActor.assumeIsolated {
                     guard let self, !self.isSyncingInspector else { return }
+                    guard let collapsed = newCollapsed ?? self.inspectorItem?.isCollapsed else { return }
                     let model = self.state.inspector
                     let poppedOut = self.inspectorController?.isPoppedOut == true
                     guard InspectorLogic.handlesToggleNatively(model: model, poppedOut: poppedOut) else { return }
-                    let actualOpen = !item.isCollapsed
+                    let actualOpen = !collapsed
                     let expectedOpen = InspectorLogic.shouldShowNativeInspector(model: model, poppedOut: poppedOut)
                     if actualOpen != expectedOpen {
                         self.send(.inspectorVisibility(open: actualOpen))
@@ -195,11 +198,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     private func handleRailCommand(_ command: NativeCommand) {
         if case .railAction(let itemId, let menuItemId) = command, menuItemId == nil {
-            if itemId == "dock.toggle",
-               InspectorLogic.handlesToggleNatively(model: state.inspector, poppedOut: inspectorController?.isPoppedOut == true) {
-                toggleInspector(nil)
-                return
-            }
             if let tabId = InspectorLogic.railDockTabId(from: itemId),
                let model = state.inspector,
                InspectorLogic.isNativeTab(tabId, in: model) {

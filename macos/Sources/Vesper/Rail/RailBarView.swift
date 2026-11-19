@@ -31,6 +31,10 @@ final class RailBarView: NSVisualEffectView {
         let edge = NSBox()
         edge.boxType = .separator
         edge.translatesAutoresizingMaskIntoConstraints = false
+        // A separator box has an intrinsic height of 1 and hugs at 750, above the window's
+        // stay-put priority (500). Pinned to the rail's full height, that would shrink the whole
+        // window to the rail's minimum height (and keep it there in full screen).
+        edge.setContentHuggingPriority(.defaultLow, for: .vertical)
         addSubview(edge)
 
         let divider = NSBox()

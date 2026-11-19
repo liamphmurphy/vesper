@@ -10,22 +10,19 @@ const tabs = [
 const review = { configured: true, requests: [], approved: 0, prefs: { direct: true, team: true }, counts: { direct: 0, team: 0 } };
 const base = { dock: [], pathname: "/work", review, needsYou: 0, harnesses: [], settingsNeedYou: false };
 
-test("a dock's rail items: fold control, then a tab each, the open one active", () => {
+test("a dock's rail items: a tab each, the open one active, no fold control (the toolbar's)", () => {
   const items = dockRailItems(tabs, "chat", true);
-  assert.deepEqual(items.map((i) => [i.id, i.active]), [["dock.toggle", true], ["dock.tab:facts", false], ["dock.tab:chat", true]]);
-  assert.equal(items[0].label, "Collapse panel");
-  assert.deepEqual(items[2].badge, { tone: "human" });
-  assert.equal(items[2].status, "accent");
-  assert.match(items[2].label, /working/);
+  assert.deepEqual(items.map((i) => [i.id, i.active]), [["dock.tab:facts", false], ["dock.tab:chat", true]]);
+  assert.deepEqual(items[1].badge, { tone: "human" });
+  assert.equal(items[1].status, "accent");
+  assert.match(items[1].label, /working/);
   const folded = dockRailItems(tabs, "chat", false);
-  assert.equal(folded[0].label, "Expand panel");
   assert.ok(folded.every((i) => !i.active));
   assert.deepEqual(dockRailItems([], undefined, true), []);
 });
 
 test("dock rail actions match the web buttons", () => {
-  assert.deepEqual(dockRailAction("dock.toggle", tabs, "chat", true), { type: "collapse" });
-  assert.deepEqual(dockRailAction("dock.toggle", tabs, "chat", false), { type: "open", tab: "chat" });
+  assert.equal(dockRailAction("dock.toggle", tabs, "chat", true), null);
   assert.deepEqual(dockRailAction("dock.tab:facts", tabs, "chat", true), { type: "select", tab: "facts" });
   assert.deepEqual(dockRailAction("dock.tab:facts", tabs, "chat", false), { type: "open", tab: "facts" });
   assert.equal(dockRailAction("dock.tab:nope", tabs, "chat", true), null);
@@ -35,7 +32,7 @@ test("dock rail actions match the web buttons", () => {
 test("an action tab (Start playground) is never active and runs instead of opening", () => {
   const withStart = [{ id: "playground", label: "Start playground", icon: "playLeft", action: true }, ...tabs];
   const items = dockRailItems(withStart, "playground", true);
-  assert.deepEqual(items.map((i) => [i.id, i.icon, i.active]), [["dock.toggle", "panel-right", true], ["dock.tab:playground", "playLeft", false], ["dock.tab:facts", "doc", false], ["dock.tab:chat", "msg", false]]);
+  assert.deepEqual(items.map((i) => [i.id, i.icon, i.active]), [["dock.tab:playground", "playLeft", false], ["dock.tab:facts", "doc", false], ["dock.tab:chat", "msg", false]]);
   assert.deepEqual(dockRailAction("dock.tab:playground", withStart, "chat", true), { type: "run", tab: "playground" });
   assert.deepEqual(dockRailAction("dock.tab:playground", withStart, "chat", false), { type: "run", tab: "playground" });
 });
@@ -131,13 +128,13 @@ test("the dock store: the latest registration wins, clearing falls back", () => 
   store.subscribe(() => changes++);
   const a = Symbol("a"), b = Symbol("b");
   const seen = [];
-  store.set(a, [{ id: "dock.toggle", label: "A" }], (id) => seen.push(["a", id]));
-  store.set(b, [{ id: "dock.toggle", label: "B" }], (id) => seen.push(["b", id]));
+  store.set(a, [{ id: "dock.tab:chat", label: "A" }], (id) => seen.push(["a", id]));
+  store.set(b, [{ id: "dock.tab:chat", label: "B" }], (id) => seen.push(["b", id]));
   assert.equal(store.items()[0].label, "B");
-  assert.ok(store.act("dock.toggle"));
-  assert.deepEqual(seen, [["b", "dock.toggle"]]);
+  assert.ok(store.act("dock.tab:chat"));
+  assert.deepEqual(seen, [["b", "dock.tab:chat"]]);
   const before = store.items();
-  store.set(b, [{ id: "dock.toggle", label: "B" }], () => {});
+  store.set(b, [{ id: "dock.tab:chat", label: "B" }], () => {});
   assert.equal(store.items(), before, "an equal model keeps the same snapshot");
   store.clear(b);
   assert.equal(store.items()[0].label, "A");
