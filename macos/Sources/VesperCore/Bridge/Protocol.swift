@@ -375,11 +375,50 @@ public struct CompanionContext: Codable, Sendable, Hashable {
 }
 
 public enum InspectorTabKind: String, Codable, Sendable, Hashable {
-    case native, companion, web
+    case native, companion, panel, web
 
     public init(from decoder: Decoder) throws {
         let raw = try decoder.singleValueContainer().decode(String.self)
         self = InspectorTabKind(rawValue: raw) ?? .web
+    }
+}
+
+public enum InspectorWidth: String, Codable, Sendable, Hashable {
+    case regular, wide, max
+
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = InspectorWidth(rawValue: raw) ?? .regular
+    }
+}
+
+public struct InspectorPanelSpec: Codable, Sendable, Hashable {
+    public var kind: String
+    public var key: String
+    public var propsJson: String
+
+    public init(kind: String, key: String, propsJson: String) {
+        self.kind = kind; self.key = key; self.propsJson = propsJson
+    }
+}
+
+public struct InspectorPanelContext: Codable, Sendable, Hashable {
+    public var active: InspectorPanelSpec?
+    public var keepKeys: [String]
+    public var path: String?
+
+    public init(active: InspectorPanelSpec? = nil, keepKeys: [String] = [], path: String? = nil) {
+        self.active = active; self.keepKeys = keepKeys; self.path = path
+    }
+
+    // active is `InspectorPanelSpec | null`: always present on the wire.
+    enum CodingKeys: String, CodingKey { case active, keepKeys, path }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(active, forKey: .active)
+        try c.encode(keepKeys, forKey: .keepKeys)
+        try c.encodeIfPresent(path, forKey: .path)
     }
 }
 
@@ -532,19 +571,21 @@ public struct InspectorTab: Codable, Sendable, Hashable, Identifiable {
     public var label: String
     public var icon: String
     public var kind: InspectorTabKind
+    public var width: InspectorWidth?
     public var busy: Bool?
     public var unread: Bool?
     public var badge: NavBadge?
     public var headerActions: [InspectorAction]?
     public var sections: [InspectorSection]?
     public var emptyText: String?
+    public var panel: InspectorPanelSpec?
 
-    public init(id: String, label: String, icon: String, kind: InspectorTabKind, busy: Bool? = nil,
-                unread: Bool? = nil, badge: NavBadge? = nil, headerActions: [InspectorAction]? = nil,
-                sections: [InspectorSection]? = nil, emptyText: String? = nil) {
-        self.id = id; self.label = label; self.icon = icon; self.kind = kind; self.busy = busy
+    public init(id: String, label: String, icon: String, kind: InspectorTabKind, width: InspectorWidth? = nil,
+                busy: Bool? = nil, unread: Bool? = nil, badge: NavBadge? = nil, headerActions: [InspectorAction]? = nil,
+                sections: [InspectorSection]? = nil, emptyText: String? = nil, panel: InspectorPanelSpec? = nil) {
+        self.id = id; self.label = label; self.icon = icon; self.kind = kind; self.width = width; self.busy = busy
         self.unread = unread; self.badge = badge; self.headerActions = headerActions
-        self.sections = sections; self.emptyText = emptyText
+        self.sections = sections; self.emptyText = emptyText; self.panel = panel
     }
 }
 
@@ -579,6 +620,8 @@ public enum PageMessage: Sendable, Equatable, Decodable {
     case rail(RailModel?)
     /// The native inspector model; nil: the page has none.
     case inspector(InspectorModel?)
+    /// Forwards an interactive event from `/inspector-panel` back to the main page's active dock tab.
+    case panelEvent(tabId: String, event: String, payloadJson: String? = nil)
     /// Asks the shell to open an in-app path in the main pane (or a new tab).
     case openInMain(path: String, newTab: Bool = false)
     case shell(ShellModel)
@@ -596,6 +639,7 @@ public enum PageMessage: Sendable, Equatable, Decodable {
     private enum Keys: String, CodingKey {
         case v, type, path, area, title, subtitle, model, active, items, requestId, scope, folder, x, y, mode, menu
         case body, confirmLabel, cancelLabel, destructive, background, newTab
+        case tabId, event, payloadJson
     }
 
     public init(from decoder: Decoder) throws {
@@ -617,6 +661,10 @@ public enum PageMessage: Sendable, Equatable, Decodable {
             self = .rail(try c.decodeIfPresent(RailModel.self, forKey: .model))
         case "inspector":
             self = .inspector(try c.decodeIfPresent(InspectorModel.self, forKey: .model))
+        case "panel.event":
+            self = .panelEvent(tabId: try c.decode(String.self, forKey: .tabId),
+                               event: try c.decode(String.self, forKey: .event),
+                               payloadJson: try c.decodeIfPresent(String.self, forKey: .payloadJson))
         case "openInMain":
             self = .openInMain(path: try c.decode(String.self, forKey: .path),
                                newTab: try c.decodeIfPresent(Bool.self, forKey: .newTab) ?? false)
@@ -684,6 +732,8 @@ public enum NativeCommand: Sendable, Equatable, Codable {
     case inspectorChange(tabId: String, fieldId: String, value: String)
     case inspectorToggle(tabId: String, fieldId: String, checked: Bool)
     case companionContext(CompanionContext)
+    case panelContext(InspectorPanelContext)
+    case panelEvent(tabId: String, event: String, payloadJson: String? = nil)
     /// macOS's accent colour ("#RRGGBB") and effective appearance.
     case appearance(accent: String, mode: ColorMode)
     /// `query` only means something for openCommandMenu: the text to open the palette with.
@@ -693,7 +743,7 @@ public enum NativeCommand: Sendable, Equatable, Codable {
 
     private enum Keys: String, CodingKey {
         case v, type, path, navigatorId, itemId, actionId, menuItemId, pickerId, searchId, filterId, value, expanded, checked, name, query, newTab
-        case open, tabId, fieldId, context
+        case open, tabId, fieldId, context, event, payloadJson
         case accent, mode
         case requestId, ok, selectedId, error
     }
@@ -742,6 +792,12 @@ public enum NativeCommand: Sendable, Equatable, Codable {
             self = .inspectorToggle(tabId: try c.decode(String.self, forKey: .tabId), fieldId: try c.decode(String.self, forKey: .fieldId), checked: try c.decode(Bool.self, forKey: .checked))
         case "companion.context":
             self = .companionContext(try c.decode(CompanionContext.self, forKey: .context))
+        case "panel.context":
+            self = .panelContext(try c.decode(InspectorPanelContext.self, forKey: .context))
+        case "panel.event":
+            self = .panelEvent(tabId: try c.decode(String.self, forKey: .tabId),
+                               event: try c.decode(String.self, forKey: .event),
+                               payloadJson: try c.decodeIfPresent(String.self, forKey: .payloadJson))
         case "command": self = .command(try c.decode(ShellCommandName.self, forKey: .name), query: try c.decodeIfPresent(String.self, forKey: .query))
         case "reply":
             let selected: String??
@@ -799,6 +855,11 @@ public enum NativeCommand: Sendable, Equatable, Codable {
             try c.encode("inspector.toggle", forKey: .type); try c.encode(tabId, forKey: .tabId); try c.encode(fieldId, forKey: .fieldId); try c.encode(checked, forKey: .checked)
         case .companionContext(let context):
             try c.encode("companion.context", forKey: .type); try c.encode(context, forKey: .context)
+        case .panelContext(let context):
+            try c.encode("panel.context", forKey: .type); try c.encode(context, forKey: .context)
+        case .panelEvent(let tabId, let event, let payloadJson):
+            try c.encode("panel.event", forKey: .type); try c.encode(tabId, forKey: .tabId); try c.encode(event, forKey: .event)
+            try c.encodeIfPresent(payloadJson, forKey: .payloadJson)
         case .command(let name, let query):
             try c.encode("command", forKey: .type); try c.encode(name, forKey: .name)
             try c.encodeIfPresent(query, forKey: .query)

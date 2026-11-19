@@ -19,8 +19,10 @@ import { PersonaAvatar, personaLook } from "@/app/(app)/chat/_components/persona
 import { toast } from "@/lib/toast";
 import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { buildDocActions, buildDocOutlineNav, parseHeadingId } from "@/lib/native-shell/models/doc-editor";
+import { buildDocReviewInspector } from "@/lib/native-shell/models/doc-inspector";
 import { navAvatar, pageOrigin } from "@/lib/native-shell/models/common";
 import { presenceLabel } from "@/lib/native-shell/models/editor-header";
+import { makePanelSpec } from "@/lib/native-shell/panel-events";
 import { DocEditor, type DocEditorHandle, type Picked, type SaveState } from "./doc-editor";
 import { DocReview, DocReviewList, useDocReview } from "./doc-review";
 import { ExportMenu, useDocExports } from "./export-menu";
@@ -346,6 +348,22 @@ export function DocScreen({ id }: { id: string }) {
       </nav>
     ) : undefined;
 
+  const docReviewInspector = useMemo(
+    () =>
+      suggesting
+        ? buildDocReviewInspector({
+            persona,
+            segments: review.segments,
+            changes: review.changes,
+            decisions: review.decisions,
+            left: review.left,
+            busy: reviewBusy,
+            error: reviewError,
+          })
+        : undefined,
+    [suggesting, persona, review.segments, review.changes, review.decisions, review.left, reviewBusy, reviewError],
+  );
+
   const dockTabs: DockTab[] = [
     {
       id: "chat",
@@ -354,6 +372,12 @@ export function DocScreen({ id }: { id: string }) {
       avatar: <PersonaAvatar persona={look} size={16} />,
       busy: live,
       unread,
+      native: chatId
+        ? {
+            kind: "panel",
+            panel: makePanelSpec("editor.chat", `doc.chat:${chatId}`, { tabId: "chat", chatId }),
+          }
+        : { kind: "native", sections: [], emptyText: "Loading chat…" },
       content: (
         <div data-testid="doc-chat" aria-label={`Chat with ${persona}`} className="flex min-h-0 flex-1 flex-col">
           {/* A document keeps its one chat: /new starts another document instead. */}
@@ -368,6 +392,22 @@ export function DocScreen({ id }: { id: string }) {
       label: "Review",
       icon: "check",
       badge: <span className="rounded-full bg-pill-review-bg px-1.5 text-11 text-pill-review-fg">{review.left}</span>,
+      native: docReviewInspector
+        ? {
+            kind: "native",
+            ...docReviewInspector,
+            onAction: (actionId) => {
+              if (actionId === "accept_all") review.everything("accept");
+              else if (actionId === "reject_all") review.everything("reject");
+              else if (actionId.startsWith("accept:")) review.decide(Number(actionId.slice(7)), "accept");
+              else if (actionId.startsWith("reject:")) review.decide(Number(actionId.slice(7)), "reject");
+              else if (actionId.startsWith("undo:")) review.undo(Number(actionId.slice(5)));
+              else if (actionId.startsWith("jump:")) {
+                document.getElementById(`doc-change-${actionId.slice(5)}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }
+            },
+          }
+        : undefined,
       content: <DocReviewList review={review} persona={persona} busy={reviewBusy} error={reviewError} />,
     });
 

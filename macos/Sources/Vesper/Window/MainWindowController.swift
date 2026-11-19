@@ -26,6 +26,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     private var inspectorSyncDepth = 0
     private var isSyncingInspector: Bool { inspectorSyncDepth > 0 }
     private var lastObservedInspectorTab: ObjectIdentifier?
+    private var lastInspectorWidthClass: InspectorWidth?
+    private var isAnimatingPinnedWidth = false
     private var toolbarController: ToolbarController?
     private var lastContent: WebContentController
     /// Set when the layout switch emptied and closed this window.
@@ -89,10 +91,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
                 send: { [weak self] in self?.send($0) },
                 navigate: { [weak self] path, newTab in self?.openInMain(path: path, newTab: newTab) },
                 openPlayground: { [weak self] url in self?.app.openPlayground(url: url, nextTo: self?.window) },
-                onPopOutChanged: { [weak self] poppedOut in self?.inspectorPopOutChanged(poppedOut) }
+                onPopOutChanged: { [weak self] poppedOut in self?.inspectorPopOutChanged(poppedOut) },
+                onPanelEvent: { [weak self] tabId, event, payloadJson in self?.handlePanelEvent(tabId: tabId, event: event, payloadJson: payloadJson) }
             )
             inspector.companion.ownerWindow = { [weak self] in self?.window }
             inspector.companion.playgroundPorts = { [weak app] in app?.playgroundPorts ?? defaultPlaygroundPorts }
+            inspector.panelWeb.ownerWindow = { [weak self] in self?.window }
+            inspector.panelWeb.playgroundPorts = { [weak app] in app?.playgroundPorts ?? defaultPlaygroundPorts }
             if let conn = app.connection { inspector.connect(conn) }
             let inspItem = NSSplitViewItem(inspectorWithViewController: inspector)
             inspItem.allowsFullHeightLayout = true
@@ -182,7 +187,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         }
         if InspectorLogic.handlesToggleNatively(model: state.inspector, poppedOut: false) {
             let targetCollapsed = !isInspectorCollapsed
-            animateInspector(collapsed: targetCollapsed)
+            let widthClass = InspectorLogic.activeTab(in: state.inspector)?.width ?? .regular
+            let applyDesired = !targetCollapsed && widthClass != lastInspectorWidthClass
+            if applyDesired {
+                lastInspectorWidthClass = widthClass
+            }
+            animateInspector(collapsed: targetCollapsed, widthClass: widthClass, applyDesiredWidth: applyDesired)
             send(.inspectorVisibility(open: !targetCollapsed))
         } else {
             send(.command(.toggleCompanion))
@@ -200,7 +210,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         if case .railAction(let itemId, let menuItemId) = command, menuItemId == nil {
             if let tabId = InspectorLogic.railDockTabId(from: itemId),
                let model = state.inspector,
-               InspectorLogic.isNativeTab(tabId, in: model) {
+               let targetTab = model.tabs.first(where: { $0.id == tabId }),
+               targetTab.kind != .web {
                 if inspectorController?.isPoppedOut == true {
                     inspectorController?.bringPopoutToFront()
                     send(.inspectorSelectTab(tabId: tabId))
@@ -208,7 +219,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
                 }
                 let currentlyOpen = InspectorLogic.shouldShowNativeInspector(model: model, poppedOut: false)
                 if !currentlyOpen {
-                    animateInspector(collapsed: false)
+                    let widthClass = targetTab.width ?? .regular
+                    let applyDesired = widthClass != lastInspectorWidthClass
+                    if applyDesired {
+                        lastInspectorWidthClass = widthClass
+                    }
+                    animateInspector(collapsed: false, widthClass: widthClass, applyDesiredWidth: applyDesired)
                     send(.inspectorSelectTab(tabId: tabId))
                     return
                 }
@@ -222,6 +238,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             }
         }
         send(command)
+    }
+
+    private func handlePanelEvent(tabId: String, event: String, payloadJson: String?) {
+        let cmd = NativeCommand.panelEvent(tabId: tabId, event: event, payloadJson: payloadJson)
+        if event == "composerDrop" {
+            for tab in tabs.list.items where tab.kind == .vesper {
+                tab.bridge?.send(cmd)
+            }
+            return
+        }
+        content.bridge?.send(cmd)
     }
 
     private func openInMain(path: String, newTab: Bool) {
@@ -243,29 +270,102 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     private func syncInspectorVisibility(tabId: ObjectIdentifier?, model: InspectorModel?) {
         guard let item = inspectorItem else { return }
+        let active = InspectorLogic.activeTab(in: model)
+        let widthClass = active?.width ?? .regular
+        let thickness = InspectorLogic.thickness(for: active?.width)
+
         let wantOpen = InspectorLogic.shouldShowNativeInspector(model: model, poppedOut: inspectorController?.isPoppedOut == true)
         let targetCollapsed = !wantOpen
         let tabSwitched = tabId != lastObservedInspectorTab
         lastObservedInspectorTab = tabId
-        guard item.isCollapsed != targetCollapsed else { return }
-        if tabSwitched {
-            inspectorSyncDepth += 1
-            item.isCollapsed = targetCollapsed
-            inspectorSyncDepth -= 1
-        } else {
-            animateInspector(collapsed: targetCollapsed)
+
+        let wasCollapsed = item.isCollapsed
+        let widthChanged = widthClass != lastInspectorWidthClass
+        if wantOpen && widthChanged {
+            lastInspectorWidthClass = widthClass
+        }
+
+        if item.isCollapsed != targetCollapsed {
+            if tabSwitched {
+                isAnimatingPinnedWidth = false
+                item.minimumThickness = CGFloat(thickness.min)
+                item.maximumThickness = CGFloat(thickness.max)
+                inspectorSyncDepth += 1
+                item.isCollapsed = targetCollapsed
+                inspectorSyncDepth -= 1
+                if wantOpen && widthChanged {
+                    applyInspectorWidth(widthClass, animated: false)
+                }
+            } else {
+                animateInspector(collapsed: targetCollapsed, widthClass: widthClass, applyDesiredWidth: wantOpen && widthChanged)
+            }
+        } else if !isAnimatingPinnedWidth || widthChanged {
+            isAnimatingPinnedWidth = false
+            item.minimumThickness = CGFloat(thickness.min)
+            item.maximumThickness = CGFloat(thickness.max)
+            if wantOpen && (wasCollapsed || widthChanged) {
+                applyInspectorWidth(widthClass, animated: !tabSwitched)
+            }
         }
     }
 
-    private func animateInspector(collapsed: Bool) {
+    private func desiredInspectorWidth(for widthClass: InspectorWidth?) -> CGFloat {
+        let splitWidth = split.splitView.bounds.width
+        let thickness = InspectorLogic.thickness(for: widthClass)
+        guard splitWidth > 0 else { return CGFloat(thickness.preferred) }
+        let sidebarWidth = (hasSidebar && sidebarItem?.isCollapsed == false) ? (sidebarItem?.viewController.view.frame.width ?? 0) : 0
+        let dividerCount = CGFloat((hasSidebar ? 1 : 0) + 1)
+        let available = Double(splitWidth - sidebarWidth - dividerCount * split.splitView.dividerThickness)
+        return CGFloat(InspectorLogic.desiredWidth(for: widthClass, availableWidth: available))
+    }
+
+    private func applyInspectorWidth(_ widthClass: InspectorWidth?, animated: Bool) {
+        guard let item = inspectorItem, !item.isCollapsed else { return }
+        let divider = inspectorDividerIndex
+        guard split.splitView.arrangedSubviews.count > divider + 1 else { return }
+        let splitWidth = split.splitView.bounds.width
+        guard splitWidth > 0 else { return }
+        let desired = desiredInspectorWidth(for: widthClass)
+        let dividerPos = splitWidth - desired - split.splitView.dividerThickness
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.allowsImplicitAnimation = true
+                split.splitView.animator().setPosition(dividerPos, ofDividerAt: divider)
+            }
+        } else {
+            split.splitView.setPosition(dividerPos, ofDividerAt: divider)
+        }
+    }
+
+    private func animateInspector(collapsed: Bool, widthClass: InspectorWidth? = nil, applyDesiredWidth: Bool = false) {
         guard let item = inspectorItem, item.isCollapsed != collapsed else { return }
+        let effectiveWidth = widthClass ?? InspectorLogic.activeTab(in: state.inspector)?.width
+        let thickness = InspectorLogic.thickness(for: effectiveWidth)
+        let pinnedForAnimation = !collapsed && applyDesiredWidth && split.splitView.bounds.width > 0
+        if pinnedForAnimation {
+            let desired = desiredInspectorWidth(for: effectiveWidth)
+            isAnimatingPinnedWidth = true
+            item.minimumThickness = desired
+            item.maximumThickness = desired
+        } else {
+            isAnimatingPinnedWidth = false
+            item.minimumThickness = CGFloat(thickness.min)
+            item.maximumThickness = CGFloat(thickness.max)
+        }
         inspectorSyncDepth += 1
         NSAnimationContext.runAnimationGroup({ context in
             context.allowsImplicitAnimation = true
             item.animator().isCollapsed = collapsed
         }, completionHandler: {
-            Task { @MainActor [weak self] in
+            Task { @MainActor [weak self, effectiveWidth, pinnedForAnimation] in
                 guard let self else { return }
+                if pinnedForAnimation, self.isAnimatingPinnedWidth, let insp = self.inspectorItem {
+                    self.isAnimatingPinnedWidth = false
+                    let activeWidth = InspectorLogic.activeTab(in: self.state.inspector)?.width ?? effectiveWidth
+                    let current = InspectorLogic.thickness(for: activeWidth)
+                    insp.minimumThickness = CGFloat(current.min)
+                    insp.maximumThickness = CGFloat(current.max)
+                }
                 self.inspectorSyncDepth = max(0, self.inspectorSyncDepth - 1)
             }
         })

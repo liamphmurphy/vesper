@@ -246,7 +246,25 @@ export interface CompanionContext {
   path?: string;
 }
 
-export type InspectorTabKind = "native" | "companion" | "web";
+export type InspectorTabKind = "native" | "companion" | "panel" | "web";
+
+export type InspectorWidth = "regular" | "wide" | "max";
+
+export interface InspectorPanelSpec {
+  /** Panel renderer key inside /inspector-panel, e.g. "chat.playground", "chat.code". */
+  kind: string;
+  /** Stable mount key so /inspector-panel keeps instances alive across tab switches. */
+  key: string;
+  /** JSON-encoded props passed opaquely through the Swift shell. */
+  propsJson: string;
+}
+
+export interface InspectorPanelContext {
+  active: InspectorPanelSpec | null;
+  /** Keys of all currently open panel tabs across the window's tabs (keep mounted while present). */
+  keepKeys: string[];
+  path?: string;
+}
 
 export interface InspectorOption {
   value: string;
@@ -349,12 +367,14 @@ export interface InspectorTab {
   label: string;
   icon: IconRef;
   kind: InspectorTabKind;
+  width?: InspectorWidth;
   busy?: boolean;
   unread?: boolean;
   badge?: NavBadge;
   headerActions?: InspectorAction[];
   sections?: InspectorSection[];
   emptyText?: string;
+  panel?: InspectorPanelSpec;
 }
 
 export interface InspectorModel {
@@ -379,6 +399,8 @@ export type PageMessage =
   | { v: 1; type: "rail"; model: RailModel | null }
   /** The native inspector model; null: the page has no inspector. */
   | { v: 1; type: "inspector"; model: InspectorModel | null }
+  /** Forwards an interactive event from /inspector-panel back to the main page's active dock tab. */
+  | { v: 1; type: "panel.event"; tabId: string; event: string; payloadJson?: string }
   /** Asks the shell to open an in-app path in the main content pane (or a new tab). */
   | { v: 1; type: "openInMain"; path: string; newTab?: boolean }
   | { v: 1; type: "shell"; model: ShellModel }
@@ -417,6 +439,8 @@ export type NativeCommand =
   | { v: 1; type: "inspector.change"; tabId: string; fieldId: string; value: string }
   | { v: 1; type: "inspector.toggle"; tabId: string; fieldId: string; checked: boolean }
   | { v: 1; type: "companion.context"; context: CompanionContext }
+  | { v: 1; type: "panel.context"; context: InspectorPanelContext }
+  | { v: 1; type: "panel.event"; tabId: string; event: string; payloadJson?: string }
   /** macOS's accent colour ("#RRGGBB") and effective appearance; sent when the page is ready and whenever either changes. */
   | { v: 1; type: "appearance"; accent: string; mode: ColorMode }
   /** query only applies to openCommandMenu: the text to open the palette with (the toolbar search field). */
@@ -446,6 +470,7 @@ const PAGE_TYPES = new Set([
   "title",
   "rail",
   "inspector",
+  "panel.event",
   "openInMain",
   "shell",
   "navigator",
@@ -474,6 +499,8 @@ const COMMAND_TYPES = new Set([
   "inspector.change",
   "inspector.toggle",
   "companion.context",
+  "panel.context",
+  "panel.event",
   "command",
   "reply",
   "appearance",
@@ -486,6 +513,9 @@ const isInAppPath = (p: unknown): p is string => typeof p === "string" && p.star
 export function isPageMessage(v: unknown): v is PageMessage {
   if (!isObj(v) || v.v !== PROTOCOL_VERSION || typeof v.type !== "string" || !PAGE_TYPES.has(v.type)) return false;
   if (v.type === "inspector") return v.model === null || isObj(v.model);
+  if (v.type === "panel.event") {
+    return typeof v.tabId === "string" && typeof v.event === "string" && (v.payloadJson === undefined || typeof v.payloadJson === "string");
+  }
   if (v.type === "openInMain") return isInAppPath(v.path) && (v.newTab === undefined || typeof v.newTab === "boolean");
   return true;
 }
@@ -502,5 +532,14 @@ export function isNativeCommand(v: unknown): v is NativeCommand {
   if (v.type === "inspector.change") return typeof v.tabId === "string" && typeof v.fieldId === "string" && typeof v.value === "string";
   if (v.type === "inspector.toggle") return typeof v.tabId === "string" && typeof v.fieldId === "string" && typeof v.checked === "boolean";
   if (v.type === "companion.context") return isObj(v.context);
+  if (v.type === "panel.context") {
+    if (!isObj(v.context) || !Array.isArray(v.context.keepKeys) || !v.context.keepKeys.every((k) => typeof k === "string")) return false;
+    if (v.context.path !== undefined && typeof v.context.path !== "string") return false;
+    if (v.context.active === null) return true;
+    return isObj(v.context.active) && typeof v.context.active.kind === "string" && typeof v.context.active.key === "string" && typeof v.context.active.propsJson === "string";
+  }
+  if (v.type === "panel.event") {
+    return typeof v.tabId === "string" && typeof v.event === "string" && (v.payloadJson === undefined || typeof v.payloadJson === "string");
+  }
   return true;
 }

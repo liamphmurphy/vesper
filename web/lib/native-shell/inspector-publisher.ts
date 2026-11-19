@@ -15,7 +15,8 @@ export type InspectorCommand = Extract<
       | "inspector.selectTab"
       | "inspector.action"
       | "inspector.change"
-      | "inspector.toggle";
+      | "inspector.toggle"
+      | "panel.event";
   }
 >;
 
@@ -35,6 +36,7 @@ const INSPECTOR_COMMAND_TYPES = new Set<string>([
   "inspector.action",
   "inspector.change",
   "inspector.toggle",
+  "panel.event",
 ]);
 
 export function isInspectorCommand(cmd: NativeCommand): cmd is InspectorCommand {

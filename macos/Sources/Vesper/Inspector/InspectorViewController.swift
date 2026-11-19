@@ -3,7 +3,8 @@ import SwiftUI
 import VesperCore
 
 /// Hosts the native inspector split pane: full-height vibrancy backdrop, compact header strip,
-/// declarative SwiftUI `InspectorBodyView`, and the window's persistent `CompanionWebController`.
+/// declarative SwiftUI `InspectorBodyView`, the window's persistent `CompanionWebController`, and
+/// the persistent `InspectorPanelWebController`.
 /// Also handles popping the inspector out into a floating `NSPanel` and re-docking it.
 @MainActor
 final class InspectorViewController: NSViewController {
@@ -14,6 +15,7 @@ final class InspectorViewController: NSViewController {
     private let onPopOutChanged: (Bool) -> Void
 
     let companion = CompanionWebController()
+    let panelWeb = InspectorPanelWebController()
     private let bodyContainer = NSView()
     private let separator = NSBox()
     private var headerHost: NSHostingView<InspectorHeaderView>?
@@ -26,7 +28,8 @@ final class InspectorViewController: NSViewController {
         send: @escaping (NativeCommand) -> Void,
         navigate: @escaping (String, Bool) -> Void,
         openPlayground: @escaping (URL) -> Void,
-        onPopOutChanged: @escaping (Bool) -> Void
+        onPopOutChanged: @escaping (Bool) -> Void,
+        onPanelEvent: @escaping (String, String, String?) -> Void
     ) {
         self.tabs = tabs
         self.send = send
@@ -36,6 +39,9 @@ final class InspectorViewController: NSViewController {
         super.init(nibName: nil, bundle: nil)
         companion.onOpenInMain = navigate
         companion.onOpenPlayground = openPlayground
+        panelWeb.onOpenInMain = navigate
+        panelWeb.onOpenPlayground = openPlayground
+        panelWeb.onPanelEvent = onPanelEvent
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
@@ -66,12 +72,14 @@ final class InspectorViewController: NSViewController {
         nativeHost = native
 
         companion.webView.translatesAutoresizingMaskIntoConstraints = false
+        panelWeb.webView.translatesAutoresizingMaskIntoConstraints = false
 
         bodyContainer.translatesAutoresizingMaskIntoConstraints = false
         bodyContainer.addSubview(header)
         bodyContainer.addSubview(separator)
         bodyContainer.addSubview(native.view)
         bodyContainer.addSubview(companion.webView)
+        bodyContainer.addSubview(panelWeb.webView)
 
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: bodyContainer.topAnchor),
@@ -92,22 +100,43 @@ final class InspectorViewController: NSViewController {
             companion.webView.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
             companion.webView.trailingAnchor.constraint(equalTo: bodyContainer.trailingAnchor),
             companion.webView.bottomAnchor.constraint(equalTo: bodyContainer.bottomAnchor),
+
+            panelWeb.webView.topAnchor.constraint(equalTo: separator.bottomAnchor),
+            panelWeb.webView.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
+            panelWeb.webView.trailingAnchor.constraint(equalTo: bodyContainer.trailingAnchor),
+            panelWeb.webView.bottomAnchor.constraint(equalTo: bodyContainer.bottomAnchor),
         ])
 
         attachBodyContainer(to: backdrop)
 
-        track({ [weak tabs] in tabs?.list.active?.state.inspector }) { [weak self] model in
-            self?.apply(model)
+        track({ [weak tabs] () -> (InspectorModel?, String?, [String]) in
+            guard let tabs else { return (nil, nil, []) }
+            let model = tabs.list.active?.state.inspector
+            let route = tabs.list.active?.state.route
+            var seen = Set<String>()
+            var keepKeys: [String] = []
+            for item in tabs.list.items {
+                for tab in item.state.inspector?.tabs ?? [] {
+                    if tab.kind == .panel, let key = tab.panel?.key, seen.insert(key).inserted {
+                        keepKeys.append(key)
+                    }
+                }
+            }
+            return (model, route, keepKeys)
+        }) { [weak self] model, route, keepKeys in
+            self?.apply(model, route: route, keepKeys: keepKeys)
         }
     }
 
     func connect(_ conn: Connection) {
         companion.connect(conn)
+        panelWeb.connect(conn)
     }
 
     func teardown() {
         dockBack(notify: false)
         companion.teardown()
+        panelWeb.teardown()
     }
 
     func togglePopOut() {
@@ -122,16 +151,26 @@ final class InspectorViewController: NSViewController {
         popout?.window?.makeKeyAndOrderFront(nil)
     }
 
-    private func apply(_ model: InspectorModel?) {
+    private func apply(_ model: InspectorModel?, route: String?, keepKeys: [String]) {
         let active = InspectorLogic.activeTab(in: model)
         let isCompanion = active?.kind == .companion
         let isNative = active?.kind == .native
+        let isPanel = active?.kind == .panel
         nativeHost?.view.isHidden = !isNative
         companion.webView.isHidden = !isCompanion
+        panelWeb.webView.isHidden = !isPanel
         if isCompanion && (model?.open == true || isPoppedOut) {
             companion.ensureLoaded()
         }
+        if isPanel && (model?.open == true || isPoppedOut) {
+            panelWeb.ensureLoaded()
+        }
         companion.updateContext(model?.companion)
+        panelWeb.updateContext(InspectorPanelContext(
+            active: isPanel ? active?.panel : nil,
+            keepKeys: keepKeys,
+            path: route
+        ))
         popout?.window?.title = active?.label ?? "Inspector"
     }
 
@@ -166,8 +205,14 @@ final class InspectorViewController: NSViewController {
         guard !isPoppedOut else { return }
         isPoppedOut = true
         headerHost?.rootView = makeHeaderView()
-        let activeTitle = InspectorLogic.activeTab(in: tabs.list.active?.state.inspector)?.label ?? "Inspector"
-        let panel = InspectorPopoutController(title: activeTitle, ownerFrame: view.window?.frame) { [weak self] in
+        let active = InspectorLogic.activeTab(in: tabs.list.active?.state.inspector)
+        let activeTitle = active?.label ?? "Inspector"
+        let popSize = InspectorLogic.popoutSize(for: active?.width)
+        let panel = InspectorPopoutController(
+            title: activeTitle,
+            size: NSSize(width: popSize.width, height: popSize.height),
+            ownerFrame: view.window?.frame
+        ) { [weak self] in
             self?.dockBack(notify: true)
         }
         if let content = panel.backdropView {
@@ -193,26 +238,26 @@ final class InspectorViewController: NSViewController {
     }
 }
 
-/// Floating utility panel holding the popped-out inspector without tearing down its WebView.
+/// Floating utility panel holding the popped-out inspector without tearing down its WebViews.
 @MainActor
 private final class InspectorPopoutController: NSWindowController, NSWindowDelegate {
     private var onClose: (() -> Void)?
     private(set) var backdropView: NSVisualEffectView?
 
-    init(title: String, ownerFrame: NSRect?, onClose: @escaping () -> Void) {
+    init(title: String, size: NSSize, ownerFrame: NSRect?, onClose: @escaping () -> Void) {
         self.onClose = onClose
-        let size = NSSize(width: 380, height: 680)
         var origin = NSPoint(x: 120, y: 120)
         if let f = ownerFrame {
             origin = NSPoint(x: f.maxX - size.width - 24, y: f.midY - size.height / 2)
         }
         let panel = NSPanel(
             contentRect: NSRect(origin: origin, size: size),
-            styleMask: [.titled, .closable, .resizable],
+            styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         panel.title = title
+        panel.titlebarAppearsTransparent = true
         panel.isFloatingPanel = true
         panel.hidesOnDeactivate = false
         panel.level = .floating

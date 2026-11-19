@@ -53,12 +53,12 @@ final class RailBarView: NSVisualEffectView {
         addSubview(column)
         NSLayoutConstraint.activate([
             edge.leadingAnchor.constraint(equalTo: leadingAnchor),
-            edge.topAnchor.constraint(equalTo: topAnchor),
+            edge.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor),
             edge.bottomAnchor.constraint(equalTo: bottomAnchor),
             edge.widthAnchor.constraint(equalToConstant: 1),
             column.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 1),
             column.trailingAnchor.constraint(equalTo: trailingAnchor),
-            column.topAnchor.constraint(equalTo: topAnchor),
+            column.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor),
             column.bottomAnchor.constraint(equalTo: bottomAnchor),
             divider.widthAnchor.constraint(equalToConstant: 24),
             divider.heightAnchor.constraint(equalToConstant: 1),

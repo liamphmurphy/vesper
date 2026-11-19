@@ -67,6 +67,7 @@ test("dispatchCommand routes inspector commands only to the active owner", () =>
   assert.equal(pub.dispatchCommand({ v: 1, type: "inspector.action", tabId: "context", actionId: "cancel" }), true);
   assert.equal(pub.dispatchCommand({ v: 1, type: "inspector.change", tabId: "properties", fieldId: "priority", value: "high" }), true);
   assert.equal(pub.dispatchCommand({ v: 1, type: "inspector.toggle", tabId: "properties", fieldId: "mockup", checked: true }), true);
+  assert.equal(pub.dispatchCommand({ v: 1, type: "panel.event", tabId: "playground", event: "openFull" }), true);
 
   assert.equal(fallbackCmds.length, 0);
   assert.deepEqual(screenCmds.map((c) => c.type), [
@@ -75,8 +76,10 @@ test("dispatchCommand routes inspector commands only to the active owner", () =>
     "inspector.action",
     "inspector.change",
     "inspector.toggle",
+    "panel.event",
   ]);
   assert.equal(isInspectorCommand({ v: 1, type: "inspector.toggle", tabId: "t", fieldId: "f", checked: false }), true);
+  assert.equal(isInspectorCommand({ v: 1, type: "panel.event", tabId: "playground", event: "openFull" }), true);
   assert.equal(isInspectorCommand({ v: 1, type: "companion.context", context: {} }), false);
 });
 

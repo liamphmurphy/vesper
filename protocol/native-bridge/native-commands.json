@@ -178,5 +178,33 @@
       },
       "path": "/runs/0b5c9a6e-0000-4000-8000-000000000001"
     }
+  },
+  {
+    "v": 1,
+    "type": "panel.context",
+    "context": {
+      "active": {
+        "kind": "chat.playground",
+        "key": "chat.playground:c1",
+        "propsJson": "{\"chatId\":\"c1\"}"
+      },
+      "keepKeys": ["chat.playground:c1", "chat.code:c1"],
+      "path": "/chat/c1"
+    }
+  },
+  {
+    "v": 1,
+    "type": "panel.context",
+    "context": {
+      "active": null,
+      "keepKeys": []
+    }
+  },
+  {
+    "v": 1,
+    "type": "panel.event",
+    "tabId": "playground",
+    "event": "composerDrop",
+    "payloadJson": "{\"chatId\":\"c1\",\"drop\":{\"text\":\"check logs\"}}"
   }
 ]
