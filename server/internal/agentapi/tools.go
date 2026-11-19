@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -216,12 +217,55 @@ func claim(ctx context.Context, d Deps, c agents.Caller, in ClaimIn) (any, error
 }
 
 type GetTicketIn struct {
-	Ticket string `json:"ticket" jsonschema:"Ticket key, e.g. PAY-214"`
+	Ticket string `json:"ticket" jsonschema:"Ticket key, e.g. PAY-214, or its bare number, e.g. 214, when only one active project has it"`
+}
+
+// resolveTicketKey turns what the agent passed into a ticket key. A bare
+// number ("251", "#251") is how people name tickets in conversation, so it
+// resolves to the chat's default project's ticket when there is one, else to
+// the only active project that has that number. Anything else is a key.
+func resolveTicketKey(ctx context.Context, d Deps, c agents.Caller, raw string) (string, error) {
+	key := strings.ToUpper(strings.TrimSpace(raw))
+	digits := strings.TrimPrefix(key, "#")
+	n, err := strconv.ParseInt(digits, 10, 32)
+	if err != nil || n <= 0 {
+		return key, nil
+	}
+	matches, err := d.Q.TicketKeysByNumber(ctx, store.TicketKeysByNumberParams{WorkspaceID: c.Agent.WorkspaceID, Number: int32(n)})
+	if err != nil {
+		return "", err
+	}
+	scope, err := chatScopeFor(ctx, d, c)
+	if err != nil {
+		return "", err
+	}
+	if scope != nil && scope.ProjectKey != "" {
+		for _, m := range matches {
+			if m.ProjectKey == scope.ProjectKey {
+				return m.Key, nil
+			}
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return "", apperr.Invalid("ticket", "no active project has a ticket numbered %d; pass its full key, e.g. PAY-%d", n, n)
+	case 1:
+		return matches[0].Key, nil
+	}
+	keys := make([]string, len(matches))
+	for i, m := range matches {
+		keys[i] = m.Key
+	}
+	return "", apperr.Invalid("ticket", "%d is ambiguous: it matches %s; pass the full key", n, strings.Join(keys, ", "))
 }
 
 func getTicket(ctx context.Context, d Deps, c agents.Caller, in GetTicketIn) (any, error) {
 	ws := c.Agent.WorkspaceID
-	t, err := tracker.Get(ctx, d.Q, ws, strings.ToUpper(strings.TrimSpace(in.Ticket)))
+	key, err := resolveTicketKey(ctx, d, c, in.Ticket)
+	if err != nil {
+		return nil, err
+	}
+	t, err := tracker.Get(ctx, d.Q, ws, key)
 	if err != nil {
 		return nil, apperr.Invalid("ticket", "no ticket %s", in.Ticket)
 	}

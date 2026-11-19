@@ -36,7 +36,7 @@ type ListTicketsIn struct {
 	Status  []string   `json:"status,omitempty" jsonschema:"Only these statuses: backlog, todo, in_progress, in_review, done or canceled; default every open one (all but done and canceled). Pass [\"all\"] for every status"`
 	EpicID  *uuid.UUID `json:"epic_id,omitempty" jsonschema:"Only tickets in this epic, id from list_epics"`
 	Agent   string     `json:"agent,omitempty" jsonschema:"Only tickets assigned to this persona, by its @handle, e.g. pike"`
-	Query   string     `json:"q,omitempty" jsonschema:"Words in the title or description, or the start of a key"`
+	Query   string     `json:"q,omitempty" jsonschema:"Words in the title or description, the start of a key, or a ticket number like 214"`
 	Limit   int        `json:"limit,omitempty" jsonschema:"Up to 200, default 50"`
 	Offset  int        `json:"offset,omitempty" jsonschema:"Skip this many tickets, to page through more"`
 }
