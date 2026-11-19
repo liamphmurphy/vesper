@@ -3,7 +3,7 @@
 import { useRecordVisit } from "@/components/shell/use-record-visit";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ContextMenu, DropdownMenu } from "radix-ui";
+import { ContextMenu, Dialog, DropdownMenu } from "radix-ui";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { cx } from "@/lib/cx";
@@ -18,6 +18,7 @@ import { downloadFile } from "@/lib/api/docs-hooks";
 import { floatPanel } from "@/components/domain/pickers";
 import { Markdown } from "@/components/domain/markdown";
 import { PdfViewer } from "@/components/domain/pdf-viewer";
+import { isPdfContentType, pdfDownloadUrl } from "@/lib/pdf-viewer";
 import { Icon } from "@/components/ui/icon";
 import { Banner, Skeleton } from "@/components/ui/primitives";
 import { toast } from "@/lib/toast";
@@ -131,6 +132,7 @@ function Loaded({ page: p }: { page: Page }) {
                 return next;
               }));
             },
+            stopEvent: (event) => event.target instanceof Element && !!event.target.closest("[data-pdf-viewer], [data-pdf-embed]"),
           };
         },
         onOpen: (raw) => {
@@ -421,29 +423,90 @@ function PropValue({ v }: { v: unknown }) {
 
 /** A resolved ![[…]] preview, mounted at its position inside the editor. */
 function EmbedPreview({ embed: e }: { embed: Embed }) {
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [page, setPage] = useState(1);
+
   if (e.url && (e.kind === "image" || e.content_type?.startsWith("image/"))) {
     // an attachment served by the API, sized by the page
     return <img src={e.url} alt={e.title ?? ""} className="max-h-[420px] max-w-full rounded-lg object-contain" />;
   }
+  const isPdf = !!e.url && isPdfContentType(e.content_type);
+  const downloadHref = isPdf && e.url ? pdfDownloadUrl(e.url) : undefined;
   return (
-    <figure className="overflow-hidden rounded-xl border border-border bg-surface">
+    <figure data-pdf-embed={isPdf ? "" : undefined} className="overflow-hidden rounded-xl border border-border bg-surface">
       <figcaption className="flex items-center gap-2 border-b border-border-subtle px-3 py-2 text-12 text-fg-tertiary">
-        <Icon name={e.kind === "image" || e.content_type?.startsWith("image/") ? "library" : e.kind === "design" ? "designs" : "link"} size={12} />
+        <Icon name={e.kind === "image" || e.content_type?.startsWith("image/") ? "library" : e.kind === "design" ? "designs" : isPdf ? "artifacts" : "link"} size={12} />
         <span className="truncate">{e.title ?? e.ref}</span>
-        {e.url && e.kind !== "page" && (
+        {isPdf && e.url ? (
+          <span className="ml-auto flex flex-none items-center gap-3">
+            <button type="button" onClick={() => setViewerOpen(true)} className="text-accent hover:underline">
+              Open
+            </button>
+            <a href={downloadHref} download={e.title ?? "document.pdf"} className="text-fg-secondary hover:text-fg hover:underline">
+              Download
+            </a>
+          </span>
+        ) : e.url && e.kind !== "page" ? (
           <a href={e.url} target="_blank" rel="noreferrer" className="ml-auto text-accent hover:underline">
             Open
           </a>
-        )}
+        ) : null}
       </figcaption>
       {e.content_type?.startsWith("video/") ? (
         <video src={e.url} controls className="max-h-[420px] w-full" />
       ) : e.content_type?.startsWith("audio/") ? (
         <audio src={e.url} controls className="w-full p-3" />
-      ) : e.url && e.content_type === "application/pdf" ? (
-        <div className="p-3" data-testid="knowledge-pdf-embed">
-          <PdfViewer url={e.url} title={e.title ?? "PDF"} maxHeightClass="max-h-[540px]" />
-        </div>
+      ) : isPdf && e.url ? (
+        <>
+          <div className="p-3" data-testid="knowledge-pdf-embed">
+            <PdfViewer
+              url={e.url}
+              title={e.title ?? "PDF"}
+              heightClass="h-[540px]"
+              downloadUrl={downloadHref}
+              page={page}
+              onPageChange={setPage}
+            />
+          </div>
+          <Dialog.Root open={viewerOpen} onOpenChange={setViewerOpen}>
+            <Dialog.Portal>
+              <Dialog.Overlay className="motion-scrim fixed inset-0 z-40 bg-scrim" />
+              <Dialog.Content
+                aria-describedby={undefined}
+                className="motion-dialog fixed left-1/2 top-1/2 z-50 flex h-[90vh] w-[min(1180px,calc(100%-32px))] -translate-x-1/2 -translate-y-1/2 flex-col gap-3 rounded-xl border border-border-float bg-surface-raised p-4 shadow-[var(--shadow-float)] outline-none"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <Dialog.Title className="min-w-0 flex-1 truncate text-14 font-semibold text-fg">
+                    {e.title ?? "PDF"}
+                  </Dialog.Title>
+                  <a
+                    href={downloadHref}
+                    download={e.title ?? "document.pdf"}
+                    className="inline-flex h-7 items-center gap-1.5 rounded-md border border-btn-secondary-border bg-btn-secondary px-2.5 text-12 text-fg hover:bg-hover"
+                  >
+                    <Icon name="download" size={14} />
+                    Download
+                  </a>
+                  <Dialog.Close asChild>
+                    <button type="button" aria-label="Close" className="text-fg-tertiary hover:text-fg">
+                      <Icon name="x" size={15} />
+                    </button>
+                  </Dialog.Close>
+                </div>
+                {viewerOpen && (
+                  <PdfViewer
+                    url={e.url}
+                    title={e.title ?? "PDF"}
+                    heightClass="min-h-0 flex-1"
+                    downloadUrl={downloadHref}
+                    page={page}
+                    onPageChange={setPage}
+                  />
+                )}
+              </Dialog.Content>
+            </Dialog.Portal>
+          </Dialog.Root>
+        </>
       ) : e.markdown ? (
         <div className="border-l-2 border-border-strong px-4 py-3 text-14">
           <Markdown>{e.markdown}</Markdown>

@@ -17,7 +17,9 @@ import { BacklinksPanel } from "@/components/domain/backlinks";
 import { StatusGlyph } from "@/components/domain/glyphs";
 import { DocTypeTag } from "@/components/domain/labels";
 import { Markdown } from "@/components/domain/markdown";
+import { PdfViewer } from "@/components/domain/pdf-viewer";
 import { printHref } from "@/components/domain/print-mode";
+import { isPdfContentType } from "@/lib/pdf-viewer";
 import { ReviewChip } from "@/components/domain/mockup";
 import { MockupEditor } from "./mockup-editor";
 import { MockupReviewBanner, MockupViewer } from "./mockup-parts";
@@ -41,8 +43,8 @@ function FileView({ a, versionId }: { a: Artifact; versionId: string }) {
   if (c.content_type === "video/mp4") {
     return <video src={src} controls preload="metadata" className="max-h-[70vh] w-full rounded-xl border border-border bg-black" aria-label={a.title} />;
   }
-  if (c.content_type === "application/pdf") {
-    return <iframe src={src} title={a.title} className="h-[75vh] w-full rounded-xl border border-border bg-surface" />;
+  if (isPdfContentType(c.content_type)) {
+    return <PdfViewer url={src} title={a.title} heightClass="h-[75vh]" downloadUrl={contentUrl(a.id, v.id, true)} />;
   }
   return (
     <EmptyState icon="artifacts" title={c.filename ?? a.title} actions={<ButtonLink href={contentUrl(a.id, v.id, true)} variant="outline" icon="download">Download</ButtonLink>}>

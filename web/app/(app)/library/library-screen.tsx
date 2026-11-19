@@ -343,7 +343,7 @@ function FilePreviewPane({ item, open }: { item: LibraryItem; open: boolean }) {
   if (isPdf) {
     return (
       <div data-testid="file-preview" data-kind="pdf">
-        {open ? <PdfViewer url={libraryItemUrl(item.id)} title={item.title} maxHeightClass="max-h-[60vh]" /> : null}
+        {open ? <PdfViewer url={libraryItemUrl(item.id)} title={item.title} heightClass="h-[60vh]" /> : null}
       </div>
     );
   }
@@ -438,7 +438,7 @@ function ExportTile({ item, initiallyOpen }: { item: LibraryItem; initiallyOpen:
           <p className="text-14 text-fg-secondary">A copy as it was when you exported it. {fileMeta(item)}</p>
           <ExportSourceLine item={item} />
           {open && item.content_type === "application/pdf" ? (
-            <PdfViewer url={libraryItemUrl(item.id)} title={item.title} maxHeightClass="max-h-[60vh]" />
+            <PdfViewer url={libraryItemUrl(item.id)} title={item.title} heightClass="h-[60vh]" />
           ) : null}
         </div>
       </ItemDialog>
