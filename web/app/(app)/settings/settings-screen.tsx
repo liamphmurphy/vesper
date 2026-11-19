@@ -11,8 +11,6 @@ import { useApiSecrets } from "@/lib/api/secret-hooks";
 import { useSpaces } from "@/lib/api/space-hooks";
 import { cx } from "@/lib/cx";
 import { ago } from "@/lib/format";
-import { isNativeShell } from "@/lib/native-shell/bridge";
-import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { pageOrigin } from "@/lib/native-shell/models/common";
 import {
   buildSettingsNavModel,
@@ -44,7 +42,7 @@ import { Banner, Card, EmptyState, Skeleton } from "@/components/ui/primitives";
 import { PersonaEditor } from "../chat/_components/persona-editor";
 import { ApiSecretsSection } from "../customization/api-secrets-section";
 import { ConnectorsSection, PersonaConnectors } from "../customization/connectors-section";
-import { ExportMenu, ImportView, MemorySection, useMemoryExport } from "../customization/memory-section";
+import { ImportView, MemorySection, useMemoryExport } from "../customization/memory-section";
 import { PersonaModelSection } from "../customization/persona-model";
 import { DeleteDialog, PersonaProfile } from "../customization/persona-profile";
 import { PersonaWorkSection } from "../customization/persona-work";
@@ -120,7 +118,6 @@ export function SettingsScreen() {
   const router = useRouter();
   const search = useSearchParams();
   const loc = useLocation();
-  const native = useIsNativeShell();
 
   const mounted = useSyncExternalStore(noSubscribe, () => true, () => false);
   const winHash = useSyncExternalStore(subscribeHash, () => window.location.hash, () => "");
@@ -152,7 +149,7 @@ export function SettingsScreen() {
   const memoryExport = useMemoryExport();
   const exportError = memoryExport.err;
   useEffect(() => {
-    if (exportError && isNativeShell()) toast({ title: exportError, tone: "error" });
+    if (exportError) toast({ title: exportError, tone: "error" });
   }, [exportError]);
 
   const scrollAnchor = (route.section === "workspace" || route.section === "spaces") ? route.anchor : undefined;
@@ -238,31 +235,6 @@ export function SettingsScreen() {
       ]
     : [{ label: "Settings", href: "/settings" }, { label: sectionTitle }];
 
-  const topBarActions =
-    route.section === "memory" ? (
-      <>
-        {total !== undefined && <span className="text-12 text-fg-tertiary">{total} entries</span>}
-        <button
-          type="button"
-          aria-pressed={importing}
-          onClick={() => setImportingFor((v) => (v === activeId ? null : activeId))}
-          className={cx(
-            "inline-flex h-[30px] items-center gap-1.5 rounded-md border px-3 text-13 text-fg",
-            importing ? "border-accent bg-selected" : "border-btn-secondary-border bg-btn-secondary hover:bg-hover",
-          )}
-        >
-          <Icon name="upload" size={14} />
-          Import
-        </button>
-        <ExportMenu />
-      </>
-    ) : route.section === "workspace" && !native ? (
-      <span className="flex flex-wrap items-center gap-4 text-13">
-        <Link href="/chat?new&setup" className="text-accent hover:underline">Run setup again →</Link>
-        <Link href="/setup" className="text-accent hover:underline">Open setup checklist →</Link>
-      </span>
-    ) : undefined;
-
   const nativeActions =
     route.section === "memory"
       ? [
@@ -314,7 +286,6 @@ export function SettingsScreen() {
           ...(route.section === "memory" && total !== undefined ? { subtitle: `${total} entries` } : {}),
         }}
         nativeActions={nativeActions}
-        actions={topBarActions}
       />
       <Content>
         <div className="flex flex-col gap-5">

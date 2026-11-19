@@ -1,28 +1,20 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { DropdownMenu } from "radix-ui";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type KeyboardEvent, type ReactNode } from "react";
 import { contentUrl, type Artifact } from "@/lib/api/client";
 import { useArtifact, useReviewMockup } from "@/lib/api/hooks";
 import { cx } from "@/lib/cx";
-import { timelineTime } from "@/lib/format";
 import { svgDataUrl } from "@/lib/mockup";
 import { actualView, fitView, panBy, PAN_STEP, svgSize, zoomAt, ZOOM_STEP, type Fraction, type Size, type View } from "@/lib/mockup-review";
-import { Button, ButtonLink } from "@/components/ui/button";
-import { Segmented } from "@/components/ui/controls";
-import { Icon } from "@/components/ui/icon";
+import { ButtonLink } from "@/components/ui/button";
 import { Banner, EmptyState, Kbd, Skeleton } from "@/components/ui/primitives";
 import { artifactTitle } from "@/components/domain/artifacts";
-import { DocTypeTag } from "@/components/domain/labels";
-import { ReviewChip, reviewLabel } from "@/components/domain/mockup";
-import { floatPanel } from "@/components/domain/pickers";
+import { reviewLabel } from "@/components/domain/mockup";
 import { Pane, type ChangeView, type Drawing, type Pin, type Tool } from "./review-canvas";
 import { ReviewPanel, type Decision } from "./review-panel";
 import { useNativeActions } from "@/lib/native-shell/use-native-actions";
-import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { buildReviewActions, type ReviewActionsInput } from "@/lib/native-shell/models/mockup-editor";
 import { setTopBarTitle } from "@/lib/native-shell/title";
 
@@ -37,7 +29,6 @@ const MODES = [
   { value: "swipe", label: "Swipe" },
 ] as const;
 const DEFAULT_SIZE: Size = { w: 1280, h: 800 };
-const menuItem = "flex h-8 cursor-default select-none items-center gap-2 rounded-md px-2 outline-none data-[highlighted]:bg-hover";
 const shell = "fixed inset-0 z-40 flex flex-col bg-bg text-fg";
 
 /** SVG source of a version. The current one comes with the artifact; older ones are fetched once (versions are immutable). */
@@ -62,45 +53,6 @@ function useDrawing(a: Artifact, v: Version | undefined): Drawing | null {
   return useMemo(
     () => (source && label ? { url: svgDataUrl(source), size: svgSize(source), label, alt: `${a.title} ${label}` } : null),
     [source, label, a.title],
-  );
-}
-
-function VersionMenu({ label, versions, value, currentId, onChange }: {
-  label: string; versions: Version[]; value: string; currentId: string; onChange: (id: string) => void;
-}) {
-  const v = versions.find((x) => x.id === value);
-  if (!v) return null;
-  return (
-    <div className="flex items-center gap-1.5">
-      <span className="text-12 text-fg-tertiary">{label}</span>
-      <DropdownMenu.Root>
-        <DropdownMenu.Trigger asChild>
-          <button
-            type="button"
-            aria-label={`${label}: ${v.label}`}
-            className="inline-flex h-[30px] items-center gap-2 rounded-md border border-border-strong bg-surface px-2.5 text-13 hover:bg-hover"
-          >
-            <span className="font-mono font-semibold">{v.label}</span>
-            {v.id === currentId && <span className="text-12 text-fg-secondary">current</span>}
-            {v.review && <ReviewChip state={v.review.state} />}
-            <Icon name="chev" size={14} />
-          </button>
-        </DropdownMenu.Trigger>
-        <DropdownMenu.Portal>
-          <DropdownMenu.Content align="start" sideOffset={6} className={cx(floatPanel, "w-72")}>
-            {versions.map((x) => (
-              <DropdownMenu.Item key={x.id} className={menuItem} onSelect={() => onChange(x.id)}>
-                <span className="w-7 font-mono text-12 font-semibold">{x.label}</span>
-                {x.review && <ReviewChip state={x.review.state} />}
-                {x.id === currentId && <span className="text-11 text-pill-done-fg">current</span>}
-                <span className="ml-auto text-12 text-fg-tertiary">{timelineTime(x.created_at)}</span>
-                <span className="w-4 text-accent">{x.id === value && <Icon name="check" size={14} />}</span>
-              </DropdownMenu.Item>
-            ))}
-          </DropdownMenu.Content>
-        </DropdownMenu.Portal>
-      </DropdownMenu.Root>
-    </div>
   );
 }
 
@@ -309,7 +261,6 @@ function Workspace({ a, initialVersion, initialTicket }: { a: Artifact; initialV
   }, [router, ticketKey, a.id]);
 
   // In the Mac app the header row is the window's toolbar (versions, compare, Close) and title; NativeReviewBar publishes them.
-  const inToolbar = useIsNativeShell();
   const nativeTitle = artifactTitle(a);
 
   // Take focus so the canvas shortcuts work straight away.
@@ -411,57 +362,24 @@ function Workspace({ a, initialVersion, initialTicket }: { a: Artifact; initialV
 
   return (
     <div ref={rootRef} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} onKeyDown={onKeyDown} className={cx(shell, "outline-none")}>
-      {inToolbar && (
-        <>
-          <h1 id={titleId} className="sr-only">{nativeTitle}</h1>
-          <NativeReviewBar
-            title={nativeTitle}
-            input={{
-              versions,
-              primaryId: primary.id,
-              currentId: current.id,
-              pickVersion,
-              modes: versions.length > 1 ? [...MODES] : undefined,
-              mode: shown,
-              setMode,
-              others: compare ? others : undefined,
-              withId: compare?.id,
-              setWith: setWithId,
-              ticket: ticketKey ? { key: ticketKey, run: () => router.push(`/tickets/${ticketKey}`) } : undefined,
-              close,
-            }}
-          />
-        </>
-      )}
-      {!inToolbar && <header className="flex h-14 flex-none items-center gap-3 border-b border-border bg-surface px-4">
-        <button type="button" onClick={close} aria-label="Back" title="Back" className="grid size-7 flex-none place-items-center rounded-md bg-surface-sunken text-fg hover:bg-hover">
-          <Icon name="chevr" size={16} className="rotate-180" />
-        </button>
-        <div className="flex min-w-0 items-center gap-2">
-          {ticketKey && (
-            <>
-              <Link href={`/tickets/${ticketKey}`} className="font-mono text-13 text-fg-tertiary hover:text-fg">
-                {ticketKey}
-              </Link>
-              <span aria-hidden="true" className="text-fg-tertiary">
-                /
-              </span>
-            </>
-          )}
-          <h1 id={titleId} className="truncate text-14 font-semibold">
-            {artifactTitle(a)}
-          </h1>
-          <DocTypeTag type="mockup" />
-        </div>
-        <div className="ml-auto flex flex-none items-center gap-3">
-          <VersionMenu label="Version" versions={versions} value={primary.id} currentId={current.id} onChange={pickVersion} />
-          {versions.length > 1 && <Segmented small label="Compare" value={shown} onChange={setMode} options={MODES} />}
-          {compare && <VersionMenu label="with" versions={others} value={compare.id} currentId={current.id} onChange={setWithId} />}
-        </div>
-        <Button variant="outline" onClick={close} hint="Esc" className="ml-2">
-          Close
-        </Button>
-      </header>}
+      <h1 id={titleId} className="sr-only">{nativeTitle}</h1>
+      <NativeReviewBar
+        title={nativeTitle}
+        input={{
+          versions,
+          primaryId: primary.id,
+          currentId: current.id,
+          pickVersion,
+          modes: versions.length > 1 ? [...MODES] : undefined,
+          mode: shown,
+          setMode,
+          others: compare ? others : undefined,
+          withId: compare?.id,
+          setWith: setWithId,
+          ticket: ticketKey ? { key: ticketKey, run: () => router.push(`/tickets/${ticketKey}`) } : undefined,
+          close,
+        }}
+      />
 
       <div className="flex min-h-0 flex-1">
         <div className="relative flex min-w-0 flex-1 flex-col">

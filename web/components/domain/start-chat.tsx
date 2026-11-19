@@ -3,7 +3,6 @@
 import { useRouter } from "next/navigation";
 import { useCreateChat } from "@/lib/api/hooks";
 import { attachQuery, type ContextRef } from "@/lib/chat-context";
-import { isNativeShell } from "@/lib/native-shell/bridge";
 import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import { NoHarnessNote, useHarnessHealth } from "@/components/domain/setup";
@@ -27,8 +26,7 @@ export function useStartChat({ attach, title, project }: { attach: ContextRef; t
         project ? { project } : {},
         {
           onSuccess: (c) => router.push(`/chat/${c.id}?${attachQuery(project, attach, title)}`),
-          // A browser shows the failure beside the button; the Mac app's button is in the toolbar.
-          onError: (e) => { if (isNativeShell()) toast({ title: e instanceof Error ? e.message : "Couldn’t start the chat.", tone: "error" }); },
+          onError: (e) => { toast({ title: e instanceof Error ? e.message : "Couldn’t start the chat.", tone: "error" }); },
         },
       ),
   };

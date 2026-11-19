@@ -26,7 +26,7 @@ import { LinkEditor } from "@/components/domain/link-editor";
 import { LocalGraph } from "@/components/domain/local-graph";
 import { Markdown } from "@/components/domain/markdown";
 import { TargetMark } from "@/components/domain/wikilink";
-import { StartChatButton, useStartChat } from "@/components/domain/start-chat";
+import { useStartChat } from "@/components/domain/start-chat";
 import type { NativeAction } from "@/lib/native-shell/actions";
 import { TopBar, type Crumb } from "@/components/shell/topbar";
 import { pageHeader, parseCompare } from "@/lib/wiki";
@@ -52,14 +52,12 @@ function WikiLayout({
   current,
   index,
   crumbs,
-  actions,
   nativeActions,
   children,
 }: {
   current: string;
   index?: WikiIndex;
   crumbs: Crumb[];
-  actions?: ReactNode;
   nativeActions?: NativeAction[];
   children: ReactNode;
 }) {
@@ -67,7 +65,7 @@ function WikiLayout({
   const wikiNative = useWikiNative(tree.data?.pages, current, index);
   return (
     <>
-      <TopBar crumbs={crumbs} actions={actions} nativeActions={nativeActions} />
+      <TopBar crumbs={crumbs} nativeActions={nativeActions} />
       <div className="flex flex-1 flex-wrap">
         <NavigatorPortal native={wikiNative} />
         {children}
@@ -209,11 +207,6 @@ function WikiIndexView({ index }: { index: WikiIndex }) {
       index={index}
       crumbs={[{ label: "Wiki", href: "/wiki" }, { label: index === "patterns" ? "Patterns" : "Architecture" }, { label }]}
       nativeActions={[{ id: "wiki.new", label: "New page", kind: "button", icon: "plus", showsLabel: true, accent: true, run: () => setCreating(true) }]}
-      actions={
-        <Button variant="primary" icon="plus" onClick={() => setCreating(true)}>
-          New page
-        </Button>
-      }
     >
       <div className="flex min-w-0 flex-[999_1_480px] justify-center px-7 py-8 max-sm:px-4">
         <div className="flex w-full max-w-[var(--reading-max)] flex-col gap-7">{index === "patterns" ? <PatternsFinder index /> : <ADRIndex />}</div>
@@ -246,16 +239,6 @@ function WikiHome() {
         { id: "wiki.export", label: "Export vault", kind: "button", icon: "download", showsLabel: true, run: downloadVault },
         { id: "wiki.new", label: "New page", kind: "button", icon: "plus", showsLabel: true, accent: true, run: () => setCreating(true) },
       ]}
-      actions={
-        <>
-          <ButtonLink href="/api/v1/wiki/export" variant="outline" icon="download" prefetch={false}>
-            Export vault
-          </ButtonLink>
-          <Button variant="primary" icon="plus" onClick={() => setCreating(true)}>
-            New page
-          </Button>
-        </>
-      }
     >
       <div className="flex min-w-0 flex-[999_1_480px] justify-center px-7 py-8 max-sm:px-4">
         <div className="flex w-full max-w-[var(--reading-max)] flex-col gap-7">
@@ -473,21 +456,6 @@ function PageView({ path }: { path: string }) {
             ]
           : []),
       ]}
-      actions={
-        <>
-          <Button variant="outline" icon="plus" onClick={() => setCreating(true)}>
-            New page
-          </Button>
-          {page && !editing && (
-            <StartChatButton attach={{ kind: "page", id: page.id }} title={page.title} project={page.project?.key} />
-          )}
-          {page && !editing && (
-            <Button variant="secondary" icon="edit" hint="E" onClick={() => setEditing(true)}>
-              Edit
-            </Button>
-          )}
-        </>
-      }
     >
       <article className="flex min-w-0 flex-[999_1_480px] justify-center px-7 py-8 max-sm:px-4">
         <div className="flex w-full max-w-[var(--reading-max)] flex-col gap-5">

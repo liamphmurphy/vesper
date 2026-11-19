@@ -478,13 +478,6 @@ function Canvas({ workflow, chatId, onChatId, personaId, onPersonaId, onApplied,
           subtitle: `${workflow.published_version > 0 ? `v${workflow.published_version}${workflow.unpublished_changes ? " · edited" : ""}` : "Draft"} · ${save.isPending ? "Saving…" : "Saved"}`,
         }}
         nativeActions={[{ id: "workflow.publish", label: "Publish", kind: "button", icon: "upload", showsLabel: true, accent: true, disabled: issues.length > 0 || publish.isPending || !!preview || !workflow.unpublished_changes, run: flushAndPublish }]}
-        actions={
-          <>
-            <span className="font-mono text-12 text-fg-tertiary">{workflow.published_version > 0 ? `v${workflow.published_version}${workflow.unpublished_changes ? " · edited" : ""}` : "Draft"}</span>
-            <span className="text-12 text-fg-tertiary">{save.isPending ? "Saving…" : "Saved"}</span>
-            <Button variant="primary" onClick={flushAndPublish} disabled={issues.length > 0 || publish.isPending || !!preview || !workflow.unpublished_changes} hint={issues[0]?.message}>Publish</Button>
-          </>
-        }
       />
       <div className="flex min-h-0 flex-1 max-md:flex-col">
         <div ref={canvas} className="relative min-h-[320px] min-w-0 flex-1" onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>

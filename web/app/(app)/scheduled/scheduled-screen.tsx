@@ -86,7 +86,6 @@ export function ScheduledScreen() {
             <PageHeader
               title="Scheduled tasks"
               description="Prompts, workflows, and app tools that run on their own. Results and approvals show up in Needs you."
-              actions={<Button variant="primary" icon="plus" onClick={() => setOpen("new")}>New task</Button>}
               nativeActions={[{ id: "scheduled.new", label: "New task", kind: "button", icon: "plus", showsLabel: true, accent: true, run: () => setOpen("new") }]}
             />
             {compact && (

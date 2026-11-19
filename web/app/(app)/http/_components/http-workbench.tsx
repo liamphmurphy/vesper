@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useClaimCompanion } from "@/components/shell/companion";
 import { Button } from "@/components/ui/button";
@@ -10,7 +9,6 @@ import { Icon } from "@/components/ui/icon";
 import { EmptyState, Skeleton, TextArea, TextInput } from "@/components/ui/primitives";
 import { toast } from "@/components/ui/toast";
 import { cx } from "@/lib/cx";
-import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { setTopBarTitle } from "@/lib/native-shell/title";
 import { useNativeActions } from "@/lib/native-shell/use-native-actions";
 import {
@@ -35,7 +33,7 @@ import {
   type RequestDraftInput,
 } from "@/lib/api/http-client-hooks";
 import { AuthEditor, describeAuth } from "./auth-editor";
-import { AuthEnvView, ENV_DOT } from "./auth-env-view";
+import { AuthEnvView } from "./auth-env-view";
 import { ImportDialog, type ImportTab } from "./import-dialog";
 import { KVEditor } from "./kv-editor";
 import { TreeMenu, type TreeMenuEntry } from "./tree-menu";
@@ -127,7 +125,6 @@ function readStoredWorkspaceId(): string | null {
 
 export function HttpWorkbench() {
   useClaimCompanion();
-  const router = useRouter();
 
   const workspacesQuery = useHttpWorkspaces();
   const workspaces = useMemo(() => workspacesQuery.data ?? [], [workspacesQuery.data]);
@@ -483,8 +480,7 @@ export function HttpWorkbench() {
     });
     if (ok) void deleteWorkspace.mutateAsync(bundle.workspace.id).then(() => setSelectedWsId(null));
   };
-  // In the Mac app the utility bar's controls are the window's toolbar items and the bar is not drawn.
-  const inToolbar = useNativeActions([
+  useNativeActions([
     ...(workspaces.length > 0
       ? [{
           id: "http.workspace", label: workspaces.find((w) => w.id === effectiveWsId)?.name ?? "Workspace", kind: "menu" as const, icon: "server", showsLabel: true, placement: "leading" as const,
@@ -514,110 +510,15 @@ export function HttpWorkbench() {
       : []),
   ]);
   const titleToken = useRef(Symbol("http-title"));
-  const native = useIsNativeShell();
   const httpTitle = bundle?.workspace.name;
   useEffect(() => {
-    if (!native) return;
     const token = titleToken.current;
     setTopBarTitle(token, { title: "HTTP client", ...(httpTitle ? { subtitle: httpTitle } : {}) });
     return () => setTopBarTitle(token, null);
-  }, [native, httpTitle]);
+  }, [httpTitle]);
 
   return (
     <div className="flex h-dvh min-h-0 flex-1 flex-col bg-bg text-fg">
-      {/* Top utility bar */}
-      <header className={cx(inToolbar ? "hidden" : "flex", "h-[48px] flex-none items-center justify-between gap-3 border-b border-border-subtle bg-sidebar px-3")}>
-        <div className="flex min-w-0 items-center gap-2">
-          <Button
-            variant="outline"
-            onClick={() => {
-              if (window.history.length > 1) router.back();
-              else router.push("/");
-            }}
-          >
-            ← Back
-          </Button>
-
-          {workspaces.length > 0 && (
-            <select
-              aria-label="HTTP Workspace"
-              value={effectiveWsId ?? ""}
-              onChange={(e) => {
-                setSelectedWsId(e.target.value);
-                setSelectedReqId(null);
-                setSelectedFolderId(null);
-              }}
-              className="h-[30px] max-w-[220px] rounded-md border border-border-strong bg-surface px-2.5 text-13 font-medium text-fg focus:border-accent focus:outline-none"
-            >
-              {workspaces.map((w) => (
-                <option key={w.id} value={w.id}>
-                  {w.name}
-                </option>
-              ))}
-            </select>
-          )}
-
-          <Button variant="outline" icon="plus" onClick={() => setNewWsOpen((v) => !v)}>
-            Workspace
-          </Button>
-          {bundle && (
-            <button
-              type="button"
-              title="Delete workspace"
-              onClick={async () => {
-                const ok = await confirmAction({
-                  title: `Delete workspace "${bundle.workspace.name}"?`,
-                  body: "This deletes all folders, requests, environments, and execution history in this workspace.",
-                  confirmLabel: "Delete",
-                });
-                if (ok) {
-                  void deleteWorkspace.mutateAsync(bundle.workspace.id).then(() => setSelectedWsId(null));
-                }
-              }}
-              className="grid size-[30px] place-items-center rounded-md text-fg-tertiary hover:bg-hover hover:text-state-blocked"
-            >
-              <Icon name="trash" size={14} />
-            </button>
-          )}
-        </div>
-
-        {bundle && (
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 rounded-md border border-border-strong bg-surface px-2">
-              <span className={cx("size-2 rounded-full", activeEnv ? ENV_DOT[activeEnv.color] : "bg-fg-tertiary")} />
-              <select
-                aria-label="Active environment"
-                value={bundle.workspace.active_environment_id ?? ""}
-                onChange={(e) =>
-                  setActiveEnv.mutate({
-                    workspaceId: bundle.workspace.id,
-                    environmentId: e.target.value || null,
-                  })
-                }
-                className="h-[28px] bg-transparent text-12 font-medium text-fg focus:outline-none"
-              >
-                <option value="">No environment</option>
-                {bundle.environments.map((env) => (
-                  <option key={env.id} value={env.id}>
-                    {env.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <Button variant="outline" icon="upload" onClick={() => setShowImport({ folder: null, tab: "bru" })}>
-              Import
-            </Button>
-            <Button
-              variant={viewMode === "auth-env" ? "primary" : "outline"}
-              icon="sliders"
-              onClick={() => setViewMode((m) => (m === "auth-env" ? "requests" : "auth-env"))}
-            >
-              Auth & Env
-            </Button>
-          </div>
-        )}
-      </header>
 
       {newWsOpen && (
         <div className="flex items-center gap-2 border-b border-border-subtle bg-surface px-4 py-2.5">

@@ -2,7 +2,7 @@
 
 import { useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
-import { useCanStartSavedPlayground, useChatPlayground, usePlaygroundAction, type Playground } from "@/lib/api/playground-hooks";
+import { useChatPlayground, usePlaygroundAction, type Playground } from "@/lib/api/playground-hooks";
 import { cx } from "@/lib/cx";
 import { CaptureError, captureElement } from "@/lib/frame-capture";
 import { ago, idleRule, isErrorLine, parsePlaygroundFence, playgroundOrigin, type LogLine } from "@/lib/playground";
@@ -263,40 +263,6 @@ export function PlaygroundFullscreen({ chatId }: { chatId: string }) {
       <PlaygroundView chatId={chatId} pg={pg} full />
     </section>,
     document.body,
-  );
-}
-
-/** In the chat header once the chat has a playground. */
-export function PlaygroundButton({ chatId }: { chatId: string }) {
-  const panel = usePlaygroundPanel();
-  const pg = useChatPlayground(chatId).data;
-  const canStart = useCanStartSavedPlayground(chatId);
-  const act = usePlaygroundAction(chatId);
-  if (!pg && canStart) {
-    // The repository's playground ran in another chat: start it here without asking an agent.
-    return (
-      <>
-        {act.isError && <span role="alert" className="max-w-56 truncate text-12 text-pill-blocked-fg" title={errorText(act.error)}>{errorText(act.error)}</span>}
-        <button
-          type="button"
-          disabled={act.isPending}
-          title="Start this repository’s playground, as it last ran"
-          onClick={() => act.mutate("start", { onSuccess: panel.show })}
-          className="inline-flex h-[30px] flex-none items-center gap-1.5 rounded-md border border-btn-secondary-border bg-btn-secondary px-3 text-13 text-fg transition-colors hover:bg-hover disabled:opacity-60"
-        >
-          <Icon name="play" size={12} className="text-fg-secondary" />
-          {act.isPending ? "Starting…" : "Start playground"}
-        </button>
-      </>
-    );
-  }
-  if (!pg) return null;
-  const live = pg.state === "running" || pg.state === "starting";
-  return (
-    <button type="button" aria-pressed={panel.open} onClick={panel.open ? panel.close : panel.show} className={cx("inline-flex h-[30px] flex-none items-center gap-1.5 rounded-md border px-3 text-13 text-fg transition-colors hover:bg-hover", panel.open ? "border-accent bg-accent-soft" : "border-btn-secondary-border bg-btn-secondary")}>
-      <span aria-hidden className={cx("size-1.5 rounded-full", live ? "bg-pill-done-fg" : pg.state === "failed" ? "bg-pill-blocked-fg" : "bg-fg-tertiary")} />
-      Playground
-    </button>
   );
 }
 

@@ -13,7 +13,6 @@ import { ESTIMATE_SCALE } from "@/lib/ticket-draft";
 import { runStateTone, ticketStatusTone } from "@/lib/native-shell/models/common";
 import { buildTicketInspectorSections } from "@/lib/native-shell/models/ticket-inspector";
 import { spendLabel } from "@/lib/costs";
-import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { useNativeToolbar } from "@/lib/native-shell/use-native-toolbar";
 import { buildTicketToolbar, parseTicketToolbarAction } from "@/lib/native-shell/models/work-toolbars";
 import { useNativeTitle } from "../_components/native-title";
@@ -29,9 +28,7 @@ import { TicketEditorDialog } from "@/components/domain/ticket-editor-dialog";
 import { PriorityGlyph, StatusGlyph } from "@/components/domain/glyphs";
 import { Flag, SmallPill } from "@/components/domain/labels";
 import { PRIORITY_NAME, PRIORITY_ORDER, STATUS_NAME, STATUS_ORDER } from "@/components/domain/meta";
-import { TicketCostChip } from "@/components/domain/cost-chip";
 import { WORK_COLUMN, WorkDetailHeader, WorkEyebrow, WorkViewTabs, type EyebrowItem } from "@/components/domain/work-detail-header";
-import { TopBar } from "@/components/shell/topbar";
 import { BacklinksPanel } from "@/components/domain/backlinks";
 import { ContextArtifacts } from "./context-artifacts";
 import { Dependencies, useDependencyChange } from "./dependencies";
@@ -407,9 +404,7 @@ export function TicketScreen({ ticketKey }: { ticketKey: string }) {
   const ticketRuns = useTicketRuns(ticketKey, hasLiveRun(t));
   const saver = useTicketSave(t);
 
-  // In the Mac app the header row is the window title and toolbar (the web's top bar, below, isn't drawn).
-  const native = useIsNativeShell();
-  const cost = useCosts({ ticket: ticketKey }, native).data;
+  const cost = useCosts({ ticket: ticketKey }).data;
   const copyLink = () => {
     void navigator.clipboard.writeText(window.location.href);
     setCopied(true);
@@ -452,21 +447,16 @@ export function TicketScreen({ ticketKey }: { ticketKey: string }) {
 
   if (ticket.isError) {
     const missing = "status" in ticket.error && ticket.error.status === 404;
-    return (
-      <>
-        {!native && <TopBar crumbs={[{ label: "Tickets", href: "/tickets" }, { label: ticketKey, mono: true }]} />}
-        {missing ? (
-          <EmptyState icon="tickets" title={`${ticketKey} doesn't exist`} actions={<ButtonLink href="/tickets" variant="outline">All tickets</ButtonLink>}>
-            It may have been moved, or the link has a typo.
-          </EmptyState>
-        ) : (
-          <div className="p-6">
-            <Banner tone="blocked" title="Couldn't load this ticket">
-              {ticket.error.message}
-            </Banner>
-          </div>
-        )}
-      </>
+    return missing ? (
+      <EmptyState icon="tickets" title={`${ticketKey} doesn't exist`} actions={<ButtonLink href="/tickets" variant="outline">All tickets</ButtonLink>}>
+        It may have been moved, or the link has a typo.
+      </EmptyState>
+    ) : (
+      <div className="p-6">
+        <Banner tone="blocked" title="Couldn't load this ticket">
+          {ticket.error.message}
+        </Banner>
+      </div>
     );
   }
 
@@ -499,38 +489,6 @@ export function TicketScreen({ ticketKey }: { ticketKey: string }) {
           onCommand: (cmd) => handleWorkHeaderCommand(cmd, { project: t?.project.key, push: (href) => router.push(href), onProject: () => {}, onAgent: () => {} }),
         }}
       />
-      {!native && <TopBar
-        crumbs={
-          t
-            ? [
-                { label: t.project.name, swatch: t.project.color, href: `/tickets?project=${t.project.key}` },
-                ...(t.epic ? [{ label: t.epic.name }] : []),
-                { label: t.key, mono: true },
-              ]
-            : [{ label: "Tickets", href: "/tickets" }, { label: ticketKey, mono: true }]
-        }
-        actions={
-          <>
-            {t && <TicketCostChip ticketKey={t.key} project={t.project.key} />}
-            {pager.total > 0 && pager.index >= 0 && (
-              <span className="font-mono text-12 text-fg-tertiary" aria-label={`Ticket ${pager.index + 1} of ${pager.total}`}>
-                {pager.index + 1} / {pager.total}
-              </span>
-            )}
-            <IconButton icon="chev" label="Previous ticket (K)" bordered disabled={!pager.prev} onClick={() => pager.prev && router.push(`/tickets/${pager.prev}`)} className="rotate-180" />
-            <IconButton icon="chev" label="Next ticket (J)" bordered disabled={!pager.next} onClick={() => pager.next && router.push(`/tickets/${pager.next}`)} />
-            <IconButton
-              icon={copied ? "check" : "link"}
-              label={copied ? "Link copied" : "Copy link"}
-              onClick={() => {
-                void navigator.clipboard.writeText(window.location.href);
-                setCopied(true);
-                setTimeout(() => setCopied(false), 1500);
-              }}
-            />
-          </>
-        }
-      />}
       {!t || !boot.data ? (
         <DetailSkeleton />
       ) : (

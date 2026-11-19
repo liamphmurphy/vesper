@@ -3,7 +3,7 @@
 import { useRecordVisit } from "@/components/shell/use-record-visit";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ContextMenu, Dialog, DropdownMenu } from "radix-ui";
+import { ContextMenu, Dialog } from "radix-ui";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { cx } from "@/lib/cx";
@@ -25,8 +25,8 @@ import { toast } from "@/lib/toast";
 import { DocEditor, type DocEditorHandle, type SaveState } from "@/app/(app)/apps/docs/_components/doc-editor";
 import { DeckScreen } from "@/app/(app)/apps/slides/_components/deck-screen";
 import { DesignEditor } from "@/app/(app)/apps/designs/_components/design-editor";
-import { AUDIENCE, AudienceChip, StatusBar, Tag } from "./kit";
-import { PersonaAvatar, personaLook } from "@/app/(app)/chat/_components/persona";
+import { StatusBar, Tag } from "./kit";
+import { personaLook } from "@/app/(app)/chat/_components/persona";
 import { ReviewBar, ReviewList, undecided } from "./page-review";
 import { QueryTable } from "./query-table";
 import { useKnowledgeTab } from "./shell";
@@ -35,7 +35,6 @@ import { useNativeTitle } from "../../tickets/_components/native-title";
 import { useNativeActions } from "@/lib/native-shell/use-native-actions";
 import { knowledgePageActions } from "@/lib/native-shell/models/knowledge-page";
 import { navAvatar, pageOrigin } from "@/lib/native-shell/models/common";
-import { useIsNativeShell } from "@/lib/native-shell/hooks";
 
 const SAVE_LABEL: Record<SaveState, string> = { saved: "Saved", unsaved: "Unsaved changes", saving: "Saving…", conflict: "Changed elsewhere", error: "Not saved" };
 const item = "flex cursor-default select-none items-start gap-2.5 rounded-md px-2 py-2 outline-none data-[highlighted]:bg-hover data-[disabled]:opacity-50";
@@ -185,55 +184,28 @@ function Loaded({ page: p }: { page: Page }) {
   const copyLink = () => void navigator.clipboard?.writeText(`[[${p.path ?? p.title}]]`);
 
   // In the Mac app the header row's controls are window toolbar items and the page is the window's
-  // (and so its tab's) title; the folder path moves into the page, above the title.
-  const native = useIsNativeShell();
+  // (and so its tab's) title; the folder path sits above the title.
   useNativeTitle(p.title || "Untitled");
-  const inToolbar = useNativeActions(
-    native
-      ? knowledgePageActions({
-          audience: p.audience,
-          setAudience: (audience) => save.mutate({ audience }),
-          mode: { label: modeLabel, avatar: navAvatar(look.name, look.color, look.avatar_url, pageOrigin()), open: () => openPanel("history") },
-          copyLink,
-          exportMarkdown: () => exportMarkdown(p),
-          print: () => window.print(),
-          history: () => openPanel("history"),
-        })
-      : undefined,
+  useNativeActions(
+    knowledgePageActions({
+      audience: p.audience,
+      setAudience: (audience) => save.mutate({ audience }),
+      mode: { label: modeLabel, avatar: navAvatar(look.name, look.color, look.avatar_url, pageOrigin()), open: () => openPanel("history") },
+      copyLink,
+      exportMarkdown: () => exportMarkdown(p),
+      print: () => window.print(),
+      history: () => openPanel("history"),
+    }),
   );
 
   return (
     <div className="flex min-h-0 flex-1">
       {[...inlinePreviews.values()].map(({ dom, embed, key }) => createPortal(<EmbedPreview embed={embed} />, dom, key))}
       <div className="flex min-w-0 flex-1 flex-col">
-        {!inToolbar && <header className="flex h-12 flex-none items-center gap-2 px-6">
-          <nav aria-label="Folder" className="flex min-w-0 flex-1 items-center gap-1.5 text-12 text-fg-tertiary">
-            {crumbs.map((c, i) => (
-              <span key={i} className="flex min-w-0 items-center gap-1.5">
-                {i > 0 && <span className="text-fg-tertiary/60">/</span>}
-                <span className={cx("truncate", i === crumbs.length - 1 && "font-medium text-fg-2")}>{i === crumbs.length - 1 ? p.title : c}</span>
-              </span>
-            ))}
-          </nav>
-          <AudienceMenu audience={p.audience} onChange={(audience) => save.mutate({ audience })} />
-          <button onClick={() => openPanel("history")} className="flex h-[26px] items-center gap-2 rounded-full border border-border bg-surface pl-1.5 pr-3 text-12 font-medium text-fg-secondary hover:border-border-strong">
-            <PersonaAvatar persona={look} size={16} />
-            {modeLabel}
-          </button>
-          <button
-            aria-label="Copy link"
-            title="Copy [[link]]"
-            onClick={copyLink}
-            className="grid size-7 place-items-center rounded-md text-fg-tertiary hover:bg-hover"
-          >
-            <Icon name="link" size={15} />
-          </button>
-          <MoreMenu page={p} onHistory={() => openPanel("history")} />
-        </header>}
         <ReviewBar page={p} persona={persona} direct={p.direct} />
         <div className="min-h-0 flex-1 overflow-y-auto">
           <article className="mx-auto w-full max-w-[720px] px-8 pb-24 pt-8">
-            {inToolbar && crumbs.length > 1 && (
+            {crumbs.length > 1 && (
               <nav aria-label="Folder" className="mb-2 truncate text-12 text-fg-tertiary">
                 {crumbs.slice(0, -1).join("  /  ")}
               </nav>
@@ -516,60 +488,8 @@ function EmbedPreview({ embed: e }: { embed: Embed }) {
   );
 }
 
-function AudienceMenu({ audience, onChange }: { audience: Audience; onChange: (a: "private" | "shared") => void }) {
-  return (
-    <DropdownMenu.Root>
-      <DropdownMenu.Trigger aria-label={`Who can see this page: ${AUDIENCE[audience].label}`} className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-accent">
-        <AudienceChip audience={audience} />
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Portal>
-        <DropdownMenu.Content align="end" sideOffset={6} className={cx(floatPanel, "w-[300px] p-2")}>
-          <DropdownMenu.Label className="px-2 pb-2 pt-1 text-13 font-semibold">Who can see this page</DropdownMenu.Label>
-          {(Object.keys(AUDIENCE) as Audience[]).map((a) => (
-            <DropdownMenu.Item key={a} disabled={a === "agent"} onSelect={() => a !== "agent" && a !== audience && onChange(a)} className={cx(item, a === audience && "bg-selected")}>
-              <span className={cx("grid size-7 flex-none place-items-center rounded-lg", AUDIENCE[a].cls)}>
-                <Icon name={AUDIENCE[a].icon} size={15} />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block font-semibold">{AUDIENCE[a].label}</span>
-                <span className="block text-12 text-fg-tertiary">{AUDIENCE[a].detail}</span>
-              </span>
-              {a === audience && <Icon name="check" size={14} className="text-accent" />}
-            </DropdownMenu.Item>
-          ))}
-          <p className="px-2 pt-2 text-11 text-fg-tertiary">Only you can change this. Agents can&apos;t.</p>
-        </DropdownMenu.Content>
-      </DropdownMenu.Portal>
-    </DropdownMenu.Root>
-  );
-}
-
 /** The page as a Markdown file, its properties as front matter. */
 function exportMarkdown(page: Page) {
   const front = Object.keys(page.properties).length ? `---\n${Object.entries(page.properties).map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join("\n")}\n---\n\n` : "";
   downloadFile(page.title, "md", new Blob([front + (page.body_md ?? "")], { type: "text/markdown" }));
-}
-
-function MoreMenu({ page, onHistory }: { page: Page; onHistory: () => void }) {
-  const row = "flex h-8 cursor-default select-none items-center gap-2.5 rounded-md px-2 outline-none data-[highlighted]:bg-hover";
-  return (
-    <DropdownMenu.Root>
-      <DropdownMenu.Trigger aria-label="More" className="grid size-7 place-items-center rounded-md text-fg-tertiary outline-none hover:bg-hover">
-        <Icon name="dots" size={15} />
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Portal>
-        <DropdownMenu.Content align="end" sideOffset={6} className={cx(floatPanel, "min-w-[200px]")}>
-          <DropdownMenu.Item className={row} onSelect={() => exportMarkdown(page)}>
-            <Icon name="download" size={14} /> Export Markdown
-          </DropdownMenu.Item>
-          <DropdownMenu.Item className={row} onSelect={() => window.print()}>
-            <Icon name="printer" size={14} /> Print or save as PDF
-          </DropdownMenu.Item>
-          <DropdownMenu.Item className={row} onSelect={onHistory}>
-            <Icon name="history" size={14} /> Version history
-          </DropdownMenu.Item>
-        </DropdownMenu.Content>
-      </DropdownMenu.Portal>
-    </DropdownMenu.Root>
-  );
 }

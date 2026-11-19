@@ -52,7 +52,6 @@ import { Tabs } from "@/components/ui/controls";
 import { focusActivityStep, useActivityFocus } from "./activity-focus";
 import { openThread, setDock } from "@/lib/chat-panels";
 import { isTyping } from "@/components/shell/shortcuts";
-import { HistoryNav } from "@/components/shell/history-nav";
 import { linkedItems, openItem, type LinkedItem } from "@/lib/chat-panels";
 import { LinkedRow, OpenLinkedItem } from "./item-panel";
 import { useRecordVisit } from "@/components/shell/use-record-visit";
@@ -106,7 +105,6 @@ import { unavailableReason } from "@/lib/setup";
 import { ChatSpacePicker } from "./chat-space";
 import { NativeChatHeader } from "./native-chat-header";
 import { trackDockHeight } from "@/lib/dock-height";
-import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { useCompact } from "@/lib/viewport";
 import { composerOptions } from "@/lib/composer-options";
 import { CommitEmailPicker } from "./commit-email";
@@ -593,16 +591,15 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   const [tab, setTab] = useState<"chat" | "activity">("chat");
   const compact = useCompact();
   const dockActivity = activityInDock;
-  // In the Mac app the chat page's header lives in the window's toolbar (NativeChatHeader), so the page keeps the row's height.
-  const native = useIsNativeShell();
-  const nativeHeader = native && dockActivity && !docked && !headerSlot;
-  // Native only: the floating composer's real height drives the overlap and the transcript's bottom padding (native-mac.css).
+  // The full-page chat's header lives in the Mac window's toolbar (NativeChatHeader); docked chats keep their inline dock header.
+  const nativeHeader = dockActivity && !docked && !headerSlot;
+  // The floating composer's real height drives the overlap and transcript bottom padding (native-mac.css).
   // A callback ref: the dock mounts only once the chat has loaded.
   const stopDockTrack = useRef<(() => void) | undefined>(undefined);
   const dockRef = useCallback((el: HTMLDivElement | null) => {
     stopDockTrack.current?.();
-    stopDockTrack.current = native && el ? trackDockHeight(el) : undefined;
-  }, [native]);
+    stopDockTrack.current = el ? trackDockHeight(el) : undefined;
+  }, []);
   const view = dockActivity ? "chat" : tab;
   // "View reasoning" on a chat step: Activity opens on that step (the compact tab, or the dock's tab).
   const [traceFocus, setTraceFocus] = useState<{ key: string; at: number }>();
@@ -1207,8 +1204,6 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
           "@container flex min-w-0 items-center",
           headerSlot ? "h-full flex-1 gap-1.5 pl-1" : cx("min-h-[44px] border-b border-border-subtle py-1.5", docked ? "gap-1.5 pl-3 pr-2" : "gap-2.5 pl-3 pr-6"),
         )}>
-          {/* Back and forward lead the page; a dock's chat sits beside a page that has its own. */}
-          {!docked && <HistoryNav />}
           {group ? <PersonaStack personas={participants} size={22} /> : <HeaderPersona persona={persona} personaId={c.persona?.id} fresh={fresh} onSwitch={switchPersona} disabled={locked || create.isPending} compact={docked} working={running} />}
           {/* The title over a live line, as a messaging app shows who's typing; the line goes when the reply ends.
               Docks with an inline switcher already name and switch the conversation in Switch chat, avoiding 1-letter crushed title stubs. */}

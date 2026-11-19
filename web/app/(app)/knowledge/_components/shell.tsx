@@ -1,30 +1,22 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { cx } from "@/lib/cx";
-import { HOME_TAB, START_TAB, ancestors, buildTree, closeOtherTabs, closeTab, closeTabsToRight, folderPaths, isoDay, joinPath, kindHref, movedPath, nameOf, openTab, pageHref, pageIcon, parentOf, parseKind, startTabKind, type Tab, type TreeFolder, type TreeRow } from "@/lib/knowledge";
+import { HOME_TAB, START_TAB, ancestors, buildTree, folderPaths, isoDay, joinPath, movedPath, nameOf, openTab, pageHref, pageIcon, parentOf, parseKind, type Tab, type TreeFolder, type TreeRow } from "@/lib/knowledge";
 import { useAllPages, useCreatePage, useDaily, useDeleteFolder, useDeletePage, useMoveFolder, useMovePage, usePage } from "@/lib/api/knowledge-hooks";
-import { ContextMenu } from "radix-ui";
-import { Icon, type IconName } from "@/components/ui/icon";
-import { floatPanel } from "@/components/domain/pickers";
 import { useSlideStarters, type StarterKey } from "@/lib/api/slides-hooks";
 import { useNewDeck } from "@/components/domain/use-new-deck";
 import { toast } from "@/lib/toast";
 import { useCreateDesign, type DesignStarter } from "@/lib/api/designs-hooks";
-import { Kbd } from "@/components/ui/primitives";
 import { useToday } from "./kit";
 import { isTyping } from "@/components/shell/shortcuts";
 import { NavigatorPortal, openInNewTab } from "@/components/shell/navigator-slot";
-import { TopBar } from "@/components/shell/topbar";
 import { EditorEmbedContext, type EditorEmbed } from "@/components/shell/editor-layout";
 import { openCommandPalette } from "@/components/shell/command-menu";
 import { CaptureDialog } from "./capture";
 import { ImportDialog } from "./import-dialog";
 import { KnowledgeDock } from "./knowledge-dock";
 import { buildKnowledgeNavModel, K } from "@/lib/native-shell/models/knowledge";
-import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import type { NativeCommand } from "@/lib/native-shell/protocol";
 import { KnowledgeChatProvider, useKnowledgeChat } from "./chat-context";
 import { DeleteDialog, MoveDialog, NewFolderDialog, RenameDialog, type ExplorerTarget } from "./explorer-actions";
@@ -124,32 +116,12 @@ function activeTab(pathname: string, kind: string | null): string | undefined {
 // The tab shown before the one being opened, so a new tab lands beside it.
 let lastActive: string | undefined;
 
-export function tabHref(t: Tab): string {
-  if (t.kind === "graph") return "/knowledge/graph";
-  if (t.kind === "connect") return "/knowledge/connect";
-  if (t.kind === "home") return "/knowledge";
-  if (t.kind === "start") return kindHref(startTabKind(t));
-  return pageHref(t.id, t.title);
-}
-
 /**
  * Knowledge as a workspace, in the way Obsidian lays one out: the file
  * explorer on the left, tabs over the screen, and each screen's own right
  * sidebar and status bar. The Vesper sidebar folds to its icon rail while
  * it's open, as it does for the other apps.
  */
-function isFormField(el: EventTarget | null): boolean {
-  if (!(el instanceof HTMLElement)) return false;
-  return ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName) || el.getAttribute("role") === "combobox";
-}
-
-function hasOpenOverlay(): boolean {
-  return !!document.querySelector('[role="dialog"],[role="menu"],[role="listbox"]:not([hidden])');
-}
-
-const tabMenuItem =
-  "flex h-8 cursor-default select-none items-center gap-2.5 rounded-md px-2 outline-none data-[highlighted]:bg-hover data-[disabled]:opacity-50";
-
 export function KnowledgeShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -158,14 +130,10 @@ export function KnowledgeShell({ children }: { children: ReactNode }) {
   const tabs = useStore(tabsStore);
   const active = activeTab(pathname, search.get("kind"));
   // A deck or design page opens its editor here: its structure is the column's list, its own
-  // dock is the companion, and its actions sit in this bar (EditorEmbedContext).
+  // dock is the companion, and its back navigation points to Knowledge (EditorEmbedContext).
   const activeKind = tabs.find((t) => t.id === active)?.kind;
   const editorOpen = activeKind === "deck" || activeKind === "design";
-  // The Mac app opens pages as its own window tabs, so Knowledge draws no tab strip there (and its
-  // screens put their actions in the window's toolbar).
-  const native = useIsNativeShell();
-  const [barActions, setBarActions] = useState<HTMLElement | null>(null);
-  const embed = useMemo<EditorEmbed>(() => ({ actions: barActions, back: { href: "/knowledge", label: "Knowledge" } }), [barActions]);
+  const embed = useMemo<EditorEmbed>(() => ({ back: { href: "/knowledge", label: "Knowledge" } }), []);
   const [capture, setCapture] = useState(false);
   const [importing, setImporting] = useState(false);
   const daily = useDaily();
@@ -180,46 +148,9 @@ export function KnowledgeShell({ children }: { children: ReactNode }) {
     daily.mutate({ date: isoDay(new Date()) }, { onSuccess: (p) => router.push(pageHref(p.id, p.title)) });
   }, [daily, router]);
 
-  const applyTabResult = useCallback(
-    (result: { tabs: Tab[]; next?: Tab }, redirectWhenEmpty = false) => {
-      if (result.tabs.length === 0 && active === HOME_TAB.id) {
-        tabsStore.set([HOME_TAB]);
-        return;
-      }
-      tabsStore.set(result.tabs);
-      if (result.next) {
-        router.push(tabHref(result.next));
-      } else if (redirectWhenEmpty && result.tabs.length === 0) {
-        router.push("/knowledge");
-      }
-    },
-    [active, router],
-  );
-
-  const close = useCallback(
-    (id: string) => applyTabResult(closeTab(tabsStore.get(), id, active), id === active),
-    [active, applyTabResult],
-  );
-
-  const closeOthers = useCallback(
-    (id: string) => applyTabResult(closeOtherTabs(tabsStore.get(), id, active)),
-    [active, applyTabResult],
-  );
-
-  const closeRight = useCallback(
-    (id: string) => applyTabResult(closeTabsToRight(tabsStore.get(), id, active)),
-    [active, applyTabResult],
-  );
-
-  const closeAll = useCallback(() => {
-    tabsStore.set(active === HOME_TAB.id ? [HOME_TAB] : []);
-    if (active !== HOME_TAB.id) router.push("/knowledge");
-  }, [active, router]);
-
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
-      const isW = e.code === "KeyW" || e.key.toLowerCase() === "w";
       if (mod && !e.altKey && e.key.toLowerCase() === "o") {
         e.preventDefault();
         openSwitcher();
@@ -229,18 +160,11 @@ export function KnowledgeShell({ children }: { children: ReactNode }) {
       } else if (mod && e.key.toLowerCase() === "d" && !isTyping(e.target)) {
         e.preventDefault();
         openToday();
-      } else if (!native && !mod && e.altKey && isW && !isFormField(e.target) && !hasOpenOverlay()) {
-        e.preventDefault();
-        if (e.shiftKey) {
-          closeAll();
-        } else if (active) {
-          close(active);
-        }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, close, closeAll, native, openSwitcher, openToday]);
+  }, [openSwitcher, openToday]);
 
   const registerTab = useCallback((tab: Tab) => {
     const cur = tabsStore.get();
@@ -255,13 +179,9 @@ export function KnowledgeShell({ children }: { children: ReactNode }) {
       const cur = tabsStore.get();
       const left = cur.filter((t) => !gone.has(t.id));
       if (left.length !== cur.length) tabsStore.set(left);
-      if (active && gone.has(active)) {
-        // In the Mac app the hidden tab list isn't what the person sees, so fall back to Home.
-        const next = native ? undefined : left.at(-1);
-        router.push(next ? tabHref(next) : "/knowledge");
-      }
+      if (active && gone.has(active)) router.push("/knowledge");
     },
-    [active, native, router],
+    [active, router],
   );
 
   const retitleTab = useCallback((id: string, title: string) => {
@@ -288,22 +208,6 @@ export function KnowledgeShell({ children }: { children: ReactNode }) {
       <div className="relative flex h-dvh min-h-0 min-w-0 flex-none bg-bg">
         {!editorOpen && <Explorer pathname={pathname} />}
         <div className="flex min-w-0 flex-1 flex-col">
-          {/* The shared top bar, with the open pages as its tabs: the same height and back button as every page. */}
-          {!native && (
-            <TopBar
-              tabs={
-                <TabStrip
-                  tabs={tabs}
-                  active={active}
-                  onClose={close}
-                  onCloseOthers={closeOthers}
-                  onCloseRight={closeRight}
-                  onCloseAll={closeAll}
-                />
-              }
-              actions={<div ref={setBarActions} className="contents" />}
-            />
-          )}
           <EditorEmbedContext.Provider value={embed}>
             <div className="flex min-h-0 flex-1 flex-col">{children}</div>
           </EditorEmbedContext.Provider>
@@ -314,95 +218,6 @@ export function KnowledgeShell({ children }: { children: ReactNode }) {
       <ImportDialog open={importing} onOpenChange={setImporting} />
       </KnowledgeChatProvider>
     </Ctx.Provider>
-  );
-}
-
-function TabStrip({
-  tabs,
-  active,
-  onClose,
-  onCloseOthers,
-  onCloseRight,
-  onCloseAll,
-}: {
-  tabs: Tab[];
-  active?: string;
-  onClose: (id: string) => void;
-  onCloseOthers: (id: string) => void;
-  onCloseRight: (id: string) => void;
-  onCloseAll: () => void;
-}) {
-  const icon = (t: Tab): IconName =>
-    t.kind === "graph" ? "graph" : t.kind === "connect" ? "link" : t.kind === "home" ? "dashboard" : t.kind === "start" ? pageIcon({ kind: startTabKind(t) }) : t.kind === "deck" ? "slides" : t.kind === "design" ? "designs" : "artifacts";
-  return (
-    <div role="tablist" aria-label="Open pages" className="flex min-w-0 flex-1 items-end gap-1 overflow-x-auto pl-1">
-      {tabs.map((t, i) => {
-        const on = t.id === active;
-        const onlyHome = tabs.length === 1 && t.id === HOME_TAB.id;
-        return (
-          <ContextMenu.Root key={t.id}>
-            <ContextMenu.Trigger asChild>
-              <div
-                role="tab"
-                aria-selected={on}
-                onMouseDown={(e) => {
-                  if (e.button === 1) e.preventDefault();
-                }}
-                onAuxClick={(e) => {
-                  if (e.button === 1) {
-                    e.preventDefault();
-                    onClose(t.id);
-                  }
-                }}
-                className={cx(
-                  "group relative -mb-px flex h-[34px] max-w-[220px] flex-none items-center gap-2 rounded-t-lg pl-3 pr-1.5 text-12 font-medium",
-                  on ? "border-x border-t border-border-subtle bg-bg text-fg" : "text-fg-tertiary hover:bg-hover hover:text-fg-secondary",
-                )}
-              >
-                <Icon name={icon(t)} size={13} className={on ? "text-accent" : undefined} />
-                <Link href={tabHref(t)} className="min-w-0 flex-1 truncate after:absolute after:inset-0" title={t.title}>
-                  {t.title || "Untitled"}
-                </Link>
-                <button
-                  type="button"
-                  aria-label={`Close ${t.title}`}
-                  onClick={() => onClose(t.id)}
-                  className="relative z-10 grid size-5 place-items-center rounded text-fg-tertiary opacity-60 hover:bg-hover hover:opacity-100 group-hover:opacity-100"
-                >
-                  <Icon name="x" size={11} />
-                </button>
-              </div>
-            </ContextMenu.Trigger>
-            <ContextMenu.Portal>
-              <ContextMenu.Content
-                collisionPadding={8}
-                onCloseAutoFocus={(e) => e.preventDefault()}
-                className={cx(floatPanel, "min-w-[210px]")}
-              >
-                <ContextMenu.Item className={tabMenuItem} disabled={onlyHome} onSelect={() => onClose(t.id)}>
-                  Close
-                  {on && <Kbd className="ml-auto">⌥W</Kbd>}
-                </ContextMenu.Item>
-                <ContextMenu.Item className={tabMenuItem} disabled={tabs.length <= 1} onSelect={() => onCloseOthers(t.id)}>
-                  Close others
-                </ContextMenu.Item>
-                <ContextMenu.Item className={tabMenuItem} disabled={i >= tabs.length - 1} onSelect={() => onCloseRight(t.id)}>
-                  Close tabs to the right
-                </ContextMenu.Item>
-                <ContextMenu.Separator className="mx-1 my-1 h-px bg-border-subtle" />
-                <ContextMenu.Item className={tabMenuItem} disabled={onlyHome} onSelect={onCloseAll}>
-                  Close all tabs
-                  <Kbd className="ml-auto">⌥⇧W</Kbd>
-                </ContextMenu.Item>
-              </ContextMenu.Content>
-            </ContextMenu.Portal>
-          </ContextMenu.Root>
-        );
-      })}
-      <Link href="/knowledge" aria-label="New tab" className="mb-[9px] grid size-6 flex-none place-items-center rounded text-fg-tertiary hover:bg-hover">
-        <Icon name="plus" size={13} />
-      </Link>
-    </div>
   );
 }
 

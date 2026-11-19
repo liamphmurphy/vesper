@@ -37,7 +37,7 @@ import { epicHealthTone, ticketStatusTone } from "@/lib/native-shell/models/comm
 import { buildEpicsOverviewInspectorSections } from "@/lib/native-shell/models/epic-inspector";
 import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
 import { EpicBrief } from "../../work/work-details";
-import { TicketsLayoutBar, TicketsTopBar } from "./layout-bar";
+import { TicketsTopBar } from "./layout-bar";
 
 function Timeline({
   epics,
@@ -445,12 +445,10 @@ export function EpicsScreen() {
           ]}
         />
       )}
-      {/* Compact: the layout bar is the header, with its own + button. */}
-      {!compact && <TicketsTopBar
+      <TicketsTopBar
         layout="epics"
         action={{ label: "New ticket", primary: true, href: project ? `/tickets/new?project=${encodeURIComponent(project)}` : "/tickets/new" }}
-      />}
-      <TicketsLayoutBar layout="epics" />
+      />
       <Content>
         <div className="space-y-6">
           {scope.status !== "ready" ? (

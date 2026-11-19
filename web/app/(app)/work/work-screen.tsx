@@ -24,7 +24,6 @@ import { cx } from "@/lib/cx";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { CompanionDock } from "@/components/shell/companion";
 import { WorkChat } from "@/components/domain/work-chat";
-import { TopBar } from "@/components/shell/topbar";
 import { useProjectScope } from "@/components/shell/project-scope";
 import { STATUS_NAME } from "@/components/domain/meta";
 import { Button } from "@/components/ui/button";
@@ -34,7 +33,6 @@ import {
   TicketBrief,
   EpicBrief,
   LiveRun,
-  WorkTopRunLinks,
   type Navigate,
 } from "./work-details";
 import { BoardView } from "../tickets/_components/board-screen";
@@ -46,7 +44,6 @@ import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
 import { buildWorkEpicsNavModel, buildWorkTicketsNavModel, WORK_LAYOUT_FILTER } from "@/lib/native-shell/models/work-lists";
 import { workViewPatch, workViewQuery } from "@/lib/native-shell/models/saved-views";
 import { buildWorkToolbar, parseWorkToolbarAction } from "@/lib/native-shell/models/work-toolbars";
-import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { useNativeToolbar } from "@/lib/native-shell/use-native-toolbar";
 import { SavedViewNativeDialogs, useSavedViewsNav, useSavedViewsUi } from "@/components/domain/saved-views";
 import { useNativeTitle } from "../tickets/_components/native-title";
@@ -309,7 +306,6 @@ export function WorkScreen() {
         }
       : undefined;
   // The Tickets and Epics lists beside a focused ticket or epic, with the saved views.
-  const native = useIsNativeShell();
   const svUi = useSavedViewsUi();
   const savedNav = useSavedViewsNav({
     ui: svUi,
@@ -378,37 +374,9 @@ export function WorkScreen() {
   return (
     <div className="work-page" onClickCapture={intercept}>
       <NavigatorPortal native={activityNative ?? listNative} />
-      {native && <SavedViewNativeDialogs ui={svUi} onCreated={(v) => updateWorkUrl({ saved: v.id })} />}
-      {native ? (
-        <>
-          <NativeWorkHeader title={view[0].toUpperCase() + view.slice(1)} needs={!companion ? runs.needs.length : 0} onNeeds={() => go({ filter: "needs_you", context: null })} />
-          {!companion && runId && <NativeRunLinks id={runId} context={context} navigate={go} />}
-        </>
-      ) : (
-        <TopBar
-          crumbs={[
-            { label: "Work", href: "/work" },
-            { label: view[0].toUpperCase() + view.slice(1) },
-          ]}
-          actions={
-            <>
-              {!companion && runs.needs.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => go({ filter: "needs_you", context: null })}
-                  className="hidden items-center gap-1.5 rounded-md border border-pill-human-bg/80 bg-pill-human-bg px-2 py-1 text-11 font-medium text-pill-human-fg hover:brightness-105 md:inline-flex"
-                >
-                  <span aria-hidden className="size-1.5 rounded-full bg-state-human" />
-                  Needs you · {runs.needs.length}
-                </button>
-              )}
-              {!companion && runId && (
-                <WorkTopRunLinks id={runId} context={context} navigate={go} />
-              )}
-            </>
-          }
-        />
-      )}
+      <SavedViewNativeDialogs ui={svUi} onCreated={(v) => updateWorkUrl({ saved: v.id })} />
+      <NativeWorkHeader title={view[0].toUpperCase() + view.slice(1)} needs={!companion ? runs.needs.length : 0} onNeeds={() => go({ filter: "needs_you", context: null })} />
+      {!companion && runId && <NativeRunLinks id={runId} context={context} navigate={go} />}
       <div
         className={cx(
           "work-body",

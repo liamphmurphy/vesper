@@ -46,9 +46,8 @@ export function useProjectPickerNative(allowAll = true) {
  * The project a page shows, in its header: projects are context, not a
  * place, so each page that lists one project's work picks it here.
  * allowAll: offer "All spaces" (pages that list every project's work).
- * crumb: drawn as a pill inside a top bar's breadcrumb, where it stands for the project crumb.
  */
-export function ProjectPicker({ allowAll = true, crumb }: { allowAll?: boolean; crumb?: boolean }) {
+export function ProjectPicker({ allowAll = true }: { allowAll?: boolean }) {
   const router = useRouter();
   const pathname = usePathname();
   const search = useSearchParams();
@@ -72,10 +71,7 @@ export function ProjectPicker({ allowAll = true, crumb }: { allowAll?: boolean; 
         <button
           type="button"
           aria-label={`Switch space, current: ${current?.name ?? "All spaces"}`}
-          className={cx(
-            "flex max-w-[240px] items-center gap-2 border text-left hover:bg-hover data-[state=open]:border-accent",
-            crumb ? "h-[26px] rounded-full border-border-subtle px-2.5 text-fg-2" : "h-[30px] rounded-md border-border-strong bg-surface px-2.5",
-          )}
+          className="flex h-[30px] max-w-[240px] items-center gap-2 rounded-md border border-border-strong bg-surface px-2.5 text-left hover:bg-hover data-[state=open]:border-accent"
         >
           {current ? (
             <span aria-hidden className="size-2.5 flex-none rounded-[3px]" style={{ background: current.color }} />

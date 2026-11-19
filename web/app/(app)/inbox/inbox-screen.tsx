@@ -249,11 +249,6 @@ function DesktopInbox() {
             ),
           },
         ]}
-        actions={
-          <Button variant="outline" onClick={openShortcuts}>
-            <Kbd>?</Kbd> Shortcuts
-          </Button>
-        }
       />
       <div className="flex min-h-0 flex-1 flex-wrap">
         <section aria-label="Inbox" className="flex min-w-0 flex-[2_1_480px] flex-col">

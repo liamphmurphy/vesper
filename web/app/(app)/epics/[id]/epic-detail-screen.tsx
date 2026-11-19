@@ -19,7 +19,7 @@ import { buildEpicInspectorSections } from "@/lib/native-shell/models/epic-inspe
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Banner, EmptyState, Skeleton } from "@/components/ui/primitives";
 import { Toggle } from "@/components/ui/controls";
-import { Content, TopBar, type Crumb } from "@/components/shell/topbar";
+import { Content } from "@/components/shell/topbar";
 import { AgentStack, HealthPill, type EpicOverview } from "@/components/domain/overview";
 import { HumanAvatar } from "@/components/domain/avatars";
 import { DocTypeTag, Pill } from "@/components/domain/labels";
@@ -34,7 +34,6 @@ import { WorkChat } from "@/components/domain/work-chat";
 import { buildEpicDetailNavModel } from "@/lib/native-shell/models/epic-detail";
 import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
 import { buildEpicToolbar } from "@/lib/native-shell/models/work-toolbars";
-import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { useNativeToolbar } from "@/lib/native-shell/use-native-toolbar";
 import { useNativeTitle } from "../../tickets/_components/native-title";
 
@@ -45,15 +44,6 @@ export function EpicDetailScreen({ epicId }: { epicId: string }) {
   const query = useEpicOverviews();
   const e = query.data?.find((x) => x.epic.id === epicId);
   const siblingEpics = (query.data ?? []).filter((x) => !e || x.project.key === e.project.key);
-  const crumbs: Crumb[] = e
-    ? [
-        { label: e.project.name, swatch: e.project.color, href: `/tickets?project=${encodeURIComponent(e.project.key)}` },
-        { label: "Epics", href: ticketsHref("epics", { project: e.project.key }) },
-        { label: e.epic.name },
-      ]
-    : [{ label: "Epics", href: ticketsHref("epics") }];
-  // In the Mac app the header row is the window title and a toolbar button.
-  const native = useIsNativeShell();
   useNativeTitle(e?.epic.name ?? "Epics", e?.project.name);
   useNativeToolbar({ items: e ? buildEpicToolbar() : [], onAction: () => e && router.push(boardHref(e)) });
   return (
@@ -69,14 +59,6 @@ export function EpicDetailScreen({ epicId }: { epicId: string }) {
           onCommand: (cmd) => handleWorkHeaderCommand(cmd, { project: e?.project.key, push: (href) => router.push(href), onProject: () => {}, onAgent: () => {} }),
         }}
       />
-      {!native && <TopBar
-        crumbs={crumbs}
-        actions={e && (
-          <>
-            <ButtonLink variant="outline" icon="board" href={boardHref(e)}>View on board</ButtonLink>
-          </>
-        )}
-      />}
       <div className="flex min-h-0 flex-1">
       <div className="min-w-0 flex-1">
       <Content>

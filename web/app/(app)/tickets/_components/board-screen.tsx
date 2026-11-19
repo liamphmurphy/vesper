@@ -18,15 +18,14 @@ import { EpicCompletion } from "@/components/domain/epic-completion";
 import { TicketEditorDialog } from "@/components/domain/ticket-editor-dialog";
 import { DependencyMap } from "@/components/domain/dependency-map";
 import { useMotionList } from "@/components/ui/motion";
-import { Toggle } from "@/components/ui/controls";
 import { ticketsHref } from "@/lib/tickets-layout";
 import { buildBoardNavModel } from "@/lib/native-shell/models/board";
 import { buildBoardExtras, parseBoardToggle } from "@/lib/native-shell/models/tickets-toolbar";
-import { useIsNativeShell, useNativeContextMenu } from "@/lib/native-shell/hooks";
+import { useNativeContextMenu } from "@/lib/native-shell/hooks";
 import { toast } from "@/lib/toast";
 import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
-import { ChipScroller, TicketsLayoutBar, TicketsTopBar } from "./layout-bar";
+import { ChipScroller, TicketsTopBar } from "./layout-bar";
 import { AssigneeAvatar, EpicChip, StateText } from "./ticket-row";
 
 export function BoardScreen() {
@@ -63,20 +62,12 @@ export function BoardScreen() {
     window.history.replaceState(null, "", ticketsHref("board", next));
   }
   const compact = useCompact();
-  const native = useIsNativeShell();
-  const boardToggles = project && !native && (
-    <>
-      <Toggle label="Show canceled" checked={filters.include_canceled} onChange={(on) => setParam("include_canceled", on ? "true" : "")} />
-      <Toggle label="Blocked only" checked={blockedOnly} onChange={(on) => setParam("blocked", on ? "true" : "")} />
-    </>
-  );
   const compactBoardFilters = project && (
     <>
       <FilterMenu label="Epic" value={filters.epic ?? ""} onChange={(v) => setParam("epic", v)}
         options={[{ value: "", label: "All epics" }, ...epics.map((e) => ({ value: e.id, label: e.name }))]} />
       <FilterMenu label="Assignee" value={filters.assignee ?? ""} onChange={(v) => setParam("assignee", v)}
         options={[{ value: "", label: "All assignees" }, ...(bootstrap.data?.agents ?? []).map((a) => ({ value: a.handle, label: `@${a.handle}` }))]} />
-      {boardToggles}
     </>
   );
   return (
@@ -108,7 +99,7 @@ export function BoardScreen() {
           },
         }}
       />
-      {!compact && <TicketsTopBar layout="board"
+      <TicketsTopBar layout="board"
         action={{ label: "New ticket", primary: true, href: project ? `/tickets/new?project=${encodeURIComponent(project.key)}` : "/tickets/new" }}
         extra={project ? buildBoardExtras({ showCanceled: !!filters.include_canceled, blockedOnly }) : undefined}
         onExtra={(id) => {
@@ -116,16 +107,14 @@ export function BoardScreen() {
           if (t?.type === "canceled") setParam("include_canceled", filters.include_canceled ? "" : "true");
           else if (t?.type === "blocked") setParam("blocked", blockedOnly ? "" : "true");
         }}
-      />}
-      <TicketsLayoutBar layout="board" />
+      />
       {compact && compactBoardFilters && <ChipScroller label="Board filters">{compactBoardFilters}</ChipScroller>}
-      {/* The board's views, with its filters at the row's end (the top bar holds only the header). */}
+      {/* The board's views (the top bar lives in the native toolbar). */}
       {project && <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-border px-5 py-2 text-14">
         <nav aria-label="Board views" className="flex gap-5">
           <button aria-current={!map ? "page" : undefined} className={!map ? "font-semibold text-accent" : ""} onClick={() => setParam("tab", "")}>Board</button>
           <button aria-current={map ? "page" : undefined} className={map ? "font-semibold text-accent" : ""} onClick={() => setParam("tab", "map")}>Map</button>
         </nav>
-        {!compact && <div role="group" aria-label="Board filters" className="ml-auto flex flex-wrap items-center gap-3">{boardToggles}</div>}
       </div>}
       {!project ? <ProjectScopeState base="/tickets" scope={scope} />
         : map ? <div className="p-5"><DependencyMap key={JSON.stringify([project.key, filters])} project={project.key} epic={filters.epic} assignee={filters.assignee} includeCanceled={filters.include_canceled} onOpen={setTicket} /></div>

@@ -1,8 +1,6 @@
 "use client";
 
-import Link from "next/link";
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { createPortal } from "react-dom";
 import { type IconName } from "@/components/ui/icon";
 import { cx } from "@/lib/cx";
 import {
@@ -17,7 +15,6 @@ import {
   type DockState,
 } from "@/lib/editor-layout";
 import { isTyping } from "./shortcuts";
-import { HistoryNav } from "./history-nav";
 import { NavigatorPortal, type NativeNavigator } from "./navigator-slot";
 import { splitActions, type NativeAction, type NativeMenuEntry } from "@/lib/native-shell/actions";
 import { useIsNativeShell } from "@/lib/native-shell/hooks";
@@ -67,27 +64,10 @@ export type DockTab = {
   run?: () => void;
 };
 
-export type EditorHeader = {
-  back: { href: string; label: string };
-  title: ReactNode;
-  /** The document's name as text, shown over its structure in the left column (the title may be a rename field). */
-  name?: string;
-  /** The ▾ menu beside the title (rename, duplicate, …). */
-  titleMenu?: ReactNode;
-  saveState?: ReactNode;
-  /** Beside the save state: what waits on the document, e.g. Designs' "Review 3" pill. */
-  status?: ReactNode;
-  presence?: ReactNode;
-  /** Up to two primary actions. */
-  actions?: [ReactNode, ReactNode?];
-  /** The ⋯ menu. */
-  overflow?: ReactNode;
-};
-
 /**
- * An editor's header row for the Mac app: the title (and the title's ▾ menu) go to the window's
+ * An editor's header for the Mac app: the title (and the title's menu) go to the window's
  * title, the actions to its toolbar (`placement: "leading"` ones sit next to the title: save state,
- * who is working on it), and the page draws no header row. A browser keeps `EditorHeader`.
+ * who is working on it).
  */
 export type NativeEditorHeader = {
   title: string;
@@ -98,10 +78,9 @@ export type NativeEditorHeader = {
 
 /**
  * Set by a host that opens an editor inside its own screen (Knowledge, for deck and design pages):
- * the element in the host's bar where the editor's actions go (save state, Present, Share…), and the
- * way back that heads the editor's structure in the left column. The host's bar is then the only bar.
+ * supplies the way back that heads the editor's structure in the left column.
  */
-export type EditorEmbed = { actions: HTMLElement | null; back: { href: string; label: string } };
+export type EditorEmbed = { back: { href: string; label: string } };
 export const EditorEmbedContext = createContext<EditorEmbed | null>(null);
 
 /** True while the chat's ⌘. reading focus is on: the Vesper sidebar then hides. */
@@ -123,6 +102,7 @@ const COMPOSER = "[data-dock-composer], textarea, [contenteditable='true'], inpu
  */
 export function EditorLayout({
   app,
+  back,
   header,
   main,
   dock,
@@ -131,24 +111,23 @@ export function EditorLayout({
   onDockChange,
   defaultOpen = true,
   nativeLeft,
-  nativeHeader,
 }: {
   /** Key for the remembered dock state, e.g. "designs". */
   app: string;
-  header: EditorHeader;
+  back: { href: string; label: string };
+  /** The window's title and toolbar in the Mac app. */
+  header: NativeEditorHeader;
   /**
    * `left` as a NavModel for the native sidebar. The layout adds the way back (and the document's name as the title);
    * the editor handles its own rows' commands.
    */
   nativeLeft?: NativeNavigator;
-  /** `header` as the window's title and toolbar in the Mac app, where the page draws no header row. */
-  nativeHeader?: NativeEditorHeader;
   main: ReactNode;
   dock: DockTab[];
   chatTab?: string;
   /** Opens `tab` whenever `n` changes, e.g. when the canvas asks to start a review. */
   show?: { tab: string; n: number };
-  /** The dock's state after every change, e.g. to clear an unread mark while its tab shows. `open` is false while a phone's sheet is closed. */
+  /** The dock's state after every change, e.g. to clear an unread mark while its tab shows. */
   onDockChange?: (s: DockState) => void;
   /** Whether the dock starts open for someone with no remembered choice. Once they collapse or open it, theirs wins. */
   defaultOpen?: boolean;
@@ -156,39 +135,36 @@ export function EditorLayout({
   const uid = useId();
   const router = useRouter();
   const embed = useContext(EditorEmbedContext);
-  const back = embed?.back ?? header.back;
-  // An editor with a native header always shows its column, if only the way back (its structure may still be loading).
-  const navSource: NativeNavigator | undefined = nativeLeft ?? (nativeHeader ? { model: { id: `editor-${app}`, sections: [] } } : undefined);
-  const nativeNav: NativeNavigator | undefined = navSource && {
+  const resolvedBack = embed?.back ?? back;
+  // An editor always shows its back button in the native sidebar, even while its structure is loading.
+  const navSource: NativeNavigator = nativeLeft ?? { model: { id: `editor-${app}`, sections: [] } };
+  const nativeNav: NativeNavigator = {
     model: {
       ...navSource.model,
-      title: header.name ?? navSource.model.title,
-      actions: [{ id: EDITOR_BACK_ACTION, label: back.label, icon: "chev" }, ...(navSource.model.actions ?? [])],
+      title: header.title || navSource.model.title,
+      actions: [{ id: EDITOR_BACK_ACTION, label: resolvedBack.label, icon: "chev" }, ...(navSource.model.actions ?? [])],
     },
     onCommand: (cmd) => {
-      if (cmd.type === "nav.action" && cmd.actionId === EDITOR_BACK_ACTION) router.push(back.href);
+      if (cmd.type === "nav.action" && cmd.actionId === EDITOR_BACK_ACTION) router.push(resolvedBack.href);
       else navSource.onCommand?.(cmd);
     },
   };
-  // The header row in the Mac app's toolbar. Not drawn there, so nothing is lost to the page.
-  const isNative = useIsNativeShell();
-  const nativeBar = isNative && !!nativeHeader;
-  const bar = splitActions(nativeHeader?.actions ?? []);
-  const titleMenu = splitActions(nativeHeader?.titleMenu ? [{ id: "title", label: "", kind: "menu", menu: nativeHeader.titleMenu }] : []);
+  const bar = splitActions(header.actions ?? []);
+  const titleMenu = splitActions(header.titleMenu ? [{ id: "title", label: "", kind: "menu", menu: header.titleMenu }] : []);
   useNativeToolbar({
     items: bar.items,
     onAction: bar.dispatch,
     titleMenu: titleMenu.items[0]?.menu,
     onTitleAction: (id) => titleMenu.dispatch("title", id),
   });
-  const barTitle = nativeHeader?.title;
-  const barSubtitle = nativeHeader?.subtitle;
+  const barTitle = header.title;
+  const barSubtitle = header.subtitle;
   useEffect(() => {
-    if (!nativeBar || !barTitle) return;
+    if (!barTitle) return;
     const token = Symbol("editor-title");
     setTopBarTitle(token, { title: barTitle, ...(barSubtitle ? { subtitle: barSubtitle } : {}) });
     return () => setTopBarTitle(token, null);
-  }, [nativeBar, barTitle, barSubtitle]);
+  }, [barTitle, barSubtitle]);
   const tabIds = dock.map((t) => t.id).join("\n");
   const [state, setState] = useState<DockState>({ open: defaultOpen, tab: dock[0]?.id ?? "", hidden: false });
   const [loaded, setLoaded] = useState(false);
@@ -266,7 +242,7 @@ export function EditorLayout({
         {/* The editor's bar spans only the work; the dock is a full-height column whose own first row,
             the same height, continues the bar: its header (the chat's, for Chat) is the top of the dock. */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {nativeBar ? <h1 className="sr-only">{nativeHeader.title}</h1> : embed ? <EmbeddedBar {...header} slot={embed.actions} /> : <Header {...header} />}
+          <h1 className="sr-only">{header.title}</h1>
           <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-auto bg-bg">{main}</div>
         </div>
         {/* The dock is the companion: in the shell's right-hand column.
@@ -523,49 +499,5 @@ export function Dock({
       </aside>}
       {!state.hidden && <RightRailPortal native={{ tabs, activeId: active?.id, expanded, dispatch }} />}
     </>
-  );
-}
-
-/**
- * The editor's bar inside a host's screen: its actions go into the host's bar (the title is the
- * host's tab), so the page keeps one bar. The title stays as the page's heading for assistive tech.
- */
-function EmbeddedBar({ title, titleMenu, saveState, status, presence, actions, overflow, slot }: EditorHeader & { slot: HTMLElement | null }) {
-  const heading = <h1 className="sr-only">{title}</h1>;
-  if (!slot) return heading;
-  return createPortal(
-    <div className="flex min-w-0 items-center gap-3">
-      {heading}
-      {titleMenu}
-      {saveState && <span className="flex-none text-12 text-fg-tertiary" aria-live="polite">{saveState}</span>}
-      {status}
-      {presence && <div className="flex flex-none items-center max-md:hidden">{presence}</div>}
-      {actions && <div className="flex flex-none items-center gap-2">{actions}</div>}
-      {overflow}
-    </div>,
-    slot,
-  );
-}
-
-/** The editor's bar: back and forward first, as on every page, then the title; the way up to the app is in the left column. */
-function Header({ back, title, titleMenu, saveState, status, presence, actions, overflow }: EditorHeader) {
-  return (
-    <header className="flex h-[44px] flex-none items-center gap-3 border-b border-border-subtle bg-surface pl-3 pr-4">
-      <HistoryNav className="max-md:hidden" />
-      <Link href={back.href} className="flex flex-none items-center gap-1 text-13 text-fg-secondary hover:text-fg">
-        <span aria-hidden>←</span>
-        {back.label}
-      </Link>
-      <div className="flex min-w-0 items-center gap-1">
-        <h1 className="truncate text-14 font-semibold">{title}</h1>
-        {titleMenu}
-      </div>
-      {saveState && <span className="flex-none text-12 text-fg-tertiary" aria-live="polite">{saveState}</span>}
-      {status}
-      <div className="flex-1" />
-      {presence && <div className="flex flex-none items-center max-md:hidden">{presence}</div>}
-      {actions && <div className="flex flex-none items-center gap-2">{actions}</div>}
-      {overflow}
-    </header>
   );
 }

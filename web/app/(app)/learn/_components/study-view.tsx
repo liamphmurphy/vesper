@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { HistoryNav } from "@/components/shell/history-nav";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { useCompact } from "@/lib/viewport";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -296,11 +295,8 @@ export function StudyView({ course, onDelete }: { course: Course; onDelete: () =
       <NavigatorPortal native={{ model: nativeModel, onCommand: nativeCommand }} />
       {compact && lessons}
       <div ref={scroller} className="min-w-0 overflow-y-auto">
-        <div className="flex h-[52px] items-center justify-between border-b border-border-subtle pl-3 pr-6">
-          <span className="flex min-w-0 items-center gap-2">
-          <HistoryNav />
-          <span className="truncate text-13 text-fg-tertiary">{lesson?.unit_title}{lesson && <span className="font-medium text-fg"> / {lesson.title}</span>}</span>
-          </span>
+        <div className="flex h-[52px] items-center justify-between border-b border-border-subtle pl-6 pr-6">
+          <span className="min-w-0 truncate text-13 text-fg-tertiary">{lesson?.unit_title}{lesson && <span className="font-medium text-fg"> / {lesson.title}</span>}</span>
           {next && <Button variant="outline" onClick={() => router.push(`/learn/${id}?lesson=${next.key}`)}>Next →</Button>}
         </div>
         {lesson && (

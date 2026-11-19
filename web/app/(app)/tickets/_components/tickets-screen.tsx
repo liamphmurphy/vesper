@@ -42,13 +42,12 @@ import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { rememberProject, ProjectScopeState, projectCrumbs, useProjectScope } from "@/components/shell/project-scope";
 import { ticketsHref } from "@/lib/tickets-layout";
 import type { NativeCommand } from "@/lib/native-shell/protocol";
-import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { buildTicketsNavModel, parseTicketsRow, type TicketQueue } from "@/lib/native-shell/models/tickets";
 import { buildTicketsListExtras, parseTicketsListAction } from "@/lib/native-shell/models/tickets-toolbar";
 import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
 import { BulkBar, BulkResultPanel } from "./bulk-bar";
 import { CompactTicketRow, TicketRow, type Density } from "./ticket-row";
-import { ChipScroller, TicketsLayoutBar, TicketsTopBar } from "./layout-bar";
+import { ChipScroller, TicketsTopBar } from "./layout-bar";
 
 const VIEWS: Array<{ key: TicketView; label: string }> = [
   { key: "all", label: "All tickets" },
@@ -206,8 +205,6 @@ export function TicketsScreen() {
   const savedViews = useSavedViews();
   const [dispatchKeys, setDispatchKeys] = useState<string[] | null>(null);
   const savedView = svId ? savedViews.data?.find((v) => v.id === svId) : undefined;
-  // In the Mac app the header, filters and saved views are the toolbar and the sidebar (below).
-  const native = useIsNativeShell();
   const svUi = useSavedViewsUi();
 
   // Debounced box → URL, so views are shareable. Tokens that match nothing aren't applied.
@@ -476,26 +473,6 @@ export function TicketsScreen() {
       </DropdownMenu.Root>
     </>
   );
-  const densitySwitch = (
-    <div role="radiogroup" aria-label="Density" className="inline-flex h-[26px] overflow-hidden rounded-sm border border-border-strong">
-      {(["comfortable", "compact"] as const).map((d) => (
-        <button
-          key={d}
-          type="button"
-          role="radio"
-          aria-checked={density === d}
-          aria-label={d === "comfortable" ? "Comfortable rows" : "Compact rows"}
-          title={d === "comfortable" ? "Comfortable rows" : "Compact rows"}
-          onClick={() => setDensity(d)}
-          className={cx("grid w-[27px] place-items-center", d === "compact" && "border-l border-border-strong", density === d ? "bg-selected text-fg" : "text-fg-tertiary hover:bg-hover")}
-        >
-          <svg aria-hidden width="12" height="12" viewBox="0 0 12 12" stroke="currentColor" strokeWidth="1.3">
-            {d === "comfortable" ? <path d="M0 2h12M0 6h12M0 10h12" /> : <path d="M0 1.5h12M0 4.5h12M0 7.5h12M0 10.5h12" />}
-          </svg>
-        </button>
-      ))}
-    </div>
-  );
 
   // The native sidebar's version of the column below: the same state and handlers, driven by the shell's commands.
   const savedNav = useSavedViewsNav({ ui: svUi, current: viewQuery(new URLSearchParams(params.toString())), project });
@@ -541,9 +518,9 @@ export function TicketsScreen() {
 
   return (
     <>
-      {native && <SavedViewNativeDialogs ui={svUi} />}
+      <SavedViewNativeDialogs ui={svUi} />
       <NavigatorPortal native={{ model: nativeModel, onCommand: nativeCommand }} />
-      {!compact && <TicketsTopBar
+      <TicketsTopBar
         layout="list"
         // The project crumb is the bar's project pill.
         crumbs={proj ? crumbs.slice(1) : crumbs}
@@ -565,8 +542,7 @@ export function TicketsScreen() {
           else if (a?.type === "group") setParam("group", a.value === "status" ? null : a.value);
           else if (a?.type === "density") setDensity(a.value);
         }}
-      />}
-      <TicketsLayoutBar layout="list" />
+      />
       {proj?.archived && <div className="px-6 py-3 max-md:px-4"><Banner tone="human" title="Archived work">Tickets and history remain available. Restore the work on the space’s page to start new work.</Banner></div>}
       {compact ? (
         <ChipScroller label="Filters">
@@ -575,7 +551,7 @@ export function TicketsScreen() {
           <SavedViewTabs project={project} />
           {filterControls}
         </ChipScroller>
-      ) : native ? (
+      ) : (
         // The filter box is the sidebar's search, group and density are toolbar items; what's left is what can't be one.
         (blockedOnly || unestimated || resolved.unknown.length > 0) && (
           <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle px-6 py-2">
@@ -583,12 +559,6 @@ export function TicketsScreen() {
             {resolved.unknown.length > 0 && <span role="status" className="text-12 text-pill-blocked-fg">No match for {resolved.unknown.join(", ")}</span>}
           </div>
         )
-      ) : (
-        <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle px-6 py-2">
-          {filterBox}
-          {filterControls}
-          <div className="ml-auto flex items-center">{densitySwitch}</div>
-        </div>
       )}
 
       {savedView && <SavedViewHeader view={savedView} />}

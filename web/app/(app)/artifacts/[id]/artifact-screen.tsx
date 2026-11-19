@@ -24,7 +24,7 @@ import { ReviewChip } from "@/components/domain/mockup";
 import { MockupEditor } from "./mockup-editor";
 import { MockupReviewBanner, MockupViewer } from "./mockup-parts";
 import { wikiHref } from "@/lib/wikilinks";
-import { StartChatButton, useStartChat } from "@/components/domain/start-chat";
+import { useStartChat } from "@/components/domain/start-chat";
 import { toast } from "@/lib/toast";
 import { buildArtifactActions } from "@/lib/native-shell/models/mockup-editor";
 import { TopBar } from "@/components/shell/topbar";
@@ -162,34 +162,6 @@ export function ArtifactScreen({ id }: { id: string }) {
                 ...(editing ? [{ label: "Edit" }] : []),
               ]
             : [{ label: "Library", href: "/library?source=projects" }, { label: "…" }]
-        }
-        actions={
-          a && !editing && (
-            <>
-              {isMockup && (
-                <>
-                  <ButtonLink variant="primary" href={`/artifacts/${a.id}/review${isOld && viewing ? `?version=${viewing.id}` : ""}`}>
-                    Review
-                  </ButtonLink>
-                  <Button variant="outline" icon="edit" onClick={() => setEditing(true)}>
-                    Edit
-                  </Button>
-                </>
-              )}
-              <StartChatButton attach={{ kind: a.type === "note" ? "page" : "artifact", id: a.id }} title={artifactTitle(a)} project={a.project?.key} />
-              <ButtonLink href={contentUrl(a.id, (viewing ?? a.current_version).id, true)} variant="outline" icon="download">
-                Download
-              </ButtonLink>
-              {!isMockup && (viewing ?? a.current_version).content.kind === "markdown" && (
-                <ButtonLink href={printHref(a.id, isOld ? viewing?.id : null)} target="_blank" variant="outline" icon="printer">
-                  Export PDF
-                </ButtonLink>
-              )}
-              <Button variant={isMockup ? "outline" : "secondary"} icon={isMockup ? "upload" : "history"} onClick={() => setVersioning(true)}>
-                New version
-              </Button>
-            </>
-          )
         }
       />
       {!a || !viewing ? (

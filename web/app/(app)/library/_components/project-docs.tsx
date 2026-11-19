@@ -133,16 +133,6 @@ export function ProjectDocs() {
           { id: "docs.mockup", label: "New mockup", kind: "button", icon: "plus", showsLabel: true, run: () => setMockup(true) },
           { id: "docs.upload", label: "Upload", kind: "button", icon: "upload", showsLabel: true, accent: true, run: () => setUpload({ files: [] }) },
         ]}
-        actions={
-          <>
-            <Button variant="outline" icon="plus" onClick={() => setMockup(true)}>
-              New mockup
-            </Button>
-            <Button variant="primary" icon="upload" onClick={() => setUpload({ files: [] })}>
-              Upload
-            </Button>
-          </>
-        }
       />
       <div className="flex flex-1 flex-wrap">
         <div className="flex min-w-0 flex-[999_1_560px] flex-col gap-5 px-7 py-8 max-sm:px-4">

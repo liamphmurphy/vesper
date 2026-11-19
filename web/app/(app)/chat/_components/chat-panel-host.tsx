@@ -319,12 +319,11 @@ function ChatDock({ chatId, live, readOnly, agent, activity }: { chatId: string;
  * a tab then) or when there is nothing to start.
  */
 function usePlaygroundStart(chatId: string): DockTab | null {
-  const native = useIsNativeShell();
   const pg = useChatPlayground(chatId).data;
   const canStart = useCanStartSavedPlayground(chatId);
   const act = usePlaygroundAction(chatId);
   const panel = usePlaygroundPanel();
-  if (!native || panel.open) return null;
+  if (panel.open) return null;
   if (!pg && canStart) {
     return {
       id: "playground",

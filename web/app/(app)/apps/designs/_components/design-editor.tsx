@@ -2,7 +2,7 @@
 
 import { useRecordVisit } from "@/components/shell/use-record-visit";
 import { useRouter, useSearchParams } from "next/navigation";
-import { DropdownMenu, Popover } from "radix-ui";
+import { DropdownMenu } from "radix-ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "@/lib/api/client";
 import { fetchDesign, fetchDesignVersion, uploadDesignAsset, useDesign, useDesignProposals, useDesignSettings, useDesignVersion, useDuplicateDesign, useRenameDesign, useResolveProposal, useSaveDesign } from "@/lib/api/designs-hooks";
@@ -21,19 +21,18 @@ import { DesignError, normalize, type Design, type DesignNode, type ImageNode } 
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Banner, Skeleton } from "@/components/ui/primitives";
-import { EditorLayout, type DockTab, type EditorHeader, type NativeEditorHeader } from "@/components/shell/editor-layout";
+import { EditorLayout, type DockTab, type NativeEditorHeader } from "@/components/shell/editor-layout";
 import { floatPanel } from "@/components/domain/pickers";
 import type { DockState } from "@/lib/editor-layout";
 import { tokensChanged } from "@/lib/designs/tokens";
 import { PersonaAvatar, personaLook } from "@/app/(app)/chat/_components/persona";
 import { Conversation } from "@/app/(app)/chat/_components/conversation";
 import { DesignCanvas, fitCamera, zoomAt, type Camera, type Tool } from "./design-canvas";
-import { ReviewOverlay, ReviewPanel, ReviewPill, stepChange, suggestionPages, useReview, type ReviewMode } from "./design-review";
-import { ExportMenu, useDesignExport } from "./export-menu";
+import { ReviewOverlay, ReviewPanel, ReviewPill, stepChange, useReview, type ReviewMode } from "./design-review";
+import { useDesignExport } from "./export-menu";
 import { NativeRenameDialog } from "@/components/shell/native-rename-dialog";
 import { useNativeLayers } from "./native-layers";
 import { toast } from "@/lib/toast";
-import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { buildDesignActions, buildDesignTitleMenu, type ExportScopeName } from "@/lib/native-shell/models/design-editor";
 import { navAvatar, pageOrigin } from "@/lib/native-shell/models/common";
 import { frameFor } from "@/lib/designs/export";
@@ -697,25 +696,16 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
   const proposalCount = proposals?.length ?? 0;
   const suggestions = `${proposalCount} ${proposalCount === 1 ? "suggestion" : "suggestions"}`;
   const pending = proposals?.[0];
-  const pendingPages = useMemo(() => (design && pending ? suggestionPages(design, pending) : []), [design, pending]);
   const look = personaLook(chat?.speaker ?? chat?.persona);
   const rename = useRenameDesign();
   const duplicate = useDuplicateDesign();
-  const [renaming, setRenaming] = useState(false);
-  const commitRename = (v: string) => {
-    setRenaming(false);
-    if (v.trim() && v.trim() !== title) rename.mutate({ id, title: v.trim() });
-  };
 
-  // The Share menu's state is the editor's, so the web popover and the Mac app's toolbar menu share it.
   const exp = useDesignExport({ id, title, design, pageId: page?.id, selected, current: exportCurrent });
-  const native = useIsNativeShell();
   const [nativeScope, setNativeScope] = useState<ExportScopeName>();
   const expNotice = exp.notice;
   const cancelExport = exp.cancel;
-  // The Mac app draws no Share menu in the page to show an export's progress beside, so it's a toast (with Cancel while it builds).
   useEffect(() => {
-    if (!native || !expNotice) return;
+    if (!expNotice) return;
     toast({
       id: "design-export",
       title: expNotice.text,
@@ -723,9 +713,9 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
       ...(expNotice.tone === "busy" && expNotice.cancellable !== false ? { duration: 600000, action: { label: "Cancel", onClick: cancelExport } } : expNotice.tone === "busy" ? { duration: 600000 } : {}),
       ...(expNotice.tone !== "busy" && expNotice.href ? { action: { label: "Open", onClick: () => router.push(expNotice.href!) } } : {}),
     });
-  }, [native, expNotice, cancelExport, router]);
+  }, [expNotice, cancelExport, router]);
   const nativeScopes = useMemo(() => {
-    if (!native || !design) return [];
+    if (!design) return [];
     const frame = frameFor(design, page?.id, selected);
     return [
       { id: "selection" as const, label: selected.length ? `Selection (${selected.length})` : "Selection", disabled: !selected.length },
@@ -733,7 +723,7 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
       { id: "page" as const, label: `Page: ${page?.name ?? ""}` },
       { id: "frames" as const, label: "All frames" },
     ];
-  }, [native, design, page, selected]);
+  }, [design, page, selected]);
   const chosenScope: ExportScopeName = nativeScope && nativeScopes.find((x) => x.id === nativeScope && !x.disabled) ? nativeScope : (nativeScopes.find((x) => !x.disabled && x.id !== "frames")?.id ?? "page");
   const [renamingTitle, setRenamingTitle] = useState(false);
   const nativeLayers = useNativeLayers({
@@ -750,7 +740,7 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
     onEdit: apply,
     readOnly,
   });
-  const nativeHeader: NativeEditorHeader = {
+  const header: NativeEditorHeader = {
     title,
     titleMenu: ref.data ? buildDesignTitleMenu({ duplicating: duplicate.isPending, rename: () => setRenamingTitle(true), duplicate: () => duplicate.mutate(id, { onSuccess: (d) => router.push(`/apps/designs/${d.id}`) }) }) : undefined,
     actions: buildDesignActions({
@@ -964,90 +954,6 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
     );
   }
 
-  const saveBad = saveState.s === "error" || saveState.s === "conflict";
-  const header: EditorHeader = {
-    back: { href: "/knowledge", label: "Knowledge" },
-    name: title,
-    title: renaming ? (
-      <input
-        autoFocus
-        aria-label="Design title"
-        maxLength={200}
-        defaultValue={title}
-        className="h-[26px] w-[240px] rounded-md border border-accent bg-surface px-2 text-14 font-semibold text-fg outline-none"
-        onBlur={(e) => commitRename(e.currentTarget.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") commitRename(e.currentTarget.value);
-          else if (e.key === "Escape") setRenaming(false);
-        }}
-      />
-    ) : (
-      title
-    ),
-    titleMenu: ref.data && !renaming && (
-      <DropdownMenu.Root>
-        <DropdownMenu.Trigger asChild>
-          <button type="button" aria-label="Design menu" className="grid size-6 place-items-center rounded-md text-fg-tertiary hover:bg-hover hover:text-fg">▾</button>
-        </DropdownMenu.Trigger>
-        <DropdownMenu.Portal>
-          <DropdownMenu.Content align="start" sideOffset={6} className={cx(floatPanel, "z-50 w-44")}>
-            <DropdownMenu.Item className={menuItem} onSelect={() => setRenaming(true)}>Rename</DropdownMenu.Item>
-            <DropdownMenu.Item className={menuItem} disabled={duplicate.isPending} onSelect={() => duplicate.mutate(id, { onSuccess: (d) => router.push(`/apps/designs/${d.id}`) })}>Duplicate</DropdownMenu.Item>
-          </DropdownMenu.Content>
-        </DropdownMenu.Portal>
-      </DropdownMenu.Root>
-    ),
-    // What waits on the design sits with the design, beside its save state, not in the chat.
-    status: pending && (
-      <SuggestionsPill
-        changes={pending.ops.length}
-        pages={pendingPages}
-        more={proposalCount - 1}
-        onReview={startReview}
-      />
-    ),
-    saveState: doc && (
-      <span data-testid="design-save-state" title={saveState.message} className={cx("flex items-center gap-1.5", saveBad && "text-pill-blocked-fg")}>
-        <span aria-hidden className={cx("size-1.5 rounded-full", saveBad ? "bg-pill-blocked-fg" : saveState.s === "saved" ? "bg-state-done" : "bg-fg-tertiary")} />
-        {SAVE_LABEL[saveState.s]} · v{doc.saved.seq}
-        {saveState.s === "error" && (
-          <button type="button" className="text-accent hover:underline" onClick={() => void flush().catch(() => undefined)}>
-            Retry
-          </button>
-        )}
-      </span>
-    ),
-    presence: presence && (
-      <span className="flex items-center gap-1.5 text-12 text-fg-tertiary" title={`${persona} is working on it`}>
-        <PersonaAvatar persona={look} size={22} className="ring-2 ring-[#3FC1B0]" />
-        editing
-      </span>
-    ),
-    actions: ref.data
-      ? [
-          <Button key="present" variant="secondary" disabled={!design} onClick={() => void present()} title="Play the prototype from the selected frame">
-            ▶ Present
-          </Button>,
-          <ExportMenu key="share" trigger="Share" x={exp} design={design} />,
-        ]
-      : undefined,
-    overflow: ref.data && (
-      <Popover.Root>
-        <Popover.Trigger asChild>
-          <button type="button" aria-label="More" className="relative grid size-7 flex-none place-items-center rounded-md border border-border text-fg-secondary hover:bg-hover hover:text-fg">
-            ⋯{design && tokensChanged(design) && <span aria-hidden className="absolute -right-1 -top-1 size-2 rounded-full bg-state-human" />}
-          </button>
-        </Popover.Trigger>
-        <Popover.Portal>
-          <Popover.Content align="end" sideOffset={6} aria-label="More" className={cx(floatPanel, "z-50 flex w-[260px] flex-col gap-2 p-3 text-13")}>
-            <span className="text-11 font-medium uppercase tracking-wide text-fg-tertiary">Design tokens</span>
-            {design && tokensChanged(design) ? <TokensSyncBadge design={design} readOnly={readOnly} onEdit={apply} /> : <span className="text-fg-secondary">In sync with tokens.css</span>}
-          </Popover.Content>
-        </Popover.Portal>
-      </Popover.Root>
-    ),
-  };
-
   const loading = <Skeleton className="m-3 flex-1" />;
   // How the persona's edits land, in the chat's one header row rather than a bar of its own.
   const editMode = (
@@ -1136,15 +1042,14 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
     <>
     <EditorLayout
       app="designs"
+      back={{ href: "/knowledge", label: "Knowledge" }}
       header={header}
-      nativeHeader={nativeHeader}
       nativeLeft={nativeLayers.nativeLeft}
       show={{ tab: "review", n: showReview }}
       onDockChange={setDock}
       main={
         <>
-          {/* The header's ⋯ menu (tokens out of step with tokens.css) isn't drawn in the Mac app, so its badge sits above the canvas. */}
-          {native && design && tokensChanged(design) && (
+          {design && tokensChanged(design) && (
             <div className="flex flex-none items-center gap-2 border-b border-border-subtle bg-surface px-3 py-1.5">
               <TokensSyncBadge design={design} readOnly={readOnly} onEdit={apply} />
             </div>
@@ -1161,19 +1066,5 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
       onSubmit={(name) => rename.mutate({ id, title: name })}
     />
     </>
-  );
-}
-
-/** The editor bar's "Review N": the persona's waiting suggestions, one click from review. Nothing changes until they're accepted. */
-function SuggestionsPill({ changes, pages, more, onReview }: { changes: number; pages: string[]; more: number; onReview: () => void }) {
-  const what = `${changes} suggested ${changes === 1 ? "change" : "changes"}`;
-  const detail = [what + (pages.length ? ` · ${pages.join(", ")}` : ""), "Nothing changes until you accept.", more > 0 ? `${more} more waiting after this.` : ""].filter(Boolean).join(" ");
-  return (
-    <button type="button" data-testid="suggestion-card" aria-label={`Review ${what}`} title={detail} onClick={onReview}
-      className="flex h-[26px] flex-none items-center gap-1.5 rounded-full bg-pill-review-bg px-2.5 text-12 font-medium text-pill-review-fg hover:brightness-95">
-      <Icon name="check" size={12} />
-      Review
-      <span className="rounded-full bg-surface/60 px-1.5 text-11 tabular-nums">{changes}</span>
-    </button>
   );
 }

@@ -1,7 +1,6 @@
 "use client";
 
 import { useNewDeck } from "@/components/domain/use-new-deck";
-import { HistoryNav } from "@/components/shell/history-nav";
 import { ResearchToggle, TemporaryToggle } from "./reply-tools";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -27,11 +26,9 @@ import { useSnippets } from "./snippets";
 import { Composer, type CommandRun, type ComposerCommands } from "./composer";
 import { ModelEffortPicker, effortLabel, modelEffortSummary, modelEfforts, type Effort, type Selection } from "./model-picker";
 import { useNewConversation } from "./chat-history";
-import { CanvasButton } from "@/components/domain/canvas-view";
 import { ChatPanelHost } from "./chat-panel-host";
 import { useClaimCompanion } from "@/components/shell/companion";
 import { DOC_DRAFT, designRequest, type CreateKind } from "@/lib/chat-commands";
-import { PlaygroundButton } from "@/components/domain/playground";
 import { PersonaCarousel, personaLook } from "./persona";
 import { CommitEmailPicker } from "./commit-email";
 import { needsCommitEmailPick } from "@/lib/commit-email";
@@ -242,10 +239,6 @@ function Welcome({ disabled, onNew, arrived }: { disabled: boolean; onNew: () =>
   return (
     <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto" {...drop.props}>
       <DropOverlay over={drop.over} />
-      {/* No chat header yet, but back and forward still lead the page, where the header's would be. */}
-      <div className="flex h-[44px] flex-none items-center pl-3">
-        <HistoryNav />
-      </div>
       <div className="mx-auto flex w-full max-w-[768px] flex-1 flex-col items-center justify-center px-6 py-10">
         {/* Fresh from the Welcome Wizard, the new persona slides into the centre and the Assistant moves aside. */}
         <PersonaCarousel ordered={ordered} current={persona} left={around.left} right={around.right} onPick={setPicked} disabled={locked} enterFrom={arrived ? 1 : 0} />
@@ -387,7 +380,7 @@ export function ChatScreen({ id }: { id?: string }) {
               </div>
             )}
             {id ? (
-              <Conversation key={id} id={id} onNew={conversation.start} activityInDock actions={<><PlaygroundButton chatId={id} /><CanvasButton chatId={id} live={turnRunning} /></>} />
+              <Conversation key={id} id={id} onNew={conversation.start} activityInDock />
             ) : (
               <>
                 {chats.isError ? (

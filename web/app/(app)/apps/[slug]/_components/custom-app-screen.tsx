@@ -9,7 +9,7 @@ import { DockChatSwitcher, type DockChatSection } from "@/components/domain/dock
 import { DockContext, dockContextChip } from "@/components/domain/dock-context";
 import { buildCustomAppActions, buildCustomAppNav, parseViewId } from "@/lib/native-shell/models/custom-app";
 import { buildCustomAppInspectorSections } from "@/lib/native-shell/models/custom-app-inspector";
-import { EditorLayout, type DockTab, type EditorHeader, type NativeEditorHeader } from "@/components/shell/editor-layout";
+import { EditorLayout, type DockTab, type NativeEditorHeader } from "@/components/shell/editor-layout";
 import { isTyping } from "@/components/shell/shortcuts";
 import { Content, TopBar } from "@/components/shell/topbar";
 import { Button, ButtonLink, IconButton } from "@/components/ui/button";
@@ -638,32 +638,7 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
       queue.clear();
     };
   }, [app.current_seq, reloadKey]);
-  const header: EditorHeader = {
-    back: { href: "/apps", label: "Custom Apps" },
-    name: app.name,
-    title: (
-      <span className="inline-flex items-center gap-2">
-        <Icon name={resolveAppIcon(app.icon)} size={15} className="flex-none text-fg-secondary" />
-        <span className="truncate">{app.name}</span>
-        <span className="rounded bg-selected px-1.5 py-0.5 font-mono text-11 font-normal text-fg-tertiary">
-          v{app.current_seq}
-        </span>
-      </span>
-    ),
-    actions: [
-      <IconButton
-        key="reload"
-        icon="refresh"
-        label="Reload app"
-        onClick={reload}
-      />,
-      <Button key="perms" variant="outline" icon="shield" onClick={() => openDockTab("permissions")}>
-        Permissions
-      </Button>,
-    ],
-  };
-
-  const nativeHeader: NativeEditorHeader = {
+  const header: NativeEditorHeader = {
     title: app.name,
     subtitle: `v${app.current_seq}`,
     actions: buildCustomAppActions({ reload, permissions: () => openDockTab("permissions") }),
@@ -901,8 +876,8 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
   return (
     <EditorLayout
       app={`custom-app:${app.slug}`}
+      back={{ href: "/apps", label: "Custom Apps" }}
       header={header}
-      nativeHeader={nativeHeader}
       nativeLeft={nativeLeft}
       main={main}
       dock={dockTabs}

@@ -13,7 +13,6 @@ import { Icon } from "@/components/ui/icon";
 import { floatPanel } from "./pickers";
 import { hoverReveal } from "@/lib/reveal";
 import { confirmAction } from "@/components/ui/confirm";
-import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { useNativeToolbar } from "@/lib/native-shell/use-native-toolbar";
 import { type SavedViewRow, parseSavedViewCommand, parseSavedViewTitleAction, savedViewMenu } from "@/lib/native-shell/models/saved-views";
 import type { NativeCommand, ToolbarItem } from "@/lib/native-shell/protocol";
@@ -429,9 +428,6 @@ export function SavedViewHeader({ view }: { view: SavedView }) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
   const edited = now !== saved;
-  // In the Mac app the header's actions are toolbar items and its menu the title's; the screen's
-  // title carries the name and what the view keeps (savedViewSubtitle).
-  const native = useIsNativeShell();
   const remove = useDeleteSavedViewAction();
   const project = search.get("project");
   const items: ToolbarItem[] = edited
@@ -446,7 +442,7 @@ export function SavedViewHeader({ view }: { view: SavedView }) {
       if (id === "sv.discard") router.replace(savedViewHref(view, project));
       else if (id === "sv.save-changes") update.mutate({ id: view.id, query: now });
     },
-    titleMenu: native ? savedViewMenu() : undefined,
+    titleMenu: savedViewMenu(),
     onTitleAction: (id) => {
       const a = parseSavedViewTitleAction(id);
       if (a === "rename") setRenaming(true);
@@ -455,43 +451,11 @@ export function SavedViewHeader({ view }: { view: SavedView }) {
       else if (a === "delete") void remove(view);
     },
   });
-  if (native) {
-    return (
-      <>
-        <RenameViewDialog view={renaming ? view : undefined} onClose={() => setRenaming(false)} />
-        <SaveViewDialog query={now} open={saving} onOpenChange={setSaving} />
-        {update.isError && <span role="alert" className="px-6 py-1 text-12 text-pill-blocked-fg">{errorText(update.error)}</span>}
-      </>
-    );
-  }
   return (
-    <div className="flex min-h-10 flex-wrap items-center gap-2.5 border-b border-border-subtle px-6 py-1.5">
-      <Bookmark on className="text-accent" />
-      {renaming ? (
-        <div className="w-60"><RenameInput view={view} onDone={() => setRenaming(false)} /></div>
-      ) : (
-        <h2 className="text-14 font-semibold">{view.name}</h2>
-      )}
-      {edited && <span className="rounded-full bg-border-strong px-2 py-px text-11 text-fg-secondary">Edited</span>}
-      <span className="min-w-0 flex-1 truncate text-12 text-fg-tertiary">
-        {describeView(now)}
-        {edited && ` · saved as ${describeView(saved)}`}
-      </span>
-      {update.isError && <span role="alert" className="text-12 text-pill-blocked-fg">{errorText(update.error)}</span>}
-      {edited && (
-        <>
-          <Button variant="ghost" className="h-[26px]" onClick={() => router.replace(savedViewHref(view, search.get("project")))}>
-            Discard
-          </Button>
-          <Button variant="secondary" className="h-[26px]" disabled={update.isPending} onClick={() => update.mutate({ id: view.id, query: now })}>
-            Save changes
-          </Button>
-        </>
-      )}
-      <SavedViewMenu view={view} onRename={() => setRenaming(true)} onSaveAs={() => setSaving(true)}>
-        <IconButton icon="dots" label="Saved view actions" bordered size={26} />
-      </SavedViewMenu>
+    <>
+      <RenameViewDialog view={renaming ? view : undefined} onClose={() => setRenaming(false)} />
       <SaveViewDialog query={now} open={saving} onOpenChange={setSaving} />
-    </div>
+      {update.isError && <span role="alert" className="px-6 py-1 text-12 text-pill-blocked-fg">{errorText(update.error)}</span>}
+    </>
   );
 }
