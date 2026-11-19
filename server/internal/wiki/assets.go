@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path"
 	"strings"
 
@@ -180,4 +182,84 @@ func (s *Service) StoreLibraryItemAsset(ctx context.Context, ws, user, itemID uu
 		name = item.Title
 	}
 	return s.StoreAssetBytes(ctx, ws, user, name, data)
+}
+
+var (
+	// ErrAssetTooLarge is returned when a Knowledge asset or Library item exceeds the caller's byte limit.
+	ErrAssetTooLarge = errors.New("asset exceeds size limit")
+	// ErrAssetNoFile is returned when a Library item has no backing blob (such as a saved link).
+	ErrAssetNoFile = errors.New("library item has no file")
+)
+
+func readBoundedObject(ctx context.Context, objects VaultObjects, bucket, key string, maxBytes int64) ([]byte, error) {
+	rc, err := objects.Open(ctx, bucket, key)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, apperr.ErrNotFound
+		}
+		return nil, err
+	}
+	defer rc.Close()
+	if maxBytes <= 0 {
+		return io.ReadAll(rc)
+	}
+	data, err := io.ReadAll(io.LimitReader(rc, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, ErrAssetTooLarge
+	}
+	return data, nil
+}
+
+// ReadKnowledgeAsset loads a Knowledge attachment's bytes if viewer can read it
+// (either as owner or via a visible Knowledge page referencing it).
+func (s *Service) ReadKnowledgeAsset(ctx context.Context, ws, viewer, id uuid.UUID, maxBytes int64) (store.KnowledgeAsset, []byte, error) {
+	objects, bucket, err := s.vaultObjects()
+	if err != nil {
+		return store.KnowledgeAsset{}, nil, err
+	}
+	asset, err := store.New(s.Pool).GetKnowledgeAsset(ctx, store.GetKnowledgeAssetParams{ID: id, WorkspaceID: ws, Viewer: &viewer})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return store.KnowledgeAsset{}, nil, apperr.ErrNotFound
+	}
+	if err != nil {
+		return store.KnowledgeAsset{}, nil, err
+	}
+	if maxBytes > 0 && asset.SizeBytes > maxBytes {
+		return asset, nil, ErrAssetTooLarge
+	}
+	data, err := readBoundedObject(ctx, objects, bucket, asset.BlobKey, maxBytes)
+	if err != nil {
+		return asset, nil, err
+	}
+	return asset, data, nil
+}
+
+// ReadLibraryItem loads a Library item's bytes for its owning user. Private Docs
+// and items belonging to other users return apperr.ErrNotFound.
+func (s *Service) ReadLibraryItem(ctx context.Context, ws, user, id uuid.UUID, maxBytes int64) (store.LibraryItem, []byte, error) {
+	objects, bucket, err := s.vaultObjects()
+	if err != nil {
+		return store.LibraryItem{}, nil, err
+	}
+	item, err := store.New(s.Pool).GetLibraryItem(ctx, store.GetLibraryItemParams{ID: id, WorkspaceID: ws, UserID: user})
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && item.Kind == "document") {
+		return store.LibraryItem{}, nil, apperr.ErrNotFound
+	}
+	if err != nil {
+		return store.LibraryItem{}, nil, err
+	}
+	if item.BlobKey == "" {
+		return item, nil, ErrAssetNoFile
+	}
+	if maxBytes > 0 && item.SizeBytes > maxBytes {
+		return item, nil, ErrAssetTooLarge
+	}
+	data, err := readBoundedObject(ctx, objects, bucket, item.BlobKey, maxBytes)
+	if err != nil {
+		return item, nil, err
+	}
+	return item, data, nil
 }
