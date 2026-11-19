@@ -110,10 +110,11 @@ func (Antigravity) Invocation(ws Workspace, t Turn) (Invocation, error) {
 		return Invocation{}, err
 	}
 
+	// agy loads AGENTS.md and the always-on rules InstructionFiles writes into
+	// its prompt itself (agy 1.5.9 docs/rules.md, TestAgyProbe/instructions),
+	// so the prompt no longer asks for a read_file of AGENTS.md first.
 	prompt := t.Prompt
 	if !noTools {
-		// agy has no documented AGENTS.md convention; say where the instructions are.
-		prompt = "Your instructions are in AGENTS.md in the workspace root: read it first and follow it.\n\n" + prompt
 		if note := agyImageNote(t.Images); note != "" {
 			prompt += "\n\n" + note
 		}

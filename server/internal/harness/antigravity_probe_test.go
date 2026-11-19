@@ -121,6 +121,56 @@ func TestAgyProbe(t *testing.T) {
 		}
 	})
 
+	// agy caps each rule file at 24,000 bytes and cut the repository's AGENTS.md
+	// off behind Vesper's section. Placed by InstructionFiles, a section well
+	// past the cap and the repository's file both reach the model whole, with
+	// no read_file of AGENTS.md (LAZYAGENTS-253). agy also has a ~20k-token
+	// budget for all rules together (about 60 KB in 1.5.9): past it, it shows
+	// whole rule files as paths to read instead, starting from vesper-01.
+	t.Run("instructions", func(t *testing.T) {
+		p := newAgyProbe(t, bin)
+		var section strings.Builder
+		section.WriteString("# Vesper chat\n\nSECTION_HEAD\n")
+		// About a heavy chat's size once its playbooks are skills (~40 KB).
+		for i := range 22 {
+			fmt.Fprintf(&section, "\n## Part %d\n\n%s\n", i, strings.Repeat("Guidance for this part of the chat. ", 50))
+		}
+		section.WriteString("\nSECTION_TAIL\n")
+		files, _ := InstructionFiles(agentdef.HarnessAntigravity, []byte(section.String()))
+		for rel, body := range files {
+			if rel == AgentsSectionPath {
+				continue
+			}
+			if err := os.MkdirAll(filepath.Join(p.ws, filepath.Dir(rel)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(p.ws, rel), body, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		repo := "# Repository\n\nREPO_HEAD\n" + strings.Repeat("Repository convention line.\n", 300) + "REPO_TAIL\n"
+		if err := os.WriteFile(filepath.Join(p.ws, "AGENTS.md"), []byte("\n"+repo), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		p.gemini.script(agyReply{text: "Done."})
+		p.run(t, readOnlyChat(), "")
+		first := p.gemini.firstRequest()
+		if section.Len() < 2*24000*3/4 {
+			t.Fatalf("the section is only %d bytes", section.Len())
+		}
+		for _, want := range []string{"SECTION_HEAD", "Part 21", "SECTION_TAIL", "REPO_HEAD", "REPO_TAIL"} {
+			if !strings.Contains(first, want) {
+				t.Errorf("%s didn't reach the model", want)
+			}
+		}
+		if strings.Contains(first, "<truncated") || strings.Contains(first, "\\u003ctruncated") {
+			t.Error("agy truncated an instruction file")
+		}
+		if strings.Contains(first, "read it first") {
+			t.Error("the prompt still asks for a read of AGENTS.md")
+		}
+	})
+
 	// An OAuth account's synced preferences can turn agy's terminal sandbox on
 	// whatever settings.json says. Vesper's session settings turn it off again,
 	// so commands run unsandboxed without BypassSandbox, whose presence sent each

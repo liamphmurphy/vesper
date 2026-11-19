@@ -280,8 +280,8 @@ const AssistantPDFSection = `
 func AssistantInstructionsFor(coding, _ bool, _ []string, images, codex bool) string {
 	out := AssistantInstructions
 	if coding {
-		out = strings.Replace(out, assistantNeverBullet, assistantCoderBullet, 1) + assistantCodeSection
-		out += assistantVideoSection + assistantAudioSection + assistantFilesSection + assistantPlaygroundSection
+		// Videos, audio and the playground are skills (AssistantSkills).
+		out = strings.Replace(out, assistantNeverBullet, assistantCoderBullet, 1) + assistantCodeSection + assistantFilesSection
 	}
 	switch {
 	case images && codex:

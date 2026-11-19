@@ -46,6 +46,14 @@ func SkillFiles(skills []agentdef.Skill) map[string][]byte {
 	return files
 }
 
+// nativeSkills reports whether a harness lists the skills SkillFilesFor
+// installs by itself (Claude Code .claude/skills, Codex 0.169 and agy 1.5.8
+// .agents/skills). An index in AGENTS.md would point the others at
+// .lazyagents/skills, which SkillFilesFor writes for none of these.
+func nativeSkills(name string) bool {
+	return name == agentdef.HarnessClaudeCode || name == agentdef.HarnessCodex || name == agentdef.HarnessAntigravity
+}
+
 // skillsIndex is the AGENTS.md section for harnesses without native skills.
 func skillsIndex(skills []agentdef.Skill) string {
 	var b strings.Builder

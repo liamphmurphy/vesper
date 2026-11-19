@@ -171,7 +171,8 @@ func TestAntigravityInvocation(t *testing.T) {
 	if invLegacy, err := (Antigravity{}).Invocation(ws, Turn{Spec: sLegacy, Prompt: "go"}); err != nil || flag(invLegacy.Argv, "--model") != "gemini-3.8-flash" || flag(invLegacy.Argv, "--effort") != "high" {
 		t.Fatalf("legacy model+effort = %v (%q)", err, invLegacy.Argv)
 	}
-	if i := slices.Index(inv.Argv, "-p"); i < 0 || !strings.HasSuffix(inv.Argv[i+1], "go") || !strings.Contains(inv.Argv[i+1], "AGENTS.md") {
+	// agy inlines AGENTS.md and Vesper's rule files itself: asking for a read is a wasted turn.
+	if i := slices.Index(inv.Argv, "-p"); i < 0 || inv.Argv[i+1] != "go" {
 		t.Fatalf("prompt = %q", inv.Argv)
 	}
 	if slices.Contains(inv.Argv, "--dangerously-skip-permissions") {

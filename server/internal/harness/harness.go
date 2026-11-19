@@ -378,7 +378,7 @@ func ChatAgentsMDInSpace(spec agentdef.Resolved, contextFiles []string, project,
 		}
 	}
 	b.WriteString("## Instructions\n\n" + strings.TrimSpace(spec.Instructions) + "\n\n")
-	if len(spec.Skills) > 0 && spec.Harness != agentdef.HarnessClaudeCode && spec.Harness != agentdef.HarnessAntigravity { // those two discover their skills
+	if len(spec.Skills) > 0 && !nativeSkills(spec.Harness) {
 		b.WriteString(skillsIndex(spec.Skills))
 	}
 	if persona != nil {

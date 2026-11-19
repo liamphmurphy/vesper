@@ -1630,9 +1630,21 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 	if backend, ok := r.Backend.(CacheBackend); ok {
 		cacheDir = backend.DependencyCacheDir()
 	}
+	section, skills, failMsg, err := agentsSection(ctx, q, c, paths)
+	if err != nil {
+		r.Log.Warn("agents section", "run", c.run.ID, "err", err)
+		r.failChat(ctx, c, failMsg)
+		return
+	}
+	// A chat's feature playbooks reach the harness as skills for this turn
+	// only; the run's stored spec keeps the persona's own.
+	turnSpec := c.spec
+	if len(skills) > 0 {
+		turnSpec.Skills = append(slices.Clone(c.spec.Skills), skills...)
+	}
 	inv, err := h.Invocation(harness.Workspace{
 		DependencyCacheDir: cacheDir, Dir: wsDir, MCPURL: r.Cfg.MCPURL, Token: token, TokenEnv: tokenEnv, ContainerSandbox: r.Backend.Isolates(),
-	}, harness.Turn{Spec: c.spec, Prompt: prompt, SessionID: session, Images: inputPaths, InlineImages: inputImages, Lead: runs.LeadRun(c.run)})
+	}, harness.Turn{Spec: turnSpec, Prompt: prompt, SessionID: session, Images: inputPaths, InlineImages: inputImages, Lead: runs.LeadRun(c.run)})
 	if err != nil {
 		r.end(ctx, c, "failed", err.Error(), runs.VerbRunFailed)
 		return
@@ -1640,13 +1652,13 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 	for k, v := range inv.Files {
 		files[k] = v
 	}
-	section, failMsg, err := agentsSection(ctx, q, c, paths)
-	if err != nil {
-		r.Log.Warn("agents section", "run", c.run.ID, "err", err)
-		r.failChat(ctx, c, failMsg)
-		return
+	placed, exclude := harness.InstructionFiles(c.spec.Harness, section)
+	for k, v := range placed {
+		files[k] = v
 	}
-	files[".lazyagents/agents-section.md"] = section
+	if len(exclude) > 0 {
+		files[harness.SkillsExcludeFile] = append(files[harness.SkillsExcludeFile], []byte(strings.Join(exclude, "\n")+"\n")...)
+	}
 	for k, v := range inv.Env {
 		env[k] = v
 	}

@@ -189,9 +189,31 @@ with its frontmatter description, the same location Codex reads. Vesper writes a
 run's skills there (`SkillFilesFor`) and git-excludes them. The chat's AGENTS.md
 doesn't index them for Antigravity, as for Claude Code.
 
+## Instructions (verified, 1.5.9)
+
+agy loads `AGENTS.md` (and `GEMINI.md`) from the working directory up to the
+repository root into its prompt as rules, so the prompt doesn't ask for a read.
+Each rule file is capped at 24,000 bytes and cut on a line boundary
+(`<truncated N bytes>`); all always-on rules together get a ~20,000-token
+budget (about 60 KB here), past which agy shows whole files as paths to read
+instead, filling the budget from the last file name backwards.
+
+A chat's generated section is often bigger than 24,000 bytes on its own, and
+the repository's `AGENTS.md` came after it, so agy cut the repository's file
+off on every turn. For agy, `InstructionFiles` writes Vesper's section as
+always-on rule files instead (`.agents/rules/vesper-01.md` … `vesper-06.md`,
+each starting `---\ntrigger: always_on\n---`, split at `## ` headings under
+22,000 bytes, every slot written each turn, git-excluded), and `AGENTS.md` holds
+only the repository's file. Rule files load with or without a `.git`
+(`TestAgyProbe/instructions`).
+
 ## MCP (verified)
 
 `mcp_config.json` `{"mcpServers": {name: {"serverUrl", "headers", "timeoutSeconds"}}}`.
+Vesper's own server also sets `"tools": {"<tool>": {"eager": true}}` for
+`agentdef.EagerVesperTools` (1.5.9): agy declares those to the model up front and
+lists the rest by name under "Lazy", to be read before use
+(`TestAgyProbe/turn`).
 agy connects over Streamable HTTP with the bearer header the launcher substitutes
 (`server/discover`, `initialize` at protocol 2025-11-25, `tools/list`, then
 `tools/call` on use). It lists the server's tools to the model by name in the
