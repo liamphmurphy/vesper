@@ -177,3 +177,24 @@ test("handlePdf enforces concurrency (503), timeout (504) and missing browser (5
     pdfDeps.render = real;
   }
 });
+
+test("handlePdf accepts large inlined data: URI images (JPEG, PNG, WebP) above legacy 8 MB limit", async () => {
+  const real = pdfDeps.render;
+  let captured = null;
+  pdfDeps.render = async (opts) => {
+    captured = opts;
+    return { pdf: FAKE_PDF, pages: 1, previews: [{ page: 1, png: FAKE_PNG, width: 850, height: 1100 }] };
+  };
+  try {
+    const bigWebp = "data:image/webp;base64," + "A".repeat(9 * 1024 * 1024);
+    const html = `<img src="${bigWebp}"><img src="data:image/jpeg;base64,/9j/4AAQ"><img src="data:image/png;base64,iVBORw0KGgo=">`;
+    const ok = await call({ html, preview_pages: [1] });
+    assert.equal(ok.status, 200);
+    assert.ok(captured);
+    assert.ok(captured.html.includes("data:image/webp;base64,"));
+    assert.ok(captured.html.includes("data:image/jpeg;base64,"));
+    assert.ok(captured.html.includes("data:image/png;base64,"));
+  } finally {
+    pdfDeps.render = real;
+  }
+});

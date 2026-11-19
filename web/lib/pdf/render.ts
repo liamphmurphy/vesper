@@ -12,10 +12,10 @@ import {
 
 export const PDF_MAX_CONCURRENT = 2;
 export const PDF_TIMEOUT_MS = 30_000;
-const MAX_REQUEST = 8 * 1024 * 1024;
-const MAX_HTML_BYTES = 6 * 1024 * 1024;
-const MAX_CSS_BYTES = 1 * 1024 * 1024;
-const MAX_TEMPLATE_BYTES = 64 * 1024;
+const MAX_REQUEST = 48 * 1024 * 1024;
+const MAX_HTML_BYTES = 40 * 1024 * 1024;
+const MAX_CSS_BYTES = 8 * 1024 * 1024;
+const MAX_TEMPLATE_BYTES = 2 * 1024 * 1024;
 const MAX_PDF_BYTES = 25 * 1024 * 1024;
 const MAX_PREVIEW_PAGES = 4;
 
@@ -204,10 +204,10 @@ export async function handlePdf(req: Request): Promise<Response> {
     }
     const o = parsed as Obj;
     if (typeof o.html !== "string" || o.html.trim() === "") throw new WorkerError(400, "html: is required");
-    if (Buffer.byteLength(o.html, "utf8") > MAX_HTML_BYTES) throw new WorkerError(400, "html: is too large (max 6 MB)");
+    if (Buffer.byteLength(o.html, "utf8") > MAX_HTML_BYTES) throw new WorkerError(400, "html: is too large (max 40 MB)");
     if (o.css !== undefined && o.css !== null) {
       if (typeof o.css !== "string") throw new WorkerError(400, "css: must be a string");
-      if (Buffer.byteLength(o.css, "utf8") > MAX_CSS_BYTES) throw new WorkerError(400, "css: is too large (max 1 MB)");
+      if (Buffer.byteLength(o.css, "utf8") > MAX_CSS_BYTES) throw new WorkerError(400, "css: is too large (max 8 MB)");
     }
     const orientationRaw = o.orientation === undefined || o.orientation === null || o.orientation === "" ? "portrait" : o.orientation;
     if (orientationRaw !== "portrait" && orientationRaw !== "landscape") {

@@ -649,9 +649,20 @@ export async function renderHtmlToPdf(opts: PdfRenderOptions, signal?: AbortSign
         });
         await b.cdp.send("Page.setDocumentContent", { frameId, html: opts.html }, sessionId, signal);
         await loaded;
-        // Wait for bundled @font-face webfonts to finish loading before printing.
+        // Wait for bundled @font-face webfonts and inlined images to finish decoding before printing.
         await b.cdp
-          .send("Runtime.evaluate", { expression: "document.fonts ? document.fonts.ready.then(() => true) : true", awaitPromise: true }, sessionId, signal)
+          .send(
+            "Runtime.evaluate",
+            {
+              expression: `Promise.all([
+                document.fonts ? document.fonts.ready : Promise.resolve(),
+                ...Array.from(document.images, (img) => (typeof img.decode === "function" ? img.decode().catch(() => {}) : Promise.resolve()))
+              ]).then(() => true)`,
+              awaitPromise: true,
+            },
+            sessionId,
+            signal,
+          )
           .catch(() => {});
 
         const hasHeaderFooter = Boolean(opts.headerHtml || opts.footerHtml);

@@ -19,6 +19,26 @@ func TestAssistantPDFSectionNamesTools(t *testing.T) {
 			t.Errorf("PDF section names %s, which chats don't have", tool)
 		}
 	}
+	for _, want := range []string{"attachment:<asset-id>", "attachment:<asset-id>/<filename>", "library:<library_item_id>"} {
+		if !strings.Contains(agents.AssistantPDFSection, want) {
+			t.Errorf("PDF section doesn't document %q", want)
+		}
+	}
+	var desc string
+	for _, tool := range Tools {
+		if tool.Name == "render_pdf" {
+			desc = tool.Description
+			break
+		}
+	}
+	if desc == "" {
+		t.Fatal("render_pdf tool not registered")
+	}
+	for _, want := range []string{"attachment:<asset-id>", "attachment:<asset-id>/<filename>", "library:<library_item_id>"} {
+		if !strings.Contains(desc, want) {
+			t.Errorf("render_pdf description doesn't document %q", want)
+		}
+	}
 }
 
 func TestMultiImageResultMCPContent(t *testing.T) {
