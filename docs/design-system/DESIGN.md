@@ -81,8 +81,8 @@ The palette is taken from the Vesper mark: a dusk gradient from `--brand-deep` `
 
 The mark's gradient (`--brand-deep` → `--brand-violet` → `--brand-star`) appears only on portraits and decoration, never on a control or as a state's colour, and always beside words that say what's happening (`globals.css`, "The Dusk brand layer"):
 
-* `dusk-aura`: a persona's portrait on the live chat status card while it works. A 2px dusk ring circles it and a violet glow breathes behind it. Off while it waits on you, is quiet or is stopping.
-* `dusk-shimmer`: the status line ("Gwen is thinking…") while it works. A band of starlight crosses the words.
+* `dusk-aura`: a persona's portrait on compact live indicators (such as a reply thread) while it works. A 2px dusk ring circles it and a violet glow breathes behind it.
+* `dusk-shimmer`: compact live status lines ("Gwen is answering…") while working. A band of starlight crosses the words. (The main chat working card keeps plain crisp text so the recessed `ActivityScene` stays the single focal animation.)
 * `dusk-tile`: `EmptyState`'s icon tile, lit violet from the top-left with the mark's four-point star on its corner.
 * `live-sheen`: a neutral white sheen across a progress bar that's still moving (a ticket run, a run's plan, research). The bar keeps its state colour.
 

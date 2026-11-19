@@ -1030,7 +1030,7 @@ function useWindDown(ref: RefObject<HTMLElement | null>, stopping: boolean | und
   }, [ref, stopping, scene]);
 }
 
-/** The card's vignette, purely decorative: the status text is what's announced. Hidden when the card is too narrow. */
+/** The card's vignette inside a recessed stage, purely decorative: the status text is what's announced. Hidden when the card is too narrow. */
 export function ActivityScene({ current, previous, stopping }: { current: ChatStatusKind; previous?: ChatStatusKind; stopping?: boolean }) {
   const stage = useRef<HTMLDivElement>(null);
   useWindDown(stage, stopping, current);
@@ -1039,10 +1039,12 @@ export function ActivityScene({ current, previous, stopping }: { current: ChatSt
       ref={stage}
       aria-hidden
       data-stopping={stopping || undefined}
-      className={`relative h-14 w-[132px] flex-none transition-[filter,opacity] duration-(--motion-progress) motion-reduce:transition-none @max-[420px]:w-[88px] @max-[300px]:hidden ${stopping ? "opacity-50 grayscale" : ""}`}
+      className={`relative h-[54px] w-[112px] flex-none overflow-hidden rounded-[9px] border border-border-subtle bg-surface-sunken px-1 py-[3px] transition-[filter,opacity] duration-(--motion-progress) motion-reduce:transition-none @max-[380px]:h-[46px] @max-[380px]:w-[92px] @max-[280px]:hidden ${stopping ? "opacity-50 grayscale" : ""}`}
     >
-      {previous && <SceneLayer key={`out-${previous}`} kind={previous} leaving />}
-      <SceneLayer key={current} kind={current} />
+      <div className="relative h-full w-full">
+        {previous && <SceneLayer key={`out-${previous}`} kind={previous} leaving />}
+        <SceneLayer key={current} kind={current} />
+      </div>
     </div>
   );
 }

@@ -1006,6 +1006,13 @@
   .step-glyph * { animation: none !important; }
 }
 
+/* Inside ChatStatus, the recessed ActivityScene is the single hero animation; keep the active step glyph calm unless a narrow card hides the stage. */
+[data-testid="chat-status-card"] { container-name: chat-status; }
+@container chat-status (min-width: 281px) {
+  .step-glyph.active .glyph-a { animation: none; }
+  .step-glyph.active .glyph-live { display: none; }
+}
+
 /*
  * Motion tokens and shared overlay animations (DESIGN.md §6). Exits are shorter than entrances,
  * and only transform and opacity move, apart from the sidebar and Collapse heights.
