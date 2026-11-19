@@ -2,17 +2,18 @@ import AppKit
 import VesperCore
 
 /// The unified toolbar: sidebar toggle, back/forward (navigational, so they sit before the window
-/// title), the title's own menu, the page's items, then the companion toggle and search. New Chat
-/// lives in the sidebar, on the first day's header in Chats.
+/// title), the title's own menu, the page's items, search, then the inspector tracking separator
+/// and toggle. New Chat lives in the sidebar, on the first day's header in Chats.
 /// Title and subtitle are the window's.
 @MainActor
 final class ToolbarController: NSObject, NSToolbarDelegate {
     private static let nav = NSToolbarItem.Identifier("vesper.nav")
     private static let tabStrip = NSToolbarItem.Identifier("vesper.tabs")
     private static let search = NSToolbarItem.Identifier("vesper.search")
-    private static let companion = NSToolbarItem.Identifier("vesper.companion")
     private static let titleMenu = NSToolbarItem.Identifier("vesper.titleMenu")
     private static let titleLabel = NSToolbarItem.Identifier("vesper.titleLabel")
+    private static let sidebarSeparator = NSToolbarItem.Identifier("vesper.sidebarSeparator")
+    private static let inspectorSeparator = NSToolbarItem.Identifier("vesper.inspectorSeparator")
     private static let pagePrefix = "vesper.page."
 
     private weak var owner: MainWindowController?
@@ -63,7 +64,7 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
 
     private var pageOnlyItemsEnabled = true {
         didSet {
-            for item in toolbar.items where [Self.companion, Self.search].contains(item.itemIdentifier) {
+            for item in toolbar.items where [Self.search, .toggleInspector].contains(item.itemIdentifier) {
                 item.isEnabled = pageOnlyItemsEnabled
             }
         }
@@ -94,9 +95,9 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         if owner?.compact == true {
-            return [.toggleSidebar, .sidebarTrackingSeparator, Self.nav, Self.tabStrip, Self.companion, Self.search]
+            return [.toggleSidebar, Self.sidebarSeparator, Self.nav, Self.tabStrip, Self.search, Self.inspectorSeparator, .toggleInspector]
         }
-        return [.toggleSidebar, .sidebarTrackingSeparator, Self.nav, .flexibleSpace, Self.companion, Self.search]
+        return [.toggleSidebar, Self.sidebarSeparator, Self.nav, .flexibleSpace, Self.search, Self.inspectorSeparator, .toggleInspector]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -106,6 +107,18 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
         switch identifier {
+        case Self.sidebarSeparator:
+            guard let owner, owner.hasSidebar, owner.split.splitView.arrangedSubviews.count > 1 else { return nil }
+            return NSTrackingSeparatorToolbarItem(identifier: identifier, splitView: owner.split.splitView, dividerIndex: 0)
+        case Self.inspectorSeparator:
+            guard let owner, owner.hasInspector else { return nil }
+            let divider = owner.inspectorDividerIndex
+            guard owner.split.splitView.arrangedSubviews.count > divider + 1 else { return nil }
+            return NSTrackingSeparatorToolbarItem(identifier: identifier, splitView: owner.split.splitView, dividerIndex: divider)
+        case .toggleInspector:
+            let item = button(identifier, label: "Inspector", symbol: "sidebar.right", tip: "Toggle inspector (⌘\\)", action: #selector(MainWindowController.toggleInspector(_:)))
+            item.target = owner
+            return item
         case Self.nav:
             let group = NSToolbarItemGroup(itemIdentifier: identifier, images: [symbol("chevron.left"), symbol("chevron.right")],
                                            selectionMode: .momentary, labels: ["Back", "Forward"], target: self, action: #selector(navigate(_:)))
@@ -125,8 +138,6 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
             return makeTitleMenuItem(identifier)
         case Self.titleLabel:
             return makeTitleLabelItem(identifier)
-        case Self.companion:
-            return button(identifier, label: "Companion", symbol: "sidebar.right", tip: "Toggle companion", action: #selector(companionTapped))
         default:
             guard identifier.rawValue.hasPrefix(Self.pagePrefix), let item = pageItems[identifier.rawValue] else { return nil }
             return makePageItem(identifier, item)
@@ -159,15 +170,13 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
     /// ⌥⌘F and the toolbar button both open the page's command palette (⌘K).
     func focusSearch() { searchTapped() }
     @objc private func searchTapped() { owner?.send(.command(.openCommandMenu)) }
-    @objc private func companionTapped() { owner?.send(.command(.toggleCompanion)) }
 
 
     // MARK: Title menu and page-contributed items
 
     /// Replaces the title menu and the page's items. Order: [..., nav, (flexible space), title menu,
-    /// leading items, ... trailing items, companion, search]; in Compact the leading items
-    /// follow the tab strip. Leading items sit right after the title because the title is placed
-    /// after the navigational group and everything else follows it.
+    /// leading items, ... trailing items, search, inspector separator, toggleInspector]; in Compact
+    /// the leading items follow the tab strip.
     private func rebuildPageItems() {
         for index in toolbar.items.indices.reversed() {
             let id = toolbar.items[index].itemIdentifier
@@ -175,7 +184,9 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
         }
         generation += 1
         pageItems = [:]
-        let trailingAt = toolbar.items.firstIndex { $0.itemIdentifier == Self.companion } ?? toolbar.items.count
+        let trailingAt = toolbar.items.firstIndex { $0.itemIdentifier == Self.search }
+            ?? toolbar.items.firstIndex { $0.itemIdentifier == Self.inspectorSeparator }
+            ?? toolbar.items.count
         let leadingAt = owner?.compact == true
             ? trailingAt
             : (toolbar.items.firstIndex { $0.itemIdentifier == .flexibleSpace } ?? trailingAt)

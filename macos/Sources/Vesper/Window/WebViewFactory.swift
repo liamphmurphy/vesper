@@ -1,12 +1,14 @@
 import AppKit
+import ObjectiveC
 import VesperCore
 import WebKit
 
-enum WebViewKind { case vesper, playground }
+enum WebViewKind { case vesper, companion, playground }
 
-/// Builds the web views. Vesper pages share the default (persistent) data store and get the native
-/// bridge; playground pages get a separate non-persistent store (so the session cookie, which is
-/// not port-scoped, never reaches them) and neither the bridge nor the native-mode script.
+/// Builds the web views. Vesper and companion pages share the default (persistent) data store and
+/// get the native bridge; playground pages get a separate non-persistent store (so the session
+/// cookie, which is not port-scoped, never reaches them) and neither the bridge nor the native-mode
+/// script.
 @MainActor
 enum WebViewFactory {
     static let userAgentSuffix = "VesperMac/1"
@@ -23,28 +25,72 @@ enum WebViewFactory {
     document.documentElement.classList.add("native-mac");
     """
 
+    private static let companionModeScript = """
+    window.__VESPER_NATIVE__ = {v:1, platform:"macos"};
+    document.documentElement.classList.add("native-mac", "native-companion");
+    """
+
     static func makeWebView(kind: WebViewKind, bridge: WKScriptMessageHandler?, services: WebPageServices? = nil) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.applicationNameForUserAgent = userAgentSuffix
         // element.requestFullscreen (slides/designs present, video, dev terminal).
         config.preferences.isElementFullscreenEnabled = true
         switch kind {
-        case .vesper:
+        case .vesper, .companion:
             config.websiteDataStore = WKWebsiteDataStore.default()
-            let script = WKUserScript(source: nativeModeScript, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+            let source = kind == .companion ? companionModeScript : nativeModeScript
+            let script = WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true)
             config.userContentController.addUserScript(script)
             if let bridge { config.userContentController.add(bridge, name: handlerName) }
             enablePrivateMediaPreferences(config.preferences)
+            disable60FPSCap(config.preferences)
             if let services { WebPageServices.install(on: config.userContentController, services: services) }
         case .playground:
             config.websiteDataStore = playgroundStore
         }
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.isInspectable = true
-        webView.allowsBackForwardNavigationGestures = true
+        webView.allowsBackForwardNavigationGestures = kind != .companion
         webView.allowsMagnification = true
-        if kind == .vesper, let background = lastPageBackground { webView.underPageBackgroundColor = background }
+        if kind != .playground, let background = lastPageBackground { webView.underPageBackgroundColor = background }
         return webView
+    }
+
+    /// Unlocks 120Hz ProMotion frame pacing for page animations inside Vesper web views by disabling
+    /// WebKit's `PreferPageRenderingUpdatesNear60FPS` feature when the private SPI is present; skips
+    /// safely otherwise.
+    private static func disable60FPSCap(_ prefs: WKPreferences) {
+        let featuresSel = NSSelectorFromString("_features")
+        let keySel = NSSelectorFromString("key")
+        let setEnabledSel = NSSelectorFromString("_setEnabled:forFeature:")
+        let prefsClass: AnyClass = WKPreferences.self
+        let rawFeatures: [Any]?
+        if let method = class_getClassMethod(prefsClass, featuresSel) {
+            typealias FeaturesFn = @convention(c) (AnyClass, Selector) -> Unmanaged<AnyObject>?
+            let fn = unsafeBitCast(method_getImplementation(method), to: FeaturesFn.self)
+            rawFeatures = fn(prefsClass, featuresSel)?.takeUnretainedValue() as? [Any]
+        } else if prefs.responds(to: featuresSel) {
+            rawFeatures = prefs.perform(featuresSel)?.takeUnretainedValue() as? [Any]
+        } else {
+            rawFeatures = nil
+        }
+        guard let features = rawFeatures, prefs.responds(to: setEnabledSel) else {
+            vlog("private WebKit 60fps feature toggle unavailable; skipped")
+            return
+        }
+        guard let feature = features.first(where: { obj in
+            guard let nsObj = obj as? NSObject, nsObj.responds(to: keySel),
+                  let key = nsObj.perform(keySel)?.takeUnretainedValue() as? String else { return false }
+            return key == "PreferPageRenderingUpdatesNear60FPS" || key == "PreferPageRenderingUpdatesNear60FPSEnabled"
+        }) as? NSObject else {
+            vlog("private WebKit feature PreferPageRenderingUpdatesNear60FPS not found; skipped")
+            return
+        }
+        guard let imp = class_getMethodImplementation(type(of: prefs), setEnabledSel) else { return }
+        typealias SetEnabledFn = @convention(c) (AnyObject, Selector, ObjCBool, AnyObject) -> Void
+        let setEnabled = unsafeBitCast(imp, to: SetEnabledFn.self)
+        setEnabled(prefs, setEnabledSel, ObjCBool(false), feature)
+        vlog("disabled WebKit PreferPageRenderingUpdatesNear60FPS")
     }
 
     /// Private WebKit preferences without which this macOS exposes no navigator.mediaDevices (so no
