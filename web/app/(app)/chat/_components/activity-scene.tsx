@@ -45,8 +45,6 @@ const LEARNING_PATH = "M18 44C34 44 34 16 52 16S70 44 88 44S104 16 114 16";
 /** The next-step scene's branches out of the finished step: up, straight on, down. */
 const NEXT_BRANCHES = ["M30 28C52 28 62 12 92 12", "M30 28H96", "M30 28C52 28 62 44 92 44"];
 
-const CODE_LINES ="M20 10H72 M30 19H112 M30 28H88 M20 37H60 M20 46H108";
-
 const toX = (px: number) => ({ "--to-x": `${px}px` }) as CSSProperties;
 const toFrom = (px: number) => ({ "--from-x": `${px}px` }) as CSSProperties;
 
@@ -111,10 +109,12 @@ type SplitKind = "image-view" | "design-view";
 const SCENES: Record<Exclude<ChatStatusKind, SplitKind>, ReactNode> = {
   thinking: (
     <>
-      <circle className="scene-box scene-breathe" cx="66" cy="28" r="22" fill="none" stroke="var(--accent)" strokeOpacity="0.35" strokeWidth="1.5" />
-      <circle className="scene-accent scene-drift-a" cx="54" cy="29" r="4" opacity="0.55" />
-      <circle className="scene-accent scene-drift-b" cx="66" cy="23" r="5" />
-      <circle className="scene-accent scene-drift-c" cx="78" cy="31" r="3.5" opacity="0.75" />
+      <circle className="scene-box scene-breathe" cx="66" cy="28" r="21" fill="none" stroke="var(--accent)" strokeOpacity="0.3" strokeWidth="1.5" />
+      <circle cx="66" cy="28" r="12.5" fill="none" stroke="var(--border-strong)" strokeDasharray="3 3" strokeWidth="1.2" opacity="0.7" />
+      <path className="scene-line-accent" strokeWidth="1.2" opacity="0.35" d="M52 31L66 19L80 31Z" />
+      <circle className="scene-accent scene-drift-a" cx="52" cy="31" r="3.6" opacity="0.65" />
+      <circle className="scene-accent scene-drift-b" cx="66" cy="19" r="4.6" />
+      <circle className="scene-warm scene-drift-c" cx="80" cy="31" r="3.4" opacity="0.85" />
     </>
   ),
   // From the step just finished, it tries two branches part way, then commits to one and lights its node.
@@ -137,11 +137,16 @@ const SCENES: Record<Exclude<ChatStatusKind, SplitKind>, ReactNode> = {
       <g className="scene-ns-from">{doneBadge(22, 28)}</g>
     </>
   ),
+  // An open knowledge spread with a wikilink chip and a reading highlight sweeping the right page.
   wiki: (
     <>
-      <rect className="scene-paper" x="38" y="5" width="56" height="46" rx="4" />
-      <rect className="scene-accent scene-sweep" x="38" y="18" width="56" height="9" opacity="0.3" />
-      <path className="scene-line" d="M45 13H85 M45 22H81 M45 31H87 M45 40H70" />
+      <rect className="scene-paper" x="20" y="6" width="46" height="44" rx="3" />
+      <rect className="scene-paper" x="66" y="6" width="46" height="44" rx="3" />
+      <rect className="scene-accent" opacity="0.28" x="26" y="13" width="20" height="7" rx="2" />
+      <path className="scene-line" strokeWidth="1.5" d="M26 26H58 M26 33H52 M26 40H56" />
+      <rect className="scene-accent scene-sweep" x="70" y="19" width="38" height="8" rx="1.5" opacity="0.28" />
+      <path className="scene-line-accent" strokeWidth="1.6" d="M73 14H96" />
+      <path className="scene-line" strokeWidth="1.5" d="M73 23H105 M73 31H101 M73 39H94" />
     </>
   ),
   tickets: (
@@ -181,8 +186,12 @@ const SCENES: Record<Exclude<ChatStatusKind, SplitKind>, ReactNode> = {
   ),
   "reading-code": (
     <>
-      <path className="scene-line" d={CODE_LINES} />
-      <rect className="scene-accent scene-scan" x="14" y="23" width="104" height="10" rx="2" opacity="0.25" />
+      <rect className="scene-paper" x="18" y="4" width="96" height="48" rx="4" />
+      <path className="scene-line" strokeWidth="1" opacity="0.35" d="M30 8V48" />
+      <path className="scene-line" strokeWidth="1.4" opacity="0.45" d="M23 13H26 M23 22H26 M23 31H26 M23 40H26" />
+      <path className="scene-line-accent" strokeWidth="1.8" d="M35 13H68" />
+      <path className="scene-line" strokeWidth="1.7" d="M41 22H104 M41 31H86 M35 40H96" />
+      <rect className="scene-accent scene-scan" x="33" y="22" width="75" height="9" rx="2" opacity="0.25" />
     </>
   ),
   // A lens sweeps across the code and locks onto the matched token.
@@ -200,41 +209,59 @@ const SCENES: Record<Exclude<ChatStatusKind, SplitKind>, ReactNode> = {
   ),
   "writing-code": (
     <>
-      <path className="scene-line-accent scene-left scene-type-1" d="M20 12H80" />
-      <path className="scene-line scene-left scene-type-2" d="M30 22H110" />
-      <path className="scene-line-done scene-left scene-type-3" d="M30 32H80" />
-      <path className="scene-line-done scene-left scene-type-4" d="M30 42H62" />
+      <rect className="scene-paper" x="18" y="4" width="96" height="48" rx="4" />
+      <path className="scene-line" strokeWidth="1" opacity="0.45" d="M18 13H114" />
+      {[24, 29, 34].map((cx) => (
+        <circle key={cx} className="scene-muted" cx={cx} cy="8.5" r="1.3" />
+      ))}
+      <path className="scene-line-accent scene-left scene-type-1" strokeWidth="1.8" d="M26 20H78" />
+      <path className="scene-line scene-left scene-type-2" strokeWidth="1.8" d="M34 28H102" />
+      <path className="scene-line-done scene-left scene-type-3" strokeWidth="1.8" d="M34 36H84" />
+      <path className="scene-line-done scene-left scene-type-4" strokeWidth="1.8" d="M34 44H66" />
       <g className="scene-caret-path">
-        <rect className="scene-caret" x="63" y="38" width="1.5" height="8" fill="var(--text)" />
+        <rect className="scene-caret" x="68" y="40.5" width="1.8" height="7" rx="0.5" fill="var(--text)" />
       </g>
     </>
   ),
+  // A test-runner card ticks off each suite row green as the progress bar fills.
   tests: (
     <>
-      {[26, 46, 66, 86, 106].map((cx, i) => (
-        <g key={cx}>
-          <circle className="scene-empty" cx={cx} cy="28" r="6.5" />
-          <circle className="scene-done scene-box scene-dot" cx={cx} cy="28" r="6.5" style={{ ...delay(i * 0.4), ...(i === 4 ? { transform: "scale(0)" } : {}) }} />
+      <rect className="scene-paper" x="20" y="4" width="92" height="48" rx="4" />
+      {[
+        { y: 14, end: 88 },
+        { y: 26, end: 98 },
+        { y: 38, end: 82 },
+      ].map(({ y, end }, i) => (
+        <g key={y}>
+          <circle className="scene-empty" cx="31" cy={y} r="4.5" strokeWidth="1.3" />
+          <g className={`scene-story scene-ts-${i}`}>
+            <circle className="scene-done" cx="31" cy={y} r="4.5" />
+            <path d={`M29 ${y}l1.4 1.4 2.7-2.8`} fill="none" stroke="var(--surface)" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+          </g>
+          <path className="scene-line" strokeWidth="1.6" d={`M41 ${y}H${end}`} />
         </g>
       ))}
+      <path className="scene-line" strokeWidth="2" opacity="0.25" d="M28 46.5H104" />
+      <path className="scene-line-done scene-story scene-ts-bar" strokeWidth="2" d="M28 46.5H104" />
     </>
   ),
   build: (
     <>
-      <path className="scene-line" d="M36 53H96" />
+      <path className="scene-line" d="M32 52H100" />
       <g className="scene-row-1">
-        {[42, 58, 74].map((x) => (
-          <rect key={x} className="scene-paper" x={x} y="40" width="15" height="12" rx="2" />
+        {[40, 58, 76].map((x) => (
+          <rect key={x} className="scene-paper" x={x} y="39" width="16" height="11" rx="2.5" />
         ))}
       </g>
       <g className="scene-row-2">
-        {[50, 66].map((x) => (
-          <rect key={x} className="scene-paper" x={x} y="27" width="15" height="12" rx="2" />
+        {[49, 67].map((x) => (
+          <rect key={x} className="scene-paper" x={x} y="26" width="16" height="11" rx="2.5" />
         ))}
       </g>
       <g className="scene-row-3">
-        <rect className="scene-accent" x="58" y="14" width="15" height="12" rx="2" />
+        <rect className="scene-accent" x="58" y="13" width="16" height="11" rx="2.5" />
       </g>
+      <g className="scene-box scene-bld-ok">{doneBadge(88, 16)}</g>
     </>
   ),
   install: (
@@ -362,8 +389,9 @@ const SCENES: Record<Exclude<ChatStatusKind, SplitKind>, ReactNode> = {
   ),
   image: (
     <>
+      <rect className="scene-paper" x="30" y="4" width="72" height="48" rx="5" />
       {["var(--border-strong)", "var(--text-tertiary)", "var(--accent)", "var(--accent)", "var(--text-tertiary)", "var(--accent)", "var(--accent)", "var(--state-progress)", "var(--border-strong)", "var(--state-done)", "var(--state-done)", "var(--state-done)"].map((fill, i) => (
-        <rect key={i} className="scene-tile" x={40 + (i % 4) * 13} y={6 + Math.floor(i / 4) * 14.67} width="13" height="14.67" fill={fill} opacity={i % 4 === 2 ? 0.75 : 1} style={delay(((i * 5) % 12) * 0.08)} />
+        <rect key={i} className="scene-tile" x={36 + (i % 4) * 15.5} y={9 + Math.floor(i / 4) * 13} width="13.5" height="11" rx="2" fill={fill} opacity={i % 4 === 2 ? 0.78 : 1} style={delay(((i * 5) % 12) * 0.08)} />
       ))}
     </>
   ),
@@ -392,13 +420,15 @@ const SCENES: Record<Exclude<ChatStatusKind, SplitKind>, ReactNode> = {
   runs: (
     <>
       {[
-        { y: 14, rest: 0.8, seconds: 2.6, stroke: "var(--accent)" },
-        { y: 28, rest: 0.45, seconds: 3.7, stroke: "var(--state-done)" },
-        { y: 42, rest: 0.65, seconds: 3.1, stroke: "var(--state-progress)" },
+        { y: 6, rest: 0.8, seconds: 2.6, stroke: "var(--accent)" },
+        { y: 22, rest: 0.5, seconds: 3.7, stroke: "var(--state-done)" },
+        { y: 38, rest: 0.68, seconds: 3.1, stroke: "var(--state-progress)" },
       ].map(({ y, rest, seconds, stroke }) => (
         <g key={y}>
-          <path className="scene-line" d={`M24 ${y}H108`} opacity="0.3" />
-          <path className="scene-line scene-left scene-bar" d={`M24 ${y}H108`} style={{ stroke, transform: `scaleX(${rest})`, animationDuration: `${seconds}s` }} />
+          <rect className="scene-paper" x="18" y={y} width="96" height="12" rx="3" />
+          <circle cx="26" cy={y + 6} r="2.4" fill={stroke} />
+          <path className="scene-line" strokeWidth="2.2" d={`M34 ${y + 6}H106`} opacity="0.25" />
+          <path className="scene-line scene-left scene-bar" strokeWidth="2.2" d={`M34 ${y + 6}H106`} style={{ stroke, transform: `scaleX(${rest})`, animationDuration: `${seconds}s` }} />
         </g>
       ))}
     </>
@@ -428,15 +458,18 @@ const SCENES: Record<Exclude<ChatStatusKind, SplitKind>, ReactNode> = {
       <circle className="scene-warm scene-box scene-node" cx="80" cy="47" r="2" style={delay(1)} />
     </>
   ),
-  // A key travels to a lock: Vesper adds the secret on the way out.
+  // A key glides into the padlock and lifts its shackle: Vesper adds the secret on the way out.
   secret: (
     <>
-      <circle className="scene-warm scene-box" cx="30" cy="28" r="9" fillOpacity="0.85" />
-      <path className="scene-line-accent scene-plug" d="M39 28H62M54 28V34M60 28V33" />
-      <rect className="scene-accent scene-box" x="86" y="22" width="22" height="18" rx="3" />
-      <path className="scene-line-accent" d="M90 22V17A7 7 0 0 1 104 17V22" />
-      <path className="scene-line-accent scene-link" d="M64 28H84" pathLength={1} strokeOpacity="0.5" />
-      <circle className="scene-warm scene-box scene-node" cx="97" cy="31" r="2" style={delay(0.5)} />
+      <g className="scene-plug">
+        <circle className="scene-warm" cx="28" cy="29" r="7.5" fillOpacity="0.88" />
+        <circle cx="28" cy="29" r="2.5" fill="var(--surface)" />
+        <path className="scene-line-accent" d="M36 29H58M49 29V35M55 29V34" />
+      </g>
+      <path className="scene-line-accent scene-link" d="M62 29H82" pathLength={1} strokeOpacity="0.45" />
+      <path className="scene-line-accent scene-sec-shackle" d="M89 23V17a7 7 0 0 1 14 0v6" />
+      <rect className="scene-paper" x="84" y="23" width="24" height="20" rx="3.5" stroke="var(--accent)" strokeWidth="1.5" />
+      <circle className="scene-warm scene-box scene-node" cx="96" cy="33" r="2.6" style={delay(0.4)} />
     </>
   ),
   memory: (

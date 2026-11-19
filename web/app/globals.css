@@ -267,13 +267,13 @@
 @keyframes scene-drift-c { 50% { transform: translate(4px, 6px); } }
 
 .scene-sweep { animation: scene-sweep 2.4s ease-in-out infinite alternate; }
-@keyframes scene-sweep { from { transform: translateY(-10px); } to { transform: translateY(20px); } }
+@keyframes scene-sweep { from { transform: translateY(-6px); } to { transform: translateY(18px); } }
 
 .scene-scan { animation: scene-scan 2.2s linear infinite; }
 @keyframes scene-scan {
-  0% { transform: translateY(-18px); opacity: 0; }
-  10%, 90% { opacity: 0.25; }
-  100% { transform: translateY(18px); opacity: 0; }
+  0% { transform: translateY(-13px); opacity: 0; }
+  12%, 88% { opacity: 0.25; }
+  100% { transform: translateY(17px); opacity: 0; }
 }
 
 .scene-type-1 { animation: scene-type-1 4s linear infinite; }
@@ -287,23 +287,34 @@
 .scene-caret-path { animation: scene-caret-path 4s linear infinite; }
 .scene-caret { animation: scene-caret 0.8s steps(1) infinite; }
 @keyframes scene-caret-path {
-  0% { transform: translate(-42px, -30px); }
-  20% { transform: translate(18px, -30px); }
-  20.01% { transform: translate(-32px, -20px); }
-  40% { transform: translate(48px, -20px); }
-  40.01% { transform: translate(-32px, -10px); }
-  60% { transform: translate(18px, -10px); }
-  60.01% { transform: translate(-32px, 0); }
+  0% { transform: translate(-42px, -24px); }
+  20% { transform: translate(10px, -24px); }
+  20.01% { transform: translate(-34px, -16px); }
+  40% { transform: translate(34px, -16px); }
+  40.01% { transform: translate(-34px, -8px); }
+  60% { transform: translate(16px, -8px); }
+  60.01% { transform: translate(-34px, 0); }
   75%, 100% { transform: translate(0, 0); }
 }
 @keyframes scene-caret { 50% { opacity: 0; } }
 
-.scene-dot { animation: scene-dot 4s ease-out infinite both; }
-@keyframes scene-dot {
-  0% { transform: scale(0); }
-  8%, 55% { transform: scale(1); }
-  63%, 100% { transform: scale(0); }
-}
+/* tests: each checklist row pops green in sequence while the bottom bar fills. */
+.scene-ts-0 { animation-name: scene-ts-0; }
+.scene-ts-1 { animation-name: scene-ts-1; }
+.scene-ts-2 { animation-name: scene-ts-2; }
+.scene-ts-bar { animation-name: scene-ts-bar; transform-origin: left center; animation-timing-function: linear; }
+@keyframes scene-ts-0 { 0%, 6% { transform: scale(0); } 12% { transform: scale(1.25); } 16%, 88% { transform: scale(1); } 100% { transform: scale(0); } }
+@keyframes scene-ts-1 { 0%, 26% { transform: scale(0); } 32% { transform: scale(1.25); } 36%, 88% { transform: scale(1); } 100% { transform: scale(0); } }
+@keyframes scene-ts-2 { 0%, 46% { transform: scale(0); } 52% { transform: scale(1.25); } 56%, 88% { transform: scale(1); } 100% { transform: scale(0); } }
+@keyframes scene-ts-bar { 0%, 6% { transform: scaleX(0); } 56%, 88% { transform: scaleX(1); opacity: 1; } 100% { transform: scaleX(1); opacity: 0; } }
+
+/* build: completion badge pops once the top cap lands. */
+.scene-bld-ok { animation: scene-bld-ok 4s ease-out infinite both; }
+@keyframes scene-bld-ok { 0%, 60% { transform: scale(0); } 67% { transform: scale(1.25); } 72%, 86% { transform: scale(1); opacity: 1; } 100% { transform: scale(0); opacity: 0; } }
+
+/* secret: padlock shackle lifts slightly as the key glides in. */
+.scene-sec-shackle { animation: scene-sec-shackle 2.4s ease-in-out infinite; }
+@keyframes scene-sec-shackle { 0%, 35%, 100% { transform: none; } 55%, 75% { transform: translateY(-3px); } }
 
 .scene-commit { animation: scene-commit 3.2s linear infinite; }
 @keyframes scene-commit {
