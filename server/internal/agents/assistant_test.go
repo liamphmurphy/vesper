@@ -107,3 +107,16 @@ func TestAssistantInstructionsMemoryVsKnowledge(t *testing.T) {
 		}
 	}
 }
+
+func TestAssistantCodingChatChecksConflictsBeforePush(t *testing.T) {
+	coding := agents.AssistantInstructionsFor(true, false, nil, false, false)
+	for _, want := range []string{"check for conflicts against the target branch", "git merge origin/HEAD", "before calling request_push"} {
+		if !strings.Contains(coding, want) {
+			t.Errorf("coding instructions missing %q", want)
+		}
+	}
+	nonCoding := agents.AssistantInstructionsFor(false, false, nil, false, false)
+	if strings.Contains(nonCoding, "check for conflicts") {
+		t.Errorf("non-coding instructions should not include git conflict instructions")
+	}
+}
