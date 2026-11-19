@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import { api, unwrap, type Schemas } from "@/lib/api/client";
-import { hasLiveRun, keys, useBootstrap, useBulkUpdate, useCosts, useDecideRunApproval, useDispatch, useEpicOverviews, useInbox, useTickets, useUpdateEpic } from "@/lib/api/hooks";
+import { hasLiveRun, keys, useBootstrap, useBulkUpdate, useCosts, useDecideRunApproval, useDispatch, useEpicCriterionMutations, useEpicOverviews, useInbox, useTickets, useUpdateEpic } from "@/lib/api/hooks";
 import { spendLabel } from "@/lib/costs";
 import { cx } from "@/lib/cx";
 import { approvalId, epicProgress, needsYouByTicket, startReady, ticketNeedsYou, type NeedsYou } from "@/lib/work-rows";
@@ -15,6 +15,7 @@ import { StateText } from "@/app/(app)/tickets/_components/ticket-row";
 import { useBoard } from "@/lib/api/board-hooks";
 import { dueDate } from "@/lib/format";
 import { burnUp, isOverdue, ymd, type BurnUp } from "@/lib/epics";
+import { buildEpicInspectorSections } from "@/lib/native-shell/models/epic-inspector";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Banner, EmptyState, Skeleton } from "@/components/ui/primitives";
 import { Toggle } from "@/components/ui/controls";
@@ -239,6 +240,45 @@ function EpicDetail({ epic: e }: { epic: EpicOverview }) {
  */
 function EpicContext({ epic: e }: { epic: EpicOverview }) {
   const tickets = useTickets({ epic: e.epic.id, view: "all" });
+  const board = useBoard(e.project.key, { epic: e.epic.id, include_canceled: false });
+  const updateEpic = useUpdateEpic(e.epic.id);
+  const mutations = useEpicCriterionMutations(e.epic.id);
+  const summary = board.data?.epic;
+  const criteria = summary ? [...summary.criteria].sort((a, b) => a.position - b.position) : [];
+  const blockers = summary?.done_blockers;
+  const gated = blockers ? blockers.open_tickets.length > 0 || blockers.unchecked_criteria.length > 0 : false;
+  const closed = e.epic.status === "done";
+  const blockerParts: string[] = [];
+  if (blockers?.open_tickets.length) blockerParts.push(`Open: ${blockers.open_tickets.join(", ")}`);
+  if (blockers?.unchecked_criteria.length) {
+    blockerParts.push(`${blockers.unchecked_criteria.length} unchecked criteria`);
+  }
+  const burn = tickets.data ? burnUp(tickets.data, { start: e.start_date, today: ymd(new Date()) }) : undefined;
+  const sections = buildEpicInspectorSections({
+    status: e.epic.status,
+    pointsDone: e.epic.points_done,
+    pointsTotal: e.epic.points_total,
+    criteriaDone: e.epic.criteria_done,
+    criteriaTotal: e.epic.criteria_total,
+    criteria: criteria.map((c) => ({ id: c.id, text: `${c.position}. ${c.text}`, done: c.done })),
+    canMarkDone: !closed && criteria.length > 0 && !gated && !updateEpic.isPending,
+    canToggleStatus: !!summary && (criteria.length > 0 || closed),
+    blockerNote: !closed && gated ? blockerParts.join(" · ") : undefined,
+    ownerName: e.owner?.name ?? "Unassigned",
+    schedule: `${e.start_date ? dueDate(e.start_date) : "No start"} → ${e.target_date ? dueDate(e.target_date) : "No target"}`,
+    source: e.source ? { title: e.source.title, href: e.source.href } : undefined,
+    requiresMockup: e.epic.requires_mockup,
+    agentHours: `${(e.agent_seconds / 3600).toFixed(1)}h`,
+    burnUpPoints:
+      burn && burn.scope > 0
+        ? burn.points.map((pt) => ({ label: dueDate(pt.date), value: pt.done, secondary: burn.scope }))
+        : [],
+    burnUpSummary:
+      burn && burn.scope > 0
+        ? `${burn.done} / ${burn.scope} pts (${Math.round((burn.done / burn.scope) * 100)}%)`
+        : undefined,
+  });
+
   const context = (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <ContextSection title="Acceptance criteria" aside={`${e.epic.criteria_done}/${e.epic.criteria_total}`}>
@@ -253,7 +293,7 @@ function EpicContext({ epic: e }: { epic: EpicOverview }) {
         ) : tickets.isPending ? (
           <Skeleton className="h-32" />
         ) : (
-          <BurnUpChart data={burnUp(tickets.data, { start: e.start_date, today: ymd(new Date()) })} />
+          <BurnUpChart data={burn!} />
         )}
       </ContextSection>
     </div>
@@ -262,8 +302,28 @@ function EpicContext({ epic: e }: { epic: EpicOverview }) {
     <CompanionDock
       app="epic"
       tabs={[
-        { id: "context", label: "Context", icon: "sidebar", content: context },
-        { id: "chat", label: "Chat", icon: "msg", content: <WorkChat /> },
+        {
+          id: "context",
+          label: "Context",
+          icon: "sidebar",
+          native: {
+            kind: "native",
+            sections,
+            onToggle: (fieldId, checked) => {
+              if (fieldId === "requires_mockup") {
+                updateEpic.mutate({ requires_mockup: checked });
+              } else if (fieldId.startsWith("criterion:")) {
+                mutations.update.mutate({ id: fieldId.slice("criterion:".length), done: checked });
+              }
+            },
+            onAction: (actionId) => {
+              if (actionId === "mark_epic_done") updateEpic.mutate({ status: "done" });
+              else if (actionId === "reopen_epic") updateEpic.mutate({ status: "open" });
+            },
+          },
+          content: context,
+        },
+        { id: "chat", label: "Chat", icon: "msg", native: { kind: "companion" }, content: <WorkChat /> },
       ]}
     />
   );

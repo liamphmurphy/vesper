@@ -1,7 +1,7 @@
 // Small helpers shared by the screen models.
 import { initials } from "../chats-model.ts";
 import { DUSK } from "../../palette-defaults.ts";
-import type { Avatar } from "../protocol.ts";
+import type { Avatar, Tone } from "../protocol.ts";
 
 const AGENT_HUES = ["atlas", "quill", "sentry", "juno", "nova", "relay", "pike", "echo"] as const;
 
@@ -35,4 +35,44 @@ export function navAvatar(name: string, color?: string, imageUrl?: string | null
 /** The page's origin for absolute avatar urls; undefined while rendering on the server. */
 export function pageOrigin(): string | undefined {
   return typeof window === "undefined" ? undefined : window.location.origin;
+}
+
+const TICKET_TONES: Record<string, Tone> = {
+  done: "done",
+  in_progress: "accent",
+  in_review: "warning",
+  canceled: "neutral",
+  todo: "neutral",
+  backlog: "neutral",
+};
+
+export function ticketStatusTone(status: string): Tone {
+  return TICKET_TONES[status] ?? "neutral";
+}
+
+const RUN_TONES: Record<string, Tone> = {
+  running: "done",
+  queued: "neutral",
+  starting: "accent",
+  waiting: "human",
+  paused: "human",
+  waiting_for_quota: "warning",
+  blocked: "blocked",
+  failed: "blocked",
+  completed: "done",
+  cancelled: "neutral",
+};
+
+export function runStateTone(state: string): Tone {
+  return RUN_TONES[state] ?? "neutral";
+}
+
+const HEALTH_TONES: Record<string, Tone> = {
+  on_track: "done",
+  at_risk: "warning",
+  off_track: "blocked",
+};
+
+export function epicHealthTone(health: string): Tone {
+  return HEALTH_TONES[health] ?? "neutral";
 }

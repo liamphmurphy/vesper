@@ -19,14 +19,9 @@ function putBlockers(key: string, revision: number, blockedBy: string[]) {
   return unwrap(api.PUT("/tickets/{key}/dependencies", { params: { path: { key } }, body: { revision, blocked_by: blockedBy } }));
 }
 
-/**
- * Blocked by / Blocks in the side panel. Each list shows the linked tickets'
- * status and edits in place: adding to "Blocks" adds this ticket as a blocker
- * of the other one.
- */
-export function Dependencies({ ticket: t }: { ticket: Ticket }) {
+export function useDependencyChange(t: Ticket) {
   const qc = useQueryClient();
-  const change = useMutation({
+  return useMutation({
     mutationFn: async (c: { list: "blocked_by" | "blocks"; op: "add" | "remove"; key: string }) => {
       if (c.list === "blocked_by") {
         const keys = t.blocked_by.map((d) => d.key);
@@ -43,6 +38,15 @@ export function Dependencies({ ticket: t }: { ticket: Ticket }) {
     onSettled: () =>
       Promise.all(["tickets", "planning", "inbox", "bootstrap", "dashboard", "agent-overviews", "boards"].map((key) => qc.invalidateQueries({ queryKey: [key] }))),
   });
+}
+
+/**
+ * Blocked by / Blocks in the side panel. Each list shows the linked tickets'
+ * status and edits in place: adding to "Blocks" adds this ticket as a blocker
+ * of the other one.
+ */
+export function Dependencies({ ticket: t }: { ticket: Ticket }) {
+  const change = useDependencyChange(t);
   const live = hasLiveRun(t);
   return (
     <div className="flex flex-col gap-5">
