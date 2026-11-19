@@ -1,44 +1,35 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { WorkChat } from "@/components/domain/work-chat";
-import { Icon } from "@/components/ui/icon";
 import { useNavCounts } from "@/lib/use-nav-counts";
 import { useDismissedReviewRequests, useGitHubReviewRequests, useRefreshGitHubReviewRequests, useReviewFilterPrefs } from "@/lib/api/github-reviews-hooks";
 import { useInbox, usePersonaDock } from "@/lib/api/hooks";
 import { COMPANION_OPEN_EVENT } from "@/lib/dev-workspace";
-import { claimCompanion, companionClaimed, companionSlot, rightRailSlot, setCompanionSlot, setRightRailSlot, subscribeCompanion } from "@/lib/companion";
+import { claimCompanion, companionClaimed, companionSlot, setCompanionSlot, subscribeCompanion } from "@/lib/companion";
 import { cx } from "@/lib/cx";
 import { actOnDock, dockReducer, dockShortcut, loadDock, saveDock, type DockAction, type DockState } from "@/lib/editor-layout";
 import { connectedHarnesses } from "@/lib/harness-activity";
 import { countReviewRequests, excludeDismissedReviewRequests, filterReviewRequests, isReviewRequestDismissed } from "@/lib/github-reviews";
 import { isOpen } from "@/lib/inbox";
 import { postDeduped } from "@/lib/native-shell/bridge";
-import { useIsNativeShell, useNativeCommand } from "@/lib/native-shell/hooks";
-import { buildRailModel, dockRail, dockRailAction, dockRailItems, railEffect, type DockRailTab } from "@/lib/native-shell/models/rail";
-import { isActive } from "@/lib/project-scope";
-import { useCompact } from "@/lib/viewport";
+import { useNativeCommand } from "@/lib/native-shell/hooks";
+import { buildRailModel, dockRail, dockRailAction, dockRailItems, harnessRailInputs, railEffect, type DockRailTab } from "@/lib/native-shell/models/rail";
 import { Dock, useReadingFocus, type DockTab } from "./editor-layout";
-import { HarnessFooter, harnessRailInputs } from "./harness-footer";
-import { NeedsYou } from "./needs-you";
-import { PrReviewRequests } from "./pr-review-requests";
 import { isTyping } from "./shortcuts";
 import { useAppearance } from "./theme";
 
 /**
  * Puts a page's own dock in the shell's right-hand column, in place of the default companion, so
  * every page's panel sits in the same place at the same width (DESIGN.md §3). The content keeps
- * this page's React context. Phones have no column: there the dock renders where it is.
+ * this page's React context.
  */
 export function CompanionPortal({ children }: { children: ReactNode }) {
   const slot = useSyncExternalStore(subscribeCompanion, companionSlot, () => null);
-  const compact = useCompact();
   useEffect(() => claimCompanion(), []);
-  if (slot) return createPortal(children, slot);
-  return compact ? <>{children}</> : null;
+  return slot ? createPortal(children, slot) : null;
 }
 
 /**
@@ -117,20 +108,15 @@ function DefaultCompanion() {
 }
 
 /**
- * Puts a Dock's rail controls into the permanent right rail's top dynamic slot on wide screens. In
- * the Mac app the shell draws the rail, so the dock describes its controls as data (`native`)
- * instead and the shell's `rail.action` runs the same dispatches the buttons do.
+ * Registers a Dock's rail controls with the Mac app's native right rail as data (`native`) so the
+ * shell's `rail.action` runs the same dispatches.
  */
 export function RightRailPortal({
-  children,
   native,
 }: {
-  children: ReactNode;
   native?: { tabs: readonly (Omit<DockRailTab, "action"> & { run?: () => void })[]; activeId: string | undefined; expanded: boolean; dispatch: (a: DockAction) => void };
 }) {
-  const slot = useSyncExternalStore(subscribeCompanion, rightRailSlot, () => null);
-  const isNative = useIsNativeShell();
-  const registered = isNative && !!native;
+  const registered = !!native;
   const items = useMemo(
     () => (native ? dockRailItems(railTabs(native.tabs), native.activeId, native.expanded) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the tabs' content is by id; their description is what matters
@@ -152,30 +138,12 @@ export function RightRailPortal({
     });
     return () => dockRail.clear(token);
   }, [registered, items]);
-  if (isNative) return null;
-  return slot ? createPortal(children, slot) : null;
+  return null;
 }
 
 /** A dock's tabs as the rail model sees them: a tab with `run` is an action button. */
 const railTabs = (tabs: readonly (Omit<DockRailTab, "action"> & { run?: () => void })[]): DockRailTab[] =>
   tabs.map(({ run, ...t }) => (run ? { ...t, action: true } : t));
-
-function RailFootLinks({ settingsNeedYou }: { settingsNeedYou: boolean }) {
-  const pathname = usePathname();
-  const link = (href: string) => cx(
-    "relative grid size-[30px] place-items-center rounded-md text-12",
-    isActive(pathname, href) ? "bg-selected text-fg" : "text-fg-tertiary hover:bg-hover hover:text-fg",
-  );
-  return (
-    <div className="flex flex-none flex-col items-center gap-1 pb-1">
-      <Link href="/settings" title="Settings: profile, appearance, personas, credentials and runners" aria-current={isActive(pathname, "/settings") ? "page" : undefined} className={link("/settings")}>
-        <Icon name="gear" size={15} />
-        <span className="sr-only">Settings{settingsNeedYou && ": a setting runs need is missing"}</span>
-        {settingsNeedYou && <span aria-hidden className="absolute right-1 top-1 size-1.5 rounded-full bg-state-human" />}
-      </Link>
-    </div>
-  );
-}
 
 /** What the page tells the Mac shell about the rail: the page's dock, then reviews, Needs you, harnesses and links. */
 function NativeRail() {
@@ -264,36 +232,9 @@ function NativeRail() {
   return null;
 }
 
-/**
- * The permanent 44px right rail on every desktop screen: dynamic page controls (Dock rail) at the
- * top, and persistent utilities (Needs you, harnesses, Customization, Settings) anchored at the bottom.
- */
+/** Publishes the rail model for the Mac app's native right rail. */
 function RightRail() {
-  const native = useIsNativeShell();
-  return native ? <NativeRail /> : <WebRail />;
-}
-
-function WebRail() {
-  const counts = useNavCounts();
-  const [appearance] = useAppearance();
-  const harness = appearance.showHarnessActivity !== false;
-  const settingsNeedYou = counts.settings > 0;
-  return (
-    <aside
-      aria-label="Right rail"
-      data-right-rail
-      className="relative z-30 flex w-[44px] flex-none flex-col items-center border-l border-border-subtle bg-sidebar py-2.5"
-    >
-      <div ref={setRightRailSlot} data-right-rail-top className="flex w-full flex-col items-center gap-2 empty:hidden" />
-      <div className="mt-auto flex w-full flex-col items-center gap-2 pt-2">
-        <PrReviewRequests />
-        <NeedsYou variant="rail" count={counts.inbox} />
-        {harness && <HarnessFooter layout="rail" />}
-        <div aria-hidden className="h-px w-6 bg-border-subtle" />
-        <RailFootLinks settingsNeedYou={settingsNeedYou} />
-      </div>
-    </aside>
-  );
+  return <NativeRail />;
 }
 
 /**

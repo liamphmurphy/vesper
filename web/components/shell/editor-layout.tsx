@@ -3,8 +3,7 @@
 import Link from "next/link";
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Icon, type IconName } from "@/components/ui/icon";
-import { Sheet } from "@/components/ui/sheet";
+import { type IconName } from "@/components/ui/icon";
 import { cx } from "@/lib/cx";
 import {
   actOnDock,
@@ -17,7 +16,6 @@ import {
   type DockAction,
   type DockState,
 } from "@/lib/editor-layout";
-import { useCompact } from "@/lib/viewport";
 import { isTyping } from "./shortcuts";
 import { HistoryNav } from "./history-nav";
 import { NavigatorPortal, type NativeNavigator } from "./navigator-slot";
@@ -156,7 +154,6 @@ export function EditorLayout({
   defaultOpen?: boolean;
 }) {
   const uid = useId();
-  const compact = useCompact();
   const router = useRouter();
   const embed = useContext(EditorEmbedContext);
   const back = embed?.back ?? header.back;
@@ -195,8 +192,6 @@ export function EditorLayout({
   const tabIds = dock.map((t) => t.id).join("\n");
   const [state, setState] = useState<DockState>({ open: defaultOpen, tab: dock[0]?.id ?? "", hidden: false });
   const [loaded, setLoaded] = useState(false);
-  // On phones the sheet starts closed whatever was remembered, and isn't remembered itself.
-  const [sheetOpen, setSheetOpen] = useState(false);
   const [focusChat, setFocusChat] = useState(0);
 
 
@@ -216,22 +211,13 @@ export function EditorLayout({
     if (loaded) saveDock(window.localStorage, app, state);
   }, [app, state, loaded]);
 
-  // On phones the dock is visible only while its sheet is open, so that's what `open` reports.
-  const reportedOpen = compact ? sheetOpen && state.open : state.open;
   useEffect(() => {
-    onDockChange?.({ ...state, open: reportedOpen });
-  }, [state, reportedOpen, onDockChange]);
+    onDockChange?.(state);
+  }, [state, onDockChange]);
 
-  const dispatch = useCallback(
-    (a: DockAction) => {
-      setState((s) => actOnDock(s, a));
-      if (!compact) return;
-      if (a.type === "open" || a.type === "select") setSheetOpen(true);
-      else if (a.type === "collapse" || a.type === "toggleHidden") setSheetOpen(false);
-      else setSheetOpen((o) => !o);
-    },
-    [compact],
-  );
+  const dispatch = useCallback((a: DockAction) => {
+    setState((s) => actOnDock(s, a));
+  }, []);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -257,11 +243,10 @@ export function EditorLayout({
     setShownN(showN);
     if (show?.tab) {
       setState((s) => dockReducer(s, { type: "open", tab: show.tab }));
-      if (compact) setSheetOpen(true);
     }
   }
 
-  // After ⌘J renders the Chat panel (or the sheet's focus trap settles), focus its composer.
+  // After ⌘J renders the Chat panel, focus its composer.
   useEffect(() => {
     if (!focusChat) return;
     const id = requestAnimationFrame(() => {
@@ -271,11 +256,8 @@ export function EditorLayout({
     return () => cancelAnimationFrame(id);
   }, [focusChat, uid, chatTab]);
 
-  const active = dock.find((t) => t.id === state.tab) ?? dock[0];
   const hasDock = dock.length > 0;
   const docked = hasDock && !state.hidden;
-
-  const panels = dockPanels(uid, dock, active?.id, compact);
 
   return (
     <div data-editor-layout={app} className={cx("flex min-h-0 min-w-0 flex-col bg-bg", embed ? "flex-1" : "h-dvh flex-none")}>
@@ -287,25 +269,20 @@ export function EditorLayout({
           {nativeBar ? <h1 className="sr-only">{nativeHeader.title}</h1> : embed ? <EmbeddedBar {...header} slot={embed.actions} /> : <Header {...header} />}
           <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-auto bg-bg">{main}</div>
         </div>
-        {/* The dock is the companion: in the shell's right-hand column on wide screens, here on phones.
+        {/* The dock is the companion: in the shell's right-hand column.
             An app's panels unmount once the dock finishes collapsing, as they always have. */}
         <CompanionPortal>
-          {docked && <Dock uid={uid} tabs={dock} state={state} dispatch={dispatch} unmountWhenClosed railOnly={compact} />}
+          {docked && <Dock uid={uid} tabs={dock} state={state} dispatch={dispatch} unmountWhenClosed />}
         </CompanionPortal>
       </div>
-      {compact && docked && (
-        <Sheet open={sheetOpen} onOpenChange={(o) => (o ? setSheetOpen(true) : dispatch({ type: "collapse" }))} title={active?.label ?? ""} className="h-[85dvh]">
-          <div className="flex h-full min-h-0 flex-col">{panels}</div>
-        </Sheet>
-      )}
     </div>
   );
 }
 
 /** The tab panels of a dock, one per tab, only the active one shown. Kept mounted so switching tabs or collapsing keeps their state. */
-export function dockPanels(uid: string, tabs: DockTab[], activeId: string | undefined, compact = false): ReactNode {
+export function dockPanels(uid: string, tabs: DockTab[], activeId: string | undefined): ReactNode {
   // A lone tab has no tab to be labelled by (the dock shows tabs only when there is a choice).
-  const labelled = !compact && tabs.length > 1;
+  const labelled = tabs.length > 1;
   return tabs.map((t) => (
     <div
       key={t.id}
@@ -350,7 +327,6 @@ export function Dock({
   panels,
   unmountWhenClosed = false,
   overlay = "xl",
-  railOnly = false,
 }: {
   uid: string;
   tabs: DockTab[];
@@ -361,8 +337,6 @@ export function Dock({
   /** Unmount tab panels once the collapse animation finishes (keeps them visible during the slide; ⌘. hiding keeps them mounted). */
   unmountWhenClosed?: boolean;
   overlay?: "xl" | "lg";
-  /** Phones: only the rail, whose icons open the owner's sheet. */
-  railOnly?: boolean;
 }) {
   const isNative = useIsNativeShell();
   const pathname = usePathname();
@@ -383,9 +357,9 @@ export function Dock({
   };
   // ⌘. hides the dock but keeps its panels mounted (the owner passes null panels or unmountWhenClosed to unmount them).
   const shown = state.open && !state.hidden;
-  const nativeHosted = isNative && !railOnly && !!active?.native;
+  const nativeHosted = isNative && !!active?.native;
   const webShown = shown && !nativeHosted;
-  const expanded = !railOnly && shown;
+  const expanded = shown;
   const [phase, setPhase] = useState<"idle" | "preparing" | "opening" | "closing">("idle");
   const [wasWebShown, setWasWebShown] = useState(webShown);
   if (webShown !== wasWebShown) {
@@ -418,7 +392,7 @@ export function Dock({
   const companionTab = panelTabs.find((t) => t.native?.kind === "companion");
   const companionNative = companionTab?.native?.kind === "companion" ? companionTab.native : undefined;
   const inspectorModel: InspectorModel | null =
-    isNative && !railOnly && panelTabs.length > 0
+    isNative && panelTabs.length > 0
       ? {
           id: uid,
           open: shown,
@@ -510,64 +484,9 @@ export function Dock({
         : overlay === "xl"
           ? "[--dock-w:360px] max-xl:[--dock-w:min(360px,calc(100vw-96px))]"
           : "[--dock-w:360px] max-lg:[--dock-w:min(360px,calc(100vw-96px))]";
-  const renderTab = (t: DockTab) => {
-    if (t.run) {
-      return (
-        <button key={t.id} type="button" aria-label={t.label} title={t.label} onClick={t.run}
-          className="relative grid size-8 place-items-center rounded-full text-fg-secondary hover:bg-hover hover:text-fg">
-          <TabIcon tab={t} size={16} />
-        </button>
-      );
-    }
-    const selected = expanded && t.id === active?.id;
-    const asTab = expanded && panelTabs.length > 1;
-    const status = `${t.busy ? ", working" : ""}${t.unread ? ", unread" : ""}`;
-    return (
-      <button
-        key={t.id}
-        type="button"
-        role={asTab ? "tab" : undefined}
-        id={asTab ? `${uid}-tab-${t.id}` : undefined}
-        aria-selected={asTab ? selected : undefined}
-        aria-controls={asTab ? `${uid}-panel-${t.id}` : undefined}
-        aria-pressed={!asTab && expanded ? true : undefined}
-        aria-label={asTab ? undefined : `${expanded ? "Collapse" : "Open"} ${t.label}${status}`}
-        title={selected ? `${t.label}: click to collapse` : t.label}
-        onClick={() => dispatch({ type: expanded ? "select" : "open", tab: t.id })}
-        className={cx(
-          "relative grid size-8 place-items-center rounded-full hover:bg-hover hover:text-fg",
-          selected ? "bg-selected text-fg" : "text-fg-secondary",
-        )}
-      >
-        <TabIcon tab={t} size={16} />
-        {asTab && <span className="sr-only">{t.label}</span>}
-        {t.badge && <span className="pointer-events-none absolute -right-1 -top-1">{t.badge}</span>}
-      </button>
-    );
-  };
-  const railControls = (
-    <>
-      <button
-        type="button"
-        aria-label={expanded ? "Collapse panel" : "Expand panel"}
-        title={expanded ? "Collapse panel (⌘\\)" : "Expand panel (⌘\\)"}
-        onClick={() => dispatch(expanded ? { type: "collapse" } : { type: "open", tab: active?.id ?? "" })}
-        className="grid size-7 place-items-center rounded-md border border-border text-fg-secondary hover:bg-hover hover:text-fg"
-      >
-        <span aria-hidden>{expanded ? "⇥" : "⇤"}</span>
-      </button>
-      {expanded && panelTabs.length > 1 ? (
-        <div role="tablist" aria-label="Panel tabs" aria-orientation="vertical" className="flex flex-col items-center gap-2">
-          {tabs.map(renderTab)}
-        </div>
-      ) : (
-        tabs.map(renderTab)
-      )}
-    </>
-  );
   return (
     <>
-      {!railOnly && !nativeHosted && <aside
+      {!nativeHosted && <aside
         aria-label="Panel"
         hidden={!visible}
         data-open={webShown}
@@ -602,33 +521,8 @@ export function Dock({
           </DockSlotsContext.Provider>
         </div>
       </aside>}
-      {!state.hidden && (
-        railOnly ? (
-          <nav aria-label="Panel rail" className="flex w-[44px] flex-none flex-col items-center gap-2 border-l border-border-subtle bg-sidebar py-2.5">
-            {railControls}
-          </nav>
-        ) : (
-          <RightRailPortal native={{ tabs, activeId: active?.id, expanded, dispatch }}>
-            <nav aria-label="Panel rail" className="flex w-full flex-col items-center gap-2">
-              {railControls}
-            </nav>
-          </RightRailPortal>
-        )
-      )}
+      {!state.hidden && <RightRailPortal native={{ tabs, activeId: active?.id, expanded, dispatch }} />}
     </>
-  );
-}
-
-function TabIcon({ tab, size = 14 }: { tab: DockTab; size?: number }) {
-  return (
-    <span className="relative grid place-items-center">
-      {tab.busy && (
-        <span aria-hidden data-busy className="absolute -inset-1.5 animate-pulse rounded-full border-2 border-accent motion-reduce:animate-none" />
-      )}
-      {tab.avatar ?? <Icon name={tab.icon} size={size} />}
-      {tab.unread && <span aria-hidden data-unread className="absolute -right-1.5 -top-1.5 size-2 rounded-full bg-state-human" />}
-      {(tab.busy || tab.unread) && <span className="sr-only">{[tab.busy && "working", tab.unread && "unread"].filter(Boolean).join(", ")}</span>}
-    </span>
   );
 }
 
