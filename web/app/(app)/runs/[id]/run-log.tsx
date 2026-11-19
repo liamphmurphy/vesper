@@ -76,6 +76,8 @@ function lifecycleText(p: P): ReactNode {
       return <>Recovered work from an earlier run: <code className="inline">{str(p.branch)}</code></>;
     case "checkpoint_failed":
       return <>Could not save unpushed work, so the workspace was kept: {str(p.reason)}</>;
+    case "checkpoint_deleted":
+      return <>Removed checkpoint <code className="inline">{str(p.branch)}</code> after PR shipped</>;
     case "environment_snapshot":
       return <Link href="/settings/runner" className="underline underline-offset-2">Runner environment recorded</Link>;
     case "workspace_ready":

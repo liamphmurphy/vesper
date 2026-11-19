@@ -1,7 +1,9 @@
 package runner_test
 
 import (
+	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,7 +11,9 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/liamphmurphy/vesper/server/internal/secrets"
 	"github.com/liamphmurphy/vesper/server/internal/store"
+	"github.com/liamphmurphy/vesper/server/internal/tracker"
 )
 
 func (e env) due(id uuid.UUID) {
@@ -267,5 +271,112 @@ func TestCheckpointSkipsWorkAlreadyOnOrigin(t *testing.T) {
 	}
 	if run.WorkspaceVolume != nil {
 		t.Fatal("workspace kept")
+	}
+}
+
+func TestTicketCheckpointDeletedAfterCompletedPR(t *testing.T) {
+	for _, name := range []string{"GH_TOKEN", "GITHUB_TOKEN", "GIT_PAT"} {
+		t.Setenv(name, "")
+		os.Unsetenv(name)
+	}
+	e := setup(t)
+	bare := bareRepo(t)
+	gitIn(t, bare, "symbolic-ref", "HEAD", "refs/heads/main")
+	config := filepath.Join(t.TempDir(), "gitconfig")
+	if out, err := exec.Command("git", "config", "--file", config, "url."+bare+".insteadOf", "https://github.com/acme/alpha.git").CombinedOutput(); err != nil {
+		t.Fatalf("rewrite: %v %s", err, out)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", config)
+	if _, err := e.pool.Exec(e.ctx, "UPDATE projects SET repo_url = 'https://github.com/acme/alpha.git', default_branch = 'main'"); err != nil {
+		t.Fatal(err)
+	}
+	sec := e.runner.Secrets.(*secrets.Service)
+	if _, err := sec.Set(e.ctx, e.ws, e.me.ID, secrets.SetInput{Name: "git:pat", Value: "ghp_testtoken123"}); err != nil {
+		t.Fatal(err)
+	}
+	gh := &fakeGitHub{t: t, bare: bare}
+	srv := httptest.NewServer(gh)
+	t.Cleanup(srv.Close)
+	e.runner.Cfg.GitHubAPIURL = srv.URL
+
+	// Run 1 hits quota with uncommitted before-fallback.txt, then cancels.
+	t.Setenv("FAKE_HARNESS_MODE", "quota")
+	e.dispatch("PAY-214")
+	e.until("held", e.state("PAY-214=waiting_for_quota"))
+	first := e.run("PAY-214")
+	e.control(first.ID, "cancel")
+
+	if _, err := e.pool.Exec(e.ctx, "UPDATE tickets SET status = 'todo' WHERE key = 'PAY-214'"); err != nil {
+		t.Fatal(err)
+	}
+	// Run 2 recovers Run 1's checkpoint and pauses waiting for approval.
+	t.Setenv("FAKE_HARNESS_MODE", "approval")
+	e.dispatch("PAY-214")
+	second := e.run("PAY-214")
+	e.until("waiting for approval", e.state("PAY-214=waiting"))
+	if !e.hasLifecycle(second.ID, "checkpoint_recovered") {
+		t.Fatalf("expected checkpoint_recovered on second run, events: %s", e.eventTypes(second.ID))
+	}
+
+	// Simulate Run 2 polishing the recovered work, committing cleanly, pushing its branch, and recording PR #42.
+	tk, err := tracker.Get(e.ctx, e.q, e.ws, "PAY-214")
+	if err != nil || tk.Branch == nil || *tk.Branch == "" {
+		t.Fatalf("ticket = %+v, err = %v", tk, err)
+	}
+	ws := e.workspace(second)
+	gitIn(t, ws, "reset", "--soft", "main")
+	if err := os.WriteFile(filepath.Join(ws, "before-fallback.txt"), []byte("polished work preserved\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, ws, "add", "before-fallback.txt")
+	gitIn(t, ws, "commit", "-qm", "Implement PAY-214 cleanly")
+	gitIn(t, ws, "push", "-q", bare, "HEAD:refs/heads/"+*tk.Branch)
+	prSHA := gitIn(t, ws, "rev-parse", "HEAD")
+
+	gh.mu.Lock()
+	gh.pulls = append(gh.pulls, map[string]any{
+		"number":   42,
+		"html_url": "https://github.com/acme/alpha/pull/42",
+		"head":     map[string]any{"sha": prSHA, "ref": *tk.Branch},
+		"head_ref": *tk.Branch,
+		"head_sha": prSHA,
+		"base":     "main",
+		"title":    "Implement PAY-214",
+		"draft":    false,
+		"state":    "open",
+		"merged":   false,
+	})
+	gh.mu.Unlock()
+	prNum := int32(42)
+	prURL := "https://github.com/acme/alpha/pull/42"
+	prState := "open"
+	if err := e.q.SetTicketPR(e.ctx, store.SetTicketPRParams{ID: tk.ID, PrNumber: &prNum, PrUrl: &prURL, PrState: &prState}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Approve so Run 2 completes -> cleanup deletes Run 1's checkpoint branch.
+	aps, err := e.q.PendingApprovalsForTicket(e.ctx, tk.ID)
+	if err != nil || len(aps) == 0 {
+		t.Fatalf("pending approvals: %+v, err=%v", aps, err)
+	}
+	if _, err := e.runs.Decide(e.ctx, e.ws, e.me.ID, aps[0].ID, true, "ship it"); err != nil {
+		t.Fatal(err)
+	}
+	e.until("completed", e.state("PAY-214=completed"))
+	e.runner.Wait()
+
+	if refs := listCheckpointRefs(t, bare); len(refs) != 0 {
+		t.Fatalf("ticket checkpoint still present on bare after completed PR: %v", refs)
+	}
+	open, err := e.q.OpenTicketCheckpoints(e.ctx, tk.ID)
+	if err != nil || len(open) != 0 {
+		t.Fatalf("expected 0 open ticket checkpoints, got %+v, err=%v", open, err)
+	}
+	afterFirst, err := e.q.GetRun(e.ctx, store.GetRunParams{ID: first.ID, WorkspaceID: e.ws})
+	if err != nil || afterFirst.CheckpointBranch != nil {
+		t.Fatalf("expected Run 1 checkpoint_branch cleared, got %v, err=%v", afterFirst.CheckpointBranch, err)
+	}
+	if !e.hasLifecycle(second.ID, "checkpoint_deleted") {
+		t.Fatalf("expected checkpoint_deleted event on Run 2, got %s", e.eventTypes(second.ID))
 	}
 }

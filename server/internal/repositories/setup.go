@@ -52,8 +52,8 @@ func SetupScript(url, dir string, branches []string, checkpoint *string, name, e
 	b.WriteString(`git -c credential.helper= -c "credential.https://github.com.helper=$helper" clone --quiet --no-checkout -- ` + quote(url) + " .lazyagents/clone\n")
 	b.WriteString("mv .lazyagents/clone/.git .git\nrm -rf .lazyagents/clone\nif git rev-parse -q --verify HEAD >/dev/null; then git reset -q --hard; fi\n")
 	// Recovery restores the exact unsaved snapshot before accepting new work.
-	if checkpoint != nil {
-		b.WriteString("git fetch --quiet origin " + quote(*checkpoint) + "\ngit checkout --quiet --detach FETCH_HEAD\n")
+	if checkpoint != nil && *checkpoint != "" {
+		b.WriteString("if git fetch --quiet origin " + quote(*checkpoint) + " 2>/dev/null; then git checkout --quiet --detach FETCH_HEAD; echo '→ recovered checkpoint " + strings.ReplaceAll(*checkpoint, "'", "") + "'; else echo '→ checkpoint " + strings.ReplaceAll(*checkpoint, "'", "") + " is no longer on origin: starting without it'; fi\n")
 	}
 	b.WriteString("git config vesper.base \"$(git rev-parse HEAD 2>/dev/null || true)\"\nfi\n")
 	b.WriteString("git config user.name " + quote(name) + "\ngit config user.email " + quote(email) + "\n")

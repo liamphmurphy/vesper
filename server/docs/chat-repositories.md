@@ -43,8 +43,9 @@ live under `.lazyagents/repos/owner/name`. Branch ownership, changes, and
 checkpoint snapshots belong to each attachment. Cleanup checkpoints every
 checkout before removing a workspace; a new segment saves earlier local
 workspaces before it clones and restores snapshots. If a checkpoint push
-fails, Vesper retains the workspace. Switching repositories leaves the other
-checkouts and conversation messages intact.
+fails, Vesper retains the workspace. Checkpoint branches are automatically
+deleted once a successful pull request contains all of their changes. Switching
+repositories leaves the other checkouts and conversation messages intact.
 
 Automatic test services are selected from the active repository at the start
 of a turn. When working across repositories in one turn, the persona must run

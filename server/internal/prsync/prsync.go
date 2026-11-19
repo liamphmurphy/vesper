@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/liamphmurphy/vesper/server/internal/pushreq"
 	"github.com/liamphmurphy/vesper/server/internal/runner"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/store"
@@ -44,6 +45,10 @@ type PR struct {
 	Draft     bool   `json:"draft"`
 	Additions int32  `json:"additions"`
 	Deletions int32  `json:"deletions"`
+	Head      struct {
+		SHA string `json:"sha"`
+		Ref string `json:"ref"`
+	} `json:"head"`
 }
 
 // Run polls every interval until ctx is cancelled.
@@ -120,10 +125,10 @@ func (s *Syncer) fetch(ctx context.Context, token, owner, repo string, n int) (P
 	return pr, json.NewDecoder(res.Body).Decode(&pr)
 }
 
-func (s *Syncer) fetchPRState(ctx context.Context, workspaceID uuid.UUID, projectID *uuid.UUID, rawURL string) (PR, int, string, bool, error) {
+func (s *Syncer) fetchPRState(ctx context.Context, workspaceID uuid.UUID, projectID *uuid.UUID, rawURL string) (PR, int, string, string, bool, error) {
 	m := prURL.FindStringSubmatch(rawURL)
 	if m == nil {
-		return PR{}, 0, "", false, nil
+		return PR{}, 0, "", "", false, nil
 	}
 	n, _ := strconv.Atoi(m[3])
 	token := ""
@@ -132,7 +137,7 @@ func (s *Syncer) fetchPRState(ctx context.Context, workspaceID uuid.UUID, projec
 	}
 	pr, err := s.fetch(ctx, token, m[1], m[2], n)
 	if err != nil {
-		return PR{}, 0, "", true, err
+		return PR{}, 0, "", "", true, err
 	}
 	state := "open"
 	switch {
@@ -143,22 +148,31 @@ func (s *Syncer) fetchPRState(ctx context.Context, workspaceID uuid.UUID, projec
 	case pr.Draft:
 		state = "draft"
 	}
-	return pr, n, state, true, nil
+	return pr, n, state, token, true, nil
 }
 
 func (s *Syncer) syncPushRequest(ctx context.Context, q *store.Queries, p store.PushRequestsWithOpenPRsRow) error {
-	_, _, state, valid, err := s.fetchPRState(ctx, p.WorkspaceID, p.ProjectID, *p.PrUrl)
+	pr, _, state, token, valid, err := s.fetchPRState(ctx, p.WorkspaceID, p.ProjectID, *p.PrUrl)
 	if err != nil {
 		return err
 	}
 	if !valid {
 		return q.TouchPushRequestPRSync(ctx, p.ID)
 	}
-	return q.UpdatePushRequestPRSync(ctx, store.UpdatePushRequestPRSyncParams{ID: p.ID, PrState: &state})
+	if err := q.UpdatePushRequestPRSync(ctx, store.UpdatePushRequestPRSyncParams{ID: p.ID, PrState: &state}); err != nil {
+		return err
+	}
+	if (state == "open" || state == "draft" || state == "merged") && token != "" && pr.Head.SHA != "" {
+		gh := &pushreq.GitHub{BaseURL: s.BaseURL, HTTP: s.HTTP, Token: token}
+		if _, cerr := pushreq.CleanupChatCheckpointsAtPR(ctx, gh, q, p.ChatID, p.RepoUrl, *p.PrUrl, p.Branch, pr.Head.SHA, p.RunID, true); cerr != nil {
+			s.Log.Warn("cleanup chat checkpoints", "push_request", p.ID, "err", cerr)
+		}
+	}
+	return nil
 }
 
 func (s *Syncer) sync(ctx context.Context, q *store.Queries, t store.TicketsWithOpenPRsRow) error {
-	pr, n, state, valid, err := s.fetchPRState(ctx, t.WorkspaceID, &t.ProjectID, *t.PrUrl)
+	pr, n, state, token, valid, err := s.fetchPRState(ctx, t.WorkspaceID, &t.ProjectID, *t.PrUrl)
 	if err != nil {
 		return err
 	}
@@ -187,8 +201,17 @@ func (s *Syncer) sync(ctx context.Context, q *store.Queries, t store.TicketsWith
 		done := "done"
 		_, err = s.Tracker.Update(ctx, t.WorkspaceID, tracker.Actor{Type: "system"}, t.Key, tracker.Patch{Status: &done})
 		if errors.Is(err, tracker.ErrNotFound) {
-			return nil
+			err = nil
+		}
+		if err != nil {
+			return err
 		}
 	}
-	return err
+	if (state == "open" || state == "draft" || state == "merged") && token != "" && pr.Head.SHA != "" {
+		gh := &pushreq.GitHub{BaseURL: s.BaseURL, HTTP: s.HTTP, Token: token}
+		if _, cerr := pushreq.CleanupTicketCheckpoints(ctx, gh, q, t.ID, *t.PrUrl, pr.Head.Ref, pr.Head.SHA, nil, false, true); cerr != nil {
+			s.Log.Warn("cleanup ticket checkpoints", "ticket", t.Key, "err", cerr)
+		}
+	}
+	return nil
 }

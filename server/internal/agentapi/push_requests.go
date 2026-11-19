@@ -97,8 +97,16 @@ func requestPush(ctx context.Context, d Deps, c agents.Caller, in RequestPushIn)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := d.Q.SupersedePushRequests(ctx, store.SupersedePushRequestsParams{ChatID: s.ChatID, RepoUrl: repo.RepoUrl, Branch: in.Branch, ID: r.ID}); err != nil {
+	superseded, err := d.Q.SupersedePushRequests(ctx, store.SupersedePushRequestsParams{ChatID: s.ChatID, RepoUrl: repo.RepoUrl, Branch: in.Branch, ID: r.ID})
+	if err != nil {
 		return nil, err
+	}
+	if d.DiscardPush != nil {
+		for _, old := range superseded {
+			if old.StagingRef != nil && *old.StagingRef != "" {
+				d.DiscardPush(ctx, old)
+			}
+		}
 	}
 	auto := false
 	if p, err := d.Q.GetRepositoryPushPolicy(ctx, store.GetRepositoryPushPolicyParams{UserID: s.UserID, RepoUrl: repo.RepoUrl}); err == nil {

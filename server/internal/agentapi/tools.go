@@ -46,6 +46,8 @@ type Deps struct {
 	Files FileKeeper
 	// PDF renders HTML/CSS into a PDF via the design worker (render_pdf); nil when unconfigured.
 	PDF PDFRenderer
+	// DiscardPush removes a superseded staging branch on GitHub, best effort.
+	DiscardPush func(ctx context.Context, r store.PushRequest)
 }
 
 // Tool is one Agent API operation, independent of transport.
