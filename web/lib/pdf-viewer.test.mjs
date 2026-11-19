@@ -194,7 +194,7 @@ test("pdfjs-dist/legacy renders non-white PDF content and serializes cancelled r
   const data = new Uint8Array(pdf.output("arraybuffer"));
 
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const doc = await pdfjs.getDocument({ data, verbosity: 0, isEvalSupported: false, disableFontFace: true }).promise;
+  const doc = await pdfjs.getDocument({ data, verbosity: 0, disableFontFace: true }).promise;
   try {
     assert.equal(doc.numPages, 6);
     const page1 = await doc.getPage(1);
