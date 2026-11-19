@@ -98,8 +98,8 @@ export function ActivityOverview({
       aria-label="Activity overview"
       className="work-activity-main"
     >
-      <div className="work-kpi-grid" role="region" aria-label="Activity telemetry">
-        <div className="work-kpi-card">
+      <div className="work-telemetry-strip" role="region" aria-label="Activity telemetry">
+        <div className="work-telemetry-cell">
           <div className="flex items-center justify-between text-11 text-fg-tertiary">
             <span>Runner slots</span>
             <span
@@ -112,9 +112,9 @@ export function ActivityOverview({
             </span>
           </div>
           <div className="flex items-baseline gap-2">
-            <span className="font-mono text-20 font-semibold leading-tight text-fg tabular-nums">
+            <span className="font-mono text-16 font-semibold leading-tight text-fg tabular-nums">
               {stats.slotsBusy}
-              <span className="text-13 font-normal text-fg-tertiary">
+              <span className="text-12 font-normal text-fg-tertiary">
                 {" "}
                 / {stats.slotsMax}
               </span>
@@ -131,12 +131,7 @@ export function ActivityOverview({
           </div>
         </div>
 
-        <div
-          className={cx(
-            "work-kpi-card",
-            stats.needsYouCount > 0 && "border-pill-human-bg/80",
-          )}
-        >
+        <div className="work-telemetry-cell">
           <div className="flex items-center justify-between text-11 text-fg-tertiary">
             <span>Needs you</span>
             {stats.needsYouCount > 0 && (
@@ -145,7 +140,7 @@ export function ActivityOverview({
           </div>
           <div
             className={cx(
-              "font-mono text-20 font-semibold leading-tight tabular-nums",
+              "font-mono text-16 font-semibold leading-tight tabular-nums",
               stats.needsYouCount > 0 ? "text-pill-human-fg" : "text-fg",
             )}
           >
@@ -164,10 +159,10 @@ export function ActivityOverview({
           </div>
         </div>
 
-        <div className="work-kpi-card">
+        <div className="work-telemetry-cell">
           <div className="text-11 text-fg-tertiary">Today&apos;s velocity</div>
           <div className="flex items-baseline gap-2">
-            <span className="font-mono text-20 font-semibold leading-tight text-fg tabular-nums">
+            <span className="font-mono text-16 font-semibold leading-tight text-fg tabular-nums">
               {stats.completedToday}
             </span>
             <span className="text-11 text-fg-tertiary">runs done</span>
@@ -180,14 +175,14 @@ export function ActivityOverview({
           </div>
         </div>
 
-        <div className="work-kpi-card">
+        <div className="work-telemetry-cell">
           <div className="flex items-center justify-between text-11 text-fg-tertiary">
             <span>7-day spend</span>
             <Link href={reportsHref} className="text-accent hover:underline">
               Reports →
             </Link>
           </div>
-          <div className="font-mono text-20 font-semibold leading-tight text-fg tabular-nums">
+          <div className="font-mono text-16 font-semibold leading-tight text-fg tabular-nums">
             {costs7d
               ? spendLabel(costs7d.total.cost_micros, costs7d.unpriced_runs)
               : "–"}

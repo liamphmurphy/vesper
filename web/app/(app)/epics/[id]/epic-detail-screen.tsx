@@ -24,6 +24,7 @@ import { HumanAvatar } from "@/components/domain/avatars";
 import { DocTypeTag, Pill } from "@/components/domain/labels";
 import { EpicCompletion } from "@/components/domain/epic-completion";
 import { DependencyMap } from "@/components/domain/dependency-map";
+import { WorkDetailHeader, WorkEyebrow, WorkViewTabs } from "@/components/domain/work-detail-header";
 import { ticketsHref } from "@/lib/tickets-layout";
 import { useCompact } from "@/lib/viewport";
 import { ContextSection } from "@/components/shell/context-panel";
@@ -161,45 +162,65 @@ function EpicDetail({ epic: e }: { epic: EpicOverview }) {
   const needs = useMemo(() => needsYouByTicket(inbox.data), [inbox.data]);
   const waiting = (tickets.data ?? []).filter((t) => Boolean(ticketNeedsYou(t, needs.get(t.key))));
   return (
-    <article className="mx-auto max-w-[860px] space-y-8">
-      <header className="space-y-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="type-display">{e.epic.name}</h1>
-          <Pill tone={e.epic.status === "done" ? "done" : "neutral"}>{e.epic.status === "done" ? "Done" : "Open"}</Pill>
-          <HealthPill health={e.epic.health} />
-        </div>
-        <p className="flex flex-wrap gap-x-2 text-12 text-fg-tertiary">
-          <span>{e.project.name}</span>·
-          <span className={overdue ? "text-pill-blocked-fg" : undefined}>
-            {e.target_date ? `${overdue ? "Overdue ·" : "Target"} ${dueDate(e.target_date)}` : "No target date"}
-          </span>·
-          <span>{e.owner ? `Owner ${e.owner.name}` : "No owner"}</span>
-        </p>
-        <p className="whitespace-pre-line text-14 leading-relaxed text-fg-2">{e.objective || "No objective has been written yet."}</p>
-        <div className="flex flex-wrap gap-2">
-          <ButtonLink variant="outline" href={boardHref(e)}>Board filtered to this epic</ButtonLink>
-          <ButtonLink variant="outline" href={`/tickets?view=all&epic=${e.epic.id}&project=${encodeURIComponent(e.project.key)}`}>Ticket list</ButtonLink>
-          <ButtonLink variant="outline" href={`/plans?epic=${e.epic.id}&project=${encodeURIComponent(e.project.key)}${e.source ? `&artifact=${e.source.id}` : ""}`}>Plan with an agent</ButtonLink>
-        </div>
-      </header>
+    <article className="mx-auto max-w-[820px] space-y-6">
+      <WorkDetailHeader
+        eyebrow={
+          <WorkEyebrow
+            items={[
+              { label: e.project.name, href: `/tickets?project=${encodeURIComponent(e.project.key)}` },
+              { label: "Epics", href: ticketsHref("epics", { project: e.project.key }) },
+            ]}
+          />
+        }
+        title={<h1 className="text-[22px] font-semibold leading-tight tracking-[-0.018em] text-fg">{e.epic.name}</h1>}
+        meta={
+          <>
+            <HealthPill health={e.epic.health} />
+            <Pill tone={e.epic.status === "done" ? "done" : "neutral"}>{e.epic.status === "done" ? "Done" : "Open"}</Pill>
+            <span aria-hidden className="text-fg-tertiary">·</span>
+            <span className={overdue ? "text-pill-blocked-fg" : "text-fg-secondary"}>
+              {e.target_date ? `${overdue ? "Overdue · " : "Target "}${dueDate(e.target_date)}` : "No target date"}
+            </span>
+            <span aria-hidden className="text-fg-tertiary">·</span>
+            <span className="text-fg-secondary">{e.owner ? `Owner ${e.owner.name}` : "No owner"}</span>
+          </>
+        }
+        notice={
+          <div className="flex flex-col gap-2 pt-0.5">
+            <p className="whitespace-pre-line text-14 leading-relaxed text-fg-2">
+              {e.objective || "No objective has been written yet."}
+            </p>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-12 text-fg-secondary">
+              <Link href={boardHref(e)} className="text-accent hover:underline">Board filtered to this epic</Link>
+              <Link href={`/tickets?view=all&epic=${e.epic.id}&project=${encodeURIComponent(e.project.key)}`} className="hover:text-fg hover:underline">Ticket list ↗</Link>
+              <Link href={`/plans?epic=${e.epic.id}&project=${encodeURIComponent(e.project.key)}${e.source ? `&artifact=${e.source.id}` : ""}`} className="hover:text-fg hover:underline">Plan with an agent ↗</Link>
+            </div>
+          </div>
+        }
+      />
 
       <EpicProgressBar epicId={e.epic.id} tickets={tickets.data} needs={needs} />
 
       {waiting.length > 0 && <NeedsYouBanner tickets={waiting} needs={needs} />}
 
-      <nav aria-label="Epic views" className="flex gap-5 border-b border-border-subtle pb-2 text-14">
-        <button aria-current={tab === "overview" ? "page" : undefined} className={tab === "overview" ? "font-semibold text-fg" : "text-fg-secondary"} onClick={() => setTab("overview")}>Overview</button>
-        <button aria-current={tab === "map" ? "page" : undefined} className={tab === "map" ? "font-semibold text-fg" : "text-fg-secondary"} onClick={() => setTab("map")}>Map</button>
-      </nav>
+      <WorkViewTabs
+        label="Epic views"
+        value={tab}
+        onChange={setTab}
+        items={[
+          { key: "overview", label: "Overview", count: e.epic.tickets_total },
+          { key: "map", label: "Map" },
+        ]}
+      />
       {tab === "map" ? <DependencyMap key={e.epic.id} project={e.project.key} epic={e.epic.id} /> : <>
-      <section aria-label="Tickets" className="space-y-2">
-        <h2 className="flex items-center gap-2 text-11 font-medium uppercase tracking-[0.06em] text-fg-tertiary">
-          Tickets <span className="font-mono">{e.epic.tickets_open} open of {e.epic.tickets_total}</span>
+      <section aria-label="Tickets" className="space-y-2.5">
+        <h2 className="flex items-center gap-2 text-11 font-semibold uppercase tracking-[0.06em] text-fg-tertiary">
+          Tickets <span className="font-mono font-normal">{e.epic.tickets_open} open of {e.epic.tickets_total}</span>
         </h2>
         {tickets.isError ? (
           <p role="alert" className="text-12 text-pill-blocked-fg">Couldn’t load tickets: {tickets.error.message}</p>
         ) : tickets.isPending ? (
-          <Skeleton className="h-24" />
+          <Skeleton className="h-24 rounded-xl" />
         ) : (
           <TicketChecklist tickets={tickets.data} needs={needs} />
         )}
@@ -322,12 +343,12 @@ function TicketChecklist({ tickets, needs }: { tickets: TicketSummary[]; needs: 
     Number(Boolean(ticketNeedsYou(b, needs.get(b.key)))) - Number(Boolean(ticketNeedsYou(a, needs.get(a.key)))) ||
     CHECKLIST_ORDER.indexOf(a.status) - CHECKLIST_ORDER.indexOf(b.status));
   return (
-    <ul aria-label="Ticket checklist">
+    <ul aria-label="Ticket checklist" className="divide-y divide-border-row overflow-hidden rounded-xl border border-border bg-surface">
       {sorted.map((t) => {
         const done = t.status === "done";
         const itemNeeds = ticketNeedsYou(t, needs.get(t.key));
         return (
-          <li key={t.id} className="relative flex min-h-10 items-center gap-3 rounded-lg px-2 hover:bg-row-hover">
+          <li key={t.id} className="relative flex min-h-10 items-center gap-3 px-3.5 py-1.5 hover:bg-row-hover">
             <span
               role="img"
               aria-label={done ? "Done" : t.status === "canceled" ? "Canceled" : "Not done"}
