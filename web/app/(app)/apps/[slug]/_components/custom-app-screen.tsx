@@ -72,14 +72,24 @@ function readThemeVars(): Record<string, string> {
   return readThemeVarsFrom((name) => styles.getPropertyValue(name));
 }
 
-type PendingApproval = {
-  seq: number;
-  reload: number;
-  reqId: string;
-  body: CustomAppInvokeRequest;
-  capability: string;
-  summary: string;
-};
+type PendingApproval =
+  | {
+      seq: number;
+      reload: number;
+      reqId: string;
+      kind: "invoke";
+      body: CustomAppInvokeRequest;
+      capability: string;
+      summary: string;
+    }
+  | {
+      seq: number;
+      reload: number;
+      reqId: string;
+      kind: "image";
+      capability: "app.http:outbound";
+      summary: string;
+    };
 
 export function CustomAppScreen({ slug }: { slug: string }) {
   const query = useCustomApp(slug);
@@ -144,6 +154,11 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
   const [decidingApproval, setDecidingApproval] = useState(false);
   const [activeVideo, setActiveVideo] = useState<(VideoEmbed & { title: string }) | null>(null);
+  const capabilitiesRef = useRef(app.capabilities);
+  useEffect(() => {
+    capabilitiesRef.current = app.capabilities;
+  }, [app.capabilities]);
+  const pendingImageQueueRef = useRef<Map<string, Array<{ id: string; url: string }>>>(new Map());
 
   const [show, setShow] = useState({ tab: "chat", n: 0 });
   const openDockTab = useCallback((tab: string) => {
@@ -151,9 +166,36 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
   }, []);
   const [dock, setDock] = useState<DockState>();
 
-  const postToFrame = useCallback((msg: unknown) => {
-    frameRef.current?.contentWindow?.postMessage(msg, "*");
+  const postToFrame = useCallback((msg: unknown, transfer?: Transferable[]) => {
+    frameRef.current?.contentWindow?.postMessage(msg, "*", transfer);
   }, []);
+
+  const serveProxyImage = useCallback(
+    async (reqId: string, imageUrl: string, approved: boolean) => {
+      try {
+        const params = new URLSearchParams({ url: imageUrl });
+        if (approved) params.set("approved", "true");
+        const res = await fetch(`/api/v1/custom-apps/${encodeURIComponent(app.slug)}/image?${params.toString()}`, {
+          credentials: "same-origin",
+        });
+        if (!res.ok) {
+          let msg = `Image request failed (HTTP ${res.status})`;
+          try {
+            const errJson = (await res.json()) as { message?: string };
+            if (errJson?.message) msg = errJson.message;
+          } catch {}
+          postToFrame({ type: "vesper:response", id: reqId, ok: false, error: msg });
+          return;
+        }
+        const mime = res.headers.get("content-type")?.split(";")[0]?.trim() || "image/png";
+        const bytes = await res.arrayBuffer();
+        postToFrame({ type: "vesper:response", id: reqId, ok: true, data: { bytes, mime } }, [bytes]);
+      } catch (err) {
+        postToFrame({ type: "vesper:response", id: reqId, ok: false, error: errorText(err) });
+      }
+    },
+    [app.slug, postToFrame],
+  );
 
   // Theme sync whenever root attributes change (dark/light/palette switch).
   useEffect(() => {
@@ -335,6 +377,43 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
         setRuntimeErrorState({ seq: app.current_seq, reload: reloadKey, message: msg.payload.message });
         return;
       }
+      if (msg.type === "image") {
+        const mode = capabilitiesRef.current["app.http:outbound"] ?? "denied";
+        if (mode === "allowed") {
+          void serveProxyImage(msg.id, msg.payload.url, false);
+          return;
+        }
+        if (mode === "denied") {
+          postToFrame({
+            type: "vesper:response",
+            id: msg.id,
+            ok: false,
+            error: `capability app.http:outbound is denied for custom app "${app.slug}"`,
+          });
+          return;
+        }
+        const queueKey = `${app.current_seq}:${reloadKey}`;
+        const existing = pendingImageQueueRef.current.get(queueKey) ?? [];
+        existing.push({ id: msg.id, url: msg.payload.url });
+        pendingImageQueueRef.current.set(queueKey, existing);
+        setPendingApprovals((prev) => {
+          if (prev.some((a) => a.kind === "image" && a.seq === app.current_seq && a.reload === reloadKey)) {
+            return prev;
+          }
+          return [
+            ...prev,
+            {
+              seq: app.current_seq,
+              reload: reloadKey,
+              reqId: `img:${queueKey}`,
+              kind: "image",
+              capability: "app.http:outbound",
+              summary: "Load remote images via HTTPS proxy",
+            },
+          ];
+        });
+        return;
+      }
 
       const reqBody: CustomAppInvokeRequest =
         msg.type === "sql"
@@ -352,6 +431,7 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
                 seq: app.current_seq,
                 reload: reloadKey,
                 reqId: msg.id,
+                kind: "invoke",
                 body: reqBody,
                 capability: res.capability,
                 summary: res.summary ?? `Allow ${res.capability}`,
@@ -371,11 +451,52 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
 
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [app.slug, app.current_seq, reloadKey, postToFrame, qc]);
+  }, [app.slug, app.current_seq, reloadKey, postToFrame, serveProxyImage, qc]);
 
   const decideApproval = useCallback(
     async (decision: "once" | "always" | "decline") => {
       if (!headApproval || decidingApproval) return;
+      if (headApproval.kind === "image") {
+        const queueKey = `${headApproval.seq}:${headApproval.reload}`;
+        if (decision === "decline") {
+          const queued = pendingImageQueueRef.current.get(queueKey) ?? [];
+          pendingImageQueueRef.current.delete(queueKey);
+          setPendingApprovals((prev) => prev.filter((x) => x.reqId !== headApproval.reqId));
+          for (const item of queued) {
+            postToFrame({ type: "vesper:response", id: item.id, ok: false, error: "Capability request declined" });
+          }
+          return;
+        }
+        setDecidingApproval(true);
+        try {
+          if (decision === "always") {
+            const updated = await unwrap(
+              api.PATCH("/custom-apps/{slug}", {
+                params: { path: { slug: app.slug } },
+                body: { capabilities: { ...capabilitiesRef.current, "app.http:outbound": "allowed" } },
+              }),
+            );
+            capabilitiesRef.current = updated.capabilities;
+            void qc.invalidateQueries({ queryKey: customAppKeys.detail(app.slug) });
+            void qc.invalidateQueries({ queryKey: customAppKeys.list });
+          }
+          const queued = pendingImageQueueRef.current.get(queueKey) ?? [];
+          pendingImageQueueRef.current.delete(queueKey);
+          await Promise.all(queued.map((item) => serveProxyImage(item.id, item.url, decision === "once")));
+        } catch (err) {
+          const queued = pendingImageQueueRef.current.get(queueKey) ?? [];
+          pendingImageQueueRef.current.delete(queueKey);
+          const message = errorText(err);
+          for (const item of queued) {
+            postToFrame({ type: "vesper:response", id: item.id, ok: false, error: message });
+          }
+        } finally {
+          setPendingApprovals((prev) => prev.filter((x) => x.reqId !== headApproval.reqId));
+          setDecidingApproval(false);
+        }
+        return;
+      }
+
       if (decision === "decline") {
         setPendingApprovals((prev) => prev.filter((x) => x.reqId !== headApproval.reqId));
         postToFrame({ type: "vesper:response", id: headApproval.reqId, ok: false, error: "Capability request declined" });
@@ -403,7 +524,7 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
         setDecidingApproval(false);
       }
     },
-    [headApproval, decidingApproval, app.slug, postToFrame, qc],
+    [headApproval, decidingApproval, app.slug, postToFrame, serveProxyImage, qc],
   );
 
   const decideRef = useRef(decideApproval);
@@ -505,11 +626,17 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
     welcome: appWelcome,
   };
 
-  const reload = () => {
+  const reload = useCallback(() => {
     setRuntimeErrorState(null);
     setPendingApprovals([]);
     setReloadKey((k) => k + 1);
-  };
+  }, []);
+  useEffect(() => {
+    const queue = pendingImageQueueRef.current;
+    return () => {
+      queue.clear();
+    };
+  }, [app.current_seq, reloadKey]);
   const header: EditorHeader = {
     back: { href: "/apps", label: "Custom Apps" },
     name: app.name,
@@ -956,8 +1083,7 @@ function PermissionsTab({ app }: { app: CustomAppDetail }) {
   }, [connectors.data?.connectors]);
 
   const knownKeys = useMemo(() => {
-    const keys = new Set<string>(["vesper.api:read", "vesper.api:write"]);
-    if (app.has_mcp_server) keys.add("app.http:outbound");
+    const keys = new Set<string>(["vesper.api:read", "vesper.api:write", "app.http:outbound"]);
     for (const c of connectorRows) keys.add(c.key);
     for (const k of Object.keys(app.manifest.requested_capabilities ?? {})) {
       if (!k.startsWith("app.sql:")) keys.add(k);
@@ -966,7 +1092,7 @@ function PermissionsTab({ app }: { app: CustomAppDetail }) {
       if (!k.startsWith("app.sql:")) keys.add(k);
     }
     return [...keys];
-  }, [app.has_mcp_server, connectorRows, app.manifest.requested_capabilities, app.capabilities]);
+  }, [connectorRows, app.manifest.requested_capabilities, app.capabilities]);
 
   const connectorMap = useMemo(() => new Map(connectorRows.map((c) => [c.key, c])), [connectorRows]);
 
@@ -1071,7 +1197,7 @@ function PermissionsTab({ app }: { app: CustomAppDetail }) {
                 : capKey === "vesper.api:write"
                   ? "Vesper API · Write"
                   : capKey === "app.http:outbound"
-                    ? "Outbound HTTPS (MCP server)"
+                    ? "Outbound HTTPS"
                     : capKey.startsWith("secret:")
                       ? `Secret · ${capKey.slice("secret:".length)}`
                       : cInfo?.label ?? capKey;
@@ -1081,7 +1207,7 @@ function PermissionsTab({ app }: { app: CustomAppDetail }) {
                 : capKey === "vesper.api:write"
                   ? "POST, PATCH, PUT, DELETE requests to Vesper APIs"
                   : capKey === "app.http:outbound"
-                    ? "Public HTTPS fetch calls from the app's MCP server"
+                    ? "Public HTTPS fetches from the app's MCP server and remote image proxy"
                     : capKey.startsWith("secret:")
                       ? "Authenticated secretFetch calls using this Vesper secret"
                       : cInfo?.hint ?? "Requested by app manifest";

@@ -322,6 +322,7 @@ export type BridgeMessage =
   | { channel: "vesper:custom-app"; id: string; type: "sql"; payload: { query: string; params: unknown[] } }
   | { channel: "vesper:custom-app"; id: string; type: "api"; payload: { method: string; path: string; body?: unknown } }
   | { channel: "vesper:custom-app"; id: string; type: "mcp"; payload: { connector: string; tool: string; arguments: Record<string, unknown> } }
+  | { channel: "vesper:custom-app"; id: string; type: "image"; payload: { url: string } }
   | { channel: "vesper:custom-app"; id: ""; type: "set-nav"; payload: { items: CustomAppNavSpec[]; activeId?: string } }
   | { channel: "vesper:custom-app"; id: ""; type: "ask-dock"; payload: { prompt: string } }
   | { channel: "vesper:custom-app"; id: ""; type: "open-url"; payload: { url: string } }
@@ -358,6 +359,12 @@ export function parseBridgeMessage(raw: unknown): BridgeMessage | null {
         type: "mcp",
         payload: { connector: payload.connector, tool: payload.tool, arguments: args },
       };
+    }
+    case "image": {
+      if (!id) return null;
+      const url = parseSafeHttpsUrl(payload.url);
+      if (!url) return null;
+      return { channel: "vesper:custom-app", id, type: "image", payload: { url } };
     }
     case "set-nav": {
       const rawItems = Array.isArray(payload.items) ? payload.items : [];

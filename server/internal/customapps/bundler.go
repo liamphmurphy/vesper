@@ -720,6 +720,82 @@ export function onEvent(handler) {
   return () => eventListeners.delete(handler);
 }
 
+const imageCache = new Map();
+const resolvedImages = new Map();
+const imageBlobUrls = new Set();
+
+window.addEventListener("pagehide", () => {
+  for (const blobUrl of imageBlobUrls) {
+    try { URL.revokeObjectURL(blobUrl); } catch {}
+  }
+  imageBlobUrls.clear();
+  resolvedImages.clear();
+  imageCache.clear();
+});
+
+export function loadImage(url) {
+  const key = String(url || "").trim();
+  if (!key) return Promise.reject(new Error("Image URL is required"));
+  const existing = imageCache.get(key);
+  if (existing) return existing;
+  const promise = callHost("image", { url: key }).then(
+    (res) => {
+      const blobUrl = URL.createObjectURL(new Blob([res.bytes], { type: res.mime || "image/png" }));
+      imageBlobUrls.add(blobUrl);
+      resolvedImages.set(key, blobUrl);
+      return blobUrl;
+    },
+    (err) => {
+      imageCache.delete(key);
+      throw err;
+    },
+  );
+  imageCache.set(key, promise);
+  return promise;
+}
+
+export function useImageUrl(url) {
+  const key = typeof url === "string" ? url.trim() : "";
+  const [src, setSrc] = useState(() => (key ? resolvedImages.get(key) ?? null : null));
+  const [loading, setLoading] = useState(() => Boolean(key && !resolvedImages.has(key)));
+  const [error, setError] = useState(null);
+  useEffect(() => {
+    if (!key) {
+      setSrc(null);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+    const cached = resolvedImages.get(key);
+    if (cached) {
+      setSrc(cached);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+    let cancelled = false;
+    setSrc(null);
+    setLoading(true);
+    setError(null);
+    loadImage(key).then(
+      (blobUrl) => {
+        if (!cancelled) {
+          setSrc(blobUrl);
+          setLoading(false);
+        }
+      },
+      (err) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err));
+          setLoading(false);
+        }
+      },
+    );
+    return () => { cancelled = true; };
+  }, [key]);
+  return { src, loading, error };
+}
+
 export function useBridgeQuery(fn, deps = []) {
   const [data, setData] = useState(undefined);
   const [loading, setLoading] = useState(true);

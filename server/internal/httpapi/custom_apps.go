@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/auth"
 	"github.com/liamphmurphy/vesper/server/internal/customapps"
 	"github.com/liamphmurphy/vesper/server/internal/store"
+	"github.com/liamphmurphy/vesper/server/internal/usersecrets"
 )
 
 func (s *Server) customApps() *customapps.Service {
@@ -508,6 +510,105 @@ func (s *Server) InvokeCustomApp(ctx context.Context, req api.InvokeCustomAppReq
 		}, nil
 	}
 	return nil, apperr.Invalid("kind", "unsupported invoke kind")
+}
+
+const (
+	maxCustomAppImageBytes     = 3 << 20
+	maxCustomAppImageRedirects = 3
+)
+
+// GetCustomAppImage proxies a public HTTPS raster image for a custom app,
+// gated by app.http:outbound and SSRF-checked via usersecrets.SafeTransport.
+func (s *Server) GetCustomAppImage(ctx context.Context, req api.GetCustomAppImageRequestObject) (api.GetCustomAppImageResponseObject, error) {
+	u, _, ws := me(ctx)
+	app, err := s.customApps().Get(ctx, ws, u.ID, req.Slug)
+	if err != nil {
+		return nil, err
+	}
+	switch customapps.ModeFor(app.Capabilities, "app.http:outbound") {
+	case agentdef.Denied:
+		return api.GetCustomAppImage403JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{
+			Code:    api.Forbidden,
+			Message: fmt.Sprintf("capability app.http:outbound is denied for custom app %q", app.Slug),
+		}}, nil
+	case agentdef.RequiresApproval:
+		if req.Params.Approved == nil || !*req.Params.Approved {
+			return api.GetCustomAppImage403JSONResponse{ErrorJSONResponse: api.ErrorJSONResponse{
+				Code:    api.Forbidden,
+				Message: fmt.Sprintf("capability app.http:outbound requires approval for custom app %q", app.Slug),
+			}}, nil
+		}
+	}
+
+	rawURL := strings.TrimSpace(req.Params.Url)
+	parsed, err := url.Parse(rawURL)
+	if rawURL == "" || len(rawURL) > 2048 || err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil {
+		return nil, apperr.Invalid("url", "image url must be a valid https URL")
+	}
+
+	body, ct, err := s.fetchCustomAppImage(ctx, parsed.String())
+	if err != nil {
+		return nil, err
+	}
+	return avatarResponse{body: io.NopCloser(bytes.NewReader(body)), contentType: ct, length: int64(len(body))}, nil
+}
+
+// VisitGetCustomAppImageResponse serves a proxied image with avatar security/cache headers.
+func (r avatarResponse) VisitGetCustomAppImageResponse(w http.ResponseWriter) error {
+	return r.write(w)
+}
+
+func (s *Server) fetchCustomAppImage(ctx context.Context, targetURL string) ([]byte, string, error) {
+	rt := s.CustomAppImageTransport
+	if rt == nil {
+		t := usersecrets.SafeTransport(false, nil)
+		defer t.CloseIdleConnections()
+		rt = t
+	}
+	client := &http.Client{
+		Timeout:   12 * time.Second,
+		Transport: rt,
+		CheckRedirect: func(next *http.Request, via []*http.Request) error {
+			if len(via) >= maxCustomAppImageRedirects {
+				return errors.New("too many redirects")
+			}
+			if next.URL == nil || next.URL.Scheme != "https" || next.URL.Hostname() == "" || next.URL.User != nil || len(next.URL.String()) > 2048 {
+				return errors.New("redirect to an unsupported image URL")
+			}
+			return nil
+		},
+	}
+	outReq, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+	if err != nil {
+		return nil, "", apperr.Invalid("url", "invalid image url: %v", err)
+	}
+	outReq.Header.Set("User-Agent", "Vesper")
+	res, err := client.Do(outReq)
+	if err != nil {
+		var b *usersecrets.Blocked
+		if errors.As(err, &b) {
+			return nil, "", apperr.Invalid("url", "%s", b.Reason)
+		}
+		return nil, "", apperr.Conflict("failed to fetch image: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return nil, "", apperr.Conflict("image server returned HTTP %d", res.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(res.Body, maxCustomAppImageBytes+1))
+	if err != nil {
+		return nil, "", apperr.Conflict("reading image: %v", err)
+	}
+	if len(body) > maxCustomAppImageBytes {
+		return nil, "", apperr.Invalid("url", "image exceeds 3 MB limit")
+	}
+	ct := http.DetectContentType(body)
+	switch ct {
+	case "image/png", "image/jpeg", "image/gif", "image/webp":
+		return body, ct, nil
+	default:
+		return nil, "", apperr.Invalid("url", "unsupported image type %q", ct)
+	}
 }
 
 func validateCustomAppAPIRequest(method, rawURL string) (cleaned string, isRead bool, err error) {

@@ -5081,6 +5081,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/custom-apps/{slug}/image": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        /** Proxy a remote raster image for a custom app gated by app.http:outbound */
+        get: operations["getCustomAppImage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -18261,6 +18280,34 @@ export interface operations {
                 };
             };
             403: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getCustomAppImage: {
+        parameters: {
+            query: {
+                url: string;
+                approved?: boolean;
+            };
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The image */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
             default: components["responses"]["Error"];
         };
     };

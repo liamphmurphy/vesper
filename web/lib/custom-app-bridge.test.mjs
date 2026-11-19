@@ -196,3 +196,47 @@ test("parseBridgeMessage validates open-url and play-video", () => {
     null,
   );
 });
+
+test("parseBridgeMessage validates image proxy requests", () => {
+  assert.deepEqual(
+    parseBridgeMessage({
+      channel: "vesper:custom-app",
+      id: "req_img_1",
+      type: "image",
+      payload: { url: "https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg" },
+    }),
+    {
+      channel: "vesper:custom-app",
+      id: "req_img_1",
+      type: "image",
+      payload: { url: "https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg" },
+    },
+  );
+  assert.equal(
+    parseBridgeMessage({
+      channel: "vesper:custom-app",
+      id: "",
+      type: "image",
+      payload: { url: "https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg" },
+    }),
+    null,
+  );
+  assert.equal(
+    parseBridgeMessage({
+      channel: "vesper:custom-app",
+      id: "req_img_2",
+      type: "image",
+      payload: { url: "http://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg" },
+    }),
+    null,
+  );
+  assert.equal(
+    parseBridgeMessage({
+      channel: "vesper:custom-app",
+      id: "req_img_3",
+      type: "image",
+      payload: { url: "javascript:alert(1)" },
+    }),
+    null,
+  );
+});

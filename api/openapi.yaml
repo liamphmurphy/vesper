@@ -6157,6 +6157,25 @@ paths:
               schema: { $ref: "#/components/schemas/CustomAppInvokeResponse" }
         "403": { $ref: "#/components/responses/Error" }
         default: { $ref: "#/components/responses/Error" }
+  /custom-apps/{slug}/image:
+    parameters:
+      - { name: slug, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [custom-apps]
+      operationId: getCustomAppImage
+      summary: Proxy a remote raster image for a custom app gated by app.http:outbound
+      parameters:
+        - { name: url, in: query, required: true, schema: { type: string } }
+        - { name: approved, in: query, required: false, schema: { type: boolean } }
+      responses:
+        "200":
+          description: The image
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
 
 components:
   parameters:
