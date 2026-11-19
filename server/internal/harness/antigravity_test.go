@@ -267,6 +267,16 @@ func TestAntigravityConnectorsAndInstallInContainers(t *testing.T) {
 	if !slices.Contains(rules(cfg, "allow"), "mcp(github/*)") || !slices.Contains(rules(cfg, "allow"), "mcp(docs/*)") {
 		t.Fatalf("allow = %v", rules(cfg, "allow"))
 	}
+	// Vesper's core tools load up front; connectors stay lazy (TestAgyProbe/turn).
+	tools, _ := cfg.MCPServers[lazyagentsServer].(map[string]any)["tools"].(map[string]any)
+	for _, name := range agentdef.EagerVesperTools {
+		if tl, _ := tools[name].(map[string]any); tl["eager"] != true {
+			t.Errorf("%s isn't eager: %v", name, tools)
+		}
+	}
+	if gh["tools"] != nil || docs["tools"] != nil {
+		t.Errorf("only Vesper's own server marks eager tools: github=%v docs=%v", gh["tools"], docs["tools"])
+	}
 }
 
 func TestAntigravityReferenceImagesAreNamedInThePrompt(t *testing.T) {

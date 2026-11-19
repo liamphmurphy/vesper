@@ -221,6 +221,19 @@ const (
 	ExplorerAgent = "explorer"
 )
 
+// EagerVesperTools are the lazyagents tools almost every chat turn or ticket run
+// calls. Harnesses that defer MCP tools until the model looks them up load these
+// up front instead, saving a discovery round-trip each: Claude Code reads the
+// MCP server's per-tool _meta "anthropic/alwaysLoad", agy reads tools.<name>.eager
+// in mcp_config.json. Codex loads every tool up front already. Each one costs its
+// schema in every prompt, so keep the list to tools a turn really starts with.
+var EagerVesperTools = []string{
+	// Chats.
+	"set_chat_title", "list_projects", "list_tickets", "get_ticket", "update_ticket", "request_push",
+	// Ticket runs.
+	"claim_ticket", "post_plan", "update_step", "check_criterion", "complete_run",
+}
+
 // BatchExplorationGuide is the one line every coding prompt (chat and ticket
 // run, on every harness) carries about exploring a codebase. Each model turn
 // costs seconds of latency, so independent lookups belong in one turn.

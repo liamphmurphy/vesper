@@ -79,6 +79,13 @@ func (Antigravity) Invocation(ws Workspace, t Turn) (Invocation, error) {
 	}
 	if !noTools {
 		addServer(lazyagentsServer, ws.MCPURL, true, 0)
+		// agy lists MCP tools lazily (the model reads a schema file before its
+		// first call); the ones nearly every turn starts with load up front.
+		eager := map[string]any{}
+		for _, name := range agentdef.EagerVesperTools {
+			eager[name] = map[string]any{"eager": true}
+		}
+		servers[lazyagentsServer].(map[string]any)["tools"] = eager
 	}
 	for _, m := range spec.MCPServers {
 		if m.Connector {

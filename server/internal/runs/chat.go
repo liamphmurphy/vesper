@@ -171,14 +171,19 @@ func chatCaps(ctx context.Context, q *store.Queries, chat store.ChatSession) (Ch
 	if err != nil {
 		return ChatCaps{}, err
 	}
-	customApps, err := customAppMCPsForChat(ctx, q, chat)
+	customApps, err := customAppMCPsForChat(ctx, q, chat, code && deref(chat.RepoUrl) != "")
 	if err != nil {
 		return ChatCaps{}, err
 	}
 	return ChatCaps{Code: code, RepoURL: deref(chat.RepoUrl), WorkBranches: chat.WorkBranches, Images: p.CanGenerateImages, Connectors: slugs, Secrets: len(secrets) > 0, CustomApps: customApps}, nil
 }
 
-func customAppMCPsForChat(ctx context.Context, q *store.Queries, chat store.ChatSession) ([]string, error) {
+// customAppMCPsForChat is the custom apps whose MCP servers a chat is given: an
+// app scoped to chats goes to every chat, an app_only one to its own dock chat.
+// A chat working in a repository gets only its dock's app: every server it's
+// given puts its tools in each prompt (Codex declares them all up front), and
+// a coding session has no use for, say, a D&D bestiary (LAZYAGENTS-254).
+func customAppMCPsForChat(ctx context.Context, q *store.Queries, chat store.ChatSession, repoCoding bool) ([]string, error) {
 	rows, err := q.ListCustomAppsWithMCP(ctx, store.ListCustomAppsWithMCPParams{WorkspaceID: chat.WorkspaceID, UserID: chat.CreatedBy})
 	if err != nil {
 		return nil, err
@@ -201,7 +206,7 @@ func customAppMCPsForChat(ctx context.Context, q *store.Queries, chat store.Chat
 			ToolScope string `json:"tool_scope"`
 		}
 		_ = json.Unmarshal(r.Manifest, &m)
-		if m.ToolScope == "" || m.ToolScope == "chats" || (m.ToolScope == "app_only" && appSpaceSlug == r.Slug) {
+		if appSpaceSlug == r.Slug || (!repoCoding && (m.ToolScope == "" || m.ToolScope == "chats")) {
 			out = append(out, r.Slug)
 		}
 	}

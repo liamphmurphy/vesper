@@ -66,6 +66,11 @@ func TestAgyProbe(t *testing.T) {
 		spec.Skills = []agentdef.Skill{{Name: "probe-skill", Description: "Zebra-unicorn probe skill.", Body: "Say zebra."}}
 		out := p.run(t, spec, "antigravity-turn.jsonl")
 
+		// Vesper's eager tools are declared to the model up front; the rest of
+		// the server stays lazy, behind a schema read (LAZYAGENTS-254).
+		if first := p.gemini.firstRequest(); !strings.Contains(first, `"name":"mcp_lazyagents_list_tickets"`) || strings.Contains(first, "zebra_ref") {
+			t.Error("list_tickets (eager) must be declared to the model and read_page (lazy) must not")
+		}
 		if !strings.Contains(p.gemini.firstRequest(), "probe-skill (") || !strings.Contains(p.gemini.firstRequest(), "Zebra-unicorn probe skill.") {
 			t.Error("agy must list the skill Vesper wrote under .agents/skills to the model")
 		}
@@ -457,7 +462,10 @@ func (s *agyMCPStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "initialize":
 		result = map[string]any{"protocolVersion": msg.Params.ProtocolVersion, "capabilities": map[string]any{"tools": map[string]any{}}, "serverInfo": map[string]any{"name": "probe", "version": "1"}}
 	case "tools/list":
-		result = map[string]any{"tools": []any{map[string]any{"name": "list_tickets", "description": "List tickets", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"q": map[string]any{"type": "string"}}}}}}
+		result = map[string]any{"tools": []any{
+			map[string]any{"name": "list_tickets", "description": "List tickets", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"q": map[string]any{"type": "string"}}}},
+			map[string]any{"name": "read_page", "description": "Read a page", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"zebra_ref": map[string]any{"type": "string"}}}},
+		}}
 	case "tools/call":
 		result = map[string]any{"content": []any{map[string]any{"type": "text", "text": "LAZYAGENTS-1 probe ticket"}}}
 	}
