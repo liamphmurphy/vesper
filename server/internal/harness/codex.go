@@ -20,6 +20,9 @@ func (Codex) Name() string { return agentdef.HarnessCodex }
 
 func tomlString(s string) string { return strconv.Quote(s) }
 
+// CodexProjectDocMaxBytes is the AGENTS.md budget Vesper gives Codex.
+const CodexProjectDocMaxBytes = 128 * 1024
+
 func (Codex) Invocation(ws Workspace, t Turn) (Invocation, error) {
 	spec := t.Spec
 	env, err := hookEnvironment(ws)
@@ -47,6 +50,11 @@ func (Codex) Invocation(ws Workspace, t Turn) (Invocation, error) {
 		"features.multi_agent=false", // delegation stays in the run-scoped service
 		`hooks.PreToolUse=[{matcher="*",hooks=[{type="command",command=` + tomlString(command) + `,timeout=20}]}]`,
 		"approval_policy=" + tomlString("never"), // nobody answers prompts headless
+		// Codex 0.169 truncates AGENTS.md past 32 KiB, global and thread
+		// instructions included. A chat's generated section can be most of
+		// that by itself (memory index, persona), so the repository's own
+		// AGENTS.md at the end was cut off. Room for both (LAZYAGENTS-253).
+		"project_doc_max_bytes=" + strconv.Itoa(CodexProjectDocMaxBytes),
 	}
 	// Codex can't switch its shell off here, so a no-tools turn gets a policy
 	// hook that denies every call (and still passes the launcher's preflight).
