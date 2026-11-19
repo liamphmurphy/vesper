@@ -387,16 +387,16 @@ export function PdfViewer({
           goToPage(numPages);
           break;
         case "scroll-up":
-          stage?.scrollBy({ top: -80, behavior: "smooth" });
+          if (stage) stage.scrollTop -= 80;
           break;
         case "scroll-down":
-          stage?.scrollBy({ top: 80, behavior: "smooth" });
+          if (stage) stage.scrollTop += 80;
           break;
         case "page-scroll-up":
-          stage?.scrollBy({ top: -Math.max(120, Math.round((stage?.clientHeight ?? 400) * 0.85)), behavior: "smooth" });
+          if (stage) stage.scrollTop -= Math.max(120, Math.round(stage.clientHeight * 0.85));
           break;
         case "page-scroll-down":
-          stage?.scrollBy({ top: Math.max(120, Math.round((stage?.clientHeight ?? 400) * 0.85)), behavior: "smooth" });
+          if (stage) stage.scrollTop += Math.max(120, Math.round(stage.clientHeight * 0.85));
           break;
         case "zoom-in":
           setZoom((z) => clampZoom(z + PDF_ZOOM_STEP));
