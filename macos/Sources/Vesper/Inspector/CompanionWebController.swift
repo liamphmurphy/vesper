@@ -111,10 +111,8 @@ final class CompanionWebController: NSObject, WKScriptMessageHandler, WKNavigati
             }
         case .openInMain(let path, let newTab):
             onOpenInMain?(path, newTab)
-        case .appearance(_, let background):
-            if let color = NSColor.fromCSS(background) {
-                webView.underPageBackgroundColor = color
-            }
+        case .appearance:
+            break
         case .confirmApproval(let requestId, let scope):
             Task { [weak self] in
                 let ok = await ShellBridge.services?.confirmApproval(scope: scope) ?? false

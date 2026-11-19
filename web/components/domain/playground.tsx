@@ -6,7 +6,7 @@ import { useChatPlayground, usePlaygroundAction, type Playground } from "@/lib/a
 import { cx } from "@/lib/cx";
 import { CaptureError, captureElement } from "@/lib/frame-capture";
 import { ago, idleRule, isErrorLine, parsePlaygroundFence, playgroundOrigin, type LogLine } from "@/lib/playground";
-import { applyProbe, emptyProbe, playgroundReport, reportNames, sendToComposer, type ProbeState } from "@/lib/playground-report";
+import { applyProbe, emptyProbe, playgroundReport, reportNames, sendToComposer, type ComposerDrop, type ProbeState } from "@/lib/playground-report";
 import { usePlaygroundPanel, type PlaygroundTab } from "@/lib/use-playground-panel";
 import { Button, IconButton } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
@@ -56,7 +56,15 @@ function usePlaygroundProbe(origin: string | null) {
  * and a screenshot of the frame, attached to the next message. The browser
  * asks to share the tab for each screenshot; declining still sends the report.
  */
-function SendToChat({ chatId, origin, branch, probe, logs, frame, onSent }: {
+export interface PlaygroundHost {
+  hideTitle?: boolean;
+  initialTab?: PlaygroundTab;
+  onOpenFull?: () => void;
+  onClose?: () => void;
+  onSendToComposer?: (drop: ComposerDrop) => Promise<boolean> | boolean;
+}
+
+function SendToChat({ chatId, origin, branch, probe, logs, frame, onSent, onSendToComposer }: {
   chatId: string;
   origin: string;
   branch?: string | null;
@@ -64,6 +72,7 @@ function SendToChat({ chatId, origin, branch, probe, logs, frame, onSent }: {
   logs: LogLine[];
   frame: HTMLIFrameElement | null;
   onSent: () => void;
+  onSendToComposer?: (drop: ComposerDrop) => Promise<boolean> | boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string>();
@@ -83,8 +92,9 @@ function SendToChat({ chatId, origin, branch, probe, logs, frame, onSent }: {
     }
     const report = playgroundReport({ origin, probe, logs, branch, at, noScreenshot });
     files.unshift(new File([report], names.report, { type: "text/markdown" }));
+    const ok = onSendToComposer ? await onSendToComposer({ files }) : sendToComposer(chatId, { files });
     setBusy(false);
-    if (!sendToComposer(chatId, { files })) {
+    if (!ok) {
       setProblem("Open the chat to attach it.");
       return;
     }
@@ -115,8 +125,13 @@ function StatusPill({ pg }: { pg: Playground }) {
 // bg-pill-review-bg text-pill-review-fg bg-pill-neutral-bg text-pill-neutral-fg bg-pill-done-bg text-pill-done-fg bg-pill-blocked-bg text-pill-blocked-fg
 
 /** The playground: header, tabs and the running app; `full` lays it out over the whole window. */
-function PlaygroundView({ chatId, pg, full }: { chatId: string; pg: Playground; full: boolean }) {
+function PlaygroundView({ chatId, pg, full, host }: { chatId: string; pg: Playground; full: boolean; host?: PlaygroundHost }) {
   const panel = usePlaygroundPanel();
+  const [hostedTab, setHostedTab] = useState<PlaygroundTab>(host?.initialTab ?? "preview");
+  const activeTab = host ? hostedTab : panel.tab;
+  const setActiveTab = host ? setHostedTab : panel.setTab;
+  const openFull = host?.onOpenFull ?? panel.openFull;
+  const close = host?.onClose ?? panel.close;
   const act = usePlaygroundAction(chatId);
   const origin = useOrigin(pg);
   const running = pg.state === "running" && !pg.action;
@@ -126,26 +141,36 @@ function PlaygroundView({ chatId, pg, full }: { chatId: string; pg: Playground; 
   const [frame, setFrame] = useState<HTMLIFrameElement | null>(null);
   const now = useNow();
   const tab = (t: PlaygroundTab, label: string, badge?: number) => (
-    <button type="button" role="tab" aria-selected={panel.tab === t} onClick={() => panel.setTab(t)} className={cx("flex items-center gap-1.5 border-b-2 px-0.5 pb-2 pt-2.5 text-13", panel.tab === t ? "border-accent font-semibold text-fg" : "border-transparent text-fg-secondary hover:text-fg")}>
+    <button type="button" role="tab" aria-selected={activeTab === t} onClick={() => setActiveTab(t)} className={cx("flex items-center gap-1.5 border-b-2 px-0.5 pb-2 pt-2.5 text-13", activeTab === t ? "border-accent font-semibold text-fg" : "border-transparent text-fg-secondary hover:text-fg")}>
       {label}
       {!!badge && <span aria-label={`${badge} errors`} className="rounded-full bg-pill-blocked-bg px-1.5 text-10 font-semibold text-pill-blocked-fg">{badge}</span>}
     </button>
   );
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-2.5">
-        {full && <Button variant="secondary" onClick={panel.exitFull}>← Back to chat</Button>}
-        <h2 className="text-14 font-semibold text-fg">Playground</h2>
-        <StatusPill pg={pg} />
-        {pg.branch && <code className="min-w-0 truncate font-mono text-12 text-fg-secondary">{pg.branch}</code>}
-        <span className="ml-auto flex items-center gap-1">
+      {host?.hideTitle ? (
+        <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-1.5">
+          <StatusPill pg={pg} />
+          {pg.branch && <code className="min-w-0 truncate font-mono text-12 text-fg-secondary">{pg.branch}</code>}
           {origin && running && (
-            <a href={origin} target="_blank" rel="noopener noreferrer" aria-label="Open in a new tab" title="Open in a new tab" className="grid size-7 place-items-center rounded-sm text-fg-secondary hover:bg-hover hover:text-fg">↗</a>
+            <a href={origin} target="_blank" rel="noopener noreferrer" aria-label="Open in a new tab" title="Open in a new tab" className="ml-auto grid size-7 place-items-center rounded-sm text-fg-secondary hover:bg-hover hover:text-fg">↗</a>
           )}
-          {full ? <IconButton icon="shrink" label="Exit full screen" onClick={panel.exitFull} /> : <IconButton icon="expand" label="Full screen" onClick={panel.openFull} />}
-          <IconButton icon="x" label="Close playground" onClick={panel.close} />
-        </span>
-      </div>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-2.5">
+          {full && <Button variant="secondary" onClick={panel.exitFull}>← Back to chat</Button>}
+          <h2 className="text-14 font-semibold text-fg">Playground</h2>
+          <StatusPill pg={pg} />
+          {pg.branch && <code className="min-w-0 truncate font-mono text-12 text-fg-secondary">{pg.branch}</code>}
+          <span className="ml-auto flex items-center gap-1">
+            {origin && running && (
+              <a href={origin} target="_blank" rel="noopener noreferrer" aria-label="Open in a new tab" title="Open in a new tab" className="grid size-7 place-items-center rounded-sm text-fg-secondary hover:bg-hover hover:text-fg">↗</a>
+            )}
+            {full ? <IconButton icon="shrink" label="Exit full screen" onClick={panel.exitFull} /> : <IconButton icon="expand" label="Full screen" onClick={openFull} />}
+            <IconButton icon="x" label="Close playground" onClick={close} />
+          </span>
+        </div>
+      )}
       <div className="flex items-center gap-4 border-b border-border-subtle px-4">
         <span role="tablist" aria-label="Playground view" className="flex items-center gap-4">
           {tab("preview", "Preview")}
@@ -156,7 +181,7 @@ function PlaygroundView({ chatId, pg, full }: { chatId: string; pg: Playground; 
           {(pg.state === "running" || pg.state === "starting") && (
             <>
               {running && origin && (
-                <SendToChat chatId={chatId} origin={origin} branch={pg.branch} probe={probe} logs={logs.lines} frame={panel.tab === "preview" ? frame : null} onSent={full ? panel.exitFull : () => {}} />
+                <SendToChat chatId={chatId} origin={origin} branch={pg.branch} probe={probe} logs={logs.lines} frame={activeTab === "preview" ? frame : null} onSent={full ? panel.exitFull : () => {}} onSendToComposer={host?.onSendToComposer} />
               )}
               <Button variant="secondary" disabled={!running || act.isPending} onClick={() => act.mutate("reset")}>↺ Reset data</Button>
               <Button variant="secondary" disabled={pg.action === "stop" || act.isPending} onClick={() => act.mutate("stop")}>■ Stop</Button>
@@ -167,9 +192,9 @@ function PlaygroundView({ chatId, pg, full }: { chatId: string; pg: Playground; 
       </div>
       {act.isError && <p role="alert" className="border-b border-border-row px-4 py-1 text-12 text-pill-blocked-fg">{errorText(act.error)}</p>}
       {running && origin ? (
-        panel.tab === "api" ? (
-          <ApiTab chatId={chatId} pg={pg} origin={origin} logs={logs.lines} wide={full} onOpenLogs={() => panel.setTab("logs")} />
-        ) : panel.tab === "logs" ? (
+        activeTab === "api" ? (
+          <ApiTab chatId={chatId} pg={pg} origin={origin} logs={logs.lines} wide={full} onOpenLogs={() => setActiveTab("logs")} onSendToComposer={host?.onSendToComposer} />
+        ) : activeTab === "logs" ? (
           <LogsTab logs={logs} />
         ) : (
           <PreviewTab origin={origin} frameRef={setFrame} livePath={probe.path} onReload={resetProbe} />
@@ -228,13 +253,14 @@ function NotRunning({ pg }: { pg: Playground }) {
  * The playground in the desktop dock's tab while the person keeps talking to the agent (fullscreen
  * shows over the window instead); `sheet` fills the compact panel sheet, so fullscreen shows there too.
  */
-export function PlaygroundPanel({ chatId, sheet }: { chatId: string; sheet?: boolean }) {
+export function PlaygroundPanel({ chatId, sheet, host }: { chatId: string; sheet?: boolean; host?: PlaygroundHost }) {
   const panel = usePlaygroundPanel();
   const pg = useChatPlayground(chatId).data;
-  if (!panel.open || (panel.fullscreen && !sheet) || !pg) return null;
+  if (!pg) return null;
+  if (!host && (!panel.open || (panel.fullscreen && !sheet))) return null;
   return (
     <aside aria-label="Playground" data-testid="playground-panel" className="flex min-h-0 flex-1 flex-col bg-panel">
-      <PlaygroundView chatId={chatId} pg={pg} full={false} />
+      <PlaygroundView chatId={chatId} pg={pg} full={false} host={host} />
     </aside>
   );
 }

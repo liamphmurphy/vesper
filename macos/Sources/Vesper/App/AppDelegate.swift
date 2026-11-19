@@ -268,7 +268,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             return true
         case #selector(toggleInspectorAction(_:)):
             guard let controller = app.keyController, controller.hasInspector, controller.kind == .vesper else { return false }
-            item.title = controller.isInspectorCollapsed ? "Show Inspector" : "Hide Inspector"
+            let isOpen = (controller.state.inspector?.open ?? false) || !controller.isInspectorCollapsed
+            item.title = isOpen ? "Hide Inspector" : "Show Inspector"
             return true
         case #selector(find(_:)), #selector(reload(_:)), #selector(forceReload(_:)), #selector(zoomIn(_:)), #selector(zoomOut(_:)),
              #selector(zoomReset(_:)), #selector(showInspector(_:)):

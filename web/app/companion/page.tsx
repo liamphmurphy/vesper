@@ -58,7 +58,7 @@ export default function NativeCompanionPage() {
   }, []);
 
   return (
-    <div className="flex h-dvh min-h-0 flex-col bg-surface text-fg">
+    <div className="flex h-dvh min-h-0 flex-col bg-transparent text-fg">
       <LiveUpdates />
       <WorkChat subject={subject} />
     </div>

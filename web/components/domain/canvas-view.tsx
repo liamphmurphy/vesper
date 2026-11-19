@@ -346,7 +346,31 @@ export function Rail({ inline, threads, replies, resolved, target, activeId, set
 
 /** One canvas: inline in a chat card (a fixed height, comments under their passages) or fullscreen (comments alongside). */
 /** `page` lays it out like fullscreen, for a page of its own (a document in the Docs app). */
-export function CanvasView({ chatId, canvasId, live, readOnly, agent, page, onCollapse, onFullscreen, onExitFullscreen, onClose }: { chatId: string; canvasId: string; live: boolean; readOnly: boolean; agent: string; page?: boolean; onCollapse?: () => void; onFullscreen?: () => void; onExitFullscreen?: () => void; onClose?: () => void }) {
+export function CanvasView({
+  chatId,
+  canvasId,
+  live,
+  readOnly,
+  agent,
+  page,
+  hideWindowActions,
+  onCollapse,
+  onFullscreen,
+  onExitFullscreen,
+  onClose,
+}: {
+  chatId: string;
+  canvasId: string;
+  live: boolean;
+  readOnly: boolean;
+  agent: string;
+  page?: boolean;
+  hideWindowActions?: boolean;
+  onCollapse?: () => void;
+  onFullscreen?: () => void;
+  onExitFullscreen?: () => void;
+  onClose?: () => void;
+}) {
   // Undefined follows the current version as the agent revises it.
   const [seq, setSeq] = useState<number>();
   const [view, setView] = useState<View>("preview");
@@ -434,10 +458,10 @@ export function CanvasView({ chatId, canvasId, live, readOnly, agent, page, onCo
         ) : (
           c && <Button variant="secondary" disabled={actions.promote.isPending} onClick={() => actions.promote.mutate()}>Save as artifact</Button>
         )}
-        {onFullscreen && <IconButton icon="expand" label="Fullscreen" onClick={onFullscreen} />}
-        {onExitFullscreen && <IconButton icon="shrink" label="Exit fullscreen" onClick={onExitFullscreen} />}
+        {!hideWindowActions && onFullscreen && <IconButton icon="expand" label="Fullscreen" onClick={onFullscreen} />}
+        {!hideWindowActions && onExitFullscreen && <IconButton icon="shrink" label="Exit fullscreen" onClick={onExitFullscreen} />}
         {onCollapse && <IconButton icon="chevronUp" label="Collapse canvas" onClick={onCollapse} />}
-        {onClose && <IconButton icon="x" label="Close canvas" onClick={onClose} />}
+        {!hideWindowActions && onClose && <IconButton icon="x" label="Close canvas" onClick={onClose} />}
       </div>
       <div className="flex items-center gap-2 border-b border-border-row px-4 py-1.5 text-12 text-fg-tertiary">
         {c && viewing !== undefined && (
@@ -534,16 +558,33 @@ function FullscreenChat({ chatId, live, readOnly }: { chatId: string; live: bool
 
 const noSubscribe = () => () => {};
 
+export type CanvasDockHost = {
+  canvasId?: string;
+  hideWindowActions?: boolean;
+  onFullscreen?: (canvasId: string) => void;
+  onClose?: () => void;
+};
+
 /** The desktop dock's Canvas tab: the canvas in the dock's width, with Fullscreen to take it over the window and Close to put it back in its card. */
-export function CanvasDock({ chatId, live, readOnly, agent }: { chatId: string; live: boolean; readOnly: boolean; agent: string }) {
+export function CanvasDock({ chatId, live, readOnly, agent, host }: { chatId: string; live: boolean; readOnly: boolean; agent: string; host?: CanvasDockHost }) {
   const panel = useCanvasPanel();
   const canvases = useChatCanvases(chatId, live).data?.canvases;
-  const id = panel.focus ?? canvases?.at(-1)?.id;
+  const id = host ? (host.canvasId ?? canvases?.at(-1)?.id) : (panel.focus ?? canvases?.at(-1)?.id);
   // While it's over the window (CanvasFullscreen) it shows only there.
-  if (!id || panel.maximized) return null;
+  if (!id || (!host && panel.maximized)) return null;
   return (
     <section aria-label="Canvas" data-testid="canvas-dock" className="flex min-h-0 flex-1 flex-col bg-surface-sunken">
-      <CanvasView key={id} chatId={chatId} canvasId={id} live={live} readOnly={readOnly} agent={agent} onFullscreen={() => panel.maximize(id)} onClose={panel.exitFull} />
+      <CanvasView
+        key={id}
+        chatId={chatId}
+        canvasId={id}
+        live={live}
+        readOnly={readOnly}
+        agent={agent}
+        hideWindowActions={host?.hideWindowActions}
+        onFullscreen={host?.onFullscreen ? () => host.onFullscreen?.(id) : () => panel.maximize(id)}
+        onClose={host?.onClose ?? panel.exitFull}
+      />
     </section>
   );
 }

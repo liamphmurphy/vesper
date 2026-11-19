@@ -3,12 +3,12 @@ import ObjectiveC
 import VesperCore
 import WebKit
 
-enum WebViewKind { case vesper, companion, playground }
+enum WebViewKind { case vesper, companion, inspectorPanel, playground }
 
-/// Builds the web views. Vesper and companion pages share the default (persistent) data store and
-/// get the native bridge; playground pages get a separate non-persistent store (so the session
-/// cookie, which is not port-scoped, never reaches them) and neither the bridge nor the native-mode
-/// script.
+/// Builds the web views. Vesper, companion, and inspector-panel pages share the default
+/// (persistent) data store and get the native bridge; playground pages get a separate
+/// non-persistent store (so the session cookie, which is not port-scoped, never reaches them)
+/// and neither the bridge nor the native-mode script.
 @MainActor
 enum WebViewFactory {
     static let userAgentSuffix = "VesperMac/1"
@@ -27,7 +27,12 @@ enum WebViewFactory {
 
     private static let companionModeScript = """
     window.__VESPER_NATIVE__ = {v:1, platform:"macos"};
-    document.documentElement.classList.add("native-mac", "native-companion");
+    document.documentElement.classList.add("native-mac", "native-companion", "native-inspector-glass");
+    """
+
+    private static let inspectorPanelModeScript = """
+    window.__VESPER_NATIVE__ = {v:1, platform:"macos"};
+    document.documentElement.classList.add("native-mac", "native-inspector-panel", "native-inspector-glass");
     """
 
     static func makeWebView(kind: WebViewKind, bridge: WKScriptMessageHandler?, services: WebPageServices? = nil) -> WKWebView {
@@ -36,9 +41,13 @@ enum WebViewFactory {
         // element.requestFullscreen (slides/designs present, video, dev terminal).
         config.preferences.isElementFullscreenEnabled = true
         switch kind {
-        case .vesper, .companion:
+        case .vesper, .companion, .inspectorPanel:
             config.websiteDataStore = WKWebsiteDataStore.default()
-            let source = kind == .companion ? companionModeScript : nativeModeScript
+            let source: String = switch kind {
+            case .companion: companionModeScript
+            case .inspectorPanel: inspectorPanelModeScript
+            case .vesper, .playground: nativeModeScript
+            }
             let script = WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true)
             config.userContentController.addUserScript(script)
             if let bridge { config.userContentController.add(bridge, name: handlerName) }
@@ -50,10 +59,23 @@ enum WebViewFactory {
         }
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.isInspectable = true
-        webView.allowsBackForwardNavigationGestures = kind != .companion
+        webView.allowsBackForwardNavigationGestures = kind == .vesper || kind == .playground
         webView.allowsMagnification = true
-        if kind != .playground, let background = lastPageBackground { webView.underPageBackgroundColor = background }
+        if kind == .companion || kind == .inspectorPanel {
+            disableBackground(webView)
+        } else if kind != .playground, let background = lastPageBackground {
+            webView.underPageBackgroundColor = background
+        }
         return webView
+    }
+
+    /// Lets the native inspector backdrop's vibrancy / Liquid Glass shine through `/companion` and `/inspector-panel`.
+    private static func disableBackground(_ webView: WKWebView) {
+        webView.underPageBackgroundColor = .clear
+        if webView.responds(to: NSSelectorFromString("_setDrawsBackground:"))
+            || webView.responds(to: NSSelectorFromString("setDrawsBackground:")) {
+            webView.setValue(false, forKey: "drawsBackground")
+        }
     }
 
     /// Unlocks 120Hz ProMotion frame pacing for page animations inside Vesper web views by disabling

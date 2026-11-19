@@ -16,7 +16,7 @@ const excerpt = (s: string) => (s.length > 280 ? `${s.slice(0, 280).trimEnd()}â€
  * and a box to reply in it. The first reply starts the thread (an aside anchored to the message);
  * the persona answers in a read-only session and the main conversation never sees it.
  */
-export function ThreadPanel({ chatId, messageId, onClose }: { chatId: string; messageId: string; onClose: () => void }) {
+export function ThreadPanel({ chatId, messageId, onClose, hideHeader }: { chatId: string; messageId: string; onClose: () => void; hideHeader?: boolean }) {
   const parent = useChatMessages(chatId).data?.messages.find((m) => m.id === messageId);
   // The newest thread about this message, if one was started (second opinions render inline in the transcript).
   const thread = useChatAsides(chatId).data?.findLast((a) => a.anchor_message_id === messageId && !a.second_opinion);
@@ -35,13 +35,15 @@ export function ThreadPanel({ chatId, messageId, onClose }: { chatId: string; me
   };
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="thread-panel">
-      <div className="flex flex-none items-center gap-2 border-b border-border-subtle px-3 py-2">
-        <Icon name="branch" size={14} className="text-fg-secondary" />
-        <span className="flex-1 text-13 font-semibold text-fg">Thread</span>
-        <button type="button" aria-label="Close thread" onClick={onClose} className="grid size-7 place-items-center rounded-md text-fg-tertiary hover:bg-hover hover:text-fg">
-          <Icon name="x" size={13} />
-        </button>
-      </div>
+      {!hideHeader && (
+        <div className="flex flex-none items-center gap-2 border-b border-border-subtle px-3 py-2">
+          <Icon name="branch" size={14} className="text-fg-secondary" />
+          <span className="flex-1 text-13 font-semibold text-fg">Thread</span>
+          <button type="button" aria-label="Close thread" onClick={onClose} className="grid size-7 place-items-center rounded-md text-fg-tertiary hover:bg-hover hover:text-fg">
+            <Icon name="x" size={13} />
+          </button>
+        </div>
+      )}
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
         <figure className="rounded-lg border border-border bg-surface p-3" data-testid="thread-anchor">
           <figcaption className="mb-1 flex items-center gap-1.5 text-12 text-fg-tertiary">

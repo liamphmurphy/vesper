@@ -18,20 +18,28 @@ import { isTyping } from "./shortcuts";
 import { NavigatorPortal, type NativeNavigator } from "./navigator-slot";
 import { splitActions, type NativeAction, type NativeMenuEntry } from "@/lib/native-shell/actions";
 import { inspectorPublisher, toCompanionSubject } from "@/lib/native-shell/inspector-publisher";
-import type { InspectorAction, InspectorModel, InspectorSection, InspectorTab } from "@/lib/native-shell/protocol";
+import type {
+  InspectorAction,
+  InspectorModel,
+  InspectorPanelSpec,
+  InspectorSection,
+  InspectorTab,
+  InspectorWidth,
+} from "@/lib/native-shell/protocol";
 import { setTopBarTitle } from "@/lib/native-shell/title";
 import { useNativeToolbar } from "@/lib/native-shell/use-native-toolbar";
 import type { WorkSubject } from "@/lib/work-context";
 import { usePathname, useRouter } from "next/navigation";
 import { CompanionPortal, RightRailPortal } from "./companion";
 
-/** Native macOS inspector representation for a dock tab (`native` SwiftUI or `companion` `/companion` WebView; omit for `web`). */
+/** Native macOS inspector representation for a dock tab (`native` SwiftUI, `companion` `/companion` WebView, or `panel` `/inspector-panel` WebView; omit for `web`). */
 export type NativeDockTab =
   | {
       kind: "native";
       sections: InspectorSection[];
       headerActions?: InspectorAction[];
       emptyText?: string;
+      width?: InspectorWidth;
       onAction?: (actionId: string, itemId?: string, menuItemId?: string) => void;
       onChange?: (fieldId: string, value: string) => void;
       onToggle?: (fieldId: string, checked: boolean) => void;
@@ -39,6 +47,15 @@ export type NativeDockTab =
   | {
       kind: "companion";
       subject?: WorkSubject;
+      width?: InspectorWidth;
+    }
+  | {
+      kind: "panel";
+      panel: InspectorPanelSpec;
+      width?: InspectorWidth;
+      headerActions?: InspectorAction[];
+      onAction?: (actionId: string, itemId?: string, menuItemId?: string) => void;
+      onEvent?: (event: string, payloadJson?: string) => void;
     };
 
 /** A tab in the right dock. `busy` pulses its ring, `unread` adds a dot (Chat uses both for the persona). */
@@ -372,21 +389,31 @@ export function Dock({
           id: uid,
           open: shown,
           activeTabId: active?.id ?? "",
-          tabs: panelTabs.map((t): InspectorTab => ({
-            id: t.id,
-            label: t.label,
-            icon: t.icon,
-            kind: t.native?.kind ?? "web",
-            ...(t.busy ? { busy: true } : {}),
-            ...(t.unread ? { unread: true } : {}),
-            ...(t.native?.kind === "native"
-              ? {
-                  sections: t.native.sections,
-                  ...(t.native.headerActions?.length ? { headerActions: t.native.headerActions } : {}),
-                  ...(t.native.emptyText ? { emptyText: t.native.emptyText } : {}),
-                }
-              : {}),
-          })),
+          tabs: panelTabs.map((t): InspectorTab => {
+            const width: InspectorWidth | undefined =
+              t.native?.width ?? (t.wide === "max" ? "max" : t.wide ? "wide" : undefined);
+            return {
+              id: t.id,
+              label: t.label,
+              icon: t.icon,
+              kind: t.native?.kind ?? "web",
+              ...(width ? { width } : {}),
+              ...(t.busy ? { busy: true } : {}),
+              ...(t.unread ? { unread: true } : {}),
+              ...(t.native?.kind === "native"
+                ? {
+                    sections: t.native.sections,
+                    ...(t.native.headerActions?.length ? { headerActions: t.native.headerActions } : {}),
+                    ...(t.native.emptyText ? { emptyText: t.native.emptyText } : {}),
+                  }
+                : t.native?.kind === "panel"
+                  ? {
+                      panel: t.native.panel,
+                      ...(t.native.headerActions?.length ? { headerActions: t.native.headerActions } : {}),
+                    }
+                  : {}),
+            };
+          }),
           ...(companionNative
             ? {
                 companion: {
@@ -421,7 +448,7 @@ export function Dock({
             break;
           case "inspector.action": {
             const tab = cur.tabs.find((t) => t.id === cmd.tabId);
-            if (tab?.native?.kind === "native") {
+            if (tab?.native?.kind === "native" || tab?.native?.kind === "panel") {
               tab.native.onAction?.(cmd.actionId, cmd.itemId, cmd.menuItemId);
             }
             break;
@@ -437,6 +464,13 @@ export function Dock({
             const tab = cur.tabs.find((t) => t.id === cmd.tabId);
             if (tab?.native?.kind === "native") {
               tab.native.onToggle?.(cmd.fieldId, cmd.checked);
+            }
+            break;
+          }
+          case "panel.event": {
+            const tab = cur.tabs.find((t) => t.id === cmd.tabId);
+            if (tab?.native?.kind === "panel") {
+              tab.native.onEvent?.(cmd.event, cmd.payloadJson);
             }
             break;
           }

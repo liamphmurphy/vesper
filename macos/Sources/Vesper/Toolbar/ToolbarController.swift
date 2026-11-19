@@ -95,9 +95,9 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         if owner?.compact == true {
-            return [.toggleSidebar, Self.sidebarSeparator, Self.nav, Self.tabStrip, Self.search, Self.inspectorSeparator, .toggleInspector]
+            return [.toggleSidebar, Self.sidebarSeparator, Self.nav, Self.tabStrip, Self.search, Self.inspectorSeparator, .flexibleSpace, .toggleInspector]
         }
-        return [.toggleSidebar, Self.sidebarSeparator, Self.nav, .flexibleSpace, Self.search, Self.inspectorSeparator, .toggleInspector]
+        return [.toggleSidebar, Self.sidebarSeparator, Self.nav, .flexibleSpace, Self.search, Self.inspectorSeparator, .flexibleSpace, .toggleInspector]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {

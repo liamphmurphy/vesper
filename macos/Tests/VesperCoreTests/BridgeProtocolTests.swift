@@ -57,11 +57,11 @@ final class BridgeProtocolTests: XCTestCase {
         XCTAssertTrue(all.contains(.inspector(nil)))
         XCTAssertTrue(all.contains(.openInMain(path: "/tickets/VES-412", newTab: true)))
 
-        let inspectorModel = all.compactMap { msg -> InspectorModel? in
+        let inspectorModels = all.compactMap { msg -> InspectorModel? in
             if case .inspector(let model?) = msg { return model }
             return nil
-        }.first
-        let model = try XCTUnwrap(inspectorModel)
+        }
+        let model = try XCTUnwrap(inspectorModels.first)
         XCTAssertEqual(model.id, "ticket:VES-412")
         XCTAssertTrue(model.open)
         XCTAssertEqual(model.activeTabId, "properties")
@@ -70,6 +70,14 @@ final class BridgeProtocolTests: XCTestCase {
         XCTAssertEqual(model.tabs.map(\.kind), [.native, .companion, .web])
         XCTAssertEqual(model.tabs[0].sections?.first?.items.count, 12)
         XCTAssertEqual(model.tabs[0].sections?.first?.items[5].steps?.last?.state, .needsHuman)
+
+        let panelModel = try XCTUnwrap(inspectorModels.dropFirst().first)
+        XCTAssertEqual(panelModel.id, "chat:c1")
+        XCTAssertEqual(panelModel.tabs.first?.kind, .panel)
+        XCTAssertEqual(panelModel.tabs.first?.width, .wide)
+        XCTAssertEqual(panelModel.tabs.first?.panel?.kind, "chat.playground")
+        XCTAssertEqual(panelModel.tabs.first?.panel?.key, "chat.playground:c1")
+        XCTAssertTrue(all.contains(.panelEvent(tabId: "playground", event: "fullscreen", payloadJson: nil)))
     }
 
     func testEveryCommandFixtureRoundTrips() throws {
@@ -128,6 +136,14 @@ final class BridgeProtocolTests: XCTestCase {
         )).jsonString()
         XCTAssertTrue(ctx.contains("\"type\":\"companion.context\""))
         XCTAssertTrue(ctx.contains("\"ticketKey\":\"VES-1\""))
+
+        let emptyPanelCtx = try NativeCommand.panelContext(InspectorPanelContext(active: nil, keepKeys: [])).jsonString()
+        XCTAssertTrue(emptyPanelCtx.contains("\"type\":\"panel.context\""))
+        XCTAssertTrue(emptyPanelCtx.contains("\"active\":null"))
+
+        let panelEvt = try NativeCommand.panelEvent(tabId: "code", event: "fullscreen", payloadJson: "{}").jsonString()
+        XCTAssertTrue(panelEvt.contains("\"type\":\"panel.event\""))
+        XCTAssertTrue(panelEvt.contains("\"tabId\":\"code\""))
     }
 }
 

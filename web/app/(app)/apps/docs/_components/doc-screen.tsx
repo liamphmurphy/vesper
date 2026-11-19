@@ -13,14 +13,15 @@ import { Button } from "@/components/ui/button";
 import { Banner, Skeleton } from "@/components/ui/primitives";
 import { EditorLayout, type DockTab, type NativeEditorHeader } from "@/components/shell/editor-layout";
 import { CanvasView, Rail, type Target } from "@/components/domain/canvas-view";
-import { Conversation } from "@/app/(app)/chat/_components/conversation";
 import { PersonaAvatar, personaLook } from "@/app/(app)/chat/_components/persona";
 import { toast } from "@/lib/toast";
 import { buildDocActions, buildDocOutlineNav, parseHeadingId } from "@/lib/native-shell/models/doc-editor";
+import { buildDocReviewInspector } from "@/lib/native-shell/models/doc-inspector";
 import { navAvatar, pageOrigin } from "@/lib/native-shell/models/common";
 import { presenceLabel } from "@/lib/native-shell/models/editor-header";
+import { makePanelSpec } from "@/lib/native-shell/panel-events";
 import { DocEditor, type DocEditorHandle, type Picked, type SaveState } from "./doc-editor";
-import { DocReview, DocReviewList, useDocReview } from "./doc-review";
+import { DocReview, useDocReview } from "./doc-review";
 import { useDocExports } from "./export-menu";
 
 type Comment = Schemas["ChatCanvasComment"];
@@ -285,6 +286,22 @@ export function DocScreen({ id }: { id: string }) {
     </div>
   );
 
+  const docReviewInspector = useMemo(
+    () =>
+      suggesting
+        ? buildDocReviewInspector({
+            persona,
+            segments: review.segments,
+            changes: review.changes,
+            decisions: review.decisions,
+            left: review.left,
+            busy: reviewBusy,
+            error: reviewError,
+          })
+        : undefined,
+    [suggesting, persona, review.segments, review.changes, review.decisions, review.left, reviewBusy, reviewError],
+  );
+
   const dockTabs: DockTab[] = [
     {
       id: "chat",
@@ -293,12 +310,12 @@ export function DocScreen({ id }: { id: string }) {
       avatar: <PersonaAvatar persona={look} size={16} />,
       busy: live,
       unread,
-      content: (
-        <div data-testid="doc-chat" aria-label={`Chat with ${persona}`} className="flex min-h-0 flex-1 flex-col">
-          {/* A document keeps its one chat: /new starts another document instead. */}
-          {chatId && <Conversation key={chatId} id={chatId} docked onNew={() => router.push("/apps/docs")} />}
-        </div>
-      ),
+      native: chatId
+        ? {
+            kind: "panel",
+            panel: makePanelSpec("editor.chat", `doc.chat:${chatId}`, { tabId: "chat", chatId }),
+          }
+        : { kind: "native", sections: [], emptyText: "Loading chat…" },
     },
   ];
   if (suggesting)
@@ -307,7 +324,22 @@ export function DocScreen({ id }: { id: string }) {
       label: "Review",
       icon: "check",
       badge: <span className="rounded-full bg-pill-review-bg px-1.5 text-11 text-pill-review-fg">{review.left}</span>,
-      content: <DocReviewList review={review} persona={persona} busy={reviewBusy} error={reviewError} />,
+      native: docReviewInspector
+        ? {
+            kind: "native",
+            ...docReviewInspector,
+            onAction: (actionId) => {
+              if (actionId === "accept_all") review.everything("accept");
+              else if (actionId === "reject_all") review.everything("reject");
+              else if (actionId.startsWith("accept:")) review.decide(Number(actionId.slice(7)), "accept");
+              else if (actionId.startsWith("reject:")) review.decide(Number(actionId.slice(7)), "reject");
+              else if (actionId.startsWith("undo:")) review.undo(Number(actionId.slice(5)));
+              else if (actionId.startsWith("jump:")) {
+                document.getElementById(`doc-change-${actionId.slice(5)}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }
+            },
+          }
+        : undefined,
     });
 
   return <EditorLayout app="docs" back={{ href: "/apps/docs", label: "Docs" }} header={header} nativeLeft={nativeLeft} main={failed ?? main} dock={dockTabs} show={show} onDockChange={setDock} />;

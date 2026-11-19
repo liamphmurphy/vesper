@@ -200,9 +200,40 @@ html.native-mac [data-chat-dock] > * {
   pointer-events: auto;
 }
 
-/* Window-level companion WKWebView (/companion) fills its inspector host without outer scrolling. */
+/* Window-level companion (/companion) and inspector panel (/inspector-panel) WKWebViews
+ * fill their native AppKit inspector host and let NSVisualEffectView Liquid Glass show through. */
 html.native-companion,
-html.native-companion body {
+html.native-companion body,
+html.native-inspector-glass,
+html.native-inspector-glass body {
   height: 100%;
   overflow: hidden;
+  background: transparent !important;
+}
+
+html.native-inspector-glass body {
+  --glass-solid-surface: var(--surface);
+  --glass-solid-raised: var(--surface-raised);
+}
+
+html.native-inspector-glass body > * {
+  --bg: transparent;
+  --bg-panel: transparent;
+  --bg-sidebar: color-mix(in srgb, var(--glass-solid-surface) 28%, transparent);
+  --surface: color-mix(in srgb, var(--glass-solid-surface) 44%, transparent);
+  --surface-raised: color-mix(in srgb, var(--glass-solid-raised) 76%, transparent);
+  --surface-sunken: color-mix(in srgb, var(--glass-solid-surface) 28%, transparent);
+  --hover: color-mix(in srgb, var(--text) 7%, transparent);
+  --selected: color-mix(in srgb, var(--text) 12%, transparent);
+  --border: color-mix(in srgb, var(--text) 11%, transparent);
+  --border-subtle: color-mix(in srgb, var(--text) 8%, transparent);
+  --border-row: color-mix(in srgb, var(--text) 7%, transparent);
+  --border-strong: color-mix(in srgb, var(--text) 16%, transparent);
+}
+
+html.native-inspector-glass :is([data-radix-popper-content-wrapper], [role="dialog"], [role="menu"], [role="listbox"]) {
+  --surface: color-mix(in srgb, var(--glass-solid-surface) 88%, transparent);
+  --surface-raised: color-mix(in srgb, var(--glass-solid-raised) 90%, transparent);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
+  backdrop-filter: blur(22px) saturate(160%);
 }

@@ -20,9 +20,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { ago, outline } from "@/lib/knowledge";
 import { buildKnowledgeHistorySections, buildKnowledgeLinksSections, buildKnowledgeOutlineSections } from "@/lib/native-shell/models/knowledge-inspector";
 import { KNOWLEDGE_CONTEXT_MARKER, refKey } from "@/lib/chat-context";
+import { makePanelSpec } from "@/lib/native-shell/panel-events";
 import { actOnDock, dockShortcut, loadDock, saveDock, type DockAction, type DockState } from "@/lib/editor-layout";
-import { isFolder, useKnowledgeChat, type FolderAttachment, type PageAttachment } from "./chat-context";
-import { CalendarPanel, SIDE_TABS } from "./page-side";
+import { isFolder, useKnowledgeChat, type Attachment, type FolderAttachment, type PageAttachment } from "./chat-context";
+import { SIDE_TABS } from "./page-side";
 
 const APP = "knowledge";
 // Chat everywhere; a page adds its side panels (Links, Outline, Calendar, History).
@@ -44,7 +45,7 @@ function screenOf(pathname: string): string {
  * folded in each new browser tab. On a page it is that page's chat; elsewhere one general Knowledge chat.
  */
 export function KnowledgeDock({ pageId }: { pageId?: string }) {
-  const { request, panel } = useKnowledgeChat();
+  const { attachments, request, remove, readDraft, panel } = useKnowledgeChat();
   const screen = screenOf(usePathname());
   const uid = useId();
   const page = usePage(pageId).data;
@@ -211,6 +212,12 @@ export function KnowledgeDock({ pageId }: { pageId?: string }) {
         },
       };
     }
+    if (tab === "calendar") {
+      return {
+        kind: "panel",
+        panel: makePanelSpec("knowledge.calendar", "knowledge.calendar", { tabId: "calendar" }),
+      };
+    }
     return undefined;
   };
 
@@ -222,19 +229,32 @@ export function KnowledgeDock({ pageId }: { pageId?: string }) {
       avatar: <PersonaAvatar persona={personaLook(chat?.speaker ?? chat?.persona)} size={16} />,
       busy: running,
       unread,
-      content: (
-        <ChatBody
-          key={pageId ?? "general"}
-          chatId={chatId}
-          page={pageId ? page : undefined}
-          screen={pageId ? undefined : screen}
-          loadingPage={!!pageId && !page}
-          onGeneral={(id) => {
-            window.localStorage.setItem(GENERAL_CHAT_KEY, id);
-            setGeneral(id);
-          }}
-        />
-      ),
+      native: {
+        kind: "panel",
+        panel: makePanelSpec("knowledge.chat", `knowledge.chat:${pageId ?? "general"}`, {
+          tabId: "chat",
+          pageId,
+          screen: pageId ? undefined : screen,
+          chatId,
+          attachments,
+          request,
+          draftText: pageId ? readDraft(pageId) : undefined,
+        }),
+        onEvent: (event, payloadJson) => {
+          if (!payloadJson) return;
+          try {
+            const payload = JSON.parse(payloadJson) as { keys?: string[]; chatId?: string };
+            if (event === "removeAttachments" && Array.isArray(payload.keys)) {
+              remove(payload.keys);
+            } else if (event === "generalChat" && typeof payload.chatId === "string" && payload.chatId) {
+              window.localStorage.setItem(GENERAL_CHAT_KEY, payload.chatId);
+              setGeneral(payload.chatId);
+            }
+          } catch {
+            // Ignore malformed panel event payloads.
+          }
+        },
+      },
     },
     ...(pageId && page
       ? SIDE_TABS.map(([t, icon, label]): DockTab => ({
@@ -242,7 +262,6 @@ export function KnowledgeDock({ pageId }: { pageId?: string }) {
           label,
           icon,
           native: nativeSideTab(page, t),
-          ...(t === "calendar" ? { content: <CalendarPanel /> } : {}),
         }))
       : []),
   ];
@@ -256,11 +275,50 @@ export function KnowledgeDock({ pageId }: { pageId?: string }) {
   );
 }
 
-function ChatBody({ chatId, page, screen, loadingPage, onGeneral }: { chatId?: string; page?: Page; screen?: string; loadingPage: boolean; onGeneral: (id: string) => void }) {
+export type KnowledgeChatHost = {
+  attachments: Attachment[];
+  request: number;
+  draftText?: string;
+  readDraft?: (id: string) => string | undefined;
+  onRemove: (keys: string[]) => void;
+  onClaimRequest?: (n: number) => boolean;
+  onGeneral: (id: string) => void;
+};
+
+export function KnowledgeChatPanel({
+  pageId,
+  screen,
+  chatId,
+  loadingPage,
+  host,
+}: {
+  pageId?: string;
+  screen?: string;
+  chatId?: string;
+  loadingPage?: boolean;
+  host: KnowledgeChatHost;
+}) {
+  const pageQuery = usePage(pageId);
+  const page = pageId ? pageQuery.data : undefined;
+  const loading = loadingPage ?? (!!pageId && !page);
   const create = useCreateChat();
   const attach = useAttachChat(page?.id ?? "");
   const addDockChat = useAddDockChat();
-  const { attachments, request, remove, readDraft, claimRequest } = useKnowledgeChat();
+  const { attachments, request, onRemove: remove, readDraft: hostReadDraft, draftText, onClaimRequest, onGeneral } = host;
+  const handledRequest = useRef(0);
+  const claimRequest = useCallback(
+    (n: number) => {
+      if (onClaimRequest) return onClaimRequest(n);
+      if (n <= handledRequest.current) return false;
+      handledRequest.current = n;
+      return true;
+    },
+    [onClaimRequest],
+  );
+  const readDraft = useCallback(
+    (id: string) => (hostReadDraft ? hostReadDraft(id) : page?.id === id ? draftText : undefined),
+    [hostReadDraft, page?.id, draftText],
+  );
   const [created, setCreated] = useState<string>();
   const id = created ?? chatId;
   const open = useChat(id).data;
@@ -271,7 +329,7 @@ function ChatBody({ chatId, page, screen, loadingPage, onGeneral }: { chatId?: s
   const rememberPersona = starting.remember;
   useEffect(() => rememberPersona(openPersonaId), [rememberPersona, openPersonaId]);
   const persona = open ? personaLook(open.speaker ?? open.persona).name : starting.look.name;
-  const host = useRef<HTMLDivElement>(null);
+  const hostRef = useRef<HTMLDivElement>(null);
   const pageScope: DockScope | undefined = page ? `page:${page.id}` : undefined;
   const pageChats = useDockChats(pageScope);
   const appChats = useDockChats(APP_SCOPE);
@@ -294,7 +352,8 @@ function ChatBody({ chatId, page, screen, loadingPage, onGeneral }: { chatId?: s
       { title: page?.title ?? "Knowledge", hidden: true, ...(starting.id ? { persona_id: starting.id } : {}) },
       { onSuccess: (c) => { void selectChat(c.id).catch(() => { /* attach.error keeps the chat available with Retry. */ }); } },
     );
-  };  const sections: DockChatSection[] = page
+  };
+  const sections: DockChatSection[] = page
     ? [{ label: "This page", chats: pageChats.data?.chats ?? [] }, { label: "Elsewhere in Knowledge", chats: (appList ?? []).filter((c) => !pageChats.data?.chats.some((p) => p.id === c.id)) }]
     : [{ label: "Knowledge", chats: appList ?? [] }];
   const known = sections.flatMap((s) => s.chats);
@@ -310,15 +369,14 @@ function ChatBody({ chatId, page, screen, loadingPage, onGeneral }: { chatId?: s
     />
   );
 
-
   // Only an explicit Ask action creates an empty conversation; opening the rail does not.
   useEffect(() => {
-    if (!request || loadingPage || !claimRequest(request)) return;
+    if (!request || loading || !claimRequest(request)) return;
     if (!id && !create.isPending) start();
   });
   useEffect(() => {
     if (!request || !id) return;
-    const frame = requestAnimationFrame(() => host.current?.querySelector<HTMLElement>("textarea")?.focus());
+    const frame = requestAnimationFrame(() => hostRef.current?.querySelector<HTMLElement>("textarea")?.focus());
     return () => cancelAnimationFrame(frame);
   }, [request, id]);
 
@@ -384,27 +442,27 @@ function ChatBody({ chatId, page, screen, loadingPage, onGeneral }: { chatId?: s
     welcome: welcomeFor({ page, screen, selection: pages.some((a) => a.quote !== undefined), folders: folders.map((f) => f.path) }),
   };
 
-  if (loadingPage) return <div className="p-4"><Skeleton className="h-4 w-2/3" /></div>;
+  if (loading) return <div className="p-4"><Skeleton className="h-4 w-2/3" /></div>;
   if (id) return (
-    <div ref={host} className="flex min-h-0 min-w-0 flex-1 flex-col">
+    <div ref={hostRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
       {attach.error && <p role="alert" className="p-2 text-12 text-state-blocked">Couldn’t link this chat to the page. <button className="underline" onClick={() => attach.mutate(id)}>Retry</button></p>}
       <Conversation key={id} id={id} docked hideTitle onNew={start} onReplace={selectChat} context={context} actions={switcher} />
     </div>
   );
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-    {known.length > 0 && switcher}
-    <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-      <Icon name="msg" size={22} className="text-fg-tertiary" />
-      {renderContext("justify-center")}
-      <p className="text-13 text-fg-secondary">
-        {page ? "Talk to a persona about this page. It can read it, link it and edit it with you." : "Talk to a persona about your notes. It can search, link and write pages with you."}
-      </p>
-      <Button variant="primary" disabled={create.isPending} onClick={start}>
-        {page ? "Start a chat about this page" : "Start a chat"}
-      </Button>
-      {create.error && <p className="text-12 text-state-blocked">{create.error.message}</p>}
-    </div>
+      {known.length > 0 && switcher}
+      <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+        <Icon name="msg" size={22} className="text-fg-tertiary" />
+        {renderContext("justify-center")}
+        <p className="text-13 text-fg-secondary">
+          {page ? "Talk to a persona about this page. It can read it, link it and edit it with you." : "Talk to a persona about your notes. It can search, link and write pages with you."}
+        </p>
+        <Button variant="primary" disabled={create.isPending} onClick={start}>
+          {page ? "Start a chat about this page" : "Start a chat"}
+        </Button>
+        {create.error && <p className="text-12 text-state-blocked">{create.error.message}</p>}
+      </div>
     </div>
   );
 }

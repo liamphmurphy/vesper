@@ -4,7 +4,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { ApiError, api, unwrap } from "@/lib/api/client";
 import { useCanvasActions, useChatCanvas } from "@/lib/api/canvas-hooks";
-import { useMarkDocReviewed } from "@/lib/api/docs-hooks";
 import { useChat, useSendChatMessage } from "@/lib/api/hooks";
 import { uploadDeckAsset, useCreateSlideTheme, useDeckRef, useDeleteSlideTheme, useSlideThemes, useUpdateSlideTheme } from "@/lib/api/slides-hooks";
 import { cx } from "@/lib/cx";
@@ -24,14 +23,13 @@ import { Banner, Skeleton } from "@/components/ui/primitives";
 import { EditorLayout, type DockTab, type NativeEditorHeader } from "@/components/shell/editor-layout";
 import type { DockState } from "@/lib/editor-layout";
 import { useCompact } from "@/lib/viewport";
-import { Conversation } from "@/app/(app)/chat/_components/conversation";
 import { PersonaAvatar, personaLook } from "@/app/(app)/chat/_components/persona";
-import { DeckReview } from "./deck-review";
 import { PreflightDialog, useDeckExport } from "./export-menu";
 import { toast } from "@/lib/toast";
 import { buildDeckActions, buildDeckNav, parseDeckCommand } from "@/lib/native-shell/models/deck-editor";
 import { navAvatar, pageOrigin } from "@/lib/native-shell/models/common";
 import { presenceLabel } from "@/lib/native-shell/models/editor-header";
+import { makePanelSpec } from "@/lib/native-shell/panel-events";
 import { LAYOUTS } from "@/lib/slides/schema";
 import { SlideCanvas } from "./slide-canvas";
 import type { TextEditorHandle } from "./text-editor";
@@ -127,7 +125,6 @@ export function DeckScreen({ id }: { id: string }) {
   const actions = useCanvasActions(chatId, id);
   // mutateAsync is stable across renders; the mutation result object isn't.
   const saveVersion = actions.save.mutateAsync;
-  const reviewed = useMarkDocReviewed(id);
   const send = useSendChatMessage(chatId);
   const assetUrl = useCallback((a: string) => assetHref(id, a), [id]);
   // Custom colours used in this deck, newest first: editor state, kept per deck in this browser.
@@ -1010,7 +1007,12 @@ export function DeckScreen({ id }: { id: string }) {
       avatar: <PersonaAvatar persona={look} size={16} />,
       busy: live,
       unread,
-      content: <div data-deck-chat className="flex min-h-0 flex-1 flex-col">{chatId && <Conversation key={chatId} id={chatId} docked onNew={() => router.push("/knowledge")} />}</div>,
+      native: chatId
+        ? {
+            kind: "panel",
+            panel: makePanelSpec("editor.chat", `slides.chat:${chatId}`, { tabId: "chat", chatId }),
+          }
+        : { kind: "native", sections: [], emptyText: "Loading chat…" },
     },
   ];
   if (reviewing && c)
@@ -1018,29 +1020,21 @@ export function DeckScreen({ id }: { id: string }) {
       id: "review",
       label: "Review",
       icon: "check",
+      wide: true,
       badge: changeCount ? <span className="rounded-full bg-pill-review-bg px-1.5 text-11 text-pill-review-fg">{changeCount}</span> : undefined,
-      content:
-        baseDeck && headDeck ? (
-          <DeckReview
-            key={`${base}-${c.seq}`}
-            base={baseDeck}
-            head={headDeck}
-            persona={persona}
-            assetUrl={assetUrl}
-            fontsReady={fonts}
-            busy={archived || reviewed.isPending || actions.save.isPending}
-            error={reviewed.error || actions.save.error ? errorText(reviewed.error ?? actions.save.error) : undefined}
-            onAcceptAll={() => reviewed.mutate(c.seq)}
-            onResolve={(d, note) =>
-              actions.save.mutate(
-                { base_seq: c.seq, body: encodeDeck(d), note },
-                { onSuccess: (v) => reviewed.mutate(v.seq) },
-              )
-            }
-          />
-        ) : (
-          <div aria-busy="true" className="p-3"><Skeleton className="h-[320px]" /></div>
-        ),
+      native: {
+        kind: "panel",
+        width: "wide",
+        panel: makePanelSpec("slides.review", `slides.review:${id}:${base}-${c.seq}`, {
+          tabId: "review",
+          chatId,
+          docId: id,
+          baseSeq: base,
+          headSeq: c.seq,
+          persona,
+          archived,
+        }),
+      },
     });
 
   return (

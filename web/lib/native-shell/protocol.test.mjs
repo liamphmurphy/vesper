@@ -63,4 +63,18 @@ test("inspector and companion commands validate required fields", () => {
   assert.equal(isNativeCommand({ v: 1, type: "inspector.toggle", tabId: "p", fieldId: "f", checked: true }), true);
   assert.equal(isNativeCommand({ v: 1, type: "companion.context", context: {} }), true);
   assert.equal(isNativeCommand({ v: 1, type: "companion.context", context: null }), false);
+  assert.equal(isNativeCommand({ v: 1, type: "panel.context", context: { active: null, keepKeys: [] } }), true);
+  assert.equal(
+    isNativeCommand({
+      v: 1,
+      type: "panel.context",
+      context: { active: { kind: "chat.code", key: "chat.code:c1", propsJson: "{}" }, keepKeys: ["chat.code:c1"] },
+    }),
+    true,
+  );
+  assert.equal(isNativeCommand({ v: 1, type: "panel.context", context: { keepKeys: [] } }), false);
+  assert.equal(isNativeCommand({ v: 1, type: "panel.event", tabId: "code", event: "fullscreen" }), true);
+  assert.equal(isNativeCommand({ v: 1, type: "panel.event", tabId: "code" }), false);
+  assert.equal(isPageMessage({ v: 1, type: "panel.event", tabId: "playground", event: "close", payloadJson: "{}" }), true);
+  assert.equal(isPageMessage({ v: 1, type: "panel.event", tabId: "playground" }), false);
 });

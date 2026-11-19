@@ -71,7 +71,7 @@ final class WindowRootController: NSViewController, NSUserInterfaceValidations {
         let trailing = split.view.trailingAnchor.constraint(equalTo: bar.leadingAnchor)
         splitTrailing = trailing
         NSLayoutConstraint.activate([
-            bar.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor),
+            bar.topAnchor.constraint(equalTo: root.topAnchor),
             bar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             bar.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             width,

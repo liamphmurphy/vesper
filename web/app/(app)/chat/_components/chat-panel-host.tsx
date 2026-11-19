@@ -1,13 +1,13 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useChatCanvases } from "@/lib/api/canvas-hooks";
 import { useCanStartSavedPlayground, useChatPlayground, usePlaygroundAction } from "@/lib/api/playground-hooks";
 import { useDesignProposals } from "@/lib/api/designs-hooks";
 import { useChat, useChatMessages, useChatModels, useChatRunEvents, useCosts, useRunLog, useTicket } from "@/lib/api/hooks";
 import { usePage } from "@/lib/api/knowledge-hooks";
-import { closeItem, closeThread, itemOf, dockOpen, dockTab, openPanels, setDock, threadOf, type ChatPanel, type DockTabId } from "@/lib/chat-panels";
+import { closeItem, closeThread, codeFullscreen, itemOf, dockOpen, dockTab, openCodeFullscreen, openPanels, setDock, threadOf, type ChatPanel, type DockTabId } from "@/lib/chat-panels";
 import { toolCalls, turnWindows } from "@/lib/chat-ui";
 import { spendLabel } from "@/lib/costs";
 import { pageHref } from "@/lib/knowledge";
@@ -17,18 +17,18 @@ import { CompanionPortal } from "@/components/shell/companion";
 import { Dock, type DockTab, type NativeDockTab } from "@/components/shell/editor-layout";
 import { useCanvasPanel } from "@/lib/use-canvas-panel";
 import { buildChatActivitySections, buildChatItemSections, type ChatTurnSummary } from "@/lib/native-shell/models/chat-inspector";
+import { makePanelSpec } from "@/lib/native-shell/panel-events";
 import { usePlaygroundPanel } from "@/lib/use-playground-panel";
 import { toast } from "@/lib/toast";
 import { type IconName } from "@/components/ui/icon";
-import { CanvasDock, CanvasFullscreen } from "@/components/domain/canvas-view";
-import { PlaygroundFullscreen, PlaygroundPanel } from "@/components/domain/playground";
+import { CanvasFullscreen } from "@/components/domain/canvas-view";
+import { PlaygroundFullscreen } from "@/components/domain/playground";
 import { STATUS_NAME, PRIORITY_NAME } from "@/components/domain/meta";
 import { runTitle } from "@/lib/run-list";
 import { useCodeReview } from "@/lib/api/code-review-hooks";
 import { CodePanel } from "./code-panel";
-import { DesignPanel, useOpenNewDesigns } from "./design-panel";
+import { useOpenNewDesigns } from "./design-panel";
 import { effortLabel, modelLabel } from "./model-picker";
-import { ThreadPanel } from "./thread-panel";
 
 const LABELS: Record<DockTabId, string> = { design: "Design", canvas: "Canvas", playground: "Playground", code: "Code", thread: "Thread", item: "Linked", activity: "Activity" };
 
@@ -153,6 +153,8 @@ function ChatDock({ chatId, live, readOnly, agent }: { chatId: string; live: boo
     state.open && !hidden ? (state.tab as DockTabId) : undefined,
   );
 
+  const pgPanel = usePlaygroundPanel();
+  const isCodeFull = codeFullscreen(search);
   const thread = threadOf(search);
   const item = itemOf(search);
   const messagesQuery = useChatMessages(chatId, 200);
@@ -264,13 +266,6 @@ function ChatDock({ chatId, live, readOnly, agent }: { chatId: string; live: boo
         },
       };
 
-  const content: Partial<Record<DockTabId, ReactNode>> = {
-    thread: thread && <ThreadPanel key={thread} chatId={chatId} messageId={thread} onClose={() => go(closeThread(new URLSearchParams(search.toString())))} />,
-    design: <DesignPanel chatId={chatId} live={live} />,
-    canvas: <CanvasDock chatId={chatId} live={live} readOnly={readOnly} agent={agent} />,
-    playground: <PlaygroundPanel chatId={chatId} />,
-    code: <CodePanel chatId={chatId} />,
-  };
   const busy: Partial<Record<DockTabId, boolean>> = { design: designBusy, playground: pgBusy, code: !!code?.some((r) => r.live), activity: live };
   // The playground and Code sit together, the playground just above.
   const ids: DockTabId[] = [
@@ -281,6 +276,134 @@ function ChatDock({ chatId, live, readOnly, agent }: { chatId: string; live: boo
     ...(item ? ["item" as const] : []),
     "activity" as const,
   ];
+  const anyFullscreen = pgPanel.fullscreen || (canvasPanel.maximized && open.includes("canvas")) || isCodeFull;
+  const nativeById: Partial<Record<DockTabId, NativeDockTab>> = {
+        activity: activityNative,
+        item: itemNative,
+        playground: {
+          kind: "panel",
+          width: "wide",
+          panel: makePanelSpec("chat.playground", `chat.playground:${chatId}`, {
+            tabId: "playground",
+            chatId,
+            initialTab: pgPanel.tab,
+          }),
+          headerActions: [
+            { id: "fullscreen", label: "Full screen", icon: "expand" },
+            { id: "close", label: "Close playground", icon: "x" },
+          ],
+          onAction: (actionId) => {
+            if (actionId === "fullscreen") pgPanel.openFull();
+            else if (actionId === "close") pgPanel.close();
+          },
+          onEvent: (event) => {
+            if (event === "openFull") pgPanel.openFull();
+            else if (event === "close") pgPanel.close();
+          },
+        },
+        code: {
+          kind: "panel",
+          width: "wide",
+          panel: makePanelSpec("chat.code", `chat.code:${chatId}`, {
+            tabId: "code",
+            chatId,
+          }),
+          headerActions: [{ id: "fullscreen", label: "Full screen", icon: "expand" }],
+          onAction: (actionId) => {
+            if (actionId === "fullscreen") go(openCodeFullscreen(new URLSearchParams(search.toString())));
+          },
+          onEvent: (event) => {
+            if (event === "openFull") go(openCodeFullscreen(new URLSearchParams(search.toString())));
+          },
+        },
+        design: {
+          kind: "panel",
+          width: canvasPanel.reviewing ? "max" : "wide",
+          panel: makePanelSpec("chat.design", `chat.design:${chatId}`, {
+            tabId: "design",
+            chatId,
+            live,
+            designId,
+            reviewing: canvasPanel.reviewing,
+          }),
+          headerActions: [{ id: "close", label: "Close design", icon: "x" }],
+          onAction: (actionId) => {
+            if (actionId === "close") canvasPanel.collapse();
+          },
+          onEvent: (event, payloadJson) => {
+            if (event === "close") {
+              canvasPanel.collapse();
+            } else if (event === "review" && payloadJson) {
+              try {
+                const p = JSON.parse(payloadJson) as { on?: boolean; designId?: string };
+                const targetId = p.designId ?? designId;
+                if (!targetId) return;
+                if (p.on) canvasPanel.review(targetId);
+                else canvasPanel.show(targetId);
+              } catch {
+                // Ignore malformed review event payloads.
+              }
+            }
+          },
+        },
+        canvas: {
+          kind: "panel",
+          width: "wide",
+          panel: makePanelSpec("chat.canvas", `chat.canvas:${chatId}`, {
+            tabId: "canvas",
+            chatId,
+            live,
+            readOnly,
+            agent,
+            canvasId,
+          }),
+          headerActions: [
+            { id: "fullscreen", label: "Fullscreen", icon: "expand" },
+            { id: "close", label: "Close canvas", icon: "x" },
+          ],
+          onAction: (actionId) => {
+            if (actionId === "fullscreen" && canvasId) canvasPanel.maximize(canvasId);
+            else if (actionId === "close") canvasPanel.exitFull();
+          },
+          onEvent: (event, payloadJson) => {
+            if (event === "close") {
+              canvasPanel.exitFull();
+            } else if (event === "openFull") {
+              let target = canvasId;
+              if (payloadJson) {
+                try {
+                  const p = JSON.parse(payloadJson) as { canvasId?: string };
+                  if (typeof p.canvasId === "string" && p.canvasId) target = p.canvasId;
+                } catch {
+                  // Ignore malformed payload and fall back to active canvasId.
+                }
+              }
+              if (target) canvasPanel.maximize(target);
+            }
+          },
+        },
+        ...(thread
+          ? {
+              thread: {
+                kind: "panel",
+                width: "regular",
+                panel: makePanelSpec("chat.thread", `chat.thread:${chatId}:${thread}`, {
+                  tabId: "thread",
+                  chatId,
+                  messageId: thread,
+                }),
+                headerActions: [{ id: "close", label: "Close thread", icon: "x" }],
+                onAction: (actionId: string) => {
+                  if (actionId === "close") go(closeThread(new URLSearchParams(search.toString())));
+                },
+                onEvent: (event: string) => {
+                  if (event === "close") go(closeThread(new URLSearchParams(search.toString())));
+                },
+              },
+            }
+          : {}),
+      };
+
   const tabs: DockTab[] = ids.map((id) => ({
     id,
     label: LABELS[id],
@@ -290,8 +413,7 @@ function ChatDock({ chatId, live, readOnly, agent }: { chatId: string; live: boo
     badge: id === "design" && pending > 0 ? <span data-testid="design-tab-pending" title={`${pending} to review`} className="rounded-full bg-pill-review-bg px-1.5 text-11 text-pill-review-fg">{pending}</span> : undefined,
     // A design under review needs its canvas and the list of changes side by side.
     wide: id === "design" && canvasPanel.reviewing ? "max" : id !== "activity" && id !== "thread" && id !== "item",
-    native: id === "activity" ? activityNative : id === "item" ? itemNative : undefined,
-    content: content[id],
+    native: nativeById[id],
   }));
   const start = usePlaygroundStart(chatId);
   if (start) tabs.splice(tabs.findIndex((t) => t.id === "code" || t.id === "thread" || t.id === "item" || t.id === "activity"), 0, start);
@@ -299,10 +421,11 @@ function ChatDock({ chatId, live, readOnly, agent }: { chatId: string; live: boo
   return (
     <>
       <CompanionPortal>
-        <Dock uid={uid} tabs={tabs} state={state} dispatch={dispatch} overlay="lg" />
+        <Dock uid={uid} tabs={tabs} state={anyFullscreen ? { ...state, open: false } : state} dispatch={dispatch} overlay="lg" />
       </CompanionPortal>
       <PlaygroundFullscreen chatId={chatId} />
       {canvasPanel.maximized && open.includes("canvas") ? <CanvasFullscreen chatId={chatId} live={live} readOnly={readOnly} agent={agent} /> : null}
+      {isCodeFull ? <CodePanel chatId={chatId} /> : null}
     </>
   );
 }

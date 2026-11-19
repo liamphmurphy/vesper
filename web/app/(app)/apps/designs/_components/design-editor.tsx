@@ -2,7 +2,6 @@
 
 import { useRecordVisit } from "@/components/shell/use-record-visit";
 import { useRouter, useSearchParams } from "next/navigation";
-import { DropdownMenu } from "radix-ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "@/lib/api/client";
 import { fetchDesign, fetchDesignVersion, uploadDesignAsset, useDesign, useDesignProposals, useDesignSettings, useDesignVersion, useDuplicateDesign, useRenameDesign, useResolveProposal, useSaveDesign } from "@/lib/api/designs-hooks";
@@ -22,11 +21,9 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Banner, Skeleton } from "@/components/ui/primitives";
 import { EditorLayout, type DockTab, type NativeEditorHeader } from "@/components/shell/editor-layout";
-import { floatPanel } from "@/components/domain/pickers";
 import type { DockState } from "@/lib/editor-layout";
 import { tokensChanged } from "@/lib/designs/tokens";
 import { PersonaAvatar, personaLook } from "@/app/(app)/chat/_components/persona";
-import { Conversation } from "@/app/(app)/chat/_components/conversation";
 import { DesignCanvas, fitCamera, zoomAt, type Camera, type Tool } from "./design-canvas";
 import { ReviewOverlay, ReviewPanel, ReviewPill, stepChange, useReview, type ReviewMode } from "./design-review";
 import { useDesignExport } from "./export-menu";
@@ -34,11 +31,13 @@ import { NativeRenameDialog } from "@/components/shell/native-rename-dialog";
 import { useNativeLayers } from "./native-layers";
 import { toast } from "@/lib/toast";
 import { buildDesignActions, buildDesignTitleMenu, type ExportScopeName } from "@/lib/native-shell/models/design-editor";
+import { applyDesignInspectorChange, buildDesignInspector, buildDesignReviewInspector } from "@/lib/native-shell/models/design-inspector";
 import { navAvatar, pageOrigin } from "@/lib/native-shell/models/common";
+import { makePanelSpec } from "@/lib/native-shell/panel-events";
 import { frameFor } from "@/lib/designs/export";
-import { Inspector } from "./inspector";
-import { PrototypePanel } from "./prototype-panel";
-import { InspectPanel, TokensSyncBadge } from "./library-panels";
+import type { InspectTarget } from "@/lib/designs/inspect";
+import { addLink, removeLink } from "@/lib/designs/prototype";
+import { TokensSyncBadge } from "./library-panels";
 import { addLeaveGuard } from "@/lib/leave-guard";
 
 type SaveState = "saved" | "unsaved" | "saving" | "conflict" | "error";
@@ -66,7 +65,6 @@ const TOOLS: { tool: Tool | "image"; label: string; key: string; glyph: string }
 ];
 /** The beside-chat panel's cut-down toolbar (docs/design/designs-from-chat.svg). */
 const BESIDE_TOOLS = new Set<Tool | "image">(["select", "frame", "rect", "line", "text"]);
-const menuItem = "flex cursor-pointer select-none items-center rounded-md px-2.5 py-1.5 text-13 text-fg outline-none data-[highlighted]:bg-hover";
 const TOOL_KEYS: Record<string, Tool> = { v: "select", h: "hand", f: "frame", a: "frame", r: "rect", o: "ellipse", l: "line", p: "pen", t: "text", s: "sticky", c: "connector" };
 
 async function prepareImage(file: File): Promise<Blob> {
@@ -128,7 +126,7 @@ function useLaidPage(design: Design | undefined, pageId: string | undefined): { 
  * overlapping changes ask the person.
  */
 /** Beside the chat: closing, and the review in place, whose open state the chat keeps in its URL (review=1). */
-type Beside = { onClose: () => void; reviewing?: boolean; onReview?: (on: boolean) => void };
+type Beside = { onClose: () => void; reviewing?: boolean; hideClose?: boolean; onReview?: (on: boolean) => void };
 
 export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
   const router = useRouter();
@@ -647,6 +645,7 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
   }, [brief, chatId, doc, id, persona, router, send]);
 
   const [tab, setTab] = useState<"Design" | "Prototype" | "Inspect">("Design");
+  const [inspectTarget, setInspectTarget] = useState<InspectTarget>("css");
   /** Present mode plays the saved design, so unsaved edits are saved first. */
   const present = async (frame?: string) => {
     try {
@@ -670,7 +669,6 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
   };
   const title = ref.data?.title ?? "Design";
   const fetchError = ref.error ?? head.error;
-  const selectionLabel = design && selected.length === 1 ? find(design, selected[0])?.node : undefined;
 
   // ---- The dock (full editor only): Review opens from the header's Review pill; Chat is unread while hidden.
   // Each review that starts (the pill, ?review=1 once suggestions load) brings the Review tab up.
@@ -692,7 +690,6 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
   // The reply that was there on load, or that arrived while Chat showed, counts as read.
   if (lastReply && seenReply !== lastReply && (chatShowing || seenReply === undefined)) setSeenReply(lastReply);
   const unread = !chatShowing && !!lastReply && !!seenReply && lastReply !== seenReply && !running;
-  const direct = !!ref.data?.settings?.direct_edit;
   const proposalCount = proposals?.length ?? 0;
   const suggestions = `${proposalCount} ${proposalCount === 1 ? "suggestion" : "suggestions"}`;
   const pending = proposals?.[0];
@@ -740,6 +737,73 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
     onEdit: apply,
     readOnly,
   });
+  const nativeCallbacks = useRef<{
+    reviewAction: (actionId: string) => void;
+    designChange: (fieldId: string, value: string) => void;
+    designAction: (actionId: string, itemId?: string) => void;
+  }>({
+    reviewAction: () => undefined,
+    designChange: () => undefined,
+    designAction: () => undefined,
+  });
+  useEffect(() => {
+    nativeCallbacks.current = {
+      reviewAction: (actionId) => {
+        if (actionId === "start_review") {
+          setReviewing(true);
+          return;
+        }
+        if (!review) return;
+        if (actionId === "done") void finishReview(review.body);
+        else if (actionId === "accept_all") void finishReview(review.restBody("accepted"));
+        else if (actionId === "reject_all") void finishReview(review.restBody("rejected"));
+        else if (actionId.startsWith("focus:")) {
+          const idx = Number(actionId.slice(6));
+          const c = review.changes.find((x) => x.i === idx);
+          if (c) focusChange(c);
+        } else if (actionId.startsWith("accept:")) {
+          review.accept(Number(actionId.slice(7)));
+        } else if (actionId.startsWith("reject:")) {
+          review.reject(Number(actionId.slice(7)));
+        }
+      },
+      designChange: (fieldId, value) => {
+        if (fieldId === "mode" && (value === "Design" || value === "Prototype" || value === "Inspect")) {
+          setTab(value);
+          return;
+        }
+        if (fieldId === "inspect:target" && (value === "css" || value === "tailwind" || value === "react")) {
+          setInspectTarget(value);
+          return;
+        }
+        apply((d) => applyDesignInspectorChange(d, selected, fieldId, value), `${selected[0] ?? "doc"}:${fieldId}`);
+      },
+      designAction: (actionId, itemId) => {
+        if (actionId === "present") void present();
+        else if (actionId === "group") group();
+        else if (actionId === "ungroup") ungroup();
+        else if (actionId === "delete") removeSelected();
+        else if (actionId === "select_node" && itemId) setSelected([itemId]);
+        else if (actionId === "proto:add_link" && selected.length === 1) {
+          apply((d) => addLink(d, selected[0])?.design ?? d);
+        } else if (actionId.startsWith("proto:remove:")) {
+          const linkId = actionId.slice("proto:remove:".length);
+          apply((d) => removeLink(d, linkId));
+        }
+      },
+    };
+  });
+
+  const handleReviewNativeAction = useCallback((actionId: string) => {
+    nativeCallbacks.current.reviewAction(actionId);
+  }, []);
+  const handleDesignNativeChange = useCallback((fieldId: string, value: string) => {
+    nativeCallbacks.current.designChange(fieldId, value);
+  }, []);
+  const handleDesignNativeAction = useCallback((actionId: string, itemId?: string) => {
+    nativeCallbacks.current.designAction(actionId, itemId);
+  }, []);
+
   const header: NativeEditorHeader = {
     title,
     titleMenu: ref.data ? buildDesignTitleMenu({ duplicating: duplicate.isPending, rename: () => setRenamingTitle(true), duplicate: () => duplicate.mutate(id, { onSuccess: (d) => router.push(`/apps/designs/${d.id}`) }) }) : undefined,
@@ -931,9 +995,11 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
             </Button>
           )}
           <Button variant="secondary" onClick={() => void flush().catch(() => undefined).then(() => router.push(`/apps/designs/${id}${reviewing ? "?review=1" : ""}`))}>Open in Designs</Button>
-          <button type="button" aria-label="Close the design" onClick={beside.onClose} className="grid size-7 flex-none place-items-center rounded-md text-fg-tertiary hover:bg-hover hover:text-fg">
-            <Icon name="x" size={14} />
-          </button>
+          {!beside.hideClose && (
+            <button type="button" aria-label="Close the design" onClick={beside.onClose} className="grid size-7 flex-none place-items-center rounded-md text-fg-tertiary hover:bg-hover hover:text-fg">
+              <Icon name="x" size={14} />
+            </button>
+          )}
         </div>
         {failed ?? (canvas ? (
           <div className="relative flex min-h-0 flex-1 max-md:flex-col">
@@ -954,89 +1020,89 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
     );
   }
 
-  const loading = <Skeleton className="m-3 flex-1" />;
-  // How the persona's edits land, in the chat's one header row rather than a bar of its own.
-  const editMode = (
-    <DropdownMenu.Root>
-      <DropdownMenu.Trigger asChild>
-        <button
-          type="button"
-          data-testid="direct-edit"
-          disabled={!ref.data || settings.isPending}
-          title={`Suggests: ${persona}’s edits wait as suggestions you review. Edits directly: they apply at once, and Undo reverts them.`}
-          aria-label={`${persona} ${direct ? "edits directly" : "suggests changes"}`}
-          className="flex h-[26px] flex-none items-center gap-1 rounded-full border border-border bg-surface-raised px-2.5 text-12 text-fg hover:bg-hover disabled:opacity-50"
-        >
-          {direct ? "Direct" : "Suggests"} <span aria-hidden className="text-fg-tertiary">▾</span>
-        </button>
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Portal>
-        <DropdownMenu.Content align="start" sideOffset={6} className={cx(floatPanel, "z-50 w-64")}>
-          <DropdownMenu.RadioGroup value={direct ? "direct" : "suggest"} onValueChange={(v) => settings.mutate({ direct_edit: v === "direct" })}>
-            <DropdownMenu.RadioItem value="suggest" className={cx(menuItem, "flex-col items-start")}>
-              <span>{direct ? "" : "✓ "}Suggests changes</span>
-              <span className="text-11 text-fg-tertiary">Edits wait as suggestions you review.</span>
-            </DropdownMenu.RadioItem>
-            <DropdownMenu.RadioItem value="direct" className={cx(menuItem, "flex-col items-start")}>
-              <span>{direct ? "✓ " : ""}Edits directly</span>
-              <span className="text-11 text-fg-tertiary">Edits apply at once; Undo reverts them.</span>
-            </DropdownMenu.RadioItem>
-          </DropdownMenu.RadioGroup>
-        </DropdownMenu.Content>
-      </DropdownMenu.Portal>
-    </DropdownMenu.Root>
-  );
-  const chatPanel = (
-    <div data-design-chat className="flex min-h-0 flex-1 flex-col">
-      {chatId && <Conversation key={chatId} id={chatId} docked actions={editMode} onNew={() => router.push("/knowledge")} />}
-    </div>
-  );
-  const dockTabs: DockTab[] = [
-    { id: "chat", label: "Chat", icon: "msg", avatar: <PersonaAvatar persona={look} size={16} />, busy: !!presence, unread, content: chatPanel },
-  ];
-  if (proposalCount || reviewing)
-    dockTabs.push({
-      id: "review",
-      label: "Review",
-      icon: "check",
-      badge: <span className="rounded-full bg-pill-review-bg px-1.5 text-11 text-pill-review-fg">{proposalCount}</span>,
-      content:
-        reviewing && review && shown ? (
-          <ReviewPanel review={review} design={shown} chatId={chatId} canvasId={id} seq={doc?.saved.seq ?? 0} persona={persona} error={resolveError} busy={resolving} onFocus={focusChange} onDone={(body) => void finishReview(body)} />
-        ) : (
-          <div className="flex flex-col items-start gap-3 p-4 text-13 text-fg-secondary">
-            <p>{persona} suggested {suggestions}. Nothing changes until you accept.</p>
-            <Button variant="approve" onClick={() => setReviewing(true)}>Start review</Button>
-          </div>
-        ),
-    });
-  dockTabs.push({
+  const reviewNative =
+    proposalCount || reviewing
+      ? buildDesignReviewInspector({
+          persona,
+          proposalCount,
+          reviewing: !!(reviewing && review && shown),
+          changes: review?.changes,
+          decisions: review?.decisions,
+          left: review?.left,
+          busy: resolving,
+          error: resolveError,
+        })
+      : undefined;
+
+  const designNative =
+    design && lay
+      ? buildDesignInspector({
+          design,
+          page,
+          selected,
+          lay,
+          tab,
+          inspectTarget,
+          readOnly,
+        })
+      : undefined;
+
+  const chatTab: DockTab = {
+    id: "chat",
+    label: "Chat",
+    icon: "msg",
+    avatar: <PersonaAvatar persona={look} size={16} />,
+    busy: !!presence,
+    unread,
+    native: chatId
+      ? {
+          kind: "panel",
+          panel: makePanelSpec("designs.chat", `designs.chat:${id}:${chatId}`, {
+            tabId: "chat",
+            chatId,
+            designId: id,
+            persona,
+            pageId: page?.id,
+            selected,
+          }),
+        }
+      : { kind: "native", sections: [], emptyText: "Loading chat…" },
+  };
+
+  const designTab: DockTab = {
     id: "design",
     label: "Design",
     icon: "designs",
-    content: design && lay ? (
-      <>
-        <div role="tablist" aria-label="Inspector" className="flex flex-none gap-4 border-b border-border-subtle px-4 pt-3">
-          {(["Design", "Prototype", "Inspect"] as const).map((t) => (
-            <button key={t} type="button" role="tab" aria-selected={t === tab} onClick={() => setTab(t)} className={cx("-mb-px border-b-2 pb-2 text-13", t === tab ? "border-accent font-medium text-fg" : "border-transparent text-fg-tertiary hover:text-fg")}>
-              {t}
-            </button>
-          ))}
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto" role="tabpanel" aria-label={selectionLabel ? `${tab}: ${labelOf(selectionLabel)}` : tab}>
-          {tab === "Design" ? (
-            <Inspector design={design} selected={selected} lay={lay} onEdit={apply} readOnly={readOnly} onGroup={group} onRemove={removeSelected} onSelect={setSelected} />
-          ) : tab === "Inspect" ? (
-            <InspectPanel design={design} selected={selected} />
-          ) : (
-            <PrototypePanel design={design} selected={selected} readOnly={readOnly} onEdit={apply} onSelect={setSelected} onPresent={(f) => void present(f)} />
-          )}
-        </div>
-      </>
-    ) : (
-      loading
-    ),
-  });
+    native: designNative
+      ? {
+          kind: "native",
+          ...designNative,
+          onChange: handleDesignNativeChange,
+          onAction: handleDesignNativeAction,
+        }
+      : { kind: "native", sections: [], emptyText: "Loading design…" },
+  };
+
+  const dockTabs: DockTab[] =
+    proposalCount || reviewing
+      ? [
+          chatTab,
+          {
+            id: "review",
+            label: "Review",
+            icon: "check",
+            badge: <span className="rounded-full bg-pill-review-bg px-1.5 text-11 text-pill-review-fg">{proposalCount}</span>,
+            native: reviewNative
+              ? {
+                  kind: "native",
+                  ...reviewNative,
+                  onAction: handleReviewNativeAction,
+                }
+              : undefined,
+          },
+          designTab,
+        ]
+      : [chatTab, designTab];
 
   return (
     <>

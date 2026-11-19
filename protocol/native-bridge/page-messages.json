@@ -710,5 +710,42 @@
     "type": "openInMain",
     "path": "/tickets/VES-412",
     "newTab": true
+  },
+  {
+    "v": 1,
+    "type": "inspector",
+    "model": {
+      "id": "chat:c1",
+      "open": true,
+      "activeTabId": "playground",
+      "tabs": [
+        {
+          "id": "playground",
+          "label": "Playground",
+          "icon": "playLeft",
+          "kind": "panel",
+          "width": "wide",
+          "panel": {
+            "kind": "chat.playground",
+            "key": "chat.playground:c1",
+            "propsJson": "{\"chatId\":\"c1\"}"
+          }
+        },
+        {
+          "id": "activity",
+          "label": "Activity",
+          "icon": "history",
+          "kind": "native",
+          "width": "regular",
+          "sections": []
+        }
+      ]
+    }
+  },
+  {
+    "v": 1,
+    "type": "panel.event",
+    "tabId": "playground",
+    "event": "fullscreen"
   }
 ]
