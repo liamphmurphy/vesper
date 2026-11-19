@@ -170,12 +170,162 @@ ${js}
 </html>`;
 }
 
+const MAX_BRIDGE_URL_CHARS = 4000;
+const YT_VIDEO_ID_RE = /^[A-Za-z0-9_-]{11}$/;
+const YT_HOSTS = new Set([
+  "youtube.com",
+  "www.youtube.com",
+  "m.youtube.com",
+  "music.youtube.com",
+  "youtube-nocookie.com",
+  "www.youtube-nocookie.com",
+  "youtu.be",
+  "www.youtu.be",
+]);
+const TWITCH_HOSTS = new Set(["twitch.tv", "www.twitch.tv", "m.twitch.tv", "clips.twitch.tv"]);
+const TWITCH_RESERVED_PATHS = new Set([
+  "directory",
+  "videos",
+  "downloads",
+  "jobs",
+  "p",
+  "settings",
+  "subscriptions",
+  "wallet",
+  "inventory",
+  "drops",
+  "search",
+  "turbo",
+  "login",
+  "signup",
+  "friends",
+  "messages",
+  "moderator",
+  "popout",
+  "embed",
+  "u",
+]);
+const TWITCH_CHANNEL_RE = /^[a-zA-Z0-9_]{2,25}$/;
+const TWITCH_VOD_RE = /^\d{4,16}$/;
+const TWITCH_CLIP_RE = /^[A-Za-z0-9_-]{4,120}$/;
+
+function parseUrlWithProtocols(raw: unknown, allowedProtocols: ReadonlySet<string>): string | null {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > MAX_BRIDGE_URL_CHARS) return null;
+  try {
+    const u = new URL(trimmed);
+    if (!allowedProtocols.has(u.protocol) || !u.hostname || u.username || u.password) return null;
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
+
+export function parseSafeExternalUrl(raw: unknown): string | null {
+  return parseUrlWithProtocols(raw, new Set(["https:", "http:"]));
+}
+
+export function parseSafeHttpsUrl(raw: unknown): string | null {
+  return parseUrlWithProtocols(raw, new Set(["https:"]));
+}
+
+function parseTimestampSeconds(raw: string | null): number | null {
+  if (!raw) return null;
+  const s = raw.trim();
+  if (!s) return null;
+  if (/^\d+s?$/.test(s)) return parseInt(s, 10);
+  const m = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/.exec(s);
+  if (!m) return null;
+  const total = Number(m[1] ?? 0) * 3600 + Number(m[2] ?? 0) * 60 + Number(m[3] ?? 0);
+  return total > 0 ? total : null;
+}
+
+export type VideoEmbed = {
+  provider: "youtube" | "twitch";
+  embedUrl: string;
+  externalUrl: string;
+  titleFallback: string;
+};
+
+export function resolveVideoEmbed(rawUrl: string, parentHost?: string): VideoEmbed | null {
+  const safe = parseSafeExternalUrl(rawUrl);
+  if (!safe) return null;
+  const u = new URL(safe);
+  const host = u.hostname.toLowerCase();
+  const segments = u.pathname.split("/").filter(Boolean);
+
+  if (YT_HOSTS.has(host)) {
+    let id = "";
+    if (host.endsWith("youtu.be")) {
+      id = segments[0] ?? "";
+    } else if (u.pathname === "/watch") {
+      id = u.searchParams.get("v") ?? "";
+    } else if (segments.length >= 2 && ["shorts", "live", "embed"].includes(segments[0])) {
+      id = segments[1];
+    }
+    if (!YT_VIDEO_ID_RE.test(id)) return null;
+    const start = parseTimestampSeconds(u.searchParams.get("t") ?? u.searchParams.get("start"));
+    return {
+      provider: "youtube",
+      embedUrl: `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0${start && start > 0 ? `&start=${start}` : ""}`,
+      externalUrl: `https://www.youtube.com/watch?v=${id}${start && start > 0 ? `&t=${start}s` : ""}`,
+      titleFallback: "YouTube video",
+    };
+  }
+
+  if (TWITCH_HOSTS.has(host)) {
+    const parent = parentHost && /^[a-z0-9.-]+$/i.test(parentHost) ? parentHost : "localhost";
+    if (host === "clips.twitch.tv") {
+      const slug = segments[0] ?? "";
+      if (!TWITCH_CLIP_RE.test(slug)) return null;
+      return {
+        provider: "twitch",
+        embedUrl: `https://clips.twitch.tv/embed?clip=${encodeURIComponent(slug)}&parent=${encodeURIComponent(parent)}&autoplay=true`,
+        externalUrl: u.toString(),
+        titleFallback: "Twitch clip",
+      };
+    }
+    if (segments.length === 3 && segments[1] === "clip" && TWITCH_CHANNEL_RE.test(segments[0]) && TWITCH_CLIP_RE.test(segments[2])) {
+      const slug = segments[2];
+      return {
+        provider: "twitch",
+        embedUrl: `https://clips.twitch.tv/embed?clip=${encodeURIComponent(slug)}&parent=${encodeURIComponent(parent)}&autoplay=true`,
+        externalUrl: u.toString(),
+        titleFallback: "Twitch clip",
+      };
+    }
+    if (segments.length === 2 && segments[0] === "videos" && TWITCH_VOD_RE.test(segments[1])) {
+      const vodId = segments[1];
+      return {
+        provider: "twitch",
+        embedUrl: `https://player.twitch.tv/?video=${vodId}&parent=${encodeURIComponent(parent)}&autoplay=true`,
+        externalUrl: `https://www.twitch.tv/videos/${vodId}`,
+        titleFallback: "Twitch video",
+      };
+    }
+    if (segments.length === 1 && TWITCH_CHANNEL_RE.test(segments[0]) && !TWITCH_RESERVED_PATHS.has(segments[0].toLowerCase())) {
+      const channel = segments[0].toLowerCase();
+      return {
+        provider: "twitch",
+        embedUrl: `https://player.twitch.tv/?channel=${encodeURIComponent(channel)}&parent=${encodeURIComponent(parent)}&autoplay=true`,
+        externalUrl: `https://www.twitch.tv/${encodeURIComponent(channel)}`,
+        titleFallback: `${segments[0]} on Twitch`,
+      };
+    }
+  }
+
+  return null;
+}
+
 export type BridgeMessage =
   | { channel: "vesper:custom-app"; id: string; type: "sql"; payload: { query: string; params: unknown[] } }
   | { channel: "vesper:custom-app"; id: string; type: "api"; payload: { method: string; path: string; body?: unknown } }
   | { channel: "vesper:custom-app"; id: string; type: "mcp"; payload: { connector: string; tool: string; arguments: Record<string, unknown> } }
   | { channel: "vesper:custom-app"; id: ""; type: "set-nav"; payload: { items: CustomAppNavSpec[]; activeId?: string } }
   | { channel: "vesper:custom-app"; id: ""; type: "ask-dock"; payload: { prompt: string } }
+  | { channel: "vesper:custom-app"; id: ""; type: "open-url"; payload: { url: string } }
+  | { channel: "vesper:custom-app"; id: ""; type: "play-video"; payload: { url: string; title?: string } }
   | { channel: "vesper:custom-app"; id: ""; type: "app-error"; payload: { message: string } };
 
 export function parseBridgeMessage(raw: unknown): BridgeMessage | null {
@@ -225,6 +375,22 @@ export function parseBridgeMessage(raw: unknown): BridgeMessage | null {
     case "ask-dock": {
       if (typeof payload.prompt !== "string" || !payload.prompt.trim()) return null;
       return { channel: "vesper:custom-app", id: "", type: "ask-dock", payload: { prompt: payload.prompt.trim() } };
+    }
+    case "open-url": {
+      const url = parseSafeExternalUrl(payload.url);
+      if (!url) return null;
+      return { channel: "vesper:custom-app", id: "", type: "open-url", payload: { url } };
+    }
+    case "play-video": {
+      const url = parseSafeExternalUrl(payload.url);
+      if (!url) return null;
+      const title = typeof payload.title === "string" ? payload.title.trim().slice(0, 200) : "";
+      return {
+        channel: "vesper:custom-app",
+        id: "",
+        type: "play-video",
+        payload: { url, ...(title ? { title } : {}) },
+      };
     }
     case "app-error": {
       if (typeof payload.message !== "string" || !payload.message.trim()) return null;

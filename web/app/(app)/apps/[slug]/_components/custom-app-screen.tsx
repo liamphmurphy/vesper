@@ -1,6 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
+import { Dialog } from "radix-ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Conversation, type ConversationContext, type DockWelcome } from "@/app/(app)/chat/_components/conversation";
 import { PersonaAvatar, personaLook, useDockPersona } from "@/app/(app)/chat/_components/persona";
@@ -33,8 +34,10 @@ import {
   parseBridgeMessage,
   readThemeVarsFrom,
   resolveAppIcon,
+  resolveVideoEmbed,
   withCustomAppContext,
   type CustomAppNavSpec,
+  type VideoEmbed,
 } from "@/lib/custom-app-bridge";
 import { cx } from "@/lib/cx";
 import type { DockState } from "@/lib/editor-layout";
@@ -140,6 +143,7 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
   const [activeNav, setActiveNav] = useState<string>();
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
   const [decidingApproval, setDecidingApproval] = useState(false);
+  const [activeVideo, setActiveVideo] = useState<(VideoEmbed & { title: string }) | null>(null);
 
   const [show, setShow] = useState({ tab: "chat", n: 0 });
   const openDockTab = useCallback((tab: string) => {
@@ -312,6 +316,19 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
       }
       if (msg.type === "ask-dock") {
         void askDockRef.current(msg.payload.prompt);
+        return;
+      }
+      if (msg.type === "open-url") {
+        window.open(msg.payload.url, "_blank", "noopener,noreferrer");
+        return;
+      }
+      if (msg.type === "play-video") {
+        const embed = resolveVideoEmbed(msg.payload.url, typeof window !== "undefined" ? window.location.hostname : undefined);
+        if (embed) {
+          setActiveVideo({ ...embed, title: msg.payload.title || embed.titleFallback });
+        } else {
+          window.open(msg.payload.url, "_blank", "noopener,noreferrer");
+        }
         return;
       }
       if (msg.type === "app-error") {
@@ -641,6 +658,48 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
         onLoad={() => postToFrame({ type: "vesper:theme", vars: readThemeVars() })}
         className="h-full min-h-[420px] w-full flex-1 border-0 bg-bg"
       />
+      <Dialog.Root open={activeVideo !== null} onOpenChange={(open) => { if (!open) setActiveVideo(null); }}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="motion-scrim fixed inset-0 z-50 bg-scrim" />
+          <Dialog.Content
+            aria-describedby={undefined}
+            className="motion-dialog fixed left-1/2 top-1/2 z-50 flex w-[min(960px,calc(100%-32px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-border-float bg-surface-raised shadow-[var(--shadow-float)] outline-none"
+          >
+            {activeVideo && (
+              <>
+                <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-2.5">
+                  <Dialog.Title className="min-w-0 flex-1 truncate text-14 font-semibold text-fg">
+                    {activeVideo.title}
+                  </Dialog.Title>
+                  <a
+                    href={activeVideo.externalUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex h-7 flex-none items-center gap-1.5 rounded-md border border-border-strong px-2.5 text-12 font-medium text-fg-secondary transition-colors hover:bg-hover hover:text-fg"
+                  >
+                    <Icon name="link" size={13} />
+                    {activeVideo.provider === "youtube" ? "Open on YouTube" : "Open on Twitch"}
+                  </a>
+                  <Dialog.Close asChild>
+                    <IconButton icon="x" label="Close video player" />
+                  </Dialog.Close>
+                </div>
+                <div className="relative aspect-video w-full bg-black">
+                  <iframe
+                    key={activeVideo.embedUrl}
+                    src={activeVideo.embedUrl}
+                    title={activeVideo.title}
+                    allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+                    allowFullScreen
+                    referrerPolicy="strict-origin-when-cross-origin"
+                    className="absolute inset-0 size-full border-0"
+                  />
+                </div>
+              </>
+            )}
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
     </div>
   );
 

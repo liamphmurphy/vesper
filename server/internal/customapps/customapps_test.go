@@ -55,17 +55,17 @@ func TestBundleTSXAndErrors(t *testing.T) {
 		"styles.css": "body { color: red; }",
 		"helper.ts":  "export const label = 'ok';",
 		"app.tsx": `import { useState } from "react";
-import { sql } from "@vesper/bridge";
+import { sql, openUrl, playVideo } from "@vesper/bridge";
 import { label } from "./helper";
 export default function App() {
   const [n, setN] = useState(0);
-  return <button onClick={() => { setN(n + 1); void sql("SELECT 1"); }}>{label}:{n}</button>;
+  return <button onClick={() => { setN(n + 1); void sql("SELECT 1"); openUrl("https://example.com"); playVideo("https://youtu.be/dQw4w9WgXcQ", "Test"); }}>{label}:{n}</button>;
 }`,
 	})
 	if err != nil {
 		t.Fatalf("Bundle valid app: %v", err)
 	}
-	if !strings.Contains(js, "vesper:custom-app") || !strings.Contains(js, "SELECT 1") {
+	if !strings.Contains(js, "vesper:custom-app") || !strings.Contains(js, "SELECT 1") || !strings.Contains(js, "open-url") || !strings.Contains(js, "play-video") {
 		t.Fatalf("bundle missing expected bridge runtime or code")
 	}
 	if !strings.Contains(css, "color: red") {

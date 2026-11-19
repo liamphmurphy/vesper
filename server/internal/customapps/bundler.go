@@ -699,6 +699,22 @@ export function askDock(prompt) {
   window.parent.postMessage({ channel: "vesper:custom-app", type: "ask-dock", payload: { prompt } }, "*");
 }
 
+export function openUrl(url) {
+  window.parent.postMessage({ channel: "vesper:custom-app", type: "open-url", payload: { url: String(url || "") } }, "*");
+}
+
+export function playVideo(url, opts) {
+  const options = typeof opts === "string" ? { title: opts } : (opts && typeof opts === "object" ? opts : {});
+  window.parent.postMessage({
+    channel: "vesper:custom-app",
+    type: "play-video",
+    payload: {
+      url: String(url || ""),
+      ...(typeof options.title === "string" && options.title ? { title: options.title } : {}),
+    },
+  }, "*");
+}
+
 export function onEvent(handler) {
   eventListeners.add(handler);
   return () => eventListeners.delete(handler);
