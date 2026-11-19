@@ -8,7 +8,7 @@ const tabs = [
   { id: "chat", label: "Chat", icon: "msg", busy: true, unread: true },
 ];
 const review = { configured: true, requests: [], approved: 0, prefs: { direct: true, team: true }, counts: { direct: 0, team: 0 } };
-const base = { dock: [], pathname: "/work", review, needsYou: 0, harnesses: [], devWorkspace: false, settingsNeedYou: false };
+const base = { dock: [], pathname: "/work", review, needsYou: 0, harnesses: [], settingsNeedYou: false };
 
 test("a dock's rail items: fold control, then a tab each, the open one active", () => {
   const items = dockRailItems(tabs, "chat", true);
@@ -40,17 +40,16 @@ test("an action tab (Start playground) is never active and runs instead of openi
   assert.deepEqual(dockRailAction("dock.tab:playground", withStart, "chat", false), { type: "run", tab: "playground" });
 });
 
-test("the foot: links, current page active, Settings carries the attention dot", () => {
-  const m = buildRailModel({ ...base, pathname: "/settings/runner", settingsNeedYou: true, devWorkspace: true });
-  assert.deepEqual(m.foot.map((i) => i.id), ["http", "dev", "customization", "settings"]);
+test("the foot holds only Customization and Settings; the current page is active, Settings carries the attention dot", () => {
+  const m = buildRailModel({ ...base, pathname: "/settings/runner", settingsNeedYou: true });
+  assert.deepEqual(m.foot.map((i) => i.id), ["customization", "settings"]);
   const settings = m.foot.at(-1);
   assert.equal(settings.active, true);
   assert.deepEqual(settings.badge, { tone: "human" });
-  assert.ok(m.foot.slice(0, 3).every((i) => !i.active));
-  assert.deepEqual(buildRailModel(base).foot.map((i) => i.id), ["http", "customization", "settings"]);
-  const onHttp = buildRailModel({ ...base, pathname: "/http" }).foot[0];
-  assert.equal(onHttp.active, true);
-  assert.equal(onHttp.label, "Return to previous page");
+  assert.equal(m.foot[0].active, false);
+  assert.deepEqual(buildRailModel(base).foot.map((i) => i.id), ["customization", "settings"]);
+  // HTTP Client and Dev workspace moved to the Apps menu, so being on them marks nothing in the rail.
+  for (const pathname of ["/http", "/dev"]) assert.ok(buildRailModel({ ...base, pathname }).foot.every((i) => !i.active), pathname);
 });
 
 test("Needs you carries its kind and a count badge", () => {
@@ -106,7 +105,9 @@ test("harnesses: avatar, status tone and a usage menu", () => {
 test("rail.action resolves to the web's own actions", () => {
   const ctx = { reviewUrl: (id) => (id === "a" ? "https://github.com/o/r/pull/7" : undefined) };
   assert.deepEqual(railEffect("dock.tab:chat", undefined, ctx), { type: "dock", itemId: "dock.tab:chat" });
-  assert.deepEqual(railEffect("http", undefined, ctx), { type: "toggle", path: "/http" });
+  // The retired HTTP Client and Dev workspace buttons resolve to nothing.
+  assert.equal(railEffect("http", undefined, ctx), null);
+  assert.equal(railEffect("dev", undefined, ctx), null);
   assert.deepEqual(railEffect("settings", undefined, ctx), { type: "navigate", path: "/settings" });
   assert.deepEqual(railEffect("pr", "pr:a", ctx), { type: "open", url: "https://github.com/o/r/pull/7" });
   assert.equal(railEffect("pr", "pr:zzz", ctx), null);

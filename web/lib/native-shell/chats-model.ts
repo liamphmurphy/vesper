@@ -205,6 +205,8 @@ export function buildChatsNavModel(input: ChatsModelInput): NavModel {
         menu: [
           { id: VIEW_ACTIVE, label: "Recent", checked: !archived },
           { id: VIEW_ARCHIVED, label: "Archived", icon: "folder", checked: archived },
+          // The Spaces section (and its + button) only shows once a space exists, so the first one starts here.
+          ...(spaces.length === 0 ? [{ id: "view.sep", separator: true }, { id: NEW_SPACE_ACTION, label: "New space…", icon: "plus" }] : []),
         ],
       },
     ],

@@ -19,8 +19,6 @@ export const RAIL_PR_TEAM = "pr.team";
 export const RAIL_NEEDS_YOU = "needsYou";
 export const RAIL_HARNESS = "harness:";
 export const RAIL_HARNESS_USAGE = "usage";
-export const RAIL_HTTP = "http";
-export const RAIL_DEV = "dev";
 export const RAIL_CUSTOMIZATION = "customization";
 export const RAIL_SETTINGS = "settings";
 
@@ -164,7 +162,6 @@ export interface RailInput {
   needsYou: number;
   /** Null: the person turned harness activity off. */
   harnesses: readonly HarnessRailInput[] | null;
-  devWorkspace: boolean;
   settingsNeedYou: boolean;
 }
 
@@ -235,20 +232,9 @@ function harnessItem(h: HarnessRailInput): RailItem {
 /** The whole rail: the page's dock on top, then reviews, Needs you and the harnesses, then the links. */
 export function buildRailModel(input: RailInput): RailModel {
   const { pathname } = input;
-  const onHttp = isActive(pathname, "/http");
-  const onDev = isActive(pathname, "/dev");
   const foot: RailItem[] = [
-    {
-      id: RAIL_HTTP,
-      label: onHttp ? "Return to previous page" : "HTTP Client",
-      icon: "plug",
-      active: onHttp,
-    },
+    { id: RAIL_CUSTOMIZATION, label: "Customization", icon: "sliders", active: isActive(pathname, "/customization") },
   ];
-  if (input.devWorkspace) {
-    foot.push({ id: RAIL_DEV, label: onDev ? "Return to previous page" : "Dev workspace", icon: "terminal", active: onDev });
-  }
-  foot.push({ id: RAIL_CUSTOMIZATION, label: "Customization", icon: "sliders", active: isActive(pathname, "/customization") });
   const settings: RailItem = {
     id: RAIL_SETTINGS,
     label: input.settingsNeedYou ? "Settings: a setting runs need is missing" : "Settings",
@@ -276,8 +262,6 @@ export function buildRailModel(input: RailInput): RailModel {
 export type RailEffect =
   | { type: "dock"; itemId: string }
   | { type: "navigate"; path: string }
-  /** The same toggle the HTTP Client / Dev workspace link does: leave the page you're on, else go there. */
-  | { type: "toggle"; path: string }
   | { type: "open"; url: string }
   | { type: "refreshReviews" }
   | { type: "clearReviews" }
@@ -294,10 +278,6 @@ export function railEffect(
 ): RailEffect {
   if (itemId === RAIL_DOCK_TOGGLE || itemId.startsWith(RAIL_DOCK_TAB)) return { type: "dock", itemId };
   switch (itemId) {
-    case RAIL_HTTP:
-      return { type: "toggle", path: "/http" };
-    case RAIL_DEV:
-      return { type: "toggle", path: "/dev" };
     case RAIL_CUSTOMIZATION:
       return { type: "navigate", path: "/customization" };
     case RAIL_SETTINGS:

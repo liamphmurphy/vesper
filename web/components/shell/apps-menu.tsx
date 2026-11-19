@@ -6,8 +6,9 @@ import { Popover } from "radix-ui";
 import { useState, type CSSProperties, type KeyboardEvent } from "react";
 import { cx } from "@/lib/cx";
 import { useMediaQuery } from "@/lib/viewport";
-import { TOOL_ITEMS, inAppsMenu, isActive, type NavBadge, type NavItem } from "@/lib/project-scope";
+import { TOOL_ITEMS, toolItems, inAppsMenu, isActive, type NavBadge, type NavItem } from "@/lib/project-scope";
 import { useCustomApps } from "@/lib/api/custom-app-hooks";
+import { useDevWorkspace } from "@/lib/api/dev-workspace-hooks";
 import { resolveAppIcon } from "@/lib/custom-app-bridge";
 import { Icon } from "@/components/ui/icon";
 
@@ -107,6 +108,7 @@ function ToolPill({ item, index, count, current, onPick }: TileArgs) {
 function Grid({ counts, onPick, onNewSpace }: { counts: Record<NavBadge, number>; onPick: () => void; onNewSpace: () => void }) {
   const pathname = usePathname();
   const customApps = useCustomApps();
+  const tools = toolItems(!!useDevWorkspace().data?.enabled);
   const customTiles: NavItem[] = (customApps.data?.apps ?? []).map((a) => ({
     href: `/apps/${a.slug}`,
     label: a.name,
@@ -128,7 +130,7 @@ function Grid({ counts, onPick, onNewSpace }: { counts: Record<NavBadge, number>
       <div role="group" aria-label="Tools" className="flex flex-col gap-2">
         <span aria-hidden className="text-11 font-semibold uppercase tracking-[0.04em] text-fg-tertiary">Tools</span>
         <div className="flex flex-wrap gap-2">
-          {TOOL_ITEMS.map((item, i) => (
+          {tools.map((item, i) => (
             <ToolPill key={item.href} item={item} index={customTiles.length + i} count={countOf(item)} current={isActive(pathname, item.href)} onPick={onPick} />
           ))}
         </div>
@@ -164,7 +166,7 @@ function Grid({ counts, onPick, onNewSpace }: { counts: Record<NavBadge, number>
 
 /**
  * The menu's Apps row: your own apps as a row of tiles, then the tools (Workflows,
- * Scheduled, Learn, Wiki) as pills, in a card that opens to the right. Opens on click,
+ * Scheduled, Learn, Reports, HTTP Client, Dev workspace) as pills, in a card that opens to the right. Opens on click,
  * not hover: the row sits over Spaces, and a hover flyout would open on the way there.
  */
 export function AppsMenu({ rail, vertical, counts, onNewSpace }: { rail?: boolean; vertical?: boolean; counts: Record<NavBadge, number>; onNewSpace: () => void }) {

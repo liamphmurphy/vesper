@@ -40,7 +40,17 @@ export const TOOL_ITEMS: NavItem[] = [
   { href: "/learn", label: "Learn", icon: "learn" },
   // Costs and Highlights (LAZYAGENTS-163), formerly the Runs tabs. In the Apps flyout: the column's icon row holds the areas only.
   { href: "/reports", label: "Reports", icon: "dollar" },
+  // HTTP Client and Dev workspace used to sit in the right rail's foot; they're tools, so they live with the rest.
+  { href: "/http", label: "HTTP Client", icon: "plug" },
 ];
+
+/** The Dev workspace is a tool only while it's enabled, so it isn't in TOOL_ITEMS (and so not in NAV_GROUPS or More). */
+export const DEV_TOOL_ITEM: NavItem = { href: "/dev", label: "Dev workspace", icon: "terminal" };
+
+/** Every tool the person can open now: TOOL_ITEMS, plus the Dev workspace when it's enabled. */
+export function toolItems(devWorkspaceEnabled: boolean): NavItem[] {
+  return devWorkspaceEnabled ? [...TOOL_ITEMS, DEV_TOOL_ITEM] : TOOL_ITEMS;
+}
 
 export const FOOTER_ITEMS: NavItem[] = [
   { href: "/customization", label: "Customization", icon: "sliders" },
@@ -62,7 +72,7 @@ export function inAppsMenu(pathname: string): boolean {
   if (RAIL_APP_ITEMS.some((i) => isActive(pathname, i.href))) return false;
   // Decks' and designs' old addresses lead to their Knowledge pages, so Knowledge reads as current.
   if (isActive(pathname, "/apps/slides") || isActive(pathname, "/apps/designs")) return false;
-  return [...APP_ITEMS, ...TOOL_ITEMS].some((i) => isActive(pathname, i.href));
+  return [...APP_ITEMS, ...toolItems(true)].some((i) => isActive(pathname, i.href));
 }
 
 /** Routes whose content belongs to one project, read from ?project=. */
