@@ -176,9 +176,10 @@ func fileCapture(ctx context.Context, d Deps, c agents.Caller, in FileCaptureIn)
 }
 
 type AttachFileIn struct {
-	AttachmentID *uuid.UUID `json:"attachment_id,omitempty" jsonschema:"A file the person sent in this chat (its id from the message)"`
-	Data         string     `json:"data,omitempty" jsonschema:"Or the file's bytes, base64-encoded: something you made, such as an SVG; at most 25 MB"`
-	Filename     string     `json:"filename,omitempty" jsonschema:"The file's name, e.g. harbour-map.svg; required with data"`
+	AttachmentID  *uuid.UUID `json:"attachment_id,omitempty" jsonschema:"A file the person sent in this chat (its id from the message)"`
+	LibraryItemID *uuid.UUID `json:"library_item_id,omitempty" jsonschema:"Or a file in the person's Library (such as a PDF made with render_pdf or saved with save_file)"`
+	Data          string     `json:"data,omitempty" jsonschema:"Or the file's bytes, base64-encoded: something you made, such as an SVG; at most 25 MB"`
+	Filename      string     `json:"filename,omitempty" jsonschema:"The file's name, e.g. harbour-map.svg; required with data"`
 }
 
 // attachFile stores a file among the person's Knowledge assets and returns the
@@ -188,13 +189,26 @@ func attachFile(ctx context.Context, d Deps, c agents.Caller, in AttachFileIn) (
 	if err != nil {
 		return nil, err
 	}
-	if (in.AttachmentID == nil) == (in.Data == "") {
-		return nil, apperr.Invalid("attachment_id", "give either attachment_id or data")
+	sources := 0
+	if in.AttachmentID != nil {
+		sources++
+	}
+	if in.LibraryItemID != nil {
+		sources++
+	}
+	if in.Data != "" {
+		sources++
+	}
+	if sources != 1 {
+		return nil, apperr.Invalid("attachment_id", "give exactly one of attachment_id, library_item_id or data")
 	}
 	var asset store.KnowledgeAsset
-	if in.AttachmentID != nil {
+	switch {
+	case in.AttachmentID != nil:
 		asset, err = d.Wiki.StoreAttachmentAsset(ctx, c.Agent.WorkspaceID, scope.UserID, *in.AttachmentID)
-	} else {
+	case in.LibraryItemID != nil:
+		asset, err = d.Wiki.StoreLibraryItemAsset(ctx, c.Agent.WorkspaceID, scope.UserID, *in.LibraryItemID)
+	default:
 		if strings.TrimSpace(in.Filename) == "" {
 			return nil, apperr.Invalid("filename", "is required with data")
 		}

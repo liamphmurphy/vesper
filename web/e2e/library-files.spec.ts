@@ -103,9 +103,16 @@ test("a CSV previews as a table and a zip as a list that says nothing is unpacke
 });
 
 test("a file with nothing to show says to download it", async ({ page }) => {
-  await installLibrary(page, [file("f-pdf", { title: "Report.pdf", filename: "Report.pdf", content_type: "application/pdf", detail: undefined })]);
+  await installLibrary(page, [file("f-xlsx", { title: "Model.xlsx", filename: "Model.xlsx", content_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", detail: undefined })]);
+  await page.goto("/library?tab=files&item=f-xlsx");
+  await expect(page.getByRole("dialog", { name: "Model.xlsx" }).getByTestId("file-preview")).toContainText("No preview for this type of file");
+});
+
+test("a PDF opens an inline PDF preview in its dialog", async ({ page }) => {
+  await installLibrary(page, [file("f-pdf", { title: "Report.pdf", filename: "Report.pdf", content_type: "application/pdf", detail: "2 pages · Letter" })]);
   await page.goto("/library?tab=files&item=f-pdf");
-  await expect(page.getByRole("dialog", { name: "Report.pdf" }).getByTestId("file-preview")).toContainText("No preview for this type of file");
+  const preview = page.getByRole("dialog", { name: "Report.pdf" }).getByTestId("file-preview");
+  await expect(preview).toHaveAttribute("data-kind", "pdf");
 });
 
 test("removing a file asks first and says file", async ({ page }) => {

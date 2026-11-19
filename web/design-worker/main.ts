@@ -5,14 +5,21 @@
 //   STATIC_DIR            also serve the built UI from this directory
 //   API_INTERNAL_URL      also proxy /api, /mcp and /events there
 import { fileURLToPath } from "node:url";
+import { closePdfBrowser } from "../lib/pdf/cdp.ts";
 import { createWebServer } from "./server.ts";
 
-// The Inter TTFs sit in the UI build, one directory up from the bundled worker.
+// The Inter and Liberation TTFs sit in the UI build, one directory up from the bundled worker.
 process.env.DESIGN_FONT_DIR ??= fileURLToPath(new URL("../fonts/designs", import.meta.url));
+process.env.VESPER_FONTS_DIR ??= fileURLToPath(new URL("../fonts", import.meta.url));
+process.env.VESPER_PDFJS_DIR ??= fileURLToPath(new URL("./pdfjs", import.meta.url));
 
 const port = Number(process.env.PORT ?? 3000);
 const host = process.env.HOSTNAME ?? "127.0.0.1";
 createWebServer({ staticDir: process.env.STATIC_DIR, apiURL: process.env.API_INTERNAL_URL }).listen(port, host, () => {
   console.log(`web ready on http://${host}:${port}`);
 });
-for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => process.exit(0));
+for (const sig of ["SIGINT", "SIGTERM"] as const)
+  process.on(sig, () => {
+    closePdfBrowser();
+    process.exit(0);
+  });

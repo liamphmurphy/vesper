@@ -2332,7 +2332,11 @@ export interface paths {
             };
             cookie?: never;
         };
-        get?: never;
+        /**
+         * One item from your Library
+         * @description 404 unless it is yours.
+         */
+        get: operations["getLibraryItem"];
         put?: never;
         post?: never;
         /**
@@ -13692,6 +13696,30 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            404: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getLibraryItem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                itemId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The item */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryItem"];
+                };
             };
             404: components["responses"]["Error"];
             default: components["responses"]["Error"];

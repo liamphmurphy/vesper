@@ -60,6 +60,8 @@ func ResolvePageEmbeds(ctx context.Context, q *store.Queries, ws, pageID uuid.UU
 					item, err := q.GetLibraryItem(ctx, store.GetLibraryItemParams{ID: id, WorkspaceID: ws, UserID: *viewer})
 					if err == nil && (item.Kind == "image" || item.Kind == "video") {
 						e = Embed{Ref: ref.Raw, Kind: item.Kind, Title: item.Title, URL: "/api/v1/library/" + id.String() + "/content", ContentType: item.ContentType, Available: true}
+					} else if err == nil && (item.Kind == "file" || item.Kind == "export" || item.Kind == "document") && item.ContentType == "application/pdf" {
+						e = Embed{Ref: ref.Raw, Kind: "file", Title: item.Title, URL: "/api/v1/library/" + id.String() + "/content", ContentType: item.ContentType, Available: true}
 					} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 						return nil, err
 					}

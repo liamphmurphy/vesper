@@ -16,37 +16,65 @@ struct SidebarHost: View {
 
 /// The native sidebar: the shell section (areas, Apps) on top, then the current screen's list,
 /// drawn from the `NavModel` the page describes. Everything user-driven goes out through `send`.
+private struct SidebarScrollTarget: Equatable, Sendable {
+    let navId: String
+    let itemId: String
+}
+
 struct SidebarView: View {
     let state: ShellState
     let send: (NativeCommand) -> Void
 
+    private var scrollTarget: SidebarScrollTarget? {
+        guard let nav = state.navigator, let selected = nav.selectedId else { return nil }
+        guard SidebarTree.isVisible(
+            selected,
+            in: nav,
+            expandedOverrides: state.expandedOverrides,
+            collapsedOverrides: state.collapsedOverrides
+        ) else { return nil }
+        return SidebarScrollTarget(navId: nav.id, itemId: selected)
+    }
+
     var body: some View {
         let shell = state.shell ?? ShellState.fallbackShell
-        List(selection: navSelection) {
-            ShellSection(shell: shell, send: send)
-            if let nav = state.navigator {
-                NavContent(nav: nav, state: state, send: send)
+        ScrollViewReader { proxy in
+            List(selection: navSelection) {
+                ShellSection(shell: shell, send: send)
+                if let nav = state.navigator {
+                    NavContent(nav: nav, state: state, send: send)
+                }
+            }
+            .listStyle(.sidebar)
+            .task(id: scrollTarget) {
+                guard let target = scrollTarget, !state.recentlyActivated(target.itemId) else { return }
+                // Let newly expanded DisclosureGroups materialize child rows in NSOutlineView before scrolling.
+                try? await Task.sleep(for: .milliseconds(60))
+                guard !Task.isCancelled else { return }
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    proxy.scrollTo(target.itemId, anchor: .center)
+                }
             }
         }
-        .listStyle(.sidebar)
     }
 
     /// The selected row: the screen's selected nav row, else the current area (so an area looks like
     /// a native source-list selection). Setting it is a user click: the page navigates, the shell only
     /// reports. Areas navigate from their own tap (so re-clicking the current area works too).
-    static func contains(_ id: String, in nav: NavModel) -> Bool {
-        func walk(_ items: [NavItem]) -> Bool { items.contains { $0.id == id || walk($0.children ?? []) } }
-        return nav.sections.contains { walk($0.items) }
-    }
-
     private var navSelection: Binding<String?> {
         Binding(
             get: {
-                // Report a nav selection only once its row exists: a page may name the selection before
-                // the row loads (a saved view), and the List won't re-apply an unchanged value when the
-                // row appears later. Going from nil to the id makes it select the row.
+                // Report a nav selection only once its row is visible: a page may name the selection
+                // before the row loads or before its ancestor folders expand, and the List won't
+                // re-apply an unchanged value when the row appears later. Going from nil to the id
+                // makes it select the row.
                 if let nav = state.navigator, let selected = nav.selectedId {
-                    return Self.contains(selected, in: nav) ? selected : nil
+                    return SidebarTree.isVisible(
+                        selected,
+                        in: nav,
+                        expandedOverrides: state.expandedOverrides,
+                        collapsedOverrides: state.collapsedOverrides
+                    ) ? selected : nil
                 }
                 return (state.shell ?? ShellState.fallbackShell).currentArea.map { ShellSection.areaTag($0) }
             },
@@ -214,6 +242,7 @@ private struct NavHeader: View {
 private struct ActionButton: View {
     let action: NavAction
     let onChoose: (String?) -> Void
+    @State private var hovered = false
 
     var body: some View {
         content.disabled(action.disabled == true)
@@ -223,25 +252,60 @@ private struct ActionButton: View {
         if let menu = action.menu, !menu.isEmpty {
             // A plain button that pops up an NSMenu: SwiftUI's Menu collapses to zero width in a
             // sidebar header row, which hid Knowledge's + (New) menu.
-            Button {
+            styled(Button {
                 let ns = MenuBuilder.menu(from: menu) { onChoose($0) }
                 ns.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
-            } label: { buttonFace }
-            .buttonStyle(.borderless)
-            .help(action.label)
+            } label: { buttonFace })
         } else {
-            Button { onChoose(nil) } label: { buttonFace }
-            .buttonStyle(.borderless)
-            .help(action.label)
+            styled(Button { onChoose(nil) } label: { buttonFace })
+        }
+    }
+
+    @ViewBuilder private func styled<V: View>(_ button: V) -> some View {
+        if action.showsLabel == true {
+            button
+                .buttonStyle(.plain)
+                .onHover { hovered = $0 }
+                .help(action.label)
+        } else {
+            button
+                .buttonStyle(.borderless)
+                .help(action.label)
         }
     }
 
     @ViewBuilder private var buttonFace: some View {
         let symbol = SidebarIcons.symbolName(action.icon)
-        let tint = action.accent == true ? Color.accentColor : .secondary
         if action.showsLabel == true {
-            Label(action.label, systemImage: symbol).labelStyle(.titleAndIcon).lineLimit(1).foregroundStyle(tint)
+            let accent = action.accent == true
+            HStack(spacing: 4) {
+                Image(systemName: symbol)
+                    .font(.system(size: 11, weight: .medium))
+                Text(action.label)
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(accent ? Color.accentColor : Color.primary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(
+                Capsule().fill(
+                    accent
+                        ? Color.accentColor.opacity(hovered ? 0.22 : 0.14)
+                        : Color.primary.opacity(hovered ? 0.14 : 0.08)
+                )
+            )
+            .overlay(
+                Capsule().strokeBorder(
+                    accent
+                        ? Color.accentColor.opacity(0.32)
+                        : Color.primary.opacity(hovered ? 0.22 : 0.14),
+                    lineWidth: 0.5
+                )
+            )
+            .contentShape(Capsule())
         } else {
+            let tint = action.accent == true ? Color.accentColor : Color.secondary
             Image(systemName: symbol).foregroundStyle(tint)
         }
     }
@@ -314,36 +378,70 @@ private struct NavSectionView: View {
     let section: NavSection
     let state: ShellState
     let send: (NativeCommand) -> Void
+    @State private var titleHovered = false
 
-    private var expanded: Binding<Bool> {
-        Binding(
-            get: { !(state.collapsedOverrides[section.id] ?? section.collapsed ?? false) },
-            set: { open in
-                state.collapsedOverrides[section.id] = !open
-                // The protocol has no section message; nav.toggle with the section id is the closest signal.
-                send(.navToggle(navigatorId: nav.id, itemId: section.id, expanded: open))
-            })
+    private var isExpanded: Bool {
+        !(state.collapsedOverrides[section.id] ?? section.collapsed ?? false)
+    }
+
+    private var hasHeader: Bool {
+        section.title != nil || !(section.actions ?? []).isEmpty || section.badge != nil
+    }
+
+    private func toggleSection() {
+        let open = !isExpanded
+        withAnimation(.easeInOut(duration: 0.15)) {
+            state.collapsedOverrides[section.id] = !open
+        }
+        // The protocol has no section message; nav.toggle with the section id is the closest signal.
+        if section.collapsible == true {
+            send(.navToggle(navigatorId: nav.id, itemId: section.id, expanded: open))
+        }
     }
 
     var body: some View {
-        if section.collapsible == true, section.title != nil {
-            Section(isExpanded: expanded) { rows } header: { header }
-        } else {
-            Section { rows } header: { if section.title != nil || !(section.actions ?? []).isEmpty || section.badge != nil { header } }
+        // Render section headers as non-selectable rows inside a headerless Section so macOS's
+        // sidebar outline view never injects a hover disclosure arrow (which shifted header actions
+        // like "New Chat" left and pushed the header past the row's trailing edge).
+        Section {
+            if hasHeader {
+                header
+                    .selectionDisabled()
+            }
+            if isExpanded {
+                rows
+            }
         }
     }
 
     private var header: some View {
-        HStack {
-            Text(section.title ?? "")
-            if let badge = section.badge { BadgeView(text: badge.text, tone: badge.tone) }
-            Spacer()
+        HStack(spacing: 6) {
+            if let title = section.title {
+                Button(action: toggleSection) {
+                    HStack(spacing: 6) {
+                        Text(title)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(titleHovered ? Color.primary : Color.secondary)
+                            .lineLimit(1)
+                        if let badge = section.badge { BadgeView(text: badge.text, tone: badge.tone) }
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .onHover { titleHovered = $0 }
+                .help(isExpanded ? "Collapse \(title)" : "Expand \(title)")
+            } else {
+                if let badge = section.badge { BadgeView(text: badge.text, tone: badge.tone) }
+                Spacer(minLength: 0)
+            }
             ForEach(section.actions ?? []) { action in
                 ActionButton(action: action) { menuId in
                     send(.navAction(navigatorId: nav.id, actionId: action.id, itemId: nil, menuItemId: menuId))
                 }
             }
         }
+        .padding(.top, 2)
     }
 
     @ViewBuilder private var rows: some View {
@@ -383,9 +481,12 @@ private struct NavRow: View {
             DisclosureGroup(isExpanded: expanded) {
                 ForEach(children) { child in NavRow(nav: nav, item: child, state: state, send: send) }
             } label: { label }
+            .id(item.id)
             .tag(item.id)
         } else {
-            label.tag(item.id)
+            label
+                .id(item.id)
+                .tag(item.id)
         }
     }
 

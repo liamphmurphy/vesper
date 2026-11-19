@@ -26,6 +26,7 @@ type fileOrigin struct {
 	chatID    *uuid.UUID
 	personaID *uuid.UUID
 	title     string
+	detail    string
 }
 
 // keepFile checks a file, describes it, stores its bytes and records the item.
@@ -70,8 +71,15 @@ func (s *Server) keepFile(ctx context.Context, userID, ws uuid.UUID, r interface
 	if err := s.Blobs.Put(ctx, s.ArtifactBucket, key, r, size, ct); err != nil {
 		return store.LibraryItem{}, err
 	}
+	detail := strings.TrimSpace(from.detail)
+	if detail == "" {
+		detail = runs.FileDetail(prev)
+	}
+	if rs := []rune(detail); len(rs) > 200 {
+		detail = string(rs[:200])
+	}
 	l, err := s.Q.CreateLibraryFile(ctx, store.CreateLibraryFileParams{WorkspaceID: ws, UserID: userID, Title: title, Filename: name, ContentType: ct, SizeBytes: size, BlobKey: key,
-		Source: from.source, ChatID: from.chatID, PersonaID: from.personaID, Detail: runs.FileDetail(prev)})
+		Source: from.source, ChatID: from.chatID, PersonaID: from.personaID, Detail: detail})
 	if err != nil {
 		_ = s.Blobs.Delete(context.WithoutCancel(ctx), s.ArtifactBucket, key)
 		return store.LibraryItem{}, err
@@ -219,6 +227,12 @@ func exportExt(name string) string { return strings.ToLower(path.Ext(name)) }
 
 // KeepChatFile saves a file a persona handed over in a chat (the save_file tool).
 func (s *Server) KeepChatFile(ctx context.Context, userID, ws uuid.UUID, chatID, personaID *uuid.UUID, title, filename string, data []byte) (store.LibraryItem, error) {
+	return s.KeepChatFileWithDetail(ctx, userID, ws, chatID, personaID, title, filename, "", data)
+}
+
+// KeepChatFileWithDetail saves a file a persona made in a chat with an optional
+// summary line (such as "4 pages · Letter" for a rendered PDF).
+func (s *Server) KeepChatFileWithDetail(ctx context.Context, userID, ws uuid.UUID, chatID, personaID *uuid.UUID, title, filename, detail string, data []byte) (store.LibraryItem, error) {
 	head := data[:min(len(data), 512)]
-	return s.keepFile(ctx, userID, ws, bytes.NewReader(data), int64(len(data)), filename, head, fileOrigin{source: "generated", chatID: chatID, personaID: personaID, title: title})
+	return s.keepFile(ctx, userID, ws, bytes.NewReader(data), int64(len(data)), filename, head, fileOrigin{source: "generated", chatID: chatID, personaID: personaID, title: title, detail: detail})
 }

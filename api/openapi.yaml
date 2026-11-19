@@ -2942,6 +2942,19 @@ paths:
   /library/{itemId}:
     parameters:
       - { name: itemId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getLibraryItem
+      summary: One item from your Library
+      description: 404 unless it is yours.
+      tags: [library]
+      responses:
+        "200":
+          description: The item
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LibraryItem" }
+        "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
     patch:
       operationId: renameLibraryItem
       summary: Rename an item in your Library

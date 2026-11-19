@@ -4,6 +4,7 @@
 // file only adapts it to Node's server. It is used by the standalone server and the Vite dev server.
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { handleImport, handleInspect, handleLayout, handleRender, tokenOk } from "../lib/designs/worker.ts";
+import { handlePdf } from "../lib/pdf/render.ts";
 
 export const PREFIX = "/internal/designs";
 
@@ -12,6 +13,7 @@ const posts: Record<string, (req: Request) => Promise<Response>> = {
   [`${PREFIX}/layout`]: handleLayout,
   [`${PREFIX}/inspect`]: handleInspect,
   [`${PREFIX}/import`]: handleImport,
+  [`${PREFIX}/pdf`]: handlePdf,
 };
 
 // The worker refuses bodies over 48 MiB itself; this only stops reading a hostile stream.
