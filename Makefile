@@ -3,7 +3,7 @@
 # web app on the host against a local Postgres for hot-reload development.
 SHELL := /bin/bash
 
-.PHONY: help signin dev-infra dev-infra-stop stop-dev dev api web web-deps runner gen gen-check test test-server test-web lint build reset mac-app mac-test mac-run mac-dmg mac-reinstall
+.PHONY: help signin dev-infra dev-infra-stop stop-dev dev api web web-deps runner gen gen-check test test-server test-web lint build reset mac-app mac-test mac-run mac-dmg mac-reinstall mac-golden
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-13s %s\n", $$1, $$2}'
@@ -107,3 +107,26 @@ mac-dmg: ## Build macos/build/Vesper-arm64.dmg (macos/Makefile)
 
 mac-reinstall: ## Rebuild and replace the installed macOS app (macos/Makefile)
 	$(MAKE) -C macos reinstall
+
+# macOS guest VM golden image for personas' `mac` command (Apple Silicon only).
+# Optional overrides: MACOS_GOLDEN_DIR, VESPER_MACOS_SOURCE, VESPER_USER_DATA_DIR.
+mac-golden: ## Set up the macOS VM golden image for `mac` (installs tart/sshpass via Homebrew if missing)
+	@set -euo pipefail; \
+	if [ "$$(uname -s)/$$(uname -m)" != "Darwin/arm64" ]; then \
+	  echo "mac-golden needs an Apple Silicon Mac (Darwin/arm64)." >&2; exit 1; \
+	fi; \
+	pkgs=""; \
+	command -v tart >/dev/null 2>&1 || pkgs="$$pkgs cirruslabs/cli/tart"; \
+	command -v sshpass >/dev/null 2>&1 || pkgs="$$pkgs cirruslabs/cli/sshpass"; \
+	if [ -n "$$pkgs" ]; then \
+	  if ! command -v brew >/dev/null 2>&1; then \
+	    echo "Missing prerequisites ($${pkgs# }) and Homebrew is not installed." >&2; exit 1; \
+	  fi; \
+	  echo "Installing prerequisites via Homebrew:$$pkgs"; \
+	  brew install $$pkgs; \
+	fi; \
+	if [ -n "$(MACOS_GOLDEN_DIR)" ]; then \
+	  deploy/microvm/macos-golden.sh "$(MACOS_GOLDEN_DIR)"; \
+	else \
+	  deploy/microvm/macos-golden.sh; \
+	fi
