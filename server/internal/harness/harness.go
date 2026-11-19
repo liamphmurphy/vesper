@@ -535,9 +535,14 @@ func gitSection(spec agentdef.Resolved) string {
 		b.WriteString(epicSteps(r.EpicBranch, r.DefaultBranch, r.EpicName, r.EpicReview))
 		return b.String()
 	}
-	b.WriteString("1. `git push -u origin HEAD`\n")
-	b.WriteString("2. `gh pr create --title \"<ticket key>: <summary>\" --body \"<what changed, how you tested it, link to the ticket>\"` (add `--draft` if anything is unfinished)\n")
-	b.WriteString("3. Record the PR URL it prints with the `set_pr` tool.\n\n")
+	base := "HEAD"
+	if r := spec.Repository; r != nil && r.DefaultBranch != "" {
+		base = r.DefaultBranch
+	}
+	b.WriteString("1. `git fetch origin` and `git merge origin/" + base + "` to check for conflicts with changes merged since you started. Resolve any conflicts and rerun the affected tests.\n")
+	b.WriteString("2. `git push -u origin HEAD`\n")
+	b.WriteString("3. `gh pr create --title \"<ticket key>: <summary>\" --body \"<what changed, how you tested it, link to the ticket>\"` (add `--draft` if anything is unfinished)\n")
+	b.WriteString("4. Record the PR URL it prints with the `set_pr` tool.\n\n")
 	b.WriteString("If a PR for the branch already exists (`gh pr view`), push to update it instead of opening another.\n\n")
 	return b.String()
 }
@@ -600,7 +605,7 @@ func epicReviewSection(r *agentdef.Repository) string {
 	b.WriteString("1. `git fetch --prune origin`.\n")
 	fmt.Fprintf(&b, "2. For each ticket PR that's still open with base `%s`, merge it into the epic branch: `gh pr merge <url> --squash --delete-branch`. If it conflicts, check out its branch, merge `origin/%s`, resolve, push, and merge it. Then `git fetch --prune origin` again.\n", epic, epic)
 	fmt.Fprintf(&b, "3. Skip tickets whose PR is merged (squash merges look unmerged to git). Any other listed ticket branch still on origin without an open PR and not yet in `origin/%s` (`git branch -r --no-merged origin/%s`): merge it into your branch.\n", epic, epic)
-	fmt.Fprintf(&b, "4. `git merge origin/%s` into your branch, then run the full test suite once, fix failures, and rerun only what failed.\n", epic)
+	fmt.Fprintf(&b, "4. `git merge origin/%s` and `git merge origin/%s` into your branch (resolving any conflicts with `%s`), then run the full test suite once, fix failures, and rerun only what failed.\n", epic, base, base)
 	b.WriteString("5. Verify each epic acceptance criterion and tick it with check_epic_criterion; check your own ticket's criteria with check_criterion.\n")
 	b.WriteString("6. Publish your branch with the epic steps below. If you committed nothing beyond the epic branch, skip publishing and go straight to step 7.\n")
 	fmt.Fprintf(&b, "7. Mark the epic PR ready: `gh pr ready <epic PR>` (find it with `gh pr list --head %s --base %s --state open`). Never merge the epic PR into `%s`.\n\n", epic, base, base)

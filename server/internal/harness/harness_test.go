@@ -381,10 +381,15 @@ func TestAgentsMDDoesNotWaitForPRChecks(t *testing.T) {
 
 func TestAgentsMDGitHubSection(t *testing.T) {
 	allowed := string(AgentsMD("", spec("repo:write", "allowed"), nil, "PAY-1"))
-	for _, want := range []string{"`gh` CLI", "git push -u origin HEAD", "gh pr create", "`set_pr`"} {
+	for _, want := range []string{"`gh` CLI", "git fetch origin", "git merge origin/HEAD", "Resolve any conflicts", "git push -u origin HEAD", "gh pr create", "`set_pr`"} {
 		if !strings.Contains(allowed, want) {
 			t.Fatalf("allowed repo:write missing %q:\n%s", want, allowed)
 		}
+	}
+	withBase := spec("repo:write", "allowed")
+	withBase.Repository = &agentdef.Repository{DefaultBranch: "develop"}
+	if md := string(AgentsMD("", withBase, nil, "PAY-1")); !strings.Contains(md, "git merge origin/develop") {
+		t.Fatalf("expected custom default branch merge check:\n%s", md)
 	}
 	if gated := string(AgentsMD("", spec("repo:write", "requires_approval"), nil, "PAY-1")); !strings.Contains(gated, "request_approval for it") {
 		t.Fatalf("gated section should ask for approval:\n%s", gated)
@@ -703,7 +708,7 @@ func TestAgentsMDEpicReview(t *testing.T) {
 		"- PAY-1 Schema — done, branch `pay-1`, PR https://github.com/o/r/pull/3 (open)",
 		"- PAY-2 API — in_review\n",
 		"gh pr ready <epic PR>", "git branch -r --no-merged origin/epic/pay-1234abcd", "check_epic_criterion",
-		"Resolve conflicts and rerun tests.", "tests pass",
+		"git merge origin/main", "Resolve conflicts and rerun tests.", "tests pass",
 	} {
 		if !strings.Contains(md, want) {
 			t.Fatalf("review ticket missing %q:\n%s", want, md)
