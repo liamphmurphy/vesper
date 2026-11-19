@@ -72,6 +72,15 @@ final class ShellState {
         let oldSections = Dictionary(old.sections.map { ($0.id, $0.collapsed ?? false) }, uniquingKeysWith: { a, _ in a })
         let newSections = Dictionary(new.sections.map { ($0.id, $0.collapsed ?? false) }, uniquingKeysWith: { a, _ in a })
         collapsedOverrides = collapsedOverrides.filter { oldSections[$0.key] == newSections[$0.key] }
+        // When navigation switches selection (e.g. via the command palette), clear any local
+        // collapse overrides along the new target's path so the sidebar reveals it.
+        if let selected = new.selectedId, selected != old.selectedId,
+           let path = SidebarTree.path(to: selected, in: new) {
+            collapsedOverrides[path.sectionId] = nil
+            for ancestor in path.ancestors {
+                expandedOverrides[ancestor] = nil
+            }
+        }
     }
 
     private static func expandedValues(_ nav: NavModel) -> [String: Bool] {

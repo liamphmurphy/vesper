@@ -16,37 +16,65 @@ struct SidebarHost: View {
 
 /// The native sidebar: the shell section (areas, Apps) on top, then the current screen's list,
 /// drawn from the `NavModel` the page describes. Everything user-driven goes out through `send`.
+private struct SidebarScrollTarget: Equatable, Sendable {
+    let navId: String
+    let itemId: String
+}
+
 struct SidebarView: View {
     let state: ShellState
     let send: (NativeCommand) -> Void
 
+    private var scrollTarget: SidebarScrollTarget? {
+        guard let nav = state.navigator, let selected = nav.selectedId else { return nil }
+        guard SidebarTree.isVisible(
+            selected,
+            in: nav,
+            expandedOverrides: state.expandedOverrides,
+            collapsedOverrides: state.collapsedOverrides
+        ) else { return nil }
+        return SidebarScrollTarget(navId: nav.id, itemId: selected)
+    }
+
     var body: some View {
         let shell = state.shell ?? ShellState.fallbackShell
-        List(selection: navSelection) {
-            ShellSection(shell: shell, send: send)
-            if let nav = state.navigator {
-                NavContent(nav: nav, state: state, send: send)
+        ScrollViewReader { proxy in
+            List(selection: navSelection) {
+                ShellSection(shell: shell, send: send)
+                if let nav = state.navigator {
+                    NavContent(nav: nav, state: state, send: send)
+                }
+            }
+            .listStyle(.sidebar)
+            .task(id: scrollTarget) {
+                guard let target = scrollTarget, !state.recentlyActivated(target.itemId) else { return }
+                // Let newly expanded DisclosureGroups materialize child rows in NSOutlineView before scrolling.
+                try? await Task.sleep(for: .milliseconds(60))
+                guard !Task.isCancelled else { return }
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    proxy.scrollTo(target.itemId, anchor: .center)
+                }
             }
         }
-        .listStyle(.sidebar)
     }
 
     /// The selected row: the screen's selected nav row, else the current area (so an area looks like
     /// a native source-list selection). Setting it is a user click: the page navigates, the shell only
     /// reports. Areas navigate from their own tap (so re-clicking the current area works too).
-    static func contains(_ id: String, in nav: NavModel) -> Bool {
-        func walk(_ items: [NavItem]) -> Bool { items.contains { $0.id == id || walk($0.children ?? []) } }
-        return nav.sections.contains { walk($0.items) }
-    }
-
     private var navSelection: Binding<String?> {
         Binding(
             get: {
-                // Report a nav selection only once its row exists: a page may name the selection before
-                // the row loads (a saved view), and the List won't re-apply an unchanged value when the
-                // row appears later. Going from nil to the id makes it select the row.
+                // Report a nav selection only once its row is visible: a page may name the selection
+                // before the row loads or before its ancestor folders expand, and the List won't
+                // re-apply an unchanged value when the row appears later. Going from nil to the id
+                // makes it select the row.
                 if let nav = state.navigator, let selected = nav.selectedId {
-                    return Self.contains(selected, in: nav) ? selected : nil
+                    return SidebarTree.isVisible(
+                        selected,
+                        in: nav,
+                        expandedOverrides: state.expandedOverrides,
+                        collapsedOverrides: state.collapsedOverrides
+                    ) ? selected : nil
                 }
                 return (state.shell ?? ShellState.fallbackShell).currentArea.map { ShellSection.areaTag($0) }
             },
@@ -453,9 +481,12 @@ private struct NavRow: View {
             DisclosureGroup(isExpanded: expanded) {
                 ForEach(children) { child in NavRow(nav: nav, item: child, state: state, send: send) }
             } label: { label }
+            .id(item.id)
             .tag(item.id)
         } else {
-            label.tag(item.id)
+            label
+                .id(item.id)
+                .tag(item.id)
         }
     }
 
