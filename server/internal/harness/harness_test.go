@@ -879,6 +879,9 @@ func TestChatAgentsMDForCapabilities(t *testing.T) {
 	if !strings.Contains(plain, "write_note saves a wiki note") {
 		t.Fatalf("chat isn't told about write_note:\n%s", plain)
 	}
+	if !strings.Contains(plain, "Keep Memory for the person, not project logs") {
+		t.Fatalf("chat memory guide lost Memory-vs-Knowledge boundary:\n%s", plain)
+	}
 	noWiki := spec("repo:write", "denied")
 	noWiki.Scopes = append(noWiki.Scopes, agentdef.ResolvedScope{Scope: "wiki:write", Mode: agentdef.Denied})
 	if md := string(ChatAgentsMD(noWiki, nil, "PAY", "", nil)); strings.Contains(md, "write_note") {

@@ -80,3 +80,19 @@ func TestAssistantCanvasSectionRoutesMockupsAndDesigns(t *testing.T) {
 		}
 	}
 }
+
+// Memory guidance keeps technical decisions and PR/branch logs out of personal
+// memory and points them at Knowledge instead, without contradicting Knowledge
+// with a blanket ban on writing the wiki.
+func TestAssistantInstructionsMemoryVsKnowledge(t *testing.T) {
+	for _, ins := range []string{agents.AssistantInstructions, agents.AssistantInstructionsFor(true, true, []string{"feat/x"}, true, false)} {
+		for _, want := range []string{"technical or architecture decisions", "durable project knowledge belongs in Knowledge", "PR/branch/implementation logs"} {
+			if !strings.Contains(ins, want) {
+				t.Errorf("instructions lack %q", want)
+			}
+		}
+		if strings.Contains(ins, "write the shared wiki") {
+			t.Errorf("instructions still forbid writing the shared wiki")
+		}
+	}
+}

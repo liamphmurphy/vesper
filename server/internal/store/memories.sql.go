@@ -359,6 +359,81 @@ func (q *Queries) GetMemory(ctx context.Context, arg GetMemoryParams) (Memory, e
 	return i, err
 }
 
+const listIndexMemories = `-- name: ListIndexMemories :many
+SELECT m.id, m.workspace_id, m.user_id, m.title, m.summary, m.body, m.tags, m.type, m.source, m.source_chat_id, m.source_run_id, m.superseded_by, m.created_at, m.updated_at, m.retired_reason, m.retired_at, m.consolidation_exempt, m.persona_id, m.space_id FROM memories m
+WHERE m.workspace_id = $1 AND m.user_id = $2
+  AND m.id IN (
+  SELECT ranked.id FROM (
+    SELECT m2.id, row_number() OVER (
+      PARTITION BY (m2.type = 'project')
+      ORDER BY m2.updated_at DESC, m2.id DESC
+    ) AS rn
+    FROM memories m2
+    WHERE m2.workspace_id = $1 AND m2.user_id = $2
+      AND m2.persona_id IS NULL
+      AND (m2.space_id IS NULL OR m2.space_id = $3)
+      AND m2.superseded_by IS NULL
+  ) ranked
+  WHERE ranked.rn <= $4::bigint
+)
+ORDER BY m.updated_at DESC, m.id DESC
+`
+
+type ListIndexMemoriesParams struct {
+	WorkspaceID uuid.UUID
+	UserID      uuid.UUID
+	SpaceID     *uuid.UUID
+	Lim         int64
+}
+
+// Candidate entries for the always-loaded Memory index: up to @lim most
+// recently changed non-project entries and up to @lim most recently changed
+// project entries, so project churn cannot evict personal facts or preferences.
+func (q *Queries) ListIndexMemories(ctx context.Context, arg ListIndexMemoriesParams) ([]Memory, error) {
+	rows, err := q.db.Query(ctx, listIndexMemories,
+		arg.WorkspaceID,
+		arg.UserID,
+		arg.SpaceID,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Memory{}
+	for rows.Next() {
+		var i Memory
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.UserID,
+			&i.Title,
+			&i.Summary,
+			&i.Body,
+			&i.Tags,
+			&i.Type,
+			&i.Source,
+			&i.SourceChatID,
+			&i.SourceRunID,
+			&i.SupersededBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.RetiredReason,
+			&i.RetiredAt,
+			&i.ConsolidationExempt,
+			&i.PersonaID,
+			&i.SpaceID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listMemories = `-- name: ListMemories :many
 SELECT id, workspace_id, user_id, title, summary, body, tags, type, source, source_chat_id, source_run_id, superseded_by, created_at, updated_at, retired_reason, retired_at, consolidation_exempt, persona_id, space_id FROM memories
 WHERE workspace_id = $1 AND user_id = $2
