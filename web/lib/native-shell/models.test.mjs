@@ -5,6 +5,7 @@ import { findNavItem, routeNavCommand } from "./nav-model.ts";
 import { buildShellModel, protocolArea } from "./shell-model.ts";
 import { stripVesperSuffix } from "./title.ts";
 import { createNavigatorPublisher } from "./publisher.ts";
+import { buildCustomAppCapabilities, buildCustomAppInspectorSections } from "./models/custom-app-inspector.ts";
 
 const NOW = Date.parse("2026-01-02T12:00:00Z");
 const chat = (o) => ({ id: "c1", title: "Plan", state: "idle", created_at: "2026-01-02T11:00:00Z", last_message_at: "2026-01-02T11:30:00Z", ...o });
@@ -170,4 +171,115 @@ test("the navigator publisher coalesces, dedupes and prefers a screen's model", 
   assert.deepEqual(sent.slice(-2).map((m) => m.type), ["navigator", "navigatorFallback"]);
   assert.equal(sent.at(-1).active, false);
   assert.equal(sent.at(-2).model.id, "chats");
+});
+
+test("buildCustomAppCapabilities surfaces configured API secrets without manifest declaration", () => {
+  const caps = buildCustomAppCapabilities({
+    connectors: [{ slug: "github", name: "GitHub", toolCount: 12, status: "connected" }],
+    secrets: [
+      { handle: "youtube-data-api", name: "YouTube Data API", allowedHosts: ["www.googleapis.com"] },
+      { handle: "empty-hosts", name: "Empty Hosts", allowedHosts: [] },
+    ],
+  });
+
+  assert.deepEqual(caps, [
+    {
+      key: "vesper.api:read",
+      label: "Vesper API · Read",
+      hint: "GET requests to Vesper REST APIs",
+      mode: "denied",
+      requested: undefined,
+    },
+    {
+      key: "vesper.api:write",
+      label: "Vesper API · Write",
+      hint: "POST, PATCH, PUT, DELETE requests to Vesper APIs",
+      mode: "denied",
+      requested: undefined,
+    },
+    {
+      key: "app.http:outbound",
+      label: "Outbound HTTPS",
+      hint: "Public HTTPS fetches from the app's MCP server and remote image proxy",
+      mode: "denied",
+      requested: undefined,
+    },
+    {
+      key: "mcp:github:*",
+      label: "MCP · GitHub",
+      hint: "12 tools · connected",
+      mode: "denied",
+      requested: undefined,
+    },
+    {
+      key: "secret:youtube-data-api",
+      label: "Secret · YouTube Data API",
+      hint: "youtube-data-api · www.googleapis.com",
+      mode: "denied",
+      requested: undefined,
+    },
+    {
+      key: "secret:empty-hosts",
+      label: "Secret · Empty Hosts",
+      hint: "empty-hosts · authenticated secretFetch calls",
+      mode: "denied",
+      requested: undefined,
+    },
+  ]);
+});
+
+test("buildCustomAppCapabilities deduplicates requested/granted secrets, keeps unknown secrets, and drops app.sql:*", () => {
+  const caps = buildCustomAppCapabilities({
+    connectors: [],
+    secrets: [{ handle: "youtube-data-api", name: "YouTube Data API", allowedHosts: ["www.googleapis.com"] }],
+    requestedCapabilities: {
+      "app.sql:read": "allowed",
+      "secret:youtube-data-api": "requires_approval",
+      "secret:missing-key": "requires_approval",
+    },
+    grantedCapabilities: {
+      "app.sql:read": "allowed",
+      "app.sql:write": "allowed",
+      "secret:youtube-data-api": "denied",
+      "app.http:outbound": "allowed",
+    },
+  });
+
+  assert.deepEqual(caps.map((c) => c.key), [
+    "vesper.api:read",
+    "vesper.api:write",
+    "app.http:outbound",
+    "secret:youtube-data-api",
+    "secret:missing-key",
+  ]);
+  assert.deepEqual(caps[3], {
+    key: "secret:youtube-data-api",
+    label: "Secret · YouTube Data API",
+    hint: "youtube-data-api · www.googleapis.com",
+    mode: "denied",
+    requested: "requires_approval",
+  });
+  assert.deepEqual(caps[4], {
+    key: "secret:missing-key",
+    label: "Secret · missing-key",
+    hint: "Authenticated secretFetch calls using this Vesper secret",
+    mode: "denied",
+    requested: "requires_approval",
+  });
+
+  const sections = buildCustomAppInspectorSections({
+    hasMcpServer: true,
+    mcpEntry: "server.ts",
+    mcpToolCount: 1,
+    mcpTools: [{ name: "backfill", description: "Backfill catalog" }],
+    dbSizeLabel: "64 KB",
+    schemaCount: 1,
+    schemaObjects: [{ type: "table", name: "items" }],
+    capabilities: caps,
+    toolScope: "chats",
+    versions: [],
+  });
+  const capSection = sections.find((s) => s.id === "capabilities");
+  const ytItem = capSection?.items.find((i) => i.id === "cap:secret:youtube-data-api");
+  assert.equal(ytItem?.detail, "youtube-data-api · www.googleapis.com (manifest requests ask)");
 });

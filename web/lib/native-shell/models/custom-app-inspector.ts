@@ -8,6 +8,87 @@ export interface CustomAppCapabilityInput {
   requested?: "allowed" | "requires_approval" | "denied";
 }
 
+export interface CustomAppConnectorRow {
+  slug: string;
+  name: string;
+  toolCount: number;
+  status: string;
+}
+
+export interface CustomAppSecretRow {
+  handle: string;
+  name: string;
+  allowedHosts: readonly string[];
+}
+
+export interface BuildCustomAppCapabilitiesInput {
+  connectors: readonly CustomAppConnectorRow[];
+  secrets: readonly CustomAppSecretRow[];
+  requestedCapabilities?: Readonly<Record<string, CustomAppCapabilityInput["mode"]>>;
+  grantedCapabilities?: Readonly<Record<string, CustomAppCapabilityInput["mode"]>>;
+}
+
+/** Collects built-in, connector, secret, and manifest-requested capabilities for the Custom App Permissions inspector. */
+export function buildCustomAppCapabilities(input: BuildCustomAppCapabilitiesInput): CustomAppCapabilityInput[] {
+  const connectorRows = input.connectors.map((c) => ({
+    key: `mcp:${c.slug}:*`,
+    label: `MCP · ${c.name}`,
+    hint: `${c.toolCount} tool${c.toolCount === 1 ? "" : "s"} · ${c.status.replaceAll("_", " ")}`,
+  }));
+
+  const secretRows = input.secrets.map((s) => ({
+    key: `secret:${s.handle}`,
+    label: `Secret · ${s.name}`,
+    hint:
+      s.allowedHosts.length > 0
+        ? `${s.handle} · ${s.allowedHosts.join(", ")}`
+        : `${s.handle} · authenticated secretFetch calls`,
+  }));
+
+  const knownKeys = new Set<string>(["vesper.api:read", "vesper.api:write", "app.http:outbound"]);
+  for (const c of connectorRows) knownKeys.add(c.key);
+  for (const s of secretRows) knownKeys.add(s.key);
+  for (const k of Object.keys(input.requestedCapabilities ?? {})) {
+    if (!k.startsWith("app.sql:")) knownKeys.add(k);
+  }
+  for (const k of Object.keys(input.grantedCapabilities ?? {})) {
+    if (!k.startsWith("app.sql:")) knownKeys.add(k);
+  }
+
+  const connectorMap = new Map(connectorRows.map((c) => [c.key, c]));
+  const secretMap = new Map(secretRows.map((s) => [s.key, s]));
+
+  return [...knownKeys].map((capKey) => {
+    const cInfo = connectorMap.get(capKey);
+    const sInfo = secretMap.get(capKey);
+    const label =
+      capKey === "vesper.api:read"
+        ? "Vesper API · Read"
+        : capKey === "vesper.api:write"
+          ? "Vesper API · Write"
+          : capKey === "app.http:outbound"
+            ? "Outbound HTTPS"
+            : sInfo?.label ??
+              (capKey.startsWith("secret:")
+                ? `Secret · ${capKey.slice("secret:".length)}`
+                : cInfo?.label ?? capKey);
+    const hint =
+      capKey === "vesper.api:read"
+        ? "GET requests to Vesper REST APIs"
+        : capKey === "vesper.api:write"
+          ? "POST, PATCH, PUT, DELETE requests to Vesper APIs"
+          : capKey === "app.http:outbound"
+            ? "Public HTTPS fetches from the app's MCP server and remote image proxy"
+            : sInfo?.hint ??
+              (capKey.startsWith("secret:")
+                ? "Authenticated secretFetch calls using this Vesper secret"
+                : cInfo?.hint ?? "Requested by app manifest");
+    const mode: CustomAppCapabilityInput["mode"] = input.grantedCapabilities?.[capKey] ?? "denied";
+    const requested = input.requestedCapabilities?.[capKey];
+    return { key: capKey, label, hint, mode, requested };
+  });
+}
+
 export interface CustomAppVersionInput {
   seq: number;
   authorLabel: string;
