@@ -30,15 +30,17 @@ export function Criteria({ t, events }: { t: Ticket; events?: ActivityEvent[] })
   const done = t.criteria.filter((c) => c.done).length;
 
   return (
-    <section className="flex flex-col gap-2">
-      <h2 className="flex items-baseline gap-2 type-heading">
-        Acceptance criteria
+    <section className="flex flex-col gap-2.5 rounded-xl border border-border-subtle bg-surface/50 px-4 py-3.5">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-11 font-semibold uppercase tracking-[0.06em] text-fg-tertiary">
+          Acceptance criteria
+        </h2>
         {t.criteria.length > 0 && (
-          <span className="font-mono text-12 font-normal text-fg-tertiary">
+          <span className={cx("font-mono text-11", done === t.criteria.length ? "text-state-done" : "text-fg-tertiary")}>
             {done}/{t.criteria.length}
           </span>
         )}
-      </h2>
+      </div>
       <ul className="flex flex-col">
         {t.criteria.map((c) => (
           <li key={c.id} className="group flex min-h-8 items-center gap-3 rounded-md">

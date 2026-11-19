@@ -133,27 +133,39 @@
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
-  gap: 16px;
-  padding: 14px 18px 28px;
+  gap: 18px;
+  padding: 20px 24px 28px;
+  container-type: inline-size;
 }
-.work-kpi-grid {
+.work-telemetry-strip {
   display: grid;
+  flex: none;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-}
-.work-kpi-card {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-  padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: 10px;
   border: 1px solid var(--border-subtle);
   background: var(--surface);
+  overflow: hidden;
 }
-@media (max-width: 1120px) {
-  .work-kpi-grid {
+.work-telemetry-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  padding: 11px 14px;
+  border-right: 1px solid var(--border-subtle);
+}
+.work-telemetry-cell:last-child {
+  border-right: 0;
+}
+@container (max-width: 680px) {
+  .work-telemetry-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .work-telemetry-cell:nth-child(2n) {
+    border-right: 0;
+  }
+  .work-telemetry-cell:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--border-subtle);
   }
 }
 @media (max-width: 960px) {

@@ -308,17 +308,21 @@ test("the Context panel shows the ticket, code and run, opens the views, and rem
   await expect(code.getByRole("link", { name: /#41/ })).toHaveAttribute("href", "https://github.com/acme/app/pull/41");
   const facts = ctx.getByRole("region", { name: "Run" });
   // Every column of the old "More columns" table: purpose, model, started, elapsed, cost, sub runs (status, agent and work are in the list and header).
-  for (const text of ["Ticket run", "gpt-5-codex", "codex", "12m", "$0.40", "+$0.10 sub", "Sub runs1", "runner-2 · docker"]) await expect(facts).toContainText(text);
+  for (const text of ["Ticket run", "gpt-5-codex", "codex", "12m", "$0.40", "+$0.10 sub", "Sub runs1", "runner-2 · microvm"]) await expect(facts).toContainText(text);
 
   await ctx.getByRole("button", { name: "Raw log" }).click();
   await expect(page).toHaveURL(/view=details/);
   await expect(page.getByRole("region", { name: "Events" })).toBeVisible();
+  // Unified inline Run views tabs stay in place across every mode (no toolbar Back to thread button).
+  const viewTabs = page.getByRole("tablist", { name: "Run views" });
+  await expect(viewTabs.getByRole("tab", { name: /^Trace/ })).toHaveAttribute("aria-selected", "true");
   await ctx.getByRole("button", { name: "Graph" }).click();
   await expect(page).toHaveURL(/view=graph/);
   await ctx.getByRole("button", { name: "Files" }).click();
   await expect(page.getByRole("region", { name: "Files" })).toContainText("db/migrations/0042_partition.sql");
-  await page.getByRole("button", { name: "Back to thread" }).click();
+  await viewTabs.getByRole("tab", { name: "Thread" }).click();
   await expect(page).toHaveURL(new RegExp(`/runs/${APPROVING}$`));
+  await expect(ctx.getByRole("region", { name: "Plan" })).toContainText("Write the migration");
 
   // Folding the companion is remembered: it reopens from its rail.
   await page.getByRole("navigation", { name: "Panel rail" }).getByRole("button", { name: "Collapse panel" }).click();

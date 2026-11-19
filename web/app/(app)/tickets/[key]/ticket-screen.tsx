@@ -7,7 +7,8 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, ViewTransition } from "react";
 import type { Bootstrap, Ticket } from "@/lib/api/client";
 import { useCompact } from "@/lib/viewport";
-import { useActivity, useBootstrap, useCosts, useTicket, useTickets, hasLiveRun } from "@/lib/api/hooks";
+import { useActivity, useBootstrap, useCosts, useTicket, useTicketRuns, useTickets, hasLiveRun } from "@/lib/api/hooks";
+import { duration, runCost } from "@/lib/format";
 import { spendLabel } from "@/lib/costs";
 import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { useNativeToolbar } from "@/lib/native-shell/use-native-toolbar";
@@ -17,14 +18,16 @@ import { Button, ButtonLink, IconButton } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Banner, EmptyState, Skeleton, TextArea } from "@/components/ui/primitives";
 import { Sheet } from "@/components/ui/sheet";
+import { AgentAvatar } from "@/components/domain/avatars";
 import { Markdown } from "@/components/domain/markdown";
 import { StartChatButton } from "@/components/domain/start-chat";
 import { DispatchDialog } from "@/components/domain/dispatch-dialog";
 import { TicketEditorDialog } from "@/components/domain/ticket-editor-dialog";
 import { PriorityGlyph, StatusGlyph } from "@/components/domain/glyphs";
-import { Flag } from "@/components/domain/labels";
+import { Flag, SmallPill } from "@/components/domain/labels";
 import { STATUS_NAME } from "@/components/domain/meta";
 import { TicketCostChip } from "@/components/domain/cost-chip";
+import { WORK_COLUMN, WorkDetailHeader, WorkEyebrow, WorkViewTabs, type EyebrowItem } from "@/components/domain/work-detail-header";
 import { TopBar } from "@/components/shell/topbar";
 import { BacklinksPanel } from "@/components/domain/backlinks";
 import { ContextArtifacts } from "./context-artifacts";
@@ -33,7 +36,7 @@ import { Criteria } from "./criteria";
 import { GateStrip } from "./gates";
 import { MetaStrip } from "./meta-strip";
 import { CodeSection, Properties } from "./properties";
-import { ApprovalBanner, needsDispatch, RunCard } from "./run-parts";
+import { ApprovalBanner, needsDispatch, RUN_STATE, RunCard } from "./run-parts";
 import { RunsHistory } from "./runs-history";
 import { ConflictBanner, useTicketSave, type SaveTicket, type TicketSaver } from "./ticket-save";
 import { Composer, Timeline } from "./timeline";
@@ -48,7 +51,7 @@ function TitleEditor({ t, save }: { t: Ticket; save: SaveTicket }) {
   const [editing, setEditing] = useState(false);
   if (!editing) {
     return (
-      <h1 className="type-display min-w-0 flex-1">
+      <h1 className="type-title min-w-0 flex-1 text-fg">
         <button type="button" onClick={() => setEditing(true)} className="-mx-1 rounded-md px-1 text-left hover:bg-hover" title="Edit title">
           <ViewTransition name={`ticket-title-${t.key}`} share="auto" default="none"><span>{t.title}</span></ViewTransition>
         </button>
@@ -75,7 +78,7 @@ function TitleEditor({ t, save }: { t: Ticket; save: SaveTicket }) {
           if (e.key === "Enter") commit(e.currentTarget.value);
           if (e.key === "Escape") setEditing(false);
         }}
-        className="type-display -mx-1 w-full rounded-md border border-accent bg-surface px-1 text-fg outline-none"
+        className="type-title -mx-1 w-full rounded-md border border-accent bg-surface px-1 text-fg outline-none"
       />
     </>
   );
@@ -161,47 +164,122 @@ function dispatchHint(t: Ticket) {
   return `${t.assignee?.name ?? "The agent"} is assigned and waiting for dispatch. Assigning doesn’t start work.`;
 }
 
-/** Key, status, blocked badge and priority over the title, with the ticket's actions. */
-function Header({ t, save, onEdit }: { t: Ticket; save: SaveTicket; onEdit: () => void }) {
+/** Unified editorial ticket header: eyebrow, editable title, single calm meta line, and inline view tabs. */
+function Header({
+  t,
+  save,
+  onEdit,
+  tab,
+  onTabChange,
+  runsCount,
+  activityCount,
+}: {
+  t: Ticket;
+  save: SaveTicket;
+  onEdit: () => void;
+  tab: "overview" | "runs" | "activity";
+  onTabChange: (next: "overview" | "runs" | "activity") => void;
+  runsCount?: number;
+  activityCount?: number;
+}) {
   const [dispatching, setDispatching] = useState(false);
   const blockers = t.blocked_by.filter((d) => d.status !== "done");
   const dispatch = needsDispatch(t);
+  const eyebrow: EyebrowItem[] = [
+    { label: t.project.key, href: `/tickets?project=${encodeURIComponent(t.project.key)}`, mono: true },
+    ...(t.epic ? [{ label: `${t.epic.name} ↗`, href: `/epics/${encodeURIComponent(t.epic.id)}`, accent: true }] : []),
+    { label: t.key, mono: true },
+  ];
   return (
-    <header className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-2 text-13">
-        <span className="font-mono text-fg-tertiary">{t.key}</span>
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-border px-2 py-0.5 text-fg-2">
-          <StatusGlyph state={t.status} size={12} label={false} />
-          {STATUS_NAME[t.status]}
-        </span>
-        {blockers.length > 0 && (
-          <a href="#blocked-by" className="rounded-[5px] focus-visible:outline-2">
-            <Flag tone="blocked">
-              Blocked · {blockers.length} {blockers.length === 1 ? "blocker" : "blockers"}
-            </Flag>
-          </a>
-        )}
-        <span className="inline-flex items-center gap-1.5 text-fg-secondary">
-          <PriorityGlyph priority={t.priority} />
-        </span>
-      </div>
-      <div className="flex flex-wrap items-start gap-3">
-        <TitleEditor t={t} save={save} />
-        <div className="flex flex-none flex-wrap items-center gap-2">
-          {dispatch && (
-            <Button variant="approve" icon="play" disabled={t.project.archived} onClick={() => setDispatching(true)}>
-              Dispatch now
+    <>
+      <WorkDetailHeader
+        eyebrow={<WorkEyebrow items={eyebrow} />}
+        title={<TitleEditor t={t} save={save} />}
+        actions={
+          <>
+            {dispatch && (
+              <Button variant="approve" icon="play" disabled={t.project.archived} onClick={() => setDispatching(true)}>
+                Dispatch now
+              </Button>
+            )}
+            <StartChatButton attach={{ kind: "ticket", key: t.key }} title={`${t.key} ${t.title}`} project={t.project.key} />
+            <Button variant="outline" icon="edit" hint="E" onClick={onEdit} aria-keyshortcuts="E">
+              Edit
             </Button>
-          )}
-          <StartChatButton attach={{ kind: "ticket", key: t.key }} title={`${t.key} ${t.title}`} project={t.project.key} />
-          <Button variant="outline" icon="edit" hint="E" onClick={onEdit} aria-keyshortcuts="E">
-            Edit
-          </Button>
-        </div>
-      </div>
-      {dispatch && <p className="text-12 text-pill-human-fg">{dispatchHint(t)}</p>}
+          </>
+        }
+        meta={
+          <>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-2 py-0.5 text-fg-2">
+              <StatusGlyph state={t.status} size={12} label={false} />
+              {STATUS_NAME[t.status]}
+            </span>
+            {t.assignee && (
+              <span className="inline-flex items-center gap-1.5 font-medium text-fg">
+                <AgentAvatar name={t.assignee.name} colorIndex={t.assignee.color_index} label={false} size="sm" />
+                {t.assignee.name}
+              </span>
+            )}
+            <span aria-hidden className="text-fg-tertiary">·</span>
+            <span className="inline-flex items-center gap-1.5 text-fg-secondary">
+              <PriorityGlyph priority={t.priority} />
+            </span>
+            {t.estimate_points != null && (
+              <>
+                <span aria-hidden className="text-fg-tertiary">·</span>
+                <span className="font-mono text-fg-tertiary">{t.estimate_points} pts</span>
+              </>
+            )}
+            {blockers.length > 0 && (
+              <a href="#blocked-by" className="rounded-[5px] focus-visible:outline-2">
+                <Flag tone="blocked">
+                  Blocked · {blockers.length} {blockers.length === 1 ? "blocker" : "blockers"}
+                </Flag>
+              </a>
+            )}
+          </>
+        }
+        notice={dispatch ? <p className="text-12 text-pill-human-fg">{dispatchHint(t)}</p> : undefined}
+        tabs={
+          <WorkViewTabs
+            label="Ticket views"
+            value={tab}
+            onChange={(k) => onTabChange(k as "overview" | "runs" | "activity")}
+            items={[
+              { key: "overview", label: "Overview" },
+              { key: "runs", label: "Runs", count: runsCount },
+              { key: "activity", label: "Activity", count: activityCount },
+            ]}
+          />
+        }
+      />
       {dispatching && <DispatchDialog keys={[t.key]} open onOpenChange={setDispatching} />}
-    </header>
+    </>
+  );
+}
+
+/** Compact one-row link card to the ticket's latest run, matching Run Detail's calm surface grammar. */
+function LatestRunRow({ t }: { t: Ticket }) {
+  const run = t.run;
+  if (!run) return null;
+  const st = RUN_STATE[run.state];
+  return (
+    <Link
+      href={`/runs/${run.id}`}
+      className="flex items-center gap-3 rounded-xl border border-border bg-surface px-4 py-3 transition-colors hover:border-border-hover hover:bg-hover/40"
+    >
+      <AgentAvatar name={run.agent.name} colorIndex={run.agent.color_index} label={false} size="sm" />
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5 leading-tight">
+        <span className="flex flex-wrap items-center gap-2 text-13 font-medium text-fg">
+          <span>Latest run · {run.agent.name}</span>
+          <SmallPill tone={st.tone}>{st.label}</SmallPill>
+        </span>
+        <span className="truncate font-mono text-11 text-fg-tertiary">
+          Run {run.id.slice(0, 8)} · {duration(run.started_at, run.ended_at)} · {run.tool_calls} step{run.tool_calls === 1 ? "" : "s"} · {runCost(run.cost_usd, run.cost_source)}
+        </span>
+      </div>
+      <span className="flex-none text-12 font-medium text-accent">Open run →</span>
+    </Link>
   );
 }
 
@@ -323,6 +401,8 @@ export function TicketScreen({ ticketKey }: { ticketKey: string }) {
   const pager = usePager(t);
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [tab, setTab] = useState<"overview" | "runs" | "activity">("overview");
+  const ticketRuns = useTicketRuns(ticketKey, hasLiveRun(t));
   const saver = useTicketSave(t);
 
   // In the Mac app the header row is the window title and toolbar (the web's top bar, below, isn't drawn).
@@ -472,30 +552,57 @@ export function TicketScreen({ ticketKey }: { ticketKey: string }) {
         <DetailSkeleton />
       ) : (
         <div className="flex flex-1 flex-wrap">
-          <article className="flex min-w-0 flex-[999_1_480px] justify-center px-7 py-8 max-sm:px-4">
-            <div className="flex w-full max-w-[700px] flex-col gap-7">
+          <article className="flex min-w-0 flex-[999_1_480px] justify-center py-6">
+            <div className={`${WORK_COLUMN} flex flex-col gap-6`}>
               {t.project.archived && <Banner tone="human" title="This space’s work is archived" actions={<ButtonLink href={workSettingsHref(t.project)} variant="outline">Open the space</ButtonLink>}>History is preserved. Restore the work on the space’s page before starting new work.</Banner>}
-              <Header t={t} save={saver.save} onEdit={() => setEditing(true)} />
-              <GateStrip t={t} />
-              {t.approvals.map((ap) => (
-                <div key={ap.id} id={`approval-${ap.id}`} className="scroll-mt-16">
-                  <ApprovalBanner t={t} ap={ap} />
+              <Header
+                t={t}
+                save={saver.save}
+                onEdit={() => setEditing(true)}
+                tab={tab}
+                onTabChange={setTab}
+                runsCount={ticketRuns.data?.runs.length}
+                activityCount={activity.data?.length}
+              />
+              {tab === "runs" ? (
+                <div className="flex flex-col gap-4">
+                  {t.run && hasLiveRun(t) && <RunCard t={t} run={t.run} />}
+                  <RunsHistory t={t} />
                 </div>
-              ))}
-              <Description t={t} save={saver.save} />
-              <Criteria t={t} events={activity.data} />
-              <div id="mockups" className="scroll-mt-16">
-                <ContextArtifacts t={t} />
-              </div>
-              <section className="flex flex-col gap-4">
-                <h2 className="type-heading">Activity</h2>
-                {activity.data ? (
-                  <Timeline events={activity.data} ticketKey={t.key} boot={boot.data} run={t.run} />
-                ) : (
-                  <Skeleton className="h-3 w-1/2" />
-                )}
-                <Composer ticketKey={t.key} />
-              </section>
+              ) : tab === "activity" ? (
+                <section className="flex flex-col gap-4">
+                  {activity.data ? (
+                    <Timeline events={activity.data} ticketKey={t.key} boot={boot.data} run={t.run} />
+                  ) : (
+                    <Skeleton className="h-3 w-1/2" />
+                  )}
+                  <Composer ticketKey={t.key} />
+                </section>
+              ) : (
+                <>
+                  <GateStrip t={t} />
+                  {t.approvals.map((ap) => (
+                    <div key={ap.id} id={`approval-${ap.id}`} className="scroll-mt-16">
+                      <ApprovalBanner t={t} ap={ap} />
+                    </div>
+                  ))}
+                  <Description t={t} save={saver.save} />
+                  <Criteria t={t} events={activity.data} />
+                  <LatestRunRow t={t} />
+                  <div id="mockups" className="scroll-mt-16">
+                    <ContextArtifacts t={t} />
+                  </div>
+                  <section className="flex flex-col gap-4">
+                    <h2 className="type-heading">Activity</h2>
+                    {activity.data ? (
+                      <Timeline events={activity.data} ticketKey={t.key} boot={boot.data} run={t.run} />
+                    ) : (
+                      <Skeleton className="h-3 w-1/2" />
+                    )}
+                    <Composer ticketKey={t.key} />
+                  </section>
+                </>
+              )}
             </div>
           </article>
           {/* The ticket's companion: Properties and Chat, in the shell's right-hand column. */}
