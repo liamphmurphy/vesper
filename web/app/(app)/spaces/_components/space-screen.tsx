@@ -20,6 +20,7 @@ import { formatTokens, sortSpaceChats, SOURCE_KIND_LABEL, sourceName, SPACE_PAGE
 import { ticketsHref } from "@/lib/tickets-layout";
 import { checkRepoURL, type RepoCheck } from "@/lib/repo-url";
 import { repoShortName } from "@/lib/persona-ui";
+import { buildSpaceInspectorSections } from "@/lib/native-shell/models/space-inspector";
 import { CompanionDock } from "@/components/shell/companion";
 import { WorkChat } from "@/components/domain/work-chat";
 import { floatPanel } from "@/components/domain/pickers";
@@ -781,28 +782,97 @@ export function SpaceScreen({ id }: { id: string }) {
           <ChatList space={space} />
         </div>
       </div>
-      <CompanionDock
-        app="space"
-        tabs={[
-          {
-            id: "about",
-            label: "About",
-            icon: "sidebar",
-            content: (
-              <aside aria-label="Space settings" className="flex min-h-0 flex-1 flex-col gap-[16px] overflow-y-auto p-[16px]">
-                <InstructionsCard key={`i-${space.updated_at}`} space={space} />
-                <SourcesCard space={space} onAdd={() => setSources(true)} />
-                <MemoryCard space={space} />
-                <DefaultsCard space={space} />
-                <WorkCard key={`w-${space.work?.key ?? ""}`} space={space} />
-              </aside>
-            ),
-          },
-          { id: "chat", label: "Chat", icon: "msg", content: <WorkChat /> },
-        ]}
-      />
+      <SpaceCompanion space={space} onEdit={() => setEditing(true)} onSources={() => setSources(true)} />
       <SourcesDialog spaceId={space.id} spaceName={space.name} open={sources} onOpenChange={setSources} />
       <DeleteSpaceDialog space={space} open={deleting} onOpenChange={setDeleting} />
     </div>
+  );
+}
+
+function SpaceCompanion({
+  space,
+  onEdit,
+  onSources,
+}: {
+  space: Space;
+  onEdit: () => void;
+  onSources: () => void;
+}) {
+  const sources = useSpaceSources(space.id);
+  const personas = usePersonas();
+  const update = useUpdateSpace();
+  const projectName = useProjectName(space.project ?? "");
+  const connectorsSummary = useConnectorNames(space.connector_ids);
+  const list = sources.data?.sources ?? [];
+  const budget = sources.data?.inline_budget ?? 40000;
+  const used = sources.data?.inline_tokens ?? space.inline_tokens;
+  const sections = buildSpaceInspectorSections({
+    id: space.id,
+    instructions: space.instructions,
+    sourceCount: space.source_count,
+    sources: list.map((s) => ({
+      id: s.id,
+      name: sourceName(s),
+      kindLabel: SOURCE_KIND_LABEL[s.kind as SourceKind] ?? s.kind,
+    })),
+    inlineUsed: used,
+    inlineBudget: budget,
+    inlineLabel: `${formatTokens(used)} of ${formatTokens(budget)} inline`,
+    spaceMemory: space.space_memory,
+    spaceName: space.name,
+    memoryCount: space.memory_count,
+    personaId: space.persona_id ?? "",
+    personaOptions: [
+      { value: "", label: "Default persona" },
+      ...(personas.data?.personas ?? []).map((p) => ({ value: p.id, label: p.name })),
+    ],
+    projectName,
+    connectorsSummary,
+    work: space.work
+      ? {
+          key: space.work.key,
+          archived: space.work.archived,
+          repoName: space.work.repo_url ? repoShortName(space.work.repo_url) : undefined,
+          branch: space.work.default_branch,
+        }
+      : undefined,
+    filesUnder: projectName,
+  });
+
+  return (
+    <CompanionDock
+      app="space"
+      tabs={[
+        {
+          id: "about",
+          label: "About",
+          icon: "sidebar",
+          native: {
+            kind: "native",
+            sections,
+            onToggle: (fieldId, checked) => {
+              if (fieldId === "space_memory") update.mutate({ id: space.id, patch: { space_memory: checked } });
+            },
+            onChange: (fieldId, value) => {
+              if (fieldId === "persona_id") update.mutate({ id: space.id, patch: { persona_id: value } });
+            },
+            onAction: (actionId) => {
+              if (actionId === "edit_space") onEdit();
+              else if (actionId === "manage_sources") onSources();
+            },
+          },
+          content: (
+            <aside aria-label="Space settings" className="flex min-h-0 flex-1 flex-col gap-[16px] overflow-y-auto p-[16px]">
+              <InstructionsCard key={`i-${space.updated_at}`} space={space} />
+              <SourcesCard space={space} onAdd={onSources} />
+              <MemoryCard space={space} />
+              <DefaultsCard space={space} />
+              <WorkCard key={`w-${space.work?.key ?? ""}`} space={space} />
+            </aside>
+          ),
+        },
+        { id: "chat", label: "Chat", icon: "msg", native: { kind: "companion" }, content: <WorkChat /> },
+      ]}
+    />
   );
 }

@@ -52,6 +52,26 @@ final class BridgeProtocolTests: XCTestCase {
                                             confirmLabel: "Approve all", cancelLabel: nil, destructive: false)))
     }
 
+    func testInspectorAndOpenInMainMessages() throws {
+        let all = try entries("page-messages.json").map { try PageMessage.decode(fromJSONObject: $0) }
+        XCTAssertTrue(all.contains(.inspector(nil)))
+        XCTAssertTrue(all.contains(.openInMain(path: "/tickets/VES-412", newTab: true)))
+
+        let inspectorModel = all.compactMap { msg -> InspectorModel? in
+            if case .inspector(let model?) = msg { return model }
+            return nil
+        }.first
+        let model = try XCTUnwrap(inspectorModel)
+        XCTAssertEqual(model.id, "ticket:VES-412")
+        XCTAssertTrue(model.open)
+        XCTAssertEqual(model.activeTabId, "properties")
+        XCTAssertEqual(model.companion?.subject?.kind, .ticket)
+        XCTAssertEqual(model.companion?.subject?.id, "VES-412")
+        XCTAssertEqual(model.tabs.map(\.kind), [.native, .companion, .web])
+        XCTAssertEqual(model.tabs[0].sections?.first?.items.count, 12)
+        XCTAssertEqual(model.tabs[0].sections?.first?.items[5].steps?.last?.state, .needsHuman)
+    }
+
     func testEveryCommandFixtureRoundTrips() throws {
         let all = try entries("native-commands.json")
         XCTAssertGreaterThanOrEqual(all.count, 10)
@@ -81,6 +101,33 @@ final class BridgeProtocolTests: XCTestCase {
         let json = try NativeCommand.reply(requestId: "a", ok: true, selectedId: .some(nil)).jsonString()
         XCTAssertTrue(json.contains("\"selectedId\":null"))
         XCTAssertFalse(try NativeCommand.reply(requestId: "a", ok: true).jsonString().contains("selectedId"))
+    }
+
+    func testInspectorCommandsEncode() throws {
+        let vis = try NativeCommand.inspectorVisibility(open: false).jsonString()
+        XCTAssertTrue(vis.contains("\"type\":\"inspector.visibility\""))
+        XCTAssertTrue(vis.contains("\"open\":false"))
+
+        let tab = try NativeCommand.inspectorSelectTab(tabId: "chat").jsonString()
+        XCTAssertTrue(tab.contains("\"type\":\"inspector.selectTab\""))
+        XCTAssertTrue(tab.contains("\"tabId\":\"chat\""))
+
+        let act = try NativeCommand.inspectorAction(tabId: "properties", actionId: "labels", itemId: "l1", menuItemId: "toggle:l1").jsonString()
+        XCTAssertTrue(act.contains("\"type\":\"inspector.action\""))
+        XCTAssertTrue(act.contains("\"menuItemId\":\"toggle:l1\""))
+
+        let change = try NativeCommand.inspectorChange(tabId: "properties", fieldId: "status", value: "done").jsonString()
+        XCTAssertTrue(change.contains("\"type\":\"inspector.change\""))
+
+        let toggle = try NativeCommand.inspectorToggle(tabId: "properties", fieldId: "mockup", checked: true).jsonString()
+        XCTAssertTrue(toggle.contains("\"type\":\"inspector.toggle\""))
+
+        let ctx = try NativeCommand.companionContext(CompanionContext(
+            subject: CompanionSubject(kind: .run, id: "r1", title: "Run", agent: "Implementer", ticketKey: "VES-1"),
+            path: "/runs/r1"
+        )).jsonString()
+        XCTAssertTrue(ctx.contains("\"type\":\"companion.context\""))
+        XCTAssertTrue(ctx.contains("\"ticketKey\":\"VES-1\""))
     }
 }
 

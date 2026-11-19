@@ -4,7 +4,7 @@ import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Conversation, type ConversationContext, type DockStarter, type DockWelcome } from "@/app/(app)/chat/_components/conversation";
 import { PersonaAvatar, personaLook, useDockPersona } from "@/app/(app)/chat/_components/persona";
-import { Dock, type DockTab } from "@/components/shell/editor-layout";
+import { Dock, type DockTab, type NativeDockTab } from "@/components/shell/editor-layout";
 import { CompanionPortal } from "@/components/shell/companion";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
@@ -13,10 +13,12 @@ import { isTyping } from "@/components/shell/shortcuts";
 import { DockChatSwitcher, type DockChatSection } from "@/components/domain/dock-chat-switcher";
 import { DockContext, dockContextChip } from "@/components/domain/dock-context";
 import { useAddDockChat, useDockChats, type DockScope } from "@/lib/api/dock-hooks";
-import { provideChatRefs, useChat, useCreateChat } from "@/lib/api/hooks";
-import { fetchPage, useAttachChat, usePage, type Page } from "@/lib/api/knowledge-hooks";
+import { provideChatRefs, useBacklinks, useChat, useCreateChat, useLinkMention } from "@/lib/api/hooks";
+import { fetchPage, useAttachChat, usePage, usePageControls, useRestore, type Page } from "@/lib/api/knowledge-hooks";
 import { ApiError, type Schemas } from "@/lib/api/client";
 import { useQueryClient } from "@tanstack/react-query";
+import { ago, outline } from "@/lib/knowledge";
+import { buildKnowledgeHistorySections, buildKnowledgeLinksSections, buildKnowledgeOutlineSections } from "@/lib/native-shell/models/knowledge-inspector";
 import { KNOWLEDGE_CONTEXT_MARKER, refKey } from "@/lib/chat-context";
 import { actOnDock, dockShortcut, loadDock, saveDock, type DockAction, type DockState } from "@/lib/editor-layout";
 import { isFolder, useKnowledgeChat, type FolderAttachment, type PageAttachment } from "./chat-context";
@@ -112,6 +114,10 @@ export function KnowledgeDock({ pageId }: { pageId?: string }) {
   }, [chatId, pageId]);
   const chat = gone ? undefined : linkedChat.data;
   const running = chat?.state === "running";
+  const backlinks = useBacklinks("artifact", page?.id);
+  const linkMention = useLinkMention();
+  const pageControls = usePageControls(page?.id ?? "");
+  const restoreVersion = useRestore(page?.id ?? "");
 
   // A persona can create, move and edit pages during a turn: refresh the explorer and lists when it ends.
   // The open page's own query is left alone so a refetch can't disturb the editor.
@@ -128,6 +134,85 @@ export function KnowledgeDock({ pageId }: { pageId?: string }) {
   const [seen, setSeen] = useState<{ chat?: string; at?: string }>({});
   if (lastReply && (seen.chat !== chatId || (shown && seen.at !== lastReply))) setSeen({ chat: chatId, at: lastReply });
   const unread = !shown && !!lastReply && seen.chat === chatId && seen.at !== lastReply && !running;
+
+  const personaName = (chat?.speaker ?? chat?.persona)?.name ?? "Persona";
+  const nativeSideTab = (p: Page, tab: (typeof SIDE_TABS)[number][0]): NativeDockTab | undefined => {
+    if (tab === "outline") {
+      return {
+        kind: "native",
+        sections: buildKnowledgeOutlineSections(outline(p.body_md ?? "")),
+        onAction: (actionId, itemId) => {
+          if (actionId !== "jump_heading" || !itemId) return;
+          const sep = itemId.indexOf(":");
+          const text = sep >= 0 ? itemId.slice(sep + 1) : itemId;
+          const el = [...document.querySelectorAll<HTMLElement>(".ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror h4, .ProseMirror h5, .ProseMirror h6")].find((h) => h.textContent?.trim() === text);
+          el?.scrollIntoView({ behavior: "smooth", block: "start" });
+        },
+      };
+    }
+    if (tab === "links") {
+      const mapMention = (m: Schemas["Mention"]) => {
+        const s = m.source;
+        const raw = s.kind === "artifact" && s.artifact_type === "note" ? (s.path ?? s.title) : s.title;
+        return {
+          id: `${m.source_kind}:${m.source_id}`,
+          sourceKind: m.source_kind,
+          sourceId: m.source_id,
+          title: s.display_id && s.kind !== "agent" ? `${s.display_id} · ${s.kind === "comment" ? "Comment" : raw}` : s.kind === "comment" ? "Comment" : raw,
+          href: s.href ?? undefined,
+        };
+      };
+      return {
+        kind: "native",
+        sections: buildKnowledgeLinksSections({
+          linked: (backlinks.data?.linked ?? []).map(mapMention),
+          unlinked: (backlinks.data?.unlinked ?? [])
+            .filter((m) => m.source_kind === "artifact" || m.source_kind === "ticket")
+            .map(mapMention),
+          linking: linkMention.isPending,
+        }),
+        onAction: (actionId, itemId) => {
+          if (actionId !== "link_mention" || !itemId) return;
+          const sep = itemId.indexOf(":");
+          if (sep <= 0) return;
+          const sourceKind = itemId.slice(0, sep);
+          const sourceId = itemId.slice(sep + 1);
+          if (sourceKind === "artifact" || sourceKind === "ticket") {
+            linkMention.mutate({ target_kind: "artifact", target_id: p.id, source_kind: sourceKind, source_id: sourceId });
+          }
+        },
+      };
+    }
+    if (tab === "history") {
+      const mode: "direct" | "suggest" | "paused" = p.paused ? "paused" : p.direct ? "direct" : "suggest";
+      const versions = [...p.versions].sort((a, b) => b.seq - a.seq);
+      return {
+        kind: "native",
+        sections: buildKnowledgeHistorySections({
+          mode,
+          versions: versions.map((v) => ({
+            id: v.id,
+            label: v.note || v.label,
+            who: v.author_type === "user" ? "You" : personaName,
+            age: ago(v.created_at),
+            current: v.id === p.version_id,
+          })),
+          busy: pageControls.isPending || restoreVersion.isPending,
+        }),
+        onChange: (fieldId, value) => {
+          if (fieldId === "edit_mode" && (value === "direct" || value === "suggest" || value === "paused")) {
+            pageControls.mutate({ direct: value === "direct" || (value === "paused" && p.direct), paused: value === "paused" });
+          }
+        },
+        onAction: (actionId, itemId) => {
+          if (actionId === "restore_version" && itemId && itemId !== p.version_id) {
+            restoreVersion.mutate(itemId);
+          }
+        },
+      };
+    }
+    return undefined;
+  };
 
   const tabs: DockTab[] = [
     {
@@ -152,7 +237,13 @@ export function KnowledgeDock({ pageId }: { pageId?: string }) {
       ),
     },
     ...(pageId && page
-      ? SIDE_TABS.map(([t, icon, label]): DockTab => ({ id: t, label, icon, content: <SidePanel page={page} tab={t} persona={(chat?.speaker ?? chat?.persona)?.name ?? "Persona"} /> }))
+      ? SIDE_TABS.map(([t, icon, label]): DockTab => ({
+          id: t,
+          label,
+          icon,
+          native: nativeSideTab(page, t),
+          content: <SidePanel page={page} tab={t} persona={personaName} />,
+        }))
       : []),
   ];
   // Hidden below md: the page sidebar and explorer already fill a phone.

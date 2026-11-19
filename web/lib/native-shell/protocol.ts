@@ -36,6 +36,11 @@ export interface Avatar {
   imageUrl?: string;
 }
 
+export interface NavBadge {
+  text: string;
+  tone?: Tone;
+}
+
 export interface NavItem {
   id: string;
   title: string;
@@ -43,7 +48,7 @@ export interface NavItem {
   icon?: IconRef;
   avatar?: Avatar;
   /** Right-aligned count or short label. */
-  badge?: { text: string; tone?: Tone };
+  badge?: NavBadge;
   /** A small status dot before the title. */
   status?: Tone;
   /** Short muted text on the right, e.g. "4m". */
@@ -69,7 +74,7 @@ export interface NavSection {
   collapsible?: boolean;
   collapsed?: boolean;
   /** A count or short label beside the section title (a trailing capsule), instead of baking it into the title. */
-  badge?: { text: string; tone?: Tone };
+  badge?: NavBadge;
   /** Shown when items is empty. */
   emptyText?: string;
 }
@@ -226,6 +231,140 @@ export interface RailModel {
   foot: RailItem[];
 }
 
+// MARK: Native inspector
+
+export interface CompanionSubject {
+  kind: "run" | "ticket";
+  id: string;
+  title: string;
+  agent?: string;
+  ticketKey?: string;
+}
+
+export interface CompanionContext {
+  subject?: CompanionSubject;
+  path?: string;
+}
+
+export type InspectorTabKind = "native" | "companion" | "web";
+
+export interface InspectorOption {
+  value: string;
+  label: string;
+  icon?: IconRef;
+  tone?: Tone;
+}
+
+export interface InspectorAction {
+  id: string;
+  label: string;
+  icon?: IconRef;
+  accent?: boolean;
+  destructive?: boolean;
+  active?: boolean;
+  disabled?: boolean;
+  menu?: MenuItem[];
+}
+
+export interface InspectorChip {
+  id: string;
+  text: string;
+  color?: string;
+  tone?: Tone;
+  icon?: IconRef;
+  href?: string;
+  removable?: boolean;
+}
+
+export type InspectorStepState = "done" | "current" | "pending" | "failed" | "needs_human";
+
+export interface InspectorStep {
+  id: string;
+  text: string;
+  state: InspectorStepState;
+  interactive?: boolean;
+}
+
+export interface InspectorBarPoint {
+  label: string;
+  value: number;
+  secondary?: number;
+}
+
+export type InspectorItemKind =
+  | "fact"
+  | "picker"
+  | "segmented"
+  | "toggle"
+  | "text"
+  | "checklist"
+  | "progress"
+  | "chips"
+  | "list"
+  | "actions"
+  | "note"
+  | "chart";
+
+export interface InspectorItem {
+  id: string;
+  kind: InspectorItemKind;
+  label?: string;
+  value?: string;
+  detail?: string;
+  placeholder?: string;
+  icon?: IconRef;
+  tone?: Tone;
+  mono?: boolean;
+  multiline?: boolean;
+  inputType?: string;
+  checked?: boolean;
+  disabled?: boolean;
+  fraction?: number;
+  href?: string;
+  url?: string;
+  actionId?: string;
+  badge?: NavBadge;
+  options?: InspectorOption[];
+  steps?: InspectorStep[];
+  chips?: InspectorChip[];
+  rows?: NavItem[];
+  actions?: InspectorAction[];
+  menu?: MenuItem[];
+  points?: InspectorBarPoint[];
+}
+
+export interface InspectorSection {
+  id: string;
+  title?: string;
+  aside?: string;
+  collapsible?: boolean;
+  collapsed?: boolean;
+  badge?: NavBadge;
+  emptyText?: string;
+  items: InspectorItem[];
+}
+
+export interface InspectorTab {
+  id: string;
+  label: string;
+  icon: IconRef;
+  kind: InspectorTabKind;
+  busy?: boolean;
+  unread?: boolean;
+  badge?: NavBadge;
+  headerActions?: InspectorAction[];
+  sections?: InspectorSection[];
+  emptyText?: string;
+}
+
+export interface InspectorModel {
+  id: string;
+  open: boolean;
+  activeTabId: string;
+  tabs: InspectorTab[];
+  companion?: CompanionContext;
+}
+
 export type ApprovalScope = "run_approvals" | "push_requests" | "connector_approvals" | "secret_approvals";
 
 export type ColorMode = "dark" | "light";
@@ -238,6 +377,10 @@ export type PageMessage =
   | { v: 1; type: "title"; title: string; subtitle?: string; menu?: MenuItem[] }
   /** The right rail; null: the page has none (the shell hides its rail). */
   | { v: 1; type: "rail"; model: RailModel | null }
+  /** The native inspector model; null: the page has no inspector. */
+  | { v: 1; type: "inspector"; model: InspectorModel | null }
+  /** Asks the shell to open an in-app path in the main content pane (or a new tab). */
+  | { v: 1; type: "openInMain"; path: string; newTab?: boolean }
   | { v: 1; type: "shell"; model: ShellModel }
   | { v: 1; type: "navigator"; model: NavModel | null }
   /** True while the page shows a screen's list in its own fallback column (not yet described). */
@@ -268,6 +411,12 @@ export type NativeCommand =
   | { v: 1; type: "toolbar.action"; itemId: string; menuItemId?: string }
   | { v: 1; type: "title.action"; menuItemId: string }
   | { v: 1; type: "rail.action"; itemId: string; menuItemId?: string }
+  | { v: 1; type: "inspector.visibility"; open: boolean }
+  | { v: 1; type: "inspector.selectTab"; tabId: string }
+  | { v: 1; type: "inspector.action"; tabId: string; actionId: string; itemId?: string; menuItemId?: string }
+  | { v: 1; type: "inspector.change"; tabId: string; fieldId: string; value: string }
+  | { v: 1; type: "inspector.toggle"; tabId: string; fieldId: string; checked: boolean }
+  | { v: 1; type: "companion.context"; context: CompanionContext }
   /** macOS's accent colour ("#RRGGBB") and effective appearance; sent when the page is ready and whenever either changes. */
   | { v: 1; type: "appearance"; accent: string; mode: ColorMode }
   /** query only applies to openCommandMenu: the text to open the palette with (the toolbar search field). */
@@ -296,6 +445,8 @@ const PAGE_TYPES = new Set([
   "route",
   "title",
   "rail",
+  "inspector",
+  "openInMain",
   "shell",
   "navigator",
   "navigatorFallback",
@@ -306,20 +457,50 @@ const PAGE_TYPES = new Set([
   "contextMenu",
   "confirm",
 ]);
-const COMMAND_TYPES = new Set(["navigate", "nav.activate", "nav.action", "nav.picker", "nav.filter", "nav.search", "nav.toggle", "toolbar.action", "title.action", "rail.action", "command", "reply", "appearance"]);
+const COMMAND_TYPES = new Set([
+  "navigate",
+  "nav.activate",
+  "nav.action",
+  "nav.picker",
+  "nav.filter",
+  "nav.search",
+  "nav.toggle",
+  "toolbar.action",
+  "title.action",
+  "rail.action",
+  "inspector.visibility",
+  "inspector.selectTab",
+  "inspector.action",
+  "inspector.change",
+  "inspector.toggle",
+  "companion.context",
+  "command",
+  "reply",
+  "appearance",
+]);
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+const isInAppPath = (p: unknown): p is string => typeof p === "string" && p.startsWith("/") && !p.startsWith("//");
 
 /** A shallow check that a value is a v1 page message of a known type. */
 export function isPageMessage(v: unknown): v is PageMessage {
-  return isObj(v) && v.v === PROTOCOL_VERSION && typeof v.type === "string" && PAGE_TYPES.has(v.type);
+  if (!isObj(v) || v.v !== PROTOCOL_VERSION || typeof v.type !== "string" || !PAGE_TYPES.has(v.type)) return false;
+  if (v.type === "inspector") return v.model === null || isObj(v.model);
+  if (v.type === "openInMain") return isInAppPath(v.path) && (v.newTab === undefined || typeof v.newTab === "boolean");
+  return true;
 }
 
 /** A shallow check that a value is a v1 native command of a known type. */
 export function isNativeCommand(v: unknown): v is NativeCommand {
   if (!isObj(v) || v.v !== PROTOCOL_VERSION || typeof v.type !== "string" || !COMMAND_TYPES.has(v.type)) return false;
-  if (v.type === "navigate") return typeof v.path === "string" && v.path.startsWith("/") && !v.path.startsWith("//");
+  if (v.type === "navigate") return isInAppPath(v.path);
   if (v.type === "appearance") return typeof v.accent === "string" && /^#[\da-f]{6}$/i.test(v.accent) && (v.mode === "dark" || v.mode === "light");
   if (v.type === "command") return SHELL_COMMANDS.includes(v.name as ShellCommandName) && (v.query === undefined || typeof v.query === "string");
+  if (v.type === "inspector.visibility") return typeof v.open === "boolean";
+  if (v.type === "inspector.selectTab") return typeof v.tabId === "string";
+  if (v.type === "inspector.action") return typeof v.tabId === "string" && typeof v.actionId === "string";
+  if (v.type === "inspector.change") return typeof v.tabId === "string" && typeof v.fieldId === "string" && typeof v.value === "string";
+  if (v.type === "inspector.toggle") return typeof v.tabId === "string" && typeof v.fieldId === "string" && typeof v.checked === "boolean";
+  if (v.type === "companion.context") return isObj(v.context);
   return true;
 }

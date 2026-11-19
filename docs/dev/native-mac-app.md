@@ -38,12 +38,21 @@ A first-class, native-feeling Mac app that keeps every existing feature. Layout 
   (areas, Apps); its middle is the current screen's list, which the page *describes* as data
   (`NavModel`) and the shell draws as a native source list.
 - **Native unified toolbar** over the content: back/forward, title and subtitle, search (opens the
-  page's ⌘K menu), companion toggle, plus items the page contributes. New Chat sits in the
-  sidebar instead, on the first day's header in Chats (a labelled section action).
+  page's ⌘K menu), tracking separators (`vesper.sidebarSeparator`, `vesper.inspectorSeparator`),
+  inspector toggle (`⌘\`), plus items the page contributes. New Chat sits in the sidebar instead,
+  on the first day's header in Chats (a labelled section action).
+- **Native, full-height inspector**: a 3-pane `NSSplitViewController` (`Sidebar | Content | Inspector`)
+  hosted in `WindowRootController` beside the stationary 44pt `RailBarView` (so toggling the
+  inspector never shifts rail buttons away from the pointer). The trailing pane uses
+  `NSSplitViewItem(inspectorWithViewController:)` with full-height vibrancy, drag-to-resize
+  (280–640 pt), floating `NSPanel` pop-out/re-dock, and hybrid tabs: `native` (declarative
+  SwiftUI `InspectorView`), `companion` (persistent `/companion` `WKWebView`), and `web`
+  (in-page DOM panels animated via GPU-composited `.motion-dock` transforms).
 - **Native menus, context menus, windows and system surfaces**: menu bar extra, notifications with
   actions, Dock badge and menu, Quick Capture, Settings, Screenshot to Chat, files in, Touch ID,
   power, backups, updates, deep links, logs.
-- **One WKWebView per tab for the content area only**, showing the existing React UI.
+- **One WKWebView per tab for the content area**, plus one persistent window-level `/companion`
+  `WKWebView` (`CompanionWebController`) shared across routes and tabs for `<WorkChat />`.
 
 The Go backend is unchanged in role: the shell launches the bundled `vesper app` as a child
 process and supervises it.
@@ -123,6 +132,13 @@ Source of truth: `web/lib/native-shell/protocol.ts`; Swift mirror
   Rows without an href are activated as by a plain click.
 - Request/response messages (`confirmApproval`, `openWorkspaceMenu`, `contextMenu`) carry a
   `requestId`; the shell answers with a `reply` command.
+- Native inspector bridge: screens publish an `inspector` message (`InspectorModel | null`) with
+  three `InspectorTabKind`s — `native` (declarative sections/items rendered natively in SwiftUI),
+  `companion` (routed to the persistent `/companion` `WKWebView` whose `WorkChat` subject updates
+  via `companion.context`), and `web` (kept in-page). The shell dispatches
+  `inspector.visibility`, `inspector.selectTab`, `inspector.action`, `inspector.change`, and
+  `inspector.toggle` back to the page; links clicked inside `/companion` post `openInMain`
+  (`{ path, newTab }`) so navigation opens in the main pane or a new tab.
 
 ### Security rules for the shell
 
@@ -139,11 +155,14 @@ Source of truth: `web/lib/native-shell/protocol.ts`; Swift mirror
   scripts or page services.
 - **Private WebKit preferences, Vesper web views only.** This macOS exposes no `navigator.mediaDevices`
   (so no `getDisplayMedia`, used by the playground frame capture in `web/lib/frame-capture.ts`) unless
-  the private `mediaDevicesEnabled` and `screenCaptureEnabled` `WKPreferences` are on.
-  `WebViewFactory.enablePrivateMediaPreferences` sets each by KVC only when `WKPreferences` responds to
-  its private setter; otherwise it logs and skips, so a future WebKit degrades to the page's "can't
-  capture" message instead of an `NSUndefinedKeyException`. Playground and popup web views never get
-  them, and `decideMediaCapturePermissionsFor` still prompts only for the Vesper origin's main frame.
+  the private `mediaDevicesEnabled` and `screenCaptureEnabled` `WKPreferences` are on, and caps
+  `WKWebView` rendering near 60 fps unless `PreferPageRenderingUpdatesNear60FPS` is off.
+  `WebViewFactory.enablePrivateMediaPreferences` sets media flags via KVC when supported;
+  `WebViewFactory.disable60FPSCap` checks `_features` and `_setEnabled:forFeature:` on
+  `WKPreferences` before `WKWebView` creation to turn off `PreferPageRenderingUpdatesNear60FPS` /
+  `PreferPageRenderingUpdatesNear60FPSEnabled` for 120Hz ProMotion pacing on Vesper and companion
+  web views. Both skip safely and log if absent, never run on playground or popup web views, and
+  `decideMediaCapturePermissionsFor` still prompts only for the Vesper origin's main frame.
   Screen capture goes through the system's own "Share a Window or Entire Screen" picker; verified
   end to end (a MediaStream with one video track arrives). Screenshot to Chat's Screen Recording
   explanation lives in `ScreenRecordingAccess` for any path that needs the permission.
@@ -179,7 +198,7 @@ What the app does, for regression testing by hand.
 **Menus**
 - [ ] App: About, Check for Updates…, Settings… ⌘,, Restart Stack, Show Logs…, Services, Hide/Hide Others/Show All, Quit ⌘Q
 - [ ] File: New Tab, New Window, Reopen Closed Tab, Quick Capture…, Screenshot to Chat…, Import Backup…, Close Tab, Close Window
-- [ ] Edit (standard, incl. Find ⌘F → page find), View (Reload, Force Reload, Developer Tools, zoom, tab bar, full screen, Show/Hide Sidebar ⌃⌘S), History (Back, Forward), Window (standard + tab commands), Help (Show Logs…, Vesper Repository & Docs)
+- [ ] Edit (standard, incl. Find ⌘F → page find), View (Reload, Force Reload, Developer Tools, zoom, tab bar, full screen, Show/Hide Sidebar ⌃⌘S, Show/Hide Inspector ⌘\), History (Back, Forward), Window (standard + tab commands), Help (Show Logs…, Vesper Repository & Docs)
 - [ ] "Change Server URL…" and remote/Docker modes are dropped on purpose (local app only)
 
 **Stack**
@@ -240,11 +259,12 @@ macos/Sources/VesperCore/           logic with no AppKit UI (unit-tested)
   Stack/        StackController, SecretsKey (+ safeStorage migration), StackHealth, BundledResources
   API/          APIClient (session cookie), InboxMonitor, RunMonitor, EventStream (SSE)
   Settings/     NativeSettings (config.json "native"), SessionStore (session.json)
-  Model/        DeepLinks, Routing, NotificationPolicy, TrayModel, DockModel, Capture, Drop, Power, Thermal, Backups, Updates, WorkspaceOpen
+  Model/        DeepLinks, Routing, InspectorLogic, NotificationPolicy, TrayModel, DockModel, Capture, Drop, Power, Thermal, Backups, Updates, WorkspaceOpen
 macos/Sources/Vesper/               the app (AppKit + SwiftUI)
   App/          main.swift, AppDelegate, AppModel
-  Window/       MainWindowController (a window and its tabs), TabsModel, TabContainerController, WebContentController (one tab), ShellBridge, WebViewFactory, OfflineView
+  Window/       WindowRootController (3-pane split + stationary rail), MainWindowController (a window and its tabs), TabsModel, TabContainerController, WebContentController (one tab), ShellBridge, WebViewFactory, OfflineView
   Sidebar/      SidebarView (renders ShellModel + NavModel)
+  Inspector/    InspectorViewController (split pane + NSPanel pop-out), InspectorView (SwiftUI renderer), CompanionWebController (persistent /companion WebView)
   Toolbar/      ToolbarController, TabStripView (compact tabs)
   Menus/        MainMenu
   MenuBar/ Notifications/ Dock/ Capture/ Files/ Settings/ Logs/ Power/

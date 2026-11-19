@@ -173,6 +173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// ⌥⌘F: opens the page's command palette, like the toolbar's search button.
     @objc func focusSearch(_ sender: Any?) { app.keyController?.send(.command(.openCommandMenu)) }
     @objc func toggleSidebarAction(_ sender: Any?) { app.keyController?.split.toggleSidebar(sender) }
+    @objc func toggleInspectorAction(_ sender: Any?) { app.keyController?.toggleInspector(sender) }
     @objc func reload(_ sender: Any?) { web?.reload() }
     @objc func forceReload(_ sender: Any?) { web?.reloadFromOrigin() }
     @objc func zoomIn(_ sender: Any?) { if let web { web.pageZoom = min(web.pageZoom + 0.1, 3) } }
@@ -264,6 +265,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         case #selector(toggleSidebarAction(_:)):
             guard let controller = app.keyController, controller.hasSidebar, let sidebar = controller.split.splitViewItems.first else { return false }
             item.title = sidebar.isCollapsed ? "Show Sidebar" : "Hide Sidebar"
+            return true
+        case #selector(toggleInspectorAction(_:)):
+            guard let controller = app.keyController, controller.hasInspector, controller.kind == .vesper else { return false }
+            item.title = controller.isInspectorCollapsed ? "Show Inspector" : "Hide Inspector"
             return true
         case #selector(find(_:)), #selector(reload(_:)), #selector(forceReload(_:)), #selector(zoomIn(_:)), #selector(zoomOut(_:)),
              #selector(zoomReset(_:)), #selector(showInspector(_:)):

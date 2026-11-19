@@ -650,6 +650,7 @@ export function WorkScreen() {
               id: "chat",
               label: "Chat",
               icon: "msg",
+              native: { kind: "companion", subject: workSubject },
               content: <WorkChat subject={workSubject} />,
             },
           ]}

@@ -23,6 +23,8 @@ final class ShellState {
     var titleMenu: [MenuItem]?
     /// The right rail the page describes; nil when it has none.
     var rail: RailModel?
+    /// The native inspector the page describes; nil when it has none.
+    var inspector: InspectorModel?
     var route: String?
     var area: AreaId?
     /// The page has sent `ready`: commands will be heard.

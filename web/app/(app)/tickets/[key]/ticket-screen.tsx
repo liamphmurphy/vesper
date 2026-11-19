@@ -5,10 +5,13 @@ import { workSettingsHref } from "@/lib/spaces";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, ViewTransition } from "react";
-import type { Bootstrap, Ticket } from "@/lib/api/client";
+import type { Bootstrap, Schemas, Ticket } from "@/lib/api/client";
 import { useCompact } from "@/lib/viewport";
-import { useActivity, useBootstrap, useCosts, useTicket, useTicketRuns, useTickets, hasLiveRun } from "@/lib/api/hooks";
-import { duration, runCost } from "@/lib/format";
+import { useActivity, useBacklinks, useBootstrap, useCosts, useLinkMention, useTicket, useTicketRuns, useTickets, hasLiveRun } from "@/lib/api/hooks";
+import { ago, duration, dueDate, runCost, timelineTime } from "@/lib/format";
+import { ESTIMATE_SCALE } from "@/lib/ticket-draft";
+import { runStateTone, ticketStatusTone } from "@/lib/native-shell/models/common";
+import { buildTicketInspectorSections } from "@/lib/native-shell/models/ticket-inspector";
 import { spendLabel } from "@/lib/costs";
 import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { useNativeToolbar } from "@/lib/native-shell/use-native-toolbar";
@@ -25,13 +28,13 @@ import { DispatchDialog } from "@/components/domain/dispatch-dialog";
 import { TicketEditorDialog } from "@/components/domain/ticket-editor-dialog";
 import { PriorityGlyph, StatusGlyph } from "@/components/domain/glyphs";
 import { Flag, SmallPill } from "@/components/domain/labels";
-import { STATUS_NAME } from "@/components/domain/meta";
+import { PRIORITY_NAME, PRIORITY_ORDER, STATUS_NAME, STATUS_ORDER } from "@/components/domain/meta";
 import { TicketCostChip } from "@/components/domain/cost-chip";
 import { WORK_COLUMN, WorkDetailHeader, WorkEyebrow, WorkViewTabs, type EyebrowItem } from "@/components/domain/work-detail-header";
 import { TopBar } from "@/components/shell/topbar";
 import { BacklinksPanel } from "@/components/domain/backlinks";
 import { ContextArtifacts } from "./context-artifacts";
-import { Dependencies } from "./dependencies";
+import { Dependencies, useDependencyChange } from "./dependencies";
 import { Criteria } from "./criteria";
 import { GateStrip } from "./gates";
 import { MetaStrip } from "./meta-strip";
@@ -606,34 +609,13 @@ export function TicketScreen({ ticketKey }: { ticketKey: string }) {
             </div>
           </article>
           {/* The ticket's companion: Properties and Chat, in the shell's right-hand column. */}
-          <CompanionDock
-            app="ticket"
-            tabs={[
-              {
-                id: "properties",
-                label: "Properties",
-                icon: "sliders",
-                content: (
-                  <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-4 py-5">
-                    {saver.conflict && (
-                      <ConflictBanner what={saver.conflict.what} reloading={ticket.isFetching} onReapply={saver.reapply} onKeep={saver.keepLatest} />
-                    )}
-                    <Properties t={t} boot={boot.data} save={saver.save} error={saver.error} />
-                    <Dependencies ticket={t} />
-                    {t.run && hasLiveRun(t) && <RunCard t={t} run={t.run} />}
-                    <RunsHistory t={t} />
-                    <div id="code" className="scroll-mt-16">
-                      <CodeSection t={t} />
-                    </div>
-                    <section className="flex flex-col gap-2 px-1">
-                      <h2 className="text-13 text-fg-tertiary">Backlinks</h2>
-                      <BacklinksPanel kind="ticket" id={t.id} compact />
-                    </section>
-                  </div>
-                ),
-              },
-              { id: "chat", label: "Chat", icon: "msg", content: <WorkChat subject={{ kind: "ticket", key: t.key, title: t.title }} /> },
-            ]}
+          <TicketCompanion
+            t={t}
+            boot={boot.data}
+            saver={saver}
+            reloading={ticket.isFetching}
+            runs={ticketRuns.data?.runs ?? []}
+            runsHasMore={!!ticketRuns.data?.has_more}
           />
         </div>
       )}
@@ -650,5 +632,221 @@ export function TicketScreen({ ticketKey }: { ticketKey: string }) {
         />
       )}
     </>
+  );
+}
+
+function TicketCompanion({
+  t,
+  boot,
+  saver,
+  reloading,
+  runs,
+  runsHasMore,
+}: {
+  t: Ticket;
+  boot: Bootstrap;
+  saver: TicketSaver;
+  reloading: boolean;
+  runs: Schemas["Run"][];
+  runsHasMore: boolean;
+}) {
+  const backlinks = useBacklinks("ticket", t.id);
+  const linkMention = useLinkMention();
+  const depChange = useDependencyChange(t);
+
+  const epics = boot.epics.filter((e) => e.project_id === t.project.id);
+  const closed = t.status === "done" || t.status === "canceled";
+  const scale: number[] = [...ESTIMATE_SCALE];
+  if (t.estimate_points != null && !scale.includes(t.estimate_points)) scale.push(t.estimate_points);
+  scale.sort((a, b) => a - b);
+
+  const priced = runs.filter((r) => r.cost_source && r.cost_source !== "unknown");
+  const totalCost = priced.reduce((sum, r) => sum + r.cost_usd, 0);
+  const partialCost = runsHasMore || priced.length < runs.length || priced.some((r) => r.cost_source === "partial");
+  const runsSummary =
+    priced.length > 0
+      ? `${runs.length}${runsHasMore ? "+" : ""} · ${partialCost ? "≥ " : ""}$${totalCost.toFixed(2)}`
+      : runs.length > 0
+        ? `${runs.length}${runsHasMore ? "+" : ""}`
+        : undefined;
+
+  const mapMention = (m: Schemas["Mention"]) => {
+    const s = m.source;
+    const raw = s.kind === "artifact" && s.artifact_type === "note" ? (s.path ?? s.title) : s.title;
+    const name = s.kind === "comment" ? "Comment" : raw;
+    return {
+      id: `${m.source_kind}:${m.source_id}`,
+      sourceKind: m.source_kind,
+      sourceId: m.source_id,
+      title: s.display_id && s.kind !== "agent" ? `${s.display_id} · ${name}` : name,
+      href: s.href ?? undefined,
+    };
+  };
+
+  const agentOptions = [
+    { value: "", label: "Unassigned" },
+    ...boot.agents.filter((a) => a.kind === "main").map((a) => ({ value: a.id, label: a.name })),
+  ];
+  const assigneeBadge = needsDispatch(t)
+    ? { text: "Not dispatched", tone: "human" as const }
+    : t.run?.state === "queued"
+      ? { text: "Queued", tone: "neutral" as const }
+      : undefined;
+
+  const sections = buildTicketInspectorSections({
+    status: t.status,
+    statusOptions: STATUS_ORDER.map((s) => ({ value: s, label: STATUS_NAME[s] })),
+    priority: t.priority,
+    priorityOptions: PRIORITY_ORDER.map((p) => ({ value: p, label: PRIORITY_NAME[p] })),
+    assignee: t.assignee?.id ?? "",
+    assigneeOptions: agentOptions,
+    assigneeBadge,
+    reviewer: t.reviewer?.id ?? "",
+    reviewerOptions: [{ value: "", label: "No reviewer" }, ...boot.users.map((u) => ({ value: u.id, label: u.name }))],
+    epic: t.epic?.id ?? "",
+    epicOptions: [{ value: "", label: "No epic" }, ...epics.map((e) => ({ value: e.id, label: e.name }))],
+    spaceName: t.project.name,
+    mockupFromEpic: t.mockup_gate.from_epic ? (t.epic?.name ?? "epic") : undefined,
+    requiresMockup: t.requires_mockup,
+    estimate: t.estimate_points != null ? String(t.estimate_points) : "",
+    estimateOptions: [{ value: "", label: "Unestimated" }, ...scale.map((p) => ({ value: String(p), label: `${p} pts` }))],
+    estimateDisabled: closed,
+    estimateNote: closed ? "Closed tickets can’t be re-estimated." : t.estimate ? `Legacy note: ${t.estimate}` : undefined,
+    dueDate: t.due_date ?? "",
+    selectedLabels: t.labels.map((l) => ({ id: l.id, name: l.name, color: l.color })),
+    allLabels: boot.labels.map((l) => ({ id: l.id, name: l.name })),
+    blockedBy: t.blocked_by.map((d) => ({
+      key: d.key,
+      title: d.title,
+      statusLabel: STATUS_NAME[d.status],
+      statusTone: ticketStatusTone(d.status),
+    })),
+    blocks: t.blocks.map((d) => ({
+      key: d.key,
+      title: d.title,
+      statusLabel: STATUS_NAME[d.status],
+      statusTone: ticketStatusTone(d.status),
+    })),
+    canEditBlockedBy: !hasLiveRun(t) && !depChange.isPending,
+    runs: runs.map((r) => {
+      const st = RUN_STATE[r.state];
+      const when = r.ended_at ? `${timelineTime(r.started_at)} · ${duration(r.started_at, r.ended_at)}` : `Started ${ago(r.started_at)}`;
+      return {
+        id: r.id,
+        handle: r.agent.handle,
+        stateLabel: st.label,
+        stateTone: runStateTone(r.state),
+        subtitle: `${when} · ${r.model}`,
+        cost: runCost(r.cost_usd, r.cost_source),
+      };
+    }),
+    runsSummary,
+    code:
+      t.branch || t.pr
+        ? {
+            branch: t.branch,
+            prNumber: t.pr?.number,
+            prState: t.pr ? t.pr.state[0].toUpperCase() + t.pr.state.slice(1) : undefined,
+            prUrl: t.pr?.url,
+            diff: t.pr?.additions != null ? `+${t.pr.additions} −${t.pr.deletions ?? 0}` : undefined,
+            closedUnmerged: t.pr?.closed_unmerged,
+            synced: t.pr?.synced_at ? `Synced ${ago(t.pr.synced_at)}` : undefined,
+          }
+        : undefined,
+    linkedMentions: backlinks.data ? backlinks.data.linked.map(mapMention) : undefined,
+    unlinkedMentions: backlinks.data
+      ? backlinks.data.unlinked.filter((m) => m.source_kind === "artifact" || m.source_kind === "ticket").map(mapMention)
+      : undefined,
+    error: saver.error,
+  });
+
+  const subject = { kind: "ticket" as const, key: t.key, title: t.title };
+  return (
+    <CompanionDock
+      app="ticket"
+      tabs={[
+        {
+          id: "properties",
+          label: "Properties",
+          icon: "sliders",
+          native: {
+            kind: "native",
+            sections,
+            onChange: (fieldId, value) => {
+              if (fieldId === "status") {
+                const next = value as Ticket["status"];
+                saver.save({ status: next }, `Status → ${STATUS_NAME[next] ?? next}`);
+              } else if (fieldId === "priority") {
+                const next = value as Ticket["priority"];
+                saver.save({ priority: next }, `Priority → ${PRIORITY_NAME[next] ?? next}`);
+              } else if (fieldId === "assignee_agent_id") {
+                const name = boot.agents.find((a) => a.id === value)?.name ?? "Unassigned";
+                saver.save({ assignee_agent_id: value || null }, `Persona → ${name}`);
+              } else if (fieldId === "reviewer_user_id") {
+                const name = boot.users.find((u) => u.id === value)?.name ?? "none";
+                saver.save({ reviewer_user_id: value || null }, `Reviewer → ${name}`);
+              } else if (fieldId === "epic_id") {
+                const name = epics.find((e) => e.id === value)?.name ?? "none";
+                saver.save({ epic_id: value || null }, `Epic → ${name}`);
+              } else if (fieldId === "estimate_points") {
+                saver.save({ estimate_points: value ? Number(value) : null }, value ? `Estimate → ${value}` : "Estimate cleared");
+              } else if (fieldId === "due_date") {
+                const trimmed = value.trim();
+                saver.save({ due_date: trimmed || null }, trimmed ? `Due → ${dueDate(trimmed)}` : "Due date cleared");
+              }
+            },
+            onToggle: (fieldId, checked) => {
+              if (fieldId === "requires_mockup") {
+                saver.save({ requires_mockup: checked }, checked ? "Mockup → required" : "Mockup → not required");
+              }
+            },
+            onAction: (actionId, itemId, menuItemId) => {
+              if (actionId === "labels") {
+                const current = t.labels.map((l) => l.id);
+                if (itemId) {
+                  saver.save({ label_ids: current.filter((id) => id !== itemId) }, "Labels");
+                } else if (menuItemId) {
+                  const next = current.includes(menuItemId)
+                    ? current.filter((id) => id !== menuItemId)
+                    : [...current, menuItemId];
+                  saver.save({ label_ids: next }, "Labels");
+                }
+              } else if (actionId === "remove_blocked_by" && itemId && (menuItemId === "remove" || !menuItemId)) {
+                depChange.mutate({ list: "blocked_by", op: "remove", key: itemId });
+              } else if (actionId === "remove_blocks" && itemId && (menuItemId === "remove" || !menuItemId)) {
+                depChange.mutate({ list: "blocks", op: "remove", key: itemId });
+              } else if (actionId === "link_mention" && itemId) {
+                const sep = itemId.indexOf(":");
+                if (sep <= 0) return;
+                const kind = itemId.slice(0, sep);
+                const sourceId = itemId.slice(sep + 1);
+                if (kind === "artifact" || kind === "ticket") {
+                  linkMention.mutate({ target_kind: "ticket", target_id: t.id, source_kind: kind, source_id: sourceId });
+                }
+              }
+            },
+          },
+          content: (
+            <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-4 py-5">
+              {saver.conflict && (
+                <ConflictBanner what={saver.conflict.what} reloading={reloading} onReapply={saver.reapply} onKeep={saver.keepLatest} />
+              )}
+              <Properties t={t} boot={boot} save={saver.save} error={saver.error} />
+              <Dependencies ticket={t} />
+              {t.run && hasLiveRun(t) && <RunCard t={t} run={t.run} />}
+              <RunsHistory t={t} />
+              <div id="code" className="scroll-mt-16">
+                <CodeSection t={t} />
+              </div>
+              <section className="flex flex-col gap-2 px-1">
+                <h2 className="text-13 text-fg-tertiary">Backlinks</h2>
+                <BacklinksPanel kind="ticket" id={t.id} compact />
+              </section>
+            </div>
+          ),
+        },
+        { id: "chat", label: "Chat", icon: "msg", native: { kind: "companion", subject }, content: <WorkChat subject={subject} /> },
+      ]}
+    />
   );
 }

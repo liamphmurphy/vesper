@@ -14,6 +14,7 @@ import { useNavCounts } from "@/lib/use-nav-counts";
 import { onCommand, post, postDeduped } from "@/lib/native-shell/bridge";
 import { buildChatsNavModel, CHAT_SEARCH, CHATS_NAVIGATOR_ID, CHATS_VIEW_ACTION, NEW_CHAT_ACTION, NEW_SPACE_ACTION, PERSONA_PICKER, START_WITH_PREFIX, VIEW_ACTIVE, VIEW_ARCHIVED, type ChatSearchState } from "@/lib/native-shell/chats-model";
 import { useAnyNativeCommand } from "@/lib/native-shell/hooks";
+import { inspectorPublisher } from "@/lib/native-shell/inspector-publisher";
 import { routeNavCommand } from "@/lib/native-shell/nav-model";
 import { publisher } from "@/lib/native-shell/publisher";
 import { buildShellModel, protocolArea } from "@/lib/native-shell/shell-model";
@@ -179,6 +180,7 @@ export function NativeShellHost() {
 
   // Page-level commands.
   useAnyNativeCommand((cmd: NativeCommand) => {
+    if (inspectorPublisher.dispatchCommand(cmd)) return;
     if (cmd.type === "navigate") router.push(cmd.path);
     // macOS's accent colour (and mode, which the page already follows) for the macOS palette.
     if (cmd.type === "appearance") setSystemAccent(cmd.accent);

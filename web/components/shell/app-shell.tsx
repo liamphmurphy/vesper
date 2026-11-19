@@ -108,7 +108,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const native = useIsNativeShell();
   useShortcuts();
   return (
-    <div className={compact ? "flex min-h-dvh flex-col bg-bg text-fg" : "flex min-h-dvh bg-bg text-fg"}>
+    <div className={compact ? "flex min-h-dvh flex-col bg-bg text-fg" : "flex min-h-dvh overflow-x-clip bg-bg text-fg"}>
       <LiveUpdates />
       {/* usePathname needs a Suspense boundary for prerendering. */}
       <Suspense fallback={null}>

@@ -342,6 +342,224 @@ public struct RailModel: Codable, Sendable, Hashable {
     }
 }
 
+// MARK: - Native inspector
+
+public enum CompanionSubjectKind: String, Codable, Sendable, Hashable {
+    case run, ticket
+
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = CompanionSubjectKind(rawValue: raw) ?? .ticket
+    }
+}
+
+public struct CompanionSubject: Codable, Sendable, Hashable {
+    public var kind: CompanionSubjectKind
+    public var id: String
+    public var title: String
+    public var agent: String?
+    public var ticketKey: String?
+
+    public init(kind: CompanionSubjectKind, id: String, title: String, agent: String? = nil, ticketKey: String? = nil) {
+        self.kind = kind; self.id = id; self.title = title; self.agent = agent; self.ticketKey = ticketKey
+    }
+}
+
+public struct CompanionContext: Codable, Sendable, Hashable {
+    public var subject: CompanionSubject?
+    public var path: String?
+
+    public init(subject: CompanionSubject? = nil, path: String? = nil) {
+        self.subject = subject; self.path = path
+    }
+}
+
+public enum InspectorTabKind: String, Codable, Sendable, Hashable {
+    case native, companion, web
+
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = InspectorTabKind(rawValue: raw) ?? .web
+    }
+}
+
+public struct InspectorOption: Codable, Sendable, Hashable {
+    public var value: String
+    public var label: String
+    public var icon: String?
+    public var tone: Tone?
+
+    public init(value: String, label: String, icon: String? = nil, tone: Tone? = nil) {
+        self.value = value; self.label = label; self.icon = icon; self.tone = tone
+    }
+}
+
+public struct InspectorAction: Codable, Sendable, Hashable, Identifiable {
+    public var id: String
+    public var label: String
+    public var icon: String?
+    public var accent: Bool?
+    public var destructive: Bool?
+    public var active: Bool?
+    public var disabled: Bool?
+    public var menu: [MenuItem]?
+
+    public init(id: String, label: String, icon: String? = nil, accent: Bool? = nil, destructive: Bool? = nil,
+                active: Bool? = nil, disabled: Bool? = nil, menu: [MenuItem]? = nil) {
+        self.id = id; self.label = label; self.icon = icon; self.accent = accent; self.destructive = destructive
+        self.active = active; self.disabled = disabled; self.menu = menu
+    }
+}
+
+public struct InspectorChip: Codable, Sendable, Hashable, Identifiable {
+    public var id: String
+    public var text: String
+    public var color: String?
+    public var tone: Tone?
+    public var icon: String?
+    public var href: String?
+    public var removable: Bool?
+
+    public init(id: String, text: String, color: String? = nil, tone: Tone? = nil,
+                icon: String? = nil, href: String? = nil, removable: Bool? = nil) {
+        self.id = id; self.text = text; self.color = color; self.tone = tone
+        self.icon = icon; self.href = href; self.removable = removable
+    }
+}
+
+public enum InspectorStepState: String, Codable, Sendable, Hashable {
+    case done, current, pending, failed
+    case needsHuman = "needs_human"
+
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = InspectorStepState(rawValue: raw) ?? .pending
+    }
+}
+
+public struct InspectorStep: Codable, Sendable, Hashable, Identifiable {
+    public var id: String
+    public var text: String
+    public var state: InspectorStepState
+    public var interactive: Bool?
+
+    public init(id: String, text: String, state: InspectorStepState, interactive: Bool? = nil) {
+        self.id = id; self.text = text; self.state = state; self.interactive = interactive
+    }
+}
+
+public struct InspectorBarPoint: Codable, Sendable, Hashable {
+    public var label: String
+    public var value: Double
+    public var secondary: Double?
+
+    public init(label: String, value: Double, secondary: Double? = nil) {
+        self.label = label; self.value = value; self.secondary = secondary
+    }
+}
+
+public enum InspectorItemKind: String, Codable, Sendable, Hashable {
+    case fact, picker, segmented, toggle, text, checklist, progress, chips, list, actions, note, chart
+
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = InspectorItemKind(rawValue: raw) ?? .note
+    }
+}
+
+public struct InspectorItem: Codable, Sendable, Hashable, Identifiable {
+    public var id: String
+    public var kind: InspectorItemKind
+    public var label: String?
+    public var value: String?
+    public var detail: String?
+    public var placeholder: String?
+    public var icon: String?
+    public var tone: Tone?
+    public var mono: Bool?
+    public var multiline: Bool?
+    public var inputType: String?
+    public var checked: Bool?
+    public var disabled: Bool?
+    public var fraction: Double?
+    public var href: String?
+    public var url: String?
+    public var actionId: String?
+    public var badge: NavBadge?
+    public var options: [InspectorOption]?
+    public var steps: [InspectorStep]?
+    public var chips: [InspectorChip]?
+    public var rows: [NavItem]?
+    public var actions: [InspectorAction]?
+    public var menu: [MenuItem]?
+    public var points: [InspectorBarPoint]?
+
+    public init(id: String, kind: InspectorItemKind, label: String? = nil, value: String? = nil, detail: String? = nil,
+                placeholder: String? = nil, icon: String? = nil, tone: Tone? = nil, mono: Bool? = nil, multiline: Bool? = nil,
+                inputType: String? = nil, checked: Bool? = nil, disabled: Bool? = nil, fraction: Double? = nil,
+                href: String? = nil, url: String? = nil, actionId: String? = nil, badge: NavBadge? = nil,
+                options: [InspectorOption]? = nil, steps: [InspectorStep]? = nil, chips: [InspectorChip]? = nil,
+                rows: [NavItem]? = nil, actions: [InspectorAction]? = nil, menu: [MenuItem]? = nil,
+                points: [InspectorBarPoint]? = nil) {
+        self.id = id; self.kind = kind; self.label = label; self.value = value; self.detail = detail
+        self.placeholder = placeholder; self.icon = icon; self.tone = tone; self.mono = mono; self.multiline = multiline
+        self.inputType = inputType; self.checked = checked; self.disabled = disabled; self.fraction = fraction
+        self.href = href; self.url = url; self.actionId = actionId; self.badge = badge
+        self.options = options; self.steps = steps; self.chips = chips; self.rows = rows
+        self.actions = actions; self.menu = menu; self.points = points
+    }
+}
+
+public struct InspectorSection: Codable, Sendable, Hashable, Identifiable {
+    public var id: String
+    public var title: String?
+    public var aside: String?
+    public var collapsible: Bool?
+    public var collapsed: Bool?
+    public var badge: NavBadge?
+    public var emptyText: String?
+    public var items: [InspectorItem]
+
+    public init(id: String, title: String? = nil, aside: String? = nil, collapsible: Bool? = nil,
+                collapsed: Bool? = nil, badge: NavBadge? = nil, emptyText: String? = nil, items: [InspectorItem]) {
+        self.id = id; self.title = title; self.aside = aside; self.collapsible = collapsible
+        self.collapsed = collapsed; self.badge = badge; self.emptyText = emptyText; self.items = items
+    }
+}
+
+public struct InspectorTab: Codable, Sendable, Hashable, Identifiable {
+    public var id: String
+    public var label: String
+    public var icon: String
+    public var kind: InspectorTabKind
+    public var busy: Bool?
+    public var unread: Bool?
+    public var badge: NavBadge?
+    public var headerActions: [InspectorAction]?
+    public var sections: [InspectorSection]?
+    public var emptyText: String?
+
+    public init(id: String, label: String, icon: String, kind: InspectorTabKind, busy: Bool? = nil,
+                unread: Bool? = nil, badge: NavBadge? = nil, headerActions: [InspectorAction]? = nil,
+                sections: [InspectorSection]? = nil, emptyText: String? = nil) {
+        self.id = id; self.label = label; self.icon = icon; self.kind = kind; self.busy = busy
+        self.unread = unread; self.badge = badge; self.headerActions = headerActions
+        self.sections = sections; self.emptyText = emptyText
+    }
+}
+
+public struct InspectorModel: Codable, Sendable, Hashable, Identifiable {
+    public var id: String
+    public var open: Bool
+    public var activeTabId: String
+    public var tabs: [InspectorTab]
+    public var companion: CompanionContext?
+
+    public init(id: String, open: Bool, activeTabId: String, tabs: [InspectorTab], companion: CompanionContext? = nil) {
+        self.id = id; self.open = open; self.activeTabId = activeTabId; self.tabs = tabs; self.companion = companion
+    }
+}
+
 public enum ApprovalScope: String, Codable, Sendable, Hashable {
     case runApprovals = "run_approvals"
     case pushRequests = "push_requests"
@@ -359,6 +577,10 @@ public enum PageMessage: Sendable, Equatable, Decodable {
     case title(title: String, subtitle: String?, menu: [MenuItem]? = nil)
     /// The right rail; nil: the page has none.
     case rail(RailModel?)
+    /// The native inspector model; nil: the page has none.
+    case inspector(InspectorModel?)
+    /// Asks the shell to open an in-app path in the main pane (or a new tab).
+    case openInMain(path: String, newTab: Bool = false)
     case shell(ShellModel)
     case navigator(NavModel?)
     case navigatorFallback(active: Bool)
@@ -373,7 +595,7 @@ public enum PageMessage: Sendable, Equatable, Decodable {
 
     private enum Keys: String, CodingKey {
         case v, type, path, area, title, subtitle, model, active, items, requestId, scope, folder, x, y, mode, menu
-        case body, confirmLabel, cancelLabel, destructive, background
+        case body, confirmLabel, cancelLabel, destructive, background, newTab
     }
 
     public init(from decoder: Decoder) throws {
@@ -393,6 +615,11 @@ public enum PageMessage: Sendable, Equatable, Decodable {
                           menu: try c.decodeIfPresent([MenuItem].self, forKey: .menu))
         case "rail":
             self = .rail(try c.decodeIfPresent(RailModel.self, forKey: .model))
+        case "inspector":
+            self = .inspector(try c.decodeIfPresent(InspectorModel.self, forKey: .model))
+        case "openInMain":
+            self = .openInMain(path: try c.decode(String.self, forKey: .path),
+                               newTab: try c.decodeIfPresent(Bool.self, forKey: .newTab) ?? false)
         case "shell":
             self = .shell(try c.decode(ShellModel.self, forKey: .model))
         case "navigator":
@@ -451,6 +678,12 @@ public enum NativeCommand: Sendable, Equatable, Codable {
     case titleAction(menuItemId: String)
     /// A right-rail button, or an item from its menu.
     case railAction(itemId: String, menuItemId: String? = nil)
+    case inspectorVisibility(open: Bool)
+    case inspectorSelectTab(tabId: String)
+    case inspectorAction(tabId: String, actionId: String, itemId: String? = nil, menuItemId: String? = nil)
+    case inspectorChange(tabId: String, fieldId: String, value: String)
+    case inspectorToggle(tabId: String, fieldId: String, checked: Bool)
+    case companionContext(CompanionContext)
     /// macOS's accent colour ("#RRGGBB") and effective appearance.
     case appearance(accent: String, mode: ColorMode)
     /// `query` only means something for openCommandMenu: the text to open the palette with.
@@ -460,6 +693,7 @@ public enum NativeCommand: Sendable, Equatable, Codable {
 
     private enum Keys: String, CodingKey {
         case v, type, path, navigatorId, itemId, actionId, menuItemId, pickerId, searchId, filterId, value, expanded, checked, name, query, newTab
+        case open, tabId, fieldId, context
         case accent, mode
         case requestId, ok, selectedId, error
     }
@@ -495,6 +729,19 @@ public enum NativeCommand: Sendable, Equatable, Codable {
             self = .titleAction(menuItemId: try c.decode(String.self, forKey: .menuItemId))
         case "rail.action":
             self = .railAction(itemId: try c.decode(String.self, forKey: .itemId), menuItemId: try c.decodeIfPresent(String.self, forKey: .menuItemId))
+        case "inspector.visibility":
+            self = .inspectorVisibility(open: try c.decode(Bool.self, forKey: .open))
+        case "inspector.selectTab":
+            self = .inspectorSelectTab(tabId: try c.decode(String.self, forKey: .tabId))
+        case "inspector.action":
+            self = .inspectorAction(tabId: try c.decode(String.self, forKey: .tabId), actionId: try c.decode(String.self, forKey: .actionId),
+                                    itemId: try c.decodeIfPresent(String.self, forKey: .itemId), menuItemId: try c.decodeIfPresent(String.self, forKey: .menuItemId))
+        case "inspector.change":
+            self = .inspectorChange(tabId: try c.decode(String.self, forKey: .tabId), fieldId: try c.decode(String.self, forKey: .fieldId), value: try c.decode(String.self, forKey: .value))
+        case "inspector.toggle":
+            self = .inspectorToggle(tabId: try c.decode(String.self, forKey: .tabId), fieldId: try c.decode(String.self, forKey: .fieldId), checked: try c.decode(Bool.self, forKey: .checked))
+        case "companion.context":
+            self = .companionContext(try c.decode(CompanionContext.self, forKey: .context))
         case "command": self = .command(try c.decode(ShellCommandName.self, forKey: .name), query: try c.decodeIfPresent(String.self, forKey: .query))
         case "reply":
             let selected: String??
@@ -539,6 +786,19 @@ public enum NativeCommand: Sendable, Equatable, Codable {
             try c.encode("title.action", forKey: .type); try c.encode(menuItem, forKey: .menuItemId)
         case .railAction(let item, let menuItem):
             try c.encode("rail.action", forKey: .type); try c.encode(item, forKey: .itemId); try c.encodeIfPresent(menuItem, forKey: .menuItemId)
+        case .inspectorVisibility(let open):
+            try c.encode("inspector.visibility", forKey: .type); try c.encode(open, forKey: .open)
+        case .inspectorSelectTab(let tabId):
+            try c.encode("inspector.selectTab", forKey: .type); try c.encode(tabId, forKey: .tabId)
+        case .inspectorAction(let tabId, let actionId, let itemId, let menuItemId):
+            try c.encode("inspector.action", forKey: .type); try c.encode(tabId, forKey: .tabId); try c.encode(actionId, forKey: .actionId)
+            try c.encodeIfPresent(itemId, forKey: .itemId); try c.encodeIfPresent(menuItemId, forKey: .menuItemId)
+        case .inspectorChange(let tabId, let fieldId, let value):
+            try c.encode("inspector.change", forKey: .type); try c.encode(tabId, forKey: .tabId); try c.encode(fieldId, forKey: .fieldId); try c.encode(value, forKey: .value)
+        case .inspectorToggle(let tabId, let fieldId, let checked):
+            try c.encode("inspector.toggle", forKey: .type); try c.encode(tabId, forKey: .tabId); try c.encode(fieldId, forKey: .fieldId); try c.encode(checked, forKey: .checked)
+        case .companionContext(let context):
+            try c.encode("companion.context", forKey: .type); try c.encode(context, forKey: .context)
         case .command(let name, let query):
             try c.encode("command", forKey: .type); try c.encode(name, forKey: .name)
             try c.encodeIfPresent(query, forKey: .query)

@@ -414,7 +414,7 @@ private struct FilterMenu: View {
 }
 
 /// Lays children out left to right, wrapping to a new line when the row is full.
-private struct FlowLayout: Layout {
+struct FlowLayout: Layout {
     var spacing: CGFloat
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
@@ -598,7 +598,7 @@ private struct NavRowLabel: View {
     }
 }
 
-private struct AvatarView: View {
+struct AvatarView: View {
     let avatar: Avatar
     @State private var picture: NSImage?
 
@@ -622,7 +622,7 @@ private struct AvatarView: View {
     }
 }
 
-private struct BadgeView: View {
+struct BadgeView: View {
     let text: String?
     let tone: Tone?
 
@@ -639,7 +639,7 @@ private struct BadgeView: View {
 }
 
 /// A protocol MenuItem tree as SwiftUI menu content (context menus and header menus).
-private struct MenuItems: View {
+struct MenuItems: View {
     let items: [MenuItem]
     let onChoose: (String) -> Void
 

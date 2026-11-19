@@ -7,6 +7,7 @@ import { PersonaAvatar, personaLook, useDockPersona } from "@/app/(app)/chat/_co
 import { DockChatSwitcher, type DockChatSection } from "@/components/domain/dock-chat-switcher";
 import { DockContext, dockContextChip } from "@/components/domain/dock-context";
 import { buildCustomAppActions, buildCustomAppNav, parseViewId } from "@/lib/native-shell/models/custom-app";
+import { buildCustomAppInspectorSections } from "@/lib/native-shell/models/custom-app-inspector";
 import { EditorLayout, type DockTab, type EditorHeader, type NativeEditorHeader } from "@/components/shell/editor-layout";
 import { isTyping } from "@/components/shell/shortcuts";
 import { Content, TopBar } from "@/components/shell/topbar";
@@ -645,6 +646,27 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
   );
 
   const personaLookForTab = chat ? personaLook(chat.speaker ?? chat.persona) : startingPersona.look;
+  const perms = useCustomAppPermissions(app);
+  const permSections = buildCustomAppInspectorSections({
+    hasMcpServer: app.has_mcp_server,
+    mcpEntry: app.manifest.mcp_entry || "server.ts",
+    mcpToolCount: (app.mcp_tools ?? []).length,
+    mcpTools: (app.mcp_tools ?? []).map((t) => ({ name: t.name, description: t.description })),
+    dbSizeLabel: formatBytes(app.db_size_bytes),
+    schemaCount: app.schema.length,
+    schemaObjects: app.schema.map((o) => ({ type: o.type, name: o.name })),
+    capabilities: perms.capabilities,
+    toolScope: app.manifest.tool_scope === "app_only" ? "app_only" : "chats",
+    versions: perms.versions.map((v) => ({
+      seq: v.seq,
+      authorLabel: v.author_type === "persona" ? "Persona" : "You",
+      age: shortAgo(v.created_at),
+      note: v.note,
+      current: v.seq === app.current_seq,
+    })),
+    updating: perms.updating,
+  });
+
   const dockTabs: DockTab[] = [
     {
       id: "chat",
@@ -692,6 +714,27 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
       id: "permissions",
       label: "Permissions",
       icon: "shield",
+      native: {
+        kind: "native",
+        sections: permSections,
+        onChange: (fieldId, value) => {
+          if (fieldId === "tool_scope") {
+            const nextScope = value === "app_only" ? "app_only" : "chats";
+            perms.setToolScope(nextScope);
+          } else if (fieldId.startsWith("cap:")) {
+            const capKey = fieldId.slice("cap:".length);
+            perms.setCapabilityMode(capKey, value as CustomAppCapabilityMode);
+          }
+        },
+        onAction: (actionId, itemId) => {
+          if (actionId === "restore_version" && itemId) {
+            const seq = Number(itemId);
+            if (Number.isFinite(seq) && seq > 0 && seq !== app.current_seq) {
+              perms.restoreVersion(seq);
+            }
+          }
+        },
+      },
       content: dock?.open && dock.tab === "permissions" ? <PermissionsTab app={app} /> : <Skeleton className="m-3 h-40" />,
     },
   ];
@@ -881,11 +924,9 @@ function CodeInspectorTab({ app }: { app: CustomAppDetail }) {
   );
 }
 
-function PermissionsTab({ app }: { app: CustomAppDetail }) {
+function useCustomAppPermissions(app: CustomAppDetail) {
   const update = useUpdateCustomApp(app.slug);
   const connectors = useConnectors();
-  const [schemaOpen, setSchemaOpen] = useState(false);
-  const [toolsOpen, setToolsOpen] = useState(false);
 
   const connectorRows = useMemo(() => {
     const rows = connectors.data?.connectors ?? [];
@@ -911,18 +952,66 @@ function PermissionsTab({ app }: { app: CustomAppDetail }) {
 
   const connectorMap = useMemo(() => new Map(connectorRows.map((c) => [c.key, c])), [connectorRows]);
 
+  const capabilities = useMemo(
+    () =>
+      knownKeys.map((capKey) => {
+        const cInfo = connectorMap.get(capKey);
+        const label =
+          capKey === "vesper.api:read"
+            ? "Vesper API · Read"
+            : capKey === "vesper.api:write"
+              ? "Vesper API · Write"
+              : capKey === "app.http:outbound"
+                ? "Outbound HTTPS (MCP server)"
+                : capKey.startsWith("secret:")
+                  ? `Secret · ${capKey.slice("secret:".length)}`
+                  : cInfo?.label ?? capKey;
+        const hint =
+          capKey === "vesper.api:read"
+            ? "GET requests to Vesper REST APIs"
+            : capKey === "vesper.api:write"
+              ? "POST, PATCH, PUT, DELETE requests to Vesper APIs"
+              : capKey === "app.http:outbound"
+                ? "Public HTTPS fetch calls from the app's MCP server"
+                : capKey.startsWith("secret:")
+                  ? "Authenticated secretFetch calls using this Vesper secret"
+                  : cInfo?.hint ?? "Requested by app manifest";
+        const mode: CustomAppCapabilityMode = app.capabilities[capKey] ?? "denied";
+        const requested = app.manifest.requested_capabilities?.[capKey];
+        return { key: capKey, label, hint, mode, requested };
+      }),
+    [knownKeys, connectorMap, app.capabilities, app.manifest.requested_capabilities],
+  );
+
+  const versions = useMemo(() => [...app.versions].sort((a, b) => b.seq - a.seq), [app.versions]);
+
   const setCapabilityMode = (capKey: string, mode: CustomAppCapabilityMode) => {
     update.mutate(
-      {
-        capabilities: { ...app.capabilities, [capKey]: mode },
-      },
+      { capabilities: { ...app.capabilities, [capKey]: mode } },
       {
         onError: (e) => toast({ id: `cap-${app.slug}`, tone: "error", title: "Couldn’t update capability", description: errorText(e) }),
       },
     );
   };
 
-  const versions = useMemo(() => [...app.versions].sort((a, b) => b.seq - a.seq), [app.versions]);
+  const setToolScope = (nextScope: "chats" | "app_only") => {
+    update.mutate({
+      manifest: { ...app.manifest, tool_scope: nextScope },
+      note: `Set SQL tool scope to ${nextScope}`,
+    });
+  };
+
+  const restoreVersion = (seq: number) => {
+    update.mutate({ restore_seq: seq, note: `Restored v${seq}` });
+  };
+
+  return { capabilities, versions, setCapabilityMode, setToolScope, restoreVersion, updating: update.isPending };
+}
+
+function PermissionsTab({ app }: { app: CustomAppDetail }) {
+  const { capabilities, versions, setCapabilityMode, setToolScope, restoreVersion, updating } = useCustomAppPermissions(app);
+  const [schemaOpen, setSchemaOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto p-3.5">
@@ -1004,30 +1093,7 @@ function PermissionsTab({ app }: { app: CustomAppDetail }) {
       <section className="flex flex-col gap-2.5">
         <h3 className="text-12 font-semibold uppercase tracking-[0.04em] text-fg-tertiary">Bridge capabilities</h3>
         <div className="flex flex-col gap-2">
-          {knownKeys.map((capKey) => {
-            const cInfo = connectorMap.get(capKey);
-            const label =
-              capKey === "vesper.api:read"
-                ? "Vesper API · Read"
-                : capKey === "vesper.api:write"
-                  ? "Vesper API · Write"
-                  : capKey === "app.http:outbound"
-                    ? "Outbound HTTPS (MCP server)"
-                    : capKey.startsWith("secret:")
-                      ? `Secret · ${capKey.slice("secret:".length)}`
-                      : cInfo?.label ?? capKey;
-            const hint =
-              capKey === "vesper.api:read"
-                ? "GET requests to Vesper REST APIs"
-                : capKey === "vesper.api:write"
-                  ? "POST, PATCH, PUT, DELETE requests to Vesper APIs"
-                  : capKey === "app.http:outbound"
-                    ? "Public HTTPS fetch calls from the app's MCP server"
-                    : capKey.startsWith("secret:")
-                      ? "Authenticated secretFetch calls using this Vesper secret"
-                      : cInfo?.hint ?? "Requested by app manifest";
-            const mode: CustomAppCapabilityMode = app.capabilities[capKey] ?? "denied";
-            const requested = app.manifest.requested_capabilities?.[capKey];
+          {capabilities.map(({ key: capKey, label, hint, mode, requested }) => {
             return (
               <div key={capKey} className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface-sunken p-2.5">
                 <div className="flex items-start justify-between gap-2">
@@ -1062,12 +1128,7 @@ function PermissionsTab({ app }: { app: CustomAppDetail }) {
             label="Persona SQL tool scope"
             layout="fill"
             value={app.manifest.tool_scope === "app_only" ? "app_only" : "chats"}
-            onChange={(nextScope) =>
-              update.mutate({
-                manifest: { ...app.manifest, tool_scope: nextScope },
-                note: `Set SQL tool scope to ${nextScope}`,
-              })
-            }
+            onChange={setToolScope}
             options={SCOPE_OPTIONS}
           />
         </Field>
@@ -1094,13 +1155,8 @@ function PermissionsTab({ app }: { app: CustomAppDetail }) {
                 ) : (
                   <Button
                     variant="outline"
-                    disabled={update.isPending}
-                    onClick={() =>
-                      update.mutate({
-                        restore_seq: v.seq,
-                        note: `Restored v${v.seq}`,
-                      })
-                    }
+                    disabled={updating}
+                    onClick={() => restoreVersion(v.seq)}
                     className="h-6 px-2 text-11"
                   >
                     Restore

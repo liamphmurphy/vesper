@@ -32,6 +32,9 @@ import { cx } from "@/lib/cx";
 import { FilterMenu } from "@/components/domain/pickers";
 import { ticketsHref } from "@/lib/tickets-layout";
 import { buildEpicsNavModel, EPICS_HEALTH_FILTER, EPICS_STATUS_FILTER } from "@/lib/native-shell/models/epics";
+import { STATUS_NAME } from "@/components/domain/meta";
+import { epicHealthTone, ticketStatusTone } from "@/lib/native-shell/models/common";
+import { buildEpicsOverviewInspectorSections } from "@/lib/native-shell/models/epic-inspector";
 import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
 import { EpicBrief } from "../../work/work-details";
 import { WorkNavHeader, WorkSectionLabel, WorkSpaceFilter } from "../../work/work-nav-header";
@@ -525,6 +528,33 @@ export function EpicsScreen() {
               id: "context",
               label: "Context",
               icon: "sidebar",
+              native: {
+                kind: "native",
+                sections: buildEpicsOverviewInspectorSections({
+                  epicId: selectedEpic.epic.id,
+                  name: selectedEpic.epic.name,
+                  projectName: selectedEpic.project.name,
+                  healthLabel: HEALTH_LABEL[selectedEpic.epic.health],
+                  healthTone: epicHealthTone(selectedEpic.epic.health),
+                  status: selectedEpic.epic.status,
+                  doneCount: selectedEpic.counts.done,
+                  totalCount: selectedEpic.counts.total,
+                  pointsDone: selectedEpic.epic.points_done,
+                  pointsTotal: selectedEpic.epic.points_total,
+                  ownerName: selectedEpic.owner?.name ?? "Unassigned",
+                  targetDate: selectedEpic.target_date ? dueDate(selectedEpic.target_date) : "No target date",
+                  objective: selectedEpic.objective,
+                  tickets: ((selectedEpic.epic.id === activeFeaturedEpic?.epic.id ? featuredTicketsQuery.data : undefined) ?? selectedEpic.tickets).map((t) => ({
+                    key: t.key,
+                    title: t.title,
+                    statusLabel: STATUS_NAME[t.status] ?? t.status,
+                    statusTone: ticketStatusTone(t.status),
+                  })),
+                }),
+                onAction: (actionId) => {
+                  if (actionId === "open_epic") router.push(`/epics/${encodeURIComponent(selectedEpic.epic.id)}`);
+                },
+              },
               content: (
                 <EpicContextPane
                   epic={selectedEpic}
@@ -535,7 +565,7 @@ export function EpicsScreen() {
                 />
               ),
             },
-            { id: "chat", label: "Chat", icon: "msg", content: <WorkChat /> },
+            { id: "chat", label: "Chat", icon: "msg", native: { kind: "companion" }, content: <WorkChat /> },
           ]}
         />
       )}
