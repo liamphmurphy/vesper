@@ -1715,8 +1715,10 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 		}
 	}
 	networks = append(networks, r.turnPlayground(ctx, c, env, sensitive)...)
+	// instruction_bytes and skills feed get_run's efficiency summary: what each
+	// harness had to read before its first tool call (LAZYAGENTS-257).
 	r.event(ctx, c.run.ID, "lifecycle", map[string]any{"state": "turn_started", "turn": turn.Seq, "trigger": turn.Trigger,
-		"harness": c.spec.Harness, "resume": session != ""})
+		"harness": c.spec.Harness, "resume": session != "", "instruction_bytes": len(section), "skills": len(turnSpec.Skills)})
 	turnEnv := env
 	if c.run.Purpose == "chat" && allowedScope(c.spec, "repo:write") {
 		// Pushing waits for the person: the persona asks with request_push.

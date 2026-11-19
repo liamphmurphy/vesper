@@ -1978,7 +1978,9 @@ SELECT seq, type, at,
   coalesce(payload->>'id', '')::text AS call_id,
   coalesce(payload->>'tool', '')::text AS tool,
   coalesce(payload->'input'->>'command', '')::text AS command,
-  coalesce((payload->>'context_tokens')::bigint, 0)::bigint AS context_tokens
+  coalesce(payload->'input'->>'file_path', '')::text AS file_path,
+  coalesce((payload->>'context_tokens')::bigint, 0)::bigint AS context_tokens,
+  coalesce((payload->>'instruction_bytes')::bigint, 0)::bigint AS instruction_bytes
 FROM run_events
 WHERE run_id = $1 AND type IN ('lifecycle', 'tool_call', 'tool_result')
   AND coalesce((payload->>'subagent')::boolean, false) = false
@@ -1986,14 +1988,16 @@ ORDER BY seq
 `
 
 type RunEfficiencyEventsRow struct {
-	Seq           int64
-	Type          string
-	At            time.Time
-	State         string
-	CallID        string
-	Tool          string
-	Command       string
-	ContextTokens int64
+	Seq              int64
+	Type             string
+	At               time.Time
+	State            string
+	CallID           string
+	Tool             string
+	Command          string
+	FilePath         string
+	ContextTokens    int64
+	InstructionBytes int64
 }
 
 // The main agent's tool calls and results plus setup lifecycle events, slim:
@@ -2015,7 +2019,9 @@ func (q *Queries) RunEfficiencyEvents(ctx context.Context, runID uuid.UUID) ([]R
 			&i.CallID,
 			&i.Tool,
 			&i.Command,
+			&i.FilePath,
 			&i.ContextTokens,
+			&i.InstructionBytes,
 		); err != nil {
 			return nil, err
 		}

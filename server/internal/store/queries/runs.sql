@@ -342,7 +342,9 @@ SELECT seq, type, at,
   coalesce(payload->>'id', '')::text AS call_id,
   coalesce(payload->>'tool', '')::text AS tool,
   coalesce(payload->'input'->>'command', '')::text AS command,
-  coalesce((payload->>'context_tokens')::bigint, 0)::bigint AS context_tokens
+  coalesce(payload->'input'->>'file_path', '')::text AS file_path,
+  coalesce((payload->>'context_tokens')::bigint, 0)::bigint AS context_tokens,
+  coalesce((payload->>'instruction_bytes')::bigint, 0)::bigint AS instruction_bytes
 FROM run_events
 WHERE run_id = $1 AND type IN ('lifecycle', 'tool_call', 'tool_result')
   AND coalesce((payload->>'subagent')::boolean, false) = false

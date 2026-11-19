@@ -82,6 +82,15 @@ func TestChatInstructionsFitEveryHarness(t *testing.T) {
 			if strings.Contains(section, ".lazyagents/skills/") {
 				t.Error("every harness discovers its skills natively: no index pointing at .lazyagents/skills")
 			}
+			// get_run's efficiency summary reads what each turn started with.
+			var bytes, skills int
+			if err := e.pool.QueryRow(e.ctx, `SELECT (payload->>'instruction_bytes')::int, (payload->>'skills')::int FROM run_events
+				WHERE run_id = $1 AND type = 'lifecycle' AND payload->>'state' = 'turn_started' ORDER BY seq DESC LIMIT 1`, e.chatRun(chat.ID).ID).Scan(&bytes, &skills); err != nil {
+				t.Fatal(err)
+			}
+			if bytes != len(section) || skills < 6 {
+				t.Errorf("turn_started: instruction_bytes=%d (section %d) skills=%d", bytes, len(section), skills)
+			}
 			for _, skill := range []string{"vesper-pdfs", "vesper-canvases", "vesper-custom-apps", "vesper-videos", "vesper-audio", "vesper-playground"} {
 				if body := read(filepath.Join(c.skills, skill, "SKILL.md")); !strings.Contains(body, "description: ") {
 					t.Errorf("%s has no description:\n%s", skill, body)
