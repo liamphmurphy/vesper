@@ -83,6 +83,7 @@ enum MainMenu {
         // View
         _ = add("View", [
             item("Show Sidebar", #selector(AppDelegate.toggleSidebarAction(_:)), "s", [.command, .control]),
+            item("Show Inspector", #selector(AppDelegate.toggleInspectorAction(_:)), "\\", [.command]),
             sep(),
             item("Reload", #selector(AppDelegate.reload(_:)), "r"),
             item("Force Reload", #selector(AppDelegate.forceReload(_:)), "r", [.command, .shift]),

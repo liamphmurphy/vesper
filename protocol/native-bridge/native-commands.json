@@ -132,5 +132,51 @@
     "type": "rail.action",
     "itemId": "prs",
     "menuItemId": "pr:1"
+  },
+  {
+    "v": 1,
+    "type": "inspector.visibility",
+    "open": true
+  },
+  {
+    "v": 1,
+    "type": "inspector.selectTab",
+    "tabId": "chat"
+  },
+  {
+    "v": 1,
+    "type": "inspector.action",
+    "tabId": "properties",
+    "actionId": "labels",
+    "itemId": "l1",
+    "menuItemId": "toggle:l1"
+  },
+  {
+    "v": 1,
+    "type": "inspector.change",
+    "tabId": "properties",
+    "fieldId": "status",
+    "value": "done"
+  },
+  {
+    "v": 1,
+    "type": "inspector.toggle",
+    "tabId": "properties",
+    "fieldId": "mockup",
+    "checked": true
+  },
+  {
+    "v": 1,
+    "type": "companion.context",
+    "context": {
+      "subject": {
+        "kind": "run",
+        "id": "0b5c9a6e-0000-4000-8000-000000000001",
+        "title": "Implementer on VES-412",
+        "agent": "Implementer",
+        "ticketKey": "VES-412"
+      },
+      "path": "/runs/0b5c9a6e-0000-4000-8000-000000000001"
+    }
   }
 ]

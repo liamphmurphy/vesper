@@ -14,6 +14,8 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
     static weak var services: SystemServices?
     /// Called when the route changes (session saving).
     var onRouteChange: (() -> Void)?
+    /// Called when the page (or companion) asks to open an in-app path in the main pane.
+    var onOpenInMain: ((String, Bool) -> Void)?
 
     private var appearanceMonitor: AppearanceMonitor?
 
@@ -66,6 +68,8 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
             state.subtitle = subtitle
             state.titleMenu = menu
         case .rail(let model): state.rail = model
+        case .inspector(let model): state.inspector = model
+        case .openInMain(let path, let newTab): onOpenInMain?(path, newTab)
         case .shell(let model): state.shell = model
         case .navigator(let model): state.navigator = model
         case .navigatorFallback(let active): state.navigatorFallback = active
@@ -100,6 +104,10 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
 
     /// The page's confirmAction as a sheet on its window: Return confirms, Esc cancels.
     private func confirmSheet(title: String, body: String?, confirmLabel: String, cancelLabel: String?, destructive: Bool) async -> Bool {
+        await Self.confirmSheet(title: title, body: body, confirmLabel: confirmLabel, cancelLabel: cancelLabel, destructive: destructive, window: webView?.window)
+    }
+
+    static func confirmSheet(title: String, body: String?, confirmLabel: String, cancelLabel: String?, destructive: Bool, window: NSWindow?) async -> Bool {
         let alert = NSAlert()
         alert.alertStyle = destructive ? .warning : .informational
         alert.messageText = title
@@ -108,7 +116,7 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
         confirm.hasDestructiveAction = destructive
         // NSAlert only gives Esc to a button titled "Cancel"; the page may name it "Keep editing".
         alert.addButton(withTitle: cancelLabel ?? "Cancel").keyEquivalent = "\u{1b}"
-        guard let window = webView?.window else { return alert.runModal() == .alertFirstButtonReturn }
+        guard let window else { return alert.runModal() == .alertFirstButtonReturn }
         // A sheet already up (another confirm, the unsaved-changes alert) would make this one queue
         // invisibly; answer no instead, as the in-app dialog does when replaced.
         guard window.attachedSheet == nil else { return false }
@@ -120,6 +128,11 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
             send(.reply(requestId: requestId, ok: false, error: "no web view"))
             return
         }
+        let selected = Self.showContextMenu(items: items, x: x, y: y, in: webView)
+        send(.reply(requestId: requestId, ok: true, selectedId: .some(selected)))
+    }
+
+    static func showContextMenu(items: [MenuItem], x: Double, y: Double, in webView: WKWebView) -> String? {
         var selected: String?
         let menu = MenuBuilder.menu(from: items) { selected = $0 }
         // The page sends CSS pixels, which View › Zoom scales into view points. Its y grows
@@ -127,12 +140,16 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
         let px = x * webView.pageZoom, py = y * webView.pageZoom
         let point = NSPoint(x: px, y: webView.isFlipped ? py : webView.bounds.height - py)
         menu.popUp(positioning: nil, at: point, in: webView)
-        send(.reply(requestId: requestId, ok: true, selectedId: .some(selected)))
+        return selected
     }
 
     // MARK: Shell -> page
 
     func send(_ command: NativeCommand) {
+        Self.send(command, to: webView)
+    }
+
+    static func send(_ command: NativeCommand, to webView: WKWebView?) {
         guard let webView else { return }
         do {
             let data = try JSONEncoder().encode(command)
@@ -158,12 +175,14 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
         controller.removeScriptMessageHandler(forName: WebViewFactory.handlerName)
     }
 
-    private static func describe(_ m: PageMessage) -> String {
+    static func describe(_ m: PageMessage) -> String {
         switch m {
         case .ready(let p): "ready \(p)"
         case .route(let p, let a): "route \(p) area=\(a?.rawValue ?? "nil")"
         case .title(let t, _, _): "title \(t)"
         case .rail(let m): "rail \(m == nil ? "none" : "items")"
+        case .inspector(let m): "inspector \(m == nil ? "none" : "\(m!.id) open=\(m!.open) tab=\(m!.activeTabId)")"
+        case .openInMain(let p, let newTab): "openInMain \(p) newTab=\(newTab)"
         case .shell(let s): "shell areas=\(s.areas.count) apps=\(s.apps.count)"
         case .navigator(let n): "navigator \(n?.id ?? "nil") selected=\(n?.selectedId ?? "nil") rows=\(n?.sections.flatMap { $0.items.map(\.id) }.prefix(12).joined(separator: ",") ?? "")"
         case .navigatorFallback(let a): "navigatorFallback \(a)"

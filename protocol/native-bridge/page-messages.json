@@ -522,5 +522,193 @@
     "v": 1,
     "type": "rail",
     "model": null
+  },
+  {
+    "v": 1,
+    "type": "inspector",
+    "model": {
+      "id": "ticket:VES-412",
+      "open": true,
+      "activeTabId": "properties",
+      "companion": {
+        "subject": {
+          "kind": "ticket",
+          "id": "VES-412",
+          "title": "Move right inspector to native macOS split view"
+        },
+        "path": "/tickets/VES-412"
+      },
+      "tabs": [
+        {
+          "id": "properties",
+          "label": "Properties",
+          "icon": "sliders",
+          "kind": "native",
+          "headerActions": [
+            {
+              "id": "refresh",
+              "label": "Refresh",
+              "icon": "refresh"
+            }
+          ],
+          "sections": [
+            {
+              "id": "props",
+              "title": "Details",
+              "aside": "VES-412",
+              "collapsible": true,
+              "collapsed": false,
+              "badge": {
+                "text": "2",
+                "tone": "accent"
+              },
+              "items": [
+                {
+                  "id": "space",
+                  "kind": "fact",
+                  "label": "Space",
+                  "value": "Vesper",
+                  "icon": "briefcase",
+                  "href": "/tickets?project=VES"
+                },
+                {
+                  "id": "status",
+                  "kind": "picker",
+                  "label": "Status",
+                  "value": "in_progress",
+                  "options": [
+                    { "value": "todo", "label": "Todo" },
+                    { "value": "in_progress", "label": "In progress", "tone": "accent" },
+                    { "value": "done", "label": "Done", "tone": "done" }
+                  ]
+                },
+                {
+                  "id": "mode",
+                  "kind": "segmented",
+                  "label": "Edits",
+                  "value": "suggest",
+                  "detail": "Nothing changes until you accept it.",
+                  "options": [
+                    { "value": "direct", "label": "Direct" },
+                    { "value": "suggest", "label": "Suggest" },
+                    { "value": "paused", "label": "Paused" }
+                  ]
+                },
+                {
+                  "id": "mockup",
+                  "kind": "toggle",
+                  "label": "Mockup required",
+                  "checked": false,
+                  "detail": "Require an approved mockup before starting"
+                },
+                {
+                  "id": "due",
+                  "kind": "text",
+                  "label": "Due date",
+                  "value": "2026-11-30",
+                  "placeholder": "YYYY-MM-DD",
+                  "inputType": "date"
+                },
+                {
+                  "id": "plan",
+                  "kind": "checklist",
+                  "label": "Plan",
+                  "steps": [
+                    { "id": "s1", "text": "Protocol types", "state": "done", "interactive": true },
+                    { "id": "s2", "text": "Native split view", "state": "current" },
+                    { "id": "s3", "text": "Needs approval", "state": "needs_human" }
+                  ]
+                },
+                {
+                  "id": "cache",
+                  "kind": "progress",
+                  "label": "Cache share",
+                  "detail": "82%",
+                  "fraction": 0.82,
+                  "tone": "accent"
+                },
+                {
+                  "id": "labels",
+                  "kind": "chips",
+                  "label": "Labels",
+                  "actionId": "labels",
+                  "chips": [
+                    { "id": "l1", "text": "macos", "color": "#5E6AD2", "removable": true }
+                  ],
+                  "menu": [
+                    { "id": "l2", "label": "ui", "checked": false }
+                  ]
+                },
+                {
+                  "id": "runs",
+                  "kind": "list",
+                  "label": "Runs",
+                  "actionId": "openRun",
+                  "rows": [
+                    {
+                      "id": "run-1",
+                      "title": "Implementer",
+                      "subtitle": "2m ago",
+                      "status": "done",
+                      "trailing": "$0.12",
+                      "href": "/runs/0b5c9a6e-0000-4000-8000-000000000001"
+                    }
+                  ]
+                },
+                {
+                  "id": "btns",
+                  "kind": "actions",
+                  "actions": [
+                    { "id": "reapply", "label": "Reapply", "icon": "refresh", "accent": true }
+                  ]
+                },
+                {
+                  "id": "conflict",
+                  "kind": "note",
+                  "label": "Heads up",
+                  "value": "Updated elsewhere; review before saving.",
+                  "tone": "warning"
+                },
+                {
+                  "id": "burnup",
+                  "kind": "chart",
+                  "label": "Points burn-up",
+                  "points": [
+                    { "label": "Day 1", "value": 2, "secondary": 10 },
+                    { "label": "Day 2", "value": 5, "secondary": 10 }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "chat",
+          "label": "Chat",
+          "icon": "msg",
+          "kind": "companion",
+          "busy": true,
+          "unread": true
+        },
+        {
+          "id": "design",
+          "label": "Design",
+          "icon": "designs",
+          "kind": "web",
+          "badge": { "text": "3", "tone": "human" }
+        }
+      ]
+    }
+  },
+  {
+    "v": 1,
+    "type": "inspector",
+    "model": null
+  },
+  {
+    "v": 1,
+    "type": "openInMain",
+    "path": "/tickets/VES-412",
+    "newTab": true
   }
 ]

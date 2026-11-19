@@ -14,6 +14,7 @@ import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { TopBar } from "@/components/shell/topbar";
 import { WorkChat } from "@/components/domain/work-chat";
 import { useCompact } from "@/lib/viewport";
+import { buildWorkflowInspectorSections } from "@/lib/native-shell/models/workflow-inspector";
 import { buildWorkflowPaletteNavModel } from "@/lib/native-shell/models/workflows";
 import { Button } from "@/components/ui/button";
 import { Banner, Skeleton, TextArea, TextInput } from "@/components/ui/primitives";
@@ -257,6 +258,7 @@ function Canvas({ workflow, chatId, onChatId, personaId, onPersonaId, onApplied,
     setInspectN((n) => n + 1);
   };
   const flow = useReactFlow();
+  const personasQuery = usePersonas();
   const save = useSaveWorkflow(workflow.id);
   const publish = usePublishWorkflow(workflow.id);
   const resolve = useResolveProposal(workflow.id);
@@ -340,6 +342,42 @@ function Canvas({ workflow, chatId, onChatId, personaId, onPersonaId, onApplied,
 
   const issues = workflow.issues;
   const error = save.error ?? publish.error ?? resolve.error;
+  const patchNode = (patch: Partial<GraphNode>) => {
+    if (!node) return;
+    update({ ...graph, nodes: graph.nodes.map((n) => (n.id === node.id ? { ...n, ...patch } : n)) });
+  };
+  const patchNodeConfig = (patch: Partial<GraphNode["config"]>) => {
+    if (!node) return;
+    patchNode({ config: { ...node.config, ...patch } });
+  };
+  const ancestorsOfSelected = node ? ancestors(graph, node.id) : [];
+  const rerunnableOptions = [
+    { value: "", label: node?.type === "gate" ? "Only approve or reject" : "Don’t retry" },
+    ...ancestorsOfSelected
+      .filter((n) => n.type === "enrich" || n.type === "agent")
+      .map((n) => ({ value: n.id, label: `Re-run from ${n.title}` })),
+  ];
+  const parentCheckOptions = [
+    { value: "", label: "No check" },
+    ...(node ? parentChecks(graph, node.id).map((n) => ({ value: n.id, label: n.title })) : []),
+  ];
+  const personaOptions = [
+    { value: "", label: "The chat’s persona" },
+    ...(personasQuery.data?.personas ?? []).map((p) => ({ value: p.id, label: p.name })),
+  ];
+  const workflowSections = buildWorkflowInspectorSections({
+    workflowName: workflow.name,
+    workflowDescription: workflow.description,
+    publishedVersion: workflow.published_version,
+    unpublishedChanges: workflow.unpublished_changes,
+    preview: !!preview,
+    selectedNode: node,
+    personaOptions,
+    rerunnableOptions,
+    parentCheckOptions,
+    issues,
+    error: error?.message,
+  });
   const nodePalette = (
     <aside aria-label="Node types" className="min-h-0 flex-1 overflow-y-auto px-2.5 pt-4 pb-3">
       {PALETTE.map((g) => (
@@ -410,13 +448,52 @@ function Canvas({ workflow, chatId, onChatId, personaId, onPersonaId, onApplied,
               id: "details",
               label: "Details",
               icon: "sliders",
+              native: {
+                kind: "native",
+                sections: workflowSections,
+                onChange: (fieldId, value) => {
+                  if (preview) return;
+                  if (fieldId === "workflow.name") {
+                    if (value.trim() && value.trim() !== workflow.name) mutate({ name: value.trim() });
+                  } else if (fieldId === "workflow.description") {
+                    if (value !== workflow.description) mutate({ description: value });
+                  } else if (fieldId === "node.title") patchNode({ title: value });
+                  else if (fieldId === "node.prompt") patchNodeConfig({ prompt: value });
+                  else if (fieldId === "node.persona_id") patchNodeConfig({ persona_id: value || undefined, agent_handle: undefined });
+                  else if (fieldId === "node.image_engine") patchNodeConfig({ image_engine: value || undefined });
+                  else if (fieldId === "node.retry_from") patchNodeConfig({ retry_from: value || undefined });
+                  else if (fieldId === "node.max_attempts") patchNodeConfig({ max_attempts: Number(value) || undefined });
+                  else if (fieldId === "node.requires_check") patchNodeConfig({ requires_check: value || undefined });
+                  else if (fieldId === "node.path") patchNodeConfig({ path: value });
+                  else if (fieldId === "node.mode") patchNodeConfig({ mode: value });
+                  else if (fieldId === "node.item_title") patchNodeConfig({ title: value });
+                },
+                onToggle: (fieldId, checked) => {
+                  if (preview) return;
+                  if (fieldId === "node.web") patchNodeConfig({ web: checked || undefined });
+                  else if (fieldId === "node.images") patchNodeConfig({ images: checked || undefined });
+                  else if (fieldId === "node.check") {
+                    patchNodeConfig(
+                      checked ? { check: true } : { check: undefined, retry_from: undefined, max_attempts: undefined },
+                    );
+                  }
+                },
+                onAction: (actionId, itemId) => {
+                  if (actionId === "delete_node" && !preview && node && node.type !== "trigger") {
+                    update(removeNode(graph, node.id));
+                    setSelected(null);
+                  } else if (actionId === "select_issue_node" && itemId && !itemId.startsWith("issue:")) {
+                    inspectNode(itemId);
+                  }
+                },
+              },
               content: (
                 <div aria-label="Workflow details" className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto bg-panel p-4">
                   {detailsContent}
                 </div>
               ),
             },
-            { id: "chat", label: "Chat", icon: "msg", content: <WorkChat /> },
+            { id: "chat", label: "Chat", icon: "msg", native: { kind: "companion" }, content: <WorkChat /> },
           ]}
         />
       )}

@@ -5,26 +5,33 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type PointerE
 import { useCanvasComments, useChatCanvases } from "@/lib/api/canvas-hooks";
 import { useCanStartSavedPlayground, useChatPlayground, usePlaygroundAction } from "@/lib/api/playground-hooks";
 import { useDesignProposals } from "@/lib/api/designs-hooks";
-import { useChat, useChatRunEvents } from "@/lib/api/hooks";
+import { useChat, useChatMessages, useChatModels, useChatRunEvents, useCosts, useRunLog, useTicket } from "@/lib/api/hooks";
+import { usePage } from "@/lib/api/knowledge-hooks";
 import { activePanel, closeItem, closePanel, closeThread, itemOf, itemParam, dockOpen, dockTab, dragCloses, hideSheet, openPanels, openThreads, PANELS, setDock, sheetHidden, switchPanel, threadOf, type ChatPanel, type DockTabId, type PanelLayout } from "@/lib/chat-panels";
-import { toolCalls } from "@/lib/chat-ui";
+import { toolCalls, turnWindows } from "@/lib/chat-ui";
+import { spendLabel } from "@/lib/costs";
+import { pageHref } from "@/lib/knowledge";
 import { presenceOf } from "@/lib/designs/presence";
 import { claimReadingFocus, dockReducer, dockShortcut, type DockAction, type DockState } from "@/lib/editor-layout";
 import { CompanionPortal } from "@/components/shell/companion";
-import { Dock, type DockTab } from "@/components/shell/editor-layout";
+import { Dock, type DockTab, type NativeDockTab } from "@/components/shell/editor-layout";
 import { ItemPanel } from "./item-panel";
 import { cx } from "@/lib/cx";
 import { useCanvasPanel } from "@/lib/use-canvas-panel";
 import { useIsNativeShell } from "@/lib/native-shell/hooks";
+import { buildChatActivitySections, buildChatItemSections, type ChatTurnSummary } from "@/lib/native-shell/models/chat-inspector";
 import { usePlaygroundPanel } from "@/lib/use-playground-panel";
 import { toast } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { CanvasDock, CanvasFullscreen } from "@/components/domain/canvas-view";
 import { PlaygroundFullscreen, PlaygroundPanel } from "@/components/domain/playground";
+import { STATUS_NAME, PRIORITY_NAME } from "@/components/domain/meta";
+import { runTitle } from "@/lib/run-list";
 import { useCodeReview } from "@/lib/api/code-review-hooks";
 import { CodePanel } from "./code-panel";
 import { DesignPanel, useOpenNewDesigns } from "./design-panel";
+import { effortLabel, modelLabel } from "./model-picker";
 import { ThreadPanel } from "./thread-panel";
 
 const LABELS: Record<DockTabId, string> = { design: "Design", canvas: "Canvas", playground: "Playground", code: "Code", thread: "Thread", item: "Linked", activity: "Activity" };
@@ -187,8 +194,118 @@ function ChatDock({ chatId, live, readOnly, agent, activity, panels }: { chatId:
     state.open && !hidden ? (state.tab as DockTabId) : undefined,
   );
 
+  const isNative = useIsNativeShell();
   const thread = threadOf(search);
   const item = itemOf(search);
+  const messagesQuery = useChatMessages(isNative ? chatId : undefined, 200);
+  const modelsQuery = useChatModels();
+  const chatCosts = useCosts({ chat: chatId }, isNative);
+  const itemTicket = useTicket(isNative && item?.kind === "ticket" ? item.key : "");
+  const itemRun = useRunLog(isNative && item?.kind === "run" ? item.id : "");
+  const itemPage = usePage(isNative && item?.kind === "page" ? item.id : undefined);
+
+  const activityNative = useMemo<NativeDockTab | undefined>(() => {
+    if (!isNative || !chat) return undefined;
+    const msgList = messagesQuery.data?.messages;
+    const groups = modelsQuery.data;
+    const current = { harness: chat.harness, model: chat.model, auto: !!chat.auto_model };
+    const ml = modelLabel(groups, current);
+    const turnsMap = turnWindows(msgList);
+    const turnSummaries: ChatTurnSummary[] = [];
+    let lastUserPrompt = "";
+    for (const m of msgList ?? []) {
+      if (m.role === "user") {
+        lastUserPrompt = m.body_md;
+      } else if (turnsMap.has(m.id)) {
+        const promptText = turnsMap.get(m.id)?.followup
+          ? "Follow-up: reacting to generated images"
+          : lastUserPrompt;
+        const trimmed = promptText.length > 90 ? `${promptText.slice(0, 90).trimEnd()}…` : promptText;
+        const mLabel = m.harness && m.model ? modelLabel(groups, { harness: m.harness, model: m.model }) : ml;
+        turnSummaries.push({
+          id: m.id,
+          prompt: trimmed || "Reply",
+          meta: `${mLabel.harness} · ${mLabel.model}`,
+          tone: "done",
+        });
+      }
+    }
+    const total = chatCosts.data?.total;
+    const costLabel =
+      total && total.runs > 0
+        ? spendLabel(total.cost_micros, chatCosts.data?.unpriced_runs ?? 0)
+        : undefined;
+    return {
+      kind: "native",
+      sections: buildChatActivitySections({
+        modelLabel: `${ml.model}${current.auto ? " (auto)" : ""}`,
+        harnessLabel: ml.harness,
+        effort: chat.effort ? effortLabel(chat.effort) : undefined,
+        costLabel,
+        running: chat.state === "running",
+        turns: turnSummaries.reverse(),
+      }),
+    };
+  }, [isNative, chat, messagesQuery.data?.messages, modelsQuery.data, chatCosts.data]);
+
+  const itemHref = !item
+    ? ""
+    : item.kind === "ticket"
+      ? `/tickets/${encodeURIComponent(item.key)}`
+      : item.kind === "run"
+        ? `/runs/${encodeURIComponent(item.id)}`
+        : pageHref(item.id, itemPage.data?.title);
+
+  const itemNative: NativeDockTab | undefined = !isNative || !item
+    ? undefined
+    : {
+        kind: "native",
+        sections: buildChatItemSections(
+          item.kind === "ticket"
+            ? {
+                kind: "ticket",
+                key: item.key,
+                title: itemTicket.data?.title ?? item.key,
+                statusLabel: itemTicket.data ? (STATUS_NAME[itemTicket.data.status] ?? itemTicket.data.status) : "Ticket",
+                priorityLabel: itemTicket.data ? (PRIORITY_NAME[itemTicket.data.priority] ?? itemTicket.data.priority) : "",
+                assignee: itemTicket.data?.assignee?.name,
+                description: itemTicket.data?.description_md,
+                criteria: (itemTicket.data?.criteria ?? []).map((c) => ({ id: c.id, text: c.text, done: c.done })),
+                href: itemHref,
+                loading: itemTicket.isPending,
+                error: itemTicket.isError,
+              }
+            : item.kind === "run"
+              ? {
+                  kind: "run",
+                  id: item.id,
+                  title: itemRun.data?.run ? runTitle(itemRun.data.run) : "Run",
+                  agent: itemRun.data?.run.agent.name,
+                  ticketKey: itemRun.data?.run.ticket_key ?? undefined,
+                  stateLabel: itemRun.data?.run.state.replace("_", " "),
+                  outcome: itemRun.data?.run.outcome ?? undefined,
+                  plan: (itemRun.data?.run.plan ?? []).map((s) => ({ position: s.position, text: s.text, state: s.state })),
+                  href: itemHref,
+                  loading: itemRun.isPending,
+                  error: itemRun.isError,
+                }
+              : {
+                  kind: "page",
+                  id: item.id,
+                  title: itemPage.data?.title ?? "Page",
+                  path: itemPage.data?.path ?? undefined,
+                  excerpt: itemPage.data?.body_md ?? undefined,
+                  href: itemHref,
+                  loading: itemPage.isPending,
+                  error: itemPage.isError,
+                },
+        ),
+        onAction: (actionId) => {
+          if (actionId === "open_item" && itemHref) router.push(itemHref);
+          else if (actionId === "close_item") go(closeItem(new URLSearchParams(search.toString())));
+        },
+      };
+
   const content: Record<DockTabId, ReactNode> = {
     item: item && <ItemPanel key={itemParam(item)} item={item} onClose={() => go(closeItem(new URLSearchParams(search.toString())))} />,
     thread: thread && <ThreadPanel key={thread} chatId={chatId} messageId={thread} onClose={() => go(closeThread(new URLSearchParams(search.toString())))} />,
@@ -217,6 +334,7 @@ function ChatDock({ chatId, live, readOnly, agent, activity, panels }: { chatId:
     badge: id === "design" && pending > 0 ? <span data-testid="design-tab-pending" title={`${pending} to review`} className="rounded-full bg-pill-review-bg px-1.5 text-11 text-pill-review-fg">{pending}</span> : undefined,
     // A design under review needs its canvas and the list of changes side by side.
     wide: id === "design" && canvasPanel.reviewing ? "max" : id !== "activity" && id !== "thread" && id !== "item",
+    native: id === "activity" ? activityNative : id === "item" ? itemNative : undefined,
     content: content[id],
   }));
   const start = usePlaygroundStart(chatId);

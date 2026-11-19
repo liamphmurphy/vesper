@@ -7,7 +7,7 @@ import WebKit
 /// separate layout it holds one tab (and the system groups windows into tabs); in the compact
 /// layout it holds several tabs, drawn in its toolbar, and shows the active one.
 @MainActor
-final class MainWindowController: NSWindowController, NSWindowDelegate {
+final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolbarItemValidation {
     static let tabbingIdentifier = "vesper"
     static let defaultSize = NSSize(width: 1280, height: 840)
     static let minSize = NSSize(width: 760, height: 540)
@@ -18,7 +18,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     let tabs = TabsModel()
     let split = NSSplitViewController()
     private let container = TabContainerController()
+    private var rootController: WindowRootController?
     private var sidebarItem: NSSplitViewItem?
+    private var inspectorItem: NSSplitViewItem?
+    private var inspectorController: InspectorViewController?
+    private var inspectorCollapseObservation: NSKeyValueObservation?
+    private var inspectorSyncDepth = 0
+    private var isSyncingInspector: Bool { inspectorSyncDepth > 0 }
+    private var lastObservedInspectorTab: ObjectIdentifier?
     private var toolbarController: ToolbarController?
     private var lastContent: WebContentController
     /// Set when the layout switch emptied and closed this window.
@@ -29,6 +36,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     var state: ShellState { content.state }
     var kind: WindowKind { content.kind }
     var hasSidebar: Bool { sidebarItem != nil }
+    var hasInspector: Bool { inspectorItem != nil }
+    var isInspectorCollapsed: Bool { inspectorItem?.isCollapsed ?? true }
+    var inspectorDividerIndex: Int { InspectorLogic.inspectorDividerIndex(hasSidebar: hasSidebar) }
     var currentURLString: String? { content.currentURLString }
 
     /// ⌥⌘F: the toolbar's search field, which opens the page's command palette.
@@ -57,32 +67,84 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         super.init(window: window)
         window.delegate = self
 
-        if compact || firstKind == .vesper {
+        let hasNativeChrome = compact || firstKind == .vesper
+        if hasNativeChrome {
             let sidebar = NSHostingController(rootView: SidebarHost(tabs: tabs, send: { [weak self] in self?.send($0) }))
             sidebar.sizingOptions = []
             let item = NSSplitViewItem(sidebarWithViewController: sidebar)
+            item.allowsFullHeightLayout = true
             item.minimumThickness = 220
             item.maximumThickness = 400
             item.canCollapse = true
             split.addSplitViewItem(item)
             sidebarItem = item
         }
-        split.addSplitViewItem(NSSplitViewItem(viewController: container))
-        container.installRail(
-            tabs: tabs, send: { [weak self] in self?.send($0) },
-            services: { [weak app] in app?.system })
-        window.contentViewController = split
+        let contentItem = NSSplitViewItem(viewController: container)
+        contentItem.minimumThickness = 380
+        split.addSplitViewItem(contentItem)
+
+        if hasNativeChrome {
+            let inspector = InspectorViewController(
+                tabs: tabs,
+                send: { [weak self] in self?.send($0) },
+                navigate: { [weak self] path, newTab in self?.openInMain(path: path, newTab: newTab) },
+                openPlayground: { [weak self] url in self?.app.openPlayground(url: url, nextTo: self?.window) },
+                onPopOutChanged: { [weak self] poppedOut in self?.inspectorPopOutChanged(poppedOut) }
+            )
+            inspector.companion.ownerWindow = { [weak self] in self?.window }
+            inspector.companion.playgroundPorts = { [weak app] in app?.playgroundPorts ?? defaultPlaygroundPorts }
+            if let conn = app.connection { inspector.connect(conn) }
+            let inspItem = NSSplitViewItem(inspectorWithViewController: inspector)
+            inspItem.allowsFullHeightLayout = true
+            inspItem.minimumThickness = 280
+            inspItem.maximumThickness = 640
+            inspItem.canCollapse = true
+            inspItem.isCollapsed = true
+            // AppKit requires the inspector split item to be the final item in NSSplitViewController.
+            split.addSplitViewItem(inspItem)
+            inspectorItem = inspItem
+            inspectorController = inspector
+
+            inspectorCollapseObservation = inspItem.observe(\.isCollapsed, options: [.new]) { [weak self] item, _ in
+                MainActor.assumeIsolated {
+                    guard let self, !self.isSyncingInspector else { return }
+                    let model = self.state.inspector
+                    let poppedOut = self.inspectorController?.isPoppedOut == true
+                    guard InspectorLogic.handlesToggleNatively(model: model, poppedOut: poppedOut) else { return }
+                    let actualOpen = !item.isCollapsed
+                    let expectedOpen = InspectorLogic.shouldShowNativeInspector(model: model, poppedOut: poppedOut)
+                    if actualOpen != expectedOpen {
+                        self.send(.inspectorVisibility(open: actualOpen))
+                    }
+                }
+            }
+        }
+
+        let root = WindowRootController(split: split)
+        root.installRail(
+            tabs: tabs,
+            send: { [weak self] in self?.handleRailCommand($0) },
+            services: { [weak app] in app?.system }
+        )
+        root.onToggleSidebar = { [weak self] sender in self?.split.toggleSidebar(sender) }
+        root.onToggleInspector = { [weak self] sender in self?.toggleInspector(sender) }
+        root.canToggleSidebar = { [weak self] in self?.hasSidebar == true }
+        root.canToggleInspector = { [weak self] in self?.hasInspector == true && self?.kind == .vesper }
+        rootController = root
+
+        window.contentViewController = root
+        _ = root.view
         window.setContentSize(Self.defaultSize)
         window.center()
 
         for tab in initial {
-            tab.host = self
+            attachTab(tab)
             tabs.list.insert(tab, select: false)
         }
         tabs.list.select(activeIndex)
         container.show(content)
 
-        if compact || firstKind == .vesper {
+        if hasNativeChrome {
             toolbarController = ToolbarController(owner: self)
             window.toolbar = toolbarController?.toolbar
             track({ [weak self] in self?.state.pageMode }) { [weak self] mode in self?.applyPageMode(mode) }
@@ -90,6 +152,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
                 guard let self, let title else { return }
                 self.window?.title = title
                 self.window?.subtitle = self.compact ? "" : (subtitle ?? "")
+            }
+            track({ [weak self] in (self?.tabs.list.active.map { ObjectIdentifier($0) }, self?.state.inspector) }) { [weak self] tabId, model in
+                self?.syncInspectorVisibility(tabId: tabId, model: model)
             }
         }
     }
@@ -106,6 +171,115 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    @objc func toggleInspector(_ sender: Any?) {
+        guard hasInspector, kind == .vesper else { return }
+        if inspectorController?.isPoppedOut == true {
+            inspectorController?.togglePopOut()
+            return
+        }
+        if InspectorLogic.handlesToggleNatively(model: state.inspector, poppedOut: false) {
+            let targetCollapsed = !isInspectorCollapsed
+            animateInspector(collapsed: targetCollapsed)
+            send(.inspectorVisibility(open: !targetCollapsed))
+        } else {
+            send(.command(.toggleCompanion))
+        }
+    }
+
+    func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
+        if item.itemIdentifier == .toggleInspector {
+            return kind == .vesper && hasInspector
+        }
+        return true
+    }
+
+    private func handleRailCommand(_ command: NativeCommand) {
+        if case .railAction(let itemId, let menuItemId) = command, menuItemId == nil {
+            if itemId == "dock.toggle",
+               InspectorLogic.handlesToggleNatively(model: state.inspector, poppedOut: inspectorController?.isPoppedOut == true) {
+                toggleInspector(nil)
+                return
+            }
+            if let tabId = InspectorLogic.railDockTabId(from: itemId),
+               let model = state.inspector,
+               InspectorLogic.isNativeTab(tabId, in: model) {
+                if inspectorController?.isPoppedOut == true {
+                    inspectorController?.bringPopoutToFront()
+                    send(.inspectorSelectTab(tabId: tabId))
+                    return
+                }
+                let currentlyOpen = InspectorLogic.shouldShowNativeInspector(model: model, poppedOut: false)
+                if !currentlyOpen {
+                    animateInspector(collapsed: false)
+                    send(.inspectorSelectTab(tabId: tabId))
+                    return
+                }
+                if tabId == InspectorLogic.activeTab(in: model)?.id {
+                    animateInspector(collapsed: true)
+                    send(.inspectorVisibility(open: false))
+                    return
+                }
+                send(.inspectorSelectTab(tabId: tabId))
+                return
+            }
+        }
+        send(command)
+    }
+
+    private func openInMain(path: String, newTab: Bool) {
+        guard path.hasPrefix("/"), !path.hasPrefix("//") else { return }
+        if newTab || kind != .vesper {
+            app.openVesperTab(path: path, nextTo: window)
+        } else {
+            content.navigate(path: path)
+            window?.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    private func inspectorPopOutChanged(_ poppedOut: Bool) {
+        syncInspectorVisibility(tabId: tabs.list.active.map { ObjectIdentifier($0) }, model: state.inspector)
+        if !poppedOut && InspectorLogic.handlesToggleNatively(model: state.inspector, poppedOut: false) {
+            send(.inspectorVisibility(open: true))
+        }
+    }
+
+    private func syncInspectorVisibility(tabId: ObjectIdentifier?, model: InspectorModel?) {
+        guard let item = inspectorItem else { return }
+        let wantOpen = InspectorLogic.shouldShowNativeInspector(model: model, poppedOut: inspectorController?.isPoppedOut == true)
+        let targetCollapsed = !wantOpen
+        let tabSwitched = tabId != lastObservedInspectorTab
+        lastObservedInspectorTab = tabId
+        guard item.isCollapsed != targetCollapsed else { return }
+        if tabSwitched {
+            inspectorSyncDepth += 1
+            item.isCollapsed = targetCollapsed
+            inspectorSyncDepth -= 1
+        } else {
+            animateInspector(collapsed: targetCollapsed)
+        }
+    }
+
+    private func animateInspector(collapsed: Bool) {
+        guard let item = inspectorItem, item.isCollapsed != collapsed else { return }
+        inspectorSyncDepth += 1
+        NSAnimationContext.runAnimationGroup({ context in
+            context.allowsImplicitAnimation = true
+            item.animator().isCollapsed = collapsed
+        }, completionHandler: {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.inspectorSyncDepth = max(0, self.inspectorSyncDepth - 1)
+            }
+        })
+    }
+
+    private func attachTab(_ tab: WebContentController) {
+        tab.host = self
+        tab.bridge?.onOpenInMain = { [weak self] path, newTab in
+            self?.openInMain(path: path, newTab: newTab)
+        }
+    }
+
     /// Match the window to the page's effective mode, so a person who forces Dark in Vesper while macOS is
     /// Light gets a consistent window. When they agree the window follows the system (no override).
     private func applyPageMode(_ mode: ColorMode?) {
@@ -114,7 +288,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.appearance = NSAppearance(named: mode == .dark ? .darkAqua : .aqua)
     }
 
-    func connect(_ conn: Connection) { tabs.list.items.forEach { $0.connect(conn) } }
+    func connect(_ conn: Connection) {
+        tabs.list.items.forEach { $0.connect(conn) }
+        inspectorController?.connect(conn)
+    }
 
     /// A tab's document title changed; the window title follows the active tab.
     func tabTitleChanged(_ tab: WebContentController) {
@@ -183,6 +360,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        inspectorCollapseObservation = nil
+        inspectorController?.teardown()
         for tab in tabs.list.items {
             app.recordClosed(url: tab.currentURLString)
             tab.teardown()
@@ -200,7 +379,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     // MARK: Tabs
 
     func addTab(_ tab: WebContentController, at index: Int? = nil, select: Bool = true) {
-        tab.host = self
+        attachTab(tab)
         if let index { tabs.list.insert(tab, at: index, select: select) } else { tabs.list.insertAfterActive(tab, select: select) }
         activeTabChanged(focus: select)
     }
@@ -248,6 +427,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         lastContent = tab
         container.show(tab)
         window?.title = tab.displayTitle
+        window?.toolbar?.validateVisibleItems()
         if focus { window?.makeFirstResponder(tab.webView) }
         app.scheduleSessionSave()
     }
