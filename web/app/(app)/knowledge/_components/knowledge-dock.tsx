@@ -159,7 +159,7 @@ export function KnowledgeDock({ pageId }: { pageId?: string }) {
   return (
     <div className="hidden md:contents">
       <CompanionPortal>
-        <Dock uid={uid} tabs={tabs} state={state} dispatch={dispatch} panels={shown ? undefined : null} />
+        <Dock uid={uid} tabs={tabs} state={state} dispatch={dispatch} unmountWhenClosed />
       </CompanionPortal>
     </div>
   );

@@ -982,6 +982,24 @@ details[open]::details-content { height: auto; }
   .motion-sidebar[data-expanded] > * { min-width: 211px; }
 }
 
+/* The right-rail dock panel: slides open and closed by width, matching the sidebar collapse. */
+.motion-dock {
+  overflow-x: clip;
+  transition: width var(--motion-base) var(--motion-ease), border-left-color var(--motion-base) var(--motion-ease);
+}
+.motion-dock[data-open="false"] {
+  width: 0;
+  border-left-color: transparent;
+  box-shadow: none;
+  transition-duration: var(--motion-exit);
+}
+@starting-style {
+  .motion-dock[data-open="true"] {
+    width: 0;
+    border-left-color: transparent;
+  }
+}
+
 /* Shared elements (<ViewTransition>). Clicks pass through to the live page. */
 ::view-transition { pointer-events: none; }
 ::view-transition-group(*),
@@ -1019,6 +1037,7 @@ details[open]::details-content { height: auto; }
   .motion-flyout[data-state="open"] { animation-name: motion-fade-in !important; }
   .motion-flyout[data-state="open"] .motion-tile { animation: none !important; }
   .motion-collapse,
+  .motion-dock,
   details::details-content { transition-duration: 1ms !important; }
   ::view-transition-group(*),
   ::view-transition-old(*),

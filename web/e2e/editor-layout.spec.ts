@@ -106,3 +106,25 @@ test("the busy and unread marks show on the Chat tab", async ({ page }) => {
   await page.getByLabel("Persona busy").check();
   await expect(chat).toHaveAccessibleName(/working, unread/);
 });
+
+test("opening and collapsing the dock animates its width like the sidebar", async ({ page }) => {
+  await page.goto("/dev/editor-layout");
+  const aside = page.locator('aside[aria-label="Panel"]');
+  // Initial load with the dock already open does not animate.
+  await expect(aside).toBeVisible();
+  await expect(aside).not.toHaveClass(/\bmotion-dock\b/);
+
+  // Collapsing starts a width transition to 0, then hides the panel once it finishes.
+  await rail(page).getByRole("button", { name: "Collapse panel" }).click();
+  await expect(aside).toHaveClass(/\bmotion-dock\b/);
+  await expect(aside).toHaveAttribute("data-open", "false");
+  await expect(aside).toHaveCSS("transition-property", /width/);
+  await expect(dock(page)).toHaveCount(0);
+
+  // Reopening from the right rail animates the width back to 360px and clears motion-dock on settle.
+  await rail(page).getByRole("button", { name: "Open Comments" }).click();
+  await expect(aside).toHaveAttribute("data-open", "true");
+  await expect(aside).toBeVisible();
+  await expect(aside).not.toHaveClass(/\bmotion-dock\b/);
+  await expect.poll(() => aside.evaluate((el) => Math.round(el.getBoundingClientRect().width))).toBe(360);
+});
