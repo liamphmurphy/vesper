@@ -229,12 +229,9 @@ function harnessItem(h: HarnessRailInput): RailItem {
   return item;
 }
 
-/** The whole rail: the page's dock on top, then reviews, Needs you and the harnesses, then the links. */
+/** The whole rail: the page's dock on top, then reviews, Needs you and the harnesses, then Settings. */
 export function buildRailModel(input: RailInput): RailModel {
   const { pathname } = input;
-  const foot: RailItem[] = [
-    { id: RAIL_CUSTOMIZATION, label: "Customization", icon: "sliders", active: isActive(pathname, "/customization") },
-  ];
   const settings: RailItem = {
     id: RAIL_SETTINGS,
     label: input.settingsNeedYou ? "Settings: a setting runs need is missing" : "Settings",
@@ -242,7 +239,7 @@ export function buildRailModel(input: RailInput): RailModel {
     active: isActive(pathname, "/settings"),
   };
   if (input.settingsNeedYou) settings.badge = { tone: "human" };
-  foot.push(settings);
+  const foot: RailItem[] = [settings];
 
   const needsYou: RailItem = {
     id: RAIL_NEEDS_YOU,
@@ -278,8 +275,6 @@ export function railEffect(
 ): RailEffect {
   if (itemId === RAIL_DOCK_TOGGLE || itemId.startsWith(RAIL_DOCK_TAB)) return { type: "dock", itemId };
   switch (itemId) {
-    case RAIL_CUSTOMIZATION:
-      return { type: "navigate", path: "/customization" };
     case RAIL_SETTINGS:
       return { type: "navigate", path: "/settings" };
     case RAIL_PR: {

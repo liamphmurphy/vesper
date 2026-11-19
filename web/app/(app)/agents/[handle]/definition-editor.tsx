@@ -208,7 +208,7 @@ export function DefinitionEditor({ detail, draft, onChange }: { detail: AgentDet
       <SectionCard
         title="Runtime"
         action={
-          <Link href={`/customization?who=${encodeURIComponent(detail.agent.id)}`} className="text-12 text-accent hover:underline">
+          <Link href={`/settings?section=personas&persona=${encodeURIComponent(detail.agent.id)}`} className="text-12 text-accent hover:underline">
             Change model on persona page
           </Link>
         }

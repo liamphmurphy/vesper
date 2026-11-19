@@ -16,7 +16,7 @@ test("default model on persona page uses chat-models catalog and updates work se
   await expect(page.getByLabel("Harness", { exact: true })).toHaveValue("Claude Code");
   await expect(page.getByLabel("Model", { exact: true })).toHaveValue("Opus 5.5");
   await page.getByRole("link", { name: "Change model on persona page" }).click();
-  await expect(page).toHaveURL(/\/customization\?who=00000000-0000-4000-8000-000000000001/);
+  await expect(page).toHaveURL(/\/settings\?section=personas&persona=00000000-0000-4000-8000-000000000001/);
 
   // Pick Codex · gpt-5-codex and High effort from the live /chat-models menu.
   await page.getByRole("button", { name: "Default model and effort for Atlas" }).click();

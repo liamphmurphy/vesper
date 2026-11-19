@@ -5,7 +5,7 @@ const ATLAS = persona(1, { name: "Atlas", tone: "friendly", color: "#4fd1c5", is
 
 test("a connector is added, then given to a persona with per-tool permissions", async ({ page }) => {
   const mock = await installChatApi(page, { personas: [ATLAS] });
-  await page.goto("/customization?who=connectors");
+  await page.goto("/settings?section=connectors");
   await page.getByRole("button", { name: "Add connector" }).click();
   await page.getByLabel("Name").fill("Linear");
   await page.getByLabel("MCP server URL").fill("https://mcp.example.com/mcp");

@@ -105,7 +105,7 @@ test("a full load hydrates Settings after the shell's data arrives and lands on 
   await page.route("**/_next/static/chunks/**", async (route) => {
     const response = await route.fetch();
     const body = await response.body();
-    if (body.includes("Everything runs depend on")) await new Promise((r) => setTimeout(r, 1500));
+    if (body.includes("Shared by every space. Secret encryption is configured on the API server.")) await new Promise((r) => setTimeout(r, 1500));
     await route.fulfill({ response, body });
   });
   await page.goto("/settings#appearance");
@@ -146,11 +146,12 @@ test("provider credentials show status and unlocks, are write-only, and saving r
   await expect(page.getByRole("menuitem", { name: /Codex gpt-5-codex/ })).toHaveAttribute("aria-disabled", "true");
   await page.keyboard.press("Escape");
   const before = mock.models();
-  // Settings is the gear in the menu's footer; it opens client-side, so the model cache survives.
-  await page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: /Settings/ }).click();
+  // Settings is the gear in the right rail's foot; it opens client-side, so the model cache survives.
+  await page.getByRole("complementary", { name: "Right rail" }).getByRole("link", { name: /Settings/ }).click();
+  await expect(page.getByRole("complementary", { name: "Right rail" })).toContainText("a setting runs need is missing");
+  await page.getByRole("navigation", { name: "Settings sections" }).getByRole("link", { name: /Secrets & Credentials/ }).click();
 
-  await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "Primary" })).toContainText("a setting runs need is missing");
+  await expect(page.getByRole("heading", { name: "Secrets & Credentials", level: 1 })).toBeVisible();
   await expect(page.getByRole("status").filter({ hasText: "Codex can’t run" })).toBeVisible();
   const conn = page.locator("#secrets li");
   await expect(conn.filter({ hasText: "harness:anthropic" })).toContainText("Set");
@@ -170,7 +171,7 @@ test("provider credentials show status and unlocks, are write-only, and saving r
   expect(mock.puts).toEqual([{ name: "harness:openai", value: SECRET }]);
   await expect(page.getByLabel("New value for harness:openai")).toHaveCount(0);
   await expect(page.getByText("Codex can’t run")).toHaveCount(0);
-  await expect(page.getByRole("navigation", { name: "Primary" })).not.toContainText("a setting runs need is missing");
+  await expect(page.getByRole("complementary", { name: "Right rail" })).not.toContainText("a setting runs need is missing");
   expect(await page.content()).not.toContain(SECRET);
 
   // Switching from one Replace to another remounts the form with the new name.
@@ -183,6 +184,7 @@ test("provider credentials show status and unlocks, are write-only, and saving r
 
   // The chat model cache was invalidated, so back in chat Codex is selectable
   // without a reload (the cache is otherwise fresh for a minute). Back returns to the empty chat from before.
+  await page.goBack();
   await page.goBack();
   await expect(page).toHaveURL(/\/chat\//);
   await page.getByRole("button", { name: /^Model and effort for the next message/ }).click();
@@ -252,13 +254,15 @@ test("host folders turn on for new runs and show where checkouts go", async ({ p
 
 test("sections show empty and error states independently", async ({ page }) => {
   await installSettingsApi(page, { runners: false, secretsFail: true });
-  await page.goto("/settings");
+  await page.goto("/settings#secrets");
   await expect(page.getByRole("alert").filter({ hasText: "Couldn’t load provider credentials" })).toBeVisible();
   await expect(page.locator("#secrets").getByRole("button", { name: "Retry" })).toBeVisible();
+  await page.getByRole("navigation", { name: "Settings sections" }).getByRole("link", { name: /^Runners/ }).click();
   await expect(page.locator("#runners")).toContainText("No runner online");
   await expect(page.locator("#runners")).toContainText("RUNNER_BACKEND = not reported");
   // Settings has no Projects section: a space's work is managed on its page (LAZYAGENTS-213).
   await expect(page.locator("#projects")).toHaveCount(0);
+  await page.getByRole("navigation", { name: "Settings sections" }).getByRole("link", { name: /^Workspace/ }).click();
   await expect(page.locator("#workspace")).toContainText("Acme");
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: "test-results/settings-mobile.png", fullPage: true });
@@ -266,7 +270,7 @@ test("sections show empty and error states independently", async ({ page }) => {
 
 test("unset providers can be signed in from Settings; the login itself never reaches the page", async ({ page }) => {
   const mock = await installSettingsApi(page, { signIn: true, noClaude: true });
-  await page.goto("/settings");
+  await page.goto("/settings#secrets");
   const conn = page.locator("#secrets li");
   // Only unset keys a sign-in can fill: not the SSH key, and not one already set.
   await expect(page.getByRole("button", { name: "Sign in to OpenAI" })).toBeVisible();
@@ -302,7 +306,7 @@ test("unset providers can be signed in from Settings; the login itself never rea
 
 test("sign-in is hidden without a Docker runner", async ({ page }) => {
   await installSettingsApi(page, { signIn: false, noClaude: true });
-  await page.goto("/settings");
+  await page.goto("/settings#secrets");
   await expect(page.getByRole("button", { name: "Add OpenAI key" })).toBeVisible();
   await expect(page.getByRole("button", { name: /^Sign in to/ })).toHaveCount(0);
 });
@@ -406,13 +410,15 @@ test("GitHub presets refresh after credentials change", async ({ page }) => {
     return route.fulfill({ json: { owners: [{ login: lookups === 1 ? "previous-account" : "new-account", organization: false }] } });
   });
   await page.goto("/settings#repositories");
-  const section = page.locator("#repositories");
-  await expect(section.getByRole("button", { name: "Add all repositories under previous-account" })).toBeVisible();
+  await expect(page.locator("#repositories").getByRole("button", { name: "Add all repositories under previous-account" })).toBeVisible();
+  await page.getByRole("navigation", { name: "Settings sections" }).getByRole("link", { name: /Secrets & Credentials/ }).click();
   await page.getByRole("button", { name: "Add credential", exact: true }).click();
   const secrets = page.locator("#secrets");
   await secrets.getByLabel("Name", { exact: true }).fill("git:pat");
   await secrets.getByLabel("Value", { exact: true }).fill("fixture-github-token");
   await secrets.getByRole("button", { name: "Save credential", exact: true }).click();
+  await page.getByRole("navigation", { name: "Settings sections" }).getByRole("link", { name: /^Repositories/ }).click();
+  const section = page.locator("#repositories");
   await expect(section.getByRole("button", { name: "Add all repositories under new-account" })).toBeVisible();
   await expect(section.getByRole("button", { name: "Add all repositories under previous-account" })).toHaveCount(0);
   expect(mock.api.unhandled).toEqual([]);

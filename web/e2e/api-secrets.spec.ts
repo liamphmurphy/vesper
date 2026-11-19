@@ -16,7 +16,7 @@ async function openChat(page: Page, message = "Pull last week's orders from the 
 
 test("a secret is added with its hosts, then given to a persona with request permissions", async ({ page }) => {
   const mock = await installChatApi(page, { personas: [ATLAS] });
-  await page.goto("/customization?who=secrets");
+  await page.goto("/settings?section=secrets&tab=api");
   await page.getByRole("button", { name: "Add secret" }).click();
   await page.getByLabel("Name").fill("Acme API JWT");
   await expect(page.getByText("Personas see it as acme-api-jwt")).toBeVisible();
@@ -46,7 +46,7 @@ test("an OAuth secret is set up for Google and signed in, without a value", asyn
   const mock = await installChatApi(page, { personas: [ATLAS] });
   // The provider's page opens in its own window; keep it from leaving the test.
   await context.route("https://accounts.google.com/**", (route) => route.fulfill({ body: "<title>Google sign-in</title>" }));
-  await page.goto("/customization?who=secrets");
+  await page.goto("/settings?section=secrets&tab=api");
   await page.getByRole("button", { name: "Add secret" }).click();
   await page.getByLabel("Name").fill("Google Drive");
   await page.getByRole("radiogroup", { name: "Type" }).getByRole("radio", { name: "OAuth sign-in" }).click();

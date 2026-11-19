@@ -173,7 +173,7 @@ export function ConnectorSelect({ value, onChange, disabled }: { value: string[]
   return (
     <SelectBox label="Connectors" value={label} muted={label === "None"} disabled={disabled}>
       {rows.length === 0 ? (
-        <p className="px-[8px] py-[6px] text-12 text-fg-secondary">No connectors yet. Add one under Customization.</p>
+        <p className="px-[8px] py-[6px] text-12 text-fg-secondary">No connectors yet. Add one under Settings → Connectors.</p>
       ) : (
         rows.map((c) => (
           <DropdownMenu.CheckboxItem key={c.id} checked={value.includes(c.id)} onCheckedChange={(on) => toggle(c.id, on === true)} onSelect={(e) => e.preventDefault()} className={menuItem}>

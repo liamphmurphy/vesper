@@ -49,7 +49,7 @@ function SearchField() {
   );
 }
 
-/** You: the person, with the You group's pages (Customization, Settings) as buttons beside them. */
+/** You: the person, with Settings beside them. */
 function ProfileRow({ group, counts }: { group: NavGroup; counts: Counts }) {
   const me = useBootstrap().data?.me;
   return (

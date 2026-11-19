@@ -43,7 +43,7 @@ async function refresh(page: Page) {
 const footer = (page: Page) => page.getByRole("region", { name: "Harness activity" });
 const bubble = (page: Page, label: string) => page.getByRole("dialog", { name: `${label} usage` });
 
-test("the permanent right rail holds the characters stacked above Customization and Settings", async ({ page }) => {
+test("the permanent right rail holds the characters stacked above Settings", async ({ page }) => {
   await installFooter(page, { dock: { personas: [], space_chats: [], harnesses: harnesses() } });
   await page.goto("/board?project=WEB");
   await expect(footer(page).getByRole("button", { name: /show usage/ })).toHaveCount(3);
@@ -56,14 +56,12 @@ test("the permanent right rail holds the characters stacked above Customization 
   await expect(menu.getByRole("region", { name: "Harness activity" })).toHaveCount(0);
   const rail = page.getByRole("complementary", { name: "Right rail" });
   const settings = (await rail.getByRole("link", { name: "Settings", exact: true }).boundingBox())!;
-  const customization = (await rail.getByRole("link", { name: "Customization", exact: true }).boundingBox())!;
   const bounds = (await rail.boundingBox())!;
   const bottom = (await footer(page).boundingBox())!;
-  // The characters stack in the right rail above Customization and Settings, which close the rail.
+  // The characters stack in the right rail above Settings, which closes the rail.
   await expect(footer(page)).toHaveAttribute("data-rail", "true");
-  expect(Math.abs(customization.x - settings.x)).toBeLessThan(2);
-  expect(customization.y).toBeLessThan(settings.y);
-  expect(bottom.y + bottom.height).toBeLessThanOrEqual(customization.y);
+  await expect(rail.getByRole("link", { name: "Customization" })).toHaveCount(0);
+  expect(bottom.y + bottom.height).toBeLessThanOrEqual(settings.y);
   expect(bounds.y + bounds.height - (settings.y + settings.height)).toBeLessThan(20);
   expect(await footer(page).evaluate((el) => getComputedStyle(el).borderRadius)).toBe("0px");
 });

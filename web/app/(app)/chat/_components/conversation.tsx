@@ -1095,7 +1095,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   const whileIdle = (what: string, run: () => void): string | void => (running ? `Wait for the reply to finish before changing the ${what}.` : run());
   const plainCommands: Record<string, CommandRun> = {
     new: onNew,
-    memory: () => router.push("/customization"),
+    memory: () => router.push("/settings?section=memory"),
     stop: () => {
       if (!running) return "There’s no reply to stop.";
       if (!stopping) cancel.mutate();

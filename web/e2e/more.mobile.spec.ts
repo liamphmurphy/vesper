@@ -18,7 +18,7 @@ test("More lists the apps, tools and your pages with the nav badges", async ({ p
   const tools = main(page).getByRole("region", { name: "Tools" });
   await expect(tools.getByRole("link")).toHaveText(["Workflows", "Scheduled", "Learn", "Reports"]);
   const you = main(page).getByRole("region", { name: "You" });
-  await expect(you.getByRole("link", { name: "Customization" })).toBeVisible();
+  await expect(you.getByRole("link", { name: "Customization" })).toHaveCount(0);
   await expect(you.getByRole("link", { name: "Settings: a setting runs need is missing" }).getByTestId("more-dot")).toBeVisible();
 
   // Every row is a comfortable touch target, and nothing scrolls sideways.

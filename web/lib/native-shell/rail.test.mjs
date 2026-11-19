@@ -40,14 +40,14 @@ test("an action tab (Start playground) is never active and runs instead of openi
   assert.deepEqual(dockRailAction("dock.tab:playground", withStart, "chat", false), { type: "run", tab: "playground" });
 });
 
-test("the foot holds only Customization and Settings; the current page is active, Settings carries the attention dot", () => {
+test("the foot holds only Settings; the current page is active and Settings carries the attention dot", () => {
   const m = buildRailModel({ ...base, pathname: "/settings/runner", settingsNeedYou: true });
-  assert.deepEqual(m.foot.map((i) => i.id), ["customization", "settings"]);
-  const settings = m.foot.at(-1);
+  assert.deepEqual(m.foot.map((i) => i.id), ["settings"]);
+  const settings = m.foot[0];
   assert.equal(settings.active, true);
   assert.deepEqual(settings.badge, { tone: "human" });
-  assert.equal(m.foot[0].active, false);
-  assert.deepEqual(buildRailModel(base).foot.map((i) => i.id), ["customization", "settings"]);
+  assert.deepEqual(buildRailModel(base).foot.map((i) => i.id), ["settings"]);
+  assert.equal(buildRailModel(base).foot[0].active, false);
   // HTTP Client and Dev workspace moved to the Apps menu, so being on them marks nothing in the rail.
   for (const pathname of ["/http", "/dev"]) assert.ok(buildRailModel({ ...base, pathname }).foot.every((i) => !i.active), pathname);
 });
@@ -105,7 +105,8 @@ test("harnesses: avatar, status tone and a usage menu", () => {
 test("rail.action resolves to the web's own actions", () => {
   const ctx = { reviewUrl: (id) => (id === "a" ? "https://github.com/o/r/pull/7" : undefined) };
   assert.deepEqual(railEffect("dock.tab:chat", undefined, ctx), { type: "dock", itemId: "dock.tab:chat" });
-  // The retired HTTP Client and Dev workspace buttons resolve to nothing.
+  // The retired Customization, HTTP Client and Dev workspace buttons resolve to nothing.
+  assert.equal(railEffect("customization", undefined, ctx), null);
   assert.equal(railEffect("http", undefined, ctx), null);
   assert.equal(railEffect("dev", undefined, ctx), null);
   assert.deepEqual(railEffect("settings", undefined, ctx), { type: "navigate", path: "/settings" });

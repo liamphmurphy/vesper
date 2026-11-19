@@ -95,7 +95,7 @@ export function setupChecklist(s: SetupState): SetupStep[] {
     {
       key: "agents",
       label: s.agents > 0 ? "Review who does the work" : "Give a persona work",
-      href: "/customization?who=agents",
+      href: "/settings?section=personas&filter=tickets",
       link: "Personas",
       // Someone who already ran a plan has used the personas that work.
       done: s.agents > 0 && (s.agentsReviewed || s.plans > 0),

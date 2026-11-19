@@ -9,7 +9,7 @@ test("one Personas list: who chats and who works, and a persona's work from its 
   const mock = await installAgentApi(page, { spec: { scopes: SCOPES } });
   // The old Agents URL lands on the Personas list, showing those that take tickets.
   await page.goto("/agents");
-  await expect(page).toHaveURL(/\/customization\?who=agents$/);
+  await expect(page).toHaveURL(/\/settings\?section=personas&filter=tickets$/);
   await expect(page.getByTestId("all-personas")).toHaveAttribute("aria-pressed", "true");
   const rows = page.getByTestId("persona-list-row");
   await expect(rows).toHaveCount(1);
@@ -154,7 +154,7 @@ test("old definition and runs links open Settings and Activity", async ({ page }
   await expect(page.getByLabel("Harness", { exact: true })).toHaveValue("Claude Code");
   await expect(page.getByRole("link", { name: "Change model on persona page" })).toHaveAttribute(
     "href",
-    "/customization?who=00000000-0000-4000-8000-000000000001",
+    "/settings?section=personas&persona=00000000-0000-4000-8000-000000000001",
   );
   await page.goto("/agents/atlas?tab=runs");
   await expect(tab(page, "Activity")).toHaveAttribute("aria-current", "page");

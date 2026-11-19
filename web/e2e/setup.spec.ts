@@ -80,6 +80,8 @@ async function installSetupApi(page: Page, init: Partial<State> = {}) {
       { harness: "codex", label: "Codex", available: false, unavailable_reason: "no harness:openai secret", models: [{ id: "gpt-5-codex", label: "gpt-5-codex", default: true }] },
     ]);
     if (path === "/secrets") return json({ secrets: [], key_configured: true, known: [] });
+    if (path === "/personas" && request.method() === "GET") return json({ personas: [] });
+    if (path === "/memories" && request.method() === "GET") return json({ memories: [], total: 0, has_more: false });
     if (path === "/planning-sessions") return json(Array.from({ length: state.plans }, (_, i) => ({ id: `plan-${i}`, project: "WEB" })));
     if (path === "/inbox") return json({ items: [
       inboxItem("m1", "mention", "WEB-40", 500), inboxItem("r1", "review", "WEB-41", 10), inboxItem("a1", "approval", "WEB-44", 5),
@@ -106,7 +108,7 @@ async function installSetupApi(page: Page, init: Partial<State> = {}) {
 
 test("a new workspace sees the checklist and a health banner naming missing secrets; steps tick without a reload", async ({ page }) => {
   await installSetupApi(page, { runner: false, harness: false, repo: false, plans: 0 });
-  await page.goto("/settings");
+  await page.goto("/settings?section=workspace");
   const banner = page.getByRole("status", { name: /Agents can’t run/ });
   await expect(banner).toContainText("No harness is available: add harness:anthropic or harness:openai.");
   await expect(banner.getByRole("link", { name: "Fix in Provider credentials →" })).toHaveAttribute("href", "/settings#secrets");
@@ -118,12 +120,12 @@ test("a new workspace sees the checklist and a health banner naming missing secr
   await expect(setup.getByRole("link", { name: "Spaces →" })).toHaveAttribute("href", "/spaces/new?work=1");
   await expect(setup.getByRole("link", { name: "Provider credentials →" })).toHaveAttribute("href", "/settings#secrets");
   await expect(setup.getByRole("link", { name: "Runner backends →" })).toHaveAttribute("href", "/settings#runners");
-  await expect(setup.getByRole("link", { name: "Personas →" })).toHaveAttribute("href", "/customization?who=agents");
+  await expect(setup.getByRole("link", { name: "Personas →" })).toHaveAttribute("href", "/settings?section=personas&filter=tickets");
   await expect(setup.getByRole("button", { name: "Dismiss" })).toHaveCount(0);
 
   // The URL changes before the Personas list mounts and records the visit.
   await setup.getByRole("link", { name: "Personas →" }).click();
-  await expect(page).toHaveURL(/\/customization\?who=agents$/);
+  await expect(page).toHaveURL(/\/settings\?section=personas&filter=tickets$/);
   await expect.poll(() => page.evaluate(() => localStorage.getItem("la:setup:workspace:agents-reviewed"))).toBe("1");
   await page.goBack();
   await expect(page.getByRole("region", { name: "Get set up" })).toContainText("1 of 5 done");
@@ -162,11 +164,11 @@ test("a starting runner hides the offline banner and updates to online automatic
 
 test("a complete checklist can be dismissed and doesn't come back", async ({ page }) => {
   await installSetupApi(page);
-  await page.goto("/settings");
+  await page.goto("/settings?section=workspace");
   const done = page.getByRole("region", { name: "Setup complete" });
   await done.getByRole("button", { name: "Dismiss" }).click();
   await expect(done).toHaveCount(0);
   await page.reload();
-  await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Workspace", level: 1 })).toBeVisible();
   await expect(page.getByRole("region", { name: "Setup complete" })).toHaveCount(0);
 });

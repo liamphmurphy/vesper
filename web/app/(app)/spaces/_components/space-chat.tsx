@@ -38,7 +38,7 @@ export function SpaceContextChips({ space, dense }: { space: SpaceRef; dense?: b
           </button>
         )}
         {space.space_memory && (
-          <Link href={`/customization?space=${space.id}`} className={`${chip} border-border-strong bg-surface-raised text-fg-secondary hover:bg-hover`} title={`What’s learned here stays in ${space.name}`}>
+          <Link href={`/settings?section=spaces&space=${space.id}`} className={`${chip} border-border-strong bg-surface-raised text-fg-secondary hover:bg-hover`} title={`What’s learned here stays in ${space.name}`}>
             Space memory
           </Link>
         )}

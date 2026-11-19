@@ -232,7 +232,7 @@ export function useDockPersona(dock: string): { id?: string; look: PersonaLook; 
 /** Opens the persona manager (LAZYAGENTS-85). */
 export function useOpenPersonaManager() {
   const router = useRouter();
-  return () => router.push("/customization");
+  return () => router.push("/settings?section=personas");
 }
 
 const item =

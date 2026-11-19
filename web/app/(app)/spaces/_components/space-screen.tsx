@@ -221,7 +221,7 @@ function MemoryCard({ space }: { space: Space }) {
         )}
       </p>
       {space.memory_count > 0 && (
-        <Link href={`/customization?space=${space.id}`} className="text-11 text-accent hover:underline">
+        <Link href={`/settings?section=spaces&space=${space.id}`} className="text-11 text-accent hover:underline">
           View {space.memory_count} {space.memory_count === 1 ? "memory" : "memories"}
         </Link>
       )}
