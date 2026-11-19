@@ -21,7 +21,11 @@ def canonical(name, args):
     if not isinstance(args, dict):
         args = {}
     if name == "run_command":
-        return "Bash", {"command": FIRST(args, "CommandLine", "command", "cmd")}
+        out = {"command": FIRST(args, "CommandLine", "command", "cmd")}
+        desc = FIRST(args, "toolSummary", "description")
+        if desc:
+            out["description"] = desc
+        return "Bash", out
     if name in ("read_file", "view_file", "view_file_outline"):
         return "Read", {"file_path": FIRST(args, *PATH)}
     if name in ("write_file", "write_to_file", "create_file"):

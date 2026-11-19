@@ -210,6 +210,7 @@ type claudeParser struct {
 	tools    map[string]string // tool_use id → name
 	baseline Usage
 	reply    replyScanner
+	activity activityTracker
 }
 
 type claudeLine struct {
@@ -257,20 +258,49 @@ type claudeBlock struct {
 
 func (p *claudeParser) streamEvent(l claudeLine) []Event {
 	var ev struct {
-		Type  string `json:"type"`
-		Delta struct {
+		Type         string `json:"type"`
+		ContentBlock struct {
 			Type string `json:"type"`
-			Text string `json:"text"`
+		} `json:"content_block"`
+		Delta struct {
+			Type     string `json:"type"`
+			Text     string `json:"text"`
+			Thinking string `json:"thinking"`
 		} `json:"delta"`
 	}
 	if l.Parent != nil || json.Unmarshal(l.Event, &ev) != nil {
 		return nil
 	}
-	switch {
-	case ev.Type == "content_block_start":
-		p.reply = replyScanner{}
-	case ev.Type == "content_block_delta" && ev.Delta.Type == "text_delta":
-		return p.reply.feed(ev.Delta.Text)
+	switch ev.Type {
+	case "content_block_start":
+		switch ev.ContentBlock.Type {
+		case "thinking":
+			return p.activity.thinkingStart()
+		case "tool_use":
+			p.activity.toolInputStartNow()
+		default:
+			p.reply = replyScanner{}
+			p.activity.resetText()
+		}
+	case "content_block_delta":
+		switch ev.Delta.Type {
+		case "thinking_delta":
+			return p.activity.thinkingDelta(ev.Delta.Thinking)
+		case "text_delta":
+			var out []Event
+			if blocks := p.reply.feed(ev.Delta.Text); len(blocks) > 0 {
+				p.activity.touch()
+				out = append(out, blocks...)
+			}
+			if !p.reply.inFence {
+				out = append(out, p.activity.textDelta(ev.Delta.Text)...)
+			} else if len(out) == 0 {
+				out = append(out, p.activity.heartbeatIfDue("writing_reply")...)
+			}
+			return out
+		case "input_json_delta":
+			return p.activity.toolInputDelta()
+		}
 	}
 	return nil
 }
@@ -347,6 +377,7 @@ func (p *claudeParser) Line(b []byte) []Event {
 				// A sub agent's text is its report to the main agent, which
 				// arrives as the Agent tool's result: never the reply.
 				if l.Type == "assistant" && !sub && strings.TrimSpace(bl.Text) != "" {
+					p.activity.reset()
 					p.res.Final = bl.Text
 					out = append(out, Event{"message", map[string]any{"role": "assistant", "text": bl.Text}})
 				}
@@ -365,6 +396,7 @@ func (p *claudeParser) Line(b []byte) []Event {
 					p.res.Usage.SubagentToolCalls++
 					pl["subagent"] = true
 				} else {
+					p.activity.reset()
 					p.res.Usage.ToolCalls++
 					if reqContext > 0 { // per-call context growth, for run analysis
 						pl["context_tokens"] = reqContext
@@ -377,6 +409,7 @@ func (p *claudeParser) Line(b []byte) []Event {
 				if sub { // a sub agent's results never enter the main context
 					pl["subagent"] = true
 				} else {
+					p.activity.reset()
 					p.res.Usage.AddToolOutput(p.tools[bl.ToolUseID], int64(len(text)))
 				}
 				out = append(out, Event{"tool_result", pl})

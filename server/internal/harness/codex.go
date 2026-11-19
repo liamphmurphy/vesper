@@ -153,6 +153,10 @@ type codexParser struct {
 	model           string
 	prices          map[string]Price
 	res             Result
+	reply           replyScanner
+	replyItemID     string
+	replyOffset     int
+	activity        activityTracker
 }
 
 type codexItem struct {
@@ -270,7 +274,7 @@ func (p *codexParser) Line(b []byte) []Event {
 		p.res.Error = l.Message
 		p.res.UsageLimited = p.res.UsageLimited || UsageLimit(l.Message)
 		return []Event{{"error", map[string]any{"message": l.Message}}}
-	case "item.started", "item.completed":
+	case "item.started", "item.updated", "item.completed":
 		if l.Item == nil {
 			return nil
 		}
@@ -282,12 +286,40 @@ func (p *codexParser) Line(b []byte) []Event {
 func (p *codexParser) item(done bool, it codexItem) []Event {
 	switch it.Type {
 	case "agent_message":
-		if !done || strings.TrimSpace(it.Text) == "" {
+		if !done {
+			if it.ID != "" && it.ID != p.replyItemID {
+				p.reply = replyScanner{}
+				p.replyItemID = it.ID
+				p.replyOffset = 0
+				p.activity.resetText()
+			}
+			var out []Event
+			if len(it.Text) > p.replyOffset {
+				delta := it.Text[p.replyOffset:]
+				p.replyOffset = len(it.Text)
+				if blocks := p.reply.feed(delta); len(blocks) > 0 {
+					p.activity.touch()
+					out = append(out, blocks...)
+				}
+			}
+			if !p.reply.inFence {
+				out = append(out, p.activity.textSnapshot(it.Text)...)
+			} else if len(out) == 0 {
+				out = append(out, p.activity.heartbeatIfDue("writing_reply")...)
+			}
+			return out
+		}
+		p.reply = replyScanner{}
+		p.replyItemID = ""
+		p.replyOffset = 0
+		p.activity.reset()
+		if strings.TrimSpace(it.Text) == "" {
 			return nil
 		}
 		p.res.Final = it.Text
 		return []Event{{"message", map[string]any{"role": "assistant", "text": it.Text}}}
 	case "command_execution":
+		p.activity.reset()
 		if !done {
 			p.res.Usage.ToolCalls++
 			return []Event{{"tool_call", map[string]any{"id": it.ID, "tool": "shell", "input": map[string]any{"command": it.Command}}}}
@@ -299,6 +331,7 @@ func (p *codexParser) item(done bool, it codexItem) []Event {
 		return []Event{{"tool_result", map[string]any{"id": it.ID, "tool": "shell", "is_error": exit != 0 || it.Status == "failed",
 			"exit_code": exit, "output": clip(it.AggregatedOutput, 4000)}}}
 	case "mcp_tool_call":
+		p.activity.reset()
 		tool := it.Tool
 		if it.Server != "" && it.Server != lazyagentsServer {
 			tool = it.Server + "." + it.Tool
@@ -324,6 +357,7 @@ func (p *codexParser) item(done bool, it codexItem) []Event {
 		if !done {
 			return nil
 		}
+		p.activity.reset()
 		files := make([]string, len(it.Changes))
 		for i, c := range it.Changes {
 			files[i] = c.Kind + " " + c.Path
@@ -332,11 +366,16 @@ func (p *codexParser) item(done bool, it codexItem) []Event {
 		return []Event{{"tool_call", map[string]any{"id": it.ID, "tool": "apply_patch", "input": map[string]any{"files": files}, "status": it.Status}}}
 	case "web_search":
 		if done {
+			p.activity.reset()
 			p.res.Usage.ToolCalls++
 			return []Event{{"tool_call", map[string]any{"id": it.ID, "tool": "web_search", "input": map[string]any{"query": it.Query}}}}
 		}
 	case "reasoning":
-		if ev, ok := thinkingEvent(it.Text); ok && done {
+		if !done {
+			return p.activity.thinkingText(it.Text)
+		}
+		p.activity.reset()
+		if ev, ok := thinkingEvent(it.Text); ok {
 			return []Event{ev}
 		}
 	case "error":
