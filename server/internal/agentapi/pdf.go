@@ -58,8 +58,8 @@ type PDFMarginsIn struct {
 type RenderPDFIn struct {
 	Title             string        `json:"title,omitempty" jsonschema:"Title shown in the chat card and Library, e.g. Q4 Architecture Review"`
 	Filename          string        `json:"filename,omitempty" jsonschema:"PDF file name (.pdf added if omitted), e.g. q4-review.pdf"`
-	HTML              string        `json:"html" jsonschema:"HTML document or body fragment to render. Runs offline with scripts disabled: use inline CSS, SVG, or data: URIs only (no remote URLs). Bundled fonts: Inter, Liberation Serif, Liberation Sans, Liberation Mono."`
-	CSS               string        `json:"css,omitempty" jsonschema:"Optional print CSS appended after the base styles (supports @page, Flexbox, Grid, break-inside: avoid)"`
+	HTML              string        `json:"html" jsonschema:"HTML document or body fragment to render. Runs offline with scripts disabled (no remote URLs): use inline CSS, SVG, data: URIs, Knowledge attachments (<img src=\"attachment:<asset-id>\"> or attachment:<asset-id>/<filename>), or Library images (library:<library_item_id>). Bundled fonts: Inter, Liberation Serif, Liberation Sans, Liberation Mono."`
+	CSS               string        `json:"css,omitempty" jsonschema:"Optional print CSS appended after the base styles (supports @page, Flexbox, Grid, break-inside: avoid, and url(\"attachment:...\") / url(\"library:...\"))"`
 	PageSize          string        `json:"page_size,omitempty" jsonschema:"letter (default), a4, legal, tabloid, a5 or a3"`
 	WidthIn           *float64      `json:"width_in,omitempty" jsonschema:"Custom page width in inches (2 to 24); give with height_in instead of page_size"`
 	HeightIn          *float64      `json:"height_in,omitempty" jsonschema:"Custom page height in inches (2 to 24); give with width_in instead of page_size"`
@@ -157,12 +157,21 @@ func renderPDF(ctx context.Context, d Deps, c agents.Caller, in RenderPDFIn) (an
 		return nil, apperr.Conflict("Knowledge storage isn't available here")
 	}
 
+	resolvedHTML, resolvedCSS, resolvedHeader, resolvedFooter, err := resolvePDFInputs(
+		ctx,
+		newWikiPDFAssetLoader(d.Wiki, c.Agent.WorkspaceID, scope.UserID),
+		in.HTML, in.CSS, in.HeaderHTML, in.FooterHTML,
+	)
+	if err != nil {
+		return nil, err
+	}
+
 	req := designs.PDFRenderRequest{
-		HTML:            in.HTML,
-		CSS:             in.CSS,
+		HTML:            resolvedHTML,
+		CSS:             resolvedCSS,
 		Orientation:     strings.TrimSpace(in.Orientation),
-		HeaderHTML:      in.HeaderHTML,
-		FooterHTML:      in.FooterHTML,
+		HeaderHTML:      resolvedHeader,
+		FooterHTML:      resolvedFooter,
 		PrintBackground: in.PrintBackground,
 		PreviewPages:    in.PreviewPages,
 	}
