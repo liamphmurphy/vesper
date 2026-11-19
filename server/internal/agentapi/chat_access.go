@@ -96,7 +96,7 @@ func listConnectors(ctx context.Context, d Deps, c agents.Caller, _ Empty) (any,
 	for i, p := range proposals {
 		pending[i] = pendingProposal{Name: p.Name, Host: hostOf(p.Url)}
 	}
-	return map[string]any{"connectors": out, "pending_proposals": pending, "href": "/customization?who=connectors"}, nil
+	return map[string]any{"connectors": out, "pending_proposals": pending, "href": "/settings?section=connectors"}, nil
 }
 
 type chatSecretName struct {
@@ -145,5 +145,5 @@ func listSecretNames(ctx context.Context, d Deps, c agents.Caller, _ Empty) (any
 	for i, p := range proposals {
 		pending[i] = pendingProposal{Name: p.Name, Host: p.Host}
 	}
-	return map[string]any{"secrets": out, "pending_proposals": pending, "href": "/customization?who=secrets"}, nil
+	return map[string]any{"secrets": out, "pending_proposals": pending, "href": "/settings?section=secrets&tab=api"}, nil
 }

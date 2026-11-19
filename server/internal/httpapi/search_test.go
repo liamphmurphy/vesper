@@ -130,7 +130,7 @@ func TestSearchCapsEachTypeAndFindsEveryKind(t *testing.T) {
 		t.Fatal(err)
 	}
 	hits, _ = e.searchHits("/search?q=tailscale%20tutor&kind=persona")
-	if len(hits) == 0 || hits[0]["target"].(map[string]any)["href"] != "/customization?who="+personaID {
+	if len(hits) == 0 || hits[0]["target"].(map[string]any)["href"] != "/settings?section=personas&persona="+personaID {
 		t.Errorf("persona hit href: %v", hits)
 	}
 }
