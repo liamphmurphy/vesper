@@ -5,7 +5,10 @@ import {
   buildCustomAppSrcDoc,
   CUSTOM_APP_ICONS,
   parseBridgeMessage,
+  parseSafeExternalUrl,
+  parseSafeHttpsUrl,
   resolveAppIcon,
+  resolveVideoEmbed,
   slugifyAppName,
   validateCustomAppSlug,
   withCustomAppContext,
@@ -106,4 +109,134 @@ test("readThemeVarsFrom exposes Vesper's text colors under the --fg names apps u
   assert.equal(vars["--fg-secondary"], "#A4A1B3");
   assert.equal(vars["--on-accent"], "#120F24");
   assert.ok(!("--fg-2" in vars), "unset host vars are omitted so the app's own fallback applies");
+});
+
+test("parseSafeExternalUrl and parseSafeHttpsUrl enforce protocols and reject credentials", () => {
+  assert.equal(parseSafeExternalUrl("https://youtube.com/watch?v=dQw4w9WgXcQ"), "https://youtube.com/watch?v=dQw4w9WgXcQ");
+  assert.equal(parseSafeExternalUrl("http://localhost:3000/test"), "http://localhost:3000/test");
+  assert.equal(parseSafeExternalUrl("javascript:alert(1)"), null);
+  assert.equal(parseSafeExternalUrl("data:text/html,<script>alert(1)</script>"), null);
+  assert.equal(parseSafeExternalUrl("file:///etc/passwd"), null);
+  assert.equal(parseSafeExternalUrl("https://user:pass@example.com"), null);
+
+  assert.equal(parseSafeHttpsUrl("https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"), "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg");
+  assert.equal(parseSafeHttpsUrl("http://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"), null);
+  assert.equal(parseSafeHttpsUrl("https://user@example.com/a.png"), null);
+});
+
+test("resolveVideoEmbed resolves YouTube and Twitch URLs safely", () => {
+  assert.deepEqual(resolveVideoEmbed("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=1m5s"), {
+    provider: "youtube",
+    embedUrl: "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&rel=0&start=65",
+    externalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=65s",
+    titleFallback: "YouTube video",
+  });
+  assert.equal(
+    resolveVideoEmbed("https://youtu.be/dQw4w9WgXcQ")?.embedUrl,
+    "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&rel=0",
+  );
+  assert.equal(
+    resolveVideoEmbed("https://m.youtube.com/shorts/dQw4w9WgXcQ")?.embedUrl,
+    "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&rel=0",
+  );
+  assert.equal(
+    resolveVideoEmbed("https://www.youtube.com/live/dQw4w9WgXcQ")?.embedUrl,
+    "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&rel=0",
+  );
+
+  assert.deepEqual(resolveVideoEmbed("https://www.twitch.tv/SomeStreamer", "vesper.local"), {
+    provider: "twitch",
+    embedUrl: "https://player.twitch.tv/?channel=somestreamer&parent=vesper.local&autoplay=true",
+    externalUrl: "https://www.twitch.tv/somestreamer",
+    titleFallback: "SomeStreamer on Twitch",
+  });
+  assert.deepEqual(resolveVideoEmbed("https://www.twitch.tv/videos/123456789", "vesper.local"), {
+    provider: "twitch",
+    embedUrl: "https://player.twitch.tv/?video=123456789&parent=vesper.local&autoplay=true",
+    externalUrl: "https://www.twitch.tv/videos/123456789",
+    titleFallback: "Twitch video",
+  });
+  assert.equal(
+    resolveVideoEmbed("https://clips.twitch.tv/FriendlyClipSlug-123", "vesper.local")?.embedUrl,
+    "https://clips.twitch.tv/embed?clip=FriendlyClipSlug-123&parent=vesper.local&autoplay=true",
+  );
+  assert.equal(
+    resolveVideoEmbed("https://www.twitch.tv/streamer/clip/FriendlyClipSlug-123", "vesper.local")?.embedUrl,
+    "https://clips.twitch.tv/embed?clip=FriendlyClipSlug-123&parent=vesper.local&autoplay=true",
+  );
+  assert.equal(resolveVideoEmbed("https://www.twitch.tv/directory", "vesper.local"), null);
+  assert.equal(resolveVideoEmbed("https://evil.example/watch?v=dQw4w9WgXcQ"), null);
+  assert.equal(resolveVideoEmbed("javascript:alert(1)"), null);
+});
+
+test("parseBridgeMessage validates open-url and play-video", () => {
+  assert.deepEqual(
+    parseBridgeMessage({ channel: "vesper:custom-app", type: "open-url", payload: { url: "https://example.com/a" } }),
+    { channel: "vesper:custom-app", id: "", type: "open-url", payload: { url: "https://example.com/a" } },
+  );
+  assert.equal(
+    parseBridgeMessage({ channel: "vesper:custom-app", type: "open-url", payload: { url: "javascript:alert(1)" } }),
+    null,
+  );
+  assert.deepEqual(
+    parseBridgeMessage({
+      channel: "vesper:custom-app",
+      type: "play-video",
+      payload: { url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", title: "Demo video" },
+    }),
+    {
+      channel: "vesper:custom-app",
+      id: "",
+      type: "play-video",
+      payload: { url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", title: "Demo video" },
+    },
+  );
+  assert.equal(
+    parseBridgeMessage({ channel: "vesper:custom-app", type: "play-video", payload: { url: "data:text/html,hi" } }),
+    null,
+  );
+});
+
+test("parseBridgeMessage validates image proxy requests", () => {
+  assert.deepEqual(
+    parseBridgeMessage({
+      channel: "vesper:custom-app",
+      id: "req_img_1",
+      type: "image",
+      payload: { url: "https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg" },
+    }),
+    {
+      channel: "vesper:custom-app",
+      id: "req_img_1",
+      type: "image",
+      payload: { url: "https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg" },
+    },
+  );
+  assert.equal(
+    parseBridgeMessage({
+      channel: "vesper:custom-app",
+      id: "",
+      type: "image",
+      payload: { url: "https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg" },
+    }),
+    null,
+  );
+  assert.equal(
+    parseBridgeMessage({
+      channel: "vesper:custom-app",
+      id: "req_img_2",
+      type: "image",
+      payload: { url: "http://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg" },
+    }),
+    null,
+  );
+  assert.equal(
+    parseBridgeMessage({
+      channel: "vesper:custom-app",
+      id: "req_img_3",
+      type: "image",
+      payload: { url: "javascript:alert(1)" },
+    }),
+    null,
+  );
 });

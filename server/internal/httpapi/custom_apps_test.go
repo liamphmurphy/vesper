@@ -1,8 +1,11 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -238,4 +241,118 @@ func TestCustomAppMCPToolsAndScope(t *testing.T) {
 	if code != http.StatusOK || delRes["deleted"] != "habits" {
 		t.Fatalf("delete_custom_app = %d %v", code, delRes)
 	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestCustomAppImageProxy(t *testing.T) {
+	pngBytes := []byte{
+		0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n',
+		0x00, 0x00, 0x00, 0x0d, 'I', 'H', 'D', 'R',
+		0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+		0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89,
+	}
+	var apiSrv *Server
+	e := newChatEnvServer(t, nil, func(s *Server) {
+		apiSrv = s
+		s.CustomAppImageTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			switch r.URL.Path {
+			case "/thumb.png":
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": {"image/png"}},
+					Body:       io.NopCloser(bytes.NewReader(pngBytes)),
+					Request:    r,
+				}, nil
+			case "/evil.svg":
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": {"image/svg+xml"}},
+					Body:       io.NopCloser(strings.NewReader(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`)),
+					Request:    r,
+				}, nil
+			case "/huge.png":
+				big := make([]byte, (3<<20)+16)
+				copy(big, pngBytes)
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": {"image/png"}},
+					Body:       io.NopCloser(bytes.NewReader(big)),
+					Request:    r,
+				}, nil
+			default:
+				return &http.Response{
+					StatusCode: http.StatusNotFound,
+					Body:       io.NopCloser(strings.NewReader("missing")),
+					Request:    r,
+				}, nil
+			}
+		})
+	})
+
+	e.want("POST", "/custom-apps", map[string]any{
+		"slug":     "feed",
+		"name":     "Feed",
+		"template": "blank",
+	}, http.StatusCreated)
+
+	// 1. Default app.http:outbound is denied -> 403.
+	if code, _ := e.do("GET", "/custom-apps/feed/image?url="+url.QueryEscape("https://cdn.example/thumb.png"), nil); code != http.StatusForbidden {
+		t.Fatalf("denied image proxy = %d, want 403", code)
+	}
+
+	// 2. requires_approval blocks unapproved requests, allows approved=true.
+	e.want("PATCH", "/custom-apps/feed", map[string]any{
+		"capabilities": map[string]any{
+			"app.sql:read":      "allowed",
+			"app.sql:write":     "allowed",
+			"app.http:outbound": "requires_approval",
+		},
+	}, http.StatusOK)
+
+	if code, _ := e.do("GET", "/custom-apps/feed/image?url="+url.QueryEscape("https://cdn.example/thumb.png"), nil); code != http.StatusForbidden {
+		t.Fatalf("unapproved image proxy = %d, want 403", code)
+	}
+
+	res, err := http.Get(e.srv.URL + "/api/v1/custom-apps/feed/image?approved=true&url=" + url.QueryEscape("https://cdn.example/thumb.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotBytes, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || !bytes.Equal(gotBytes, pngBytes) {
+		t.Fatalf("approved image = %d len=%d", res.StatusCode, len(gotBytes))
+	}
+	if ct := res.Header.Get("Content-Type"); ct != "image/png" {
+		t.Fatalf("Content-Type = %q, want image/png", ct)
+	}
+	if nosniff := res.Header.Get("X-Content-Type-Options"); nosniff != "nosniff" {
+		t.Fatalf("X-Content-Type-Options = %q, want nosniff", nosniff)
+	}
+	if csp := res.Header.Get("Content-Security-Policy"); csp != "default-src 'none'; sandbox" {
+		t.Fatalf("Content-Security-Policy = %q", csp)
+	}
+	if cc := res.Header.Get("Cache-Control"); cc != "private, max-age=86400" {
+		t.Fatalf("Cache-Control = %q", cc)
+	}
+
+	// 3. Allowed mode rejects SVG, oversized images, and non-https / credentialed URLs.
+	e.want("PATCH", "/custom-apps/feed", map[string]any{
+		"capabilities": map[string]any{
+			"app.sql:read":      "allowed",
+			"app.sql:write":     "allowed",
+			"app.http:outbound": "allowed",
+		},
+	}, http.StatusOK)
+
+	e.invalid("GET", "/custom-apps/feed/image?url="+url.QueryEscape("https://cdn.example/evil.svg"), nil, "url", "unsupported image type")
+	e.invalid("GET", "/custom-apps/feed/image?url="+url.QueryEscape("https://cdn.example/huge.png"), nil, "url", "3 MB limit")
+	e.invalid("GET", "/custom-apps/feed/image?url="+url.QueryEscape("http://cdn.example/thumb.png"), nil, "url", "https")
+	e.invalid("GET", "/custom-apps/feed/image?url="+url.QueryEscape("https://u:p@cdn.example/thumb.png"), nil, "url", "https")
+
+	// 4. Default SafeTransport blocks loopback/private SSRF targets.
+	apiSrv.CustomAppImageTransport = nil
+	e.invalid("GET", "/custom-apps/feed/image?url="+url.QueryEscape("https://127.0.0.1/img.png"), nil, "url", "private address")
 }

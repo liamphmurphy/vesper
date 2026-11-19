@@ -372,3 +372,59 @@ func TestRequireScope(t *testing.T) {
 	}
 	wantErr(static, "isn't an OAuth secret", "drive.file")
 }
+
+func TestOAuthTokenResponseAcceptsScopeArray(t *testing.T) {
+	f := newOAuthFixture(t)
+	wantConflict := func(sec store.UserSecret, msg string, anyOf ...string) {
+		t.Helper()
+		err := f.svc.RequireScope(sec, anyOf...)
+		var ce *apperr.ConflictError
+		if !errors.As(err, &ce) || !strings.Contains(ce.Msg, msg) {
+			t.Fatalf("RequireScope(%v) = %v, want conflict containing %q", anyOf, err, msg)
+		}
+	}
+
+	f.ts.reply = func(form url.Values) (int, string) {
+		if form.Get("grant_type") == "authorization_code" {
+			return 200, `{"access_token":"tw-1","refresh_token":"tw-r1","expires_in":3600,"scope":["user:read:follows","user:read:email"]}`
+		}
+		return 200, `{"access_token":"tw-2","expires_in":3600,"scope":["user:read:follows"]}`
+	}
+	f.signIn(t)
+	if err := f.svc.RequireScope(f.sec, "user:read:follows"); err != nil {
+		t.Fatalf("RequireScope(follows): %v", err)
+	}
+	if err := f.svc.RequireScope(f.sec, "user:read:email"); err != nil {
+		t.Fatalf("RequireScope(email): %v", err)
+	}
+	wantConflict(f.sec, "it has user:read:follows user:read:email.", "channel:read:subscriptions")
+
+	// Refresh updates granted scopes when the provider includes an array.
+	f.clock = f.clock.Add(2 * time.Hour)
+	if v, err := f.svc.Value(f.ctx, f.sec); err != nil || v != "tw-2" {
+		t.Fatalf("refreshed Value = %q, %v", v, err)
+	}
+	f.sec, _ = f.q.UserSecretByID(f.ctx, f.sec.ID)
+	if err := f.svc.RequireScope(f.sec, "user:read:follows"); err != nil {
+		t.Fatalf("RequireScope after refresh: %v", err)
+	}
+	wantConflict(f.sec, "it has user:read:follows.", "user:read:email")
+
+	// Null scope succeeds; invalid non-string/non-array scope fails cleanly.
+	f.ts.reply = func(url.Values) (int, string) {
+		return 200, `{"access_token":"tw-3","refresh_token":"tw-r2","expires_in":3600,"scope":null}`
+	}
+	f.signIn(t)
+
+	f.ts.reply = func(url.Values) (int, string) {
+		return 200, `{"access_token":"tw-4","refresh_token":"tw-r3","expires_in":3600,"scope":123}`
+	}
+	link, err := f.svc.BeginOAuth(f.ctx, f.sec, "https://vesper.example.ts.net/api/v1/connector-oauth/callback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, _ := url.Parse(link)
+	if _, err := f.svc.FinishOAuth(f.ctx, u.Query().Get("state"), "auth-code"); err == nil || !strings.Contains(err.Error(), "didn't issue a token") {
+		t.Fatalf("expected failure for numeric scope, got %v", err)
+	}
+}

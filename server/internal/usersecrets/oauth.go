@@ -1,6 +1,7 @@
 package usersecrets
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -223,6 +224,36 @@ func (s *Service) tokenClient(tokenURL string) *http.Client {
 	return &http.Client{Transport: rt, Timeout: sendTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
 
+// oauthScope accepts either a standard space-delimited string or a JSON array
+// of scope strings (e.g. Twitch's token response).
+type oauthScope []string
+
+func (s *oauthScope) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		*s = nil
+		return nil
+	}
+	switch trimmed[0] {
+	case '"':
+		var raw string
+		if err := json.Unmarshal(trimmed, &raw); err != nil {
+			return err
+		}
+		*s = NormalizeScopes([]string{raw})
+		return nil
+	case '[':
+		var raw []string
+		if err := json.Unmarshal(trimmed, &raw); err != nil {
+			return err
+		}
+		*s = NormalizeScopes(raw)
+		return nil
+	default:
+		return fmt.Errorf("oauth scope must be string or array")
+	}
+}
+
 func (s *Service) tokenRequest(ctx context.Context, st OAuthSettings, clientSecret string, form url.Values) (credential, error) {
 	var c credential
 	form.Set("client_id", st.ClientID)
@@ -246,11 +277,11 @@ func (s *Service) tokenRequest(ctx context.Context, st OAuthSettings, clientSecr
 	}
 	defer res.Body.Close()
 	var body struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		ExpiresIn    int64  `json:"expires_in"`
-		Scope        string `json:"scope"`
-		Error        string `json:"error"`
+		AccessToken  string     `json:"access_token"`
+		RefreshToken string     `json:"refresh_token"`
+		ExpiresIn    int64      `json:"expires_in"`
+		Scope        oauthScope `json:"scope"`
+		Error        string     `json:"error"`
 	}
 	decodeErr := json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&body)
 	if res.StatusCode >= 300 {
@@ -260,8 +291,8 @@ func (s *Service) tokenRequest(ctx context.Context, st OAuthSettings, clientSecr
 		return c, errors.New("the sign-in provider didn't issue a token")
 	}
 	c = credential{AccessToken: body.AccessToken, RefreshToken: body.RefreshToken}
-	if body.Scope != "" {
-		c.Granted = NormalizeScopes([]string{body.Scope})
+	if len(body.Scope) > 0 {
+		c.Granted = []string(body.Scope)
 	}
 	if body.ExpiresIn > 0 {
 		c.ExpiresAt = s.now().Add(time.Duration(body.ExpiresIn) * time.Second)

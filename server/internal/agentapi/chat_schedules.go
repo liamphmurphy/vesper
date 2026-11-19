@@ -2,6 +2,7 @@ package agentapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -19,21 +20,23 @@ import (
 // sending them to the Scheduled page to fix what the persona set up.
 
 type chatScheduledTask struct {
-	ID           uuid.UUID  `json:"task_id"`
-	Name         string     `json:"name"`
-	Kind         string     `json:"kind"`
-	Instructions string     `json:"instructions,omitempty"`
-	Frequency    string     `json:"frequency"`
-	AtTime       string     `json:"at_time,omitempty"`
-	Timezone     string     `json:"timezone"`
-	Weekdays     []int32    `json:"weekdays,omitempty"`
-	MonthDay     int32      `json:"month_day,omitempty"`
-	Cron         string     `json:"cron,omitempty"`
-	Enabled      bool       `json:"enabled"`
-	NextRunAt    *time.Time `json:"next_run_at,omitempty"`
-	Project      string     `json:"project,omitempty"`
-	Revision     int32      `json:"revision"`
-	LastRun      *lastRun   `json:"last_run,omitempty"`
+	ID            uuid.UUID  `json:"task_id"`
+	Name          string     `json:"name"`
+	Kind          string     `json:"kind"`
+	Instructions  string     `json:"instructions,omitempty"`
+	CustomAppSlug string     `json:"custom_app_slug,omitempty"`
+	CustomAppTool string     `json:"custom_app_tool,omitempty"`
+	Frequency     string     `json:"frequency"`
+	AtTime        string     `json:"at_time,omitempty"`
+	Timezone      string     `json:"timezone"`
+	Weekdays      []int32    `json:"weekdays,omitempty"`
+	MonthDay      int32      `json:"month_day,omitempty"`
+	Cron          string     `json:"cron,omitempty"`
+	Enabled       bool       `json:"enabled"`
+	NextRunAt     *time.Time `json:"next_run_at,omitempty"`
+	Project       string     `json:"project,omitempty"`
+	Revision      int32      `json:"revision"`
+	LastRun       *lastRun   `json:"last_run,omitempty"`
 }
 
 type lastRun struct {
@@ -42,9 +45,12 @@ type lastRun struct {
 	Error     string    `json:"error,omitempty"`
 }
 
-func toChatScheduledTask(t store.ScheduledTask, project string) chatScheduledTask {
-	out := chatScheduledTask{ID: t.ID, Name: t.Name, Kind: t.Kind, Instructions: t.Instructions, Frequency: t.Frequency, Timezone: t.Timezone, Enabled: t.Enabled,
+func toChatScheduledTask(t store.ScheduledTask, project, customAppSlug string) chatScheduledTask {
+	out := chatScheduledTask{ID: t.ID, Name: t.Name, Kind: t.Kind, Instructions: t.Instructions, CustomAppSlug: customAppSlug, Frequency: t.Frequency, Timezone: t.Timezone, Enabled: t.Enabled,
 		NextRunAt: t.NextRunAt, Project: project, Revision: t.Revision}
+	if t.Kind == "custom_app" {
+		out.CustomAppTool = t.CustomAppTool
+	}
 	switch t.Frequency {
 	case "cron":
 		out.Cron = t.Cron
@@ -80,13 +86,25 @@ func listScheduledTasks(ctx context.Context, d Deps, c agents.Caller, _ Empty) (
 	for _, p := range projects {
 		keys[p.ID] = p.Key
 	}
+	apps, err := d.Q.ListCustomApps(ctx, store.ListCustomAppsParams{WorkspaceID: ws, UserID: s.UserID})
+	if err != nil {
+		return nil, err
+	}
+	appSlugs := make(map[uuid.UUID]string, len(apps))
+	for _, a := range apps {
+		appSlugs[a.ID] = a.Slug
+	}
 	out := make([]chatScheduledTask, len(rows))
 	for i, t := range rows {
 		project := ""
 		if t.ProjectID != nil {
 			project = keys[*t.ProjectID]
 		}
-		out[i] = toChatScheduledTask(t, project)
+		appSlug := ""
+		if t.CustomAppID != nil {
+			appSlug = appSlugs[*t.CustomAppID]
+		}
+		out[i] = toChatScheduledTask(t, project, appSlug)
 		// Newest first, so the first run of this task is its latest.
 		for _, r := range recent {
 			if r.TaskID == t.ID {
@@ -127,14 +145,32 @@ func updateScheduledTask(ctx context.Context, d Deps, c agents.Caller, in Update
 		return nil, err
 	}
 	if in.Instructions != nil && t.Kind != "prompt" {
+		if t.Kind == "custom_app" {
+			return nil, apperr.Invalid("instructions", "this task runs a Custom App tool; change the app instead")
+		}
 		return nil, apperr.Invalid("instructions", "this task runs a workflow; change the workflow instead")
 	}
 	project, err := runs.OptionalProject(ctx, d.Q, ws, t.ProjectID)
 	if err != nil {
 		return nil, err
 	}
+	var appSlug string
+	var appArgs map[string]any
+	if t.Kind == "custom_app" {
+		if t.CustomAppID != nil {
+			app, err := d.Q.GetCustomAppWithMCPByID(ctx, store.GetCustomAppWithMCPByIDParams{WorkspaceID: ws, UserID: s.UserID, ID: *t.CustomAppID})
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return nil, err
+			}
+			appSlug = app.Slug
+		}
+		if len(t.CustomAppArgs) > 0 {
+			_ = json.Unmarshal(t.CustomAppArgs, &appArgs)
+		}
+	}
 	next := runs.ScheduledTaskInput{Revision: in.Revision, Name: t.Name, Kind: t.Kind, Instructions: t.Instructions, WorkflowID: t.WorkflowID, PersonaID: t.PersonaID, Project: project.Key,
-		ConnectorIDs: t.ConnectorIds, Enabled: t.Enabled, MaxMinutes: t.MaxMinutes, MaxCostMicros: t.MaxCostMicros,
+		ConnectorIDs: t.ConnectorIds, CustomAppSlug: appSlug, CustomAppTool: t.CustomAppTool, CustomAppArgs: appArgs,
+		Enabled: t.Enabled, MaxMinutes: t.MaxMinutes, MaxCostMicros: t.MaxCostMicros,
 		Schedule: runs.Schedule{Frequency: t.Frequency, Weekdays: t.Weekdays, MonthDay: t.MonthDay, AtTime: t.AtTime, Timezone: t.Timezone, Cron: t.Cron}}
 	set := func(dst *string, v *string) {
 		if v != nil {
@@ -160,7 +196,7 @@ func updateScheduledTask(ctx context.Context, d Deps, c agents.Caller, in Update
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"task": toChatScheduledTask(updated, project.Key), "href": "/scheduled",
+	return map[string]any{"task": toChatScheduledTask(updated, project.Key, appSlug), "href": "/scheduled",
 		"tell_the_person": "Changed. Say what's different and when it next runs; they can review it in [Scheduled](/scheduled)."}, nil
 }
 

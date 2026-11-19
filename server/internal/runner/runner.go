@@ -131,6 +131,8 @@ type Runner struct {
 	wg        sync.WaitGroup
 	// sweeping keeps Run to one Sweep in flight (Sweep alone owns otherBackend).
 	sweeping atomic.Bool
+	// scheduling keeps Run to one scheduled tick in flight off the poll loop.
+	scheduling atomic.Bool
 	// playgrounds is what this process serves of chats' playgrounds; nil
 	// when it serves none.
 	playgrounds *playgroundHost
@@ -173,7 +175,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	defer schedule.Stop()
 	r.heartbeat(ctx)
 	// Before waiting on the ticker: anything missed while Vesper was off runs once now.
-	r.tickScheduled(ctx)
+	r.scheduleTickAsync(ctx)
 	for {
 		select {
 		case <-ctx.Done():
@@ -198,7 +200,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		case <-poll.C:
 			r.Tick(ctx)
 		case <-schedule.C:
-			r.tickScheduled(ctx)
+			r.scheduleTickAsync(ctx)
 		}
 	}
 }
@@ -244,6 +246,20 @@ func (r *Runner) resumeStranded(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// scheduleTickAsync starts tickScheduled off the main event loop so a
+// long-running custom app tool sync never stalls heartbeats or polling.
+func (r *Runner) scheduleTickAsync(ctx context.Context) {
+	if r.Scheduled == nil || !r.scheduling.CompareAndSwap(false, true) {
+		return
+	}
+	r.wg.Add(1)
+	go func() {
+		defer r.wg.Done()
+		defer r.scheduling.Store(false)
+		r.tickScheduled(ctx)
+	}()
 }
 
 // tickScheduled starts tasks that are due and records runs that have ended.

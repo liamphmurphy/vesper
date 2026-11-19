@@ -7,6 +7,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -132,8 +133,8 @@ func (q *Queries) CreateScheduledRun(ctx context.Context, arg CreateScheduledRun
 
 const createScheduledTask = `-- name: CreateScheduledTask :one
 
-INSERT INTO scheduled_tasks (workspace_id, user_id, name, kind, instructions, workflow_id, persona_id, project_id, connector_ids, frequency, weekdays, month_day, at_time, timezone, cron, enabled, max_minutes, max_cost_micros, next_run_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING id, workspace_id, user_id, name, kind, instructions, workflow_id, persona_id, project_id, connector_ids, frequency, weekdays, month_day, at_time, timezone, cron, enabled, max_minutes, max_cost_micros, next_run_at, revision, created_at, updated_at
+INSERT INTO scheduled_tasks (workspace_id, user_id, name, kind, instructions, workflow_id, persona_id, project_id, connector_ids, custom_app_id, custom_app_tool, custom_app_args, frequency, weekdays, month_day, at_time, timezone, cron, enabled, max_minutes, max_cost_micros, next_run_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22) RETURNING id, workspace_id, user_id, name, kind, instructions, workflow_id, persona_id, project_id, connector_ids, frequency, weekdays, month_day, at_time, timezone, cron, enabled, max_minutes, max_cost_micros, next_run_at, revision, created_at, updated_at, custom_app_id, custom_app_tool, custom_app_args
 `
 
 type CreateScheduledTaskParams struct {
@@ -146,6 +147,9 @@ type CreateScheduledTaskParams struct {
 	PersonaID     *uuid.UUID
 	ProjectID     *uuid.UUID
 	ConnectorIds  []uuid.UUID
+	CustomAppID   *uuid.UUID
+	CustomAppTool string
+	CustomAppArgs json.RawMessage
 	Frequency     string
 	Weekdays      []int32
 	MonthDay      int32
@@ -170,6 +174,9 @@ func (q *Queries) CreateScheduledTask(ctx context.Context, arg CreateScheduledTa
 		arg.PersonaID,
 		arg.ProjectID,
 		arg.ConnectorIds,
+		arg.CustomAppID,
+		arg.CustomAppTool,
+		arg.CustomAppArgs,
 		arg.Frequency,
 		arg.Weekdays,
 		arg.MonthDay,
@@ -206,6 +213,9 @@ func (q *Queries) CreateScheduledTask(ctx context.Context, arg CreateScheduledTa
 		&i.Revision,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CustomAppID,
+		&i.CustomAppTool,
+		&i.CustomAppArgs,
 	)
 	return i, err
 }
@@ -252,7 +262,7 @@ func (q *Queries) FinishScheduledRun(ctx context.Context, arg FinishScheduledRun
 }
 
 const getScheduledTask = `-- name: GetScheduledTask :one
-SELECT id, workspace_id, user_id, name, kind, instructions, workflow_id, persona_id, project_id, connector_ids, frequency, weekdays, month_day, at_time, timezone, cron, enabled, max_minutes, max_cost_micros, next_run_at, revision, created_at, updated_at FROM scheduled_tasks WHERE id = $1 AND workspace_id = $2 AND user_id = $3
+SELECT id, workspace_id, user_id, name, kind, instructions, workflow_id, persona_id, project_id, connector_ids, frequency, weekdays, month_day, at_time, timezone, cron, enabled, max_minutes, max_cost_micros, next_run_at, revision, created_at, updated_at, custom_app_id, custom_app_tool, custom_app_args FROM scheduled_tasks WHERE id = $1 AND workspace_id = $2 AND user_id = $3
 `
 
 type GetScheduledTaskParams struct {
@@ -288,6 +298,9 @@ func (q *Queries) GetScheduledTask(ctx context.Context, arg GetScheduledTaskPara
 		&i.Revision,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CustomAppID,
+		&i.CustomAppTool,
+		&i.CustomAppArgs,
 	)
 	return i, err
 }
@@ -343,7 +356,7 @@ func (q *Queries) LastAssistantBody(ctx context.Context, sessionID uuid.UUID) (s
 }
 
 const listScheduledTasks = `-- name: ListScheduledTasks :many
-SELECT id, workspace_id, user_id, name, kind, instructions, workflow_id, persona_id, project_id, connector_ids, frequency, weekdays, month_day, at_time, timezone, cron, enabled, max_minutes, max_cost_micros, next_run_at, revision, created_at, updated_at FROM scheduled_tasks WHERE workspace_id = $1 AND user_id = $2 ORDER BY created_at, id
+SELECT id, workspace_id, user_id, name, kind, instructions, workflow_id, persona_id, project_id, connector_ids, frequency, weekdays, month_day, at_time, timezone, cron, enabled, max_minutes, max_cost_micros, next_run_at, revision, created_at, updated_at, custom_app_id, custom_app_tool, custom_app_args FROM scheduled_tasks WHERE workspace_id = $1 AND user_id = $2 ORDER BY created_at, id
 `
 
 type ListScheduledTasksParams struct {
@@ -384,6 +397,9 @@ func (q *Queries) ListScheduledTasks(ctx context.Context, arg ListScheduledTasks
 			&i.Revision,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.CustomAppID,
+			&i.CustomAppTool,
+			&i.CustomAppArgs,
 		); err != nil {
 			return nil, err
 		}
@@ -396,7 +412,7 @@ func (q *Queries) ListScheduledTasks(ctx context.Context, arg ListScheduledTasks
 }
 
 const nextDueScheduledTask = `-- name: NextDueScheduledTask :one
-SELECT id, workspace_id, user_id, name, kind, instructions, workflow_id, persona_id, project_id, connector_ids, frequency, weekdays, month_day, at_time, timezone, cron, enabled, max_minutes, max_cost_micros, next_run_at, revision, created_at, updated_at FROM scheduled_tasks WHERE enabled AND next_run_at <= now() ORDER BY next_run_at LIMIT 1 FOR UPDATE SKIP LOCKED
+SELECT id, workspace_id, user_id, name, kind, instructions, workflow_id, persona_id, project_id, connector_ids, frequency, weekdays, month_day, at_time, timezone, cron, enabled, max_minutes, max_cost_micros, next_run_at, revision, created_at, updated_at, custom_app_id, custom_app_tool, custom_app_args FROM scheduled_tasks WHERE enabled AND next_run_at <= now() ORDER BY next_run_at LIMIT 1 FOR UPDATE SKIP LOCKED
 `
 
 // However many times a task came due while Vesper was off, it is claimed once:
@@ -428,6 +444,9 @@ func (q *Queries) NextDueScheduledTask(ctx context.Context) (ScheduledTask, erro
 		&i.Revision,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CustomAppID,
+		&i.CustomAppTool,
+		&i.CustomAppArgs,
 	)
 	return i, err
 }
@@ -509,8 +528,8 @@ func (q *Queries) SetScheduledRunState(ctx context.Context, arg SetScheduledRunS
 }
 
 const updateScheduledTask = `-- name: UpdateScheduledTask :one
-UPDATE scheduled_tasks SET name = $4, kind = $5, instructions = $6, workflow_id = $7, persona_id = $8, project_id = $9, connector_ids = $10, frequency = $11, weekdays = $12, month_day = $13, at_time = $14, timezone = $15, cron = $16, enabled = $17, max_minutes = $18, max_cost_micros = $19, next_run_at = $20, revision = revision + 1, updated_at = now()
-WHERE id = $1 AND workspace_id = $2 AND revision = $3 RETURNING id, workspace_id, user_id, name, kind, instructions, workflow_id, persona_id, project_id, connector_ids, frequency, weekdays, month_day, at_time, timezone, cron, enabled, max_minutes, max_cost_micros, next_run_at, revision, created_at, updated_at
+UPDATE scheduled_tasks SET name = $4, kind = $5, instructions = $6, workflow_id = $7, persona_id = $8, project_id = $9, connector_ids = $10, custom_app_id = $11, custom_app_tool = $12, custom_app_args = $13, frequency = $14, weekdays = $15, month_day = $16, at_time = $17, timezone = $18, cron = $19, enabled = $20, max_minutes = $21, max_cost_micros = $22, next_run_at = $23, revision = revision + 1, updated_at = now()
+WHERE id = $1 AND workspace_id = $2 AND revision = $3 RETURNING id, workspace_id, user_id, name, kind, instructions, workflow_id, persona_id, project_id, connector_ids, frequency, weekdays, month_day, at_time, timezone, cron, enabled, max_minutes, max_cost_micros, next_run_at, revision, created_at, updated_at, custom_app_id, custom_app_tool, custom_app_args
 `
 
 type UpdateScheduledTaskParams struct {
@@ -524,6 +543,9 @@ type UpdateScheduledTaskParams struct {
 	PersonaID     *uuid.UUID
 	ProjectID     *uuid.UUID
 	ConnectorIds  []uuid.UUID
+	CustomAppID   *uuid.UUID
+	CustomAppTool string
+	CustomAppArgs json.RawMessage
 	Frequency     string
 	Weekdays      []int32
 	MonthDay      int32
@@ -549,6 +571,9 @@ func (q *Queries) UpdateScheduledTask(ctx context.Context, arg UpdateScheduledTa
 		arg.PersonaID,
 		arg.ProjectID,
 		arg.ConnectorIds,
+		arg.CustomAppID,
+		arg.CustomAppTool,
+		arg.CustomAppArgs,
 		arg.Frequency,
 		arg.Weekdays,
 		arg.MonthDay,
@@ -585,6 +610,9 @@ func (q *Queries) UpdateScheduledTask(ctx context.Context, arg UpdateScheduledTa
 		&i.Revision,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CustomAppID,
+		&i.CustomAppTool,
+		&i.CustomAppArgs,
 	)
 	return i, err
 }
