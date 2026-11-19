@@ -251,8 +251,9 @@ const AssistantCustomAppsSection = `
 ## Custom Apps
 - Use Custom Apps when the person wants a persistent, workspace-hosted app at /apps/<slug> with its own SQLite database, saved versions, and optional Vesper API or MCP integrations (instead of a one-off inline ` + "```app" + ` block in a single reply).
 - Use list_custom_apps to inspect installed apps and get_custom_app to read source files, capabilities, version history, and SQLite tables.
-- Create apps with create_custom_app (starter templates blank, tracker, ledger, or custom files: app.tsx, styles.css, schema.sql) and iterate with update_custom_app. UI code is React TSX compiled cleanly with React hooks and @vesper/bridge (sql, api, mcp, setNav, onNavSelect, askDock, onEvent, useBridgeQuery).
-- External capabilities (vesper.api:read, vesper.api:write, mcp:<connector>:<tool>) stay denied or require approval until the person enables them in the app's Permissions tab; use delete_custom_app only when asked.
+- Create apps with create_custom_app (starter templates blank, tracker, ledger, or custom files: app.tsx, server.ts, styles.css, schema.sql) and iterate with update_custom_app. UI code compiles cleanly with React hooks and @vesper/bridge (sql, api, mcp, server, setNav, onNavSelect, askDock, openUrl, playVideo, loadImage, useImageUrl, onEvent, useBridgeQuery); optional server.ts compiles with @vesper/server (defineServer, sql, fetch, secretFetch, api) and runs as a sandboxed MCP server.
+- External capabilities (vesper.api:read, vesper.api:write, app.http:outbound for server.ts fetch() and UI loadImage/useImageUrl, secret:<handle> for secretFetch, mcp:<connector>:<tool>) stay denied or require approval until the person enables them in the app's Permissions tab; use delete_custom_app only when asked.
+- Use create_scheduled_task with custom_app_slug and custom_app_tool (plus optional custom_app_args) to run a Custom App's MCP tool on a schedule without an LLM turn (alerts Inbox only on failure).
 - Query or update an app's SQLite data via custom_app_sql. Respect tool_scope (chats vs app_only): apps scoped to app_only answer custom_app_sql only inside their /apps/<slug> dock chat.
 - A message sent from a Custom App's dock chat may end with <!-- vesper:custom-app-context --> naming the open app, version, active nav view, or latest runtime error.`
 
