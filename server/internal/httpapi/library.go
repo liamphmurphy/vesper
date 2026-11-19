@@ -93,6 +93,17 @@ func (s *Server) ListLibraryItems(ctx context.Context, req api.ListLibraryItemsR
 	return out, nil
 }
 
+func (s *Server) GetLibraryItem(ctx context.Context, req api.GetLibraryItemRequestObject) (api.GetLibraryItemResponseObject, error) {
+	u, _, ws := me(ctx)
+	row, err := s.Q.GetLibraryItemDetail(ctx, store.GetLibraryItemDetailParams{ID: req.ItemId, WorkspaceID: ws, UserID: u.ID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apperr.ErrNotFound
+	} else if err != nil {
+		return nil, err
+	}
+	return api.GetLibraryItem200JSONResponse(toLibraryItem(store.ListLibraryItemsRow(row))), nil
+}
+
 func (s *Server) GetLibraryItemContent(ctx context.Context, req api.GetLibraryItemContentRequestObject) (api.GetLibraryItemContentResponseObject, error) {
 	u, _, ws := me(ctx)
 	l, err := s.Q.GetLibraryItem(ctx, store.GetLibraryItemParams{ID: req.ItemId, WorkspaceID: ws, UserID: u.ID})

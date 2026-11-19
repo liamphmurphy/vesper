@@ -41,8 +41,10 @@ type Deps struct {
 	CustomApps *customapps.Service
 	// AppAPICall forwards vesper.api:* calls from a custom app MCP server for its owning user.
 	AppAPICall func(ctx context.Context, user store.User, method, rawPath string, body any) (any, error)
-	// Files keeps a file in the person's Library (save_file); nil where there is no object store.
+	// Files keeps a file in the person's Library (save_file, render_pdf); nil where there is no object store.
 	Files FileKeeper
+	// PDF renders HTML/CSS into a PDF via the design worker (render_pdf); nil when unconfigured.
+	PDF PDFRenderer
 }
 
 // Tool is one Agent API operation, independent of transport.
@@ -994,6 +996,7 @@ var Tools = []Tool{
 	define("finish_video", "Save the finished video once its file is written; Vesper stores it in the chat and the person's Library.", finishVideo),
 	define("fail_video", "End a video that can't be finished, with what went wrong and the failing command's log tail. The card keeps the stills and shows the error.", failVideo),
 	define("save_file", "Keep a file you made in the person's Library under Files: a script, a zip, a spreadsheet, a CSV. Give its text, or base64 data for a binary, at most 25 MB. Executables and disk images are refused. It is only kept, never run.", saveFile),
+	define("render_pdf", "Render styled HTML and CSS into a polished PDF in an offline sandboxed renderer, save it to the person's Library under Files, and return PNG previews of the rendered pages so you can visually inspect layout and page breaks. Bundled offline fonts: Inter, Liberation Serif, Liberation Sans, Liberation Mono. Pass preview_only: true to inspect before saving, or attach_to_knowledge: true to also get a ![[attachment:...]] embed for Knowledge pages.", renderPDF),
 	define("start_audio", "Start audio you'll render with code in this chat's workspace (MIDI through a soundfont, a synth script, ffmpeg). The chat shows a card that follows its stages; returns the audio_id and where the renderer writes its progress and the finished file. You can't hear audio: say so, and check numbers instead.", startAudio),
 	define("update_audio", "Move audio on: stage render as the renderer starts, check once the file is written (with the numbers you measured on it).", updateAudio),
 	define("finish_audio", "Save the finished audio once its file is written; Vesper stores it in the chat and the person's Library.", finishAudio),
@@ -1242,7 +1245,7 @@ var Tools = []Tool{
 	define("list_page_versions", "A page's published versions, newest first, with who made each and the current one marked.", listPageVersions),
 	define("restore_page_version", "Bring back an earlier published version of a page as your new version, against base_version. The page's persona controls decide as for patch_page.", restorePageVersion),
 	define("file_capture", "File an inbox capture: move it into folder, or append it to the merge page and delete the capture. Both pages must take persona changes directly.", fileCapture),
-	define("attach_file", "Store a file among the person's Knowledge assets (a file they sent in this chat, or base64 data you made, at most 25 MB) and get the ![[embed]] to place in a page with patch_page.", attachFile),
+	define("attach_file", "Store a file among the person's Knowledge assets (a chat attachment_id, a Library file's library_item_id such as a rendered PDF, or base64 data you made, at most 25 MB) and get the ![[embed]] to place in a page with create_page or patch_page.", attachFile),
 	define("list_page_reviews", "A page's pending suggestions and direct edits awaiting review, with each change and whether it is yours.", listPageReviews),
 	define("withdraw_suggestion", "Withdraw your own pending changes on a page: a suggestion is dropped, a direct edit is undone. Only the person accepts changes, and only theirs to reject others'.", withdrawSuggestion),
 	define("set_page_controls", "Tighten a page's persona controls: pause persona edits or make them wait for review. Only the person can lift them.", setPageControls),

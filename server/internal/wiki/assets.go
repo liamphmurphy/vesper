@@ -148,3 +148,36 @@ func (s *Service) StoreAttachmentAsset(ctx context.Context, ws, user, attachment
 	}
 	return s.StoreAssetBytes(ctx, ws, user, a.Filename, data)
 }
+
+// StoreLibraryItemAsset copies a file from the person's Library (such as a
+// persona-generated PDF) into their Knowledge assets so it can be embedded in a page.
+func (s *Service) StoreLibraryItemAsset(ctx context.Context, ws, user, itemID uuid.UUID) (store.KnowledgeAsset, error) {
+	objects, bucket, err := s.vaultObjects()
+	if err != nil {
+		return store.KnowledgeAsset{}, err
+	}
+	item, err := store.New(s.Pool).GetLibraryItem(ctx, store.GetLibraryItemParams{ID: itemID, WorkspaceID: ws, UserID: user})
+	if err != nil {
+		return store.KnowledgeAsset{}, apperr.ErrNotFound
+	}
+	if item.BlobKey == "" {
+		return store.KnowledgeAsset{}, apperr.Invalid("library_item_id", "this Library item has no file to attach")
+	}
+	if item.SizeBytes > PersonaAssetLimit {
+		return store.KnowledgeAsset{}, apperr.Invalid("library_item_id", "is over the %d MB limit; the person can upload it in the Knowledge app", PersonaAssetLimit>>20)
+	}
+	object, err := objects.Open(ctx, bucket, item.BlobKey)
+	if err != nil {
+		return store.KnowledgeAsset{}, err
+	}
+	defer object.Close()
+	data, err := io.ReadAll(io.LimitReader(object, PersonaAssetLimit+1))
+	if err != nil {
+		return store.KnowledgeAsset{}, err
+	}
+	name := item.Filename
+	if strings.TrimSpace(name) == "" {
+		name = item.Title
+	}
+	return s.StoreAssetBytes(ctx, ws, user, name, data)
+}
