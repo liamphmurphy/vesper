@@ -89,6 +89,22 @@ final class BackupsTests: XCTestCase {
         ]
         XCTAssertEqual(Backups.exportsToPrune(names, keep: 2), ["vesper-export-2026-11-15-0900.zip", "vesper-export-2026-11-14-0900.zip"])
         XCTAssertEqual(Backups.exportsToPrune(names, keep: 0).count, 3, "always keeps at least the newest")
+        // Evicted iCloud Drive placeholders sort by their export timestamp alongside local zips.
+        let icloudNames = [
+            "vesper-export-2026-11-15-0900.zip",
+            ".vesper-export-2026-11-17-0900.zip.icloud",
+            ".vesper-export-2026-11-14-0900.zip.icloud",
+            "vesper-export-2026-11-16-0900.zip",
+            ".notes.txt.icloud",
+            ".vesper-export-latest.zip.icloud",
+            ".vesper-export-2026-11-17-0900.zip",
+            "vesper-export-2026-11-17-0900.zip.icloud",
+        ]
+        XCTAssertEqual(
+            Backups.exportsToPrune(icloudNames, keep: 2),
+            ["vesper-export-2026-11-15-0900.zip", ".vesper-export-2026-11-14-0900.zip.icloud"],
+            "keeps the newest evicted placeholder and local zip, prunes older evicted and local exports, ignores unrelated files"
+        )
         let h = 60.0 * 60 * 1000
         XCTAssertTrue(Backups.isExportDue(lastAt: nil, now: 10 * h, everyHours: 24))
         XCTAssertFalse(Backups.isExportDue(lastAt: 1 * h, now: 10 * h, everyHours: 24))
