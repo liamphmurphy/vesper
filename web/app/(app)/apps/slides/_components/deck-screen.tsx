@@ -4,7 +4,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { ApiError, api, unwrap } from "@/lib/api/client";
 import { useCanvasActions, useChatCanvas } from "@/lib/api/canvas-hooks";
-import { useMarkDocReviewed } from "@/lib/api/docs-hooks";
 import { useChat, useSendChatMessage } from "@/lib/api/hooks";
 import { uploadDeckAsset, useCreateSlideTheme, useDeckRef, useDeleteSlideTheme, useSlideThemes, useUpdateSlideTheme } from "@/lib/api/slides-hooks";
 import { cx } from "@/lib/cx";
@@ -21,15 +20,12 @@ import { applyStyle } from "@/lib/slides/styles";
 import { fit, flatten, groupElements, isGroup, mapDeep, removeDeep, scopeElements, ungroupElements, withFrame } from "@/lib/slides/group";
 import { Button } from "@/components/ui/button";
 import { Banner, Skeleton } from "@/components/ui/primitives";
-import { EditorLayout, type DockTab, type EditorHeader, type NativeEditorHeader } from "@/components/shell/editor-layout";
+import { EditorLayout, type DockTab, type NativeEditorHeader } from "@/components/shell/editor-layout";
 import type { DockState } from "@/lib/editor-layout";
 import { useCompact } from "@/lib/viewport";
-import { Conversation } from "@/app/(app)/chat/_components/conversation";
 import { PersonaAvatar, personaLook } from "@/app/(app)/chat/_components/persona";
-import { DeckReview } from "./deck-review";
-import { ExportMenu, PreflightDialog, useDeckExport } from "./export-menu";
+import { PreflightDialog, useDeckExport } from "./export-menu";
 import { toast } from "@/lib/toast";
-import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { buildDeckActions, buildDeckNav, parseDeckCommand } from "@/lib/native-shell/models/deck-editor";
 import { navAvatar, pageOrigin } from "@/lib/native-shell/models/common";
 import { presenceLabel } from "@/lib/native-shell/models/editor-header";
@@ -45,7 +41,6 @@ import { confirmAction } from "@/components/ui/confirm";
 import { addLeaveGuard } from "@/lib/leave-guard";
 
 type SaveState = "saved" | "unsaved" | "saving" | "conflict" | "error";
-const SAVE_LABEL: Record<SaveState, string> = { saved: "Saved", unsaved: "Unsaved changes", saving: "Saving…", conflict: "Not saved", error: "Not saved" };
 const AUTOSAVE_MS = 800;
 const MAX_IMAGE_EDGE = 4096;
 const errorText = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong. Please try again.");
@@ -130,7 +125,6 @@ export function DeckScreen({ id }: { id: string }) {
   const actions = useCanvasActions(chatId, id);
   // mutateAsync is stable across renders; the mutation result object isn't.
   const saveVersion = actions.save.mutateAsync;
-  const reviewed = useMarkDocReviewed(id);
   const send = useSendChatMessage(chatId);
   const assetUrl = useCallback((a: string) => assetHref(id, a), [id]);
   // Custom colours used in this deck, newest first: editor state, kept per deck in this browser.
@@ -773,54 +767,20 @@ export function DeckScreen({ id }: { id: string }) {
   const changeCount = changedSlides?.size ?? 0;
 
   const exp = useDeckExport({ deckId: id, title, current: flush, assetUrl });
-  const native = useIsNativeShell();
-  // The Mac app draws no Share menu in the page to show an export's progress beside, so it's a toast (with Cancel while it builds).
   const expNotice = exp.notice;
   const cancelExport = exp.cancel;
   useEffect(() => {
-    if (!native || !expNotice) return;
+    if (!expNotice) return;
     toast({
       id: "deck-export",
       title: expNotice.text,
       tone: expNotice.tone === "error" ? "error" : expNotice.tone === "ok" ? "success" : "neutral",
       ...(expNotice.tone === "busy" ? { duration: 600000, action: { label: "Cancel", onClick: cancelExport } } : {}),
     });
-  }, [native, expNotice, cancelExport]);
-
-  const saveBad = saveState.s === "error" || saveState.s === "conflict";
-  const header: EditorHeader = {
-    back: { href: "/knowledge", label: "Knowledge" },
-    name: title,
-    title,
-    saveState: ref.data && c && (
-      <span data-testid="deck-save-state" title={saveState.message} className={cx("flex items-center gap-1.5", saveBad && "text-pill-blocked-fg")}>
-        <span aria-hidden className={cx("size-1.5 rounded-full", saveBad ? "bg-pill-blocked-fg" : saveState.s === "saved" ? "bg-state-done" : "bg-fg-tertiary")} />
-        {SAVE_LABEL[saveState.s]} · v{savedSeq || c.seq}
-        {saveState.s === "error" && (
-          <button type="button" className="text-accent hover:underline" onClick={() => void flush().catch(() => undefined)}>
-            Retry
-          </button>
-        )}
-      </span>
-    ),
-    presence: ref.data && (
-      <span className="flex items-center gap-1.5 text-12 text-fg-tertiary">
-        <PersonaAvatar persona={look} size={22} className={cx(live && "animate-pulse ring-2 ring-[#3FC1B0] motion-reduce:animate-none")} />
-        {live ? `${persona} is editing…` : reviewing ? `${persona} suggested changes` : `${persona} can edit`}
-      </span>
-    ),
-    actions: ref.data
-      ? [
-          <Button key="present" variant="secondary" onClick={() => void present()} disabled={!deck} hint="⌘↵">
-            ▶ Present
-          </Button>,
-          deck ? <ExportMenu key="share" exp={exp} /> : undefined,
-        ]
-      : undefined,
-  };
+  }, [expNotice, cancelExport]);
 
   const look2 = look;
-  const nativeHeader: NativeEditorHeader = {
+  const header: NativeEditorHeader = {
     title,
     actions: buildDeckActions({
       save: ref.data && c ? { state: saveState.s, seq: savedSeq || c.seq } : undefined,
@@ -1053,7 +1013,6 @@ export function DeckScreen({ id }: { id: string }) {
             panel: makePanelSpec("editor.chat", `slides.chat:${chatId}`, { tabId: "chat", chatId }),
           }
         : { kind: "native", sections: [], emptyText: "Loading chat…" },
-      content: <div data-deck-chat className="flex min-h-0 flex-1 flex-col">{chatId && <Conversation key={chatId} id={chatId} docked onNew={() => router.push("/knowledge")} />}</div>,
     },
   ];
   if (reviewing && c)
@@ -1076,40 +1035,17 @@ export function DeckScreen({ id }: { id: string }) {
           archived,
         }),
       },
-      content:
-        baseDeck && headDeck ? (
-          <DeckReview
-            key={`${base}-${c.seq}`}
-            base={baseDeck}
-            head={headDeck}
-            persona={persona}
-            assetUrl={assetUrl}
-            fontsReady={fonts}
-            busy={archived || reviewed.isPending || actions.save.isPending}
-            error={reviewed.error || actions.save.error ? errorText(reviewed.error ?? actions.save.error) : undefined}
-            onAcceptAll={() => reviewed.mutate(c.seq)}
-            onResolve={(d, note) =>
-              actions.save.mutate(
-                { base_seq: c.seq, body: encodeDeck(d), note },
-                { onSuccess: (v) => reviewed.mutate(v.seq) },
-              )
-            }
-          />
-        ) : (
-          <div aria-busy="true" className="p-3"><Skeleton className="h-[320px]" /></div>
-        ),
     });
 
   return (
     <>
     <EditorLayout
       app="slides"
+      back={{ href: "/knowledge", label: "Knowledge" }}
       header={header}
-      nativeHeader={nativeHeader}
       nativeLeft={nativeLeft}
       show={{ tab: "review", n: showReview }}
       onDockChange={setDock}
-      left={!compact && !loadError ? thumbnails || <div aria-busy="true" className="flex flex-col gap-3 p-3">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="aspect-video w-full" />)}</div> : undefined}
       main={main}
       dock={dockTabs}
     />

@@ -67,75 +67,18 @@ export function ScheduledScreen() {
   const count = (on: boolean) => all.filter((t) => t.enabled === on).length;
   const setEnabled = (t: ScheduledTask, enabled: boolean) => save.mutate({ id: t.id, body: { ...toDraft(t), enabled } });
   const listError = save.error ?? runNow.error;
-  const filterOptions = [
-    { value: "all" as const, label: "All", n: all.length },
-    { value: "active" as const, label: "Active", n: count(true) },
-    { value: "paused" as const, label: "Paused", n: count(false) },
-  ];
   return (
     <section aria-label="Scheduled tasks">
-      {!compact && (
-        <NavigatorPortal
-          native={{
-            model: buildScheduledNavModel({ all: all.map((t) => ({ id: t.id, name: t.name, enabled: t.enabled, schedule: describeSchedule(t) })), filter, open }),
-            onCommand: (cmd) => {
-              if (cmd.type === "nav.action" && cmd.actionId === SCHEDULED_NEW_ACTION) setOpen("new");
-              else if (cmd.type === "nav.activate") setOpen(cmd.itemId);
-              else if (cmd.type === "nav.picker" && cmd.pickerId === SCHEDULED_FILTER_PICKER) setFilter(cmd.value as typeof filter);
-            },
-          }}
-        >
-          <nav aria-label="Scheduled tasks" className="flex min-h-0 flex-1 flex-col gap-3 px-2.5 pt-4 pb-3">
-            <div className="flex items-center justify-between px-1.5">
-              <h2 className="text-16 font-semibold text-fg">Scheduled</h2>
-              <IconButton icon="plus" label="Create scheduled task" size={26} onClick={() => setOpen("new")} />
-            </div>
-            <div role="tablist" aria-label="Filter scheduled tasks" className="flex gap-0.5 rounded-md bg-surface-sunken p-0.5">
-              {filterOptions.map((o) => {
-                const on = filter === o.value;
-                return (
-                  <button
-                    key={o.value}
-                    type="button"
-                    role="tab"
-                    aria-selected={on}
-                    onClick={() => setFilter(o.value)}
-                    className={cx(
-                      "flex-1 rounded-[5px] px-2 py-1 text-12 transition-colors",
-                      on ? "bg-surface font-medium text-fg" : "text-fg-secondary hover:text-fg",
-                    )}
-                  >
-                    {o.label} <span className="text-11 text-fg-tertiary">{o.n}</span>
-                  </button>
-                );
-              })}
-            </div>
-            <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
-              {rows.map((t) => {
-                const active = t.id === open;
-                return (
-                  <button
-                    key={t.id}
-                    type="button"
-                    aria-current={active ? "true" : undefined}
-                    onClick={() => setOpen(t.id)}
-                    className={cx(
-                      "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
-                      active ? "bg-selected text-fg" : "text-fg-secondary hover:bg-hover hover:text-fg",
-                    )}
-                  >
-                    <span className={cx("size-1.5 flex-none rounded-full", t.enabled ? "bg-state-done" : "bg-state-backlog")} />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-13 font-medium">{t.name}</span>
-                      <span className="block truncate text-11 text-fg-tertiary">{describeSchedule(t)}</span>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </nav>
-        </NavigatorPortal>
-      )}
+      <NavigatorPortal
+        native={{
+          model: buildScheduledNavModel({ all: all.map((t) => ({ id: t.id, name: t.name, enabled: t.enabled, schedule: describeSchedule(t) })), filter, open }),
+          onCommand: (cmd) => {
+            if (cmd.type === "nav.action" && cmd.actionId === SCHEDULED_NEW_ACTION) setOpen("new");
+            else if (cmd.type === "nav.activate") setOpen(cmd.itemId);
+            else if (cmd.type === "nav.picker" && cmd.pickerId === SCHEDULED_FILTER_PICKER) setFilter(cmd.value as typeof filter);
+          },
+        }}
+      />
       <TopBar crumbs={[{ label: "Scheduled" }]} />
       <Content>
         <div className="flex gap-6 max-xl:flex-col">
@@ -143,7 +86,6 @@ export function ScheduledScreen() {
             <PageHeader
               title="Scheduled tasks"
               description="Prompts, workflows, and app tools that run on their own. Results and approvals show up in Needs you."
-              actions={<Button variant="primary" icon="plus" onClick={() => setOpen("new")}>New task</Button>}
               nativeActions={[{ id: "scheduled.new", label: "New task", kind: "button", icon: "plus", showsLabel: true, accent: true, run: () => setOpen("new") }]}
             />
             {compact && (

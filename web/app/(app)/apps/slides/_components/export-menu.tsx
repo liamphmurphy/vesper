@@ -1,6 +1,6 @@
 "use client";
 
-import { Dialog, DropdownMenu } from "radix-ui";
+import { Dialog } from "radix-ui";
 import { useCallback, useRef, useState } from "react";
 import { downloadFile } from "@/lib/api/docs-hooks";
 import { useSaveDeckExport } from "@/lib/api/slides-hooks";
@@ -8,11 +8,7 @@ import { measure } from "@/lib/slides/fonts";
 import { layoutSlide } from "@/lib/slides/layout";
 import { SlideSvg } from "@/lib/slides/render";
 import { slideTitle, type Deck } from "@/lib/slides/schema";
-import { floatPanel } from "@/components/domain/pickers";
 import { Button } from "@/components/ui/button";
-
-const item = "flex cursor-pointer select-none flex-col rounded-md px-2.5 py-1.5 text-13 text-fg outline-none data-[highlighted]:bg-hover";
-const detail = "text-11 text-fg-tertiary";
 
 export type DeckExportNotice = { tone: "ok" | "error" | "busy"; text: string };
 type Format = "pdf" | "pptx";
@@ -118,50 +114,5 @@ export function PreflightDialog({ exp, assetUrl, fontsReady }: { exp: DeckExport
       </Dialog.Portal>
     </Dialog.Root>
     </>
-  );
-}
-
-/** The web's Share ▾ menu (and the notice beside it) over `exp`; Present is its own header action. The screen renders the PreflightDialog. */
-export function ExportMenu({ exp }: { exp: DeckExport }) {
-  const { notice, start, cancel } = exp;
-  return (
-    <div className="flex items-center gap-2">
-      {notice && (
-        <span role={notice.tone === "error" ? "alert" : "status"} className={notice.tone === "error" ? "max-w-[360px] truncate text-12 text-pill-blocked-fg" : "max-w-[360px] truncate text-12 text-fg-secondary"} title={notice.text}>
-          {notice.text}
-          {notice.tone === "busy" && (
-            <button type="button" className="ml-2 text-accent hover:underline" onClick={cancel}>
-              Cancel
-            </button>
-          )}
-        </span>
-      )}
-      <DropdownMenu.Root>
-        <DropdownMenu.Trigger asChild>
-          <Button variant="primary" disabled={notice?.tone === "busy"}>
-            Share <span aria-hidden>▾</span>
-          </Button>
-        </DropdownMenu.Trigger>
-        <DropdownMenu.Portal>
-          <DropdownMenu.Content align="end" sideOffset={6} className={`${floatPanel} z-50 w-[270px]`}>
-            <DropdownMenu.Label className="px-2.5 pb-0.5 pt-1 text-11 font-medium uppercase tracking-wide text-fg-tertiary">Export</DropdownMenu.Label>
-            <DropdownMenu.Item className={item} onSelect={() => void start("pdf")()}>
-              PDF (.pdf)<span className={detail}>Downloads one page per slide</span>
-            </DropdownMenu.Item>
-            <DropdownMenu.Item className={item} onSelect={() => void start("pptx")()}>
-              PowerPoint (.pptx)<span className={detail}>Editable in PowerPoint, Keynote, Google Slides</span>
-            </DropdownMenu.Item>
-            <DropdownMenu.Separator className="my-1 h-px bg-border-subtle" />
-            <DropdownMenu.Label className="px-2.5 pb-0.5 pt-1 text-11 font-medium uppercase tracking-wide text-fg-tertiary">Library</DropdownMenu.Label>
-            <DropdownMenu.Item className={item} onSelect={() => void start("pdf", "library")()}>
-              Save PDF to Library<span className={detail}>Keeps a copy linked to this deck</span>
-            </DropdownMenu.Item>
-            <DropdownMenu.Item className={item} onSelect={() => void start("pptx", "library")()}>
-              Save PowerPoint to Library<span className={detail}>Keeps a copy linked to this deck</span>
-            </DropdownMenu.Item>
-          </DropdownMenu.Content>
-        </DropdownMenu.Portal>
-      </DropdownMenu.Root>
-    </div>
   );
 }

@@ -9,29 +9,24 @@ import type { Schemas } from "@/lib/api/client";
 import { editorKeeps, locateQuote } from "@/lib/doc-markdown";
 import { reviewBase, reviewSegments, splitBlocks } from "@/lib/doc-review";
 import type { DockState } from "@/lib/editor-layout";
-import { cx } from "@/lib/cx";
 import { Button } from "@/components/ui/button";
 import { Banner, Skeleton } from "@/components/ui/primitives";
-import { EditorLayout, type DockTab, type EditorHeader, type NativeEditorHeader } from "@/components/shell/editor-layout";
+import { EditorLayout, type DockTab, type NativeEditorHeader } from "@/components/shell/editor-layout";
 import { CanvasView, Rail, type Target } from "@/components/domain/canvas-view";
-import { Conversation } from "@/app/(app)/chat/_components/conversation";
 import { PersonaAvatar, personaLook } from "@/app/(app)/chat/_components/persona";
 import { toast } from "@/lib/toast";
-import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { buildDocActions, buildDocOutlineNav, parseHeadingId } from "@/lib/native-shell/models/doc-editor";
 import { buildDocReviewInspector } from "@/lib/native-shell/models/doc-inspector";
 import { navAvatar, pageOrigin } from "@/lib/native-shell/models/common";
 import { presenceLabel } from "@/lib/native-shell/models/editor-header";
 import { makePanelSpec } from "@/lib/native-shell/panel-events";
 import { DocEditor, type DocEditorHandle, type Picked, type SaveState } from "./doc-editor";
-import { DocReview, DocReviewList, useDocReview } from "./doc-review";
-import { ExportMenu, useDocExports } from "./export-menu";
+import { DocReview, useDocReview } from "./doc-review";
+import { useDocExports } from "./export-menu";
 
 type Comment = Schemas["ChatCanvasComment"];
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong. Please try again.");
-
-const SAVE_LABEL: Record<SaveState, string> = { saved: "Saved", unsaved: "Unsaved changes", saving: "Saving…", conflict: "Not saved", error: "Not saved" };
 
 /** The document's headings, in order, as plain text with their level. */
 function outlineOf(body: string): { level: number; text: string }[] {
@@ -85,7 +80,6 @@ export function DocScreen({ id }: { id: string }) {
 
   const editable = useMemo(() => (c ? editorKeeps(c.body) : true), [c]);
   const outline = useMemo(() => (c ? outlineOf(c.body) : []), [c]);
-  const [outlineOpen, setOutlineOpen] = useState(false);
 
   // The version the editor's text was last saved as; comments anchor to it.
   const saved = useRef<{ seq: number; body: string }>({ seq: 0, body: "" });
@@ -176,35 +170,15 @@ export function DocScreen({ id }: { id: string }) {
 
   const title = c?.title ?? doc.data?.title ?? "Document";
   const showRail = !reviewing && editable && (open.length > 0 || resolved.length > 0 || !!target);
-  const saveBad = saveState.s === "error" || saveState.s === "conflict";
 
   const exports = useDocExports({ id, title, current: async () => (await flushed()).body });
-  // The Mac app has no Share menu in the page to show an export's outcome beside, so it's a toast.
-  const native = useIsNativeShell();
   const exportNotice = exports.notice;
   useEffect(() => {
-    if (!native || !exportNotice) return;
+    if (!exportNotice) return;
     toast({ id: "doc-export", title: exportNotice.text, tone: exportNotice.tone === "error" ? "error" : "success", ...(exportNotice.href ? { action: { label: "Open", onClick: () => router.push(exportNotice.href!) } } : {}) });
-  }, [native, exportNotice, router]);
+  }, [exportNotice, router]);
 
-  const header: EditorHeader = {
-    back: { href: "/apps/docs", label: "Docs" },
-    name: title,
-    title,
-    saveState: c && (
-      <span data-testid="doc-save-state" title={saveState.message} className={cx(saveBad && "text-pill-blocked-fg")}>
-        {SAVE_LABEL[saveState.s]} · v{c.seq}
-      </span>
-    ),
-    presence: doc.data && (
-      <span data-testid="doc-presence" className="flex items-center gap-1.5 text-12 text-fg-tertiary">
-        <PersonaAvatar persona={look} size={22} className={cx(live && "animate-pulse ring-2 ring-[#3FC1B0] motion-reduce:animate-none")} />
-        {live ? `${persona} is editing…` : reviewing ? `${persona} suggested changes` : `${persona} can edit`}
-      </span>
-    ),
-    actions: doc.data ? [<ExportMenu key="share" trigger="Share" exports={exports} />] : undefined,
-  };
-  const nativeHeader: NativeEditorHeader = {
+  const header: NativeEditorHeader = {
     title,
     actions: buildDocActions({
       save: c ? { state: saveState.s, seq: c.seq } : undefined,
@@ -243,12 +217,6 @@ export function DocScreen({ id }: { id: string }) {
     </div>
   ) : (
     <div data-testid="doc-page" className="relative flex min-h-0 min-w-0 flex-1">
-      {!native && !outlineOpen && outline.length > 0 && (
-        <Button variant="secondary" className="absolute left-3 top-[52px] z-20 max-md:hidden" aria-label="Show outline" title="Show outline" onClick={() => setOutlineOpen(true)}>
-          <span aria-hidden>☰</span>
-          <span className="max-xl:hidden">Outline</span>
-        </Button>
-      )}
       <div ref={page} className="min-h-0 min-w-0 flex-1 overflow-y-auto">
         {notice && (
           <p role="alert" className="mx-auto mt-3 max-w-[720px] px-8 text-12 text-pill-blocked-fg">
@@ -318,36 +286,6 @@ export function DocScreen({ id }: { id: string }) {
     </div>
   );
 
-  const left =
-    outlineOpen && c ? (
-      <nav aria-label="Outline" className="flex min-h-0 flex-1 flex-col gap-1 p-3">
-        <div className="flex items-center justify-between px-1 pb-1">
-          <span className="text-11 font-medium uppercase tracking-wide text-fg-tertiary">Outline</span>
-          <button type="button" aria-label="Hide outline" title="Hide outline" onClick={() => setOutlineOpen(false)} className="grid size-6 place-items-center rounded-md text-fg-tertiary hover:bg-hover hover:text-fg">
-            ×
-          </button>
-        </div>
-        {outline.length ? (
-          <ol className="flex flex-col">
-            {outline.map((h, i) => (
-              <li key={i}>
-                <button
-                  type="button"
-                  onClick={() => jumpTo(i)}
-                  style={{ paddingLeft: `${8 + (h.level - Math.min(...outline.map((x) => x.level))) * 12}px` }}
-                  className={cx("w-full truncate rounded-md py-1 pr-2 text-left text-13 hover:bg-hover", h.level === 1 ? "text-fg" : "text-fg-secondary")}
-                >
-                  {h.text}
-                </button>
-              </li>
-            ))}
-          </ol>
-        ) : (
-          <p className="px-1 text-12 text-fg-tertiary">No headings yet.</p>
-        )}
-      </nav>
-    ) : undefined;
-
   const docReviewInspector = useMemo(
     () =>
       suggesting
@@ -378,12 +316,6 @@ export function DocScreen({ id }: { id: string }) {
             panel: makePanelSpec("editor.chat", `doc.chat:${chatId}`, { tabId: "chat", chatId }),
           }
         : { kind: "native", sections: [], emptyText: "Loading chat…" },
-      content: (
-        <div data-testid="doc-chat" aria-label={`Chat with ${persona}`} className="flex min-h-0 flex-1 flex-col">
-          {/* A document keeps its one chat: /new starts another document instead. */}
-          {chatId && <Conversation key={chatId} id={chatId} docked onNew={() => router.push("/apps/docs")} />}
-        </div>
-      ),
     },
   ];
   if (suggesting)
@@ -408,8 +340,7 @@ export function DocScreen({ id }: { id: string }) {
             },
           }
         : undefined,
-      content: <DocReviewList review={review} persona={persona} busy={reviewBusy} error={reviewError} />,
     });
 
-  return <EditorLayout app="docs" header={header} nativeHeader={nativeHeader} left={left} nativeLeft={nativeLeft} main={failed ?? main} dock={dockTabs} show={show} onDockChange={setDock} />;
+  return <EditorLayout app="docs" back={{ href: "/apps/docs", label: "Docs" }} header={header} nativeLeft={nativeLeft} main={failed ?? main} dock={dockTabs} show={show} onDockChange={setDock} />;
 }

@@ -5,9 +5,7 @@ import type { Artifact } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/client";
 import { useNewVersion, useReviewMockup } from "@/lib/api/hooks";
 import { insertIndent, svgError, type Zoom } from "@/lib/mockup";
-import { Button } from "@/components/ui/button";
 import { Field, TextInput } from "@/components/ui/primitives";
-import { Segmented } from "@/components/ui/controls";
 import { MockupImage } from "@/components/domain/mockup";
 import { MockupCanvas, useSourceHistory } from "@/components/domain/mockup-canvas";
 import { ZoomControl } from "./mockup-parts";
@@ -99,7 +97,7 @@ export function MockupEditor({ a, onDone }: { a: Artifact; onDone: () => void })
   }
 
   // In the Mac app the mode switch and Cancel / Save are in the window's toolbar; the page keeps only the note field.
-  const inToolbar = useNativeActions(
+  useNativeActions(
     buildMockupEditActions({
       mode,
       modes: MODES,
@@ -174,27 +172,11 @@ export function MockupEditor({ a, onDone }: { a: Artifact; onDone: () => void })
             <TextInput id="mockup-note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Optional note for this version" />
           </Field>
         </div>
-        {!inToolbar && <div className="flex flex-wrap items-center gap-2">
-          <Button variant="ghost" onClick={cancel}>
-            Cancel
-          </Button>
-          <Button variant="secondary" disabled={!canSave} onClick={() => save(false)} hint="⌘S">
-            Save version
-          </Button>
-          <Button variant="approve" icon="check" disabled={!canSave} onClick={() => save(true)}>
-            Save &amp; approve
-          </Button>
-        </div>}
       </div>
       {(error || problem) && (
         <p role="alert" className="border-b border-border-subtle px-6 py-2 text-12 text-pill-blocked-fg">
           {error ?? problem}
         </p>
-      )}
-      {!inToolbar && (
-        <div className="flex items-center justify-between gap-2 px-6 pt-3">
-          <Segmented small label="Editor mode" value={mode} onChange={setMode} options={MODES} />
-        </div>
       )}
       {mode === "visual" && (
         <div className="flex min-h-[480px] flex-1 p-4 lg:p-6">{canvas(true)}</div>

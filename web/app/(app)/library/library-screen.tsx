@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { Dialog, DropdownMenu } from "radix-ui";
 import { useRouter, useSearchParams } from "next/navigation";
-import { isNativeShell } from "@/lib/native-shell/bridge";
 import { buildKeepsakesNavModel, LIBRARY_SOURCE_PICKER, librarySourceHref, type LibrarySourceValue } from "@/lib/native-shell/models/library";
 import { useState } from "react";
 import { libraryItemUrl } from "@/lib/api/client";
@@ -525,17 +524,6 @@ function UploadInput({ up: { setInput, take } }: { up: ReturnType<typeof useLibr
   );
 }
 
-function UploadButton({ up }: { up: ReturnType<typeof useLibraryUpload> }) {
-  return (
-    <div className="flex shrink-0 items-center gap-2">
-      {up.error && <span className="text-12 text-pill-blocked-fg">{up.error}</span>}
-      <Button variant="secondary" icon="upload" disabled={up.pending} onClick={up.pick}>
-        {up.pending ? "Uploading…" : "Upload"}
-      </Button>
-    </div>
-  );
-}
-
 const grid = "grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-4";
 
 /** One kind's items, a page at a time. */
@@ -627,56 +615,27 @@ function Keepsakes() {
   const openItem = params.get("item");
   return (
     <>
-      {!compact && (
-        <NavigatorPortal
-          native={{
-            model: buildKeepsakesNavModel({ tabs: KEEPSAKE_TABS, tab }),
-            onCommand: (cmd) => {
-              if (cmd.type === "nav.activate") setTab(cmd.itemId);
-              else if (cmd.type === "nav.picker" && cmd.pickerId === LIBRARY_SOURCE_PICKER) router.push(librarySourceHref(cmd.value as LibrarySourceValue));
-            },
-          }}
-        >
-          <nav aria-label="Library" className="flex min-h-0 flex-1 flex-col gap-3 px-2.5 pt-4 pb-3">
-            <div className="px-1">
-              <LibrarySourceSwitch source="yours" />
-            </div>
-            <div role="tablist" aria-label="Library" aria-orientation="vertical" className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
-              {KEEPSAKE_TABS.map((item) => {
-                const active = tab === item.key;
-                return (
-                  <button
-                    key={item.key}
-                    type="button"
-                    role="tab"
-                    aria-selected={active}
-                    onClick={() => setTab(item.key)}
-                    className={cx(
-                      "flex h-8 items-center rounded-md px-2.5 text-left text-13 transition-colors",
-                      active ? "bg-selected font-medium text-fg" : "text-fg-secondary hover:bg-hover hover:text-fg",
-                    )}
-                  >
-                    {item.label}
-                  </button>
-                );
-              })}
-            </div>
-          </nav>
-        </NavigatorPortal>
-      )}
+      <NavigatorPortal
+        native={{
+          model: buildKeepsakesNavModel({ tabs: KEEPSAKE_TABS, tab }),
+          onCommand: (cmd) => {
+            if (cmd.type === "nav.activate") setTab(cmd.itemId);
+            else if (cmd.type === "nav.picker" && cmd.pickerId === LIBRARY_SOURCE_PICKER) router.push(librarySourceHref(cmd.value as LibrarySourceValue));
+          },
+        }}
+      />
       <TopBar crumbs={[{ label: "Library" }]} />
       <Content>
         <div className="flex flex-col gap-5">
           <PageHeader
             title="Library"
             description="Private keepsakes from your chats: generated media, saved files, exports, diagrams, references, and links."
-            actions={<UploadButton up={up} />}
             nativeActions={[{ id: "library.upload", label: up.pending ? "Uploading…" : "Upload", kind: "button", icon: "upload", showsLabel: true, disabled: up.pending, run: up.pick }]}
           >
             {compact && <LibrarySourceSwitch source="yours" />}
           </PageHeader>
           <UploadInput up={up} />
-          {up.error && isNativeShell() && <p role="alert" className="text-12 text-pill-blocked-fg">{up.error}</p>}
+          {up.error && <p role="alert" className="text-12 text-pill-blocked-fg">{up.error}</p>}
           {compact && <Tabs label="Library" value={tab} onChange={setTab} items={[...KEEPSAKE_TABS]} />}
           {tab === "fridge" ? <Fridge /> : tab === "links" ? <Links /> : <Items kind={KINDS[tab] ?? "image"} openItem={openItem} />}
         </div>

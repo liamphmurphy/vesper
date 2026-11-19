@@ -231,21 +231,6 @@ export function AgentScreen({ handle }: { handle: string }) {
           ...(dirty ? [{ id: "agent.discard", label: "Discard", kind: "button" as const, showsLabel: true, run: () => setDraft(null) }] : []),
           { id: "agent.review", label: "Review changes", kind: "button" as const, accent: true, showsLabel: true, disabled: !dirty, run: review },
         ] : undefined}
-        actions={
-          detail && (
-            <>
-              {dirty && (
-                <span className="flex items-center gap-1.5 text-13 text-pill-human-fg">
-                  <span aria-hidden className="size-1.5 rounded-full bg-state-human" /> {changes} unsaved change{changes === 1 ? "" : "s"}
-                </span>
-              )}
-              {dirty && <Button variant="ghost" onClick={() => setDraft(null)}>Discard</Button>}
-              <Button variant="primary" disabled={!dirty} onClick={review} hint="⌘S">
-                Review changes
-              </Button>
-            </>
-          )
-        }
       />
       {!detail || !current ? (
         <div aria-busy="true" className="flex flex-col gap-4 px-7 py-8">

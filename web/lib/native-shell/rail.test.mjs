@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildRailModel, createDockRailStore, dockRailAction, dockRailItems, railEffect } from "./models/rail.ts";
+import { buildRailModel, createDockRailStore, dockRailAction, dockRailItems, harnessRailInputs, railEffect } from "./models/rail.ts";
 import { isPageMessage } from "./protocol.ts";
 
 const tabs = [
@@ -142,4 +142,65 @@ test("the dock store: the latest registration wins, clearing falls back", () => 
   assert.deepEqual(store.items(), []);
   assert.equal(store.act("x"), false);
   assert.ok(changes >= 3);
+});
+
+test("harnessRailInputs maps idle, working, limited, antigravity, and fallback harnesses", () => {
+  const inputs = harnessRailInputs([
+    {
+      harness: "claude-code",
+      label: "Claude",
+      connected: true,
+      running: 2,
+      usage_available: true,
+      usage_checked_at: new Date().toISOString(),
+      windows: [{ id: "s", kind: "session", label: "5h", used_percent: 45 }],
+    },
+    {
+      harness: "codex",
+      label: "Codex",
+      connected: true,
+      running: 0,
+      limited_until: "2026-11-19T23:00:00Z",
+      usage_available: true,
+      windows: [{ id: "s", kind: "session", label: "5h", used_percent: 100 }],
+    },
+    {
+      harness: "antigravity",
+      label: "Antigravity",
+      connected: true,
+      running: 0,
+      usage_available: false,
+      windows: [],
+    },
+    {
+      harness: "custom-cli",
+      label: "Custom",
+      connected: true,
+      running: 0,
+      usage_available: false,
+      usage_checking: true,
+      windows: [],
+    },
+  ]);
+
+  assert.equal(inputs[0].initials, "CC");
+  assert.equal(inputs[0].state, "working");
+  assert.equal(inputs[0].usage.value, "45%");
+  assert.equal(inputs[0].usage.fraction, 0.45);
+  assert.deepEqual(inputs[0].usage.meta, ["5h allowance used", "2 working"]);
+
+  assert.equal(inputs[1].initials, "CX");
+  assert.equal(inputs[1].state, "limited");
+  assert.equal(inputs[1].usage.tone, "limited");
+  assert.deepEqual(inputs[1].usage.meta, ["5h allowance used", "Limited"]);
+
+  assert.equal(inputs[2].name, "AG");
+  assert.equal(inputs[2].usage.value, "—");
+  assert.equal(inputs[2].usage.unavailable, true);
+  assert.deepEqual(inputs[2].usage.meta, ["Allowance not reported", "Idle"]);
+
+  assert.equal(inputs[3].initials, "CU");
+  assert.equal(inputs[3].color, "#8A8F98");
+  assert.equal(inputs[3].usage.value, "…");
+  assert.deepEqual(inputs[3].usage.meta, ["Checking usage…", "Idle"]);
 });

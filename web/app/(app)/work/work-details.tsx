@@ -422,7 +422,6 @@ function WorkRunLinks({
   epic,
   companion,
   context,
-  inTopBar,
   navigate,
 }: {
   id: string;
@@ -430,11 +429,10 @@ function WorkRunLinks({
   epic?: { id: string; name: string } | null;
   companion: boolean;
   context?: string | null;
-  inTopBar?: boolean;
   navigate: Navigate;
 }) {
   return (
-    <div className={cx("work-run-links", inTopBar && "work-run-links-topbar")}>
+    <div className="work-run-links">
       {ticketKey && (
         <button
           type="button"
@@ -467,7 +465,7 @@ function WorkRunLinks({
         <button
           type="button"
           aria-pressed={context === "ticket"}
-          className={inTopBar ? undefined : "ml-auto"}
+          className="ml-auto"
           onClick={() =>
             navigate({
               ticket: ticketKey,
@@ -485,33 +483,6 @@ function WorkRunLinks({
         Run details →
       </Link>
     </div>
-  );
-}
-
-/** TopBar run-context actions rendered when Activity is the primary pane. */
-export function WorkTopRunLinks({
-  id,
-  context,
-  navigate,
-}: {
-  id: string;
-  context: string | null;
-  navigate: Navigate;
-}) {
-  const query = useRunLog(id);
-  const ticketKey = query.data?.run.ticket_key ?? "";
-  const t = useTicket(ticketKey);
-  if (!query.data) return null;
-  return (
-    <WorkRunLinks
-      id={id}
-      ticketKey={query.data.run.ticket_key}
-      epic={t.data?.epic}
-      companion={false}
-      context={context}
-      inTopBar
-      navigate={navigate}
-    />
   );
 }
 

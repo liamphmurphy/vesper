@@ -56,18 +56,6 @@ export function useCanvasEntry(chatId: string, live: boolean) {
   return { count: canvases.length, go };
 }
 
-/** Header entry point, once the chat has a canvas: goes to the newest card, or fullscreen if it has none. */
-export function CanvasButton({ chatId, live }: { chatId: string; live: boolean }) {
-  const { count, go } = useCanvasEntry(chatId, live);
-  if (!count) return null;
-  return (
-    <button type="button" aria-label={`Canvas, ${count} open`} onClick={go} className="inline-flex h-[30px] flex-none items-center gap-1.5 rounded-md border border-btn-secondary-border bg-btn-secondary px-3 text-13 text-fg transition-colors hover:bg-hover">
-      Canvas
-      <span className="text-fg-tertiary">{count}</span>
-    </button>
-  );
-}
-
 function useParsedSvg(source: string) {
   const prefix = `cv-${useId().replace(/\W/g, "")}-`;
   return useMemo(() => {

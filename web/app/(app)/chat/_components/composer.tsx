@@ -8,7 +8,6 @@ import { insertMention, mentionQuery, mentionSuggestions } from "@/lib/persona-u
 import { cx } from "@/lib/cx";
 import type { ComposerOption, ComposerOptionId } from "@/lib/composer-options";
 import { LinkEditor } from "@/components/domain/link-editor";
-import { LiveRunStrip } from "@/components/shell/live-run-strip";
 import { acceptTarget, AddContext, ChipList, type CreateWith } from "./context-chips";
 import { AttachButton, AttachmentChips, type useAttachments } from "./attachments";
 import { ComposerHints, composerFrameFor, composerIconButton, composerInput, SendButton, type SendTone } from "./reply-tools";
@@ -61,7 +60,6 @@ export function Composer({
   options,
   controls = {},
   actions,
-  sheetSignal = 0,
   send,
   onCycle,
   hints,
@@ -89,8 +87,6 @@ export function Composer({
   controls?: Partial<Record<ComposerOptionId, ReactNode>>;
   /** Shown after the option actions, before Send (Stop). */
   actions?: ReactNode;
-  /** Bumped to open the compact options sheet from elsewhere (the chat menu's Repository). */
-  sheetSignal?: number;
   send: { label: string; disabled: boolean; title?: string; tone?: SendTone };
   /** Tab in a draft with no menu open: the caller switches how Send sends (back for Shift+Tab). */
   onCycle?: (back: boolean) => void;
@@ -108,11 +104,6 @@ export function Composer({
   const [commandError, setCommandError] = useState<string | null>(null);
   const compact = useCompact();
   const [sheet, setSheet] = useState(false);
-  const [seenSheetSignal, setSeenSheetSignal] = useState(sheetSignal);
-  if (sheetSignal !== seenSheetSignal) {
-    setSeenSheetSignal(sheetSignal);
-    setSheet(true);
-  }
 
   // The snippet bubble's draft (open while set), and the last paste into the message box worth offering as a snippet or file.
   const [snippetDraft, setSnippetDraft] = useState<SnippetDraft | null>(null);
@@ -251,7 +242,6 @@ export function Composer({
 
   return (
     <>
-      <LiveRunStrip />
       {commandError && (
         <p role="alert" data-testid="command-error" className="text-13 text-pill-blocked-fg">
           {commandError}

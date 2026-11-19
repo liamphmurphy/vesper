@@ -8,10 +8,9 @@ import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 import { useStopWorkflowRun, useWorkflowRun, type WorkflowRun } from "@/lib/api/workflow-hooks";
 import { Content, TopBar } from "@/components/shell/topbar";
-import { Button } from "@/components/ui/button";
 import { Banner, Skeleton } from "@/components/ui/primitives";
 import { Markdown } from "@/components/domain/markdown";
-import { RunStatePill, WorkflowGatePanel, WorkflowImages } from "@/components/domain/workflow-cards";
+import { WorkflowGatePanel, WorkflowImages } from "@/components/domain/workflow-cards";
 import { RUN_STATE_LABEL, imagesByAttempt, runActive, type Graph } from "@/lib/workflows";
 import { FLOW_STYLE, NODE_TYPES, toFlowEdges, toFlowNodes, type StepStatus } from "./flow";
 
@@ -36,14 +35,6 @@ function RunView({ run }: { run: WorkflowRun }) {
           ...(runActive(run.state) ? [{ id: "wfrun.stop", label: "Stop", kind: "button" as const, icon: "pause", showsLabel: true, disabled: stop.isPending, run: () => stop.mutate() }] : []),
           { id: "wfrun.chat", label: "Open chat", kind: "button" as const, icon: "msg", showsLabel: true, run: () => router.push(`/chat/${run.chat_id}`) },
         ]}
-        actions={
-          <>
-            <span className="font-mono text-12 text-fg-tertiary">v{run.version}</span>
-            <RunStatePill state={run.state} />
-            {runActive(run.state) && <Button disabled={stop.isPending} onClick={() => stop.mutate()}>Stop</Button>}
-            <Link className="text-13 text-accent hover:underline" href={`/chat/${run.chat_id}`}>Open chat</Link>
-          </>
-        }
       />
       <Content wide>
         <div className="flex flex-col gap-4">

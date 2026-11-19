@@ -15,7 +15,6 @@ import {
   argSummary, delegateChild, groupByTurn, isFailedRow, parseRunAnchor, pickRunView, rowEvent, rowsOf, str,
   toolLink, toolName, triggerLine, turnAt, turnByEvent, turnStarts, workHref, type Row, type RunViewMode,
 } from "@/lib/run-view";
-import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import type { NativeAction } from "@/lib/native-shell/actions";
 import { useNativeActions } from "@/lib/native-shell/use-native-actions";
 import { useNativeTitle } from "../../tickets/_components/native-title";
@@ -28,7 +27,6 @@ import { Flag, SmallPill } from "@/components/domain/labels";
 import { Markdown } from "@/components/domain/markdown";
 import { RUN_ENDED, RUN_STATE as STATE, StatusPill } from "@/components/domain/run-status";
 import { WORK_COLUMN, WorkDetailHeader, WorkEyebrow, WorkViewTabs, type EyebrowItem } from "@/components/domain/work-detail-header";
-import { TopBar, type Crumb } from "@/components/shell/topbar";
 import { ActionBox, confirmCancel } from "./run-panels";
 import { CostValue, RunThread } from "./run-thread";
 import { RunContext } from "./run-context";
@@ -386,7 +384,6 @@ export function RunLogScreen({ id }: { id: string }) {
   const [tab, setTab] = useState("all");
   const [filter, setFilter] = useState("");
   const params = useSearchParams();
-  const native = useIsNativeShell();
   // The hash (a deep link to a turn or event) is read once on load; ?view= is
   // read on every render, so the URL stays the truth.
   const [nav, setNav] = useState(() => ({ hash: typeof window === "undefined" ? "" : window.location.hash }));
@@ -422,7 +419,7 @@ export function RunLogScreen({ id }: { id: string }) {
           : []),
       ]
     : undefined;
-  useNativeActions(native ? nativeActions : undefined);
+  useNativeActions(nativeActions);
 
   const parentTurn = turnByEvent(d?.events ?? []);
   const starts = turnStarts(d?.events ?? []);
@@ -486,38 +483,23 @@ export function RunLogScreen({ id }: { id: string }) {
 
   if (isError) {
     return (
-      <>
-        {!native && <TopBar crumbs={[{ label: "Runs", href: "/runs" }, { label: "Not found" }]} />}
-        <div className="p-6">
-          <Banner tone="blocked" title="Couldn't load this run">
-            {error.message}
-          </Banner>
-        </div>
-      </>
+      <div className="p-6">
+        <Banner tone="blocked" title="Couldn't load this run">
+          {error.message}
+        </Banner>
+      </div>
     );
   }
   if (!d || !run) {
     return (
-      <>
-        {!native && <TopBar crumbs={[{ label: "Run" }]} />}
-        <div aria-busy="true" className={`${WORK_COLUMN} flex flex-col gap-3 py-8`}>
-          <Skeleton className="h-6 w-2/3" />
-          <Skeleton className="h-3 w-1/2" />
-          <Skeleton className="h-32 w-full rounded-xl" />
-        </div>
-      </>
+      <div aria-busy="true" className={`${WORK_COLUMN} flex flex-col gap-3 py-8`}>
+        <Skeleton className="h-6 w-2/3" />
+        <Skeleton className="h-3 w-1/2" />
+        <Skeleton className="h-32 w-full rounded-xl" />
+      </div>
     );
   }
 
-  const crumbs: Crumb[] = [
-    ...(run.project_key ? [{ label: run.project_key, href: `/tickets?project=${encodeURIComponent(run.project_key)}`, mono: true }] : []),
-    ...(run.purpose === "ticket" && run.ticket_key
-      ? [{ label: run.ticket_key, href: `/tickets/${encodeURIComponent(run.ticket_key)}`, mono: true }]
-      : run.purpose === "planning"
-        ? [{ label: "Plans", href: workHref(run) ?? "/plans" }]
-        : [{ label: "Chat", href: workHref(run) ?? "/chat" }]),
-    { label: `Run ${run.id.slice(0, 8)}` },
-  ];
   const eyebrow: EyebrowItem[] = [
     ...(run.project_key ? [{ label: run.project_key, href: `/tickets?project=${encodeURIComponent(run.project_key)}`, mono: true }] : []),
     ...(run.purpose === "ticket" && run.ticket_key
@@ -573,41 +555,6 @@ export function RunLogScreen({ id }: { id: string }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {!native && (
-        <TopBar
-          crumbs={crumbs}
-          actions={
-            <>
-              {live && run.mode === "managed" && (
-                run.state === "paused" ? (
-                  <Button variant="outline" icon="play" disabled={control.isPending} onClick={() => control.mutate("resume")}>
-                    Resume
-                  </Button>
-                ) : (
-                  <Button variant="outline" icon="pause" disabled={control.isPending || run.state === "queued"} onClick={() => control.mutate("pause")}>
-                    Pause
-                  </Button>
-                )
-              )}
-              {(run.state === "failed" || run.state === "cancelled") && run.ticket_key && !run.parent_run_id && (
-                <Button
-                  variant="approve"
-                  icon="refresh"
-                  disabled={control.isPending}
-                  onClick={() => control.mutate("retry", { onSuccess: (r) => router.push(`/runs/${r.id}`) })}
-                >
-                  Retry run
-                </Button>
-              )}
-              {live && (
-                <Button variant="outline" icon="x" className="text-pill-blocked-fg" disabled={control.isPending} onClick={async () => { if (await confirmCancel(run.agent.name)) control.mutate("cancel"); }}>
-                  Cancel run
-                </Button>
-              )}
-            </>
-          }
-        />
-      )}
       {control.isError && (
         <div className={`${WORK_COLUMN} pt-3`}>
           <Banner tone="blocked" title={control.variables === "retry" ? "Couldn't retry the run" : "Couldn't change the run"}>

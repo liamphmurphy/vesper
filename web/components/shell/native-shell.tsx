@@ -7,7 +7,7 @@ import { useCustomApps } from "@/lib/api/custom-app-hooks";
 import { useDevWorkspace } from "@/lib/api/dev-workspace-hooks";
 import { useSpaces } from "@/lib/api/space-hooks";
 import { resolveAppIcon } from "@/lib/custom-app-bridge";
-import { currentArea, subscribeNavigator } from "@/lib/navigator";
+import { AREAS, currentArea, subscribeNavigator } from "@/lib/navigator";
 import { viewedChatId } from "@/lib/persona-dock";
 import { toolItems } from "@/lib/project-scope";
 import { useNavCounts } from "@/lib/use-nav-counts";
@@ -26,7 +26,6 @@ import { openCommandPalette } from "./command-menu";
 import { setSystemAccent } from "./theme";
 import { openShortcuts } from "./shortcuts";
 import { useNativeChatActions } from "./native-chat-actions";
-import { AREAS } from "./sidebar";
 
 /** The page's find box: the first search or filter field in the content, if any. */
 function focusFind(): void {

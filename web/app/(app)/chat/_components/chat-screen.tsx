@@ -1,7 +1,6 @@
 "use client";
 
 import { useNewDeck } from "@/components/domain/use-new-deck";
-import { HistoryNav } from "@/components/shell/history-nav";
 import { ResearchToggle, TemporaryToggle } from "./reply-tools";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -21,18 +20,15 @@ import Link from "next/link";
 import { parseAttach, toContextRefs, type Chip } from "@/lib/chat-context";
 import { Banner, Skeleton } from "@/components/ui/primitives";
 import { NoHarnessNote, useHarnessHealth } from "@/components/domain/setup";
-import { ChatActivity, Conversation } from "./conversation";
+import { Conversation } from "./conversation";
 import { DropOverlay, useAttachments, useFileDrop } from "./attachments";
 import { useSnippets } from "./snippets";
 import { Composer, type CommandRun, type ComposerCommands } from "./composer";
 import { ModelEffortPicker, effortLabel, modelEffortSummary, modelEfforts, type Effort, type Selection } from "./model-picker";
 import { useNewConversation } from "./chat-history";
-import { CanvasButton } from "@/components/domain/canvas-view";
 import { ChatPanelHost } from "./chat-panel-host";
 import { useClaimCompanion } from "@/components/shell/companion";
-import { useCompact } from "@/lib/viewport";
 import { DOC_DRAFT, designRequest, type CreateKind } from "@/lib/chat-commands";
-import { PlaygroundButton } from "@/components/domain/playground";
 import { PersonaCarousel, personaLook } from "./persona";
 import { CommitEmailPicker } from "./commit-email";
 import { needsCommitEmailPick } from "@/lib/commit-email";
@@ -243,10 +239,6 @@ function Welcome({ disabled, onNew, arrived }: { disabled: boolean; onNew: () =>
   return (
     <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto" {...drop.props}>
       <DropOverlay over={drop.over} />
-      {/* No chat header yet, but back and forward still lead the page, where the header's would be. */}
-      <div className="flex h-[44px] flex-none items-center pl-3">
-        <HistoryNav />
-      </div>
       <div className="mx-auto flex w-full max-w-[768px] flex-1 flex-col items-center justify-center px-6 py-10">
         {/* Fresh from the Welcome Wizard, the new persona slides into the centre and the Assistant moves aside. */}
         <PersonaCarousel ordered={ordered} current={persona} left={around.left} right={around.right} onPick={setPicked} disabled={locked} enterFrom={arrived ? 1 : 0} />
@@ -359,8 +351,6 @@ export function ChatScreen({ id }: { id?: string }) {
   const boot = useBootstrap();
   // First run (or ?setup, from Settings): the Welcome Wizard takes the welcome's place until it hands over.
   const [arrived, setArrived] = useState<string>();
-  // Compact: the panels are one sheet over the chat (chat-panel-host); the compact header's Panels button reopens it.
-  const compact = useCompact();
   const mode = search.has("setup") ? "full" : wizardMode(boot.data?.me);
   const wizard = !id && !arrived && !!boot.data && !!mode;
   const noHarness = !!health && !health.ready && !wizard;
@@ -390,7 +380,7 @@ export function ChatScreen({ id }: { id?: string }) {
               </div>
             )}
             {id ? (
-              <Conversation key={id} id={id} onNew={conversation.start} activityInDock actions={<><PlaygroundButton chatId={id} /><CanvasButton chatId={id} live={turnRunning} /></>} />
+              <Conversation key={id} id={id} onNew={conversation.start} activityInDock />
             ) : (
               <>
                 {chats.isError ? (
@@ -418,7 +408,7 @@ export function ChatScreen({ id }: { id?: string }) {
               </>
             )}
           </div>
-          {id && <ChatPanelHost key={id} chatId={id} live={turnRunning} readOnly={!!current.data?.archived} agent={current.data?.persona?.name ?? "Assistant"} activity={<ChatActivity chatId={id} />} layout={compact ? "sheet" : "side"} />}
+          {id && <ChatPanelHost key={id} chatId={id} live={turnRunning} readOnly={!!current.data?.archived} agent={current.data?.persona?.name ?? "Assistant"} />}
       </div>
     </div>
   );

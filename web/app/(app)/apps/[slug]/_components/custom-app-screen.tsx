@@ -9,13 +9,12 @@ import { DockChatSwitcher, type DockChatSection } from "@/components/domain/dock
 import { DockContext, dockContextChip } from "@/components/domain/dock-context";
 import { buildCustomAppActions, buildCustomAppNav, parseViewId } from "@/lib/native-shell/models/custom-app";
 import { buildCustomAppCapabilities, buildCustomAppInspectorSections } from "@/lib/native-shell/models/custom-app-inspector";
-import { EditorLayout, type DockTab, type EditorHeader, type NativeEditorHeader } from "@/components/shell/editor-layout";
+import { EditorLayout, type DockTab, type NativeEditorHeader } from "@/components/shell/editor-layout";
 import { isTyping } from "@/components/shell/shortcuts";
 import { Content, TopBar } from "@/components/shell/topbar";
 import { Button, ButtonLink, IconButton } from "@/components/ui/button";
-import { Segmented } from "@/components/ui/controls";
 import { Icon } from "@/components/ui/icon";
-import { Banner, EmptyState, Field, Skeleton, TextArea, TextInput } from "@/components/ui/primitives";
+import { Banner, EmptyState, Skeleton, TextArea, TextInput } from "@/components/ui/primitives";
 import { api, ApiError, unwrap, type Schemas } from "@/lib/api/client";
 import { useConnectors } from "@/lib/api/connector-hooks";
 import { useApiSecrets } from "@/lib/api/secret-hooks";
@@ -48,17 +47,6 @@ import { makePanelSpec } from "@/lib/native-shell/panel-events";
 import { toast } from "@/lib/toast";
 
 const ALLOWED_FILE_EXTS = [".tsx", ".ts", ".jsx", ".js", ".css", ".sql", ".json"];
-
-const MODE_OPTIONS: ReadonlyArray<{ value: CustomAppCapabilityMode; label: string }> = [
-  { value: "allowed", label: "Allow" },
-  { value: "requires_approval", label: "Ask" },
-  { value: "denied", label: "Deny" },
-];
-
-const SCOPE_OPTIONS: ReadonlyArray<{ value: "chats" | "app_only"; label: string }> = [
-  { value: "chats", label: "All chats" },
-  { value: "app_only", label: "This app only" },
-];
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong. Please try again.");
 
@@ -242,17 +230,12 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
     runtimeError,
   });
   const {
-    knownChats,
     chatId,
     chat,
     running,
     startingPersona,
     createChat,
     selectChat,
-    startChat,
-    switcher,
-    conversationContext,
-    renderContext,
   } = dockChat;
 
   const chatShowing = !dock || (dock.open && !dock.hidden && dock.tab === "chat");
@@ -535,32 +518,7 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
       queue.clear();
     };
   }, [app.current_seq, reloadKey]);
-  const header: EditorHeader = {
-    back: { href: "/apps", label: "Custom Apps" },
-    name: app.name,
-    title: (
-      <span className="inline-flex items-center gap-2">
-        <Icon name={resolveAppIcon(app.icon)} size={15} className="flex-none text-fg-secondary" />
-        <span className="truncate">{app.name}</span>
-        <span className="rounded bg-selected px-1.5 py-0.5 font-mono text-11 font-normal text-fg-tertiary">
-          v{app.current_seq}
-        </span>
-      </span>
-    ),
-    actions: [
-      <IconButton
-        key="reload"
-        icon="refresh"
-        label="Reload app"
-        onClick={reload}
-      />,
-      <Button key="perms" variant="outline" icon="shield" onClick={() => openDockTab("permissions")}>
-        Permissions
-      </Button>,
-    ],
-  };
-
-  const nativeHeader: NativeEditorHeader = {
+  const header: NativeEditorHeader = {
     title: app.name,
     subtitle: `v${app.current_seq}`,
     actions: buildCustomAppActions({ reload, permissions: () => openDockTab("permissions") }),
@@ -577,33 +535,6 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
           },
         }
       : undefined;
-
-  const left =
-    navItems.length > 0 ? (
-      <nav aria-label="App views" className="flex flex-col gap-0.5 p-2">
-        {navItems.map((item) => {
-          const selected = item.id === currentNav;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => {
-                setActiveNav(item.id);
-                postToFrame({ type: "vesper:nav-select", id: item.id });
-              }}
-              aria-current={selected ? "page" : undefined}
-              className={cx(
-                "flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-left text-13 transition-colors",
-                selected ? "bg-selected font-medium text-fg" : "text-fg-secondary hover:bg-hover hover:text-fg",
-              )}
-            >
-              {item.icon && <Icon name={resolveAppIcon(item.icon)} size={14} className="flex-none" />}
-              <span className="truncate">{item.label}</span>
-            </button>
-          );
-        })}
-      </nav>
-    ) : undefined;
 
   const main = (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -779,20 +710,6 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
           }
         },
       },
-      content: (
-        <CustomAppChatPane
-          app={app}
-          knownChats={knownChats}
-          chatId={chatId}
-          switcher={switcher}
-          conversationContext={conversationContext}
-          renderContext={renderContext}
-          createPending={createChat.isPending}
-          createError={createChat.error}
-          onStartChat={startChat}
-          onSelectChat={selectChat}
-        />
-      ),
     },
     {
       id: "code",
@@ -807,7 +724,6 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
           slug: app.slug,
         }),
       },
-      content: <CodeInspectorTab key={app.current.seq} app={app} />,
     },
     {
       id: "permissions",
@@ -834,17 +750,15 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
           }
         },
       },
-      content: dock?.open && dock.tab === "permissions" ? <PermissionsTab app={app} /> : <Skeleton className="m-3 h-40" />,
     },
   ];
 
   return (
     <EditorLayout
       app={`custom-app:${app.slug}`}
+      back={{ href: "/apps", label: "Custom Apps" }}
       header={header}
-      nativeHeader={nativeHeader}
       nativeLeft={nativeLeft}
-      left={left}
       main={main}
       dock={dockTabs}
       show={show}
@@ -1071,169 +985,6 @@ function useCustomAppPermissions(app: CustomAppDetail) {
   };
 
   return { capabilities, versions, setCapabilityMode, setToolScope, restoreVersion, updating: update.isPending };
-}
-
-function PermissionsTab({ app }: { app: CustomAppDetail }) {
-  const { capabilities, versions, setCapabilityMode, setToolScope, restoreVersion, updating } = useCustomAppPermissions(app);
-  const [schemaOpen, setSchemaOpen] = useState(false);
-  const [toolsOpen, setToolsOpen] = useState(false);
-
-  return (
-    <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto p-3.5">
-      {app.has_mcp_server && (
-        <section className="flex flex-col gap-2">
-          <div className="flex items-center justify-between gap-2">
-            <h3 className="text-12 font-semibold uppercase tracking-[0.04em] text-fg-tertiary">MCP Server</h3>
-            <span className="rounded-sm bg-pill-done-bg px-1.5 py-0.5 text-11 font-medium text-pill-done-fg">
-              {app.manifest.tool_scope === "app_only" ? "This app only" : "Chats & workflows"}
-            </span>
-          </div>
-          <div className="rounded-lg border border-border bg-surface-sunken p-2.5 text-12">
-            <div className="flex items-center justify-between text-fg-2">
-              <span>Entrypoint</span>
-              <span className="font-mono text-11">{app.manifest.mcp_entry || "server.ts"}</span>
-            </div>
-            <div className="mt-1.5 flex items-center justify-between text-fg-2">
-              <span>Exposed tools</span>
-              <button
-                type="button"
-                onClick={() => setToolsOpen((v) => !v)}
-                className="font-mono text-11 text-accent hover:underline"
-              >
-                {(app.mcp_tools ?? []).length} {(app.mcp_tools ?? []).length === 1 ? "tool" : "tools"}{" "}
-                {(app.mcp_tools ?? []).length > 0 ? (toolsOpen ? "▾" : "▸") : ""}
-              </button>
-            </div>
-            {toolsOpen && (app.mcp_tools ?? []).length > 0 && (
-              <ul className="mt-2 flex flex-col gap-1.5 border-t border-border-subtle pt-2">
-                {(app.mcp_tools ?? []).map((t) => (
-                  <li key={t.name} className="flex flex-col gap-0.5">
-                    <span className="font-mono text-11 font-medium text-fg">{t.name}</span>
-                    <span className="text-11 text-fg-secondary">{t.description}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </section>
-      )}
-
-      <section className="flex flex-col gap-2">
-        <div className="flex items-center justify-between gap-2">
-          <h3 className="text-12 font-semibold uppercase tracking-[0.04em] text-fg-tertiary">Embedded SQLite</h3>
-          <span className="rounded-sm bg-pill-done-bg px-1.5 py-0.5 text-11 font-medium text-pill-done-fg">Allowed</span>
-        </div>
-        <div className="rounded-lg border border-border bg-surface-sunken p-2.5 text-12">
-          <div className="flex items-center justify-between text-fg-2">
-            <span>Size on disk</span>
-            <span className="font-mono text-11">{formatBytes(app.db_size_bytes)}</span>
-          </div>
-          <div className="mt-1.5 flex items-center justify-between text-fg-2">
-            <span>Schema objects</span>
-            <button
-              type="button"
-              onClick={() => setSchemaOpen((v) => !v)}
-              className="font-mono text-11 text-accent hover:underline"
-            >
-              {app.schema.length} {app.schema.length === 1 ? "object" : "objects"} {app.schema.length > 0 ? (schemaOpen ? "▾" : "▸") : ""}
-            </button>
-          </div>
-          {schemaOpen && app.schema.length > 0 && (
-            <ul className="mt-2 flex flex-col gap-1.5 border-t border-border-subtle pt-2">
-              {app.schema.map((obj) => (
-                <li key={`${obj.type}:${obj.name}`} className="flex flex-col gap-0.5">
-                  <span className="font-mono text-11 font-medium text-fg">
-                    {obj.type} · {obj.name}
-                  </span>
-                  <pre className="overflow-x-auto whitespace-pre-wrap rounded bg-bg px-2 py-1 font-mono text-11 text-fg-secondary">
-                    {obj.sql}
-                  </pre>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </section>
-
-      <section className="flex flex-col gap-2.5">
-        <h3 className="text-12 font-semibold uppercase tracking-[0.04em] text-fg-tertiary">Bridge capabilities</h3>
-        <div className="flex flex-col gap-2">
-          {capabilities.map(({ key: capKey, label, hint, mode, requested }) => {
-            return (
-              <div key={capKey} className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface-sunken p-2.5">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="truncate text-13 font-medium text-fg">{label}</div>
-                    <div className="truncate text-11 text-fg-tertiary">{hint}</div>
-                  </div>
-                  {requested && requested !== mode && (
-                    <span className="flex-none rounded bg-pill-human-bg px-1.5 py-0.5 text-10 font-medium text-pill-human-fg">
-                      wants {requested === "requires_approval" ? "ask" : requested}
-                    </span>
-                  )}
-                </div>
-                <Segmented
-                  small
-                  label={`${label} permission`}
-                  layout="fill"
-                  value={mode}
-                  onChange={(next) => setCapabilityMode(capKey, next)}
-                  options={MODE_OPTIONS}
-                />
-              </div>
-            );
-          })}
-        </div>
-      </section>
-
-      <section className="flex flex-col gap-2">
-        <Field label="Persona SQL tool scope" hint="Whether any chat can query this app’s SQLite DB or only chats opened in this app.">
-          <Segmented
-            small
-            label="Persona SQL tool scope"
-            layout="fill"
-            value={app.manifest.tool_scope === "app_only" ? "app_only" : "chats"}
-            onChange={setToolScope}
-            options={SCOPE_OPTIONS}
-          />
-        </Field>
-      </section>
-
-      <section className="flex flex-col gap-2">
-        <h3 className="text-12 font-semibold uppercase tracking-[0.04em] text-fg-tertiary">Version history</h3>
-        <ul className="flex flex-col divide-y divide-border-subtle rounded-lg border border-border bg-surface-sunken">
-          {versions.map((v) => {
-            const current = v.seq === app.current_seq;
-            return (
-              <li key={v.seq} className="flex items-center justify-between gap-2 px-2.5 py-2">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5 text-12 font-medium text-fg">
-                    <span className="font-mono">v{v.seq}</span>
-                    <span className="text-fg-tertiary">·</span>
-                    <span>{v.author_type === "persona" ? "Persona" : "You"}</span>
-                    <span className="text-fg-tertiary">· {shortAgo(v.created_at)}</span>
-                  </div>
-                  {v.note && <div className="truncate text-11 text-fg-secondary">{v.note}</div>}
-                </div>
-                {current ? (
-                  <span className="flex-none rounded bg-selected px-1.5 py-0.5 text-11 font-medium text-fg">Current</span>
-                ) : (
-                  <Button
-                    variant="outline"
-                    disabled={updating}
-                    onClick={() => restoreVersion(v.seq)}
-                    className="h-6 px-2 text-11"
-                  >
-                    Restore
-                  </Button>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      </section>
-    </div>
-  );
 }
 
 function useCustomAppDockChat({

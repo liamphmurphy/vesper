@@ -23,7 +23,7 @@ import { KNOWLEDGE_CONTEXT_MARKER, refKey } from "@/lib/chat-context";
 import { makePanelSpec } from "@/lib/native-shell/panel-events";
 import { actOnDock, dockShortcut, loadDock, saveDock, type DockAction, type DockState } from "@/lib/editor-layout";
 import { isFolder, useKnowledgeChat, type Attachment, type FolderAttachment, type PageAttachment } from "./chat-context";
-import { SIDE_TABS, SidePanel } from "./page-side";
+import { SIDE_TABS } from "./page-side";
 
 const APP = "knowledge";
 // Chat everywhere; a page adds its side panels (Links, Outline, Calendar, History).
@@ -255,19 +255,6 @@ export function KnowledgeDock({ pageId }: { pageId?: string }) {
           }
         },
       },
-      content: (
-        <ChatBody
-          key={pageId ?? "general"}
-          chatId={chatId}
-          page={pageId ? page : undefined}
-          screen={pageId ? undefined : screen}
-          loadingPage={!!pageId && !page}
-          onGeneral={(id) => {
-            window.localStorage.setItem(GENERAL_CHAT_KEY, id);
-            setGeneral(id);
-          }}
-        />
-      ),
     },
     ...(pageId && page
       ? SIDE_TABS.map(([t, icon, label]): DockTab => ({
@@ -275,7 +262,6 @@ export function KnowledgeDock({ pageId }: { pageId?: string }) {
           label,
           icon,
           native: nativeSideTab(page, t),
-          content: <SidePanel page={page} tab={t} persona={personaName} />,
         }))
       : []),
   ];
@@ -478,26 +464,6 @@ export function KnowledgeChatPanel({
         {create.error && <p className="text-12 text-state-blocked">{create.error.message}</p>}
       </div>
     </div>
-  );
-}
-
-function ChatBody({ chatId, page, screen, loadingPage, onGeneral }: { chatId?: string; page?: Page; screen?: string; loadingPage: boolean; onGeneral: (id: string) => void }) {
-  const { attachments, request, remove, readDraft, claimRequest } = useKnowledgeChat();
-  return (
-    <KnowledgeChatPanel
-      pageId={page?.id}
-      screen={screen}
-      chatId={chatId}
-      loadingPage={loadingPage}
-      host={{
-        attachments,
-        request,
-        readDraft,
-        onRemove: remove,
-        onClaimRequest: claimRequest,
-        onGeneral,
-      }}
-    />
   );
 }
 

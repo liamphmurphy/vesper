@@ -596,7 +596,6 @@ export const SHORTCUTS: { section: string; items: { label: string; keys: string[
     items: [
       { label: "Open command palette", keys: ["⌘/Ctrl", "K"] },
       { label: "Open page-scoped command palette", keys: ["⌘/Ctrl", "⇧", "K"] },
-      { label: "Toggle left sidebar", keys: ["⌘/Ctrl", "⇧", "\\"] },
       { label: "Show this reference", keys: ["?"] },
     ],
   },

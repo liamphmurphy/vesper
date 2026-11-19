@@ -11,8 +11,6 @@ import { useApiSecrets } from "@/lib/api/secret-hooks";
 import { useSpaces } from "@/lib/api/space-hooks";
 import { cx } from "@/lib/cx";
 import { ago } from "@/lib/format";
-import { isNativeShell } from "@/lib/native-shell/bridge";
-import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { pageOrigin } from "@/lib/native-shell/models/common";
 import {
   buildSettingsNavModel,
@@ -25,32 +23,28 @@ import type { NativeCommand } from "@/lib/native-shell/protocol";
 import { MAX_PERSONAS, sortPersonas } from "@/lib/persona-ui";
 import { missingConnections } from "@/lib/settings";
 import {
-  matchesSettingsFilter,
   resolveSettingsRoute,
   selectedNavId,
-  SETTINGS_FILTER_KEYWORDS,
   settingsHref,
   type SecretsTab,
   type SettingsRoute,
 } from "@/lib/settings-nav";
 import { toast } from "@/lib/toast";
-import { useCompact } from "@/lib/viewport";
 import { HumanAvatar } from "@/components/domain/avatars";
 import { SetupChecklist } from "@/components/domain/setup";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { Content, TopBar, type Crumb } from "@/components/shell/topbar";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Segmented, Toggle } from "@/components/ui/controls";
-import { Icon, type IconName } from "@/components/ui/icon";
+import { Icon } from "@/components/ui/icon";
 import { PageHeader } from "@/components/ui/page-header";
 import { Banner, Card, EmptyState, Skeleton } from "@/components/ui/primitives";
-import { PersonaAvatar } from "../chat/_components/persona";
 import { PersonaEditor } from "../chat/_components/persona-editor";
 import { ApiSecretsSection } from "../customization/api-secrets-section";
 import { ConnectorsSection, PersonaConnectors } from "../customization/connectors-section";
-import { ExportMenu, ImportView, MemorySection, useMemoryExport } from "../customization/memory-section";
+import { ImportView, MemorySection, useMemoryExport } from "../customization/memory-section";
 import { PersonaModelSection } from "../customization/persona-model";
-import { DefaultBadge, DeleteDialog, PersonaProfile } from "../customization/persona-profile";
+import { DeleteDialog, PersonaProfile } from "../customization/persona-profile";
 import { PersonaWorkSection } from "../customization/persona-work";
 import { PersonasList } from "../customization/personas-list";
 import { ProfileSection } from "../customization/profile-section";
@@ -116,15 +110,6 @@ function PlainHeader({ lead, title, detail, actions }: { lead: ReactNode; title:
   );
 }
 
-function NavGroupLabel({ label, action }: { label: string; action?: ReactNode }) {
-  return (
-    <div className="flex items-center justify-between px-2 pb-1 pt-4">
-      <span className="text-11 font-semibold uppercase tracking-[0.06em] text-fg-tertiary">{label}</span>
-      {action}
-    </div>
-  );
-}
-
 /**
  * Unified Settings: Personal, Personas, Integrations, and System in one grouped sidebar
  * with focused per-section master-detail screens.
@@ -133,8 +118,6 @@ export function SettingsScreen() {
   const router = useRouter();
   const search = useSearchParams();
   const loc = useLocation();
-  const native = useIsNativeShell();
-  const compact = useCompact();
 
   const mounted = useSyncExternalStore(noSubscribe, () => true, () => false);
   const winHash = useSyncExternalStore(subscribeHash, () => window.location.hash, () => "");
@@ -166,7 +149,7 @@ export function SettingsScreen() {
   const memoryExport = useMemoryExport();
   const exportError = memoryExport.err;
   useEffect(() => {
-    if (exportError && isNativeShell()) toast({ title: exportError, tone: "error" });
+    if (exportError) toast({ title: exportError, tone: "error" });
   }, [exportError]);
 
   const scrollAnchor = (route.section === "workspace" || route.section === "spaces") ? route.anchor : undefined;
@@ -183,7 +166,6 @@ export function SettingsScreen() {
 
   const total = count.data?.total;
   const me = boot.data?.me;
-  const personaCountLoading = list.isPending;
 
   if (!mounted) {
     return (
@@ -198,238 +180,6 @@ export function SettingsScreen() {
       </section>
     );
   }
-
-  const filtering = filter.trim().length > 0;
-  const showItem = (id: string, label: string, extra?: string) => matchesSettingsFilter(filter, label, extra ?? SETTINGS_FILTER_KEYWORDS[id]);
-
-  const personalItems: Array<{ id: string; label: string; href: string; lead: ReactNode; trailing?: ReactNode }> = [
-    {
-      id: "you",
-      label: "You",
-      href: settingsHref({ section: "you" }),
-      lead: <HumanAvatar name={me?.name ?? "You"} initials={me?.initials} color={me?.avatar_color} src={me?.avatar_url} size={20} label={false} />,
-    },
-    {
-      id: "appearance",
-      label: "Appearance",
-      href: settingsHref({ section: "appearance" }),
-      lead: <Icon name="sun" size={16} />,
-    },
-    {
-      id: "memory",
-      label: "Memory",
-      href: settingsHref({ section: "memory" }),
-      lead: <Icon name="bookmark" size={16} />,
-      trailing: total !== undefined && total > 0 ? <span className="text-12 text-fg-tertiary">{total}</span> : undefined,
-    },
-  ].filter((item) => showItem(item.id, item.label, item.id === "you" ? `${SETTINGS_FILTER_KEYWORDS.you} ${me?.name ?? ""}` : undefined));
-
-  const showAllPersonasRow = showItem("all-personas", "All personas");
-  const visiblePersonas = personas.filter((p) =>
-    matchesSettingsFilter(filter, p.name, p.handle ? `persona @${p.handle} ${p.handle}` : "persona"),
-  );
-  const showPersonasGroup = showAllPersonasRow || visiblePersonas.length > 0 || (!filtering && (personaCountLoading || list.isError || personas.length === 0));
-
-  type NavLinkEntry = { id: string; label: string; href: string; icon: IconName; health?: SettingsHealth; badge?: string };
-  const allIntegrationItems: NavLinkEntry[] = [
-    {
-      id: "secrets",
-      label: "Secrets & Credentials",
-      href: settingsHref({ section: "secrets", secretsTab: "provider" }),
-      icon: "key",
-      health: secretsHealth,
-      badge: missing ? `${missing} off` : undefined,
-    },
-    { id: "connectors", label: "Connectors", href: settingsHref({ section: "connectors" }), icon: "plug" },
-    { id: "repositories", label: "Repositories", href: settingsHref({ section: "repositories" }), icon: "github" },
-  ];
-  const integrationItems = allIntegrationItems.filter((item) => showItem(item.id, item.label));
-
-  const allSystemItems: NavLinkEntry[] = [
-    { id: "workspace", label: "Workspace", href: settingsHref({ section: "workspace" }), icon: "briefcase", health: workspaceHealth },
-    { id: "runners", label: "Runners", href: settingsHref({ section: "runners" }), icon: "server", health: runnersHealth },
-    { id: "dev-workspace", label: "Dev workspace", href: settingsHref({ section: "dev-workspace" }), icon: "terminal" },
-    { id: "spaces", label: "Spaces", href: settingsHref({ section: "spaces" }), icon: "folder" },
-    { id: "sign-in", label: "Sign-in", href: settingsHref({ section: "sign-in" }), icon: "lock", health: signInHealth },
-    { id: "backup", label: "Backup & move", href: settingsHref({ section: "backup" }), icon: "download" },
-  ];
-  const systemItems = allSystemItems.filter((item) => showItem(item.id, item.label));
-
-  const rowClass = (on: boolean) =>
-    cx(
-      "flex min-h-8 items-center gap-2.5 rounded-md px-2.5 text-13 transition-colors",
-      compact
-        ? on
-          ? "border border-accent bg-selected font-medium text-fg"
-          : "border border-border bg-surface text-fg-secondary hover:bg-hover hover:text-fg"
-        : on
-          ? "bg-selected font-medium text-fg"
-          : "text-fg-secondary hover:bg-hover hover:text-fg",
-    );
-
-  const sectionNav = compact ? (
-    <nav aria-label="Settings sections" className="flex gap-1.5 overflow-x-auto pb-1">
-      {[...personalItems, ...(showAllPersonasRow ? [{ id: "all-personas", label: "Personas", href: settingsHref({ section: "personas", personaFilter: "all" }) }] : [])].map((n) => (
-        <Link key={n.id} href={n.href} aria-current={activeId === n.id ? "page" : undefined} className={cx(rowClass(activeId === n.id), "flex-none whitespace-nowrap")}>
-          {n.label}
-        </Link>
-      ))}
-      {visiblePersonas.map((p) => (
-        <Link
-          key={p.id}
-          href={settingsHref({ section: "persona", personaId: p.id })}
-          data-testid="persona-row"
-          aria-current={activeId === `persona:${p.id}` ? "page" : undefined}
-          className={cx(rowClass(activeId === `persona:${p.id}`), "flex-none whitespace-nowrap")}
-        >
-          <PersonaAvatar persona={p} size={16} />
-          <span>{p.name}</span>
-        </Link>
-      ))}
-      {integrationItems.map((n) => (
-        <Link key={n.id} href={n.href} aria-current={activeId === n.id ? "page" : undefined} className={cx(rowClass(activeId === n.id), "flex-none whitespace-nowrap")}>
-          {n.health && <HealthDot health={n.health} />}
-          <span>{n.label}</span>
-          {n.badge && <span className="rounded-full bg-pill-human-bg px-1.5 text-11 text-pill-human-fg">{n.badge}</span>}
-        </Link>
-      ))}
-      {systemItems.map((n) => (
-        <Link key={n.id} href={n.href} aria-current={activeId === n.id ? "page" : undefined} className={cx(rowClass(activeId === n.id), "flex-none whitespace-nowrap")}>
-          {n.health && <HealthDot health={n.health} />}
-          <span>{n.label}</span>
-        </Link>
-      ))}
-    </nav>
-  ) : (
-    <nav aria-label="Settings sections" className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2.5 pb-4 pt-3">
-      <div className="relative mb-1 px-0.5">
-        <Icon name="search" size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-fg-tertiary" />
-        <input
-          type="search"
-          aria-label="Filter settings"
-          placeholder="Filter settings…"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          className="h-[30px] w-full rounded-md border border-border bg-surface pl-7 pr-6 text-12 text-fg placeholder:text-fg-tertiary focus:border-accent focus:outline-none"
-        />
-        {filter && (
-          <button
-            type="button"
-            aria-label="Clear filter"
-            onClick={() => setFilter("")}
-            className="absolute right-2 top-1/2 grid size-4 -translate-y-1/2 place-items-center rounded text-fg-tertiary hover:text-fg"
-          >
-            <Icon name="x" size={11} />
-          </button>
-        )}
-      </div>
-
-      {personalItems.length > 0 && (
-        <div className="flex flex-col gap-0.5">
-          <NavGroupLabel label="Personal" />
-          {personalItems.map((n) => (
-            <Link key={n.id} href={n.href} aria-current={activeId === n.id ? "page" : undefined} className={rowClass(activeId === n.id)}>
-              {n.lead}
-              <span className="min-w-0 flex-1 truncate">{n.label}</span>
-              {n.trailing}
-            </Link>
-          ))}
-        </div>
-      )}
-
-      {showPersonasGroup && (
-        <div className="flex flex-col gap-0.5">
-          <NavGroupLabel
-            label="Personas"
-            action={
-              list.data && all.length < MAX_PERSONAS ? (
-                <button
-                  type="button"
-                  aria-label="New persona"
-                  title="New persona"
-                  onClick={() => setEditing("new")}
-                  className="grid size-5 place-items-center rounded text-fg-secondary hover:bg-hover hover:text-accent"
-                >
-                  <Icon name="plus" size={13} />
-                </button>
-              ) : undefined
-            }
-          />
-          {showAllPersonasRow && (
-            <Link
-              href={settingsHref({ section: "personas", personaFilter: "all" })}
-              data-testid="all-personas"
-              aria-current={activeId === "all-personas" ? "page" : undefined}
-              className={rowClass(activeId === "all-personas")}
-            >
-              <Icon name="agents" size={16} />
-              <span className="min-w-0 flex-1 truncate">All personas</span>
-            </Link>
-          )}
-          {list.isError ? (
-            <Banner tone="blocked" title="Couldn’t load personas" actions={<Button variant="outline" onClick={() => void list.refetch()}>Retry</Button>}>
-              {errorText(list.error)}
-            </Banner>
-          ) : !list.data ? (
-            <div aria-busy="true" className="flex flex-col gap-1 px-1">
-              <Skeleton className="h-8" />
-              <Skeleton className="h-8" />
-            </div>
-          ) : (
-            <>
-              {visiblePersonas.map((p) => (
-                <Link
-                  key={p.id}
-                  href={settingsHref({ section: "persona", personaId: p.id })}
-                  data-testid="persona-row"
-                  aria-current={activeId === `persona:${p.id}` ? "page" : undefined}
-                  className={rowClass(activeId === `persona:${p.id}`)}
-                >
-                  <PersonaAvatar persona={p} size={20} />
-                  <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                  {p.is_default && <DefaultBadge small />}
-                </Link>
-              ))}
-              {!filtering && personas.length === 0 && (
-                <p className="px-2.5 py-1 text-12 text-fg-secondary">No personas yet. The built-in Assistant is your default.</p>
-              )}
-            </>
-          )}
-        </div>
-      )}
-
-      {integrationItems.length > 0 && (
-        <div className="flex flex-col gap-0.5">
-          <NavGroupLabel label="Integrations" />
-          {integrationItems.map((n) => (
-            <Link key={n.id} href={n.href} aria-current={activeId === n.id ? "page" : undefined} className={rowClass(activeId === n.id)}>
-              <Icon name={n.icon} size={16} />
-              <span className="min-w-0 flex-1 truncate">{n.label}</span>
-              {n.health && <HealthDot health={n.health} />}
-              {n.badge && <span className="rounded-full bg-pill-human-bg px-1.5 text-11 text-pill-human-fg">{n.badge}</span>}
-            </Link>
-          ))}
-        </div>
-      )}
-
-      {systemItems.length > 0 && (
-        <div className="flex flex-col gap-0.5">
-          <NavGroupLabel label="System" />
-          {systemItems.map((n) => (
-            <Link key={n.id} href={n.href} aria-current={activeId === n.id ? "page" : undefined} className={rowClass(activeId === n.id)}>
-              <Icon name={n.icon} size={16} />
-              <span className="min-w-0 flex-1 truncate">{n.label}</span>
-              {n.health && <HealthDot health={n.health} />}
-            </Link>
-          ))}
-        </div>
-      )}
-
-      {filtering && personalItems.length === 0 && !showPersonasGroup && integrationItems.length === 0 && systemItems.length === 0 && (
-        <p className="px-2.5 py-4 text-12 text-fg-tertiary">No settings match &ldquo;{filter.trim()}&rdquo;.</p>
-      )}
-    </nav>
-  );
 
   const navModel = buildSettingsNavModel({
     me,
@@ -485,31 +235,6 @@ export function SettingsScreen() {
       ]
     : [{ label: "Settings", href: "/settings" }, { label: sectionTitle }];
 
-  const topBarActions =
-    route.section === "memory" ? (
-      <>
-        {total !== undefined && <span className="text-12 text-fg-tertiary">{total} entries</span>}
-        <button
-          type="button"
-          aria-pressed={importing}
-          onClick={() => setImportingFor((v) => (v === activeId ? null : activeId))}
-          className={cx(
-            "inline-flex h-[30px] items-center gap-1.5 rounded-md border px-3 text-13 text-fg",
-            importing ? "border-accent bg-selected" : "border-btn-secondary-border bg-btn-secondary hover:bg-hover",
-          )}
-        >
-          <Icon name="upload" size={14} />
-          Import
-        </button>
-        <ExportMenu />
-      </>
-    ) : route.section === "workspace" && !native ? (
-      <span className="flex flex-wrap items-center gap-4 text-13">
-        <Link href="/chat?new&setup" className="text-accent hover:underline">Run setup again →</Link>
-        <Link href="/setup" className="text-accent hover:underline">Open setup checklist →</Link>
-      </span>
-    ) : undefined;
-
   const nativeActions =
     route.section === "memory"
       ? [
@@ -553,7 +278,7 @@ export function SettingsScreen() {
 
   return (
     <section aria-label="Settings">
-      {!compact && <NavigatorPortal native={{ model: navModel, onCommand: handleNativeCommand }}>{sectionNav}</NavigatorPortal>}
+      <NavigatorPortal native={{ model: navModel, onCommand: handleNativeCommand }} />
       <TopBar
         crumbs={crumbs}
         nativeTitle={{
@@ -561,11 +286,9 @@ export function SettingsScreen() {
           ...(route.section === "memory" && total !== undefined ? { subtitle: `${total} entries` } : {}),
         }}
         nativeActions={nativeActions}
-        actions={topBarActions}
       />
       <Content>
         <div className="flex flex-col gap-5">
-          {compact && sectionNav}
           <div className={cx("flex min-w-0 flex-col gap-6", wideBody ? "max-w-[1020px]" : "max-w-[820px]")}>
             {route.section === "you" && (
               <div id="you" className="flex flex-col gap-5">
@@ -929,23 +652,6 @@ function PersonaDetailView({ persona, onEdit, onDelete }: { persona: Persona; on
         <MemorySection key={persona.id} whose={persona.id} heading={`${persona.name}’s memory`} />
       </div>
     </>
-  );
-}
-
-function HealthDot({ health }: { health: SettingsHealth }) {
-  const label = { ok: "Configured", attention: "Needs attention", idle: "", unknown: "Checking" }[health];
-  return (
-    <span
-      role={label ? "img" : undefined}
-      aria-label={label || undefined}
-      aria-hidden={label ? undefined : true}
-      className={cx(
-        "size-2 flex-none rounded-full",
-        health === "ok" && "bg-state-done",
-        health === "attention" && "bg-state-human",
-        (health === "idle" || health === "unknown") && "bg-track",
-      )}
-    />
   );
 }
 

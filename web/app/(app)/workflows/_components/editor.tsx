@@ -12,7 +12,6 @@ import { usePublishWorkflow, useResolveProposal, useSaveWorkflow, useWorkflow, t
 import { CompanionDock } from "@/components/shell/companion";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { TopBar } from "@/components/shell/topbar";
-import { WorkChat } from "@/components/domain/work-chat";
 import { useCompact } from "@/lib/viewport";
 import { buildWorkflowInspectorSections } from "@/lib/native-shell/models/workflow-inspector";
 import { buildWorkflowPaletteNavModel } from "@/lib/native-shell/models/workflows";
@@ -378,28 +377,6 @@ function Canvas({ workflow, chatId, onChatId, personaId, onPersonaId, onApplied,
     issues,
     error: error?.message,
   });
-  const nodePalette = (
-    <aside aria-label="Node types" className="min-h-0 flex-1 overflow-y-auto px-2.5 pt-4 pb-3">
-      {PALETTE.map((g) => (
-        <div key={g.group} className="mb-4">
-          <p className="mb-1.5 px-1 text-10 font-semibold uppercase tracking-wide text-fg-tertiary">{g.group}</p>
-          {g.items.map((i) => (
-            <button
-              key={i.type}
-              type="button"
-              draggable
-              disabled={!!preview}
-              onDragStart={(e) => e.dataTransfer.setData("application/vesper-node", `${i.type}|${i.label}`)}
-              onClick={() => addNode(i.type, i.label)}
-              className="mb-1.5 block w-full rounded-md border border-border-strong bg-surface px-2.5 py-1.5 text-left text-13 text-fg-2 hover:bg-hover disabled:opacity-50"
-            >
-              {i.label}
-            </button>
-          ))}
-        </div>
-      ))}
-    </aside>
-  );
   const detailsContent = (
     <>
       {error && <Banner tone="blocked" title={error.message} />}
@@ -425,20 +402,16 @@ function Canvas({ workflow, chatId, onChatId, personaId, onPersonaId, onApplied,
   );
   return (
     <>
-      {!compact && (
-        <NavigatorPortal
-          native={{
-            model: buildWorkflowPaletteNavModel({ palette: PALETTE, disabled: !!preview }),
-            onCommand: (cmd) => {
-              if (cmd.type !== "nav.activate" || preview) return;
-              const item = PALETTE.flatMap((g) => g.items).find((i) => i.type === cmd.itemId);
-              if (item) addNode(item.type, item.label);
-            },
-          }}
-        >
-          {nodePalette}
-        </NavigatorPortal>
-      )}
+      <NavigatorPortal
+        native={{
+          model: buildWorkflowPaletteNavModel({ palette: PALETTE, disabled: !!preview }),
+          onCommand: (cmd) => {
+            if (cmd.type !== "nav.activate" || preview) return;
+            const item = PALETTE.flatMap((g) => g.items).find((i) => i.type === cmd.itemId);
+            if (item) addNode(item.type, item.label);
+          },
+        }}
+      />
       {!compact && (
         <CompanionDock
           app="workflows"
@@ -487,13 +460,8 @@ function Canvas({ workflow, chatId, onChatId, personaId, onPersonaId, onApplied,
                   }
                 },
               },
-              content: (
-                <div aria-label="Workflow details" className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto bg-panel p-4">
-                  {detailsContent}
-                </div>
-              ),
             },
-            { id: "chat", label: "Chat", icon: "msg", native: { kind: "companion" }, content: <WorkChat /> },
+            { id: "chat", label: "Chat", icon: "msg", native: { kind: "companion" } },
           ]}
         />
       )}
@@ -504,13 +472,6 @@ function Canvas({ workflow, chatId, onChatId, personaId, onPersonaId, onApplied,
           subtitle: `${workflow.published_version > 0 ? `v${workflow.published_version}${workflow.unpublished_changes ? " · edited" : ""}` : "Draft"} · ${save.isPending ? "Saving…" : "Saved"}`,
         }}
         nativeActions={[{ id: "workflow.publish", label: "Publish", kind: "button", icon: "upload", showsLabel: true, accent: true, disabled: issues.length > 0 || publish.isPending || !!preview || !workflow.unpublished_changes, run: flushAndPublish }]}
-        actions={
-          <>
-            <span className="font-mono text-12 text-fg-tertiary">{workflow.published_version > 0 ? `v${workflow.published_version}${workflow.unpublished_changes ? " · edited" : ""}` : "Draft"}</span>
-            <span className="text-12 text-fg-tertiary">{save.isPending ? "Saving…" : "Saved"}</span>
-            <Button variant="primary" onClick={flushAndPublish} disabled={issues.length > 0 || publish.isPending || !!preview || !workflow.unpublished_changes} hint={issues[0]?.message}>Publish</Button>
-          </>
-        }
       />
       <div className="flex min-h-0 flex-1 max-md:flex-col">
         <div ref={canvas} className="relative min-h-[320px] min-w-0 flex-1" onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>

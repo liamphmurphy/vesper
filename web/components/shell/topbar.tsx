@@ -2,12 +2,9 @@
 
 import Link from "next/link";
 import { Fragment, useEffect, type ReactNode } from "react";
-import { cx } from "@/lib/cx";
-import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import type { NativeAction } from "@/lib/native-shell/actions";
 import { setTopBarTitle } from "@/lib/native-shell/title";
 import { useNativeActions } from "@/lib/native-shell/use-native-actions";
-import { HistoryNav } from "./history-nav";
 
 export type Crumb = { label: ReactNode; href?: string; swatch?: string; mono?: boolean };
 
@@ -69,51 +66,30 @@ export function Breadcrumb({ items, hideCurrent }: { items: Crumb[]; hideCurrent
 }
 
 /**
- * A pane's 44px bar: back and forward, then the breadcrumb (or, for a pane with tabs, its tab
- * strip), left; actions right (secondary first, primary last). Every page's top bar is this one, so
- * its height and the back button's place never change between screens.
+ * Publishes the window title and native toolbar actions to the Mac shell. Only renders a compact
+ * parent-breadcrumb strip when a screen has parent crumbs above the current page.
  */
-export function TopBar({ crumbs, tabs, actions, nativeActions, nativeTitle }: {
+export function TopBar({ crumbs, nativeActions, nativeTitle }: {
   crumbs?: Crumb[];
-  tabs?: ReactNode;
-  actions?: ReactNode;
-  /**
-   * The same actions as native toolbar items, each with the handler to run. In the Mac app they go
-   * to the window's toolbar and `actions` is not drawn; a browser draws `actions` as always. Give
-   * this only when it covers every action in `actions`.
-   */
   nativeActions?: NativeAction[];
   /** The window's title and subtitle when the current crumb is not plain text. */
   nativeTitle?: { title: string; subtitle?: string };
 }) {
-  const native = useIsNativeShell();
-  const inToolbar = useNativeActions(nativeActions);
-  // In the native shell the current crumb is the window's title, so the bar sends it and doesn't draw it.
-  const current = !tabs ? crumbs?.at(-1)?.label : undefined;
+  useNativeActions(nativeActions);
+  const current = crumbs?.at(-1)?.label;
   const plain = typeof current === "string" || typeof current === "number" ? String(current) : null;
-  const title = native && !tabs ? (nativeTitle?.title ?? plain) : null;
-  const subtitle = native && !tabs ? nativeTitle?.subtitle : undefined;
+  const title = nativeTitle?.title ?? plain;
+  const subtitle = nativeTitle?.subtitle;
   useEffect(() => {
     if (!title) return;
     const token = Symbol("topbar");
     setTopBarTitle(token, { title, ...(subtitle ? { subtitle } : {}) });
     return () => setTopBarTitle(token, null);
   }, [title, subtitle]);
-  // Nothing left to draw: the title and the actions are in the window's toolbar, back/forward too.
-  const shownActions = inToolbar ? undefined : actions;
-  const hasParents = (crumbs?.length ?? 0) > 1;
-  if (native && title && !tabs && !hasParents && !shownActions) return null;
+  if ((crumbs?.length ?? 0) <= 1) return null;
   return (
-    <header className={cx(
-      "flex min-h-[44px] flex-none items-center justify-between gap-3 border-b border-border-subtle pl-3 pr-6 max-md:pl-6",
-      // Tabs sit on the bar's bottom rule, so the bar gives them its full height.
-      tabs ? "items-stretch" : "flex-wrap py-1.5",
-    )}>
-      <div className={cx("flex min-w-0 gap-2", tabs ? "flex-1" : "items-center")}>
-        <HistoryNav className={tabs ? "self-center" : undefined} />
-        {tabs ?? (crumbs && <Breadcrumb items={crumbs} hideCurrent={!!title} />)}
-      </div>
-      {shownActions && <div className="flex flex-wrap items-center gap-2">{shownActions}</div>}
+    <header className="flex min-h-[44px] flex-none flex-wrap items-center gap-3 border-b border-border-subtle py-1.5 pl-3 pr-6 max-md:pl-6">
+      <Breadcrumb items={crumbs!} hideCurrent={!!title} />
     </header>
   );
 }

@@ -1,30 +1,16 @@
 "use client";
 
-import Link from "next/link";
-import { Popover } from "radix-ui";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { downloadFile } from "@/lib/api/docs-hooks";
 import { useSaveDesignExport } from "@/lib/api/designs-hooks";
-import { cx } from "@/lib/cx";
 import { ExportError, base64, exportItems, exportPdf, exportSvg, fileName, frameFor, pngTooLarge, renderQuery, usedAssets, type ExportFormat, type ExportItem, type ExportScope, type Loaders } from "@/lib/designs/export";
 import { labelOf } from "@/lib/designs/edit";
 import { designAssetHref } from "@/lib/designs/render";
 import type { Design } from "@/lib/designs/schema";
-import { floatPanel } from "@/components/domain/pickers";
-import { Button } from "@/components/ui/button";
 
 export type DesignExportNotice = { tone: "ok" | "error" | "busy"; text: string; href?: string; cancellable?: boolean };
 type File1 = { name: string; ext: ExportFormat; blob: Blob };
-
-const FORMATS: { id: ExportFormat; label: string; detail: string }[] = [
-  { id: "png", label: "PNG", detail: "An image, drawn by the same renderer as the editor" },
-  { id: "svg", label: "SVG", detail: "Text stays text; Inter is embedded, so it opens offline" },
-  { id: "pdf", label: "PDF", detail: "One page per frame, at the frame’s size" },
-];
 const MIME: Record<ExportFormat, string> = { png: "image/png", svg: "image/svg+xml", pdf: "application/pdf" };
-
-const label = "text-11 font-medium uppercase tracking-wide text-fg-tertiary";
-const choice = (on: boolean) => cx("flex cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 text-13 text-fg", on ? "bg-selected" : "hover:bg-hover");
 
 async function bytes(url: string, signal: AbortSignal, what: string): Promise<Response> {
   const r = await fetch(url, { credentials: "same-origin", signal });
@@ -184,89 +170,3 @@ export function useDesignExport({ id, title, design, pageId, selected, current }
 }
 
 export type DesignExport = ReturnType<typeof useDesignExport>;
-
-/** Export as a popover over `x`; `trigger` renames its button, e.g. the editor header's Share ▾. */
-export function ExportMenu({ x, design, trigger }: { x: DesignExport; design?: Design; trigger?: string }) {
-  const { save, open, setOpen, format, setFormat, scale, setScale, setScope, notice, busy, scopes, scope, count, oneFile, run, cancel } = x;
-
-  return (
-    <div className="flex items-center gap-2">
-      {notice && (
-        <span role={notice.tone === "error" ? "alert" : "status"} data-testid="design-export-notice" className={cx("max-w-[420px] truncate text-12", notice.tone === "error" ? "text-pill-blocked-fg" : "text-fg-secondary")} title={notice.text}>
-          {notice.text}
-          {notice.tone === "busy" && notice.cancellable !== false && (
-            <button type="button" className="ml-2 text-accent hover:underline" onClick={cancel}>
-              Cancel
-            </button>
-          )}
-          {notice.href && (
-            <>
-              {" · "}
-              <Link href={notice.href} className="text-accent hover:underline">Open</Link>
-            </>
-          )}
-        </span>
-      )}
-      <Popover.Root open={open} onOpenChange={setOpen}>
-        <Popover.Trigger asChild>
-          {trigger ? (
-            <Button variant="primary" disabled={!design || busy}>
-              {trigger} <span aria-hidden>▾</span>
-            </Button>
-          ) : (
-            <Button variant="secondary" icon="download" disabled={!design || busy}>
-              Export
-            </Button>
-          )}
-        </Popover.Trigger>
-        <Popover.Portal>
-          <Popover.Content align="end" sideOffset={6} aria-label="Export" className={cx(floatPanel, "z-50 flex w-[320px] flex-col gap-3 p-3")}>
-            {trigger && <span className="text-13 font-semibold text-fg">Export</span>}
-            <fieldset className="flex flex-col gap-0.5">
-              <legend className={label}>What</legend>
-              {scopes.map((s) => (
-                <label key={s.id} className={cx(choice(scope === s.id), !s.count && "cursor-not-allowed opacity-50")}>
-                  <input type="radio" name="export-scope" className="mt-0.5" checked={scope === s.id} disabled={!s.count} onChange={() => setScope(s.id)} />
-                  <span className="truncate">{s.text}</span>
-                </label>
-              ))}
-            </fieldset>
-            <fieldset className="flex flex-col gap-0.5">
-              <legend className={label}>Format</legend>
-              {FORMATS.map((f) => (
-                <label key={f.id} className={choice(format === f.id)}>
-                  <input type="radio" name="export-format" className="mt-0.5" checked={format === f.id} onChange={() => setFormat(f.id)} />
-                  <span className="flex flex-col">
-                    {f.label}
-                    <span className="text-11 text-fg-tertiary">{f.detail}</span>
-                  </span>
-                </label>
-              ))}
-            </fieldset>
-            {format === "png" && (
-              <div className="flex items-center gap-2" role="radiogroup" aria-label="Scale">
-                <span className={label}>Scale</span>
-                {[1, 2, 3].map((s) => (
-                  <button key={s} type="button" role="radio" aria-checked={scale === s} onClick={() => setScale(s)} className={cx("rounded-md border px-2 py-0.5 text-13", scale === s ? "border-accent bg-selected text-fg" : "border-border text-fg-secondary hover:bg-hover")}>
-                    {s}×
-                  </button>
-                ))}
-              </div>
-            )}
-            <div className="flex flex-col gap-1.5 border-t border-border-subtle pt-3">
-              <div className="flex gap-2">
-                <Button variant="primary" className="flex-1" disabled={!count} onClick={() => void run("download")}>
-                  Download{count > 1 && format !== "pdf" ? ` ${count} files` : ""}
-                </Button>
-                <Button variant="secondary" className="flex-1" disabled={!count || !oneFile || save.isPending} onClick={() => void run("library")}>
-                  Save to Library
-                </Button>
-              </div>
-              {!!count && !oneFile && <span className="text-11 text-fg-tertiary">The Library takes one file at a time: pick one item, or PDF.</span>}
-            </div>
-          </Popover.Content>
-        </Popover.Portal>
-      </Popover.Root>
-    </div>
-  );
-}

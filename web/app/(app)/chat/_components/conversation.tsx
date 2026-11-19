@@ -49,10 +49,9 @@ import { ChatWorkflowTray, WorkflowStartCard } from "@/components/domain/workflo
 import { ChatRunsPill, ChatTicketRunTray } from "@/components/domain/dispatch-cards";
 import { ActivityScene } from "./activity-scene";
 import { Tabs } from "@/components/ui/controls";
-import { focusActivityStep, useActivityFocus } from "./activity-focus";
+import { focusActivityStep } from "./activity-focus";
 import { openThread, setDock } from "@/lib/chat-panels";
 import { isTyping } from "@/components/shell/shortcuts";
-import { HistoryNav } from "@/components/shell/history-nav";
 import { linkedItems, openItem, type LinkedItem } from "@/lib/chat-panels";
 import { LinkedRow, OpenLinkedItem } from "./item-panel";
 import { useRecordVisit } from "@/components/shell/use-record-visit";
@@ -104,10 +103,9 @@ import { ChatTitleMenu } from "./title-menu";
 import { ChatCostChip } from "@/components/domain/cost-chip";
 import { unavailableReason } from "@/lib/setup";
 import { ChatSpacePicker } from "./chat-space";
-import { CompactChatHeader } from "./compact-chat-header";
 import { NativeChatHeader } from "./native-chat-header";
 import { trackDockHeight } from "@/lib/dock-height";
-import { useIsNativeShell, useNativeCommand } from "@/lib/native-shell/hooks";
+import { useNativeCommand } from "@/lib/native-shell/hooks";
 import { useCompact } from "@/lib/viewport";
 import { composerOptions } from "@/lib/composer-options";
 import { CommitEmailPicker } from "./commit-email";
@@ -486,25 +484,6 @@ function ActivityBody({ chat: c, list, groups, focus }: { chat: NonNullable<Retu
   );
 }
 
-/** The desktop dock's Activity tab: beside the conversation, so a reply and its trace read side by side. */
-export function ChatActivity({ chatId }: { chatId: string }) {
-  const chat = useChat(chatId).data;
-  const target = useSearchParams().get("message");
-  // The same query the conversation reads, so it's shared rather than fetched twice.
-  const list = useChatMessages(chatId, target ? 1000 : 200).data?.messages;
-  const groups: Groups = useChatModels().data;
-  const focus = useActivityFocus();
-  if (!chat) return null;
-  return (
-    // Its own tooltip provider: the dock sits outside the conversation's.
-    <Tooltip.Provider delayDuration={200}>
-      <div data-testid="chat-activity" className="flex-1 overflow-y-auto px-4 py-4">
-        <ActivityBody chat={chat} list={list} groups={groups} focus={focus} />
-      </div>
-    </Tooltip.Provider>
-  );
-}
-
 const DRAFT_KEY = (id: string) => `lazyagents.chat-draft:${id}`;
 function putDraft(id: string, text: string) {
   try {
@@ -581,8 +560,6 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   const create = useCreateChat();
   const selectRepo = useSetChatRepository(id);
   const [repoSignal, setRepoSignal] = useState(0);
-  // The compact composer keeps the repository picker in its options sheet: the chat menu opens that.
-  const [sheetSignal, setSheetSignal] = useState(0);
   const savedRepos = useRepositories();
   const discard = useDeleteChat();
   const qc = useQueryClient();
@@ -596,17 +573,16 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   // The header switches the conversation for Activity, except on the chat page's desktop dock, where Activity is a tab beside it.
   const [tab, setTab] = useState<"chat" | "activity">("chat");
   const compact = useCompact();
-  const dockActivity = activityInDock && !compact;
-  // In the Mac app the chat page's header lives in the window's toolbar (NativeChatHeader), so the page keeps the row's height.
-  const native = useIsNativeShell();
-  const nativeHeader = native && dockActivity && !docked && !headerSlot;
-  // Native only: the floating composer's real height drives the overlap and the transcript's bottom padding (native-mac.css).
+  const dockActivity = activityInDock;
+  // The full-page chat's header lives in the Mac window's toolbar (NativeChatHeader); docked chats keep their inline dock header.
+  const nativeHeader = dockActivity && !docked && !headerSlot;
+  // The floating composer's real height drives the overlap and transcript bottom padding (native-mac.css).
   // A callback ref: the dock mounts only once the chat has loaded.
   const stopDockTrack = useRef<(() => void) | undefined>(undefined);
   const dockRef = useCallback((el: HTMLDivElement | null) => {
     stopDockTrack.current?.();
-    stopDockTrack.current = native && el ? trackDockHeight(el) : undefined;
-  }, [native]);
+    stopDockTrack.current = el ? trackDockHeight(el) : undefined;
+  }, []);
   const view = dockActivity ? "chat" : tab;
   // "View reasoning" on a chat step: Activity opens on that step (the compact tab, or the dock's tab).
   const [traceFocus, setTraceFocus] = useState<{ key: string; at: number }>();
@@ -1201,18 +1177,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
         <DropOverlay over={drop.over} />
         {/* Sized by its own width: a panel beside the chat can leave it narrow on a wide screen. */}
         {/* The page's only header: who you're talking to, the title, then the chat's context. */}
-        {compact ? (
-          <CompactChatHeader
-            chat={c}
-            personas={group ? participants : [persona]}
-            tab={tab}
-            onTab={setTab}
-            running={running}
-            canCode={!!(c.speaker ?? c.persona)?.capabilities?.code}
-            onRepository={() => { setTab("chat"); setSheetSignal((n) => n + 1); }}
-            onRestored={restored}
-          />
-        ) : nativeHeader ? (
+        {nativeHeader ? (
           <NativeChatHeader
             chat={c}
             participants={participants}
@@ -1231,8 +1196,6 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
           "@container flex min-w-0 items-center",
           headerSlot ? "h-full flex-1 gap-1.5 pl-1" : cx("min-h-[44px] border-b border-border-subtle py-1.5", docked ? "gap-1.5 pl-3 pr-2" : "gap-2.5 pl-3 pr-6"),
         )}>
-          {/* Back and forward lead the page; a dock's chat sits beside a page that has its own. */}
-          {!docked && <HistoryNav />}
           {group ? <PersonaStack personas={participants} size={22} /> : <HeaderPersona persona={persona} personaId={c.persona?.id} fresh={fresh} onSwitch={switchPersona} disabled={locked || create.isPending} compact={docked} working={running} />}
           {/* The title over a live line, as a messaging app shows who's typing; the line goes when the reply ends.
               Docks with an inline switcher already name and switch the conversation in Switch chat, avoiding 1-letter crushed title stubs. */}
@@ -1608,7 +1571,6 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
             <>
             {context?.composer}
             <Composer
-              sheetSignal={sheetSignal}
               text={text}
               onText={setText}
               inputRef={area}

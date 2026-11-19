@@ -19,7 +19,6 @@ import { IMPORT_PROMPT, MEMORY_TYPES, PERSONA_MEMORY_TYPES, memoriesMarkdown, pa
 import { cx } from "@/lib/cx";
 import { Button, IconButton } from "@/components/ui/button";
 import { CopyButton } from "@/components/ui/copy-button";
-import { Icon } from "@/components/ui/icon";
 import { Banner, Skeleton, TextArea, TextInput } from "@/components/ui/primitives";
 
 type Memory = Schemas["Memory"];
@@ -263,28 +262,6 @@ export function useMemoryExport() {
     }
   }
   return { busy, err, run };
-}
-
-export function ExportMenu() {
-  const { busy, err, run } = useMemoryExport();
-  return (
-    <details className="relative">
-      <summary className="inline-flex h-[30px] cursor-pointer list-none items-center gap-1.5 rounded-md border border-btn-secondary-border bg-btn-secondary px-3 text-13 text-fg hover:bg-hover">
-        <Icon name="download" size={14} />
-        Export
-        <Icon name="chev" size={12} />
-      </summary>
-      <div className="absolute right-0 z-10 mt-1 flex w-44 flex-col rounded-md border border-border-strong bg-surface p-1 shadow-lg">
-        <button type="button" disabled={busy} className="rounded px-2 py-1.5 text-left text-13 hover:bg-hover" onClick={() => run("json")}>
-          JSON (all entries)
-        </button>
-        <button type="button" disabled={busy} className="rounded px-2 py-1.5 text-left text-13 hover:bg-hover" onClick={() => run("md")}>
-          Markdown (all entries)
-        </button>
-        {err && <p role="alert" className="px-2 py-1 text-12 text-pill-blocked-fg">{err}</p>}
-      </div>
-    </details>
-  );
 }
 
 /** Import view: copy a prompt for another assistant, paste its reply, preview, then save. */

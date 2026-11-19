@@ -13,7 +13,6 @@ import { ESTIMATE_SCALE } from "@/lib/ticket-draft";
 import { runStateTone, ticketStatusTone } from "@/lib/native-shell/models/common";
 import { buildTicketInspectorSections } from "@/lib/native-shell/models/ticket-inspector";
 import { spendLabel } from "@/lib/costs";
-import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { useNativeToolbar } from "@/lib/native-shell/use-native-toolbar";
 import { buildTicketToolbar, parseTicketToolbarAction } from "@/lib/native-shell/models/work-toolbars";
 import { useNativeTitle } from "../_components/native-title";
@@ -29,9 +28,7 @@ import { TicketEditorDialog } from "@/components/domain/ticket-editor-dialog";
 import { PriorityGlyph, StatusGlyph } from "@/components/domain/glyphs";
 import { Flag, SmallPill } from "@/components/domain/labels";
 import { PRIORITY_NAME, PRIORITY_ORDER, STATUS_NAME, STATUS_ORDER } from "@/components/domain/meta";
-import { TicketCostChip } from "@/components/domain/cost-chip";
 import { WORK_COLUMN, WorkDetailHeader, WorkEyebrow, WorkViewTabs, type EyebrowItem } from "@/components/domain/work-detail-header";
-import { TopBar } from "@/components/shell/topbar";
 import { BacklinksPanel } from "@/components/domain/backlinks";
 import { ContextArtifacts } from "./context-artifacts";
 import { Dependencies, useDependencyChange } from "./dependencies";
@@ -45,8 +42,7 @@ import { ConflictBanner, useTicketSave, type SaveTicket, type TicketSaver } from
 import { Composer, Timeline } from "./timeline";
 import { CompanionDock } from "@/components/shell/companion";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
-import { WorkChat, WorkChatSheet } from "@/components/domain/work-chat";
-import { WorkNavHeader } from "../../work/work-nav-header";
+import { WorkChatSheet } from "@/components/domain/work-chat";
 import { buildTicketNavModel } from "@/lib/native-shell/models/ticket";
 import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
 
@@ -408,9 +404,7 @@ export function TicketScreen({ ticketKey }: { ticketKey: string }) {
   const ticketRuns = useTicketRuns(ticketKey, hasLiveRun(t));
   const saver = useTicketSave(t);
 
-  // In the Mac app the header row is the window title and toolbar (the web's top bar, below, isn't drawn).
-  const native = useIsNativeShell();
-  const cost = useCosts({ ticket: ticketKey }, native).data;
+  const cost = useCosts({ ticket: ticketKey }).data;
   const copyLink = () => {
     void navigator.clipboard.writeText(window.location.href);
     setCopied(true);
@@ -453,21 +447,16 @@ export function TicketScreen({ ticketKey }: { ticketKey: string }) {
 
   if (ticket.isError) {
     const missing = "status" in ticket.error && ticket.error.status === 404;
-    return (
-      <>
-        {!native && <TopBar crumbs={[{ label: "Tickets", href: "/tickets" }, { label: ticketKey, mono: true }]} />}
-        {missing ? (
-          <EmptyState icon="tickets" title={`${ticketKey} doesn't exist`} actions={<ButtonLink href="/tickets" variant="outline">All tickets</ButtonLink>}>
-            It may have been moved, or the link has a typo.
-          </EmptyState>
-        ) : (
-          <div className="p-6">
-            <Banner tone="blocked" title="Couldn't load this ticket">
-              {ticket.error.message}
-            </Banner>
-          </div>
-        )}
-      </>
+    return missing ? (
+      <EmptyState icon="tickets" title={`${ticketKey} doesn't exist`} actions={<ButtonLink href="/tickets" variant="outline">All tickets</ButtonLink>}>
+        It may have been moved, or the link has a typo.
+      </EmptyState>
+    ) : (
+      <div className="p-6">
+        <Banner tone="blocked" title="Couldn't load this ticket">
+          {ticket.error.message}
+        </Banner>
+      </div>
     );
   }
 
@@ -499,58 +488,7 @@ export function TicketScreen({ ticketKey }: { ticketKey: string }) {
           model: buildTicketNavModel({ project: t?.project.key, siblings: pager.tickets, statusNames: STATUS_NAME, ticketKey }),
           onCommand: (cmd) => handleWorkHeaderCommand(cmd, { project: t?.project.key, push: (href) => router.push(href), onProject: () => {}, onAgent: () => {} }),
         }}
-      >
-        <nav aria-label="Work" className="work-nav">
-          <WorkNavHeader active="tickets" project={t?.project.key} />
-          <div className="work-nav-list">
-            {pager.tickets.map((sib) => (
-              <Link
-                key={sib.key}
-                href={`/tickets/${encodeURIComponent(sib.key)}`}
-                aria-current={sib.key === ticketKey ? "true" : undefined}
-              >
-                <strong className="flex items-center gap-1.5 truncate">
-                  <StatusGlyph state={sib.status} label={false} />
-                  <span className="font-mono text-11 text-fg-tertiary">{sib.key}</span>
-                  <span className="truncate">{sib.title}</span>
-                </strong>
-              </Link>
-            ))}
-          </div>
-        </nav>
-      </NavigatorPortal>
-      {!native && <TopBar
-        crumbs={
-          t
-            ? [
-                { label: t.project.name, swatch: t.project.color, href: `/tickets?project=${t.project.key}` },
-                ...(t.epic ? [{ label: t.epic.name }] : []),
-                { label: t.key, mono: true },
-              ]
-            : [{ label: "Tickets", href: "/tickets" }, { label: ticketKey, mono: true }]
-        }
-        actions={
-          <>
-            {t && <TicketCostChip ticketKey={t.key} project={t.project.key} />}
-            {pager.total > 0 && pager.index >= 0 && (
-              <span className="font-mono text-12 text-fg-tertiary" aria-label={`Ticket ${pager.index + 1} of ${pager.total}`}>
-                {pager.index + 1} / {pager.total}
-              </span>
-            )}
-            <IconButton icon="chev" label="Previous ticket (K)" bordered disabled={!pager.prev} onClick={() => pager.prev && router.push(`/tickets/${pager.prev}`)} className="rotate-180" />
-            <IconButton icon="chev" label="Next ticket (J)" bordered disabled={!pager.next} onClick={() => pager.next && router.push(`/tickets/${pager.next}`)} />
-            <IconButton
-              icon={copied ? "check" : "link"}
-              label={copied ? "Link copied" : "Copy link"}
-              onClick={() => {
-                void navigator.clipboard.writeText(window.location.href);
-                setCopied(true);
-                setTimeout(() => setCopied(false), 1500);
-              }}
-            />
-          </>
-        }
-      />}
+      />
       {!t || !boot.data ? (
         <DetailSkeleton />
       ) : (
@@ -558,6 +496,9 @@ export function TicketScreen({ ticketKey }: { ticketKey: string }) {
           <article className="flex min-w-0 flex-[999_1_480px] justify-center py-6">
             <div className={`${WORK_COLUMN} flex flex-col gap-6`}>
               {t.project.archived && <Banner tone="human" title="This space’s work is archived" actions={<ButtonLink href={workSettingsHref(t.project)} variant="outline">Open the space</ButtonLink>}>History is preserved. Restore the work on the space’s page before starting new work.</Banner>}
+              {saver.conflict && (
+                <ConflictBanner what={saver.conflict.what} reloading={ticket.isFetching} onReapply={saver.reapply} onKeep={saver.keepLatest} />
+              )}
               <Header
                 t={t}
                 save={saver.save}
@@ -613,7 +554,6 @@ export function TicketScreen({ ticketKey }: { ticketKey: string }) {
             t={t}
             boot={boot.data}
             saver={saver}
-            reloading={ticket.isFetching}
             runs={ticketRuns.data?.runs ?? []}
             runsHasMore={!!ticketRuns.data?.has_more}
           />
@@ -639,14 +579,12 @@ function TicketCompanion({
   t,
   boot,
   saver,
-  reloading,
   runs,
   runsHasMore,
 }: {
   t: Ticket;
   boot: Bootstrap;
   saver: TicketSaver;
-  reloading: boolean;
   runs: Schemas["Run"][];
   runsHasMore: boolean;
 }) {
@@ -826,26 +764,8 @@ function TicketCompanion({
               }
             },
           },
-          content: (
-            <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-4 py-5">
-              {saver.conflict && (
-                <ConflictBanner what={saver.conflict.what} reloading={reloading} onReapply={saver.reapply} onKeep={saver.keepLatest} />
-              )}
-              <Properties t={t} boot={boot} save={saver.save} error={saver.error} />
-              <Dependencies ticket={t} />
-              {t.run && hasLiveRun(t) && <RunCard t={t} run={t.run} />}
-              <RunsHistory t={t} />
-              <div id="code" className="scroll-mt-16">
-                <CodeSection t={t} />
-              </div>
-              <section className="flex flex-col gap-2 px-1">
-                <h2 className="text-13 text-fg-tertiary">Backlinks</h2>
-                <BacklinksPanel kind="ticket" id={t.id} compact />
-              </section>
-            </div>
-          ),
         },
-        { id: "chat", label: "Chat", icon: "msg", native: { kind: "companion", subject }, content: <WorkChat subject={subject} /> },
+        { id: "chat", label: "Chat", icon: "msg", native: { kind: "companion", subject } },
       ]}
     />
   );

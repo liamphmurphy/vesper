@@ -1,11 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
-import { createPortal } from "react-dom";
-import { claimNavigator, fallbackSlot, navigatorSlot, subscribeNavigator } from "@/lib/navigator";
+import { useEffect, useRef } from "react";
+import { claimNavigator } from "@/lib/navigator";
 import { onCommand } from "@/lib/native-shell/bridge";
-import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { routeNavCommand } from "@/lib/native-shell/nav-model";
 import { publisher } from "@/lib/native-shell/publisher";
 import type { NativeCommand, NavModel } from "@/lib/native-shell/protocol";
@@ -19,24 +17,16 @@ export function openInNewTab(href: string) {
 export type NativeNavigator = { model: NavModel; onCommand?: (cmd: NativeCommand) => void };
 
 /**
- * Puts a screen's own list (the Runs list, the Knowledge explorer, an editor's pages and layers)
- * in the left column's middle, in place of Chats, so the screen draws no second column. It renders
- * nothing while the column is collapsed or hidden, as the column's other lists don't show then.
- * The content keeps this screen's React context, so it can share state with the page.
- *
- * In the native Mac app the shell draws the column. A screen passes `native` (its list as a
- * NavModel) and the page renders nothing here; a screen that doesn't yet keeps its children in a
- * fallback column inside the content area. nav.* commands for the model's id go to `native.onCommand`;
+ * Publishes a screen's own list (the Runs list, the Knowledge explorer, an editor's pages and
+ * layers) to the native Mac sidebar as a NavModel, claiming the navigator slot so the default
+ * Chats list stands down. nav.* commands for the model's id go to `native.onCommand`;
  * nav.activate on an item with an href navigates by itself.
  */
-export function NavigatorPortal({ children, native }: { children?: ReactNode; native?: NativeNavigator }) {
-  const isNative = useIsNativeShell();
-  const slot = useSyncExternalStore(subscribeNavigator, navigatorSlot, () => null);
-  const fallback = useSyncExternalStore(subscribeNavigator, fallbackSlot, () => null);
+export function NavigatorPortal({ native }: { native?: NativeNavigator }) {
   const router = useRouter();
   useEffect(() => claimNavigator(), []);
 
-  const model = isNative ? native?.model : undefined;
+  const model = native?.model;
   const json = model ? JSON.stringify(model) : null;
   const handler = useRef(native?.onCommand);
   useEffect(() => {
@@ -54,14 +44,5 @@ export function NavigatorPortal({ children, native }: { children?: ReactNode; na
     };
   }, [json, router]);
 
-  const inFallback = isNative && !native;
-  useEffect(() => {
-    if (!inFallback) return;
-    const token = Symbol("fallback");
-    publisher.setFallback(token, true);
-    return () => publisher.setFallback(token, false);
-  }, [inFallback]);
-
-  if (isNative) return inFallback && fallback ? createPortal(children, fallback) : null;
-  return slot ? createPortal(children, slot) : null;
+  return null;
 }

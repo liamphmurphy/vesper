@@ -18,16 +18,14 @@ import { EpicCompletion } from "@/components/domain/epic-completion";
 import { TicketEditorDialog } from "@/components/domain/ticket-editor-dialog";
 import { DependencyMap } from "@/components/domain/dependency-map";
 import { useMotionList } from "@/components/ui/motion";
-import { Toggle } from "@/components/ui/controls";
 import { ticketsHref } from "@/lib/tickets-layout";
 import { buildBoardNavModel } from "@/lib/native-shell/models/board";
 import { buildBoardExtras, parseBoardToggle } from "@/lib/native-shell/models/tickets-toolbar";
-import { useIsNativeShell, useNativeContextMenu } from "@/lib/native-shell/hooks";
+import { useNativeContextMenu } from "@/lib/native-shell/hooks";
 import { toast } from "@/lib/toast";
 import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
-import { WorkNavHeader, WorkSectionLabel, WorkSpacePersonaFilters } from "../../work/work-nav-header";
-import { ChipScroller, TicketsLayoutBar, TicketsTopBar } from "./layout-bar";
+import { ChipScroller, TicketsTopBar } from "./layout-bar";
 import { AssigneeAvatar, EpicChip, StateText } from "./ticket-row";
 
 export function BoardScreen() {
@@ -64,101 +62,44 @@ export function BoardScreen() {
     window.history.replaceState(null, "", ticketsHref("board", next));
   }
   const compact = useCompact();
-  const native = useIsNativeShell();
-  const boardToggles = project && !native && (
-    <>
-      <Toggle label="Show canceled" checked={filters.include_canceled} onChange={(on) => setParam("include_canceled", on ? "true" : "")} />
-      <Toggle label="Blocked only" checked={blockedOnly} onChange={(on) => setParam("blocked", on ? "true" : "")} />
-    </>
-  );
   const compactBoardFilters = project && (
     <>
       <FilterMenu label="Epic" value={filters.epic ?? ""} onChange={(v) => setParam("epic", v)}
         options={[{ value: "", label: "All epics" }, ...epics.map((e) => ({ value: e.id, label: e.name }))]} />
       <FilterMenu label="Assignee" value={filters.assignee ?? ""} onChange={(v) => setParam("assignee", v)}
         options={[{ value: "", label: "All assignees" }, ...(bootstrap.data?.agents ?? []).map((a) => ({ value: a.handle, label: `@${a.handle}` }))]} />
-      {boardToggles}
     </>
   );
   return (
     <div data-testid="board-screen" className="flex min-h-0 flex-1 flex-col">
-      {!compact && (
-        <NavigatorPortal
-          native={{
-            model: buildBoardNavModel({
-              header: {
-                active: "tickets",
-                project: project?.key,
-                projects: bootstrap.data?.projects,
-                agents: bootstrap.data?.agents,
-                agent: filters.assignee ?? "",
-                allowAllProjects: false,
-                hideNewTicket: true,
-              },
-              epics: project ? epics : undefined,
-              epic: filters.epic,
-            }),
-            onCommand: (cmd) => {
-              const ctx = {
-                project: project?.key,
-                push: (href: string) => router.push(href),
-                onProject: (v: string) => router.push(ticketsHref("board", v ? { project: v } : undefined)),
-                onAgent: (v: string) => setParam("assignee", v),
-              };
-              if (handleWorkHeaderCommand(cmd, ctx)) return;
-              if (cmd.type === "nav.activate") setParam("epic", cmd.itemId.startsWith("epic:") ? cmd.itemId.slice(5) : "");
+      <NavigatorPortal
+        native={{
+          model: buildBoardNavModel({
+            header: {
+              active: "tickets",
+              project: project?.key,
+              projects: bootstrap.data?.projects,
+              agents: bootstrap.data?.agents,
+              agent: filters.assignee ?? "",
+              allowAllProjects: false,
+              hideNewTicket: true,
             },
-          }}
-        >
-          <nav aria-label="Work" className="work-nav">
-            <WorkNavHeader active="tickets" project={project?.key} />
-            <WorkSpacePersonaFilters
-              projects={bootstrap.data?.projects}
-              agents={bootstrap.data?.agents}
-              project={project?.key ?? ""}
-              onProjectChange={(v) =>
-                router.push(ticketsHref("board", v ? { project: v } : undefined))
-              }
-              allowAllProjects={false}
-              agent={filters.assignee ?? ""}
-              onAgentChange={(v) => setParam("assignee", v)}
-            />
-            <div className="work-nav-list">
-              {project && (
-                <div role="group" aria-label="Board epics" className="flex flex-col gap-0.5">
-                  <WorkSectionLabel count={epics.length}>By epic</WorkSectionLabel>
-                  <button
-                    type="button"
-                    aria-current={!filters.epic ? "true" : undefined}
-                    onClick={() => setParam("epic", "")}
-                    className={cx(
-                      "flex h-[26px] items-center rounded-md px-2 text-left text-12",
-                      !filters.epic ? "bg-selected font-medium text-fg" : "text-fg-secondary hover:bg-hover hover:text-fg",
-                    )}
-                  >
-                    All epics
-                  </button>
-                  {epics.map((e) => (
-                    <button
-                      key={e.id}
-                      type="button"
-                      aria-current={filters.epic === e.id ? "true" : undefined}
-                      onClick={() => setParam("epic", e.id)}
-                      className={cx(
-                        "flex h-[26px] items-center truncate rounded-md px-2 text-left text-12",
-                        filters.epic === e.id ? "bg-selected font-medium text-fg" : "text-fg-secondary hover:bg-hover hover:text-fg",
-                      )}
-                    >
-                      {e.name}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </nav>
-        </NavigatorPortal>
-      )}
-      {!compact && <TicketsTopBar layout="board"
+            epics: project ? epics : undefined,
+            epic: filters.epic,
+          }),
+          onCommand: (cmd) => {
+            const ctx = {
+              project: project?.key,
+              push: (href: string) => router.push(href),
+              onProject: (v: string) => router.push(ticketsHref("board", v ? { project: v } : undefined)),
+              onAgent: (v: string) => setParam("assignee", v),
+            };
+            if (handleWorkHeaderCommand(cmd, ctx)) return;
+            if (cmd.type === "nav.activate") setParam("epic", cmd.itemId.startsWith("epic:") ? cmd.itemId.slice(5) : "");
+          },
+        }}
+      />
+      <TicketsTopBar layout="board"
         action={{ label: "New ticket", primary: true, href: project ? `/tickets/new?project=${encodeURIComponent(project.key)}` : "/tickets/new" }}
         extra={project ? buildBoardExtras({ showCanceled: !!filters.include_canceled, blockedOnly }) : undefined}
         onExtra={(id) => {
@@ -166,16 +107,14 @@ export function BoardScreen() {
           if (t?.type === "canceled") setParam("include_canceled", filters.include_canceled ? "" : "true");
           else if (t?.type === "blocked") setParam("blocked", blockedOnly ? "" : "true");
         }}
-      />}
-      <TicketsLayoutBar layout="board" />
+      />
       {compact && compactBoardFilters && <ChipScroller label="Board filters">{compactBoardFilters}</ChipScroller>}
-      {/* The board's views, with its filters at the row's end (the top bar holds only the header). */}
+      {/* The board's views (the top bar lives in the native toolbar). */}
       {project && <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-border px-5 py-2 text-14">
         <nav aria-label="Board views" className="flex gap-5">
           <button aria-current={!map ? "page" : undefined} className={!map ? "font-semibold text-accent" : ""} onClick={() => setParam("tab", "")}>Board</button>
           <button aria-current={map ? "page" : undefined} className={map ? "font-semibold text-accent" : ""} onClick={() => setParam("tab", "map")}>Map</button>
         </nav>
-        {!compact && <div role="group" aria-label="Board filters" className="ml-auto flex flex-wrap items-center gap-3">{boardToggles}</div>}
       </div>}
       {!project ? <ProjectScopeState base="/tickets" scope={scope} />
         : map ? <div className="p-5"><DependencyMap key={JSON.stringify([project.key, filters])} project={project.key} epic={filters.epic} assignee={filters.assignee} includeCanceled={filters.include_canceled} onOpen={setTicket} /></div>

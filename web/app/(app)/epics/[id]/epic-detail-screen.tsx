@@ -14,116 +14,46 @@ import { StackedBar } from "@/components/domain/data";
 import { StateText } from "@/app/(app)/tickets/_components/ticket-row";
 import { useBoard } from "@/lib/api/board-hooks";
 import { dueDate } from "@/lib/format";
-import { burnUp, isOverdue, ymd, type BurnUp } from "@/lib/epics";
+import { burnUp, isOverdue, ymd } from "@/lib/epics";
 import { buildEpicInspectorSections } from "@/lib/native-shell/models/epic-inspector";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Banner, EmptyState, Skeleton } from "@/components/ui/primitives";
-import { Toggle } from "@/components/ui/controls";
-import { Content, TopBar, type Crumb } from "@/components/shell/topbar";
-import { AgentStack, HealthPill, type EpicOverview } from "@/components/domain/overview";
-import { HumanAvatar } from "@/components/domain/avatars";
-import { DocTypeTag, Pill } from "@/components/domain/labels";
-import { EpicCompletion } from "@/components/domain/epic-completion";
+import { Content } from "@/components/shell/topbar";
+import { HealthPill, type EpicOverview } from "@/components/domain/overview";
+import { Pill } from "@/components/domain/labels";
 import { DependencyMap } from "@/components/domain/dependency-map";
 import { WorkDetailHeader, WorkEyebrow, WorkViewTabs } from "@/components/domain/work-detail-header";
 import { ticketsHref } from "@/lib/tickets-layout";
-import { useCompact } from "@/lib/viewport";
-import { ContextSection } from "@/components/shell/context-panel";
 import { CompanionDock } from "@/components/shell/companion";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
-import { WorkChat } from "@/components/domain/work-chat";
-import { WorkNavHeader, WorkSectionLabel } from "../../work/work-nav-header";
 import { buildEpicDetailNavModel } from "@/lib/native-shell/models/epic-detail";
 import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
 import { buildEpicToolbar } from "@/lib/native-shell/models/work-toolbars";
-import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { useNativeToolbar } from "@/lib/native-shell/use-native-toolbar";
 import { useNativeTitle } from "../../tickets/_components/native-title";
 
 type TicketSummary = Schemas["TicketSummary"];
 
 export function EpicDetailScreen({ epicId }: { epicId: string }) {
-  const compact = useCompact();
   const router = useRouter();
   const query = useEpicOverviews();
   const e = query.data?.find((x) => x.epic.id === epicId);
   const siblingEpics = (query.data ?? []).filter((x) => !e || x.project.key === e.project.key);
-  const crumbs: Crumb[] = e
-    ? [
-        { label: e.project.name, swatch: e.project.color, href: `/tickets?project=${encodeURIComponent(e.project.key)}` },
-        { label: "Epics", href: ticketsHref("epics", { project: e.project.key }) },
-        { label: e.epic.name },
-      ]
-    : [{ label: "Epics", href: ticketsHref("epics") }];
-  // In the Mac app the header row is the window title and a toolbar button.
-  const native = useIsNativeShell();
   useNativeTitle(e?.epic.name ?? "Epics", e?.project.name);
   useNativeToolbar({ items: e ? buildEpicToolbar() : [], onAction: () => e && router.push(boardHref(e)) });
   return (
     <>
-      {!compact && (
-        <NavigatorPortal
-          native={{
-            model: buildEpicDetailNavModel({
-              project: e?.project.key,
-              projectName: e?.project.name,
-              epics: siblingEpics.map((x) => ({ id: x.epic.id, name: x.epic.name, done: x.epic.tickets_total - x.epic.tickets_open, total: x.epic.tickets_total })),
-              epicId,
-            }),
-            onCommand: (cmd) => handleWorkHeaderCommand(cmd, { project: e?.project.key, push: (href) => router.push(href), onProject: () => {}, onAgent: () => {} }),
-          }}
-        >
-          <nav aria-label="Work" className="work-nav">
-            <WorkNavHeader active="epics" project={e?.project.key} />
-            <div className="work-nav-list">
-              <WorkSectionLabel count={siblingEpics.length}>
-                {e?.project.name ?? "Epics"}
-              </WorkSectionLabel>
-              {siblingEpics.map((item) => {
-                const done = item.epic.tickets_total - item.epic.tickets_open;
-                const total = item.epic.tickets_total;
-                const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-                const active = item.epic.id === epicId;
-                return (
-                  <Link
-                    key={item.epic.id}
-                    href={`/epics/${encodeURIComponent(item.epic.id)}`}
-                    aria-current={active ? "true" : undefined}
-                    className={cx(
-                      "flex h-[26px] items-center gap-2 rounded-md px-2 text-12 transition-colors",
-                      active
-                        ? "bg-selected font-medium text-fg"
-                        : "text-fg-secondary hover:bg-hover hover:text-fg",
-                    )}
-                  >
-                    <span className="min-w-0 flex-1 truncate">{item.epic.name}</span>
-                    <span
-                      aria-hidden
-                      className="h-1 w-6 flex-none overflow-hidden rounded-full bg-surface-sunken"
-                    >
-                      <span
-                        className="block h-full rounded-full bg-accent"
-                        style={{ width: `${pct}%` }}
-                      />
-                    </span>
-                    <span className="flex-none font-mono text-10 text-fg-tertiary">
-                      {done}/{total}
-                    </span>
-                  </Link>
-                );
-              })}
-            </div>
-          </nav>
-        </NavigatorPortal>
-      )}
-      {!native && <TopBar
-        crumbs={crumbs}
-        actions={e && (
-          <>
-            <ButtonLink variant="outline" icon="board" href={boardHref(e)}>View on board</ButtonLink>
-          </>
-        )}
-      />}
+      <NavigatorPortal
+        native={{
+          model: buildEpicDetailNavModel({
+            project: e?.project.key,
+            projectName: e?.project.name,
+            epics: siblingEpics.map((x) => ({ id: x.epic.id, name: x.epic.name, done: x.epic.tickets_total - x.epic.tickets_open, total: x.epic.tickets_total })),
+            epicId,
+          }),
+          onCommand: (cmd) => handleWorkHeaderCommand(cmd, { project: e?.project.key, push: (href) => router.push(href), onProject: () => {}, onAgent: () => {} }),
+        }}
+      />
       <div className="flex min-h-0 flex-1">
       <div className="min-w-0 flex-1">
       <Content>
@@ -279,25 +209,6 @@ function EpicContext({ epic: e }: { epic: EpicOverview }) {
         : undefined,
   });
 
-  const context = (
-    <div className="min-h-0 flex-1 overflow-y-auto">
-      <ContextSection title="Acceptance criteria" aside={`${e.epic.criteria_done}/${e.epic.criteria_total}`}>
-        <Completion projectKey={e.project.key} epicId={e.epic.id} />
-      </ContextSection>
-      <ContextSection title="Specs and details">
-        <Details epic={e} />
-      </ContextSection>
-      <ContextSection title="Points burn-up">
-        {tickets.isError ? (
-          <p role="alert" className="text-12 text-pill-blocked-fg">Couldn’t load tickets: {tickets.error.message}</p>
-        ) : tickets.isPending ? (
-          <Skeleton className="h-32" />
-        ) : (
-          <BurnUpChart data={burn!} />
-        )}
-      </ContextSection>
-    </div>
-  );
   return (
     <CompanionDock
       app="epic"
@@ -321,9 +232,8 @@ function EpicContext({ epic: e }: { epic: EpicOverview }) {
               else if (actionId === "reopen_epic") updateEpic.mutate({ status: "open" });
             },
           },
-          content: context,
         },
-        { id: "chat", label: "Chat", icon: "msg", native: { kind: "companion" }, content: <WorkChat /> },
+        { id: "chat", label: "Chat", icon: "msg", native: { kind: "companion" } },
       ]}
     />
   );
@@ -430,95 +340,6 @@ function TicketChecklist({ tickets, needs }: { tickets: TicketSummary[]; needs: 
         );
       })}
     </ul>
-  );
-}
-
-/** Criteria editor and done gate, from the board's epic summary (structured done_blockers). */
-function Completion({ projectKey, epicId }: { projectKey: string; epicId: string }) {
-  const board = useBoard(projectKey, { epic: epicId, include_canceled: false });
-  return (
-    <section aria-label="Epic completion">
-      {board.data?.epic ? <EpicCompletion summary={board.data.epic} stacked />
-        : board.isError ? <p role="alert" className="text-12">Couldn&apos;t load acceptance criteria: {board.error.message} <button type="button" className="underline" onClick={() => void board.refetch()}>Retry</button></p>
-        : <p role="status" className="text-12 text-fg-tertiary">Loading acceptance criteria…</p>}
-    </section>
-  );
-}
-
-const W = 720, H = 180, PAD = { l: 36, r: 12, t: 12, b: 26 };
-
-export function BurnUpChart({ data }: { data: BurnUp }) {
-  const { scope, done, points } = data;
-  if (!scope) {
-    return <p className="text-14 text-fg-tertiary">No estimates yet. Estimate the epic’s tickets to see a burn-up.</p>;
-  }
-  const day = (d: string) => new Date(`${d}T00:00:00`).getTime();
-  const t0 = day(points[0].date), t1 = day(points.at(-1)!.date);
-  const x = (d: string) => PAD.l + (t1 > t0 ? (day(d) - t0) / (t1 - t0) : 0) * (W - PAD.l - PAD.r);
-  const y = (v: number) => PAD.t + (1 - v / scope) * (H - PAD.t - PAD.b);
-  // A step line: completions land on their day.
-  const path = points.map((p, i) => `${i ? `H${x(p.date).toFixed(1)}V` : `M${x(p.date).toFixed(1)},`}${y(p.done).toFixed(1)}`).join(" ");
-  const pct = Math.round((done / scope) * 100);
-  return (
-    <figure className="space-y-2">
-      <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-label={`Points burn-up: ${done} of ${scope} points done (${pct}%)`}>
-        <line x1={PAD.l} x2={W - PAD.r} y1={y(0)} y2={y(0)} stroke="var(--border-subtle)" />
-        <line x1={PAD.l} x2={W - PAD.r} y1={y(scope)} y2={y(scope)} stroke="var(--text-tertiary)" strokeDasharray="4 3" />
-        <text x={PAD.l - 6} y={y(scope) + 4} textAnchor="end" fontSize="11" fill="var(--text-tertiary)">{scope}</text>
-        <text x={PAD.l - 6} y={y(0) + 4} textAnchor="end" fontSize="11" fill="var(--text-tertiary)">0</text>
-        <path d={path} fill="none" stroke="var(--accent)" strokeWidth="2" />
-        {points.map((p) => <circle key={p.date} cx={x(p.date)} cy={y(p.done)} r="3" fill="var(--accent)" />)}
-        <text x={PAD.l} y={H - 8} fontSize="11" fill="var(--text-tertiary)">{dueDate(points[0].date)}</text>
-        <text x={W - PAD.r} y={H - 8} textAnchor="end" fontSize="11" fill="var(--text-tertiary)">Today</text>
-      </svg>
-      <figcaption className="flex flex-wrap justify-between gap-2 text-12 text-fg-tertiary">
-        <span><span className="font-mono text-fg">{done} / {scope}</span> pts done · {pct}%</span>
-        <span>Dashed line is today’s scope. Done tickets count on the day they were last updated.</span>
-      </figcaption>
-    </figure>
-  );
-}
-
-function Details({ epic: e }: { epic: EpicOverview }) {
-  const updateEpic = useUpdateEpic(e.epic.id);
-  return (
-    <dl className="grid grid-cols-[80px_minmax(0,1fr)] items-start gap-x-3 gap-y-3 text-12">
-      <dt className="text-fg-tertiary">Owner</dt>
-      <dd>
-        {e.owner ? (
-          <span className="flex items-center gap-2">
-            <HumanAvatar name={e.owner.name} initials={e.owner.initials} color={e.owner.avatar_color} src={e.owner.avatar_url} />
-            {e.owner.name}
-          </span>
-        ) : "Unassigned"}
-      </dd>
-      <dt className="text-fg-tertiary">Schedule</dt>
-      <dd>{e.start_date ? dueDate(e.start_date) : "No start"} → {e.target_date ? dueDate(e.target_date) : "No target"}</dd>
-      <dt className="text-fg-tertiary">Agents</dt>
-      <dd>{e.agents.length ? <AgentStack agents={e.agents} /> : <span className="text-fg-tertiary">None yet</span>}</dd>
-      <dt className="text-fg-tertiary">Source</dt>
-      <dd>
-        {e.source ? (
-          <Link href={e.source.href} className="flex items-start gap-2 hover:text-accent">
-            <DocTypeTag type={e.source.type} />
-            <span>{e.source.title}</span>
-          </Link>
-        ) : <span className="text-fg-tertiary">No linked PRD</span>}
-      </dd>
-      <dt className="text-fg-tertiary">Mockup</dt>
-      <dd className="space-y-1">
-        <Toggle
-          checked={e.epic.requires_mockup}
-          disabled={updateEpic.isPending}
-          onChange={(v) => updateEpic.mutate({ requires_mockup: v })}
-          label="Requires mockup"
-        />
-        <span className="block text-fg-tertiary">Tickets need an approved UI mockup before an agent can finish.</span>
-        {updateEpic.isError && <span role="alert" className="block text-pill-blocked-fg">{updateEpic.error.message}</span>}
-      </dd>
-      <dt className="text-fg-tertiary">Agent hours</dt>
-      <dd className="font-mono">{(e.agent_seconds / 3600).toFixed(1)}h</dd>
-    </dl>
   );
 }
 

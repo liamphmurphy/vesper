@@ -1,14 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { DropdownMenu } from "radix-ui";
 import type { Schemas } from "@/lib/api/client";
-import { usePersonaDock } from "@/lib/api/hooks";
 import { usePersonas } from "@/lib/api/persona-hooks";
 import { cx } from "@/lib/cx";
-import { DOCK_STATE_LABEL, dockEntries, type DockState } from "@/lib/persona-dock";
-import { characterStateForDock, type CharacterState } from "@/lib/persona-character";
+import type { CharacterState } from "@/lib/persona-character";
 import { inChatList } from "@/lib/persona-ui";
 import { PersonaCharacterView } from "@/components/domain/persona-character";
 import { Icon, type IconName } from "@/components/ui/icon";
@@ -268,103 +266,6 @@ const item =
 
 function Check({ on }: { on: boolean }) {
   return <span className="w-4 flex-none text-accent">{on && <Icon name="check" size={14} strokeWidth={1.8} />}</span>;
-}
-
-const ACTIVITY_DOT: Record<DockState, string> = { working: "bg-state-done", replied: "bg-accent", needs_you: "bg-state-human" };
-
-/** Each persona's dock state, for the dots on its avatar in the menu. */
-export function usePersonaActivity(viewed: string | null): Map<string, DockState> {
-  const dock = usePersonaDock();
-  const entries = dockEntries<Schemas["PersonaDockChat"], Schemas["PersonaDockEntry"]>(dock.data?.personas ?? [], viewed);
-  return new Map(entries.map((e) => [e.persona.id ?? "", e.state]));
-}
-
-/**
- * The Chats list's one persona filter (persona mockup, frame B): a chip naming who the list shows,
- * opening a menu of every persona with its chat count and what it's doing (working, replied, needs
- * you). With a persona picked, the chip names it and ✕ goes back to every persona. Personas are who a
- * chat is with, so this is the only place outside a conversation that lists them.
- */
-export function PersonaFilter({ filter, activity, trailing }: { filter: PersonaFilterState; activity: Map<string, DockState>; trailing?: ReactNode }) {
-  const manage = useOpenPersonaManager();
-  const { personas, defaultLook, defaultId, value } = filter;
-  const others = [...personas.filter((p) => p.id !== defaultId)].sort((a, b) => (b.chat_count ?? 0) - (a.chat_count ?? 0));
-  const defaultPersona = personas.find((p) => p.id === defaultId);
-  const picked = value === "default" ? defaultLook : value === "all" ? undefined : personaLook(personas.find((p) => p.id === value));
-  const label = picked ? picked.name : "All personas";
-  const pickedState = value === "default" ? (defaultId ? activity.get(defaultId) : undefined) : value !== "all" ? activity.get(value) : undefined;
-  // News from any persona shows on the chip while the menu is closed, as the strip's dots did.
-  const news = [...activity.values()].find((st) => st === "needs_you") ?? [...activity.values()].find((st) => st === "working");
-  const row = (key: string, look: PersonaLook, count: number | undefined, state: DockState | undefined, tag?: string) => (
-    <DropdownMenu.RadioItem key={key} value={key} className={item}>
-      <span className="relative flex-none">
-        <PersonaAvatar persona={look} state={characterStateForDock(state)} />
-        {state && <span aria-hidden className={cx("absolute -right-0.5 -top-0.5 size-2 rounded-full ring-2 ring-surface-raised", ACTIVITY_DOT[state])} />}
-      </span>
-      <span className="min-w-0 flex-1 truncate">{look.name}{tag && <span className="ml-1.5 text-12 text-fg-tertiary">{tag}</span>}</span>
-      {state && <span className="flex-none text-11 text-fg-tertiary">{DOCK_STATE_LABEL[state]}</span>}
-      {count !== undefined && <span className="w-6 flex-none text-right font-mono text-12 text-fg-tertiary">{count}</span>}
-      <DropdownMenu.ItemIndicator className="flex-none"><Icon name="check" size={14} className="text-accent" /></DropdownMenu.ItemIndicator>
-    </DropdownMenu.RadioItem>
-  );
-  // With no personas of your own there is no one to filter by (the built-in Assistant has every chat).
-  if (!personas.length && !filter.error && !trailing) return null;
-  return (
-    <div className="flex flex-col gap-1">
-      {(personas.length > 0 || trailing) && <div className="flex items-center gap-1">
-        {personas.length > 0 && <>
-          <DropdownMenu.Root>
-            <DropdownMenu.Trigger asChild>
-              <button type="button" aria-label={`Show conversations for: ${label}${pickedState ? `, ${DOCK_STATE_LABEL[pickedState]}` : ""}`} disabled={filter.loading}
-                className={cx(
-                  "flex h-[26px] min-w-0 max-w-full items-center gap-1.5 rounded-full border text-12 font-medium disabled:opacity-60 data-[state=open]:border-accent",
-                  picked ? "border-accent bg-selected pl-1 pr-2.5 text-accent" : "border-border bg-surface px-2.5 text-fg-secondary hover:text-fg",
-                )}>
-                {picked && <PersonaAvatar persona={picked} size={18} />}
-                <span className="truncate">{label}</span>
-                {!picked && news && <span aria-hidden className={cx("size-1.5 flex-none rounded-full", ACTIVITY_DOT[news])} />}
-                <Icon name="chev" size={12} className="flex-none opacity-70" />
-              </button>
-            </DropdownMenu.Trigger>
-            <DropdownMenu.Portal>
-              <DropdownMenu.Content align="start" sideOffset={4} className={cx(floatPanel, "w-[272px]")}>
-                <DropdownMenu.RadioGroup value={value} onValueChange={(v) => filter.set(v)}>
-                  <DropdownMenu.RadioItem value="all" className={item}>
-                    <span className="grid size-5 flex-none place-items-center text-fg-tertiary"><Icon name="msg" size={14} /></span>
-                    <span className="flex-1">All personas</span>
-                    <DropdownMenu.ItemIndicator className="flex-none"><Icon name="check" size={14} className="text-accent" /></DropdownMenu.ItemIndicator>
-                  </DropdownMenu.RadioItem>
-                  {row("default", defaultLook, defaultPersona?.chat_count, defaultId ? activity.get(defaultId) : undefined, "default")}
-                  {others.map((p) => row(p.id, personaLook(p), p.chat_count, activity.get(p.id)))}
-                </DropdownMenu.RadioGroup>
-                <DropdownMenu.Separator className="my-1 h-px bg-border-subtle" />
-                <DropdownMenu.Item className={item} onSelect={manage}>
-                  <Icon name="gear" size={14} strokeWidth={1.6} className="text-fg-tertiary" />
-                  <span className="text-fg-secondary">Manage personas…</span>
-                </DropdownMenu.Item>
-              </DropdownMenu.Content>
-            </DropdownMenu.Portal>
-          </DropdownMenu.Root>
-          {picked && (
-            <button type="button" aria-label="Show all personas" title="Show all personas" onClick={() => filter.set("all")}
-              className="grid size-6 flex-none place-items-center rounded-full text-fg-tertiary hover:bg-hover hover:text-fg">
-              <Icon name="x" size={12} />
-            </button>
-          )}
-        </>}
-        {trailing && <div className="ml-auto flex-none">{trailing}</div>}
-      </div>}
-      {!!filter.error && (
-        <p role="alert" className="flex flex-wrap items-center gap-x-2 px-1 text-12">
-          <span className="text-pill-blocked-fg">Couldn’t load personas.</span>
-          <button type="button" className="text-accent hover:underline" onClick={filter.retry}>
-            Retry
-          </button>
-          <span className="basis-full text-fg-tertiary">Showing all conversations.</span>
-        </p>
-      )}
-    </div>
-  );
 }
 
 /**

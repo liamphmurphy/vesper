@@ -42,19 +42,12 @@ import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { rememberProject, ProjectScopeState, projectCrumbs, useProjectScope } from "@/components/shell/project-scope";
 import { ticketsHref } from "@/lib/tickets-layout";
 import type { NativeCommand } from "@/lib/native-shell/protocol";
-import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { buildTicketsNavModel, parseTicketsRow, type TicketQueue } from "@/lib/native-shell/models/tickets";
 import { buildTicketsListExtras, parseTicketsListAction } from "@/lib/native-shell/models/tickets-toolbar";
 import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
-import {
-  WorkNavHeader,
-  WorkSectionLabel,
-  WorkSidebarFilterRow,
-  WorkSpacePersonaFilters,
-} from "../../work/work-nav-header";
 import { BulkBar, BulkResultPanel } from "./bulk-bar";
 import { CompactTicketRow, TicketRow, type Density } from "./ticket-row";
-import { ChipScroller, TicketsLayoutBar, TicketsTopBar } from "./layout-bar";
+import { ChipScroller, TicketsTopBar } from "./layout-bar";
 
 const VIEWS: Array<{ key: TicketView; label: string }> = [
   { key: "all", label: "All tickets" },
@@ -212,8 +205,6 @@ export function TicketsScreen() {
   const savedViews = useSavedViews();
   const [dispatchKeys, setDispatchKeys] = useState<string[] | null>(null);
   const savedView = svId ? savedViews.data?.find((v) => v.id === svId) : undefined;
-  // In the Mac app the header, filters and saved views are the toolbar and the sidebar (below).
-  const native = useIsNativeShell();
   const svUi = useSavedViewsUi();
 
   // Debounced box → URL, so views are shareable. Tokens that match nothing aren't applied.
@@ -482,26 +473,6 @@ export function TicketsScreen() {
       </DropdownMenu.Root>
     </>
   );
-  const densitySwitch = (
-    <div role="radiogroup" aria-label="Density" className="inline-flex h-[26px] overflow-hidden rounded-sm border border-border-strong">
-      {(["comfortable", "compact"] as const).map((d) => (
-        <button
-          key={d}
-          type="button"
-          role="radio"
-          aria-checked={density === d}
-          aria-label={d === "comfortable" ? "Comfortable rows" : "Compact rows"}
-          title={d === "comfortable" ? "Comfortable rows" : "Compact rows"}
-          onClick={() => setDensity(d)}
-          className={cx("grid w-[27px] place-items-center", d === "compact" && "border-l border-border-strong", density === d ? "bg-selected text-fg" : "text-fg-tertiary hover:bg-hover")}
-        >
-          <svg aria-hidden width="12" height="12" viewBox="0 0 12 12" stroke="currentColor" strokeWidth="1.3">
-            {d === "comfortable" ? <path d="M0 2h12M0 6h12M0 10h12" /> : <path d="M0 1.5h12M0 4.5h12M0 7.5h12M0 10.5h12" />}
-          </svg>
-        </button>
-      ))}
-    </div>
-  );
 
   // The native sidebar's version of the column below: the same state and handlers, driven by the shell's commands.
   const savedNav = useSavedViewsNav({ ui: svUi, current: viewQuery(new URLSearchParams(params.toString())), project });
@@ -547,119 +518,9 @@ export function TicketsScreen() {
 
   return (
     <>
-      {native && <SavedViewNativeDialogs ui={svUi} />}
-      {!compact && (
-        <NavigatorPortal native={{ model: nativeModel, onCommand: nativeCommand }}>
-          <nav aria-label="Work" className="work-nav">
-            <WorkNavHeader
-              active="tickets"
-              project={project}
-              search={search}
-              onSearchChange={setSearch}
-              searchPlaceholder="Filter tasks… epic: agent:"
-              counts={{
-                tickets: queueCounts.all || undefined,
-                epics: sidebarEpics.length || undefined,
-              }}
-            />
-            <WorkSpacePersonaFilters
-              projects={boot.data?.projects}
-              agents={boot.data?.agents}
-              project={project ?? ""}
-              onProjectChange={pickProject}
-              agent={assignee ?? ""}
-              onAgentChange={(v) => setParam("assignee", v || null)}
-            />
-            <div className="work-nav-list">
-              <div role="group" aria-label="Ticket views" className="flex flex-col gap-0.5">
-                <WorkSectionLabel>Queues</WorkSectionLabel>
-                <WorkSidebarFilterRow
-                  label="Needs you"
-                  count={queueCounts.needs_you}
-                  active={!svId && view === "needs_human"}
-                  dotClass="bg-state-human"
-                  countTone="human"
-                  onClick={() => selectQueue("needs_you")}
-                />
-                <WorkSidebarFilterRow
-                  label="In progress"
-                  count={queueCounts.in_progress}
-                  active={!svId && view === "active"}
-                  dotClass="bg-state-done"
-                  onClick={() => selectQueue("in_progress")}
-                />
-                <WorkSidebarFilterRow
-                  label="Ready to dispatch"
-                  count={queueCounts.ready}
-                  active={!svId && ready}
-                  dotClass="bg-accent"
-                  onClick={() => selectQueue("ready")}
-                />
-                <WorkSidebarFilterRow
-                  label="Blocked"
-                  count={queueCounts.blocked}
-                  active={!svId && blockedOnly}
-                  dotClass="bg-state-blocked"
-                  countTone="blocked"
-                  onClick={() => selectQueue("blocked")}
-                />
-                <WorkSidebarFilterRow
-                  label="All tasks"
-                  count={queueCounts.all}
-                  active={!svId && view === "all" && !ready && !blockedOnly && !epic}
-                  dotClass="bg-fg-tertiary/60"
-                  onClick={() => selectQueue("all")}
-                />
-              </div>
-
-              {sidebarEpics.length > 0 && (
-                <div role="group" aria-label="By epic" className="mt-1 flex flex-col gap-0.5">
-                  <WorkSectionLabel count={sidebarEpics.length}>By epic</WorkSectionLabel>
-                  {sidebarEpics.map((e) => {
-                    const active = epic === e.id;
-                    return (
-                      <button
-                        key={e.id}
-                        type="button"
-                        aria-current={active ? "true" : undefined}
-                        onClick={() => toggleEpic(e.id)}
-                        className={cx(
-                          "flex h-[26px] w-full items-center gap-2 rounded-md px-2 text-left text-12 transition-colors",
-                          active
-                            ? "bg-selected font-medium text-fg"
-                            : "text-fg-secondary hover:bg-hover hover:text-fg",
-                        )}
-                      >
-                        <Icon
-                          name={active ? "chev" : "chevr"}
-                          size={11}
-                          className="flex-none text-fg-tertiary"
-                        />
-                        <span className="min-w-0 flex-1 truncate">{e.name}</span>
-                        <span
-                          aria-hidden
-                          className="h-1 w-7 flex-none overflow-hidden rounded-full bg-surface-sunken"
-                        >
-                          <span
-                            className="block h-full rounded-full bg-accent"
-                            style={{ width: `${e.pct}%` }}
-                          />
-                        </span>
-                        <span className="flex-none font-mono text-10 text-fg-tertiary">
-                          {e.done}/{e.total}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-
-              <SavedViewTabs project={project} vertical ui={svUi} />
-            </div>
-          </nav>
-        </NavigatorPortal>
-      )}
-      {!compact && <TicketsTopBar
+      <SavedViewNativeDialogs ui={svUi} />
+      <NavigatorPortal native={{ model: nativeModel, onCommand: nativeCommand }} />
+      <TicketsTopBar
         layout="list"
         // The project crumb is the bar's project pill.
         crumbs={proj ? crumbs.slice(1) : crumbs}
@@ -681,8 +542,7 @@ export function TicketsScreen() {
           else if (a?.type === "group") setParam("group", a.value === "status" ? null : a.value);
           else if (a?.type === "density") setDensity(a.value);
         }}
-      />}
-      <TicketsLayoutBar layout="list" />
+      />
       {proj?.archived && <div className="px-6 py-3 max-md:px-4"><Banner tone="human" title="Archived work">Tickets and history remain available. Restore the work on the space’s page to start new work.</Banner></div>}
       {compact ? (
         <ChipScroller label="Filters">
@@ -691,7 +551,7 @@ export function TicketsScreen() {
           <SavedViewTabs project={project} />
           {filterControls}
         </ChipScroller>
-      ) : native ? (
+      ) : (
         // The filter box is the sidebar's search, group and density are toolbar items; what's left is what can't be one.
         (blockedOnly || unestimated || resolved.unknown.length > 0) && (
           <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle px-6 py-2">
@@ -699,12 +559,6 @@ export function TicketsScreen() {
             {resolved.unknown.length > 0 && <span role="status" className="text-12 text-pill-blocked-fg">No match for {resolved.unknown.join(", ")}</span>}
           </div>
         )
-      ) : (
-        <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle px-6 py-2">
-          {filterBox}
-          {filterControls}
-          <div className="ml-auto flex items-center">{densitySwitch}</div>
-        </div>
       )}
 
       {savedView && <SavedViewHeader view={savedView} />}

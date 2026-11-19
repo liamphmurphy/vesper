@@ -1,33 +1,19 @@
 /**
- * The shell's left column (the one-column workbench): a fixed top and foot that never change, and
- * in between the current area's own list. Pure so the rules are unit-tested; the column is
- * components/shell/sidebar.tsx and the lists come from the areas (navigator-slot.tsx).
+ * The navigation areas and active-screen navigator slot. Pure so the rules are unit-tested;
+ * the screens publish NavModels through components/shell/navigator-slot.tsx.
  */
-import { inAppsMenu, isActive } from "./project-scope.ts";
+import type { IconName } from "@/components/ui/icon";
+import { inAppsMenu, isActive, type NavBadge } from "./project-scope.ts";
 
-/**
- * Every list in the column has the same width, whoever draws it: Chats, the Runs list, the
- * Knowledge explorer, an editor's pages and layers. A literal class so Tailwind finds it.
- */
-export const NAVIGATOR_WIDTH = "w-[248px]";
-
-export const SIDEBAR_TOGGLE_HINT = "⌘⇧\\";
-
-/** ⌘⇧\ (or Ctrl+Shift+\) toggles the left navigation column's collapsed state. */
-export function isSidebarToggleShortcut(e: {
-  key: string;
-  code?: string;
-  metaKey: boolean;
-  ctrlKey: boolean;
-  altKey: boolean;
-  shiftKey: boolean;
-}): boolean {
-  if (!(e.metaKey || e.ctrlKey) || !e.shiftKey || e.altKey) return false;
-  return e.code === "Backslash" || e.key === "|" || e.key === "\\";
-}
-
-/** The areas on the column's icon row, in order. Apps is the flyout of Custom Apps and tools. */
+/** The areas on the icon row, in order. Apps is the flyout of Custom Apps and tools. */
 export type Area = "chat" | "work" | "runs" | "tickets" | "knowledge" | "library" | "apps";
+
+export const AREAS: { area: Exclude<Area, "apps" | "runs" | "tickets">; href: string; label: string; icon: IconName; badge?: NavBadge }[] = [
+  { area: "chat", href: "/chat", label: "Chat", icon: "msg" },
+  { area: "work", href: "/work", label: "Work", icon: "tickets", badge: "runs" },
+  { area: "knowledge", href: "/knowledge", label: "Knowledge", icon: "wiki", badge: "wiki" },
+  { area: "library", href: "/library", label: "Library", icon: "library" },
+];
 
 /** The area a path belongs to, for the icon row's current mark; null on screens of no area (Settings, Customization). */
 export function currentArea(pathname: string): Area | null {
@@ -41,15 +27,14 @@ export function currentArea(pathname: string): Area | null {
   return null;
 }
 
-// The column's middle: a screen that has a list of its own (Runs, the Knowledge explorer, an
-// editor's structure) claims it and renders into its element; otherwise the column shows Chats.
+// A screen that has a list of its own (Runs, the Knowledge explorer, an editor's structure)
+// claims the navigator while mounted so the default Chats list stands down.
 // Claims are a count, not a flag, so a screen replacing another during navigation never drops it.
 let claims = 0;
-let slot: HTMLElement | null = null;
 const listeners = new Set<() => void>();
 const notify = () => listeners.forEach((l) => l());
 
-/** Mark the column's middle as this screen's; call the returned function on unmount. */
+/** Mark the navigator as this screen's; call the returned function on unmount. */
 export function claimNavigator(): () => void {
   claims++;
   notify();
@@ -64,31 +49,9 @@ export function claimNavigator(): () => void {
 
 export const navigatorClaimed = () => claims > 0;
 
-/** The element the column's middle renders into, set by the column while it is expanded. */
-export function setNavigatorSlot(el: HTMLElement | null): void {
-  if (el === slot) return;
-  slot = el;
-  notify();
-}
-
-export const navigatorSlot = () => slot;
-
 export function subscribeNavigator(l: () => void): () => void {
   listeners.add(l);
   return () => {
     listeners.delete(l);
   };
 }
-
-// In the native shell the left column is drawn by the shell, so a screen that hasn't described its
-// list as a NavModel draws it in a fallback column inside the content area instead.
-let fallbackSlotEl: HTMLElement | null = null;
-
-/** The element the fallback column's content renders into, set by the app shell in native mode. */
-export function setFallbackSlot(el: HTMLElement | null): void {
-  if (el === fallbackSlotEl) return;
-  fallbackSlotEl = el;
-  notify();
-}
-
-export const fallbackSlot = () => fallbackSlotEl;

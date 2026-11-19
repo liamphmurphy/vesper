@@ -987,11 +987,6 @@ export function PlansScreen() {
           "Plans",
         )}
         nativeActions={[{ id: "plans.new", label: "New plan", kind: "button", icon: "plus", showsLabel: true, run: () => router.push("/plans") }]}
-        actions={
-          <ButtonLink href="/plans" variant="outline">
-            New plan
-          </ButtonLink>
-        }
       />
       <Content>
         <div className="grid min-w-0 gap-6 lg:grid-cols-[240px_minmax(0,1fr)]">
