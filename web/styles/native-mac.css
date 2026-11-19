@@ -199,3 +199,10 @@ html.native-mac [data-chat-dock] {
 html.native-mac [data-chat-dock] > * {
   pointer-events: auto;
 }
+
+/* Window-level companion WKWebView (/companion) fills its inspector host without outer scrolling. */
+html.native-companion,
+html.native-companion body {
+  height: 100%;
+  overflow: hidden;
+}

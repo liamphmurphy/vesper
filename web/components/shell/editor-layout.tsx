@@ -23,10 +23,29 @@ import { HistoryNav } from "./history-nav";
 import { NavigatorPortal, type NativeNavigator } from "./navigator-slot";
 import { splitActions, type NativeAction, type NativeMenuEntry } from "@/lib/native-shell/actions";
 import { useIsNativeShell } from "@/lib/native-shell/hooks";
+import { inspectorPublisher, toCompanionSubject } from "@/lib/native-shell/inspector-publisher";
+import type { InspectorAction, InspectorModel, InspectorSection, InspectorTab } from "@/lib/native-shell/protocol";
 import { setTopBarTitle } from "@/lib/native-shell/title";
 import { useNativeToolbar } from "@/lib/native-shell/use-native-toolbar";
-import { useRouter } from "next/navigation";
+import type { WorkSubject } from "@/lib/work-context";
+import { usePathname, useRouter } from "next/navigation";
 import { CompanionPortal, RightRailPortal } from "./companion";
+
+/** Native macOS inspector representation for a dock tab (`native` SwiftUI or `companion` `/companion` WebView; omit for `web`). */
+export type NativeDockTab =
+  | {
+      kind: "native";
+      sections: InspectorSection[];
+      headerActions?: InspectorAction[];
+      emptyText?: string;
+      onAction?: (actionId: string, itemId?: string, menuItemId?: string) => void;
+      onChange?: (fieldId: string, value: string) => void;
+      onToggle?: (fieldId: string, checked: boolean) => void;
+    }
+  | {
+      kind: "companion";
+      subject?: WorkSubject;
+    };
 
 /** A tab in the right dock. `busy` pulses its ring, `unread` adds a dot (Chat uses both for the persona). */
 export type DockTab = {
@@ -40,6 +59,8 @@ export type DockTab = {
   unread?: boolean;
   /** Needs the room of a document or a running app rather than a side conversation: the dock widens while it shows. "max" leaves the content beside it only 400px (a design under review). */
   wide?: boolean | "max";
+  /** Native macOS inspector description (`native` SwiftUI or `companion` `/companion` WebView). */
+  native?: NativeDockTab;
   content: ReactNode;
   /**
    * A rail button that does this instead of showing a panel (the Mac app's Start playground). It has no
@@ -357,6 +378,9 @@ export function Dock({
   /** Phones: only the rail, whose icons open the owner's sheet. */
   railOnly?: boolean;
 }) {
+  const isNative = useIsNativeShell();
+  const pathname = usePathname();
+  const [inspectorToken] = useState(() => Symbol("inspector"));
   const panelTabs = tabs.filter((t) => !t.run);
   const active = panelTabs.find((t) => t.id === state.tab) ?? panelTabs[0];
   const [slots, setSlots] = useState<Record<string, HTMLElement | null>>({});
@@ -373,21 +397,122 @@ export function Dock({
   };
   // ⌘. hides the dock but keeps its panels mounted (the owner passes null panels or unmountWhenClosed to unmount them).
   const shown = state.open && !state.hidden;
+  const nativeHosted = isNative && !railOnly && !!active?.native;
+  const webShown = shown && !nativeHosted;
   const expanded = !railOnly && shown;
-  const [phase, setPhase] = useState<"idle" | "opening" | "closing">("idle");
-  const [wasShown, setWasShown] = useState(shown);
-  if (shown !== wasShown) {
-    setWasShown(shown);
-    setPhase(shown ? "opening" : "closing");
+  const [phase, setPhase] = useState<"idle" | "preparing" | "opening" | "closing">("idle");
+  const [wasWebShown, setWasWebShown] = useState(webShown);
+  if (webShown !== wasWebShown) {
+    setWasWebShown(webShown);
+    if (nativeHosted) {
+      setPhase("idle");
+    } else {
+      setPhase(webShown ? "preparing" : "closing");
+    }
   }
+  useEffect(() => {
+    if (phase !== "preparing") return;
+    let outer = 0;
+    let inner = 0;
+    outer = window.requestAnimationFrame(() => {
+      inner = window.requestAnimationFrame(() => setPhase("opening"));
+    });
+    return () => {
+      window.cancelAnimationFrame(outer);
+      window.cancelAnimationFrame(inner);
+    };
+  }, [phase]);
   useEffect(() => {
     if (phase === "idle") return;
     // Settle even when transitionend doesn't fire (hidden ancestor, zero-width viewport, JSDOM).
-    const id = window.setTimeout(() => setPhase("idle"), 300);
+    const id = window.setTimeout(() => setPhase("idle"), 350);
     return () => window.clearTimeout(id);
   }, [phase]);
+
+  const companionTab = panelTabs.find((t) => t.native?.kind === "companion");
+  const companionNative = companionTab?.native?.kind === "companion" ? companionTab.native : undefined;
+  const inspectorModel: InspectorModel | null =
+    isNative && !railOnly && panelTabs.length > 0
+      ? {
+          id: uid,
+          open: shown,
+          activeTabId: active?.id ?? "",
+          tabs: panelTabs.map((t): InspectorTab => ({
+            id: t.id,
+            label: t.label,
+            icon: t.icon,
+            kind: t.native?.kind ?? "web",
+            ...(t.busy ? { busy: true } : {}),
+            ...(t.unread ? { unread: true } : {}),
+            ...(t.native?.kind === "native"
+              ? {
+                  sections: t.native.sections,
+                  ...(t.native.headerActions?.length ? { headerActions: t.native.headerActions } : {}),
+                  ...(t.native.emptyText ? { emptyText: t.native.emptyText } : {}),
+                }
+              : {}),
+          })),
+          ...(companionNative
+            ? {
+                companion: {
+                  ...(companionNative.subject ? { subject: toCompanionSubject(companionNative.subject) } : {}),
+                  path: pathname,
+                },
+              }
+            : {}),
+        }
+      : null;
+  const inspectorJson = inspectorModel ? JSON.stringify(inspectorModel) : null;
+  const inspectorLatest = useRef({ tabs: panelTabs, activeId: active?.id ?? "", dispatch });
+  useEffect(() => {
+    inspectorLatest.current = { tabs: panelTabs, activeId: active?.id ?? "", dispatch };
+  });
+  useEffect(() => {
+    if (!inspectorJson) {
+      inspectorPublisher.clear(inspectorToken);
+      return;
+    }
+    const model = JSON.parse(inspectorJson) as InspectorModel;
+    inspectorPublisher.set(inspectorToken, {
+      model,
+      onCommand: (cmd) => {
+        const cur = inspectorLatest.current;
+        switch (cmd.type) {
+          case "inspector.visibility":
+            cur.dispatch(cmd.open ? { type: "open", tab: cur.activeId } : { type: "collapse" });
+            break;
+          case "inspector.selectTab":
+            cur.dispatch({ type: "open", tab: cmd.tabId });
+            break;
+          case "inspector.action": {
+            const tab = cur.tabs.find((t) => t.id === cmd.tabId);
+            if (tab?.native?.kind === "native") {
+              tab.native.onAction?.(cmd.actionId, cmd.itemId, cmd.menuItemId);
+            }
+            break;
+          }
+          case "inspector.change": {
+            const tab = cur.tabs.find((t) => t.id === cmd.tabId);
+            if (tab?.native?.kind === "native") {
+              tab.native.onChange?.(cmd.fieldId, cmd.value);
+            }
+            break;
+          }
+          case "inspector.toggle": {
+            const tab = cur.tabs.find((t) => t.id === cmd.tabId);
+            if (tab?.native?.kind === "native") {
+              tab.native.onToggle?.(cmd.fieldId, cmd.checked);
+            }
+            break;
+          }
+        }
+      },
+    });
+  }, [inspectorToken, inspectorJson]);
+  useEffect(() => () => inspectorPublisher.clear(inspectorToken), [inspectorToken]);
+
   if (!tabs.length) return null;
-  const visible = shown || phase === "closing";
+  const visible = webShown || phase === "closing";
   const animating = phase !== "idle";
   const widthClass =
     active?.wide === "max"
@@ -456,12 +581,13 @@ export function Dock({
   );
   return (
     <>
-      {!railOnly && <aside
+      {!railOnly && !nativeHosted && <aside
         aria-label="Panel"
         hidden={!visible}
-        data-open={shown}
+        data-open={webShown}
+        data-preparing={phase === "preparing" ? "true" : undefined}
         onTransitionEnd={(e) => {
-          if (e.target === e.currentTarget && e.propertyName === "width") setPhase("idle");
+          if (e.target === e.currentTarget && e.propertyName === "transform") setPhase("idle");
         }}
         className={cx(
           "flex min-w-0 flex-none flex-col border-l border-border-subtle bg-surface w-(--dock-w)",

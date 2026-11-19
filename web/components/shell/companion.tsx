@@ -106,7 +106,7 @@ export function CompanionDock({
 /** The work chat, as the companion on every page with no panel of its own. Starts folded to its rail. */
 function DefaultCompanion() {
   const uid = useId();
-  const tabs: DockTab[] = [{ id: "chat", label: "Chat", icon: "msg", content: <WorkChat /> }];
+  const tabs: DockTab[] = [{ id: "chat", label: "Chat", icon: "msg", native: { kind: "companion" }, content: <WorkChat /> }];
   const [state, dispatch] = useDockState("companion", ["chat"], false);
   useEffect(() => {
     const onOpen = () => dispatch({ type: "open", tab: "chat" });
@@ -282,7 +282,7 @@ function WebRail() {
     <aside
       aria-label="Right rail"
       data-right-rail
-      className="flex w-[44px] flex-none flex-col items-center border-l border-border-subtle bg-sidebar py-2.5"
+      className="relative z-30 flex w-[44px] flex-none flex-col items-center border-l border-border-subtle bg-sidebar py-2.5"
     >
       <div ref={setRightRailSlot} data-right-rail-top className="flex w-full flex-col items-center gap-2 empty:hidden" />
       <div className="mt-auto flex w-full flex-col items-center gap-2 pt-2">
