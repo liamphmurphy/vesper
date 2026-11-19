@@ -1,13 +1,10 @@
-import { Content, TopBar } from "@/components/shell/topbar";
+import { Suspense } from "react";
 import { SettingsScreen } from "./settings-screen";
 
 export default function Settings() {
   return (
-    <>
-      <TopBar crumbs={[{ label: "Settings" }]} />
-      <Content>
-        <SettingsScreen />
-      </Content>
-    </>
+    <Suspense>
+      <SettingsScreen />
+    </Suspense>
   );
 }

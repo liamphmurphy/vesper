@@ -62,7 +62,7 @@ export function ConnectorsSection({ personas }: { personas: Persona[] }) {
       <header className="flex items-center gap-4">
         <span className="grid size-[72px] flex-none place-items-center rounded-full bg-selected text-fg-secondary"><Icon name="plug" size={28} /></span>
         <div className="min-w-0 flex-1">
-          <h2 className="type-heading">Connectors</h2>
+          <h1 className="type-display text-fg">Connectors</h1>
           <p className="text-13 text-fg-secondary">MCP servers your personas can use.</p>
         </div>
         <Button variant="primary" icon="plus" onClick={() => setAdding(true)}>Add connector</Button>
@@ -375,7 +375,7 @@ export function PersonaConnectors({ personaId }: { personaId: string }) {
     <section aria-label="Persona connectors" className="flex flex-col gap-3 rounded-xl border border-border bg-surface px-[18px] py-3.5">
       <div className="flex items-center justify-between">
         <h3 className="type-heading text-fg">Connectors</h3>
-        <Link href="/customization?who=connectors" className="text-13 text-accent hover:underline">Manage connectors</Link>
+        <Link href="/settings?section=connectors" className="text-13 text-accent hover:underline">Manage connectors</Link>
       </div>
       <div className="flex flex-wrap gap-2">
         {rows.map((c) => {

@@ -57,7 +57,7 @@ export function PersonasList({ personas, filter: initial = "all", onOpen, onNew,
     <section aria-label="Personas" className="flex flex-col gap-4">
       <header className="flex items-center gap-4">
         <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <h2 className="truncate type-display text-fg">Personas</h2>
+          <h1 className="truncate type-display text-fg">Personas</h1>
           <p className="text-14 text-fg-secondary">Who you talk with and who does the work</p>
         </div>
         {canAdd && (
@@ -72,7 +72,11 @@ export function PersonasList({ personas, filter: initial = "all", onOpen, onNew,
         onChange={setFilter}
         options={FILTERS.map((f) => ({ value: f.value, label: `${f.label} ${count(f.value)}` }))}
       />
-      {rows.length === 0 ? (
+      {personas.length === 0 ? (
+        <EmptyState icon="agents" title="No personas yet">
+          The built-in Assistant is your default.
+        </EmptyState>
+      ) : rows.length === 0 ? (
         <EmptyState icon="agents" title="No personas here" />
       ) : (
         <table className="w-full table-fixed border-collapse text-13">

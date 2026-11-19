@@ -40,24 +40,42 @@ function KeyTile({ muted }: { muted?: boolean }) {
 }
 
 /** Secrets the person's personas may use in API calls: the list, and the selected one's hosts, access, permissions and activity. */
-export function ApiSecretsSection({ personas, initialId }: { personas: Persona[]; initialId?: string }) {
+export function ApiSecretsSection({
+  personas,
+  initialId,
+  hideKeyBanner = false,
+  embedded = false,
+}: {
+  personas: Persona[];
+  initialId?: string;
+  hideKeyBanner?: boolean;
+  embedded?: boolean;
+}) {
   const list = useApiSecrets();
   const [adding, setAdding] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | undefined>(initialId);
+  const [picked, setPicked] = useState<{ base?: string; id?: string }>({ base: initialId, id: initialId });
+  const selectedId = picked.base === initialId ? picked.id : initialId;
   const rows = list.data?.secrets ?? [];
   const selected = rows.find((s) => s.id === selectedId) ?? rows[0];
   const readOnly = list.data ? !list.data.key_configured : false;
   return (
-    <section aria-label="Secrets" className="flex flex-col gap-5">
-      <header className="flex items-center gap-4">
-        <span className="grid size-[72px] flex-none place-items-center rounded-full bg-selected text-fg-secondary"><Icon name="key" size={28} /></span>
-        <div className="min-w-0 flex-1">
-          <h2 className="type-heading">Secrets</h2>
+    <section aria-label="API secrets" className="flex flex-col gap-5">
+      {embedded ? (
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-13 text-fg-secondary">Tokens and keys your personas can use in API calls without ever seeing them.</p>
+          <Button variant="primary" icon="plus" disabled={readOnly} onClick={() => setAdding(true)}>Add secret</Button>
         </div>
-        <Button variant="primary" icon="plus" disabled={readOnly} onClick={() => setAdding(true)}>Add secret</Button>
-      </header>
-      {readOnly && (
+      ) : (
+        <header className="flex items-center gap-4">
+          <span className="grid size-[72px] flex-none place-items-center rounded-full bg-selected text-fg-secondary"><Icon name="key" size={28} /></span>
+          <div className="min-w-0 flex-1">
+            <h2 className="type-heading">Secrets</h2>
+            <p className="text-13 text-fg-secondary">Tokens and keys your personas can use in API calls without ever seeing them.</p>
+          </div>
+          <Button variant="primary" icon="plus" disabled={readOnly} onClick={() => setAdding(true)}>Add secret</Button>
+        </header>
+      )}
+      {!hideKeyBanner && readOnly && (
         <Banner tone="human" title="Secrets can’t be stored until SECRETS_KEY is set">
           Add <code>SECRETS_KEY=$(openssl rand -base64 32)</code> to <code>.env</code> and restart the API.
         </Banner>
@@ -77,7 +95,13 @@ export function ApiSecretsSection({ personas, initialId }: { personas: Persona[]
               const pill = oauthStatus(s.oauth) ?? expiryPill(s.expires_at);
               return (
                 <li key={s.id} className="border-b border-border-row last:border-b-0">
-                  <button type="button" data-testid="secret-row" aria-current={s.id === selected?.id} onClick={() => setSelectedId(s.id)} className={cx("flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-hover", s.id === selected?.id && "bg-selected")}>
+                  <button
+                    type="button"
+                    data-testid="secret-row"
+                    aria-current={s.id === selected?.id}
+                    onClick={() => setPicked({ base: initialId, id: s.id })}
+                    className={cx("flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-hover", s.id === selected?.id && "bg-selected")}
+                  >
                     <KeyTile muted={!pill || pill.tone === "done"} />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-14 font-medium text-fg">{s.name}</span>
