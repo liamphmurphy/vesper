@@ -95,9 +95,21 @@ private struct ShellSection: View {
     let send: (NativeCommand) -> Void
     // Collapsed until the person opens it; remembered across launches.
     @AppStorage("sidebar.appsExpanded") private var appsExpanded = false
+    @State private var lastAppsTap: Date?
 
     static let areaPrefix = "area:"
     static func areaTag(_ id: AreaId) -> String { areaPrefix + id.rawValue }
+
+    /// Tapping the Apps label navigates to /apps; only the disclosure triangle toggles expansion.
+    private var appsExpandedBinding: Binding<Bool> {
+        Binding(
+            get: { appsExpanded },
+            set: { open in
+                if let last = lastAppsTap, Date().timeIntervalSince(last) < 0.35 { return }
+                appsExpanded = open
+            }
+        )
+    }
 
     var body: some View {
         Section {
@@ -112,7 +124,7 @@ private struct ShellSection: View {
                 .tag(Self.areaTag(area.id))
             }
             if !shell.apps.isEmpty {
-                DisclosureGroup(isExpanded: $appsExpanded) {
+                DisclosureGroup(isExpanded: appsExpandedBinding) {
                     ForEach(shell.apps) { app in
                         Button { send(.navigate(path: app.href)) } label: {
                             Label(app.label, systemImage: SidebarIcons.symbolName(app.icon)).contentShape(Rectangle())
@@ -121,9 +133,17 @@ private struct ShellSection: View {
                         .selectionDisabled()
                     }
                 } label: {
-                    Label("Apps", systemImage: "square.grid.2x2")
+                    HStack {
+                        Label("Apps", systemImage: "square.grid.2x2")
+                        Spacer()
+                    }
+                    .contentShape(Rectangle())
+                    .simultaneousGesture(TapGesture().onEnded {
+                        lastAppsTap = Date()
+                        send(.navigate(path: "/apps"))
+                    })
                 }
-                .selectionDisabled()
+                .tag(Self.areaTag(.apps))
             }
         }
     }
