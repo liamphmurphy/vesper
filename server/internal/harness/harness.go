@@ -211,8 +211,9 @@ func SubagentAgentsMD(existing string, spec agentdef.Resolved, contextFiles []st
 
 // chatMemoryGuide tells a chat assistant how to use the person's private memory.
 const chatMemoryGuide = "## Memory\n\n" +
-	"You keep a private memory of this person, separate from the shared wiki. Its index (titles and summaries of the most recent entries) is below; use search_memory and read_memory to find and open entries rather than guessing.\n" +
-	"- Save durable facts, preferences and context with save_memory when they'll help later. It updates a near-duplicate instead of adding one.\n" +
+	"You keep a private memory of this person, separate from Knowledge and the shared wiki. Its index (titles and summaries of the most recent entries) is below; use search_memory and read_memory to find and open entries rather than guessing.\n" +
+	"- Save durable facts and preferences about the person with save_memory when they'll help later. It updates a near-duplicate instead of adding one.\n" +
+	"- Keep Memory for the person, not project logs: don't save PR/branch status, code-change recaps, or technical/architecture decisions here — put durable technical decisions and runbooks in Knowledge, and leave work-in-progress state in git and tickets.\n" +
 	"- Whenever you save or update a memory, tell the person in your reply what you remembered (and what it replaced, if anything).\n" +
 	"- Never store secrets: credentials, passwords, API keys or tokens. save_memory refuses them.\n" +
 	"- When the person says 'forget that', forget_memory the entry they mean and confirm. When they say 'don't remember this', save nothing from it (and forget anything you already saved from it).\n" +

@@ -49,7 +49,7 @@ type SaveMemoryIn struct {
 	Summary string   `json:"summary,omitempty" jsonschema:"One line saying what to remember"`
 	Body    string   `json:"body,omitempty" jsonschema:"Details, if the summary isn't enough"`
 	Tags    []string `json:"tags,omitempty" jsonschema:"A few lowercase keywords"`
-	Type    string   `json:"type,omitempty" jsonschema:"One of preference, project, person, life, work, fact, other (default other); moment (a shared moment) only with about persona"`
+	Type    string   `json:"type,omitempty" jsonschema:"One of preference, project (standing high-level project context only — not PR logs or technical decisions), person, life, work, fact, other (default other); moment (a shared moment) only with about persona"`
 	About   string   `json:"about,omitempty" jsonschema:"Whose memory: person (default: facts about the person) or persona (your own identity, traits, history, appearance and shared moments; persona chats only)"`
 }
 
