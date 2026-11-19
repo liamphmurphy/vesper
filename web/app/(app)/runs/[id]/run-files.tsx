@@ -7,6 +7,7 @@ import type { Schemas } from "@/lib/api/client";
 import { touchedFiles } from "@/lib/run-list";
 import { EmptyState } from "@/components/ui/primitives";
 import { WorkspaceFolderChip } from "@/components/domain/workspace-folder";
+import { WORK_COLUMN } from "@/components/domain/work-detail-header";
 
 type RunDetail = Schemas["RunDetail"];
 
@@ -15,8 +16,8 @@ export function RunFiles({ d, childDetails }: { d: RunDetail; childDetails: (Run
   const changed = files.filter((f) => f.writes > 0);
   const read = files.filter((f) => f.writes === 0);
   return (
-    <section aria-label="Files" className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-      <div className="mx-auto flex max-w-[760px] flex-col gap-4">
+    <section aria-label="Files" className="min-h-0 flex-1 overflow-y-auto py-4">
+      <div className={`${WORK_COLUMN} flex flex-col gap-4`}>
         {d.run.workspace_path && <WorkspaceFolderChip path={d.run.workspace_path} className="self-start" />}
         {d.run.branch && <p className="text-13 text-fg-secondary">Branch <span className="font-mono text-12 text-fg">{d.run.branch}</span></p>}
         {files.length === 0 ? (

@@ -24,8 +24,10 @@ import { AgentAvatar } from "@/components/domain/avatars";
 import { Markdown } from "@/components/domain/markdown";
 import { RUN_ENDED, StatusPill } from "@/components/domain/run-status";
 import { Button, ButtonLink } from "@/components/ui/button";
+import { Icon } from "@/components/ui/icon";
 import { Kbd, TextArea } from "@/components/ui/primitives";
 import { Banner } from "@/components/ui/primitives";
+import { WORK_COLUMN } from "@/components/domain/work-detail-header";
 import { shortcutBlocked } from "@/components/shell/shortcuts";
 import { ActionBox, useReply, waitsForReply } from "./run-panels";
 import { listQuery } from "../run-list";
@@ -59,7 +61,7 @@ export function WorkLink({ run }: { run: Run }) {
 }
 
 /** Now · step N of M, with a thin progress bar under it. */
-function NowLine({ d, unified }: { d: RunDetail; unified?: boolean }) {
+function NowLine({ d, unified, col }: { d: RunDetail; unified?: boolean; col: string }) {
   const run = d.run;
   const p = stepProgress(run);
   const ended = RUN_ENDED.includes(run.state);
@@ -71,7 +73,7 @@ function NowLine({ d, unified }: { d: RunDetail; unified?: boolean }) {
   return (
     <div className={cx("flex flex-none flex-col border-b border-border-subtle", unified ? (ended ? "py-1.5" : "gap-1 py-1.5") : "gap-1.5 py-2.5")}>
       {unified && !ended && (
-        <div className={cx(COLUMN, "flex items-center gap-3")}>
+        <div className={cx(col, "flex items-center gap-3")}>
           <ActivityScene current={chatStatus(toolCalls(d.events)).kind} stopping={false} />
           <span role="status" className="min-w-0 flex-1 truncate text-13">
             {p.current?.text ?? now}
@@ -81,13 +83,13 @@ function NowLine({ d, unified }: { d: RunDetail; unified?: boolean }) {
           </span>
         </div>
       )}
-      {!unified && <p className={cx(COLUMN, "flex items-baseline gap-3 text-13")}>
+      {!unified && <p className={cx(col, "flex items-baseline gap-3 text-13")}>
         <span className="flex-none text-11 font-semibold uppercase tracking-wide text-fg-tertiary">{now ? "Now" : "Plan"}</span>
         {p.total > 0 && <span title={p.current?.text} className="flex-none font-mono text-12 text-fg-tertiary">Step {p.current?.position ?? p.done} of {p.total}</span>}
         <span role="status" className="min-w-0 flex-1 truncate text-fg-2">{now ?? (p.done === p.total ? "All steps done" : p.current?.text)}</span>
       </p>}
       {p.total > 0 && (
-        <div className={COLUMN}>
+        <div className={col}>
           <div
             role="progressbar"
             aria-label="Plan progress"
@@ -212,15 +214,51 @@ function Outcome({ d }: { d: RunDetail }) {
   const final = finalMessage(d.events);
   const href = workHref(run);
   return (
-    <section aria-label="Outcome" className={cx("my-3 flex flex-col gap-2 rounded-xl border bg-surface p-3.5", run.state === "failed" ? "border-pill-blocked-bg" : "border-border")}>
-      <h2 className="text-12 font-medium text-fg-tertiary">Outcome</h2>
-      {run.outcome ? <p className="whitespace-pre-line text-14 text-fg-2">{run.outcome}</p> : <p className="text-13 text-fg-secondary">The run ended without an outcome.</p>}
-      {final && final !== run.outcome && !run.outcome && <p className="max-h-40 overflow-y-auto whitespace-pre-wrap text-13 text-fg-secondary">{final}</p>}
-      <div className="flex flex-wrap items-center gap-2">
-        {run.pr_url && run.pr_number ? <ButtonLink variant="outline" href={run.pr_url}>PR #{run.pr_number} ↗</ButtonLink> : null}
-        {href && <ButtonLink variant="outline" href={href}>{run.purpose === "ticket" ? run.ticket_key : run.purpose === "planning" ? "Review proposals" : "Open chat"}</ButtonLink>}
+    <section aria-label="Outcome" className={cx("my-3 flex flex-col gap-2.5 rounded-xl border bg-surface p-4", run.state === "failed" ? "border-pill-blocked-bg" : "border-border")}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="flex items-center gap-1.5 text-11 font-semibold uppercase tracking-[0.06em] text-fg-tertiary">
+          {run.state === "completed" && <Icon name="check" size={12} className="text-state-done" />}
+          Outcome
+        </h2>
+        <div className="flex flex-wrap items-center gap-2">
+          {run.pr_url && run.pr_number ? <ButtonLink variant="outline" href={run.pr_url}>PR #{run.pr_number} ↗</ButtonLink> : null}
+          {href && <ButtonLink variant="outline" href={href}>{run.purpose === "ticket" ? run.ticket_key : run.purpose === "planning" ? "Review proposals" : "Open chat"}</ButtonLink>}
+        </div>
       </div>
+      {run.outcome ? (
+        <div className="text-14 leading-relaxed text-fg-2"><Markdown>{run.outcome}</Markdown></div>
+      ) : (
+        <p className="text-13 text-fg-secondary">The run ended without an outcome.</p>
+      )}
+      {final && final !== run.outcome && !run.outcome && (
+        <div className="max-h-40 overflow-y-auto text-13 leading-relaxed text-fg-secondary"><Markdown>{final}</Markdown></div>
+      )}
     </section>
+  );
+}
+
+/** Chat-native folded step strip linking directly into the Trace tab. */
+function TraceSummaryStrip({ d, onOpenTrace }: { d: RunDetail; onOpenTrace: () => void }) {
+  const run = d.run;
+  const p = stepProgress(run);
+  if (run.tool_calls === 0 && p.total === 0) return null;
+  const parts = [
+    `Worked for ${duration(run.started_at, run.ended_at)}`,
+    run.tool_calls > 0 ? `${run.tool_calls} tool call${run.tool_calls === 1 ? "" : "s"}` : null,
+    p.total > 0 ? `${p.done}/${p.total} plan steps` : null,
+  ].filter(Boolean);
+  return (
+    <button
+      type="button"
+      onClick={onOpenTrace}
+      className="my-2 flex w-full items-center justify-between gap-3 rounded-lg border border-border-subtle bg-surface/60 px-3.5 py-2 text-left text-12 text-fg-secondary transition-colors hover:bg-hover hover:text-fg"
+    >
+      <span className="flex min-w-0 items-center gap-2 truncate">
+        <span aria-hidden className="text-fg-tertiary">▸</span>
+        <span className="truncate">{parts.join(" · ")}</span>
+      </span>
+      <span className="flex-none text-11 font-medium text-accent">Inspect trace →</span>
+    </button>
   );
 }
 
@@ -266,7 +304,7 @@ function NextLine({ next, query }: { next: Schemas["InboxItem"]; query: string }
  * `human_reply` resumes with it; a working agent reads it from the ticket.
  * The run API has no aside or interrupt, so this is Follow-up only.
  */
-function Composer({ run, lastSeq, unified }: { run: Run; lastSeq: number; unified?: boolean }) {
+function Composer({ run, lastSeq, unified, col }: { run: Run; lastSeq: number; unified?: boolean; col: string }) {
   const { comment, body, setBody, sent, again, submit } = useReply(run, lastSeq);
   const ref = useRef<HTMLTextAreaElement>(null);
   const waiting = waitsForReply(run);
@@ -281,7 +319,7 @@ function Composer({ run, lastSeq, unified }: { run: Run; lastSeq: number; unifie
         e.preventDefault();
         submit();
       }}
-      className={cx(COLUMN, "flex flex-none flex-col gap-1.5 pb-4 pt-2")}
+      className={cx(col, "flex flex-none flex-col gap-1.5 pb-4 pt-2")}
     >
       {comment.isError && <Banner tone="blocked" title="Couldn't send">{comment.error.message}</Banner>}
       {sent ? (
@@ -299,7 +337,7 @@ function Composer({ run, lastSeq, unified }: { run: Run; lastSeq: number; unifie
             {run.agent.name}{run.ticket_key ? ` · ${run.ticket_key}` : ""}
           </span>
         </div>}
-        <div className={cx("flex items-end gap-2 rounded-xl border bg-surface p-2 focus-within:border-accent", waiting ? "border-state-human/60" : "border-border-strong")}>
+        <div className={cx("flex items-end gap-2 rounded-[14px] border bg-surface p-2 focus-within:border-accent", waiting ? "border-state-human/60" : "border-border-strong")}>
           <label className="sr-only" htmlFor="run-composer">{label}</label>
           <TextArea
             ref={ref}
@@ -329,7 +367,21 @@ function Composer({ run, lastSeq, unified }: { run: Run; lastSeq: number; unifie
   );
 }
 
-export function RunThread({ d, onOpenTurn, unified, workLinks }: { d: RunDetail; onOpenTurn: (turn: number) => void; unified?: boolean; workLinks?: ReactNode }) {
+export function RunThread({
+  d,
+  onOpenTurn,
+  onOpenTrace,
+  unified,
+  embeddedHeader,
+  workLinks,
+}: {
+  d: RunDetail;
+  onOpenTurn: (turn: number) => void;
+  onOpenTrace?: () => void;
+  unified?: boolean;
+  embeddedHeader?: boolean;
+  workLinks?: ReactNode;
+}) {
   const run = d.run;
   const params = useSearchParams();
   const query = listQuery(params);
@@ -348,9 +400,10 @@ export function RunThread({ d, onOpenTurn, unified, workLinks }: { d: RunDetail;
   const asking = waitsForReply(run);
   const canWrite = !ended && run.purpose === "ticket" && !!run.ticket_key;
   const steps = stepProgress(run);
+  const col = embeddedHeader ? WORK_COLUMN : COLUMN;
   return (
     <section aria-label="Run thread" className="flex min-h-0 min-w-0 flex-1 flex-col">
-      {unified ? (
+      {!embeddedHeader && (unified ? (
         <div className="flex flex-none items-center gap-2.5 border-b border-border-subtle px-4 py-2 md:px-6">
           <AgentAvatar name={run.agent.name} colorIndex={run.agent.color_index} label={false} size="sm" />
           <h1 className="min-w-0 flex-1 truncate text-14 font-semibold leading-snug text-fg">{runTitle(run)}</h1>
@@ -368,7 +421,7 @@ export function RunThread({ d, onOpenTurn, unified, workLinks }: { d: RunDetail;
           <StatusPill run={run} />
         </div>
       ) : (
-        <div className={cx(COLUMN, "flex flex-none items-center gap-3 py-3")}>
+        <div className={cx(col, "flex flex-none items-center gap-3 py-3")}>
           <AgentAvatar name={run.agent.name} colorIndex={run.agent.color_index} label={false} size="md" />
           <div className="flex min-w-0 flex-1 flex-col leading-tight">
             <h1 className="truncate text-16 font-semibold text-fg">{runTitle(run)}</h1>
@@ -381,9 +434,9 @@ export function RunThread({ d, onOpenTurn, unified, workLinks }: { d: RunDetail;
           </div>
           <StatusPill run={run} />
         </div>
-      )}
+      ))}
       {workLinks}
-      <NowLine d={d} unified={unified} />
+      <NowLine d={d} unified={unified} col={col} />
       <div
         ref={scroller}
         role="log"
@@ -395,17 +448,18 @@ export function RunThread({ d, onOpenTurn, unified, workLinks }: { d: RunDetail;
         }}
         className="min-h-0 flex-1 overflow-y-auto outline-none"
       >
-        <div className={cx(COLUMN, "py-2")}>
+        <div className={cx(col, "py-3")}>
+          {ended && <Outcome d={d} />}
+          {onOpenTrace && <TraceSummaryStrip d={d} onOpenTrace={onOpenTrace} />}
           {feed.length ? (
             <ol aria-live={follow ? "polite" : "off"}>
               {feed.map((item, i) => <FeedRow key={`${item.kind}:${item.at}:${i}`} item={item} d={d} onOpenTurn={onOpenTurn} />)}
             </ol>
-          ) : (
+          ) : !ended ? (
             <p className="py-8 text-center text-13 text-fg-tertiary">
               {run.state === "queued" ? "The run starts when a runner slot is free." : `Messages appear as ${run.agent.name} works.`}
             </p>
-          )}
-          {ended && <Outcome d={d} />}
+          ) : null}
           {/* An unmanaged session's await_human logs no run event; its Needs you item carries the question. */}
           {asking && <Question run={run} question={latestQuestion(d.events) ?? (needs.find((i) => i.run_id === run.id && i.kind === "question")?.summary || null)} />}
           <ActionBox d={d} inThread keys={!ended} />
@@ -413,9 +467,9 @@ export function RunThread({ d, onOpenTurn, unified, workLinks }: { d: RunDetail;
         </div>
       </div>
       {canWrite ? (
-        <Composer run={run} unified={unified} lastSeq={d.events.at(-1)?.seq ?? 0} />
+        <Composer run={run} unified={unified} col={col} lastSeq={d.events.at(-1)?.seq ?? 0} />
       ) : !ended && (run.purpose === "planning" || run.purpose === "chat") && workHref(run) ? (
-        <p className={cx(COLUMN, "flex-none pb-4 pt-2 text-12 text-fg-tertiary")}>
+        <p className={cx(col, "flex-none pb-4 pt-2 text-12 text-fg-tertiary")}>
           Write to {run.agent.name} in the {run.purpose === "planning" ? <Link href={workHref(run)!} className="text-accent hover:underline">plan</Link> : <Link href={workHref(run)!} className="text-accent hover:underline">chat</Link>}.
         </p>
       ) : null}

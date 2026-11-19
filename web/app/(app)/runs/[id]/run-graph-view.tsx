@@ -10,6 +10,7 @@ import { layoutRunGraph, moveFrom, type BranchItem, type Column, type GroupItem,
 import { finalMessage, turnByEvent } from "@/lib/run-view";
 import { Button } from "@/components/ui/button";
 import { usePulseList } from "@/components/ui/motion";
+import { WORK_COLUMN } from "@/components/domain/work-detail-header";
 import { ACTION_BOX_ID } from "./run-panels";
 
 type RunDetail = Schemas["RunDetail"];
@@ -198,7 +199,8 @@ export function RunGraphView({ d, childDetails, onOpenTurn, onOpenEvent }: {
   const sel = selected ? findItem(layout.columns, selected) : undefined;
 
   return (
-    <section ref={nodes} aria-label="Run graph" className="flex min-h-0 flex-1 flex-col gap-3 px-6 py-4 lg:flex-row">
+    <section ref={nodes} aria-label="Run graph" className="min-h-0 flex-1 overflow-y-auto py-4">
+      <div className={`${WORK_COLUMN} flex flex-col gap-3 lg:flex-row`}>
       <div className="flex min-w-0 flex-1 flex-col gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <p className="mr-auto text-12 text-fg-secondary">Turns left to right · subagent runs below the turn that delegated them</p>
@@ -253,6 +255,7 @@ export function RunGraphView({ d, childDetails, onOpenTurn, onOpenEvent }: {
       {sel && sel.kind === "node" && (
         <Summary node={sel.node} d={d} turnOfEvent={turnOfEvent} onOpen={() => activate(sel)} onClose={() => setSelected(undefined)} />
       )}
+      </div>
     </section>
   );
 }
