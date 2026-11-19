@@ -25,7 +25,7 @@ const targetKey = (t: Target) => `${t.name}|${t.project}|${t.fixedName}`;
  * encrypted and returns names, scopes and timestamps only, never any part of a
  * value. The value input clears after saving and nothing is echoed back.
  */
-export function SecretsSection() {
+export function SecretsSection({ hideKeyBanner = false }: { hideKeyBanner?: boolean } = {}) {
   const list = useSecrets();
   const del = useDeleteSecret();
   const [editing, setEditing] = useState<Target | null>(null);
@@ -66,7 +66,7 @@ export function SecretsSection() {
 
   return (
     <div className="space-y-4">
-      {readOnly && (
+      {!hideKeyBanner && readOnly && (
         <Banner tone="human" title="Credentials are read-only until SECRETS_KEY is set">
           Add <code>SECRETS_KEY=$(openssl rand -base64 32)</code> to <code>.env</code> and restart the API. Until then runs get no harness keys or git credentials.
         </Banner>

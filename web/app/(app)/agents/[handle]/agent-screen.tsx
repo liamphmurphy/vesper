@@ -32,11 +32,11 @@ type Tab = (typeof TABS)[number];
 /** Links from before the tabs were split keep working. */
 const LEGACY: Record<string, Tab> = { definition: "settings", runs: "activity" };
 
-/** A persona's work settings: its work record, opened from the persona in Customization. */
-const AGENTS_HREF = "/customization?who=personas";
-const AGENTS_CRUMBS = [{ label: "Customization", href: "/customization" }, { label: "Personas", href: AGENTS_HREF }];
+/** A persona's work settings: its work record, opened from the persona in Settings. */
+const AGENTS_HREF = "/settings?section=personas";
+const AGENTS_CRUMBS = [{ label: "Settings", href: "/settings" }, { label: "Personas", href: AGENTS_HREF }];
 /** The persona a work record belongs to has the record's id. */
-const personaHref = (id: string) => `/customization?who=${encodeURIComponent(id)}`;
+const personaHref = (id: string) => `/settings?section=personas&persona=${encodeURIComponent(id)}`;
 
 export function tabFrom(param: string | null): Tab {
   if (param && (TABS as readonly string[]).includes(param)) return param as Tab;

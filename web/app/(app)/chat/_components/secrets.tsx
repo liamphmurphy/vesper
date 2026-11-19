@@ -33,7 +33,7 @@ export function SecretsList({ chatId, secrets }: { chatId: string; secrets: Retu
             <span className="flex items-center gap-1.5 text-13 text-fg"><Icon name="key" size={13} className="text-pill-human-fg" />{s.name}</span>
             <span className="text-12 text-fg-secondary">{s.calls} {s.calls === 1 ? "request" : "requests"} · {ago(s.last_used_at)} · {s.methods.join(", ")}{!s.enabled && " · off here"}</span>
             <span className="mt-1 flex gap-3 text-12">
-              <Link href={`/customization?who=secrets&secret=${s.id}`} className="text-accent hover:underline">View activity</Link>
+              <Link href={`/settings?section=secrets&tab=api&secret=${s.id}`} className="text-accent hover:underline">View activity</Link>
               {s.enabled && (
                 <button type="button" className="text-pill-blocked-fg hover:underline disabled:opacity-50" disabled={disable.isPending} onClick={() => disable.mutate(s.id)}>
                   Turn off for this chat

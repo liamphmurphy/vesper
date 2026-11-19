@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { buildSettingsNavModel } from "./models/settings.ts";
 import { buildScheduledNavModel } from "./models/scheduled.ts";
 import { buildWorkflowsNavModel, buildWorkflowPaletteNavModel } from "./models/workflows.ts";
-import { buildCustomizationNavModel } from "./models/customization.ts";
 import { handleWorkHeaderCommand, workHeader, workTabHref } from "./models/work.ts";
 import { buildBoardNavModel } from "./models/board.ts";
 import { buildEpicsNavModel } from "./models/epics.ts";
@@ -21,15 +20,49 @@ import { findNavItem } from "./nav-model.ts";
 
 const json = (m) => assert.equal(JSON.stringify(m), JSON.stringify(JSON.parse(JSON.stringify(m))));
 
-test("settings: health becomes a status, a missing credential a badge", () => {
-  const m = buildSettingsNavModel([
-    { id: "workspace", label: "Workspace", health: "ok" },
-    { id: "secrets", label: "Provider credentials", health: "attention", badge: "2 off" },
-    { id: "images", label: "Image engine", health: "idle" },
-  ]);
-  const items = m.sections[0].items;
-  assert.deepEqual(items.map((i) => [i.id, i.status]), [["workspace", "done"], ["secrets", "human"], ["images", undefined]]);
-  assert.deepEqual(items[1].badge, { text: "2 off", tone: "human" });
+test("settings: 4 groups, health dots, badges, persona rows, actions and filter", () => {
+  const input = {
+    me: { name: "Liam Murphy" },
+    personas: [
+      { id: "p1", name: "Ada", handle: "ada", color: "#9B8CFF", is_default: true },
+      { id: "p2", name: "Meow", handle: "meow", color: "#34D399", is_default: false },
+    ],
+    personasState: "ready",
+    canAddPersona: true,
+    memoryTotal: 12,
+    health: {
+      secrets: "attention",
+      missingCredentials: 2,
+      workspace: "ok",
+      runners: "ok",
+      signIn: "idle",
+    },
+    selectedId: "you",
+    filter: "",
+  };
+  const m = buildSettingsNavModel(input);
+  assert.deepEqual(m.sections.map((s) => s.id), ["personal", "personas", "integrations", "system"]);
+  assert.deepEqual(m.sections[0].items.map((i) => i.id), ["you", "appearance", "memory"]);
+  assert.equal(m.sections[0].items[2].trailing, "12");
+  assert.equal(m.sections[1].actions[0].id, "new-persona");
+  assert.deepEqual(m.sections[1].items.map((i) => i.id), ["all-personas", "persona:p1", "persona:p2"]);
+  assert.deepEqual(m.sections[1].items[1].badge, { text: "Default", tone: "accent" });
+  const secrets = m.sections[2].items.find((i) => i.id === "secrets");
+  assert.equal(secrets.status, "human");
+  assert.deepEqual(secrets.badge, { text: "2 off", tone: "human" });
+  assert.equal(m.sections[3].items.find((i) => i.id === "workspace").status, "done");
+  assert.equal(m.sections[3].items.find((i) => i.id === "sign-in").status, undefined);
+  assert.equal(m.selectedId, "you");
+
+  assert.equal(buildSettingsNavModel({ ...input, selectedId: "persona:p1" }).selectedId, "persona:p1");
+  assert.equal(buildSettingsNavModel({ ...input, canAddPersona: false }).sections[1].actions, undefined);
+  assert.equal(buildSettingsNavModel({ ...input, personasState: "error" }).sections[1].actions[0].id, "retry-personas");
+  assert.equal(buildSettingsNavModel({ ...input, personas: [] }).sections[1].items.at(-1).id, "no-personas");
+
+  const filtered = buildSettingsNavModel({ ...input, filter: "palette" });
+  assert.deepEqual(filtered.sections.map((s) => [s.id, s.items.map((i) => i.id)]), [["personal", ["appearance"]]]);
+  const byHandle = buildSettingsNavModel({ ...input, filter: "@meow" });
+  assert.deepEqual(byHandle.sections.map((s) => [s.id, s.items.map((i) => i.id)]), [["personas", ["persona:p2"]]]);
   json(m);
 });
 
@@ -56,32 +89,6 @@ test("workflows list and the node palette", () => {
   assert.equal(buildWorkflowsNavModel({ workflows: [], runs: [] }).sections.length, 1);
   const p = buildWorkflowPaletteNavModel({ palette: [{ group: "Steps", items: [{ type: "agent", label: "Agent step" }] }], disabled: true });
   assert.deepEqual(p.sections[0].items[0], { id: "agent", title: "Agent step", icon: "plus", disabled: true });
-});
-
-test("customization: rail rows, selection, persona + space rows, new persona", () => {
-  const input = {
-    me: { name: "Liam Murphy" },
-    personas: [{ id: "p1", name: "Ada", color: "#9B8CFF", is_default: true }],
-    personasState: "ready",
-    spaces: [{ id: "s1", name: "Home", color: "#34D399", memory_count: 4 }],
-    who: "",
-    whose: "",
-    spaceParam: "",
-    canAddPersona: true,
-  };
-  const m = buildCustomizationNavModel(input);
-  assert.equal(m.selectedId, "everything");
-  assert.deepEqual(m.sections[0].items.map((i) => i.id), ["everything", "person", "connectors", "secrets"]);
-  assert.equal(m.sections[1].actions[0].id, "new-persona");
-  assert.deepEqual(m.sections[1].items[1].badge, { text: "Default", tone: "accent" });
-  assert.equal(m.sections[2].items[0].trailing, "4");
-  assert.equal(buildCustomizationNavModel({ ...input, whose: "p1" }).selectedId, "persona:p1");
-  assert.equal(buildCustomizationNavModel({ ...input, who: "personas" }).selectedId, "all-personas");
-  assert.equal(buildCustomizationNavModel({ ...input, who: "secrets" }).selectedId, "secrets");
-  assert.equal(buildCustomizationNavModel({ ...input, whose: "space:s1", spaceParam: "s1" }).selectedId, "space:s1");
-  assert.equal(buildCustomizationNavModel({ ...input, canAddPersona: false }).sections[1].actions, undefined);
-  assert.equal(buildCustomizationNavModel({ ...input, personasState: "error" }).sections[1].actions[0].id, "retry-personas");
-  json(m);
 });
 
 const projects = [{ key: "VES", name: "Vesper" }, { key: "OLD", name: "Old", archived: true }];

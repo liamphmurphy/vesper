@@ -18,8 +18,7 @@ export type NavGroup = { label: "Work" | "Apps" | "Tools" | "You"; items: NavIte
 /**
  * The one menu (no Chat/Work modes): conversations first, then Work (what
  * agents are doing for you), the Apps row whose flyout holds Apps and Tools,
- * and Customization and Settings in the footer. The sidebar and the command
- * menu both read these.
+ * and Settings in the footer. The sidebar and the command menu both read these.
  */
 export const WORK_ITEMS: NavItem[] = [
   // No Inbox row: the Needs you pill above the menu opens the tray, and /inbox is its "Open all" page.
@@ -53,7 +52,6 @@ export function toolItems(devWorkspaceEnabled: boolean): NavItem[] {
 }
 
 export const FOOTER_ITEMS: NavItem[] = [
-  { href: "/customization", label: "Customization", icon: "sliders" },
   { href: "/settings", label: "Settings", icon: "gear", badge: "settings" },
 ];
 

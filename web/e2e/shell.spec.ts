@@ -74,7 +74,7 @@ test("one column switches areas; a screen's own list takes the place of Chats", 
   await expect(page.getByRole("link", { name: "Projects & tickets" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Chats & personas" })).toHaveCount(0);
   const work = nav(page);
-  // The areas, then Apps; Needs you, Customization, Settings and harnesses live on the permanent right rail.
+  // The areas, then Apps; Needs you, Settings and harnesses live on the permanent right rail.
   const areas = page.getByRole("list", { name: "Areas" });
   const names = await areas.getByRole("link").evaluateAll((els) => els.map((e) => e.getAttribute("aria-label")));
   expect(names).toEqual(["Chat", "Work", "Knowledge", "Library"]);
@@ -84,7 +84,7 @@ test("one column switches areas; a screen's own list takes the place of Chats", 
   const rightRail = page.getByRole("complementary", { name: "Right rail" });
   await expect(rightRail).toBeVisible();
   await expect(rightRail.getByRole("button", { name: /^Needs you/ })).toBeVisible();
-  await expect(rightRail.getByRole("link", { name: "Customization" })).toHaveAttribute("href", "/customization");
+  await expect(rightRail.getByRole("link", { name: "Customization" })).toHaveCount(0);
   await expect(rightRail.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
 
 
@@ -305,7 +305,7 @@ test("the persistent right rail stays mounted across Chat, Work and Knowledge, i
     await expect(menu.getByRole("link", { name: "Settings" })).toHaveCount(0);
     await expect(rightRail).toBeVisible();
     await expect(rightRail.getByRole("button", { name: /^Needs you/ })).toBeVisible();
-    await expect(rightRail.getByRole("link", { name: "Customization" })).toHaveAttribute("href", "/customization");
+    await expect(rightRail.getByRole("link", { name: "Customization" })).toHaveCount(0);
     await expect(rightRail.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
   };
 

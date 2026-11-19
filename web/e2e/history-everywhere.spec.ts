@@ -6,7 +6,7 @@ import { installChatApi } from "./mock-chat-api";
 // keeps that true: a page with a header of its own that forgets them fails here, as does a page
 // that draws them twice.
 // /tickets/new is a modal over the Tickets list: the list's bar is behind it, hidden while it is open.
-const BOARD = ["/tickets?project=WEB", "/tickets/WEB-1", "/runs", "/inbox", "/reports", "/settings", "/settings/runner", "/customization", "/library", "/learn", "/workflows", "/scheduled", "/more", "/plans"];
+const BOARD = ["/tickets?project=WEB", "/tickets/WEB-1", "/runs", "/inbox", "/reports", "/settings", "/settings/runner", "/settings?section=memory", "/library", "/learn", "/workflows", "/scheduled", "/more", "/plans"];
 const CHAT = ["/chat?new", "/knowledge", "/knowledge/graph", "/knowledge/connect", "/apps/designs", "/apps/slides", "/apps/docs", "/apps", "/setup", "/wiki"];
 
 for (const [install, routes] of [[installBoardApi, BOARD], [installChatApi, CHAT]] as const) {

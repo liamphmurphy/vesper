@@ -14,7 +14,6 @@ const ROUTE_TITLES: Array<[prefix: string, title: string]> = [
   ["/knowledge/graph", "Knowledge graph"],
   ["/knowledge", "Knowledge"],
   ["/library", "Library"],
-  ["/customization", "Customization"],
   ["/agents", "Agent"],
   ["/workflows", "Workflows"],
   ["/scheduled", "Scheduled"],

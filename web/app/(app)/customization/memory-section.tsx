@@ -422,8 +422,8 @@ function Focused({ id, onDone }: { id: string; onDone: () => void }) {
   return <Editor key={m.data.id} m={m.data} onDone={onDone} onDeleted={onDone} />;
 }
 
-/** The memory manager: a rail for whose memory it is, then search, filter, edit, delete and export every entry as cards. */
-const FOCUS_DONE = "/customization";
+/** The memory manager: search, filter, edit, delete and export every entry as cards. */
+const FOCUS_DONE = "/settings?section=memory";
 
 /** One person's or persona's memories: search, type filter and the cards. Delete everything only applies to the whole list. */
 export function MemorySection({ whose, heading, focus }: { whose: string; heading: string; focus?: string }) {

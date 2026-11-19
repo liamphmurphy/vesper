@@ -274,7 +274,7 @@ export function AgentPicker({
           </div>
           <p className="border-t border-border-subtle px-3 py-2 text-12 text-fg-tertiary">
             Personas that take tickets. Assigning queues the ticket; a person starts the run.{" "}
-            <Link href="/customization?who=personas" className="text-accent hover:underline">Turn it on for another…</Link>
+            <Link href="/settings?section=personas" className="text-accent hover:underline">Turn it on for another…</Link>
           </p>
         </Popover.Content>
       </Popover.Portal>

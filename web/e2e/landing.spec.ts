@@ -21,6 +21,7 @@ test("a finished user only sees the wizard again from Settings", async ({ page }
   await expect(page.getByRole("radiogroup", { name: "Who to talk to" })).toBeVisible();
   await expect(page.getByTestId("welcome-wizard")).toHaveCount(0);
   await page.goto("/settings");
+  await page.getByRole("navigation", { name: "Settings sections" }).getByRole("link", { name: /^Workspace/ }).click();
   await page.getByRole("link", { name: "Run setup again →" }).click();
   await expect(page).toHaveURL(/\/chat\?new&setup$/);
   await expect(page.getByTestId("welcome-wizard")).toBeVisible();

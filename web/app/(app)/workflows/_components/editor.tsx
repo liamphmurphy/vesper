@@ -207,7 +207,7 @@ function BuildChat({ workflow, chatId, onChatId, personaId, onPersonaId, onChatt
       )}
       {error && <Banner tone="blocked" title={error.message} />}
       {personas.data && !builders.length && (
-        <p className="px-1 text-12 text-fg-secondary">No persona can create workflows yet. Turn on Create workflows for one in <Link href="/customization" className="underline">Customization</Link>.</p>
+        <p className="px-1 text-12 text-fg-secondary">No persona can create workflows yet. Turn on Create workflows for one in <Link href="/settings?section=personas" className="underline">Settings → Personas</Link>.</p>
       )}
       {builders.length > 0 && (
         <div role="radiogroup" aria-label="Build as persona" className="flex flex-wrap gap-1">

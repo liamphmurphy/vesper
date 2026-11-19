@@ -504,7 +504,6 @@ const TYPE_SCOPE_PREFIXES: readonly [string, TypeKey][] = [
   ["/runs", "run"],
   ["/chat", "chat"],
   ["/agents", "people"],
-  ["/customization", "people"],
   ["/workflows", "workflow"],
   ["/library", "library"],
   ["/scheduled", "scheduled"],
@@ -530,6 +529,12 @@ export function pageScope(pathname: string, search?: string | URLSearchParams): 
     const view = query.get("view");
     const type: TypeKey = view === "tickets" ? "ticket" : view === "epics" ? "epic" : "run";
     return { kind: "type", type, label: TYPE[type].label };
+  }
+  if (
+    matchesPrefix(path, "/settings") &&
+    (query.get("section") === "personas" || query.get("section") === "persona" || query.has("persona"))
+  ) {
+    return { kind: "type", type: "people", label: TYPE.people.label };
   }
   const hit = TYPE_SCOPE_PREFIXES.find(([p]) => matchesPrefix(path, p));
   return hit ? { kind: "type", type: hit[1], label: TYPE[hit[1]].label } : undefined;

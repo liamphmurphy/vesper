@@ -47,7 +47,8 @@ test("/ lists the commands and /memory opens the Memory page without sending", a
   await composer(page).pressSequentially("mem");
   await expect(menu(page).getByRole("option")).toHaveCount(1);
   await composer(page).press("Enter");
-  await expect(page.getByRole("region", { name: "Customization", exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Settings", exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/\/settings\?section=memory$/);
   expect(mock.posted).toEqual([]);
   expect(mock.unhandled).toEqual([]);
 });
@@ -102,20 +103,23 @@ test("/persona starts a new chat and keeps the one with messages", async ({ page
   expect(mock.chats.length).toBe(2);
 });
 
-test("Customization replaces Assistant, Memory and Personas in the main menu", async ({ page }) => {
+test("Settings replaces Assistant, Memory, Personas and Customization, and legacy links redirect", async ({ page }) => {
   await installChatApi(page);
   await openChat(page);
   const nav = page.getByRole("navigation", { name: "Primary" });
-  for (const gone of ["Assistant", "Memory", "Personas", "Dashboard"]) await expect(nav.getByRole("link", { name: gone, exact: true })).toHaveCount(0);
-  await nav.getByRole("link", { name: "Customization", exact: true }).click();
-  await expect(page.getByRole("region", { name: "Customization", exact: true })).toBeVisible();
-  await expect(page).toHaveURL(/\/customization$/);
-  // One menu, no modes: Customization is the footer link, current here.
-  await expect(page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Customization", exact: true })).toHaveAttribute("aria-current", "page");
-  // Old links land on the combined page, with their query.
+  const rail = page.getByRole("complementary", { name: "Right rail" });
+  for (const gone of ["Assistant", "Memory", "Personas", "Customization", "Dashboard"]) await expect(nav.getByRole("link", { name: gone, exact: true })).toHaveCount(0);
+  await expect(rail.getByRole("link", { name: "Customization", exact: true })).toHaveCount(0);
+  await rail.getByRole("link", { name: "Settings", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Settings", exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/\/settings$/);
+  await expect(rail.getByRole("link", { name: "Settings", exact: true })).toHaveAttribute("aria-current", "page");
+  // Old links land on the unified Settings screen with their query.
   await page.goto("/personas");
-  await expect(page).toHaveURL(/\/customization$/);
+  await expect(page).toHaveURL(/\/settings\?section=personas$/);
   await page.goto("/memory?id=abc");
-  await expect(page).toHaveURL(/\/customization\?id=abc$/);
+  await expect(page).toHaveURL(/\/settings\?section=memory&id=abc$/);
+  await page.goto("/customization");
+  await expect(page).toHaveURL(/\/settings\?section=memory$/);
 });
 

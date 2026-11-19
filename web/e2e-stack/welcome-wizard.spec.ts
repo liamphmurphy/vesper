@@ -126,6 +126,7 @@ test("Welcome Wizard: from a fresh install to a first chat", async ({ page, requ
   await expect(page).toHaveURL(/\/chat\?new&persona=/);
   await expect(page.getByTestId("welcome-wizard")).toHaveCount(0);
   await page.goto("/settings");
+  await page.getByRole("navigation", { name: "Settings sections" }).getByRole("link", { name: /^Workspace/ }).click();
   await page.getByRole("link", { name: "Run setup again →" }).click();
   await wizardCard(page);
   expect((await get("/me")).onboarded_at).toBe(me.onboarded_at);

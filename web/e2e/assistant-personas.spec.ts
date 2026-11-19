@@ -1,15 +1,17 @@
 import { expect, test, type Page } from "@playwright/test";
 import { installChatApi, persona } from "./mock-chat-api";
 
-const panel = (page: Page) => page.getByRole("region", { name: "Customization", exact: true });
+const panel = (page: Page) => page.getByRole("region", { name: "Settings", exact: true });
 const editor = (page: Page) => page.getByRole("dialog");
 // Next keeps the page we navigated from mounted but hidden, so count only what is on screen.
 const rows = (page: Page) => page.locator('[data-testid="persona-row"]:visible');
 
 async function openPanel(page: Page) {
   await page.goto("/chat?project=WEB");
-  await page.getByRole("complementary", { name: "Right rail" }).getByRole("link", { name: "Customization", exact: true }).click();
-  await expect(page).toHaveURL(/\/customization$/);
+  await page.getByRole("complementary", { name: "Right rail" }).getByRole("link", { name: "Settings", exact: true }).click();
+  await expect(page).toHaveURL(/\/settings$/);
+  await page.getByTestId("all-personas").click();
+  await expect(page).toHaveURL(/\/settings\?section=personas$/);
   await expect(panel(page)).toBeVisible();
 }
 

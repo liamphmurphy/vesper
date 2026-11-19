@@ -190,7 +190,7 @@ function Welcome({ disabled, onNew, arrived }: { disabled: boolean; onNew: () =>
   const commands: ComposerCommands = {
     plain: {
       new: onNew,
-      memory: () => router.push("/customization"),
+      memory: () => router.push("/settings?section=memory"),
       stop: () => "There’s no reply to stop.",
     },
     options: (command): { name: string; run: CommandRun }[] => {

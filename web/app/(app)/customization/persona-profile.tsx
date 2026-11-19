@@ -133,7 +133,7 @@ export function PersonaProfile({ p, memories, onEdit, onDelete }: { p: Persona; 
       <Portrait persona={p} />
       <div className="flex min-w-0 flex-1 basis-64 flex-col gap-1.5">
         <div className="flex items-center gap-2">
-          <PersonaName persona={p} className="truncate type-display" />
+          <h1 className="truncate type-display"><PersonaName persona={p} /></h1>
           {p.is_default && <DefaultBadge />}
         </div>
         <p className="text-14 text-fg-secondary">{stats.join(" · ")}</p>

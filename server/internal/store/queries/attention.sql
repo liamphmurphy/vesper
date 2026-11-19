@@ -103,7 +103,7 @@ WITH items AS (
  UNION ALL
  SELECT 'secret_expiring:'||us.id||':'||extract(epoch FROM us.expires_at)::bigint,'secret_expiring',us.name,
  CASE WHEN us.expires_at<=now() THEN 'Expired. Replace it to keep using it.' ELSE 'Expires within a day. Replace it to keep using it.' END,
- '/customization?who=secrets&secret='||us.id,'','',us.expires_at-interval '1 day',false,NULL,NULL,NULL
+ '/settings?section=secrets&tab=api&secret='||us.id,'','',us.expires_at-interval '1 day',false,NULL,NULL,NULL
  FROM user_secrets us
  WHERE us.workspace_id=sqlc.arg(workspace_id) AND us.user_id=sqlc.arg(user_id) AND us.expires_at<now()+interval '1 day'
  UNION ALL
@@ -167,10 +167,10 @@ FROM needle CROSS JOIN LATERAL (
  SELECT 'workflow',w.id,w.name,'/workflows/'||w.id,'','',w.updated_at,w.name
  FROM workflows w WHERE w.workspace_id=sqlc.arg(workspace_id) AND w.user_id=sqlc.arg(user_id)
  UNION ALL
- SELECT 'persona',pe.id,pe.name,'/customization?who='||pe.id,'','',pe.updated_at,pe.name
+ SELECT 'persona',pe.id,pe.name,'/settings?section=personas&persona='||pe.id,'','',pe.updated_at,pe.name
  FROM personas pe WHERE pe.workspace_id=sqlc.arg(workspace_id) AND pe.user_id=sqlc.arg(user_id)
  UNION ALL
- SELECT 'memory',m.id,m.title,'/customization?id='||m.id,'',m.summary,m.updated_at,m.title||' '||m.summary
+ SELECT 'memory',m.id,m.title,'/settings?section=memory&id='||m.id,'',m.summary,m.updated_at,m.title||' '||m.summary
  FROM memories m WHERE m.workspace_id=sqlc.arg(workspace_id) AND m.user_id=sqlc.arg(user_id) AND m.superseded_by IS NULL
  UNION ALL
  -- The Library's tab for each kind (library-screen.tsx KINDS), opened on the item.

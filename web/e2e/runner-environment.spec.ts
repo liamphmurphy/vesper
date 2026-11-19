@@ -24,7 +24,7 @@ const environment: Schemas["RunnerEnvironment"] = {
 test("environment shows measured tools, project libraries, caches and setup failures", async ({ page }) => {
   await installChatApi(page);
   await page.route("**/api/v1/runner/environment*", (route) => route.fulfill({ json: environment }));
-  await page.goto("/settings");
+  await page.goto("/settings#runners");
   await page.getByRole("link", { name: "View runner environment" }).click();
   await expect(page.getByRole("heading", { name: "Runner environment", exact: true })).toBeVisible();
   await expect(page.getByRole("cell", { name: "go version go1.26.0 darwin/arm64" })).toBeVisible();

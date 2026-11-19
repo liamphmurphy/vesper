@@ -168,11 +168,7 @@ function RailFootLinks({ settingsNeedYou }: { settingsNeedYou: boolean }) {
   );
   return (
     <div className="flex flex-none flex-col items-center gap-1 pb-1">
-      <Link href="/customization" aria-label="Customization" title="Customization: personas, agents, memory and your profile"
-        aria-current={isActive(pathname, "/customization") ? "page" : undefined} className={link("/customization")}>
-        <Icon name="sliders" size={15} />
-      </Link>
-      <Link href="/settings" title="Settings: credentials and runners" aria-current={isActive(pathname, "/settings") ? "page" : undefined} className={link("/settings")}>
+      <Link href="/settings" title="Settings: profile, appearance, personas, credentials and runners" aria-current={isActive(pathname, "/settings") ? "page" : undefined} className={link("/settings")}>
         <Icon name="gear" size={15} />
         <span className="sr-only">Settings{settingsNeedYou && ": a setting runs need is missing"}</span>
         {settingsNeedYou && <span aria-hidden className="absolute right-1 top-1 size-1.5 rounded-full bg-state-human" />}

@@ -285,7 +285,7 @@ function Editor({ task, onClose, onCreated }: { task?: ScheduledTask; onClose: (
               })}
             </div>
           ) : (
-            <p className="text-12 text-fg-tertiary">This persona has no connectors. <Link className="text-accent hover:underline" href="/customization?who=connectors">Manage connectors</Link></p>
+            <p className="text-12 text-fg-tertiary">This persona has no connectors. <Link className="text-accent hover:underline" href="/settings?section=connectors">Manage connectors</Link></p>
           )}
         </Field>
       )}

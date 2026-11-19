@@ -1,22 +1,60 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useIsNativeShell } from "@/lib/native-shell/hooks";
-import { useEffect, useSyncExternalStore, type ReactNode } from "react";
-import { useBootstrap, useRunnerStatus, useSecrets, useUpdateRunnerSettings } from "@/lib/api/hooks";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useLocation } from "react-router";
 import type { Schemas } from "@/lib/api/client";
+import { useBootstrap, useMemories, useRunnerStatus, useSecrets, useUpdateRunnerSettings } from "@/lib/api/hooks";
+import { usePersonas, type Persona } from "@/lib/api/persona-hooks";
+import { useApiSecrets } from "@/lib/api/secret-hooks";
+import { useSpaces } from "@/lib/api/space-hooks";
 import { cx } from "@/lib/cx";
 import { ago } from "@/lib/format";
-import { missingConnections } from "@/lib/settings";
-import { Button, ButtonLink } from "@/components/ui/button";
-import { Icon } from "@/components/ui/icon";
-import { Toggle } from "@/components/ui/controls";
-import { Banner, Card, EmptyState, Skeleton } from "@/components/ui/primitives";
-import { NavigatorPortal } from "@/components/shell/navigator-slot";
-import { useCompact } from "@/lib/viewport";
-import { buildSettingsNavModel } from "@/lib/native-shell/models/settings";
+import { isNativeShell } from "@/lib/native-shell/bridge";
+import { useIsNativeShell } from "@/lib/native-shell/hooks";
+import { pageOrigin } from "@/lib/native-shell/models/common";
+import {
+  buildSettingsNavModel,
+  NEW_PERSONA_ACTION,
+  RETRY_PERSONAS_ACTION,
+  SETTINGS_SEARCH_ID,
+  type SettingsHealth,
+} from "@/lib/native-shell/models/settings";
 import type { NativeCommand } from "@/lib/native-shell/protocol";
+import { MAX_PERSONAS, sortPersonas } from "@/lib/persona-ui";
+import { missingConnections } from "@/lib/settings";
+import {
+  matchesSettingsFilter,
+  resolveSettingsRoute,
+  selectedNavId,
+  SETTINGS_FILTER_KEYWORDS,
+  settingsHref,
+  type SecretsTab,
+  type SettingsRoute,
+} from "@/lib/settings-nav";
+import { toast } from "@/lib/toast";
+import { useCompact } from "@/lib/viewport";
+import { HumanAvatar } from "@/components/domain/avatars";
+import { SetupChecklist } from "@/components/domain/setup";
+import { NavigatorPortal } from "@/components/shell/navigator-slot";
+import { Content, TopBar, type Crumb } from "@/components/shell/topbar";
+import { Button, ButtonLink } from "@/components/ui/button";
+import { Segmented, Toggle } from "@/components/ui/controls";
+import { Icon, type IconName } from "@/components/ui/icon";
+import { PageHeader } from "@/components/ui/page-header";
+import { Banner, Card, EmptyState, Skeleton } from "@/components/ui/primitives";
+import { PersonaAvatar } from "../chat/_components/persona";
+import { PersonaEditor } from "../chat/_components/persona-editor";
+import { ApiSecretsSection } from "../customization/api-secrets-section";
+import { ConnectorsSection, PersonaConnectors } from "../customization/connectors-section";
+import { ExportMenu, ImportView, MemorySection, useMemoryExport } from "../customization/memory-section";
+import { PersonaModelSection } from "../customization/persona-model";
+import { DefaultBadge, DeleteDialog, PersonaProfile } from "../customization/persona-profile";
+import { PersonaWorkSection } from "../customization/persona-work";
+import { PersonasList } from "../customization/personas-list";
+import { ProfileSection } from "../customization/profile-section";
+import { SpaceTile } from "../spaces/_components/space-parts";
 import { AppearanceSection } from "./appearance-section";
 import { BackupSection } from "./backup-section";
 import { DevWorkspaceSection } from "./dev-workspace-section";
@@ -24,159 +62,878 @@ import { ImageEngineSection } from "./image-engine-section";
 import { RepositorySourcesSection } from "./repositories-section";
 import { SecretsSection } from "./secrets-section";
 import { SignInSection, useAuthStatus } from "./sign-in-section";
-import { SetupChecklist } from "@/components/domain/setup";
-import { PageHeader } from "@/components/ui/page-header";
 
-type Health = "ok" | "attention" | "idle" | "unknown";
-
+const errorText = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong. Please try again.");
 const noSubscribe = () => () => {};
 
-/**
- * Settings (LAZYAGENTS-44): everything runs depend on, one page with a sticky
- * section nav. Each section loads independently, so one failing API call
- * leaves the others usable, and each says what breaks when something is missing.
- */
-export function SettingsScreen() {
-  const router = useRouter();
-  const native = useIsNativeShell();
-  const compact = useCompact();
-  const secrets = useSecrets();
-  const runner = useRunnerStatus();
-  const auth = useAuthStatus();
-  // The shell's queries can resolve before this page's chunk hydrates; reading them in
-  // the hydration pass would not match the server's loading HTML, so sections render after mount.
-  const mounted = useSyncExternalStore(noSubscribe, () => true, () => false);
-  useEffect(() => {
-    // Sections arrive after load, so the browser's own jump to #section found nothing.
-    if (mounted && window.location.hash) document.getElementById(decodeURIComponent(window.location.hash.slice(1)))?.scrollIntoView();
-  }, [mounted]);
-  const missing = secrets.data ? missingConnections(secrets.data.secrets).length : 0;
-  const nav: { id: string; label: string; health: Health; badge?: string }[] = [
-    { id: "workspace", label: "Workspace", health: !secrets.data ? "unknown" : secrets.data.key_configured ? "ok" : "attention" },
-    { id: "secrets", label: "Provider credentials", health: !secrets.data ? "unknown" : missing || !secrets.data.key_configured ? "attention" : "ok", badge: missing ? `${missing} off` : undefined },
-    { id: "images", label: "Image engine", health: "idle" },
-    { id: "repositories", label: "Repository discovery", health: "idle" },
-    { id: "runners", label: "Runner backends", health: !runner.data ? "unknown" : runner.data.online ? "ok" : runner.data.starting ? "unknown" : "attention" },
-    { id: "dev-workspace", label: "Dev workspace", health: "idle" },
-    { id: "overrides", label: "Space overrides", health: "idle" },
-    { id: "sign-in", label: "Sign-in", health: !auth.data ? "unknown" : auth.data.password_set ? "ok" : "attention" },
-    { id: "backup", label: "Backup & move", health: "idle" },
-    { id: "appearance", label: "Appearance", health: "idle" },
-  ];
+function subscribeHash(cb: () => void) {
+  window.addEventListener("hashchange", cb);
+  return () => window.removeEventListener("hashchange", cb);
+}
 
-  // The native sidebar's rows scroll to the section, as the web nav's #links do.
-  const jumpToSection = (cmd: NativeCommand) => {
-    if (cmd.type !== "nav.activate") return;
-    window.location.hash = cmd.itemId;
-    document.getElementById(cmd.itemId)?.scrollIntoView();
-  };
+const SECTION_TITLES: Record<SettingsRoute["section"], string> = {
+  you: "You",
+  appearance: "Appearance",
+  memory: "Memory",
+  personas: "Personas",
+  persona: "Persona",
+  secrets: "Secrets & Credentials",
+  connectors: "Connectors",
+  repositories: "Repositories",
+  workspace: "Workspace",
+  runners: "Runners",
+  "dev-workspace": "Dev workspace",
+  spaces: "Spaces",
+  "sign-in": "Sign-in",
+  backup: "Backup & move",
+};
 
-  if (!mounted) {
-    return (
-      <div aria-busy className="flex flex-col gap-6">
-        <PageHeader title="Settings" />
-        <Skeleton className="h-40 max-w-[1020px]" />
-      </div>
-    );
-  }
-  const sectionNav = (
-    <nav
-      aria-label="Settings sections"
-      className={cx(
-        compact
-          ? "flex gap-1.5 overflow-x-auto pb-1"
-          : "flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2.5 pt-4 pb-3",
-      )}
-    >
-      {!compact && <h2 className="px-2 pb-1.5 text-11 font-semibold uppercase tracking-[0.06em] text-fg-tertiary">Settings</h2>}
-      {nav.map((n) => (
-        <a
-          key={n.id}
-          href={`#${n.id}`}
-          className={cx(
-            "flex min-h-8 flex-none items-center gap-2.5 rounded-md px-2.5 text-13 transition-colors",
-            compact
-              ? "border border-border bg-surface hover:bg-hover"
-              : "text-fg-secondary hover:bg-hover hover:text-fg",
-          )}
-        >
-          <HealthDot health={n.health} />
-          <span className="flex-1 whitespace-nowrap">{n.label}</span>
-          {n.badge && <span className="rounded-full bg-pill-human-bg px-1.5 text-11 text-pill-human-fg">{n.badge}</span>}
-        </a>
-      ))}
-    </nav>
-  );
+const SIMPLE_NAV_IDS = new Set([
+  "you",
+  "appearance",
+  "memory",
+  "secrets",
+  "connectors",
+  "repositories",
+  "workspace",
+  "runners",
+  "dev-workspace",
+  "spaces",
+  "sign-in",
+  "backup",
+]);
+
+function PlainHeader({ lead, title, detail, actions }: { lead: ReactNode; title: string; detail: string; actions?: ReactNode }) {
   return (
-    <div className="flex flex-col gap-6">
-      {!compact && (
-        <NavigatorPortal native={{ model: buildSettingsNavModel(nav), onCommand: jumpToSection }}>{sectionNav}</NavigatorPortal>
-      )}
-      <PageHeader
-        title="Settings"
-        description="Everything runs depend on. Each section says what breaks when something is missing."
-        nativeActions={[
-          { id: "settings.setup", label: "Run setup again", kind: "button", showsLabel: true, run: () => router.push("/chat?new&setup") },
-          { id: "settings.checklist", label: "Open setup checklist", kind: "button", showsLabel: true, run: () => router.push("/setup") },
-        ]}
-      >
-        {!native && (
-          <span className="flex gap-4 text-14">
-            <Link href="/chat?new&setup" className="text-accent hover:underline">Run setup again →</Link>
-            <Link href="/setup" className="text-accent hover:underline">Open setup checklist →</Link>
-          </span>
-        )}
-      </PageHeader>
-      <SetupChecklist className="max-w-[1020px]" />
-      {compact && sectionNav}
-      <div className="flex min-w-0 max-w-[820px] flex-col gap-10">
-          <Section id="workspace" title="Workspace" lead="Shared by every space. Secret encryption is configured on the API server.">
-            <WorkspaceSection />
-          </Section>
-          <Section
-            id="secrets"
-            title="Provider credentials"
-            lead="Values are write-only. They are stored encrypted, injected only into runs whose scopes allow them, and never shown or returned by the API."
-          >
-            <SecretsSection />
-          </Section>
-          <Section id="images" title="Image engine" lead="Which harness makes the images personas and workflows ask for.">
-            <ImageEngineSection />
-          </Section>
-          <Section id="repositories" title="Repositories & GitHub owners"><RepositorySourcesSection /></Section>
-          <Section
-            id="runners"
-            title="Runner backends"
-            lead="Reported by each runner’s heartbeat. Set by environment variables on the runner process; restart the runner to change them."
-          >
-            <RunnerSection />
-          </Section>
-          <Section
-            id="dev-workspace"
-            title="Dev workspace"
-            lead="Persistent Nix + LazyVim container for inspecting and testing agent branches. No container runs until enabled."
-          >
-            <DevWorkspaceSection />
-          </Section>
-          <Section id="overrides" title="Space overrides" lead="Customize an agent for one space while keeping future agent definition updates.">
-            <ProjectOverridesSection />
-          </Section>
-          <Section id="sign-in" title="Sign-in" lead="How you get into Vesper from a browser that isn’t signed in.">
-            <SignInSection />
-          </Section>
-          <Section id="backup" title="Backup & move" lead="Take everything with you to another machine.">
-            <BackupSection />
-          </Section>
-          <Section id="appearance" title="Appearance">
-            <AppearanceSection />
-          </Section>
+    <header className="flex flex-wrap items-center gap-4">
+      {lead}
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <h1 className="truncate type-display text-fg">{title}</h1>
+        <p className="text-14 text-fg-secondary">{detail}</p>
       </div>
+      {actions}
+    </header>
+  );
+}
+
+function NavGroupLabel({ label, action }: { label: string; action?: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between px-2 pb-1 pt-4">
+      <span className="text-11 font-semibold uppercase tracking-[0.06em] text-fg-tertiary">{label}</span>
+      {action}
     </div>
   );
 }
 
-function HealthDot({ health }: { health: Health }) {
-  const label = { ok: "Configured", attention: "Needs attention", idle: "", unknown: "Loading" }[health];
+/**
+ * Unified Settings: Personal, Personas, Integrations, and System in one grouped sidebar
+ * with focused per-section master-detail screens.
+ */
+export function SettingsScreen() {
+  const router = useRouter();
+  const search = useSearchParams();
+  const loc = useLocation();
+  const native = useIsNativeShell();
+  const compact = useCompact();
+
+  const mounted = useSyncExternalStore(noSubscribe, () => true, () => false);
+  const winHash = useSyncExternalStore(subscribeHash, () => window.location.hash, () => "");
+  const hash = loc.hash || winHash;
+
+  const route = useMemo(() => resolveSettingsRoute(search, hash), [search, hash]);
+  const activeId = selectedNavId(route);
+
+  const boot = useBootstrap();
+  const secrets = useSecrets();
+  const runner = useRunnerStatus();
+  const auth = useAuthStatus();
+  const list = usePersonas();
+  const count = useMemories();
+
+  const all = useMemo(() => list.data?.personas ?? [], [list.data?.personas]);
+  const personas = useMemo(() => sortPersonas(all), [all]);
+  const selectedPersona = route.section === "persona" ? personas.find((p) => p.id === route.personaId) : undefined;
+
+  const [filter, setFilter] = useState("");
+  const [editing, setEditing] = useState<Persona | "new" | null>(null);
+  const [deleting, setDeleting] = useState<Persona | null>(null);
+  const [importingFor, setImportingFor] = useState<string | null>(null);
+  const [editingProfileFor, setEditingProfileFor] = useState<string | null>(null);
+
+  const importing = route.section === "memory" && importingFor === activeId;
+  const editingProfile = route.section === "you" && editingProfileFor === activeId;
+
+  const memoryExport = useMemoryExport();
+  const exportError = memoryExport.err;
+  useEffect(() => {
+    if (exportError && isNativeShell()) toast({ title: exportError, tone: "error" });
+  }, [exportError]);
+
+  const scrollAnchor = (route.section === "workspace" || route.section === "spaces") ? route.anchor : undefined;
+  useEffect(() => {
+    if (!mounted || !scrollAnchor) return;
+    document.getElementById(scrollAnchor)?.scrollIntoView();
+  }, [mounted, scrollAnchor]);
+
+  const missing = secrets.data ? missingConnections(secrets.data.secrets).length : 0;
+  const secretsHealth: SettingsHealth = !secrets.data ? "unknown" : missing || !secrets.data.key_configured ? "attention" : "ok";
+  const workspaceHealth: SettingsHealth = !secrets.data ? "unknown" : secrets.data.key_configured ? "ok" : "attention";
+  const runnersHealth: SettingsHealth = !runner.data ? "unknown" : runner.data.online ? "ok" : runner.data.starting ? "unknown" : "attention";
+  const signInHealth: SettingsHealth = !auth.data ? "unknown" : auth.data.password_set ? "ok" : "attention";
+
+  const total = count.data?.total;
+  const me = boot.data?.me;
+  const personaCountLoading = list.isPending;
+
+  if (!mounted) {
+    return (
+      <section aria-label="Settings">
+        <TopBar crumbs={[{ label: "Settings" }]} />
+        <Content>
+          <div aria-busy className="flex flex-col gap-6">
+            <PageHeader title="Settings" />
+            <Skeleton className="h-40 max-w-[1020px]" />
+          </div>
+        </Content>
+      </section>
+    );
+  }
+
+  const filtering = filter.trim().length > 0;
+  const showItem = (id: string, label: string, extra?: string) => matchesSettingsFilter(filter, label, extra ?? SETTINGS_FILTER_KEYWORDS[id]);
+
+  const personalItems: Array<{ id: string; label: string; href: string; lead: ReactNode; trailing?: ReactNode }> = [
+    {
+      id: "you",
+      label: "You",
+      href: settingsHref({ section: "you" }),
+      lead: <HumanAvatar name={me?.name ?? "You"} initials={me?.initials} color={me?.avatar_color} src={me?.avatar_url} size={20} label={false} />,
+    },
+    {
+      id: "appearance",
+      label: "Appearance",
+      href: settingsHref({ section: "appearance" }),
+      lead: <Icon name="sun" size={16} />,
+    },
+    {
+      id: "memory",
+      label: "Memory",
+      href: settingsHref({ section: "memory" }),
+      lead: <Icon name="bookmark" size={16} />,
+      trailing: total !== undefined && total > 0 ? <span className="text-12 text-fg-tertiary">{total}</span> : undefined,
+    },
+  ].filter((item) => showItem(item.id, item.label, item.id === "you" ? `${SETTINGS_FILTER_KEYWORDS.you} ${me?.name ?? ""}` : undefined));
+
+  const showAllPersonasRow = showItem("all-personas", "All personas");
+  const visiblePersonas = personas.filter((p) =>
+    matchesSettingsFilter(filter, p.name, p.handle ? `persona @${p.handle} ${p.handle}` : "persona"),
+  );
+  const showPersonasGroup = showAllPersonasRow || visiblePersonas.length > 0 || (!filtering && (personaCountLoading || list.isError || personas.length === 0));
+
+  type NavLinkEntry = { id: string; label: string; href: string; icon: IconName; health?: SettingsHealth; badge?: string };
+  const allIntegrationItems: NavLinkEntry[] = [
+    {
+      id: "secrets",
+      label: "Secrets & Credentials",
+      href: settingsHref({ section: "secrets", secretsTab: "provider" }),
+      icon: "key",
+      health: secretsHealth,
+      badge: missing ? `${missing} off` : undefined,
+    },
+    { id: "connectors", label: "Connectors", href: settingsHref({ section: "connectors" }), icon: "plug" },
+    { id: "repositories", label: "Repositories", href: settingsHref({ section: "repositories" }), icon: "github" },
+  ];
+  const integrationItems = allIntegrationItems.filter((item) => showItem(item.id, item.label));
+
+  const allSystemItems: NavLinkEntry[] = [
+    { id: "workspace", label: "Workspace", href: settingsHref({ section: "workspace" }), icon: "briefcase", health: workspaceHealth },
+    { id: "runners", label: "Runners", href: settingsHref({ section: "runners" }), icon: "server", health: runnersHealth },
+    { id: "dev-workspace", label: "Dev workspace", href: settingsHref({ section: "dev-workspace" }), icon: "terminal" },
+    { id: "spaces", label: "Spaces", href: settingsHref({ section: "spaces" }), icon: "folder" },
+    { id: "sign-in", label: "Sign-in", href: settingsHref({ section: "sign-in" }), icon: "lock", health: signInHealth },
+    { id: "backup", label: "Backup & move", href: settingsHref({ section: "backup" }), icon: "download" },
+  ];
+  const systemItems = allSystemItems.filter((item) => showItem(item.id, item.label));
+
+  const rowClass = (on: boolean) =>
+    cx(
+      "flex min-h-8 items-center gap-2.5 rounded-md px-2.5 text-13 transition-colors",
+      compact
+        ? on
+          ? "border border-accent bg-selected font-medium text-fg"
+          : "border border-border bg-surface text-fg-secondary hover:bg-hover hover:text-fg"
+        : on
+          ? "bg-selected font-medium text-fg"
+          : "text-fg-secondary hover:bg-hover hover:text-fg",
+    );
+
+  const sectionNav = compact ? (
+    <nav aria-label="Settings sections" className="flex gap-1.5 overflow-x-auto pb-1">
+      {[...personalItems, ...(showAllPersonasRow ? [{ id: "all-personas", label: "Personas", href: settingsHref({ section: "personas", personaFilter: "all" }) }] : [])].map((n) => (
+        <Link key={n.id} href={n.href} aria-current={activeId === n.id ? "page" : undefined} className={cx(rowClass(activeId === n.id), "flex-none whitespace-nowrap")}>
+          {n.label}
+        </Link>
+      ))}
+      {visiblePersonas.map((p) => (
+        <Link
+          key={p.id}
+          href={settingsHref({ section: "persona", personaId: p.id })}
+          data-testid="persona-row"
+          aria-current={activeId === `persona:${p.id}` ? "page" : undefined}
+          className={cx(rowClass(activeId === `persona:${p.id}`), "flex-none whitespace-nowrap")}
+        >
+          <PersonaAvatar persona={p} size={16} />
+          <span>{p.name}</span>
+        </Link>
+      ))}
+      {integrationItems.map((n) => (
+        <Link key={n.id} href={n.href} aria-current={activeId === n.id ? "page" : undefined} className={cx(rowClass(activeId === n.id), "flex-none whitespace-nowrap")}>
+          {n.health && <HealthDot health={n.health} />}
+          <span>{n.label}</span>
+          {n.badge && <span className="rounded-full bg-pill-human-bg px-1.5 text-11 text-pill-human-fg">{n.badge}</span>}
+        </Link>
+      ))}
+      {systemItems.map((n) => (
+        <Link key={n.id} href={n.href} aria-current={activeId === n.id ? "page" : undefined} className={cx(rowClass(activeId === n.id), "flex-none whitespace-nowrap")}>
+          {n.health && <HealthDot health={n.health} />}
+          <span>{n.label}</span>
+        </Link>
+      ))}
+    </nav>
+  ) : (
+    <nav aria-label="Settings sections" className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2.5 pb-4 pt-3">
+      <div className="relative mb-1 px-0.5">
+        <Icon name="search" size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-fg-tertiary" />
+        <input
+          type="search"
+          aria-label="Filter settings"
+          placeholder="Filter settings…"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          className="h-[30px] w-full rounded-md border border-border bg-surface pl-7 pr-6 text-12 text-fg placeholder:text-fg-tertiary focus:border-accent focus:outline-none"
+        />
+        {filter && (
+          <button
+            type="button"
+            aria-label="Clear filter"
+            onClick={() => setFilter("")}
+            className="absolute right-2 top-1/2 grid size-4 -translate-y-1/2 place-items-center rounded text-fg-tertiary hover:text-fg"
+          >
+            <Icon name="x" size={11} />
+          </button>
+        )}
+      </div>
+
+      {personalItems.length > 0 && (
+        <div className="flex flex-col gap-0.5">
+          <NavGroupLabel label="Personal" />
+          {personalItems.map((n) => (
+            <Link key={n.id} href={n.href} aria-current={activeId === n.id ? "page" : undefined} className={rowClass(activeId === n.id)}>
+              {n.lead}
+              <span className="min-w-0 flex-1 truncate">{n.label}</span>
+              {n.trailing}
+            </Link>
+          ))}
+        </div>
+      )}
+
+      {showPersonasGroup && (
+        <div className="flex flex-col gap-0.5">
+          <NavGroupLabel
+            label="Personas"
+            action={
+              list.data && all.length < MAX_PERSONAS ? (
+                <button
+                  type="button"
+                  aria-label="New persona"
+                  title="New persona"
+                  onClick={() => setEditing("new")}
+                  className="grid size-5 place-items-center rounded text-fg-secondary hover:bg-hover hover:text-accent"
+                >
+                  <Icon name="plus" size={13} />
+                </button>
+              ) : undefined
+            }
+          />
+          {showAllPersonasRow && (
+            <Link
+              href={settingsHref({ section: "personas", personaFilter: "all" })}
+              data-testid="all-personas"
+              aria-current={activeId === "all-personas" ? "page" : undefined}
+              className={rowClass(activeId === "all-personas")}
+            >
+              <Icon name="agents" size={16} />
+              <span className="min-w-0 flex-1 truncate">All personas</span>
+            </Link>
+          )}
+          {list.isError ? (
+            <Banner tone="blocked" title="Couldn’t load personas" actions={<Button variant="outline" onClick={() => void list.refetch()}>Retry</Button>}>
+              {errorText(list.error)}
+            </Banner>
+          ) : !list.data ? (
+            <div aria-busy="true" className="flex flex-col gap-1 px-1">
+              <Skeleton className="h-8" />
+              <Skeleton className="h-8" />
+            </div>
+          ) : (
+            <>
+              {visiblePersonas.map((p) => (
+                <Link
+                  key={p.id}
+                  href={settingsHref({ section: "persona", personaId: p.id })}
+                  data-testid="persona-row"
+                  aria-current={activeId === `persona:${p.id}` ? "page" : undefined}
+                  className={rowClass(activeId === `persona:${p.id}`)}
+                >
+                  <PersonaAvatar persona={p} size={20} />
+                  <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                  {p.is_default && <DefaultBadge small />}
+                </Link>
+              ))}
+              {!filtering && personas.length === 0 && (
+                <p className="px-2.5 py-1 text-12 text-fg-secondary">No personas yet. The built-in Assistant is your default.</p>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {integrationItems.length > 0 && (
+        <div className="flex flex-col gap-0.5">
+          <NavGroupLabel label="Integrations" />
+          {integrationItems.map((n) => (
+            <Link key={n.id} href={n.href} aria-current={activeId === n.id ? "page" : undefined} className={rowClass(activeId === n.id)}>
+              <Icon name={n.icon} size={16} />
+              <span className="min-w-0 flex-1 truncate">{n.label}</span>
+              {n.health && <HealthDot health={n.health} />}
+              {n.badge && <span className="rounded-full bg-pill-human-bg px-1.5 text-11 text-pill-human-fg">{n.badge}</span>}
+            </Link>
+          ))}
+        </div>
+      )}
+
+      {systemItems.length > 0 && (
+        <div className="flex flex-col gap-0.5">
+          <NavGroupLabel label="System" />
+          {systemItems.map((n) => (
+            <Link key={n.id} href={n.href} aria-current={activeId === n.id ? "page" : undefined} className={rowClass(activeId === n.id)}>
+              <Icon name={n.icon} size={16} />
+              <span className="min-w-0 flex-1 truncate">{n.label}</span>
+              {n.health && <HealthDot health={n.health} />}
+            </Link>
+          ))}
+        </div>
+      )}
+
+      {filtering && personalItems.length === 0 && !showPersonasGroup && integrationItems.length === 0 && systemItems.length === 0 && (
+        <p className="px-2.5 py-4 text-12 text-fg-tertiary">No settings match &ldquo;{filter.trim()}&rdquo;.</p>
+      )}
+    </nav>
+  );
+
+  const navModel = buildSettingsNavModel({
+    me,
+    personas: personas.map((p) => ({
+      id: p.id,
+      name: p.name,
+      handle: p.handle,
+      color: p.color,
+      avatar_url: p.avatar_url,
+      is_default: p.is_default,
+    })),
+    personasState: list.isError ? "error" : !list.data ? "loading" : "ready",
+    canAddPersona: all.length < MAX_PERSONAS,
+    memoryTotal: total,
+    health: {
+      secrets: secretsHealth,
+      missingCredentials: missing,
+      workspace: workspaceHealth,
+      runners: runnersHealth,
+      signIn: signInHealth,
+    },
+    selectedId: activeId,
+    filter,
+    origin: pageOrigin(),
+  });
+
+  const handleNativeCommand = (cmd: NativeCommand) => {
+    if (cmd.type === "nav.search") {
+      if (cmd.searchId === SETTINGS_SEARCH_ID) setFilter(cmd.value);
+      return;
+    }
+    if (cmd.type === "nav.action") {
+      if (cmd.actionId === NEW_PERSONA_ACTION) setEditing("new");
+      else if (cmd.actionId === RETRY_PERSONAS_ACTION) void list.refetch();
+      return;
+    }
+    if (cmd.type !== "nav.activate") return;
+    const id = cmd.itemId;
+    if (id === "all-personas") router.push(settingsHref({ section: "personas", personaFilter: "all" }));
+    else if (id.startsWith("persona:")) router.push(settingsHref({ section: "persona", personaId: id.slice("persona:".length) }));
+    else if (id === "secrets") router.push(settingsHref({ section: "secrets", secretsTab: "provider" }));
+    else if (SIMPLE_NAV_IDS.has(id)) {
+      router.push(settingsHref({ section: id as Exclude<SettingsRoute["section"], "personas" | "persona" | "secrets"> }));
+    }
+  };
+
+  const sectionTitle = route.section === "persona" ? (selectedPersona?.name ?? "Persona") : SECTION_TITLES[route.section];
+  const crumbs: Crumb[] = route.section === "persona"
+    ? [
+        { label: "Settings", href: "/settings" },
+        { label: "Personas", href: settingsHref({ section: "personas", personaFilter: "all" }) },
+        { label: selectedPersona?.name ?? "Persona" },
+      ]
+    : [{ label: "Settings", href: "/settings" }, { label: sectionTitle }];
+
+  const topBarActions =
+    route.section === "memory" ? (
+      <>
+        {total !== undefined && <span className="text-12 text-fg-tertiary">{total} entries</span>}
+        <button
+          type="button"
+          aria-pressed={importing}
+          onClick={() => setImportingFor((v) => (v === activeId ? null : activeId))}
+          className={cx(
+            "inline-flex h-[30px] items-center gap-1.5 rounded-md border px-3 text-13 text-fg",
+            importing ? "border-accent bg-selected" : "border-btn-secondary-border bg-btn-secondary hover:bg-hover",
+          )}
+        >
+          <Icon name="upload" size={14} />
+          Import
+        </button>
+        <ExportMenu />
+      </>
+    ) : route.section === "workspace" && !native ? (
+      <span className="flex flex-wrap items-center gap-4 text-13">
+        <Link href="/chat?new&setup" className="text-accent hover:underline">Run setup again →</Link>
+        <Link href="/setup" className="text-accent hover:underline">Open setup checklist →</Link>
+      </span>
+    ) : undefined;
+
+  const nativeActions =
+    route.section === "memory"
+      ? [
+          {
+            id: "custom.import",
+            label: "Import",
+            kind: "toggle" as const,
+            icon: "upload",
+            showsLabel: true,
+            on: importing,
+            run: () => setImportingFor((v) => (v === activeId ? null : activeId)),
+          },
+          {
+            id: "custom.export",
+            label: "Export",
+            kind: "menu" as const,
+            icon: "download",
+            showsLabel: true,
+            disabled: memoryExport.busy,
+            menu: [
+              { id: "export.json", label: "JSON (all entries)", run: () => void memoryExport.run("json") },
+              { id: "export.md", label: "Markdown (all entries)", run: () => void memoryExport.run("md") },
+            ],
+          },
+        ]
+      : route.section === "workspace"
+        ? [
+            { id: "settings.setup", label: "Run setup again", kind: "button" as const, showsLabel: true, run: () => router.push("/chat?new&setup") },
+            { id: "settings.checklist", label: "Open setup checklist", kind: "button" as const, showsLabel: true, run: () => router.push("/setup") },
+          ]
+        : undefined;
+
+  const wideBody =
+    route.section === "you" ||
+    route.section === "memory" ||
+    route.section === "personas" ||
+    route.section === "persona" ||
+    route.section === "connectors" ||
+    route.section === "spaces" ||
+    (route.section === "secrets" && route.secretsTab === "api");
+
+  return (
+    <section aria-label="Settings">
+      {!compact && <NavigatorPortal native={{ model: navModel, onCommand: handleNativeCommand }}>{sectionNav}</NavigatorPortal>}
+      <TopBar
+        crumbs={crumbs}
+        nativeTitle={{
+          title: sectionTitle,
+          ...(route.section === "memory" && total !== undefined ? { subtitle: `${total} entries` } : {}),
+        }}
+        nativeActions={nativeActions}
+        actions={topBarActions}
+      />
+      <Content>
+        <div className="flex flex-col gap-5">
+          {compact && sectionNav}
+          <div className={cx("flex min-w-0 flex-col gap-6", wideBody ? "max-w-[1020px]" : "max-w-[820px]")}>
+            {route.section === "you" && (
+              <div id="you" className="flex flex-col gap-5">
+                <PlainHeader
+                  lead={<HumanAvatar name={me?.name ?? "You"} initials={me?.initials} color={me?.avatar_color} src={me?.avatar_url} size={72} label={false} />}
+                  title={me?.name ?? "You"}
+                  detail={[me?.role_title, "Your profile and what your personas remember about you."].filter(Boolean).join(" · ")}
+                  actions={
+                    <Button variant="secondary" aria-pressed={editingProfile} onClick={() => setEditingProfileFor((v) => (v === activeId ? null : activeId))}>
+                      {editingProfile ? "Done" : "Edit profile"}
+                    </Button>
+                  }
+                />
+                {editingProfile && (
+                  <section aria-label="Profile">
+                    <ProfileSection />
+                  </section>
+                )}
+                <MemorySection key="person" whose="person" heading="About you" />
+              </div>
+            )}
+
+            {route.section === "appearance" && (
+              <section id="appearance" aria-labelledby="appearance-title" className="flex flex-col gap-3">
+                <div>
+                  <h1 id="appearance-title" className="type-display text-fg">Appearance</h1>
+                  <p className="mt-1 text-14 text-fg-secondary">Theme, text size, harness activity, and palette colors.</p>
+                </div>
+                <AppearanceSection />
+              </section>
+            )}
+
+            {route.section === "memory" && (
+              <section id="memory" aria-label="Memory" className="flex flex-col gap-5">
+                {importing ? (
+                  <div className="mx-auto w-full max-w-2xl">
+                    <ImportView onClose={() => setImportingFor(null)} />
+                  </div>
+                ) : (
+                  <>
+                    <PlainHeader
+                      lead={
+                        <span className="grid size-[72px] flex-none place-items-center rounded-full bg-selected text-fg-secondary">
+                          <Icon name="bookmark" size={28} />
+                        </span>
+                      }
+                      title="Memory"
+                      detail="Every memory: about you, and each persona’s and space’s own."
+                    />
+                    <MemorySection key="all" whose="" focus={route.focusId} heading="All memories" />
+                  </>
+                )}
+              </section>
+            )}
+
+            {route.section === "personas" && (
+              <div id="personas">
+                <PersonasList
+                  key={route.personaFilter}
+                  personas={all}
+                  filter={route.personaFilter}
+                  onOpen={(id) => router.push(settingsHref({ section: "persona", personaId: id }))}
+                  onNew={() => setEditing("new")}
+                  canAdd={all.length < MAX_PERSONAS}
+                />
+              </div>
+            )}
+
+            {route.section === "persona" && (
+              <div id="persona" className="flex flex-col gap-5">
+                {list.isPending ? (
+                  <Skeleton className="h-40" />
+                ) : list.isError ? (
+                  <Banner tone="blocked" title="Couldn’t load persona" actions={<Button variant="outline" onClick={() => void list.refetch()}>Retry</Button>}>
+                    {errorText(list.error)}
+                  </Banner>
+                ) : selectedPersona ? (
+                  <PersonaDetailView
+                    persona={selectedPersona}
+                    onEdit={() => setEditing(selectedPersona)}
+                    onDelete={() => setDeleting(selectedPersona)}
+                  />
+                ) : (
+                  <PersonasList
+                    personas={all}
+                    filter="all"
+                    onOpen={(id) => router.push(settingsHref({ section: "persona", personaId: id }))}
+                    onNew={() => setEditing("new")}
+                    canAdd={all.length < MAX_PERSONAS}
+                  />
+                )}
+              </div>
+            )}
+
+            {route.section === "secrets" && (
+              <SecretsView
+                secretsTab={route.secretsTab}
+                secretId={route.secretId}
+                personas={personas}
+                missing={missing}
+                providerSecrets={secrets.data}
+                onTabChange={(tab) => router.replace(settingsHref({ section: "secrets", secretsTab: tab }), { scroll: false })}
+              />
+            )}
+
+            {route.section === "connectors" && (
+              <div id="connectors">
+                <ConnectorsSection personas={personas} />
+              </div>
+            )}
+
+            {route.section === "repositories" && (
+              <section id="repositories" aria-labelledby="repositories-title" className="flex flex-col gap-3">
+                <h1 id="repositories-title" className="type-display text-fg">Repositories &amp; GitHub owners</h1>
+                <RepositorySourcesSection />
+              </section>
+            )}
+
+            {route.section === "workspace" && (
+              <div id="workspace" className="flex flex-col gap-8">
+                <section aria-labelledby="workspace-title" className="flex flex-col gap-3">
+                  <div>
+                    <h1 id="workspace-title" className="type-display text-fg">Workspace</h1>
+                    <p className="mt-1 text-14 text-fg-secondary">Shared by every space. Secret encryption is configured on the API server.</p>
+                  </div>
+                  <SetupChecklist />
+                  <WorkspaceSection />
+                </section>
+                <section id="images" aria-labelledby="images-title" className="flex scroll-mt-6 flex-col gap-3 border-t border-border-subtle pt-6">
+                  <div>
+                    <h2 id="images-title" className="type-title">Image engine</h2>
+                    <p className="mt-1 text-14 text-fg-secondary">Which harness makes the images personas and workflows ask for.</p>
+                  </div>
+                  <ImageEngineSection />
+                </section>
+              </div>
+            )}
+
+            {route.section === "runners" && (
+              <section id="runners" aria-labelledby="runners-title" className="flex flex-col gap-3">
+                <div>
+                  <h1 id="runners-title" className="type-display text-fg">Runner backends</h1>
+                  <p className="mt-1 text-14 text-fg-secondary">
+                    Reported by each runner’s heartbeat. Set by environment variables on the runner process; restart the runner to change them.
+                  </p>
+                </div>
+                <RunnerSection />
+              </section>
+            )}
+
+            {route.section === "dev-workspace" && (
+              <section id="dev-workspace" aria-labelledby="dev-workspace-title" className="flex flex-col gap-3">
+                <div>
+                  <h1 id="dev-workspace-title" className="type-display text-fg">Dev workspace</h1>
+                  <p className="mt-1 text-14 text-fg-secondary">
+                    Persistent Nix + LazyVim container for inspecting and testing agent branches. No container runs until enabled.
+                  </p>
+                </div>
+                <DevWorkspaceSection />
+              </section>
+            )}
+
+            {route.section === "spaces" && <SpacesView spaceId={route.spaceId} />}
+
+            {route.section === "sign-in" && (
+              <section id="sign-in" aria-labelledby="sign-in-title" className="flex flex-col gap-3">
+                <div>
+                  <h1 id="sign-in-title" className="type-display text-fg">Sign-in</h1>
+                  <p className="mt-1 text-14 text-fg-secondary">How you get into Vesper from a browser that isn’t signed in.</p>
+                </div>
+                <SignInSection />
+              </section>
+            )}
+
+            {route.section === "backup" && (
+              <section id="backup" aria-labelledby="backup-title" className="flex flex-col gap-3">
+                <div>
+                  <h1 id="backup-title" className="type-display text-fg">Backup &amp; move</h1>
+                  <p className="mt-1 text-14 text-fg-secondary">Take everything with you to another machine.</p>
+                </div>
+                <BackupSection />
+              </section>
+            )}
+          </div>
+        </div>
+      </Content>
+      {editing && <PersonaEditor key={editing === "new" ? "new" : editing.id} persona={editing} onClose={() => setEditing(null)} />}
+      {deleting && <DeleteDialog persona={deleting} all={all} onClose={() => setDeleting(null)} />}
+    </section>
+  );
+}
+
+function SecretsView({
+  secretsTab,
+  secretId,
+  personas,
+  missing,
+  providerSecrets,
+  onTabChange,
+}: {
+  secretsTab: SecretsTab;
+  secretId?: string;
+  personas: Persona[];
+  missing: number;
+  providerSecrets?: { key_configured: boolean };
+  onTabChange: (tab: SecretsTab) => void;
+}) {
+  const apiSecrets = useApiSecrets();
+  const keyConfigured = providerSecrets?.key_configured ?? apiSecrets.data?.key_configured;
+  const apiCount = apiSecrets.data?.secrets.length ?? 0;
+
+  return (
+    <section id="secrets" aria-labelledby="secrets-title" className="flex flex-col gap-4">
+      <div>
+        <h1 id="secrets-title" className="type-display text-fg">Secrets &amp; Credentials</h1>
+        <p className="mt-1 text-14 text-fg-secondary">
+          Values are write-only. Stored encrypted with SECRETS_KEY, injected only into runs or API requests whose scopes allow them, and never shown or returned by the API.
+        </p>
+      </div>
+      {keyConfigured === false ? (
+        <Banner tone="human" title="Credentials and secrets are read-only until SECRETS_KEY is set">
+          Add <code>SECRETS_KEY=$(openssl rand -base64 32)</code> to <code>.env</code> and restart the API. Until then runs get no harness keys or git credentials and API secrets can&rsquo;t be stored.
+        </Banner>
+      ) : keyConfigured === true ? (
+        <p className="flex items-center gap-2 rounded-xl border border-border bg-surface px-3.5 py-2.5 text-13 text-fg-secondary">
+          <Icon name="check" size={14} className="text-pill-done-fg" />
+          <span>
+            <span className="font-medium text-fg">SECRETS_KEY is configured</span> · Encrypted at rest · Write-only
+          </span>
+        </p>
+      ) : null}
+      <div>
+        <Segmented<SecretsTab>
+          label="Secrets category"
+          value={secretsTab}
+          onChange={onTabChange}
+          options={[
+            {
+              value: "provider",
+              name: missing > 0 ? `Provider credentials (${missing} off)` : "Provider credentials",
+              label: (
+                <span className="inline-flex items-center gap-1.5">
+                  <span>Provider credentials</span>
+                  {missing > 0 && <span className="rounded-full bg-pill-human-bg px-1.5 text-10 text-pill-human-fg">{missing} off</span>}
+                </span>
+              ),
+            },
+            {
+              value: "api",
+              name: apiCount > 0 ? `API secrets (${apiCount})` : "API secrets",
+              label: (
+                <span className="inline-flex items-center gap-1.5">
+                  <span>API secrets</span>
+                  {apiCount > 0 && <span className="text-11 text-fg-tertiary">{apiCount}</span>}
+                </span>
+              ),
+            },
+          ]}
+        />
+      </div>
+      {secretsTab === "provider" ? (
+        <SecretsSection hideKeyBanner />
+      ) : (
+        <ApiSecretsSection personas={personas} initialId={secretId} hideKeyBanner embedded />
+      )}
+    </section>
+  );
+}
+
+function SpacesView({ spaceId }: { spaceId?: string }) {
+  const router = useRouter();
+  const spaces = useSpaces();
+  const spaceList = spaces.data?.spaces ?? [];
+  const activeSpace =
+    (spaceId ? spaceList.find((s) => s.id === spaceId) : undefined) ??
+    spaceList.find((s) => s.memory_count > 0) ??
+    spaceList[0];
+
+  return (
+    <div id="spaces" className="flex flex-col gap-8">
+      <section aria-labelledby="spaces-title" className="flex flex-col gap-4">
+        <div>
+          <h1 id="spaces-title" className="type-display text-fg">Spaces</h1>
+          <p className="mt-1 text-14 text-fg-secondary">Per-space memory and agent skill overrides.</p>
+        </div>
+        {spaces.isError ? (
+          <Banner tone="blocked" title="Couldn’t load spaces" actions={<Button variant="outline" onClick={() => void spaces.refetch()}>Retry</Button>}>
+            {errorText(spaces.error)}
+          </Banner>
+        ) : !spaces.data ? (
+          <Skeleton className="h-32" />
+        ) : spaceList.length === 0 ? (
+          <Card>
+            <EmptyState
+              compact
+              icon="folder"
+              title="No spaces yet"
+              actions={<ButtonLink href="/spaces/new" variant="outline">New space</ButtonLink>}
+            >
+              Create a space to keep separate memory for a project or topic and customize agent skills per space.
+            </EmptyState>
+          </Card>
+        ) : activeSpace ? (
+          <div className="flex flex-col gap-4">
+            <div role="group" aria-label="Choose a space" className="flex flex-wrap gap-2">
+              {spaceList.map((sp) => {
+                const on = sp.id === activeSpace.id;
+                return (
+                  <button
+                    key={sp.id}
+                    type="button"
+                    data-testid="space-memory-row"
+                    aria-pressed={on}
+                    onClick={() => router.replace(settingsHref({ section: "spaces", spaceId: sp.id }), { scroll: false })}
+                    className={cx(
+                      "inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-13 transition-colors",
+                      on ? "border-accent bg-selected font-medium text-fg" : "border-border bg-surface text-fg-secondary hover:bg-hover hover:text-fg",
+                    )}
+                  >
+                    <SpaceTile name={sp.name} color={sp.color} size={18} />
+                    <span>{sp.name}</span>
+                    {sp.memory_count > 0 && <span className="text-11 text-fg-tertiary">{sp.memory_count}</span>}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-surface px-3.5 py-2.5 text-13">
+              <span className="text-fg-secondary">
+                {activeSpace.space_memory === false
+                  ? "Space memory is off: chats here use your general memory. These were saved while it was on."
+                  : "What chats in this space remember. Only chats in it see these."}
+              </span>
+              <Link href={`/spaces/${activeSpace.id}`} className="text-12 text-accent hover:underline">
+                Open {activeSpace.name} →
+              </Link>
+            </div>
+            <MemorySection key={`space:${activeSpace.id}`} whose={`space:${activeSpace.id}`} heading={`${activeSpace.name} memory`} />
+          </div>
+        ) : null}
+      </section>
+      <section id="overrides" aria-labelledby="overrides-title" className="flex scroll-mt-6 flex-col gap-3 border-t border-border-subtle pt-6">
+        <div>
+          <h2 id="overrides-title" className="type-title">Space overrides</h2>
+          <p className="mt-1 text-14 text-fg-secondary">Customize an agent for one space while keeping future agent definition updates.</p>
+        </div>
+        <ProjectOverridesSection />
+      </section>
+    </div>
+  );
+}
+
+function PersonaDetailView({ persona, onEdit, onDelete }: { persona: Persona; onEdit: () => void; onDelete: () => void }) {
+  const scopedMemories = useMemories("", undefined, 0, persona.id);
+  return (
+    <>
+      <PersonaProfile p={persona} memories={scopedMemories.data?.total} onEdit={onEdit} onDelete={onDelete} />
+      <PersonaModelSection p={persona} />
+      <PersonaWorkSection p={persona} />
+      <PersonaConnectors personaId={persona.id} />
+      <div className="pt-2">
+        <MemorySection key={persona.id} whose={persona.id} heading={`${persona.name}’s memory`} />
+      </div>
+    </>
+  );
+}
+
+function HealthDot({ health }: { health: SettingsHealth }) {
+  const label = { ok: "Configured", attention: "Needs attention", idle: "", unknown: "Checking" }[health];
   return (
     <span
       role={label ? "img" : undefined}
@@ -189,18 +946,6 @@ function HealthDot({ health }: { health: Health }) {
         (health === "idle" || health === "unknown") && "bg-track",
       )}
     />
-  );
-}
-
-function Section({ id, title, lead, children }: { id: string; title: string; lead?: string; children: ReactNode }) {
-  return (
-    <section id={id} aria-labelledby={`${id}-title`} className="flex scroll-mt-6 flex-col gap-3">
-      <div>
-        <h2 id={`${id}-title`} className="type-title">{title}</h2>
-        {lead && <p className="mt-1 text-14 text-fg-secondary">{lead}</p>}
-      </div>
-      {children}
-    </section>
   );
 }
 
@@ -266,7 +1011,6 @@ function HostFoldersSetting({ status }: { status: Schemas["RunnerStatus"] }) {
     <>
       <Toggle
         checked={on}
-        // Turning it off always works; turning it on needs a runner with a folder.
         disabled={update.isPending || (!on && dirs.length === 0)}
         onChange={(host_folder_workspaces) => update.mutate({ host_folder_workspaces })}
         label="Keep new checkouts in a folder on this machine"
@@ -377,7 +1121,7 @@ function RunnerSection() {
           <Row label="Per agent">
             <span className="text-13 text-fg-secondary">
               Each agent also caps its own parallel runs (max concurrency). Change it on the agent’s page.{" "}
-              <Link href="/customization?who=agents" className="text-accent">Agents →</Link>
+              <Link href={settingsHref({ section: "personas", personaFilter: "tickets" })} className="text-accent">Agents →</Link>
             </span>
           </Row>
         </dl>
@@ -401,11 +1145,31 @@ function Stat({ label, value, of }: { label: string; value: number; of?: number 
 
 function ProjectOverridesSection() {
   const boot = useBootstrap();
-  return <Card>
-    <p className="text-14 text-fg-secondary">Add skills to extend an agent’s defaults, or remove skills to stop injecting them for a space. With no override, the space uses the agent definition as is. Changes apply to new runs; active runs keep their saved snapshot.</p>
-    <p className="mt-2 text-14 text-fg-secondary">Open an agent’s Skills tab to inspect its skills. In Space overrides, choose Add or an existing space to edit skill additions and removals.</p>
-    {boot.isPending && <div aria-label="Loading space override editors" className="mt-4"><Skeleton className="h-16" /></div>}
-    {boot.isError && <Banner tone="blocked" title="Couldn’t load space override editors" actions={<Button variant="outline" onClick={() => void boot.refetch()}>Retry</Button>}>Agent and space details are unavailable.</Banner>}
-    {boot.data && (!boot.data.projects.length || !boot.data.agents.length ? <p className="mt-4 text-14 text-fg-tertiary">No space overrides available yet. Create a space that tracks work and an agent first; until then agents use their default skills.</p> : <ul className="mt-4 flex flex-col gap-2">{boot.data.agents.map((agent) => <li key={agent.id}><Link href={`/agents/${agent.handle}?tab=skills#overrides`} className="text-14 text-accent">Manage {agent.name} project skills →</Link></li>)}</ul>)}
-  </Card>;
+  return (
+    <Card>
+      <p className="text-14 text-fg-secondary">
+        Add skills to extend an agent’s defaults, or remove skills to stop injecting them for a space. With no override, the space uses the agent definition as is. Changes apply to new runs; active runs keep their saved snapshot.
+      </p>
+      <p className="mt-2 text-14 text-fg-secondary">
+        Open an agent’s Skills tab to inspect its skills. In Space overrides, choose Add or an existing space to edit skill additions and removals.
+      </p>
+      {boot.isPending && <div aria-label="Loading space override editors" className="mt-4"><Skeleton className="h-16" /></div>}
+      {boot.isError && <Banner tone="blocked" title="Couldn’t load space override editors" actions={<Button variant="outline" onClick={() => void boot.refetch()}>Retry</Button>}>Agent and space details are unavailable.</Banner>}
+      {boot.data && (!boot.data.projects.length || !boot.data.agents.length ? (
+        <p className="mt-4 text-14 text-fg-tertiary">
+          No space overrides available yet. Create a space that tracks work and an agent first; until then agents use their default skills.
+        </p>
+      ) : (
+        <ul className="mt-4 flex flex-col gap-2">
+          {boot.data.agents.map((agent) => (
+            <li key={agent.id}>
+              <Link href={`/agents/${agent.handle}?tab=skills#overrides`} className="text-14 text-accent">
+                Manage {agent.name} project skills →
+              </Link>
+            </li>
+          ))}
+        </ul>
+      ))}
+    </Card>
+  );
 }

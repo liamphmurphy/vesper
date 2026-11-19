@@ -158,7 +158,8 @@ test("pageScope maps Knowledge, Work views, and app routes to their scoped palet
   assert.deepEqual(pageScope("/work", "?view=epics"), { kind: "type", type: "epic", label: "Epics" });
   assert.deepEqual(pageScope("/chat/c1"), { kind: "type", type: "chat", label: "Chats" });
   assert.deepEqual(pageScope("/runs/r1"), { kind: "type", type: "run", label: "Runs" });
-  assert.deepEqual(pageScope("/customization"), { kind: "type", type: "people", label: "People" });
+  assert.deepEqual(pageScope("/settings", "?section=personas"), { kind: "type", type: "people", label: "People" });
+  assert.deepEqual(pageScope("/settings?persona=p1"), { kind: "type", type: "people", label: "People" });
   assert.deepEqual(pageScope("/workflows/w1"), { kind: "type", type: "workflow", label: "Workflows" });
   assert.deepEqual(pageScope("/library"), { kind: "type", type: "library", label: "Library" });
   assert.deepEqual(pageScope("/scheduled"), { kind: "type", type: "scheduled", label: "Scheduled" });
@@ -166,6 +167,7 @@ test("pageScope maps Knowledge, Work views, and app routes to their scoped palet
   assert.deepEqual(pageScope("/spaces/s1"), { kind: "type", type: "space", label: "Spaces" });
   assert.deepEqual(pageScope("/artifacts/a1"), { kind: "type", type: "artifact", label: "Artifacts" });
   assert.equal(pageScope("/settings"), undefined);
+  assert.equal(pageScope("/settings?section=secrets"), undefined);
 });
 
 test("Knowledge helpers parse #tag queries, format folders and step kinds", () => {

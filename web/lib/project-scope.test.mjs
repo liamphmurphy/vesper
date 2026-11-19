@@ -13,17 +13,17 @@ test("one menu: Work, the Apps flyout's Apps and Tools, and the footer, with uni
     ["Work", ["Work"]],
     ["Apps", ["Knowledge", "Custom Apps", "Library"]],
     ["Tools", ["Workflows", "Scheduled", "Learn", "Reports", "HTTP Client"]],
-    ["You", ["Customization", "Settings"]],
+    ["You", ["Settings"]],
   ]);
   const hrefs = NAV_GROUPS.flatMap((g) => g.items.map((i) => i.href));
   assert.equal(new Set(hrefs).size, hrefs.length);
   // Work-mode pages that were merged or cut aren't in the menu.
-  for (const gone of ["/dashboard", "/board", "/epics", "/plans", "/artifacts", "/costs", "/agents"]) assert.ok(!hrefs.includes(gone), gone);
+  for (const gone of ["/dashboard", "/board", "/epics", "/plans", "/artifacts", "/costs", "/agents", "/customization"]) assert.ok(!hrefs.includes(gone), gone);
 });
 
 test("the Apps row is current on any page its flyout opens that has no rail entry of its own", () => {
   for (const p of ["/apps", "/apps/habit-tracker", "/workflows/1", "/scheduled", "/learn/2", "/reports", "/http", "/dev"]) assert.equal(inAppsMenu(p), true, p);
-  for (const p of ["/", "/chat/1", "/inbox", "/tickets", "/customization"]) assert.equal(inAppsMenu(p), false, p);
+  for (const p of ["/", "/chat/1", "/inbox", "/tickets", "/settings"]) assert.equal(inAppsMenu(p), false, p);
   // Knowledge and Library have their own rail entries, which read as current instead, also for
   // decks' and designs' old addresses, which lead to their Knowledge pages (LAZYAGENTS-212).
   for (const p of ["/knowledge/abc/the-old-harbour", "/library", "/library/item-1", "/apps/designs/d1", "/apps/slides/s1"]) assert.equal(inAppsMenu(p), false, p);

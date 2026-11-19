@@ -214,7 +214,7 @@ function AboutYou({ onNext }: { onNext: () => void }) {
       </div>
       {tooLong && <Alert error={`Keep “What you do” to ${ROLE_MAX} characters.`} />}
       <Alert error={error} />
-      <Foot hint="You can change these in Customization.">
+      <Foot hint="You can change these in Settings.">
         <button type="button" className={primary} disabled={!name.trim() || tooLong || busy} onClick={save}>
           {busy ? "Saving…" : "Continue"}
         </button>
@@ -438,7 +438,7 @@ function FirstPersona({ harness, onDone }: { harness?: HarnessId; onDone: (perso
   const { fresh, failed, waiting } = draftState(list, before, sentAt, seen, proposals.dataUpdatedAt);
   const draft = fresh ?? list.filter((p) => p.state === "pending").at(-1);
   const ready = !!draft && draft.avatar_state !== "pending";
-  const shownError = failed && !error ? "No draft came back. Try describing them differently, or check that your Assistant may create personas (Customization → Personas)." : error;
+  const shownError = failed && !error ? "No draft came back. Try describing them differently, or check that your Assistant may create personas (Settings → Personas)." : error;
 
   async function send() {
     const words = text.trim();

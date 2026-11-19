@@ -1,14 +1,14 @@
 import { expect, test } from "@playwright/test";
 import { installChatApi } from "./mock-chat-api";
 
-// Customization → You: display name, role title, email addresses, picture upload/replace/remove. The menu has no profile.
+// Settings → You: display name, role title, email addresses, picture upload/replace/remove. The menu has no profile.
 
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
 const profile = (page: import("@playwright/test").Page) => page.getByRole("region", { name: "Profile" });
-const headerPic = (page: import("@playwright/test").Page) => page.getByRole("region", { name: "Customization" }).locator("header img");
+const headerPic = (page: import("@playwright/test").Page) => page.getByRole("region", { name: "Settings" }).locator("header img");
 
 async function openProfile(page: import("@playwright/test").Page) {
-  await page.goto("/customization?who=person");
+  await page.goto("/settings?section=you");
   await page.getByRole("button", { name: "Edit profile" }).click();
 }
 
@@ -32,7 +32,7 @@ test("edit the display name and role: Save is gated, and the shell shows the new
   await save.click();
   await expect(section.getByRole("status")).toHaveText("Profile saved.");
   expect(mock.profileRequests).toEqual([`PATCH ${JSON.stringify({ name: "Maya Chen", role_title: "Engineering lead" })}`]);
-  const header = page.getByRole("region", { name: "Customization" }).locator("header").last();
+  const header = page.getByRole("region", { name: "Settings" }).locator("header").last();
   await expect(header).toContainText("Maya Chen");
   await expect(header).toContainText("Engineering lead");
   await expect(save).toBeDisabled();
@@ -107,7 +107,7 @@ test("upload, replace and remove a picture; the header follows", async ({ page }
   expect(mock.profileRequests).toEqual(["PUT avatar", "DELETE avatar"]);
 });
 
-test("the profile is only under Customization, not in the menu or Settings", async ({ page }) => {
+test("the profile is under Settings → You, not in the main menu", async ({ page }) => {
   await installChatApi(page);
   await page.addInitScript(() => localStorage.setItem("lazyagents.sidebar-expanded", "1"));
   await page.goto("/chat?project=WEB");
@@ -115,10 +115,8 @@ test("the profile is only under Customization, not in the menu or Settings", asy
   await expect(menu.getByRole("button", { name: "New chat" })).toBeVisible();
   await expect(menu.getByRole("link", { name: /Liam/ })).toHaveCount(0);
   await expect(menu.getByRole("link", { name: "Customization" })).toHaveCount(0);
-  await page.getByRole("complementary", { name: "Right rail" }).getByRole("link", { name: "Customization", exact: true }).click();
-  await page.getByRole("button", { name: /^You/ }).click();
+  await page.getByRole("complementary", { name: "Right rail" }).getByRole("link", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Edit profile" }).click();
   await expect(profile(page).getByLabel("Display name")).toHaveValue("Liam");
-  await page.goto("/settings");
   await expect(page.getByRole("navigation", { name: "Settings sections" }).getByRole("link", { name: /Profile/ })).toHaveCount(0);
 });
