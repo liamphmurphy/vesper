@@ -13,10 +13,11 @@ struct InspectorHeaderView: View {
     var body: some View {
         let model = tabs.list.active?.state.inspector
         let active = InspectorLogic.activeTab(in: model)
+        let popoutTabs = isPoppedOut ? (model?.tabs.filter { $0.kind != .web } ?? []) : []
         HStack(spacing: 6) {
-            if let model, model.tabs.count > 1 {
+            if popoutTabs.count > 1 {
                 HStack(spacing: 2) {
-                    ForEach(model.tabs) { tab in
+                    ForEach(popoutTabs) { tab in
                         InspectorTabButton(
                             tab: tab,
                             selected: tab.id == active?.id,
