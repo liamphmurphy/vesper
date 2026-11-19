@@ -12,7 +12,7 @@ import { pageHref, restoreObsidianSyntax, visibleProperties, wordCount } from "@
 import { KnowledgeSyntax } from "@/lib/knowledge-editor";
 import { KnowledgeCompletion } from "@/lib/knowledge-completion";
 import { api, unwrap } from "@/lib/api/client";
-import { fetchKnowledgeImages, usePage, usePages, useSavePage, useSavedQuery, type Audience, type Embed, type Page } from "@/lib/api/knowledge-hooks";
+import { fetchKnowledgeImages, usePage, usePages, useSavePage, useSavedQuery, type Embed, type Page } from "@/lib/api/knowledge-hooks";
 import { useChat, useSendChatMessage } from "@/lib/api/hooks";
 import { downloadFile } from "@/lib/api/docs-hooks";
 import { floatPanel } from "@/components/domain/pickers";
