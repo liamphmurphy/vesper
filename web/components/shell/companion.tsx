@@ -3,7 +3,6 @@
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { WorkChat } from "@/components/domain/work-chat";
 import { useNavCounts } from "@/lib/use-nav-counts";
 import { useDismissedReviewRequests, useGitHubReviewRequests, useRefreshGitHubReviewRequests, useReviewFilterPrefs } from "@/lib/api/github-reviews-hooks";
 import { useInbox, usePersonaDock } from "@/lib/api/hooks";
@@ -97,7 +96,7 @@ export function CompanionDock({
 /** The work chat, as the companion on every page with no panel of its own. Starts folded to its rail. */
 function DefaultCompanion() {
   const uid = useId();
-  const tabs: DockTab[] = [{ id: "chat", label: "Chat", icon: "msg", native: { kind: "companion" }, content: <WorkChat /> }];
+  const tabs: DockTab[] = [{ id: "chat", label: "Chat", icon: "msg", native: { kind: "companion" } }];
   const [state, dispatch] = useDockState("companion", ["chat"], false);
   useEffect(() => {
     const onOpen = () => dispatch({ type: "open", tab: "chat" });

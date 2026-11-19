@@ -7,7 +7,7 @@ import { useCanStartSavedPlayground, useChatPlayground, usePlaygroundAction } fr
 import { useDesignProposals } from "@/lib/api/designs-hooks";
 import { useChat, useChatMessages, useChatModels, useChatRunEvents, useCosts, useRunLog, useTicket } from "@/lib/api/hooks";
 import { usePage } from "@/lib/api/knowledge-hooks";
-import { closeItem, closeThread, itemOf, itemParam, dockOpen, dockTab, openPanels, setDock, threadOf, type ChatPanel, type DockTabId } from "@/lib/chat-panels";
+import { closeItem, closeThread, itemOf, dockOpen, dockTab, openPanels, setDock, threadOf, type ChatPanel, type DockTabId } from "@/lib/chat-panels";
 import { toolCalls, turnWindows } from "@/lib/chat-ui";
 import { spendLabel } from "@/lib/costs";
 import { pageHref } from "@/lib/knowledge";
@@ -15,9 +15,7 @@ import { presenceOf } from "@/lib/designs/presence";
 import { claimReadingFocus, dockReducer, dockShortcut, type DockAction, type DockState } from "@/lib/editor-layout";
 import { CompanionPortal } from "@/components/shell/companion";
 import { Dock, type DockTab, type NativeDockTab } from "@/components/shell/editor-layout";
-import { ItemPanel } from "./item-panel";
 import { useCanvasPanel } from "@/lib/use-canvas-panel";
-import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { buildChatActivitySections, buildChatItemSections, type ChatTurnSummary } from "@/lib/native-shell/models/chat-inspector";
 import { usePlaygroundPanel } from "@/lib/use-playground-panel";
 import { toast } from "@/lib/toast";
@@ -40,9 +38,9 @@ const LABELS: Record<DockTabId, string> = { design: "Design", canvas: "Canvas", 
  * always there too ("Chat: side panels in the shared dock"); the canvas and playground can still
  * go fullscreen from their tab. Key it by chat.
  */
-export function ChatPanelHost({ chatId, live, readOnly, agent, activity }: { chatId: string; live: boolean; readOnly: boolean; agent: string; activity: ReactNode }) {
+export function ChatPanelHost({ chatId, live, readOnly, agent }: { chatId: string; live: boolean; readOnly: boolean; agent: string }) {
   useOpenNewDesigns(chatId, live);
-  return <ChatDock chatId={chatId} live={live} readOnly={readOnly} agent={agent} activity={activity} />;
+  return <ChatDock chatId={chatId} live={live} readOnly={readOnly} agent={agent} />;
 }
 
 const ICONS: Record<DockTabId, IconName> = { design: "designs", canvas: "artifacts", playground: "playLeft", code: "code", thread: "branch", item: "link", activity: "history" };
@@ -64,7 +62,7 @@ function useUnread(sigs: Partial<Record<DockTabId, string>>, visible: DockTabId 
 }
 
 /** The desktop dock: its tab and open/collapsed state live in the URL (lib/chat-panels), ⌘. only for the visit. */
-function ChatDock({ chatId, live, readOnly, agent, activity }: { chatId: string; live: boolean; readOnly: boolean; agent: string; activity: ReactNode }) {
+function ChatDock({ chatId, live, readOnly, agent }: { chatId: string; live: boolean; readOnly: boolean; agent: string }) {
   const uid = useId();
   const router = useRouter();
   const pathname = usePathname();
@@ -155,18 +153,17 @@ function ChatDock({ chatId, live, readOnly, agent, activity }: { chatId: string;
     state.open && !hidden ? (state.tab as DockTabId) : undefined,
   );
 
-  const isNative = useIsNativeShell();
   const thread = threadOf(search);
   const item = itemOf(search);
-  const messagesQuery = useChatMessages(isNative ? chatId : undefined, 200);
+  const messagesQuery = useChatMessages(chatId, 200);
   const modelsQuery = useChatModels();
-  const chatCosts = useCosts({ chat: chatId }, isNative);
-  const itemTicket = useTicket(isNative && item?.kind === "ticket" ? item.key : "");
-  const itemRun = useRunLog(isNative && item?.kind === "run" ? item.id : "");
-  const itemPage = usePage(isNative && item?.kind === "page" ? item.id : undefined);
+  const chatCosts = useCosts({ chat: chatId });
+  const itemTicket = useTicket(item?.kind === "ticket" ? item.key : "");
+  const itemRun = useRunLog(item?.kind === "run" ? item.id : "");
+  const itemPage = usePage(item?.kind === "page" ? item.id : undefined);
 
   const activityNative = useMemo<NativeDockTab | undefined>(() => {
-    if (!isNative || !chat) return undefined;
+    if (!chat) return undefined;
     const msgList = messagesQuery.data?.messages;
     const groups = modelsQuery.data;
     const current = { harness: chat.harness, model: chat.model, auto: !!chat.auto_model };
@@ -207,7 +204,7 @@ function ChatDock({ chatId, live, readOnly, agent, activity }: { chatId: string;
         turns: turnSummaries.reverse(),
       }),
     };
-  }, [isNative, chat, messagesQuery.data?.messages, modelsQuery.data, chatCosts.data]);
+  }, [chat, messagesQuery.data?.messages, modelsQuery.data, chatCosts.data]);
 
   const itemHref = !item
     ? ""
@@ -217,7 +214,7 @@ function ChatDock({ chatId, live, readOnly, agent, activity }: { chatId: string;
         ? `/runs/${encodeURIComponent(item.id)}`
         : pageHref(item.id, itemPage.data?.title);
 
-  const itemNative: NativeDockTab | undefined = !isNative || !item
+  const itemNative: NativeDockTab | undefined = !item
     ? undefined
     : {
         kind: "native",
@@ -267,14 +264,12 @@ function ChatDock({ chatId, live, readOnly, agent, activity }: { chatId: string;
         },
       };
 
-  const content: Record<DockTabId, ReactNode> = {
-    item: item && <ItemPanel key={itemParam(item)} item={item} onClose={() => go(closeItem(new URLSearchParams(search.toString())))} />,
+  const content: Partial<Record<DockTabId, ReactNode>> = {
     thread: thread && <ThreadPanel key={thread} chatId={chatId} messageId={thread} onClose={() => go(closeThread(new URLSearchParams(search.toString())))} />,
     design: <DesignPanel chatId={chatId} live={live} />,
     canvas: <CanvasDock chatId={chatId} live={live} readOnly={readOnly} agent={agent} />,
     playground: <PlaygroundPanel chatId={chatId} />,
     code: <CodePanel chatId={chatId} />,
-    activity,
   };
   const busy: Partial<Record<DockTabId, boolean>> = { design: designBusy, playground: pgBusy, code: !!code?.some((r) => r.live), activity: live };
   // The playground and Code sit together, the playground just above.

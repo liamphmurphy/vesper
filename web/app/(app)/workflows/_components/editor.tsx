@@ -12,7 +12,6 @@ import { usePublishWorkflow, useResolveProposal, useSaveWorkflow, useWorkflow, t
 import { CompanionDock } from "@/components/shell/companion";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { TopBar } from "@/components/shell/topbar";
-import { WorkChat } from "@/components/domain/work-chat";
 import { useCompact } from "@/lib/viewport";
 import { buildWorkflowInspectorSections } from "@/lib/native-shell/models/workflow-inspector";
 import { buildWorkflowPaletteNavModel } from "@/lib/native-shell/models/workflows";
@@ -461,13 +460,8 @@ function Canvas({ workflow, chatId, onChatId, personaId, onPersonaId, onApplied,
                   }
                 },
               },
-              content: (
-                <div aria-label="Workflow details" className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto bg-panel p-4">
-                  {detailsContent}
-                </div>
-              ),
             },
-            { id: "chat", label: "Chat", icon: "msg", native: { kind: "companion" }, content: <WorkChat /> },
+            { id: "chat", label: "Chat", icon: "msg", native: { kind: "companion" } },
           ]}
         />
       )}

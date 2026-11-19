@@ -49,7 +49,7 @@ import { ChatWorkflowTray, WorkflowStartCard } from "@/components/domain/workflo
 import { ChatRunsPill, ChatTicketRunTray } from "@/components/domain/dispatch-cards";
 import { ActivityScene } from "./activity-scene";
 import { Tabs } from "@/components/ui/controls";
-import { focusActivityStep, useActivityFocus } from "./activity-focus";
+import { focusActivityStep } from "./activity-focus";
 import { openThread, setDock } from "@/lib/chat-panels";
 import { isTyping } from "@/components/shell/shortcuts";
 import { linkedItems, openItem, type LinkedItem } from "@/lib/chat-panels";
@@ -479,25 +479,6 @@ function ActivityBody({ chat: c, list, groups, focus }: { chat: NonNullable<Retu
       </div>
       <ActivityLog list={list} turns={turnWindows(list)} groups={groups} running={running} runId={c.current_run_id} since={since} focus={focus} />
     </>
-  );
-}
-
-/** The desktop dock's Activity tab: beside the conversation, so a reply and its trace read side by side. */
-export function ChatActivity({ chatId }: { chatId: string }) {
-  const chat = useChat(chatId).data;
-  const target = useSearchParams().get("message");
-  // The same query the conversation reads, so it's shared rather than fetched twice.
-  const list = useChatMessages(chatId, target ? 1000 : 200).data?.messages;
-  const groups: Groups = useChatModels().data;
-  const focus = useActivityFocus();
-  if (!chat) return null;
-  return (
-    // Its own tooltip provider: the dock sits outside the conversation's.
-    <Tooltip.Provider delayDuration={200}>
-      <div data-testid="chat-activity" className="flex-1 overflow-y-auto px-4 py-4">
-        <ActivityBody chat={chat} list={list} groups={groups} focus={focus} />
-      </div>
-    </Tooltip.Provider>
   );
 }
 

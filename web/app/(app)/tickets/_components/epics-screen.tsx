@@ -4,7 +4,6 @@ import { useCompact } from "@/lib/viewport";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
 import { useBootstrap, useCosts, useEpicOverviews, useTickets } from "@/lib/api/hooks";
 import { dueDate } from "@/lib/format";
 import {
@@ -20,9 +19,7 @@ import { Segmented } from "@/components/ui/controls";
 import { StatusGlyph } from "@/components/domain/glyphs";
 import { Content } from "@/components/shell/topbar";
 import { CompanionDock } from "@/components/shell/companion";
-import { useDockHeaderSlot } from "@/components/shell/editor-layout";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
-import { WorkChat } from "@/components/domain/work-chat";
 import { rememberProject, ProjectScopeState, useProjectScope } from "@/components/shell/project-scope";
 import { HealthPill, type EpicOverview } from "@/components/domain/overview";
 import { HumanAvatar } from "@/components/domain/avatars";
@@ -36,7 +33,6 @@ import { STATUS_NAME } from "@/components/domain/meta";
 import { epicHealthTone, ticketStatusTone } from "@/lib/native-shell/models/common";
 import { buildEpicsOverviewInspectorSections } from "@/lib/native-shell/models/epic-inspector";
 import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
-import { EpicBrief } from "../../work/work-details";
 import { TicketsTopBar } from "./layout-bar";
 
 function Timeline({
@@ -249,48 +245,6 @@ function groupEpicsBySpace(list: readonly EpicOverview[]) {
   return [...groups.entries()];
 }
 
-function EpicContextPane({
-  epic,
-  onSelectEpic,
-  onOpenRun,
-  onOpenTicket,
-  onOpenEpicPage,
-}: {
-  epic: EpicOverview;
-  onSelectEpic: (id: string) => void;
-  onOpenRun: (runId: string) => void;
-  onOpenTicket: (key: string) => void;
-  onOpenEpicPage: (id: string) => void;
-}) {
-  const headerSlot = useDockHeaderSlot();
-  return (
-    <section aria-label="Work context" className="work-details h-full">
-      {headerSlot &&
-        createPortal(
-          <Link
-            className="block truncate px-2 text-13 font-semibold text-fg hover:text-accent"
-            href={`/epics/${encodeURIComponent(epic.epic.id)}`}
-          >
-            {epic.epic.name} →
-          </Link>,
-          headerSlot,
-        )}
-      <div className="work-detail-scroll">
-        <EpicBrief
-          epicId={epic.epic.id}
-          focused={false}
-          navigate={(patch) => {
-            if (patch.ticket) onOpenTicket(patch.ticket);
-            else if (patch.run) onOpenRun(patch.run);
-            else if (patch.view === "epics") onOpenEpicPage(epic.epic.id);
-            else if (patch.epic) onSelectEpic(patch.epic);
-          }}
-        />
-      </div>
-    </section>
-  );
-}
-
 export function EpicsScreen() {
   const boot = useBootstrap();
   const query = useEpicOverviews();
@@ -431,17 +385,8 @@ export function EpicsScreen() {
                   if (actionId === "open_epic") router.push(`/epics/${encodeURIComponent(selectedEpic.epic.id)}`);
                 },
               },
-              content: (
-                <EpicContextPane
-                  epic={selectedEpic}
-                  onSelectEpic={openEpic}
-                  onOpenRun={(runId) => router.push(`/work?run=${encodeURIComponent(runId)}&view=activity`)}
-                  onOpenTicket={(key) => router.push(`/tickets/${encodeURIComponent(key)}`)}
-                  onOpenEpicPage={(id) => router.push(`/epics/${encodeURIComponent(id)}`)}
-                />
-              ),
             },
-            { id: "chat", label: "Chat", icon: "msg", native: { kind: "companion" }, content: <WorkChat /> },
+            { id: "chat", label: "Chat", icon: "msg", native: { kind: "companion" } },
           ]}
         />
       )}

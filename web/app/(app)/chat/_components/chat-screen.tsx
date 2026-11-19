@@ -20,7 +20,7 @@ import Link from "next/link";
 import { parseAttach, toContextRefs, type Chip } from "@/lib/chat-context";
 import { Banner, Skeleton } from "@/components/ui/primitives";
 import { NoHarnessNote, useHarnessHealth } from "@/components/domain/setup";
-import { ChatActivity, Conversation } from "./conversation";
+import { Conversation } from "./conversation";
 import { DropOverlay, useAttachments, useFileDrop } from "./attachments";
 import { useSnippets } from "./snippets";
 import { Composer, type CommandRun, type ComposerCommands } from "./composer";
@@ -408,7 +408,7 @@ export function ChatScreen({ id }: { id?: string }) {
               </>
             )}
           </div>
-          {id && <ChatPanelHost key={id} chatId={id} live={turnRunning} readOnly={!!current.data?.archived} agent={current.data?.persona?.name ?? "Assistant"} activity={<ChatActivity chatId={id} />} />}
+          {id && <ChatPanelHost key={id} chatId={id} live={turnRunning} readOnly={!!current.data?.archived} agent={current.data?.persona?.name ?? "Assistant"} />}
       </div>
     </div>
   );

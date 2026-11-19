@@ -42,7 +42,7 @@ import { ConflictBanner, useTicketSave, type SaveTicket, type TicketSaver } from
 import { Composer, Timeline } from "./timeline";
 import { CompanionDock } from "@/components/shell/companion";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
-import { WorkChat, WorkChatSheet } from "@/components/domain/work-chat";
+import { WorkChatSheet } from "@/components/domain/work-chat";
 import { buildTicketNavModel } from "@/lib/native-shell/models/ticket";
 import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
 
@@ -496,6 +496,9 @@ export function TicketScreen({ ticketKey }: { ticketKey: string }) {
           <article className="flex min-w-0 flex-[999_1_480px] justify-center py-6">
             <div className={`${WORK_COLUMN} flex flex-col gap-6`}>
               {t.project.archived && <Banner tone="human" title="This space’s work is archived" actions={<ButtonLink href={workSettingsHref(t.project)} variant="outline">Open the space</ButtonLink>}>History is preserved. Restore the work on the space’s page before starting new work.</Banner>}
+              {saver.conflict && (
+                <ConflictBanner what={saver.conflict.what} reloading={ticket.isFetching} onReapply={saver.reapply} onKeep={saver.keepLatest} />
+              )}
               <Header
                 t={t}
                 save={saver.save}
@@ -551,7 +554,6 @@ export function TicketScreen({ ticketKey }: { ticketKey: string }) {
             t={t}
             boot={boot.data}
             saver={saver}
-            reloading={ticket.isFetching}
             runs={ticketRuns.data?.runs ?? []}
             runsHasMore={!!ticketRuns.data?.has_more}
           />
@@ -577,14 +579,12 @@ function TicketCompanion({
   t,
   boot,
   saver,
-  reloading,
   runs,
   runsHasMore,
 }: {
   t: Ticket;
   boot: Bootstrap;
   saver: TicketSaver;
-  reloading: boolean;
   runs: Schemas["Run"][];
   runsHasMore: boolean;
 }) {
@@ -764,26 +764,8 @@ function TicketCompanion({
               }
             },
           },
-          content: (
-            <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-4 py-5">
-              {saver.conflict && (
-                <ConflictBanner what={saver.conflict.what} reloading={reloading} onReapply={saver.reapply} onKeep={saver.keepLatest} />
-              )}
-              <Properties t={t} boot={boot} save={saver.save} error={saver.error} />
-              <Dependencies ticket={t} />
-              {t.run && hasLiveRun(t) && <RunCard t={t} run={t.run} />}
-              <RunsHistory t={t} />
-              <div id="code" className="scroll-mt-16">
-                <CodeSection t={t} />
-              </div>
-              <section className="flex flex-col gap-2 px-1">
-                <h2 className="text-13 text-fg-tertiary">Backlinks</h2>
-                <BacklinksPanel kind="ticket" id={t.id} compact />
-              </section>
-            </div>
-          ),
         },
-        { id: "chat", label: "Chat", icon: "msg", native: { kind: "companion", subject }, content: <WorkChat subject={subject} /> },
+        { id: "chat", label: "Chat", icon: "msg", native: { kind: "companion", subject } },
       ]}
     />
   );

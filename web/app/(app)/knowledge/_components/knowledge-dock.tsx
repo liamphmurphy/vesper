@@ -22,7 +22,7 @@ import { buildKnowledgeHistorySections, buildKnowledgeLinksSections, buildKnowle
 import { KNOWLEDGE_CONTEXT_MARKER, refKey } from "@/lib/chat-context";
 import { actOnDock, dockShortcut, loadDock, saveDock, type DockAction, type DockState } from "@/lib/editor-layout";
 import { isFolder, useKnowledgeChat, type FolderAttachment, type PageAttachment } from "./chat-context";
-import { SIDE_TABS, SidePanel } from "./page-side";
+import { CalendarPanel, SIDE_TABS } from "./page-side";
 
 const APP = "knowledge";
 // Chat everywhere; a page adds its side panels (Links, Outline, Calendar, History).
@@ -242,7 +242,7 @@ export function KnowledgeDock({ pageId }: { pageId?: string }) {
           label,
           icon,
           native: nativeSideTab(page, t),
-          content: <SidePanel page={page} tab={t} persona={personaName} />,
+          ...(t === "calendar" ? { content: <CalendarPanel /> } : {}),
         }))
       : []),
   ];

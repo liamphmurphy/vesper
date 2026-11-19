@@ -17,7 +17,6 @@ import {
 import { isTyping } from "./shortcuts";
 import { NavigatorPortal, type NativeNavigator } from "./navigator-slot";
 import { splitActions, type NativeAction, type NativeMenuEntry } from "@/lib/native-shell/actions";
-import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { inspectorPublisher, toCompanionSubject } from "@/lib/native-shell/inspector-publisher";
 import type { InspectorAction, InspectorModel, InspectorSection, InspectorTab } from "@/lib/native-shell/protocol";
 import { setTopBarTitle } from "@/lib/native-shell/title";
@@ -56,7 +55,7 @@ export type DockTab = {
   wide?: boolean | "max";
   /** Native macOS inspector description (`native` SwiftUI or `companion` `/companion` WebView). */
   native?: NativeDockTab;
-  content: ReactNode;
+  content?: ReactNode;
   /**
    * A rail button that does this instead of showing a panel (the Mac app's Start playground). It has no
    * panel or header and is never the active tab; `content` is ignored.
@@ -255,11 +254,12 @@ export function EditorLayout({
   );
 }
 
-/** The tab panels of a dock, one per tab, only the active one shown. Kept mounted so switching tabs or collapsing keeps their state. */
+/** The tab panels of a dock, one per web tab, only the active one shown. Kept mounted so switching tabs or collapsing keeps their state. */
 export function dockPanels(uid: string, tabs: DockTab[], activeId: string | undefined): ReactNode {
+  const webTabs = tabs.filter((t) => !t.native);
   // A lone tab has no tab to be labelled by (the dock shows tabs only when there is a choice).
-  const labelled = tabs.length > 1;
-  return tabs.map((t) => (
+  const labelled = webTabs.length > 1;
+  return webTabs.map((t) => (
     <div
       key={t.id}
       role="tabpanel"
@@ -314,7 +314,6 @@ export function Dock({
   unmountWhenClosed?: boolean;
   overlay?: "xl" | "lg";
 }) {
-  const isNative = useIsNativeShell();
   const pathname = usePathname();
   const [inspectorToken] = useState(() => Symbol("inspector"));
   const panelTabs = tabs.filter((t) => !t.run);
@@ -333,7 +332,7 @@ export function Dock({
   };
   // ⌘. hides the dock but keeps its panels mounted (the owner passes null panels or unmountWhenClosed to unmount them).
   const shown = state.open && !state.hidden;
-  const nativeHosted = isNative && !!active?.native;
+  const nativeHosted = !!active?.native;
   const webShown = shown && !nativeHosted;
   const expanded = shown;
   const [phase, setPhase] = useState<"idle" | "preparing" | "opening" | "closing">("idle");
@@ -368,7 +367,7 @@ export function Dock({
   const companionTab = panelTabs.find((t) => t.native?.kind === "companion");
   const companionNative = companionTab?.native?.kind === "companion" ? companionTab.native : undefined;
   const inspectorModel: InspectorModel | null =
-    isNative && panelTabs.length > 0
+    panelTabs.length > 0
       ? {
           id: uid,
           open: shown,

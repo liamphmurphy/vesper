@@ -23,7 +23,6 @@ import { useCompact } from "@/lib/viewport";
 import { cx } from "@/lib/cx";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { CompanionDock } from "@/components/shell/companion";
-import { WorkChat } from "@/components/domain/work-chat";
 import { useProjectScope } from "@/components/shell/project-scope";
 import { STATUS_NAME } from "@/components/domain/meta";
 import { Button } from "@/components/ui/button";
@@ -502,7 +501,6 @@ export function WorkScreen() {
               label: "Chat",
               icon: "msg",
               native: { kind: "companion", subject: workSubject },
-              content: <WorkChat subject={workSubject} />,
             },
           ]}
         />
