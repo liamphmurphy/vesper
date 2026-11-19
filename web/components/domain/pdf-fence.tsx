@@ -110,7 +110,7 @@ export function PdfFence({ code, info }: { code: string; info?: string }) {
                   </button>
                 </Dialog.Close>
               </div>
-              <PdfViewer url={url} title={item.title} maxHeightClass="max-h-[75vh]" />
+              <PdfViewer url={url} title={item.title} heightClass="h-[75vh]" />
             </Dialog.Content>
           </Dialog.Portal>
         </Dialog.Root>
