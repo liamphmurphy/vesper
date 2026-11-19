@@ -906,10 +906,11 @@ test("once the newest call has finished, the card plans the next step instead of
   await send(page, "between: carry on");
   const status = page.getByTestId("chat-status");
   await expect(status).toHaveText(/ is writing code…$/);
-  await expect(page.getByTestId("chat-pulse")).toContainText(/last activity \d+s ago/);
+  await expect(page.getByTestId("chat-pulse")).not.toContainText(/last activity/);
   await page.clock.fastForward("00:10");
   await expect(status).toHaveText(/ is planning the next step…$/);
   await expect(page.locator('[data-scene="next-step"]')).toBeAttached();
+  await expect(page.getByTestId("chat-pulse")).toContainText(/last activity \d+s ago/);
   const rail = page.getByTestId("chat-steps");
   await expect(rail.locator('[data-step-state="done"]')).toContainText("Editing runner.go");
   await expect(rail.locator('[data-step-state="active"]')).toContainText("Planning the next step");

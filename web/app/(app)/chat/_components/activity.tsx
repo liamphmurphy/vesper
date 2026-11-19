@@ -184,7 +184,7 @@ function StepTimer({ step, now }: { step: ChatStep; now: number }) {
 function StepRail({ steps, now, stopping, awaiting, onOpenStep, fold = foldSteps }: { steps: ChatStep[]; now: number; stopping?: boolean; awaiting?: boolean; onOpenStep?: (key: string) => void; fold?: (steps: ChatStep[]) => ReturnType<typeof foldSteps> }) {
   const { earlier, shown, later } = fold(steps);
   return (
-    <ol data-testid="chat-steps" className="flex flex-col gap-2 border-t border-border px-3.5 py-3 text-13">
+    <ol data-testid="chat-steps" className="flex flex-col gap-2 border-t border-border-subtle px-3 py-2.5 text-13">
       {earlier > 0 && (
         <li className="flex items-center gap-2.5 text-fg-tertiary">
           <StepGlyph step={{ state: "done" }} />
@@ -262,13 +262,20 @@ export function ChatStatus({ chatId, disabled, runId, since, persona, stopping, 
   const current = steps.find((s) => s.state === "active") ?? steps.findLast((s) => s.state !== "planned");
   return (
     <div data-testid="chat-status-card" data-folded={collapsed || undefined} data-awaiting={awaiting || undefined} data-quiet={quiet || undefined}
-      className={`@container w-full max-w-[min(720px,100%)] rounded-xl border bg-surface transition-[border-color,box-shadow] duration-(--motion-slow) ${awaiting ? "border-pill-human-fg/60 shadow-[0_0_0_3px_var(--pill-human-bg)]" : quiet ? "border-[var(--state-progress)]/50" : "border-border"}`}>
-      <div className="flex h-[72px] items-center gap-3 px-3.5">
-        <span data-testid="persona-aura" className={`flex-none ${awaiting || stopping || quiet ? "" : "dusk-aura"}`}>
-          <PersonaAvatar persona={persona} size={28} />
+      className={`@container w-full max-w-[min(540px,100%)] overflow-hidden rounded-[13px] border bg-surface transition-[border-color,box-shadow] duration-(--motion-slow) ${awaiting ? "border-pill-human-fg/60 shadow-[0_0_0_3px_var(--pill-human-bg)]" : quiet ? "border-[var(--state-progress)]/50" : "border-border"}`}>
+      <div className="flex items-center gap-3.5 px-3 py-2.5">
+        {awaiting ? (
+          <span aria-hidden className="grid h-[54px] w-[112px] flex-none place-items-center rounded-[9px] border border-pill-human-fg/50 bg-pill-human-bg/50 text-pill-human-fg motion-safe:animate-pulse @max-[380px]:h-[46px] @max-[380px]:w-[92px] @max-[280px]:hidden">
+            <Icon name="shield" size={20} />
+          </span>
+        ) : (
+          <ActivityScene current={scene.current} previous={scene.previous} stopping={stopping} />
+        )}
+        <span className="hidden flex-none @max-[280px]:inline-flex">
+          <PersonaAvatar persona={persona} size={24} />
         </span>
-        <div className="min-w-0 flex-1">
-          <p role="status" aria-live="polite" className={`truncate text-14 ${awaiting ? "text-pill-human-fg" : stopping || quiet ? "text-fg" : "dusk-shimmer"}`} data-testid="chat-status">
+        <div className="flex min-w-0 flex-1 flex-col justify-center gap-1">
+          <p role="status" aria-live="polite" className={`truncate text-14 font-medium leading-[1.2] ${awaiting ? "text-pill-human-fg" : "text-fg"}`} data-testid="chat-status">
             {stopping
               ? "Stopping…"
               : awaiting
@@ -277,35 +284,40 @@ export function ChatStatus({ chatId, disabled, runId, since, persona, stopping, 
                   ? `${persona.name} has been quiet for ${quietFor(pulse.idle ?? 0)}`
                   : `${persona.name} is ${status.phrase}…`}
           </p>
-          <p aria-hidden data-testid="chat-pulse" className="flex min-w-0 items-center gap-1.5 truncate text-12 text-fg-tertiary @max-[300px]:hidden">
+          <p aria-hidden data-testid="chat-pulse" className="flex min-w-0 items-center gap-1.5 truncate text-12 leading-[1.2] text-fg-tertiary tabular-nums">
             {awaiting ? (
               "Paused until you decide"
             ) : quiet ? (
               ["Still running", `last: ${newest ? chatStatusOf(newest).phrase : "thinking"}`, pulse.elapsed !== undefined && `${formatSpan(pulse.elapsed)} in all`].filter(Boolean).join(" · ")
             ) : (
-              <PulseLine planned={planned ? `Step ${Math.min(done + 1, steps.length)} of ${steps.length}` : undefined} work={planned ? 0 : work} pulse={pulse} heard={clock.last !== undefined} />
+              <PulseLine planned={planned ? `Step ${Math.min(done + 1, steps.length)} of ${steps.length}` : undefined} work={planned ? 0 : work} pulse={pulse} heard={clock.last !== undefined} stopping={stopping} />
             )}
           </p>
         </div>
-        {awaiting ? (
-          <span aria-hidden className="grid h-[38px] w-14 flex-none place-items-center rounded-md border border-pill-human-fg/50 text-pill-human-fg motion-safe:animate-pulse">
-            <Icon name="shield" size={20} />
-          </span>
-        ) : (
-          <ActivityScene current={scene.current} previous={scene.previous} stopping={stopping} />
+        {hasRail && (
+          <button
+            type="button"
+            aria-expanded={!collapsed}
+            aria-label={collapsed ? "Show steps" : "Hide steps"}
+            onClick={() => setCollapsed((c) => !c)}
+            className="flex flex-none items-center gap-1 rounded-[7px] border border-border bg-surface-sunken px-2 py-1 text-11 font-medium tabular-nums text-fg-secondary transition-colors hover:border-border-strong hover:bg-hover hover:text-fg"
+          >
+            <span aria-hidden>{planned ? `${Math.min(done + 1, steps.length)}/${steps.length}` : `${steps.length}`}</span>
+            <span aria-hidden className="text-10 leading-none">{collapsed ? "▾" : "▴"}</span>
+          </button>
         )}
       </div>
       {/* Always mounted so the panel can animate open and shut instead of popping in. */}
       <div className={`grid transition-[grid-template-rows] duration-(--motion-slow) ease-out motion-reduce:transition-none ${awaiting ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
         <div className="overflow-hidden">
-          <div role="group" aria-label="Waiting for your approval" className="flex flex-col gap-2 px-3.5 pb-3">
+          <div role="group" aria-label="Waiting for your approval" className="flex flex-col gap-2 px-3 pb-3">
             <ConnectorApprovalCards chatId={chatId} disabled={disabled} />
             <SecretApprovalCards chatId={chatId} disabled={disabled} />
           </div>
         </div>
       </div>
       {quiet && (onAsk || onStop) && (
-        <div data-testid="quiet-actions" className="flex flex-wrap gap-2 px-3.5 pb-3 pl-[54px]">
+        <div data-testid="quiet-actions" className="flex flex-wrap gap-2 px-3 pb-3">
           {onAsk && !asked && (
             <Button variant="outline" icon="branch" disabled={disabled} onClick={() => { setAskedAt(Date.now()); onAsk(); }}>
               Ask what it&apos;s doing
@@ -319,29 +331,24 @@ export function ChatStatus({ chatId, disabled, runId, since, persona, stopping, 
         </div>
       )}
       {hasRail && (
-        <>
-          {collapsed ? (
-            <>
-              <div aria-hidden className="flex gap-[3px] px-3.5">
-                {steps.map((s) => (
-                  <i key={s.key} className={`h-1 flex-1 rounded-sm ${STEP_BAR[s.state]} ${stepPulse(s, stopping)}`} />
-                ))}
-              </div>
-              {current && (
-                <p data-testid="chat-step-now" className="flex min-w-0 items-center gap-2 px-3.5 pt-2 text-12">
-                  <StepGlyph step={current} stopping={stopping} />
-                  <span className="min-w-0 truncate font-medium text-fg">{current.title}</span>
-                  <span className="flex-none text-fg-tertiary">{steps.indexOf(current) + 1} of {steps.length}</span>
-                </p>
-              )}
-            </>
-          ) : (
-            <StepRail steps={steps} now={now} stopping={stopping} awaiting={awaiting} onOpenStep={onOpenStep} />
-          )}
-          <button type="button" aria-expanded={!collapsed} onClick={() => setCollapsed((c) => !c)} className="px-3.5 py-1.5 text-12 text-fg-tertiary hover:text-fg-secondary">
-            {collapsed ? "Show steps" : "Hide steps"}
-          </button>
-        </>
+        collapsed ? (
+          <>
+            <div aria-hidden className={`flex gap-[3px] px-3 ${current ? "pb-2" : "pb-2.5"}`}>
+              {steps.map((s) => (
+                <i key={s.key} className={`h-[3px] flex-1 rounded-full ${STEP_BAR[s.state]} ${stepPulse(s, stopping)}`} />
+              ))}
+            </div>
+            {current && (
+              <p data-testid="chat-step-now" className="flex min-w-0 items-center gap-2 px-3 pb-2.5 text-12">
+                <StepGlyph step={current} stopping={stopping} />
+                <span className="min-w-0 truncate font-medium text-fg">{current.title}</span>
+                <span className="flex-none tabular-nums text-fg-tertiary">{steps.indexOf(current) + 1} of {steps.length}</span>
+              </p>
+            )}
+          </>
+        ) : (
+          <StepRail steps={steps} now={now} stopping={stopping} awaiting={awaiting} onOpenStep={onOpenStep} />
+        )
       )}
     </div>
   );
@@ -433,17 +440,21 @@ export function TurnSteps({ runId, outcome, since, until, end, replyId }: { runI
 const replyOpen = (openStep: ((key: string) => void) | undefined, replyId: string | undefined) =>
   openStep && replyId ? (key: string) => openStep(turnStepKey(replyId, key)) : undefined;
 
-/** "4m 12s · 23 steps · ● last activity 3s ago": the turn's time, its work so far, and a heartbeat. */
-function PulseLine({ planned, work, pulse, heard }: { planned?: string; work: number; pulse: TurnPulse; heard: boolean }) {
-  const parts = [planned, pulse.elapsed !== undefined && formatSpan(pulse.elapsed), work > 1 && `${work} steps`].filter(Boolean);
+/** Only show "last activity Xs ago" once the turn has been idle long enough that it's useful signal, not per-second churn. */
+const IDLE_HINT_MS = 10_000;
+
+/** "● Step 2 of 3 · 4m 12s" (plus "· last activity 14s ago" after a brief pause). */
+function PulseLine({ planned, work, pulse, heard, stopping }: { planned?: string; work: number; pulse: TurnPulse; heard: boolean; stopping?: boolean }) {
+  const parts = [planned, work > 1 && `${work} steps`, pulse.elapsed !== undefined && formatSpan(pulse.elapsed)].filter(Boolean);
+  const showIdle = heard && pulse.idle !== undefined && pulse.idle >= IDLE_HINT_MS;
   return (
     <>
-      <span className="truncate">{parts.join(" · ")}</span>
-      {heard && pulse.idle !== undefined && (
+      <span className={`size-1.5 flex-none rounded-full ${stopping ? "bg-fg-tertiary" : "bg-accent motion-safe:animate-pulse"}`} />
+      {parts.length > 0 && <span className="truncate">{parts.join(" · ")}</span>}
+      {showIdle && (
         <>
           {parts.length > 0 && <span>·</span>}
-          <span className="size-1.5 flex-none rounded-full bg-[var(--state-done)]" />
-          <span className="truncate tabular-nums">last activity {formatSpan(pulse.idle)} ago</span>
+          <span className="truncate tabular-nums">last activity {formatSpan(pulse.idle!)} ago</span>
         </>
       )}
     </>

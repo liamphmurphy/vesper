@@ -1334,6 +1334,11 @@ export function installChatApi(page: Page, opts: MockOptions = {}) {
       return route.fulfill({ status: 200, contentType: "image/png", body: png });
     }
 
+    const runEv = /^\/runs\/([^/]+)\/events$/.exec(path);
+    if (runEv && method === "GET") {
+      const after = Number(url.searchParams.get("after") ?? 0);
+      return json({ events: (runEvents.get(runEv[1]) ?? []).filter((e) => e.seq > after) });
+    }
     const run = /^\/runs\/([^/]+)$/.exec(path);
     if (run) {
       return json({ run: {}, turns: [], approvals: [], events: runEvents.get(run[1]) ?? [] });

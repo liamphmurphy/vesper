@@ -301,6 +301,11 @@ export type ChatStatusKind =
   | "chart"
   | "diagram"
   | "app"
+  | "custom-app"
+  | "database"
+  | "http"
+  | "pdf"
+  | "subagent"
   | "choices";
 export type ChatStatusInfo = { kind: ChatStatusKind; phrase: string };
 
@@ -351,7 +356,7 @@ const REPLY_BLOCK_STATUS: Record<string, ChatStatusInfo> = {
   choices: status("choices", "laying out your options"),
   "workflow-run": status("workflow", "lining up a workflow"),
   recommend: status("web", "picking something for you to look at"),
-  pdf: status("library", "attaching a PDF"),
+  pdf: status("pdf", "attaching a PDF"),
 };
 
 /** The running turn's tool calls and the rich blocks written between them, in order, for the chat tab. */
@@ -473,7 +478,7 @@ export function chatStatusOf(call: { tool: string; input: unknown }): ChatStatus
     case "save_file":
       return status("library", "saving a file to your Library");
     case "render_pdf":
-      return status("library", "creating a PDF");
+      return status("pdf", "creating a PDF");
     case "read_library_item":
       return status("library", "opening something from your Library");
     case "list_inbox":
@@ -503,7 +508,7 @@ export function chatStatusOf(call: { tool: string; input: unknown }): ChatStatus
     case "use_repository":
       return status("repo-attach", "checking out a repository");
     case "request_push":
-      return status("repo-attach", "asking to push a branch");
+      return status("push", "asking to push a branch");
     case "start_video":
       return status("video-render", "setting up a video");
     case "update_video":
@@ -581,22 +586,70 @@ export function chatStatusOf(call: { tool: string; input: unknown }): ChatStatus
       return status("workflow", "looking over a workflow");
     case "list_custom_apps":
     case "get_custom_app":
-      return status("reading-code", "inspecting a custom app");
+      return status("custom-app", "inspecting a custom app");
     case "create_custom_app":
-      return status("writing-code", "creating a custom app");
+      return status("custom-app", "creating a custom app");
     case "update_custom_app":
-      return status("writing-code", "updating a custom app");
+      return status("custom-app", "updating a custom app");
     case "delete_custom_app":
-      return status("writing-code", "deleting a custom app");
+      return status("custom-app", "deleting a custom app");
     case "custom_app_sql":
-      return status("playground", "querying app data");
+      return status("database", "querying app data");
     case "http_list_workspaces":
     case "http_get_workspace":
-      return status("reading-code", "checking HTTP collections");
+      return status("http", "checking HTTP collections");
     case "http_save_request":
-      return status("writing-code", "saving an HTTP request");
+      return status("http", "saving an HTTP request");
     case "http_run_request":
-      return status("web", "sending an HTTP request");
+      return status("http", "sending an HTTP request");
+    case "Agent":
+    case "Task":
+    case "delegate":
+      return status("subagent", "delegating to a helper");
+    case "list_subagents":
+      return status("subagent", "checking available helpers");
+    case "claim_ticket":
+    case "next_ticket":
+      return status("ticket-lookup", "picking up a ticket");
+    case "estimate_ticket":
+    case "propose_tickets":
+    case "comment":
+    case "check_criterion":
+    case "check_epic_criterion":
+      return status("tickets", "updating ticket progress");
+    case "create_artifact":
+    case "propose_pattern":
+    case "list_proposed_patterns":
+    case "publish_pattern":
+    case "reject_pattern":
+      return status("wiki", "updating project knowledge");
+    case "create_mockup":
+      return status("design", "creating a mockup");
+    case "post_plan":
+    case "update_step":
+      return status("next-step", "updating its plan");
+    case "set_branch":
+      return status("repo-history", "updating the branch");
+    case "set_pr":
+    case "recheck_review":
+      return status("pull-request", "updating the pull request");
+    case "request_approval":
+    case "wait_for_approval":
+    case "await_human":
+    case "await_signal":
+      return status("inbox", "waiting on you");
+    case "submit_findings":
+      return status("research", "submitting its findings");
+    case "submit_outline":
+    case "submit_lesson":
+    case "submit_review":
+      return status("learning", "building a lesson");
+    case "submit_workflow_output":
+      return status("workflow", "finishing a workflow step");
+    case "run_gated":
+      return status("secret", "running a gated action");
+    case "get_prior_attempts":
+      return status("runs", "reviewing prior attempts");
     case "propose_workflow_edit":
       return status("workflow", "sketching a workflow");
     case "image_generation":
@@ -1162,6 +1215,10 @@ export function stepDetail(call: { tool: string; input: unknown }, names: Map<st
       return named("Saving request", o.name || o.url);
     case "http_run_request":
       return named("Sending request", known(o.request_id));
+    case "Agent":
+    case "Task":
+    case "delegate":
+      return named("Delegating", o.description || o.agent);
     case "create_scheduled_task":
       return named("Scheduling", o.name);
     case "update_scheduled_task":

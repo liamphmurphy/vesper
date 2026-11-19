@@ -170,13 +170,13 @@ test("each tool call maps to the kind of scene it shows", () => {
     [{ tool: "set_playground_openapi", input: {} }, "playground"],
     [{ tool: "mcp__lazyagents__search_repositories", input: { query: "secret" } }, "repo-search"],
     [{ tool: "use_repository", input: {} }, "repo-attach"],
-    [{ tool: "request_push", input: {} }, "repo-attach"],
+    [{ tool: "request_push", input: {} }, "push"],
     [{ tool: "start_video", input: {} }, "video-render"],
     [{ tool: "update_video", input: {} }, "video-render"],
     [{ tool: "finish_video", input: {} }, "video-render"],
     [{ tool: "fail_video", input: {} }, "video-render"],
     [{ tool: "save_file", input: {} }, "library"],
-    [{ tool: "render_pdf", input: {} }, "library"],
+    [{ tool: "render_pdf", input: {} }, "pdf"],
     [{ tool: "start_audio", input: {} }, "audio-render"],
     [{ tool: "update_audio", input: {} }, "audio-render"],
     [{ tool: "finish_audio", input: {} }, "audio-render"],
@@ -185,10 +185,13 @@ test("each tool call maps to the kind of scene it shows", () => {
     [{ tool: "create_scheduled_task", input: {} }, "schedule"],
     [{ tool: "create_learning_module", input: {} }, "learning"],
     [{ tool: "submit_research_report", input: {} }, "research"],
-    [{ tool: "list_custom_apps", input: {} }, "reading-code"],
-    [{ tool: "mcp__lazyagents__get_custom_app", input: {} }, "reading-code"],
-    ...["create_custom_app", "update_custom_app", "delete_custom_app"].map((tool) => [{ tool, input: {} }, "writing-code"]),
-    [{ tool: "custom_app_sql", input: {} }, "playground"],
+    [{ tool: "list_custom_apps", input: {} }, "custom-app"],
+    [{ tool: "mcp__lazyagents__get_custom_app", input: {} }, "custom-app"],
+    ...["create_custom_app", "update_custom_app", "delete_custom_app"].map((tool) => [{ tool, input: {} }, "custom-app"]),
+    [{ tool: "custom_app_sql", input: {} }, "database"],
+    ...["http_list_workspaces", "http_get_workspace", "http_save_request", "http_run_request"].map((tool) => [{ tool, input: {} }, "http"]),
+    ...["Agent", "Task", "delegate", "list_subagents"].map((tool) => [{ tool, input: {} }, "subagent"]),
+    [{ tool: "reply_block", input: { kind: "pdf" } }, "pdf"],
     [{ tool: "create_space", input: {} }, "space"],
     [{ tool: "list_saved_links", input: {} }, "saved-links"],
     [{ tool: "mcp__lazyagents__list_tickets", input: {} }, "ticket-lookup"],
@@ -667,6 +670,52 @@ test("the design kinds have their own scene, with no placeholder left", () => {
   for (const part of [...scenes.matchAll(/scene-dz-([a-z0-9]+)/g)].map((m) => m[1])) assert.match(css, new RegExp(`@keyframes scene-dz-${part} `), `scene-dz-${part} has keyframes`);
   for (const tool of ["design_create", "design_patch"]) assert.equal(chatStatusOf({ tool, input: {} }).kind, "design", tool);
   for (const tool of ["design_render", "design_outline", "design_read", "design_flows"]) assert.equal(chatStatusOf({ tool, input: {} }).kind, "design-view", tool);
+});
+
+test("every ChatStatusKind has a scene, a step glyph, and defined scene CSS classes", () => {
+  const ui = readFileSync(new URL("./chat-ui.ts", import.meta.url), "utf8");
+  const typeBlock = /export type ChatStatusKind =([\s\S]*?);/.exec(ui)?.[1];
+  assert.ok(typeBlock, "ChatStatusKind union not found");
+  const kinds = [...typeBlock.matchAll(/"([a-z-]+)"/g)].map((m) => m[1]);
+  assert.ok(kinds.length >= 40, `expected >= 40 kinds, got ${kinds.length}`);
+
+  const scenesSrc = readFileSync(new URL("../app/(app)/chat/_components/activity-scene.tsx", import.meta.url), "utf8");
+  const glyphsSrc = readFileSync(new URL("../app/(app)/chat/_components/step-glyph.tsx", import.meta.url), "utf8");
+  const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
+
+  for (const k of kinds) {
+    const keyRe = new RegExp(`^ {2}(?:"${k}"|${k}):`, "m");
+    assert.match(scenesSrc, keyRe, `activity-scene.tsx missing scene or alias for "${k}"`);
+    assert.match(glyphsSrc, keyRe, `step-glyph.tsx missing glyph for "${k}"`);
+  }
+
+  // Every static scene-* class referenced in activity-scene.tsx must exist in globals.css.
+  const referenced = new Set([...scenesSrc.matchAll(/\b(scene-[a-z0-9-]+)\b/g)].map((m) => m[1]));
+  // Dynamic prefix templates like scene-db-r${i} produce scene-db-r; skip prefixes ending with - or single-letter stem followed by ${.
+  const missingCss = [...referenced].filter((cls) => {
+    if (scenesSrc.includes(`${cls}${"${"}`) || scenesSrc.includes(`${cls}-${"${"}`)) return false;
+    return !new RegExp(`\\.${cls}(?![a-z0-9-])`).test(css);
+  });
+  assert.deepEqual(missingCss, [], `globals.css missing scene classes: ${missingCss.join(", ")}`);
+});
+
+test("subagent and run-level MCP tools map to dedicated non-thinking scenes", () => {
+  assert.equal(stepDetail({ tool: "Agent", input: { description: "Audit scenes" } }), "Delegating “Audit scenes”");
+  const runCases = [
+    ["claim_ticket", "ticket-lookup"],
+    ["check_criterion", "tickets"],
+    ["create_mockup", "design"],
+    ["post_plan", "next-step"],
+    ["set_branch", "repo-history"],
+    ["set_pr", "pull-request"],
+    ["await_human", "inbox"],
+    ["submit_findings", "research"],
+    ["submit_lesson", "learning"],
+    ["submit_workflow_output", "workflow"],
+    ["run_gated", "secret"],
+    ["get_prior_attempts", "runs"],
+  ];
+  for (const [tool, want] of runCases) assert.equal(chatStatusOf({ tool, input: {} }).kind, want, tool);
 });
 
 // ---- the status card's pulse: alive, between steps, or quiet ----

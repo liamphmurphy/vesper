@@ -414,6 +414,47 @@ const GLYPHS: Record<ChatStatusKind, ReactNode> = {
       <circle className="glyph-a glyph-slide" cx="5" cy="10.5" r="1.6" fill="currentColor" />
     </>
   ),
+  "custom-app": (
+    <>
+      <rect className="glyph-s" x="1.5" y="2" width="13" height="12" rx="1.5" />
+      <path className="glyph-s" d="M1.5 5h13" />
+      {[
+        [3.5, 7, 3.5, 5, 0],
+        [8.5, 7, 4, 2.2, 0.3],
+        [8.5, 10.3, 4, 1.8, 0.6],
+      ].map(([x, y, w, h, wait]) => (
+        <rect key={`${x}-${y}`} className="glyph-a glyph-tile" style={delay(wait)} x={x} y={y} width={w} height={h} rx=".5" fill="currentColor" />
+      ))}
+    </>
+  ),
+  database: (
+    <>
+      <ellipse className="glyph-s" cx="8" cy="4" rx="5.5" ry="2" />
+      <path className="glyph-s" d="M2.5 4v8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2V4" />
+      <path className="glyph-s glyph-a glyph-tile" d="M2.5 8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2" />
+    </>
+  ),
+  http: (
+    <>
+      <path className="glyph-s glyph-a glyph-draw" pathLength={1} d="M2 5.5h11.5M10.5 3l3 2.5-3 2.5" />
+      <path className="glyph-s glyph-a glyph-draw" style={delay(0.5)} pathLength={1} d="M14 10.5H2.5M5.5 8l-3 2.5 3 2.5" />
+    </>
+  ),
+  pdf: (
+    <>
+      <path className="glyph-s" d="M3 1.5h6.5l3.5 3.5v9.5H3z" />
+      <path className="glyph-s" d="M9.5 1.5V5H13" strokeWidth="1.1" />
+      <path className="glyph-s glyph-a glyph-draw" pathLength={1} d="M5.5 8.5h5M5.5 11.5h3.5" />
+    </>
+  ),
+  subagent: (
+    <>
+      <circle className="glyph-s" cx="3.5" cy="8" r="2" />
+      <path className="glyph-s glyph-a glyph-draw" pathLength={1} d="M5.5 7.2L10.5 4.2M5.5 8.8L10.5 11.8" strokeWidth="1.2" />
+      <circle className="glyph-a glyph-tile" cx="12.5" cy="3.5" r="1.8" fill="currentColor" />
+      <circle className="glyph-a glyph-tile" style={delay(0.45)} cx="12.5" cy="12.5" r="1.8" fill="currentColor" />
+    </>
+  ),
   choices: (
     <>
       {[3.5, 8, 12.5].map((cy) => (
