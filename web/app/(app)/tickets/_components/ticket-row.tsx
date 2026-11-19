@@ -80,6 +80,7 @@ export function AgentOrPersonaAvatar({
         name={match.name}
         color={match.color}
         src={match.avatar_url ?? undefined}
+        characterSvg={match.character_svg ?? undefined}
         size={size === "md" ? 24 : 20}
       />
     );

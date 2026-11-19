@@ -76,3 +76,22 @@ test("character data is only kept inside text-ish elements", () => {
   assert.equal(tree.children.length, 1);
   assert.equal(tree.children[0].children.length, 0);
 });
+
+test("character mode allows valid rig attributes and drops image or invalid values", () => {
+  const { tree, skipped } = sanitizeSvg(
+    parse(`<svg ${NS} viewBox="0 0 64 64"><g data-part="body" data-motion-idle="breathe" data-motion-coding="type" data-pivot="32 34" data-delay="-0.5" data-speed="fast" data-show="idle coding"><image href="data:image/png;base64,AAAA"/><rect data-motion="explode" data-pivot="99 99" data-delay="99" data-speed="warp" data-show="nap" data-part="Bad!"/></g></svg>`).documentElement,
+    "pc-1-",
+    { character: true },
+  );
+  assert.equal(skipped, 1);
+  const g = tree.children[0];
+  assert.equal(g.attrs["data-part"], "body");
+  assert.equal(g.attrs["data-motion-idle"], "breathe");
+  assert.equal(g.attrs["data-motion-coding"], "type");
+  assert.equal(g.attrs["data-pivot"], "32 34");
+  assert.equal(g.attrs["data-delay"], "-0.5");
+  assert.equal(g.attrs["data-speed"], "fast");
+  assert.equal(g.attrs["data-show"], "idle coding");
+  const rect = g.children[0];
+  assert.deepEqual(rect.attrs, {});
+});

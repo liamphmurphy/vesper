@@ -186,7 +186,7 @@ function BuildChat({ workflow, chatId, onChatId, personaId, onPersonaId, onChatt
             <div role="status" data-testid="workflow-build-working" className="flex items-center gap-2 px-1">
               <span className="relative grid flex-none place-items-center">
                 <span aria-hidden className="absolute inset-0 rounded-full opacity-60 motion-safe:animate-ping" style={{ background: persona.color }} />
-                <PersonaAvatar name={persona.name} color={persona.color} src={persona.avatar_url} size={24} className="relative" />
+                <PersonaAvatar name={persona.name} color={persona.color} src={persona.avatar_url} characterSvg={persona.character_svg} state="working" size={24} className="relative" />
               </span>
               <span className="animate-skeleton text-12 text-fg-secondary">{persona.name} is working…</span>
             </div>

@@ -1222,7 +1222,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
         )}>
           {/* Back and forward lead the page; a dock's chat sits beside a page that has its own. */}
           {!docked && <HistoryNav />}
-          {group ? <PersonaStack personas={participants} size={22} /> : <HeaderPersona persona={persona} personaId={c.persona?.id} fresh={fresh} onSwitch={switchPersona} disabled={locked || create.isPending} compact={docked} />}
+          {group ? <PersonaStack personas={participants} size={22} /> : <HeaderPersona persona={persona} personaId={c.persona?.id} fresh={fresh} onSwitch={switchPersona} disabled={locked || create.isPending} compact={docked} working={running} />}
           {/* The title over a live line, as a messaging app shows who's typing; the line goes when the reply ends.
               Docks with an inline switcher already name and switch the conversation in Switch chat, avoiding 1-letter crushed title stubs. */}
           <div className="flex min-w-0 flex-1 flex-col items-start justify-center">

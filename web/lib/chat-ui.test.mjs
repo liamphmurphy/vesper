@@ -421,6 +421,8 @@ test("stepDetail names canvases, workflows, tickets, images, personas, runs and 
     [{ tool: "mcp__lazyagents__create_epic", input: { name: "Billing" } }, "Drafting “Billing”"],
     [{ tool: "mcp__lazyagents__generate_image", input: { prompt: "a cat on a bike" } }, "Creating “a cat on a bike”"],
     [{ tool: "mcp__lazyagents__propose_persona", input: { name: "Nora", instructions: "secret" } }, "Sketching “Nora”"],
+    [{ tool: "mcp__lazyagents__propose_persona_character", input: { persona: "Nora", svg: "<svg/>" } }, "Designing character for “Nora”"],
+    [{ tool: "mcp__lazyagents__propose_persona_character", input: { summary: "Bouncy ears" } }, "Designing character: Bouncy ears"],
     [{ tool: "mcp__lazyagents__create_space", input: { name: "Health", instructions: "secret" } }, "Setting up “Health”"],
     [{ tool: "mcp__lazyagents__create_scheduled_task", input: { name: "Weekly check-in", instructions: "secret" } }, "Scheduling “Weekly check-in”"],
     [{ tool: "mcp__lazyagents__create_learning_module", input: { topic: "Strength training" } }, "Starting a module on “Strength training”"],
