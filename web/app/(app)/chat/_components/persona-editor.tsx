@@ -1,8 +1,10 @@
 "use client";
 
 import { ColorWheel } from "@/components/ui/color-wheel";
+import { useRouter } from "next/navigation";
 import { Dialog } from "radix-ui";
 import { useEffect, useMemo, useReducer, useRef, useState, type FormEvent } from "react";
+import { useCreateChat } from "@/lib/api/hooks";
 import {
   useCreatePersona,
   useDeletePersonaAvatar,
@@ -14,6 +16,7 @@ import {
   type PersonaPatch,
   type PersonaTone,
 } from "@/lib/api/persona-hooks";
+import { CHARACTER_PREVIEW_STATES, detectCharacterStates, type CharacterState } from "@/lib/persona-character";
 import {
   AVATAR_ACCEPT,
   AVATAR_HINT,
@@ -186,22 +189,32 @@ function AvatarField({
   name,
   color,
   current,
+  currentCharacter,
   choice,
   setChoice,
   errors,
   setErrors,
+  onDesignInChat,
+  designing,
 }: {
   name: string;
   color: string;
   current?: string;
+  currentCharacter?: string;
   choice: AvatarChoice;
   setChoice: (c: AvatarChoice) => void;
   errors: AvatarError[];
   setErrors: (e: AvatarError[]) => void;
+  onDesignInChat?: () => void;
+  designing?: boolean;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
+  const [previewState, setPreviewState] = useState<CharacterState>("idle");
   const src = choice.kind === "file" ? choice.url : choice.kind === "remove" ? undefined : current;
+  const characterSvg = choice.kind === "keep" ? currentCharacter : undefined;
+  const customStates = useMemo(() => (characterSvg ? detectCharacterStates(characterSvg) : new Set<CharacterState>()), [characterSvg]);
+  const hasVisual = !!(src || characterSvg);
   function take(files: FileList | null) {
     const f = files?.[0];
     if (!f) return;
@@ -228,26 +241,59 @@ function AvatarField({
         take(e.dataTransfer.files);
       }}
     >
-      <span className={label}>Avatar</span>
+      <span className={label}>{characterSvg ? "Animated character" : "Avatar"}</span>
       <div className="flex items-center gap-4">
-        <PersonaAvatar name={name || "?"} color={color} src={src} size={96} />
+        <PersonaAvatar name={name || "?"} color={color} src={src} characterSvg={characterSvg} state={previewState} framed={!characterSvg} size={96} />
         <div className="flex flex-col items-center gap-2">
-          <PersonaAvatar name={name || "?"} color={color} src={src} size={48} />
-          <PersonaAvatar name={name || "?"} color={color} src={src} size={24} />
+          <PersonaAvatar name={name || "?"} color={color} src={src} characterSvg={characterSvg} state={previewState} framed={!characterSvg} size={48} />
+          <PersonaAvatar name={name || "?"} color={color} src={src} characterSvg={characterSvg} state={previewState} framed clipped size={24} />
           <span className="text-11 text-fg-tertiary">Result</span>
         </div>
       </div>
+      {characterSvg && (
+        <div role="group" aria-label="Preview action state" className="flex flex-wrap gap-1 pt-1">
+          {CHARACTER_PREVIEW_STATES.map((s) => {
+            const active = previewState === s.value;
+            return (
+              <button
+                key={s.value}
+                type="button"
+                aria-pressed={active}
+                onClick={() => setPreviewState(s.value)}
+                className={cx(
+                  "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-11 transition-colors",
+                  active ? "border-accent bg-accent-soft text-accent" : "border-border bg-surface-sunken text-fg-secondary hover:bg-hover",
+                )}
+              >
+                {customStates.has(s.value) && <span aria-hidden className={cx("size-1.5 rounded-full", active ? "bg-accent" : "bg-fg-tertiary")} />}
+                {s.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <input ref={input} type="file" accept={AVATAR_ACCEPT} hidden aria-label="Avatar image" onChange={(e) => { take(e.target.files); e.target.value = ""; }} />
         <Button variant="secondary" icon="upload" onClick={() => input.current?.click()}>
           Upload image
         </Button>
-        <Button variant="secondary" disabled={!src} onClick={() => { setErrors([]); setChoice(current ? { kind: "remove" } : { kind: "keep" }); }}>
+        {onDesignInChat && (
+          <Button variant="secondary" disabled={designing} onClick={onDesignInChat}>
+            {characterSvg ? "Tweak in chat" : "Design character in chat"}
+          </Button>
+        )}
+        <Button variant="secondary" disabled={!hasVisual} onClick={() => { setErrors([]); setChoice(current || currentCharacter ? { kind: "remove" } : { kind: "keep" }); }}>
           Use initials
         </Button>
       </div>
-      <p className="text-12 text-fg-tertiary">{AVATAR_HINT}</p>
-      <p className="text-12 text-fg-tertiary">No image: initials on the persona color.</p>
+      {characterSvg ? (
+        <p className="text-12 text-fg-tertiary">Animated SVG character; talk to this persona in chat to redesign its look or action animations.</p>
+      ) : (
+        <>
+          <p className="text-12 text-fg-tertiary">{AVATAR_HINT}</p>
+          <p className="text-12 text-fg-tertiary">No image: initials on the persona color.</p>
+        </>
+      )}
       <div aria-live="polite" className="flex flex-col gap-2">
         {errors.map((e, i) => (
           <div key={i} role="alert" className="flex items-start gap-2 rounded-lg bg-pill-blocked-bg px-3 py-2">
@@ -273,7 +319,7 @@ function AvatarField({
 
 // ---- preview ----
 
-function Preview({ name, color, src, tone }: { name: string; color: string; src?: string; tone: PersonaTone }) {
+function Preview({ name, color, src, characterSvg, tone }: { name: string; color: string; src?: string; characterSvg?: string; tone: PersonaTone }) {
   const t = TONES.find((x) => x.value === tone) ?? TONES[0];
   const shown = name.trim() || "New persona";
   return (
@@ -281,7 +327,7 @@ function Preview({ name, color, src, tone }: { name: string; color: string; src?
       <span className={label}>Preview</span>
       <div className="flex flex-col gap-3 rounded-lg border border-border bg-bg p-3" aria-label="Message preview">
         <div className="flex gap-2.5">
-          <PersonaAvatar name={shown} color={color} src={src} size={28} />
+          <PersonaAvatar name={shown} color={color} src={src} characterSvg={characterSvg} size={28} />
           <div className="flex min-w-0 flex-col gap-1">
             <p className="text-13">
               <span className="font-semibold" style={{ color }}>{shown}</span>
@@ -295,7 +341,7 @@ function Preview({ name, color, src, tone }: { name: string; color: string; src?
         <div className="flex flex-col gap-1.5 border-t border-border pt-2">
           <span className="text-11 uppercase tracking-wide text-fg-tertiary">In the sidebar</span>
           <div className="flex items-center gap-2">
-            <PersonaAvatar name={shown} color={color} src={src} size={20} />
+            <PersonaAvatar name={shown} color={color} src={src} characterSvg={characterSvg} size={20} />
             <span className="flex-1 truncate text-12 text-fg">Weekly recap</span>
             <span className="text-11 text-fg-tertiary">Today</span>
           </div>
@@ -376,6 +422,8 @@ export function PersonaEditor({ persona, onClose }: { persona: Persona | "new"; 
   const setDefault = useSetDefaultPersona();
   const upload = useUploadPersonaAvatar();
   const removeAvatar = useDeletePersonaAvatar();
+  const createChat = useCreateChat();
+  const router = useRouter();
 
   useEffect(() => () => void (avatar.kind === "file" && URL.revokeObjectURL(avatar.url)), [avatar]);
 
@@ -384,6 +432,7 @@ export function PersonaEditor({ persona, onClose }: { persona: Persona | "new"; 
   const field = fieldError(error);
   const nameError = taken ? "You already have a persona with this name." : field?.field === "name" ? field.message : null;
   const src = avatar.kind === "file" ? avatar.url : avatar.kind === "remove" ? undefined : saved?.avatar_url;
+  const characterSvg = avatar.kind === "keep" ? saved?.character_svg : undefined;
   const set = (p: Partial<Draft>) => setDraft((d) => ({ ...d, ...p }));
 
   function reload() {
@@ -635,12 +684,20 @@ export function PersonaEditor({ persona, onClose }: { persona: Persona | "new"; 
                   name={name}
                   color={color.color}
                   current={saved?.avatar_url}
+                  currentCharacter={saved?.character_svg}
                   choice={avatar}
                   setChoice={setAvatar}
                   errors={avatarErrors}
                   setErrors={setAvatarErrors}
+                  onDesignInChat={saved ? () => {
+                    createChat.mutate(
+                      { persona_id: saved.id },
+                      { onSuccess: (c) => { onClose(); router.push(`/chat/${c.id}`); } },
+                    );
+                  } : undefined}
+                  designing={createChat.isPending}
                 />
-                <Preview name={draft.name} color={color.color} src={src} tone={draft.tone} />
+                <Preview name={draft.name} color={color.color} src={src} characterSvg={characterSvg} tone={draft.tone} />
               </div>
             </div>
 

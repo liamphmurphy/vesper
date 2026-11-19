@@ -94,6 +94,7 @@ import { HarnessSwitchDialog } from "./switch-dialog";
 import { UsageTag } from "./usage-tag";
 import { HeaderPersona, PersonaAvatar, PersonaGreeting, PersonaName, PersonaStack, PersonaSwitcher, personaLook, toneLabel, type PersonaLook } from "./persona";
 import { PersonaProposals } from "./persona-proposals";
+import { PersonaCharacterProposals } from "./persona-character-proposals";
 import { ConnectorRequests } from "./connector-requests";
 import { SecretRequests } from "./secret-requests";
 import { TicketChangeRequests } from "./ticket-change-requests";
@@ -1371,6 +1372,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
                 </li>
               )}
               <PersonaProposals chatId={c.id} disabled={c.archived} />
+              <PersonaCharacterProposals chatId={c.id} disabled={c.archived} />
               <ConnectorRequests chatId={c.id} disabled={c.archived} />
               <SecretRequests chatId={c.id} disabled={c.archived} />
               <TicketChangeRequests chatId={c.id} disabled={c.archived} />
