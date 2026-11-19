@@ -173,7 +173,6 @@ struct SettingsDetail: View {
         "stalled": "Stalled runs", "mockup": "Mockups to review", "planning": "Plans to approve",
         "review": "Work ready for review", "workflow_gate": "Workflow gates", "connector_approval": "Connector tool calls",
         "secret_approval": "Requests using a secret", "merged": "Merged pull requests", "pr_approved": "Approved pull requests",
-        "drive_backup": "Failed backups",
     ]
 
     private func clock(_ keyPath: WritableKeyPath<NativeSettings, String>) -> Binding<Date> {

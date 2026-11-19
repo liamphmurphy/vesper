@@ -174,6 +174,23 @@ final class AuxLogicTests: XCTestCase {
         XCTAssertFalse(left.contains { $0.hasSuffix(".part") })
     }
 
+    func testExportPrunesEvictedICloudPlaceholders() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("exp-icloud-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        for n in [".vesper-export-2026-01-01-0100.zip.icloud", ".vesper-export-2026-01-02-0100.zip.icloud", ".notes.txt.icloud"] {
+            try Data("stub".utf8).write(to: dir.appendingPathComponent(n))
+        }
+        let now = Date(timeIntervalSince1970: 1_794_924_309)
+        _ = try await BackupExporter.export(client: makeClient(), folder: dir.path, keep: 2, now: now) { request in
+            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("dl-\(UUID().uuidString)")
+            try Data("zipdata".utf8).write(to: tmp)
+            return (tmp, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
+        let left = try FileManager.default.contentsOfDirectory(atPath: dir.path).sorted()
+        XCTAssertEqual(left, [".notes.txt.icloud", ".vesper-export-2026-01-02-0100.zip.icloud", Backups.exportFileName(now)].sorted())
+    }
+
     func testExportFailureLeavesNothingBehind() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("exp-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

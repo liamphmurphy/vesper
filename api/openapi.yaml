@@ -1111,62 +1111,6 @@ paths:
               schema: { type: string, format: binary }
         default: { $ref: "#/components/responses/Error" }
 
-  /backups/drive:
-    get:
-      operationId: getDriveBackup
-      summary: The scheduled export to Google Drive, and how its last run went
-      description: |
-        Defaults (revision 0) before anyone saved settings. running is true
-        while a backup holds the workspace's lease, scheduled or by hand.
-      tags: [workspace]
-      responses:
-        "200":
-          description: Settings and status
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/DriveBackup" }
-        default: { $ref: "#/components/responses/Error" }
-    put:
-      operationId: updateDriveBackup
-      summary: Save the scheduled export to Google Drive
-      description: |
-        The secret must be one of the caller's OAuth secrets. While enabled
-        it must be signed in with drive.file or drive scope, and a folder is
-        required; a disabled backup may be incomplete. Saving reschedules the
-        next run, keeping a due one when the time and zone are unchanged.
-        422 names the invalid field; 409 when revision is stale or the
-        secret can't upload (field secret_id).
-      tags: [workspace]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/DriveBackupInput" }
-      responses:
-        "200":
-          description: The saved settings
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/DriveBackup" }
-        default: { $ref: "#/components/responses/Error" }
-
-  /backups/drive/run:
-    post:
-      operationId: runDriveBackup
-      summary: Export to Google Drive now
-      description: |
-        Starts a backup in the background, enabled or not, and returns once
-        it holds the lease; poll GET /backups/drive for the outcome. 409 when
-        a backup is already running or no secret or folder is set.
-      tags: [workspace]
-      responses:
-        "202":
-          description: Started; the settings with running true
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/DriveBackup" }
-        default: { $ref: "#/components/responses/Error" }
-
   /secrets:
     get:
       operationId: listSecrets
@@ -8147,30 +8091,6 @@ components:
         heartbeat_at: { type: string, format: date-time }
         host_workspaces_dir: { type: string, description: "Where this runner keeps host-folder workspaces (RUNNER_HOST_WORKSPACES_DIR); absent when it has none" }
         slot_limit: { type: integer, description: "A temporary cap below max_concurrent (PUT /runner/slot-limit); absent when none" }
-    DriveBackupInput:
-      type: object
-      required: [enabled, folder_id, at_time, timezone, retention, revision]
-      properties:
-        enabled: { type: boolean }
-        secret_id: { type: string, format: uuid, nullable: true, description: "One of the caller's OAuth API secrets" }
-        folder_id: { type: string, maxLength: 200, description: Google Drive folder ID }
-        folder_name: { type: string, maxLength: 500, description: Shown in Settings only }
-        at_time: { type: string, example: "03:00", description: "Daily, at this 24-hour local time (HH:MM)" }
-        timezone: { type: string, example: Europe/London, description: IANA time zone }
-        retention: { type: integer, minimum: 0, maximum: 1000, description: "Backups to keep in the folder; 0 keeps them all" }
-        revision: { type: integer, description: "The revision read; 0 when there was none" }
-    DriveBackup:
-      allOf:
-        - $ref: "#/components/schemas/DriveBackupInput"
-        - type: object
-          required: [running, last_status, last_error]
-          properties:
-            next_run_at: { type: string, format: date-time, nullable: true, description: Absent while disabled }
-            last_run_at: { type: string, format: date-time, nullable: true }
-            last_status: { type: string, description: "succeeded, failed, or empty before the first run" }
-            last_error: { type: string, description: "Why the last run failed, in words the person can act on" }
-            running: { type: boolean }
-            running_since: { type: string, format: date-time, nullable: true }
     ImageEngineSettings:
       type: object
       required: [engine, options]
@@ -8322,8 +8242,8 @@ components:
         id: { type: string }
         kind:
           type: string
-          description: "question is a run waiting on await_human (summary is the question); blocked is a failed or blocked run; stalled is a running run with no event for 30 minutes; merged is a pull request merged in the last 14 days; pr_approved is a pull request you authored on GitHub that a reviewer approved in the last 14 days (href is the pull request's GitHub URL); drive_backup is a failed scheduled or manual export to Google Drive (summary is the reason)"
-          enum: [approval, question, blocked, stalled, mockup, planning, review, dispatch, mention, suggestion, workflow_gate, scheduled, connector_approval, secret_approval, secret_expiring, merged, pr_approved, drive_backup]
+          description: "question is a run waiting on await_human (summary is the question); blocked is a failed or blocked run; stalled is a running run with no event for 30 minutes; merged is a pull request merged in the last 14 days; pr_approved is a pull request you authored on GitHub that a reviewer approved in the last 14 days (href is the pull request's GitHub URL)"
+          enum: [approval, question, blocked, stalled, mockup, planning, review, dispatch, mention, suggestion, workflow_gate, scheduled, connector_approval, secret_approval, secret_expiring, merged, pr_approved]
         title: { type: string }
         summary: { type: string }
         href: { type: string }

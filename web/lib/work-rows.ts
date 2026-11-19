@@ -67,7 +67,6 @@ export const NEEDS_PREFIX: Record<NeedsKind, string> = {
   secret_expiring: "Secret expiring",
   merged: "PR merged",
   pr_approved: "PR approved",
-  drive_backup: "Drive backup failed",
 };
 
 const ENDED_RUN_STATES = new Set(["completed", "failed", "cancelled"]);

@@ -9,7 +9,6 @@ public enum NotificationLogic {
         "mention": "Mention", "suggestion": "Wiki edit", "workflow_gate": "Workflow gate", "scheduled": "Scheduled task",
         "connector_approval": "Connector approval", "secret_approval": "Secret approval",
         "secret_expiring": "Secret expiring", "merged": "PR merged", "pr_approved": "PR approved",
-        "drive_backup": "Backup failed",
     ]
 
     static let notifiableKinds = Set(NotificationKind.all)

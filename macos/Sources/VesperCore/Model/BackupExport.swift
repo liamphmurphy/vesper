@@ -43,8 +43,10 @@ public enum BackupExporter {
         return (url, http)
     }
 
-    /// Downloads GET /api/v1/instance/export into `folder` as `<name>.part`, renames it when complete
-    /// (mode 0600), then deletes Vesper's own exports beyond `keep`. Returns the final file.
+    /// Downloads GET /api/v1/instance/export to a temporary file, sets mode 0600, moves it straight
+    /// into `folder` without staging a `.part` file inside the destination (which can trip cloud
+    /// sync daemons such as iCloud Drive), then deletes Vesper's own exports beyond `keep`.
+    /// Returns the final file.
     public static func export(
         client: APIClient, folder: String, keep: Int, now: Date = Date(), download: ExportDownload = defaultDownload
     ) async throws -> URL {
@@ -55,7 +57,6 @@ public enum BackupExporter {
         }
         let folderURL = URL(fileURLWithPath: folder, isDirectory: true)
         let final = folderURL.appendingPathComponent(Backups.exportFileName(now))
-        let part = URL(fileURLWithPath: final.path + ".part")
         var request = URLRequest(url: try client.makeURL("/api/v1/instance/export"))
         request.httpMethod = "GET"
         client.authorize(&request)
@@ -66,13 +67,10 @@ public enum BackupExporter {
             guard (200..<300).contains(response.statusCode) else {
                 throw BackupImportError("The server answered \(response.statusCode).")
             }
-            try? fm.removeItem(at: part)
-            try fm.moveItem(at: tmp, to: part)
-            try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: part.path)
+            try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tmp.path)
             try? fm.removeItem(at: final)
-            try fm.moveItem(at: part, to: final)
+            try fm.moveItem(at: tmp, to: final)
         } catch {
-            try? fm.removeItem(at: part)
             if let e = error as? BackupImportError { throw e }
             throw BackupImportError(error.localizedDescription)
         }

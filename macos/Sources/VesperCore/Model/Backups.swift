@@ -26,11 +26,31 @@ public enum Backups {
         return "vesper-export-\(String(format: "%04d", c.year ?? 0))-\(p(c.month))-\(p(c.day))-\(p(c.hour))\(p(c.minute)).zip"
     }
 
-    /// Exports to delete so only the newest `keep` remain. Only files with Vesper's own export name
-    /// are considered; anything else in the folder is left alone.
+    /// Canonical export filename if `name` is Vesper's own zip or its evicted iCloud Drive
+    /// placeholder (`.vesper-export-YYYY-MM-DD-HHMM.zip.icloud`), otherwise nil.
+    static func canonicalExportName(_ name: String) -> String? {
+        let stripped: String
+        if name.hasPrefix("."), name.hasSuffix(".icloud") {
+            stripped = String(name.dropFirst().dropLast(".icloud".count))
+        } else {
+            stripped = name
+        }
+        guard stripped.range(of: exportPattern, options: .regularExpression) != nil else { return nil }
+        return stripped
+    }
+
+    /// Exports to delete so only the newest `keep` remain. Considers Vesper's own export zips and
+    /// their evicted iCloud Drive placeholders (`.<name>.icloud`), ordered by export timestamp
+    /// regardless of eviction state; anything else in the folder is left alone.
     public static func exportsToPrune(_ names: [String], keep: Int) -> [String] {
-        let ours = names.filter { $0.range(of: exportPattern, options: .regularExpression) != nil }.sorted(by: >)
-        return Array(ours.dropFirst(max(1, keep)))
+        let ours = names.compactMap { name -> (canonical: String, actual: String)? in
+            guard let canonical = canonicalExportName(name) else { return nil }
+            return (canonical, name)
+        }
+        .sorted { a, b in
+            a.canonical != b.canonical ? a.canonical > b.canonical : a.actual > b.actual
+        }
+        return ours.dropFirst(max(1, keep)).map { $0.actual }
     }
 
     /// Milliseconds since the epoch, as the Electron app stored them.
