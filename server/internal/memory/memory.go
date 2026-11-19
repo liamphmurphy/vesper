@@ -9,6 +9,7 @@
 package memory
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -43,6 +44,11 @@ const (
 	// IndexSize caps the always-loaded index: enough to recognise what's
 	// remembered, small enough to load every turn.
 	IndexSize = 50
+	// IndexProjectCap caps how many project entries occupy the always-loaded
+	// index when non-project entries also exist, so project churn cannot evict
+	// personal facts, preferences, or life context. Unused slots in either
+	// bucket spill over to the other up to IndexSize.
+	IndexProjectCap = 15
 	// Near-duplicate thresholds (pg_trgm similarity, 0–1).
 	dupTitle   = 0.6
 	dupSummary = 0.75
@@ -396,12 +402,16 @@ type IndexEntry struct {
 	Space bool `json:"space,omitempty"`
 }
 
-// Index lists the person's most recently changed live entries, titles and
-// summaries only, and the total number of live entries. Personas' own
-// memories are never in it.
+// Index lists up to IndexSize of the person's live entries (titles and
+// summaries only) and the total number of live entries. Personas' own memories
+// are never in it. At most IndexProjectCap slots are reserved for project
+// entries when non-project entries also exist; unused slots spill over up to
+// IndexSize.
 func (s *Service) Index(ctx context.Context, o Owner) ([]IndexEntry, int, error) {
 	o = o.Person()
-	hits, err := s.Find(ctx, o, Query{Limit: IndexSize})
+	rows, err := s.Q.ListIndexMemories(ctx, store.ListIndexMemoriesParams{
+		WorkspaceID: o.WorkspaceID, UserID: o.UserID, SpaceID: o.SpaceID, Lim: IndexSize,
+	})
 	if err != nil {
 		return nil, 0, err
 	}
@@ -409,11 +419,54 @@ func (s *Service) Index(ctx context.Context, o Owner) ([]IndexEntry, int, error)
 	if err != nil {
 		return nil, 0, err
 	}
-	out := make([]IndexEntry, len(hits))
-	for i, h := range hits {
-		out[i] = IndexEntry{ID: h.ID, Title: h.Title, Summary: h.Summary, Type: h.Type, Space: h.SpaceID != nil}
+	selected := selectIndexMemories(rows)
+	out := make([]IndexEntry, len(selected))
+	for i, m := range selected {
+		out[i] = IndexEntry{ID: m.ID, Title: m.Title, Summary: m.Summary, Type: m.Type, Space: m.SpaceID != nil}
 	}
 	return out, total, nil
+}
+
+func compareMemoriesNewestFirst(a, b store.Memory) int {
+	if !a.UpdatedAt.Equal(b.UpdatedAt) {
+		if a.UpdatedAt.After(b.UpdatedAt) {
+			return -1
+		}
+		return 1
+	}
+	return bytes.Compare(b.ID[:], a.ID[:])
+}
+
+func selectIndexMemories(rows []store.Memory) []store.Memory {
+	var personal, project []store.Memory
+	for _, m := range rows {
+		if m.Type == "project" {
+			project = append(project, m)
+		} else {
+			personal = append(personal, m)
+		}
+	}
+	slices.SortFunc(personal, compareMemoriesNewestFirst)
+	slices.SortFunc(project, compareMemoriesNewestFirst)
+
+	personalQuota := IndexSize - IndexProjectCap
+	takePersonal := min(len(personal), personalQuota)
+	takeProject := min(len(project), IndexProjectCap)
+	if rem := IndexSize - takePersonal - takeProject; rem > 0 {
+		if extra := min(len(personal)-takePersonal, rem); extra > 0 {
+			takePersonal += extra
+			rem -= extra
+		}
+		if extra := min(len(project)-takeProject, rem); extra > 0 {
+			takeProject += extra
+		}
+	}
+
+	selected := make([]store.Memory, 0, takePersonal+takeProject)
+	selected = append(selected, personal[:takePersonal]...)
+	selected = append(selected, project[:takeProject]...)
+	slices.SortFunc(selected, compareMemoriesNewestFirst)
+	return selected
 }
 
 // IndexMarkdown renders the index for an assistant's context.

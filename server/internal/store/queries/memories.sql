@@ -119,6 +119,28 @@ WHERE workspace_id = @workspace_id AND user_id = @user_id
 ORDER BY CASE WHEN @by_created::bool THEN created_at ELSE updated_at END DESC, id DESC
 LIMIT @lim OFFSET @off;
 
+-- name: ListIndexMemories :many
+-- Candidate entries for the always-loaded Memory index: up to @lim most
+-- recently changed non-project entries and up to @lim most recently changed
+-- project entries, so project churn cannot evict personal facts or preferences.
+SELECT m.* FROM memories m
+WHERE m.workspace_id = @workspace_id AND m.user_id = @user_id
+  AND m.id IN (
+  SELECT ranked.id FROM (
+    SELECT m2.id, row_number() OVER (
+      PARTITION BY (m2.type = 'project')
+      ORDER BY m2.updated_at DESC, m2.id DESC
+    ) AS rn
+    FROM memories m2
+    WHERE m2.workspace_id = @workspace_id AND m2.user_id = @user_id
+      AND m2.persona_id IS NULL
+      AND (m2.space_id IS NULL OR m2.space_id = sqlc.narg(space_id))
+      AND m2.superseded_by IS NULL
+  ) ranked
+  WHERE ranked.rn <= @lim::bigint
+)
+ORDER BY m.updated_at DESC, m.id DESC;
+
 -- name: CountMemories :one
 SELECT count(*) FROM memories
 WHERE workspace_id = @workspace_id AND user_id = @user_id
