@@ -144,8 +144,8 @@ func TestToolPolicyExactApproval(t *testing.T) {
 
 }
 
-// Claude Code's sub agent tool: only the explorer, only for a lead run whose
-// spec has the option on.
+// Claude Code's and agy's sub agent tool: only the explorer, only for a lead
+// run whose spec has the option on.
 func TestToolPolicyExplorerSubagent(t *testing.T) {
 	ctx := context.Background()
 	pool := testdb.New(t)
@@ -211,6 +211,14 @@ func TestToolPolicyExplorerSubagent(t *testing.T) {
 	}
 	spec.Harness = agentdef.HarnessCodex
 	setOption("true")
+	check("Agent", "explorer", "deny")
+	// agy's invoke_subagent reaches the hook as Agent with subagent_type
+	// (LAZYAGENTS-258): the same explorer, and only it.
+	spec.Harness = agentdef.HarnessAntigravity
+	setOption("true")
+	check("Agent", "explorer", "allow")
+	check("Agent", "general", "deny")
+	setOption("false")
 	check("Agent", "explorer", "deny")
 	spec.Harness = agentdef.HarnessClaudeCode
 	setOption("true")

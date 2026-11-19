@@ -19,7 +19,9 @@ func TestExplorerOn(t *testing.T) {
 		{"no tools", HarnessClaudeCode, map[string]string{OptionNoTools: "true"}, true, false},
 		{"codex", HarnessCodex, nil, true, false},
 		{"codex with option true", HarnessCodex, map[string]string{OptionExplorer: "true"}, true, false},
-		{"antigravity", HarnessAntigravity, nil, true, false},
+		{"antigravity lead", HarnessAntigravity, nil, true, true},
+		{"antigravity sub agent or chat run", HarnessAntigravity, nil, false, false},
+		{"antigravity explicit false", HarnessAntigravity, map[string]string{OptionExplorer: "false"}, true, false},
 	} {
 		spec := Resolved{Harness: c.harness, HarnessOptions: c.opts}
 		if got := ExplorerOn(spec, c.lead); got != c.want {

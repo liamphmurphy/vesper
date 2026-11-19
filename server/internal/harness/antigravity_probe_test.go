@@ -171,6 +171,55 @@ func TestAgyProbe(t *testing.T) {
 		}
 	})
 
+	// A lead run gets the read-only explorer as an agy custom agent: the lead
+	// sees it in its subagent roster, invoke_subagent reaches Vesper's policy
+	// as Agent/explorer, and the explorer runs on the flash tier with read_file
+	// and none of the lead's write, shell or MCP tools (LAZYAGENTS-258).
+	t.Run("explorer", func(t *testing.T) {
+		p := newAgyProbe(t, bin)
+		p.lead = true
+		p.gemini.script(
+			agyReply{call: agyCall("invoke_subagent", map[string]any{"TypeName": "explorer", "Role": "explorer", "Prompt": "Where is the greeting?"})},
+			agyReply{text: "notes.txt:1"},
+			agyReply{text: "Done."},
+		)
+		s := spec("repo:read", "allowed", "repo:write", "allowed", "tests:run", "allowed")
+		s.Harness, s.Model = agentdef.HarnessAntigravity, ""
+		out := p.run(t, s, "")
+		// The explorer runs asynchronously, so how many turns the lead takes
+		// to finish varies; that it finished is what counts.
+		if out.exit != 0 || out.res.IsError {
+			t.Fatalf("exit=%d result=%+v", out.exit, out.res)
+		}
+		if !strings.Contains(p.gemini.firstRequest(), agentdef.ExplorerDescription) {
+			t.Error("the lead must see the explorer in its subagent roster")
+		}
+		if got := p.policy.tools(); !slices.Equal(got, []string{"Agent"}) || p.policy.input(0)["subagent_type"] != agentdef.ExplorerAgent {
+			t.Errorf("policy saw %v %v", got, p.policy.input(0))
+		}
+		explorer := -1
+		for i, body := range p.gemini.all {
+			if strings.Contains(string(body), agentdef.ExplorerPrompt) {
+				explorer = i
+			}
+		}
+		if explorer < 0 {
+			t.Fatal("the explorer never ran")
+		}
+		body, path := string(p.gemini.all[explorer]), p.gemini.paths[explorer]
+		if !strings.Contains(path, "flash") || strings.Contains(p.gemini.paths[0], "flash") {
+			t.Errorf("explorer on %s, lead on %s: the explorer runs on the flash tier", path, p.gemini.paths[0])
+		}
+		if !strings.Contains(body, `"name":"read_file"`) {
+			t.Error("the explorer must be able to read")
+		}
+		for _, tool := range []string{"run_command", "write_file", "edit_file", "mcp_lazyagents_list_tickets", "call_mcp_tool", "invoke_subagent"} {
+			if strings.Contains(body, `"name":"`+tool+`"`) {
+				t.Errorf("the explorer was given %s", tool)
+			}
+		}
+	})
+
 	// An OAuth account's synced preferences can turn agy's terminal sandbox on
 	// whatever settings.json says. Vesper's session settings turn it off again,
 	// so commands run unsandboxed without BypassSandbox, whose presence sent each
@@ -232,6 +281,7 @@ type agyProbe struct {
 	accountSettings map[string]any
 	// withoutSessionSettings drops Vesper's --settings, to show what they change.
 	withoutSessionSettings bool
+	lead                   bool // a lead ticket run's turn
 }
 
 func newAgyProbe(t *testing.T, bin string) *agyProbe {
@@ -264,7 +314,7 @@ func (p *agyProbe) run(t *testing.T, spec agentdef.Resolved, record string) agyO
 func (p *agyProbe) runWithSettings(t *testing.T, spec agentdef.Resolved, record, settingsJSON string) agyOutcome {
 	t.Helper()
 	inv, err := (Antigravity{}).Invocation(Workspace{Dir: p.ws, MCPURL: p.vesperURL + "/mcp", Token: "probe-token", TokenEnv: "LAZYAGENTS_TOKEN", ContainerSandbox: true},
-		Turn{Spec: spec, Prompt: "Do the probe task."})
+		Turn{Spec: spec, Prompt: "Do the probe task.", Lead: p.lead})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -382,6 +432,7 @@ type agyGemini struct {
 	replies []agyReply
 	first   []byte
 	all     [][]byte
+	paths   []string
 }
 
 func (g *agyGemini) script(r ...agyReply) { g.replies = r }
@@ -399,6 +450,7 @@ func (g *agyGemini) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g.first = body
 	}
 	g.all = append(g.all, body)
+	g.paths = append(g.paths, r.URL.Path)
 	reply := agyReply{text: "done"}
 	if len(g.replies) > 0 {
 		reply, g.replies = g.replies[0], g.replies[1:]
@@ -430,6 +482,7 @@ type agyPolicyStub struct {
 	mu     sync.Mutex
 	denied []string
 	seen   []string
+	inputs []map[string]any
 }
 
 func (s *agyPolicyStub) deny(tools ...string) { s.denied = tools }
@@ -440,13 +493,24 @@ func (s *agyPolicyStub) tools() []string {
 	return append([]string(nil), s.seen...)
 }
 
+func (s *agyPolicyStub) input(i int) map[string]any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if i >= len(s.inputs) {
+		return nil
+	}
+	return s.inputs[i]
+}
+
 func (s *agyPolicyStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Tool string `json:"tool"`
+		Tool  string         `json:"tool"`
+		Input map[string]any `json:"input"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&in)
 	s.mu.Lock()
 	s.seen = append(s.seen, in.Tool)
+	s.inputs = append(s.inputs, in.Input)
 	s.mu.Unlock()
 	decision := map[string]string{"decision": "allow"}
 	for _, d := range s.denied {

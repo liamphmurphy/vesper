@@ -140,11 +140,25 @@ func (Antigravity) Invocation(ws Workspace, t Turn) (Invocation, error) {
 	}
 
 	files := SkillFilesFor(spec.Skills, agentdef.HarnessAntigravity) // agy 1.5.8 lists .agents/skills/*/SKILL.md to the model
+	if agentdef.ExplorerOn(spec, t.Lead) {
+		files[agyExplorerPath] = agyExplorerAgent
+		files[SkillsExcludeFile] = append(files[SkillsExcludeFile], []byte("/"+agyExplorerPath+"\n")...)
+	}
 	files[agyPolicyPath] = agyPolicyHook
 	files[agyLaunchPath] = agyLauncher
 	files[agyConfigPath] = body
 	return Invocation{Argv: argv, Env: env, Files: files}, nil
 }
+
+// agyExplorerAgent is the explorer as an agy custom agent (agy 1.5.9,
+// TestAgyProbe/explorer): a subagent only, on agy's flash tier, with read-only
+// tools and none of the run's MCP servers. The lead calls it with
+// invoke_subagent, whose TypeName the policy hook sends as subagent_type, so
+// runs.CheckTool allows it exactly as it does Claude Code's explorer.
+const agyExplorerPath = ".agents/agents/" + agentdef.ExplorerAgent + ".md"
+
+var agyExplorerAgent = []byte("---\nname: " + agentdef.ExplorerAgent + "\ndescription: " + strconv.Quote(agentdef.ExplorerDescription) +
+	"\nsubagent: true\nmainAgent: false\ninheritMcp: false\nmodel: flash\ntools: [read_file]\n---\n\n# Explorer\n\n" + agentdef.ExplorerPrompt + "\n")
 
 // agySessionSettings turns agy's terminal sandbox off for this session only.
 // The container is the boundary, as for Codex. settings.json can't do it on
@@ -601,8 +615,8 @@ func antigravityTool(name string, args map[string]any) (string, map[string]any) 
 		input, _ := args["Arguments"].(map[string]any)
 		return "mcp__" + server + "__" + tool, input
 	case "invoke_subagent", "define_subagent", "manage_subagents", "swarm", "send_message":
-		// Other agents, which Vesper's policy refuses as it does Claude Code's
-		// (only its explorer, which agy doesn't have), except image-generator in image steps.
+		// Other agents, which Vesper's policy refuses as it does Claude Code's:
+		// only a lead's explorer, and image-generator in image steps.
 		out := map[string]any{"description": str("Role", "Name", "TypeName", "action")}
 		if name == "invoke_subagent" {
 			if st := str("TypeName"); st != "" {

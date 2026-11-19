@@ -208,17 +208,22 @@ const OptionNoTools = "no_tools"
 // sets it, and the MCP surface it gets is read-only.
 const OptionAside = "aside"
 
-// OptionExplorer gives a Claude Code lead ticket run one read-only sub agent,
-// "explorer", that searches and reads code on a cheap model and returns
-// conclusions, keeping that output out of the lead's context. It is on unless
-// set to "false". OptionExplorerModel picks its model (default
-// DefaultExplorerModel). See ExplorerOn for when it applies.
+// OptionExplorer gives a Claude Code or Antigravity lead ticket run one
+// read-only sub agent, "explorer", that searches and reads code on a cheap
+// model and returns conclusions, keeping that output out of the lead's
+// context. It is on unless set to "false". OptionExplorerModel picks its model
+// on Claude Code (default DefaultExplorerModel); agy runs it on its flash
+// tier. Codex has none (docs/contracts/ADR-explorer.md). See ExplorerOn for
+// when it applies.
 const (
 	OptionExplorer       = "explorer"
 	OptionExplorerModel  = "explorer_model"
 	DefaultExplorerModel = "haiku-5.5"
 	// ExplorerAgent is the explorer's sub agent type.
 	ExplorerAgent = "explorer"
+	// ExplorerDescription and ExplorerPrompt are the same on every harness.
+	ExplorerDescription = "Read-only code search. Use it for any question that needs a broad grep or reading more than about three files, when you need the conclusion and not the file contents."
+	ExplorerPrompt      = "Answer the question from the code. Reply in at most 300 words with file:line references. Never paste whole files or long excerpts. Say what you could not find."
 )
 
 // EagerVesperTools are the lazyagents tools almost every chat turn or ticket run
@@ -240,12 +245,12 @@ var EagerVesperTools = []string{
 const BatchExplorationGuide = "Explore in batches: make independent file reads and searches together in one turn, don't repeat a lookup you've already answered, and start editing once you know where the change goes and the local conventions."
 
 // ExplorerOn reports whether a run gets the explorer sub agent: the option
-// isn't "false", the harness is Claude Code, the run is a lead (an undelegated
-// ticket run), and the spec is neither readonly nor no_tools. Only main agents
-// run leads, so sub agents and chats never get it.
+// isn't "false", the harness is Claude Code or Antigravity, the run is a lead
+// (an undelegated ticket run), and the spec is neither readonly nor no_tools.
+// Only main agents run leads, so sub agents and chats never get it.
 func ExplorerOn(spec Resolved, lead bool) bool {
 	o := spec.HarnessOptions
-	return lead && spec.Harness == HarnessClaudeCode && o[OptionExplorer] != "false" &&
+	return lead && (spec.Harness == HarnessClaudeCode || spec.Harness == HarnessAntigravity) && o[OptionExplorer] != "false" &&
 		o["readonly"] != "true" && o[OptionNoTools] != "true"
 }
 

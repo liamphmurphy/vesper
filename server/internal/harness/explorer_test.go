@@ -92,6 +92,42 @@ func TestClaudeExplorerOnlyForLeads(t *testing.T) {
 	}
 }
 
+// agy gets the same explorer as a custom agent file, for leads only, kept out
+// of git; TestAgyProbe/explorer runs it against the real agy.
+func TestAntigravityExplorerInvocation(t *testing.T) {
+	agy := func(opts ...string) agentdef.Resolved {
+		s := explorerSpec(opts...)
+		s.Harness, s.Model = agentdef.HarnessAntigravity, "gemini-3.8-flash"
+		return s
+	}
+	inv, err := Antigravity{}.Invocation(ws, Turn{Spec: agy(), Prompt: "go", Lead: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	md := string(inv.Files[agyExplorerPath])
+	for _, want := range []string{"name: explorer\n", "subagent: true\n", "mainAgent: false\n", "inheritMcp: false\n", "model: flash\n", "tools: [read_file]\n", agentdef.ExplorerDescription, agentdef.ExplorerPrompt} {
+		if !strings.Contains(md, want) {
+			t.Errorf("explorer agent missing %q:\n%s", want, md)
+		}
+	}
+	if !strings.Contains(string(inv.Files[SkillsExcludeFile]), "/"+agyExplorerPath) {
+		t.Errorf("explorer agent isn't excluded from git: %q", inv.Files[SkillsExcludeFile])
+	}
+	for name, turn := range map[string]Turn{
+		"delegated":  {Spec: agy(), Prompt: "go"},
+		"option off": {Spec: agy(agentdef.OptionExplorer, "false"), Prompt: "go", Lead: true},
+		"readonly":   {Spec: agy("readonly", "true"), Prompt: "go", Lead: true},
+	} {
+		inv, err := Antigravity{}.Invocation(ws, turn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if inv.Files[agyExplorerPath] != nil || strings.Contains(string(inv.Files[SkillsExcludeFile]), agyExplorerPath) {
+			t.Errorf("%s: explorer present", name)
+		}
+	}
+}
+
 func TestClaudeSubagentMessagesAreNotTheReply(t *testing.T) {
 	lines := []string{
 		`{"type":"assistant","message":{"content":[{"type":"text","text":"Let me ask the explorer."},{"type":"tool_use","id":"a1","name":"Agent","input":{"subagent_type":"explorer","prompt":"where?"}}]}}`,
