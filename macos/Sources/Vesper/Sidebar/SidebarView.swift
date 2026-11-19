@@ -14,8 +14,9 @@ struct SidebarHost: View {
     }
 }
 
-/// The native sidebar: the shell section (areas, Apps) on top, then the current screen's list,
-/// drawn from the `NavModel` the page describes. Everything user-driven goes out through `send`.
+/// The native sidebar: a pinned bar of the areas (with the Apps menu), the screen's compact header
+/// (title, actions, search, filters), then its scrolling list, all drawn from the `NavModel` the page
+/// describes. The first two stay put while the list scrolls. Everything user-driven goes out through `send`.
 private struct SidebarScrollTarget: Equatable, Sendable {
     let navId: String
     let itemId: String
@@ -38,29 +39,35 @@ struct SidebarView: View {
 
     var body: some View {
         let shell = state.shell ?? ShellState.fallbackShell
-        ScrollViewReader { proxy in
-            List(selection: navSelection) {
-                ShellSection(shell: shell, send: send)
-                if let nav = state.navigator {
-                    NavContent(nav: nav, state: state, send: send)
-                }
+        VStack(spacing: 0) {
+            AreaBar(shell: shell, send: send)
+            if let nav = state.navigator {
+                NavHeader(nav: nav, send: send).id(nav.id)
             }
-            .listStyle(.sidebar)
-            .task(id: scrollTarget) {
-                guard let target = scrollTarget, !state.recentlyActivated(target.itemId) else { return }
-                // Let newly expanded DisclosureGroups materialize child rows in NSOutlineView before scrolling.
-                try? await Task.sleep(for: .milliseconds(60))
-                guard !Task.isCancelled else { return }
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    proxy.scrollTo(target.itemId, anchor: .center)
+            ScrollViewReader { proxy in
+                List(selection: navSelection) {
+                    if let nav = state.navigator {
+                        NavContent(nav: nav, state: state, send: send)
+                    }
+                }
+                .listStyle(.sidebar)
+                // Denser rows than the sidebar default, so a long chat list or file tree shows more of itself.
+                .environment(\.defaultMinListRowHeight, 22)
+                .task(id: scrollTarget) {
+                    guard let target = scrollTarget, !state.recentlyActivated(target.itemId) else { return }
+                    // Let newly expanded DisclosureGroups materialize child rows in NSOutlineView before scrolling.
+                    try? await Task.sleep(for: .milliseconds(60))
+                    guard !Task.isCancelled else { return }
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        proxy.scrollTo(target.itemId, anchor: .center)
+                    }
                 }
             }
         }
     }
 
-    /// The selected row: the screen's selected nav row, else the current area (so an area looks like
-    /// a native source-list selection). Setting it is a user click: the page navigates, the shell only
-    /// reports. Areas navigate from their own tap (so re-clicking the current area works too).
+    /// The selected row: the screen's selected nav row. Setting it is a user click: the page
+    /// navigates, the shell only reports. (The areas are buttons in the bar above, not rows.)
     private var navSelection: Binding<String?> {
         Binding(
             get: {
@@ -68,18 +75,16 @@ struct SidebarView: View {
                 // before the row loads or before its ancestor folders expand, and the List won't
                 // re-apply an unchanged value when the row appears later. Going from nil to the id
                 // makes it select the row.
-                if let nav = state.navigator, let selected = nav.selectedId {
-                    return SidebarTree.isVisible(
-                        selected,
-                        in: nav,
-                        expandedOverrides: state.expandedOverrides,
-                        collapsedOverrides: state.collapsedOverrides
-                    ) ? selected : nil
-                }
-                return (state.shell ?? ShellState.fallbackShell).currentArea.map { ShellSection.areaTag($0) }
+                guard let nav = state.navigator, let selected = nav.selectedId else { return nil }
+                return SidebarTree.isVisible(
+                    selected,
+                    in: nav,
+                    expandedOverrides: state.expandedOverrides,
+                    collapsedOverrides: state.collapsedOverrides
+                ) ? selected : nil
             },
             set: { id in
-                guard let id, !id.hasPrefix(ShellSection.areaPrefix), let nav = state.navigator, id != nav.selectedId else { return }
+                guard let id, let nav = state.navigator, id != nav.selectedId else { return }
                 state.noteActivate(id)
                 // ⌘-click opens the row in a new tab (as in Safari); the page decides, since it knows the href.
                 let newTab = NSApp.currentEvent?.modifierFlags.contains(.command) == true
@@ -88,64 +93,81 @@ struct SidebarView: View {
     }
 }
 
-// MARK: - Shell section
+// MARK: - Area bar
 
-private struct ShellSection: View {
+/// The areas as one row of icons, pinned above the list (the old vertical rows took ~150pt of it).
+/// Apps pops up a menu of Custom Apps and Tools instead of expanding in place.
+private struct AreaBar: View {
     let shell: ShellModel
     let send: (NativeCommand) -> Void
-    // Collapsed until the person opens it; remembered across launches.
-    @AppStorage("sidebar.appsExpanded") private var appsExpanded = false
-    @State private var lastAppsTap: Date?
-
-    static let areaPrefix = "area:"
-    static func areaTag(_ id: AreaId) -> String { areaPrefix + id.rawValue }
-
-    /// Tapping the Apps label navigates to /apps; only the disclosure triangle toggles expansion.
-    private var appsExpandedBinding: Binding<Bool> {
-        Binding(
-            get: { appsExpanded },
-            set: { open in
-                if let last = lastAppsTap, Date().timeIntervalSince(last) < 0.35 { return }
-                appsExpanded = open
-            }
-        )
-    }
 
     var body: some View {
-        Section {
+        HStack(spacing: 2) {
             ForEach(shell.areas) { area in
-                HStack {
-                    Label(area.label, systemImage: SidebarIcons.symbolName(area.icon))
-                    Spacer()
-                    if let badge = area.badge { BadgeView(text: badge.text, tone: badge.tone) }
+                AreaButton(label: area.label, symbol: SidebarIcons.symbolName(area.icon), badge: area.badge, selected: shell.currentArea == area.id) {
+                    send(.navigate(path: area.href))
                 }
-                .contentShape(Rectangle())
-                .simultaneousGesture(TapGesture().onEnded { send(.navigate(path: area.href)) })
-                .tag(Self.areaTag(area.id))
             }
-            if !shell.apps.isEmpty {
-                DisclosureGroup(isExpanded: appsExpandedBinding) {
-                    ForEach(shell.apps) { app in
-                        Button { send(.navigate(path: app.href)) } label: {
-                            Label(app.label, systemImage: SidebarIcons.symbolName(app.icon)).contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .selectionDisabled()
-                    }
-                } label: {
-                    HStack {
-                        Label("Apps", systemImage: "square.grid.2x2")
-                        Spacer()
-                    }
-                    .contentShape(Rectangle())
-                    .simultaneousGesture(TapGesture().onEnded {
-                        lastAppsTap = Date()
-                        send(.navigate(path: "/apps"))
-                    })
-                }
-                .tag(Self.areaTag(.apps))
+            AreaButton(label: "Apps", symbol: SidebarIcons.symbolName("dashboard"), badge: nil, selected: shell.currentArea == .apps) {
+                if shell.apps.isEmpty { send(.navigate(path: "/apps")) } else { popUpAppsMenu() }
             }
         }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+    }
+
+    /// Custom Apps (the /apps page), then your apps and the tools as grouped items.
+    private func popUpAppsMenu() {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let hub = ClosureMenuItem(title: "Custom Apps", handler: { _ in send(.navigate(path: "/apps")) }, id: "apps")
+        hub.image = SidebarIcons.image("dashboard")
+        menu.addItem(hub)
+        for section in SidebarTree.appsMenuSections(shell.apps) {
+            menu.addItem(.separator())
+            let header = NSMenuItem(title: section.title, action: nil, keyEquivalent: "")
+            header.isEnabled = false
+            menu.addItem(header)
+            for app in section.apps {
+                let item = ClosureMenuItem(title: app.label, handler: { _ in send(.navigate(path: app.href)) }, id: app.id)
+                item.image = SidebarIcons.image(app.icon)
+                menu.addItem(item)
+            }
+        }
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+    }
+}
+
+private struct AreaButton: View {
+    let label: String
+    let symbol: String
+    let badge: AreaBadge?
+    let selected: Bool
+    let action: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 14))
+                .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+                .frame(maxWidth: .infinity, minHeight: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(selected ? Color.accentColor.opacity(0.14) : hovered ? Color.primary.opacity(0.08) : Color.clear)
+                )
+                .overlay(alignment: .topTrailing) {
+                    if let badge {
+                        Circle().fill((badge.tone ?? .neutral).color).frame(width: 6, height: 6).padding(.top, 4).padding(.trailing, 8)
+                    }
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .help(label)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 
@@ -157,9 +179,6 @@ private struct NavContent: View {
     let send: (NativeCommand) -> Void
 
     var body: some View {
-        Section {
-            NavHeader(nav: nav, send: send)
-        }
         ForEach(nav.sections) { section in
             NavSectionView(nav: nav, section: section, state: state, send: send)
         }
@@ -170,10 +189,15 @@ private struct NavContent: View {
     }
 }
 
+/// The screen's header, pinned above the list: one compact line of title, search toggle and actions,
+/// then the filters and picker. Search is a field that opens from the magnifier, so it costs a row
+/// only while it's in use.
 private struct NavHeader: View {
     let nav: NavModel
     let send: (NativeCommand) -> Void
     @State private var search = ""
+    @State private var searchOpen = false
+    @FocusState private var searchFocused: Bool
     @State private var debounce: Task<Void, Never>?
 
     /// At most three choices whose labels add up to about the sidebar's width.
@@ -189,19 +213,29 @@ private struct NavHeader: View {
         }
     }
 
+    /// Closing clears the text too, so the list isn't left filtered by a field that's no longer showing.
+    private func closeSearch() {
+        search = ""
+        searchOpen = false
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let title = nav.title, (nav.actions ?? []).count > 2 {
-                // Many actions would squeeze the title to "Know…": title on its own line, actions below.
-                Text(title).font(.title3.weight(.semibold)).lineLimit(1)
-                HStack(spacing: 2) {
-                    actionButtons
-                    Spacer(minLength: 0)
-                }
-            } else if nav.title != nil || !(nav.actions ?? []).isEmpty {
-                HStack {
-                    if let title = nav.title { Text(title).font(.title3.weight(.semibold)).lineLimit(1).layoutPriority(1) }
+        VStack(alignment: .leading, spacing: 6) {
+            if nav.title != nil || nav.search != nil || !(nav.actions ?? []).isEmpty {
+                HStack(spacing: 4) {
+                    if let title = nav.title {
+                        Text(title).font(.subheadline.weight(.semibold)).lineLimit(1).layoutPriority(1)
+                    }
                     Spacer(minLength: 4)
+                    if nav.search != nil {
+                        Button {
+                            if searchOpen { closeSearch() } else { searchOpen = true }
+                        } label: {
+                            Image(systemName: "magnifyingglass").foregroundStyle(searchOpen ? Color.accentColor : Color.secondary)
+                        }
+                        .buttonStyle(.borderless)
+                        .help(searchOpen ? "Close search" : "Search")
+                    }
                     actionButtons
                 }
             }
@@ -224,6 +258,7 @@ private struct NavHeader: View {
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
+                    .controlSize(.small)
                 } else {
                     Picker(picker.id, selection: selection) {
                         ForEach(picker.options, id: \.value) { option in
@@ -236,26 +271,41 @@ private struct NavHeader: View {
                     }
                     .pickerStyle(.menu)
                     .labelsHidden()
+                    .controlSize(.small)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            if let s = nav.search {
+            if let s = nav.search, searchOpen {
                 TextField(s.placeholder, text: $search)
                     .textFieldStyle(.roundedBorder)
-                    .onAppear { search = s.value }
-                    .onChange(of: s.value) { _, new in if new != search { search = new } }
-                    .onChange(of: search) { _, new in
-                        guard new != s.value else { return }
-                        debounce?.cancel()
-                        debounce = Task {
-                            try? await Task.sleep(for: .milliseconds(250))
-                            guard !Task.isCancelled else { return }
-                            send(.navSearch(navigatorId: nav.id, searchId: s.id, value: new))
-                        }
-                    }
+                    .controlSize(.small)
+                    .focused($searchFocused)
+                    // Esc closes the field (clearing it), as the web's search does.
+                    .onExitCommand { closeSearch() }
+                    .onAppear { searchFocused = true }
             }
         }
-        .selectionDisabled()
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        // The search state lives on the header, not the field, so a query the page already holds (a
+        // restored tab, a shared filter) keeps the field open and filled while it's applied.
+        .onAppear {
+            if let s = nav.search, !s.value.isEmpty { search = s.value; searchOpen = true }
+        }
+        .onChange(of: nav.search?.value) { _, new in
+            guard let new, new != search else { return }
+            search = new
+            if !new.isEmpty { searchOpen = true }
+        }
+        .onChange(of: search) { _, new in
+            guard let s = nav.search, new != s.value else { return }
+            debounce?.cancel()
+            debounce = Task {
+                try? await Task.sleep(for: .milliseconds(250))
+                guard !Task.isCancelled else { return }
+                send(.navSearch(navigatorId: nav.id, searchId: s.id, value: new))
+            }
+        }
     }
 }
 
