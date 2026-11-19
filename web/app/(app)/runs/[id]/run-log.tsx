@@ -615,7 +615,7 @@ export function RunLogScreen({ id }: { id: string }) {
           <div className={`${WORK_COLUMN} flex-none pt-6 pb-2`}>
             <WorkDetailHeader
               eyebrow={<WorkEyebrow items={eyebrow} />}
-              title={<h1 className="text-[22px] font-semibold leading-tight tracking-[-0.018em] text-fg">{runTitle(run)}</h1>}
+              title={<h1 className="type-title text-fg">{runTitle(run)}</h1>}
               meta={
                 <>
                   <span className="inline-flex items-center gap-1.5 font-medium text-fg">
@@ -696,7 +696,7 @@ export function RunLogScreen({ id }: { id: string }) {
                   items={[
                     { key: "all", label: "All", count: counts.all },
                     { key: "messages", label: "Messages", count: counts.messages },
-                    { key: "tools", label: "Tool calls", count: counts.tools },
+                    { key: "tools", label: "Tools", count: counts.tools },
                     { key: "errors", label: "Errors", count: counts.errors },
                   ]}
                 />
@@ -705,7 +705,7 @@ export function RunLogScreen({ id }: { id: string }) {
                   placeholder="Filter trace…"
                   value={filter}
                   onChange={(e) => setFilter(e.target.value)}
-                  className="ml-auto w-48 max-sm:w-full"
+                  className="ml-auto w-36 max-sm:w-full"
                 />
                 <Button
                   variant="outline"

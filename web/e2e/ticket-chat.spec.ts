@@ -18,4 +18,14 @@ test("the ticket's side panel switches to Chat, which names the ticket, and reme
   await tabs.getByRole("tab", { name: "Properties" }).click();
   // The chat stays mounted behind its tab (a dock keeps its tabs), out of sight.
   await expect(panel.getByTestId("work-chat")).toBeHidden();
+
+  // Unified inline Ticket views tabs switch cleanly between Overview, Runs, and Activity.
+  const viewTabs = page.getByRole("tablist", { name: "Ticket views" });
+  await expect(viewTabs.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+  await viewTabs.getByRole("tab", { name: /^Runs/ }).click();
+  await expect(viewTabs.getByRole("tab", { name: /^Runs/ })).toHaveAttribute("aria-selected", "true");
+  await viewTabs.getByRole("tab", { name: /^Activity/ }).click();
+  await expect(viewTabs.getByRole("tab", { name: /^Activity/ })).toHaveAttribute("aria-selected", "true");
+  await viewTabs.getByRole("tab", { name: "Overview" }).click();
+  await expect(viewTabs.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
 });

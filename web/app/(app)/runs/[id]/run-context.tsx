@@ -102,7 +102,7 @@ function DelegatedNode({ run, depth, kids }: { run: Run; depth: number; kids?: R
 function DelegatedSection({ d, grandchildren }: { d: RunDetail; grandchildren: (Run[] | undefined)[] }) {
   if (!d.child_runs.length) return null;
   return (
-    <Section title="Delegated runs" aside={`${d.child_runs.length}`}>
+    <Section title="Sub-agents" aside={`${d.child_runs.length}`}>
       <ul>
         {d.child_runs.map((c, i) => (
           <DelegatedNode key={c.id} run={c} depth={0} kids={grandchildren[i]} />

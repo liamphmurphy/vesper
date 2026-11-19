@@ -172,7 +172,7 @@ function EpicDetail({ epic: e }: { epic: EpicOverview }) {
             ]}
           />
         }
-        title={<h1 className="text-[22px] font-semibold leading-tight tracking-[-0.018em] text-fg">{e.epic.name}</h1>}
+        title={<h1 className="type-title text-fg">{e.epic.name}</h1>}
         meta={
           <>
             <HealthPill health={e.epic.health} />

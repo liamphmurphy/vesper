@@ -51,7 +51,7 @@ function TitleEditor({ t, save }: { t: Ticket; save: SaveTicket }) {
   const [editing, setEditing] = useState(false);
   if (!editing) {
     return (
-      <h1 className="min-w-0 flex-1 text-[22px] font-semibold leading-tight tracking-[-0.018em] text-fg">
+      <h1 className="type-title min-w-0 flex-1 text-fg">
         <button type="button" onClick={() => setEditing(true)} className="-mx-1 rounded-md px-1 text-left hover:bg-hover" title="Edit title">
           <ViewTransition name={`ticket-title-${t.key}`} share="auto" default="none"><span>{t.title}</span></ViewTransition>
         </button>
@@ -78,7 +78,7 @@ function TitleEditor({ t, save }: { t: Ticket; save: SaveTicket }) {
           if (e.key === "Enter") commit(e.currentTarget.value);
           if (e.key === "Escape") setEditing(false);
         }}
-        className="-mx-1 w-full rounded-md border border-accent bg-surface px-1 text-[22px] font-semibold leading-tight tracking-[-0.018em] text-fg outline-none"
+        className="type-title -mx-1 w-full rounded-md border border-accent bg-surface px-1 text-fg outline-none"
       />
     </>
   );

@@ -86,20 +86,38 @@ test("a run shows its harness and model; usage without cost source is unknown", 
   await expect(timeline.getByText("$0.00")).toHaveCount(0);
 });
 
-test("run usage separates cached, uncached and unreported input", async ({ page }) => {
+test("run usage separates cached, uncached and unreported input in the Context dock and renders Trace messages as Markdown", async ({ page }) => {
   await installChatApi(page);
-  const usage = { ...run(parentId, "Lead"), input_tokens: 1000, output_tokens: 100,
-    cached_input_tokens: 900, uncached_input_tokens: 50, unreported_input_tokens: 50 };
+  const usage = {
+    ...run(parentId, "Lead"),
+    input_tokens: 1000,
+    output_tokens: 100,
+    cached_input_tokens: 900,
+    uncached_input_tokens: 50,
+    unreported_input_tokens: 50,
+    plan: [{ position: 1, state: "done" as const, text: "Verify token breakdown" }],
+  };
   await page.route("**/api/v1/runs/*", (route) => route.fulfill({ json: {
     run: usage, child_runs: [], turns: [], approvals: [],
-    events: [event(1, "usage", { input_tokens: 1000, output_tokens: 100, cached_tokens: 900, cache_reported_input_tokens: 950 }, 1)],
+    events: [
+      event(1, "message", { text: "Added **Status line** in `drive-backup.ts`." }, 0),
+      event(2, "usage", { input_tokens: 1000, output_tokens: 100, cached_tokens: 900, cache_reported_input_tokens: 950 }, 1),
+    ],
   } }));
   await page.goto(`/runs/${parentId}?view=details`);
-  const breakdown = page.getByLabel("Token breakdown");
-  await expect(breakdown).toContainText("Cached input 900");
-  await expect(breakdown).toContainText("Uncached input 50");
+  const ctx = page.getByRole("tabpanel", { name: "Context" });
+  const breakdown = ctx.getByLabel("Token breakdown");
+  await expect(breakdown).toContainText("Cached input");
+  await expect(breakdown).toContainText("900");
+  await expect(breakdown).toContainText("Uncached input");
+  await expect(breakdown).toContainText("50");
   await expect(breakdown).toContainText("Cache breakdown unavailable for 50 input");
   await expect(breakdown).toContainText("Total includes cached input");
-  await expect(page.getByRole("region", { name: "Events" })).toContainText("900 cached");
+  await expect(ctx.getByRole("region", { name: "Plan" })).toContainText("Verify token breakdown");
+  await expect(page.getByRole("complementary", { name: "Run summary" })).toHaveCount(0);
+  const events = page.getByRole("region", { name: "Events" });
+  await expect(events).toContainText("900 cached");
+  await expect(events.locator("strong", { hasText: "Status line" })).toBeVisible();
+  await expect(events.locator("code", { hasText: "drive-backup.ts" })).toBeVisible();
   await page.screenshot({ path: "test-results/token-breakdown.png", fullPage: true });
 });

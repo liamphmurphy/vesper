@@ -135,9 +135,11 @@
   overflow-y: auto;
   gap: 18px;
   padding: 20px 24px 28px;
+  container-type: inline-size;
 }
 .work-telemetry-strip {
   display: grid;
+  flex: none;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   border-radius: 10px;
   border: 1px solid var(--border-subtle);
@@ -155,7 +157,7 @@
 .work-telemetry-cell:last-child {
   border-right: 0;
 }
-@media (max-width: 1120px) {
+@container (max-width: 680px) {
   .work-telemetry-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
