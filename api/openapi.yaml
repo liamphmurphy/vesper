@@ -10104,12 +10104,15 @@ components:
       properties:
         revision: { type: integer, description: Required when updating }
         name: { type: string, minLength: 1, maxLength: 120 }
-        kind: { type: string, enum: [prompt, workflow] }
+        kind: { type: string, enum: [prompt, workflow, custom_app] }
         instructions: { type: string, maxLength: 20000 }
         workflow_id: { type: string, format: uuid }
         persona_id: { type: string, format: uuid }
         project: { type: string, description: "Project key to attach; omit for none" }
         connector_ids: { type: array, items: { type: string, format: uuid } }
+        custom_app_slug: { type: string }
+        custom_app_tool: { type: string }
+        custom_app_args: { type: object, additionalProperties: true }
         frequency: { type: string, enum: [daily, weekly, monthly, cron] }
         weekdays: { type: array, items: { type: integer, minimum: 0, maximum: 6 }, description: "0 is Sunday; weekly only" }
         month_day: { type: integer, minimum: 1, maximum: 31, description: "Runs on the last day of shorter months" }
@@ -10138,12 +10141,15 @@ components:
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
-        kind: { type: string, enum: [prompt, workflow] }
+        kind: { type: string, enum: [prompt, workflow, custom_app] }
         instructions: { type: string }
         workflow_id: { type: string, format: uuid }
         persona_id: { type: string, format: uuid }
         project: { type: string }
         connector_ids: { type: array, items: { type: string, format: uuid } }
+        custom_app_slug: { type: string }
+        custom_app_tool: { type: string }
+        custom_app_args: { type: object, additionalProperties: true }
         frequency: { type: string, enum: [daily, weekly, monthly, cron] }
         weekdays: { type: array, items: { type: integer } }
         month_day: { type: integer }

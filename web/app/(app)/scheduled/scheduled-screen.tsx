@@ -4,8 +4,10 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useBootstrap } from "@/lib/api/hooks";
 import { useConnectors, useDeleteScheduledTask, useRunScheduledTask, useSaveScheduledTask, useScheduledTasks, type ScheduledTask, type ScheduledTaskInput } from "@/lib/api/connector-hooks";
+import { useCustomApps } from "@/lib/api/custom-app-hooks";
 import { usePersonas } from "@/lib/api/persona-hooks";
 import { useWorkflows } from "@/lib/api/workflow-hooks";
+import { resolveAppIcon } from "@/lib/custom-app-bridge";
 import { cx } from "@/lib/cx";
 import { hoverReveal } from "@/lib/reveal";
 import { useCompact } from "@/lib/viewport";
@@ -45,14 +47,15 @@ function blank(): Draft {
 }
 
 function toDraft(t: ScheduledTask): Draft {
-  return { revision: t.revision, name: t.name, kind: t.kind, instructions: t.instructions, workflow_id: t.workflow_id, persona_id: t.persona_id, project: t.project, connector_ids: t.connector_ids, frequency: t.frequency, weekdays: t.weekdays, month_day: t.month_day, at_time: t.at_time, timezone: t.timezone, cron: t.cron, enabled: t.enabled, max_minutes: t.max_minutes, max_cost_micros: t.max_cost_micros };
+  return { revision: t.revision, name: t.name, kind: t.kind, instructions: t.instructions, workflow_id: t.workflow_id, persona_id: t.persona_id, project: t.project, connector_ids: t.connector_ids, custom_app_slug: t.custom_app_slug, custom_app_tool: t.custom_app_tool, custom_app_args: t.custom_app_args, frequency: t.frequency, weekdays: t.weekdays, month_day: t.month_day, at_time: t.at_time, timezone: t.timezone, cron: t.cron, enabled: t.enabled, max_minutes: t.max_minutes, max_cost_micros: t.max_cost_micros };
 }
 
-/** Prompts and workflows that run on their own; results and approvals show up in Needs you. */
+/** Prompts, workflows, and app tools that run on their own; results and approvals show up in Needs you. */
 export function ScheduledScreen() {
   const compact = useCompact();
   const tasks = useScheduledTasks();
   const personas = usePersonas();
+  const customApps = useCustomApps();
   const save = useSaveScheduledTask();
   const runNow = useRunScheduledTask();
   const [filter, setFilter] = useState<"all" | "active" | "paused">("all");
@@ -139,7 +142,7 @@ export function ScheduledScreen() {
           <div className="flex min-w-0 flex-1 flex-col gap-6">
             <PageHeader
               title="Scheduled tasks"
-              description="Prompts and workflows that run on their own. Results and approvals show up in Needs you."
+              description="Prompts, workflows, and app tools that run on their own. Results and approvals show up in Needs you."
               actions={<Button variant="primary" icon="plus" onClick={() => setOpen("new")}>New task</Button>}
               nativeActions={[{ id: "scheduled.new", label: "New task", kind: "button", icon: "plus", showsLabel: true, accent: true, run: () => setOpen("new") }]}
             />
@@ -152,20 +155,31 @@ export function ScheduledScreen() {
             ) : !tasks.data ? (
               <Skeleton className="h-48" />
             ) : rows.length === 0 ? (
-              <EmptyState icon="clock" title={all.length ? "No tasks here" : "No scheduled tasks yet"}>{all.length ? "Nothing matches this filter." : "Run a prompt or workflow every morning, weekday, or week. Results and approvals show up in Needs you."}</EmptyState>
+              <EmptyState icon="clock" title={all.length ? "No tasks here" : "No scheduled tasks yet"}>{all.length ? "Nothing matches this filter." : "Run a prompt, workflow, or app tool every morning, weekday, or week. Results and approvals show up in Needs you."}</EmptyState>
             ) : (
               <ul className="overflow-hidden rounded-xl border border-border bg-surface">
                 {rows.map((t) => {
                   const persona = personas.data?.personas.find((p) => p.id === t.persona_id);
+                  const app = t.kind === "custom_app" ? (customApps.data?.apps ?? []).find((a) => a.slug === t.custom_app_slug) : undefined;
                   const last = t.runs[0];
                   const busy = runNow.isPending || last?.state === "running" || last?.state === "waiting";
+                  const subtitle =
+                    t.kind === "custom_app"
+                      ? [app?.name ?? t.custom_app_slug ?? "Custom app", t.custom_app_tool, describeSchedule(t)].filter(Boolean).join(" · ")
+                      : [t.kind === "workflow" ? "Workflow" : (persona?.name ?? "Default persona"), t.project, describeSchedule(t)].filter(Boolean).join(" · ");
                   return (
                     <li key={t.id} data-testid="scheduled-row" className={cx("group flex items-center gap-3 border-b border-border-row px-[18px] py-3.5 last:border-b-0", t.id === open && "bg-selected")}>
                       <button type="button" onClick={() => setOpen(t.id)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
-                        {t.kind === "workflow" ? <span className="grid size-8 flex-none place-items-center rounded-md border border-border-strong bg-selected text-fg-secondary"><Icon name="graph" size={14} /></span> : <PersonaAvatar persona={personaLook(persona)} size={32} />}
+                        {t.kind === "workflow" ? (
+                          <span className="grid size-8 flex-none place-items-center rounded-md border border-border-strong bg-selected text-fg-secondary"><Icon name="graph" size={14} /></span>
+                        ) : t.kind === "custom_app" ? (
+                          <span className="grid size-8 flex-none place-items-center rounded-md border border-border-strong bg-selected text-fg-secondary"><Icon name={resolveAppIcon(app?.icon ?? "server")} size={14} /></span>
+                        ) : (
+                          <PersonaAvatar persona={personaLook(persona)} size={32} />
+                        )}
                         <span className="min-w-0 flex-1">
                           <span className={cx("block truncate text-14 font-semibold", t.enabled ? "text-fg" : "text-fg-secondary")}>{t.name}</span>
-                          <span className="block truncate text-13 text-fg-secondary">{[t.kind === "workflow" ? "Workflow" : (persona?.name ?? "Default persona"), t.project, describeSchedule(t)].filter(Boolean).join(" · ")}</span>
+                          <span className="block truncate text-13 text-fg-secondary">{subtitle}</span>
                         </span>
                         <span className="w-52 flex-none text-right max-sm:hidden">
                           <span className="block text-12 text-fg-tertiary">Next run</span>
@@ -207,19 +221,50 @@ function Editor({ task, onClose, onCreated }: { task?: ScheduledTask; onClose: (
   const personas = usePersonas();
   const workflows = useWorkflows();
   const connectors = useConnectors();
+  const customApps = useCustomApps();
   const save = useSaveScheduledTask();
   const run = useRunScheduledTask();
   const remove = useDeleteScheduledTask();
   const [draft, setDraft] = useState<Draft>(() => (task ? toDraft(task) : blank()));
+  const [argsText, setArgsText] = useState(() =>
+    task?.custom_app_args && Object.keys(task.custom_app_args).length > 0 ? JSON.stringify(task.custom_app_args, null, 2) : "",
+  );
   const [limits, setLimits] = useState(false);
   const set = (patch: Partial<Draft>) => setDraft((d) => ({ ...d, ...patch }));
   const persona = draft.persona_id ?? personas.data?.default_persona_id;
   const available = (connectors.data?.connectors ?? []).filter((c) => persona && c.persona_ids.includes(persona));
   const published = (workflows.data?.workflows ?? []).filter((w) => w.published_version);
+  const mcpApps = useMemo(
+    () => (customApps.data?.apps ?? []).filter((a) => a.has_mcp_server && (a.mcp_tools?.length ?? 0) > 0),
+    [customApps.data?.apps],
+  );
+  const selectedApp = mcpApps.find((a) => a.slug === draft.custom_app_slug);
+  const selectedTools = selectedApp?.mcp_tools ?? [];
+  const selectedTool = selectedTools.find((t) => t.name === draft.custom_app_tool);
+  const parsedArgs = useMemo(() => {
+    const trimmed = argsText.trim();
+    if (!trimmed) return { value: undefined as Record<string, unknown> | undefined, error: null as string | null };
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return { value: undefined, error: "Arguments must be a JSON object." };
+      }
+      return { value: parsed as Record<string, unknown>, error: null };
+    } catch {
+      return { value: undefined, error: "Enter valid JSON." };
+    }
+  }, [argsText]);
   const toggleDay = (d: number) => set({ weekdays: draft.weekdays.includes(d) ? draft.weekdays.filter((x) => x !== d) : [...draft.weekdays, d] });
   const toggleConnector = (id: string) => set({ connector_ids: draft.connector_ids.includes(id) ? draft.connector_ids.filter((x) => x !== id) : [...draft.connector_ids, id] });
-  const submit = () => save.mutate({ id: task?.id, body: draft }, { onSuccess: (t) => { if (!task) onCreated(t.id); } });
+  const submit = () => {
+    const body = draft.kind === "custom_app" ? { ...draft, custom_app_args: parsedArgs.value ?? {} } : draft;
+    save.mutate({ id: task?.id, body }, { onSuccess: (t) => { if (!task) onCreated(t.id); } });
+  };
   const error = save.error ?? run.error ?? remove.error;
+  const canSave =
+    !save.isPending &&
+    !!draft.name.trim() &&
+    (draft.kind !== "custom_app" || (!!draft.custom_app_slug && !!draft.custom_app_tool && !parsedArgs.error));
   return (
     <aside aria-label="Task editor" data-testid="scheduled-editor" className="flex w-[520px] flex-none flex-col gap-4 rounded-xl border border-border bg-panel p-5 max-xl:w-full">
       <div className="flex items-center gap-2">
@@ -228,31 +273,89 @@ function Editor({ task, onClose, onCreated }: { task?: ScheduledTask; onClose: (
         <IconButton icon="x" label="Close editor" onClick={onClose} />
       </div>
       <Field label="Name" htmlFor="task-name"><TextInput id="task-name" value={draft.name} maxLength={120} onChange={(e) => set({ name: e.target.value })} /></Field>
-      <Field label="What runs"><Segmented label="What runs" value={draft.kind} onChange={(kind) => set({ kind })} options={[{ value: "prompt", label: "Prompt" }, { value: "workflow", label: "Workflow" }]} /></Field>
+      <Field label="What runs">
+        <Segmented
+          label="What runs"
+          value={draft.kind}
+          onChange={(kind) => {
+            if (kind === "custom_app" && !draft.custom_app_slug && mcpApps.length > 0) {
+              set({ kind, custom_app_slug: mcpApps[0].slug, custom_app_tool: mcpApps[0].mcp_tools?.[0]?.name ?? "" });
+            } else {
+              set({ kind });
+            }
+          }}
+          options={[{ value: "prompt", label: "Prompt" }, { value: "workflow", label: "Workflow" }, { value: "custom_app", label: "App tool" }]}
+        />
+      </Field>
       {draft.kind === "prompt" ? (
         <Field label="Instructions" htmlFor="task-instructions"><TextArea id="task-instructions" rows={4} value={draft.instructions} onChange={(e) => set({ instructions: e.target.value })} /></Field>
-      ) : (
+      ) : draft.kind === "workflow" ? (
         <Field label="Workflow" htmlFor="task-workflow">
           <select id="task-workflow" className={selectClass} value={draft.workflow_id ?? ""} onChange={(e) => set({ workflow_id: e.target.value || undefined })}>
             <option value="">Choose a published workflow</option>
             {published.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
           </select>
         </Field>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {mcpApps.length === 0 ? (
+            <p className="text-12 text-fg-tertiary">No Custom Apps with MCP tools yet. Add a <span className="font-mono">server.ts</span> to a Custom App first.</p>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Custom App" htmlFor="task-custom-app">
+                  <select
+                    id="task-custom-app"
+                    className={selectClass}
+                    value={draft.custom_app_slug ?? ""}
+                    onChange={(e) => {
+                      const nextSlug = e.target.value;
+                      const nextApp = mcpApps.find((a) => a.slug === nextSlug);
+                      set({ custom_app_slug: nextSlug || undefined, custom_app_tool: nextApp?.mcp_tools?.[0]?.name ?? "" });
+                    }}
+                  >
+                    <option value="">Choose an app</option>
+                    {mcpApps.map((a) => <option key={a.slug} value={a.slug}>{a.name}</option>)}
+                  </select>
+                </Field>
+                <Field label="Tool" htmlFor="task-custom-app-tool">
+                  <select
+                    id="task-custom-app-tool"
+                    className={selectClass}
+                    value={draft.custom_app_tool ?? ""}
+                    disabled={!selectedApp}
+                    onChange={(e) => set({ custom_app_tool: e.target.value || undefined })}
+                  >
+                    <option value="">Choose a tool</option>
+                    {selectedTools.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}
+                  </select>
+                </Field>
+              </div>
+              {selectedTool?.description && <p className="text-12 text-fg-tertiary">{selectedTool.description}</p>}
+              <Field label="Arguments (optional JSON)" htmlFor="task-custom-app-args">
+                <TextArea id="task-custom-app-args" mono rows={3} placeholder="{}" value={argsText} onChange={(e) => setArgsText(e.target.value)} />
+                {parsedArgs.error && <p className="text-12 text-pill-blocked-fg">{parsedArgs.error}</p>}
+              </Field>
+            </>
+          )}
+        </div>
       )}
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Run as" htmlFor="task-persona">
-          <select id="task-persona" className={selectClass} value={draft.persona_id ?? ""} onChange={(e) => set({ persona_id: e.target.value || undefined, connector_ids: [] })}>
-            <option value="">Default persona</option>
-            {personas.data?.personas.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-        </Field>
-        <Field label="Default space" htmlFor="task-project">
-          <select id="task-project" className={selectClass} value={draft.project ?? ""} onChange={(e) => set({ project: e.target.value || undefined })}>
-            <option value="">No default</option>
-            {boot.data?.projects.filter((p) => !p.archived).map((p) => <option key={p.key} value={p.key}>{p.name}</option>)}
-          </select>
-        </Field>
-      </div>
+      {draft.kind !== "custom_app" && (
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Run as" htmlFor="task-persona">
+            <select id="task-persona" className={selectClass} value={draft.persona_id ?? ""} onChange={(e) => set({ persona_id: e.target.value || undefined, connector_ids: [] })}>
+              <option value="">Default persona</option>
+              {personas.data?.personas.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </Field>
+          <Field label="Default space" htmlFor="task-project">
+            <select id="task-project" className={selectClass} value={draft.project ?? ""} onChange={(e) => set({ project: e.target.value || undefined })}>
+              <option value="">No default</option>
+              {boot.data?.projects.filter((p) => !p.archived).map((p) => <option key={p.key} value={p.key}>{p.name}</option>)}
+            </select>
+          </Field>
+        </div>
+      )}
       <Field label="Schedule">
         <div className="flex flex-col gap-2.5">
           <Segmented label="Frequency" value={draft.frequency} onChange={(frequency) => set({ frequency })} options={[{ value: "daily", label: "Daily" }, { value: "weekly", label: "Weekly" }, { value: "monthly", label: "Monthly" }, { value: "cron", label: "Cron" }]} />
@@ -292,15 +395,25 @@ function Editor({ task, onClose, onCreated }: { task?: ScheduledTask; onClose: (
       <div className="flex flex-col gap-2 rounded-xl border border-border bg-surface px-[18px] py-3.5">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-13 text-fg-2">Approvals and attention items show up in Needs you.</p>
-            <p className="text-12 text-fg-tertiary">Stops after {draft.max_minutes} minutes or {moneyLabel(draft.max_cost_micros)}, whichever comes first.</p>
+            <p className="text-13 text-fg-2">
+              {draft.kind === "custom_app"
+                ? "Runs your app’s MCP tool directly without an LLM turn. Failures show up in Needs you; allow required capabilities in the app’s Permissions tab."
+                : "Approvals and attention items show up in Needs you."}
+            </p>
+            <p className="text-12 text-fg-tertiary">
+              {draft.kind === "custom_app"
+                ? `Stops after ${draft.max_minutes} minutes.`
+                : `Stops after ${draft.max_minutes} minutes or ${moneyLabel(draft.max_cost_micros)}, whichever comes first.`}
+            </p>
           </div>
           <button type="button" className="flex-none text-12 text-accent hover:underline" aria-expanded={limits} onClick={() => setLimits((v) => !v)}>Edit limits</button>
         </div>
         {limits && (
-          <div className="grid grid-cols-2 gap-3">
+          <div className={cx("grid gap-3", draft.kind === "custom_app" ? "grid-cols-1" : "grid-cols-2")}>
             <Field label="Minutes" htmlFor="task-minutes"><TextInput id="task-minutes" type="number" min={1} max={240} value={draft.max_minutes} onChange={(e) => set({ max_minutes: Number(e.target.value) })} /></Field>
-            <Field label="Cost limit ($)" htmlFor="task-cost"><TextInput id="task-cost" type="number" min={0.01} step={0.01} value={draft.max_cost_micros / 1_000_000} onChange={(e) => set({ max_cost_micros: Math.round(Number(e.target.value) * 1_000_000) })} /></Field>
+            {draft.kind !== "custom_app" && (
+              <Field label="Cost limit ($)" htmlFor="task-cost"><TextInput id="task-cost" type="number" min={0.01} step={0.01} value={draft.max_cost_micros / 1_000_000} onChange={(e) => set({ max_cost_micros: Math.round(Number(e.target.value) * 1_000_000) })} /></Field>
+            )}
           </div>
         )}
       </div>
@@ -324,7 +437,7 @@ function Editor({ task, onClose, onCreated }: { task?: ScheduledTask; onClose: (
         {task ? <button type="button" className="text-13 text-pill-blocked-fg hover:underline" onClick={async () => { if (await confirmAction({ title: `Delete ${task.name}?`, body: "It won't run again.", confirmLabel: "Delete task" })) remove.mutate(task.id, { onSuccess: onClose }); }}>Delete task</button> : <span />}
         <div className="flex gap-2">
           <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" disabled={save.isPending || !draft.name.trim()} onClick={submit}>Save</Button>
+          <Button variant="primary" disabled={!canSave} onClick={submit}>Save</Button>
         </div>
       </div>
     </aside>

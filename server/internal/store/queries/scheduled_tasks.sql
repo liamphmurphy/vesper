@@ -1,12 +1,12 @@
 -- Scheduled tasks are private to one person.
 
 -- name: CreateScheduledTask :one
-INSERT INTO scheduled_tasks (workspace_id, user_id, name, kind, instructions, workflow_id, persona_id, project_id, connector_ids, frequency, weekdays, month_day, at_time, timezone, cron, enabled, max_minutes, max_cost_micros, next_run_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING *;
+INSERT INTO scheduled_tasks (workspace_id, user_id, name, kind, instructions, workflow_id, persona_id, project_id, connector_ids, custom_app_id, custom_app_tool, custom_app_args, frequency, weekdays, month_day, at_time, timezone, cron, enabled, max_minutes, max_cost_micros, next_run_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22) RETURNING *;
 
 -- name: UpdateScheduledTask :one
 -- Returns no row when the revision is stale.
-UPDATE scheduled_tasks SET name = $4, kind = $5, instructions = $6, workflow_id = $7, persona_id = $8, project_id = $9, connector_ids = $10, frequency = $11, weekdays = $12, month_day = $13, at_time = $14, timezone = $15, cron = $16, enabled = $17, max_minutes = $18, max_cost_micros = $19, next_run_at = $20, revision = revision + 1, updated_at = now()
+UPDATE scheduled_tasks SET name = $4, kind = $5, instructions = $6, workflow_id = $7, persona_id = $8, project_id = $9, connector_ids = $10, custom_app_id = $11, custom_app_tool = $12, custom_app_args = $13, frequency = $14, weekdays = $15, month_day = $16, at_time = $17, timezone = $18, cron = $19, enabled = $20, max_minutes = $21, max_cost_micros = $22, next_run_at = $23, revision = revision + 1, updated_at = now()
 WHERE id = $1 AND workspace_id = $2 AND revision = $3 RETURNING *;
 
 -- name: ListScheduledTasks :many

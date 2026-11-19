@@ -100,9 +100,10 @@ WITH items AS (
  -- Workflow gates are private to the person who started the run.
  -- A scheduled task's result, and a connector tool waiting for a yes or no; both private.
  SELECT 'scheduled:'||r.id,'scheduled',st.name,CASE WHEN r.state='failed' THEN 'Failed: '||r.error ELSE left(r.summary,240) END,
- CASE WHEN r.workflow_run_id IS NOT NULL THEN '/workflows/runs/'||r.workflow_run_id ELSE '/chat/'||r.chat_id END,coalesce(p.key,''),'',r.finished_at,false,NULL,NULL,NULL
- FROM scheduled_task_runs r JOIN scheduled_tasks st ON st.id=r.task_id LEFT JOIN projects p ON p.id=st.project_id
- WHERE st.workspace_id=$3 AND st.user_id=$1 AND r.state IN ('done','failed') AND r.finished_at IS NOT NULL
+ coalesce(CASE WHEN st.kind='custom_app' THEN coalesce('/apps/'||ca.slug,'/scheduled') WHEN r.workflow_run_id IS NOT NULL THEN '/workflows/runs/'||r.workflow_run_id ELSE '/chat/'||r.chat_id END,'/scheduled'),coalesce(p.key,''),'',r.finished_at,false,NULL,NULL,NULL
+ FROM scheduled_task_runs r JOIN scheduled_tasks st ON st.id=r.task_id LEFT JOIN projects p ON p.id=st.project_id LEFT JOIN custom_apps ca ON ca.id=st.custom_app_id
+ WHERE st.workspace_id=$3 AND st.user_id=$1 AND r.finished_at IS NOT NULL
+ AND ((st.kind='custom_app' AND r.state='failed') OR (st.kind<>'custom_app' AND r.state IN ('done','failed')))
  UNION ALL
  SELECT 'connector_approval:'||a.id,'connector_approval',cn.name,'Wants to use '||a.tool,'/chat/'||a.chat_id,'','',a.created_at,a.state<>'pending',NULL,NULL,NULL
  FROM connector_approvals a JOIN connectors cn ON cn.id=a.connector_id

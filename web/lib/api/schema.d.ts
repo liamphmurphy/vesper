@@ -9338,7 +9338,7 @@ export interface components {
             revision?: number;
             name: string;
             /** @enum {string} */
-            kind: "prompt" | "workflow";
+            kind: "prompt" | "workflow" | "custom_app";
             instructions?: string;
             /** Format: uuid */
             workflow_id?: string;
@@ -9347,6 +9347,11 @@ export interface components {
             /** @description Project key to attach; omit for none */
             project?: string;
             connector_ids?: string[];
+            custom_app_slug?: string;
+            custom_app_tool?: string;
+            custom_app_args?: {
+                [key: string]: unknown;
+            };
             /** @enum {string} */
             frequency: "daily" | "weekly" | "monthly" | "cron";
             /** @description 0 is Sunday; weekly only */
@@ -9385,7 +9390,7 @@ export interface components {
             id: string;
             name: string;
             /** @enum {string} */
-            kind: "prompt" | "workflow";
+            kind: "prompt" | "workflow" | "custom_app";
             instructions: string;
             /** Format: uuid */
             workflow_id?: string;
@@ -9393,6 +9398,11 @@ export interface components {
             persona_id?: string;
             project?: string;
             connector_ids: string[];
+            custom_app_slug?: string;
+            custom_app_tool?: string;
+            custom_app_args?: {
+                [key: string]: unknown;
+            };
             /** @enum {string} */
             frequency: "daily" | "weekly" | "monthly" | "cron";
             weekdays: number[];

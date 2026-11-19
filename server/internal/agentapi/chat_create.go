@@ -2,6 +2,7 @@ package agentapi
 
 import (
 	"context"
+	"strings"
 
 	"github.com/liamphmurphy/vesper/server/internal/agents"
 	"github.com/liamphmurphy/vesper/server/internal/apperr"
@@ -62,14 +63,17 @@ func createSpace(ctx context.Context, d Deps, c agents.Caller, in CreateSpaceIn)
 }
 
 type CreateScheduledTaskIn struct {
-	Name         string  `json:"name" jsonschema:"A short name, 1–120 characters"`
-	Instructions string  `json:"instructions" jsonschema:"What to do each time, written as the message you'll get. Nobody watches it run and the result goes to the person's Inbox, so make it self-contained"`
-	Frequency    string  `json:"frequency" jsonschema:"daily, weekly, monthly or cron"`
-	AtTime       string  `json:"at_time,omitempty" jsonschema:"Local time as HH:MM, 24-hour (default 09:00); not for cron"`
-	Timezone     string  `json:"timezone" jsonschema:"IANA time zone, e.g. America/Los_Angeles. Ask the person if you don't know it"`
-	Weekdays     []int32 `json:"weekdays,omitempty" jsonschema:"For weekly: days to run, 0 is Sunday"`
-	MonthDay     int32   `json:"month_day,omitempty" jsonschema:"For monthly: day of the month, 1–31 (shorter months use their last day)"`
-	Cron         string  `json:"cron,omitempty" jsonschema:"For cron: a five-field cron expression"`
+	Name          string         `json:"name" jsonschema:"A short name, 1–120 characters"`
+	Instructions  string         `json:"instructions,omitempty" jsonschema:"For prompt tasks: what to do each time, written as the message you'll get. Nobody watches it run and the result goes to the person's Inbox, so make it self-contained"`
+	CustomAppSlug string         `json:"custom_app_slug,omitempty" jsonschema:"For custom_app tasks: Custom App URL slug with an MCP server (runs without an LLM turn)"`
+	CustomAppTool string         `json:"custom_app_tool,omitempty" jsonschema:"For custom_app tasks: MCP tool name exported by that app"`
+	CustomAppArgs map[string]any `json:"custom_app_args,omitempty" jsonschema:"Optional JSON object arguments passed to custom_app_tool"`
+	Frequency     string         `json:"frequency" jsonschema:"daily, weekly, monthly or cron"`
+	AtTime        string         `json:"at_time,omitempty" jsonschema:"Local time as HH:MM, 24-hour (default 09:00); not for cron"`
+	Timezone      string         `json:"timezone" jsonschema:"IANA time zone, e.g. America/Los_Angeles. Ask the person if you don't know it"`
+	Weekdays      []int32        `json:"weekdays,omitempty" jsonschema:"For weekly: days to run, 0 is Sunday"`
+	MonthDay      int32          `json:"month_day,omitempty" jsonschema:"For monthly: day of the month, 1–31 (shorter months use their last day)"`
+	Cron          string         `json:"cron,omitempty" jsonschema:"For cron: a five-field cron expression"`
 }
 
 func createScheduledTask(ctx context.Context, d Deps, c agents.Caller, in CreateScheduledTaskIn) (any, error) {
@@ -94,15 +98,37 @@ func createScheduledTask(ctx context.Context, d Deps, c agents.Caller, in Create
 	if sc.MonthDay == 0 {
 		sc.MonthDay = 1
 	}
-	// A prompt task in the chat's project, answered by this persona, with
-	// the default time and cost caps and no connectors.
-	t, err := d.Runs.CreateScheduledTask(ctx, c.Agent.WorkspaceID, s.UserID, runs.ScheduledTaskInput{Name: in.Name, Kind: "prompt", Instructions: in.Instructions,
-		PersonaID: s.PersonaID, Project: s.ProjectKey, Schedule: sc, Enabled: true})
+	var taskIn runs.ScheduledTaskInput
+	tell := "Scheduled. It runs on its own with the default limits (15 minutes, $1 a run) and each result goes to their Inbox; they can pause, change or delete it in [Scheduled](/scheduled)."
+	if strings.TrimSpace(in.CustomAppSlug) != "" || strings.TrimSpace(in.CustomAppTool) != "" {
+		taskIn = runs.ScheduledTaskInput{
+			Name:          in.Name,
+			Kind:          "custom_app",
+			CustomAppSlug: in.CustomAppSlug,
+			CustomAppTool: in.CustomAppTool,
+			CustomAppArgs: in.CustomAppArgs,
+			Schedule:      sc,
+			Enabled:       true,
+		}
+		tell = "Scheduled. It runs the Custom App tool directly without an LLM turn and only posts to their Inbox if a run fails; they can pause, change or delete it in [Scheduled](/scheduled)."
+	} else {
+		// A prompt task in the chat's project, answered by this persona, with
+		// the default time and cost caps and no connectors.
+		taskIn = runs.ScheduledTaskInput{
+			Name:         in.Name,
+			Kind:         "prompt",
+			Instructions: in.Instructions,
+			PersonaID:    s.PersonaID,
+			Project:      s.ProjectKey,
+			Schedule:     sc,
+			Enabled:      true,
+		}
+	}
+	t, err := d.Runs.CreateScheduledTask(ctx, c.Agent.WorkspaceID, s.UserID, taskIn)
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]any{"task_id": t.ID, "name": t.Name, "href": "/scheduled",
-		"tell_the_person": "Scheduled. It runs on its own with the default limits (15 minutes, $1 a run) and each result goes to their Inbox; they can pause, change or delete it in [Scheduled](/scheduled)."}
+	out := map[string]any{"task_id": t.ID, "name": t.Name, "href": "/scheduled", "tell_the_person": tell}
 	if t.NextRunAt != nil {
 		out["next_run_at"] = t.NextRunAt
 	}

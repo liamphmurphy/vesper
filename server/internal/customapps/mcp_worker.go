@@ -193,6 +193,9 @@ func runMCPWorker(
 ) (json.RawMessage, error) {
 	bin := strings.TrimSpace(nodeBinary)
 	if bin == "" {
+		bin = strings.TrimSpace(os.Getenv("VESPER_NODE_BIN"))
+	}
+	if bin == "" {
 		var err error
 		bin, err = exec.LookPath("node")
 		if err != nil {

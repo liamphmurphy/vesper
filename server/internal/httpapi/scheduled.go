@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -22,6 +23,15 @@ func toScheduledInput(b api.ScheduledTaskInput) runs.ScheduledTaskInput {
 	}
 	if b.ConnectorIds != nil {
 		in.ConnectorIDs = *b.ConnectorIds
+	}
+	if b.CustomAppSlug != nil {
+		in.CustomAppSlug = *b.CustomAppSlug
+	}
+	if b.CustomAppTool != nil {
+		in.CustomAppTool = *b.CustomAppTool
+	}
+	if b.CustomAppArgs != nil {
+		in.CustomAppArgs = *b.CustomAppArgs
 	}
 	in.Schedule = runs.Schedule{Frequency: string(b.Frequency), AtTime: b.AtTime, Timezone: b.Timezone, Cron: deref(b.Cron), MonthDay: 1, Weekdays: []int32{}}
 	if b.MonthDay != nil {
@@ -50,6 +60,14 @@ func (s *Server) toScheduledTasks(ctx context.Context, ws, user uuid.UUID, rows 
 	if err != nil {
 		return nil, err
 	}
+	apps, err := s.Q.ListCustomApps(ctx, store.ListCustomAppsParams{WorkspaceID: ws, UserID: user})
+	if err != nil {
+		return nil, err
+	}
+	appSlugs := make(map[uuid.UUID]string, len(apps))
+	for _, a := range apps {
+		appSlugs[a.ID] = a.Slug
+	}
 	out := make([]api.ScheduledTask, len(rows))
 	for i, t := range rows {
 		weekdays := make([]int, len(t.Weekdays))
@@ -61,6 +79,26 @@ func (s *Server) toScheduledTasks(ctx context.Context, ws, user uuid.UUID, rows 
 		item := api.ScheduledTask{Id: t.ID, Name: t.Name, Kind: api.ScheduledTaskKind(t.Kind), Instructions: t.Instructions, WorkflowId: t.WorkflowID, PersonaId: t.PersonaID, ConnectorIds: ids,
 			Frequency: api.ScheduledTaskFrequency(t.Frequency), Weekdays: weekdays, MonthDay: int(t.MonthDay), AtTime: t.AtTime, Timezone: t.Timezone, Cron: t.Cron, Enabled: t.Enabled,
 			MaxMinutes: int(t.MaxMinutes), MaxCostMicros: t.MaxCostMicros, NextRunAt: t.NextRunAt, Revision: int(t.Revision), Runs: []api.ScheduledRun{}, Upcoming: []time.Time{}}
+		var appSlug string
+		if t.Kind == "custom_app" {
+			if t.CustomAppID != nil {
+				appSlug = appSlugs[*t.CustomAppID]
+				if appSlug != "" {
+					s := appSlug
+					item.CustomAppSlug = &s
+				}
+			}
+			if t.CustomAppTool != "" {
+				tool := t.CustomAppTool
+				item.CustomAppTool = &tool
+			}
+			if len(t.CustomAppArgs) > 0 {
+				var args map[string]any
+				if json.Unmarshal(t.CustomAppArgs, &args) == nil && args != nil {
+					item.CustomAppArgs = &args
+				}
+			}
+		}
 		if t.ProjectID != nil {
 			for _, p := range projects {
 				if p.ID == *t.ProjectID {
@@ -81,7 +119,12 @@ func (s *Server) toScheduledTasks(ctx context.Context, ws, user uuid.UUID, rows 
 				continue
 			}
 			run := api.ScheduledRun{Id: r.ID, Trigger: api.ScheduledRunTrigger(r.Trigger), State: api.ScheduledRunState(r.State), Summary: r.Summary, Error: r.Error, CostMicros: r.CostMicros, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt}
-			if r.WorkflowRunID != nil {
+			if t.Kind == "custom_app" {
+				if appSlug != "" {
+					href := "/apps/" + appSlug
+					run.Href = &href
+				}
+			} else if r.WorkflowRunID != nil {
 				href := "/workflows/runs/" + r.WorkflowRunID.String()
 				run.Href = &href
 			} else if r.ChatID != nil {

@@ -713,19 +713,38 @@ func (s *Service) GetMCPServer(ctx context.Context, ws, userID uuid.UUID, slug s
 	if err != nil {
 		return MCPServerApp{}, err
 	}
+	return mcpServerFromRow(row.ID, row.WorkspaceID, row.UserID, row.Slug, row.Name, row.Description, row.Manifest, row.Capabilities, row.CurrentSeq, row.BundleMcpJs, row.McpTools), nil
+}
+
+func (s *Service) GetMCPServerByID(ctx context.Context, ws, userID, id uuid.UUID) (MCPServerApp, error) {
+	row, err := store.New(s.Pool).GetCustomAppWithMCPByID(ctx, store.GetCustomAppWithMCPByIDParams{
+		WorkspaceID: ws,
+		UserID:      userID,
+		ID:          id,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return MCPServerApp{}, apperr.ErrNotFound
+	}
+	if err != nil {
+		return MCPServerApp{}, err
+	}
+	return mcpServerFromRow(row.ID, row.WorkspaceID, row.UserID, row.Slug, row.Name, row.Description, row.Manifest, row.Capabilities, row.CurrentSeq, row.BundleMcpJs, row.McpTools), nil
+}
+
+func mcpServerFromRow(id, ws, userID uuid.UUID, slug, name, desc string, manifest, caps json.RawMessage, seq int32, bundle string, tools json.RawMessage) MCPServerApp {
 	return MCPServerApp{
-		ID:           row.ID,
-		WorkspaceID:  row.WorkspaceID,
-		UserID:       row.UserID,
-		Slug:         row.Slug,
-		Name:         row.Name,
-		Description:  row.Description,
-		Manifest:     decodeManifest(row.Manifest),
-		Capabilities: decodeCapabilities(row.Capabilities),
-		CurrentSeq:   row.CurrentSeq,
-		BundleMCPJS:  row.BundleMcpJs,
-		Tools:        decodeMCPTools(row.McpTools),
-	}, nil
+		ID:           id,
+		WorkspaceID:  ws,
+		UserID:       userID,
+		Slug:         slug,
+		Name:         name,
+		Description:  desc,
+		Manifest:     decodeManifest(manifest),
+		Capabilities: decodeCapabilities(caps),
+		CurrentSeq:   seq,
+		BundleMCPJS:  bundle,
+		Tools:        decodeMCPTools(tools),
+	}
 }
 
 // CallMCPTool invokes one named tool in a custom app's MCP server using

@@ -1576,6 +1576,9 @@ type ScheduledTask struct {
 	Revision      int32
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+	CustomAppID   *uuid.UUID
+	CustomAppTool string
+	CustomAppArgs json.RawMessage
 }
 
 type ScheduledTaskRun struct {

@@ -23,6 +23,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/apperr"
 	"github.com/liamphmurphy/vesper/server/internal/artifacts"
 	"github.com/liamphmurphy/vesper/server/internal/chatmodels"
+	"github.com/liamphmurphy/vesper/server/internal/customapps"
 	"github.com/liamphmurphy/vesper/server/internal/repositories"
 	"github.com/liamphmurphy/vesper/server/internal/secrets"
 	"github.com/liamphmurphy/vesper/server/internal/store"
@@ -60,6 +61,7 @@ type Service struct {
 	Secrets           *secrets.Service
 	Artifacts         *artifacts.Service
 	Tracker           *tracker.Service
+	CustomApps        *customapps.Service
 	// RequireHarnessKey mirrors the runner's setting: chats can't select a
 	// harness whose API-key secret is missing.
 	RequireHarnessKey bool

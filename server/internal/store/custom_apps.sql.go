@@ -243,6 +243,52 @@ func (q *Queries) GetCustomAppVersion(ctx context.Context, arg GetCustomAppVersi
 	return i, err
 }
 
+const getCustomAppWithMCPByID = `-- name: GetCustomAppWithMCPByID :one
+SELECT a.id, a.workspace_id, a.user_id, a.slug, a.name, a.description, a.manifest, a.capabilities, a.current_seq, v.bundle_mcp_js, v.mcp_tools
+FROM custom_apps a
+JOIN custom_app_versions v ON v.app_id = a.id AND v.seq = a.current_seq
+WHERE a.workspace_id = $1 AND a.user_id = $2 AND a.id = $3
+`
+
+type GetCustomAppWithMCPByIDParams struct {
+	WorkspaceID uuid.UUID
+	UserID      uuid.UUID
+	ID          uuid.UUID
+}
+
+type GetCustomAppWithMCPByIDRow struct {
+	ID           uuid.UUID
+	WorkspaceID  uuid.UUID
+	UserID       uuid.UUID
+	Slug         string
+	Name         string
+	Description  string
+	Manifest     json.RawMessage
+	Capabilities json.RawMessage
+	CurrentSeq   int32
+	BundleMcpJs  string
+	McpTools     json.RawMessage
+}
+
+func (q *Queries) GetCustomAppWithMCPByID(ctx context.Context, arg GetCustomAppWithMCPByIDParams) (GetCustomAppWithMCPByIDRow, error) {
+	row := q.db.QueryRow(ctx, getCustomAppWithMCPByID, arg.WorkspaceID, arg.UserID, arg.ID)
+	var i GetCustomAppWithMCPByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.Slug,
+		&i.Name,
+		&i.Description,
+		&i.Manifest,
+		&i.Capabilities,
+		&i.CurrentSeq,
+		&i.BundleMcpJs,
+		&i.McpTools,
+	)
+	return i, err
+}
+
 const getCustomAppWithMCPBySlug = `-- name: GetCustomAppWithMCPBySlug :one
 SELECT a.id, a.workspace_id, a.user_id, a.slug, a.name, a.description, a.manifest, a.capabilities, a.current_seq, v.bundle_mcp_js, v.mcp_tools
 FROM custom_apps a

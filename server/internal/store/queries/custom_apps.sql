@@ -32,6 +32,12 @@ FROM custom_apps a
 JOIN custom_app_versions v ON v.app_id = a.id AND v.seq = a.current_seq
 WHERE a.workspace_id = $1 AND a.user_id = $2 AND a.slug = $3;
 
+-- name: GetCustomAppWithMCPByID :one
+SELECT a.id, a.workspace_id, a.user_id, a.slug, a.name, a.description, a.manifest, a.capabilities, a.current_seq, v.bundle_mcp_js, v.mcp_tools
+FROM custom_apps a
+JOIN custom_app_versions v ON v.app_id = a.id AND v.seq = a.current_seq
+WHERE a.workspace_id = $1 AND a.user_id = $2 AND a.id = $3;
+
 -- name: GetCustomAppForUpdate :one
 SELECT * FROM custom_apps
 WHERE workspace_id = $1 AND user_id = $2 AND slug = $3

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -213,4 +214,220 @@ export default defineServer({
 		t.Fatalf("app dock chat should still connect when tool_scope=app_only: %v", err)
 	}
 	_ = sDock.Close()
+}
+
+func TestScheduledCustomAppToolRun(t *testing.T) {
+	e := newChatEnv(t)
+	ctx := context.Background()
+
+	e.want("POST", "/custom-apps", map[string]any{
+		"slug": "feed-sync",
+		"name": "Feed Sync",
+		"manifest": map[string]any{
+			"entry":      "app.tsx",
+			"mcp_entry":  "server.ts",
+			"tool_scope": "app_only",
+		},
+		"files": map[string]string{
+			"schema.sql": `CREATE TABLE IF NOT EXISTS synced (id INTEGER PRIMARY KEY, label TEXT NOT NULL);`,
+			"app.tsx":    `export default function App() { return null; }`,
+			"server.ts": `
+import { defineServer, sql } from "@vesper/server";
+
+export default defineServer({
+  tools: {
+    sync_items: {
+      description: "Insert a synced row into SQLite",
+      inputSchema: { type: "object", properties: { label: { type: "string" } } },
+      handler: async ({ label }: { label?: string }) => {
+        const val = label || "default";
+        await sql("INSERT INTO synced (label) VALUES (?)", [val]);
+        return { synced: val };
+      },
+    },
+    fail_sync: {
+      description: "Always fail to verify Inbox alerting",
+      inputSchema: { type: "object", properties: {} },
+      handler: async () => {
+        throw new Error("upstream feed 503");
+      },
+    },
+  },
+});`,
+		},
+	}, http.StatusCreated)
+
+	// Invalid app slug or unknown tool returns 422.
+	e.invalid("POST", "/scheduled-tasks", map[string]any{
+		"name":            "Bad app",
+		"kind":            "custom_app",
+		"custom_app_slug": "missing-app",
+		"custom_app_tool": "sync_items",
+		"frequency":       "daily",
+		"at_time":         "08:00",
+		"timezone":        "UTC",
+		"enabled":         true,
+	}, "custom_app_slug", "MCP server")
+
+	e.invalid("POST", "/scheduled-tasks", map[string]any{
+		"name":            "Bad tool",
+		"kind":            "custom_app",
+		"custom_app_slug": "feed-sync",
+		"custom_app_tool": "nonexistent_tool",
+		"frequency":       "daily",
+		"at_time":         "08:00",
+		"timezone":        "UTC",
+		"enabled":         true,
+	}, "custom_app_tool", "MCP tools")
+
+	created := e.want("POST", "/scheduled-tasks", map[string]any{
+		"name":            "Sync feed",
+		"kind":            "custom_app",
+		"custom_app_slug": "feed-sync",
+		"custom_app_tool": "sync_items",
+		"custom_app_args": map[string]any{"label": "Morning"},
+		"frequency":       "daily",
+		"at_time":         "08:00",
+		"timezone":        "UTC",
+		"enabled":         true,
+	}, http.StatusOK)
+	taskID := uuid.MustParse(created["id"].(string))
+
+	// Move next_run_at to the past and execute via RunDueScheduled.
+	past := time.Now().Add(-time.Hour)
+	if err := e.q.AdvanceScheduledTask(ctx, store.AdvanceScheduledTaskParams{ID: taskID, NextRunAt: &past}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.runs.RunDueScheduled(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	listed := e.want("GET", "/scheduled-tasks", nil, http.StatusOK)
+	taskRow := listed["tasks"].([]any)[0].(map[string]any)
+	runsList := taskRow["runs"].([]any)
+	if len(runsList) != 1 {
+		t.Fatalf("expected 1 run, got %v", taskRow)
+	}
+	firstRun := runsList[0].(map[string]any)
+	if firstRun["state"] != "done" || firstRun["cost_micros"] != float64(0) || firstRun["href"] != "/apps/feed-sync" || !strings.Contains(firstRun["summary"].(string), "Morning") {
+		t.Fatalf("unexpected custom_app run = %v", firstRun)
+	}
+
+	// Verify SQLite write landed without an LLM turn.
+	sqlRes := e.want("POST", "/custom-apps/feed-sync/invoke", map[string]any{
+		"kind":  "sql",
+		"query": "SELECT label FROM synced",
+	}, http.StatusOK)
+	rows := sqlRes["result"].(map[string]any)["rows"].([]any)
+	if len(rows) != 1 || rows[0].(map[string]any)["label"] != "Morning" {
+		t.Fatalf("expected SQLite row Morning, got %v", sqlRes)
+	}
+
+	// Quiet success does NOT appear in Inbox.
+	inboxQuiet := e.want("GET", "/inbox", nil, http.StatusOK)
+	for _, it := range inboxQuiet["items"].([]any) {
+		item := it.(map[string]any)
+		if item["kind"] == "scheduled" && item["title"] == "Sync feed" {
+			t.Fatalf("routine custom_app success should stay out of Inbox: %v", item)
+		}
+	}
+
+	// Update to fail_sync and trigger Run Now -> failure DOES appear in Inbox linking to /apps/feed-sync.
+	rev := int(taskRow["revision"].(float64))
+	e.want("PUT", "/scheduled-tasks/"+taskID.String(), map[string]any{
+		"revision":        rev,
+		"name":            "Sync feed",
+		"kind":            "custom_app",
+		"custom_app_slug": "feed-sync",
+		"custom_app_tool": "fail_sync",
+		"frequency":       "daily",
+		"at_time":         "08:00",
+		"timezone":        "UTC",
+		"enabled":         true,
+	}, http.StatusOK)
+
+	afterFail := e.want("POST", "/scheduled-tasks/"+taskID.String()+"/run", nil, http.StatusOK)
+	failRun := afterFail["runs"].([]any)[0].(map[string]any)
+	if failRun["state"] != "failed" || !strings.Contains(failRun["error"].(string), "upstream feed 503") {
+		t.Fatalf("expected failed run with error, got %v", failRun)
+	}
+
+	inboxFail := e.want("GET", "/inbox", nil, http.StatusOK)
+	foundFail := false
+	for _, it := range inboxFail["items"].([]any) {
+		item := it.(map[string]any)
+		if item["kind"] == "scheduled" && item["title"] == "Sync feed" {
+			foundFail = true
+			if item["href"] != "/apps/feed-sync" || !strings.Contains(item["summary"].(string), "upstream feed 503") {
+				t.Fatalf("unexpected failed inbox item: %v", item)
+			}
+		}
+	}
+	if !foundFail {
+		t.Fatal("failed custom_app scheduled run missing from Inbox")
+	}
+
+	// Chat tools: create, list, and update (preserving custom_app_slug/tool/args) work cleanly.
+	chatID := uuid.MustParse(e.newChat(nil)["id"].(string))
+	chatTok := e.canvasToken(chatID)
+	code, chatCreated := e.tool(chatTok, "create_scheduled_task", map[string]any{
+		"name":            "Hourly sync",
+		"custom_app_slug": "feed-sync",
+		"custom_app_tool": "sync_items",
+		"custom_app_args": map[string]any{"label": "Chat"},
+		"frequency":       "cron",
+		"cron":            "0 * * * *",
+		"timezone":        "UTC",
+	})
+	if code != http.StatusOK {
+		t.Fatalf("chat create_scheduled_task = %d %v", code, chatCreated)
+	}
+	chatTaskID := chatCreated["task_id"].(string)
+
+	code, chatListed := e.tool(chatTok, "list_scheduled_tasks", map[string]any{})
+	if code != http.StatusOK {
+		t.Fatalf("chat list_scheduled_tasks = %d %v", code, chatListed)
+	}
+	var chatRev any
+	for _, raw := range chatListed["tasks"].([]any) {
+		m := raw.(map[string]any)
+		if m["task_id"] == chatTaskID {
+			chatRev = m["revision"]
+			if m["kind"] != "custom_app" || m["custom_app_slug"] != "feed-sync" || m["custom_app_tool"] != "sync_items" {
+				t.Fatalf("unexpected chat scheduled task: %v", m)
+			}
+		}
+	}
+	if chatRev == nil {
+		t.Fatalf("chat task missing from list_scheduled_tasks: %v", chatListed)
+	}
+
+	code, badEdit := e.tool(chatTok, "update_scheduled_task", map[string]any{
+		"task_id":      chatTaskID,
+		"revision":     chatRev,
+		"instructions": "nope",
+	})
+	if code != http.StatusUnprocessableEntity {
+		t.Fatalf("instructions on custom_app task = %d %v, want 422", code, badEdit)
+	}
+
+	code, chatUpdated := e.tool(chatTok, "update_scheduled_task", map[string]any{
+		"task_id":  chatTaskID,
+		"revision": chatRev,
+		"enabled":  false,
+	})
+	if code != http.StatusOK {
+		t.Fatalf("chat update_scheduled_task = %d %v", code, chatUpdated)
+	}
+	updatedMap := chatUpdated["task"].(map[string]any)
+	if updatedMap["enabled"] != false || updatedMap["custom_app_slug"] != "feed-sync" || updatedMap["custom_app_tool"] != "sync_items" {
+		t.Fatalf("custom_app fields lost on update: %v", updatedMap)
+	}
+
+	// Deleting the Custom App cascades and removes its scheduled tasks.
+	e.want("DELETE", "/custom-apps/feed-sync", nil, http.StatusNoContent)
+	afterDel := e.want("GET", "/scheduled-tasks", nil, http.StatusOK)
+	if len(afterDel["tasks"].([]any)) != 0 {
+		t.Fatalf("expected scheduled tasks deleted with custom app, got %v", afterDel)
+	}
 }
