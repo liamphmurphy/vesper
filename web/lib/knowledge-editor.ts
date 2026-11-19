@@ -26,7 +26,15 @@ function decorate(doc: PMNode, selection: Selection, focused: boolean, opts: Kno
         const editing = focused && selection.from <= to && selection.to >= from;
         const preview = ref.embed ? opts.preview(ref.raw) : undefined;
         if (preview) {
-          out.push(Decoration.widget(to, () => preview.mount(), { key: `${from}:${preview.key}`, side: 1, destroy: preview.destroy }));
+          out.push(
+            Decoration.widget(to, () => preview.mount(), {
+              key: `${from}:${preview.key}`,
+              side: 1,
+              destroy: preview.destroy,
+              ignoreSelection: true,
+              stopEvent: preview.stopEvent,
+            }),
+          );
         } else if (!ref.embed && !editing) {
           const label = defaultLabel({ ...ref, target: opts.title(ref.target) ?? ref.target });
           out.push(Decoration.widget(from, (view) => {
@@ -61,7 +69,7 @@ export type KnowledgeSyntaxOptions = {
   isResolved: (target: string) => boolean;
   title: (target: string) => string | undefined;
   /** Resolved previews are mounted only by ProseMirror, then disposed with the widget. */
-  preview: (raw: string) => { key: string; mount: () => HTMLElement; destroy: (node: Node) => void } | undefined;
+  preview: (raw: string) => { key: string; mount: () => HTMLElement; destroy: (node: Node) => void; stopEvent?: (event: Event) => boolean } | undefined;
   /** Refresh previews after the server resolves an embed added by an edit. */
   subscribe: (refresh: () => void) => () => void;
   /** ⌘/Ctrl-click on a [[link]] or ![[embed]], with the link as written. */
