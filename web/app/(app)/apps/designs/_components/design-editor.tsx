@@ -130,7 +130,7 @@ function useLaidPage(design: Design | undefined, pageId: string | undefined): { 
  * overlapping changes ask the person.
  */
 /** Beside the chat: closing, and the review in place, whose open state the chat keeps in its URL (review=1). */
-type Beside = { onClose: () => void; reviewing?: boolean; onReview?: (on: boolean) => void };
+type Beside = { onClose: () => void; reviewing?: boolean; hideClose?: boolean; onReview?: (on: boolean) => void };
 
 export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
   const router = useRouter();
@@ -942,9 +942,11 @@ export function DesignEditor({ id, beside }: { id: string; beside?: Beside }) {
             </Button>
           )}
           <Button variant="secondary" onClick={() => void flush().catch(() => undefined).then(() => router.push(`/apps/designs/${id}${reviewing ? "?review=1" : ""}`))}>Open in Designs</Button>
-          <button type="button" aria-label="Close the design" onClick={beside.onClose} className="grid size-7 flex-none place-items-center rounded-md text-fg-tertiary hover:bg-hover hover:text-fg">
-            <Icon name="x" size={14} />
-          </button>
+          {!beside.hideClose && (
+            <button type="button" aria-label="Close the design" onClick={beside.onClose} className="grid size-7 flex-none place-items-center rounded-md text-fg-tertiary hover:bg-hover hover:text-fg">
+              <Icon name="x" size={14} />
+            </button>
+          )}
         </div>
         {failed ?? (canvas ? (
           <div className="relative flex min-h-0 flex-1 max-md:flex-col">

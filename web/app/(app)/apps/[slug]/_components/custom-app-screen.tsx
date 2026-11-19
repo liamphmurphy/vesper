@@ -234,44 +234,24 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
   const headApproval = visibleApprovals[0];
 
   // ---- Dock chat wiring (`app:custom:<slug>` + app's space)
-  const dockScope: DockScope = `app:custom:${app.slug}`;
-  const dockChats = useDockChats(dockScope);
-  const spaceChats = useSpaceChats(app.space_id ?? undefined);
-  const createChat = useCreateChat();
-  const addDockChat = useAddDockChat();
-  const startingPersona = useDockPersona(dockScope);
-
-  const knownChats = useMemo(() => {
-    const byId = new Map<string, Schemas["ChatSession"]>();
-    for (const c of dockChats.data?.chats ?? []) byId.set(c.id, c);
-    for (const c of spaceChats.data?.chats ?? []) byId.set(c.id, c);
-    return [...byId.values()].sort((a, b) =>
-      (b.last_message_at ?? b.created_at).localeCompare(a.last_message_at ?? a.created_at),
-    );
-  }, [dockChats.data?.chats, spaceChats.data?.chats]);
-
-  const [selectedChatId, setSelectedChatId] = useState<string>();
-  const candidateChatId = selectedChatId ?? knownChats[0]?.id;
-  const chatQuery = useChat(candidateChatId);
-  const gone = chatQuery.error instanceof ApiError && chatQuery.error.status === 404;
-  const chatId = gone ? undefined : candidateChatId;
-  const chat = gone ? undefined : chatQuery.data;
-  const running = chat?.state === "running";
-
-  const rememberPersona = startingPersona.remember;
-  const openPersonaId = chat?.persona?.id;
-  useEffect(() => {
-    rememberPersona(openPersonaId);
-  }, [rememberPersona, openPersonaId]);
-
-  // Refresh app code, bundle, and SQLite schema when a persona turn completes.
-  const wasRunning = useRef(false);
-  useEffect(() => {
-    if (wasRunning.current && !running) {
-      void qc.invalidateQueries({ queryKey: customAppKeys.all });
-    }
-    wasRunning.current = running;
-  }, [running, qc]);
+  const dockChat = useCustomAppDockChat({
+    app,
+    currentNav,
+    runtimeError,
+  });
+  const {
+    knownChats,
+    chatId,
+    chat,
+    running,
+    startingPersona,
+    createChat,
+    selectChat,
+    startChat,
+    switcher,
+    conversationContext,
+    renderContext,
+  } = dockChat;
 
   const chatShowing = !dock || (dock.open && !dock.hidden && dock.tab === "chat");
   const lastReply = chat?.last_message_at;
@@ -280,29 +260,6 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
     setSeenReply({ chat: chatId, at: lastReply });
   }
   const unread = !chatShowing && !!lastReply && seenReply.chat === chatId && !!seenReply.at && seenReply.at !== lastReply && !running;
-
-  const selectChat = useCallback(
-    (nextId: string) => {
-      setSelectedChatId(nextId);
-      addDockChat.mutate({ scope: dockScope, chatId: nextId });
-    },
-    [addDockChat, dockScope],
-  );
-
-  const startChat = useCallback(() => {
-    if (createChat.isPending) return;
-    createChat.mutate(
-      {
-        title: app.name,
-        hidden: true,
-        ...(app.space_id ? { space_id: app.space_id } : {}),
-        ...(startingPersona.id ? { persona_id: startingPersona.id } : {}),
-      },
-      {
-        onSuccess: (created) => selectChat(created.id),
-      },
-    );
-  }, [app.name, app.space_id, createChat, selectChat, startingPersona.id]);
 
   const handleAskDock = useCallback(
     async (prompt: string) => {
@@ -565,68 +522,6 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
     [appSlug, currentSeq, bundleJs, bundleCss, initialThemeVars],
   );
 
-  const personaName = chat ? personaLook(chat.speaker ?? chat.persona).name : startingPersona.look.name;
-  const sections: DockChatSection[] = [{ label: app.name, chats: knownChats }];
-
-  const switcher = (
-    <DockChatSwitcher
-      current={knownChats.find((c) => c.id === chatId)}
-      sections={sections}
-      newLabel="New chat for this app"
-      onSelect={(next) => {
-        if (next !== chatId) selectChat(next);
-      }}
-      onNew={startChat}
-      creating={createChat.isPending}
-      inline={!!chatId}
-    />
-  );
-
-  const appWelcome: DockWelcome = {
-    where: `in ${app.name}`,
-    intro: "Ask me to build new views, evolve the SQLite tables, or wire in Vesper APIs and MCP connectors.",
-    label: "App ideas",
-    starters: [
-      { icon: "dashboard", title: "Add a view or chart", prompt: `Add a summary view and interactive filters to "${app.name}".` },
-      { icon: "server", title: "Inspect & evolve SQLite schema", prompt: `Inspect the SQLite schema in "${app.name}" and suggest useful columns or views.` },
-      { icon: "bolt", title: "Connect Vesper API data", prompt: `Show how to connect "${app.name}" to Vesper tickets, runs, or Knowledge via bridge.api.` },
-    ],
-  };
-
-  const renderContext = (className?: string) => (
-    <DockContext persona={personaName} label="Custom app context" className={className}>
-      <span className={dockContextChip} title={`/apps/${app.slug}`}>
-        <Icon name={resolveAppIcon(app.icon)} size={12} className="flex-none text-fg-tertiary" />
-        <span className="min-w-0 truncate">Viewing: {app.name} · v{app.current_seq}</span>
-      </span>
-    </DockContext>
-  );
-
-  const conversationContext: ConversationContext = {
-    hidden: true,
-    composer: renderContext(),
-    prepare: async (input) => ({
-      ...input,
-      body: withCustomAppContext(input.body, {
-        slug: app.slug,
-        name: app.name,
-        seq: app.current_seq,
-        activeNav: currentNav,
-        error: runtimeError ?? undefined,
-      }),
-    }),
-    prepareText: async (body) =>
-      withCustomAppContext(body, {
-        slug: app.slug,
-        name: app.name,
-        seq: app.current_seq,
-        activeNav: currentNav,
-        error: runtimeError ?? undefined,
-      }),
-    onSent: () => {},
-    welcome: appWelcome,
-  };
-
   const reload = useCallback(() => {
     setRuntimeErrorState(null);
     setPendingApprovals([]);
@@ -861,32 +756,19 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
       avatar: <PersonaAvatar persona={personaLookForTab} size={16} />,
       busy: running,
       unread,
-      content: chatId ? (
-        <Conversation
-          key={chatId}
-          id={chatId}
-          docked
-          hideTitle
-          onNew={startChat}
-          onReplace={selectChat}
-          context={conversationContext}
-          actions={switcher}
+      content: (
+        <CustomAppChatPane
+          app={app}
+          knownChats={knownChats}
+          chatId={chatId}
+          switcher={switcher}
+          conversationContext={conversationContext}
+          renderContext={renderContext}
+          createPending={createChat.isPending}
+          createError={createChat.error}
+          onStartChat={startChat}
+          onSelectChat={selectChat}
         />
-      ) : (
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {knownChats.length > 0 && switcher}
-          <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-            <Icon name="msg" size={22} className="text-fg-tertiary" />
-            {renderContext("justify-center")}
-            <p className="max-w-[260px] text-13 text-fg-secondary">
-              Talk to a persona about <span className="font-medium text-fg">{app.name}</span>. It can read its files, run SQLite queries, and ship new versions with you.
-            </p>
-            <Button variant="primary" disabled={createChat.isPending} onClick={startChat}>
-              {createChat.isPending ? "Starting…" : "Start a chat"}
-            </Button>
-            {createChat.error && <p className="text-12 text-pill-blocked-fg">{errorText(createChat.error)}</p>}
-          </div>
-        </div>
       ),
     },
     {
@@ -1354,4 +1236,304 @@ function PermissionsTab({ app }: { app: CustomAppDetail }) {
       </section>
     </div>
   );
+}
+
+function useCustomAppDockChat({
+  app,
+  currentNav,
+  runtimeError,
+  controlledChatId,
+  onSelectChat,
+}: {
+  app: CustomAppDetail;
+  currentNav?: string;
+  runtimeError?: string | null;
+  controlledChatId?: string;
+  onSelectChat?: (chatId: string) => void;
+}) {
+  const qc = useQueryClient();
+  const dockScope: DockScope = `app:custom:${app.slug}`;
+  const dockChats = useDockChats(dockScope);
+  const spaceChats = useSpaceChats(app.space_id ?? undefined);
+  const createChat = useCreateChat();
+  const addDockChat = useAddDockChat();
+  const startingPersona = useDockPersona(dockScope);
+
+  const knownChats = useMemo(() => {
+    const byId = new Map<string, Schemas["ChatSession"]>();
+    for (const c of dockChats.data?.chats ?? []) byId.set(c.id, c);
+    for (const c of spaceChats.data?.chats ?? []) byId.set(c.id, c);
+    return [...byId.values()].sort((a, b) =>
+      (b.last_message_at ?? b.created_at).localeCompare(a.last_message_at ?? a.created_at),
+    );
+  }, [dockChats.data?.chats, spaceChats.data?.chats]);
+
+  const [selectedChatId, setSelectedChatId] = useState<string | undefined>(controlledChatId);
+  const [prevControlled, setPrevControlled] = useState(controlledChatId);
+  if (controlledChatId !== prevControlled) {
+    setPrevControlled(controlledChatId);
+    setSelectedChatId(controlledChatId);
+  }
+  const candidateChatId = selectedChatId ?? knownChats[0]?.id;
+  const chatQuery = useChat(candidateChatId);
+  const gone = chatQuery.error instanceof ApiError && chatQuery.error.status === 404;
+  const chatId = gone ? undefined : candidateChatId;
+  const chat = gone ? undefined : chatQuery.data;
+  const running = chat?.state === "running";
+
+  const rememberPersona = startingPersona.remember;
+  const openPersonaId = chat?.persona?.id;
+  useEffect(() => {
+    rememberPersona(openPersonaId);
+  }, [rememberPersona, openPersonaId]);
+
+  const wasRunning = useRef(running);
+  useEffect(() => {
+    if (wasRunning.current && !running) {
+      void qc.invalidateQueries({ queryKey: customAppKeys.all });
+    }
+    wasRunning.current = running;
+  }, [running, qc]);
+
+  const selectChat = useCallback(
+    (nextId: string) => {
+      setSelectedChatId(nextId);
+      addDockChat.mutate({ scope: dockScope, chatId: nextId });
+      onSelectChat?.(nextId);
+    },
+    [addDockChat, dockScope, onSelectChat],
+  );
+
+  const startChat = useCallback(() => {
+    if (createChat.isPending) return;
+    createChat.mutate(
+      {
+        title: app.name,
+        hidden: true,
+        ...(app.space_id ? { space_id: app.space_id } : {}),
+        ...(startingPersona.id ? { persona_id: startingPersona.id } : {}),
+      },
+      {
+        onSuccess: (created) => selectChat(created.id),
+      },
+    );
+  }, [app.name, app.space_id, createChat, selectChat, startingPersona.id]);
+
+  const personaName = chat ? personaLook(chat.speaker ?? chat.persona).name : startingPersona.look.name;
+  const sections: DockChatSection[] = [{ label: app.name, chats: knownChats }];
+
+  const switcher = (
+    <DockChatSwitcher
+      current={knownChats.find((c) => c.id === chatId)}
+      sections={sections}
+      newLabel="New chat for this app"
+      onSelect={(next) => {
+        if (next !== chatId) selectChat(next);
+      }}
+      onNew={startChat}
+      creating={createChat.isPending}
+      inline={!!chatId}
+    />
+  );
+
+  const appWelcome: DockWelcome = {
+    where: `in ${app.name}`,
+    intro: "Ask me to build new views, evolve the SQLite tables, or wire in Vesper APIs and MCP connectors.",
+    label: "App ideas",
+    starters: [
+      { icon: "dashboard", title: "Add a view or chart", prompt: `Add a summary view and interactive filters to "${app.name}".` },
+      { icon: "server", title: "Inspect & evolve SQLite schema", prompt: `Inspect the SQLite schema in "${app.name}" and suggest useful columns or views.` },
+      { icon: "bolt", title: "Connect Vesper API data", prompt: `Show how to connect "${app.name}" to Vesper tickets, runs, or Knowledge via bridge.api.` },
+    ],
+  };
+
+  const renderContext = (className?: string) => (
+    <DockContext persona={personaName} label="Custom app context" className={className}>
+      <span className={dockContextChip} title={`/apps/${app.slug}`}>
+        <Icon name={resolveAppIcon(app.icon)} size={12} className="flex-none text-fg-tertiary" />
+        <span className="min-w-0 truncate">Viewing: {app.name} · v{app.current_seq}</span>
+      </span>
+    </DockContext>
+  );
+
+  const conversationContext: ConversationContext = {
+    hidden: true,
+    composer: renderContext(),
+    prepare: async (input) => ({
+      ...input,
+      body: withCustomAppContext(input.body, {
+        slug: app.slug,
+        name: app.name,
+        seq: app.current_seq,
+        activeNav: currentNav,
+        error: runtimeError ?? undefined,
+      }),
+    }),
+    prepareText: async (body) =>
+      withCustomAppContext(body, {
+        slug: app.slug,
+        name: app.name,
+        seq: app.current_seq,
+        activeNav: currentNav,
+        error: runtimeError ?? undefined,
+      }),
+    onSent: () => {},
+    welcome: appWelcome,
+  };
+
+  return {
+    knownChats,
+    chatId,
+    chat,
+    running,
+    startingPersona,
+    createChat,
+    selectChat,
+    startChat,
+    switcher,
+    conversationContext,
+    renderContext,
+  };
+}
+
+function CustomAppChatPane({
+  app,
+  knownChats,
+  chatId,
+  switcher,
+  conversationContext,
+  renderContext,
+  createPending,
+  createError,
+  onStartChat,
+  onSelectChat,
+}: {
+  app: CustomAppDetail;
+  knownChats: Schemas["ChatSession"][];
+  chatId?: string;
+  switcher: React.ReactNode;
+  conversationContext: ConversationContext;
+  renderContext: (className?: string) => React.ReactNode;
+  createPending: boolean;
+  createError: unknown;
+  onStartChat: () => void;
+  onSelectChat: (id: string) => void;
+}) {
+  if (chatId) {
+    return (
+      <Conversation
+        key={chatId}
+        id={chatId}
+        docked
+        hideTitle
+        onNew={onStartChat}
+        onReplace={onSelectChat}
+        context={conversationContext}
+        actions={switcher}
+      />
+    );
+  }
+  return (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      {knownChats.length > 0 && switcher}
+      <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+        <Icon name="msg" size={22} className="text-fg-tertiary" />
+        {renderContext("justify-center")}
+        <p className="max-w-[260px] text-13 text-fg-secondary">
+          Talk to a persona about <span className="font-medium text-fg">{app.name}</span>. It can read its files, run SQLite queries, and ship new versions with you.
+        </p>
+        <Button variant="primary" disabled={createPending} onClick={onStartChat}>
+          {createPending ? "Starting…" : "Start a chat"}
+        </Button>
+        {createError ? <p className="text-12 text-pill-blocked-fg">{errorText(createError)}</p> : null}
+      </div>
+    </div>
+  );
+}
+
+function CustomAppChatPanelLoaded({
+  app,
+  activeNav,
+  runtimeError,
+  chatId: controlledChatId,
+  onSelectChat,
+}: {
+  app: CustomAppDetail;
+  activeNav?: string;
+  runtimeError?: string | null;
+  chatId?: string;
+  onSelectChat?: (id: string) => void;
+}) {
+  const dockChat = useCustomAppDockChat({
+    app,
+    currentNav: activeNav,
+    runtimeError,
+    controlledChatId,
+    onSelectChat,
+  });
+  return (
+    <CustomAppChatPane
+      app={app}
+      knownChats={dockChat.knownChats}
+      chatId={dockChat.chatId}
+      switcher={dockChat.switcher}
+      conversationContext={dockChat.conversationContext}
+      renderContext={dockChat.renderContext}
+      createPending={dockChat.createChat.isPending}
+      createError={dockChat.createChat.error}
+      onStartChat={dockChat.startChat}
+      onSelectChat={dockChat.selectChat}
+    />
+  );
+}
+
+export function CustomAppChatPanel({
+  slug,
+  activeNav,
+  runtimeError,
+  chatId,
+  onSelectChat,
+}: {
+  slug: string;
+  activeNav?: string;
+  runtimeError?: string | null;
+  chatId?: string;
+  onSelectChat?: (id: string) => void;
+}) {
+  const query = useCustomApp(slug);
+  if (query.isError) {
+    return (
+      <div className="p-4">
+        <Banner tone="blocked" title="Couldn’t load custom app">
+          {errorText(query.error)}
+        </Banner>
+      </div>
+    );
+  }
+  if (!query.data) return <Skeleton className="m-3 h-40" />;
+  return (
+    <CustomAppChatPanelLoaded
+      key={query.data.id}
+      app={query.data}
+      activeNav={activeNav}
+      runtimeError={runtimeError}
+      chatId={chatId}
+      onSelectChat={onSelectChat}
+    />
+  );
+}
+
+export function CustomAppCodePanel({ slug }: { slug: string }) {
+  const query = useCustomApp(slug);
+  if (query.isError) {
+    return (
+      <div className="p-4">
+        <Banner tone="blocked" title="Couldn’t load custom app">
+          {errorText(query.error)}
+        </Banner>
+      </div>
+    );
+  }
+  if (!query.data) return <Skeleton className="m-3 h-40" />;
+  return <CodeInspectorTab key={query.data.current.seq} app={query.data} />;
 }

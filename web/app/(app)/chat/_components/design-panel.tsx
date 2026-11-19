@@ -33,16 +33,34 @@ export function useOpenNewDesigns(chatId: string, live: boolean) {
   return ids;
 }
 
+export type DesignPanelHost = {
+  designId?: string;
+  reviewing?: boolean;
+  hideClose?: boolean;
+  onClose?: () => void;
+  onReview?: (on: boolean) => void;
+};
+
 /** The design open in the chat: it fills the desktop dock's Design tab or the compact panel sheet, and reviews its suggestions in place (review=1). */
-export function DesignPanel({ chatId, live }: { chatId: string; live: boolean }) {
+export function DesignPanel({ chatId, live, host }: { chatId: string; live: boolean; host?: DesignPanelHost }) {
   const panel = useCanvasPanel();
   const list = useChatCanvases(chatId, live).data?.canvases;
   const ids = (list ?? []).filter((c) => c.kind === "design").map((c) => c.id);
-  const open = panel.focus && ids.includes(panel.focus) && !panel.fullscreen ? panel.focus : undefined;
+  const focus = host ? (host.designId && ids.includes(host.designId) ? host.designId : ids[ids.length - 1]) : panel.focus;
+  const open = focus && ids.includes(focus) && (host || !panel.fullscreen) ? focus : undefined;
   if (!open) return null;
   return (
     <aside aria-label="Design beside the chat" data-testid="design-panel" className="flex min-h-0 flex-1 flex-col bg-surface-sunken">
-      <DesignEditor key={open} id={open} beside={{ onClose: panel.collapse, reviewing: panel.reviewing, onReview: (on) => (on ? panel.review(open) : panel.show(open)) }} />
+      <DesignEditor
+        key={open}
+        id={open}
+        beside={{
+          onClose: host?.onClose ?? panel.collapse,
+          reviewing: host ? host.reviewing : panel.reviewing,
+          hideClose: host?.hideClose,
+          onReview: host?.onReview ?? ((on) => (on ? panel.review(open) : panel.show(open))),
+        }}
+      />
     </aside>
   );
 }

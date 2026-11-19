@@ -6,7 +6,7 @@ import type { Playground } from "@/lib/api/playground-hooks";
 import { cx } from "@/lib/cx";
 import { curlFor, exampleFor, filterOps, parseOpenAPI, requestPath, validate, type ApiDoc, type Operation } from "@/lib/openapi";
 import { appendLogs, inferredIsStale, isErrorLine, linesForRequest, logSources, mapApiPrompt, normalizePath, parseSpecSource, type LogLine, type SpecSource } from "@/lib/playground";
-import { sendToComposer } from "@/lib/playground-report";
+import { sendToComposer, type ComposerDrop } from "@/lib/playground-report";
 import { Button, IconButton } from "@/components/ui/button";
 
 // The Playground's tabs. Everything here talks to the playground's own origin
@@ -188,7 +188,23 @@ type SpecAnswer =
   | { found: true; doc: unknown; source: SpecSource }
   | { found: false; message: string; checked: string[] };
 
-export function ApiTab({ chatId, pg, origin, logs, wide, onOpenLogs }: { chatId: string; pg: Playground; origin: string; logs: LogLine[]; wide: boolean; onOpenLogs: () => void }) {
+export function ApiTab({
+  chatId,
+  pg,
+  origin,
+  logs,
+  wide,
+  onOpenLogs,
+  onSendToComposer,
+}: {
+  chatId: string;
+  pg: Playground;
+  origin: string;
+  logs: LogLine[];
+  wide: boolean;
+  onOpenLogs: () => void;
+  onSendToComposer?: (drop: ComposerDrop) => Promise<boolean> | boolean;
+}) {
   // Always asked: the gateway prefers the document the running app serves,
   // which the playground's spec may not name.
   const spec = useQuery({
@@ -216,8 +232,9 @@ export function ApiTab({ chatId, pg, origin, logs, wide, onOpenLogs }: { chatId:
   });
   const stale = !!inferred && inferredIsStale(inferred.commit, head.data?.commit ?? "");
   const [asked, setAsked] = useState<string>();
-  const askToMap = () => {
-    const sent = sendToComposer(chatId, { text: mapApiPrompt({ stale, existing: inferred?.path ?? null }) });
+  const askToMap = async () => {
+    const drop: ComposerDrop = { text: mapApiPrompt({ stale, existing: inferred?.path ?? null }) };
+    const sent = onSendToComposer ? await onSendToComposer(drop) : sendToComposer(chatId, drop);
     setAsked(sent ? "Added to your message: send it and the persona maps the API." : "Open the chat to ask the persona.");
   };
   const parsed = useMemo<{ api?: ApiDoc; error?: string }>(() => {

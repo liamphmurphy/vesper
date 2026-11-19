@@ -74,7 +74,7 @@ function OutlinePanel({ body }: { body: string }) {
 const DAY_NAMES = ["M", "T", "W", "T", "F", "S", "S"];
 
 /** A month of daily notes, and the inbox to file from: the Calendar plugin and the capture inbox in one. */
-export function CalendarPanel() {
+export function CalendarPanel({ onNavigate }: { onNavigate?: (path: string) => void } = {}) {
   const router = useRouter();
   const today = useToday() ?? new Date(0);
   const [picked, setMonth] = useState<{ y: number; m: number }>();
@@ -112,7 +112,18 @@ export function CalendarPanel() {
             <button
               key={i}
               aria-label={key}
-              onClick={() => daily.mutate({ date: key }, { onSuccess: (p) => router.push(pageHref(p.id, p.title)) })}
+              onClick={() =>
+                daily.mutate(
+                  { date: key },
+                  {
+                    onSuccess: (p) => {
+                      const href = pageHref(p.id, p.title);
+                      if (onNavigate) onNavigate(href);
+                      else router.push(href);
+                    },
+                  },
+                )
+              }
               className={cx("relative mx-auto grid h-8 w-9 place-items-center rounded-lg text-13", isToday ? "bg-accent font-semibold text-on-accent" : "text-fg-2 hover:bg-hover")}
             >
               {d}

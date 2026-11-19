@@ -42,7 +42,13 @@ const noSubscribe = () => () => {};
  * including the captured branch file tree when expanded to fullscreen, or just what the last
  * reply changed. Comments on diff lines collect into one review per repository.
  */
-export function CodePanel({ chatId }: { chatId: string }) {
+export function CodePanel({
+  chatId,
+  host,
+}: {
+  chatId: string;
+  host?: { onOpenFull?: () => void; hideFullscreenButton?: boolean };
+}) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -380,11 +386,11 @@ export function CodePanel({ chatId }: { chatId: string }) {
               </button>
             ))}
           </span>
-          {!fullscreen ? (
+          {host?.hideFullscreenButton ? null : !fullscreen ? (
             <button
               ref={fullscreenBtnRef}
               type="button"
-              onClick={enterFullscreen}
+              onClick={host?.onOpenFull ?? enterFullscreen}
               aria-label="Full screen"
               title="Full screen"
               data-testid="code-fullscreen-open"
