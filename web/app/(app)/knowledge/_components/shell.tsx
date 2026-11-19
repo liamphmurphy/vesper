@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { cx } from "@/lib/cx";
 import { HOME_TAB, START_TAB, ancestors, buildTree, closeOtherTabs, closeTab, closeTabsToRight, folderPaths, isoDay, joinPath, kindHref, movedPath, nameOf, openTab, pageHref, pageIcon, parentOf, parseKind, startTabKind, type Tab, type TreeFolder, type TreeRow } from "@/lib/knowledge";
 import { useAllPages, useCreatePage, useDaily, useDeleteFolder, useDeletePage, useMoveFolder, useMovePage, usePage } from "@/lib/api/knowledge-hooks";
@@ -444,22 +444,75 @@ function Explorer({ pathname }: { pathname: string }) {
   const activeId = pageIdOf(pathname);
   const current = usePage(activeId).data;
   const create = useCreatePage();
-  const tree = useMemo(() => buildTree((pages.data ?? []) as TreeRow[]), [pages.data]);
+  const rows = useMemo(() => (pages.data ?? []) as TreeRow[], [pages.data]);
+  const tree = useMemo(() => buildTree(rows), [rows]);
   const stored = useStore(openStore);
   const pinnedIds = useStore(pinnedStore);
   const pinned = useMemo(() => {
-    const byId = new Map((pages.data ?? []).map((p) => [p.id, p as TreeRow]));
+    const byId = new Map(rows.map((p) => [p.id, p]));
     return pinnedIds.flatMap((id) => byId.get(id) ?? []);
-  }, [pinnedIds, pages.data]);
+  }, [pinnedIds, rows]);
   const togglePin = (id: string) => pinnedStore.set(pinnedIds.includes(id) ? pinnedIds.filter((p) => p !== id) : [...pinnedIds, id]);
+  // Folders manually closed while on the active page; navigating to a different page starts fresh so its path always opens.
+  const [closedState, setClosedState] = useState<{ forId: string | undefined; paths: Set<string> }>({ forId: activeId, paths: new Set() });
+  const closed = useMemo(() => (closedState.forId === activeId ? closedState.paths : new Set<string>()), [closedState, activeId]);
+  const setClosed = useCallback(
+    (update: (prev: Set<string>) => Set<string>) =>
+      setClosedState((s) => ({ forId: activeId, paths: update(s.forId === activeId ? s.paths : new Set()) })),
+    [activeId],
+  );
   // Folds every folder; the open page's own path stays open, as it does on arrival.
   const collapseAll = () => {
     openStore.set([]);
-    setClosed(new Set());
+    setClosed(() => new Set());
   };
-  // The folders down to the page you're on are open too, until you close one.
-  const [closed, setClosed] = useState<Set<string>>(new Set());
-  const open = useMemo(() => new Set([...stored, ...ancestors(current?.path).filter((f) => !closed.has(f))]), [stored, current?.path, closed]);
+  // Prefer the already-loaded tree row so ancestor folders expand on the first frame after navigation.
+  const activePath = useMemo(() => rows.find((r) => r.id === activeId)?.path ?? current?.path, [rows, activeId, current?.path]);
+  const open = useMemo(() => new Set([...stored, ...ancestors(activePath).filter((f) => !closed.has(f))]), [stored, activePath, closed]);
+  // When navigating to a page that lives in the other Knowledge view (Yours vs Agent knowledge), switch the tree to match.
+  const syncedViewFor = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!activeId) {
+      syncedViewFor.current = undefined;
+      return;
+    }
+    if (!current || current.id !== activeId || syncedViewFor.current === activeId) return;
+    syncedViewFor.current = activeId;
+    const wantView: View = current.audience === "agent" ? "agent" : "yours";
+    if (viewStore.get() !== wantView) viewStore.set(wantView);
+  }, [activeId, current]);
+  // Reveal and scroll the left file tree to the opened page (e.g. from the command palette or a wiki link).
+  const navRef = useRef<HTMLElement>(null);
+  const scrolledFor = useRef<string | undefined>(undefined);
+  const [revealTick, setRevealTick] = useState(0);
+  useEffect(() => {
+    const onReveal = (e: Event) => {
+      const href = e instanceof CustomEvent ? (e.detail as { href?: string } | undefined)?.href : undefined;
+      if (href && !href.startsWith("/knowledge/")) return;
+      setClosed(() => new Set());
+      setRevealTick((n) => n + 1);
+    };
+    window.addEventListener("la:knowledge-reveal", onReveal);
+    return () => window.removeEventListener("la:knowledge-reveal", onReveal);
+  }, [setClosed]);
+  useEffect(() => {
+    if (!activeId) {
+      scrolledFor.current = undefined;
+      return;
+    }
+    const key = `${activeId}:${revealTick}`;
+    if (scrolledFor.current === key) return;
+    const nav = navRef.current;
+    const el = nav?.querySelector<HTMLElement>(`[data-tree-page="${activeId}"]`);
+    if (!nav || !el) return;
+    scrolledFor.current = key;
+    const navRect = nav.getBoundingClientRect();
+    const elRect = el.getBoundingClientRect();
+    const inView = elRect.top >= navRect.top && elRect.bottom <= navRect.bottom;
+    if (!inView && typeof el.scrollIntoView === "function") {
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  }, [activeId, open, tree, revealTick]);
   const toggle = (path: string) => {
     if (open.has(path)) {
       openStore.set(stored.filter((f) => f !== path));
@@ -624,7 +677,6 @@ function Explorer({ pathname }: { pathname: string }) {
   const design = useCreateDesign();
   const starters = useSlideStarters();
   const [showAll, setShowAll] = useState<Set<string>>(new Set());
-  const rows = (pages.data ?? []) as TreeRow[];
   const findFolder = (path: string): TreeFolder | undefined => {
     const walk = (f: TreeFolder): TreeFolder | undefined => (f.path === path ? f : f.folders.map(walk).find(Boolean));
     return walk(tree);
@@ -754,7 +806,7 @@ function Explorer({ pathname }: { pathname: string }) {
         <span className="flex-1 truncate">Search pages and #tags</span>
         <Kbd>⌘⇧K</Kbd>
       </button>
-      <nav aria-label="Pages" className="mt-3 min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+      <nav ref={navRef} aria-label="Pages" className="mt-3 min-h-0 flex-1 overflow-y-auto px-2 pb-3">
         {pages.isPending ? (
           <div className="space-y-2 px-2">
             {Array.from({ length: 8 }, (_, i) => (
@@ -977,6 +1029,7 @@ function FolderItems({ folder, depth, open, toggle, activeId, actions }: { folde
                 depth={depth}
                 active={p.id === activeId}
                 dot={(p.pending ?? 0) > 0}
+                treePageId={p.id}
               />
             </ExplorerMenu>
           )}
@@ -993,10 +1046,11 @@ function FolderItems({ folder, depth, open, toggle, activeId, actions }: { folde
   );
 }
 
-function TreeLink({ href, icon, label, depth, active, badge, dot }: { href: string; icon: IconName; label: string; depth: number; active?: boolean; badge?: number; dot?: boolean }) {
+function TreeLink({ href, icon, label, depth, active, badge, dot, treePageId }: { href: string; icon: IconName; label: string; depth: number; active?: boolean; badge?: number; dot?: boolean; treePageId?: string }) {
   return (
     <Link
       href={href}
+      data-tree-page={treePageId}
       style={{ paddingLeft: 24 + depth * 16 }}
       aria-current={active ? "page" : undefined}
       className={cx(
