@@ -13,7 +13,19 @@ export type LibraryFilePreview = Schemas["LibraryFilePreview"];
 export const libraryKeys = {
   all: ["library"] as const,
   list: (kind?: LibraryItemKind) => ["library", "list", kind ?? ""] as const,
+  item: (itemId: string) => ["library", "item", itemId] as const,
 };
+
+/** One Library item of the caller's, for inline chat cards. */
+export function useLibraryItem(itemId: string | undefined) {
+  return useQuery({
+    enabled: !!itemId,
+    queryKey: libraryKeys.item(itemId ?? ""),
+    queryFn: () => unwrap(api.GET("/library/{itemId}", { params: { path: { itemId: itemId! } } })),
+    staleTime: 30_000,
+    retry: false,
+  });
+}
 
 /** Newest first, a page at a time. */
 export function useLibrary(kind?: LibraryItemKind) {

@@ -17,6 +17,7 @@ import { useChat, useSendChatMessage } from "@/lib/api/hooks";
 import { downloadFile } from "@/lib/api/docs-hooks";
 import { floatPanel } from "@/components/domain/pickers";
 import { Markdown } from "@/components/domain/markdown";
+import { PdfViewer } from "@/components/domain/pdf-viewer";
 import { Icon } from "@/components/ui/icon";
 import { Banner, Skeleton } from "@/components/ui/primitives";
 import { toast } from "@/lib/toast";
@@ -439,6 +440,10 @@ function EmbedPreview({ embed: e }: { embed: Embed }) {
         <video src={e.url} controls className="max-h-[420px] w-full" />
       ) : e.content_type?.startsWith("audio/") ? (
         <audio src={e.url} controls className="w-full p-3" />
+      ) : e.url && e.content_type === "application/pdf" ? (
+        <div className="p-3" data-testid="knowledge-pdf-embed">
+          <PdfViewer url={e.url} title={e.title ?? "PDF"} maxHeightClass="max-h-[540px]" />
+        </div>
       ) : e.markdown ? (
         <div className="border-l-2 border-border-strong px-4 py-3 text-14">
           <Markdown>{e.markdown}</Markdown>

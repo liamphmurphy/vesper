@@ -27,6 +27,7 @@ import { timelineTime } from "@/lib/format";
 import { checkLibraryUpload, referenceBadge, referenceCaption, referenceChoices } from "@/lib/library-ui";
 import { floatPanel } from "@/components/domain/pickers";
 import { AudioPlayer } from "@/components/domain/audio-player";
+import { PdfViewer } from "@/components/domain/pdf-viewer";
 import { Waveform } from "@/components/domain/waveform";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
@@ -335,9 +336,17 @@ function fileMeta(item: LibraryItem): string {
   return [item.detail, formatBytes(item.size_bytes)].filter(Boolean).join(" · ");
 }
 
-/** What a file's dialog shows of it: text as text, a table's first rows, a zip's names. Never rendered as a page. */
+/** What a file's dialog shows of it: a PDF via pdf.js, text as text, a table's first rows, or a zip's names. Never rendered as an HTML page. */
 function FilePreviewPane({ item, open }: { item: LibraryItem; open: boolean }) {
-  const q = useLibraryFilePreview(item.id, open);
+  const isPdf = item.content_type === "application/pdf";
+  const q = useLibraryFilePreview(item.id, open && !isPdf);
+  if (isPdf) {
+    return (
+      <div data-testid="file-preview" data-kind="pdf">
+        {open ? <PdfViewer url={libraryItemUrl(item.id)} title={item.title} maxHeightClass="max-h-[60vh]" /> : null}
+      </div>
+    );
+  }
   if (q.isPending) return <Skeleton className="h-48 w-full rounded-lg" />;
   if (q.isError) return <p className="text-12 text-pill-blocked-fg" role="alert">Couldn’t read a preview: {q.error.message}</p>;
   const p = q.data;
@@ -428,6 +437,9 @@ function ExportTile({ item, initiallyOpen }: { item: LibraryItem; initiallyOpen:
           <RenameField item={item} />
           <p className="text-14 text-fg-secondary">A copy as it was when you exported it. {fileMeta(item)}</p>
           <ExportSourceLine item={item} />
+          {open && item.content_type === "application/pdf" ? (
+            <PdfViewer url={libraryItemUrl(item.id)} title={item.title} maxHeightClass="max-h-[60vh]" />
+          ) : null}
         </div>
       </ItemDialog>
       <span className="truncate text-12 text-fg-secondary">{fileMeta(item)} · exported {timelineTime(item.created_at)}</span>
