@@ -38,6 +38,9 @@ var (
 	SkillSVGImages = assistantSkill("vesper-svg-images",
 		"Read before drawing any SVG in a reply (svg-image or svg-steps blocks, an SVG canvas): required structure, the theme palette, and layout rules for diagrams.",
 		AssistantSVGSection)
+	SkillPersonaCharacter = assistantSkill("vesper-persona-character",
+		"Read before designing or iterating on an animated 64x64 SVG character for a persona (propose_persona_character, or character_svg on propose_persona): viewBox rules, currentColor, action-state animations (idle, thinking, reading, coding, creating, needs-you), and layer visibility.",
+		AssistantPersonaCharacterSection)
 )
 
 // assistantSkill is a playbook as a skill. The body keeps its section heading.
@@ -49,7 +52,7 @@ func assistantSkill(name, description, section string) agentdef.Skill {
 // it may write and run code, workflows whether its persona may build
 // workflows, svg whether it may draw SVG images.
 func AssistantSkills(coding, workflows, svg bool) []agentdef.Skill {
-	out := []agentdef.Skill{SkillCanvases, SkillCustomApps, SkillPDFs}
+	out := []agentdef.Skill{SkillCanvases, SkillCustomApps, SkillPDFs, SkillPersonaCharacter}
 	if coding {
 		out = append(out, SkillVideos, SkillAudio, SkillPlayground)
 	}

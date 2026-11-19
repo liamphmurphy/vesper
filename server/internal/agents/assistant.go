@@ -271,6 +271,41 @@ const AssistantPDFSection = `
 - After saving a PDF, write a fenced code block tagged pdf holding only its library_item_id so the chat shows a preview card with Download and Library actions. Don't paste raw HTML or base64 into your reply.
 - Placing PDFs in Knowledge: pass attach_to_knowledge: true on render_pdf to get a knowledge_embed (![[attachment:...]]) directly, or call attach_file with library_item_id for a PDF you already made, then place that embed in a Knowledge page with create_page or patch_page.`
 
+// AssistantPersonaCharacterSection is loaded as the vesper-persona-character
+// skill so any chat persona can craft an animated 64x64 SVG character with
+// action-specific animations.
+const AssistantPersonaCharacterSection = `
+
+## Persona characters
+- Any persona can design or refine an animated 64×64 SVG character in chat via propose_persona_character(svg, summary?, persona?). Nothing changes until the person approves the interactive preview card; calling propose_persona_character again for the same persona supersedes your previous pending draft so you can iterate smoothly.
+- When proposing a new persona with propose_persona (requires your personas permission), you can pass character_svg instead of avatar_prompt.
+- Canvas & readability:
+  - Write one complete <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"> document (max 32 KB, 160 elements, nesting depth 16). Do not include <style>, <script>, <foreignObject>, <image>, <animate*>, external URLs, or inline event attributes.
+  - Design a bold, unmistakable silhouette centered around (32, 34) with generous shapes and strokes ≥1.5 so it reads clearly at 20×20px as well as 92×92px.
+  - Use fill="currentColor" (or stroke="currentColor") on the primary body/accent shapes so the character adopts the persona's color, paired with high-contrast eyes and details that stay crisp on both light and dark themes.
+  - Never use <style> or <animate>; animate layers with the semantic attributes below instead.
+- Semantic rig & action-reactive animations:
+  - Tag meaningful groups with data-part="<name>" (e.g. shadow, body, head, eyes, ears, tail, hands, prop, aura) and set data-pivot="X Y" (coordinates in 0..64) on rotating/scaling parts so limbs, tails, and heads pivot naturally. Optional data-delay="-4..4" (seconds) and data-speed="slow|normal|fast".
+  - Allowed motion values (19): none, breathe, float, blink, glance, tilt, nod, sway, wag, wag-fast, tap, type, bounce, wave, scan, orbit, spark, pulse, shadow.
+  - Attach motions per state so the character visibly adapts to what the persona is doing:
+    - data-motion="..." — always active whenever animated (e.g. blink on eyes, shadow on ground ellipse).
+    - data-motion-idle="..." — calm resting motion (e.g. breathe, float, sway, wag).
+    - data-motion-working="..." — fallback motion for active work states.
+    - Action overrides: data-motion-thinking (pondering/planning/memory: tilt, pulse, float), data-motion-reading (reading code/wiki/search/web: glance, scan, nod), data-motion-coding (writing code/tests/terminal/git: type, tap, wag-fast), data-motion-creating (writing replies/canvases/designs/images/videos/PDFs: wave, bounce, spark, orbit), data-motion-needs-you (waiting for approval/input: wave, pulse, bounce).
+  - Use data-show="..." (space-separated tokens from idle, working, thinking, reading, coding, creating, needs-you) on props, expressions, or aura layers so tools/badges appear only during matching actions (e.g. data-show="reading" for a lens, data-show="coding" for typing sparks, data-show="needs-you" for an alert pip).
+- Example structure:
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+    <title>Character</title>
+    <ellipse data-part="shadow" data-motion="shadow" data-pivot="32 58" cx="32" cy="58" rx="15" ry="3" fill="#000" opacity="0.22"/>
+    <g data-part="body" data-pivot="32 36" data-motion-idle="breathe" data-motion-thinking="tilt" data-motion-reading="nod" data-motion-coding="type" data-motion-creating="bounce" data-motion-needs-you="wave">
+      <circle cx="32" cy="36" r="16" fill="currentColor"/>
+      <g data-part="eyes" data-pivot="32 34" data-motion="blink" data-motion-reading="glance">
+        <circle cx="26" cy="34" r="2.2" fill="#18181b"/><circle cx="38" cy="34" r="2.2" fill="#18181b"/>
+      </g>
+      <path data-part="spark" data-show="coding creating" data-motion="spark" data-pivot="50 18" d="M50 12l1.8 4.2L56 18l-4.2 1.8L50 24l-1.8-4.2L44 18l4.2-1.8Z" fill="#ffd6a0"/>
+    </g>
+  </svg>`
+
 // AssistantInstructionsFor is AssistantInstructions with the sections a
 // persona's capabilities add. coding is whether the chat may write and run
 // code, the legacy repository and branch arguments are unused because live

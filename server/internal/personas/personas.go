@@ -64,6 +64,8 @@ type NewInput struct {
 	// DefaultHarness/DefaultModel/DefaultEffort override Auto for new chats
 	// and set the primary model for work definitions.
 	DefaultHarness, DefaultModel, DefaultEffort *string
+	// CharacterSVG is an optional sanitized 64x64 animated SVG character.
+	CharacterSVG *string
 }
 
 // Patch edits a persona at Revision; nil fields are unchanged.
@@ -273,6 +275,14 @@ func CreateLocked(ctx context.Context, q *store.Queries, o Owner, in NewInput) (
 	if err != nil {
 		return store.Persona{}, err
 	}
+	var charSVG *string
+	if in.CharacterSVG != nil && strings.TrimSpace(*in.CharacterSVG) != "" {
+		checked, err := CheckCharacterSVG(*in.CharacterSVG)
+		if err != nil {
+			return store.Persona{}, err
+		}
+		charSVG = &checked
+	}
 	var out store.Persona
 	name, err := normName(in.Name)
 	if err != nil {
@@ -335,6 +345,11 @@ func CreateLocked(ctx context.Context, q *store.Queries, o Owner, in NewInput) (
 		}
 		if err == nil && in.TicketEdits != nil && *in.TicketEdits != out.TicketEdits {
 			out, err = q.SetPersonaTicketEdits(ctx, store.SetPersonaTicketEditsParams{ID: out.ID, WorkspaceID: o.WorkspaceID, UserID: o.UserID, TicketEdits: *in.TicketEdits})
+		}
+		if err == nil && charSVG != nil {
+			out, err = q.SetPersonaCharacter(ctx, store.SetPersonaCharacterParams{
+				ID: out.ID, WorkspaceID: o.WorkspaceID, UserID: o.UserID, CharacterSvg: *charSVG, SetAvatar: false,
+			})
 		}
 	}
 	return out, nameTaken(err)
@@ -592,12 +607,107 @@ func (s *Service) SetAvatar(ctx context.Context, o Owner, id uuid.UUID, key, con
 		if err != nil {
 			return err
 		}
-		if key == nil && cur.AvatarKey == nil {
+		if key == nil && cur.AvatarKey == nil && cur.CharacterSvg == nil {
 			out = cur
 			return nil
 		}
 		out, err = q.SetPersonaAvatar(ctx, store.SetPersonaAvatarParams{
 			ID: id, WorkspaceID: o.WorkspaceID, UserID: o.UserID, AvatarKey: key, AvatarContentType: contentType,
+		})
+		if err != nil {
+			return err
+		}
+		old = cur.AvatarKey
+		return NotifyChats(ctx, q, id)
+	})
+	if err != nil {
+		return out, nil, err
+	}
+	return out, old, nil
+}
+
+// SetCharacter validates and stores a persona's animated SVG character and
+// updates or clears its fallback raster avatar (both key and contentType nil
+// clears any old avatar blob). Returns the updated persona and any replaced
+// avatar blob key for the caller to delete post-commit.
+func (s *Service) SetCharacter(ctx context.Context, o Owner, id uuid.UUID, rawSVG string, key, contentType *string) (store.Persona, *string, error) {
+	var out store.Persona
+	var old *string
+	if (key == nil) != (contentType == nil) {
+		return out, nil, errors.New("personas: avatar key and content type go together")
+	}
+	checked, err := CheckCharacterSVG(rawSVG)
+	if err != nil {
+		return out, nil, err
+	}
+	err = s.tx(ctx, o, func(q *store.Queries) error {
+		cur, err := get(ctx, q, o, id)
+		if err != nil {
+			return err
+		}
+		out, err = q.SetPersonaCharacter(ctx, store.SetPersonaCharacterParams{
+			ID: id, WorkspaceID: o.WorkspaceID, UserID: o.UserID,
+			CharacterSvg: checked, SetAvatar: true, AvatarKey: key, AvatarContentType: contentType,
+		})
+		if err != nil {
+			return err
+		}
+		old = cur.AvatarKey
+		return NotifyChats(ctx, q, id)
+	})
+	if err != nil {
+		return out, nil, err
+	}
+	return out, old, nil
+}
+
+// SetCharacterFallback attaches a rasterized PNG fallback avatar to a persona
+// that already has a character_svg, returning any replaced avatar blob key.
+func (s *Service) SetCharacterFallback(ctx context.Context, o Owner, id uuid.UUID, key, contentType string) (store.Persona, *string, error) {
+	var out store.Persona
+	var old *string
+	err := s.tx(ctx, o, func(q *store.Queries) error {
+		cur, err := get(ctx, q, o, id)
+		if err != nil {
+			return err
+		}
+		if cur.CharacterSvg == nil {
+			out = cur
+			return nil
+		}
+		out, err = q.SetPersonaCharacter(ctx, store.SetPersonaCharacterParams{
+			ID: id, WorkspaceID: o.WorkspaceID, UserID: o.UserID,
+			CharacterSvg: *cur.CharacterSvg, SetAvatar: true, AvatarKey: &key, AvatarContentType: &contentType,
+		})
+		if err != nil {
+			return err
+		}
+		old = cur.AvatarKey
+		return NotifyChats(ctx, q, id)
+	})
+	if err != nil {
+		return out, nil, err
+	}
+	return out, old, nil
+}
+
+// ClearCharacter removes a persona's animated SVG character and its fallback
+// raster avatar (idempotent when the persona has no SVG character, leaving any
+// uploaded photo untouched).
+func (s *Service) ClearCharacter(ctx context.Context, o Owner, id uuid.UUID) (store.Persona, *string, error) {
+	var out store.Persona
+	var old *string
+	err := s.tx(ctx, o, func(q *store.Queries) error {
+		cur, err := get(ctx, q, o, id)
+		if err != nil {
+			return err
+		}
+		if cur.CharacterSvg == nil {
+			out = cur
+			return nil
+		}
+		out, err = q.ClearPersonaCharacter(ctx, store.ClearPersonaCharacterParams{
+			ID: id, WorkspaceID: o.WorkspaceID, UserID: o.UserID,
 		})
 		if err != nil {
 			return err

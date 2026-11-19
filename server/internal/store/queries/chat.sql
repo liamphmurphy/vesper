@@ -317,8 +317,8 @@ INSERT INTO chat_participants (chat_id, persona_id) VALUES ($1, $2) ON CONFLICT 
 SELECT chat_id, persona_id FROM chat_participants WHERE chat_id = ANY(sqlc.arg(chat_ids)::uuid[]) ORDER BY joined_at, persona_id;
 
 -- name: CreatePersonaProposal :one
-INSERT INTO persona_proposals (chat_id, run_id, proposed_by, name, tone, color, custom_instructions, reason, avatar_job_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *;
+INSERT INTO persona_proposals (chat_id, run_id, proposed_by, name, tone, color, custom_instructions, reason, avatar_job_id, character_svg)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *;
 
 -- name: PersonaProposalAvatars :many
 -- Where each proposal's picture stands. An image is linked to its job when
@@ -344,6 +344,28 @@ SELECT * FROM persona_proposals WHERE id = $1 AND chat_id = $2 FOR UPDATE;
 
 -- name: DecidePersonaProposal :one
 UPDATE persona_proposals SET state = sqlc.arg(state), persona_id = sqlc.narg(persona_id), decided_at = now()
+WHERE id = sqlc.arg(id) RETURNING *;
+
+-- name: SupersedePendingCharacterProposals :exec
+UPDATE persona_character_proposals
+SET state = 'superseded', decided_at = now()
+WHERE chat_id = $1 AND target_persona_id = $2 AND state = 'pending';
+
+-- name: CreatePersonaCharacterProposal :one
+INSERT INTO persona_character_proposals (chat_id, run_id, proposed_by, target_persona_id, character_svg, summary)
+VALUES ($1, $2, $3, $4, $5, $6) RETURNING *;
+
+-- name: CountPendingPersonaCharacterProposals :one
+SELECT count(*)::int FROM persona_character_proposals WHERE chat_id = $1 AND state = 'pending';
+
+-- name: ListPersonaCharacterProposals :many
+SELECT * FROM persona_character_proposals WHERE chat_id = $1 ORDER BY created_at, id;
+
+-- name: LockPersonaCharacterProposal :one
+SELECT * FROM persona_character_proposals WHERE id = $1 AND chat_id = $2 FOR UPDATE;
+
+-- name: DecidePersonaCharacterProposal :one
+UPDATE persona_character_proposals SET state = sqlc.arg(state), decided_at = now()
 WHERE id = sqlc.arg(id) RETURNING *;
 
 -- name: BumpChatRevision :one
@@ -396,6 +418,9 @@ WITH candidates AS (
   SELECT pp.chat_id AS id FROM persona_proposals pp
   WHERE pp.state = 'pending'
   UNION
+  SELECT pcp.chat_id AS id FROM persona_character_proposals pcp
+  WHERE pcp.state = 'pending'
+  UNION
   SELECT tc.chat_id AS id FROM ticket_change_requests tc
   WHERE tc.state = 'pending'
   UNION
@@ -413,8 +438,9 @@ SELECT c.id, c.title, c.state, c.persona_id, c.speaker_persona_id, c.space_id,
 FROM candidates cand
 JOIN chat_sessions c ON c.id = cand.id
 CROSS JOIN LATERAL (SELECT count(*)::int AS unread FROM chat_messages m WHERE m.session_id = c.id AND m.role = 'assistant' AND m.seq > c.last_read_seq) u
--- waiting_approval: a persona or ticket change proposal to decide, or a run this chat started waiting on the person.
+-- waiting_approval: a persona, character or ticket change proposal to decide, or a run this chat started waiting on the person.
 CROSS JOIN LATERAL (SELECT coalesce(EXISTS(SELECT 1 FROM persona_proposals pp WHERE pp.chat_id = c.id AND pp.state = 'pending')
+  OR EXISTS(SELECT 1 FROM persona_character_proposals pcp WHERE pcp.chat_id = c.id AND pcp.state = 'pending')
   OR EXISTS(SELECT 1 FROM ticket_change_requests tc WHERE tc.chat_id = c.id AND tc.state = 'pending')
   OR EXISTS(SELECT 1 FROM chat_ticket_runs ctr JOIN runs r ON r.id = ctr.run_id
     WHERE ctr.chat_id = c.id AND r.state = 'waiting' AND r.wait_reason IN ('human_reply', 'approval')), false)::bool AS waiting_approval) p

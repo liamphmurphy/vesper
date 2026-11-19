@@ -3,12 +3,14 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -163,6 +165,108 @@ func (s *Server) DeletePersonaAvatar(ctx context.Context, req api.DeletePersonaA
 	s.deleteAvatarBlob(ctx, old)
 	out, err := s.toPersona(ctx, p)
 	return api.DeletePersonaAvatar200JSONResponse(out), err
+}
+
+func decodeFallbackPNG(b64 *string) ([]byte, string, error) {
+	if b64 == nil {
+		return nil, "", nil
+	}
+	raw := strings.TrimSpace(*b64)
+	if raw == "" {
+		return nil, "", nil
+	}
+	raw = strings.TrimPrefix(raw, "data:image/png;base64,")
+	if base64.StdEncoding.DecodedLen(len(raw)) > personas.MaxAvatarBytes+4 {
+		return nil, "", personas.AvatarTooLarge()
+	}
+	b, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		return nil, "", apperr.Invalid("fallback_png_base64", "invalid base64 PNG")
+	}
+	ct, err := personas.CheckAvatar(b)
+	if err != nil {
+		var ae *personas.AvatarError
+		if errors.As(err, &ae) {
+			if ae.Status == http.StatusRequestEntityTooLarge {
+				return nil, "", err
+			}
+			return nil, "", apperr.Invalid("fallback_png_base64", "%s", ae.Msg)
+		}
+		return nil, "", err
+	}
+	if ct != "image/png" {
+		return nil, "", apperr.Invalid("fallback_png_base64", "fallback avatar must be a PNG")
+	}
+	return b, ct, nil
+}
+
+func (s *Server) storeCharacterFallback(ctx context.Context, o personas.Owner, persona uuid.UUID, pngBytes []byte, ct string) error {
+	if len(pngBytes) == 0 || s.Blobs == nil {
+		return nil
+	}
+	key := personas.AvatarKey(o, persona)
+	if err := s.Blobs.Put(ctx, s.ArtifactBucket, key, bytes.NewReader(pngBytes), int64(len(pngBytes)), ct); err != nil {
+		return err
+	}
+	_, old, err := s.personas().SetCharacterFallback(ctx, o, persona, key, ct)
+	if err != nil {
+		s.deleteAvatarBlob(ctx, &key)
+		return err
+	}
+	s.deleteAvatarBlob(ctx, old)
+	return nil
+}
+
+func (s *Server) SetPersonaCharacter(ctx context.Context, req api.SetPersonaCharacterRequestObject) (api.SetPersonaCharacterResponseObject, error) {
+	if req.Body == nil {
+		return nil, apperr.Invalid("body", "required")
+	}
+	o := personaOwner(ctx)
+	if _, err := s.personas().Get(ctx, o, req.Id); err != nil {
+		return nil, err
+	}
+	checked, err := personas.CheckCharacterSVG(req.Body.CharacterSvg)
+	if err != nil {
+		return nil, err
+	}
+	pngBytes, ct, err := decodeFallbackPNG(req.Body.FallbackPngBase64)
+	if err != nil {
+		var ae *personas.AvatarError
+		if errors.As(err, &ae) && ae.Status == http.StatusRequestEntityTooLarge {
+			field := "fallback_png_base64"
+			return api.SetPersonaCharacter413JSONResponse(api.Error{Code: api.Invalid, Message: ae.Msg, Field: &field}), nil
+		}
+		return nil, err
+	}
+	var keyPtr, ctPtr *string
+	if len(pngBytes) > 0 {
+		if s.Blobs == nil {
+			return nil, errNoBlobs
+		}
+		k := personas.AvatarKey(o, req.Id)
+		if err := s.Blobs.Put(ctx, s.ArtifactBucket, k, bytes.NewReader(pngBytes), int64(len(pngBytes)), ct); err != nil {
+			return nil, err
+		}
+		keyPtr, ctPtr = &k, &ct
+	}
+	p, old, err := s.personas().SetCharacter(ctx, o, req.Id, checked, keyPtr, ctPtr)
+	if err != nil {
+		s.deleteAvatarBlob(ctx, keyPtr)
+		return nil, err
+	}
+	s.deleteAvatarBlob(ctx, old)
+	out, err := s.toPersona(ctx, p)
+	return api.SetPersonaCharacter200JSONResponse(out), err
+}
+
+func (s *Server) DeletePersonaCharacter(ctx context.Context, req api.DeletePersonaCharacterRequestObject) (api.DeletePersonaCharacterResponseObject, error) {
+	p, old, err := s.personas().ClearCharacter(ctx, personaOwner(ctx), req.Id)
+	if err != nil {
+		return nil, err
+	}
+	s.deleteAvatarBlob(ctx, old)
+	out, err := s.toPersona(ctx, p)
+	return api.DeletePersonaCharacter200JSONResponse(out), err
 }
 
 func (s *Server) GetPersonaAvatar(ctx context.Context, req api.GetPersonaAvatarRequestObject) (api.GetPersonaAvatarResponseObject, error) {

@@ -5559,12 +5559,67 @@ paths:
               required: [decision]
               properties:
                 decision: { type: string, enum: [approve, decline] }
+                fallback_png_base64: { type: string, description: "Optional base64 PNG rendering of a proposed character_svg idle frame for native fallback avatars" }
       responses:
         "200":
           description: The decided proposal
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PersonaProposal" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /chats/{id}/persona-character-proposals:
+    parameters:
+      - { $ref: "#/components/parameters/ChatId" }
+    get:
+      operationId: listPersonaCharacterProposals
+      summary: Animated SVG character proposals in this chat, oldest first
+      description: Pending proposals wait for the person's decision; decided and superseded ones stay for the record. 404 unknown chat.
+      tags: [chats]
+      responses:
+        "200":
+          description: Character proposals, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [proposals]
+                properties:
+                  proposals: { type: array, items: { $ref: "#/components/schemas/PersonaCharacterProposal" } }
+        "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /chats/{id}/persona-character-proposals/{proposal_id}:
+    parameters:
+      - { $ref: "#/components/parameters/ChatId" }
+      - { name: proposal_id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: decidePersonaCharacterProposal
+      summary: Approve or decline a proposed animated SVG persona character
+      description: |
+        Approving updates the target persona's character_svg (and stores an
+        optional rasterized PNG fallback avatar) and adds a system message.
+        404 unknown chat or proposal; 409 already decided or superseded;
+        422 invalid fallback PNG.
+      tags: [chats]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [approve, decline] }
+                fallback_png_base64: { type: string, description: "Optional base64 PNG rendering of the character's idle frame for native fallback avatars" }
+      responses:
+        "200":
+          description: The decided character proposal
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PersonaCharacterProposal" }
         "404": { $ref: "#/components/responses/Error" }
         "409": { $ref: "#/components/responses/Error" }
         "422": { $ref: "#/components/responses/Error" }
@@ -5834,6 +5889,52 @@ paths:
       responses:
         "200":
           description: The persona without an avatar
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Persona" }
+        "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /personas/{id}/character:
+    parameters:
+      - { $ref: "#/components/parameters/PersonaId" }
+    put:
+      operationId: setPersonaCharacter
+      summary: Set or replace the persona's animated SVG character
+      description: |
+        Validates a 64x64 sanitized SVG character (max 32 KB, whitelisted
+        elements and semantic animation attributes) and optionally stores a
+        rasterized PNG fallback avatar. 422 on invalid SVG or fallback PNG,
+        413/415 if fallback PNG exceeds avatar limits, 404 for another person's persona.
+      tags: [personas]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [character_svg]
+              properties:
+                character_svg: { type: string }
+                fallback_png_base64: { type: string, description: "Optional base64 PNG rendering of the idle frame for native fallback avatars" }
+      responses:
+        "200":
+          description: The persona with its updated character_svg
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Persona" }
+        "404": { $ref: "#/components/responses/Error" }
+        "413": { $ref: "#/components/responses/Error" }
+        "415": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deletePersonaCharacter
+      summary: Remove the persona's animated SVG character (idempotent)
+      tags: [personas]
+      responses:
+        "200":
+          description: The persona without an SVG character
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Persona" }
@@ -10066,6 +10167,7 @@ components:
         name: { type: string }
         color: { type: string, pattern: "^#[0-9a-f]{6}$" }
         avatar_url: { type: string, description: "GET /personas/{id}/avatar with a cache-busting ?v=<revision>; absent without an avatar" }
+        has_character: { type: boolean, description: "True when the persona has an animated SVG character (full source on GET /personas)" }
         capabilities: { $ref: "#/components/schemas/PersonaCapabilities" }
     PersonaDockState:
       type: string
@@ -10160,6 +10262,21 @@ components:
             makes it the persona's avatar and reference image. failed: it
             wasn't made, and approving creates the persona without one.
         avatar_attachment_id: { type: string, format: uuid, description: "The picture (GET /chat-attachments/{attachmentId}/content), while avatar_state is ready" }
+        character_svg: { type: string, description: "Proposed 64x64 animated SVG character source for the new persona; absent when none" }
+        created_at: { type: string, format: date-time }
+        decided_at: { type: string, format: date-time }
+    PersonaCharacterProposal:
+      type: object
+      description: An animated SVG character proposed in chat for a persona; nothing changes until the person approves it.
+      required: [id, chat_id, target_persona, character_svg, summary, state, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        chat_id: { type: string, format: uuid }
+        proposed_by: { $ref: "#/components/schemas/PersonaSummary" }
+        target_persona: { $ref: "#/components/schemas/PersonaSummary" }
+        character_svg: { type: string }
+        summary: { type: string }
+        state: { type: string, enum: [pending, approved, declined, superseded] }
         created_at: { type: string, format: date-time }
         decided_at: { type: string, format: date-time }
     Persona:
@@ -10184,6 +10301,7 @@ components:
         tone: { $ref: "#/components/schemas/PersonaTone" }
         color: { type: string, pattern: "^#[0-9a-f]{6}$", description: Stored in lower case }
         avatar_url: { type: string, description: "GET /personas/{id}/avatar with a cache-busting ?v=<revision>; absent without an avatar" }
+        character_svg: { type: string, description: "Sanitized 64x64 animated SVG character source; absent when using a picture or initials" }
         custom_instructions: { type: string }
         capabilities: { $ref: "#/components/schemas/PersonaCapabilities" }
         repos: { type: array, maxItems: 10, items: { type: string }, deprecated: true, description: "Legacy repository favorites and first-chat default; never an access allowlist. Use shared repository sources for discovery." }

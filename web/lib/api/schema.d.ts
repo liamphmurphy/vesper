@@ -4615,6 +4615,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/chats/{id}/persona-character-proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Animated SVG character proposals in this chat, oldest first
+         * @description Pending proposals wait for the person's decision; decided and superseded ones stay for the record. 404 unknown chat.
+         */
+        get: operations["listPersonaCharacterProposals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chats/{id}/persona-character-proposals/{proposal_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+                proposal_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve or decline a proposed animated SVG persona character
+         * @description Approving updates the target persona's character_svg (and stores an
+         *     optional rasterized PNG fallback avatar) and adds a system message.
+         *     404 unknown chat or proposal; 409 already decided or superseded;
+         *     422 invalid fallback PNG.
+         */
+        post: operations["decidePersonaCharacterProposal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/chats/{id}/read": {
         parameters: {
             query?: never;
@@ -4825,6 +4873,32 @@ export interface paths {
         post?: never;
         /** Remove the persona's avatar (idempotent) */
         delete: operations["deletePersonaAvatar"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/personas/{id}/character": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PersonaId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set or replace the persona's animated SVG character
+         * @description Validates a 64x64 sanitized SVG character (max 32 KB, whitelisted
+         *     elements and semantic animation attributes) and optionally stores a
+         *     rasterized PNG fallback avatar. 422 on invalid SVG or fallback PNG,
+         *     413/415 if fallback PNG exceeds avatar limits, 404 for another person's persona.
+         */
+        put: operations["setPersonaCharacter"];
+        post?: never;
+        /** Remove the persona's animated SVG character (idempotent) */
+        delete: operations["deletePersonaCharacter"];
         options?: never;
         head?: never;
         patch?: never;
@@ -9355,6 +9429,8 @@ export interface components {
             color: string;
             /** @description GET /personas/{id}/avatar with a cache-busting ?v=<revision>; absent without an avatar */
             avatar_url?: string;
+            /** @description True when the persona has an animated SVG character (full source on GET /personas) */
+            has_character?: boolean;
             capabilities?: components["schemas"]["PersonaCapabilities"];
         };
         /** @enum {string} */
@@ -9480,6 +9556,25 @@ export interface components {
              * @description The picture (GET /chat-attachments/{attachmentId}/content), while avatar_state is ready
              */
             avatar_attachment_id?: string;
+            /** @description Proposed 64x64 animated SVG character source for the new persona; absent when none */
+            character_svg?: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            decided_at?: string;
+        };
+        /** @description An animated SVG character proposed in chat for a persona; nothing changes until the person approves it. */
+        PersonaCharacterProposal: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            chat_id: string;
+            proposed_by?: components["schemas"]["PersonaSummary"];
+            target_persona: components["schemas"]["PersonaSummary"];
+            character_svg: string;
+            summary: string;
+            /** @enum {string} */
+            state: "pending" | "approved" | "declined" | "superseded";
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -9518,6 +9613,8 @@ export interface components {
             color: string;
             /** @description GET /personas/{id}/avatar with a cache-busting ?v=<revision>; absent without an avatar */
             avatar_url?: string;
+            /** @description Sanitized 64x64 animated SVG character source; absent when using a picture or initials */
+            character_svg?: string;
             custom_instructions: string;
             capabilities: components["schemas"]["PersonaCapabilities"];
             /**
@@ -17305,6 +17402,8 @@ export interface operations {
                 "application/json": {
                     /** @enum {string} */
                     decision: "approve" | "decline";
+                    /** @description Optional base64 PNG rendering of a proposed character_svg idle frame for native fallback avatars */
+                    fallback_png_base64?: string;
                 };
             };
         };
@@ -17316,6 +17415,67 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PersonaProposal"];
+                };
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    listPersonaCharacterProposals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Character proposals, oldest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        proposals: components["schemas"]["PersonaCharacterProposal"][];
+                    };
+                };
+            };
+            404: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    decidePersonaCharacterProposal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+                proposal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    decision: "approve" | "decline";
+                    /** @description Optional base64 PNG rendering of the character's idle frame for native fallback avatars */
+                    fallback_png_base64?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The decided character proposal */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonaCharacterProposal"];
                 };
             };
             404: components["responses"]["Error"];
@@ -17672,6 +17832,65 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description The persona without an avatar */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Persona"];
+                };
+            };
+            404: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    setPersonaCharacter: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PersonaId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    character_svg: string;
+                    /** @description Optional base64 PNG rendering of the idle frame for native fallback avatars */
+                    fallback_png_base64?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The persona with its updated character_svg */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Persona"];
+                };
+            };
+            404: components["responses"]["Error"];
+            413: components["responses"]["Error"];
+            415: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    deletePersonaCharacter: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PersonaId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The persona without an SVG character */
             200: {
                 headers: {
                     [name: string]: unknown;
