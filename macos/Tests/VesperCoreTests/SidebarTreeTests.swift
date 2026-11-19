@@ -50,4 +50,23 @@ final class SidebarTreeTests: XCTestCase {
 
         XCTAssertNil(SidebarTree.path(to: "p:missing", in: nav))
     }
+
+    func testAppsMenuGroupsYourAppsThenTools() {
+        let apps = [
+            ShellApp(id: "app:habits", label: "Habits", icon: "star", href: "/apps/habits"),
+            ShellApp(id: "tool:/workflows", label: "Workflows", icon: "graph", href: "/workflows"),
+            ShellApp(id: "app:budget", label: "Budget", icon: "dollar", href: "/apps/budget"),
+            ShellApp(id: "tool:/http", label: "HTTP Client", icon: "plug", href: "/http"),
+        ]
+        let sections = SidebarTree.appsMenuSections(apps)
+        XCTAssertEqual(sections.map(\.title), ["Your apps", "Tools"])
+        XCTAssertEqual(sections[0].apps.map(\.label), ["Habits", "Budget"])
+        XCTAssertEqual(sections[1].apps.map(\.label), ["Workflows", "HTTP Client"])
+    }
+
+    func testAppsMenuDropsEmptyGroups() {
+        let tool = ShellApp(id: "tool:/reports", label: "Reports", icon: "dollar", href: "/reports")
+        XCTAssertEqual(SidebarTree.appsMenuSections([tool]).map(\.title), ["Tools"])
+        XCTAssertEqual(SidebarTree.appsMenuSections([]), [])
+    }
 }

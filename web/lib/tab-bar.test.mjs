@@ -21,12 +21,13 @@ test("a path selects its section's tab, and anything else selects More", () => {
   assert.equal(currentTab("/runsx"), "more");
 });
 
-test("run and ticket detail screens hide the bar; their lists keep it", () => {
+test("run, ticket and epic detail screens hide the bar; their lists keep it", () => {
   assert.equal(hidesTabBar("/runs/123"), true);
   assert.equal(hidesTabBar("/tickets/WEB-3"), true);
   assert.equal(hidesTabBar("/tickets/new"), true);
   assert.equal(hidesTabBar("/runs"), false);
   assert.equal(hidesTabBar("/tickets"), false);
+  assert.equal(hidesTabBar("/epics/EP-1"), true);
   assert.equal(hidesTabBar("/work"), false);
   assert.equal(hidesTabBar("/chat/abc"), false);
 });

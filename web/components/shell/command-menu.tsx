@@ -60,7 +60,7 @@ import {
   type PaletteLink,
   type TypeKey,
 } from "@/lib/command-palette";
-import { APP_ITEMS, NAV_GROUPS, TOOL_ITEMS, projectSection, switchHref, withProject } from "@/lib/project-scope";
+import { APP_ITEMS, NAV_GROUPS, projectSection, switchHref, toolItems, withProject } from "@/lib/project-scope";
 import { CommandPreview, statusLabel, statusTone, type Preview, type PreviewAction } from "./command-preview";
 import { rememberProject, useRememberedProject } from "./project-scope";
 
@@ -90,6 +90,12 @@ const LABEL_ICON: Record<string, IconName> = {
 };
 
 /** In the All list, each type shows this many before "+ N more". */
+/** Search words for tools whose label alone wouldn't find them. */
+const TOOL_ALIASES: Record<string, string> = {
+  "/http": "bruno api curl rest requests",
+  "/dev": "terminal lazyvim nvim tmux",
+};
+
 const PER_GROUP = 3;
 
 type Row = {
@@ -521,11 +527,7 @@ export function CommandMenu() {
     ...APP_ITEMS.map((i) => ({ ...i, kind: "app" })),
     ...myApps,
     ...KIND_JUMPS.map((i) => ({ ...i, kind: "in Knowledge" })),
-    ...TOOL_ITEMS.map((i) => ({ ...i, kind: "tool" })),
-    { href: "/http", label: "HTTP Client", aliases: "bruno api curl rest requests", icon: "plug" as IconName, kind: "tool" },
-    ...(devWorkspace.data?.enabled
-      ? [{ href: "/dev", label: "Dev workspace", aliases: "terminal lazyvim nvim tmux", icon: "terminal" as IconName, kind: "tool" }]
-      : []),
+    ...toolItems(!!devWorkspace.data?.enabled).map((i) => ({ ...i, aliases: TOOL_ALIASES[i.href], kind: "tool" })),
   ];
   // is:app on its own lists every app.
   const appsWanted = filters.text ? appMatches(appsMenu, filters.text) : oneType === "app" ? appsMenu : [];

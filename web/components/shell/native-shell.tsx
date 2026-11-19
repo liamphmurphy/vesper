@@ -4,11 +4,12 @@ import { usePathname, useRouter } from "next/navigation";
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useChats, useChatSearch } from "@/lib/api/hooks";
 import { useCustomApps } from "@/lib/api/custom-app-hooks";
+import { useDevWorkspace } from "@/lib/api/dev-workspace-hooks";
 import { useSpaces } from "@/lib/api/space-hooks";
 import { resolveAppIcon } from "@/lib/custom-app-bridge";
 import { currentArea, subscribeNavigator } from "@/lib/navigator";
 import { viewedChatId } from "@/lib/persona-dock";
-import { TOOL_ITEMS } from "@/lib/project-scope";
+import { toolItems } from "@/lib/project-scope";
 import { useNavCounts } from "@/lib/use-nav-counts";
 import { onCommand, post, postDeduped } from "@/lib/native-shell/bridge";
 import { buildChatsNavModel, CHAT_SEARCH, CHATS_NAVIGATOR_ID, CHATS_VIEW_ACTION, NEW_CHAT_ACTION, NEW_SPACE_ACTION, PERSONA_PICKER, START_WITH_PREFIX, VIEW_ACTIVE, VIEW_ARCHIVED, type ChatSearchState } from "@/lib/native-shell/chats-model";
@@ -77,6 +78,7 @@ export function NativeShellHost() {
   // The sidebar's top.
   const counts = useNavCounts();
   const customApps = useCustomApps();
+  const devWorkspace = useDevWorkspace();
   const shell = useMemo(
     () =>
       buildShellModel({
@@ -84,9 +86,9 @@ export function NativeShellHost() {
         counts,
         current: currentArea(pathname),
         customApps: (customApps.data?.apps ?? []).map((a) => ({ slug: a.slug, name: a.name, icon: resolveAppIcon(a.icon) })),
-        tools: TOOL_ITEMS,
+        tools: toolItems(!!devWorkspace.data?.enabled),
       }),
-    [counts, customApps.data, pathname],
+    [counts, customApps.data, devWorkspace.data?.enabled, pathname],
   );
   const shellJson = JSON.stringify(shell);
   useEffect(() => {
@@ -167,6 +169,7 @@ export function NativeShellHost() {
         if (cmd.type === "nav.search" && cmd.searchId === CHAT_SEARCH) setQuery(cmd.value);
         if (cmd.type === "nav.action" && cmd.actionId === CHATS_VIEW_ACTION) {
           if (cmd.menuItemId === VIEW_ARCHIVED || cmd.menuItemId === VIEW_ACTIVE) changeView.current(cmd.menuItemId === VIEW_ARCHIVED ? "archived" : "active");
+          if (cmd.menuItemId === NEW_SPACE_ACTION) setCreatingSpace(true);
         }
         // A row's menu: the menu item id is the actionId, the chat the itemId.
         if (cmd.type === "nav.action" && cmd.itemId && !cmd.menuItemId) void chatAction.current(cmd.actionId, cmd.itemId);

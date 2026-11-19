@@ -30,14 +30,14 @@ test("the active list groups by day with the new chat action on the first group"
   assert.equal(m.sections[0].actions[0].id, "new-chat");
   assert.equal(m.sections[1].actions, undefined);
   assert.equal(m.search.id, "chat-search");
-  assert.deepEqual(m.actions[0].menu.map((i) => [i.id, i.checked]), [["view-active", true], ["view-archived", false]]);
+  assert.deepEqual(m.actions[0].menu.slice(0, 2).map((i) => [i.id, i.checked]), [["view-active", true], ["view-archived", false]]);
 });
 
 test("the archived view: one Archived section, the view menu checks Archived", () => {
   const m = buildChatsNavModel({ chats: [chat()], viewedChatId: "c1", view: "archived", now: NOW });
   assert.deepEqual(m.sections.map((s) => s.id), ["chats-archived"]);
   assert.equal(m.sections[0].items[0].href, "/chat/c1?view=archived");
-  assert.deepEqual(m.actions[0].menu.map((i) => i.checked), [false, true]);
+  assert.deepEqual(m.actions[0].menu.slice(0, 2).map((i) => i.checked), [false, true]);
   assert.equal(buildChatsNavModel({ chats: [], viewedChatId: null, view: "archived" }).sections[0].emptyText, "No archived conversations.");
 });
 
@@ -58,4 +58,13 @@ test("search results replace the list: hits, states and no match", () => {
 test("a persona-filtered list ends with a row to start another chat with it", () => {
   const m = buildChatsNavModel({ chats: [chat()], viewedChatId: null, filteredTo: { id: "p1", name: "Ada" }, now: NOW });
   assert.deepEqual(m.sections.at(-1).items.at(-1), { id: "start-with:p1", title: "New chat with Ada", icon: "plus" });
+});
+
+test("with no spaces the View menu offers New space; once one exists the Spaces header's + takes over", () => {
+  const view = (m) => m.actions.find((a) => a.id === "chats-view").menu;
+  const none = buildChatsNavModel({ chats: [chat()], viewedChatId: null, now: NOW });
+  assert.deepEqual(view(none).filter((m) => !m.separator).map((m) => m.id), ["view-active", "view-archived", "new-space"]);
+  const some = buildChatsNavModel({ chats: [chat()], viewedChatId: null, now: NOW, spaces: [{ id: "s1", name: "Home", color: "#34D399" }] });
+  assert.deepEqual(view(some).map((m) => m.id), ["view-active", "view-archived"]);
+  assert.equal(some.sections.find((s) => s.id === "spaces").actions[0].id, "new-space");
 });

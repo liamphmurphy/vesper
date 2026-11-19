@@ -1,5 +1,13 @@
 import Foundation
 
+/// One group in the sidebar's Apps menu.
+public struct AppsMenuSection: Equatable, Sendable {
+    public let title: String
+    public let apps: [ShellApp]
+
+    public init(title: String, apps: [ShellApp]) { self.title = title; self.apps = apps }
+}
+
 /// Pure visibility and ancestor lookup for `NavModel` trees, shared by the native sidebar's
 /// selection binding, scroll-to-selection target, and stale-override cleanup.
 public enum SidebarTree {
@@ -47,5 +55,16 @@ public enum SidebarTree {
             }
         }
         return nil
+    }
+
+    /// The Apps menu's groups, in order: the person's own apps (ids `app:…`), then the tools (`tool:…`).
+    /// The page sends them as one flat list; an empty group is left out rather than shown as a bare header.
+    public static func appsMenuSections(_ apps: [ShellApp]) -> [AppsMenuSection] {
+        let yours = apps.filter { $0.id.hasPrefix("app:") }
+        let tools = apps.filter { !$0.id.hasPrefix("app:") }
+        var sections: [AppsMenuSection] = []
+        if !yours.isEmpty { sections.append(AppsMenuSection(title: "Your apps", apps: yours)) }
+        if !tools.isEmpty { sections.append(AppsMenuSection(title: "Tools", apps: tools)) }
+        return sections
     }
 }

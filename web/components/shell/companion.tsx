@@ -7,7 +7,6 @@ import { createPortal } from "react-dom";
 import { WorkChat } from "@/components/domain/work-chat";
 import { Icon } from "@/components/ui/icon";
 import { useNavCounts } from "@/lib/use-nav-counts";
-import { useDevWorkspace } from "@/lib/api/dev-workspace-hooks";
 import { useDismissedReviewRequests, useGitHubReviewRequests, useRefreshGitHubReviewRequests, useReviewFilterPrefs } from "@/lib/api/github-reviews-hooks";
 import { useInbox, usePersonaDock } from "@/lib/api/hooks";
 import { COMPANION_OPEN_EVENT } from "@/lib/dev-workspace";
@@ -163,49 +162,12 @@ const railTabs = (tabs: readonly (Omit<DockRailTab, "action"> & { run?: () => vo
 
 function RailFootLinks({ settingsNeedYou }: { settingsNeedYou: boolean }) {
   const pathname = usePathname();
-  const router = useRouter();
-  const devWorkspace = useDevWorkspace();
-  const onDevPage = isActive(pathname, "/dev");
-  const onHttpPage = isActive(pathname, "/http");
   const link = (href: string) => cx(
     "relative grid size-[30px] place-items-center rounded-md text-12",
     isActive(pathname, href) ? "bg-selected text-fg" : "text-fg-tertiary hover:bg-hover hover:text-fg",
   );
   return (
     <div className="flex flex-none flex-col items-center gap-1 pb-1">
-      <Link
-        href="/http"
-        data-testid="http-launcher"
-        aria-label={onHttpPage ? "Return to previous page" : "HTTP Client"}
-        title={onHttpPage ? "Return to previous page (⌘⇧H)" : "HTTP Client (⌘⇧H)"}
-        aria-current={onHttpPage ? "page" : undefined}
-        onClick={(e) => {
-          if (!onHttpPage) return;
-          e.preventDefault();
-          if (window.history.length > 1) router.back();
-          else router.push("/");
-        }}
-        className={link("/http")}
-      >
-        <Icon name="plug" size={15} />
-      </Link>
-      {devWorkspace.data?.enabled && (
-        <Link
-          href="/dev"
-          aria-label={onDevPage ? "Return to previous page" : "Dev workspace"}
-          title={onDevPage ? "Return to previous page" : "Dev workspace: Nix + LazyVim terminal"}
-          aria-current={onDevPage ? "page" : undefined}
-          onClick={(e) => {
-            if (!onDevPage) return;
-            e.preventDefault();
-            if (window.history.length > 1) router.back();
-            else router.push("/");
-          }}
-          className={link("/dev")}
-        >
-          <Icon name="terminal" size={15} />
-        </Link>
-      )}
       <Link href="/customization" aria-label="Customization" title="Customization: personas, agents, memory and your profile"
         aria-current={isActive(pathname, "/customization") ? "page" : undefined} className={link("/customization")}>
         <Icon name="sliders" size={15} />
@@ -225,7 +187,6 @@ function NativeRail() {
   const [appearance] = useAppearance();
   const pathname = usePathname();
   const router = useRouter();
-  const devWorkspace = useDevWorkspace();
   const dock = useSyncExternalStore(dockRail.subscribe, dockRail.items, () => []);
   const [prefs, setPrefs] = useReviewFilterPrefs();
   const { dismissed, dismiss: dismissReview, clearAll: clearReviews, restore: restoreReviews } = useDismissedReviewRequests();
@@ -259,10 +220,9 @@ function NativeRail() {
         },
         needsYou: counts.inbox,
         harnesses: showHarness ? harnessRailInputs(harnesses) : null,
-        devWorkspace: !!devWorkspace.data?.enabled,
         settingsNeedYou: counts.settings > 0,
       }),
-    [dock, pathname, reviews.data?.configured, requests, approved, prefs, activeReviews, hiddenReviews.length, counts.inbox, counts.settings, showHarness, harnesses, devWorkspace.data?.enabled],
+    [dock, pathname, reviews.data?.configured, requests, approved, prefs, activeReviews, hiddenReviews.length, counts.inbox, counts.settings, showHarness, harnesses],
   );
   useEffect(() => {
     postDeduped({ v: 1, type: "rail", model });
@@ -270,10 +230,6 @@ function NativeRail() {
   // The column unmounting (a narrow window, reading focus) means no rail.
   useEffect(() => () => postDeduped({ v: 1, type: "rail", model: null }), []);
 
-  const back = () => {
-    if (window.history.length > 1) router.back();
-    else router.push("/");
-  };
   useNativeCommand("rail.action", (cmd) => {
     const effect = railEffect(cmd.itemId, cmd.menuItemId, { reviewUrl: (id) => allReviews.find((r) => r.id === id)?.url });
     if (!effect) return;
@@ -283,10 +239,6 @@ function NativeRail() {
         break;
       case "navigate":
         router.push(effect.path);
-        break;
-      case "toggle":
-        if (isActive(pathname, effect.path)) back();
-        else router.push(effect.path);
         break;
       case "open":
         // A command from the shell carries no click, so WebKit would block window.open. A main-frame

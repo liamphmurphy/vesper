@@ -129,9 +129,9 @@ test("bottom-right launcher opens HTTP utility, switches environments, inherits 
   });
 
   await page.goto("/runs");
-  const launcher = page.getByTestId("http-launcher");
-  await expect(launcher).toBeVisible();
-  await launcher.click();
+  // HTTP Client lives in the Apps menu's Tools, beside Workflows and Reports.
+  await page.getByRole("button", { name: "Apps" }).click();
+  await page.getByRole("link", { name: "HTTP Client" }).click();
 
   await expect(page).toHaveURL(/\/http$/);
   await expect(page.getByRole("textbox", { name: "Request name" })).toHaveValue("Sync Users");

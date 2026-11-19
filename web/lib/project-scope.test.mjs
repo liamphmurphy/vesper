@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { NAV_GROUPS, RAIL_APP_ITEMS, currentProject, hasFilters, inAppsMenu, isActive, pickerHref, projectSection, resolveProject, switchHref, withProject } from "./project-scope.ts";
+import { NAV_GROUPS, DEV_TOOL_ITEM, TOOL_ITEMS, toolItems, RAIL_APP_ITEMS, currentProject, hasFilters, inAppsMenu, isActive, pickerHref, projectSection, resolveProject, switchHref, withProject } from "./project-scope.ts";
 
 const web = { key: "WEB", name: "Web app", color: "#6e56cf", archived: false };
 const ops = { key: "OPS", name: "Operations", color: "#3e9bff", archived: false };
@@ -12,7 +12,7 @@ test("one menu: Work, the Apps flyout's Apps and Tools, and the footer, with uni
   assert.deepEqual(labels, [
     ["Work", ["Work"]],
     ["Apps", ["Knowledge", "Custom Apps", "Library"]],
-    ["Tools", ["Workflows", "Scheduled", "Learn", "Reports"]],
+    ["Tools", ["Workflows", "Scheduled", "Learn", "Reports", "HTTP Client"]],
     ["You", ["Customization", "Settings"]],
   ]);
   const hrefs = NAV_GROUPS.flatMap((g) => g.items.map((i) => i.href));
@@ -22,12 +22,18 @@ test("one menu: Work, the Apps flyout's Apps and Tools, and the footer, with uni
 });
 
 test("the Apps row is current on any page its flyout opens that has no rail entry of its own", () => {
-  for (const p of ["/apps", "/apps/habit-tracker", "/workflows/1", "/scheduled", "/learn/2", "/reports"]) assert.equal(inAppsMenu(p), true, p);
+  for (const p of ["/apps", "/apps/habit-tracker", "/workflows/1", "/scheduled", "/learn/2", "/reports", "/http", "/dev"]) assert.equal(inAppsMenu(p), true, p);
   for (const p of ["/", "/chat/1", "/inbox", "/tickets", "/customization"]) assert.equal(inAppsMenu(p), false, p);
   // Knowledge and Library have their own rail entries, which read as current instead, also for
   // decks' and designs' old addresses, which lead to their Knowledge pages (LAZYAGENTS-212).
   for (const p of ["/knowledge/abc/the-old-harbour", "/library", "/library/item-1", "/apps/designs/d1", "/apps/slides/s1"]) assert.equal(inAppsMenu(p), false, p);
   assert.deepEqual(RAIL_APP_ITEMS.map((i) => i.label), ["Knowledge", "Library"]);
+});
+
+test("the Dev workspace is a tool only while enabled, and never in the menu groups", () => {
+  assert.equal(toolItems(false), TOOL_ITEMS);
+  assert.deepEqual(toolItems(true), [...TOOL_ITEMS, DEV_TOOL_ITEM]);
+  assert.ok(!NAV_GROUPS.flatMap((g) => g.items).some((i) => i.href === "/dev"));
 });
 
 test("isActive matches the section, and / only itself", () => {

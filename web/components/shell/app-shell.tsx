@@ -3,6 +3,7 @@
 import { useRouter, useSelectedLayoutSegment } from "next/navigation";
 import { Suspense, useEffect, type ReactNode } from "react";
 import { useBootstrap } from "@/lib/api/hooks";
+import { useDevWorkspace } from "@/lib/api/dev-workspace-hooks";
 import { currentArea, NAVIGATOR_WIDTH, setFallbackSlot } from "@/lib/navigator";
 import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { useCompact } from "@/lib/viewport";
@@ -21,15 +22,19 @@ import { TabBar } from "./tab-bar";
 /** Global and area-scoped single-key shortcuts (DESIGN.md §6). */
 function useShortcuts() {
   const router = useRouter();
+  const devEnabled = !!useDevWorkspace().data?.enabled;
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "h") {
+      // HTTP Client and Dev workspace left the right rail for the Apps menu; ⌘⇧H and ⌘⇧D stay as the
+      // jump-and-return toggles for them.
+      const toggle = (e.metaKey || e.ctrlKey) && e.shiftKey ? ({ h: "/http", d: "/dev" } as Record<string, string>)[e.key.toLowerCase()] : undefined;
+      if (toggle && (toggle !== "/dev" || devEnabled)) {
         e.preventDefault();
-        if (window.location.pathname.startsWith("/http")) {
+        if (window.location.pathname.startsWith(toggle)) {
           if (window.history.length > 1) router.back();
           else router.push("/");
         } else {
-          router.push("/http");
+          router.push(toggle);
         }
         return;
       }
@@ -56,7 +61,7 @@ function useShortcuts() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [router]);
+  }, [router, devEnabled]);
 }
 
 function SidebarSkeleton() {
@@ -82,7 +87,7 @@ const PAGE = "flex min-h-0 min-w-0 flex-1 flex-col";
 function SectionFade({ children }: { children: ReactNode }) {
   const section = useSelectedLayoutSegment();
   // Work screens scroll within the viewport, with room for the banner and tab bar.
-  const work = section === "work" || section === "runs" || section === "tickets";
+  const work = section === "work" || section === "runs" || section === "tickets" || section === "epics";
   return (
     <div key={section} className={`motion-page ${work ? "flex h-app min-h-0 min-w-0 flex-none flex-col overflow-hidden" : PAGE}`}>
       <SystemBanner />
