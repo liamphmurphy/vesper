@@ -424,6 +424,9 @@ func agentsMD(existing string, spec agentdef.Resolved, contextFiles []string, ti
 	if voice != nil {
 		b.WriteString(runVoiceSection(voice))
 	}
+	if !denied(spec, "repo:read") {
+		b.WriteString(agentdef.BatchExplorationGuide + "\n\n")
+	}
 	if !delegated {
 		b.WriteString("## Execution policy\n\nWork directly by default, within your scopes. Standing role routines to call a scoper, hand implementation to an implementer, hand shipping to a shipper, or curate memory after every ticket are optional; do not perform them mechanically. Delegate only substantial independent work, a capability you lack, an explicit task request, or a necessary independent review. Do not start fresh agents for small fixes, routine shipping, or checks already completed. AGENTS.md already contains your instructions and scopes; claim_ticket returns your handle, so skip whoami. Search conventions only when needed and not already available. Write memory only for a durable new lesson.\n\n")
 		if agentdef.ExplorerOn(spec, true) {

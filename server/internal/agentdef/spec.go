@@ -221,6 +221,11 @@ const (
 	ExplorerAgent = "explorer"
 )
 
+// BatchExplorationGuide is the one line every coding prompt (chat and ticket
+// run, on every harness) carries about exploring a codebase. Each model turn
+// costs seconds of latency, so independent lookups belong in one turn.
+const BatchExplorationGuide = "Explore in batches: make independent file reads and searches together in one turn, don't repeat a lookup you've already answered, and start editing once you know where the change goes and the local conventions."
+
 // ExplorerOn reports whether a run gets the explorer sub agent: the option
 // isn't "false", the harness is Claude Code, the run is a lead (an undelegated
 // ticket run), and the spec is neither readonly nor no_tools. Only main agents

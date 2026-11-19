@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/liamphmurphy/vesper/server/internal/agentdef"
 	"github.com/liamphmurphy/vesper/server/internal/agents"
 	"github.com/liamphmurphy/vesper/server/internal/seed"
 	"github.com/liamphmurphy/vesper/server/internal/store"
@@ -63,6 +64,16 @@ func TestEnsureAssistant(t *testing.T) {
 }
 
 // Every persona is told how to write interactive apps, whatever its capabilities.
+// Coding chats batch independent lookups; chats that can't code aren't told to.
+func TestAssistantCodingChatBatchesExploration(t *testing.T) {
+	if !strings.Contains(agents.AssistantInstructionsFor(true, false, nil, false, false), agentdef.BatchExplorationGuide) {
+		t.Fatal("coding chat is missing the batching guide")
+	}
+	if strings.Contains(agents.AssistantInstructionsFor(false, false, nil, false, false), agentdef.BatchExplorationGuide) {
+		t.Fatal("a chat that can't code got the batching guide")
+	}
+}
+
 func TestAssistantInstructionsInteractiveApps(t *testing.T) {
 	for _, ins := range []string{agents.AssistantInstructions, agents.AssistantInstructionsFor(true, true, []string{"feat/x"}, true, false)} {
 		if !strings.Contains(ins, "## Interactive apps") || !strings.Contains(ins, "fenced code block tagged app") || !strings.Contains(ins, "aren't just for coding") {

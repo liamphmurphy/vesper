@@ -599,6 +599,25 @@ func TestDirectExecutionPolicyAndSelectiveContextInstructions(t *testing.T) {
 	}
 }
 
+// Every ticket run that can read code is told to batch independent lookups:
+// serial one-lookup turns were most of LAZYAGENTS-251's time to first edit.
+func TestAgentsMDBatchesExploration(t *testing.T) {
+	if n := len(agentdef.BatchExplorationGuide); n >= 300 {
+		t.Fatalf("batching guide is %d bytes; keep it under 300 so it doesn't grow AGENTS.md", n)
+	}
+	s := spec("repo:read", "allowed")
+	if md := string(AgentsMD("", s, nil, "PAY-214")); !strings.Contains(md, agentdef.BatchExplorationGuide) {
+		t.Fatal("ticket run is missing the batching guide")
+	}
+	if md := string(SubagentAgentsMD("", s, nil, "PAY-214")); !strings.Contains(md, agentdef.BatchExplorationGuide) {
+		t.Fatal("delegated run is missing the batching guide")
+	}
+	s.Scopes = []agentdef.ResolvedScope{{Scope: "repo:read", Mode: agentdef.Denied}}
+	if md := string(AgentsMD("", s, nil, "PAY-214")); strings.Contains(md, agentdef.BatchExplorationGuide) {
+		t.Fatal("a run that can't read code doesn't need the batching guide")
+	}
+}
+
 func TestAgentsMDTestsSection(t *testing.T) {
 	want := "## Tests\n\nWhile iterating, run only the narrowest tests that cover your change"
 	for name, md := range map[string]string{
