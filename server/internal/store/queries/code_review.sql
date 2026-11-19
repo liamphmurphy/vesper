@@ -84,3 +84,13 @@ SELECT * FROM (
 -- A branch Vesper pushed for the chat, so later turns may build on it.
 UPDATE chat_repositories SET work_branches = array_append(work_branches, sqlc.arg(branch)::text)
 WHERE chat_id = $1 AND repo_url = $2 AND NOT (sqlc.arg(branch)::text = ANY(work_branches));
+
+-- name: GetChatCodeReview :one
+SELECT * FROM chat_code_reviews WHERE chat_id = $1 AND repo_url = $2;
+
+-- name: PushedChatPRsForRepo :many
+SELECT * FROM push_requests
+WHERE chat_id = $1 AND repo_url = $2 AND state = 'pushed' AND pr_url IS NOT NULL
+  AND coalesce(pr_state, 'open') IN ('draft', 'open', 'merged')
+ORDER BY decided_at DESC NULLS LAST, created_at DESC
+LIMIT 10;

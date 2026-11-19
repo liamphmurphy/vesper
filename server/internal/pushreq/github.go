@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -181,11 +182,96 @@ func (g *GitHub) DeleteBranch(ctx context.Context, owner, name, branch string) e
 	return err
 }
 
-// PullRequest is the part of one shipping reports.
+// PullRequest is the part of one shipping and checkpoint cleanup report.
 type PullRequest struct {
 	Number  int    `json:"number"`
 	HTMLURL string `json:"html_url"`
 	Draft   bool   `json:"draft"`
+	State   string `json:"state"`
+	Merged  bool   `json:"merged"`
+	Head    struct {
+		SHA string `json:"sha"`
+		Ref string `json:"ref"`
+	} `json:"head"`
+}
+
+var prURLRe = regexp.MustCompile(`^https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/pull/(\d+)(?:[/?#].*)?$`)
+
+// ParsePRURL extracts owner, repository name, and pull request number from a GitHub PR URL.
+func ParsePRURL(raw string) (owner, name string, number int, ok bool) {
+	m := prURLRe.FindStringSubmatch(strings.TrimSpace(raw))
+	if m == nil {
+		return "", "", 0, false
+	}
+	n, err := strconv.Atoi(m[3])
+	if err != nil || n <= 0 {
+		return "", "", 0, false
+	}
+	return m[1], m[2], n, true
+}
+
+// GetPullRequest fetches a pull request by number.
+func (g *GitHub) GetPullRequest(ctx context.Context, owner, name string, number int) (*PullRequest, error) {
+	var pr PullRequest
+	path := "/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(name) + "/pulls/" + strconv.Itoa(number)
+	if err := g.do(ctx, "GET", path, nil, &pr); err != nil {
+		return nil, err
+	}
+	return &pr, nil
+}
+
+// CommitTreeSHA returns the tree SHA recorded on commit sha.
+func (g *GitHub) CommitTreeSHA(ctx context.Context, owner, name, sha string) (string, error) {
+	var c struct {
+		Tree struct {
+			SHA string `json:"sha"`
+		} `json:"tree"`
+	}
+	path := "/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(name) + "/git/commits/" + url.PathEscape(sha)
+	if err := g.do(ctx, "GET", path, nil, &c); err != nil {
+		return "", err
+	}
+	return c.Tree.SHA, nil
+}
+
+// CompareCommit is one commit entry in a GitHub compare response.
+type CompareCommit struct {
+	SHA    string `json:"sha"`
+	Commit struct {
+		Tree struct {
+			SHA string `json:"sha"`
+		} `json:"tree"`
+	} `json:"commit"`
+}
+
+// CompareFile is one changed file entry in a GitHub compare response.
+type CompareFile struct {
+	Filename         string `json:"filename"`
+	PreviousFilename string `json:"previous_filename"`
+	Status           string `json:"status"`
+	SHA              string `json:"sha"`
+}
+
+// CompareResult is the subset of GitHub's compare endpoint used to verify
+// whether a PR head contains all changes in a checkpoint.
+type CompareResult struct {
+	Status          string          `json:"status"` // identical | ahead | behind | diverged
+	AheadBy         int             `json:"ahead_by"`
+	BehindBy        int             `json:"behind_by"`
+	BaseCommit      CompareCommit   `json:"base_commit"`
+	MergeBaseCommit CompareCommit   `json:"merge_base_commit"`
+	Commits         []CompareCommit `json:"commits"`
+	Files           []CompareFile   `json:"files"`
+}
+
+// Compare runs GitHub's three-dot compare between base and head.
+func (g *GitHub) Compare(ctx context.Context, owner, name, base, head string) (*CompareResult, error) {
+	var res CompareResult
+	path := "/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(name) + "/compare/" + escapeBranch(base) + "..." + escapeBranch(head)
+	if err := g.do(ctx, "GET", path, nil, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
 }
 
 // OpenPullRequest is the open pull request from branch, if there is one.

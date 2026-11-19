@@ -137,6 +137,11 @@ func (s *Server) DecidePushRequest(ctx context.Context, req api.DecidePushReques
 	if err != nil {
 		return nil, err
 	}
+	if shipErr == nil && done.State == "pushed" && done.PrUrl != nil && *done.PrUrl != "" {
+		if _, cerr := pushreq.CleanupChatCheckpoints(sctx, gh, s.Q, done); cerr != nil {
+			s.Log.Warn("cleanup chat checkpoints", "push_request", done.ID, "err", cerr)
+		}
+	}
 	return api.DecidePushRequest200JSONResponse(s.toPushRequest(ctx, done)), nil
 }
 

@@ -63,6 +63,17 @@ func BundleScript(dir, rev, bundle string) string {
 // remote's history. When base is set it also reads the remote's default
 // branch and prints stagedMarker with its name.
 func PushBundleScript(bundle, bare, url, dest string, base, isolate bool) string {
+	return pushBundleScript(bundle, bare, url, dest, base, false, isolate)
+}
+
+// PushCheckpointBundleScript is PushBundleScript for checkpoints: before
+// pushing, it skips if any non-checkpoint branch on url already points at the
+// staged commit.
+func PushCheckpointBundleScript(bundle, bare, url, dest string, isolate bool) string {
+	return pushBundleScript(bundle, bare, url, dest, false, true, isolate)
+}
+
+func pushBundleScript(bundle, bare, url, dest string, base, skipIfRemoteHas, isolate bool) string {
 	var b strings.Builder
 	b.WriteString("set -eu\nexport GIT_TERMINAL_PROMPT=0\n")
 	if isolate {
@@ -81,6 +92,10 @@ func PushBundleScript(bundle, bare, url, dest string, base, isolate bool) string
 		b.WriteString(`def=$(git ls-remote --symref "$url" HEAD | sed -n 's|^ref: refs/heads/\(.*\)	HEAD$|\1|p')` + "\n")
 		b.WriteString(`[ -n "$def" ] || { echo "vesper: can't read the repository's default branch" >&2; exit 4; }` + "\n")
 		b.WriteString(`echo "` + stagedMarker + `$def"` + "\n")
+	}
+	if skipIfRemoteHas {
+		b.WriteString(`stage_sha=$(git rev-parse refs/heads/stage)` + "\n")
+		b.WriteString(`if remote_heads=$(git ls-remote --heads "$url" 2>/dev/null) && printf '%s\n' "$remote_heads" | grep -v '[[:space:]]refs/heads/` + checkpointPrefix + `' | grep -q "^${stage_sha}[[:space:]]"; then echo '` + checkpointRemoteHas + `'; exit 0; fi` + "\n")
 	}
 	b.WriteString(`git push -q --no-verify "$url" ` + shellQuote("+refs/heads/stage:refs/heads/"+dest) + "\n")
 	return b.String()
@@ -246,9 +261,17 @@ func (r *Runner) autoShip(ctx context.Context, req store.PushRequest, token stri
 	if err != nil {
 		return
 	}
-	res, shipErr := pushreq.Ship(ctx, &pushreq.GitHub{BaseURL: r.Cfg.GitHubAPIURL, Token: token}, claimed)
-	if _, err := pushreq.Finish(context.WithoutCancel(ctx), r.q(), claimed, res, shipErr); err != nil {
+	gh := &pushreq.GitHub{BaseURL: r.Cfg.GitHubAPIURL, Token: token}
+	res, shipErr := pushreq.Ship(ctx, gh, claimed)
+	done, err := pushreq.Finish(context.WithoutCancel(ctx), r.q(), claimed, res, shipErr)
+	if err != nil {
 		r.Log.Warn("finish push request", "id", req.ID, "err", err)
+		return
+	}
+	if shipErr == nil && done.State == "pushed" && done.PrUrl != nil && *done.PrUrl != "" {
+		if _, cerr := pushreq.CleanupChatCheckpoints(context.WithoutCancel(ctx), gh, r.q(), done); cerr != nil {
+			r.Log.Warn("cleanup chat checkpoints", "push_request", done.ID, "err", cerr)
+		}
 	}
 }
 

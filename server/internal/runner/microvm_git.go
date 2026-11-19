@@ -130,6 +130,10 @@ func copyGuestFileToHost(ctx context.Context, b Backend, runID, rel, dstPath str
 
 func (r *Runner) runHostPushBundle(ctx context.Context, bundleHostPath, bareHostPath, url, destBranch, token string, base bool) (string, error) {
 	script := PushBundleScript("push.bundle", filepath.Base(bareHostPath), url, destBranch, base, true)
+	return r.runHostPushScript(ctx, script, bundleHostPath, token)
+}
+
+func (r *Runner) runHostPushScript(ctx context.Context, script, bundleHostPath, token string) (string, error) {
 	hostDir := filepath.Dir(bundleHostPath)
 	cmd := exec.CommandContext(ctx, "sh", "-c", script)
 	cmd.Dir = hostDir
@@ -283,23 +287,28 @@ func pathOrDot(dir, suffix string) string {
 	return filepath.ToSlash(filepath.Join(dir, suffix))
 }
 
-func (r *Runner) pushCheckpointOnHost(ctx context.Context, runUUID uuid.UUID, dir, branch, repoURL, token string) (string, error) {
+func (r *Runner) pushCheckpointOnHost(ctx context.Context, runUUID uuid.UUID, dir, branch, repoURL, token string, skipIfContained func(checkpointMeta) bool) (string, error) {
 	runID := runUUID.String()
 	commitScript := "if [ ! -d " + shellQuote(pathOrDot(dir, ".git")) + " ]; then echo vesper-checkpoint-absent; exit 0; fi\n" +
 		"(cd " + shellQuote(pathOrDot(dir, "")) + "\n" + ChatCheckpointCommitScript() + ")\n"
-	out, err := r.runScript(ctx, runUUID, "lazyagents-checkpoint", commitScript, nil)
-	if err != nil || strings.Contains(out, "vesper-checkpoint-absent") {
-		return out, err
+	commitOut, err := r.runScript(ctx, runUUID, "lazyagents-checkpoint", commitScript, nil)
+	if err != nil || strings.Contains(commitOut, "vesper-checkpoint-absent") {
+		return commitOut, err
 	}
 	guestBundle := pushRoot + "/checkpoint-" + runID + ".bundle"
 	defer func() {
 		_, _ = r.runScript(context.WithoutCancel(ctx), runUUID, "lazyagents-checkpoint-cleanup", "rm -f "+shellQuote(guestBundle), nil)
 	}()
-	if out, err = r.runScript(ctx, runUUID, "lazyagents-checkpoint-bundle", BundleScript(pathOrDot(dir, ""), chatCheckpointRef, guestBundle), nil); err != nil {
+	out, err := r.runScript(ctx, runUUID, "lazyagents-checkpoint-bundle", BundleScript(pathOrDot(dir, ""), chatCheckpointRef, guestBundle), nil)
+	if err != nil {
 		return out, err
 	}
 	if !strings.Contains(out, bundleMarker) {
-		return "", nil
+		return commitOut, nil
+	}
+	meta := parseCheckpointMeta(commitOut)
+	if skipIfContained != nil && skipIfContained(meta) {
+		return commitOut, nil
 	}
 	hostTmp, err := os.MkdirTemp("", "vesper-ckpt-*")
 	if err != nil {
@@ -317,8 +326,12 @@ func (r *Runner) pushCheckpointOnHost(ctx context.Context, runUUID uuid.UUID, di
 		pushTok = token
 	}
 	hostBare := filepath.Join(hostTmp, "ckpt.git")
-	if _, err := r.runHostPushBundle(ctx, hostBundle, hostBare, pushURL, branch, pushTok, false); err != nil {
+	pushOut, err := r.runHostPushScript(ctx, PushCheckpointBundleScript("push.bundle", filepath.Base(hostBare), pushURL, branch, true), hostBundle, pushTok)
+	if err != nil {
 		return "", err
 	}
-	return checkpointPushed, nil
+	if strings.Contains(pushOut, checkpointRemoteHas) {
+		return commitOut, nil
+	}
+	return commitOut + "\n" + checkpointPushed, nil
 }

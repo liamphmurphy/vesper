@@ -416,6 +416,35 @@ func (q *Queries) FinishPushRequest(ctx context.Context, arg FinishPushRequestPa
 	return i, err
 }
 
+const getChatCodeReview = `-- name: GetChatCodeReview :one
+SELECT chat_id, repo_url, branch, base_sha, head_sha, commits, files, dirty, live, updated_at, tree, tree_truncated FROM chat_code_reviews WHERE chat_id = $1 AND repo_url = $2
+`
+
+type GetChatCodeReviewParams struct {
+	ChatID  uuid.UUID
+	RepoUrl string
+}
+
+func (q *Queries) GetChatCodeReview(ctx context.Context, arg GetChatCodeReviewParams) (ChatCodeReview, error) {
+	row := q.db.QueryRow(ctx, getChatCodeReview, arg.ChatID, arg.RepoUrl)
+	var i ChatCodeReview
+	err := row.Scan(
+		&i.ChatID,
+		&i.RepoUrl,
+		&i.Branch,
+		&i.BaseSha,
+		&i.HeadSha,
+		&i.Commits,
+		&i.Files,
+		&i.Dirty,
+		&i.Live,
+		&i.UpdatedAt,
+		&i.Tree,
+		&i.TreeTruncated,
+	)
+	return i, err
+}
+
 const getPushRequest = `-- name: GetPushRequest :one
 SELECT id, workspace_id, user_id, chat_id, run_id, persona_id, agent_id, repo_url, branch, base_branch, base_sha, head_sha, staging_ref, commits, files, title, body, draft, state, auto, pr_url, pr_number, error, created_at, decided_at, turn_id, message_id, pr_state, pr_synced_at FROM push_requests WHERE id = $1 AND workspace_id = $2 AND user_id = $3
 `
@@ -525,6 +554,69 @@ func (q *Queries) ListRepositoryPushPolicies(ctx context.Context, arg ListReposi
 			&i.RepoUrl,
 			&i.AutoPush,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const pushedChatPRsForRepo = `-- name: PushedChatPRsForRepo :many
+SELECT id, workspace_id, user_id, chat_id, run_id, persona_id, agent_id, repo_url, branch, base_branch, base_sha, head_sha, staging_ref, commits, files, title, body, draft, state, auto, pr_url, pr_number, error, created_at, decided_at, turn_id, message_id, pr_state, pr_synced_at FROM push_requests
+WHERE chat_id = $1 AND repo_url = $2 AND state = 'pushed' AND pr_url IS NOT NULL
+  AND coalesce(pr_state, 'open') IN ('draft', 'open', 'merged')
+ORDER BY decided_at DESC NULLS LAST, created_at DESC
+LIMIT 10
+`
+
+type PushedChatPRsForRepoParams struct {
+	ChatID  uuid.UUID
+	RepoUrl string
+}
+
+func (q *Queries) PushedChatPRsForRepo(ctx context.Context, arg PushedChatPRsForRepoParams) ([]PushRequest, error) {
+	rows, err := q.db.Query(ctx, pushedChatPRsForRepo, arg.ChatID, arg.RepoUrl)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PushRequest{}
+	for rows.Next() {
+		var i PushRequest
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.UserID,
+			&i.ChatID,
+			&i.RunID,
+			&i.PersonaID,
+			&i.AgentID,
+			&i.RepoUrl,
+			&i.Branch,
+			&i.BaseBranch,
+			&i.BaseSha,
+			&i.HeadSha,
+			&i.StagingRef,
+			&i.Commits,
+			&i.Files,
+			&i.Title,
+			&i.Body,
+			&i.Draft,
+			&i.State,
+			&i.Auto,
+			&i.PrUrl,
+			&i.PrNumber,
+			&i.Error,
+			&i.CreatedAt,
+			&i.DecidedAt,
+			&i.TurnID,
+			&i.MessageID,
+			&i.PrState,
+			&i.PrSyncedAt,
 		); err != nil {
 			return nil, err
 		}

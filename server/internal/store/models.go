@@ -1468,6 +1468,24 @@ type Run struct {
 	ChatToolNames       []string
 }
 
+type RunCheckpoint struct {
+	ID               uuid.UUID
+	WorkspaceID      uuid.UUID
+	RunID            *uuid.UUID
+	ChatID           *uuid.UUID
+	TicketID         *uuid.UUID
+	RepoUrl          string
+	Branch           string
+	CommitSha        *string
+	TreeSha          *string
+	SourceBranch     string
+	HasUncommitted   bool
+	RecoveredByRunID *uuid.UUID
+	LastCheckedPrSha *string
+	CreatedAt        time.Time
+	DeletedAt        *time.Time
+}
+
 type RunEvent struct {
 	ID      uuid.UUID
 	RunID   uuid.UUID

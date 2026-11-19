@@ -1120,6 +1120,16 @@ func (r *Runner) start(ctx context.Context, run store.Run) {
 	r.inferTestEnv(ctx, c, testRepo, testFiles)
 	if checkpoint != "" && strings.Contains(output, checkpointRecovered) {
 		r.event(ctx, run.ID, "lifecycle", map[string]any{"state": "checkpoint_recovered", "branch": checkpoint})
+		if repo != "" {
+			_ = r.q().MarkCheckpointRecovered(ctx, store.MarkCheckpointRecoveredParams{
+				RepoUrl:          repo,
+				Branch:           checkpoint,
+				RecoveredByRunID: run.ID,
+			})
+		}
+	}
+	if c.run.Purpose == "chat" {
+		r.recordRecoveredChatCheckpoints(ctx, run.ID, output)
 	}
 	if baseCommit != "" {
 		r.event(ctx, run.ID, "lifecycle", map[string]any{"state": repoMapEvent, "commit": baseCommit, "ref": baseRef})
@@ -1442,6 +1452,7 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 		}
 		_, testFiles := takeTestFiles(output)
 		r.inferTestEnv(ctx, c, testEnvRepo(ctx, q, c), testFiles)
+		r.recordRecoveredChatCheckpoints(ctx, c.run.ID, output)
 	}
 	ctxFiles, err := ContextFiles(ctx, q, c.agent, c.ticket, c.spec.Memory)
 	if err != nil {

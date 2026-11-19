@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/liamphmurphy/vesper/server/internal/agentapi"
 	"github.com/liamphmurphy/vesper/server/internal/api"
 	"github.com/liamphmurphy/vesper/server/internal/apperr"
+	"github.com/liamphmurphy/vesper/server/internal/pushreq"
+	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 )
 
@@ -34,6 +37,23 @@ func (s *Server) agentDeps() agentapi.Deps {
 		},
 		Files: s,
 		PDF:   s.DesignWorker,
+		DiscardPush: func(ctx context.Context, r store.PushRequest) {
+			if s.Secrets == nil || r.StagingRef == nil || *r.StagingRef == "" {
+				return
+			}
+			dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			chat, err := s.Q.GetChatSession(dctx, store.GetChatSessionParams{ID: r.ChatID, WorkspaceID: r.WorkspaceID})
+			if err != nil {
+				return
+			}
+			project := runs.ProjectIDOrNil(chat.ProjectID)
+			token, err := s.Secrets.Reveal(dctx, r.WorkspaceID, &project, "git:pat")
+			if err != nil || token == "" {
+				return
+			}
+			pushreq.Discard(dctx, &pushreq.GitHub{BaseURL: s.GitHubAPIURL, Token: token}, r)
+		},
 	}
 }
 

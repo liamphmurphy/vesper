@@ -743,7 +743,7 @@ func (q *Queries) OwnsRunExecution(ctx context.Context, arg OwnsRunExecutionPara
 }
 
 const pushRequestsWithOpenPRs = `-- name: PushRequestsWithOpenPRs :many
-SELECT p.id, p.workspace_id, p.chat_id, p.pr_url, p.pr_number, p.pr_state, cs.project_id
+SELECT p.id, p.workspace_id, p.chat_id, p.repo_url, p.branch, p.run_id, p.pr_url, p.pr_number, p.pr_state, cs.project_id
 FROM push_requests p
 JOIN chat_sessions cs ON cs.id = p.chat_id
 WHERE p.pr_url IS NOT NULL AND coalesce(p.pr_state, 'open') IN ('draft', 'open')
@@ -756,6 +756,9 @@ type PushRequestsWithOpenPRsRow struct {
 	ID          uuid.UUID
 	WorkspaceID uuid.UUID
 	ChatID      uuid.UUID
+	RepoUrl     string
+	Branch      string
+	RunID       *uuid.UUID
 	PrUrl       *string
 	PrNumber    *int32
 	PrState     *string
@@ -775,6 +778,9 @@ func (q *Queries) PushRequestsWithOpenPRs(ctx context.Context, minAgeS int32) ([
 			&i.ID,
 			&i.WorkspaceID,
 			&i.ChatID,
+			&i.RepoUrl,
+			&i.Branch,
+			&i.RunID,
 			&i.PrUrl,
 			&i.PrNumber,
 			&i.PrState,
