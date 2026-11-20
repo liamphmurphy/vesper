@@ -143,8 +143,8 @@ type CreateCustomAppIn struct {
 	Description string               `json:"description,omitempty" jsonschema:"Short summary shown in Apps menu and launcher"`
 	Icon        string               `json:"icon,omitempty" jsonschema:"Vesper icon name (e.g. dashboard, chart, check, tickets, clock)"`
 	Template    string               `json:"template,omitempty" jsonschema:"Starter template when files are omitted: blank, tracker, or ledger"`
-	Manifest    *customapps.Manifest `json:"manifest,omitempty" jsonschema:"App manifest (entry, mcp_entry e.g. server.ts, tool_scope chats|app_only, instructions, nav, requested_capabilities)"`
-	Files       map[string]string    `json:"files,omitempty" jsonschema:"Source files keyed by path (e.g. app.tsx, server.ts, styles.css, schema.sql). UI compiles with React 19 + @vesper/bridge; optional server.ts compiles with @vesper/server (defineServer, sql, secretFetch, fetch, api) and runs as a sandboxed MCP server."`
+	Manifest    *customapps.Manifest `json:"manifest,omitempty" jsonschema:"App manifest (entry, mcp_entry e.g. server.ts, tool_scope chats|app_only, instructions, nav, requested_capabilities, requested_mounts)"`
+	Files       map[string]string    `json:"files,omitempty" jsonschema:"Source files keyed by path (e.g. app.tsx, server.ts, styles.css, schema.sql). UI compiles with React 19 + @vesper/bridge; optional server.ts compiles with @vesper/server (defineServer, sql, secretFetch, fetch, api, media, nix) and runs as a sandboxed MCP server."`
 	Note        string               `json:"note,omitempty" jsonschema:"Short version note"`
 }
 
