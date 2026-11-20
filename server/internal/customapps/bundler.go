@@ -847,6 +847,13 @@ function emit(msg) {
   realStdoutWrite(JSON.stringify(msg) + "\n");
 }
 
+// finish sends the last message and exits once it has been written: exiting straight after a
+// write larger than the pipe buffer (a ~1 MB tool result) cut the line short, and the host saw
+// truncated JSON.
+function finish(msg) {
+  realStdoutWrite(JSON.stringify(msg) + "\n", () => process.exit(0));
+}
+
 function callHost(method, params) {
   return new Promise((resolve, reject) => {
     const id = nextRpcId++;
@@ -1039,8 +1046,7 @@ export function __hardenAndRun(loadEntry) {
       try {
         msg = JSON.parse(line);
       } catch (err) {
-        emit({ type: "done", ok: false, error: "invalid worker protocol JSON: " + err.message });
-        process.exit(0);
+        finish({ type: "done", ok: false, error: "invalid worker protocol JSON: " + err.message });
         return;
       }
       if (msg.type === "rpc_result") {
@@ -1067,45 +1073,39 @@ export function __hardenAndRun(loadEntry) {
 
 async function handleInit(msg, tools, loadError) {
   if (loadError) {
-    emit({ type: "done", ok: false, error: loadError?.message || String(loadError) });
-    process.exit(0);
+    finish({ type: "done", ok: false, error: loadError?.message || String(loadError) });
     return;
   }
   try {
     if (msg.op === "list_tools") {
-      emit({
+      finish({
         type: "done",
         ok: true,
         result: {
           tools: tools.map(({ name, description, input_schema }) => ({ name, description, input_schema })),
         },
       });
-      process.exit(0);
       return;
     }
     if (msg.op === "call_tool") {
       const t = tools.find((x) => x.name === msg.tool);
       if (!t) {
-        emit({ type: "done", ok: false, error: "unknown tool " + JSON.stringify(msg.tool) });
-        process.exit(0);
+        finish({ type: "done", ok: false, error: "unknown tool " + JSON.stringify(msg.tool) });
         return;
       }
       const args = msg.arguments && typeof msg.arguments === "object" && !Array.isArray(msg.arguments) ? msg.arguments : {};
       const res = await t.handler(args);
-      emit({ type: "done", ok: true, result: res === undefined ? null : res });
-      process.exit(0);
+      finish({ type: "done", ok: true, result: res === undefined ? null : res });
       return;
     }
-    emit({ type: "done", ok: false, error: "unknown worker op " + JSON.stringify(msg.op) });
-    process.exit(0);
+    finish({ type: "done", ok: false, error: "unknown worker op " + JSON.stringify(msg.op) });
   } catch (err) {
-    emit({
+    finish({
       type: "done",
       ok: false,
       error: err?.message || String(err),
       ...(err?.approvalRequired ? { approval_required: err.approvalRequired } : {}),
     });
-    process.exit(0);
   }
 }
 `
