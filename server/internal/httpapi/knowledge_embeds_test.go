@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/designs"
 	"github.com/liamphmurphy/vesper/server/internal/links"
 	"github.com/liamphmurphy/vesper/server/internal/store"
+	"github.com/liamphmurphy/vesper/server/internal/wiki"
 )
 
 // LAZYAGENTS-178: links, block references, embeds and attachments, exercised
@@ -281,5 +283,88 @@ func TestKnowledgeEmbedsDesignFrameAndLibraryItemOverTheAPI(t *testing.T) {
 	raw, _ := json.Marshal(out)
 	if code != http.StatusOK || strings.Contains(string(raw), "/library/"+item["id"].(string)+"/content") || strings.Contains(string(raw), `"kind":"design"`) {
 		t.Errorf("run read of the moodboard: %d %s", code, raw)
+	}
+}
+
+func (e *designsEnv) uploadAssetQuery(name string, data []byte) (int, map[string]any) {
+	e.t.Helper()
+	req, _ := http.NewRequest("POST", e.srv.URL+"/api/v1/knowledge/assets?filename="+url.QueryEscape(name), bytes.NewReader(data))
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var out map[string]any
+	raw, _ := io.ReadAll(res.Body)
+	_ = json.Unmarshal(raw, &out)
+	return res.StatusCode, out
+}
+
+func TestKnowledgeAssetUploadQueryFilenameAndSniffing(t *testing.T) {
+	e, _ := newKnowledgeAssetsEnv(t)
+	png := avatarPNG(t)
+
+	// UTF-8 filename via ?filename= (macOS screenshot narrow no-break space U+202F).
+	macName := "Screenshot 2026-11-20 at 1.23.45\u202fPM.png"
+	code, shot := e.uploadAssetQuery(macName, png)
+	if code != http.StatusCreated || shot["filename"] != macName || shot["content_type"] != "image/png" {
+		t.Fatalf("utf8 query upload: %d %v", code, shot)
+	}
+
+	// SVG sniffs image/svg+xml while GET keeps attachment disposition and CSP sandbox.
+	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8"/></svg>`)
+	code, svgAsset := e.uploadAssetQuery("diagram.svg", svg)
+	if code != http.StatusCreated || svgAsset["content_type"] != "image/svg+xml" {
+		t.Fatalf("svg upload: %d %v", code, svgAsset)
+	}
+	res, err := http.Get(e.srv.URL + svgAsset["url"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK ||
+		!strings.HasPrefix(res.Header.Get("Content-Disposition"), "attachment") ||
+		res.Header.Get("Content-Security-Policy") != "default-src 'none'; sandbox" {
+		t.Fatalf("svg headers: %d %v", res.StatusCode, res.Header)
+	}
+
+	// Non-image binaries (PDF, FLAC, AVIF) sniff their real types and PDF resolves as file embed.
+	pdfBytes := []byte("%PDF-1.4\n1 0 obj\n<<>>\nendobj\n")
+	code, pdfAsset := e.uploadAssetQuery("handbook.pdf", pdfBytes)
+	if code != http.StatusCreated || pdfAsset["content_type"] != "application/pdf" || pdfAsset["filename"] != "handbook.pdf" {
+		t.Fatalf("pdf upload: %d %v", code, pdfAsset)
+	}
+	ref := "![[" + pdfAsset["ref"].(string) + "]]"
+	page := e.want("POST", "/knowledge/pages", map[string]any{"title": "Handbooks", "audience": "private", "body_md": ref}, 200)
+	emb := pageEmbeds(page)[ref]
+	if emb["available"] != true || emb["kind"] != "file" || emb["content_type"] != "application/pdf" {
+		t.Fatalf("pdf embed: %v", emb)
+	}
+
+	flacBytes := []byte("fLaC\x00\x00\x00\x22\x00\x00\x00\x00")
+	code, flacAsset := e.uploadAssetQuery("voice.flac", flacBytes)
+	if code != http.StatusCreated || flacAsset["content_type"] != "audio/flac" {
+		t.Fatalf("flac upload: %d %v", code, flacAsset)
+	}
+
+	avifBytes := []byte("\x00\x00\x00\x1cftypavif\x00\x00\x00\x00avifmif1")
+	code, avifAsset := e.uploadAssetQuery("photo.avif", avifBytes)
+	if code != http.StatusCreated || avifAsset["content_type"] != "image/avif" {
+		t.Fatalf("avif upload: %d %v", code, avifAsset)
+	}
+
+	// Disguised file (PDF bytes named fake.png) must still sniff application/pdf, not image/png.
+	disguisedBytes := []byte("%PDF-1.7\n1 0 obj\n<<>>\nendobj\n")
+	code, disguised := e.uploadAssetQuery("fake.png", disguisedBytes)
+	if code != http.StatusCreated || disguised["content_type"] != "application/pdf" {
+		t.Fatalf("disguised upload: %d %v", code, disguised)
+	}
+
+	// AttachmentRef strips backticks and CRs alongside bracket/link delimiters.
+	id := uuid.MustParse("88888888-8888-4888-8888-888888888888")
+	gotRef := wiki.AttachmentRef(id, "a`b[c]d#e|f^g\r\nh.png")
+	wantRef := "attachment:88888888-8888-4888-8888-888888888888/a b c d e f g  h.png"
+	if gotRef != wantRef {
+		t.Fatalf("AttachmentRef = %q, want %q", gotRef, wantRef)
 	}
 }

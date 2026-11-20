@@ -66,14 +66,18 @@ func (s *Server) knowledgeAssetRoutes(mux *http.ServeMux) {
 			s.responseError(w, r, apperr.Invalid("file", "is empty"))
 			return
 		}
-		filename := filepath.Base(strings.ReplaceAll(r.Header.Get("X-Filename"), "\\", "/"))
-		if filename == "." || filename == "/" || filename == "" {
+		rawName := r.URL.Query().Get("filename")
+		if strings.TrimSpace(rawName) == "" {
+			rawName = r.Header.Get("X-Filename")
+		}
+		filename := filepath.Base(strings.ReplaceAll(strings.TrimSpace(rawName), "\\", "/"))
+		if filename == "." || filename == ".." || filename == "/" || filename == "" {
 			filename = "attachment"
 		}
 		head := make([]byte, 512)
 		file.Seek(0, io.SeekStart)
 		read, _ := file.Read(head)
-		contentType := http.DetectContentType(head[:read])
+		contentType := wiki.DetectAssetContentType(filename, head[:read])
 		file.Seek(0, io.SeekStart)
 		digest := fmt.Sprintf("%x", hash.Sum(nil))
 		asset, err := s.Wiki.StoreKnowledgeAsset(r.Context(), ws, u.ID, digest, filename, contentType, n, file)
@@ -83,7 +87,13 @@ func (s *Server) knowledgeAssetRoutes(mux *http.ServeMux) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]any{"id": asset.ID, "ref": wiki.AttachmentRef(asset.ID, asset.Filename), "url": "/api/v1/knowledge/assets/" + asset.ID.String()})
+		json.NewEncoder(w).Encode(map[string]any{
+			"id":           asset.ID,
+			"ref":          wiki.AttachmentRef(asset.ID, asset.Filename),
+			"url":          "/api/v1/knowledge/assets/" + asset.ID.String(),
+			"filename":     asset.Filename,
+			"content_type": asset.ContentType,
+		})
 	})
 	mux.HandleFunc("GET /api/v1/knowledge/assets/{id}", func(w http.ResponseWriter, r *http.Request) {
 		u, _, ws := me(r.Context())
