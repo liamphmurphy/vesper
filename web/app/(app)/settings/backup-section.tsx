@@ -101,7 +101,7 @@ export function BackupSection() {
         <ul className="flex list-disc flex-col gap-1.5 pl-5 text-13 text-fg-tertiary">
           <li>The archive holds all your data. Keep it like a database backup.</li>
           <li>
-            Sign-in sessions, runner registrations and live playgrounds stay behind: you sign in again on the new machine.
+            Sign-in sessions, runner registrations, live playgrounds and downloaded custom-app media stay behind: you sign in again on the new machine, and apps can re-download videos on demand.
           </li>
           <li>
             {encrypted ? (

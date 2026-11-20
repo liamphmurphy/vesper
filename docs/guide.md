@@ -373,10 +373,12 @@ vesper import vesper.zip
   the exported tables hold. A target that has never been migrated is migrated to
   the archive's schema version, loaded, then upgraded to the running version.
   An archive from a newer Vesper than the target is refused.
-- **What moves.** Everything except machine-bound or regenerated state: browser
-  sessions and sign-in codes (people sign in again), runner registrations, live
-  playgrounds and provider usage caches. Each excluded table and its reason is
-  in `server/internal/transfer/schema.go`.
+- **What moves.** Everything except machine-bound, regenerated, or large
+  re-downloadable state: browser sessions and sign-in codes (people sign in
+  again), runner registrations, live playgrounds, provider usage caches, and
+  downloaded custom-app media (`custom_app_media` and `custom-app-media/`). Each
+  excluded table and blob prefix and its reason is in
+  `server/internal/transfer/schema.go`.
 - **Tables and buckets are discovered, not listed.** Export reads the Postgres
   catalog and the blob directory's buckets (one subdirectory each), so a table or
   bucket added later is included without touching the exporter.
