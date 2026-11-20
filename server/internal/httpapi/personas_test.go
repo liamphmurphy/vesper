@@ -444,8 +444,8 @@ func TestChatRepoSelection(t *testing.T) {
 }
 
 // A persona's work is its agents row with the persona's id: turning it on makes that row (and
-// a handle), switching changes its kind, and turning it off archives it, refused while the
-// persona holds open tickets. Renaming the persona renames its work.
+// a handle), and turning it off archives it, refused while the persona holds open tickets.
+// Renaming the persona renames its work. Taking tickets is the only work.
 func TestPersonaWork(t *testing.T) {
 	e := newChatEnv(t)
 	ctx := context.Background()
@@ -466,10 +466,9 @@ func TestPersonaWork(t *testing.T) {
 	// It can be assigned a ticket now, by handle, like any agent.
 	ticket := e.want("POST", "/tickets", map[string]any{"project_key": "PAY", "title": "Check the ledger", "assignee_agent_id": id}, http.StatusCreated)
 
-	// Helpers can't hold tickets, and work can't stop while it holds one.
+	// Work can't stop while it holds one.
 	rev := int(p["revision"].(float64))
-	e.want("PATCH", "/personas/"+id, map[string]any{"revision": rev, "work": "helper"}, http.StatusConflict)
-	rev++
+	e.invalid("PATCH", "/personas/"+id, map[string]any{"revision": rev, "work": "helper"}, "work", "")
 	e.want("PATCH", "/personas/"+id, map[string]any{"revision": rev, "work": "none"}, http.StatusConflict)
 	rev++
 	e.want("DELETE", "/personas/"+id, nil, http.StatusConflict)
@@ -484,9 +483,9 @@ func TestPersonaWork(t *testing.T) {
 	if err := e.pool.QueryRow(ctx, `SELECT name, archived_at IS NOT NULL FROM agents WHERE id=$1`, id).Scan(&name, &archived); err != nil || name != "Mara" || !archived {
 		t.Fatalf("work record name=%q archived=%v err=%v", name, archived, err)
 	}
-	// Back on, as a helper: the same record, revived.
-	p = e.want("PATCH", "/personas/"+id, map[string]any{"revision": int(p["revision"].(float64)), "work": "helper"}, 200)
-	if p["work"] != "helper" || p["handle"] != "dr-mara" {
+	// Back on: the same record, revived.
+	p = e.want("PATCH", "/personas/"+id, map[string]any{"revision": int(p["revision"].(float64)), "work": "tickets"}, 200)
+	if p["work"] != "tickets" || p["handle"] != "dr-mara" {
 		t.Fatalf("revived %v", p)
 	}
 	e.invalid("PATCH", "/personas/"+id, map[string]any{"revision": int(p["revision"].(float64)), "work": "everything"}, "work", "")

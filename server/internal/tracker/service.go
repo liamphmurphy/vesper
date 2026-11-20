@@ -133,13 +133,9 @@ func (r refs) agent(ctx context.Context, id *uuid.UUID) (store.Agent, error) {
 }
 
 // assignee is agent for a ticket's assignee: the work record of a persona that takes
-// tickets. Helpers only run when another persona's run hands them work, so they can't hold
 // tickets.
 func (r refs) assignee(ctx context.Context, id *uuid.UUID) (store.Agent, error) {
 	a, err := r.agent(ctx, id)
-	if err == nil && a.Kind == "sub" {
-		return a, invalid("assignee_agent_id", "@%s helps on runs and can't be assigned tickets; assign a persona that takes tickets, which can hand it work", a.Handle)
-	}
 	if err == nil && a.Kind == "assistant" {
 		return a, invalid("assignee_agent_id", "@%s is the Personal Assistant and can't be assigned tickets; assign a persona that takes tickets", a.Handle)
 	}

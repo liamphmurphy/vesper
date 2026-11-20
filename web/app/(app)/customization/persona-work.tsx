@@ -10,9 +10,9 @@ import { AgentStatus } from "@/components/domain/overview";
 const errorText = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong. Please try again.");
 
 /**
- * What a persona does besides chatting (the design's Work tab): chat only, takes tickets or
- * helps on runs, and whether it's offered in the chat switcher. A persona that works keeps
- * its harness, model, work brief, permissions, helpers and limits on its work page.
+ * What a persona does besides chatting (the design's Work tab): chat only or takes tickets,
+ * and whether it's offered in the chat switcher. A persona that works keeps its harness,
+ * model, work brief, permissions and limits on its work page.
  */
 export function PersonaWorkSection({ p }: { p: Persona }) {
   const update = useUpdatePersona();
@@ -47,7 +47,7 @@ export function PersonaWorkSection({ p }: { p: Persona }) {
       )}
       {work !== "none" && (
         <p className="text-12 text-fg-tertiary">
-          Work settings hold its work brief, permissions, fallbacks, helpers and limits. Its voice and default model above reach its runs too.
+          Work settings hold its work brief, permissions, fallbacks and limits. Its voice and default model above reach its runs too.
         </p>
       )}
       {update.isError && (

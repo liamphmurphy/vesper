@@ -14,34 +14,22 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/store"
 )
 
-// What a persona does besides chatting. A persona that works has a work record: the agents
-// row with the persona's own id, whose kind says which work (main takes tickets, sub helps on
-// runs) and whose versioned definition holds its harness, model, work brief, scopes and
-// limits. Turning work off archives the record, so its runs and history stay intact.
+// What a persona does besides chatting. A persona that works takes tickets and has a work
+// record: the agents row with the persona's own id, whose versioned definition holds its
+// harness, model, work brief, scopes and limits. Turning work off archives the record, so
+// its runs and history stay intact. Help within a run comes from the run's own sub agents
+// and delegated copies of the persona, not from other personas.
 const (
 	WorkNone    = "none"
 	WorkTickets = "tickets"
-	WorkHelper  = "helper"
 )
 
 // WorkOf is the work a persona's record says it does; a nil or archived record is none.
 func WorkOf(a *store.Agent) string {
-	switch {
-	case a == nil || a.ArchivedAt != nil:
+	if a == nil || a.ArchivedAt != nil || a.Kind != agents.KindMain {
 		return WorkNone
-	case a.Kind == agents.KindSub:
-		return WorkHelper
-	case a.Kind == agents.KindMain:
-		return WorkTickets
 	}
-	return WorkNone
-}
-
-func kindFor(work string) string {
-	if work == WorkHelper {
-		return agents.KindSub
-	}
-	return agents.KindMain
+	return WorkTickets
 }
 
 // WorkRecords maps each of the owner's working (or formerly working) personas to its record.
@@ -66,19 +54,18 @@ func WorkRecord(ctx context.Context, q *store.Queries, ws, id uuid.UUID) (*store
 	if err != nil {
 		return nil, err
 	}
-	if a.Kind != agents.KindMain && a.Kind != agents.KindSub {
+	if a.Kind != agents.KindMain {
 		return nil, nil
 	}
 	return &a, nil
 }
 
-// SetWork turns a persona's work on, switches it, or turns it off. Off is refused while the
-// persona holds open tickets or has a run in progress, as deleting an agent was; switching
-// to helping is refused while it holds open tickets, since helpers can't hold them. by is
-// the person, recorded on the definition version a change writes.
+// SetWork turns a persona's work on or off. Off is refused while the persona holds open
+// tickets or has a run in progress, as deleting an agent was. by is the person, recorded on
+// the definition version a change writes.
 func (s *Service) SetWork(ctx context.Context, o Owner, id uuid.UUID, work string, by uuid.UUID) (store.Persona, *store.Agent, error) {
-	if work != WorkNone && work != WorkTickets && work != WorkHelper {
-		return store.Persona{}, nil, apperr.Invalid("work", "must be none, tickets or helper")
+	if work != WorkNone && work != WorkTickets {
+		return store.Persona{}, nil, apperr.Invalid("work", "must be none or tickets")
 	}
 	var p store.Persona
 	var rec *store.Agent
@@ -106,10 +93,10 @@ func (s *Service) SetWork(ctx context.Context, o Owner, id uuid.UUID, work strin
 		case work == WorkNone:
 			return stopWork(ctx, q, rec)
 		case rec == nil:
-			rec, err = startWork(ctx, q, p, work, by)
+			rec, err = startWork(ctx, q, p, by)
 			return err
 		default:
-			rec, err = changeWork(ctx, q, p, *rec, work, by)
+			rec, err = resumeWork(ctx, q, p, *rec, by)
 			return err
 		}
 	})
@@ -146,7 +133,7 @@ func stopWork(ctx context.Context, q *store.Queries, a *store.Agent) error {
 
 // startWork gives a persona its first work record: a handle from its name and the default
 // definition (inheriting the persona's default harness/model/effort when set).
-func startWork(ctx context.Context, q *store.Queries, p store.Persona, work string, by uuid.UUID) (*store.Agent, error) {
+func startWork(ctx context.Context, q *store.Queries, p store.Persona, by uuid.UUID) (*store.Agent, error) {
 	handle, err := freeHandle(ctx, q, p.WorkspaceID, p.Name)
 	if err != nil {
 		return nil, err
@@ -157,63 +144,40 @@ func startWork(ctx context.Context, q *store.Queries, p store.Persona, work stri
 	}
 	a, err := q.CreatePersonaAgent(ctx, store.CreatePersonaAgentParams{
 		ID: p.ID, WorkspaceID: p.WorkspaceID, Name: p.Name, Handle: handle,
-		ColorIndex: int32(agents.NearestHue(p.Color)), Model: spec.Model, Kind: kindFor(work),
+		ColorIndex: int32(agents.NearestHue(p.Color)), Model: spec.Model, Kind: agents.KindMain,
 	})
 	if err != nil {
 		return nil, err
 	}
-	a, err = agents.WriteVersion(ctx, q, a, agents.Identity{Name: p.Name, ColorIndex: int(a.ColorIndex), Kind: a.Kind}, spec, "Started work", &by, nil)
+	a, err = agents.WriteVersion(ctx, q, a, agents.Identity{Name: p.Name, ColorIndex: int(a.ColorIndex)}, spec, "Started work", &by, nil)
 	return &a, err
 }
 
-// changeWork revives an archived record (under a free handle) and sets its kind, keeping its
-// definition (syncing the persona's default model on revival or change).
-func changeWork(ctx context.Context, q *store.Queries, p store.Persona, a store.Agent, work string, by uuid.UUID) (*store.Agent, error) {
-	kind := kindFor(work)
-	if kind == agents.KindSub && a.ArchivedAt == nil {
-		if err := busy(ctx, q, a, "making it a helper"); err != nil {
+// resumeWork revives an archived record (under a free handle), keeping its definition and
+// syncing the persona's default model into it.
+func resumeWork(ctx context.Context, q *store.Queries, p store.Persona, a store.Agent, by uuid.UUID) (*store.Agent, error) {
+	handle := a.Handle
+	taken, err := q.AgentHandleTaken(ctx, store.AgentHandleTakenParams{WorkspaceID: a.WorkspaceID, Handle: handle})
+	if err != nil {
+		return nil, err
+	}
+	if taken {
+		if handle, err = freeHandle(ctx, q, a.WorkspaceID, p.Name); err != nil {
 			return nil, err
 		}
 	}
-	revived := a.ArchivedAt != nil
-	if revived {
-		handle := a.Handle
-		taken, err := q.AgentHandleTaken(ctx, store.AgentHandleTakenParams{WorkspaceID: a.WorkspaceID, Handle: handle})
-		if err != nil {
-			return nil, err
-		}
-		if taken {
-			if handle, err = freeHandle(ctx, q, a.WorkspaceID, p.Name); err != nil {
-				return nil, err
-			}
-		}
-		if a, err = q.ReviveAgent(ctx, store.ReviveAgentParams{ID: a.ID, Handle: handle}); err != nil {
-			return nil, err
-		}
+	if a, err = q.ReviveAgent(ctx, store.ReviveAgentParams{ID: a.ID, Handle: handle}); err != nil {
+		return nil, err
 	}
-	if a.Kind == kind && !revived {
+	if !(p.DefaultHarness != "" && p.DefaultModel != "" || p.DefaultEffort != "") {
 		return &a, nil
 	}
 	spec, _, err := agents.CurrentSpec(ctx, q, a)
 	if err != nil {
 		return nil, err
 	}
-	modelSynced := false
-	if revived && (p.DefaultHarness != "" && p.DefaultModel != "" || p.DefaultEffort != "") {
-		spec.SetModel(p.DefaultHarness, p.DefaultModel, p.DefaultEffort)
-		modelSynced = true
-	}
-	if a.Kind == kind && !modelSynced {
-		return &a, nil
-	}
-	note := "Resumed work"
-	if a.Kind != kind {
-		note = "Takes tickets"
-		if kind == agents.KindSub {
-			note = "Helps on runs"
-		}
-	}
-	a, err = agents.WriteVersion(ctx, q, a, agents.Identity{Name: p.Name, Role: a.Role, Specialty: a.Specialty, ColorIndex: int(a.ColorIndex), Kind: kind}, spec, note, &by, nil)
+	spec.SetModel(p.DefaultHarness, p.DefaultModel, p.DefaultEffort)
+	a, err = agents.WriteVersion(ctx, q, a, agents.Identity{Name: p.Name, Role: a.Role, Specialty: a.Specialty, ColorIndex: int(a.ColorIndex)}, spec, "Resumed work", &by, nil)
 	return &a, err
 }
 

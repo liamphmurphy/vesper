@@ -397,7 +397,7 @@ func (q *Queries) KeySharePersona(ctx context.Context, arg KeySharePersonaParams
 
 const listPersonaWork = `-- name: ListPersonaWork :many
 SELECT a.id, a.workspace_id, a.name, a.handle, a.color_index, a.role, a.specialty, a.model, a.status, a.max_concurrency, a.created_at, a.updated_at, a.current_definition_version_id, a.kind, a.archived_at FROM agents a JOIN personas p ON p.id = a.id
-WHERE p.workspace_id = $1 AND p.user_id = $2 AND a.kind IN ('main', 'sub')
+WHERE p.workspace_id = $1 AND p.user_id = $2 AND a.kind = 'main'
 `
 
 type ListPersonaWorkParams struct {

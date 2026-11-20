@@ -232,9 +232,6 @@ func validateProposals(ctx context.Context, q *store.Queries, ws uuid.UUID, item
 			if sa.Kind == agents.KindAssistant {
 				return apperr.Invalid("agent_id", "@%s is the Personal Assistant; suggest a main agent", sa.Handle)
 			}
-			if sa.Kind == "sub" {
-				return apperr.Invalid("agent_id", "@%s is a sub agent; suggest a main agent, which can delegate to it", sa.Handle)
-			}
 		}
 	}
 	refs := map[string]int{}

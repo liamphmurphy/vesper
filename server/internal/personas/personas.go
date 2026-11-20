@@ -512,7 +512,7 @@ func (s *Service) Update(ctx context.Context, o Owner, id uuid.UUID, p Patch) (s
 				return apperr.Invalid("default_model", "%s", err.Error())
 			}
 			if _, err := agents.WriteVersion(ctx, q, *lockedAgent, agents.Identity{
-				Name: out.Name, Role: lockedAgent.Role, Specialty: lockedAgent.Specialty, ColorIndex: int(lockedAgent.ColorIndex), Kind: lockedAgent.Kind,
+				Name: out.Name, Role: lockedAgent.Role, Specialty: lockedAgent.Specialty, ColorIndex: int(lockedAgent.ColorIndex),
 			}, spec, "Updated persona default model", &o.UserID, nil); err != nil {
 				return err
 			}

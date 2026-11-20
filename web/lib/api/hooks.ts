@@ -8,7 +8,6 @@ import {
   postForm,
   unwrap,
   type AgentDetail,
-  type AgentKind,
   type AgentOverride,
   type AgentSpec,
   type Artifact,
@@ -483,18 +482,6 @@ export function useSetOverride(handle: string) {
   return useAgentMutation(handle, (v: { project: string; override: AgentOverride }) =>
     unwrap(api.PUT("/agents/{handle}/overrides/{project}", { params: { path: { handle, project: v.project } }, body: v.override })),
   );
-}
-
-export function useCreateAgent() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: { handle: string; name: string; role?: string; color_index?: number; kind?: AgentKind }) =>
-      unwrap(api.POST("/agents", { body })),
-    onSuccess: (d) => {
-      qc.setQueryData(keys.agent(d.agent.handle), d);
-      qc.invalidateQueries({ queryKey: keys.bootstrap });
-    },
-  });
 }
 
 // ------------------------------------------------------- tokens and secrets

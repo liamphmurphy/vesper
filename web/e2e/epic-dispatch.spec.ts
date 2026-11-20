@@ -18,7 +18,7 @@ for (const mixed of [false, true]) {
     const calls: Array<{ path: string; body: unknown }> = [];
     await page.route("**/api/v1/bootstrap", (route) => route.fulfill({ json: {
       workspace: { id: "workspace-1", name: "Acme", slug: "acme" },
-      me: { id: "user-1", name: "Liam", initials: "L" }, users: [], agents: [agent, other, { ...agent, id: "sub", name: "Sub agent", kind: "sub" }],
+      me: { id: "user-1", name: "Liam", initials: "L" }, users: [], agents: [agent, other, { ...agent, id: "pa", name: "Personal Assistant", kind: "assistant" }],
       projects: [project], epics: [epic], labels: [], counts: { inbox: 0, wiki_suggestions: 0, live_agents: 0 },
     } }));
     await page.route("**/api/v1/epics", (route) => route.fulfill({ json: { epics: [{
@@ -55,7 +55,7 @@ for (const mixed of [false, true]) {
     await page.goto("/epics/epic-1");
     const select = page.getByRole("combobox", { name: "Persona for unassigned tickets" });
     await expect(select).toHaveValue(agent.id);
-    await expect(select.getByRole("option", { name: "Sub agent" })).toHaveCount(0);
+    await expect(select.getByRole("option", { name: "Personal Assistant" })).toHaveCount(0);
     // Start ready leaves the blocked ticket alone and says why.
     await expect(page.getByRole("region", { name: "Start ready" })).toContainText("WEB-5");
     await expect(page.getByRole("region", { name: "Start ready" })).toContainText("blocked by 1");

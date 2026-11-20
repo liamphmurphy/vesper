@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/liamphmurphy/vesper/server/internal/agentdef"
 	"github.com/liamphmurphy/vesper/server/internal/agents"
 	"github.com/liamphmurphy/vesper/server/internal/apperr"
@@ -78,13 +80,19 @@ func TestDefinitionsVersionsAndOverrides(t *testing.T) {
 	if !errors.As(err, &ve) || ve.Field != "harness" {
 		t.Fatalf("bad harness: %v", err)
 	}
-	if _, err := svc.Create(ctx, ws, me.ID, "@Atlas", agents.Identity{Name: "Dup"}, nil); !errors.As(err, &ve) {
-		t.Fatalf("duplicate handle should be rejected, got %v", err)
+}
+
+// workRecord makes a bare work record, as a persona's first work does.
+func workRecord(t *testing.T, ctx context.Context, q *store.Queries, ws uuid.UUID, by uuid.UUID, handle string) store.Agent {
+	t.Helper()
+	a, err := q.CreateAgent(ctx, store.CreateAgentParams{WorkspaceID: ws, Name: "Temp", Handle: handle, Status: "idle", Model: agents.DefaultSpec().Model})
+	if err != nil {
+		t.Fatal(err)
 	}
-	n, err := svc.Create(ctx, ws, me.ID, "@scout", agents.Identity{Name: "Scout", ColorIndex: 3}, nil)
-	if err != nil || n.Handle != "scout" || n.CurrentDefinitionVersionID == nil {
-		t.Fatalf("create: %+v %v", n, err)
+	if a, err = agents.WriteVersion(ctx, q, a, agents.Identity{Name: "Temp"}, agents.DefaultSpec(), "Created", &by, nil); err != nil {
+		t.Fatal(err)
 	}
+	return a
 }
 
 func TestDeleteArchivesAgent(t *testing.T) {
@@ -97,9 +105,7 @@ func TestDeleteArchivesAgent(t *testing.T) {
 	me, _ := q.GetLocalUser(ctx)
 	ws := me.WorkspaceID
 	svc := &agents.Service{Pool: pool}
-	if _, err := svc.Create(ctx, ws, me.ID, "temp", agents.Identity{Name: "Temp"}, nil); err != nil {
-		t.Fatal(err)
-	}
+	workRecord(t, ctx, q, ws, me.ID, "temp")
 	if err := svc.Delete(ctx, ws, "temp"); err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +126,8 @@ func TestDeleteArchivesAgent(t *testing.T) {
 	if !errors.As(err, &c) {
 		t.Fatalf("atlas delete = %v, want conflict", err)
 	}
-	if _, err := svc.Create(ctx, ws, me.ID, "temp", agents.Identity{Name: "Temp"}, nil); err != nil {
-		t.Fatalf("handle reuse: %v", err)
+	// The archived record's handle is free again.
+	if taken, err := q.AgentHandleTaken(ctx, store.AgentHandleTakenParams{WorkspaceID: ws, Handle: "temp"}); err != nil || taken {
+		t.Fatalf("handle reuse: taken=%v %v", taken, err)
 	}
 }

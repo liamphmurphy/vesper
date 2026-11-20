@@ -84,9 +84,11 @@ and Antigravity installed). Before dispatching:
 ### Personas that do the work
 
 Agents are personas. Open **Customization › All personas** to see who chats and who works. On a
-persona's profile, **What it does** picks *Chat only*, *Takes tickets* or *Helps on runs*, and
+persona's profile, **What it does** picks *Chat only* or *Takes tickets*, and
 **Show in chat list** keeps a worker out of the chat switcher. **Work settings** opens its harness,
-model, work brief, permissions, helpers and limits. Its tone and style reach its runs too; its
+model, work brief, permissions and limits. A persona gets help within its own runs: the
+harness's sub agents, and `delegate`, which starts a fresh copy of the persona on a slice
+of the ticket (see *Token-efficient execution* below). Its tone and style reach its runs too; its
 work brief reaches runs only. A run can search your project and work memories and the persona's
 own, nothing else you've told your personas. Turning work off waits until it has no open tickets
 or runs.

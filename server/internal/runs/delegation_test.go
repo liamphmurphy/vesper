@@ -29,16 +29,6 @@ func TestDelegationToSubagents(t *testing.T) {
 	me, _ := q.GetLocalUser(ctx)
 	ws := me.WorkspaceID
 	svc := &runs.Service{Pool: pool, Tracker: &tracker.Service{Pool: pool}, Artifacts: &artifacts.Service{Pool: pool}, Poll: 20 * time.Millisecond}
-	agentSvc := &agents.Service{Pool: pool}
-	trk := &tracker.Service{Pool: pool}
-
-	scribe, err := agentSvc.Create(ctx, ws, me.ID, "scribe", agents.Identity{Name: "Scribe", Role: "Docs", Kind: agents.KindSub}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if scribe.Kind != agents.KindSub {
-		t.Fatalf("kind = %q", scribe.Kind)
-	}
 	callerFor := func(a store.Agent, runID *uuid.UUID) runs.Caller {
 		kind := "unmanaged"
 		var exp *time.Time
@@ -58,16 +48,8 @@ func TestDelegationToSubagents(t *testing.T) {
 		return c
 	}
 
-	// Sub agents can't be assigned tickets.
 	st := "PAY-214"
-	if _, err := trk.Update(ctx, ws, tracker.UserActor(me.ID), st, tracker.Patch{AssigneeAgentID: tracker.Opt[uuid.UUID]{Set: true, Value: &scribe.ID}}); !isInvalid(err) {
-		t.Fatalf("assigned a sub agent: %v", err)
-	}
-	// ...and an agent with open tickets can't become one.
 	atlas, _ := q.GetAgentByHandle(ctx, store.GetAgentByHandleParams{WorkspaceID: ws, Handle: "atlas"})
-	if _, err := agentSvc.SaveDefinition(ctx, ws, me.ID, "atlas", agents.Identity{Name: atlas.Name, Kind: agents.KindSub}, agents.DefaultSpec(), ""); !isConflict(err) {
-		t.Fatalf("made an agent with open tickets a sub agent: %v", err)
-	}
 
 	// A managed run for atlas whose workspace is ready.
 	runsOut, err := svc.Dispatch(ctx, ws, me.ID, []string{st})

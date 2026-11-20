@@ -11,7 +11,11 @@ import (
 func TestDeleteAgentArchivesAndKeepsHistory(t *testing.T) {
 	e := newChatEnv(t)
 	ctx := context.Background()
-	e.want("POST", "/agents", map[string]any{"handle": "gone", "name": "Gone"}, http.StatusCreated)
+	// A persona that takes tickets: its work record is the agent.
+	p := e.want("POST", "/personas", map[string]any{"name": "Gone"}, http.StatusCreated)
+	if p = e.want("PATCH", "/personas/"+p["id"].(string), map[string]any{"revision": p["revision"], "work": "tickets"}, http.StatusOK); p["handle"] != "gone" {
+		t.Fatalf("persona work %v", p)
+	}
 	e.want("DELETE", "/agents/nobody", nil, http.StatusNotFound)
 
 	// Open tickets block the delete.
@@ -61,5 +65,8 @@ func TestDeleteAgentArchivesAndKeepsHistory(t *testing.T) {
 	}
 
 	// The handle is free again.
-	e.want("POST", "/agents", map[string]any{"handle": "gone", "name": "Gone again"}, http.StatusCreated)
+	var taken bool
+	if err := e.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM agents WHERE handle='gone' AND archived_at IS NULL)`).Scan(&taken); err != nil || taken {
+		t.Fatalf("handle still taken: %v %v", taken, err)
+	}
 }

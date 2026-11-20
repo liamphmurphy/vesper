@@ -22,7 +22,7 @@ test("one Personas list: who chats and who works, and a persona's work from its 
   await page.getByRole("radiogroup", { name: "Show personas" }).getByRole("radio", { name: /^All/ }).click();
   await expect(rows).toHaveCount(3);
   const scout = rows.filter({ hasText: "Scout" });
-  await expect(scout).toContainText("Helps on runs");
+  await expect(scout).toContainText("Chat");
   await expect(scout).toContainText("not in chat list");
   await expect(rows.filter({ hasText: "Hackerman" })).toContainText("Chat · Codes");
 
