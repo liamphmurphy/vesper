@@ -27,7 +27,39 @@ import (
 )
 
 func (s *Server) customApps() *customapps.Service {
-	return &customapps.Service{Pool: s.Pool, Secrets: s.userSecrets(), Media: s.mediaDownloads()}
+	return &customapps.Service{Pool: s.Pool, Secrets: s.userSecrets(), Media: s.mediaDownloads(), Nix: s.nixRunner()}
+}
+
+// CustomApps returns the custom apps service wired with this server's media
+// downloader and Nix runner.
+func (s *Server) CustomApps() *customapps.Service {
+	return s.customApps()
+}
+
+// CloseCustomApps stops any running background media downloads or Nix package
+// jobs created for custom apps and waits for them to record their final state.
+func (s *Server) CloseCustomApps() {
+	if s.customAppMedia != nil {
+		s.customAppMedia.Close()
+	}
+	if s.customAppNix != nil {
+		s.customAppNix.Close()
+	}
+}
+
+func (s *Server) nixRunner() *customapps.Nix {
+	s.customAppNixOnce.Do(func() {
+		if s.Pool == nil {
+			return
+		}
+		s.customAppNix = &customapps.Nix{
+			Pool:           s.Pool,
+			ScratchDir:     s.CustomAppNixScratchDir,
+			Resolve:        s.CustomAppNixResolve,
+			DisableSandbox: s.CustomAppNixDisableSandbox,
+		}
+	})
+	return s.customAppNix
 }
 
 // mediaDownloads is the process-wide video downloader for custom apps, or nil
@@ -75,6 +107,17 @@ func customAppManifestOut(m customapps.Manifest) api.CustomAppManifest {
 		caps := customAppCapsOut(m.RequestedCapabilities)
 		out.RequestedCapabilities = &caps
 	}
+	if len(m.RequestedMounts) > 0 {
+		rm := make([]api.CustomAppMountRequest, len(m.RequestedMounts))
+		for i, reqM := range m.RequestedMounts {
+			rm[i] = api.CustomAppMountRequest{Name: reqM.Name}
+			if reqM.Description != "" {
+				d := reqM.Description
+				rm[i].Description = &d
+			}
+		}
+		out.RequestedMounts = &rm
+	}
 	return out
 }
 
@@ -104,7 +147,43 @@ func customAppManifestIn(in *api.CustomAppManifest) *customapps.Manifest {
 	if in.RequestedCapabilities != nil {
 		m.RequestedCapabilities = customAppCapsIn(in.RequestedCapabilities)
 	}
+	if in.RequestedMounts != nil {
+		m.RequestedMounts = make([]customapps.MountRequest, len(*in.RequestedMounts))
+		for i, reqM := range *in.RequestedMounts {
+			m.RequestedMounts[i] = customapps.MountRequest{Name: reqM.Name}
+			if reqM.Description != nil {
+				m.RequestedMounts[i].Description = *reqM.Description
+			}
+		}
+	}
 	return m
+}
+
+func customAppMountsOut(m customapps.Mounts) *api.CustomAppMounts {
+	out := make(api.CustomAppMounts, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return &out
+}
+
+func customAppMountsIn(in *api.CustomAppMounts) customapps.Mounts {
+	if in == nil {
+		return nil
+	}
+	out := make(customapps.Mounts, len(*in))
+	for k, v := range *in {
+		out[k] = v
+	}
+	return out
+}
+
+func customAppMountsPtrIn(in *api.CustomAppMounts) *customapps.Mounts {
+	if in == nil {
+		return nil
+	}
+	out := customAppMountsIn(in)
+	return &out
 }
 
 func customAppCapsOut(c customapps.Capabilities) api.CustomAppCapabilities {
@@ -156,6 +235,7 @@ func customAppSummaryOut(a customapps.AppSummary) api.CustomAppSummary {
 		CurrentSeq:   int(a.CurrentSeq),
 		Manifest:     customAppManifestOut(a.Manifest),
 		Capabilities: customAppCapsOut(a.Capabilities),
+		Mounts:       customAppMountsOut(a.Mounts),
 		DbSizeBytes:  int(a.DBSizeBytes),
 		HasMcpServer: a.HasMCPServer,
 		McpTools:     customAppMCPToolsOut(a.MCPTools),
@@ -205,6 +285,7 @@ func customAppDetailOut(d customapps.AppDetail) api.CustomAppDetail {
 		CurrentSeq:   int(d.CurrentSeq),
 		Manifest:     customAppManifestOut(d.Manifest),
 		Capabilities: customAppCapsOut(d.Capabilities),
+		Mounts:       customAppMountsOut(d.Mounts),
 		DbSizeBytes:  int(d.DBSizeBytes),
 		HasMcpServer: d.HasMCPServer,
 		McpTools:     customAppMCPToolsOut(d.MCPTools),
@@ -237,6 +318,7 @@ func (s *Server) CreateCustomApp(ctx context.Context, req api.CreateCustomAppReq
 		Name:         b.Name,
 		Manifest:     customAppManifestIn(b.Manifest),
 		Capabilities: customAppCapsIn(b.Capabilities),
+		Mounts:       customAppMountsIn(b.Mounts),
 		AuthorType:   "user",
 	}
 	if b.Description != nil {
@@ -279,6 +361,7 @@ func (s *Server) UpdateCustomApp(ctx context.Context, req api.UpdateCustomAppReq
 		Icon:         b.Icon,
 		Manifest:     customAppManifestIn(b.Manifest),
 		Capabilities: customAppCapsIn(b.Capabilities),
+		Mounts:       customAppMountsPtrIn(b.Mounts),
 		AuthorType:   "user",
 	}
 	if b.Files != nil {

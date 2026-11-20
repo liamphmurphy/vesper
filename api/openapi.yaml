@@ -10443,6 +10443,15 @@ components:
     CustomAppCapabilities:
       type: object
       additionalProperties: { $ref: "#/components/schemas/CustomAppCapabilityMode" }
+    CustomAppMountRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        description: { type: string }
+    CustomAppMounts:
+      type: object
+      additionalProperties: { type: string }
     CustomAppMCPTool:
       type: object
       required: [name, description, input_schema]
@@ -10460,6 +10469,7 @@ components:
         instructions: { type: string }
         nav: { type: array, items: { $ref: "#/components/schemas/CustomAppNavItem" } }
         requested_capabilities: { $ref: "#/components/schemas/CustomAppCapabilities" }
+        requested_mounts: { type: array, items: { $ref: "#/components/schemas/CustomAppMountRequest" } }
     CustomAppSummary:
       type: object
       required: [id, slug, name, description, icon, current_seq, manifest, capabilities, db_size_bytes, has_mcp_server, created_at, updated_at]
@@ -10473,6 +10483,7 @@ components:
         current_seq: { type: integer }
         manifest: { $ref: "#/components/schemas/CustomAppManifest" }
         capabilities: { $ref: "#/components/schemas/CustomAppCapabilities" }
+        mounts: { $ref: "#/components/schemas/CustomAppMounts" }
         db_size_bytes: { type: integer }
         has_mcp_server: { type: boolean }
         mcp_tools: { type: array, items: { $ref: "#/components/schemas/CustomAppMCPTool" } }
@@ -10520,6 +10531,7 @@ components:
         current_seq: { type: integer }
         manifest: { $ref: "#/components/schemas/CustomAppManifest" }
         capabilities: { $ref: "#/components/schemas/CustomAppCapabilities" }
+        mounts: { $ref: "#/components/schemas/CustomAppMounts" }
         db_size_bytes: { type: integer }
         has_mcp_server: { type: boolean }
         mcp_tools: { type: array, items: { $ref: "#/components/schemas/CustomAppMCPTool" } }
@@ -10540,6 +10552,7 @@ components:
         manifest: { $ref: "#/components/schemas/CustomAppManifest" }
         files: { type: object, additionalProperties: { type: string } }
         capabilities: { $ref: "#/components/schemas/CustomAppCapabilities" }
+        mounts: { $ref: "#/components/schemas/CustomAppMounts" }
         note: { type: string }
     UpdateCustomApp:
       type: object
@@ -10552,6 +10565,7 @@ components:
         replace_files: { type: boolean }
         remove_files: { type: array, items: { type: string } }
         capabilities: { $ref: "#/components/schemas/CustomAppCapabilities" }
+        mounts: { $ref: "#/components/schemas/CustomAppMounts" }
         note: { type: string }
         restore_seq: { type: integer }
     CustomAppInvokeRequest:

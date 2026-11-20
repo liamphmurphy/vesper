@@ -3,6 +3,7 @@ package agentapi
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -37,17 +38,18 @@ func listCustomApps(ctx context.Context, d Deps, c agents.Caller, _ ListCustomAp
 	items := make([]map[string]any, len(apps))
 	for i, a := range apps {
 		items[i] = map[string]any{
-			"slug":           a.Slug,
-			"name":           a.Name,
-			"description":    a.Description,
-			"icon":           a.Icon,
-			"version":        a.CurrentSeq,
-			"tool_scope":     a.Manifest.ToolScope,
-			"has_mcp_server": a.HasMCPServer,
-			"mcp_tools":      a.MCPTools,
-			"capabilities":   a.Capabilities,
-			"db_size_bytes":  a.DBSizeBytes,
-			"url":            "/apps/" + a.Slug,
+			"slug":              a.Slug,
+			"name":              a.Name,
+			"description":       a.Description,
+			"icon":              a.Icon,
+			"version":           a.CurrentSeq,
+			"tool_scope":        a.Manifest.ToolScope,
+			"has_mcp_server":    a.HasMCPServer,
+			"mcp_tools":         a.MCPTools,
+			"capabilities":      a.Capabilities,
+			"configured_mounts": configuredMounts(a.Mounts),
+			"db_size_bytes":     a.DBSizeBytes,
+			"url":               "/apps/" + a.Slug,
 		}
 	}
 	return map[string]any{"apps": items}, nil
@@ -85,21 +87,22 @@ func getCustomApp(ctx context.Context, d Deps, c agents.Caller, in GetCustomAppI
 		return nil, err
 	}
 	return map[string]any{
-		"slug":           app.Slug,
-		"name":           app.Name,
-		"description":    app.Description,
-		"icon":           app.Icon,
-		"version":        app.CurrentSeq,
-		"manifest":       app.Manifest,
-		"capabilities":   app.Capabilities,
-		"has_mcp_server": app.HasMCPServer,
-		"mcp_tools":      app.MCPTools,
-		"db_size_bytes":  app.DBSizeBytes,
-		"file_sizes":     sizes,
-		"files":          files,
-		"versions":       app.Versions,
-		"schema":         app.Schema,
-		"url":            "/apps/" + app.Slug,
+		"slug":              app.Slug,
+		"name":              app.Name,
+		"description":       app.Description,
+		"icon":              app.Icon,
+		"version":           app.CurrentSeq,
+		"manifest":          app.Manifest,
+		"capabilities":      app.Capabilities,
+		"configured_mounts": configuredMounts(app.Mounts),
+		"has_mcp_server":    app.HasMCPServer,
+		"mcp_tools":         app.MCPTools,
+		"db_size_bytes":     app.DBSizeBytes,
+		"file_sizes":        sizes,
+		"files":             files,
+		"versions":          app.Versions,
+		"schema":            app.Schema,
+		"url":               "/apps/" + app.Slug,
 	}, nil
 }
 
@@ -121,6 +124,17 @@ func selectAppFiles(all map[string]string, want []string, omit bool) (map[string
 		out[name] = content
 	}
 	return out, nil
+}
+
+func configuredMounts(m customapps.Mounts) []string {
+	names := make([]string, 0, len(m))
+	for k, v := range m {
+		if strings.TrimSpace(v) != "" {
+			names = append(names, k)
+		}
+	}
+	slices.Sort(names)
+	return names
 }
 
 type CreateCustomAppIn struct {
