@@ -44,6 +44,10 @@ const (
 	macStderrKeep    = 8 << 10
 )
 
+// macPingTimeout bounds the liveness check before a call reuses a VM. A
+// healthy agent answers over vsock in milliseconds.
+const macPingTimeout = 5 * time.Second
+
 var errMacClosed = errors.New("mac: macOS guests are shutting down")
 
 // MacOSGuests runs the macOS guest VMs that `mac` in a run's Linux VM builds
@@ -199,7 +203,32 @@ func (g *MacOSGuests) acquire(ctx context.Context, runID string, status func(gue
 				v.idle = nil
 			}
 			g.mu.Unlock()
-			return v, nil
+			pingErr := g.ping(ctx, v)
+			if pingErr == nil {
+				return v, nil
+			}
+			if ctx.Err() != nil {
+				g.release(v)
+				return nil, ctx.Err()
+			}
+			// The guest went away (shut down, crashed, or its agent stopped
+			// listening) after an earlier call. Replace it rather than fail
+			// every call until the idle timer reaps it.
+			g.mu.Lock()
+			if g.vms[runID] != v || v.active > 1 {
+				// Another call is still using it (or already replaced it);
+				// don't stop a VM out from under that call.
+				g.mu.Unlock()
+				g.release(v)
+				return nil, fmt.Errorf("mac: this run's macOS VM stopped answering: %w", pingErr)
+			}
+			v.active--
+			g.logger().Warn("mac: macOS VM stopped answering; booting a new one", "run", runID, "err", pingErr, "console", v.vm.ConsoleOutput())
+			g.evictLocked(v)
+			g.mu.Unlock()
+			g.stopEvicted(v)
+			g.mu.Lock()
+			continue
 		}
 		if len(g.vms)+g.stopping < g.maxVMs() {
 			v := &macVM{runID: runID, dir: dir, ready: make(chan struct{})}
@@ -315,6 +344,16 @@ func (g *MacOSGuests) boot(ctx context.Context, dir string) (microvm.VM, int, in
 		return nil, 0, 0, err
 	}
 	return vm, uid, gid, nil
+}
+
+// ping checks that v's guest agent still answers. A booted VM can stop
+// answering between calls, and the host isn't told when a guest shuts itself
+// down or its agent stops listening.
+func (g *MacOSGuests) ping(ctx context.Context, v *macVM) error {
+	pctx, cancel := context.WithTimeout(ctx, macPingTimeout)
+	defer cancel()
+	_, err := v.vm.Client().Ping(pctx)
+	return err
 }
 
 // cloneOnce copies src to dst unless dst exists, never leaving half a copy.

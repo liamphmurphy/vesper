@@ -76,7 +76,16 @@ func main() {
 		<-ctx.Done()
 		_ = ln.Close()
 	}()
-	srv.serve(ctx, ln)
+	if runtime.GOOS == "darwin" {
+		// launchd (KeepAlive) restarts the agent, which beats a listener
+		// that refuses every host connection while the process looks alive.
+		srv.maxAcceptFailures = 20
+	}
+	if err := srv.serve(ctx, ln); err != nil {
+		log.Error("rpc listener broken; exiting for a restart", "err", err)
+		_ = ln.Close()
+		os.Exit(1)
+	}
 	if srv.shutdownRequested() && runtime.GOOS == "linux" && os.Getpid() == 1 {
 		powerOffGuest()
 	}

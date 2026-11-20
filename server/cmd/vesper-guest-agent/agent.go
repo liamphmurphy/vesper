@@ -86,6 +86,9 @@ type agentServer struct {
 	wg        sync.WaitGroup
 	closeOnce sync.Once
 	closed    chan struct{}
+	// maxAcceptFailures, when positive, makes serve give up after that many
+	// Accept errors in a row (see serve).
+	maxAcceptFailures int
 }
 
 func newAgentServer(log *slog.Logger) *agentServer {
@@ -104,15 +107,36 @@ func (s *agentServer) close() {
 	s.closeOnce.Do(func() { close(s.closed) })
 }
 
-func (s *agentServer) serve(ctx context.Context, ln net.Listener) {
+// acceptBackoff spaces out retries when Accept keeps failing, so a broken
+// listener doesn't spin a CPU.
+const acceptBackoff = 100 * time.Millisecond
+
+// serve accepts host connections until ctx ends or ln closes. With
+// maxAcceptFailures set, that many Accept errors in a row return an error:
+// the listener is broken and the agent should exit so its supervisor (launchd
+// in a macOS guest) starts a fresh one. As PID 1 in a Linux guest there's no
+// supervisor, so there it keeps retrying.
+func (s *agentServer) serve(ctx context.Context, ln net.Listener) error {
+	failures := 0
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
-				return
+				return nil
+			}
+			failures++
+			s.log.Warn("accept failed", "err", err, "in_a_row", failures)
+			if s.maxAcceptFailures > 0 && failures >= s.maxAcceptFailures {
+				return fmt.Errorf("accept failed %d times in a row: %w", failures, err)
+			}
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(acceptBackoff):
 			}
 			continue
 		}
+		failures = 0
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
