@@ -76,8 +76,11 @@ test("theater mode folds the shell's sidebar and gives it back", async ({ page }
   await frame.locator("#play").click();
   const player = page.getByTestId("custom-app-player");
 
-  await player.getByRole("button", { name: /^Theater mode/ }).click();
+  const theaterButton = player.getByRole("button", { name: "Theater", exact: true });
+  await expect(theaterButton).toHaveAttribute("aria-pressed", "false");
+  await theaterButton.click();
   await expect(player).toHaveAttribute("data-theater", "true");
+  await expect(theaterButton).toHaveAttribute("aria-pressed", "true");
   await expect.poll(() => sidebarMessages(page)).toEqual([true]);
   await expect.poll(() => playerStates(page)).toContainEqual({ open: true, theater: true });
 
@@ -99,4 +102,28 @@ test("an app can open the player straight into theater, and closing restores the
   await player.getByRole("button", { name: /Close video player/ }).click();
   await expect(player).toHaveCount(0);
   await expect.poll(() => sidebarMessages(page)).toEqual([true, false]);
+});
+
+test("the player doesn't clip its video, and T leaves a fullscreen video alone", async ({ page }) => {
+  const frame = await open(page);
+  await frame.locator("#play").click();
+  const player = page.getByTestId("custom-app-player");
+  const embed = player.locator("iframe");
+  await expect(embed).toHaveCount(1);
+
+  // WebKit can draw a fullscreen iframe or video inside a clipping ancestor as a black screen.
+  const clipping = await embed.evaluate((el) => {
+    const out: string[] = [];
+    for (let n = el.parentElement; n && n.dataset.testid !== "custom-app-player"; n = n.parentElement) {
+      const cs = getComputedStyle(n);
+      if (cs.overflow !== "visible" || cs.borderTopLeftRadius !== "0px") out.push(`${n.className}: ${cs.overflow} ${cs.borderTopLeftRadius}`);
+    }
+    return out;
+  });
+  expect(clipping).toEqual([]);
+
+  await embed.evaluate((el) => el.requestFullscreen());
+  await expect.poll(() => page.evaluate(() => !!document.fullscreenElement)).toBe(true);
+  await page.keyboard.press("t");
+  await expect(player).toHaveAttribute("data-theater", "false");
 });

@@ -28,10 +28,11 @@ export function CustomAppPlayerStage({
   onClose: () => void;
 }) {
   // Esc leaves theater first, then closes; T toggles theater. Keys pressed inside the app's frame or
-  // the player's own iframe never reach this window, so they can't trigger it by accident.
+  // the player's own iframe never reach this window, so they can't trigger it by accident. While the
+  // video is fullscreen the keys belong to it.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.metaKey || e.ctrlKey || e.altKey || isTyping(e.target) || document.querySelector('[role="dialog"]')) return;
+      if (e.metaKey || e.ctrlKey || e.altKey || isTyping(e.target) || document.fullscreenElement || document.querySelector('[role="dialog"]')) return;
       if (e.key === "Escape") {
         e.preventDefault();
         if (theater) onTheaterChange(false);
@@ -52,7 +53,9 @@ export function CustomAppPlayerStage({
   }, [video.embedUrl]);
 
   // The player keeps 16:9 and fits the height left for it: most of the window in theater, about
-  // half of it otherwise, so the app's list stays in view below.
+  // half of it otherwise, so the app's list stays in view below. Its box doesn't clip (no
+  // overflow-hidden or rounded corners): WebKit can draw a fullscreen iframe or video inside a
+  // clipping ancestor as a black screen.
   const maxHeight = theater ? "calc(100dvh - 9rem)" : "56dvh";
 
   return (
@@ -66,7 +69,7 @@ export function CustomAppPlayerStage({
       <div className={cx("mx-auto flex w-full flex-col", !theater && "max-w-[1280px]")}>
         <div className="flex justify-center bg-black">
           <div
-            className={cx("relative aspect-video w-full overflow-hidden bg-black", !theater && "rounded-lg")}
+            className="relative aspect-video w-full bg-black"
             style={{ maxWidth: `calc(${maxHeight} * 16 / 9)` }}
           >
             {video.provider === "local" ? (
@@ -106,12 +109,19 @@ export function CustomAppPlayerStage({
               {video.provider === "youtube" ? "Open on YouTube" : "Open on Twitch"}
             </a>
           )}
-          <IconButton
-            icon={theater ? "shrink" : "expand"}
-            label={theater ? "Exit theater mode (T)" : "Theater mode (T)"}
+          <button
+            type="button"
             aria-pressed={theater}
+            title={theater ? "Leave theater mode (T)" : "Theater mode: wide player, sidebar hidden (T)"}
             onClick={() => onTheaterChange(!theater)}
-          />
+            className={cx(
+              "inline-flex h-7 flex-none items-center gap-1.5 rounded-full border px-3 text-12 font-medium transition-colors",
+              theater ? "border-accent bg-accent-soft text-fg" : "border-border-strong text-fg-secondary hover:bg-hover hover:text-fg",
+            )}
+          >
+            <Icon name="play" size={13} />
+            Theater
+          </button>
           <IconButton icon="x" label="Close video player (Esc)" onClick={onClose} />
         </div>
       </div>
