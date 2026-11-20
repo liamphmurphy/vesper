@@ -43,6 +43,18 @@ public enum BackupExporter {
         return (url, http)
     }
 
+    public static func responseIsEncrypted(_ response: HTTPURLResponse) -> Bool {
+        if let hdr = response.value(forHTTPHeaderField: "X-Vesper-Backup-Encrypted"),
+           hdr.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "true" {
+            return true
+        }
+        if let cd = response.value(forHTTPHeaderField: "Content-Disposition"),
+           cd.lowercased().contains(".vesper.enc") {
+            return true
+        }
+        return false
+    }
+
     /// Downloads GET /api/v1/instance/export to a temporary file, sets mode 0600, moves it straight
     /// into `folder` without staging a `.part` file inside the destination (which can trip cloud
     /// sync daemons such as iCloud Drive), then deletes Vesper's own exports beyond `keep`.
@@ -56,17 +68,19 @@ public enum BackupExporter {
             throw BackupImportError("The export folder isn't a folder.")
         }
         let folderURL = URL(fileURLWithPath: folder, isDirectory: true)
-        let final = folderURL.appendingPathComponent(Backups.exportFileName(now))
         var request = URLRequest(url: try client.makeURL("/api/v1/instance/export"))
         request.httpMethod = "GET"
         client.authorize(&request)
         let fm = FileManager.default
+        let final: URL
         do {
             let (tmp, response) = try await download(request)
             defer { try? fm.removeItem(at: tmp) }
             guard (200..<300).contains(response.statusCode) else {
                 throw BackupImportError("The server answered \(response.statusCode).")
             }
+            let encrypted = responseIsEncrypted(response)
+            final = folderURL.appendingPathComponent(Backups.exportFileName(now, encrypted: encrypted))
             try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tmp.path)
             try? fm.removeItem(at: final)
             try fm.moveItem(at: tmp, to: final)
@@ -77,6 +91,26 @@ public enum BackupExporter {
         let names = (try? fm.contentsOfDirectory(atPath: folder)) ?? []
         for name in Backups.exportsToPrune(names, keep: keep) { try? fm.removeItem(at: folderURL.appendingPathComponent(name)) }
         return final
+    }
+}
+
+public enum BackupEncryptionAPI {
+    public static func status(client: APIClient) async throws -> BackupEncryptionStatus {
+        try await client.get("/api/v1/instance/backup-encryption", as: BackupEncryptionStatus.self)
+    }
+
+    public static func setPassword(client: APIClient, password: String) async throws -> BackupEncryptionStatus {
+        let body = try JSONEncoder().encode(["password": password])
+        let data = try await client.request("PUT", "/api/v1/instance/backup-encryption", body: body)
+        do {
+            return try JSONDecoder().decode(BackupEncryptionStatus.self, from: data)
+        } catch {
+            throw APIError.decoding("\(error)")
+        }
+    }
+
+    public static func clearPassword(client: APIClient) async throws {
+        _ = try await client.request("DELETE", "/api/v1/instance/backup-encryption")
     }
 }
 

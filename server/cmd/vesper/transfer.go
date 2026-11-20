@@ -10,15 +10,39 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/liamphmurphy/vesper/server/internal/blob"
 	"github.com/liamphmurphy/vesper/server/internal/config"
 	"github.com/liamphmurphy/vesper/server/internal/db"
+	"github.com/liamphmurphy/vesper/server/internal/secrets"
+	"github.com/liamphmurphy/vesper/server/internal/store"
 	"github.com/liamphmurphy/vesper/server/internal/transfer"
 )
+
+func readBackupPassword(passwordFile string) (string, error) {
+	if passwordFile != "" {
+		raw, err := os.ReadFile(passwordFile)
+		if err != nil {
+			return "", fmt.Errorf("read backup password file: %w", err)
+		}
+		pw := string(raw)
+		if strings.HasSuffix(pw, "\r\n") {
+			pw = strings.TrimSuffix(pw, "\r\n")
+		} else {
+			pw = strings.TrimSuffix(pw, "\n")
+		}
+		if pw == "" {
+			return "", errors.New("backup password file is empty")
+		}
+		return pw, nil
+	}
+	return os.Getenv("VESPER_BACKUP_PASSWORD"), nil
+}
 
 // exportData writes the whole instance (every table, every stored object) to
 // one archive. It reads the database and object store directly, like
@@ -26,11 +50,20 @@ import (
 func exportData(ctx context.Context, log *slog.Logger, args []string) error {
 	fs := flag.NewFlagSet("export", flag.ContinueOnError)
 	out := fs.String("o", "", `archive file to write, or "-" for stdout (required)`)
+	passwordFile := fs.String("password-file", "", "read backup encryption password from FILE (defaults to VESPER_BACKUP_PASSWORD)")
+	plaintext := fs.Bool("plaintext", false, "write an unencrypted archive even if backup encryption is enabled")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *out == "" || fs.NArg() != 0 {
-		return errors.New("usage: vesper export -o FILE|-")
+		return errors.New("usage: vesper export [-password-file FILE | -plaintext] -o FILE|-")
+	}
+	password, err := readBackupPassword(*passwordFile)
+	if err != nil {
+		return err
+	}
+	if *plaintext && password != "" {
+		return errors.New("export: -plaintext cannot be combined with a backup password")
 	}
 	cfg, err := config.Load()
 	if err != nil {
@@ -42,10 +75,31 @@ func exportData(ctx context.Context, log *slog.Logger, args []string) error {
 	}
 	defer pool.Close()
 
+	if !*plaintext && password == "" {
+		row, err := store.New(pool).GetAnyBackupEncryption(ctx)
+		if err == nil {
+			box, berr := secrets.NewBox(cfg.SecretsKey)
+			if berr != nil {
+				return fmt.Errorf("export: backup encryption is enabled: %w", berr)
+			}
+			if box == nil {
+				return errors.New("export: backup encryption is enabled; set SECRETS_KEY or pass -plaintext")
+			}
+			pt, oerr := box.Open(row.WorkspaceID, transfer.BackupPasswordScope, row.Nonce, row.Ciphertext)
+			if oerr != nil {
+				return fmt.Errorf("export: stored backup password couldn't be decrypted (%w); check SECRETS_KEY or pass -plaintext", oerr)
+			}
+			password = string(pt)
+			clear(pt)
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+	}
+
 	if *out == "-" {
 		// The archive owns stdout, so progress goes to stderr.
 		log = slog.New(slog.NewJSONHandler(os.Stderr, nil))
-		_, err := exporter(cfg, pool, log).Export(ctx, os.Stdout)
+		_, err := exporter(cfg, pool, log).ExportWithPassword(ctx, os.Stdout, password)
 		return err
 	}
 
@@ -58,7 +112,7 @@ func exportData(ctx context.Context, log *slog.Logger, args []string) error {
 	defer os.Remove(tmp.Name())
 	defer tmp.Close()
 
-	m, err := exporter(cfg, pool, log).Export(ctx, tmp)
+	m, err := exporter(cfg, pool, log).ExportWithPassword(ctx, tmp, password)
 	if err != nil {
 		return err
 	}
@@ -75,7 +129,7 @@ func exportData(ctx context.Context, log *slog.Logger, args []string) error {
 	for _, b := range m.Buckets {
 		objects += len(b.Objects)
 	}
-	log.Info("export written", "file", *out, "tables", len(m.Tables), "buckets", len(m.Buckets), "objects", objects, "schema_version", m.SchemaVersion)
+	log.Info("export written", "file", *out, "tables", len(m.Tables), "buckets", len(m.Buckets), "objects", objects, "schema_version", m.SchemaVersion, "encrypted", password != "")
 	return nil
 }
 
@@ -86,35 +140,66 @@ func exporter(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger) *transfer
 	}
 }
 
-// openArchive opens an archive file, or spools stdin when path is "-": a zip
-// is read from its end, so a pipe has to land in a file first.
-func openArchive(path string) (*zip.ReadCloser, func(), error) {
-	if path != "-" {
-		zr, err := zip.OpenReader(path)
-		if err != nil {
-			return nil, nil, fmt.Errorf("import: open archive: %w", err)
+// openArchive opens an archive file, decrypting it if password-protected, or
+// spools stdin when path is "-": a zip is read from its end, so a pipe has to
+// land in a file first.
+func openArchive(path, password string) (*zip.ReadCloser, func(), error) {
+	var cleanups []func()
+	runCleanups := func() {
+		for i := len(cleanups) - 1; i >= 0; i-- {
+			cleanups[i]()
 		}
-		return zr, func() { zr.Close() }, nil
 	}
-	tmp, err := os.CreateTemp("", "vesper-import-*.zip")
+
+	actualPath := path
+	if path == "-" {
+		tmp, err := os.CreateTemp("", "vesper-import-*")
+		if err != nil {
+			return nil, nil, fmt.Errorf("import: %w", err)
+		}
+		tmpName := tmp.Name()
+		cleanups = append(cleanups, func() { _ = os.Remove(tmpName) })
+		if err := os.Chmod(tmpName, 0o600); err != nil {
+			_ = tmp.Close()
+			runCleanups()
+			return nil, nil, err
+		}
+		if _, err := io.Copy(tmp, os.Stdin); err != nil {
+			_ = tmp.Close()
+			runCleanups()
+			return nil, nil, fmt.Errorf("import: read stdin: %w", err)
+		}
+		if err := tmp.Close(); err != nil {
+			runCleanups()
+			return nil, nil, err
+		}
+		actualPath = tmpName
+	}
+
+	encrypted, err := transfer.IsEncryptedFile(actualPath)
 	if err != nil {
-		return nil, nil, fmt.Errorf("import: %w", err)
-	}
-	cleanup := func() { tmp.Close(); os.Remove(tmp.Name()) }
-	if _, err := io.Copy(tmp, os.Stdin); err != nil {
-		cleanup()
-		return nil, nil, fmt.Errorf("import: read stdin: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		cleanup()
-		return nil, nil, err
-	}
-	zr, err := zip.OpenReader(tmp.Name())
-	if err != nil {
-		cleanup()
+		runCleanups()
 		return nil, nil, fmt.Errorf("import: open archive: %w", err)
 	}
-	return zr, func() { zr.Close(); os.Remove(tmp.Name()) }, nil
+	if encrypted {
+		decPath, decCleanup, err := transfer.DecryptArchiveToTemp(actualPath, password)
+		if err != nil {
+			runCleanups()
+			return nil, nil, err
+		}
+		cleanups = append(cleanups, decCleanup)
+		actualPath = decPath
+	}
+
+	zr, err := zip.OpenReader(actualPath)
+	if err != nil {
+		runCleanups()
+		return nil, nil, fmt.Errorf("import: open archive: %w", err)
+	}
+	return zr, func() {
+		_ = zr.Close()
+		runCleanups()
+	}, nil
 }
 
 // importData loads an archive into this instance. Stop the server first, and
@@ -122,17 +207,22 @@ func openArchive(path string) (*zip.ReadCloser, func(), error) {
 func importData(ctx context.Context, log *slog.Logger, args []string) error {
 	fs := flag.NewFlagSet("import", flag.ContinueOnError)
 	replace := fs.Bool("replace", false, "discard rows the target already has instead of refusing")
+	passwordFile := fs.String("password-file", "", "read backup encryption password from FILE (defaults to VESPER_BACKUP_PASSWORD)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return errors.New("usage: vesper import [--replace] FILE|-")
+		return errors.New("usage: vesper import [--replace] [-password-file FILE] FILE|-")
+	}
+	password, err := readBackupPassword(*passwordFile)
+	if err != nil {
+		return err
 	}
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
-	zr, closeArchive, err := openArchive(fs.Arg(0))
+	zr, closeArchive, err := openArchive(fs.Arg(0), password)
 	if err != nil {
 		return err
 	}

@@ -81,6 +81,12 @@ func (i *Importer) ImportDir(ctx context.Context, dir string) error {
 // InspectArchivePath reads manifest.json from either a Vesper .zip archive
 // (flat or nested under a single top-level directory) or an unpacked export folder.
 func InspectArchivePath(archivePath string) (*Manifest, error) {
+	return InspectArchivePathWithPassword(archivePath, "")
+}
+
+// InspectArchivePathWithPassword reads manifest.json from a plain or
+// password-encrypted Vesper archive, or an unpacked export folder.
+func InspectArchivePathWithPassword(archivePath, password string) (*Manifest, error) {
 	st, err := os.Stat(archivePath)
 	if err != nil {
 		return nil, fmt.Errorf("transfer: inspect %s: %w", archivePath, err)
@@ -103,7 +109,20 @@ func InspectArchivePath(archivePath string) (*Manifest, error) {
 			manifestName: rootFileEntry{root: root, name: manifestName, size: mst.Size()},
 		})
 	}
-	zr, err := zip.OpenReader(archivePath)
+	encrypted, err := IsEncryptedFile(archivePath)
+	if err != nil {
+		return nil, fmt.Errorf("transfer: inspect %s: %w", archivePath, err)
+	}
+	actualPath := archivePath
+	if encrypted {
+		tmpPath, cleanup, err := DecryptArchiveToTemp(archivePath, password)
+		if err != nil {
+			return nil, err
+		}
+		defer cleanup()
+		actualPath = tmpPath
+	}
+	zr, err := zip.OpenReader(actualPath)
 	if err != nil {
 		return nil, fmt.Errorf("transfer: open archive: %w", err)
 	}

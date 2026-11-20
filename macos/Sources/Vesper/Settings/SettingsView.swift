@@ -71,6 +71,12 @@ struct SettingsDetail: View {
     @State private var quickActionsError: String?
     @State private var touchIdMessage: String?
     @State private var exportMessage: String?
+    @State private var editingBackupPassword = false
+    @State private var backupPassword = ""
+    @State private var backupPasswordConfirm = ""
+    @State private var backupPasswordError: String?
+    @State private var backupPasswordMessage: String?
+    @State private var savingBackupPassword = false
     @State private var restartMessage: String?
     @State private var updateMessage: String?
 
@@ -96,6 +102,11 @@ struct SettingsDetail: View {
             }
         }
         .formStyle(.grouped)
+        .task(id: section) {
+            if section == .backups {
+                await aux.refreshBackupEncryption()
+            }
+        }
     }
 
     private func footer(_ text: String) -> some View {
@@ -436,7 +447,7 @@ struct SettingsDetail: View {
         Section {
             Toggle(isOn: bind(\.backups.export.enabled)) {
                 Text("Save an export to a folder on a schedule")
-                Text("A whole-instance export (the same zip as File › Import Backup takes). Secrets in it stay sealed with this Mac's key, so keep the key too if you move it; still, pick a private folder.")
+                Text("A whole-instance export (the same archive File › Import Backup takes). Secrets in it stay sealed with this Mac's key, so keep the key too if you move it; still, pick a private folder.")
                 Text(state.lastExportAt.map { "Last export: \($0.formatted(date: .abbreviated, time: .shortened))." } ?? "No export yet.")
                 if let e = state.lastExportError { Text("Last attempt failed: \(e)").foregroundStyle(.red) }
             }
@@ -462,6 +473,137 @@ struct SettingsDetail: View {
             }
         } header: {
             Text("Scheduled export")
+        }
+        Section {
+            if state.backupEncryptionLoading && state.backupEncryption == nil {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Checking backup encryption…").foregroundStyle(.secondary)
+                }
+            } else if let err = state.backupEncryptionError, state.backupEncryption == nil {
+                LabeledContent {
+                    Button("Retry") { Task { await aux.refreshBackupEncryption() } }
+                } label: {
+                    Text("Couldn't load backup encryption")
+                    Text(err).foregroundStyle(.red)
+                }
+            } else if let enc = state.backupEncryption {
+                if !enc.keyConfigured {
+                    Text("Backup encryption requires SECRETS_KEY to be available in the Vesper stack.")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+                LabeledContent {
+                    if !editingBackupPassword {
+                        if enc.enabled {
+                            HStack(spacing: 8) {
+                                Button("Change Password…") { beginEditingBackupPassword() }
+                                    .disabled(!enc.keyConfigured || savingBackupPassword)
+                                Button("Turn Off") { confirmClearBackupPassword() }
+                                    .disabled(savingBackupPassword)
+                            }
+                        } else {
+                            Button("Set Password…") { beginEditingBackupPassword() }
+                                .disabled(!enc.keyConfigured || savingBackupPassword)
+                        }
+                    }
+                } label: {
+                    Text(enc.enabled ? "Password protection is on" : "Password protection is off")
+                    Text(enc.enabled
+                         ? "Both manual downloads and scheduled exports are encrypted as .vesper.enc archives."
+                         : "Exports currently save as unencrypted .zip archives (secrets inside remain sealed with this Mac's key).")
+                    if let backupPasswordMessage { Text(backupPasswordMessage).foregroundStyle(.secondary) }
+                }
+                if editingBackupPassword {
+                    SecureField("Backup password (8–256 characters)", text: $backupPassword)
+                    SecureField("Confirm password", text: $backupPasswordConfirm)
+                    Text("Applies to both manual downloads and scheduled exports. If you lose this password, encrypted backups cannot be recovered.")
+                        .font(.callout).foregroundStyle(.secondary)
+                    if let backupPasswordError {
+                        Text(backupPasswordError).foregroundStyle(.red).font(.callout)
+                    }
+                    HStack {
+                        Spacer()
+                        Button("Cancel") { cancelEditingBackupPassword() }
+                            .disabled(savingBackupPassword)
+                        Button(savingBackupPassword ? "Saving…" : "Save Password") { saveBackupPassword() }
+                            .disabled(savingBackupPassword || backupPassword.isEmpty || backupPasswordConfirm.isEmpty)
+                    }
+                }
+            } else {
+                LabeledContent {
+                    Button("Refresh") { Task { await aux.refreshBackupEncryption() } }
+                } label: {
+                    Text("Waiting for Vesper…")
+                    Text("Backup encryption settings load once the local stack is running.")
+                }
+            }
+        } header: {
+            Text("Backup encryption")
+        }
+    }
+
+    private func beginEditingBackupPassword() {
+        backupPasswordMessage = nil
+        backupPasswordError = nil
+        backupPassword = ""
+        backupPasswordConfirm = ""
+        editingBackupPassword = true
+    }
+
+    private func cancelEditingBackupPassword() {
+        backupPassword = ""
+        backupPasswordConfirm = ""
+        backupPasswordError = nil
+        editingBackupPassword = false
+    }
+
+    private func saveBackupPassword() {
+        let count = backupPassword.unicodeScalars.count
+        guard count >= 8, count <= 256 else {
+            backupPasswordError = "Use 8 to 256 characters."
+            return
+        }
+        guard backupPassword == backupPasswordConfirm else {
+            backupPasswordError = "The passwords don't match."
+            return
+        }
+        let pw = backupPassword
+        let wasEnabled = state.backupEncryption?.enabled ?? false
+        backupPasswordError = nil
+        savingBackupPassword = true
+        Task {
+            defer { savingBackupPassword = false }
+            if let err = await aux.setBackupEncryption(password: pw) {
+                backupPasswordError = err
+            } else {
+                backupPassword = ""
+                backupPasswordConfirm = ""
+                backupPasswordError = nil
+                editingBackupPassword = false
+                backupPasswordMessage = wasEnabled ? "Backup password updated." : "Backup encryption enabled."
+            }
+        }
+    }
+
+    private func confirmClearBackupPassword() {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Turn off backup encryption?"
+        alert.informativeText = "Future manual and scheduled exports will save as unencrypted .zip archives. Existing encrypted exports stay encrypted."
+        alert.addButton(withTitle: "Turn Off")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        backupPasswordMessage = nil
+        backupPasswordError = nil
+        savingBackupPassword = true
+        Task {
+            defer { savingBackupPassword = false }
+            if let err = await aux.clearBackupEncryption() {
+                backupPasswordError = err
+            } else {
+                cancelEditingBackupPassword()
+                backupPasswordMessage = "Backup encryption turned off."
+            }
         }
     }
 

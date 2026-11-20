@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -28,6 +29,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/secrets"
 	"github.com/liamphmurphy/vesper/server/internal/seed"
 	"github.com/liamphmurphy/vesper/server/internal/store"
+	"github.com/liamphmurphy/vesper/server/internal/testdb"
 	"github.com/liamphmurphy/vesper/server/internal/transfer"
 )
 
@@ -528,4 +530,117 @@ func TestAppImportFinderNestedZipAndSafariUnpackedDir(t *testing.T) {
 
 	verifySource("finder-nested-zip", finderZip)
 	verifySource("safari-unpacked-dir", unpackedDir)
+}
+
+func TestAppImportInspectEncryptedArchive(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	pool := testdb.New(t)
+	if _, err := seed.Run(ctx, pool, seed.Options{Demo: false, UserName: "Enc User", UserEmail: "enc@example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	srcKey := randomKeyBase64(t)
+	blobs := blob.New(config.Blob{Dir: t.TempDir(), ArtifactBucket: "artifacts", Buckets: []string{"artifacts"}})
+	if err := blobs.EnsureBuckets(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	const password = "my-backup-password-123"
+	archivePath := filepath.Join(t.TempDir(), "vesper-export"+transfer.EncryptedExtension)
+	af, err := os.Create(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&transfer.Exporter{
+		Pool:         pool,
+		Blobs:        blobs,
+		AppVersion:   "enc-cli-1.0",
+		SecretsKey:   srcKey,
+		KnownBuckets: []string{"artifacts"},
+		Log:          log,
+	}).ExportWithPassword(ctx, af, password); err != nil {
+		_ = af.Close()
+		t.Fatalf("ExportWithPassword: %v", err)
+	}
+	if err := af.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	inspect := func(args ...string) (appImportInspection, error) {
+		oldOut := os.Stdout
+		pr, pw, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		os.Stdout = pw
+		runErr := runAppImport(ctx, log, args)
+		_ = pw.Close()
+		os.Stdout = oldOut
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, pr)
+		_ = pr.Close()
+		var out appImportInspection
+		if runErr == nil {
+			if uerr := json.Unmarshal(buf.Bytes(), &out); uerr != nil {
+				t.Fatalf("decode inspect JSON (%q): %v", buf.String(), uerr)
+			}
+		}
+		return out, runErr
+	}
+
+	// 1. Inspect without password reports encrypted + needsPassword without failing.
+	t.Setenv("VESPER_BACKUP_PASSWORD", "")
+	t.Setenv("SECRETS_KEY", srcKey)
+	noPw, err := inspect("-inspect", archivePath)
+	if err != nil {
+		t.Fatalf("inspect without password: %v", err)
+	}
+	if !noPw.Encrypted || !noPw.NeedsPassword || noPw.TableCount != 0 {
+		t.Fatalf("unexpected inspect without password: %+v", noPw)
+	}
+
+	// 2. Inspect with wrong password returns ErrWrongPassword.
+	t.Setenv("VESPER_BACKUP_PASSWORD", "wrong-password")
+	if _, err := inspect("-inspect", archivePath); !errors.Is(err, transfer.ErrWrongPassword) {
+		t.Fatalf("wrong password err = %v, want ErrWrongPassword", err)
+	}
+
+	// 3. Inspect with matching password returns manifest metadata and key check.
+	t.Setenv("VESPER_BACKUP_PASSWORD", password)
+	right, err := inspect("-inspect", archivePath)
+	if err != nil {
+		t.Fatalf("inspect with password: %v", err)
+	}
+	if !right.Encrypted || right.NeedsPassword || right.TableCount == 0 || !right.MatchesCurrentKey || right.AppVersion != "enc-cli-1.0" {
+		t.Fatalf("unexpected inspect with password: %+v", right)
+	}
+
+	// 4. Restore without password fails fast before touching dataDir.
+	t.Setenv("VESPER_BACKUP_PASSWORD", "")
+	targetDir := filepath.Join(t.TempDir(), "unused-data-dir")
+	if err := runAppImport(ctx, log, []string{"-data-dir", targetDir, archivePath}); !errors.Is(err, transfer.ErrPasswordRequired) {
+		t.Fatalf("restore without password err = %v, want ErrPasswordRequired", err)
+	}
+	if _, statErr := os.Stat(targetDir); !os.IsNotExist(statErr) {
+		t.Fatalf("expected targetDir not created when password missing, statErr=%v", statErr)
+	}
+
+	// 5. openArchive and readBackupPassword handle -password-file and spaces.
+	pwFile := filepath.Join(t.TempDir(), "pw.txt")
+	if err := os.WriteFile(pwFile, []byte("  space-pw  \n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gotPW, err := readBackupPassword(pwFile)
+	if err != nil || gotPW != "  space-pw  " {
+		t.Fatalf("readBackupPassword = (%q, %v), want %q", gotPW, err, "  space-pw  ")
+	}
+
+	zr, closeArchive, err := openArchive(archivePath, password)
+	if err != nil {
+		t.Fatalf("openArchive encrypted: %v", err)
+	}
+	defer closeArchive()
+	if len(zr.File) == 0 {
+		t.Fatal("openArchive returned empty zip")
+	}
 }

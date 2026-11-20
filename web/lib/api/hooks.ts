@@ -580,6 +580,36 @@ export function useDeleteSecret() {
   });
 }
 
+export function useBackupEncryption() {
+  return useQuery({
+    queryKey: ["backup-encryption"],
+    queryFn: () => unwrap(api.GET("/instance/backup-encryption")),
+    staleTime: 30_000,
+    retry: 1,
+  });
+}
+
+export function useSetBackupEncryption() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (password: string) => unwrap(api.PUT("/instance/backup-encryption", { body: { password } })),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["backup-encryption"] }),
+    // Never retain the plaintext backup password in the mutation cache.
+    gcTime: 0,
+  });
+}
+
+export function useClearBackupEncryption() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const r = await api.DELETE("/instance/backup-encryption");
+      if (!r.response.ok) throw new Error("Couldn't turn off backup encryption");
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["backup-encryption"] }),
+  });
+}
+
 /** A provider sign-in from Settings. Polls while the runner is driving it. */
 export function useSignIn(id: string | null) {
   const qc = useQueryClient();

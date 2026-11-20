@@ -15,6 +15,9 @@ final class AuxState {
     var lastExportAt: Date?
     var lastExportError: String?
     var exporting = false
+    var backupEncryption: BackupEncryptionStatus?
+    var backupEncryptionLoading = false
+    var backupEncryptionError: String?
     var servicesInstalled = false
     var lastUpdateCheckAt: Date?
     var checkingForUpdates = false
@@ -284,6 +287,55 @@ final class AuxWindows {
             state.lastExportError = message
             AppStateFile.update(dataDirectory: dataDirectory) { $0["lastExportError"] = message }
             return .failure(BackupImportError(message))
+        }
+    }
+
+    func refreshBackupEncryption() async {
+        guard let client = client() else {
+            state.backupEncryption = nil
+            state.backupEncryptionError = nil
+            return
+        }
+        state.backupEncryptionLoading = true
+        defer { state.backupEncryptionLoading = false }
+        do {
+            state.backupEncryption = try await BackupEncryptionAPI.status(client: client)
+            state.backupEncryptionError = nil
+        } catch let e as APIError {
+            state.backupEncryptionError = e.userMessage
+        } catch {
+            state.backupEncryptionError = error.localizedDescription
+        }
+    }
+
+    func setBackupEncryption(password: String) async -> String? {
+        guard let client = client() else { return "Vesper isn't ready yet." }
+        do {
+            state.backupEncryption = try await BackupEncryptionAPI.setPassword(client: client, password: password)
+            state.backupEncryptionError = nil
+            return nil
+        } catch let e as APIError {
+            return e.userMessage
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    func clearBackupEncryption() async -> String? {
+        guard let client = client() else { return "Vesper isn't ready yet." }
+        do {
+            try await BackupEncryptionAPI.clearPassword(client: client)
+            state.backupEncryption = BackupEncryptionStatus(
+                enabled: false,
+                keyConfigured: state.backupEncryption?.keyConfigured ?? true,
+                updatedAt: nil
+            )
+            state.backupEncryptionError = nil
+            return nil
+        } catch let e as APIError {
+            return e.userMessage
+        } catch {
+            return error.localizedDescription
         }
     }
 

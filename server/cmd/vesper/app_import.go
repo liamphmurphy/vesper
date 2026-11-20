@@ -32,6 +32,8 @@ type appImportInspection struct {
 	SecretsKeyFingerprint string `json:"secretsKeyFingerprint,omitempty"`
 	EncryptedSecretRows   int64  `json:"encryptedSecretRows"`
 	MatchesCurrentKey     bool   `json:"matchesCurrentKey"`
+	Encrypted             bool   `json:"encrypted,omitempty"`
+	NeedsPassword         bool   `json:"needsPassword,omitempty"`
 }
 
 func runAppImport(ctx context.Context, log *slog.Logger, args []string) error {
@@ -39,15 +41,42 @@ func runAppImport(ctx context.Context, log *slog.Logger, args []string) error {
 	inspectOnly := fs.Bool("inspect", false, "inspect backup archive manifest as JSON and exit")
 	dataDirFlag := fs.String("data-dir", envOr("VESPER_APP_DATA_DIR", defaultAppDataDir()), "persistent Vesper desktop data directory")
 	dropSecrets := fs.Bool("drop-secrets", false, "import archive without SECRETS_KEY and clear stored secret ciphertexts")
+	passwordFile := fs.String("password-file", "", "read backup encryption password from FILE (defaults to VESPER_BACKUP_PASSWORD)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return errors.New("usage: vesper app-import [-inspect] [-data-dir DIR] [-drop-secrets] ARCHIVE.zip|EXPORT_DIR")
+		return errors.New("usage: vesper app-import [-inspect] [-data-dir DIR] [-drop-secrets] [-password-file FILE] ARCHIVE.zip|ARCHIVE.vesper.enc|EXPORT_DIR")
 	}
 	archivePath := fs.Arg(0)
+	password, err := readBackupPassword(*passwordFile)
+	if err != nil {
+		return err
+	}
 
-	manifest, err := transfer.InspectArchivePath(archivePath)
+	encrypted, err := transfer.IsEncryptedFile(archivePath)
+	if err != nil {
+		return fmt.Errorf("transfer: inspect %s: %w", archivePath, err)
+	}
+	effectiveArchive := archivePath
+	if encrypted {
+		if password == "" {
+			if *inspectOnly {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(appImportInspection{Encrypted: true, NeedsPassword: true})
+			}
+			return transfer.ErrPasswordRequired
+		}
+		decPath, decCleanup, err := transfer.DecryptArchiveToTemp(archivePath, password)
+		if err != nil {
+			return err
+		}
+		defer decCleanup()
+		effectiveArchive = decPath
+	}
+
+	manifest, err := transfer.InspectArchivePath(effectiveArchive)
 	if err != nil {
 		return err
 	}
@@ -62,6 +91,7 @@ func runAppImport(ctx context.Context, log *slog.Logger, args []string) error {
 	srcKey := strings.TrimSpace(os.Getenv("SECRETS_KEY"))
 	if *inspectOnly {
 		insp := inspectArchiveManifest(manifest, srcKey)
+		insp.Encrypted = encrypted
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(insp)
@@ -118,7 +148,7 @@ func runAppImport(ctx context.Context, log *slog.Logger, args []string) error {
 	}
 	pgBinDir := resolvePostgresBinDir(exeDir)
 
-	if err := populateStagedImport(ctx, log, pgBinDir, stagePG, stageBlobs, filepath.Join(dataDir, "logs", "postgres-import.log"), srcKey, *dropSecrets, archivePath); err != nil {
+	if err := populateStagedImport(ctx, log, pgBinDir, stagePG, stageBlobs, filepath.Join(dataDir, "logs", "postgres-import.log"), srcKey, *dropSecrets, effectiveArchive); err != nil {
 		return err
 	}
 

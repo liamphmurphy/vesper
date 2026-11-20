@@ -39,11 +39,27 @@ type Exporter struct {
 // blob may be newer than the rows that point to it, and one deleted in between
 // is skipped.
 func (e *Exporter) Export(ctx context.Context, w io.Writer) (*Manifest, error) {
+	return e.ExportWithPassword(ctx, w, "")
+}
+
+// ExportWithPassword streams the archive to w, encrypting the whole zip stream
+// with password when password is non-empty.
+func (e *Exporter) ExportWithPassword(ctx context.Context, w io.Writer, password string) (*Manifest, error) {
 	log := e.Log
 	if log == nil {
 		log = slog.Default()
 	}
-	zw := zip.NewWriter(w)
+	var ew *EncryptWriter
+	dst := w
+	if password != "" {
+		var err error
+		ew, err = NewEncryptWriter(w, password)
+		if err != nil {
+			return nil, err
+		}
+		dst = ew
+	}
+	zw := zip.NewWriter(dst)
 	m := &Manifest{
 		Format:                FormatVersion,
 		ExportedAt:            time.Now().UTC(),
@@ -69,6 +85,11 @@ func (e *Exporter) Export(ctx context.Context, w io.Writer) (*Manifest, error) {
 	}
 	if err := zw.Close(); err != nil {
 		return nil, fmt.Errorf("transfer: finish archive: %w", err)
+	}
+	if ew != nil {
+		if err := ew.Close(); err != nil {
+			return nil, fmt.Errorf("transfer: finish encrypted archive: %w", err)
+		}
 	}
 	return m, nil
 }

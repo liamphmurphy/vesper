@@ -1,12 +1,13 @@
 import AppKit
 import Observation
 import SwiftUI
+import UniformTypeIdentifiers
 import VesperCore
 
-/// File › Import Backup…: pick a .zip, inspect it with `vesper app-import -inspect`, ask which
-/// secrets key to use (or to drop the secrets), then stop the stack, run the import into the data
-/// directory and start the stack again. Progress and errors show in a sheet (desktop main.ts
-/// `vesper:import-backup`, stack.ts).
+/// File › Import Backup…: pick a .zip or .vesper.enc, inspect it with `vesper app-import -inspect`,
+/// prompt for the backup password if encrypted, ask which secrets key to use (or to drop the
+/// secrets), then stop the stack, run the import into the data directory and start the stack again.
+/// Progress and errors show in a sheet (desktop main.ts `vesper:import-backup`, stack.ts).
 @MainActor
 final class ImportBackupFlow {
     private weak var aux: AuxWindows?
@@ -30,9 +31,9 @@ final class ImportBackupFlow {
         NSApp.activate()
         let open = NSOpenPanel()
         open.title = "Import Vesper Backup"
-        open.message = "Choose a Vesper backup (.zip) to restore."
+        open.message = "Choose a Vesper backup (.zip or .vesper.enc) to restore."
         open.prompt = "Choose"
-        open.allowedContentTypes = [.zip]
+        open.allowedContentTypes = [UTType.zip, UTType(filenameExtension: "enc")].compactMap { $0 }
         open.canChooseDirectories = false
         open.allowsMultipleSelection = false
         guard open.runModal() == .OK, let url = open.url else { return }
@@ -90,12 +91,14 @@ final class ImportBackupFlow {
 @MainActor
 @Observable
 final class ImportModel {
-    enum Phase: Equatable { case inspecting, review, working(String), failed(String), done }
+    enum Phase: Equatable { case inspecting, password, review, working(String), failed(String), done }
     enum SecretsChoice { case useKey, drop }
 
     let archive: URL
     var phase: Phase = .inspecting
     var inspection: BackupInspection?
+    var backupPassword = ""
+    var passwordError: String?
     var choice: SecretsChoice = .useKey
     var keyText = ""
     var keyError: String?
@@ -127,16 +130,50 @@ final class ImportModel {
 
     func inspect() async {
         do {
-            inspection = try await BackupImport.inspect(vesperBin: resources.vesperBin, archive: archive.path, currentKey: currentKey())
-            phase = .review
+            let pw = backupPassword.isEmpty ? nil : backupPassword
+            let insp = try await BackupImport.inspect(
+                vesperBin: resources.vesperBin, archive: archive.path, currentKey: currentKey(), backupPassword: pw
+            )
+            if insp.needsPassword {
+                passwordError = nil
+                phase = .password
+            } else {
+                inspection = insp
+                phase = .review
+            }
         } catch {
             phase = .failed(error.localizedDescription)
+        }
+    }
+
+    func unlock() async {
+        guard !backupPassword.isEmpty else {
+            passwordError = "Enter the backup password."
+            return
+        }
+        passwordError = nil
+        phase = .working("Unlocking the backup…")
+        do {
+            let insp = try await BackupImport.inspect(
+                vesperBin: resources.vesperBin, archive: archive.path, currentKey: currentKey(), backupPassword: backupPassword
+            )
+            if insp.needsPassword {
+                phase = .password
+                passwordError = "Enter the backup password."
+                return
+            }
+            inspection = insp
+            phase = .review
+        } catch {
+            phase = .password
+            passwordError = error.localizedDescription
         }
     }
 
     func runImport() async {
         guard let app, inspection != nil else { return }
         keyError = nil
+        let pw = backupPassword.isEmpty ? nil : backupPassword
         var key: String?
         var drop = false
         if needsKeyChoice {
@@ -145,7 +182,9 @@ final class ImportModel {
             } else {
                 do { key = try SecretsKeyStore.validate(keyText) } catch { keyError = "That isn't a secrets key. It's 32 bytes, base64 encoded."; return }
                 phase = .working("Checking the key…")
-                let check = try? await BackupImport.inspect(vesperBin: resources.vesperBin, archive: archive.path, currentKey: key)
+                let check = try? await BackupImport.inspect(
+                    vesperBin: resources.vesperBin, archive: archive.path, currentKey: key, backupPassword: pw
+                )
                 guard check?.matchesCurrentKey == true else {
                     phase = .review
                     keyError = "That key doesn't match this backup."
@@ -163,7 +202,8 @@ final class ImportModel {
         do {
             try await BackupImport.run(
                 vesperBin: resources.vesperBin, postgresBinDir: resources.postgresBinDir,
-                dataDirectory: stack.dataDirectory.path, archive: archive.path, secretsKey: key, dropSecrets: drop
+                dataDirectory: stack.dataDirectory.path, archive: archive.path, secretsKey: key, dropSecrets: drop,
+                backupPassword: pw
             )
         } catch {
             phase = .working("Restarting Vesper…")
@@ -203,6 +243,8 @@ struct ImportBackupView: View {
             switch model.phase {
             case .inspecting:
                 progress("Reading the backup…")
+            case .password:
+                passwordPrompt
             case .review:
                 review
             case .working(let text):
@@ -235,6 +277,27 @@ struct ImportBackupView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity)
+    }
+
+    private var passwordPrompt: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Unlock \(model.archive.lastPathComponent)?").font(.headline).lineLimit(2)
+            Text("This backup is encrypted with a backup password. Enter it to read the backup and review what will be imported.")
+                .font(.callout).foregroundStyle(.secondary)
+            SecureField("Backup password", text: $model.backupPassword)
+                .onSubmit { Task { await model.unlock() } }
+            if let e = model.passwordError {
+                Text(e).foregroundStyle(.red).font(.callout)
+            }
+            Spacer()
+            HStack {
+                Spacer()
+                Button("Cancel") { model.finish() }.keyboardShortcut(.cancelAction)
+                Button("Unlock") { Task { await model.unlock() } }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(model.backupPassword.isEmpty)
+            }
+        }
     }
 
     private var review: some View {
