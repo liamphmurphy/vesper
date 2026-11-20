@@ -186,10 +186,23 @@ export const knowledgeKeys = {
   tree: (agent: boolean) => ["knowledge", "tree", agent] as const,
 };
 
+export type UploadedAsset = {
+  id: string;
+  ref: string;
+  url: string;
+  filename?: string;
+  content_type?: string;
+};
+
 export const fetchPages = (q: PageQuery) => call<PageTable>("POST", "/query", q);
 export const fetchPage = (id: string) => call<Page>("GET", `/pages/${id}`);
 export const fetchKnowledgeImages = (q: string, signal: AbortSignal) =>
   call<{ images: { id: string; title: string; ref: string; content_type: string }[] }>("GET", `/assets${qs({ q })}`, undefined, { signal });
+export const uploadKnowledgeAsset = (file: Blob, filename: string, signal?: AbortSignal) =>
+  call<UploadedAsset>("POST", `/assets${qs({ filename })}`, file, {
+    headers: { "Content-Type": "application/octet-stream" },
+    signal,
+  });
 export const resolveLegacy = (path: string) => call<{ id: string; url: string }>("GET", `/legacy${qs({ path })}`);
 
 /** Pages matching a filter, newest first. */

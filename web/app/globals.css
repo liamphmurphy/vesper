@@ -1428,3 +1428,5 @@ details[open]::details-content { height: auto; }
 .kn-block { color: var(--text-tertiary); font-size: 0.85em; }
 .kn-source-hidden { display: none; }
 .kn-inline-preview { display: block; margin: 0.75em 0; }
+.kn-paste-uploading { display: inline-flex; align-items: center; gap: 6px; margin: 0 2px; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text-tertiary); font-size: 12px; line-height: 1.4; }
+.kn-paste-replacing { opacity: 0.5; }
