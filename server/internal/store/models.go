@@ -176,6 +176,13 @@ type ArtifactVersion struct {
 	SourceCanvasVersionID *uuid.UUID
 }
 
+type BackupEncryption struct {
+	WorkspaceID uuid.UUID
+	Nonce       []byte
+	Ciphertext  []byte
+	UpdatedAt   time.Time
+}
+
 type BrowserExtensionToken struct {
 	UserID    uuid.UUID
 	TokenHash []byte

@@ -13,11 +13,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/liamphmurphy/vesper/server/internal/blob"
 	"github.com/liamphmurphy/vesper/server/internal/config"
 	"github.com/liamphmurphy/vesper/server/internal/db"
+	"github.com/liamphmurphy/vesper/server/internal/secrets"
+	"github.com/liamphmurphy/vesper/server/internal/store"
 	"github.com/liamphmurphy/vesper/server/internal/transfer"
 )
 
@@ -71,6 +74,27 @@ func exportData(ctx context.Context, log *slog.Logger, args []string) error {
 		return err
 	}
 	defer pool.Close()
+
+	if !*plaintext && password == "" {
+		row, err := store.New(pool).GetAnyBackupEncryption(ctx)
+		if err == nil {
+			box, berr := secrets.NewBox(cfg.SecretsKey)
+			if berr != nil {
+				return fmt.Errorf("export: backup encryption is enabled: %w", berr)
+			}
+			if box == nil {
+				return errors.New("export: backup encryption is enabled; set SECRETS_KEY or pass -plaintext")
+			}
+			pt, oerr := box.Open(row.WorkspaceID, transfer.BackupPasswordScope, row.Nonce, row.Ciphertext)
+			if oerr != nil {
+				return fmt.Errorf("export: stored backup password couldn't be decrypted (%w); check SECRETS_KEY or pass -plaintext", oerr)
+			}
+			password = string(pt)
+			clear(pt)
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+	}
 
 	if *out == "-" {
 		// The archive owns stdout, so progress goes to stderr.
