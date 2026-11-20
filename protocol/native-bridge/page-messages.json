@@ -807,4 +807,15 @@
       }
     ]
   }
+,
+  {
+    "v": 1,
+    "type": "sidebarHidden",
+    "hidden": true
+  },
+  {
+    "v": 1,
+    "type": "sidebarHidden",
+    "hidden": false
+  }
 ]

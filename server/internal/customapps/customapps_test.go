@@ -73,6 +73,22 @@ export default function App() {
 		t.Fatalf("css = %q", css)
 	}
 
+	// An app can ask for theater mode and hear the docked player's state.
+	js, _, err = Bundle("app.tsx", map[string]string{
+		"app.tsx": `import { useEffect } from "react";
+import { onPlayer, playVideo } from "@vesper/bridge";
+export default function App() {
+  useEffect(() => onPlayer((p) => console.log(p.open, p.theater)), []);
+  return <button onClick={() => playVideo("https://youtu.be/dQw4w9WgXcQ", { title: "Test", theater: true })}>play</button>;
+}`,
+	})
+	if err != nil {
+		t.Fatalf("Bundle onPlayer app: %v", err)
+	}
+	if !strings.Contains(js, "vesper:player") || !strings.Contains(js, "theater: options.theater") {
+		t.Fatalf("bundle missing the player bridge (onPlayer, theater)")
+	}
+
 	if _, _, err := Bundle("app.tsx", map[string]string{"app.tsx": "export default function () { return <div }"}); err == nil || !strings.Contains(err.Error(), "compile error") {
 		t.Fatalf("broken TSX err = %v, want compile error", err)
 	}

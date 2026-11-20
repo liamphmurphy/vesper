@@ -349,7 +349,7 @@ export type BridgeMessage =
   | { channel: "vesper:custom-app"; id: ""; type: "set-nav"; payload: { items: CustomAppNavSpec[]; activeId?: string } }
   | { channel: "vesper:custom-app"; id: ""; type: "ask-dock"; payload: { prompt: string } }
   | { channel: "vesper:custom-app"; id: ""; type: "open-url"; payload: { url: string } }
-  | { channel: "vesper:custom-app"; id: ""; type: "play-video"; payload: { url: string; title?: string } }
+  | { channel: "vesper:custom-app"; id: ""; type: "play-video"; payload: { url: string; title?: string; theater?: boolean } }
   | { channel: "vesper:custom-app"; id: ""; type: "app-error"; payload: { message: string } };
 
 export function parseBridgeMessage(raw: unknown): BridgeMessage | null {
@@ -419,7 +419,7 @@ export function parseBridgeMessage(raw: unknown): BridgeMessage | null {
         channel: "vesper:custom-app",
         id: "",
         type: "play-video",
-        payload: { url, ...(title ? { title } : {}) },
+        payload: { url, ...(title ? { title } : {}), ...(typeof payload.theater === "boolean" ? { theater: payload.theater } : {}) },
       };
     }
     case "app-error": {

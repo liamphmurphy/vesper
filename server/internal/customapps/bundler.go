@@ -638,6 +638,7 @@ let seq = 0;
 const pending = new Map();
 const navListeners = new Set();
 const eventListeners = new Set();
+const playerListeners = new Set();
 
 window.addEventListener("message", (event) => {
   const msg = event && event.data;
@@ -652,6 +653,13 @@ window.addEventListener("message", (event) => {
   if (msg.type === "vesper:nav-select") {
     for (const fn of navListeners) {
       try { fn(msg.id); } catch {}
+    }
+    return;
+  }
+  if (msg.type === "vesper:player") {
+    const state = { open: msg.open === true, theater: msg.theater === true };
+    for (const fn of playerListeners) {
+      try { fn(state); } catch {}
     }
     return;
   }
@@ -711,8 +719,16 @@ export function playVideo(url, opts) {
     payload: {
       url: String(url || ""),
       ...(typeof options.title === "string" && options.title ? { title: options.title } : {}),
+      ...(typeof options.theater === "boolean" ? { theater: options.theater } : {}),
     },
   }, "*");
+}
+
+// onPlayer hears the docked player open, close and enter or leave theater mode:
+// handler({ open, theater }).
+export function onPlayer(handler) {
+  playerListeners.add(handler);
+  return () => playerListeners.delete(handler);
 }
 
 export function onEvent(handler) {

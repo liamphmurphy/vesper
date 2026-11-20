@@ -429,6 +429,8 @@ export type PageMessage =
   | { v: 1; type: "navigator"; model: NavModel | null }
   /** True while the page shows a screen's list in its own fallback column (not yet described). */
   | { v: 1; type: "navigatorFallback"; active: boolean }
+  /** True while a screen wants the whole window, e.g. a video in theater mode: the shell folds its sidebar, then restores it. */
+  | { v: 1; type: "sidebarHidden"; hidden: boolean }
   | { v: 1; type: "toolbar"; items: ToolbarItem[] }
   /**
    * The page's effective color mode, whenever it changes; the shell matches each window's appearance to it.
@@ -528,6 +530,7 @@ const PAGE_TYPES = new Set([
   "shell",
   "navigator",
   "navigatorFallback",
+  "sidebarHidden",
   "toolbar",
   "appearance",
   "confirmApproval",
@@ -586,6 +589,7 @@ function isPaletteRequest(v: unknown): v is CommandPaletteRequest {
 export function isPageMessage(v: unknown): v is PageMessage {
   if (!isObj(v) || v.v !== PROTOCOL_VERSION || typeof v.type !== "string" || !PAGE_TYPES.has(v.type)) return false;
   if (v.type === "inspector") return v.model === null || isObj(v.model);
+  if (v.type === "sidebarHidden") return typeof v.hidden === "boolean";
   if (v.type === "panel.event") {
     return typeof v.tabId === "string" && typeof v.event === "string" && (v.payloadJson === undefined || typeof v.payloadJson === "string");
   }

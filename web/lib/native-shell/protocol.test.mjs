@@ -99,3 +99,9 @@ test("prompt, toast, shortcuts, commandPalette, and quickLook messages validate 
   assert.equal(isNativeCommand({ v: 1, type: "palette.open", request: { path: "/chat", scope: "all" } }), true);
   assert.equal(isNativeCommand({ v: 1, type: "palette.open", request: { path: "relative" } }), false);
 });
+
+test("sidebarHidden needs a boolean", () => {
+  assert.equal(isPageMessage({ v: 1, type: "sidebarHidden", hidden: true }), true);
+  assert.equal(isPageMessage({ v: 1, type: "sidebarHidden", hidden: "yes" }), false);
+  assert.equal(isPageMessage({ v: 1, type: "sidebarHidden" }), false);
+});

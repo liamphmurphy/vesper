@@ -30,6 +30,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     private var lastObservedInspectorTab: ObjectIdentifier?
     private var lastInspectorWidthClass: InspectorWidth?
     private var isAnimatingPinnedWidth = false
+    /// Set while the sidebar is folded because the page asked (theater mode), so only that fold is undone.
+    private var sidebarFoldedForPage = false
     private var toolbarController: ToolbarController?
     private var lastContent: WebContentController
     /// Set when the layout switch emptied and closed this window.
@@ -204,6 +206,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             track({ [weak self] in (self?.tabs.list.active.map { ObjectIdentifier($0) }, self?.state.inspector) }) { [weak self] tabId, model in
                 self?.syncInspectorVisibility(tabId: tabId, model: model)
             }
+            track({ [weak self] in self?.state.sidebarHidden ?? false }) { [weak self] hidden in
+                self?.syncSidebarHidden(hidden)
+            }
         }
     }
 
@@ -305,6 +310,27 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         syncInspectorVisibility(tabId: tabs.list.active.map { ObjectIdentifier($0) }, model: state.inspector)
         if !poppedOut && InspectorLogic.handlesToggleNatively(model: state.inspector, poppedOut: false) {
             send(.inspectorVisibility(open: true))
+        }
+    }
+
+    /// Folds the sidebar while the active tab's page asks for the whole window, and unfolds it after,
+    /// unless the person folded it themselves: a sidebar that was already folded stays folded.
+    private func syncSidebarHidden(_ hidden: Bool) {
+        guard let item = sidebarItem else { return }
+        if hidden {
+            guard !item.isCollapsed else { return }
+            sidebarFoldedForPage = true
+            NSAnimationContext.runAnimationGroup { context in
+                context.allowsImplicitAnimation = true
+                item.animator().isCollapsed = true
+            }
+        } else if sidebarFoldedForPage {
+            sidebarFoldedForPage = false
+            guard item.isCollapsed else { return }
+            NSAnimationContext.runAnimationGroup { context in
+                context.allowsImplicitAnimation = true
+                item.animator().isCollapsed = false
+            }
         }
     }
 

@@ -14,6 +14,8 @@ final class ShellState {
     var pageMode: ColorMode?
     /// True while the page draws a screen's list in its own fallback column.
     var navigatorFallback = false
+    /// The page asked for the sidebar to fold (theater mode); per tab, so switching tabs restores it.
+    var sidebarHidden = false
     var toolbarItems: [ToolbarItem] = []
     var title: String?
     /// The web view's own document title, used until the page sends its `title` message.

@@ -673,6 +673,8 @@ public enum PageMessage: Sendable, Equatable, Decodable {
     case shell(ShellModel)
     case navigator(NavModel?)
     case navigatorFallback(active: Bool)
+    /// True while a screen wants the whole window (a video in theater mode): the sidebar folds, then comes back.
+    case sidebarHidden(Bool)
     case toolbar([ToolbarItem])
     /// background: the page's "#RRGGBB" colour, shown past its edges and behind an unpainted tab.
     case appearance(mode: ColorMode, background: String? = nil)
@@ -692,7 +694,7 @@ public enum PageMessage: Sendable, Equatable, Decodable {
     case quickLook(items: [QuickLookItem], index: Int?)
 
     private enum Keys: String, CodingKey {
-        case v, type, path, area, title, subtitle, model, active, items, requestId, scope, folder, x, y, mode, menu
+        case v, type, path, area, title, subtitle, model, active, hidden, items, requestId, scope, folder, x, y, mode, menu
         case body, confirmLabel, cancelLabel, destructive, background, newTab
         case tabId, event, payloadJson
         case label, value, placeholder, maxLength, id, description, tone, actionLabel, durationMs, request, index
@@ -730,6 +732,8 @@ public enum PageMessage: Sendable, Equatable, Decodable {
             self = .navigator(try c.decodeIfPresent(NavModel.self, forKey: .model))
         case "navigatorFallback":
             self = .navigatorFallback(active: try c.decode(Bool.self, forKey: .active))
+        case "sidebarHidden":
+            self = .sidebarHidden(try c.decode(Bool.self, forKey: .hidden))
         case "toolbar":
             self = .toolbar(try c.decode([ToolbarItem].self, forKey: .items))
         case "appearance":
