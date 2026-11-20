@@ -7,6 +7,7 @@ import { restoreObsidianSyntax } from "./knowledge.ts";
 import {
   KNOWLEDGE_ASSET_LIMIT,
   buildEmbedInsertTransaction,
+  createKnowledgePastePlugin,
   extractClipboardFiles,
   pastedKnowledgeFileName,
   uploadedAssetToEmbed,
@@ -328,4 +329,180 @@ test("buildEmbedInsertTransaction escapes code blocks, headings, and inline mark
   assert.equal(toMarkdown(state), `First.\n\n${ref}\n\nSecond.`);
   const afterMid = findTextPos(state.doc, "Second.") + 3;
   assert.equal(state.selection.from, afterMid);
+});
+
+function createPluginHarness(opts, initialMd = "Before.") {
+  const plugin = createKnowledgePastePlugin(opts);
+  const doc = schema.nodeFromJSON(parseDoc(initialMd));
+  let state = EditorState.create({ doc, schema, plugins: [plugin] });
+  const endPos = Math.max(1, state.doc.content.size - 1);
+  state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, endPos)));
+  let dispatches = 0;
+  const view = {
+    get state() {
+      return state;
+    },
+    editable: true,
+    isDestroyed: false,
+    dispatch(tr) {
+      dispatches++;
+      state = state.apply(tr);
+    },
+  };
+  let pluginView = plugin.spec.view(view);
+  return {
+    view,
+    getState: () => state,
+    getDispatches: () => dispatches,
+    decorations: () => plugin.props.decorations(state).find(),
+    reconfigure() {
+      pluginView.destroy?.();
+      pluginView = plugin.spec.view(view);
+    },
+    destroy() {
+      view.isDestroyed = true;
+      pluginView.destroy?.();
+    },
+    paste(clipboardData) {
+      let prevented = false;
+      const handled = plugin.props.handlePaste(view, {
+        clipboardData,
+        preventDefault() {
+          prevented = true;
+        },
+      });
+      return { handled, prevented };
+    },
+  };
+}
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+test("KnowledgePaste inserts embed after mount plugin reconfiguration (TipTap registerPlugin)", async () => {
+  const errors = [];
+  const d = deferred();
+  const h = createPluginHarness({
+    upload: () => d.promise,
+    onError: (title, desc) => errors.push({ title, desc }),
+  });
+
+  // TipTap <EditorContent /> mounts and calls registerPlugin(mobileEnterPlugin),
+  // which destroys and synchronously recreates every plugin view.
+  h.reconfigure();
+
+  const file = new File([new Uint8Array([1, 2, 3])], "image.png", { type: "image/png" });
+  const { handled, prevented } = h.paste(makeClipboard({ files: [file] }));
+  assert.equal(handled, true);
+  assert.equal(prevented, true);
+  assert.equal(h.decorations().length, 1);
+
+  d.resolve({
+    ref: "![[attachment:asset-1/pasted-image-1.png]]",
+    kind: "file",
+    title: "pasted-image-1.png",
+    url: "/api/v1/knowledge/assets/asset-1",
+    content_type: "image/png",
+    available: true,
+  });
+  await new Promise((r) => setTimeout(r, 0));
+
+  assert.deepEqual(errors, []);
+  assert.equal(h.decorations().length, 0);
+  assert.equal(toMarkdown(h.getState()), "Before.\n\n![[attachment:asset-1/pasted-image-1.png]]\n\n");
+});
+
+test("KnowledgePaste keeps in-flight upload alive across mid-upload plugin reconfiguration", async () => {
+  const errors = [];
+  const d = deferred();
+  let capturedSignal;
+  const h = createPluginHarness({
+    upload: (_file, _name, signal) => {
+      capturedSignal = signal;
+      return d.promise;
+    },
+    onError: (title, desc) => errors.push({ title, desc }),
+  });
+
+  const file = new File([new Uint8Array([1, 2, 3])], "image.png", { type: "image/png" });
+  h.paste(makeClipboard({ files: [file] }));
+  assert.equal(h.decorations().length, 1);
+
+  // Reconfiguring plugins mid-upload must not abort the request or drop completion.
+  h.reconfigure();
+  await Promise.resolve();
+  assert.equal(capturedSignal.aborted, false);
+
+  d.resolve({
+    ref: "![[attachment:asset-2/pasted-image-1.png]]",
+    kind: "file",
+    title: "pasted-image-1.png",
+    url: "/api/v1/knowledge/assets/asset-2",
+    content_type: "image/png",
+    available: true,
+  });
+  await new Promise((r) => setTimeout(r, 0));
+
+  assert.deepEqual(errors, []);
+  assert.equal(h.decorations().length, 0);
+  assert.equal(toMarkdown(h.getState()), "Before.\n\n![[attachment:asset-2/pasted-image-1.png]]\n\n");
+});
+
+test("KnowledgePaste aborts in-flight uploads and ignores completion on real editor teardown", async () => {
+  const d = deferred();
+  let capturedSignal;
+  const h = createPluginHarness({
+    upload: (_file, _name, signal) => {
+      capturedSignal = signal;
+      return d.promise;
+    },
+    onError: () => {},
+  });
+
+  const file = new File([new Uint8Array([1, 2, 3])], "image.png", { type: "image/png" });
+  h.paste(makeClipboard({ files: [file] }));
+  const dispatchesBeforeTeardown = h.getDispatches();
+
+  h.destroy();
+  await Promise.resolve();
+  assert.equal(capturedSignal.aborted, true);
+
+  d.resolve({
+    ref: "![[attachment:asset-3/pasted-image-1.png]]",
+    kind: "file",
+    title: "pasted-image-1.png",
+    url: "/api/v1/knowledge/assets/asset-3",
+    content_type: "image/png",
+    available: true,
+  });
+  await new Promise((r) => setTimeout(r, 0));
+
+  assert.equal(h.getDispatches(), dispatchesBeforeTeardown);
+});
+
+test("KnowledgePaste removes uploading placeholder and reports error when upload fails", async () => {
+  const errors = [];
+  const d = deferred();
+  const h = createPluginHarness({
+    upload: () => d.promise,
+    onError: (title, desc) => errors.push({ title, desc }),
+  });
+
+  const file = new File([new Uint8Array([1, 2, 3])], "image.png", { type: "image/png" });
+  h.paste(makeClipboard({ files: [file] }));
+  assert.equal(h.decorations().length, 1);
+
+  d.reject(new Error("storage unavailable"));
+  await new Promise((r) => setTimeout(r, 0));
+
+  assert.equal(h.decorations().length, 0);
+  assert.deepEqual(errors, [{ title: "Couldn’t upload pasted-image-1.png", desc: "storage unavailable" }]);
+  assert.equal(toMarkdown(h.getState()), "Before.");
 });
