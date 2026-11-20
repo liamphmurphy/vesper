@@ -105,6 +105,7 @@ func (c ClaudeCode) RunSession(ctx context.Context, stdin io.WriteCloser, stdout
 
 	p := c.NewParser("")
 	var lastSessionID string
+	var lastCtx int64
 	sentPrompt := false
 
 	sc := bufio.NewScanner(stdout)
@@ -160,6 +161,12 @@ func (c ClaudeCode) RunSession(ctx context.Context, stdin io.WriteCloser, stdout
 			lastSessionID = sid
 			if cb.OnSession != nil {
 				cb.OnSession(sid)
+			}
+		}
+		if ct := p.Result().Usage.ContextTokens; ct > 0 && ct != lastCtx {
+			lastCtx = ct
+			if cb.OnContextTokens != nil {
+				cb.OnContextTokens(ct)
 			}
 		}
 		if env.Type == "result" {

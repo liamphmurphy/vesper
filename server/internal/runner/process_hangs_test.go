@@ -36,7 +36,7 @@ func TestOversizedHarnessLineFailsWithoutBlockingWriter(t *testing.T) {
 			r := &Runner{Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 			done := make(chan error, 1)
 			go func() {
-				_, _, _, err := r.watchSession(ctx, runCtx{run: store.Run{Purpose: "chat"}}, p, harness.ClaudeCode{}.NewParser(""), nil, 0, func(string) {})
+				_, _, _, err := r.runSession(ctx, runCtx{run: store.Run{Purpose: "chat"}}, harness.ClaudeCode{}, p, harness.Workspace{}, harness.Turn{}, nil, 0, nil, nil, false)
 				done <- err
 			}()
 			select {
@@ -93,7 +93,7 @@ func TestWatchdogStopsProcessWhileDatabaseIsBlocked(t *testing.T) {
 				remaining = 1500 * time.Millisecond
 			}
 			go func() {
-				r.watchSession(ctx, runCtx{run: store.Run{ID: uuid.New(), Purpose: "chat"}}, p, harness.ClaudeCode{}.NewParser(""), nil, remaining, func(string) {})
+				r.runSession(ctx, runCtx{run: store.Run{ID: uuid.New(), Purpose: "chat"}}, harness.ClaudeCode{}, p, harness.Workspace{}, harness.Turn{}, nil, remaining, nil, nil, false)
 				close(done)
 			}()
 			deadline := time.Now().Add(4 * time.Second)

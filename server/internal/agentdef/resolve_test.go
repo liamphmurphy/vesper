@@ -158,6 +158,7 @@ func TestEnforcement(t *testing.T) {
 		{"tests:run", Allowed, HarnessCodex, ByHarness},
 		{"tests:run", RequiresApproval, HarnessClaudeCode, ByHarness},
 		{"tests:run", RequiresApproval, HarnessCodex, ByHarness},
+		{"tests:run", RequiresApproval, HarnessAntigravity, ByHarness},
 		{"deploy:staging", Denied, HarnessClaudeCode, ByCredential},
 	}
 	for _, c := range cases {

@@ -23,11 +23,12 @@ type SessionControl interface {
 // protocol control handles, and in-process tool authorization callbacks during
 // a bidirectional harness session.
 type SessionCallbacks struct {
-	OnEvent   func(Event)
-	OnSession func(string)
-	OnRaw     func([]byte)
-	OnControl func(SessionControl)
-	CheckTool PolicyFunc
+	OnEvent         func(Event)
+	OnSession       func(string)
+	OnContextTokens func(int64)
+	OnRaw           func([]byte)
+	OnControl       func(SessionControl)
+	CheckTool       PolicyFunc
 }
 
 // SessionHarness drives a turn over bidirectional stdio pipes.

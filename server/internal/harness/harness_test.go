@@ -174,7 +174,7 @@ func TestCodexInvocation(t *testing.T) {
 	}
 	inv, _ = Codex{}.Invocation(ws, Turn{Spec: spec(), Prompt: "next", SessionID: "th1"})
 	n := len(inv.Argv)
-	if inv.Argv[4] != "resume" || inv.Argv[n-2] != "th1" || inv.Argv[n-1] != "next" || strings.Contains(strings.Join(inv.Argv, " "), "network_access") {
+	if inv.Argv[2] != "resume" || inv.Argv[n-2] != "th1" || inv.Argv[n-1] != "next" || strings.Contains(strings.Join(inv.Argv, " "), "network_access") {
 		t.Fatalf("resume argv %v", inv.Argv)
 	}
 }

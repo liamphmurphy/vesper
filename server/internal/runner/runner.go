@@ -412,6 +412,43 @@ type runCtx struct {
 	isolateGit      bool // see isolatedGitConfig
 }
 
+func (c runCtx) caller() agents.Caller {
+	return agents.Caller{Agent: c.agent, Kind: "run", RunID: &c.run.ID}
+}
+
+func (r *Runner) runsService() *runs.Service {
+	if r.Scheduled != nil {
+		return r.Scheduled
+	}
+	return &runs.Service{Pool: r.Pool}
+}
+
+func (r *Runner) policyCheck(c runCtx) harness.PolicyFunc {
+	return func(ctx context.Context, tool string, input map[string]any) (bool, string) {
+		if r.Pool == nil && r.Scheduled == nil {
+			return false, "Vesper tool policy service unavailable"
+		}
+		d, err := r.runsService().CheckTool(ctx, c.caller(), runs.ToolCheck{Tool: tool, Input: input})
+		if err != nil {
+			return false, "Vesper tool policy check failed"
+		}
+		return d.Decision == "allow", d.Reason
+	}
+}
+
+func (r *Runner) policyCheckWithSpec(c runCtx, spec agentdef.Resolved) harness.PolicyFunc {
+	return func(ctx context.Context, tool string, input map[string]any) (bool, string) {
+		if r.Pool == nil && r.Scheduled == nil {
+			return false, "Vesper tool policy service unavailable"
+		}
+		d, err := r.runsService().CheckToolWithSpec(ctx, c.caller(), spec, runs.ToolCheck{Tool: tool, Input: input})
+		if err != nil {
+			return false, "Vesper tool policy check failed"
+		}
+		return d.Decision == "allow", d.Reason
+	}
+}
+
 func (r *Runner) load(ctx context.Context, runID uuid.UUID) (runCtx, error) {
 	q := r.q()
 	c := runCtx{isolateGit: r.isolatesGit()}
@@ -1112,7 +1149,7 @@ func (r *Runner) start(ctx context.Context, run store.Run) {
 		fail("Couldn't start the workspace setup: " + err.Error())
 		return
 	}
-	stop := r.supervise(ctx, c, proc, ScriptTimeout, nil)
+	stop := r.supervise(ctx, c, proc, ScriptTimeout, nil, nil)
 	output, code, err := captureProcess(ctx, proc)
 	expired, _ := stop()
 	if ctx.Err() != nil {
@@ -1669,9 +1706,16 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 	if len(skills) > 0 {
 		turnSpec.Skills = append(slices.Clone(c.spec.Skills), skills...)
 	}
-	inv, err := h.Invocation(harness.Workspace{
+	sh, ok := h.(harness.SessionHarness)
+	if !ok {
+		r.end(ctx, c, "failed", "harness does not support bidirectional sessions", runs.VerbRunFailed)
+		return
+	}
+	ws := harness.Workspace{
 		DependencyCacheDir: cacheDir, Dir: wsDir, MCPURL: r.Cfg.MCPURL, Token: token, TokenEnv: tokenEnv, ContainerSandbox: r.Backend.Isolates(),
-	}, harness.Turn{Spec: turnSpec, Prompt: prompt, SessionID: session, Images: inputPaths, InlineImages: inputImages})
+	}
+	hTurn := harness.Turn{Spec: turnSpec, Prompt: prompt, SessionID: session, Images: inputPaths, InlineImages: inputImages}
+	inv, err := sh.SessionInvocation(ws, hTurn)
 	if err != nil {
 		r.end(ctx, c, "failed", err.Error(), runs.VerbRunFailed)
 		return
@@ -1786,7 +1830,11 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 		videos, stopVideos = r.startVideoSync(ctx, c, sensitive)
 	}
 	reviewCache, stopReview := r.watchCodeReview(ctx, c, sensitive)
-	res, raw, code, waitErr := r.watch(ctx, c, proc, h.NewParser(c.spec.Model), sensitive, maxRuntime-used)
+	res, raw, code, waitErr := r.runSession(ctx, c, sh, proc, ws, hTurn, sensitive, maxRuntime-used, r.policyCheck(c), func(s string) {
+		qctx, cancel := context.WithTimeout(ctx, controlTimeout)
+		defer cancel()
+		_ = r.q().SetRunSession(qctx, store.SetRunSessionParams{ID: c.run.ID, HarnessSessionID: &s})
+	}, true)
 	stopReview()
 	r.addTiming(c.run.ID, 0, time.Since(harnessStart), 0)
 	r.learnTestEnv(ctx, c, proc)
@@ -1878,57 +1926,44 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 	r.afterTurn(ctx, c.run.ID, res, limitMsg, code, waitErr)
 }
 
-// watch streams a turn's output into events, enforces pause/cancel and the
-// runtime guard, and returns what the parser learned.
-func (r *Runner) watch(ctx context.Context, c runCtx, proc Process, p harness.Parser, env map[string]string, remaining time.Duration) (harness.Result, []byte, int, error) {
-	write := func(wctx context.Context, n int64) {
+// contextWriteEvery bounds how often a streaming turn writes runs.context_tokens.
+const contextWriteEvery = 15 * time.Second
+
+type contextWriter struct {
+	mu      sync.Mutex
+	write   func(int64)
+	last    int64
+	written time.Time
+}
+
+func (w *contextWriter) observe(n int64) {
+	if n <= 0 {
+		return
+	}
+	w.mu.Lock()
+	due := n != w.last && (w.written.IsZero() || time.Since(w.written) >= contextWriteEvery)
+	if due {
+		w.last, w.written = n, time.Now()
+	}
+	w.mu.Unlock()
+	if due {
+		w.write(n)
+	}
+}
+
+// runSession drives a turn over its bidirectional stdio SessionHarness
+// protocol, enforcing CheckTool in-process, streaming redacted events and
+// mid-turn ContextTokens updates, supervising pause/cancel/runtime limits, and
+// draining stderr/stdout cleanly on exit.
+func (r *Runner) runSession(ctx context.Context, c runCtx, sh harness.SessionHarness, proc Process, ws harness.Workspace, turn harness.Turn, env map[string]string, remaining time.Duration, check harness.PolicyFunc, onSession func(string), recordContext bool) (harness.Result, []byte, int, error) {
+	writeContext := func(wctx context.Context, n int64) {
 		qctx, cancel := context.WithTimeout(wctx, controlTimeout)
 		defer cancel()
 		if err := r.q().SetRunContextTokens(qctx, store.SetRunContextTokensParams{ID: c.run.ID, ContextTokens: n}); err != nil {
 			r.Log.Warn("record context tokens", "run", c.run.ID, "err", err)
 		}
 	}
-	cp := &contextParser{Parser: p, write: func(n int64) { write(ctx, n) }}
-	res, raw, code, err := r.watchSession(ctx, c, proc, cp, env, remaining, func(s string) {
-		qctx, cancel := context.WithTimeout(ctx, controlTimeout)
-		defer cancel()
-		_ = r.q().SetRunSession(qctx, store.SetRunSessionParams{ID: c.run.ID, HarnessSessionID: &s})
-	})
-	// At turn end, the final value. A Claude turn that never reached a request
-	// (a rejected resume, an early crash) keeps the last known size; a Codex
-	// turn writes 0, since its context is unknown.
-	if n := res.Usage.ContextTokens; n > 0 || !agentdef.CapsOf(c.spec.Harness).ReportsContextTokens || c.spec.Harness == agentdef.HarnessAntigravity {
-		write(context.WithoutCancel(ctx), n)
-	}
-	return res, raw, code, err
-}
 
-// contextWriteEvery bounds how often a streaming turn writes runs.context_tokens.
-const contextWriteEvery = 15 * time.Second
-
-// contextParser records the main agent's context size while a turn streams,
-// at most once every contextWriteEvery, so MCP handlers can read a recent
-// value mid-turn. Line is called from one goroutine only.
-type contextParser struct {
-	harness.Parser
-	write   func(int64)
-	last    int64
-	written time.Time
-}
-
-func (cp *contextParser) Line(b []byte) []harness.Event {
-	evs := cp.Parser.Line(b)
-	if n := cp.Parser.Result().Usage.ContextTokens; n > 0 && n != cp.last && time.Since(cp.written) >= contextWriteEvery {
-		cp.last, cp.written = n, time.Now()
-		cp.write(n)
-	}
-	return evs
-}
-
-// watchSession is watch with the choice of what to do when the harness reports
-// its session id. The run's own turn records it as the run's resumable
-// session; a side step (an image job's Codex) must not.
-func (r *Runner) watchSession(ctx context.Context, c runCtx, proc Process, p harness.Parser, env map[string]string, remaining time.Duration, onSession func(string)) (harness.Result, []byte, int, error) {
 	readCtx, cancelReads := context.WithCancel(ctx)
 	defer cancelReads()
 	var raw bytes.Buffer
@@ -1942,8 +1977,12 @@ func (r *Runner) watchSession(ctx context.Context, c runCtx, proc Process, p har
 			raw.WriteByte('\n')
 		}
 	}
-	var opening openingLine // written by the stdout reader, read after readers.Wait
-	streamErrors := make(chan error, 2)
+	var ctrl atomic.Pointer[harness.SessionControl]
+	cw := &contextWriter{write: func(n int64) { writeContext(readCtx, n) }}
+	var sessMu sync.Mutex
+	var sessRes harness.Result
+	var opening openingLine
+	streamErrors := make(chan error, 3)
 	var readers sync.WaitGroup
 	readers.Add(2)
 	go func() {
@@ -1971,39 +2010,50 @@ func (r *Runner) watchSession(ctx context.Context, c runCtx, proc Process, p har
 			close(ch)
 			flusher.Wait()
 		}()
-		sc := bufio.NewScanner(proc.Stdout())
-		sc.Buffer(make([]byte, 256<<10), 32<<20)
-		session := ""
-		for sc.Scan() {
-			line := sc.Bytes()
-			appendRaw("", line)
-			if readCtx.Err() != nil {
-				_, _ = io.Copy(io.Discard, proc.Stdout())
-				return
-			}
-			for _, e := range p.Line(line) {
+		res, err := sh.RunSession(readCtx, proc.Stdin(), proc.Stdout(), ws, turn, harness.SessionCallbacks{
+			OnRaw: func(line []byte) {
+				appendRaw("", line)
+			},
+			OnEvent: func(e harness.Event) {
 				payload, b := redactPayload(e.Payload, env)
 				opening.see(e.Type, payload)
 				select {
 				case ch <- pendingRunEvent{typ: e.Type, payload: b}:
 				case <-readCtx.Done():
-					_, _ = io.Copy(io.Discard, proc.Stdout())
-					return
 				}
-			}
-			if s := p.Result().SessionID; s != "" && s != session {
-				session = s
-				onSession(s)
-			}
-		}
-		if err := sc.Err(); err != nil {
+			},
+			OnSession: func(s string) {
+				if onSession != nil {
+					onSession(s)
+				}
+			},
+			OnContextTokens: func(n int64) {
+				if recordContext {
+					cw.observe(n)
+				}
+			},
+			OnControl: func(sc harness.SessionControl) {
+				if sc != nil {
+					ctrl.Store(&sc)
+				}
+			},
+			CheckTool: check,
+		})
+		sessMu.Lock()
+		sessRes = res
+		sessMu.Unlock()
+		if err != nil {
 			streamErrors <- streamError("stdout", err)
-			_, _ = io.Copy(io.Discard, proc.Stdout())
 		}
-
+		_, _ = io.Copy(io.Discard, proc.Stdout())
 	}()
 
-	stop := r.supervise(ctx, c, proc, remaining, streamErrors)
+	stop := r.supervise(ctx, c, proc, remaining, streamErrors, func() harness.SessionControl {
+		if p := ctrl.Load(); p != nil {
+			return *p
+		}
+		return nil
+	})
 	code, err := proc.Wait()
 	drainErr := drainProcess(proc, &readers, cancelReads)
 	expired, readErr := stop()
@@ -2016,8 +2066,17 @@ func (r *Runner) watchSession(ctx context.Context, c runCtx, proc Process, p har
 		cancel()
 	}
 	err = errors.Join(err, drainErr, readErr)
-	res := p.Result()
+	sessMu.Lock()
+	res := sessRes
+	sessMu.Unlock()
 	res.Opening = opening.line
+	if recordContext {
+		// At turn end, the final value. A turn that never reached a request
+		// (a rejected resume, an early crash) keeps the last known size.
+		if n := res.Usage.ContextTokens; n > 0 || !agentdef.CapsOf(c.spec.Harness).ReportsContextTokens {
+			writeContext(context.WithoutCancel(ctx), n)
+		}
+	}
 	return res, raw.Bytes(), code, err
 }
 
@@ -2201,7 +2260,7 @@ func runnerRecord(ctx context.Context, q *store.Queries, ws, ticket uuid.UUID, e
 }
 
 // sessionGone matches the CLIs' errors for a session id they can't resume.
-var sessionGone = regexp.MustCompile(`(?i)no conversation found|session[^\n]{0,40}(not found|expired|invalid|unknown)|(cannot|could not|couldn't|unable to) (resume|find)[^\n]{0,40}(session|thread|conversation)|thread[^\n]{0,20}not found`)
+var sessionGone = regexp.MustCompile(`(?i)no conversation found|no rollout found|session[^\n]{0,40}(not found|expired|invalid|unknown)|(cannot|could not|couldn't|unable to) (resume|find)[^\n]{0,40}(session|thread|conversation)|thread[^\n]{0,20}not found`)
 
 // retryFreshSession handles a delegated run that continues an earlier run and
 // whose first turn failed because the harness could not resume that run's

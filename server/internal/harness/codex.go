@@ -199,8 +199,6 @@ func (Codex) Invocation(ws Workspace, t Turn) (Invocation, error) {
 		argv = append(argv, opts...)
 		argv = append(argv, t.Prompt)
 	}
-	b.files[".lazyagents/codex-launch.py"] = codexLauncher
-	argv = append([]string{"python3", ".lazyagents/codex-launch.py"}, argv...)
 	return Invocation{Argv: argv, Env: b.env, Files: b.files}, nil
 }
 

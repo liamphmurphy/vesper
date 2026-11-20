@@ -176,6 +176,7 @@ func (Antigravity) RunSession(ctx context.Context, stdin io.WriteCloser, stdout 
 				cb.OnEvent(ev)
 			}
 		},
+		onContextTokens: cb.OnContextTokens,
 	}
 	st.res.SessionID = sid
 	st.emit(Event{"lifecycle", map[string]any{
@@ -419,18 +420,19 @@ func handleAgyServerRequest(ctx context.Context, w *lineWriter, fn PolicyFunc, n
 }
 
 type agySessionState struct {
-	model     string
-	sessionID string
-	res       Result
-	called    map[string]bool
-	finished  map[string]bool
-	toolNames map[string]string
-	thinkBuf  strings.Builder
-	textBuf   strings.Builder
-	sawText   bool
-	reply     replyScanner
-	activity  activityTracker
-	emit      func(Event)
+	model           string
+	sessionID       string
+	res             Result
+	called          map[string]bool
+	finished        map[string]bool
+	toolNames       map[string]string
+	thinkBuf        strings.Builder
+	textBuf         strings.Builder
+	sawText         bool
+	reply           replyScanner
+	activity        activityTracker
+	emit            func(Event)
+	onContextTokens func(int64)
 }
 
 func (s *agySessionState) flushThinking() {
@@ -587,6 +589,9 @@ func (s *agySessionState) handleUpdate(paramsRaw json.RawMessage) {
 	case "usage_update":
 		if u.Used > 0 {
 			s.res.Usage.ContextTokens = u.Used
+			if s.onContextTokens != nil {
+				s.onContextTokens(u.Used)
+			}
 		}
 	}
 }

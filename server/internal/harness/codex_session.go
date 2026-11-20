@@ -126,6 +126,7 @@ func (c Codex) RunSession(ctx context.Context, stdin io.WriteCloser, stdout io.R
 				cb.OnEvent(ev)
 			}
 		},
+		onContextTokens: cb.OnContextTokens,
 	}
 
 	sc := bufio.NewScanner(stdout)
@@ -408,16 +409,17 @@ func handleCodexServerRequest(ctx context.Context, w *lineWriter, fn PolicyFunc,
 }
 
 type codexSessionState struct {
-	model          string
-	prices         map[string]Price
-	baseline       Usage
-	res            Result
-	startedEmitted bool
-	hasTokenUsage  bool
-	reply          replyScanner
-	replyItemID    string
-	activity       activityTracker
-	emit           func(Event)
+	model           string
+	prices          map[string]Price
+	baseline        Usage
+	res             Result
+	startedEmitted  bool
+	hasTokenUsage   bool
+	reply           replyScanner
+	replyItemID     string
+	activity        activityTracker
+	emit            func(Event)
+	onContextTokens func(int64)
 }
 
 func (s *codexSessionState) markStarted(threadID string) {
@@ -504,6 +506,9 @@ func (s *codexSessionState) handleNotification(method string, paramsRaw json.Raw
 			s.hasTokenUsage = true
 			if p.TokenUsage.Last.InputTokens > 0 {
 				s.res.Usage.ContextTokens = p.TokenUsage.Last.InputTokens
+				if s.onContextTokens != nil {
+					s.onContextTokens(s.res.Usage.ContextTokens)
+				}
 			}
 			tot := p.TokenUsage.Total
 			baseline := s.baseline

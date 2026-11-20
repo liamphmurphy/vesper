@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/liamphmurphy/vesper/server/internal/harness"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 )
 
@@ -86,7 +87,7 @@ func captureProcess(ctx context.Context, proc Process) (string, int, error) {
 // supervise polls state separately from timers: database backpressure must
 // never prevent the runtime deadline or runner shutdown from killing a process.
 // The returned function joins both goroutines and reports runtime expiry.
-func (r *Runner) supervise(ctx context.Context, c runCtx, proc Process, runtime time.Duration, streamErrors <-chan error) func() (bool, error) {
+func (r *Runner) supervise(ctx context.Context, c runCtx, proc Process, runtime time.Duration, streamErrors <-chan error, control func() harness.SessionControl) func() (bool, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	states := make(chan string, 1)
 	var workers sync.WaitGroup
@@ -158,7 +159,16 @@ func (r *Runner) supervise(ctx context.Context, c runCtx, proc Process, runtime 
 					_ = proc.Kill()
 					return
 				case state == "paused" && graceTimer == nil:
-					_ = proc.Interrupt()
+					var interrupted bool
+					if control != nil {
+						if ctrl := control(); ctrl != nil {
+							_ = ctrl.Interrupt()
+							interrupted = true
+						}
+					}
+					if !interrupted {
+						_ = proc.Interrupt()
+					}
 					graceTimer = time.NewTimer(max(r.Cfg.Grace, time.Millisecond))
 					grace = graceTimer.C
 				}

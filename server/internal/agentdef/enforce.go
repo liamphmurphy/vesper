@@ -13,11 +13,8 @@ type Caps struct {
 	CumulativeSessionUsage  bool `json:"cumulative_session_usage,omitempty"` // resumed turns include earlier turns' session totals
 }
 
-// Claude Code, Codex and Antigravity use run-scoped PreToolUse hooks for
-// service tool policy. Antigravity reports tokens but no cost, and cannot
-// pause for mid-turn approval on file writes (its file and shell permissions
-// include static deny rules written before the turn so a hook failure fails
-// closed, so scopes needing approval stay denied unless supported).
+// Claude Code, Codex and Antigravity run over stateful bidirectional stdio
+// protocols with Vesper enforcing tool policy and approvals in-process.
 var Capabilities = map[string]Caps{
 	HarnessClaudeCode: {
 		ToolGating:             true,
@@ -34,12 +31,12 @@ var Capabilities = map[string]Caps{
 		Resume:                 true,
 		ChatInlineImageGen:     true,
 		WorkflowImageGen:       true,
-		ReportsContextTokens:   false,
+		ReportsContextTokens:   true,
 		CumulativeSessionUsage: true,
 	},
 	HarnessAntigravity: {
 		ToolGating:              true,
-		PermissionPrompt:        false,
+		PermissionPrompt:        true,
 		NativeCost:              false,
 		Resume:                  true,
 		WorkflowImageGen:        true,

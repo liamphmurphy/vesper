@@ -184,10 +184,14 @@ func agyImageStep() {
 		name := "image-" + newUUID() + ".png"
 		_ = os.MkdirAll(dir, 0o755)
 		_ = os.WriteFile(filepath.Join(dir, name), []byte("\x89PNG\r\n\x1a\nfake image"), 0o644)
-		agyStep++
-		agyStepUpdate("ACTIVE", "tool", map[string]any{"tool_name": "generate_image", "tool_info": map[string]any{"name": "generate_image", "parameters": map[string]any{"prompt": "x"}}})
-		agyLine("step_update", map[string]any{"conversation_id": session, "step_index": agyStep, "state": "DONE", "step_type": "tool",
-			"tool_info": map[string]any{"output": "Saved " + filepath.Join(dir, name)}})
+		if sessionProto == protoAgyACP {
+			emitAgyACPImageStep(dir, name)
+		} else {
+			agyStep++
+			agyStepUpdate("ACTIVE", "tool", map[string]any{"tool_name": "generate_image", "tool_info": map[string]any{"name": "generate_image", "parameters": map[string]any{"prompt": "x"}}})
+			agyLine("step_update", map[string]any{"conversation_id": session, "step_index": agyStep, "state": "DONE", "step_type": "tool",
+				"tool_info": map[string]any{"output": "Saved " + filepath.Join(dir, name)}})
+		}
 	}
 	text("Image step done.")
 	result(false, "Image step done.")
