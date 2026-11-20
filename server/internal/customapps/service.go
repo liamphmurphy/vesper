@@ -784,6 +784,7 @@ func mcpServerFromRow(id, ws, userID uuid.UUID, slug, name, desc string, manifes
 func (s *Service) CallMCPTool(ctx context.Context, app MCPServerApp, tool string, args map[string]any, opts MCPCallContext) (any, error) {
 	opts.WorkspaceID = app.WorkspaceID
 	opts.UserID = app.UserID
+	opts.AppID = app.ID
 	opts.Slug = app.Slug
 	opts.AppName = app.Name
 	opts.Capabilities = app.Capabilities
@@ -796,6 +797,9 @@ func (s *Service) CallMCPTool(ctx context.Context, app MCPServerApp, tool string
 	}
 	if opts.NodeBinary == "" {
 		opts.NodeBinary = s.NodeBinary
+	}
+	if opts.Media == nil {
+		opts.Media = s.Media
 	}
 	if opts.SQLQuery == nil {
 		opts.SQLQuery = func(qctx context.Context, query string, params []any) (SQLResult, error) {

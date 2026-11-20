@@ -2,6 +2,7 @@ package customapps
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -446,4 +447,37 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n]
+}
+
+// handleMediaRPC serves server.ts's media.download/status/delete. Only starting
+// a download needs app.media:download; status and delete touch only this app's
+// own downloads, so cleanup still works after the permission is revoked.
+func handleMediaRPC(ctx context.Context, mc *MCPCallContext, method string, raw json.RawMessage) (any, error) {
+	var in struct {
+		URL string `json:"url"`
+		ID  string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &in); err != nil {
+		return nil, err
+	}
+	if mc.Media == nil || mc.AppID == uuid.Nil {
+		return nil, errors.New("media downloads are unavailable")
+	}
+	if method == "media_download" {
+		if err := checkWorkerCapability(ctx, mc, "app.media:download", fmt.Sprintf("Download video %s into Vesper", strings.TrimSpace(in.URL))); err != nil {
+			return nil, err
+		}
+		return mc.Media.Start(ctx, mc.AppID, in.URL)
+	}
+	id, err := uuid.Parse(strings.TrimSpace(in.ID))
+	if err != nil {
+		return nil, apperr.Invalid("id", "invalid media id")
+	}
+	if method == "media_status" {
+		return mc.Media.Status(ctx, mc.AppID, id)
+	}
+	if err := mc.Media.Delete(ctx, mc.AppID, id); err != nil {
+		return nil, err
+	}
+	return map[string]any{"deleted": id}, nil
 }

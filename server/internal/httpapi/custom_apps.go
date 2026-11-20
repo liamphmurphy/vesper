@@ -27,7 +27,24 @@ import (
 )
 
 func (s *Server) customApps() *customapps.Service {
-	return &customapps.Service{Pool: s.Pool, Secrets: s.userSecrets()}
+	return &customapps.Service{Pool: s.Pool, Secrets: s.userSecrets(), Media: s.mediaDownloads()}
+}
+
+// mediaDownloads is the process-wide video downloader for custom apps, or nil
+// without a blob store.
+func (s *Server) mediaDownloads() *customapps.Media {
+	s.customAppMediaOnce.Do(func() {
+		if s.Blobs == nil {
+			return
+		}
+		s.customAppMedia = &customapps.Media{
+			Pool:      s.Pool,
+			Blobs:     s.Blobs,
+			Bucket:    s.ArtifactBucket,
+			Transport: s.CustomAppMediaTransport,
+		}
+	})
+	return s.customAppMedia
 }
 
 func customAppManifestOut(m customapps.Manifest) api.CustomAppManifest {

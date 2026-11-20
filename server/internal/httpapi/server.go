@@ -24,6 +24,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/auth"
 	"github.com/liamphmurphy/vesper/server/internal/blob"
 	"github.com/liamphmurphy/vesper/server/internal/connectors"
+	"github.com/liamphmurphy/vesper/server/internal/customapps"
 	"github.com/liamphmurphy/vesper/server/internal/designs"
 	"github.com/liamphmurphy/vesper/server/internal/githubpr"
 	"github.com/liamphmurphy/vesper/server/internal/realtime"
@@ -74,6 +75,13 @@ type Server struct {
 	// CustomAppImageTransport overrides outbound transport for custom app image
 	// proxying in tests; nil uses usersecrets.SafeTransport.
 	CustomAppImageTransport http.RoundTripper
+	// CustomAppMediaTransport overrides the transport custom app video downloads
+	// use, for tests; nil uses usersecrets.SafeTransport.
+	CustomAppMediaTransport http.RoundTripper
+	// customAppMedia runs custom app video downloads; built on first use and
+	// shared, because downloads outlive the request that starts them.
+	customAppMedia     *customapps.Media
+	customAppMediaOnce sync.Once
 	// GitHubAPIURL is GitHub's REST API for shipping approved pushes;
 	// api.github.com when empty (tests point elsewhere).
 	GitHubAPIURL string

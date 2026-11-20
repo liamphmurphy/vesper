@@ -50,6 +50,7 @@ func (e *ApprovalRequiredError) Error() string {
 type MCPCallContext struct {
 	WorkspaceID       uuid.UUID
 	UserID            uuid.UUID
+	AppID             uuid.UUID
 	Slug              string
 	AppName           string
 	Capabilities      Capabilities
@@ -67,6 +68,9 @@ type MCPCallContext struct {
 	LookupIP          func(ctx context.Context, host string) ([]net.IP, error)
 	PublicFetch       func(ctx context.Context, req usersecrets.Request) (usersecrets.Response, error)
 	NodeBinary        string
+
+	// Media serves media.download/status/delete; nil reports them unavailable.
+	Media *Media
 }
 
 type workerInitMsg struct {
@@ -409,6 +413,9 @@ func handleWorkerRPC(ctx context.Context, mc *MCPCallContext, method string, raw
 			return nil, errors.New("Vesper API bridge is unavailable")
 		}
 		return mc.APICall(ctx, m, in.Path, in.Body)
+
+	case "media_download", "media_status", "media_delete":
+		return handleMediaRPC(ctx, mc, method, raw)
 
 	case "http_fetch":
 		var in struct {
