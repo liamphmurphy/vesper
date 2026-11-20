@@ -17,6 +17,26 @@ private final class QuickLookPreviewItem: NSObject, QLPreviewItem, @unchecked Se
     var previewItemTitle: String! { title }
 }
 
+/// The session cookie is set by hand on Quick Look downloads, and URLSession copies request
+/// headers onto a followed redirect, so a redirect off the stack's origin is refused rather than
+/// handing the session token to another host. The 3xx then fails the status check.
+private final class SameOriginRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    let base: URL
+
+    init(base: URL) { self.base = base }
+
+    func urlSession(
+        _ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        guard let target = request.url, BridgeOrigin.matches(url: target, base: base) else {
+            completionHandler(nil)
+            return
+        }
+        completionHandler(request)
+    }
+}
+
 /// Manages macOS Quick Look (`QLPreviewPanel`) for same-origin Vesper files, images, audio,
 /// videos, and PDFs. Downloads authenticated items to a temporary cache cleaned on exit.
 @MainActor
@@ -128,7 +148,9 @@ final class QuickLookController: NSObject, QLPreviewPanelDataSource, QLPreviewPa
         request.setValue("\(StackSession.cookieName)=\(conn.sessionToken)", forHTTPHeaderField: "Cookie")
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.shared.data(
+                for: request, delegate: SameOriginRedirects(base: conn.baseURL)
+            )
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
                   data.count <= Self.maxBytes else {
                 return nil
