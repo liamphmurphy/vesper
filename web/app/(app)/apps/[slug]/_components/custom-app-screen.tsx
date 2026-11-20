@@ -45,6 +45,7 @@ import type { DockState } from "@/lib/editor-layout";
 import { shortAgo } from "@/lib/format";
 import { makePanelSpec } from "@/lib/native-shell/panel-events";
 import { toast } from "@/lib/toast";
+import { TwitchPlayer } from "./twitch-player";
 
 const ALLOWED_FILE_EXTS = [".tsx", ".ts", ".jsx", ".js", ".css", ".sql", ".json"];
 
@@ -145,6 +146,7 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
   const [decidingApproval, setDecidingApproval] = useState(false);
   const [activeVideo, setActiveVideo] = useState<(VideoEmbed & { title: string }) | null>(null);
+  const [twitchChatOpen, setTwitchChatOpen] = useState(false);
   const capabilitiesRef = useRef(app.capabilities);
   useEffect(() => {
     capabilitiesRef.current = app.capabilities;
@@ -619,7 +621,14 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
           <Dialog.Overlay className="motion-scrim fixed inset-0 z-50 bg-scrim" />
           <Dialog.Content
             aria-describedby={undefined}
-            className="motion-dialog fixed left-1/2 top-1/2 z-50 flex w-[min(960px,calc(100%-32px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-border-float bg-surface-raised shadow-[var(--shadow-float)] outline-none"
+            className={cx(
+              "motion-dialog fixed left-1/2 top-1/2 z-50 flex -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-border-float bg-surface-raised shadow-[var(--shadow-float)] outline-none",
+              activeVideo?.provider === "twitch" && activeVideo.twitchTarget
+                ? twitchChatOpen && activeVideo.twitchTarget.kind === "live"
+                  ? "w-[min(1240px,calc(100%-32px))]"
+                  : "w-[min(1000px,calc(100%-32px))]"
+                : "w-[min(960px,calc(100%-32px))]",
+            )}
           >
             {activeVideo && (
               <>
@@ -627,6 +636,21 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
                   <Dialog.Title className="min-w-0 flex-1 truncate text-14 font-semibold text-fg">
                     {activeVideo.title}
                   </Dialog.Title>
+                  {activeVideo.provider === "twitch" && activeVideo.twitchTarget?.kind === "live" && (
+                    <button
+                      type="button"
+                      onClick={() => setTwitchChatOpen((open) => !open)}
+                      className={cx(
+                        "inline-flex h-7 flex-none items-center gap-1.5 rounded-md border px-2.5 text-12 font-medium transition-colors",
+                        twitchChatOpen
+                          ? "border-accent bg-selected text-fg"
+                          : "border-border-strong text-fg-secondary hover:bg-hover hover:text-fg",
+                      )}
+                    >
+                      <Icon name="msg" size={13} />
+                      Chat
+                    </button>
+                  )}
                   <a
                     href={activeVideo.externalUrl}
                     target="_blank"
@@ -640,17 +664,27 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
                     <IconButton icon="x" label="Close video player" />
                   </Dialog.Close>
                 </div>
-                <div className="relative aspect-video w-full bg-black">
-                  <iframe
-                    key={activeVideo.embedUrl}
-                    src={activeVideo.embedUrl}
+                {activeVideo.provider === "twitch" && activeVideo.twitchTarget ? (
+                  <TwitchPlayer
+                    target={activeVideo.twitchTarget}
                     title={activeVideo.title}
-                    allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
-                    allowFullScreen
-                    referrerPolicy="strict-origin-when-cross-origin"
-                    className="absolute inset-0 size-full border-0"
+                    embedUrl={activeVideo.embedUrl}
+                    chatOpen={twitchChatOpen}
+                    onToggleChat={() => setTwitchChatOpen((open) => !open)}
                   />
-                </div>
+                ) : (
+                  <div className="relative aspect-video w-full bg-black">
+                    <iframe
+                      key={activeVideo.embedUrl}
+                      src={activeVideo.embedUrl}
+                      title={activeVideo.title}
+                      allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+                      allowFullScreen
+                      referrerPolicy="strict-origin-when-cross-origin"
+                      className="absolute inset-0 size-full border-0"
+                    />
+                  </div>
+                )}
               </>
             )}
           </Dialog.Content>
