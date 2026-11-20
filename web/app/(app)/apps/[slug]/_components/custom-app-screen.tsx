@@ -1,7 +1,6 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { Dialog } from "radix-ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Conversation, type ConversationContext, type DockWelcome } from "@/app/(app)/chat/_components/conversation";
 import { PersonaAvatar, personaLook, useDockPersona } from "@/app/(app)/chat/_components/persona";
@@ -11,7 +10,9 @@ import { buildCustomAppActions, buildCustomAppNav, parseViewId } from "@/lib/nat
 import { buildCustomAppCapabilities, buildCustomAppInspectorSections } from "@/lib/native-shell/models/custom-app-inspector";
 import { EditorLayout, type DockTab, type NativeEditorHeader } from "@/components/shell/editor-layout";
 import { isTyping } from "@/components/shell/shortcuts";
+import { post as postToShell } from "@/lib/native-shell/bridge";
 import { Content, TopBar } from "@/components/shell/topbar";
+import { CustomAppPlayerStage, type StageVideo } from "./custom-app-player";
 import { Button, ButtonLink, IconButton } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Banner, EmptyState, Skeleton, TextArea, TextInput } from "@/components/ui/primitives";
@@ -40,7 +41,6 @@ import {
   resolveVideoEmbed,
   withCustomAppContext,
   type CustomAppNavSpec,
-  type VideoEmbed,
 } from "@/lib/custom-app-bridge";
 import { cx } from "@/lib/cx";
 import type { DockState } from "@/lib/editor-layout";
@@ -146,7 +146,8 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
   const [activeNav, setActiveNav] = useState<string>();
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
   const [decidingApproval, setDecidingApproval] = useState(false);
-  const [activeVideo, setActiveVideo] = useState<(VideoEmbed & { title: string }) | null>(null);
+  const [activeVideo, setActiveVideo] = useState<StageVideo | null>(null);
+  const [theater, setTheater] = useState(false);
   const capabilitiesRef = useRef(app.capabilities);
   useEffect(() => {
     capabilitiesRef.current = app.capabilities;
@@ -162,6 +163,22 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
   const postToFrame = useCallback((msg: unknown, transfer?: Transferable[]) => {
     frameRef.current?.contentWindow?.postMessage(msg, "*", transfer);
   }, []);
+
+  const closeVideo = useCallback(() => setActiveVideo(null), []);
+
+  // Tell the app what its player is doing, so it can save progress or move on to the next video.
+  const playerUrl = activeVideo?.embedUrl ?? null;
+  useEffect(() => {
+    postToFrame({ type: "vesper:player", open: playerUrl !== null, theater });
+  }, [playerUrl, theater, postToFrame]);
+
+  // Theater wants the whole window: fold the native sidebar while it lasts (a no-op in a browser).
+  const wantsWholeWindow = playerUrl !== null && theater;
+  useEffect(() => {
+    if (!wantsWholeWindow) return;
+    postToShell({ v: 1, type: "sidebarHidden", hidden: true });
+    return () => postToShell({ v: 1, type: "sidebarHidden", hidden: false });
+  }, [wantsWholeWindow]);
 
   const serveProxyImage = useCallback(
     async (reqId: string, imageUrl: string, approved: boolean) => {
@@ -315,6 +332,7 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
           resolveVideoEmbed(msg.payload.url, typeof window !== "undefined" ? window.location.hostname : undefined);
         if (embed) {
           setActiveVideo({ ...embed, title: msg.payload.title || embed.titleFallback });
+          if (msg.payload.theater !== undefined) setTheater(msg.payload.theater);
         } else if (!parseLocalMediaUrl(msg.payload.url)) {
           window.open(msg.payload.url, "_blank", "noopener,noreferrer");
         }
@@ -607,6 +625,9 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
           )}
         </div>
       )}
+      {activeVideo && (
+        <CustomAppPlayerStage video={activeVideo} theater={theater} onTheaterChange={setTheater} onClose={closeVideo} />
+      )}
       <iframe
         ref={frameRef}
         key={`${app.current.seq}:${reloadKey}`}
@@ -618,63 +639,6 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
         onLoad={() => postToFrame({ type: "vesper:theme", vars: readThemeVars() })}
         className="h-full min-h-[420px] w-full flex-1 border-0 bg-bg"
       />
-      <Dialog.Root open={activeVideo !== null} onOpenChange={(open) => { if (!open) setActiveVideo(null); }}>
-        <Dialog.Portal>
-          <Dialog.Overlay className="motion-scrim fixed inset-0 z-50 bg-scrim" />
-          <Dialog.Content
-            aria-describedby={undefined}
-            className="motion-dialog fixed left-1/2 top-1/2 z-50 flex w-[min(960px,calc(100%-32px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-border-float bg-surface-raised shadow-[var(--shadow-float)] outline-none"
-          >
-            {activeVideo && (
-              <>
-                <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-2.5">
-                  <Dialog.Title className="min-w-0 flex-1 truncate text-14 font-semibold text-fg">
-                    {activeVideo.title}
-                  </Dialog.Title>
-                  {activeVideo.provider !== "local" && (
-                    <a
-                      href={activeVideo.externalUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex h-7 flex-none items-center gap-1.5 rounded-md border border-border-strong px-2.5 text-12 font-medium text-fg-secondary transition-colors hover:bg-hover hover:text-fg"
-                    >
-                      <Icon name="link" size={13} />
-                      {activeVideo.provider === "youtube" ? "Open on YouTube" : "Open on Twitch"}
-                    </a>
-                  )}
-                  <Dialog.Close asChild>
-                    <IconButton icon="x" label="Close video player" />
-                  </Dialog.Close>
-                </div>
-                <div className="relative aspect-video w-full bg-black">
-                  {activeVideo.provider === "local" ? (
-                    <video
-                      key={activeVideo.embedUrl}
-                      src={activeVideo.embedUrl}
-                      title={activeVideo.title}
-                      controls
-                      autoPlay
-                      playsInline
-                      data-testid="custom-app-local-video"
-                      className="absolute inset-0 size-full"
-                    />
-                  ) : (
-                    <iframe
-                      key={activeVideo.embedUrl}
-                      src={activeVideo.embedUrl}
-                      title={activeVideo.title}
-                      allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
-                      allowFullScreen
-                      referrerPolicy="strict-origin-when-cross-origin"
-                      className="absolute inset-0 size-full border-0"
-                    />
-                  )}
-                </div>
-              </>
-            )}
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
     </div>
   );
 

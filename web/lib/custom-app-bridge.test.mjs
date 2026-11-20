@@ -265,3 +265,15 @@ test("downloaded videos play from Vesper, never from an outside URL", () => {
     { channel: "vesper:custom-app", id: "", type: "play-video", payload: { url: `vesper-media:${id}`, title: "Clip" } },
   );
 });
+
+test("parseBridgeMessage keeps play-video's theater flag only when it is a boolean", () => {
+  const url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
+  assert.deepEqual(
+    parseBridgeMessage({ channel: "vesper:custom-app", type: "play-video", payload: { url, theater: true } }),
+    { channel: "vesper:custom-app", id: "", type: "play-video", payload: { url, theater: true } },
+  );
+  assert.deepEqual(
+    parseBridgeMessage({ channel: "vesper:custom-app", type: "play-video", payload: { url, theater: "yes" } }),
+    { channel: "vesper:custom-app", id: "", type: "play-video", payload: { url } },
+  );
+});
