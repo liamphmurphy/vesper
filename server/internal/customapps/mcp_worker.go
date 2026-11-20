@@ -27,7 +27,7 @@ import (
 const (
 	mcpDiscoveryTimeout = 10 * time.Second
 	mcpCallTimeout      = 2 * time.Minute
-	maxWorkerLineBytes  = 8 << 20
+	maxWorkerLineBytes  = 40 << 20 // a 25 MB fetch, base64-encoded, plus the JSON around it
 	maxWorkerStderr     = 32 << 10
 )
 
@@ -308,7 +308,16 @@ func runMCPWorker(
 
 	_ = stdin.Close()
 	if scanErr := scanner.Err(); scanErr != nil && workerErr == nil {
-		workerErr = fmt.Errorf("read worker output: %w", scanErr)
+		if errors.Is(scanErr, bufio.ErrTooLong) {
+			workerErr = fmt.Errorf("the tool's result is larger than the %d MB limit", maxWorkerLineBytes>>20)
+		} else {
+			workerErr = fmt.Errorf("read worker output: %w", scanErr)
+		}
+	}
+	// Once we stop reading, a worker still writing would block on the full pipe until the call's
+	// timeout; end it now so the error comes back straight away.
+	if workerErr != nil && cmd.Process != nil {
+		_ = cmd.Process.Kill()
 	}
 	waitErr := cmd.Wait()
 	if workerErr != nil {
