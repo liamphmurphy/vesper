@@ -8,6 +8,7 @@ import {
   type MenuItem,
   type NativeCommand,
   type PageMessage,
+  type QuickLookItem,
 } from "./protocol.ts";
 
 type Reply = Extract<NativeCommand, { type: "reply" }>;
@@ -69,6 +70,7 @@ const TIMEOUT_MS: Record<RequestMessage["type"], number> = {
   contextMenu: 60_000,
   // A sheet waits for the person however long they take; this only stops a lost reply leaking.
   confirm: 3_600_000,
+  prompt: 3_600_000,
 };
 const DEFAULT_TIMEOUT_MS = 10_000;
 
@@ -122,4 +124,40 @@ export async function nativeContextMenu(items: MenuItem[], x: number, y: number)
   } catch {
     return null;
   }
+}
+
+/**
+ * Prompts for a single-line text value as a sheet on the window. Resolves to the submitted
+ * string (or null when cancelled / outside the native shell).
+ */
+export async function nativePrompt(options: {
+  title: string;
+  body?: string;
+  label?: string;
+  value?: string;
+  placeholder?: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  maxLength?: number;
+}): Promise<string | null> {
+  if (!isNativeShell()) return null;
+  try {
+    const reply = await request({
+      ...options,
+      type: "prompt",
+      confirmLabel: options.confirmLabel ?? "Save",
+    });
+    return reply.ok ? (reply.value ?? null) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Opens Quick Look (`QLPreviewPanel`) in the Mac app for one or more same-origin items. */
+export function nativeQuickLook(items: QuickLookItem[], index?: number): boolean {
+  if (!isNativeShell() || items.length === 0) return false;
+  const msg: PageMessage = index === undefined ? { v: 1, type: "quickLook", items } : { v: 1, type: "quickLook", items, index };
+  if (!isPageMessage(msg)) return false;
+  post(msg);
+  return true;
 }

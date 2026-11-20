@@ -145,6 +145,42 @@ final class BridgeProtocolTests: XCTestCase {
         XCTAssertTrue(panelEvt.contains("\"type\":\"panel.event\""))
         XCTAssertTrue(panelEvt.contains("\"tabId\":\"code\""))
     }
+
+    func testNativeChromeOverlaysDecodeAndEncode() throws {
+        let all = try entries("page-messages.json").map { try PageMessage.decode(fromJSONObject: $0) }
+        XCTAssertTrue(all.contains(.prompt(
+            requestId: "r6", title: "Rename frame", body: nil, label: "Frame name", value: "Overview",
+            placeholder: "Untitled frame", confirmLabel: "Save", cancelLabel: "Cancel", maxLength: 120
+        )))
+        XCTAssertTrue(all.contains(.toastShow(
+            id: "toast-1", title: "Removed item", description: "Archived from Library",
+            tone: .neutral, actionLabel: "Undo", durationMs: 6000
+        )))
+        XCTAssertTrue(all.contains(.toastDismiss(id: "toast-1")))
+        XCTAssertTrue(all.contains(.showShortcuts))
+        XCTAssertTrue(all.contains(.commandPaletteOpen(request: CommandPaletteRequest(
+            path: "/knowledge", search: "?view=yours", scope: .knowledge, includeAgent: false, query: "shell"
+        ))))
+        XCTAssertTrue(all.contains(.commandPaletteClose))
+        XCTAssertTrue(all.contains(.quickLook(items: [
+            QuickLookItem(url: "/api/v1/library/0b5c9a6e-0000-4000-8000-000000000001/content",
+                          title: "Architecture diagram", filename: "architecture.png", contentType: "image/png")
+        ], index: 0)))
+
+        let replyValue = try NativeCommand.reply(requestId: "r6", ok: true, value: .some("Overview v2")).jsonString()
+        XCTAssertTrue(replyValue.contains("\"value\":\"Overview v2\""))
+        XCTAssertFalse(replyValue.contains("selectedId"))
+
+        let toastEvt = try NativeCommand.toastEvent(id: "toast-1", event: .action).jsonString()
+        XCTAssertTrue(toastEvt.contains("\"type\":\"toast.event\""))
+        XCTAssertTrue(toastEvt.contains("\"event\":\"action\""))
+
+        let paletteOpen = try NativeCommand.paletteOpen(request: CommandPaletteRequest(
+            path: "/tickets/VES-412", scope: .page, query: "tests"
+        )).jsonString()
+        XCTAssertTrue(paletteOpen.contains("\"type\":\"palette.open\""))
+        XCTAssertTrue(paletteOpen.contains("\"scope\":\"page\""))
+    }
 }
 
 final class BridgeOriginTests: XCTestCase {

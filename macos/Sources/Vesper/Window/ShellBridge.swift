@@ -102,6 +102,10 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
                 let ok = await self.confirmSheet(title: title, body: body, confirmLabel: confirmLabel, cancelLabel: cancelLabel, destructive: destructive)
                 self.send(.reply(requestId: requestId, ok: ok))
             }
+        case .prompt(let requestId, _, _, _, _, _, _, _, _):
+            send(.reply(requestId: requestId, ok: false, value: .some(nil)))
+        case .toastShow, .toastDismiss, .showShortcuts, .commandPaletteOpen, .commandPaletteClose, .quickLook:
+            break
         }
     }
 
@@ -196,6 +200,13 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
         case .openWorkspaceMenu(let r, _): "openWorkspaceMenu \(r)"
         case .contextMenu(let r, let i, _, _): "contextMenu \(r) \(i.count) items"
         case .confirm(let r, _, _, _, _, _): "confirm \(r)"
+        case .prompt(let r, _, _, _, _, _, _, _, _): "prompt \(r)"
+        case .toastShow(let id, _, _, let tone, _, _): "toastShow \(id) \(tone.rawValue)"
+        case .toastDismiss(let id): "toastDismiss \(id)"
+        case .showShortcuts: "showShortcuts"
+        case .commandPaletteOpen(let req): "commandPaletteOpen \(req?.scope?.rawValue ?? "all")"
+        case .commandPaletteClose: "commandPaletteClose"
+        case .quickLook(let items, let idx): "quickLook \(items.count) items index=\(idx.map(String.init) ?? "nil")"
         }
     }
 }

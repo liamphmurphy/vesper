@@ -1,6 +1,6 @@
 import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { isNativeShell, nativeConfirm, nativeContextMenu, onCommand, post, postDeduped, request, resetDedupe } from "./bridge.ts";
+import { isNativeShell, nativeConfirm, nativeContextMenu, nativePrompt, nativeQuickLook, onCommand, post, postDeduped, request, resetDedupe } from "./bridge.ts";
 
 let posted;
 let win;
@@ -108,4 +108,32 @@ test("nativeConfirm asks for a sheet and is true only when the person confirms",
   assert.equal(await q, false);
   install({ native: false });
   assert.equal(await nativeConfirm({ title: "x", confirmLabel: "y", destructive: false }), false);
+});
+
+test("nativePrompt returns the submitted string or null on cancel", async () => {
+  const p = nativePrompt({ title: "Rename frame", label: "Name", value: "Draft" });
+  assert.deepEqual(
+    { type: posted[0].type, title: posted[0].title, confirmLabel: posted[0].confirmLabel, value: posted[0].value },
+    { type: "prompt", title: "Rename frame", confirmLabel: "Save", value: "Draft" },
+  );
+  send({ v: 1, type: "reply", requestId: posted[0].requestId, ok: true, value: "Final" });
+  assert.equal(await p, "Final");
+
+  const q = nativePrompt({ title: "Rename frame", confirmLabel: undefined });
+  assert.equal(posted[1].confirmLabel, "Save");
+  send({ v: 1, type: "reply", requestId: posted[1].requestId, ok: false, value: null });
+  assert.equal(await q, null);
+
+  install({ native: false });
+  assert.equal(await nativePrompt({ title: "x" }), null);
+});
+
+test("nativeQuickLook posts valid items and skips outside native shell", () => {
+  assert.equal(nativeQuickLook([{ url: "/api/v1/library/1/content", title: "Spec.pdf", contentType: "application/pdf" }], 0), true);
+  assert.equal(posted[0].type, "quickLook");
+  assert.equal(posted[0].items.length, 1);
+  assert.equal(nativeQuickLook([]), false);
+
+  install({ native: false });
+  assert.equal(nativeQuickLook([{ url: "/api/v1/library/1/content", title: "Spec.pdf" }]), false);
 });

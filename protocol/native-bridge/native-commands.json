@@ -206,5 +206,27 @@
     "tabId": "playground",
     "event": "composerDrop",
     "payloadJson": "{\"chatId\":\"c1\",\"drop\":{\"text\":\"check logs\"}}"
+  },
+  {
+    "v": 1,
+    "type": "reply",
+    "requestId": "r6",
+    "ok": true,
+    "value": "Overview v2"
+  },
+  {
+    "v": 1,
+    "type": "toast.event",
+    "id": "toast-1",
+    "event": "action"
+  },
+  {
+    "v": 1,
+    "type": "palette.open",
+    "request": {
+      "path": "/tickets/VES-412",
+      "scope": "page",
+      "query": "tests"
+    }
   }
 ]
