@@ -10,10 +10,11 @@
 # Vesper picks the image up on its next start (RUNNER_MACOS_IMAGE_DIR overrides
 # where it looks).
 #
-# Needs: tart and sshpass (brew install openai/tools/tart sshpass),
-# Go, and ~60 GB free. VESPER_MACOS_SOURCE picks the Tart image
-# (default ghcr.io/cirruslabs/macos-sequoia-xcode:latest, whose account is
-# admin/admin; set VESPER_MACOS_SSH_USER/VESPER_MACOS_SSH_PASSWORD for others).
+# Needs: tart (brew install openai/tools/tart), Go, and ~60 GB free.
+# VESPER_MACOS_SOURCE picks the Tart image (default
+# ghcr.io/cirruslabs/macos-sequoia-xcode:latest). It must run the Tart Guest
+# Agent, as every non-vanilla Cirrus Labs image does, and allow passwordless
+# sudo: the script works inside the VM with `tart exec`, not SSH.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,15 +22,13 @@ repo_root="$(cd "${script_dir}/../.." && pwd)"
 data_dir="${VESPER_USER_DATA_DIR:-${HOME}/Library/Application Support/vesper-desktop}"
 out_dir="${1:-${data_dir}/vm/macos-golden}"
 source_image="${VESPER_MACOS_SOURCE:-ghcr.io/cirruslabs/macos-sequoia-xcode:latest}"
-ssh_user="${VESPER_MACOS_SSH_USER:-admin}"
-ssh_password="${VESPER_MACOS_SSH_PASSWORD:-admin}"
 vm_name="vesper-macos-golden-$$"
 
 if [[ "$(uname -s)/$(uname -m)" != "Darwin/arm64" ]]; then
   echo "macOS guests need an Apple silicon Mac." >&2
   exit 1
 fi
-for tool in tart sshpass go; do
+for tool in tart go; do
   if ! command -v "${tool}" >/dev/null 2>&1; then
     echo "Missing ${tool} (see the header of $0)." >&2
     exit 1
@@ -77,30 +76,26 @@ tart clone "${source_image}" "${vm_name}"
 echo "Booting it to install the agent..."
 tart run --no-graphics "${vm_name}" >"${tmpdir}/run.log" 2>&1 &
 run_pid=$!
-ip="$(tart ip --wait 180 "${vm_name}")"
-
-# Password only: keys from the host's ssh agent would count against the
-# guest's MaxAuthTries before the password is ever tried.
-ssh_opts=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5
-  -o PubkeyAuthentication=no -o PreferredAuthentications=password,keyboard-interactive)
-remote() { SSHPASS="${ssh_password}" sshpass -e ssh "${ssh_opts[@]}" "${ssh_user}@${ip}" "$@"; }
-# sshd answers before the guest finishes booting, and rejects the right
-# password until it has, so keep trying for a while.
-ssh_ready=""
-for _ in $(seq 1 100); do
-  if ssh_err="$(remote true 2>&1)"; then
-    ssh_ready=1
+# The image's Tart Guest Agent starts a few seconds into boot; until then
+# `tart exec` fails.
+exec_ready=""
+for _ in $(seq 1 300); do
+  if tart exec "${vm_name}" true >/dev/null 2>&1; then
+    exec_ready=1
     break
   fi
-  sleep 3
+  if ! kill -0 "${run_pid}" 2>/dev/null; then
+    echo "The VM stopped while booting:" >&2
+    cat "${tmpdir}/run.log" >&2
+    exit 1
+  fi
+  sleep 1
 done
-if [[ -z "${ssh_ready}" ]]; then
-  echo "Could not ssh into the VM at ${ip} as ${ssh_user}: ${ssh_err}" >&2
-  echo "Check VESPER_MACOS_SSH_USER/VESPER_MACOS_SSH_PASSWORD, and that a VPN isn't routing ${ip} away from the VM." >&2
+if [[ -z "${exec_ready}" ]]; then
+  echo "tart exec never reached ${source_image}; it needs the Tart Guest Agent (vanilla images lack it)." >&2
   exit 1
 fi
-# ssh joins its arguments into one string the guest's shell parses again, so
-# a multi-line script passed inline loses its quoting. Copy it over instead.
+
 cat > "${tmpdir}/vesper-golden-setup.sh" <<'SETUP'
 set -eu
 install -d -o root -g wheel -m 0755 /usr/local/libexec
@@ -116,15 +111,13 @@ fi
 mkdir -p /opt/vesper/workspace
 SETUP
 
-SSHPASS="${ssh_password}" sshpass -e scp "${ssh_opts[@]}" \
-  "${tmpdir}/vesper-guest-agent" "${tmpdir}/dev.vesper.guest-agent.plist" \
-  "${tmpdir}/vesper-golden-setup.sh" "${ssh_user}@${ip}:/tmp/"
-
-# sudo -S reads the password from stdin; Tart's images also allow it without.
-echo "${ssh_password}" | remote sudo -S sh /tmp/vesper-golden-setup.sh
+for f in vesper-guest-agent dev.vesper.guest-agent.plist vesper-golden-setup.sh; do
+  tart exec -i "${vm_name}" sh -c "cat > /tmp/${f}" <"${tmpdir}/${f}"
+done
+tart exec "${vm_name}" sudo -n sh /tmp/vesper-golden-setup.sh
 
 echo "Shutting it down..."
-echo "${ssh_password}" | remote sudo -S shutdown -h now >/dev/null 2>&1 || true
+tart exec "${vm_name}" sudo -n shutdown -h now >/dev/null 2>&1 || true
 for _ in $(seq 1 120); do
   kill -0 "${run_pid}" 2>/dev/null || break
   sleep 1

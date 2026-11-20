@@ -110,14 +110,13 @@ mac-reinstall: ## Rebuild and replace the installed macOS app (macos/Makefile)
 
 # macOS guest VM golden image for personas' `mac` command (Apple Silicon only).
 # Optional overrides: MACOS_GOLDEN_DIR, VESPER_MACOS_SOURCE, VESPER_USER_DATA_DIR.
-mac-golden: ## Set up the macOS VM golden image for `mac` (installs tart/sshpass via Homebrew if missing)
+mac-golden: ## Set up the macOS VM golden image for `mac` (installs tart via Homebrew if missing)
 	@set -euo pipefail; \
 	if [ "$$(uname -s)/$$(uname -m)" != "Darwin/arm64" ]; then \
 	  echo "mac-golden needs an Apple Silicon Mac (Darwin/arm64)." >&2; exit 1; \
 	fi; \
 	pkgs=""; \
 	command -v tart >/dev/null 2>&1 || pkgs="$$pkgs openai/tools/tart"; \
-	command -v sshpass >/dev/null 2>&1 || pkgs="$$pkgs sshpass"; \
 	if [ -n "$$pkgs" ]; then \
 	  if ! command -v brew >/dev/null 2>&1; then \
 	    echo "Missing prerequisites ($${pkgs# }) and Homebrew is not installed." >&2; exit 1; \
