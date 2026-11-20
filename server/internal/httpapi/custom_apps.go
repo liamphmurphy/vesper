@@ -570,6 +570,34 @@ func (s *Server) GetCustomAppImage(ctx context.Context, req api.GetCustomAppImag
 	return avatarResponse{body: io.NopCloser(bytes.NewReader(body)), contentType: ct, length: int64(len(body))}, nil
 }
 
+// GetCustomAppMediaContent serves a video the app downloaded, so the player can
+// play it from Vesper instead of the site it came from. Players request many
+// ranges, so this looks the app up directly rather than loading its detail.
+func (s *Server) GetCustomAppMediaContent(ctx context.Context, req api.GetCustomAppMediaContentRequestObject) (api.GetCustomAppMediaContentResponseObject, error) {
+	u, _, ws := me(ctx)
+	app, err := s.Q.GetCustomAppBySlug(ctx, store.GetCustomAppBySlugParams{WorkspaceID: ws, UserID: u.ID, Slug: req.Slug})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apperr.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	media := s.mediaDownloads()
+	if media == nil {
+		return nil, apperr.ErrNotFound
+	}
+	item, key, size, err := media.Playable(ctx, app.ID, req.MediaId)
+	if err != nil {
+		return nil, err
+	}
+	return s.serveRanged(ctx, key, item.ContentType, size, "", true, req.Params.Range)
+}
+
+// VisitGetCustomAppMediaContentResponse writes a downloaded video, whole or one range.
+func (r rangedResponse) VisitGetCustomAppMediaContentResponse(w http.ResponseWriter) error {
+	return r.write(w)
+}
+
 // VisitGetCustomAppImageResponse serves a proxied image with avatar security/cache headers.
 func (r avatarResponse) VisitGetCustomAppImageResponse(w http.ResponseWriter) error {
 	return r.write(w)

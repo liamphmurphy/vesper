@@ -3,11 +3,14 @@ package httpapi
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // mediaApp's server.ts exposes the media API as tools, the way Watch Feed uses it.
@@ -135,5 +138,59 @@ func TestCustomAppMediaDownloadNeedsPermission(t *testing.T) {
 	}
 	if code, out = e.call("check", map[string]any{"id": id}); code == http.StatusOK && out["status"] == "ok" {
 		t.Fatalf("check after drop = %d %v, want an error", code, out)
+	}
+}
+
+func (e *mediaTestEnv) get(path, rangeHeader string) (*http.Response, []byte) {
+	e.t.Helper()
+	req, _ := http.NewRequest("GET", e.srv.URL+"/api/v1"+path, nil)
+	if rangeHeader != "" {
+		req.Header.Set("Range", rangeHeader)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	defer res.Body.Close()
+	b, _ := io.ReadAll(res.Body)
+	return res, b
+}
+
+func TestCustomAppMediaContentServesRanges(t *testing.T) {
+	e := newMediaTestEnv(t)
+	e.allowMedia("allowed")
+	_, out := e.call("grab", map[string]any{"url": e.site.URL + "/clip.mp4"})
+	id := out["result"].(map[string]any)["id"].(string)
+	e.waitDone(id)
+	path := "/custom-apps/feed/media/" + id + "/content"
+
+	res, body := e.get(path, "")
+	if res.StatusCode != http.StatusOK || !bytes.Equal(body, e.clip) || res.Header.Get("Content-Type") != "video/mp4" {
+		t.Fatalf("whole file = %d %q len=%d", res.StatusCode, res.Header.Get("Content-Type"), len(body))
+	}
+	if res.Header.Get("Accept-Ranges") != "bytes" {
+		t.Fatalf("Accept-Ranges = %q, want bytes so players can seek", res.Header.Get("Accept-Ranges"))
+	}
+
+	res, body = e.get(path, "bytes=10-19")
+	if res.StatusCode != http.StatusPartialContent || !bytes.Equal(body, e.clip[10:20]) {
+		t.Fatalf("range = %d %q", res.StatusCode, body)
+	}
+	if cr := res.Header.Get("Content-Range"); cr != fmt.Sprintf("bytes 10-19/%d", len(e.clip)) {
+		t.Fatalf("Content-Range = %q", cr)
+	}
+	if res, _ = e.get(path, fmt.Sprintf("bytes=%d-", len(e.clip)+5)); res.StatusCode != http.StatusRequestedRangeNotSatisfiable {
+		t.Fatalf("past-end range = %d, want 416", res.StatusCode)
+	}
+
+	// Another app, an unknown id and an unfinished download are all not found.
+	e.want("POST", "/custom-apps", map[string]any{"slug": "other", "name": "Other", "template": "blank"}, http.StatusCreated)
+	for _, p := range []string{
+		"/custom-apps/other/media/" + id + "/content",
+		"/custom-apps/feed/media/" + uuid.NewString() + "/content",
+	} {
+		if res, _ := e.get(p, ""); res.StatusCode != http.StatusNotFound {
+			t.Errorf("GET %s = %d, want 404", p, res.StatusCode)
+		}
 	}
 }
