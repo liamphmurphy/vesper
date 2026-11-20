@@ -62,6 +62,23 @@ func (q *Queries) DeleteCustomAppDockChats(ctx context.Context, arg DeleteCustom
 	return err
 }
 
+const deleteCustomAppMedia = `-- name: DeleteCustomAppMedia :one
+DELETE FROM custom_app_media WHERE id = $1 AND app_id = $2
+RETURNING blob_key
+`
+
+type DeleteCustomAppMediaParams struct {
+	ID    uuid.UUID
+	AppID uuid.UUID
+}
+
+func (q *Queries) DeleteCustomAppMedia(ctx context.Context, arg DeleteCustomAppMediaParams) (string, error) {
+	row := q.db.QueryRow(ctx, deleteCustomAppMedia, arg.ID, arg.AppID)
+	var blob_key string
+	err := row.Scan(&blob_key)
+	return blob_key, err
+}
+
 const deleteCustomAppSpace = `-- name: DeleteCustomAppSpace :exec
 DELETE FROM chat_spaces
 WHERE id = $1
@@ -81,6 +98,33 @@ ON CONFLICT (app_id) DO NOTHING
 func (q *Queries) EnsureCustomAppDatabase(ctx context.Context, appID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, ensureCustomAppDatabase, appID)
 	return err
+}
+
+const finishCustomAppMedia = `-- name: FinishCustomAppMedia :execrows
+UPDATE custom_app_media
+SET state = $1, bytes_done = $2, error = $3, updated_at = now()
+WHERE id = $4 AND state = 'downloading'
+`
+
+type FinishCustomAppMediaParams struct {
+	State     string
+	BytesDone int64
+	Error     string
+	ID        uuid.UUID
+}
+
+// Only a row still downloading can finish, so a deleted or already-failed row stays as it is.
+func (q *Queries) FinishCustomAppMedia(ctx context.Context, arg FinishCustomAppMediaParams) (int64, error) {
+	result, err := q.db.Exec(ctx, finishCustomAppMedia,
+		arg.State,
+		arg.BytesDone,
+		arg.Error,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getCustomAppBySlug = `-- name: GetCustomAppBySlug :one
@@ -206,6 +250,34 @@ func (q *Queries) GetCustomAppForUpdate(ctx context.Context, arg GetCustomAppFor
 		&i.CurrentSeq,
 		&i.Manifest,
 		&i.Capabilities,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getCustomAppMedia = `-- name: GetCustomAppMedia :one
+SELECT id, app_id, source_url, state, blob_key, content_type, bytes_done, bytes_total, error, created_at, updated_at FROM custom_app_media WHERE id = $1 AND app_id = $2
+`
+
+type GetCustomAppMediaParams struct {
+	ID    uuid.UUID
+	AppID uuid.UUID
+}
+
+func (q *Queries) GetCustomAppMedia(ctx context.Context, arg GetCustomAppMediaParams) (CustomAppMedium, error) {
+	row := q.db.QueryRow(ctx, getCustomAppMedia, arg.ID, arg.AppID)
+	var i CustomAppMedium
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.SourceUrl,
+		&i.State,
+		&i.BlobKey,
+		&i.ContentType,
+		&i.BytesDone,
+		&i.BytesTotal,
+		&i.Error,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -386,6 +458,45 @@ func (q *Queries) InsertCustomApp(ctx context.Context, arg InsertCustomAppParams
 	return i, err
 }
 
+const insertCustomAppMedia = `-- name: InsertCustomAppMedia :one
+INSERT INTO custom_app_media (app_id, source_url, state, blob_key, content_type, bytes_total)
+VALUES ($1, $2, 'downloading', $3, $4, $5)
+RETURNING id, app_id, source_url, state, blob_key, content_type, bytes_done, bytes_total, error, created_at, updated_at
+`
+
+type InsertCustomAppMediaParams struct {
+	AppID       uuid.UUID
+	SourceUrl   string
+	BlobKey     string
+	ContentType string
+	BytesTotal  *int64
+}
+
+func (q *Queries) InsertCustomAppMedia(ctx context.Context, arg InsertCustomAppMediaParams) (CustomAppMedium, error) {
+	row := q.db.QueryRow(ctx, insertCustomAppMedia,
+		arg.AppID,
+		arg.SourceUrl,
+		arg.BlobKey,
+		arg.ContentType,
+		arg.BytesTotal,
+	)
+	var i CustomAppMedium
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.SourceUrl,
+		&i.State,
+		&i.BlobKey,
+		&i.ContentType,
+		&i.BytesDone,
+		&i.BytesTotal,
+		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const insertCustomAppVersion = `-- name: InsertCustomAppVersion :one
 INSERT INTO custom_app_versions (app_id, seq, note, author_type, agent_id, manifest, files, bundle_js, bundle_css, bundle_mcp_js, mcp_tools)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
@@ -437,6 +548,35 @@ func (q *Queries) InsertCustomAppVersion(ctx context.Context, arg InsertCustomAp
 		&i.McpTools,
 	)
 	return i, err
+}
+
+const listCustomAppMediaBlobKeys = `-- name: ListCustomAppMediaBlobKeys :many
+SELECT id, blob_key FROM custom_app_media WHERE app_id = $1
+`
+
+type ListCustomAppMediaBlobKeysRow struct {
+	ID      uuid.UUID
+	BlobKey string
+}
+
+func (q *Queries) ListCustomAppMediaBlobKeys(ctx context.Context, appID uuid.UUID) ([]ListCustomAppMediaBlobKeysRow, error) {
+	rows, err := q.db.Query(ctx, listCustomAppMediaBlobKeys, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCustomAppMediaBlobKeysRow{}
+	for rows.Next() {
+		var i ListCustomAppMediaBlobKeysRow
+		if err := rows.Scan(&i.ID, &i.BlobKey); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listCustomAppVersions = `-- name: ListCustomAppVersions :many
@@ -626,6 +766,21 @@ type PruneCustomAppVersionsParams struct {
 // Drops versions older than oldest_kept; the app's current version is always the newest.
 func (q *Queries) PruneCustomAppVersions(ctx context.Context, arg PruneCustomAppVersionsParams) error {
 	_, err := q.db.Exec(ctx, pruneCustomAppVersions, arg.AppID, arg.OldestKept)
+	return err
+}
+
+const setCustomAppMediaProgress = `-- name: SetCustomAppMediaProgress :exec
+UPDATE custom_app_media SET bytes_done = $1, updated_at = now()
+WHERE id = $2 AND state = 'downloading'
+`
+
+type SetCustomAppMediaProgressParams struct {
+	BytesDone int64
+	ID        uuid.UUID
+}
+
+func (q *Queries) SetCustomAppMediaProgress(ctx context.Context, arg SetCustomAppMediaProgressParams) error {
+	_, err := q.db.Exec(ctx, setCustomAppMediaProgress, arg.BytesDone, arg.ID)
 	return err
 }
 

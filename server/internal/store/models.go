@@ -641,6 +641,20 @@ type CustomAppDatabase struct {
 	UpdatedAt   time.Time
 }
 
+type CustomAppMedium struct {
+	ID          uuid.UUID
+	AppID       uuid.UUID
+	SourceUrl   string
+	State       string
+	BlobKey     string
+	ContentType string
+	BytesDone   int64
+	BytesTotal  *int64
+	Error       string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
 type CustomAppVersion struct {
 	ID          uuid.UUID
 	AppID       uuid.UUID

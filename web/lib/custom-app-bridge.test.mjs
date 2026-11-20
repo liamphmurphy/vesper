@@ -4,7 +4,9 @@ import { typedText } from "./chat-context.ts";
 import {
   buildCustomAppSrcDoc,
   CUSTOM_APP_ICONS,
+  localMediaEmbed,
   parseBridgeMessage,
+  parseLocalMediaUrl,
   parseSafeExternalUrl,
   parseSafeHttpsUrl,
   resolveAppIcon,
@@ -238,5 +240,28 @@ test("parseBridgeMessage validates image proxy requests", () => {
       payload: { url: "javascript:alert(1)" },
     }),
     null,
+  );
+});
+
+test("downloaded videos play from Vesper, never from an outside URL", () => {
+  const id = "01a1f7a0-1234-7abc-8def-0123456789ab";
+  assert.equal(parseLocalMediaUrl(`vesper-media:${id}`), `vesper-media:${id}`);
+  assert.equal(parseLocalMediaUrl(` VESPER-MEDIA:${id.toUpperCase()} `), `vesper-media:${id}`);
+  for (const bad of ["vesper-media:not-a-uuid", `vesper-media:${id}/../x`, `https://cdn.example/${id}.mp4`, 42, null]) {
+    assert.equal(parseLocalMediaUrl(bad), null, String(bad));
+  }
+
+  assert.deepEqual(localMediaEmbed(`vesper-media:${id}`, "feed"), {
+    provider: "local",
+    embedUrl: `/api/v1/custom-apps/feed/media/${id}/content`,
+    externalUrl: "",
+    titleFallback: "Downloaded video",
+  });
+  assert.equal(localMediaEmbed(`vesper-media:${id}`, "../feed"), null);
+  assert.equal(localMediaEmbed("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "feed"), null);
+
+  assert.deepEqual(
+    parseBridgeMessage({ channel: "vesper:custom-app", type: "play-video", payload: { url: `vesper-media:${id}`, title: "Clip" } }),
+    { channel: "vesper:custom-app", id: "", type: "play-video", payload: { url: `vesper-media:${id}`, title: "Clip" } },
   );
 });

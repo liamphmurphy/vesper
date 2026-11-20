@@ -109,7 +109,7 @@ func ValidateIcon(icon string) (string, error) {
 
 func ValidCapabilityKey(key string) error {
 	switch key {
-	case "app.sql:read", "app.sql:write", "app.http:outbound", "vesper.api:read", "vesper.api:write":
+	case "app.sql:read", "app.sql:write", "app.http:outbound", "app.media:download", "vesper.api:read", "vesper.api:write":
 		return nil
 	default:
 		if mcpCap.MatchString(key) || secretCap.MatchString(key) {

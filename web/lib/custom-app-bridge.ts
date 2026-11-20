@@ -242,11 +242,34 @@ function parseTimestampSeconds(raw: string | null): number | null {
 }
 
 export type VideoEmbed = {
-  provider: "youtube" | "twitch";
+  provider: "youtube" | "twitch" | "local";
   embedUrl: string;
   externalUrl: string;
   titleFallback: string;
 };
+
+// A video the app downloaded into Vesper (server.ts media.download) plays from
+// Vesper itself: its play_url is this prefix plus the download's id.
+const LOCAL_MEDIA_PREFIX = "vesper-media:";
+const LOCAL_MEDIA_RE = /^vesper-media:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
+
+export function parseLocalMediaUrl(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const m = LOCAL_MEDIA_RE.exec(raw.trim().toLowerCase());
+  return m ? LOCAL_MEDIA_PREFIX + m[1] : null;
+}
+
+export function localMediaEmbed(rawUrl: string, appSlug: string): VideoEmbed | null {
+  const url = parseLocalMediaUrl(rawUrl);
+  if (!url || !SLUG_RE.test(appSlug)) return null;
+  const id = url.slice(LOCAL_MEDIA_PREFIX.length);
+  return {
+    provider: "local",
+    embedUrl: `/api/v1/custom-apps/${appSlug}/media/${id}/content`,
+    externalUrl: "",
+    titleFallback: "Downloaded video",
+  };
+}
 
 export function resolveVideoEmbed(rawUrl: string, parentHost?: string): VideoEmbed | null {
   const safe = parseSafeExternalUrl(rawUrl);
@@ -389,7 +412,7 @@ export function parseBridgeMessage(raw: unknown): BridgeMessage | null {
       return { channel: "vesper:custom-app", id: "", type: "open-url", payload: { url } };
     }
     case "play-video": {
-      const url = parseSafeExternalUrl(payload.url);
+      const url = parseLocalMediaUrl(payload.url) ?? parseSafeExternalUrl(payload.url);
       if (!url) return null;
       const title = typeof payload.title === "string" ? payload.title.trim().slice(0, 200) : "";
       return {

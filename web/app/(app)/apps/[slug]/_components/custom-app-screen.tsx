@@ -35,6 +35,8 @@ import {
   parseBridgeMessage,
   readThemeVarsFrom,
   resolveAppIcon,
+  localMediaEmbed,
+  parseLocalMediaUrl,
   resolveVideoEmbed,
   withCustomAppContext,
   type CustomAppNavSpec,
@@ -308,10 +310,12 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
         return;
       }
       if (msg.type === "play-video") {
-        const embed = resolveVideoEmbed(msg.payload.url, typeof window !== "undefined" ? window.location.hostname : undefined);
+        const embed =
+          localMediaEmbed(msg.payload.url, app.slug) ??
+          resolveVideoEmbed(msg.payload.url, typeof window !== "undefined" ? window.location.hostname : undefined);
         if (embed) {
           setActiveVideo({ ...embed, title: msg.payload.title || embed.titleFallback });
-        } else {
+        } else if (!parseLocalMediaUrl(msg.payload.url)) {
           window.open(msg.payload.url, "_blank", "noopener,noreferrer");
         }
         return;
@@ -627,29 +631,44 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
                   <Dialog.Title className="min-w-0 flex-1 truncate text-14 font-semibold text-fg">
                     {activeVideo.title}
                   </Dialog.Title>
-                  <a
-                    href={activeVideo.externalUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex h-7 flex-none items-center gap-1.5 rounded-md border border-border-strong px-2.5 text-12 font-medium text-fg-secondary transition-colors hover:bg-hover hover:text-fg"
-                  >
-                    <Icon name="link" size={13} />
-                    {activeVideo.provider === "youtube" ? "Open on YouTube" : "Open on Twitch"}
-                  </a>
+                  {activeVideo.provider !== "local" && (
+                    <a
+                      href={activeVideo.externalUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex h-7 flex-none items-center gap-1.5 rounded-md border border-border-strong px-2.5 text-12 font-medium text-fg-secondary transition-colors hover:bg-hover hover:text-fg"
+                    >
+                      <Icon name="link" size={13} />
+                      {activeVideo.provider === "youtube" ? "Open on YouTube" : "Open on Twitch"}
+                    </a>
+                  )}
                   <Dialog.Close asChild>
                     <IconButton icon="x" label="Close video player" />
                   </Dialog.Close>
                 </div>
                 <div className="relative aspect-video w-full bg-black">
-                  <iframe
-                    key={activeVideo.embedUrl}
-                    src={activeVideo.embedUrl}
-                    title={activeVideo.title}
-                    allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
-                    allowFullScreen
-                    referrerPolicy="strict-origin-when-cross-origin"
-                    className="absolute inset-0 size-full border-0"
-                  />
+                  {activeVideo.provider === "local" ? (
+                    <video
+                      key={activeVideo.embedUrl}
+                      src={activeVideo.embedUrl}
+                      title={activeVideo.title}
+                      controls
+                      autoPlay
+                      playsInline
+                      data-testid="custom-app-local-video"
+                      className="absolute inset-0 size-full"
+                    />
+                  ) : (
+                    <iframe
+                      key={activeVideo.embedUrl}
+                      src={activeVideo.embedUrl}
+                      title={activeVideo.title}
+                      allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+                      allowFullScreen
+                      referrerPolicy="strict-origin-when-cross-origin"
+                      className="absolute inset-0 size-full border-0"
+                    />
+                  )}
                 </div>
               </>
             )}

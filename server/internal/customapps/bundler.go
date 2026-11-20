@@ -929,6 +929,20 @@ export async function secretFetch(secret, url, init = {}) {
   return toResponse(res);
 }
 
+// media downloads direct video files into Vesper (app.media:download) so they
+// play locally: pass an item's play_url to playVideo once its state is "done".
+export const media = {
+  download(url) {
+    return callHost("media_download", { url: String(url) });
+  },
+  status(id) {
+    return callHost("media_status", { id: String(id) });
+  },
+  delete(id) {
+    return callHost("media_delete", { id: String(id) });
+  },
+};
+
 export async function fetch(url, init = {}) {
   const params = buildRequestParams(url, init);
   const res = await callHost("http_fetch", params);

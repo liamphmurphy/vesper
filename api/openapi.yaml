@@ -6221,6 +6221,31 @@ paths:
         "403": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
         default: { $ref: "#/components/responses/Error" }
+  /custom-apps/{slug}/media/{mediaId}/content:
+    parameters:
+      - { name: slug, in: path, required: true, schema: { type: string } }
+      - { name: mediaId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [custom-apps]
+      operationId: getCustomAppMediaContent
+      summary: A video the custom app downloaded (app.media:download), for playing locally
+      description: Supports a single byte Range, so players can seek. Only finished downloads are served.
+      parameters:
+        - { name: Range, in: header, description: "One byte range, e.g. bytes=0-1023", schema: { type: string } }
+      responses:
+        "200":
+          description: The video
+          content:
+            video/mp4:
+              schema: { type: string, format: binary }
+        "206":
+          description: The requested range of the video
+          content:
+            video/mp4:
+              schema: { type: string, format: binary }
+        "404": { $ref: "#/components/responses/Error" }
+        "416": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
 
 components:
   parameters:

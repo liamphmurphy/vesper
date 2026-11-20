@@ -5119,6 +5119,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/custom-apps/{slug}/media/{mediaId}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                mediaId: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * A video the custom app downloaded (app.media:download), for playing locally
+         * @description Supports a single byte Range, so players can seek. Only finished downloads are served.
+         */
+        get: operations["getCustomAppMediaContent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -18412,6 +18435,44 @@ export interface operations {
             };
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getCustomAppMediaContent: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description One byte range, e.g. bytes=0-1023 */
+                Range?: string;
+            };
+            path: {
+                slug: string;
+                mediaId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The video */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "video/mp4": string;
+                };
+            };
+            /** @description The requested range of the video */
+            206: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "video/mp4": string;
+                };
+            };
+            404: components["responses"]["Error"];
+            416: components["responses"]["Error"];
             default: components["responses"]["Error"];
         };
     };
