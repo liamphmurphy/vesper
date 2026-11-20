@@ -952,17 +952,44 @@ export async function secretFetch(secret, url, init = {}) {
   return toResponse(res);
 }
 
-// media downloads direct video files into Vesper (app.media:download) so they
-// play locally: pass an item's play_url to playVideo once its state is "done".
+// media downloads direct video files (or imports videos produced by a Nix job)
+// into Vesper (app.media:download) so they play locally: pass an item's
+// play_url to playVideo once its state is "done".
 export const media = {
   download(url) {
     return callHost("media_download", { url: String(url) });
+  },
+  import(jobId, path) {
+    return callHost("media_import", { job_id: String(jobId), path: String(path) });
   },
   status(id) {
     return callHost("media_status", { id: String(id) });
   },
   delete(id) {
     return callHost("media_delete", { id: String(id) });
+  },
+};
+
+// nix runs user-approved Nix packages (nix:<pkg>) in a per-job scratch directory.
+export const nix = {
+  start(spec) {
+    return callHost("nix_start", spec || {});
+  },
+  run(spec) {
+    return callHost("nix_run", spec || {});
+  },
+  status(id) {
+    return callHost("nix_status", { id: String(id) });
+  },
+  cancel(id) {
+    return callHost("nix_cancel", { id: String(id) });
+  },
+  delete(id) {
+    return callHost("nix_delete", { id: String(id) });
+  },
+  readFile(id, path, opts) {
+    const enc = typeof opts === "string" ? opts : (opts && typeof opts === "object" ? opts.encoding : "");
+    return callHost("nix_read_file", { id: String(id), path: String(path), encoding: String(enc || "utf8") });
   },
 };
 

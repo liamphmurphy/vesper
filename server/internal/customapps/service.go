@@ -25,6 +25,8 @@ type Service struct {
 	NodeBinary string
 	// Media downloads video files for apps with app.media:download; nil disables it.
 	Media *Media
+	// Nix runs approved Nix packages for apps with nix:<pkg>; nil disables it.
+	Nix *Nix
 }
 
 type AppSummary struct {
@@ -734,11 +736,15 @@ func (s *Service) SetMounts(ctx context.Context, ws, userID uuid.UUID, slug stri
 
 func (s *Service) Delete(ctx context.Context, ws, userID uuid.UUID, slug string) error {
 	var media []store.ListCustomAppMediaBlobKeysRow
+	var nixJobs []store.ListCustomAppNixJobWorkDirsRow
 	err := pgx.BeginTxFunc(ctx, s.Pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
 		q := store.New(tx)
 		if cur, err := q.GetCustomAppBySlug(ctx, store.GetCustomAppBySlugParams{WorkspaceID: ws, UserID: userID, Slug: slug}); err == nil {
 			// The rows cascade with the app; their files are removed after commit.
 			if media, err = q.ListCustomAppMediaBlobKeys(ctx, cur.ID); err != nil {
+				return err
+			}
+			if nixJobs, err = q.ListCustomAppNixJobWorkDirs(ctx, cur.ID); err != nil {
 				return err
 			}
 		}
@@ -767,8 +773,9 @@ func (s *Service) Delete(ctx context.Context, ws, userID uuid.UUID, slug string)
 		return err
 	}
 	// The app is gone either way; a file left behind only wastes space, so
-	// removing downloads is best effort rather than failing the delete.
+	// removing downloads and scratch dirs is best effort rather than failing the delete.
 	s.Media.forget(ctx, media)
+	s.Nix.forget(ctx, nixJobs)
 	return nil
 }
 
@@ -853,6 +860,7 @@ func (s *Service) CallMCPTool(ctx context.Context, app MCPServerApp, tool string
 	opts.Slug = app.Slug
 	opts.AppName = app.Name
 	opts.Capabilities = app.Capabilities
+	opts.Mounts = app.Mounts
 	opts.BundleJS = app.BundleMCPJS
 	if opts.Q == nil && s.Pool != nil {
 		opts.Q = store.New(s.Pool)
@@ -865,6 +873,9 @@ func (s *Service) CallMCPTool(ctx context.Context, app MCPServerApp, tool string
 	}
 	if opts.Media == nil {
 		opts.Media = s.Media
+	}
+	if opts.Nix == nil {
+		opts.Nix = s.Nix
 	}
 	if opts.SQLQuery == nil {
 		opts.SQLQuery = func(qctx context.Context, query string, params []any) (SQLResult, error) {
