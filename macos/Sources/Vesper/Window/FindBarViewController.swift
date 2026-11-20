@@ -259,16 +259,16 @@ final class FindBarViewController: NSViewController, NSTextFieldDelegate {
             config.backwards = backwards
             config.caseSensitive = matchCase
             config.wraps = true
-            let result = await webView.find(query, configuration: config)
+            let result = try? await webView.find(query, configuration: config)
             guard let self, self.searchGeneration == generation, self.targetWebView === webView, self.isVisible else { return }
-            self.applyStatus(hasResult: true, matchFound: result.matchFound)
+            self.applyStatus(hasResult: true, matchFound: result?.matchFound ?? false)
         }
     }
 
     private func clearHighlights(in webView: WKWebView?) {
         guard let webView else { return }
         Task { @MainActor in
-            _ = await webView.find("", configuration: WKFindConfiguration())
+            _ = try? await webView.find("", configuration: WKFindConfiguration())
         }
     }
 
