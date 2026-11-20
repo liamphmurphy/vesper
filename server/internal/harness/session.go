@@ -7,6 +7,8 @@ import (
 	"sync"
 )
 
+const sessionMaxScanBytes = 32 << 20
+
 // PolicyFunc authorizes a single tool call in-process. Returning allow=false
 // denies the tool with reason. Implementations must fail closed.
 type PolicyFunc func(ctx context.Context, tool string, input map[string]any) (allow bool, reason string)

@@ -3,6 +3,7 @@ package harness
 import (
 	"encoding/base64"
 	"encoding/json"
+	"path"
 	"slices"
 	"strings"
 
@@ -46,35 +47,63 @@ type mcpEntry struct {
 	Headers map[string]string `json:"headers,omitempty"`
 }
 
-func (ClaudeCode) Invocation(ws Workspace, t Turn) (Invocation, error) {
-	spec := t.Spec
-	env, err := hookEnvironment(ws)
-	if err != nil {
-		return Invocation{}, err
+func claudeConfigPath(tag, base string) string {
+	if tag == "" {
+		return path.Join(".lazyagents", base)
 	}
-	env[ws.TokenEnv] = ws.Token
+	return path.Join(".lazyagents", tag+"-"+base)
+}
+
+type claudeConfig struct {
+	env          map[string]string
+	files        map[string][]byte
+	allow        []string
+	deny         []string
+	mode         string
+	noTools      bool
+	subagents    bool
+	mcpFile      string
+	agentsFile   string
+	settingsFile string
+	inputFile    string
+}
+
+func buildClaudeConfig(ws Workspace, t Turn, commandHook bool) (claudeConfig, error) {
+	spec := t.Spec
+	var env map[string]string
+	var err error
+	if commandHook {
+		env, err = hookEnvironment(ws)
+		if err != nil {
+			return claudeConfig{}, err
+		}
+	} else {
+		env = map[string]string{}
+	}
+	if ws.TokenEnv != "" {
+		env[ws.TokenEnv] = ws.Token
+	}
 	for k, v := range claudePrivacyEnv {
 		env[k] = v
 	}
-	servers := map[string]mcpEntry{
+	noTools := spec.HarnessOptions[agentdef.OptionNoTools] == "true"
+	noMCP := noTools || spec.HarnessOptions[agentdef.OptionNoMCP] == "true"
+	servers := map[string]mcpEntry{}
+	if !noMCP {
 		// The run token is written into the (git-excluded) config; it's
 		// revoked when the run ends.
-		lazyagentsServer: {Type: "http", URL: ws.MCPURL, Headers: map[string]string{"Authorization": "Bearer " + ws.Token}},
-	}
-	for _, m := range spec.MCPServers {
-		if m.Connector {
-			servers[m.Name] = mcpEntry{Type: "http", URL: ws.MCPURL + "/connectors/" + m.Name, Headers: map[string]string{"Authorization": "Bearer " + ws.Token}}
-			continue
+		servers[lazyagentsServer] = mcpEntry{Type: "http", URL: ws.MCPURL, Headers: map[string]string{"Authorization": "Bearer " + ws.Token}}
+		for _, m := range spec.MCPServers {
+			if m.Connector {
+				servers[m.Name] = mcpEntry{Type: "http", URL: ws.MCPURL + "/connectors/" + m.Name, Headers: map[string]string{"Authorization": "Bearer " + ws.Token}}
+				continue
+			}
+			servers[m.Name] = mcpEntry{Type: "http", URL: m.URL}
 		}
-		servers[m.Name] = mcpEntry{Type: "http", URL: m.URL}
-	}
-	noTools := spec.HarnessOptions[agentdef.OptionNoTools] == "true"
-	if noTools {
-		servers = map[string]mcpEntry{}
 	}
 	cfg, err := json.MarshalIndent(map[string]any{"mcpServers": servers}, "", "  ")
 	if err != nil {
-		return Invocation{}, err
+		return claudeConfig{}, err
 	}
 
 	// "readonly" (planning runs) is enforced by the tool allow/deny lists
@@ -88,24 +117,33 @@ func (ClaudeCode) Invocation(ws Workspace, t Turn) (Invocation, error) {
 			mode = "default"
 		}
 	}
-	allow := []string{"mcp__" + lazyagentsServer, "Read", "Edit", "Write", "Glob", "Grep", "TodoWrite", "TaskCreate", "TaskUpdate", "Skill", "ToolSearch"}
-	for _, m := range spec.MCPServers {
-		allow = append(allow, "mcp__"+m.Name)
+	var allow []string
+	if !noTools {
+		allow = []string{"Read", "Edit", "Write", "Glob", "Grep", "TodoWrite", "TaskCreate", "TaskUpdate", "Skill", "ToolSearch"}
+	}
+	if !noMCP {
+		allow = append([]string{"mcp__" + lazyagentsServer}, allow...)
+		for _, m := range spec.MCPServers {
+			allow = append(allow, "mcp__"+m.Name)
+		}
 	}
 	// Shell access backs tests and git; it's granted when either scope is.
-	if spec.Mode("tests:run") != agentdef.Denied || spec.Mode("repo:write") != agentdef.Denied || spec.Mode("repo:read") != agentdef.Denied {
+	if !noTools && (spec.Mode("tests:run") != agentdef.Denied || spec.Mode("repo:write") != agentdef.Denied || spec.Mode("repo:read") != agentdef.Denied) {
 		allow = append(allow, "Bash")
 	}
 	// Web tools need web:read; requires_approval goes through the policy hook.
-	if spec.Mode("web:read") != agentdef.Denied {
+	if !noTools && spec.Mode("web:read") != agentdef.Denied {
 		allow = append(allow, "WebFetch", "WebSearch")
 	}
 	var deny []string
-	if readonly {
-		allow = []string{"mcp__" + lazyagentsServer, "Read", "Glob", "Grep", "ToolSearch"}
-		for _, m := range spec.MCPServers {
-			if m.Connector {
-				allow = append(allow, "mcp__"+m.Name)
+	if readonly && !noTools {
+		allow = []string{"Read", "Glob", "Grep", "ToolSearch"}
+		if !noMCP {
+			allow = append([]string{"mcp__" + lazyagentsServer}, allow...)
+			for _, m := range spec.MCPServers {
+				if m.Connector {
+					allow = append(allow, "mcp__"+m.Name)
+				}
 			}
 		}
 		// The web tools are handled below: a denied tool beats an allowed one.
@@ -113,13 +151,15 @@ func (ClaudeCode) Invocation(ws Workspace, t Turn) (Invocation, error) {
 	}
 	// The assistant's web_search option grants web tools even to read-only
 	// chat; otherwise read-only runs never get the web.
-	if spec.HarnessOptions[agentdef.OptionWebSearch] == "true" {
-		allow = append(allow, "WebSearch", "WebFetch")
-	} else if readonly || spec.Mode("web:read") == agentdef.Denied {
-		deny = append(deny, "WebSearch", "WebFetch")
-	}
-	if denied(spec, "repo:write") {
-		deny = append(deny, "Bash(git push:*)", "Bash(gh pr create:*)")
+	if !noTools {
+		if spec.HarnessOptions[agentdef.OptionWebSearch] == "true" {
+			allow = append(allow, "WebSearch", "WebFetch")
+		} else if readonly || spec.Mode("web:read") == agentdef.Denied {
+			deny = append(deny, "WebSearch", "WebFetch")
+		}
+		if denied(spec, "repo:write") {
+			deny = append(deny, "Bash(git push:*)", "Bash(gh pr create:*)")
+		}
 	}
 	subagents := agentdef.SubagentsOn(spec)
 	var agents []byte
@@ -146,7 +186,7 @@ func (ClaudeCode) Invocation(ws Workspace, t Turn) (Invocation, error) {
 		}
 		allow = append(allow, "Agent")
 		if agents, err = json.MarshalIndent(roster, "", "  "); err != nil {
-			return Invocation{}, err
+			return claudeConfig{}, err
 		}
 		// Sub agents run in the background by default (claude 2.1.325): the
 		// lead ends its turn, is woken when they finish, and the stream carries
@@ -155,28 +195,69 @@ func (ClaudeCode) Invocation(ws Workspace, t Turn) (Invocation, error) {
 		env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = "1"
 	}
 
+	mcpFile := claudeConfigPath(t.ConfigTag, "mcp.json")
+	agentsFile := claudeConfigPath(t.ConfigTag, "claude-agents.json")
+	settingsFile := claudeConfigPath(t.ConfigTag, "claude-settings.json")
+	inputFile := claudeConfigPath(t.ConfigTag, "claude-input.jsonl")
+
+	files := SkillFiles(spec.Skills)
+	files[mcpFile] = cfg
+	if subagents {
+		files[agentsFile] = agents
+	}
+	if commandHook {
+		files[toolHookPath] = toolHook
+		settingsDoc := map[string]any{"hooks": map[string]any{"PreToolUse": []any{map[string]any{"matcher": "*", "hooks": []any{map[string]any{"type": "command", "command": env["LAZYAGENTS_POLICY_HOOK_COMMAND"], "timeout": 20}}}}}}
+		settings, _ := json.Marshal(settingsDoc)
+		files[settingsFile] = settings
+	} else {
+		files[settingsFile] = []byte("{}")
+	}
+	return claudeConfig{
+		env:          env,
+		files:        files,
+		allow:        allow,
+		deny:         deny,
+		mode:         mode,
+		noTools:      noTools,
+		subagents:    subagents,
+		mcpFile:      mcpFile,
+		agentsFile:   agentsFile,
+		settingsFile: settingsFile,
+		inputFile:    inputFile,
+	}, nil
+}
+
+func (ClaudeCode) Invocation(ws Workspace, t Turn) (Invocation, error) {
+	c, err := buildClaudeConfig(ws, t, true)
+	if err != nil {
+		return Invocation{}, err
+	}
+	spec := t.Spec
 	argv := []string{"claude", "-p", t.Prompt,
 		"--output-format", "stream-json", "--verbose",
 		"--model", AnthropicModel(spec.Model),
-		"--mcp-config", claudeMCPFile, "--strict-mcp-config",
-		"--permission-mode", mode,
+		"--mcp-config", c.mcpFile, "--strict-mcp-config",
+		"--permission-mode", c.mode,
 		// Nobody answers prompts headless: anything not allowed is denied
 		// and the agent is told to use request_approval.
 		"--permission-prompts", "none",
-		"--settings", ".lazyagents/claude-settings.json",
+		"--settings", c.settingsFile,
 		// Skip the host's user settings: on the fake runner HOME is the
 		// host's, and a user-level "agent", plugins or permissions would
 		// replace this run's tools and prompt. Login isn't a setting source.
 		"--setting-sources", "project,local",
-		"--allowedTools", strings.Join(allow, ","),
 	}
-	if len(deny) > 0 {
-		argv = append(argv, "--disallowedTools", strings.Join(deny, ","))
+	if len(c.allow) > 0 {
+		argv = append(argv, "--allowedTools", strings.Join(c.allow, ","))
 	}
-	if subagents {
-		argv = append(argv, "--agents", claudeAgentsFile)
+	if len(c.deny) > 0 {
+		argv = append(argv, "--disallowedTools", strings.Join(c.deny, ","))
 	}
-	if noTools {
+	if c.subagents {
+		argv = append(argv, "--agents", c.agentsFile)
+	}
+	if c.noTools {
 		argv = append(argv, "--tools", "")
 	} else {
 		// Lets the chat see rich blocks being written; messages still arrive whole.
@@ -185,35 +266,29 @@ func (ClaudeCode) Invocation(ws Workspace, t Turn) (Invocation, error) {
 	if t.SessionID != "" {
 		argv = append(argv, "--resume", t.SessionID)
 	}
+	if t.SystemAppend != "" {
+		argv = append(argv, "--append-system-prompt", t.SystemAppend)
+	}
 	// The flag, not settings: it takes every level (settings files refuse max)
 	// and applies per invocation, so a chat can change it between turns.
 	if effort := spec.HarnessOptions["effort"]; effort != "" {
 		argv = append(argv, "--effort", effort)
 	}
-	files := SkillFiles(spec.Skills)
 	if len(t.InlineImages) > 0 {
 		input, err := claudeImageMessage(t.Prompt, t.InlineImages)
 		if err != nil {
 			return Invocation{}, err
 		}
-		files[claudeInputFile] = input
+		c.files[c.inputFile] = input
 		// Images need the stream-json message form, read from stdin (checked
 		// against claude 2.1.311), so the prompt moves out of the arguments.
-		argv = append([]string{"sh", "-c", `exec "$@" < ` + claudeInputFile, "lazyagents-claude-input", argv[0], argv[1]}, argv[3:]...)
+		argv = append([]string{"sh", "-c", `exec "$@" < ` + c.inputFile, "lazyagents-claude-input", argv[0], argv[1]}, argv[3:]...)
 		argv = append(argv, "--input-format", "stream-json")
 	}
-	files[claudeMCPFile] = cfg
-	if subagents {
-		files[claudeAgentsFile] = agents
-	}
-	files[toolHookPath] = toolHook
-	settingsDoc := map[string]any{"hooks": map[string]any{"PreToolUse": []any{map[string]any{"matcher": "*", "hooks": []any{map[string]any{"type": "command", "command": env["LAZYAGENTS_POLICY_HOOK_COMMAND"], "timeout": 20}}}}}}
-	settings, _ := json.Marshal(settingsDoc)
-	files[".lazyagents/claude-settings.json"] = settings
 	return Invocation{
 		Argv:  argv,
-		Env:   env,
-		Files: files,
+		Env:   c.env,
+		Files: c.files,
 	}, nil
 }
 
@@ -531,13 +606,23 @@ func (p *claudeParser) Result() Result { return p.res }
 
 const claudeInputFile = ".lazyagents/claude-input.jsonl"
 
-// claudeImageMessage is the one user message of a turn with image inputs.
-func claudeImageMessage(prompt string, images []InlineImage) ([]byte, error) {
+func claudeUserMessage(prompt string, images []InlineImage) any {
+	if len(images) == 0 {
+		return map[string]any{
+			"type":    "user",
+			"message": map[string]any{"role": "user", "content": prompt},
+		}
+	}
 	content := []map[string]any{{"type": "text", "text": prompt}}
 	for _, im := range images {
 		content = append(content, map[string]any{"type": "image", "source": map[string]any{"type": "base64", "media_type": im.MediaType, "data": base64.StdEncoding.EncodeToString(im.Data)}})
 	}
-	raw, err := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": content}})
+	return map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": content}}
+}
+
+// claudeImageMessage is the one user message of a turn with image inputs.
+func claudeImageMessage(prompt string, images []InlineImage) ([]byte, error) {
+	raw, err := json.Marshal(claudeUserMessage(prompt, images))
 	if err != nil {
 		return nil, err
 	}

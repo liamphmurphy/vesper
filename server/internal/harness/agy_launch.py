@@ -51,8 +51,15 @@ def install(cfg):
 
 
 def main():
-    program, args = sys.argv[1], sys.argv[2:]
-    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "agy-config.json")) as f:
+    args = sys.argv[1:]
+    cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agy-config.json")
+    if len(args) >= 2 and args[0] == "--config":
+        cfg_arg, args = args[1], args[2:]
+        cfg_path = cfg_arg if os.path.isabs(cfg_arg) or os.path.exists(cfg_arg) else os.path.join(os.path.dirname(os.path.abspath(__file__)), os.path.basename(cfg_arg))
+    if not args:
+        raise RuntimeError("agy_launch.py: missing program argument")
+    program, args = args[0], args[1:]
+    with open(cfg_path) as f:
         cfg = json.load(f)
     if cfg.get("install"):
         install(cfg)

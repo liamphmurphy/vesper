@@ -42,6 +42,8 @@ type Turn struct {
 	InlineImages []InlineImage
 	// SystemAppend appends per-turn instructions without touching AGENTS.md.
 	SystemAppend string
+	// ConfigTag isolates generated temp config filenames when turns share a workspace.
+	ConfigTag string
 }
 
 // InlineImage is an image delivered as bytes.
