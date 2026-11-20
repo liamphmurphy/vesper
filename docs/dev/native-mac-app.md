@@ -128,12 +128,27 @@ Source of truth: `web/lib/native-shell/protocol.ts`; Swift mirror
   nothing in the page (there is no web left column or fallback column).
 - When no screen claims the navigator, the default Chats navigator (chat history and spaces) is
   published as a `NavModel` together with `shell` (areas, apps, current area, badges).
-- Request/response messages (`confirmApproval`, `openWorkspaceMenu`, `contextMenu`, `confirm`) carry a
 - `nav.activate` carries `newTab: true` when the row was ⌘-clicked: the page opens the row's href
   with `window.open` (a new tab beside this one) and leaves the current tab and its selection alone.
   Rows without an href are activated as by a plain click.
-- Request/response messages (`confirmApproval`, `openWorkspaceMenu`, `contextMenu`) carry a
-  `requestId`; the shell answers with a `reply` command.
+- Request/response messages (`confirmApproval`, `openWorkspaceMenu`, `contextMenu`, `confirm`,
+  `prompt`) carry a `requestId`; the shell answers with a `reply` command (returning `selectedId`
+  for `contextMenu` and `value` for `prompt`).
+- Window-level Liquid Glass toast HUD: pages send `toast.show` / `toast.dismiss` to render bounded
+  toast pills (`ToastPresenter` / `ToastQueueLogic`) centered near the bottom of the host window with
+  hover-pause countdowns; the shell sends `toast.event` (`action`, `dismissed`, `timeout`) back to
+  the originating web view.
+- Searchable native Keyboard Shortcuts window (`ShortcutsWindowController`, `?` / `⌘/`): triggered
+  either from Help › Keyboard Shortcuts or via the page `showShortcuts` message.
+- Native floating Liquid Glass Command Palette (`⌘K`, `⇧⌘K`, `⌥⌘F`): `CommandPaletteController`
+  hosts a persistent borderless `NSPanel` backed by `/command-palette` (`WebViewKind.commandPalette`
+  with `native-command-palette` and `native-inspector-glass`, clear background). Pages trigger or
+  dismiss it via `commandPalette.open` / `commandPalette.close`, and the shell sends `palette.open`
+  to initialize scope/query context.
+- Native Quick Look (`quickLook`): `QuickLookController` validates same-origin URLs via `BridgeOrigin`,
+  downloads authenticated Library, chat attachment, and artifact files into a process-scoped temporary
+  cache (cleaned on quit), and presents `QLPreviewPanel` via `MainWindowController` responder-chain
+  hooks.
 - Native inspector bridge: screens publish an `inspector` message (`InspectorModel | null`) with
   tab kinds `native` (declarative sections/items rendered natively in SwiftUI), `companion`
   (routed to `/companion` via `companion.context`), `panel` (routed to `/inspector-panel` via
@@ -197,15 +212,19 @@ What the app does, for regression testing by hand.
 - [ ] ⌘-click a sidebar row with an href (a chat, a run, a Knowledge page) → it opens in a new tab; the current tab doesn't move
 - [ ] Knowledge: no Knowledge tab strip (pages are the app's tabs, named after the page); a click on a page replaces the current tab, ⌘-click or the row's Open in New Tab opens one beside it; Home is the explorer's top row; ⌘W closes the tab (⌥W does nothing); the page's Private/Shared menu, persona mode, Copy link and More are toolbar items, and its folder path sits above its title
 - [ ] Offline / stack-error state in the window with Retry, Restart Stack, Show Logs
-- [ ] Right-click on a chat message or a board card: native menu (selected text, fields and links in messages keep the system menu); right place at every zoom level
-- [ ] `confirmAction` (delete a chat, discard edits, cancel a run…) is a sheet on the window: Return confirms, Esc cancels, the custom cancel label works; page `alert`/`confirm`/`prompt` are sheets too
+- [ ] Right-click native `NSMenu` context menus across chat messages, board cards, ticket rows, Work/Activity runs & needs-you cards, Library tiles, Knowledge home rows, Custom App cards, and chat attachments (selected text, inputs, and links in messages keep the system menu); right place at every zoom level
+- [ ] `confirmAction` (delete a chat, discard edits, cancel a run…) and text-input prompts (`prompt`, e.g. rename dialogs) are native sheets on the window: Return confirms, Esc cancels, custom cancel labels and length caps work; page `alert`/`confirm`/`prompt` are sheets too
+- [ ] Floating Liquid Glass Find Bar (`FindBarViewController`): ⌘F opens in the active tab, ⌘G / ⇧⌘G navigate matches when open (preserving Slides ⌘G/⇧⌘G when closed), ⌘E uses the web selection, Esc restores focus to the page
+- [ ] Floating Liquid Glass Command Palette (`⌘K`, `⇧⌘K`, `⌥⌘F`, toolbar search): persistent borderless `NSPanel` hosting `/command-palette`; disabled on `/dev` routes so `DevTerminal` keeps `⌘K`
+- [ ] Native searchable Keyboard Shortcuts window (`?` / ⌘/) and window-level Liquid Glass Toast HUD (max 3 visible pills, hover pause, Undo action round-trip)
+- [ ] Native Quick Look (`Space` in Library / file artifacts, context menu, or Quick Look button) previews same-origin authenticated images, video, audio, PDFs, and files in `QLPreviewPanel`; temp cache cleaned on quit
 - [ ] Overscroll past the top/bottom of a page shows the palette's background (dark, Gruvbox), not white
 - [ ] Quit confirmation when runs are active (`power.confirmQuitWithActiveRuns`)
 
 **Menus**
 - [ ] App: About, Check for Updates…, Settings… ⌘,, Restart Stack, Show Logs…, Services, Hide/Hide Others/Show All, Quit ⌘Q
 - [ ] File: New Tab, New Window, Reopen Closed Tab, Quick Capture…, Screenshot to Chat…, Import Backup…, Close Tab, Close Window
-- [ ] Edit (standard, incl. Find ⌘F → page find), View (Reload, Force Reload, Developer Tools, zoom, tab bar, full screen, Show/Hide Sidebar ⌃⌘S, Show/Hide Inspector ⌘\), History (Back, Forward), Window (standard + tab commands), Help (Show Logs…, Vesper Repository & Docs)
+- [ ] Edit (standard, incl. Find… ⌘F, Find Next ⌘G, Find Previous ⇧⌘G, Use Selection for Find ⌘E, Command Palette… ⌘K, Search Current View… ⇧⌘K, Search… ⌥⌘F), View (Reload, Force Reload, Developer Tools, zoom, tab bar, full screen, Show/Hide Sidebar ⌃⌘S, Show/Hide Inspector ⌘\), History (Back, Forward), Window (standard + tab commands), Help (Keyboard Shortcuts ⌘/, Show Logs…, Vesper Repository & Docs)
 - [ ] "Change Server URL…" and remote/Docker modes are dropped on purpose (local app only)
 
 **Stack**
@@ -266,15 +285,16 @@ macos/Sources/VesperCore/           logic with no AppKit UI (unit-tested)
   Stack/        StackController, SecretsKey (+ safeStorage migration), StackHealth, BundledResources
   API/          APIClient (session cookie), InboxMonitor, RunMonitor, EventStream (SSE)
   Settings/     NativeSettings (config.json "native"), SessionStore (session.json)
-  Model/        DeepLinks, Routing, InspectorLogic, NotificationPolicy, TrayModel, DockModel, Capture, Drop, Power, Thermal, Backups, Updates, WorkspaceOpen
+  Model/        DeepLinks, Routing, InspectorLogic, FindLogic, ShortcutsCatalog, ToastQueueLogic, QuickLookLogic, NotificationPolicy, TrayModel, DockModel, Capture, Drop, Power, Thermal, Backups, Updates, WorkspaceOpen
 macos/Sources/Vesper/               the app (AppKit + SwiftUI)
   App/          main.swift, AppDelegate, AppModel
-  Window/       WindowRootController (3-pane split + stationary rail), MainWindowController (a window and its tabs), TabsModel, TabContainerController, WebContentController (one tab), ShellBridge, WebViewFactory, OfflineView
+  Window/       WindowRootController (3-pane split + stationary rail + toast HUD), MainWindowController (a window and its tabs), TabsModel, TabContainerController, WebContentController (one tab), ShellBridge, WebViewFactory, FindBarViewController, CommandPaletteController, ToastPresenter, OfflineView
   Sidebar/      SidebarView (renders ShellModel + NavModel)
   Inspector/    InspectorViewController (split pane + NSPanel pop-out), InspectorView (SwiftUI renderer), CompanionWebController (persistent /companion WebView), InspectorPanelWebController (persistent /inspector-panel WebView)
   Toolbar/      ToolbarController, TabStripView (compact tabs)
   Menus/        MainMenu
-  MenuBar/ Notifications/ Dock/ Capture/ Files/ Settings/ Logs/ Power/
+  Windows/      AuxWindows, ShortcutsWindow
+  MenuBar/ Notifications/ Dock/ Capture/ Files/ (QuickLookController) Settings/ Logs/ Power/
 macos/Tests/VesperCoreTests/        XCTest, incl. bridge fixture decoding
 macos/scripts/build-app.sh          assemble + sign Vesper.app
 macos/Resources/                    Info.plist template, icons, tray images
