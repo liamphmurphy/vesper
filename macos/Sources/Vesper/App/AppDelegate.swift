@@ -174,8 +174,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     @objc func findNext(_ sender: Any?) { app.keyController?.findNext() }
     @objc func findPrevious(_ sender: Any?) { app.keyController?.findPrevious() }
     @objc func useSelectionForFind(_ sender: Any?) { app.keyController?.useSelectionForFind() }
-    /// ⌥⌘F: opens the page's command palette, like the toolbar's search button.
-    @objc func focusSearch(_ sender: Any?) { app.keyController?.send(.command(.openCommandMenu)) }
+    /// ⌘K: opens (or toggles) the native floating command palette.
+    @objc func openCommandPalette(_ sender: Any?) {
+        app.aux.openCommandPalette(request: CommandPaletteRequest(scope: .all), from: app.keyController)
+    }
+    /// ⇧⌘K: opens the floating command palette scoped to the current view.
+    @objc func openScopedCommandPalette(_ sender: Any?) {
+        app.aux.openCommandPalette(request: CommandPaletteRequest(scope: .page), from: app.keyController)
+    }
+    /// ⌥⌘F: opens the floating command palette, like the toolbar's search button.
+    @objc func focusSearch(_ sender: Any?) {
+        app.aux.openCommandPalette(request: CommandPaletteRequest(scope: .all), from: app.keyController)
+    }
     @objc func toggleSidebarAction(_ sender: Any?) { app.keyController?.split.toggleSidebar(sender) }
     @objc func toggleInspectorAction(_ sender: Any?) { app.keyController?.toggleInspector(sender) }
     @objc func reload(_ sender: Any?) { web?.reload() }
@@ -281,6 +291,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         case #selector(findNext(_:)), #selector(findPrevious(_:)):
             guard let controller = app.keyController else { return false }
             return controller.isFindBarVisible && controller.hasFindQuery
+        case #selector(openCommandPalette(_:)), #selector(openScopedCommandPalette(_:)), #selector(focusSearch(_:)):
+            guard let controller = app.keyController, controller.kind == .vesper else { return false }
+            let route = controller.state.route
+            return route != "/dev" && route?.hasPrefix("/dev/") != true
         case #selector(nextTab(_:)), #selector(previousTab(_:)):
             if let c = compactController { return c.tabs.list.count > 1 }
             return (tabs()?.windows.count ?? 0) > 1

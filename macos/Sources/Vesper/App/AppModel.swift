@@ -64,6 +64,7 @@ final class AppModel {
         guard let new else { return }
         Task {
             await installCookieIfNeeded(new)
+            aux.commandPalette.connect(new)
             for window in windows { window.connect(new) }
             if windows.isEmpty { restoreOrOpenFirstWindow() }
         }

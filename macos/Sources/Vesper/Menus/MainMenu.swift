@@ -80,6 +80,9 @@ enum MainMenu {
             item("Find Next", #selector(AppDelegate.findNext(_:)), "g"),
             item("Find Previous", #selector(AppDelegate.findPrevious(_:)), "g", [.command, .shift]),
             item("Use Selection for Find", #selector(AppDelegate.useSelectionForFind(_:)), "e"),
+            sep(),
+            item("Command Palette…", #selector(AppDelegate.openCommandPalette(_:)), "k"),
+            item("Search Current View…", #selector(AppDelegate.openScopedCommandPalette(_:)), "k", [.command, .shift]),
             item("Search…", #selector(AppDelegate.focusSearch(_:)), "f", [.command, .option]),
         ])
 

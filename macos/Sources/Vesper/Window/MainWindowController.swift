@@ -44,9 +44,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     var inspectorDividerIndex: Int { InspectorLogic.inspectorDividerIndex(hasSidebar: hasSidebar) }
     var currentURLString: String? { content.currentURLString }
 
-    /// ⌥⌘F: the toolbar's search field, which opens the page's command palette.
+    /// ⌥⌘F: open the native floating command palette anchored to this window.
     func focusSearch() {
-        toolbarController?.focusSearch()
+        openCommandPalette(CommandPaletteRequest(scope: .all))
     }
 
     var isFindBarVisible: Bool { container.findBar.isVisible }
@@ -433,11 +433,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
 
     func openCommandPalette(_ request: CommandPaletteRequest?) {
-        // Wired in Commit 4.
+        app.aux.openCommandPalette(request: request, from: self)
     }
 
     func closeCommandPalette() {
-        // Wired in Commit 4.
+        app.aux.closeCommandPalette()
     }
 
     func showQuickLook(items: [QuickLookItem], index: Int?) {

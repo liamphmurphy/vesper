@@ -16,6 +16,9 @@ import { useDevWorkspace } from "@/lib/api/dev-workspace-hooks";
 import { resolveAppIcon } from "@/lib/custom-app-bridge";
 import { cx } from "@/lib/cx";
 import { shortAgo } from "@/lib/format";
+import { isNativeShell, onCommand, post } from "@/lib/native-shell/bridge";
+import { useIsNativeShell } from "@/lib/native-shell/hooks";
+import { fromPaletteRequest, toPaletteRequest } from "@/lib/native-shell/palette";
 import { approvalId, KIND as INBOX_KIND } from "@/lib/inbox";
 import { attachQuery, chipFromTarget, type ContextRef } from "@/lib/chat-context";
 import { KINDS, pageHref, pageIcon, type PageKind } from "@/lib/knowledge";
@@ -279,8 +282,21 @@ export type OpenPaletteDetail = {
   query?: string;
 };
 
+/** True inside the native macOS floating palette NSPanel host (`/command-palette`). */
+function isNativePaletteHost(): boolean {
+  return typeof document !== "undefined" && document.documentElement.classList.contains("native-command-palette");
+}
+
 /** Opens the command palette globally or scoped to the current page / Knowledge. */
 export function openCommandPalette(detail?: OpenPaletteDetail) {
+  if (isNativeShell() && !isNativePaletteHost()) {
+    const request = toPaletteRequest(detail, {
+      pathname: typeof window !== "undefined" ? window.location.pathname : "/",
+      search: typeof window !== "undefined" ? window.location.search : undefined,
+    });
+    post({ v: 1, type: "commandPalette.open", request });
+    return;
+  }
   window.dispatchEvent(new CustomEvent<OpenPaletteDetail>("la:search", { detail }));
 }
 
@@ -307,17 +323,50 @@ function knowledgePageRow(r: PageRow): Row {
   };
 }
 
-export function CommandMenu() {
+function NativePaletteProxy() {
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "k") {
+        if (e.target instanceof Element && e.target.closest("[data-dev-terminal]")) return;
+        e.preventDefault();
+        openCommandPalette({ scope: e.shiftKey ? "page" : "all" });
+      }
+    };
+    const onSearch = (e: Event) => {
+      const detail = e instanceof CustomEvent ? (e.detail as OpenPaletteDetail | undefined) : undefined;
+      openCommandPalette(detail);
+    };
+    window.addEventListener("keydown", key);
+    window.addEventListener("la:search", onSearch);
+    return () => {
+      window.removeEventListener("keydown", key);
+      window.removeEventListener("la:search", onSearch);
+    };
+  }, []);
+  return null;
+}
+
+export function CommandMenu({ embedded = false }: { embedded?: boolean } = {}) {
+  const native = useIsNativeShell();
+  if (!embedded && native) {
+    return <NativePaletteProxy />;
+  }
+  return <CommandMenuDialog embedded={embedded} />;
+}
+
+function CommandMenuDialog({ embedded }: { embedded: boolean }) {
   const router = useRouter();
   const qc = useQueryClient();
-  const pathname = usePathname();
+  const routePathname = usePathname();
+  const [hostLocation, setHostLocation] = useState<{ pathname: string; search: string }>(() => ({ pathname: "/", search: "" }));
+  const pathname = embedded ? hostLocation.pathname : routePathname;
   const boot = useBootstrap();
   const createChat = useCreateChat();
   const askChat = useAskChat();
   const createPage = useCreatePage();
   const remembered = useRememberedProject();
   const personas = usePersonas();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(embedded);
   const customApps = useCustomApps(open);
   const devWorkspace = useDevWorkspace();
   const [query, setQuery] = useState("");
@@ -339,6 +388,7 @@ export function CommandMenu() {
   const returnFocus = useRef<HTMLElement | null>(null);
   const openRef = useRef(open);
   const rememberedRef = useRef(remembered);
+  const hostLocationRef = useRef(hostLocation);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const knowledgeMode = paletteScope?.kind === "knowledge";
@@ -407,6 +457,25 @@ export function CommandMenu() {
   const liveRuns = useLiveRuns(idleGlobal || (open && typeScoped && oneType === "run" && !searchText));
   const chats = useChats(false, "", idleGlobal || (open && typeScoped && oneType === "chat" && !searchText), "all");
 
+  const navigateTo = (href: string, newTab = false) => {
+    if (embedded) {
+      post({ v: 1, type: "openInMain", path: href, ...(newTab ? { newTab: true } : {}) });
+      return;
+    }
+    if (newTab) {
+      window.open(href, "_blank", "noopener");
+    } else {
+      router.push(href);
+    }
+  };
+
+  const reopenPalette = () => {
+    setOpen(true);
+    if (embedded) {
+      post({ v: 1, type: "commandPalette.open", request: { path: hostLocation.pathname, ...(hostLocation.search ? { search: hostLocation.search } : {}) } });
+    }
+  };
+
   const close = (next: boolean) => {
     // A failed action's alert belongs to that attempt only.
     if (!next) {
@@ -416,11 +485,14 @@ export function CommandMenu() {
       setActionFailed(false);
     }
     setOpen(next);
+    if (embedded && !next) {
+      post({ v: 1, type: "commandPalette.close" });
+    }
   };
 
   const failed = () => {
     setActionFailed(true);
-    setOpen(true);
+    reopenPalette();
   };
 
   const remember = (link: PaletteLink) => {
@@ -454,7 +526,11 @@ export function CommandMenu() {
       return;
     }
     if (newTab && row.href) {
-      window.open(row.href, "_blank", "noopener");
+      if (embedded) {
+        close(false);
+        if (row.recent) remember(row.recent);
+      }
+      navigateTo(row.href, true);
       return;
     }
     if (row.href) returnFocus.current = null;
@@ -462,8 +538,8 @@ export function CommandMenu() {
     if (row.recent) remember(row.recent);
     if (row.perform) row.perform();
     else if (row.href) {
-      router.push(row.href);
-      if (row.href.startsWith("/knowledge/")) {
+      navigateTo(row.href);
+      if (!embedded && row.href.startsWith("/knowledge/")) {
         window.dispatchEvent(new CustomEvent("la:knowledge-reveal", { detail: { href: row.href } }));
       }
     }
@@ -475,13 +551,15 @@ export function CommandMenu() {
     if (!a) return;
     close(false);
     if (row.recent) remember(row.recent);
-    createChat.mutate({}, { onSuccess: (c) => router.push(`/chat/${c.id}?${attachQuery(undefined, a.ref, a.label)}`), onError: () => setOpen(true) });
+    createChat.mutate({}, { onSuccess: (c) => navigateTo(`/chat/${c.id}?${attachQuery(undefined, a.ref, a.label)}`), onError: reopenPalette });
   };
 
   const switchTo = (key: string) => {
     rememberProject(key);
-    const href = switchHref(window.location.pathname, new URLSearchParams(window.location.search), key);
-    if (href) router.push(href);
+    const curPath = embedded ? hostLocation.pathname : window.location.pathname;
+    const curSearch = embedded ? hostLocation.search : window.location.search;
+    const href = switchHref(curPath, new URLSearchParams(curSearch), key);
+    if (href) navigateTo(href);
   };
 
   const projectRows: Row[] = projects
@@ -652,7 +730,7 @@ export function CommandMenu() {
     createPage.mutate(
       { title: kQuery.text, path: `Inbox/${kQuery.text.replace(/[[\]#|^/\\]/g, " ").trim()}`, body_md: "" },
       {
-        onSuccess: (p) => router.push(pageHref(p.id, p.title)),
+        onSuccess: (p) => navigateTo(pageHref(p.id, p.title)),
         onError: failed,
       },
     );
@@ -749,7 +827,7 @@ export function CommandMenu() {
           perform: () =>
             askChat.mutate(
               { project: actionProject, body: title },
-              { onSuccess: (c) => router.push(`/chat/${c.id}`), onError: () => setOpen(true) },
+              { onSuccess: (c) => navigateTo(`/chat/${c.id}`), onError: reopenPalette },
             ),
         }]
       : []),
@@ -762,9 +840,9 @@ export function CommandMenu() {
         createChat.mutate(
           p ? { project: p } : {},
           {
-            onSuccess: (c) => router.push(attachHere ? `/chat/${c.id}?${attachQuery(p, attachHere.ref, attachHere.label)}` : `/chat/${c.id}`),
+            onSuccess: (c) => navigateTo(attachHere ? `/chat/${c.id}?${attachQuery(p, attachHere.ref, attachHere.label)}` : `/chat/${c.id}`),
             // Reopen so the alert below explains what happened.
-            onError: () => setOpen(true),
+            onError: reopenPalette,
           },
         );
       },
@@ -827,14 +905,22 @@ export function CommandMenu() {
       title: "Copy link to this page",
       icon: "link",
       onDemand: true,
-      perform: () => void navigator.clipboard.writeText(window.location.href).catch(failed),
+      perform: () => {
+        const url = embedded
+          ? `${window.location.origin}${hostLocation.pathname}${hostLocation.search}`
+          : window.location.href;
+        void navigator.clipboard.writeText(url).catch(failed);
+      },
     },
     {
       id: "shortcuts",
       title: "Keyboard shortcuts",
       shortcut: "?",
       icon: "key",
-      perform: () => window.dispatchEvent(new Event("la:shortcuts")),
+      perform: () => {
+        if (embedded) post({ v: 1, type: "showShortcuts" });
+        else window.dispatchEvent(new Event("la:shortcuts"));
+      },
     },
   ];
   const shownActions = paletteScope
@@ -940,26 +1026,29 @@ export function CommandMenu() {
 
   useEffect(() => {
     openRef.current = open;
-  }, [open]);
+    hostLocationRef.current = hostLocation;
+  }, [open, hostLocation]);
 
   useEffect(() => {
-    const show = (detail?: OpenPaletteDetail) => {
-      if (!openRef.current) {
+    const show = (detail?: OpenPaletteDetail, hostLoc?: { pathname: string; search: string }) => {
+      if (!embedded && !openRef.current) {
         if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body)
           returnFocus.current = document.activeElement;
         else returnFocus.current = null;
       }
+      const locPath = hostLoc?.pathname ?? (embedded ? hostLocationRef.current.pathname : window.location.pathname);
+      const locSearch = hostLoc?.search ?? (embedded ? hostLocationRef.current.search : window.location.search);
       const nextScope: PageScope | undefined =
         detail?.scope === "all" || !detail?.scope
           ? undefined
           : detail.scope === "page"
-            ? pageScope(window.location.pathname, window.location.search)
+            ? pageScope(locPath, locSearch)
             : detail.scope;
       const currentProject =
-        new URLSearchParams(window.location.search).get("project") ??
-        window.location.pathname.match(/^\/tickets\/([A-Z][A-Z0-9]*)-\d+$/)?.[1] ??
+        new URLSearchParams(locSearch).get("project") ??
+        locPath.match(/^\/tickets\/([A-Z][A-Z0-9]*)-\d+$/)?.[1] ??
         // A chat's URL may not name its project; the remembered one is what actions use too.
-        (projectSection(window.location.pathname) ? rememberedRef.current : undefined);
+        (projectSection(locPath) ? rememberedRef.current : undefined);
       setProject(currentProject ?? undefined);
       setScope(!!currentProject);
       setPaletteScope(nextScope);
@@ -976,7 +1065,7 @@ export function CommandMenu() {
       }
       setIncludeAgent(nextAgent);
       if (detail?.query !== undefined) setQuery(detail.query);
-      else if (!openRef.current) setQuery("");
+      else if (embedded || !openRef.current) setQuery("");
       setMode("root");
       setActive(0);
       setChip(nextScope?.kind === "type" ? nextScope.type : undefined);
@@ -991,6 +1080,9 @@ export function CommandMenu() {
       }
       setRecent(parseRecent(stored));
       setOpen(true);
+      if (embedded) {
+        requestAnimationFrame(() => inputRef.current?.focus());
+      }
     };
     const key = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "k") {
@@ -1003,13 +1095,24 @@ export function CommandMenu() {
       const detail = e instanceof CustomEvent ? (e.detail as OpenPaletteDetail | undefined) : undefined;
       show(detail);
     };
+    const offCommand = embedded
+      ? onCommand((cmd) => {
+          if (cmd.type !== "palette.open") return;
+          const mapped = fromPaletteRequest(cmd.request);
+          const loc = { pathname: mapped.pathname, search: mapped.search };
+          hostLocationRef.current = loc;
+          setHostLocation(loc);
+          show(mapped.detail, loc);
+        })
+      : () => {};
     window.addEventListener("keydown", key);
     window.addEventListener("la:search", onSearch);
     return () => {
+      offCommand();
       window.removeEventListener("keydown", key);
       window.removeEventListener("la:search", onSearch);
     };
-  }, []);
+  }, [embedded]);
 
   const switchToGlobal = () => {
     setPaletteScope(undefined);
@@ -1046,6 +1149,11 @@ export function CommandMenu() {
         e.stopPropagation();
         setMoreOpen(false);
       }
+      return;
+    }
+    if (embedded && e.key === "Escape") {
+      e.preventDefault();
+      close(false);
       return;
     }
     if (e.key === "ArrowDown" && rows.length) {
@@ -1322,6 +1430,203 @@ export function CommandMenu() {
   const showFacets = knowledgeMode ? (kFacetValues.length > 1 || (!!(kQuery.text || kQuery.tag) && kFacetValues.length > 0)) : !!searchText && !!oneType && facetValues.length > 0;
   const highlightQuery = knowledgeMode ? kQuery.text : title;
 
+  const paletteBody = (
+    <>
+      {/* A hairline of the theme's accent along the top edge: the palette's only ornament. */}
+      <div aria-hidden className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-accent to-transparent opacity-70" />
+      {embedded ? <h2 className="sr-only">{dialogTitle}</h2> : <Dialog.Title className="sr-only">{dialogTitle}</Dialog.Title>}
+      <div data-palette-input-row="" className="flex h-14 flex-none items-center gap-3 border-b border-border px-5 max-md:h-auto max-md:border-0 max-md:px-3 max-md:pb-1 max-md:pt-3">
+        <div className="flex min-w-0 flex-1 items-center gap-3 max-md:h-11 max-md:rounded-xl max-md:bg-surface-sunken max-md:px-3">
+          <Icon name="search" size={16} className="flex-none text-fg-tertiary" />
+          {mode === "projects" && (
+            <button
+              type="button"
+              className="rounded-full border border-border px-2.5 py-0.5 text-12 font-medium text-fg-secondary transition-colors hover:bg-hover"
+              onClick={() => {
+                setMode("root");
+                setQuery("");
+              }}
+            >
+              ← Back
+            </button>
+          )}
+          <input
+            ref={inputRef}
+            autoComplete="off"
+            spellCheck={false}
+            role="combobox"
+            aria-label={inputLabel}
+            aria-expanded={rows.length > 0}
+            aria-autocomplete="list"
+            aria-controls="command-results"
+            aria-activedescendant={activeId}
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setActive(0);
+              setExpanded(undefined);
+            }}
+            placeholder={inputPlaceholder}
+            className="min-w-0 flex-1 bg-transparent text-16 outline-none placeholder:text-fg-tertiary focus-visible:!outline-none"
+            onKeyDown={onKeyDown}
+          />
+          <span role="status" className="flex flex-none items-center gap-1.5 text-12 text-fg-tertiary">
+            {pending && <span aria-hidden className="size-1.5 animate-skeleton rounded-full bg-accent" />}
+            {pending ? "Searching…" : ""}
+          </span>
+        </div>
+        <span aria-hidden className="max-md:hidden">
+          <Kbd>esc</Kbd>
+        </span>
+        {!embedded && (
+          <Dialog.Close asChild>
+            <button type="button" className="hidden h-11 flex-none px-1 text-15 text-accent max-md:block">
+              Cancel
+            </button>
+          </Dialog.Close>
+        )}
+      </div>
+      {chipRow}
+      {root && filters.tokens.length > 0 && (
+        <div className="flex flex-none flex-wrap gap-1 border-b border-border px-4 py-2">
+          {filters.tokens.map((token) => (
+            <button
+              key={token}
+              type="button"
+              aria-label={`Remove filter ${token}`}
+              className="rounded-full border border-transparent bg-accent-soft px-2.5 py-0.5 font-mono text-12 text-accent transition-colors hover:border-accent"
+              onClick={() => {
+                setQuery(removeToken(query, token));
+                inputRef.current?.focus();
+              }}
+            >
+              {token} ×
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="flex min-h-0 flex-1">
+        <div
+          className={cx(
+            "scroll-py-2 overflow-y-auto overflow-x-hidden overscroll-contain px-2 pb-2 transition-opacity",
+            showPreview ? "w-[500px] flex-none max-[919px]:w-full max-[919px]:flex-1" : "flex-1",
+            moreOpen && "opacity-40",
+          )}
+        >
+          {(all.isError || one.isError || (knowledgeMode && pagesQuery.isError)) && (
+            <p role="alert" className="p-3 text-12 text-pill-blocked-fg">
+              Search failed. Try again.
+            </p>
+          )}
+          {(createChat.isError || askChat.isError) && (
+            <p role="alert" className="p-3 text-12 text-pill-blocked-fg">
+              Couldn’t start the chat.
+            </p>
+          )}
+          {createPage.isError && (
+            <p role="alert" className="p-3 text-12 text-pill-blocked-fg">
+              Couldn’t create the page.
+            </p>
+          )}
+          {actionFailed && (
+            <p role="alert" className="p-3 text-12 text-pill-blocked-fg">
+              That action didn’t go through. Try again.
+            </p>
+          )}
+          {showFacets && (
+            <div role="group" aria-label={knowledgeMode ? "Filter folders" : `Filter ${TYPE[oneType!].noun}`} className="flex flex-wrap gap-1.5 px-2 pb-1 pt-2.5">
+              {[{ value: undefined, label: !knowledgeMode && (oneType === "ticket" || oneType === "run") ? "Any status" : knowledgeMode || oneType === "page" ? "Any folder" : "Anyone" }, ...activeFacets.slice(0, 6).map((f) => ({ value: f.value, label: `${!knowledgeMode && oneType === "ticket" ? statusLabel(f.value) : f.value} ${f.count}` }))].map((f) => (
+                <button
+                  key={f.value ?? "any"}
+                  type="button"
+                  aria-pressed={facet === f.value}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    setFacet(f.value);
+                    setActive(0);
+                  }}
+                  className={cx(
+                    "h-[22px] rounded-md border px-2 text-11 transition-colors",
+                    facet === f.value ? "border-transparent bg-border-strong font-semibold text-fg" : "border-border text-fg-secondary hover:bg-hover",
+                  )}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+          )}
+          {knowledgeMode && !pending && rows.length === 0 && (
+            <p className="px-3 py-8 text-center text-14 text-fg-tertiary">
+              {kQuery.tag ? `No pages tagged #${kQuery.tag}.` : kQuery.text ? `No Knowledge pages match “${kQuery.text}”.` : "No Knowledge pages yet."}
+            </p>
+          )}
+          {!knowledgeMode && searchText && !pending && resultSections.length === 0 && jump.length === 0 && (
+            <p className="px-3 py-8 text-center text-14 text-fg-tertiary">
+              {oneType ? `No ${TYPE[oneType].noun} match “${filters.text}”.` : `No results for “${query.trim()}”.`}
+            </p>
+          )}
+          {typeScoped && !searchText && !pending && rows.length === 0 && (
+            <p className="px-3 py-8 text-center text-14 text-fg-tertiary">
+              Type to search {TYPE[paletteScope.type].noun}…
+            </p>
+          )}
+          {mode === "projects" && rows.length === 0 && <p className="px-3 py-8 text-center text-14 text-fg-tertiary">No project matches “{query}”.</p>}
+          <div id="command-results" role="listbox" aria-label="Results" aria-busy={pending} className={cx(pending && "opacity-60")}>
+            {sections.map((s) => {
+              const labelId = `command-group-${s.key}`;
+              return (
+                <div key={s.key} role="group" aria-labelledby={s.label ? labelId : undefined} aria-label={s.label ? undefined : TYPE[s.key as TypeKey]?.label}>
+                  {s.label && (
+                    <div
+                      id={labelId}
+                      data-palette-section=""
+                      role="presentation"
+                      className={cx("px-3 pb-1.5 pt-3 text-11 font-semibold uppercase tracking-wide", s.tone === "human" ? "text-state-human" : "text-fg-tertiary")}
+                    >
+                      {s.label}
+                      {s.count ? ` · ${s.count}` : ""}
+                    </div>
+                  )}
+                  {s.rows.map((row) => {
+                    const i = rows.indexOf(row);
+                    return <RowView key={row.id} row={row} i={i} on={i === index} query={highlightQuery} expanded={!!row.chat && expanded === row.chat.id} onPick={go} onHover={setActive} onToggle={(id) => setExpanded(expanded === id ? undefined : id)} />;
+                  })}
+                </div>
+              );
+            })}
+            {!knowledgeMode && searchText && oneType && oneTotal > oneShown && (
+              <p className="px-3 py-3 text-12 text-fg-tertiary">
+                {oneShown} of {oneTotal}
+                {oneShown < 50 ? " · scroll for more" : " · add words to narrow it"}
+              </p>
+            )}
+          </div>
+        </div>
+        {showPreview && (
+          <div className="flex min-w-0 flex-1 border-l border-border max-[919px]:hidden">
+            <CommandPreview preview={selected?.preview} query={highlightQuery} actions={previewActions} />
+          </div>
+        )}
+      </div>
+      <div data-palette-hints="" className="flex h-10 flex-none items-center gap-x-5 overflow-hidden border-t border-border bg-surface-sunken px-5 text-12 text-fg-tertiary max-md:hidden">
+        {hints.map(([keys, what]) => (
+          <span key={what} className="flex flex-none items-center gap-1.5 whitespace-nowrap">
+            <span className="text-fg-secondary">{keys}</span>
+            {what}
+          </span>
+        ))}
+      </div>
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <div data-command-palette="" data-embedded="true" className="relative flex h-dvh w-full flex-col overflow-hidden bg-transparent text-fg">
+        {paletteBody}
+      </div>
+    );
+  }
+
   return (
     <Dialog.Root open={open} onOpenChange={close}>
       <Dialog.Portal>
@@ -1343,188 +1648,7 @@ export function CommandMenu() {
             if (el?.isConnected) el.focus();
           }}
         >
-          {/* A hairline of the theme's accent along the top edge: the palette's only ornament. */}
-          <div aria-hidden className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-accent to-transparent opacity-70" />
-          <Dialog.Title className="sr-only">{dialogTitle}</Dialog.Title>
-          <div data-palette-input-row="" className="flex h-14 flex-none items-center gap-3 border-b border-border px-5 max-md:h-auto max-md:border-0 max-md:px-3 max-md:pb-1 max-md:pt-3">
-            <div className="flex min-w-0 flex-1 items-center gap-3 max-md:h-11 max-md:rounded-xl max-md:bg-surface-sunken max-md:px-3">
-              <Icon name="search" size={16} className="flex-none text-fg-tertiary" />
-              {mode === "projects" && (
-                <button
-                  type="button"
-                  className="rounded-full border border-border px-2.5 py-0.5 text-12 font-medium text-fg-secondary transition-colors hover:bg-hover"
-                  onClick={() => {
-                    setMode("root");
-                    setQuery("");
-                  }}
-                >
-                  ← Back
-                </button>
-              )}
-              <input
-                ref={inputRef}
-                autoComplete="off"
-                spellCheck={false}
-                role="combobox"
-                aria-label={inputLabel}
-                aria-expanded={rows.length > 0}
-                aria-autocomplete="list"
-                aria-controls="command-results"
-                aria-activedescendant={activeId}
-                value={query}
-                onChange={(e) => {
-                  setQuery(e.target.value);
-                  setActive(0);
-                  setExpanded(undefined);
-                }}
-                placeholder={inputPlaceholder}
-                className="min-w-0 flex-1 bg-transparent text-16 outline-none placeholder:text-fg-tertiary focus-visible:!outline-none"
-                onKeyDown={onKeyDown}
-              />
-              <span role="status" className="flex flex-none items-center gap-1.5 text-12 text-fg-tertiary">
-                {pending && <span aria-hidden className="size-1.5 animate-skeleton rounded-full bg-accent" />}
-                {pending ? "Searching…" : ""}
-              </span>
-            </div>
-            <span aria-hidden className="max-md:hidden">
-              <Kbd>esc</Kbd>
-            </span>
-            <Dialog.Close asChild>
-              <button type="button" className="hidden h-11 flex-none px-1 text-15 text-accent max-md:block">
-                Cancel
-              </button>
-            </Dialog.Close>
-          </div>
-          {chipRow}
-          {root && filters.tokens.length > 0 && (
-            <div className="flex flex-none flex-wrap gap-1 border-b border-border px-4 py-2">
-              {filters.tokens.map((token) => (
-                <button
-                  key={token}
-                  type="button"
-                  aria-label={`Remove filter ${token}`}
-                  className="rounded-full border border-transparent bg-accent-soft px-2.5 py-0.5 font-mono text-12 text-accent transition-colors hover:border-accent"
-                  onClick={() => {
-                    setQuery(removeToken(query, token));
-                    inputRef.current?.focus();
-                  }}
-                >
-                  {token} ×
-                </button>
-              ))}
-            </div>
-          )}
-          <div className="flex min-h-0 flex-1">
-            <div
-              className={cx(
-                "scroll-py-2 overflow-y-auto overflow-x-hidden overscroll-contain px-2 pb-2 transition-opacity",
-                showPreview ? "w-[500px] flex-none max-[919px]:w-full max-[919px]:flex-1" : "flex-1",
-                moreOpen && "opacity-40",
-              )}
-            >
-              {(all.isError || one.isError || (knowledgeMode && pagesQuery.isError)) && (
-                <p role="alert" className="p-3 text-12 text-pill-blocked-fg">
-                  Search failed. Try again.
-                </p>
-              )}
-              {(createChat.isError || askChat.isError) && (
-                <p role="alert" className="p-3 text-12 text-pill-blocked-fg">
-                  Couldn’t start the chat.
-                </p>
-              )}
-              {createPage.isError && (
-                <p role="alert" className="p-3 text-12 text-pill-blocked-fg">
-                  Couldn’t create the page.
-                </p>
-              )}
-              {actionFailed && (
-                <p role="alert" className="p-3 text-12 text-pill-blocked-fg">
-                  That action didn’t go through. Try again.
-                </p>
-              )}
-              {showFacets && (
-                <div role="group" aria-label={knowledgeMode ? "Filter folders" : `Filter ${TYPE[oneType!].noun}`} className="flex flex-wrap gap-1.5 px-2 pb-1 pt-2.5">
-                  {[{ value: undefined, label: !knowledgeMode && (oneType === "ticket" || oneType === "run") ? "Any status" : knowledgeMode || oneType === "page" ? "Any folder" : "Anyone" }, ...activeFacets.slice(0, 6).map((f) => ({ value: f.value, label: `${!knowledgeMode && oneType === "ticket" ? statusLabel(f.value) : f.value} ${f.count}` }))].map((f) => (
-                    <button
-                      key={f.value ?? "any"}
-                      type="button"
-                      aria-pressed={facet === f.value}
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => {
-                        setFacet(f.value);
-                        setActive(0);
-                      }}
-                      className={cx(
-                        "h-[22px] rounded-md border px-2 text-11 transition-colors",
-                        facet === f.value ? "border-transparent bg-border-strong font-semibold text-fg" : "border-border text-fg-secondary hover:bg-hover",
-                      )}
-                    >
-                      {f.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {knowledgeMode && !pending && rows.length === 0 && (
-                <p className="px-3 py-8 text-center text-14 text-fg-tertiary">
-                  {kQuery.tag ? `No pages tagged #${kQuery.tag}.` : kQuery.text ? `No Knowledge pages match “${kQuery.text}”.` : "No Knowledge pages yet."}
-                </p>
-              )}
-              {!knowledgeMode && searchText && !pending && resultSections.length === 0 && jump.length === 0 && (
-                <p className="px-3 py-8 text-center text-14 text-fg-tertiary">
-                  {oneType ? `No ${TYPE[oneType].noun} match “${filters.text}”.` : `No results for “${query.trim()}”.`}
-                </p>
-              )}
-              {typeScoped && !searchText && !pending && rows.length === 0 && (
-                <p className="px-3 py-8 text-center text-14 text-fg-tertiary">
-                  Type to search {TYPE[paletteScope.type].noun}…
-                </p>
-              )}
-              {mode === "projects" && rows.length === 0 && <p className="px-3 py-8 text-center text-14 text-fg-tertiary">No project matches “{query}”.</p>}
-              <div id="command-results" role="listbox" aria-label="Results" aria-busy={pending} className={cx(pending && "opacity-60")}>
-                {sections.map((s) => {
-                  const labelId = `command-group-${s.key}`;
-                  return (
-                    <div key={s.key} role="group" aria-labelledby={s.label ? labelId : undefined} aria-label={s.label ? undefined : TYPE[s.key as TypeKey]?.label}>
-                      {s.label && (
-                        <div
-                          id={labelId}
-                          data-palette-section=""
-                          role="presentation"
-                          className={cx("px-3 pb-1.5 pt-3 text-11 font-semibold uppercase tracking-wide", s.tone === "human" ? "text-state-human" : "text-fg-tertiary")}
-                        >
-                          {s.label}
-                          {s.count ? ` · ${s.count}` : ""}
-                        </div>
-                      )}
-                      {s.rows.map((row) => {
-                        const i = rows.indexOf(row);
-                        return <RowView key={row.id} row={row} i={i} on={i === index} query={highlightQuery} expanded={!!row.chat && expanded === row.chat.id} onPick={go} onHover={setActive} onToggle={(id) => setExpanded(expanded === id ? undefined : id)} />;
-                      })}
-                    </div>
-                  );
-                })}
-                {!knowledgeMode && searchText && oneType && oneTotal > oneShown && (
-                  <p className="px-3 py-3 text-12 text-fg-tertiary">
-                    {oneShown} of {oneTotal}
-                    {oneShown < 50 ? " · scroll for more" : " · add words to narrow it"}
-                  </p>
-                )}
-              </div>
-            </div>
-            {showPreview && (
-              <div className="flex min-w-0 flex-1 border-l border-border max-[919px]:hidden">
-                <CommandPreview preview={selected?.preview} query={highlightQuery} actions={previewActions} />
-              </div>
-            )}
-          </div>
-          <div data-palette-hints="" className="flex h-10 flex-none items-center gap-x-5 overflow-hidden border-t border-border bg-surface-sunken px-5 text-12 text-fg-tertiary max-md:hidden">
-            {hints.map(([keys, what]) => (
-              <span key={what} className="flex flex-none items-center gap-1.5 whitespace-nowrap">
-                <span className="text-fg-secondary">{keys}</span>
-                {what}
-              </span>
-            ))}
-          </div>
+          {paletteBody}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

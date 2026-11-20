@@ -73,6 +73,26 @@ html.native-mac [data-command-scrim] {
   html.native-mac [data-command-palette][data-state="closed"] { animation: native-palette-out 90ms ease-in both; }
 }
 
+/* Embedded /command-palette inside AppKit's floating NSPanel lets NSVisualEffectView glass show through. */
+html.native-command-palette [data-command-palette][data-embedded="true"] {
+  position: relative;
+  inset: auto;
+  top: auto;
+  left: auto;
+  transform: none;
+  width: 100%;
+  max-width: none;
+  height: 100dvh;
+  font-family: -apple-system, system-ui, "SF Pro Text", sans-serif;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+  animation: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   html.native-mac [data-command-palette][data-state] { animation: none; }
 }
