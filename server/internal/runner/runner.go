@@ -1364,7 +1364,7 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 		log.Warn("avoid limited harness", "err", err)
 	}
 	h, err := harness.For(c.spec.Harness)
-	if c.spec.Harness == agentdef.HarnessCodex || c.spec.Harness == agentdef.HarnessClaudeCode {
+	if agentdef.CapsOf(c.spec.Harness).CumulativeSessionUsage {
 		// Both CLIs report some usage for the whole session when resumed;
 		// the parser subtracts the previous turn's session totals.
 		baseline := harness.Usage{}
@@ -1828,7 +1828,7 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 				return
 			}
 			var images chatImages
-			if c.spec.Harness != agentdef.HarnessCodex && waitErr == nil && code == 0 && !res.IsError && !res.UsageLimited {
+			if !agentdef.CapsOf(c.spec.Harness).ChatInlineImageGen && waitErr == nil && code == 0 && !res.IsError && !res.UsageLimited {
 				images = r.runChatImageJobs(ctx, c, turn, token)
 			}
 			if ctx.Err() != nil {
@@ -1897,7 +1897,7 @@ func (r *Runner) watch(ctx context.Context, c runCtx, proc Process, p harness.Pa
 	// At turn end, the final value. A Claude turn that never reached a request
 	// (a rejected resume, an early crash) keeps the last known size; a Codex
 	// turn writes 0, since its context is unknown.
-	if n := res.Usage.ContextTokens; n > 0 || c.spec.Harness == agentdef.HarnessCodex || c.spec.Harness == agentdef.HarnessAntigravity {
+	if n := res.Usage.ContextTokens; n > 0 || !agentdef.CapsOf(c.spec.Harness).ReportsContextTokens || c.spec.Harness == agentdef.HarnessAntigravity {
 		write(context.WithoutCancel(ctx), n)
 	}
 	return res, raw, code, err

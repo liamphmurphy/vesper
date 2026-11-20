@@ -433,7 +433,7 @@ func (r *Runner) finishChatTurn(ctx context.Context, c runCtx, turn store.RunTur
 				// calls: one automatic turn shows it the images and failures to
 				// react to, and the chat keeps working until it ends. A Codex
 				// chat made its images itself, and a follow-up never gets one.
-				if finished && run.Harness != agentdef.HarnessCodex && turn.Trigger != runs.TriggerImageFollowup {
+				if finished && !agentdef.CapsOf(run.Harness).ChatInlineImageGen && turn.Trigger != runs.TriggerImageFollowup {
 					next, err := q.StartTurn(ctx, store.StartTurnParams{RunID: run.ID, Trigger: runs.TriggerImageFollowup, InputMessage: imageFollowupPrompt})
 					if err != nil {
 						return err

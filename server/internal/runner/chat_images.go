@@ -308,7 +308,7 @@ func (r *Runner) runChatImageJob(ctx context.Context, c runCtx, turn store.RunTu
 		// phrased it. Only when the step left nothing, so no image shows twice.
 		if err == nil && len(produced) == 0 && thread != "" {
 			var cerr error
-			if engine == agentdef.HarnessAntigravity {
+			if agentdef.CapsOf(engine).CollectsGeneratedImages {
 				cerr = collectAntigravityImages(ctx, r.Backend, wsID(c.run), thread, res.Images)
 			} else {
 				cerr = collectGeneratedImages(ctx, r.Backend, wsID(c.run), thread)

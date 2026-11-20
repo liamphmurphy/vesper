@@ -902,9 +902,7 @@ func WorkflowSpec(base agentdef.Resolved, harness, model, effort string, web, im
 		base.Harness, base.Model = harness, model
 	}
 	r := ChatSpec(base, ChatCaps{Images: images})
-	if images && r.Harness == agentdef.HarnessAntigravity {
-		// A chat on Antigravity hands its images to a one-shot step; a workflow
-		// image step is that step, so it makes them itself.
+	if images && agentdef.CapsOf(r.Harness).WorkflowImageGen {
 		r.HarnessOptions[agentdef.OptionImageGeneration] = "true"
 	}
 	r.Fallbacks = []agentdef.Fallback{}
@@ -975,7 +973,7 @@ func (e *WorkflowEngine) startAgent(ctx context.Context, q *store.Queries, chat 
 				effort = ""
 			}
 			harness, model = engine, engineModel
-			if engine == agentdef.HarnessAntigravity {
+			if agentdef.CapsOf(engine).CollectsGeneratedImages {
 				extra += fmt.Sprintf(workflowImageInstructionsCollected, MaxWorkflowImagesPerStep)
 			} else {
 				extra += fmt.Sprintf(workflowImageInstructions, MaxWorkflowImagesPerStep)
@@ -1077,7 +1075,7 @@ func workflowStepPrompt(run store.WorkflowRun, g WorkflowGraph, n WorkflowNode, 
 	}
 	if n.Type == NodeAgent && n.Config.Images {
 		deliver := "copy it into .lazyagents/outbox/ with cp"
-		if harness == agentdef.HarnessAntigravity {
+		if agentdef.CapsOf(harness).CollectsGeneratedImages {
 			deliver = "stop there: Vesper collects it from where the tool saved it, so don't copy it"
 		}
 		b.WriteString("Generate the image with your image generation tool and " + deliver + ". If you can't make it, say why and don't submit a result. Otherwise finish by calling submit_workflow_output with a short note on what you made. Don't put file paths or image links in it: Vesper delivers the image.")

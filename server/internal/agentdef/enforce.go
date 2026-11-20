@@ -2,24 +2,54 @@ package agentdef
 
 // Caps is what Vesper can enforce or observe on a harness (§6.2).
 type Caps struct {
-	ToolGating       bool `json:"tool_gating"`       // allow/deny individual tools
-	PermissionPrompt bool `json:"permission_prompt"` // route permission prompts to Vesper
-	NativeCost       bool `json:"native_cost"`       // harness reports cost itself
-	Resume           bool `json:"resume"`            // resume a session by id
+	ToolGating              bool `json:"tool_gating"`                        // allow/deny individual tools
+	PermissionPrompt        bool `json:"permission_prompt"`                  // route permission prompts to Vesper
+	NativeCost              bool `json:"native_cost"`                        // harness reports cost itself
+	Resume                  bool `json:"resume"`                             // resume a session by id
+	ChatInlineImageGen      bool `json:"chat_inline_image_gen,omitempty"`    // generates images in-turn into .lazyagents/outbox/
+	WorkflowImageGen        bool `json:"workflow_image_gen,omitempty"`       // can run workflow image steps
+	CollectsGeneratedImages bool `json:"collects_generated_images,omitempty"` // runner harvests saved image paths instead of agent copying to outbox
+	ReportsContextTokens    bool `json:"reports_context_tokens,omitempty"`   // reports latest request prompt size in tokens
+	CumulativeSessionUsage  bool `json:"cumulative_session_usage,omitempty"` // resumed turns include earlier turns' session totals
 }
 
 // Claude Code, Codex and Antigravity use run-scoped PreToolUse hooks for
-// service tool policy. Antigravity's hooks come from its docs and are not yet
-// proven against the real CLI (docs/contracts/antigravity.md). It reports
-// tokens but no cost, and it can't pause for approval: its file and shell
-// permissions are static deny rules written before the turn (the hook alone
-// would leave a turn unrestricted if it failed to load), so a scope that
-// needs approval stays denied, and the agent is told to ask first.
+// service tool policy. Antigravity reports tokens but no cost, and cannot
+// pause for mid-turn approval on file writes (its file and shell permissions
+// include static deny rules written before the turn so a hook failure fails
+// closed, so scopes needing approval stay denied unless supported).
 var Capabilities = map[string]Caps{
-	HarnessClaudeCode:  {ToolGating: true, PermissionPrompt: true, NativeCost: true, Resume: true},
-	HarnessCodex:       {ToolGating: true, PermissionPrompt: true, NativeCost: false, Resume: true},
-	HarnessAntigravity: {ToolGating: true, PermissionPrompt: false, NativeCost: false, Resume: true},
+	HarnessClaudeCode: {
+		ToolGating:             true,
+		PermissionPrompt:       true,
+		NativeCost:             true,
+		Resume:                 true,
+		ReportsContextTokens:   true,
+		CumulativeSessionUsage: true,
+	},
+	HarnessCodex: {
+		ToolGating:             true,
+		PermissionPrompt:       true,
+		NativeCost:             false,
+		Resume:                 true,
+		ChatInlineImageGen:     true,
+		WorkflowImageGen:       true,
+		ReportsContextTokens:   false,
+		CumulativeSessionUsage: true,
+	},
+	HarnessAntigravity: {
+		ToolGating:              true,
+		PermissionPrompt:        false,
+		NativeCost:              false,
+		Resume:                  true,
+		WorkflowImageGen:        true,
+		CollectsGeneratedImages: true,
+		ReportsContextTokens:    true,
+	},
 }
+
+// CapsOf returns the capability flags for a harness name.
+func CapsOf(harness string) Caps { return Capabilities[harness] }
 
 // Enforcement is how strongly a scope holds (§6.3), strongest first:
 //   - credential: the agent only gets the secret when the scope is allowed;

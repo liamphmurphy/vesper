@@ -144,7 +144,7 @@ func describeReferences(paths map[string]string, persona, person string) string 
 // naming the files; any other chat is told which references generate_image
 // can use. Failures only leave the references out.
 func (r *Runner) chatTurnReferences(ctx context.Context, q *store.Queries, c runCtx) (files map[string][]byte, prompt string) {
-	if c.spec.Harness == agentdef.HarnessCodex {
+	if agentdef.CapsOf(c.spec.Harness).ChatInlineImageGen {
 		if c.spec.HarnessOptions[agentdef.OptionImageGeneration] != "true" {
 			return nil, ""
 		}

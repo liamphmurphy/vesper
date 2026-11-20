@@ -52,7 +52,7 @@ var Harnesses = []string{HarnessClaudeCode, HarnessCodex, HarnessAntigravity}
 
 // CanMakeImages reports whether a harness has a built-in image generator a
 // one-shot image step can use (ImageHarnesses, in preference order).
-func CanMakeImages(harness string) bool { return slices.Contains(ImageHarnesses, harness) }
+func CanMakeImages(harness string) bool { return CapsOf(harness).WorkflowImageGen }
 
 // ImageHarnesses are the harnesses that can generate images, in the order
 // "Auto" prefers them.

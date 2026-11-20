@@ -226,8 +226,8 @@ func GroupNote(ctx context.Context, q *store.Queries, chat store.ChatSession) (s
 	if speaker != nil {
 		if i := slices.IndexFunc(ps, func(p store.Persona) bool { return p.ID == *speaker }); i >= 0 {
 			canCreate = ps[i].CanCreatePersonas
-			// avatar_prompt queues a generate_image job, which a Codex chat can't.
-			canPicture = ps[i].CanGenerateImages && chat.Harness != agentdef.HarnessCodex
+			// avatar_prompt queues a generate_image job, which inline-image harnesses don't use.
+			canPicture = ps[i].CanGenerateImages && !agentdef.CapsOf(chat.Harness).ChatInlineImageGen
 		}
 	}
 	if len(ps) < 2 && !canCreate {
@@ -475,9 +475,8 @@ func (s *Service) prepareProposalAvatar(ctx context.Context, ws, runID uuid.UUID
 	if err != nil {
 		return chatImageRequest{}, err
 	}
-	// A Codex chat makes images itself, into its outbox, with no job to tie
-	// to the proposal.
-	if run.Harness == agentdef.HarnessCodex {
+	// Harnesses with inline image generation make images into their outbox without a job to tie to the proposal.
+	if agentdef.CapsOf(run.Harness).ChatInlineImageGen {
 		return chatImageRequest{}, apperr.Conflict("avatar_prompt isn't available in a Codex chat. Propose the persona without it; the person can give it a picture in Manage personas.")
 	}
 	req, err := s.prepareChatImage(ctx, ws, runID, prompt, nil)
