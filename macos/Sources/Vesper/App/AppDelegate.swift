@@ -169,7 +169,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     private var web: WKWebView? { app.keyController?.webView }
 
-    @objc func find(_ sender: Any?) { app.keyController?.send(.command(.find)) }
+    @objc func find(_ sender: Any?) { app.keyController?.showFindBar() }
+    @objc func findNext(_ sender: Any?) { app.keyController?.findNext() }
+    @objc func findPrevious(_ sender: Any?) { app.keyController?.findPrevious() }
+    @objc func useSelectionForFind(_ sender: Any?) { app.keyController?.useSelectionForFind() }
     /// ⌥⌘F: opens the page's command palette, like the toolbar's search button.
     @objc func focusSearch(_ sender: Any?) { app.keyController?.send(.command(.openCommandMenu)) }
     @objc func toggleSidebarAction(_ sender: Any?) { app.keyController?.split.toggleSidebar(sender) }
@@ -271,9 +274,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             let isOpen = (controller.state.inspector?.open ?? false) || !controller.isInspectorCollapsed
             item.title = isOpen ? "Hide Inspector" : "Show Inspector"
             return true
-        case #selector(find(_:)), #selector(reload(_:)), #selector(forceReload(_:)), #selector(zoomIn(_:)), #selector(zoomOut(_:)),
-             #selector(zoomReset(_:)), #selector(showInspector(_:)):
+        case #selector(find(_:)), #selector(useSelectionForFind(_:)), #selector(reload(_:)), #selector(forceReload(_:)),
+             #selector(zoomIn(_:)), #selector(zoomOut(_:)), #selector(zoomReset(_:)), #selector(showInspector(_:)):
             return web != nil
+        case #selector(findNext(_:)), #selector(findPrevious(_:)):
+            guard let controller = app.keyController else { return false }
+            return controller.isFindBarVisible && controller.hasFindQuery
         case #selector(nextTab(_:)), #selector(previousTab(_:)):
             if let c = compactController { return c.tabs.list.count > 1 }
             return (tabs()?.windows.count ?? 0) > 1

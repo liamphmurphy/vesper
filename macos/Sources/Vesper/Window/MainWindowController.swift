@@ -48,6 +48,37 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         toolbarController?.focusSearch()
     }
 
+    var isFindBarVisible: Bool { container.findBar.isVisible }
+    var hasFindQuery: Bool { container.findBar.hasQuery }
+
+    func showFindBar(initialQuery: String? = nil) {
+        container.updateFindTarget(content.webView)
+        container.findBar.present(initialQuery: initialQuery)
+    }
+
+    func findNext() {
+        container.updateFindTarget(content.webView)
+        container.findBar.findNext()
+    }
+
+    func findPrevious() {
+        container.updateFindTarget(content.webView)
+        container.findBar.findPrevious()
+    }
+
+    func useSelectionForFind() {
+        let target = content.webView
+        Task { @MainActor [weak self, weak target] in
+            guard let self, let target, self.content.webView === target else { return }
+            let raw = (try? await target.callAsyncJavaScript(
+                "return window.getSelection()?.toString() ?? ''",
+                arguments: [:], in: nil, contentWorld: .page
+            )) as? String
+            guard let normalized = FindLogic.normalizeSelection(raw) else { return }
+            self.showFindBar(initialQuery: normalized)
+        }
+    }
+
     init(app: AppModel, compact: Bool, tabs initial: [WebContentController], activeIndex: Int = 0) {
         precondition(!initial.isEmpty)
         self.app = app
@@ -151,6 +182,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         }
         tabs.list.select(activeIndex)
         container.show(content)
+        container.updateFindTarget(content.webView)
+        container.findBar.onDismiss = { [weak self] in
+            guard let self else { return }
+            self.window?.makeFirstResponder(self.content.webView)
+        }
 
         if hasNativeChrome {
             toolbarController = ToolbarController(owner: self)
@@ -460,6 +496,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     func windowWillClose(_ notification: Notification) {
         inspectorCollapseObservation = nil
         inspectorController?.teardown()
+        container.teardown()
         for tab in tabs.list.items {
             app.recordClosed(url: tab.currentURLString)
             tab.teardown()
@@ -524,6 +561,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         let tab = content
         lastContent = tab
         container.show(tab)
+        container.updateFindTarget(tab.webView)
         window?.title = tab.displayTitle
         window?.toolbar?.validateVisibleItems()
         if focus { window?.makeFirstResponder(tab.webView) }
