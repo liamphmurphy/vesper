@@ -243,7 +243,9 @@ in the Linux VM; the macOS VM only receives files and runs commands.
   --agent-log`) returns the end of the guest agent's own log
   (`/var/log/vesper-guest-agent.log`), read through the agent's file op so it
   works when commands don't; a boot whose first command fails carries that
-  log's end in its error, read before the VM is stopped.
+  log's end in its error, read before the VM is stopped (or, if that command
+  took the agent down, as read when the VM booted, which holds what earlier
+  boots of the run's disk wrote).
 - **Guest agent.** `vesper-guest-agent` cross-compiles to `darwin/arm64`
   (`CGO_ENABLED=0`) and runs as the LaunchDaemon `dev.vesper.guest-agent`: no
   init, cgroups, networking, Docker or Nix; a process group is the unit of

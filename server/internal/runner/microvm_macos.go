@@ -353,12 +353,16 @@ func (g *MacOSGuests) boot(ctx context.Context, dir string) (microvm.VM, int, in
 	if err != nil {
 		return nil, 0, 0, fmt.Errorf("mac: boot macOS VM: %w", err)
 	}
+	// The log as the freshly booted agent sees it, which still holds what
+	// earlier boots of this run's disk wrote: if the first command takes the
+	// agent down, this copy is the only one left to read.
+	logAtBoot, logAtBootErr := agentLogTail(ctx, vm, macBootLogTail)
 	pctx, cancel := context.WithTimeout(ctx, durationOr(g.prepareTimeout, defaultMacPrepareTimeout))
 	uid, gid, err := g.prepareWorkspace(pctx, vm)
 	cancel()
 	if err != nil {
 		// Read the guest's side of the failure before stopping takes it away.
-		err = withAgentLog(ctx, vm, err)
+		err = withAgentLog(ctx, vm, err, logAtBoot, logAtBootErr)
 		g.stopVM(vm, dir)
 		return nil, 0, 0, err
 	}
@@ -442,17 +446,27 @@ func agentLogTail(ctx context.Context, vm microvm.VM, limit int64) (string, erro
 }
 
 // withAgentLog adds the end of the guest agent's log to err, a failure inside
-// the guest, so it says why from the guest's side.
-func withAgentLog(ctx context.Context, vm microvm.VM, err error) error {
+// the guest, so it says why from the guest's side. When the agent is gone and
+// can't be asked, it falls back to atBoot, the log read when the VM came up,
+// which has what earlier boots of the same disk wrote.
+func withAgentLog(ctx context.Context, vm microvm.VM, err error, atBoot string, atBootErr error) error {
 	tail, lerr := agentLogTail(ctx, vm, macBootLogTail)
-	if lerr != nil {
-		return fmt.Errorf("%w (the guest agent's log couldn't be read: %v)", err, lerr)
+	if lerr == nil {
+		return appendAgentLog(err, "end of "+guestproto.MacAgentLogPath+" in the macOS guest", tail)
 	}
+	if atBootErr != nil {
+		return fmt.Errorf("%w (the guest agent's log couldn't be read now: %v, or at boot: %v)", err, lerr, atBootErr)
+	}
+	return appendAgentLog(fmt.Errorf("%w (the guest agent stopped answering: %v)", err, lerr),
+		"end of "+guestproto.MacAgentLogPath+" as of this boot, from earlier boots of this run's disk", atBoot)
+}
+
+func appendAgentLog(err error, label, tail string) error {
 	tail = strings.TrimRight(tail, "\n")
 	if tail == "" {
-		return fmt.Errorf("%w (the guest agent's log is empty)", err)
+		return fmt.Errorf("%w (%s: empty)", err, label)
 	}
-	return fmt.Errorf("%w\n--- end of %s in the macOS guest ---\n%s", err, guestproto.MacAgentLogPath, tail)
+	return fmt.Errorf("%w\n--- %s ---\n%s", err, label, tail)
 }
 
 // cloneOnce copies src to dst unless dst exists, never leaving half a copy.

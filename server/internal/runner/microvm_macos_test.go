@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -707,5 +708,34 @@ func TestMacOSGuestAgentLogReturnsItsTail(t *testing.T) {
 	}
 	if len(log) != macAgentLogTail {
 		t.Fatalf("log is %d bytes, want the last %d", len(log), macAgentLogTail)
+	}
+}
+
+func TestMacOSGuestFailedBootFallsBackToTheLogReadAtBoot(t *testing.T) {
+	// The agent serves its log until the first exec, which takes it down for
+	// good, so the log can't be read after the failure.
+	var dead atomic.Bool
+	serve := logGuest("earlier boot\npanic: crashed on exec\n", func(conn net.Conn) {
+		dead.Store(true)
+		_ = conn.Close()
+	})
+	drv := &microvm.MemDriver{Handler: func(ctx context.Context, conn net.Conn) {
+		if dead.Load() {
+			_ = conn.Close()
+			return
+		}
+		serve(ctx, conn)
+	}}
+	g := newTestMacGuests(t, drv)
+	c, _ := macClient(t, g, "run-1")
+
+	err := c.Start(context.Background())
+	if err == nil {
+		t.Fatal("start succeeded against a guest that dies on exec")
+	}
+	for _, want := range []string{"prepare workspace", "stopped answering", "as of this boot", "panic: crashed on exec"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("start error lacks %q:\n%v", want, err)
+		}
 	}
 }
