@@ -316,3 +316,30 @@ export default defineServer({
 		t.Fatalf("icon.svg = %#v", m)
 	}
 }
+
+// A tool result is one JSON line on the worker's stdout. The worker used to exit straight after
+// writing it, before a write larger than the pipe buffer had flushed, so a big result (a ~1 MB
+// video segment as base64) reached the host cut short as invalid JSON.
+func TestMCPWorkerReturnsLargeResultsWhole(t *testing.T) {
+	bundle, err := BundleMCPServer("server.ts", map[string]string{
+		"app.tsx": "export default function App() { return null; }",
+		"server.ts": `
+import { defineServer } from "@vesper/server";
+export default defineServer({
+  tools: {
+    big: { description: "big", inputSchema: { type: "object" }, handler: async () => ({ data: "x".repeat(3 * 1024 * 1024) + "end" }) },
+  },
+});`,
+	})
+	if err != nil {
+		t.Fatalf("BundleMCPServer: %v", err)
+	}
+	res, err := CallMCPTool(context.Background(), MCPCallContext{Slug: "big-app", AppName: "Big", BundleJS: bundle}, "big", nil)
+	if err != nil {
+		t.Fatalf("CallMCPTool: %v", err)
+	}
+	data, _ := res.(map[string]any)["data"].(string)
+	if len(data) != 3*1024*1024+3 || !strings.HasSuffix(data, "end") {
+		t.Fatalf("result length = %d, want %d ending in \"end\"", len(data), 3*1024*1024+3)
+	}
+}
