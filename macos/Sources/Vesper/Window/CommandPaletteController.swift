@@ -350,6 +350,8 @@ final class CommandPaletteController: NSObject, NSWindowDelegate, WKScriptMessag
         case .external:
             NSWorkspace.shared.open(url)
             return .cancel
+        case .ignore:
+            return .cancel
         }
     }
 
@@ -369,6 +371,8 @@ final class CommandPaletteController: NSObject, NSWindowDelegate, WKScriptMessag
             aux?.app?.openPlayground(url: url, nextTo: targetController?.window)
         case .external:
             NSWorkspace.shared.open(url)
+        case .ignore:
+            break
         }
         return nil
     }
