@@ -32,6 +32,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/store"
 	"github.com/liamphmurphy/vesper/server/internal/tracker"
 	"github.com/liamphmurphy/vesper/server/internal/transfer"
+	"github.com/liamphmurphy/vesper/server/internal/twitchplayer"
 	"github.com/liamphmurphy/vesper/server/internal/usage"
 	"github.com/liamphmurphy/vesper/server/internal/wiki"
 )
@@ -81,11 +82,15 @@ type Server struct {
 	// RunnerStarting reports whether an in-process runner (vesper app) is
 	// still initializing before its first heartbeat.
 	RunnerStarting func() bool
+	// TwitchPlayer serves Alternate Twitch Player HLS sessions (nil constructs default).
+	TwitchPlayer *twitchplayer.Service
 
-	logins       loginLimiter
-	apiOnce      sync.Once
-	apiMux       http.Handler
-	githubPROnce sync.Once
+	logins           loginLimiter
+	apiOnce          sync.Once
+	apiMux           http.Handler
+	githubPROnce     sync.Once
+	twitchPlayerOnce sync.Once
+	twitchPlayerSvc  *twitchplayer.Service
 }
 
 var _ api.StrictServerInterface = (*Server)(nil)
@@ -95,6 +100,7 @@ func (s *Server) mountAPIRoutes(mux *http.ServeMux) {
 	s.dockChatRoutes(mux)
 	s.httpClientRoutes(mux)
 	s.browserExtensionRoutes(mux)
+	s.twitchPlayerRoutes(mux)
 	strict := api.NewStrictHandlerWithOptions(s, nil, api.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
 			writeError(w, http.StatusBadRequest, api.Invalid, err.Error(), "")

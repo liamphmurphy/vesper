@@ -636,6 +636,7 @@ func validateCustomAppAPIRequest(method, rawURL string) (cleaned string, isRead 
 		"/api/v1/api-secrets",
 		"/api/v1/custom-apps",
 		"/api/v1/harness",
+		"/api/v1/twitch",
 	} {
 		if cleanPath == blocked || strings.HasPrefix(cleanPath, blocked+"/") {
 			return "", false, apperr.Invalid("path", "access to %s from custom apps is restricted", blocked)
