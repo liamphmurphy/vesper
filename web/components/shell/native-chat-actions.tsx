@@ -6,6 +6,7 @@ import type { Schemas } from "@/lib/api/client";
 import { useDeleteChat, useUpdateChat } from "@/lib/api/hooks";
 import { chatTitle } from "@/lib/chat-ui";
 import { CHAT_MENU } from "@/lib/native-shell/chats-model";
+import { isNativeShell, nativePrompt } from "@/lib/native-shell/bridge";
 import { toast } from "@/lib/toast";
 import { Modal } from "@/app/(app)/knowledge/_components/kit";
 import { Button } from "@/components/ui/button";
@@ -62,8 +63,23 @@ export function useNativeChatActions(find: (id: string) => Chat | undefined, ope
   const run = async (menuId: string, id: string) => {
     const chat = find(id);
     if (!chat) return;
-    if (menuId === CHAT_MENU.rename) setRenaming(chat);
-    else if (menuId === CHAT_MENU.archive) {
+    if (menuId === CHAT_MENU.rename) {
+      if (isNativeShell()) {
+        const next = await nativePrompt({
+          title: `Rename “${chatTitle(chat)}”`,
+          label: "Conversation title",
+          value: chat.title,
+          placeholder: "New conversation",
+          confirmLabel: "Rename",
+        });
+        const trimmed = next?.trim();
+        if (trimmed && trimmed !== chat.title) {
+          await update.mutateAsync({ id, patch: { revision: chat.revision, title: trimmed } }).then(() => undefined, fail("Couldn’t rename"));
+        }
+        return;
+      }
+      setRenaming(chat);
+    } else if (menuId === CHAT_MENU.archive) {
       // mutateAsync: the row unmounts when the list refetches.
       await update.mutateAsync({ id, patch: { revision: chat.revision, archived: true } }).then(() => leave(id), fail("Couldn’t archive"));
     } else if (menuId === CHAT_MENU.restore) {

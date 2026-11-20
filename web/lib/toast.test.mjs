@@ -1,10 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MAX_TOASTS, currentToasts, dismissToast, toast, undoable } from "./toast.ts";
+import { MAX_TOASTS, clearToasts, currentToasts, dismissToast, toast, undoable } from "./toast.ts";
 
 const live = () => currentToasts().filter((t) => !t.leaving);
 const flush = () => new Promise((r) => setTimeout(r, 0));
-function reset() { for (const t of [...currentToasts()]) dismissToast(t.id); }
+function reset() {
+  delete globalThis.window;
+  clearToasts();
+}
+
+function installNativeShell() {
+  const posted = [];
+  const win = new EventTarget();
+  win.__VESPER_NATIVE__ = { v: 1, platform: "macos" };
+  win.webkit = { messageHandlers: { vesper: { postMessage: (m) => posted.push(m) } } };
+  globalThis.window = win;
+  const send = (cmd) => win.dispatchEvent(new CustomEvent("vesper-native", { detail: cmd }));
+  return { posted, send };
+}
 
 test("a toast with a known id replaces it instead of stacking", () => {
   reset();
@@ -61,4 +74,47 @@ test("a failed commit restores the item and says so", async () => {
   const error = live().find((t) => t.tone === "error");
   assert.equal(error?.title, "Couldn't remove it");
   assert.equal(error?.description, "offline");
+});
+
+test("native shell routes plain-text toasts over the bridge and drives undoable actions", async () => {
+  reset();
+  const { posted, send } = installNativeShell();
+  const log = [];
+  const id = undoable({
+    title: "Archived note",
+    description: "In Inbox",
+    hide: () => log.push("hide"),
+    restore: () => log.push("restore"),
+    commit: async () => {
+      log.push("commit");
+    },
+  });
+  assert.equal(live().length, 0);
+  assert.equal(posted[0].type, "toast.show");
+  assert.equal(posted[0].id, id);
+  assert.equal(posted[0].title, "Archived note");
+  assert.equal(posted[0].actionLabel, "Undo");
+
+  send({ v: 1, type: "toast.event", id, event: "action" });
+  await flush();
+  assert.deepEqual(log, ["hide", "restore"]);
+
+  const id2 = undoable({
+    title: "Archived second",
+    hide: () => log.push("hide2"),
+    restore: () => log.push("restore2"),
+    commit: async () => {
+      log.push("commit2");
+    },
+  });
+  send({ v: 1, type: "toast.event", id: id2, event: "timeout" });
+  await flush();
+  assert.deepEqual(log, ["hide", "restore", "hide2", "commit2"]);
+
+  const id3 = toast("Saved");
+  dismissToast(id3, "dismissed");
+  assert.equal(posted.at(-1)?.type, "toast.dismiss");
+  assert.equal(posted.at(-1)?.id, id3);
+
+  reset();
 });

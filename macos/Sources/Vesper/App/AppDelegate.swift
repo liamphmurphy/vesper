@@ -158,6 +158,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     @objc func screenshotToChat(_ sender: Any?) { actions.screenshotToChat() }
     @objc func importBackup(_ sender: Any?) { actions.importBackup() }
     @objc func openSettings(_ sender: Any?) { actions.openSettings() }
+    @objc func showShortcuts(_ sender: Any?) { actions.showShortcuts() }
     @objc func checkForUpdates(_ sender: Any?) { actions.checkForUpdates() }
     @objc func restartStack(_ sender: Any?) { actions.restartStack() }
     @objc func showLogs(_ sender: Any?) { actions.showLogs() }

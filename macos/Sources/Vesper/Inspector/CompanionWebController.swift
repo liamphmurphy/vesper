@@ -13,6 +13,7 @@ final class CompanionWebController: NSObject, WKScriptMessageHandler, WKNavigati
     var onOpenPlayground: ((URL) -> Void)?
     var ownerWindow: (() -> NSWindow?)?
     var playgroundPorts: () -> [Int] = { defaultPlaygroundPorts }
+    weak var shellHost: (any ShellHostActions)?
 
     private var baseURL: URL?
     private var ready = false
@@ -136,6 +137,28 @@ final class CompanionWebController: NSObject, WKScriptMessageHandler, WKNavigati
                     cancelLabel: cancelLabel, destructive: destructive, window: win)
                 ShellBridge.send(.reply(requestId: requestId, ok: ok), to: self.webView)
             }
+        case .prompt(let requestId, let title, let body, let label, let value, let placeholder, let confirmLabel, let cancelLabel, let maxLength):
+            Task { [weak self] in
+                guard let self else { return }
+                let win = self.webView.window ?? self.ownerWindow?()
+                let entered = await ShellBridge.promptSheet(
+                    title: title, body: body, label: label, value: value, placeholder: placeholder,
+                    confirmLabel: confirmLabel, cancelLabel: cancelLabel, maxLength: maxLength, window: win)
+                ShellBridge.send(.reply(requestId: requestId, ok: entered != nil, value: .some(entered)), to: self.webView)
+            }
+        case .toastShow(let id, let title, let description, let tone, let actionLabel, let durationMs):
+            let toast = ToastItemModel(id: id, title: title, description: description, tone: tone, actionLabel: actionLabel, durationMs: durationMs)
+            shellHost?.showToast(toast, from: webView)
+        case .toastDismiss(let id):
+            shellHost?.dismissToast(id: id)
+        case .showShortcuts:
+            shellHost?.showShortcuts()
+        case .commandPaletteOpen(let request):
+            shellHost?.openCommandPalette(request)
+        case .commandPaletteClose:
+            shellHost?.closeCommandPalette()
+        case .quickLook(let items, let index):
+            shellHost?.showQuickLook(items: items, index: index)
         default:
             break
         }

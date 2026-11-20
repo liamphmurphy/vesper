@@ -36,6 +36,7 @@ final class AuxWindows {
     private(set) lazy var files = FilesIn(aux: self)
     private(set) lazy var importer = ImportBackupFlow(aux: self)
     private(set) lazy var settingsWindow = SettingsWindowController(aux: self)
+    private(set) lazy var shortcutsWindow = ShortcutsWindowController()
 
     private var launchedAtLoginFlag = false
     private var exportTimer: Timer?
@@ -103,6 +104,7 @@ final class AuxWindows {
     func screenshotToChat() { screenshot.start() }
     func importBackup() { importer.start() }
     func openSettings() { settingsWindow.show() }
+    func showShortcuts() { shortcutsWindow.show() }
     func checkForUpdates() { Task { await runUpdateCheck(manual: true) } }
 
     /// Files opened with the app (Open With, Dock drop, Quick Actions) or dropped on a window.

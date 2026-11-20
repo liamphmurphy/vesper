@@ -132,6 +132,8 @@ enum MainMenu {
 
         // Help
         let helpMenu = add("Help", [
+            item("Keyboard Shortcuts", #selector(AppDelegate.showShortcuts(_:)), "/"),
+            sep(),
             item("Show Logs…", #selector(AppDelegate.showLogs(_:))),
             item("Vesper Repository & Docs", #selector(AppDelegate.openDocs(_:))),
         ])

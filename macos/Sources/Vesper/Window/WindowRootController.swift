@@ -1,16 +1,18 @@
 import AppKit
+import SwiftUI
 import VesperCore
 
 /// Window root controller: hosts the 3-pane `NSSplitViewController` (`Sidebar | Content | Inspector`)
-/// beside the stationary 44pt native `RailBarView` at the trailing edge. Keeping the rail outside
-/// the split view ensures opening or closing the native inspector never shifts the rail buttons
-/// away from the pointer.
+/// beside the stationary 44pt native `RailBarView` at the trailing edge, plus the window-level
+/// toast HUD along the bottom edge. Keeping the rail outside the split view ensures opening or
+/// closing the native inspector never shifts the rail buttons away from the pointer.
 @MainActor
 final class WindowRootController: NSViewController, NSUserInterfaceValidations {
     let split: NSSplitViewController
     private var rail: RailBarView?
     private var railWidth: NSLayoutConstraint?
     private var splitTrailing: NSLayoutConstraint?
+    private var toastHost: NSHostingView<ToastOverlayView>?
 
     var onToggleSidebar: ((Any?) -> Void)?
     var onToggleInspector: ((Any?) -> Void)?
@@ -44,6 +46,10 @@ final class WindowRootController: NSViewController, NSUserInterfaceValidations {
             trailing.isActive = true
             splitTrailing = trailing
         }
+
+        if let toastHost {
+            attachToasts(toastHost, to: root)
+        }
     }
 
     /// Installs the stationary trailing rail and binds its width and items to the active tab.
@@ -62,10 +68,30 @@ final class WindowRootController: NSViewController, NSUserInterfaceValidations {
         }
     }
 
+    /// Installs the window-level Liquid Glass toast stack centered near the bottom edge.
+    func installToasts(store: ToastStore) {
+        precondition(toastHost == nil)
+        let host = NSHostingView(rootView: ToastOverlayView(store: store))
+        host.translatesAutoresizingMaskIntoConstraints = false
+        host.sizingOptions = [.intrinsicContentSize]
+        host.isHidden = true
+        toastHost = host
+        if isViewLoaded {
+            attachToasts(host, to: view)
+        }
+        track({ [weak store] in store?.toasts.isEmpty ?? true }) { [weak host] isEmpty in
+            host?.isHidden = isEmpty
+        }
+    }
+
     private func attachRail(_ bar: RailBarView, to root: NSView) {
         splitTrailing?.isActive = false
         splitTrailing = nil
-        root.addSubview(bar)
+        if let toastHost, toastHost.superview === root {
+            root.addSubview(bar, positioned: .below, relativeTo: toastHost)
+        } else {
+            root.addSubview(bar)
+        }
         let width = bar.widthAnchor.constraint(equalToConstant: 0)
         railWidth = width
         let trailing = split.view.trailingAnchor.constraint(equalTo: bar.leadingAnchor)
@@ -76,6 +102,15 @@ final class WindowRootController: NSViewController, NSUserInterfaceValidations {
             bar.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             width,
             trailing,
+        ])
+    }
+
+    private func attachToasts(_ host: NSHostingView<ToastOverlayView>, to root: NSView) {
+        root.addSubview(host, positioned: .above, relativeTo: nil)
+        NSLayoutConstraint.activate([
+            host.centerXAnchor.constraint(equalTo: root.centerXAnchor),
+            host.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -20),
+            host.widthAnchor.constraint(lessThanOrEqualToConstant: 440),
         ])
     }
 

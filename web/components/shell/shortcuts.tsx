@@ -2,12 +2,18 @@
 
 import { Dialog } from "radix-ui";
 import { useEffect, useState } from "react";
+import { isNativeShell, post } from "@/lib/native-shell/bridge";
+import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { IconButton } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/primitives";
 import { SHORTCUTS } from "@/lib/command-palette";
 
-/** Open the shortcut reference from a button (the Inbox's "Shortcuts"). */
+/** Open the shortcut reference from a button or shortcut. Native macOS uses its own Shortcuts window. */
 export function openShortcuts() {
+  if (isNativeShell()) {
+    post({ v: 1, type: "showShortcuts" });
+    return;
+  }
   window.dispatchEvent(new Event("la:shortcuts"));
 }
 
@@ -34,12 +40,20 @@ export function shortcutBlocked(e: KeyboardEvent): boolean {
 
 /** The `?` keyboard shortcut reference; opened by `?` (app-shell.tsx) or the palette's action. */
 export function ShortcutsDialog() {
+  const native = useIsNativeShell();
   const [open, setOpen] = useState(false);
   useEffect(() => {
-    const show = () => setOpen(true);
+    const show = () => {
+      if (isNativeShell()) {
+        post({ v: 1, type: "showShortcuts" });
+        return;
+      }
+      setOpen(true);
+    };
     window.addEventListener("la:shortcuts", show);
     return () => window.removeEventListener("la:shortcuts", show);
   }, []);
+  if (native) return null;
   return (
     <Dialog.Root open={open} onOpenChange={setOpen}>
       <Dialog.Portal>

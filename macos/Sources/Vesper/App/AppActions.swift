@@ -9,6 +9,7 @@ protocol AppActions: AnyObject {
     func screenshotToChat()
     func importBackup()
     func openSettings()
+    func showShortcuts()
     func checkForUpdates()
     func restartStack()
     func showLogs()
@@ -24,6 +25,7 @@ final class DefaultAppActions: AppActions {
     func screenshotToChat() { app?.aux.screenshotToChat() }
     func importBackup() { app?.aux.importBackup() }
     func openSettings() { app?.aux.openSettings() }
+    func showShortcuts() { app?.aux.showShortcuts() }
     func checkForUpdates() { app?.aux.checkForUpdates() }
 
     func restartStack() {

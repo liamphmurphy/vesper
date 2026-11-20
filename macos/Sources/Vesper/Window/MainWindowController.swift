@@ -7,7 +7,7 @@ import WebKit
 /// separate layout it holds one tab (and the system groups windows into tabs); in the compact
 /// layout it holds several tabs, drawn in its toolbar, and shows the active one.
 @MainActor
-final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolbarItemValidation {
+final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolbarItemValidation, ShellHostActions {
     static let tabbingIdentifier = "vesper"
     static let defaultSize = NSSize(width: 1280, height: 840)
     static let minSize = NSSize(width: 760, height: 540)
@@ -17,6 +17,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     let compact: Bool
     let tabs = TabsModel()
     let split = NSSplitViewController()
+    let toastStore = ToastStore()
     private let container = TabContainerController()
     private var rootController: WindowRootController?
     private var sidebarItem: NSSplitViewItem?
@@ -138,6 +139,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             inspItem.isCollapsed = true
             // AppKit requires the inspector split item to be the final item in NSSplitViewController.
             split.addSplitViewItem(inspItem)
+            inspector.shellHost = self
             inspectorItem = inspItem
             inspectorController = inspector
 
@@ -165,6 +167,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             send: { [weak self] in self?.handleRailCommand($0) },
             services: { [weak app] in app?.system }
         )
+        root.installToasts(store: toastStore)
         root.onToggleSidebar = { [weak self] sender in self?.split.toggleSidebar(sender) }
         root.onToggleInspector = { [weak self] sender in self?.toggleInspector(sender) }
         root.canToggleSidebar = { [weak self] in self?.hasSidebar == true }
@@ -412,6 +415,33 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         tab.bridge?.onOpenInMain = { [weak self] path, newTab in
             self?.openInMain(path: path, newTab: newTab)
         }
+        tab.bridge?.shellHost = self
+    }
+
+    // MARK: ShellHostActions
+
+    func showToast(_ toast: ToastItemModel, from webView: WKWebView?) {
+        toastStore.show(toast, from: webView)
+    }
+
+    func dismissToast(id: String) {
+        toastStore.dismissFromPage(id: id)
+    }
+
+    func showShortcuts() {
+        app.aux.showShortcuts()
+    }
+
+    func openCommandPalette(_ request: CommandPaletteRequest?) {
+        // Wired in Commit 4.
+    }
+
+    func closeCommandPalette() {
+        // Wired in Commit 4.
+    }
+
+    func showQuickLook(items: [QuickLookItem], index: Int?) {
+        // Wired in Commit 5.
     }
 
     /// Match the window to the page's effective mode, so a person who forces Dark in Vesper while macOS is
@@ -497,6 +527,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         inspectorCollapseObservation = nil
         inspectorController?.teardown()
         container.teardown()
+        toastStore.teardown()
         for tab in tabs.list.items {
             app.recordClosed(url: tab.currentURLString)
             tab.teardown()

@@ -22,6 +22,12 @@ final class InspectorViewController: NSViewController {
     private var nativeHost: NSHostingController<InspectorBodyHost>?
     private var popout: InspectorPopoutController?
     private(set) var isPoppedOut = false
+    weak var shellHost: (any ShellHostActions)? {
+        didSet {
+            companion.shellHost = shellHost
+            panelWeb.shellHost = shellHost
+        }
+    }
 
     init(
         tabs: TabsModel,
