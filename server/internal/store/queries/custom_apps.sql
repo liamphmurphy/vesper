@@ -118,3 +118,28 @@ WHERE id = $1;
 -- name: DeleteCustomAppDockChats :exec
 DELETE FROM dock_chats
 WHERE workspace_id = $1 AND user_id = $2 AND scope = $3;
+
+-- name: InsertCustomAppMedia :one
+INSERT INTO custom_app_media (app_id, source_url, state, blob_key, content_type, bytes_total)
+VALUES (@app_id, @source_url, 'downloading', @blob_key, @content_type, @bytes_total)
+RETURNING *;
+
+-- name: GetCustomAppMedia :one
+SELECT * FROM custom_app_media WHERE id = @id AND app_id = @app_id;
+
+-- name: SetCustomAppMediaProgress :exec
+UPDATE custom_app_media SET bytes_done = @bytes_done, updated_at = now()
+WHERE id = @id AND state = 'downloading';
+
+-- name: FinishCustomAppMedia :execrows
+-- Only a row still downloading can finish, so a deleted or already-failed row stays as it is.
+UPDATE custom_app_media
+SET state = @state, bytes_done = @bytes_done, error = @error, updated_at = now()
+WHERE id = @id AND state = 'downloading';
+
+-- name: DeleteCustomAppMedia :one
+DELETE FROM custom_app_media WHERE id = @id AND app_id = @app_id
+RETURNING blob_key;
+
+-- name: ListCustomAppMediaBlobKeys :many
+SELECT id, blob_key FROM custom_app_media WHERE app_id = @app_id;

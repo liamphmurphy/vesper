@@ -23,6 +23,8 @@ type Service struct {
 	Pool       *pgxpool.Pool
 	Secrets    *usersecrets.Service
 	NodeBinary string
+	// Media downloads video files for apps with app.media:download; nil disables it.
+	Media *Media
 }
 
 type AppSummary struct {
@@ -668,8 +670,15 @@ func (s *Service) SetCapabilities(ctx context.Context, ws, userID uuid.UUID, slu
 }
 
 func (s *Service) Delete(ctx context.Context, ws, userID uuid.UUID, slug string) error {
-	return pgx.BeginTxFunc(ctx, s.Pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
+	var media []store.ListCustomAppMediaBlobKeysRow
+	err := pgx.BeginTxFunc(ctx, s.Pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
 		q := store.New(tx)
+		if cur, err := q.GetCustomAppBySlug(ctx, store.GetCustomAppBySlugParams{WorkspaceID: ws, UserID: userID, Slug: slug}); err == nil {
+			// The rows cascade with the app; their files are removed after commit.
+			if media, err = q.ListCustomAppMediaBlobKeys(ctx, cur.ID); err != nil {
+				return err
+			}
+		}
 		app, err := q.DeleteCustomApp(ctx, store.DeleteCustomAppParams{WorkspaceID: ws, UserID: userID, Slug: slug})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return apperr.ErrNotFound
@@ -691,6 +700,13 @@ func (s *Service) Delete(ctx context.Context, ws, userID uuid.UUID, slug string)
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	// The app is gone either way; a file left behind only wastes space, so
+	// removing downloads is best effort rather than failing the delete.
+	s.Media.forget(ctx, media)
+	return nil
 }
 
 func (s *Service) ListMCPServers(ctx context.Context, ws, userID uuid.UUID) ([]MCPServerApp, error) {
