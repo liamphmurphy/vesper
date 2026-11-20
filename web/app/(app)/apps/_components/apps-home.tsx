@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Dialog } from "radix-ui";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
+import { useNativeContextMenu } from "@/lib/native-shell/hooks";
 import { Content, TopBar } from "@/components/shell/topbar";
 import { Button, IconButton } from "@/components/ui/button";
 import { confirmAction } from "@/components/ui/confirm";
@@ -137,7 +138,10 @@ export function AppsHome() {
 }
 
 function CustomAppCard({ app }: { app: CustomAppSummary }) {
+  const router = useRouter();
   const deleteApp = useDeleteCustomApp();
+  const cardRef = useRef<HTMLElement>(null);
+  const href = `/apps/${app.slug}`;
   const caps = Object.entries(app.capabilities ?? {}).filter(([, mode]) => mode !== "denied");
 
   const handleDelete = async () => {
@@ -153,8 +157,30 @@ function CustomAppCard({ app }: { app: CustomAppSummary }) {
     });
   };
 
+  useNativeContextMenu(
+    cardRef,
+    () => [
+      { id: "open", label: `Open ${app.name}`, icon: "dashboard", onSelect: () => router.push(href) },
+      { id: "open-tab", label: "Open in new tab", icon: "external", onSelect: () => window.open(href, "_blank") },
+      { id: "sep-copy", separator: true },
+      {
+        id: "copy-link",
+        label: "Copy link",
+        icon: "link",
+        onSelect: () => {
+          const full = new URL(href, window.location.href).href;
+          void navigator.clipboard?.writeText(full).then(() => toast({ title: "Link copied", tone: "success" }));
+        },
+      },
+      { id: "sep-del", separator: true },
+      { id: "delete", label: `Delete ${app.name}`, icon: "trash", destructive: true, disabled: deleteApp.isPending, onSelect: () => void handleDelete() },
+    ],
+    { links: "menu" },
+  );
+
   return (
     <article
+      ref={cardRef}
       data-testid={`custom-app-card-${app.slug}`}
       className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4 transition-colors hover:border-border-strong"
     >

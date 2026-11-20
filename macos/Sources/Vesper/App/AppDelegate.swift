@@ -69,6 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 return
             }
             app.saveSessionNow()
+            app.aux.cleanupQuickLook()
             vlog("quit: stopping the stack")
             if let stack = app.stack { await stack.stop() }
             vlog("quit: replying yes")

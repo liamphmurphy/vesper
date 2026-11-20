@@ -38,6 +38,7 @@ final class AuxWindows {
     private(set) lazy var settingsWindow = SettingsWindowController(aux: self)
     private(set) lazy var shortcutsWindow = ShortcutsWindowController()
     private(set) lazy var commandPalette = CommandPaletteController(aux: self)
+    private(set) lazy var quickLook = QuickLookController(aux: self)
 
     private var launchedAtLoginFlag = false
     private var exportTimer: Timer?
@@ -110,6 +111,10 @@ final class AuxWindows {
         commandPalette.open(request: request, from: window)
     }
     func closeCommandPalette() { commandPalette.close(restoreFocus: true) }
+    func previewQuickLook(items: [QuickLookItem], index: Int?, from window: NSWindow?) {
+        quickLook.preview(items: items, index: index, from: window)
+    }
+    func cleanupQuickLook() { quickLook.cleanup() }
     func checkForUpdates() { Task { await runUpdateCheck(manual: true) } }
 
     /// Files opened with the app (Open With, Dock drop, Quick Actions) or dropped on a window.

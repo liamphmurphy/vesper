@@ -282,6 +282,9 @@ final class CommandPaletteController: NSObject, NSWindowDelegate, WKScriptMessag
             targetController?.showToast(toast, from: webView)
         case .toastDismiss(let id):
             targetController?.dismissToast(id: id)
+        case .quickLook(let items, let index):
+            close(restoreFocus: false)
+            targetController?.showQuickLook(items: items, index: index)
         case .confirmApproval(let requestId, let scope):
             Task { [weak self] in
                 let ok = await ShellBridge.services?.confirmApproval(scope: scope) ?? false

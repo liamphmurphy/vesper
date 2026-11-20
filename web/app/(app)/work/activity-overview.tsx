@@ -1,9 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useMemo, useRef, useState } from "react";
 import type { Schemas } from "@/lib/api/client";
 import { useCosts, useRunnerStatus } from "@/lib/api/hooks";
+import { useNativeContextMenu } from "@/lib/native-shell/hooks";
+import { toast } from "@/lib/toast";
 import { presetRange, spendLabel } from "@/lib/costs";
 import { cx } from "@/lib/cx";
 import { duration, runCost, shortAgo } from "@/lib/format";
@@ -60,6 +63,237 @@ const DOT_BG: Record<ReturnType<typeof runDot>, string> = {
 function needsBadgeTone(tone: string) {
   if (tone === "blocked") return "bg-pill-blocked-bg text-pill-blocked-fg";
   return "bg-pill-human-bg text-pill-human-fg";
+}
+
+function ActivityNeedsCard({
+  item,
+  active,
+  onSelectRun,
+}: {
+  item: InboxItem;
+  active: boolean;
+  onSelectRun: (runId: string) => void;
+}) {
+  const router = useRouter();
+  const cardRef = useRef<HTMLDivElement>(null);
+  const kind = KIND[item.kind] ?? { label: item.kind, tone: "human" };
+  const targetHref = item.href || (item.run_id ? `/runs/${item.run_id}` : "/work");
+  const copy = (text: string, title: string) => {
+    void navigator.clipboard?.writeText(text).then(() => toast({ title, tone: "success" }));
+  };
+
+  useNativeContextMenu(
+    cardRef,
+    () => [
+      ...(item.run_id
+        ? [{ id: "inspect", label: "Inspect run", icon: "activity", onSelect: () => onSelectRun(item.run_id!) }]
+        : []),
+      { id: "open", label: "Open", icon: "inbox", onSelect: () => router.push(targetHref) },
+      { id: "open-tab", label: "Open in new tab", icon: "external", onSelect: () => window.open(targetHref, "_blank") },
+      ...(item.ticket_key
+        ? [{ id: "open-ticket", label: `Open ${item.ticket_key}`, icon: "tickets", onSelect: () => router.push(`/tickets/${item.ticket_key}`) }]
+        : []),
+      { id: "sep-copy", separator: true },
+      { id: "copy-link", label: "Copy link", icon: "link", onSelect: () => copy(new URL(targetHref, window.location.href).href, "Link copied") },
+    ],
+    { links: "menu" },
+  );
+
+  return (
+    <div
+      ref={cardRef}
+      className={cx(
+        "flex items-center justify-between gap-3 rounded-lg border bg-surface px-3 py-2.5 transition-colors",
+        active ? "border-accent bg-selected/40" : "border-pill-human-bg/70 hover:bg-hover/40",
+      )}
+    >
+      <div className="flex min-w-0 flex-1 items-start gap-2.5">
+        {item.agent ? (
+          <AgentOrPersonaAvatar agent={item.agent} size="sm" />
+        ) : (
+          <span className="grid size-5 flex-none place-items-center rounded bg-pill-human-bg text-pill-human-fg">
+            <Icon name="inbox" size={12} />
+          </span>
+        )}
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className={cx("rounded px-1.5 py-[1px] text-10 font-medium", needsBadgeTone(kind.tone))}>
+              {kind.label}
+            </span>
+            {item.ticket_key && (
+              <span className="font-mono text-11 text-fg-tertiary">{item.ticket_key}</span>
+            )}
+            <span className="truncate text-13 font-medium text-fg">{item.title}</span>
+          </div>
+          <div className="flex items-center gap-2 text-11 text-fg-tertiary">
+            {item.agent && <span>{item.agent.name}</span>}
+            <span>waiting {waited(item.created_at)}</span>
+            {item.summary && (
+              <span className="truncate text-fg-secondary">· {item.summary}</span>
+            )}
+          </div>
+        </div>
+      </div>
+      <div className="flex flex-none items-center gap-1.5">
+        {item.run_id ? (
+          <button
+            type="button"
+            onClick={() => onSelectRun(item.run_id!)}
+            className={cx(
+              "inline-flex h-7 items-center rounded-md border px-2.5 text-12 font-medium transition-colors",
+              active
+                ? "border-accent bg-accent text-on-accent"
+                : "border-pill-human-bg text-pill-human-fg hover:bg-pill-human-bg",
+            )}
+          >
+            {active ? "Inspecting" : "Review →"}
+          </button>
+        ) : (
+          <Link
+            href={item.href}
+            className="inline-flex h-7 items-center rounded-md border border-border-strong px-2.5 text-12 font-medium text-fg hover:bg-hover"
+          >
+            Open →
+          </Link>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function useRunRowContextMenu(
+  ref: React.RefObject<HTMLButtonElement | null>,
+  r: Run,
+  onSelectRun: (runId: string) => void,
+) {
+  const router = useRouter();
+  const href = `/runs/${r.id}`;
+  const copy = (text: string, title: string) => {
+    void navigator.clipboard?.writeText(text).then(() => toast({ title, tone: "success" }));
+  };
+  useNativeContextMenu(ref, () => [
+    { id: "inspect", label: "Inspect in Activity", icon: "activity", onSelect: () => onSelectRun(r.id) },
+    { id: "open", label: "Open run details", icon: "play", onSelect: () => router.push(`${href}?view=details`) },
+    { id: "open-tab", label: "Open in new tab", icon: "external", onSelect: () => window.open(href, "_blank") },
+    ...(r.ticket_key
+      ? [{ id: "open-ticket", label: `Open ${r.ticket_key}`, icon: "tickets", onSelect: () => router.push(`/tickets/${r.ticket_key}`) }]
+      : []),
+    { id: "sep-copy", separator: true },
+    { id: "copy-id", label: "Copy run ID", icon: "copy", onSelect: () => copy(r.id, "Run ID copied") },
+    { id: "copy-link", label: "Copy link", icon: "link", onSelect: () => copy(new URL(href, window.location.href).href, "Link copied") },
+  ]);
+}
+
+function RunningRunCard({
+  r,
+  active,
+  onSelectRun,
+}: {
+  r: Run;
+  active: boolean;
+  onSelectRun: (runId: string) => void;
+}) {
+  const btnRef = useRef<HTMLButtonElement>(null);
+  useRunRowContextMenu(btnRef, r, onSelectRun);
+  const dot = runDot(r);
+  const totalSteps = r.plan.length;
+  const doneSteps = r.plan.filter((s) => s.state === "done").length;
+  const currentStep = r.plan.find((s) => s.state === "current");
+  const pct = totalSteps > 0 ? Math.round((doneSteps / totalSteps) * 100) : 0;
+
+  return (
+    <button
+      ref={btnRef}
+      type="button"
+      aria-current={active ? "true" : undefined}
+      onClick={() => onSelectRun(r.id)}
+      className={cx(
+        "flex flex-col gap-1.5 rounded-lg border px-3 py-2.5 text-left transition-colors",
+        active ? "border-accent bg-selected/50" : "border-border-subtle bg-surface hover:bg-hover/40",
+      )}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <AgentOrPersonaAvatar agent={r.agent} size="sm" />
+          <span aria-hidden className={cx("size-2 flex-none rounded-full", DOT_BG[dot])} />
+          {r.ticket_key && (
+            <span className="flex-none font-mono text-11 text-fg-tertiary">{r.ticket_key}</span>
+          )}
+          <span className="truncate text-13 font-medium text-fg">{runTitle(r)}</span>
+        </div>
+        <div className="flex flex-none items-center gap-2 font-mono text-11 text-fg-tertiary">
+          <span>{duration(r.started_at, r.ended_at)}</span>
+          {r.cost_usd > 0 && <span>{runCost(r.cost_usd, r.cost_source)}</span>}
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-11 text-fg-secondary">
+        <span className="text-fg-tertiary">
+          {r.agent.name} · {r.harness}/{r.model}
+        </span>
+        {r.branch && (
+          <span className="inline-flex items-center gap-1 truncate font-mono text-10 text-fg-tertiary">
+            <Icon name="branch" size={11} />
+            {r.branch}
+          </span>
+        )}
+        {currentStep && (
+          <span className="truncate text-state-done">
+            Step {currentStep.position}/{totalSteps} · {currentStep.text}
+          </span>
+        )}
+      </div>
+      {totalSteps > 0 && (
+        <div className="h-1 w-full overflow-hidden rounded-full bg-surface-sunken">
+          <div className="h-full rounded-full bg-state-done" style={{ width: `${Math.max(8, pct)}%` }} />
+        </div>
+      )}
+    </button>
+  );
+}
+
+function FinishedRunRow({
+  r,
+  active,
+  onSelectRun,
+}: {
+  r: Run;
+  active: boolean;
+  onSelectRun: (runId: string) => void;
+}) {
+  const btnRef = useRef<HTMLButtonElement>(null);
+  useRunRowContextMenu(btnRef, r, onSelectRun);
+  const dot = runDot(r);
+
+  return (
+    <button
+      ref={btnRef}
+      type="button"
+      aria-current={active ? "true" : undefined}
+      onClick={() => onSelectRun(r.id)}
+      className={cx(
+        "flex w-full items-center gap-2.5 px-3 py-2 text-left text-12 transition-colors",
+        active ? "bg-selected/60 text-fg" : "hover:bg-hover/50",
+      )}
+    >
+      <span title={DOT_LABEL[dot]} aria-hidden className={cx("size-2 flex-none rounded-full", DOT_BG[dot])} />
+      {r.ticket_key && (
+        <span className="w-16 flex-none truncate font-mono text-11 text-fg-tertiary">{r.ticket_key}</span>
+      )}
+      <span className="min-w-0 flex-1 truncate font-medium text-fg">{runTitle(r)}</span>
+      <span className="hidden flex-none text-11 text-fg-tertiary sm:inline">{r.agent.name}</span>
+      {r.pr_number && (
+        <span className="flex-none rounded bg-surface-sunken px-1.5 py-[1px] font-mono text-10 text-fg-secondary">
+          PR #{r.pr_number}
+        </span>
+      )}
+      <span className="w-12 flex-none text-right font-mono text-11 text-fg-tertiary">
+        {duration(r.started_at, r.ended_at)}
+      </span>
+      <span className="w-10 flex-none text-right font-mono text-11 text-fg-tertiary">
+        {shortAgo(r.ended_at ?? r.started_at)}
+      </span>
+    </button>
+  );
 }
 
 /**
@@ -234,83 +468,14 @@ export function ActivityOverview({
             </div>
           ) : (
             <div className="flex flex-col gap-1.5">
-              {needs.map((item) => {
-                const kind = KIND[item.kind] ?? { label: item.kind, tone: "human" };
-                const active = item.run_id && item.run_id === selectedRunId;
-                return (
-                  <div
-                    key={item.id}
-                    className={cx(
-                      "flex items-center justify-between gap-3 rounded-lg border bg-surface px-3 py-2.5 transition-colors",
-                      active
-                        ? "border-accent bg-selected/40"
-                        : "border-pill-human-bg/70 hover:bg-hover/40",
-                    )}
-                  >
-                    <div className="flex min-w-0 flex-1 items-start gap-2.5">
-                      {item.agent ? (
-                        <AgentOrPersonaAvatar agent={item.agent} size="sm" />
-                      ) : (
-                        <span className="grid size-5 flex-none place-items-center rounded bg-pill-human-bg text-pill-human-fg">
-                          <Icon name="inbox" size={12} />
-                        </span>
-                      )}
-                      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <span
-                            className={cx(
-                              "rounded px-1.5 py-[1px] text-10 font-medium",
-                              needsBadgeTone(kind.tone),
-                            )}
-                          >
-                            {kind.label}
-                          </span>
-                          {item.ticket_key && (
-                            <span className="font-mono text-11 text-fg-tertiary">
-                              {item.ticket_key}
-                            </span>
-                          )}
-                          <span className="truncate text-13 font-medium text-fg">
-                            {item.title}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2 text-11 text-fg-tertiary">
-                          {item.agent && <span>{item.agent.name}</span>}
-                          <span>waiting {waited(item.created_at)}</span>
-                          {item.summary && (
-                            <span className="truncate text-fg-secondary">
-                              · {item.summary}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex flex-none items-center gap-1.5">
-                      {item.run_id ? (
-                        <button
-                          type="button"
-                          onClick={() => onSelectRun(item.run_id!)}
-                          className={cx(
-                            "inline-flex h-7 items-center rounded-md border px-2.5 text-12 font-medium transition-colors",
-                            active
-                              ? "border-accent bg-accent text-on-accent"
-                              : "border-pill-human-bg text-pill-human-fg hover:bg-pill-human-bg",
-                          )}
-                        >
-                          {active ? "Inspecting" : "Review →"}
-                        </button>
-                      ) : (
-                        <Link
-                          href={item.href}
-                          className="inline-flex h-7 items-center rounded-md border border-border-strong px-2.5 text-12 font-medium text-fg hover:bg-hover"
-                        >
-                          Open →
-                        </Link>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+              {needs.map((item) => (
+                <ActivityNeedsCard
+                  key={item.id}
+                  item={item}
+                  active={Boolean(item.run_id && item.run_id === selectedRunId)}
+                  onSelectRun={onSelectRun}
+                />
+              ))}
             </div>
           )}
         </div>
@@ -321,76 +486,14 @@ export function ActivityOverview({
         <div className="flex flex-col gap-1.5">
           <WorkSectionLabel count={runningNow.length}>Running now</WorkSectionLabel>
           <div className="flex flex-col gap-1.5">
-            {runningNow.map((r) => {
-              const dot = runDot(r);
-              const totalSteps = r.plan.length;
-              const doneSteps = r.plan.filter((s) => s.state === "done").length;
-              const currentStep = r.plan.find((s) => s.state === "current");
-              const pct =
-                totalSteps > 0 ? Math.round((doneSteps / totalSteps) * 100) : 0;
-              const active = r.id === selectedRunId;
-
-              return (
-                <button
-                  key={r.id}
-                  type="button"
-                  aria-current={active ? "true" : undefined}
-                  onClick={() => onSelectRun(r.id)}
-                  className={cx(
-                    "flex flex-col gap-1.5 rounded-lg border px-3 py-2.5 text-left transition-colors",
-                    active
-                      ? "border-accent bg-selected/50"
-                      : "border-border-subtle bg-surface hover:bg-hover/40",
-                  )}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <AgentOrPersonaAvatar agent={r.agent} size="sm" />
-                      <span
-                        aria-hidden
-                        className={cx("size-2 flex-none rounded-full", DOT_BG[dot])}
-                      />
-                      {r.ticket_key && (
-                        <span className="flex-none font-mono text-11 text-fg-tertiary">
-                          {r.ticket_key}
-                        </span>
-                      )}
-                      <span className="truncate text-13 font-medium text-fg">
-                        {runTitle(r)}
-                      </span>
-                    </div>
-                    <div className="flex flex-none items-center gap-2 font-mono text-11 text-fg-tertiary">
-                      <span>{duration(r.started_at, r.ended_at)}</span>
-                      {r.cost_usd > 0 && <span>{runCost(r.cost_usd, r.cost_source)}</span>}
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-11 text-fg-secondary">
-                    <span className="text-fg-tertiary">
-                      {r.agent.name} · {r.harness}/{r.model}
-                    </span>
-                    {r.branch && (
-                      <span className="inline-flex items-center gap-1 truncate font-mono text-10 text-fg-tertiary">
-                        <Icon name="branch" size={11} />
-                        {r.branch}
-                      </span>
-                    )}
-                    {currentStep && (
-                      <span className="truncate text-state-done">
-                        Step {currentStep.position}/{totalSteps} · {currentStep.text}
-                      </span>
-                    )}
-                  </div>
-                  {totalSteps > 0 && (
-                    <div className="h-1 w-full overflow-hidden rounded-full bg-surface-sunken">
-                      <div
-                        className="h-full rounded-full bg-state-done"
-                        style={{ width: `${Math.max(8, pct)}%` }}
-                      />
-                    </div>
-                  )}
-                </button>
-              );
-            })}
+            {runningNow.map((r) => (
+              <RunningRunCard
+                key={r.id}
+                r={r}
+                active={r.id === selectedRunId}
+                onSelectRun={onSelectRun}
+              />
+            ))}
           </div>
         </div>
       )}
@@ -407,50 +510,14 @@ export function ActivityOverview({
         ) : (
           <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface">
             <div className="divide-y divide-border-subtle">
-              {finishedToday.map((r) => {
-                const dot = runDot(r);
-                const active = r.id === selectedRunId;
-                return (
-                  <button
-                    key={r.id}
-                    type="button"
-                    aria-current={active ? "true" : undefined}
-                    onClick={() => onSelectRun(r.id)}
-                    className={cx(
-                      "flex w-full items-center gap-2.5 px-3 py-2 text-left text-12 transition-colors",
-                      active ? "bg-selected/60 text-fg" : "hover:bg-hover/50",
-                    )}
-                  >
-                    <span
-                      title={DOT_LABEL[dot]}
-                      aria-hidden
-                      className={cx("size-2 flex-none rounded-full", DOT_BG[dot])}
-                    />
-                    {r.ticket_key && (
-                      <span className="w-16 flex-none truncate font-mono text-11 text-fg-tertiary">
-                        {r.ticket_key}
-                      </span>
-                    )}
-                    <span className="min-w-0 flex-1 truncate font-medium text-fg">
-                      {runTitle(r)}
-                    </span>
-                    <span className="hidden flex-none text-11 text-fg-tertiary sm:inline">
-                      {r.agent.name}
-                    </span>
-                    {r.pr_number && (
-                      <span className="flex-none rounded bg-surface-sunken px-1.5 py-[1px] font-mono text-10 text-fg-secondary">
-                        PR #{r.pr_number}
-                      </span>
-                    )}
-                    <span className="w-12 flex-none text-right font-mono text-11 text-fg-tertiary">
-                      {duration(r.started_at, r.ended_at)}
-                    </span>
-                    <span className="w-10 flex-none text-right font-mono text-11 text-fg-tertiary">
-                      {shortAgo(r.ended_at ?? r.started_at)}
-                    </span>
-                  </button>
-                );
-              })}
+              {finishedToday.map((r) => (
+                <FinishedRunRow
+                  key={r.id}
+                  r={r}
+                  active={r.id === selectedRunId}
+                  onSelectRun={onSelectRun}
+                />
+              ))}
             </div>
           </div>
         )}

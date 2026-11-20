@@ -1,4 +1,5 @@
 import AppKit
+import Quartz
 import SwiftUI
 import VesperCore
 import WebKit
@@ -441,7 +442,27 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
 
     func showQuickLook(items: [QuickLookItem], index: Int?) {
-        // Wired in Commit 5.
+        app.aux.previewQuickLook(items: items, index: index, from: window)
+    }
+
+    // MARK: QLPreviewPanelController
+
+    nonisolated override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
+        MainActor.assumeIsolated { app.aux.quickLook.hasItems }
+    }
+
+    nonisolated override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        MainActor.assumeIsolated {
+            guard let active = QLPreviewPanel.shared() else { return }
+            app.aux.quickLook.attach(to: active)
+        }
+    }
+
+    nonisolated override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        MainActor.assumeIsolated {
+            guard let active = QLPreviewPanel.shared() else { return }
+            app.aux.quickLook.detach(from: active)
+        }
     }
 
     /// Match the window to the page's effective mode, so a person who forces Dark in Vesper while macOS is

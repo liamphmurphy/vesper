@@ -7,6 +7,9 @@ import { ATTACH_ACCEPT, attachmentBadge, attachmentProblem, MAX_ATTACHMENTS, pas
 import { formatBytes } from "@/lib/files";
 import { cx } from "@/lib/cx";
 import { isImageType } from "@/lib/persona-ui";
+import { isNativeShell, nativeQuickLook } from "@/lib/native-shell/bridge";
+import { useNativeContextMenu } from "@/lib/native-shell/hooks";
+import { toast } from "@/lib/toast";
 import { Icon } from "@/components/ui/icon";
 import { composerIconButton } from "./reply-tools";
 
@@ -196,23 +199,55 @@ export function AttachmentChips({ attachments }: { attachments: Attachments }) {
   );
 }
 
-/** Non-image files on a message, each a link to its download. */
+function FileChip({ a }: { a: Attachment }) {
+  const linkRef = useRef<HTMLAnchorElement>(null);
+  const url = chatAttachmentUrl(a.id);
+  const preview = () => nativeQuickLook([{ url, title: a.filename, filename: a.filename, contentType: a.content_type }], 0);
+  useNativeContextMenu(
+    linkRef,
+    () => [
+      { id: "quick-look", label: "Quick Look", icon: "eye", onSelect: preview },
+      { id: "download", label: "Download", icon: "download", onSelect: () => window.open(url, "_blank", "noopener") },
+      {
+        id: "copy-link",
+        label: "Copy link",
+        icon: "link",
+        onSelect: () => {
+          const full = new URL(url, window.location.href).href;
+          void navigator.clipboard?.writeText(full).then(() => toast({ title: "Link copied", tone: "success" }));
+        },
+      },
+    ],
+    { links: "menu" },
+  );
+  return (
+    <li data-testid="sent-attachment">
+      <a
+        ref={linkRef}
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={(e) => {
+          if (!isNativeShell() || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+          e.preventDefault();
+          preview();
+        }}
+        className={cx(chipClass, "border-border bg-surface text-fg-secondary hover:bg-hover")}
+      >
+        <Badge name={a.filename} />
+        <span className="truncate text-fg">{a.filename}</span>
+        <span className="flex-none text-fg-tertiary">{formatBytes(a.size_bytes)}</span>
+      </a>
+    </li>
+  );
+}
+
+/** Non-image files on a message, each a link to its download (or Quick Look in the Mac app). */
 function FileChips({ attachments, align }: { attachments: Attachment[]; align: "start" | "end" }) {
   return (
     <ul aria-label="Attachments" className={cx("flex flex-wrap gap-1", align === "end" && "justify-end")} data-testid="sent-attachments">
       {attachments.map((a) => (
-        <li key={a.id} data-testid="sent-attachment">
-          <a
-            href={chatAttachmentUrl(a.id)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={cx(chipClass, "border-border bg-surface text-fg-secondary hover:bg-hover")}
-          >
-            <Badge name={a.filename} />
-            <span className="truncate text-fg">{a.filename}</span>
-            <span className="flex-none text-fg-tertiary">{formatBytes(a.size_bytes)}</span>
-          </a>
-        </li>
+        <FileChip key={a.id} a={a} />
       ))}
     </ul>
   );
@@ -221,10 +256,26 @@ function FileChips({ attachments, align }: { attachments: Attachment[]; align: "
 /** An image as a thumbnail; a click opens the full image with a Download action. */
 function ImageThumb({ a, compact }: { a: Attachment; compact?: boolean }) {
   const url = chatAttachmentUrl(a.id);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  useNativeContextMenu(triggerRef, () => [
+    { id: "quick-look", label: "Quick Look", icon: "eye", onSelect: () => nativeQuickLook([{ url, title: a.filename, filename: a.filename, contentType: a.content_type }], 0) },
+    { id: "open", label: "Open full size", icon: "expand", onSelect: () => setOpen(true) },
+    { id: "download", label: "Download", icon: "download", onSelect: () => window.open(url, "_blank", "noopener") },
+    {
+      id: "copy-link",
+      label: "Copy link",
+      icon: "link",
+      onSelect: () => {
+        const full = new URL(url, window.location.href).href;
+        void navigator.clipboard?.writeText(full).then(() => toast({ title: "Link copied", tone: "success" }));
+      },
+    },
+  ]);
   return (
-    <Dialog.Root>
+    <Dialog.Root open={open} onOpenChange={setOpen}>
       <Dialog.Trigger asChild>
-        <button type="button" aria-label={`Open ${a.filename}`} data-testid="image-attachment" className="cursor-zoom-in rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-accent">
+        <button ref={triggerRef} type="button" aria-label={`Open ${a.filename}`} data-testid="image-attachment" className="cursor-zoom-in rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-accent">
           {/* A same-origin, private URL: next/image would only add a proxy hop. */}
           <img
             src={url}
