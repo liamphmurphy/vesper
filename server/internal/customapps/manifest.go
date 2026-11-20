@@ -25,6 +25,10 @@ const (
 	ToolScopeAppOnly = "app_only"
 )
 
+// MaxStoredVersions is how many versions of an app are kept. Each version holds
+// the full sources plus compiled bundles, so older ones are pruned on every save.
+const MaxStoredVersions = 10
+
 var (
 	slugRE    = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,47}$`)
 	iconRE    = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)

@@ -584,6 +584,12 @@ func (s *Service) Update(ctx context.Context, ws, userID uuid.UUID, slug string,
 			}); err != nil {
 				return err
 			}
+			if err := q.PruneCustomAppVersions(ctx, store.PruneCustomAppVersionsParams{
+				AppID:      app.ID,
+				OldestKept: nextSeq - MaxStoredVersions + 1,
+			}); err != nil {
+				return err
+			}
 			if runSchema {
 				if _, err := s.runSQLTx(ctx, q, app.ID, nextFiles["schema.sql"], nil, true); err != nil {
 					return err

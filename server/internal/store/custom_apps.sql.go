@@ -613,6 +613,22 @@ func (q *Queries) ListCustomAppsWithMCP(ctx context.Context, arg ListCustomAppsW
 	return items, nil
 }
 
+const pruneCustomAppVersions = `-- name: PruneCustomAppVersions :exec
+DELETE FROM custom_app_versions
+WHERE app_id = $1 AND seq < $2::integer
+`
+
+type PruneCustomAppVersionsParams struct {
+	AppID      uuid.UUID
+	OldestKept int32
+}
+
+// Drops versions older than oldest_kept; the app's current version is always the newest.
+func (q *Queries) PruneCustomAppVersions(ctx context.Context, arg PruneCustomAppVersionsParams) error {
+	_, err := q.db.Exec(ctx, pruneCustomAppVersions, arg.AppID, arg.OldestKept)
+	return err
+}
+
 const syncAppSpaceMeta = `-- name: SyncAppSpaceMeta :exec
 UPDATE chat_spaces
 SET name = $2, instructions = $3, updated_at = now()

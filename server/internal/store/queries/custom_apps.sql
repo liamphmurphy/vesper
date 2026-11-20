@@ -70,6 +70,11 @@ INSERT INTO custom_app_versions (app_id, seq, note, author_type, agent_id, manif
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 RETURNING *;
 
+-- name: PruneCustomAppVersions :exec
+-- Drops versions older than oldest_kept; the app's current version is always the newest.
+DELETE FROM custom_app_versions
+WHERE app_id = @app_id AND seq < @oldest_kept::integer;
+
 -- name: GetCustomAppVersion :one
 SELECT * FROM custom_app_versions
 WHERE app_id = $1 AND seq = $2;
