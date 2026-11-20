@@ -17,17 +17,18 @@ public enum Backups {
         return nil
     }
 
-    static let exportPattern = #"^vesper-export-(\d{4})-(\d{2})-(\d{2})-(\d{4})\.zip\z"#
+    static let exportPattern = #"^vesper-export-(\d{4})-(\d{2})-(\d{2})-(\d{4})\.(zip|vesper\.enc)\z"#
 
-    /// "vesper-export-2026-11-17-1405.zip" (local time), sortable by name.
-    public static func exportFileName(_ now: Date, calendar: Calendar = .current) -> String {
+    /// "vesper-export-2026-11-17-1405.zip" (or `.vesper.enc` when encrypted), in local time, sortable by name.
+    public static func exportFileName(_ now: Date, encrypted: Bool = false, calendar: Calendar = .current) -> String {
         let c = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: now)
         func p(_ n: Int?) -> String { String(format: "%02d", n ?? 0) }
-        return "vesper-export-\(String(format: "%04d", c.year ?? 0))-\(p(c.month))-\(p(c.day))-\(p(c.hour))\(p(c.minute)).zip"
+        let ext = encrypted ? "vesper.enc" : "zip"
+        return "vesper-export-\(String(format: "%04d", c.year ?? 0))-\(p(c.month))-\(p(c.day))-\(p(c.hour))\(p(c.minute)).\(ext)"
     }
 
-    /// Canonical export filename if `name` is Vesper's own zip or its evicted iCloud Drive
-    /// placeholder (`.vesper-export-YYYY-MM-DD-HHMM.zip.icloud`), otherwise nil.
+    /// Canonical export filename if `name` is Vesper's own export (`.zip` or `.vesper.enc`) or its
+    /// evicted iCloud Drive placeholder (`.vesper-export-YYYY-MM-DD-HHMM.<ext>.icloud`), else nil.
     static func canonicalExportName(_ name: String) -> String? {
         let stripped: String
         if name.hasPrefix("."), name.hasSuffix(".icloud") {
@@ -39,9 +40,9 @@ public enum Backups {
         return stripped
     }
 
-    /// Exports to delete so only the newest `keep` remain. Considers Vesper's own export zips and
-    /// their evicted iCloud Drive placeholders (`.<name>.icloud`), ordered by export timestamp
-    /// regardless of eviction state; anything else in the folder is left alone.
+    /// Exports to delete so only the newest `keep` remain. Considers Vesper's own export archives
+    /// (`.zip` and `.vesper.enc`) and their evicted iCloud Drive placeholders (`.<name>.icloud`),
+    /// ordered by export timestamp regardless of eviction state; anything else is left alone.
     public static func exportsToPrune(_ names: [String], keep: Int) -> [String] {
         let ours = names.compactMap { name -> (canonical: String, actual: String)? in
             guard let canonical = canonicalExportName(name) else { return nil }

@@ -1095,20 +1095,65 @@ paths:
   /instance/export:
     get:
       operationId: exportInstance
-      summary: Every table and stored object as one zip, to move Vesper to another machine
+      summary: Every table and stored object as one archive, to move Vesper to another machine
       description: >
         Streamed, so a large instance never sits in memory; a failure partway
-        ends the download early and leaves a zip that won't open. The archive
-        holds all data, including secrets sealed with SECRETS_KEY. Import is
-        the `vesper import` command, which needs the same key and an empty
-        instance.
+        ends the download early and leaves an archive that won't open. When
+        backup encryption is enabled, streams a password-encrypted `.vesper.enc`
+        archive with `X-Vesper-Backup-Encrypted: true`; otherwise streams a
+        `.zip` archive. The archive holds all data, including secrets sealed with
+        SECRETS_KEY. Import is the `vesper import` command, which needs the same
+        key and an empty instance.
       tags: [workspace]
       responses:
         "200":
-          description: Zip archive
+          description: Zip archive, or encrypted .vesper.enc archive when backup encryption is enabled
           content:
             application/zip:
               schema: { type: string, format: binary }
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        default: { $ref: "#/components/responses/Error" }
+
+  /instance/backup-encryption:
+    get:
+      operationId: getBackupEncryption
+      summary: Whether instance exports are encrypted with a backup password
+      tags: [workspace]
+      responses:
+        "200":
+          description: Backup encryption status (password is never returned)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupEncryptionStatus" }
+        default: { $ref: "#/components/responses/Error" }
+    put:
+      operationId: setBackupEncryption
+      summary: Set or change the password used to encrypt instance exports (409 when SECRETS_KEY isn't set)
+      tags: [workspace]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string }
+      responses:
+        "200":
+          description: Updated backup encryption status
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupEncryptionStatus" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: clearBackupEncryption
+      summary: Disable backup password encryption for future instance exports
+      tags: [workspace]
+      responses:
+        "204":
+          description: Backup encryption disabled
         default: { $ref: "#/components/responses/Error" }
 
   /secrets:
@@ -7698,6 +7743,14 @@ components:
               name: { type: string }
               grants_scope: { type: string }
               description: { type: string }
+
+    BackupEncryptionStatus:
+      type: object
+      required: [enabled, key_configured]
+      properties:
+        enabled: { type: boolean }
+        key_configured: { type: boolean, description: SECRETS_KEY is set }
+        updated_at: { type: string, format: date-time }
 
     SignInProvider:
       type: string

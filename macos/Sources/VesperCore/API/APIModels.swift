@@ -241,6 +241,25 @@ public struct RunnerStatus: Sendable, Codable, Equatable {
     }
 }
 
+/// GET /api/v1/instance/backup-encryption.
+public struct BackupEncryptionStatus: Sendable, Codable, Equatable {
+    public var enabled: Bool
+    public var keyConfigured: Bool
+    public var updatedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case enabled
+        case keyConfigured = "key_configured"
+        case updatedAt = "updated_at"
+    }
+
+    public init(enabled: Bool, keyConfigured: Bool, updatedAt: String? = nil) {
+        self.enabled = enabled
+        self.keyConfigured = keyConfigured
+        self.updatedAt = updatedAt
+    }
+}
+
 extension APIClient {
     /// The roots workspace folders may be opened in: each runner's `host_workspaces_dir`.
     public func workspaceRoots() async -> [String] {

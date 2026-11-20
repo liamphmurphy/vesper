@@ -83,12 +83,23 @@ final class BackupsTests: XCTestCase {
 
     func testScheduledExportNamesDueTimesAndPruningOnlyOurFiles() {
         XCTAssertEqual(Backups.exportFileName(date(2026, 1, 2, 3, 4)), "vesper-export-2026-01-02-0304.zip")
+        XCTAssertEqual(Backups.exportFileName(date(2026, 1, 2, 3, 4), encrypted: true), "vesper-export-2026-01-02-0304.vesper.enc")
         let names = [
             "vesper-export-2026-11-15-0900.zip", "vesper-export-2026-11-17-0900.zip", "vesper-export-2026-11-16-0900.zip",
             "vesper-export-2026-11-14-0900.zip", "notes.txt", "vesper-export-latest.zip", "vesper-export-2026-11-17-0900.zip.part",
         ]
         XCTAssertEqual(Backups.exportsToPrune(names, keep: 2), ["vesper-export-2026-11-15-0900.zip", "vesper-export-2026-11-14-0900.zip"])
         XCTAssertEqual(Backups.exportsToPrune(names, keep: 0).count, 3, "always keeps at least the newest")
+        let mixed = [
+            "vesper-export-2026-11-15-0900.zip",
+            "vesper-export-2026-11-17-0900.vesper.enc",
+            ".vesper-export-2026-11-14-0900.vesper.enc.icloud",
+            "vesper-export-2026-11-16-0900.vesper.enc",
+        ]
+        XCTAssertEqual(
+            Backups.exportsToPrune(mixed, keep: 2),
+            ["vesper-export-2026-11-15-0900.zip", ".vesper-export-2026-11-14-0900.vesper.enc.icloud"]
+        )
         // Evicted iCloud Drive placeholders sort by their export timestamp alongside local zips.
         let icloudNames = [
             "vesper-export-2026-11-15-0900.zip",

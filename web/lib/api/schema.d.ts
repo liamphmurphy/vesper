@@ -844,13 +844,32 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Every table and stored object as one zip, to move Vesper to another machine
-         * @description Streamed, so a large instance never sits in memory; a failure partway ends the download early and leaves a zip that won't open. The archive holds all data, including secrets sealed with SECRETS_KEY. Import is the `vesper import` command, which needs the same key and an empty instance.
+         * Every table and stored object as one archive, to move Vesper to another machine
+         * @description Streamed, so a large instance never sits in memory; a failure partway ends the download early and leaves an archive that won't open. When backup encryption is enabled, streams a password-encrypted `.vesper.enc` archive with `X-Vesper-Backup-Encrypted: true`; otherwise streams a `.zip` archive. The archive holds all data, including secrets sealed with SECRETS_KEY. Import is the `vesper import` command, which needs the same key and an empty instance.
          */
         get: operations["exportInstance"];
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/instance/backup-encryption": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Whether instance exports are encrypted with a backup password */
+        get: operations["getBackupEncryption"];
+        /** Set or change the password used to encrypt instance exports (409 when SECRETS_KEY isn't set) */
+        put: operations["setBackupEncryption"];
+        post?: never;
+        /** Disable backup password encryption for future instance exports */
+        delete: operations["clearBackupEncryption"];
         options?: never;
         head?: never;
         patch?: never;
@@ -6613,6 +6632,13 @@ export interface components {
                 description: string;
             }[];
         };
+        BackupEncryptionStatus: {
+            enabled: boolean;
+            /** @description SECRETS_KEY is set */
+            key_configured: boolean;
+            /** Format: date-time */
+            updated_at?: string;
+        };
         /** @enum {string} */
         SignInProvider: "claude" | "codex" | "github" | "antigravity";
         SignIn: {
@@ -11330,14 +11356,82 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Zip archive */
+            /** @description Zip archive, or encrypted .vesper.enc archive when backup encryption is enabled */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/zip": string;
+                    "application/octet-stream": string;
                 };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getBackupEncryption: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Backup encryption status (password is never returned) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupEncryptionStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    setBackupEncryption: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    password: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated backup encryption status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupEncryptionStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    clearBackupEncryption: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Backup encryption disabled */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             default: components["responses"]["Error"];
         };

@@ -101,13 +101,19 @@ final class AuxLogicTests: XCTestCase {
     }
 
     func testImportEnvironment() {
-        let base = ["PATH": "/bin", "VESPER_NO_SIGNIN": "1", "SECRETS_KEY": "old"]
-        let env = BackupImport.importEnvironment(base: base, postgresBinDir: "/pg/bin", secretsKey: " key \n", dropSecrets: false)
+        let base = ["PATH": "/bin", "VESPER_NO_SIGNIN": "1", "SECRETS_KEY": "old", "VESPER_BACKUP_PASSWORD": "stale"]
+        let env = BackupImport.importEnvironment(base: base, postgresBinDir: "/pg/bin", secretsKey: " key \n", dropSecrets: false, backupPassword: "pw 123")
         XCTAssertEqual(env["SECRETS_KEY"], "key")
         XCTAssertEqual(env["VESPER_POSTGRES_BIN_DIR"], "/pg/bin")
+        XCTAssertEqual(env["VESPER_BACKUP_PASSWORD"], "pw 123")
         XCTAssertNil(env["VESPER_NO_SIGNIN"])
-        XCTAssertEqual(BackupImport.importEnvironment(base: base, postgresBinDir: "/pg", secretsKey: "key", dropSecrets: true)["SECRETS_KEY"], "")
-        XCTAssertEqual(BackupImport.inspectEnvironment(base: base, currentKey: nil)["SECRETS_KEY"], "")
+        let dropped = BackupImport.importEnvironment(base: base, postgresBinDir: "/pg", secretsKey: "key", dropSecrets: true)
+        XCTAssertEqual(dropped["SECRETS_KEY"], "")
+        XCTAssertNil(dropped["VESPER_BACKUP_PASSWORD"])
+        let inspEnv = BackupImport.inspectEnvironment(base: base, currentKey: nil)
+        XCTAssertEqual(inspEnv["SECRETS_KEY"], "")
+        XCTAssertNil(inspEnv["VESPER_BACKUP_PASSWORD"])
+        XCTAssertEqual(BackupImport.inspectEnvironment(base: base, currentKey: nil, backupPassword: "pw")["VESPER_BACKUP_PASSWORD"], "pw")
     }
 
     func testCLIErrorExtraction() {
@@ -121,9 +127,14 @@ final class AuxLogicTests: XCTestCase {
         let json = #"{"exportedAt":"2026-01-01T00:00:00Z","appVersion":"1.0.0","schemaVersion":42,"tableCount":3,"totalRows":10,"objectCount":2,"secretsKeyFingerprint":"abc","encryptedSecretRows":4,"matchesCurrentKey":false}"#
         let insp = try JSONDecoder().decode(BackupInspection.self, from: Data(json.utf8))
         XCTAssertTrue(insp.hasEncryptedSecrets)
+        XCTAssertFalse(insp.encrypted)
+        XCTAssertFalse(insp.needsPassword)
         XCTAssertEqual(insp.schemaVersion, 42)
         let none = try JSONDecoder().decode(BackupInspection.self, from: Data(#"{"exportedAt":"x","appVersion":"","schemaVersion":1,"tableCount":0,"totalRows":0,"objectCount":0,"encryptedSecretRows":0,"matchesCurrentKey":false}"#.utf8))
         XCTAssertFalse(none.hasEncryptedSecrets)
+        let locked = try JSONDecoder().decode(BackupInspection.self, from: Data(#"{"exportedAt":"","appVersion":"","schemaVersion":0,"tableCount":0,"totalRows":0,"objectCount":0,"encryptedSecretRows":0,"matchesCurrentKey":false,"encrypted":true,"needsPassword":true}"#.utf8))
+        XCTAssertTrue(locked.encrypted)
+        XCTAssertTrue(locked.needsPassword)
     }
 
     func testRunningAFakeBinary() async throws {
@@ -189,6 +200,65 @@ final class AuxLogicTests: XCTestCase {
         }
         let left = try FileManager.default.contentsOfDirectory(atPath: dir.path).sorted()
         XCTAssertEqual(left, [".notes.txt.icloud", ".vesper-export-2026-01-02-0100.zip.icloud", Backups.exportFileName(now)].sorted())
+    }
+
+    func testEncryptedExportWritesEncExtensionAndPrunes() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("exp-enc-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        for n in ["vesper-export-2026-01-01-0100.zip", "vesper-export-2026-01-02-0100.vesper.enc"] {
+            try Data("old".utf8).write(to: dir.appendingPathComponent(n))
+        }
+        let now = Date(timeIntervalSince1970: 1_794_924_309)
+        let file = try await BackupExporter.export(client: makeClient(), folder: dir.path, keep: 2, now: now) { request in
+            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("dl-\(UUID().uuidString)")
+            try Data("VSPBENC1body".utf8).write(to: tmp)
+            let headers = ["X-Vesper-Backup-Encrypted": "true"]
+            return (tmp, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: headers)!)
+        }
+        XCTAssertEqual(file.lastPathComponent, Backups.exportFileName(now, encrypted: true))
+        let perms = try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? Int
+        XCTAssertEqual(perms, 0o600)
+        let left = try FileManager.default.contentsOfDirectory(atPath: dir.path).sorted()
+        XCTAssertEqual(left, [Backups.exportFileName(now, encrypted: true), "vesper-export-2026-01-02-0100.vesper.enc"].sorted())
+    }
+
+    func testBackupEncryptionAPICalls() async throws {
+        let seen = LockedBox<[URLRequest]>([])
+        let client = APIClient(baseURL: URL(string: "http://127.0.0.1:1")!, sessionToken: "tok") { req in
+            seen.value.append(req)
+            switch req.httpMethod {
+            case "GET":
+                let data = Data(#"{"enabled":false,"key_configured":true}"#.utf8)
+                return (data, HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+            case "PUT":
+                let data = Data(#"{"enabled":true,"key_configured":true,"updated_at":"2026-11-20T00:00:00Z"}"#.utf8)
+                return (data, HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+            case "DELETE":
+                return (Data(), HTTPURLResponse(url: req.url!, statusCode: 204, httpVersion: nil, headerFields: nil)!)
+            default:
+                XCTFail("unexpected method \(req.httpMethod ?? "")")
+                return (Data(), HTTPURLResponse(url: req.url!, statusCode: 500, httpVersion: nil, headerFields: nil)!)
+            }
+        }
+
+        let initial = try await BackupEncryptionAPI.status(client: client)
+        XCTAssertEqual(initial, BackupEncryptionStatus(enabled: false, keyConfigured: true, updatedAt: nil))
+
+        let updated = try await BackupEncryptionAPI.setPassword(client: client, password: "my-backup-password")
+        XCTAssertEqual(updated, BackupEncryptionStatus(enabled: true, keyConfigured: true, updatedAt: "2026-11-20T00:00:00Z"))
+
+        try await BackupEncryptionAPI.clearPassword(client: client)
+
+        let reqs = seen.value
+        XCTAssertEqual(reqs.map(\.httpMethod), ["GET", "PUT", "DELETE"])
+        XCTAssertEqual(reqs.map { $0.url?.path }, [
+            "/api/v1/instance/backup-encryption",
+            "/api/v1/instance/backup-encryption",
+            "/api/v1/instance/backup-encryption",
+        ])
+        let putBody = try JSONSerialization.jsonObject(with: XCTUnwrap(reqs[1].httpBody)) as? [String: String]
+        XCTAssertEqual(putBody, ["password": "my-backup-password"])
     }
 
     func testExportFailureLeavesNothingBehind() async throws {

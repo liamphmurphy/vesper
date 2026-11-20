@@ -26,6 +26,7 @@ var excluded = map[string]string{
 	"metric_snapshots":          "cached dashboard metrics, recomputed on demand",
 	"browser_extension_tokens":  "the Safari extension's credential: the Mac app mints a new one at launch",
 	"browser_share_screenshots": "the latest screenshot of a shared Safari tab, replaced at every snapshot",
+	"backup_encryption":         "backup encryption password: never exported inside the archive it protects",
 }
 
 // excludedPrefixes are table-name prefixes owned by a library with its own
