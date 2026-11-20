@@ -93,6 +93,7 @@ func buildCodexConfig(ws Workspace, t Turn, includeCacheInPerm bool) (codexConfi
 			// checks and human approvals still happen inside Vesper.
 			"mcp_servers."+lazyagentsServer+".default_tools_approval_mode="+tomlString("approve"),
 			"mcp_servers."+lazyagentsServer+".required=true",
+			"mcp_servers."+lazyagentsServer+".tool_timeout_sec=2400",
 		)
 		for _, m := range spec.MCPServers {
 			if m.Connector {

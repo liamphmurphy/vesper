@@ -42,9 +42,6 @@ func (ClaudeCode) SessionInvocation(ws Workspace, t Turn) (Invocation, error) {
 	if len(c.deny) > 0 {
 		argv = append(argv, "--disallowedTools", strings.Join(c.deny, ","))
 	}
-	if c.subagents {
-		argv = append(argv, "--agents", c.agentsFile)
-	}
 	if c.noTools {
 		argv = append(argv, "--tools", "")
 	} else {

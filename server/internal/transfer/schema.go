@@ -28,6 +28,7 @@ var excluded = map[string]string{
 	"browser_share_screenshots": "the latest screenshot of a shared Safari tab, replaced at every snapshot",
 	"backup_encryption":         "backup encryption password: never exported inside the archive it protects",
 	"custom_app_media":          "custom-app downloaded media: large video files that apps can re-download",
+	"subagent_jobs":             "ephemeral in-turn subagent execution jobs, scoped to a live run turn",
 }
 
 // excludedPrefixes are table-name prefixes owned by a library with its own

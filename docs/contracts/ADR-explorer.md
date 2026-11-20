@@ -1,7 +1,6 @@
 # ADR: The explorer sub agent on every harness
 
-- **Status:** Accepted for Claude Code 2.1.325 and agy 1.5.9; Codex 0.169.0
-  deliberately left without one (below).
+- **Status:** Superseded by the Unified Vesper MCP subagents addendum below (previously native `claude --agents` / agy `.agents/agents/*`; now unified across Claude Code, Codex, and Antigravity via `run_subagent`).
 - **Ticket:** [[LAZYAGENTS-258]], epic "Reduce agent turn latency and startup
   overhead".
 - **Evidence:**
@@ -127,3 +126,15 @@ agents therefore read low while its cost is right.
 Codex is still left out, for the reason above: `features.multi_agent` would
 hand the model Codex's own spawn tools for any role, and nobody has checked
 their names, arguments and the children's tool calls through the hook.
+
+## Addendum: Unified Vesper MCP subagents (`run_subagent`)
+
+- **Status:** Accepted across Claude Code, Codex, and Antigravity.
+- **Evidence:** `TestToolPolicySubagents`, `TestToolPolicySubagentJobHeader`, `TestRunSubagentToolLifecycleAndValidation`, `TestSubagentCrossHarnessE2E`, `TestSubagentConcurrencyLimit`, `TestSubagentCanceledWhenParentInterrupted`, and `TestIsolatedSubagentSessionConfigs`.
+
+Native harness subagent configurations (`claude --agents`, `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`, and agy `.agents/agents/{explorer,helper}.md`) have been removed. Instead, subagents share one Vesper-owned orchestration path across all three harnesses:
+
+1. **Unified MCP tool (`run_subagent`):** Available across Claude Code, Codex, and Antigravity whenever `agentdef.SubagentsOn(spec)` is true (all runs with tools except `OptionSubagents="false"`, `OptionNoTools="true"`, `OptionNoMCP="true"`, or `OptionAside="true"`). Native `Agent` / `Task` tool calls are denied by `runs.CheckTool`, directing the model to `run_subagent`.
+2. **In-turn `subagent_jobs` queue and worker pool (`runner/subagents.go`):** `run_subagent` creates a row in `subagent_jobs` (ephemeral, excluded from instance export in `transfer/schema.go`) and waits for terminal state. During an active parent turn with `SubagentsOn`, `runner.startSubagentWorker` polls and runs up to `3` concurrent jobs (`maxConcurrentSubagents`) in the parent workspace over each harness's bidirectional `SessionHarness` interface.
+3. **Isolated per-job specs & configs (`runs.SubagentSpec`):** Every subagent runs with `OptionNoMCP="true"`, `OptionSubagents="false"`, `LAZYAGENTS_SUBAGENT_JOB_ID=<job_id>`, and a unique `ConfigTag="subagent-"+job.ID.String()` (isolated `mcp.json`/`claude-settings.json`, `<tag>-tool-policy.py`, and `<tag>-agy-config.json` + `<tag>-agy-policy.py` + symlink-isolated `$HOME` in `agy_launch.py`). `explorer` runs read-only (`readonly="true"`, `sandbox="read-only"`, fast per-harness model: `DefaultExplorerModel`, `gpt-5-mini`, `gemini-3.8-flash`, or `OptionExplorerModel`); `helper` inherits the parent's model and workspace scopes clamped to the parent. `Turn.SystemAppend` delivers the role prompt directly without modifying `AGENTS.md`.
+4. **Policy & usage accounting:** In-process `CheckToolWithSpec(c, subSpec, in)` evaluates stdio permission callbacks, and `tool_hook.py` / `agy_policy.py` forward `X-Vesper-Subagent-Job` to `POST /api/v1/agent/tool-policy` for PreToolUse command hooks (failing closed unless the job is `running` on the caller's run). Subagent `tool_call`/`tool_result` events are emitted on the parent run with `subagent: true`, and tokens/cost/tool calls are recorded on `subagent_jobs` and rolled up onto the parent `runs` row via `AddRunUsage`. Canceling or pausing the parent turn interrupts/kills active subagents and cancels queued/running jobs.

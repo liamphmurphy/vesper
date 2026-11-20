@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -31,6 +32,7 @@ var (
 	stdinClosed  = make(chan struct{})
 	acpPromptID  json.RawMessage
 	codexTurnID  = "turn_1"
+	policySeq    atomic.Int64
 )
 
 func signalInterrupt() {
@@ -470,6 +472,28 @@ func emitCodexAppServer(v map[string]any) {
 				"method":  method,
 				"params":  map[string]any{"item": map[string]any{"id": it["id"], "type": "agentMessage", "text": it["text"]}},
 			})
+		case "command_execution":
+			status := "inProgress"
+			if v["type"] == "item.completed" {
+				status = "completed"
+			}
+			itemOut := map[string]any{
+				"id":      it["id"],
+				"type":    "commandExecution",
+				"command": it["command"],
+				"status":  status,
+			}
+			if out, ok := it["aggregated_output"]; ok {
+				itemOut["aggregatedOutput"] = out
+			}
+			if exit, ok := it["exit_code"]; ok {
+				itemOut["exitCode"] = exit
+			}
+			writeOutJSON(map[string]any{
+				"jsonrpc": "2.0",
+				"method":  method,
+				"params":  map[string]any{"item": itemOut},
+			})
 		case "mcp_tool_call":
 			status := "inProgress"
 			if v["type"] == "item.completed" {
@@ -520,6 +544,9 @@ func emitCodexAppServer(v map[string]any) {
 }
 
 func codexSessionCountPeek() int {
+	if os.Getenv("LAZYAGENTS_SUBAGENT_JOB_ID") != "" {
+		return 1
+	}
 	counts := map[string]int{}
 	raw, _ := os.ReadFile(".lazyagents/fake-codex-usage.json")
 	_ = json.Unmarshal(raw, &counts)
@@ -688,10 +715,10 @@ func emitAgyACPImageStep(dir, name string) {
 }
 
 func checkSessionPolicy(tool string, input map[string]any) (allow bool, ok bool) {
-	id := "policy_1"
-	ch := registerPending(id)
+	id := fmt.Sprintf("policy_%d", policySeq.Add(1))
 	switch sessionProto {
 	case protoClaudeSession:
+		ch := registerPending(id)
 		writeOutJSON(map[string]any{
 			"type":       "control_request",
 			"request_id": id,
@@ -724,11 +751,21 @@ func checkSessionPolicy(tool string, input map[string]any) (allow bool, ok bool)
 		return resp.Response.Response.HookSpecificOutput.PermissionDecision == "allow", true
 
 	case protoCodexServer:
+		if tool == "Read" {
+			return true, true
+		}
+		ch := registerPending(id)
+		method := "item/commandExecution/requestApproval"
+		params := input
+		if tool == "Write" || tool == "Edit" {
+			method = "item/fileChange/requestApproval"
+			params = map[string]any{"grantRoot": input["file_path"], "reason": "subagent"}
+		}
 		writeOutJSON(map[string]any{
 			"jsonrpc": "2.0",
 			"id":      id,
-			"method":  "item/commandExecution/requestApproval",
-			"params":  input,
+			"method":  method,
+			"params":  params,
 		})
 		raw, recv := <-ch
 		if !recv {
@@ -745,16 +782,25 @@ func checkSessionPolicy(tool string, input map[string]any) (allow bool, ok bool)
 		return resp.Result.Decision == "accept", true
 
 	case protoAgyACP:
+		ch := registerPending(id)
+		var toolCall map[string]any
+		switch tool {
+		case "Write":
+			toolCall = map[string]any{"name": "write_file", "args": map[string]any{"Path": input["file_path"], "Content": ""}}
+		case "Edit":
+			toolCall = map[string]any{"name": "edit_file", "args": map[string]any{"Path": input["file_path"]}}
+		case "Read":
+			toolCall = map[string]any{"name": "read_file", "args": map[string]any{"Path": input["file_path"]}}
+		default:
+			toolCall = map[string]any{"name": "run_command", "args": map[string]any{"CommandLine": input["command"]}}
+		}
 		writeOutJSON(map[string]any{
 			"jsonrpc": "2.0",
 			"id":      id,
 			"method":  "session/request_permission",
 			"params": map[string]any{
 				"sessionId": session,
-				"toolCall": map[string]any{
-					"name": "run_command",
-					"args": map[string]any{"CommandLine": input["command"]},
-				},
+				"toolCall":  toolCall,
 				"options": []map[string]any{
 					{"optionId": "allow", "kind": "allow_once", "name": "Allow"},
 					{"optionId": "deny", "kind": "reject_once", "name": "Deny"},

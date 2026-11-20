@@ -1830,11 +1830,16 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 		videos, stopVideos = r.startVideoSync(ctx, c, sensitive)
 	}
 	reviewCache, stopReview := r.watchCodeReview(ctx, c, sensitive)
+	stopSubagents := func() {}
+	if agentdef.SubagentsOn(turnSpec) {
+		stopSubagents = r.startSubagentWorker(ctx, c, ws, turnEnv, sensitive, networks, dir)
+	}
 	res, raw, code, waitErr := r.runSession(ctx, c, sh, proc, ws, hTurn, sensitive, maxRuntime-used, r.policyCheck(c), func(s string) {
 		qctx, cancel := context.WithTimeout(ctx, controlTimeout)
 		defer cancel()
 		_ = r.q().SetRunSession(qctx, store.SetRunSessionParams{ID: c.run.ID, HarnessSessionID: &s})
 	}, true)
+	stopSubagents()
 	stopReview()
 	r.addTiming(c.run.ID, 0, time.Since(harnessStart), 0)
 	r.learnTestEnv(ctx, c, proc)

@@ -288,13 +288,9 @@ func TestPlanningInvocationsAreReadOnly(t *testing.T) {
 			t.Fatalf("planning did not deny %s", tool)
 		}
 	}
-	// Its sub agents only read as well.
-	if !strings.Contains(string(claude.Files[claudeAgentsFile]), `"tools": [
-      "Read",
-      "Grep",
-      "Glob"
-    ]`) || strings.Contains(string(claude.Files[claudeAgentsFile]), `"Bash"`) {
-		t.Fatalf("planning sub agents:\n%s", claude.Files[claudeAgentsFile])
+	// Native --agents subagent files are no longer emitted; subagents run via Vesper MCP.
+	if slices.Contains(claude.Argv, "--agents") {
+		t.Fatalf("unexpected --agents flag in %v", claude.Argv)
 	}
 	codex, err := (Codex{}).Invocation(Workspace{MCPURL: "http://localhost/mcp", Token: "fake", TokenEnv: "LA_TOKEN"}, Turn{Spec: s, Prompt: "Plan"})
 	if err != nil {

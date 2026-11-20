@@ -42,6 +42,29 @@ sign-in container, or using the host's `agy` login in local/no-key mode).
 
 ## Invocation
 
+**Bidirectional ACP stdio session (primary runner path, `antigravity_session.go`):**
+
+```
+python3 .lazyagents/agy-launch.py [--config .lazyagents/<tag>-agy-config.json] agy acp --stdio --disable-telemetry
+```
+
+With `LAZYAGENTS_AGY_ACP=1`, `RunSession` drives ACP JSON-RPC over stdin/stdout:
+`initialize` -> `session/new` or `session/load` (falling back to
+`authenticate` with `gemini-api-key` only when `-32000` and `GEMINI_API_KEY`
+are set; subscription logins work with no API key) -> `session/set_config_option`
+for `model` and `thought_level` -> `session/prompt`, answering
+`session/request_permission` via `CheckTool` and canceling on pause/abort via
+`session/cancel`.
+
+When `Turn.ConfigTag != ""` (e.g. an in-turn Vesper MCP subagent),
+`agyConfig.isolated_home` is set so `agy_launch.py` creates a temporary `$HOME`
+symlinking top-level entries and `.gemini/` state except `settings.json`,
+`mcp_config.json`, and `hooks.json`. Concurrent subagents therefore share the
+host/container subscription login with zero credential duplication while keeping
+per-job hook/MCP configs isolated.
+
+**One-shot `-p` invocation (legacy `Antigravity.Invocation`):**
+
 ```
 python3 .lazyagents/agy-launch.py agy -p "<prompt>" --output-format stream-json \
   --settings '{"enableTerminalSandbox":false,"agentMode":""}' \
@@ -171,14 +194,19 @@ headless:
    **even when the hook answers `auto_approve`**. A read-only chat's `run_command`
    and `write_file` were refused with "Matches user-configured deny rule" although
    the policy allowed them.
-2. **The PreToolUse hook** (`agy_policy.py` → `runs.CheckTool`). **Verified:** it
-   receives `{"toolCall": {"name", "args"}}`, with the full args, for every tool
-   including `call_mcp_tool` and `invoke_subagent`. A `deny` reaches the model as
-   `tool call denied by pre-tool hook: <reason>`.
+2. **The PreToolUse hook & ACP permissions** (`agy_policy.py` & `antigravity_session.go` → `runs.CheckTool`):
+   In legacy `-p` mode, `agy_policy.py` calls Vesper's `/api/v1/agent/tool-policy`
+   (forwarding `X-Vesper-Subagent-Job` when `LAZYAGENTS_SUBAGENT_JOB_ID` is set)
+   and answers `allow`/`deny`. Under `LAZYAGENTS_AGY_ACP=1` (`agy acp --stdio`),
+   `agy_policy.py` lets calls pass so `agy acp` sends `session/request_permission`
+   over stdio, where `RunSession` enforces `CheckTool` / `CheckToolWithSpec`
+   in-process and replies `allow_once` or `reject_once`.
 
-Unchanged consequence: **a scope set to `requires_approval` is denied for the
-whole turn**, because the deny rule is written before the turn. So
-`Capabilities[antigravity].PermissionPrompt` stays false.
+This lifts the legacy turn-wide deny limitation for mid-turn permission prompts:
+`Capabilities[antigravity].PermissionPrompt` is `true`, and `RequiresApproval`
+actions pause/deny via interactive ACP policy evaluation rather than being
+blocked for the entire turn up front. Native `Agent`/`Task`/`invoke_subagent`
+calls are denied in favor of Vesper MCP `run_subagent`.
 
 `trustedWorkspaces` with the workspace path: no trust prompt stalled a headless run.
 
@@ -210,7 +238,8 @@ only the repository's file. Rule files load with or without a `.git`
 ## MCP (verified)
 
 `mcp_config.json` `{"mcpServers": {name: {"serverUrl", "headers", "timeoutSeconds"}}}`.
-Vesper's own server also sets `"tools": {"<tool>": {"eager": true}}` for
+Vesper's own `lazyagents` server sets `timeoutSeconds: 2400` (matching connector
+timeouts so `run_subagent` calls do not time out) and `"tools": {"<tool>": {"eager": true}}` for
 `agentdef.EagerVesperTools` (1.5.9): agy declares those to the model up front and
 lists the rest by name under "Lazy", to be read before use
 (`TestAgyProbe/turn`).

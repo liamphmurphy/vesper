@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"path"
-	"slices"
 	"strings"
 
 	"github.com/liamphmurphy/vesper/server/internal/agentdef"
@@ -23,8 +22,7 @@ type ClaudeCode struct {
 func (ClaudeCode) Name() string { return agentdef.HarnessClaudeCode }
 
 const (
-	claudeMCPFile    = ".lazyagents/mcp.json"
-	claudeAgentsFile = ".lazyagents/claude-agents.json"
+	claudeMCPFile = ".lazyagents/mcp.json"
 )
 
 // claudePrivacyEnv keeps the CLI from sending anything beyond the model
@@ -61,9 +59,7 @@ type claudeConfig struct {
 	deny         []string
 	mode         string
 	noTools      bool
-	subagents    bool
 	mcpFile      string
-	agentsFile   string
 	settingsFile string
 	inputFile    string
 }
@@ -161,50 +157,13 @@ func buildClaudeConfig(ws Workspace, t Turn, commandHook bool) (claudeConfig, er
 			deny = append(deny, "Bash(git push:*)", "Bash(gh pr create:*)")
 		}
 	}
-	subagents := agentdef.SubagentsOn(spec)
-	var agents []byte
-	if subagents {
-		// The policy hook still allows only these types (runs.CheckTool), and
-		// it sees every tool call a sub agent makes, as it does the lead's.
-		roster := map[string]any{agentdef.HelperAgent: map[string]any{
-			"description": agentdef.HelperDescription,
-			"prompt":      agentdef.HelperPrompt,
-			"tools":       claudeHelperTools(allow, deny),
-			"model":       "inherit",
-		}}
-		if agentdef.ExplorerOn(spec) {
-			model := spec.HarnessOptions[agentdef.OptionExplorerModel]
-			if model == "" {
-				model = agentdef.DefaultExplorerModel
-			}
-			roster[agentdef.ExplorerAgent] = map[string]any{
-				"description": agentdef.ExplorerDescription,
-				"prompt":      agentdef.ExplorerPrompt,
-				"tools":       []string{"Read", "Grep", "Glob"},
-				"model":       AnthropicModel(model),
-			}
-		}
-		allow = append(allow, "Agent")
-		if agents, err = json.MarshalIndent(roster, "", "  "); err != nil {
-			return claudeConfig{}, err
-		}
-		// Sub agents run in the background by default (claude 2.1.325): the
-		// lead ends its turn, is woken when they finish, and the stream carries
-		// one result per wake, each with only that segment's usage. In the
-		// foreground the lead waits for the report inside its one turn.
-		env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = "1"
-	}
 
 	mcpFile := claudeConfigPath(t.ConfigTag, "mcp.json")
-	agentsFile := claudeConfigPath(t.ConfigTag, "claude-agents.json")
 	settingsFile := claudeConfigPath(t.ConfigTag, "claude-settings.json")
 	inputFile := claudeConfigPath(t.ConfigTag, "claude-input.jsonl")
 
 	files := SkillFiles(spec.Skills)
 	files[mcpFile] = cfg
-	if subagents {
-		files[agentsFile] = agents
-	}
 	if commandHook {
 		files[toolHookPath] = toolHook
 		settingsDoc := map[string]any{"hooks": map[string]any{"PreToolUse": []any{map[string]any{"matcher": "*", "hooks": []any{map[string]any{"type": "command", "command": env["LAZYAGENTS_POLICY_HOOK_COMMAND"], "timeout": 20}}}}}}
@@ -220,9 +179,7 @@ func buildClaudeConfig(ws Workspace, t Turn, commandHook bool) (claudeConfig, er
 		deny:         deny,
 		mode:         mode,
 		noTools:      noTools,
-		subagents:    subagents,
 		mcpFile:      mcpFile,
-		agentsFile:   agentsFile,
 		settingsFile: settingsFile,
 		inputFile:    inputFile,
 	}, nil
@@ -253,9 +210,6 @@ func (ClaudeCode) Invocation(ws Workspace, t Turn) (Invocation, error) {
 	}
 	if len(c.deny) > 0 {
 		argv = append(argv, "--disallowedTools", strings.Join(c.deny, ","))
-	}
-	if c.subagents {
-		argv = append(argv, "--agents", c.agentsFile)
 	}
 	if c.noTools {
 		argv = append(argv, "--tools", "")
@@ -290,19 +244,6 @@ func (ClaudeCode) Invocation(ws Workspace, t Turn) (Invocation, error) {
 		Env:   c.env,
 		Files: c.files,
 	}, nil
-}
-
-// claudeHelperTools are the lead's file, shell and web tools that the run
-// allows and doesn't deny, for the helper sub agent. Vesper's MCP tools stay
-// with the lead, which owns the run's plan, steps and completion.
-func claudeHelperTools(allow, deny []string) []string {
-	var tools []string
-	for _, tool := range []string{"Read", "Grep", "Glob", "Edit", "Write", "Bash", "WebSearch", "WebFetch"} {
-		if slices.Contains(allow, tool) && !slices.Contains(deny, tool) {
-			tools = append(tools, tool)
-		}
-	}
-	return tools
 }
 
 func (c ClaudeCode) NewParser(string) Parser {

@@ -110,6 +110,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -178,25 +179,32 @@ func result(isError bool, msg string) {
 			emit(map[string]any{"type": "turn.failed", "error": map[string]any{"message": msg}})
 			return
 		}
-		counts := map[string]int{}
-		raw, _ := os.ReadFile(".lazyagents/fake-codex-usage.json")
-		_ = json.Unmarshal(raw, &counts)
-		counts[session]++
-		raw, _ = json.Marshal(counts)
-		_ = os.WriteFile(".lazyagents/fake-codex-usage.json", raw, 0600)
-		count := counts[session]
+		count := 1
+		if os.Getenv("LAZYAGENTS_SUBAGENT_JOB_ID") == "" {
+			counts := map[string]int{}
+			raw, _ := os.ReadFile(".lazyagents/fake-codex-usage.json")
+			_ = json.Unmarshal(raw, &counts)
+			counts[session]++
+			raw, _ = json.Marshal(counts)
+			_ = os.WriteFile(".lazyagents/fake-codex-usage.json", raw, 0600)
+			count = counts[session]
+		}
 		emit(map[string]any{"type": "turn.completed", "usage": map[string]any{"input_tokens": 1000 * count, "cached_input_tokens": 500 * count, "output_tokens": 200 * count}})
 		return
 	}
 	// Like the real CLI: tokens are this process's, total_cost_usd is the session's so far.
-	counts := map[string]int{}
-	raw, _ := os.ReadFile(".lazyagents/fake-claude-usage.json")
-	_ = json.Unmarshal(raw, &counts)
-	counts[session]++
-	raw, _ = json.Marshal(counts)
-	_ = os.WriteFile(".lazyagents/fake-claude-usage.json", raw, 0600)
+	count := 1
+	if os.Getenv("LAZYAGENTS_SUBAGENT_JOB_ID") == "" {
+		counts := map[string]int{}
+		raw, _ := os.ReadFile(".lazyagents/fake-claude-usage.json")
+		_ = json.Unmarshal(raw, &counts)
+		counts[session]++
+		raw, _ = json.Marshal(counts)
+		_ = os.WriteFile(".lazyagents/fake-claude-usage.json", raw, 0600)
+		count = counts[session]
+	}
 	emit(map[string]any{"type": "result", "subtype": "success", "is_error": isError, "result": msg, "num_turns": 3,
-		"total_cost_usd": 0.0125 * float64(counts[session]), "usage": map[string]any{"input_tokens": 1000, "output_tokens": 200, "cache_read_input_tokens": 500}})
+		"total_cost_usd": 0.0125 * float64(count), "usage": map[string]any{"input_tokens": 1000, "output_tokens": 200, "cache_read_input_tokens": 500}})
 }
 
 func newUUID() string {
@@ -523,6 +531,75 @@ func main() {
 		result(false, "Image step done.")
 		return
 	}
+	// In-turn Vesper MCP subagents run with OptionNoMCP ("true"), so handle them
+	// before opening any lazyagents MCP server config.
+	if jobID := os.Getenv("LAZYAGENTS_SUBAGENT_JOB_ID"); jobID != "" {
+		if codex {
+			items++
+			cid := fmt.Sprintf("sub_item_%d", items)
+			item("item.started", map[string]any{"id": cid, "type": "command_execution", "command": "echo subagent"})
+			item("item.completed", map[string]any{"id": cid, "type": "command_execution", "command": "echo subagent", "aggregated_output": "subagent", "exit_code": 0})
+		} else {
+			toolName, toolInput := "Read", map[string]any{"file_path": "README.md"}
+			if agy {
+				toolName, toolInput = "read_file", map[string]any{"Path": "README.md"}
+			}
+			emit(map[string]any{"type": "assistant", "message": map[string]any{"role": "assistant", "content": []any{
+				map[string]any{"type": "tool_use", "id": "sub_read_1", "name": toolName, "input": toolInput}}}})
+			emit(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": []any{
+				map[string]any{"type": "tool_result", "tool_use_id": "sub_read_1", "content": "ok", "is_error": false}}}})
+		}
+
+		if _, rest, ok := strings.Cut(prompt, "HOLD="); ok {
+			holdPath := strings.Fields(rest)[0]
+			_ = os.MkdirAll(filepath.Dir(holdPath), 0o755)
+			_ = os.WriteFile(holdPath+".started", []byte(jobID), 0o644)
+			if sessionProto == protoLegacy {
+				watchSignals()
+			}
+			deadline := time.NewTimer(30 * time.Second)
+			tick := time.NewTicker(20 * time.Millisecond)
+		holdLoop:
+			for {
+				if _, err := os.Stat(holdPath); err == nil {
+					break holdLoop
+				}
+				select {
+				case <-interrupted:
+					deadline.Stop()
+					tick.Stop()
+					result(false, "Interrupted")
+					os.Exit(130)
+				case <-deadline.C:
+					tick.Stop()
+					result(true, "hold timed out")
+					os.Exit(2)
+				case <-tick.C:
+				}
+			}
+			deadline.Stop()
+			tick.Stop()
+		}
+
+		reply := "subagent result: " + prompt
+		switch {
+		case strings.Contains(prompt, "TRY_WRITE"):
+			wOK, _ := checkSessionPolicy("Write", map[string]any{"file_path": "blocked-by-explorer.txt"})
+			bOK, _ := checkSessionPolicy("Bash", map[string]any{"command": "echo hi"})
+			rOK, _ := checkSessionPolicy("Read", map[string]any{"file_path": "README.md"})
+			reply = fmt.Sprintf("policy write=%v bash=%v read=%v", wOK, bOK, rOK)
+		case strings.Contains(prompt, "DO_WRITE"):
+			wOK, _ := checkSessionPolicy("Write", map[string]any{"file_path": "helper.txt"})
+			if wOK {
+				_ = os.WriteFile("helper.txt", []byte("written by helper\n"), 0o644)
+			}
+			reply = fmt.Sprintf("wrote=%v", wOK)
+		}
+		text(reply)
+		result(false, reply)
+		return
+	}
+
 	var cfg struct {
 		MCPServers map[string]struct {
 			URL     string            `json:"url"`
@@ -555,7 +632,17 @@ func main() {
 		result(true, "no lazyagents MCP server configured")
 		os.Exit(2)
 	}
-	ctx := context.Background()
+	ctx, cancelTurn := context.WithCancel(context.Background())
+	defer cancelTurn()
+	if sessionProto != protoLegacy {
+		go func() {
+			select {
+			case <-interrupted:
+				cancelTurn()
+			case <-ctx.Done():
+			}
+		}()
+	}
 	client := mcp.NewClient(&mcp.Implementation{Name: "fake-harness", Version: "1"}, nil)
 	sess, err := client.Connect(ctx, &mcp.StreamableClientTransport{
 		Endpoint: srv.URL, HTTPClient: &http.Client{Transport: bearer{srv.Headers["Authorization"]}}, DisableStandaloneSSE: true,
@@ -566,6 +653,7 @@ func main() {
 	}
 	defer sess.Close()
 
+	var callMu sync.Mutex
 	n := 0
 	var call func(string, map[string]any) map[string]any
 	call = func(name string, a map[string]any) map[string]any {
@@ -579,6 +667,7 @@ func main() {
 				}
 			}
 		}
+		callMu.Lock()
 		n++
 		id := fmt.Sprintf("toolu_%02d", n)
 		if codex {
@@ -589,6 +678,7 @@ func main() {
 			emit(map[string]any{"type": "assistant", "message": map[string]any{"role": "assistant", "content": []any{
 				map[string]any{"type": "tool_use", "id": id, "name": "mcp__lazyagents__" + name, "input": a}}}})
 		}
+		callMu.Unlock()
 		res, err := sess.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: a})
 		out := map[string]any{}
 		body, isErr := "", false
@@ -603,6 +693,7 @@ func main() {
 			body = string(b)
 			_ = json.Unmarshal(b, &out)
 		}
+		callMu.Lock()
 		if codex {
 			status := "completed"
 			if isErr {
@@ -614,6 +705,7 @@ func main() {
 			emit(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": []any{
 				map[string]any{"type": "tool_result", "tool_use_id": id, "content": body, "is_error": isErr}}}})
 		}
+		callMu.Unlock()
 		return out
 	}
 	ticket := os.Getenv("LAZYAGENTS_TICKET")
@@ -791,6 +883,63 @@ func main() {
 		call("get_ticket", map[string]any{"ticket": "PAY-214"})
 		call("propose_tickets", map[string]any{"tickets": []any{map[string]any{"title": "Planned implementation", "description": "An editable draft from the fake harness", "criteria": []string{"Works safely"}, "agent_id": who["id"]}}})
 		result(false, "Draft submitted.")
+		return
+	}
+	if os.Getenv("FAKE_HARNESS_MODE") == "subagent" {
+		if ticket != "" {
+			call("claim_ticket", map[string]any{"ticket": ticket})
+		}
+		type subCall struct {
+			Type   string `json:"type"`
+			Role   string `json:"role"`
+			Prompt string `json:"prompt"`
+		}
+		calls := []subCall{{Type: "explorer", Role: "Searcher", Prompt: "inspect"}}
+		if rawCalls := os.Getenv("FAKE_SUBAGENT_CALLS"); rawCalls != "" {
+			if err := json.Unmarshal([]byte(rawCalls), &calls); err != nil {
+				result(true, "bad FAKE_SUBAGENT_CALLS: "+err.Error())
+				os.Exit(2)
+			}
+		}
+		results := make([]string, len(calls))
+		runOne := func(idx int, c subCall) {
+			out := call("run_subagent", map[string]any{"type": c.Type, "role": c.Role, "prompt": c.Prompt})
+			if errMsg, ok := out["error"].(string); ok && errMsg != "" {
+				results[idx] = fmt.Sprintf("%s:ERR:%s", c.Type, errMsg)
+				return
+			}
+			resStr, _ := out["result"].(string)
+			results[idx] = fmt.Sprintf("%s:%s", c.Type, resStr)
+		}
+		if os.Getenv("FAKE_SUBAGENT_PARALLEL") != "" {
+			var pwg sync.WaitGroup
+			for i, c := range calls {
+				pwg.Add(1)
+				go func(idx int, sc subCall) {
+					defer pwg.Done()
+					runOne(idx, sc)
+				}(i, c)
+			}
+			pwg.Wait()
+		} else {
+			for i, c := range calls {
+				if ctx.Err() != nil {
+					break
+				}
+				runOne(i, c)
+			}
+		}
+		if ctx.Err() != nil {
+			text("Interrupted")
+			result(false, "Interrupted")
+			os.Exit(130)
+		}
+		summary := strings.Join(results, " | ")
+		if ticket != "" {
+			call("complete_run", map[string]any{"outcome": summary})
+		}
+		text(summary)
+		result(false, summary)
 		return
 	}
 

@@ -1,7 +1,6 @@
 # ADR: Antigravity (`agy`) integration baseline
 
-- **Status:** Accepted for agy 1.5.8 once this PR merges. Re-check on agy updates
-  with the probe (below).
+- **Status:** Accepted for agy 1.5.9+ (ACP stdio session transport + unified Vesper MCP subagents). Re-check on agy updates with `TestAgyProbe`.
 - **Ticket:** [[LAZYAGENTS-190]], epic "Antigravity harness support". Adapter
   fixes: [[LAZYAGENTS-192]].
 - **Evidence:**
@@ -36,46 +35,32 @@ skips when `AGY_PROBE`/`AGY_BIN` aren't set.
 
 ## Decisions
 
-1. **Headless invocation:**
-   `agy -p <prompt> --output-format stream-json [--model] [--effort] [--conversation]`.
-   Resume with `--conversation` works under `-p`. Never pass
-   `--dangerously-skip-permissions`.
-2. **The stream is read from the `result` line, not the exit code**, because a
-   failed turn can exit 0. A tool step ends in `DONE` **or `ERROR`**, and both are
-   tool results.
-3. **Usage is summed from the `agent_response` steps of the turn's own process.**
-   `result.usage` is cumulative over a resumed conversation. agy's `input_tokens`
-   excludes cache reads, and its `output_tokens` already include thinking.
-4. **Tool names follow what agy declares to the model:** `read_file`,
-   `write_file`, `edit_file`, `run_command`, `search_web`. All MCP tools go through
-   `call_mcp_tool`, which Vesper names `mcp__<server>__<tool>` for its policy.
-   agy's subagent tools (`invoke_subagent`, `swarm`…) are mapped to `Agent`, which
-   Vesper's policy allows only for the run's declared sub agent types, as for
-   Claude Code (`explorer` and `helper`, see ADR-explorer.md). The policy keeps
-   one rule set for all three harnesses.
-5. **Quota:** Google's 429 text ("exceeded your current quota", `RESOURCE_EXHAUSTED`)
-   is a usage limit, so fallbacks apply, and `retryDelay` is the reset time.
-6. **Credentials:** native Antigravity login (`agy acp --login` -> `harness:google`
-   delivered as container files in `$HOME`, or host CLI login in local mode).
-   Model discovery uses `agy models` natively rather than AI Studio's API.
-7. **Skills** are written to `.agents/skills/` (git-excluded), which agy
-   discovers natively. Before this, they went to `.lazyagents/skills/`, listed in
-   chat AGENTS.md only, so ticket runs never learned about them.
-8. **Usage/quota display:** none to read. A key has no plan allowance, and `/usage`
-   is TUI-only, so the orb shows "Usage unknown" and cost is `unknown`.
+1. **Headless invocation (bidirectional ACP stdio):**
+   `python3 .lazyagents/agy-launch.py [--config <cfg>] agy acp --stdio --disable-telemetry`
+   (`SessionInvocation` / `RunSession` in `server/internal/harness/antigravity_session.go`, with `LAZYAGENTS_AGY_ACP=1`).
+   Legacy `-p <prompt> --output-format stream-json` remains on `Antigravity.Invocation` for non-session callers; never pass `--dangerously-skip-permissions`.
+   Tagged subagent runs (`ConfigTag != ""`) set `isolated_home: true` so `agy_launch.py` creates a symlinked temporary `$HOME` sharing credentials/history while isolating `settings.json`, `mcp_config.json`, and `hooks.json`.
+2. **ACP prompt completion & errors:** Turns end on the `session/prompt` JSON-RPC response, checking both RPC errors and `agent executor error:` text updates.
+3. **Usage & context occupancy:** Context occupancy updates come from `session/update` (`usage_update` -> `used` -> `ContextTokens`), and turn usage is reported in the `session/prompt` result (`usage`).
+4. **Tool names and in-process ACP permissions:** Built-in tools (`read_file`, `write_file`, `edit_file`, `run_command`, `search_web`) and `call_mcp_tool` are mapped by `antigravityTool` and `agy_policy.py`. Under `LAZYAGENTS_AGY_ACP=1`, `agy_policy.py` passes calls through (`allow`) so `agy acp` emits `session/request_permission` over stdio to `RunSession`, which evaluates `CheckTool` in-process and answers `allow_once` / `reject_once`. When `LAZYAGENTS_SUBAGENT_JOB_ID` is set, PreToolUse hooks also send `X-Vesper-Subagent-Job`. Native subagent files (`.agents/agents/*`) are removed and native `Agent`/`Task`/`invoke_subagent` calls are denied in favor of Vesper MCP `run_subagent`.
+5. **Turn interrupt:** Cancellation/pause sends ACP `session/cancel` notification over stdio.
+6. **Quota & credentials & skills & timeouts:** Google's 429 text (`RESOURCE_EXHAUSTED` + `retryDelay`) triggers fallback and limit reset calculation; native `agy acp --login` bundle (`harness:google`) and API-key `authenticate` fallback (only when `GEMINI_API_KEY` is present on `-32000`) are both supported. Skills live in `.agents/skills/` (git-excluded), instructions in `.agents/rules/vesper-01..06.md`, and `lazyagents` MCP sets `timeoutSeconds: 2400` (`antigravity.go`) to accommodate `run_subagent` calls.
 
-## Capability table (agy 1.5.8)
+## Capability table (agy 1.5.9+)
 
 | Capability | Status | Evidence / note |
 | --- | --- | --- |
 | Tool gating (static) | **Verified** | `settings.permissions.deny` blocks `command(*)`/`write_file(*)` even when the hook approves |
-| Tool gating (per call) | **Verified** | PreToolUse hook gets every call (built-in, MCP, subagent) with full args; `deny` reaches the model with its reason |
-| Permission prompt (approve one action mid-turn) | **Unsupported** | A deny rule can't be lifted inside a turn; `PermissionPrompt` stays false |
+| Tool gating (per call) | **Verified** | ACP `session/request_permission` (`LAZYAGENTS_AGY_ACP=1`) and `agy_policy.py` PreToolUse hook check every call (built-in, MCP, native subagent) via `CheckTool`; `reject_once`/`deny` reaches the model |
+| Permission prompt (approve one action mid-turn) | **Verified (`PermissionPrompt = true`)** | ACP `session/request_permission` lets Vesper evaluate `CheckToolWithSpec` / request approval dynamically per call |
+| Turn cancellation | **Verified** | ACP `session/cancel` over stdio interrupts an in-flight `session/prompt` |
+| Live context occupancy | **Verified** | `session/update` (`usage_update.used`) updates `ContextTokens` |
+| Subagents (`run_subagent`) | **Verified** | Unified via Vesper MCP `run_subagent`, isolated `$HOME` + `OptionNoMCP` ACP worker (`TestSubagentCrossHarnessE2E`) |
 | Native cost | **Unsupported** | Tokens only; cost `unknown` |
-| Token usage and cache | **Verified** | Per request on `agent_response` steps; semantics above |
-| Resume | **Verified** | `--conversation ID` with `-p`, same id, history replayed |
-| Skills | **Verified (native)** | agy lists `.agents/skills/<name>/SKILL.md` to the model, as Codex reads it; Vesper now writes them there |
-| Vesper MCP tools | **Verified** | Streamable HTTP with bearer header; called via `call_mcp_tool` |
+| Token usage and cache | **Verified** | Reported on `session/prompt` result (`inputTokens + cachedReadTokens`, `outputTokens`, `cachedReadTokens`) |
+| Resume | **Verified** | ACP `session/load` (with `t.SessionID`) and `-p --conversation ID` |
+| Skills | **Verified (native)** | agy lists `.agents/skills/<name>/SKILL.md` to the model, as Codex reads it |
+| Vesper MCP tools | **Verified** | Streamable HTTP with bearer header and `timeoutSeconds: 2400`; called via `call_mcp_tool` |
 | Image generation | **Not available with an API key (observed)** | `generate_image` is in agy's internal list but was never declared to the model; needs a real key to settle (LAZYAGENTS-196) |
 | Model listing | **Via Gemini API only** | `agy models` needs a sign-in |
 | Usage/quota probe | **Unsupported** | Nothing to read with a key |

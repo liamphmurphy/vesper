@@ -65,10 +65,14 @@ def main():
         call = event["toolCall"]
         args = call.get("args")
         tool, tool_input = canonical(call["name"], args)
+        headers = {"Content-Type": "application/json", "Authorization": "Bearer " + os.environ["LAZYAGENTS_POLICY_TOKEN"]}
+        job_id = os.environ.get("LAZYAGENTS_SUBAGENT_JOB_ID", "")
+        if job_id:
+            headers["X-Vesper-Subagent-Job"] = job_id
         request = urllib.request.Request(
             os.environ["LAZYAGENTS_POLICY_URL"],
             data=json.dumps({"tool": tool, "input": tool_input}).encode(),
-            headers={"Content-Type": "application/json", "Authorization": "Bearer " + os.environ["LAZYAGENTS_POLICY_TOKEN"]},
+            headers=headers,
             method="POST",
         )
 

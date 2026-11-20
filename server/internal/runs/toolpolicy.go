@@ -72,20 +72,6 @@ func LeadRun(run store.Run) bool {
 	return run.Purpose == "ticket" && run.ParentRunID == nil
 }
 
-// subagentDecision rules on the harness's sub agent tool: only the types the
-// run declared (agentdef.SubagentTypes). A sub agent's own tool calls come
-// through CheckTool too, under the same spec as the lead's.
-func subagentDecision(spec agentdef.Resolved, input map[string]any) ToolDecision {
-	types := agentdef.SubagentTypes(spec)
-	if typ, _ := input["subagent_type"].(string); slices.Contains(types, typ) {
-		return ToolDecision{Decision: "allow"}
-	}
-	if len(types) == 0 {
-		return ToolDecision{Decision: "deny", Reason: "This run has no sub agents; do the work yourself"}
-	}
-	return ToolDecision{Decision: "deny", Reason: "Only these sub agent types are available: " + strings.Join(types, ", ")}
-}
-
 func (s *Service) CheckTool(ctx context.Context, c Caller, in ToolCheck) (ToolDecision, error) {
 	run, err := s.checkToolRun(ctx, c)
 	if err != nil {
@@ -223,8 +209,10 @@ func (s *Service) checkToolWithRun(ctx context.Context, c Caller, run store.Run,
 		}
 	}
 	if in.Tool == "Agent" || in.Tool == "Task" { // Task: its name before Claude Code 2.1
-		// ToolScopes would send it to tests:run, which a lead has.
-		return subagentDecision(spec, in.Input), nil
+		if agentdef.SubagentsOn(spec) {
+			return deny("Use the Vesper MCP tool `run_subagent` instead of native Agent subagents.")
+		}
+		return deny("This run has no sub agents; do the work yourself")
 	}
 	scopes := ToolScopes(in.Tool, in.Input)
 	if (spec.HarnessOptions["readonly"] == "true" || stepRunning) && len(scopes) > 0 {

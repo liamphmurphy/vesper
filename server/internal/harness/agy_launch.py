@@ -32,20 +32,52 @@ def load(path):
         return {}
 
 
-def install(cfg):
-    home = os.path.expanduser("~")
+def link_except(src_dir, dst_dir, excluded):
+    os.makedirs(dst_dir, mode=0o700, exist_ok=True)
+    if not os.path.isdir(src_dir):
+        return
+    for entry in os.listdir(src_dir):
+        if entry in excluded:
+            continue
+        src = os.path.join(src_dir, entry)
+        dst = os.path.join(dst_dir, entry)
+        if not os.path.exists(dst) and not os.path.islink(dst):
+            os.symlink(src, dst)
+
+
+def isolate_home(real_home):
+    iso_home = tempfile.mkdtemp(prefix="vesper-agy-home-")
+    os.chmod(iso_home, 0o700)
+    link_except(real_home, iso_home, {".gemini"})
+    link_except(os.path.join(real_home, ".gemini"), os.path.join(iso_home, ".gemini"), {"antigravity-cli", "config"})
+    link_except(
+        os.path.join(real_home, ".gemini", "antigravity-cli"),
+        os.path.join(iso_home, ".gemini", "antigravity-cli"),
+        {"settings.json"},
+    )
+    link_except(
+        os.path.join(real_home, ".gemini", "config"),
+        os.path.join(iso_home, ".gemini", "config"),
+        {"mcp_config.json", "hooks.json"},
+    )
+    return iso_home
+
+
+def install(cfg, home, base_home):
     token = os.environ.get(cfg["token_env"], "")
     # Settings: ours win; the permission lists are replaced, never merged, so a
     # stale allow rule can't outlive the policy this turn was given.
     settings_path = os.path.join(home, ".gemini", "antigravity-cli", "settings.json")
-    settings = load(settings_path)
+    base_settings_path = os.path.join(base_home, ".gemini", "antigravity-cli", "settings.json")
+    settings = load(base_settings_path)
     settings.pop("modelProvider", None)
     settings.update(cfg["settings"])
     write(settings_path, settings)
     servers = json.loads(json.dumps(cfg["mcp_servers"]).replace("{{token}}", token))
     write(os.path.join(home, ".gemini", "config", "mcp_config.json"), {"mcpServers": servers})
     hooks_path = os.path.join(home, ".gemini", "config", "hooks.json")
-    hooks = load(hooks_path)
+    base_hooks_path = os.path.join(base_home, ".gemini", "config", "hooks.json")
+    hooks = load(base_hooks_path)
     hooks["vesper-policy"] = {"enabled": True, "PreToolUse": [{"matcher": "*", "hooks": [{"command": cfg["hook_command"], "timeout": 20}]}]}
     write(hooks_path, hooks)
 
@@ -62,7 +94,11 @@ def main():
     with open(cfg_path) as f:
         cfg = json.load(f)
     if cfg.get("install"):
-        install(cfg)
+        real_home = os.path.expanduser("~")
+        target_home = isolate_home(real_home) if cfg.get("isolated_home") else real_home
+        install(cfg, target_home, real_home)
+        if cfg.get("isolated_home"):
+            os.environ["HOME"] = target_home
     # execvp's own error for a missing program names no file, which reads as a
     # problem with the configuration above.
     if shutil.which(program) is None:
