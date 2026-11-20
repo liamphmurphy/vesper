@@ -409,6 +409,60 @@ func TestMacOSGuestSlotsWaitThenEvictIdle(t *testing.T) {
 	g.release(v2)
 }
 
+func TestMacOSGuestReplacesAVMThatStoppedAnswering(t *testing.T) {
+	drv := &microvm.MemDriver{Handler: localGuest}
+	g := newTestMacGuests(t, drv)
+	g.IdleTTL = time.Hour
+	c, _ := macClient(t, g, "run-1")
+	ctx := context.Background()
+
+	if err := c.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// The guest goes away between calls without the host hearing of it.
+	g.mu.Lock()
+	dead := g.vms["run-1"].vm.(*microvm.MemVM)
+	g.mu.Unlock()
+	_ = dead.Stop(ctx)
+
+	if err := c.Start(ctx); err != nil {
+		t.Fatalf("call after the guest died: %v", err)
+	}
+	if n := len(drv.Configs()); n != 2 {
+		t.Fatalf("boots = %d, want 2 (the dead VM replaced)", n)
+	}
+	if g.RunningVMs() != 1 {
+		t.Fatalf("running = %d, want 1", g.RunningVMs())
+	}
+}
+
+func TestMacOSGuestKeepsADeadVMAnotherCallIsUsing(t *testing.T) {
+	drv := &microvm.MemDriver{Handler: localGuest}
+	g := newTestMacGuests(t, drv)
+	g.IdleTTL = time.Hour
+	ctx := context.Background()
+
+	held, err := g.acquire(ctx, "run-1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = held.vm.Stop(ctx)
+
+	if _, err := g.acquire(ctx, "run-1", nil); err == nil || !strings.Contains(err.Error(), "stopped answering") {
+		t.Fatalf("acquire while another call holds the dead VM: err = %v, want stopped answering", err)
+	}
+	g.mu.Lock()
+	active, still := held.active, g.vms["run-1"] == held
+	g.mu.Unlock()
+	if active != 1 || !still {
+		t.Fatalf("after the failed acquire: active = %d, still registered = %v; want 1, true", active, still)
+	}
+	g.release(held)
+	if len(drv.Configs()) != 1 {
+		t.Fatalf("boots = %d, want 1", len(drv.Configs()))
+	}
+}
+
 func TestMacOSGuestStopsWhenIdle(t *testing.T) {
 	drv := &microvm.MemDriver{Handler: localGuest}
 	g := newTestMacGuests(t, drv)

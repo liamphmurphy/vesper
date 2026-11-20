@@ -212,7 +212,11 @@ in the Linux VM; the macOS VM only receives files and runs commands.
   run's broker handler at `mac.vesper.internal` (`198.18.0.5`) and
   `VESPER_MACOS=1`; the macOS VM boots on the run's first `mac` call
   (`runner.MacOSGuests`), serves the run's later calls, and stops after
-  `RUNNER_MACOS_IDLE_TTL_S` (default 600) without one. A run's macOS disk (APFS
+  `RUNNER_MACOS_IDLE_TTL_S` (default 600) without one. Each call that reuses a
+  booted VM pings its agent first; a VM that stopped answering (the guest shut
+  down or crashed, or the agent stopped listening) is stopped and replaced by a
+  fresh boot, unless another call is still using it, in which case this call
+  fails with "stopped answering". A run's macOS disk (APFS
   clone of the golden `disk.img` and `nvram.bin`, plus its own machine
   identifier: Apple requires two running VMs not to share one) outlives the VM,
   so `.build` and DerivedData stay warm until the run's workspace is removed.
@@ -240,6 +244,9 @@ in the Linux VM; the macOS VM only receives files and runs commands.
   command can't reach the root-run agent. Every command runs as the image's
   user (`RUNNER_MACOS_USER`, default `admin`) except one fixed root command at
   boot that makes `/opt/vesper/workspace` and looks the user's ids up.
+  When its vsock listener fails 20 times in a row it logs that to
+  `/var/log/vesper-guest-agent.log` and exits, so launchd (`KeepAlive`)
+  restarts it instead of leaving a live process that refuses the host.
 - **Trust.** The macOS VM has no NIC and no egress listeners: no network, no
   harness, no OAuth token, no git credential, no API. Its inputs are the run's
   own files and the commands its persona runs. SwiftPM packages that need
