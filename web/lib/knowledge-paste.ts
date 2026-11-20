@@ -368,6 +368,153 @@ function isAbortError(err: unknown): boolean {
   return (err instanceof DOMException || err instanceof Error) && err.name === "AbortError";
 }
 
+export function createKnowledgePastePlugin(opts: KnowledgePasteOptions): Plugin<DecorationSet> {
+  let batchSeq = 0;
+  let pasteSeq = 0;
+  let mounted = false;
+  const activeControllers = new Set<AbortController>();
+
+  return new Plugin<DecorationSet>({
+    key: pluginKey,
+    state: {
+      init: () => DecorationSet.empty,
+      apply: (tr, old) => {
+        let set = old.map(tr.mapping, tr.doc);
+        const meta = tr.getMeta(pluginKey) as PasteMeta | undefined;
+        if (!meta) return set;
+        if ("add" in meta) {
+          set = set.add(tr.doc, meta.add);
+        } else {
+          const victim = set.find(undefined, undefined, (spec) => spec.id === meta.remove);
+          if (victim.length > 0) set = set.remove(victim);
+        }
+        return set;
+      },
+    },
+    view(editorView) {
+      mounted = true;
+      return {
+        destroy() {
+          mounted = false;
+          // EditorView.updatePluginViews destroys and synchronously recreates plugin views
+          // when TipTap registers/unregisters a plugin (e.g. mobileEnter on mount).
+          // Defer aborting in-flight uploads to a microtask so only real teardown aborts them.
+          queueMicrotask(() => {
+            if (mounted && !editorView.isDestroyed) return;
+            for (const c of activeControllers) c.abort();
+            activeControllers.clear();
+          });
+        },
+      };
+    },
+    props: {
+      decorations(state) {
+        return pluginKey.getState(state);
+      },
+      handlePaste(view, event) {
+        if (!view.editable) return false;
+        const candidates = extractClipboardFiles(event.clipboardData, () => ++pasteSeq);
+        if (candidates.length === 0) return false;
+
+        event.preventDefault();
+
+        const valid: ExtractedClipboardFile[] = [];
+        for (const c of candidates) {
+          const problem = validateKnowledgeAssetFile({ name: c.filename, size: c.file.size });
+          if (problem) {
+            opts.onError(`Couldn’t paste ${c.filename}`, problem);
+          } else {
+            valid.push(c);
+          }
+        }
+        if (valid.length === 0) return true;
+
+        const id = ++batchSeq;
+        const controller = new AbortController();
+        activeControllers.add(controller);
+
+        const { from, to, empty } = view.state.selection;
+        const label = valid.length === 1 ? valid[0].filename : `${valid.length} files`;
+        const added: Decoration[] = [];
+        if (!empty) {
+          added.push(Decoration.inline(from, to, { class: "kn-paste-replacing" }, { id, role: "range" }));
+        }
+        added.push(
+          Decoration.widget(
+            to,
+            () => {
+              const el = document.createElement("span");
+              el.className = "kn-paste-uploading";
+              el.contentEditable = "false";
+              el.setAttribute("data-testid", "knowledge-paste-uploading");
+              el.setAttribute("role", "status");
+              el.textContent = `Uploading ${label}…`;
+              return el;
+            },
+            { id, role: "widget", side: 1, ignoreSelection: true },
+          ),
+        );
+        view.dispatch(view.state.tr.setMeta(pluginKey, { add: added }));
+
+        void Promise.allSettled(valid.map((c) => opts.upload(c.file, c.filename, controller.signal))).then((results) => {
+          activeControllers.delete(controller);
+          if (!mounted || view.isDestroyed || controller.signal.aborted) return;
+
+          const uploaded: Embed[] = [];
+          results.forEach((result, i) => {
+            if (result.status === "fulfilled") {
+              uploaded.push(result.value);
+            } else if (!isAbortError(result.reason)) {
+              const message = result.reason instanceof Error ? result.reason.message : undefined;
+              opts.onError(`Couldn’t upload ${valid[i].filename}`, message);
+            }
+          });
+
+          const decos = pluginKey.getState(view.state)?.find(undefined, undefined, (spec) => spec.id === id) ?? [];
+          if (decos.length === 0) return;
+
+          const rangeDeco = decos.find((d) => d.spec.role === "range");
+          const widgetDeco = decos.find((d) => d.spec.role === "widget") ?? decos[0];
+          const insertFrom = rangeDeco ? rangeDeco.from : widgetDeco.from;
+          const insertTo = rangeDeco ? rangeDeco.to : widgetDeco.from;
+
+          if (uploaded.length === 0) {
+            view.dispatch(view.state.tr.setMeta(pluginKey, { remove: id }));
+            return;
+          }
+          if (!view.editable) {
+            view.dispatch(view.state.tr.setMeta(pluginKey, { remove: id }));
+            opts.onError("Couldn’t insert pasted file", "This page is locked while changes are in progress.");
+            return;
+          }
+
+          try {
+            const sel = view.state.selection;
+            const cursorAtPlaceholder =
+              (sel.from === insertFrom && sel.to === insertTo) || (sel.empty && sel.from === insertTo);
+            const tr = buildEmbedInsertTransaction(
+              view.state,
+              insertFrom,
+              insertTo,
+              uploaded.map((e) => e.ref),
+              !cursorAtPlaceholder,
+            );
+            tr.setMeta(pluginKey, { remove: id });
+            view.dispatch(tr);
+          } catch (err) {
+            if (!view.isDestroyed) {
+              view.dispatch(view.state.tr.setMeta(pluginKey, { remove: id }));
+            }
+            opts.onError("Couldn’t insert pasted file", err instanceof Error ? err.message : undefined);
+          }
+        });
+
+        return true;
+      },
+    },
+  });
+}
+
 export const KnowledgePaste = Extension.create<KnowledgePasteOptions>({
   name: "knowledgePaste",
   addOptions() {
@@ -379,137 +526,6 @@ export const KnowledgePaste = Extension.create<KnowledgePasteOptions>({
     };
   },
   addProseMirrorPlugins() {
-    const opts = this.options;
-    let batchSeq = 0;
-    let pasteSeq = 0;
-    let destroyed = false;
-    const activeControllers = new Set<AbortController>();
-
-    return [
-      new Plugin<DecorationSet>({
-        key: pluginKey,
-        state: {
-          init: () => DecorationSet.empty,
-          apply: (tr, old) => {
-            let set = old.map(tr.mapping, tr.doc);
-            const meta = tr.getMeta(pluginKey) as PasteMeta | undefined;
-            if (!meta) return set;
-            if ("add" in meta) {
-              set = set.add(tr.doc, meta.add);
-            } else {
-              const victim = set.find(undefined, undefined, (spec) => spec.id === meta.remove);
-              if (victim.length > 0) set = set.remove(victim);
-            }
-            return set;
-          },
-        },
-        view() {
-          return {
-            destroy() {
-              destroyed = true;
-              for (const c of activeControllers) c.abort();
-              activeControllers.clear();
-            },
-          };
-        },
-        props: {
-          decorations(state) {
-            return pluginKey.getState(state);
-          },
-          handlePaste(view, event) {
-            if (!view.editable) return false;
-            const candidates = extractClipboardFiles(event.clipboardData, () => ++pasteSeq);
-            if (candidates.length === 0) return false;
-
-            event.preventDefault();
-
-            const valid: ExtractedClipboardFile[] = [];
-            for (const c of candidates) {
-              const problem = validateKnowledgeAssetFile({ name: c.filename, size: c.file.size });
-              if (problem) {
-                opts.onError(`Couldn’t paste ${c.filename}`, problem);
-              } else {
-                valid.push(c);
-              }
-            }
-            if (valid.length === 0) return true;
-
-            const id = ++batchSeq;
-            const controller = new AbortController();
-            activeControllers.add(controller);
-
-            const { from, to, empty } = view.state.selection;
-            const label = valid.length === 1 ? valid[0].filename : `${valid.length} files`;
-            const added: Decoration[] = [];
-            if (!empty) {
-              added.push(Decoration.inline(from, to, { class: "kn-paste-replacing" }, { id, role: "range" }));
-            }
-            added.push(
-              Decoration.widget(
-                to,
-                () => {
-                  const el = document.createElement("span");
-                  el.className = "kn-paste-uploading";
-                  el.setAttribute("data-testid", "knowledge-paste-uploading");
-                  el.setAttribute("role", "status");
-                  el.textContent = `Uploading ${label}…`;
-                  return el;
-                },
-                { id, role: "widget", side: 1, ignoreSelection: true },
-              ),
-            );
-            view.dispatch(view.state.tr.setMeta(pluginKey, { add: added }));
-
-            void Promise.allSettled(valid.map((c) => opts.upload(c.file, c.filename, controller.signal))).then((results) => {
-              activeControllers.delete(controller);
-              if (destroyed || controller.signal.aborted) return;
-
-              const uploaded: Embed[] = [];
-              results.forEach((result, i) => {
-                if (result.status === "fulfilled") {
-                  uploaded.push(result.value);
-                } else if (!isAbortError(result.reason)) {
-                  const message = result.reason instanceof Error ? result.reason.message : undefined;
-                  opts.onError(`Couldn’t upload ${valid[i].filename}`, message);
-                }
-              });
-
-              const decos = pluginKey.getState(view.state)?.find(undefined, undefined, (spec) => spec.id === id) ?? [];
-              if (decos.length === 0) return;
-
-              const rangeDeco = decos.find((d) => d.spec.role === "range");
-              const widgetDeco = decos.find((d) => d.spec.role === "widget") ?? decos[0];
-              const insertFrom = rangeDeco ? rangeDeco.from : widgetDeco.from;
-              const insertTo = rangeDeco ? rangeDeco.to : widgetDeco.from;
-
-              if (uploaded.length === 0) {
-                view.dispatch(view.state.tr.setMeta(pluginKey, { remove: id }));
-                return;
-              }
-              if (!view.editable) {
-                view.dispatch(view.state.tr.setMeta(pluginKey, { remove: id }));
-                opts.onError("Couldn’t insert pasted file", "This page is locked while changes are in progress.");
-                return;
-              }
-
-              const sel = view.state.selection;
-              const cursorAtPlaceholder =
-                (sel.from === insertFrom && sel.to === insertTo) || (sel.empty && sel.from === insertTo);
-              const tr = buildEmbedInsertTransaction(
-                view.state,
-                insertFrom,
-                insertTo,
-                uploaded.map((e) => e.ref),
-                !cursorAtPlaceholder,
-              );
-              tr.setMeta(pluginKey, { remove: id });
-              view.dispatch(tr);
-            });
-
-            return true;
-          },
-        },
-      }),
-    ];
+    return [createKnowledgePastePlugin(this.options)];
   },
 });
