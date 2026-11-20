@@ -190,7 +190,7 @@ export const SETTINGS_FILTER_KEYWORDS: Record<string, string> = {
   "dev-workspace": "nix lazyvim neovim tmux gitconfig container ssh dev",
   spaces: "space memory overrides skills project instructions",
   "sign-in": "password authentication login browser session",
-  backup: "export archive zip migrate move restore instance",
+  backup: "export archive zip migrate move restore instance encrypt encryption password",
 };
 
 /** Returns true when every whitespace-separated word in `query` matches `label` or `extra`. */
