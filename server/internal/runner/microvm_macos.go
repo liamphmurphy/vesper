@@ -44,6 +44,16 @@ const (
 	macStderrKeep    = 8 << 10
 )
 
+// defaultMacPrepareTimeout bounds the root command that readies a freshly
+// booted guest. It takes a second or two; a guest that accepts it and never
+// answers would otherwise hold the boot, and every call waiting on it, forever.
+const defaultMacPrepareTimeout = time.Minute
+
+// defaultMacStopTimeout bounds stopping a macOS VM. Virtualization.framework's
+// stop can block indefinitely; past this the stop is left to finish in the
+// background so callers and the slot count move on.
+const defaultMacStopTimeout = 30 * time.Second
+
 // macPingTimeout bounds the liveness check before a call reuses a VM. A
 // healthy agent answers over vsock in milliseconds.
 const macPingTimeout = 5 * time.Second
@@ -77,6 +87,11 @@ type MacOSGuests struct {
 	// GuestWorkspace is where the synced files live in the guest.
 	GuestWorkspace string
 	Log            *slog.Logger
+
+	// prepareTimeout and stopTimeout default to defaultMacPrepareTimeout and
+	// defaultMacStopTimeout; tests shorten them.
+	prepareTimeout time.Duration
+	stopTimeout    time.Duration
 
 	mu       sync.Mutex
 	changed  chan struct{}
@@ -338,9 +353,11 @@ func (g *MacOSGuests) boot(ctx context.Context, dir string) (microvm.VM, int, in
 	if err != nil {
 		return nil, 0, 0, fmt.Errorf("mac: boot macOS VM: %w", err)
 	}
-	uid, gid, err := g.prepareWorkspace(ctx, vm)
+	pctx, cancel := context.WithTimeout(ctx, durationOr(g.prepareTimeout, defaultMacPrepareTimeout))
+	uid, gid, err := g.prepareWorkspace(pctx, vm)
+	cancel()
 	if err != nil {
-		_ = vm.Stop(context.Background())
+		g.stopVM(vm, dir)
 		return nil, 0, 0, err
 	}
 	return vm, uid, gid, nil
@@ -354,6 +371,35 @@ func (g *MacOSGuests) ping(ctx context.Context, v *macVM) error {
 	defer cancel()
 	_, err := v.vm.Client().Ping(pctx)
 	return err
+}
+
+// stopVM stops vm, giving up after stopTimeout. A stop that's still blocked
+// then finishes in the background; until it does, the VM may still count
+// against Apple's limit, so a boot meanwhile can fail with a limit error
+// rather than hang. who names the VM (its run or directory) in the logs.
+func (g *MacOSGuests) stopVM(vm microvm.VM, who string) {
+	timeout := durationOr(g.stopTimeout, defaultMacStopTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	done := make(chan error, 1)
+	go func() {
+		defer cancel()
+		done <- vm.Stop(ctx)
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			g.logger().Warn("mac: stop macOS VM", "vm", who, "err", err)
+		}
+	case <-time.After(timeout):
+		g.logger().Warn("mac: stopping a macOS VM is taking too long; leaving it to finish in the background", "vm", who, "after", timeout)
+	}
+}
+
+func durationOr(d, def time.Duration) time.Duration {
+	if d > 0 {
+		return d
+	}
+	return def
 }
 
 // cloneOnce copies src to dst unless dst exists, never leaving half a copy.
@@ -518,11 +564,7 @@ func (g *MacOSGuests) evictLocked(v *macVM) {
 }
 
 func (g *MacOSGuests) stopEvicted(v *macVM) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := v.vm.Stop(ctx); err != nil {
-		g.logger().Warn("mac: stop macOS VM", "run", v.runID, "err", err)
-	}
+	g.stopVM(v.vm, v.runID)
 	g.mu.Lock()
 	g.stopping--
 	g.notifyLocked()

@@ -216,7 +216,10 @@ in the Linux VM; the macOS VM only receives files and runs commands.
   booted VM pings its agent first; a VM that stopped answering (the guest shut
   down or crashed, or the agent stopped listening) is stopped and replaced by a
   fresh boot, unless another call is still using it, in which case this call
-  fails with "stopped answering". A run's macOS disk (APFS
+  fails with "stopped answering". Booting is bounded end to end: waiting for
+  the guest agent (3 min), the first root command (1 min) and stopping a VM
+  (30 s; a stop still blocked in Virtualization.framework then finishes in the
+  background), so one bad guest can't hang later calls. A run's macOS disk (APFS
   clone of the golden `disk.img` and `nvram.bin`, plus its own machine
   identifier: Apple requires two running VMs not to share one) outlives the VM,
   so `.build` and DerivedData stay warm until the run's workspace is removed.
