@@ -188,7 +188,7 @@ export function ago(iso: string, now = new Date()): string {
 export function restoreObsidianSyntax(md: string): string {
   const fix = (s: string) =>
     s
-      .replace(/(!?)\\\[\\\[((?:(?!\\\]\\\]).)+?)\\\]\\\]/g, (_, bang: string, inner: string) => `${bang}[[${inner.replace(/\\([[\]|#^_*])/g, "$1")}]]`)
+      .replace(/(!?)\\\[\\\[((?:(?!\\\]\\\]).)+?)\\\]\\\]/g, (_, bang: string, inner: string) => `${bang}[[${inner.replace(/\\([[\]|#^_*~])/g, "$1")}]]`)
       .replace(/^(\s*>\s*)\\\[!([A-Za-z-]+)\\\]/gm, "$1[!$2]");
   // Leave fenced code and inline code exactly as written.
   return md
