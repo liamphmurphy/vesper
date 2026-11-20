@@ -632,6 +632,8 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
         ref={frameRef}
         key={`${app.current.seq}:${reloadKey}`}
         sandbox="allow-scripts"
+        // An app may play video it builds itself (media-src blob:) and take it fullscreen.
+        allow="fullscreen"
         referrerPolicy="no-referrer"
         srcDoc={srcDoc}
         title={app.name}

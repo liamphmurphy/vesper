@@ -42,6 +42,9 @@ test("srcDoc enforces strict CSP, embeds safe theme vars, and escapes script clo
     themeVars: { "--bg": "#111111", "--accent": "#d79921;evil" },
   });
   assert.ok(html.includes("default-src 'none'; script-src 'unsafe-inline'"));
+  // An app may play video it builds in memory (Media Source / blob URLs), and nothing from the network.
+  assert.ok(html.includes("media-src blob:;"));
+  assert.ok(!/media-src[^;]*(https?:|\*)/.test(html));
   assert.ok(html.includes("--bg: #111111;"));
   assert.ok(html.includes("<\\/script>"));
   assert.ok(html.includes("<\\/style>"));

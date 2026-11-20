@@ -127,3 +127,25 @@ test("the player doesn't clip its video, and T leaves a fullscreen video alone",
   await page.keyboard.press("t");
   await expect(player).toHaveAttribute("data-theater", "false");
 });
+
+test("an app can play video it builds in memory and take it fullscreen", async ({ page }) => {
+  const frameLocator = await open(page);
+  await expect(frameLocator.locator("#play")).toBeVisible();
+  const frame = page.frames().find((f) => f !== page.mainFrame() && f.url() === "about:srcdoc");
+  expect(frame).toBeTruthy();
+
+  // A blob: video must not trip the app frame's Content-Security-Policy (it can't load from the network).
+  const violation = await frame!.evaluate(
+    () =>
+      new Promise<string>((resolve) => {
+        document.addEventListener("securitypolicyviolation", (e) => resolve(e.violatedDirective));
+        const video = document.createElement("video");
+        video.addEventListener("error", () => setTimeout(() => resolve("none"), 200));
+        video.src = URL.createObjectURL(new Blob([new Uint8Array(16)], { type: "video/mp4" }));
+        document.body.appendChild(video);
+        setTimeout(() => resolve("none"), 2000);
+      }),
+  );
+  expect(violation).toBe("none");
+  expect(await frame!.evaluate(() => document.fullscreenEnabled)).toBe(true);
+});
