@@ -338,6 +338,7 @@ paths:
       tags: [knowledge-pages]
       summary: Upload an attachment (stored by content hash, reused when identical)
       parameters:
+        - { name: filename, in: query, schema: { type: string }, description: "Original filename (UTF-8 safe; falls back to X-Filename)" }
         - { name: X-Filename, in: header, schema: { type: string } }
       requestBody:
         required: true
@@ -353,6 +354,8 @@ paths:
                   id: { type: string, format: uuid }
                   ref: { type: string, example: "attachment:01a1.../map.png" }
                   url: { type: string }
+                  filename: { type: string }
+                  content_type: { type: string }
   /knowledge/assets/{id}:
     get:
       tags: [knowledge-pages]

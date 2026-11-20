@@ -100,6 +100,37 @@ func (s *Service) SweepKnowledgeAssets(ctx context.Context) error {
 // is read into memory, unlike the person's streamed uploads.
 const PersonaAssetLimit = 25 << 20
 
+// DetectAssetContentType sniffs a Knowledge asset's MIME type from its leading
+// bytes, preserving SVG detection for .svg files and recognizing common
+// container formats that http.DetectContentType leaves as octet-stream.
+func DetectAssetContentType(filename string, head []byte) string {
+	if len(head) > 512 {
+		head = head[:512]
+	}
+	typ := http.DetectContentType(head)
+	if strings.EqualFold(path.Ext(filename), ".svg") && strings.Contains(string(head), "<svg") {
+		// Sniffing reads an SVG as text; the viewer serves it as a download either way.
+		return "image/svg+xml"
+	}
+	if typ != "application/octet-stream" {
+		return typ
+	}
+	if len(head) >= 12 && string(head[4:8]) == "ftyp" {
+		switch string(head[8:12]) {
+		case "avif", "avis":
+			return "image/avif"
+		case "qt  ":
+			return "video/quicktime"
+		case "M4A ", "M4B ":
+			return "audio/mp4"
+		}
+	}
+	if len(head) >= 4 && string(head[:4]) == "fLaC" {
+		return "audio/flac"
+	}
+	return typ
+}
+
 // StoreAssetBytes stores a file a persona made (an SVG, a chart) as one of the
 // person's Knowledge assets, typed from its content as uploads are.
 func (s *Service) StoreAssetBytes(ctx context.Context, ws, user uuid.UUID, filename string, data []byte) (store.KnowledgeAsset, error) {
@@ -110,14 +141,10 @@ func (s *Service) StoreAssetBytes(ctx context.Context, ws, user uuid.UUID, filen
 		return store.KnowledgeAsset{}, apperr.Invalid("data", "is over the %d MB limit", PersonaAssetLimit>>20)
 	}
 	filename = path.Base(strings.ReplaceAll(strings.TrimSpace(filename), "\\", "/"))
-	if filename == "." || filename == "/" || filename == "" {
+	if filename == "." || filename == ".." || filename == "/" || filename == "" {
 		filename = "attachment"
 	}
-	typ := http.DetectContentType(data)
-	if strings.EqualFold(path.Ext(filename), ".svg") && strings.Contains(string(data[:min(len(data), 512)]), "<svg") {
-		// Sniffing reads an SVG as text; the viewer serves it as a download either way.
-		typ = "image/svg+xml"
-	}
+	typ := DetectAssetContentType(filename, data[:min(len(data), 512)])
 	sum := sha256.Sum256(data)
 	return s.StoreKnowledgeAsset(ctx, ws, user, fmt.Sprintf("%x", sum), filename, typ, int64(len(data)), bytes.NewReader(data))
 }

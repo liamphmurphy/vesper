@@ -118,5 +118,5 @@ func ResolvePageEmbeds(ctx context.Context, q *store.Queries, ws, pageID uuid.UU
 }
 
 func AttachmentRef(id uuid.UUID, filename string) string {
-	return fmt.Sprintf("attachment:%s/%s", id, strings.NewReplacer("[", " ", "]", " ", "#", " ", "|", " ", "^", " ", "\n", " ").Replace(filename))
+	return fmt.Sprintf("attachment:%s/%s", id, strings.NewReplacer("[", " ", "]", " ", "#", " ", "|", " ", "^", " ", "`", " ", "\r", " ", "\n", " ").Replace(filename))
 }

@@ -11,8 +11,9 @@ import { defaultLabel, parseWikiLinks } from "@/lib/wikilinks";
 import { pageHref, restoreObsidianSyntax, visibleProperties, wordCount } from "@/lib/knowledge";
 import { KnowledgeSyntax } from "@/lib/knowledge-editor";
 import { KnowledgeCompletion } from "@/lib/knowledge-completion";
+import { KnowledgePaste, uploadedAssetToEmbed } from "@/lib/knowledge-paste";
 import { api, unwrap } from "@/lib/api/client";
-import { fetchKnowledgeImages, usePage, usePages, useSavePage, useSavedQuery, type Embed, type Page } from "@/lib/api/knowledge-hooks";
+import { fetchKnowledgeImages, uploadKnowledgeAsset, usePage, usePages, useSavePage, useSavedQuery, type Embed, type Page } from "@/lib/api/knowledge-hooks";
 import { useChat, useSendChatMessage } from "@/lib/api/hooks";
 import { downloadFile } from "@/lib/api/docs-hooks";
 import { floatPanel } from "@/components/domain/pickers";
@@ -97,6 +98,7 @@ function Loaded({ page: p }: { page: Page }) {
   const titles = usePages({ limit: 200, include_agent: true });
   const known = useMemo(() => new Set((titles.data?.rows ?? []).flatMap((r) => [r.title.toLowerCase(), r.path.toLowerCase()])), [titles.data]);
   const previewData = useRef({ known, rows: titles.data?.rows, embeds: p.embeds });
+  const uploadedEmbeds = useRef<Map<string, Embed>>(new Map());
   const refreshPreview = useRef(() => {});
   const [inlinePreviews, setInlinePreviews] = useState<Map<Node, { dom: HTMLElement; embed: Embed; key: number }>>(new Map());
   const previewKey = useRef(0);
@@ -112,16 +114,17 @@ function Loaded({ page: p }: { page: Page }) {
         isResolved: (t) => previewData.current.known.size === 0 || previewData.current.known.has(t.toLowerCase()) || /^[A-Z]+-\d+$/.test(t),
         title: (t) => previewData.current.rows?.find((r) => r.path.toLowerCase() === t.toLowerCase() || r.title.toLowerCase() === t.toLowerCase())?.title,
         preview: (raw) => {
-          const e = previewData.current.embeds.find((e) => e.ref === raw);
+          const e = previewData.current.embeds.find((e) => e.ref === raw) ?? uploadedEmbeds.current.get(raw);
           if (!e?.available) return undefined;
+          const key = `${e.ref}|${e.kind}|${e.url ?? ""}|${e.content_type ?? ""}|${e.title ?? ""}|${e.markdown ?? ""}`;
           return {
-            key: JSON.stringify(e),
+            key,
             mount: () => {
               const dom = document.createElement("span");
               dom.className = "kn-inline-preview";
               dom.contentEditable = "false";
-              const key = ++previewKey.current;
-              queueMicrotask(() => setInlinePreviews((prev) => new Map(prev).set(dom, { dom, embed: e, key })));
+              const k = ++previewKey.current;
+              queueMicrotask(() => setInlinePreviews((prev) => new Map(prev).set(dom, { dom, embed: e, key: k })));
               return dom;
             },
             destroy: (dom) => {
@@ -131,7 +134,9 @@ function Loaded({ page: p }: { page: Page }) {
                 return next;
               }));
             },
-            stopEvent: (event) => event.target instanceof Element && !!event.target.closest("[data-pdf-viewer], [data-pdf-embed]"),
+            stopEvent: (event) =>
+              event.target instanceof Element &&
+              !!event.target.closest("[data-pdf-viewer], [data-pdf-embed], a[href], button, audio, video"),
           };
         },
         onOpen: (raw) => {
@@ -161,6 +166,16 @@ function Loaded({ page: p }: { page: Page }) {
           return result.targets.filter((t) => t.kind === "artifact" && t.artifact_type === "note" && t.path && t.id)
             .map((t) => ({ title: t.title, ref: t.path!, detail: t.path! }));
         },
+      }),
+      // eslint-disable-next-line react-hooks/refs
+      KnowledgePaste.configure({
+        upload: async (file, filename, signal) => {
+          const res = await uploadKnowledgeAsset(file, filename, signal);
+          const embed = uploadedAssetToEmbed(res, file, filename);
+          uploadedEmbeds.current.set(embed.ref, embed);
+          return embed;
+        },
+        onError: (title, description) => toast({ title, description, tone: "error" }),
       }),
     ],
     [router],
@@ -404,10 +419,11 @@ function EmbedPreview({ embed: e }: { embed: Embed }) {
   }
   const isPdf = !!e.url && isPdfContentType(e.content_type);
   const downloadHref = isPdf && e.url ? pdfDownloadUrl(e.url) : undefined;
+  const hasBody = Boolean(e.content_type?.startsWith("video/") || e.content_type?.startsWith("audio/") || (isPdf && e.url) || e.markdown);
   return (
     <figure data-pdf-embed={isPdf ? "" : undefined} className="overflow-hidden rounded-xl border border-border bg-surface">
-      <figcaption className="flex items-center gap-2 border-b border-border-subtle px-3 py-2 text-12 text-fg-tertiary">
-        <Icon name={e.kind === "image" || e.content_type?.startsWith("image/") ? "library" : e.kind === "design" ? "designs" : isPdf ? "artifacts" : "link"} size={12} />
+      <figcaption className={cx("flex items-center gap-2 px-3 py-2 text-12 text-fg-tertiary", hasBody && "border-b border-border-subtle")}>
+        <Icon name={e.kind === "image" || e.content_type?.startsWith("image/") ? "library" : e.kind === "design" ? "designs" : e.kind === "file" || isPdf ? "artifacts" : "link"} size={12} />
         <span className="truncate">{e.title ?? e.ref}</span>
         {isPdf && e.url ? (
           <span className="ml-auto flex flex-none items-center gap-3">
@@ -418,8 +434,12 @@ function EmbedPreview({ embed: e }: { embed: Embed }) {
               Download
             </a>
           </span>
+        ) : e.url && e.kind === "file" ? (
+          <a href={e.url} download={e.title ?? "attachment"} className="ml-auto flex-none text-accent hover:underline">
+            Download
+          </a>
         ) : e.url && e.kind !== "page" ? (
-          <a href={e.url} target="_blank" rel="noreferrer" className="ml-auto text-accent hover:underline">
+          <a href={e.url} target="_blank" rel="noreferrer" className="ml-auto flex-none text-accent hover:underline">
             Open
           </a>
         ) : null}

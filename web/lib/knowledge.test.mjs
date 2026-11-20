@@ -105,6 +105,14 @@ test("saving keeps wikilinks, embeds and callouts the editor escaped", async () 
   assert.equal(restoreObsidianSyntax("a \\[b\\] c"), "a \\[b\\] c");
 });
 
+test("saving preserves tildes inside attachment embeds", async () => {
+  const { restoreObsidianSyntax } = await import("./knowledge.ts");
+  const { parseDoc, serializeDoc } = await import("./doc-markdown.ts");
+  const md = "![[attachment:88888888-8888-4888-8888-888888888888/backup~1.png]]";
+  const written = serializeDoc(parseDoc(md));
+  assert.equal(restoreObsidianSyntax(written).trim(), md);
+});
+
 test("the graph layout keeps linked pages closer than unlinked ones, deterministically and fast", async () => {
   const { layoutGraph } = await import("./knowledge-graph.ts");
   const nodes = Array.from({ length: 1500 }, (_, i) => ({ id: `n${i}`, group: `g${i % 5}` }));
