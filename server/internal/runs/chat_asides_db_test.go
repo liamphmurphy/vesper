@@ -41,6 +41,19 @@ func TestChatAside(t *testing.T) {
 		}
 	}
 
+	// The code it has changed so far, as the runner's live review records it.
+	branch, baseSHA, headSHA := "fix/flaky-retry", "1111111222222", "abc1234567890"
+	files, _ := json.Marshal([]map[string]any{{
+		"path": "runner/retry.go", "status": "modified", "additions": 1, "deletions": 1,
+		"patch": "@@ -40 +40 @@\n-time.Sleep(time.Second)\n+time.Sleep(backoff(attempt))",
+	}})
+	if err := f.q.UpsertChatCodeReview(f.ctx, store.UpsertChatCodeReviewParams{
+		ChatID: parent.ID, RepoUrl: "https://github.com/acme/app", Branch: &branch, BaseSha: &baseSHA, HeadSha: &headSHA,
+		Commits: []byte("[]"), Files: files, Dirty: true, Live: true, Tree: []byte("[]"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	aside, err := f.rs.StartChatAside(f.ctx, f.ws, f.user, parent.ID, "how many runs failed so far?", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +80,9 @@ func TestChatAside(t *testing.T) {
 		t.Fatalf("aside turns %d, %v", len(turns), err)
 	}
 	prompt := turns[0].InputMessage
-	for _, want := range []string{"fix the flaky retry test", "Reproducing it first.", "Called Bash", "go test ./runner -count=50", "FAIL 3 of 50", "this is an aside", "how many runs failed so far?"} {
+	for _, want := range []string{"fix the flaky retry test", "Reproducing it first.", "Called Bash", "go test ./runner -count=50", "FAIL 3 of 50",
+		"Branch diff snapshot", "branch fix/flaky-retry", "modified runner/retry.go (+1/-1)", "+time.Sleep(backoff(attempt))",
+		"this is an aside", "how many runs failed so far?"} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("aside prompt lacks %q:\n%s", want, prompt)
 		}
