@@ -39,12 +39,11 @@ func (e env) waitedOnChecks(run store.Run) bool {
 // session and fixes it; the main agent is woken once, with the passing result.
 func TestCheckFailureIsSentBackToTheSubAgent(t *testing.T) {
 	e := setup(t)
-	e.subagent("scribe")
 	logPath := filepath.Join(t.TempDir(), "log.jsonl")
 	t.Setenv("FAKE_HARNESS_MODE", "delegate_script")
 	t.Setenv("FAKE_HARNESS_LOG", logPath)
 	t.Setenv("FAKE_HARNESS_CHILD_UNCOMMITTED", "1")
-	t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{{"agent": "scribe", "task": "Write FILE=docs/a.txt", "allowed_paths": []string{"docs/"}, "test_command": "test -f docs/a.txt"}}))
+	t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{{"task": "Write FILE=docs/a.txt", "allowed_paths": []string{"docs/"}, "test_command": "test -f docs/a.txt"}}))
 	e.dispatch("PAY-214")
 	e.until("completed", e.state("PAY-214=completed"))
 	parent := e.run("PAY-214")
@@ -91,9 +90,8 @@ func TestCheckFailureIsSentBackToTheSubAgent(t *testing.T) {
 // to the main agent, once.
 func TestCheckFailureBouncesAreBounded(t *testing.T) {
 	e := setup(t)
-	e.subagent("scribe")
 	t.Setenv("FAKE_HARNESS_MODE", "delegate_script")
-	t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{{"agent": "scribe", "task": "Write FILE=docs/a.txt", "allowed_paths": []string{"docs/"}, "test_command": "echo still broken; exit 3"}}))
+	t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{{"task": "Write FILE=docs/a.txt", "allowed_paths": []string{"docs/"}, "test_command": "echo still broken; exit 3"}}))
 	e.dispatch("PAY-214")
 	e.until("completed", e.state("PAY-214=completed"))
 	parent := e.run("PAY-214")
@@ -123,9 +121,8 @@ func TestCheckFailureBouncesAreBounded(t *testing.T) {
 // A delegation with nothing to check completes at once, as before.
 func TestEmptyContractCompletesWithoutChecksWait(t *testing.T) {
 	e := setup(t)
-	e.subagent("scribe")
 	t.Setenv("FAKE_HARNESS_MODE", "delegate_script")
-	t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{{"agent": "scribe", "task": "Write FILE=docs/a.txt"}}))
+	t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{{"task": "Write FILE=docs/a.txt"}}))
 	e.dispatch("PAY-214")
 	e.until("completed", e.state("PAY-214=completed"))
 	parent := e.run("PAY-214")
@@ -144,10 +141,9 @@ func TestEmptyContractCompletesWithoutChecksWait(t *testing.T) {
 // the sub agent; the checks finishing afterwards change nothing.
 func TestCancelledParentCancelsChildWaitingOnChecks(t *testing.T) {
 	e := setup(t)
-	e.subagent("scribe")
 	hold := filepath.Join(t.TempDir(), "release")
 	t.Setenv("FAKE_HARNESS_MODE", "delegate_script")
-	t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{{"agent": "scribe", "task": "Write FILE=docs/a.txt", "allowed_paths": []string{"docs/"},
+	t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{{"task": "Write FILE=docs/a.txt", "allowed_paths": []string{"docs/"},
 		"test_command": "while [ ! -f " + hold + " ]; do sleep 0.05; done"}}))
 	e.dispatch("PAY-214")
 	e.tickUntil("child waiting on its checks", func() bool {

@@ -148,6 +148,17 @@ func (s *Service) Claim(ctx context.Context, c Caller, key string) (store.Run, e
 		if c.Agent.Kind == agents.KindSub {
 			return apperr.Conflict("@%s is a sub agent: it runs when a main agent delegates to it, not from a ticket", c.Agent.Handle)
 		}
+		// A delegated copy runs as its lead's agent, which holds the ticket:
+		// claiming would hand it the lead's run.
+		if c.RunID != nil {
+			own, err := q.GetRun(ctx, store.GetRunParams{ID: *c.RunID, WorkspaceID: ws})
+			if err != nil {
+				return err
+			}
+			if own.ParentRunID != nil {
+				return apperr.Conflict("a delegated run works under its main agent's claim; finish with complete_run instead")
+			}
+		}
 		if t.AssigneeAgentID == nil || *t.AssigneeAgentID != c.Agent.ID {
 			return apperr.Conflict("%s isn't assigned to @%s. A person assigns tickets; ask for it in a comment.", t.Key, c.Agent.Handle)
 		}

@@ -54,7 +54,7 @@
 //	                    through the audio tools (see fakeAudio; FAKE_AUDIO_STEP)
 //	workflow-image      a workflow step: see the handler below
 //	slow                wait for SIGINT (pause), then end the turn
-//	delegate            claim, delegate to @scribe, end the turn; the delegated run
+//	delegate            claim, delegate to a copy, end the turn; the delegated run
 //	                    writes child.txt in the shared checkout and completes
 //	delegate_contract   delegate with a contract (allowed_paths docs/, a passing
 //	                    test_command); the resumed parent reports the checks it was given
@@ -1024,9 +1024,9 @@ func main() {
 
 	call("claim_ticket", map[string]any{"ticket": ticket})
 	if os.Getenv("FAKE_HARNESS_MODE") == "delegate_contract" {
-		call("delegate", map[string]any{"agent": "scribe", "task": "Write child.txt", "acceptance_criteria": []string{"child.txt exists"},
+		call("delegate", map[string]any{"task": "Write child.txt", "acceptance_criteria": []string{"child.txt exists"},
 			"allowed_paths": []string{"docs/"}, "test_command": "test -f child.txt"})
-		text("Delegated to @scribe. Ending my turn until it reports back.")
+		text("Delegated it. Ending my turn until it reports back.")
 		result(false, "Waiting for the sub agent.")
 		return
 	}
@@ -1049,8 +1049,8 @@ func main() {
 		return
 	}
 	if os.Getenv("FAKE_HARNESS_MODE") == "delegate" {
-		call("delegate", map[string]any{"agent": "scribe", "task": "Write child.txt"})
-		text("Delegated to @scribe. Ending my turn until it reports back.")
+		call("delegate", map[string]any{"task": "Write child.txt"})
+		text("Delegated it. Ending my turn until it reports back.")
 		result(false, "Waiting for the sub agent.")
 		return
 	}

@@ -85,20 +85,12 @@ func TestDelegationToSubagents(t *testing.T) {
 	main := callerFor(atlas, &parent.ID)
 	tk, _ := tracker.Get(ctx, q, ws, st)
 
-	if _, err := svc.Delegate(ctx, main, "", "scribe", "  "); !isInvalid(err) {
+	if _, err := svc.Delegate(ctx, main, "", "  "); !isInvalid(err) {
 		t.Fatalf("empty task: %v", err)
 	}
-	if _, err := svc.Delegate(ctx, main, "", "nobody", "do it"); !isInvalid(err) {
-		t.Fatalf("unknown agent: %v", err)
-	}
-	if _, err := svc.Delegate(ctx, main, "", "quill", "do it"); !isInvalid(err) {
-		t.Fatalf("delegated to a main agent: %v", err)
-	}
-	if subs, err := svc.ListSubagents(ctx, main); err != nil || len(subs) != 1 || subs[0].Agent.Handle != "scribe" || !subs[0].CanWrite() {
-		t.Fatalf("subagents = %v, %v", subs, err)
-	}
 
-	d, err := svc.Delegate(ctx, main, "", "@Scribe", "Write the migration notes")
+	// The child is a fresh copy of the lead: its persona and its frozen spec.
+	d, err := svc.Delegate(ctx, main, "", "Write the migration notes")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,27 +98,35 @@ func TestDelegationToSubagents(t *testing.T) {
 	if child.ParentRunID == nil || *child.ParentRunID != parent.ID || child.State != "queued" || *child.TicketID != tk.ID {
 		t.Fatalf("child = %+v", child)
 	}
+	if child.AgentID != atlas.ID || d.Agent.ID != atlas.ID || d.ReadOnly || child.Harness != parent.Harness || child.Model != parent.Model {
+		t.Fatalf("child isn't a copy of the lead: %+v (read-only %v)", child, d.ReadOnly)
+	}
+	parentSpec, _ := runs.Spec(parent)
+	childSpec, _ := runs.Spec(child)
+	if childSpec.Instructions != parentSpec.Instructions || childSpec.Mode("repo:write") != parentSpec.Mode("repo:write") {
+		t.Fatalf("child spec %+v, parent spec %+v", childSpec, parentSpec)
+	}
 	p, _ := q.GetRun(ctx, store.GetRunParams{ID: parent.ID, WorkspaceID: ws})
 	if p.State != "waiting" || deref(p.WaitReason) != "delegation" {
 		t.Fatalf("parent = %s/%s", p.State, deref(p.WaitReason))
 	}
-	if _, err := svc.Delegate(ctx, callerFor(atlas, &parent.ID), "", "scribe", "again"); !isConflict(err) {
+	if _, err := svc.Delegate(ctx, callerFor(atlas, &parent.ID), "", "again"); !isConflict(err) {
 		t.Fatalf("second live delegation: %v", err)
 	}
 	// The ticket's live run is still the parent's.
 	if live, err := q.ActiveRunForTicket(ctx, &tk.ID); err != nil || live.ID != parent.ID {
 		t.Fatalf("active run = %v, %v", live.ID, err)
 	}
-	// Sub agents can't claim tickets or delegate.
-	if _, err := svc.Claim(ctx, callerFor(scribe, nil), st); !isConflict(err) {
-		t.Fatalf("sub agent claimed: %v", err)
-	}
+	// The copy can't claim the ticket (its agent holds it through the lead) or delegate.
 	if _, err := q.SetRunState(ctx, store.SetRunStateParams{ID: child.ID, State: "running"}); err != nil {
 		t.Fatal(err)
 	}
-	sub := callerFor(scribe, &child.ID)
-	if _, err := svc.Delegate(ctx, sub, "", "scribe", "x"); !isConflict(err) {
-		t.Fatalf("sub agent delegated: %v", err)
+	sub := callerFor(atlas, &child.ID)
+	if _, err := svc.Claim(ctx, sub, st); !isConflict(err) {
+		t.Fatalf("delegated copy claimed: %v", err)
+	}
+	if _, err := svc.Delegate(ctx, sub, "", "x"); !isConflict(err) {
+		t.Fatalf("delegated copy delegated: %v", err)
 	}
 
 	// Finishing reports to the parent and leaves the ticket where it was.
@@ -155,7 +155,7 @@ func TestDelegationToSubagents(t *testing.T) {
 	}
 	turns, _ := q.ListTurns(ctx, parent.ID)
 	last := turns[len(turns)-1]
-	if last.Trigger != "delegation" || !strings.Contains(last.InputMessage, "Wrote docs/migrations.md") || !strings.Contains(last.InputMessage, "@scribe") {
+	if last.Trigger != "delegation" || !strings.Contains(last.InputMessage, "Wrote docs/migrations.md") || !strings.Contains(last.InputMessage, "@atlas") {
 		t.Fatalf("parent turn = %+v", last)
 	}
 	if !strings.Contains(last.InputMessage, "Wrote docs/migrations.md\n\n#### Report\n\n"+report) {
@@ -214,7 +214,7 @@ func TestDelegationToSubagents(t *testing.T) {
 	if _, err := q.SetRunState(ctx, store.SetRunStateParams{ID: parent.ID, State: "running"}); err != nil {
 		t.Fatal(err)
 	}
-	d2, err := svc.Delegate(ctx, callerFor(atlas, &parent.ID), "", "scribe", "Second task")
+	d2, err := svc.Delegate(ctx, callerFor(atlas, &parent.ID), "", "Second task")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +237,7 @@ func TestDelegationToSubagents(t *testing.T) {
 	if _, err := pool.Exec(ctx, "UPDATE run_turns SET status='done' WHERE run_id=$1", parent.ID); err != nil {
 		t.Fatal(err)
 	}
-	d3, err := svc.DelegateWithContract(ctx, callerFor(atlas, &parent.ID), "", "scribe", "Third task",
+	d3, err := svc.DelegateWithContract(ctx, callerFor(atlas, &parent.ID), "", "Third task",
 		runs.Contract{AcceptanceCriteria: []string{"docs updated"}, AllowedPaths: []string{"docs/"}, TestCommand: "make test"})
 	if err != nil {
 		t.Fatal(err)
@@ -257,9 +257,9 @@ func TestDelegationToSubagents(t *testing.T) {
 		t.Fatalf("child of a cancelled parent = %s", c3.State)
 	}
 
-	// Three finished delegations to one agent under one parent: the first two were followed by a repeat.
+	// Three finished delegations under one parent: the first two were followed by a repeat.
 	eff, err := q.DelegationEfficiency(ctx, ws)
-	if err != nil || len(eff) != 1 || eff[0].AgentID != scribe.ID || eff[0].Delegations != 3 || eff[0].RepairLoops != 2 || eff[0].FirstPass != 0 {
+	if err != nil || len(eff) != 1 || eff[0].AgentID != atlas.ID || eff[0].Delegations != 3 || eff[0].RepairLoops != 2 || eff[0].FirstPass != 0 {
 		t.Fatalf("efficiency %+v (%v)", eff, err)
 	}
 
@@ -276,9 +276,9 @@ func TestDelegationToSubagents(t *testing.T) {
 	}
 }
 
-// A sub agent that can't write is refused allowed_paths, is told it's read-only
-// in its first prompt, and the lead learns it from the delegation.
-func TestDelegateToReadOnlySubagent(t *testing.T) {
+// A read-only copy is refused allowed_paths, runs without repo:write, is told
+// it's read-only in its first prompt, and the lead learns it from the delegation.
+func TestDelegateReadOnlyCopy(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
 	if _, err := seed.Run(ctx, pool, seed.Options{Demo: true}); err != nil {
@@ -288,11 +288,6 @@ func TestDelegateToReadOnlySubagent(t *testing.T) {
 	me, _ := q.GetLocalUser(ctx)
 	ws := me.WorkspaceID
 	svc := &runs.Service{Pool: pool, Tracker: &tracker.Service{Pool: pool}, Artifacts: &artifacts.Service{Pool: pool}, Poll: 20 * time.Millisecond}
-	spec := agents.DefaultSpec()
-	spec.Scopes["repo:write"] = agentdef.Denied
-	if _, err := (&agents.Service{Pool: pool}).Create(ctx, ws, me.ID, "critic", agents.Identity{Name: "Critic", Role: "Review", Kind: agents.KindSub}, &spec); err != nil {
-		t.Fatal(err)
-	}
 	runsOut, err := svc.Dispatch(ctx, ws, me.ID, []string{"PAY-214"})
 	if err != nil {
 		t.Fatal(err)
@@ -315,22 +310,25 @@ func TestDelegateToReadOnlySubagent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	subs, err := svc.ListSubagents(ctx, main)
-	if err != nil || len(subs) != 1 || subs[0].CanWrite() || subs[0].Unavailable != "" {
-		t.Fatalf("subagents = %+v, %v", subs, err)
+	if spec, _ := runs.Spec(parent); spec.Mode("repo:write") != agentdef.Allowed {
+		t.Fatalf("the lead can't write: %v", spec.Mode("repo:write"))
 	}
 
-	_, err = svc.DelegateWithContract(ctx, main, "", "critic", "Review the diff", runs.Contract{AllowedPaths: []string{"docs/review.md"}})
-	if !isInvalid(err) || !strings.Contains(err.Error(), "@critic can't change files (repo:write is denied)") {
-		t.Fatalf("allowed_paths to a read-only sub agent: %v", err)
+	_, err = svc.DelegateWithContract(ctx, main, "", "Review the diff", runs.Contract{ReadOnly: true, AllowedPaths: []string{"docs/review.md"}})
+	if !isInvalid(err) || !strings.Contains(err.Error(), "the copy can't change files (repo:write is denied)") {
+		t.Fatalf("allowed_paths to a read-only copy: %v", err)
 	}
-	d, err := svc.Delegate(ctx, main, "", "critic", "Review the diff")
+	d, err := svc.DelegateWithContract(ctx, main, "", "Review the diff", runs.Contract{ReadOnly: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !d.ReadOnly {
 		t.Fatalf("delegation not marked read-only: %+v", d)
+	}
+	spec, _ := runs.Spec(d.Run)
+	var stored runs.Contract
+	if spec.Mode("repo:write") != agentdef.Denied || json.Unmarshal(d.Run.Contract, &stored) != nil || !stored.ReadOnly {
+		t.Fatalf("read-only copy: repo:write %v, contract %s", spec.Mode("repo:write"), d.Run.Contract)
 	}
 	turns, _ := q.ListTurns(ctx, d.Run.ID)
 	if len(turns) != 1 || !strings.Contains(turns[0].InputMessage, "You can't change files in this run (repo:write is not allowed)") {

@@ -40,15 +40,6 @@ func (s *spyBackend) RemoveWorkspace(ctx context.Context, runID string) error {
 	return s.Backend.RemoveWorkspace(ctx, runID)
 }
 
-func (e env) subagent(handle string) store.Agent {
-	e.t.Helper()
-	a, err := (&agents.Service{Pool: e.pool}).Create(e.ctx, e.ws, e.me.ID, handle, agents.Identity{Name: handle, Role: "Dev", Kind: agents.KindSub}, nil)
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	return a
-}
-
 func script(t *testing.T, v any) string {
 	t.Helper()
 	b, err := json.Marshal(v)
@@ -109,15 +100,13 @@ func spy(e env) *spyBackend {
 func TestParallelDelegationMergesBothChildren(t *testing.T) {
 	e := setup(t)
 	sp := spy(e)
-	e.subagent("scribe")
-	e.subagent("tester")
 	syncDir, logPath := t.TempDir(), filepath.Join(t.TempDir(), "log.jsonl")
 	t.Setenv("FAKE_HARNESS_MODE", "delegate_script")
 	t.Setenv("FAKE_HARNESS_SYNC", syncDir) // each child waits until both are running at once
 	t.Setenv("FAKE_HARNESS_LOG", logPath)
 	t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{
-		{"agent": "scribe", "task": "Write FILE=docs/a.txt", "allowed_paths": []string{"docs/"}, "test_command": "test -f docs/a.txt"},
-		{"agent": "tester", "task": "Write FILE=src/b.txt", "allowed_paths": []string{"src/"}},
+		{"task": "Write FILE=docs/a.txt", "allowed_paths": []string{"docs/"}, "test_command": "test -f docs/a.txt"},
+		{"task": "Write FILE=src/b.txt", "allowed_paths": []string{"src/"}},
 	}))
 	e.dispatch("PAY-214")
 	e.until("completed", e.state("PAY-214=completed"))
@@ -135,7 +124,7 @@ func TestParallelDelegationMergesBothChildren(t *testing.T) {
 	if len(turns) != 2 || turns[1].Trigger != "delegation" || !strings.Contains(turns[1].InputMessage, "2 delegated runs have ended") {
 		t.Fatalf("parent turns %+v", turns)
 	}
-	if !strings.HasPrefix(outcome, "RESUMED") || strings.Count(outcome, "**MERGED**") != 2 || !strings.Contains(outcome, "@scribe") || !strings.Contains(outcome, "@tester") {
+	if !strings.HasPrefix(outcome, "RESUMED") || strings.Count(outcome, "**MERGED**") != 2 || !strings.Contains(outcome, "@atlas") {
 		t.Fatalf("resume report:\n%s", outcome)
 	}
 	for _, want := range []string{"docs/a.txt", "src/b.txt", "Merge commit"} {
@@ -149,7 +138,7 @@ func TestParallelDelegationMergesBothChildren(t *testing.T) {
 		if k.State != "completed" || !c.Merged || !c.Passed || c.Branch != ct.Branch || ct.Worktree != ".lazyagents/worktrees/"+k.ID.String() || ct.BaseSHA == "" || len(ct.BaseUncommitted) != 0 {
 			t.Fatalf("child %s: checks %s contract %s", k.State, k.Checks, k.Contract)
 		}
-		if !strings.Contains(ct.Branch, "--") || !strings.HasSuffix(ct.Branch, "-"+k.ID.String()[:8]) {
+		if !strings.Contains(ct.Branch, "--") || !strings.HasSuffix(ct.Branch, "-"+runs.ShortRunID(k.ID)) {
 			t.Fatalf("branch %q", ct.Branch)
 		}
 		branches[ct.Branch] = true
@@ -193,13 +182,11 @@ func TestParallelDelegationIntegration(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			e := setup(t)
 			sp := spy(e)
-			e.subagent("scribe")
-			e.subagent("tester")
 			t.Setenv("FAKE_HARNESS_MODE", "delegate_script")
 			t.Setenv("FAKE_HARNESS_SYNC", t.TempDir())
 			t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{
-				{"agent": "scribe", "task": "Write FILE=docs/a.txt", "allowed_paths": []string{"docs/"}, "test_command": "test -f docs/a.txt"},
-				{"agent": "tester", "task": "Write FILE=src/b.txt", "allowed_paths": []string{"src/"}, "test_command": tc.testerCmd},
+				{"task": "Write FILE=docs/a.txt", "allowed_paths": []string{"docs/"}, "test_command": "test -f docs/a.txt"},
+				{"task": "Write FILE=src/b.txt", "allowed_paths": []string{"src/"}, "test_command": tc.testerCmd},
 			}))
 			e.dispatch("PAY-214")
 			e.until("completed", e.state("PAY-214=completed"))
@@ -243,10 +230,9 @@ func TestParallelDelegationIntegration(t *testing.T) {
 func TestFailedChecksLeaveBranchUnmerged(t *testing.T) {
 	e := setup(t)
 	sp := spy(e)
-	e.subagent("scribe")
 	t.Setenv("FAKE_HARNESS_MODE", "delegate_script")
 	t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{
-		{"agent": "scribe", "task": "Write FILE=src/oops.txt", "allowed_paths": []string{"docs/"}},
+		{"task": "Write FILE=src/oops.txt", "allowed_paths": []string{"docs/"}},
 	}))
 	e.dispatch("PAY-214")
 	e.until("completed", e.state("PAY-214=completed"))
@@ -270,11 +256,10 @@ func TestFailedChecksLeaveBranchUnmerged(t *testing.T) {
 
 func TestMergeConflictIsAbortedAndReported(t *testing.T) {
 	e := setup(t)
-	e.subagent("scribe")
 	hold := filepath.Join(t.TempDir(), "release")
 	t.Setenv("FAKE_HARNESS_MODE", "delegate_script")
 	t.Setenv("FAKE_HARNESS_HOLD", hold)
-	t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{{"agent": "scribe", "task": "Write FILE=shared.txt"}}))
+	t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{{"task": "Write FILE=shared.txt"}}))
 	e.dispatch("PAY-214")
 	// Tick without waiting: the child blocks until released.
 	for i := 0; ; i++ {
@@ -322,10 +307,9 @@ func TestMergeConflictIsAbortedAndReported(t *testing.T) {
 
 func TestDirtyParentCheckoutRejectsDelegation(t *testing.T) {
 	e := setup(t)
-	e.subagent("scribe")
 	t.Setenv("FAKE_HARNESS_MODE", "delegate_script")
 	t.Setenv("FAKE_HARNESS_DIRTY", "1")
-	t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{{"agent": "scribe", "task": "Write FILE=docs/a.txt"}}))
+	t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{{"task": "Write FILE=docs/a.txt"}}))
 	e.dispatch("PAY-214")
 	e.until("completed", e.state("PAY-214=completed"))
 	parent := e.run("PAY-214")
@@ -349,12 +333,13 @@ func TestContinuedRunIsBilledOnlyForItsOwnUsage(t *testing.T) {
 			if h == agentdef.HarnessCodex {
 				sp.Model = "gpt-5-codex" // has a built-in price
 			}
-			if _, err := (&agents.Service{Pool: e.pool}).Create(e.ctx, e.ws, e.me.ID, "scribe", agents.Identity{Name: "scribe", Role: "Dev", Kind: agents.KindSub}, &sp); err != nil {
+			// Delegated runs are copies of the lead, so the lead runs on h.
+			if _, err := (&agents.Service{Pool: e.pool}).SaveDefinition(e.ctx, e.ws, e.me.ID, "atlas", agents.Identity{Name: e.atlas.Name, Role: e.atlas.Role, Specialty: e.atlas.Specialty, ColorIndex: int(e.atlas.ColorIndex)}, sp, ""); err != nil {
 				t.Fatal(err)
 			}
 			t.Setenv("FAKE_HARNESS_MODE", "delegate_script")
-			t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{{"agent": "scribe", "task": "Write FILE=docs/a.txt", "allowed_paths": []string{"docs/"}}}))
-			t.Setenv("FAKE_HARNESS_ROUND2", script(t, []args{{"agent": "scribe", "task": "Fix it: FILE=docs/b.txt", "allowed_paths": []string{"docs/"}, "continue_run_id": "$1"}}))
+			t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{{"task": "Write FILE=docs/a.txt", "allowed_paths": []string{"docs/"}}}))
+			t.Setenv("FAKE_HARNESS_ROUND2", script(t, []args{{"task": "Fix it: FILE=docs/b.txt", "allowed_paths": []string{"docs/"}, "continue_run_id": "$1"}}))
 			e.dispatch("PAY-214")
 			e.until("completed", e.state("PAY-214=completed"))
 			kids := e.children(e.run("PAY-214"))
@@ -375,15 +360,14 @@ func TestContinueRunReusesWorktreeAndSession(t *testing.T) {
 	for name, reject := range map[string]bool{"resumes the session": false, "falls back to a fresh session": true} {
 		t.Run(name, func(t *testing.T) {
 			e := setup(t)
-			e.subagent("scribe")
 			logPath := filepath.Join(t.TempDir(), "log.jsonl")
 			t.Setenv("FAKE_HARNESS_MODE", "delegate_script")
 			t.Setenv("FAKE_HARNESS_LOG", logPath)
 			if reject {
 				t.Setenv("FAKE_HARNESS_REJECT_RESUME", "1")
 			}
-			t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{{"agent": "scribe", "task": "Write FILE=docs/a.txt", "allowed_paths": []string{"docs/"}}}))
-			t.Setenv("FAKE_HARNESS_ROUND2", script(t, []args{{"agent": "scribe", "task": "Fix it: FILE=docs/b.txt", "allowed_paths": []string{"docs/"}, "continue_run_id": "$1"}}))
+			t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{{"task": "Write FILE=docs/a.txt", "allowed_paths": []string{"docs/"}}}))
+			t.Setenv("FAKE_HARNESS_ROUND2", script(t, []args{{"task": "Fix it: FILE=docs/b.txt", "allowed_paths": []string{"docs/"}, "continue_run_id": "$1"}}))
 			e.dispatch("PAY-214")
 			e.until("completed", e.state("PAY-214=completed"))
 			parent := e.run("PAY-214")
@@ -441,7 +425,6 @@ func TestContinuedRunIsToldWhichCommitsChanged(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			moved := mode == "moved"
 			e := setup(t)
-			e.subagent("scribe")
 			logPath := filepath.Join(t.TempDir(), "log.jsonl")
 			t.Setenv("FAKE_HARNESS_MODE", "delegate_script")
 			t.Setenv("FAKE_HARNESS_LOG", logPath)
@@ -465,8 +448,8 @@ func TestContinuedRunIsToldWhichCommitsChanged(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{{"agent": "scribe", "task": first, "allowed_paths": []string{"docs/"}}}))
-			t.Setenv("FAKE_HARNESS_ROUND2", script(t, []args{{"agent": "scribe", "task": "Fix it: FILE=docs/b.txt", "allowed_paths": []string{"docs/"}, "continue_run_id": "$1"}}))
+			t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{{"task": first, "allowed_paths": []string{"docs/"}}}))
+			t.Setenv("FAKE_HARNESS_ROUND2", script(t, []args{{"task": "Fix it: FILE=docs/b.txt", "allowed_paths": []string{"docs/"}, "continue_run_id": "$1"}}))
 			e.dispatch("PAY-214")
 			e.until("completed", e.state("PAY-214=completed"))
 			parent := e.run("PAY-214")
@@ -549,11 +532,10 @@ func releaseFile(t *testing.T, path string) {
 
 func TestPausedParentChecksAndMergesAfterResume(t *testing.T) {
 	e := setup(t)
-	e.subagent("scribe")
 	hold := filepath.Join(t.TempDir(), "release")
 	t.Setenv("FAKE_HARNESS_MODE", "delegate_script")
 	t.Setenv("FAKE_HARNESS_HOLD", hold)
-	t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{{"agent": "scribe", "task": "Write FILE=docs/a.txt"}}))
+	t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{{"task": "Write FILE=docs/a.txt"}}))
 	e.dispatch("PAY-214")
 	e.tickUntil("held child", func() bool { _, err := os.Stat(hold + ".started"); return err == nil })
 	parent := e.run("PAY-214")
@@ -582,11 +564,10 @@ func TestPausedParentChecksAndMergesAfterResume(t *testing.T) {
 
 func TestDelegationWaitsForChildProcessExit(t *testing.T) {
 	e := setup(t)
-	e.subagent("scribe")
 	hold := filepath.Join(t.TempDir(), "linger")
 	t.Setenv("FAKE_HARNESS_MODE", "delegate_script")
 	t.Setenv("FAKE_HARNESS_LINGER", hold)
-	t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{{"agent": "scribe", "task": "Write FILE=docs/a.txt"}}))
+	t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{{"task": "Write FILE=docs/a.txt"}}))
 	e.dispatch("PAY-214")
 	e.tickUntil("completed child still running", func() bool { _, err := os.Stat(hold + ".started"); return err == nil })
 	parent := e.run("PAY-214")
@@ -613,11 +594,10 @@ func TestDelegationWaitsForChildProcessExit(t *testing.T) {
 
 func TestQueuedChildDoesNotOccupyRunnerSlotWhileParentRuns(t *testing.T) {
 	e := setup(t)
-	e.subagent("scribe")
 	hold := filepath.Join(t.TempDir(), "parent")
 	t.Setenv("FAKE_HARNESS_MODE", "delegate_script")
 	t.Setenv("FAKE_HARNESS_PARENT_HOLD", hold)
-	t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{{"agent": "scribe", "task": "Write FILE=docs/a.txt"}}))
+	t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{{"task": "Write FILE=docs/a.txt"}}))
 	e.dispatch("PAY-214")
 	e.tickUntil("held parent", func() bool { _, err := os.Stat(hold + ".started"); return err == nil })
 	parent := e.run("PAY-214")
@@ -646,14 +626,12 @@ func TestQueuedChildDoesNotOccupyRunnerSlotWhileParentRuns(t *testing.T) {
 
 func TestDelegationReportReplaysStoredChecks(t *testing.T) {
 	e := setup(t)
-	e.subagent("scribe")
-	e.subagent("tester")
 	hold := filepath.Join(t.TempDir(), "release")
 	t.Setenv("FAKE_HARNESS_MODE", "delegate_script")
 	t.Setenv("FAKE_HARNESS_HOLD", hold)
 	t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{
-		{"agent": "scribe", "task": "Write FILE=docs/a.txt", "allowed_paths": []string{"docs/"}},
-		{"agent": "tester", "task": "Write FILE=src/b.txt", "allowed_paths": []string{"src/"}},
+		{"task": "Write FILE=docs/a.txt", "allowed_paths": []string{"docs/"}},
+		{"task": "Write FILE=src/b.txt", "allowed_paths": []string{"src/"}},
 	}))
 	e.dispatch("PAY-214")
 	e.tickUntil("two held children", func() bool {
@@ -717,9 +695,8 @@ func TestDelegationReportReplaysStoredChecks(t *testing.T) {
 
 func TestMergeUsesCheckedCommit(t *testing.T) {
 	e := setup(t)
-	e.subagent("scribe")
 	t.Setenv("FAKE_HARNESS_MODE", "delegate_script")
-	t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{{"agent": "scribe", "task": "Write FILE=docs/a.txt", "test_command": "git commit --allow-empty -q -m 'Unchecked commit'"}}))
+	t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{{"task": "Write FILE=docs/a.txt", "test_command": "git commit --allow-empty -q -m 'Unchecked commit'"}}))
 	e.dispatch("PAY-214")
 	e.until("completed", e.state("PAY-214=completed"))
 	parent := e.run("PAY-214")
@@ -736,11 +713,10 @@ func TestMergeUsesCheckedCommit(t *testing.T) {
 
 func TestChildCancelledBeforeParentProcessExits(t *testing.T) {
 	e := setup(t)
-	e.subagent("scribe")
 	hold := filepath.Join(t.TempDir(), "parent")
 	t.Setenv("FAKE_HARNESS_MODE", "delegate_script")
 	t.Setenv("FAKE_HARNESS_PARENT_HOLD", hold)
-	t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{{"agent": "scribe", "task": "Write FILE=docs/a.txt"}}))
+	t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{{"task": "Write FILE=docs/a.txt"}}))
 	e.dispatch("PAY-214")
 	e.tickUntil("held parent", func() bool { _, err := os.Stat(hold + ".started"); return err == nil })
 	parent := e.run("PAY-214")
@@ -748,7 +724,7 @@ func TestChildCancelledBeforeParentProcessExits(t *testing.T) {
 	if _, err := e.runs.SetRunControl(e.ctx, e.ws, e.me.ID, child.ID, "cancel"); err != nil {
 		t.Fatal(err)
 	}
-	_, err := e.runs.Delegate(e.ctx, agents.Caller{Agent: e.atlas, Kind: "run", RunID: &parent.ID}, "", "scribe", "another task")
+	_, err := e.runs.Delegate(e.ctx, agents.Caller{Agent: e.atlas, Kind: "run", RunID: &parent.ID}, "", "another task")
 	if err == nil || !strings.Contains(err.Error(), "end your turn to read their report") {
 		t.Fatalf("delegate after child ended: %v", err)
 	}
@@ -778,13 +754,12 @@ func rolloverWake(t *testing.T, limit int64, tokens string) (env, store.Run, map
 	t.Helper()
 	e := setup(t)
 	e.runner.Cfg.RolloverContextTokens = limit
-	e.subagent("scribe")
 	logPath := filepath.Join(t.TempDir(), "log.jsonl")
 	t.Setenv("FAKE_HARNESS_MODE", "delegate_script")
 	t.Setenv("FAKE_HARNESS_LOG", logPath)
 	t.Setenv("FAKE_HARNESS_CONTEXT_TOKENS", tokens)
 	t.Setenv("FAKE_HARNESS_PLAN", "Delegate the doc|Review the result")
-	t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{{"agent": "scribe", "task": "Write FILE=docs/a.txt with the release notes",
+	t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{{"task": "Write FILE=docs/a.txt with the release notes",
 		"acceptance_criteria": []string{"docs/a.txt exists"}, "allowed_paths": []string{"docs/"}, "test_command": "test -f docs/a.txt"}}))
 	e.dispatch("PAY-214")
 	e.until("completed", e.state("PAY-214=completed"))
@@ -815,7 +790,7 @@ func TestLargeLeadRollsOverAtDelegationWake(t *testing.T) {
 		"## Acceptance criteria", // the ticket's, from the run brief
 		"## Plan", "Delegate the doc", "Review the result",
 		"## Git", "Branch: ",
-		"## What you delegated", "@scribe", "Write FILE=docs/a.txt with the release notes", "- docs/a.txt exists", "Test command: `test -f docs/a.txt`",
+		"## What you delegated", "@atlas", "Write FILE=docs/a.txt with the release notes", "- docs/a.txt exists", "Test command: `test -f docs/a.txt`",
 		"## Delegation report", "## Automated checks", "**MERGED**",
 	} {
 		if !strings.Contains(p, want) {

@@ -17,10 +17,9 @@ func TestReviewReproRecheckClearsDone(t *testing.T) {
 	}{{"covers all", true}, {"partial", false}} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := setup(t)
-			e.subagent("critic")
 			t.Setenv("FAKE_HARNESS_MODE", "delegate_script")
 			t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{
-				{"agent": "critic", "task": "Review the change. FILE=checks/fix_test.sh", "allowed_paths": []string{"*_test.sh"}},
+				{"task": "Review the change. FILE=checks/fix_test.sh", "allowed_paths": []string{"*_test.sh"}},
 			}))
 			t.Setenv("FAKE_HARNESS_CHILD_REPRO", "test -f checks/fix_test.sh && grep -q fixed app.txt")
 			if tc.coversAll {
@@ -60,10 +59,9 @@ func TestReviewReproRecheckClearsDone(t *testing.T) {
 // branch is not merged and the main agent is told why.
 func TestPassingReproIsNotMerged(t *testing.T) {
 	e := setup(t)
-	e.subagent("critic")
 	t.Setenv("FAKE_HARNESS_MODE", "delegate_script")
 	t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{
-		{"agent": "critic", "task": "Review the change. FILE=checks/fix_test.sh", "allowed_paths": []string{"*_test.sh"}},
+		{"task": "Review the change. FILE=checks/fix_test.sh", "allowed_paths": []string{"*_test.sh"}},
 	}))
 	t.Setenv("FAKE_HARNESS_CHILD_REPRO", "true")
 	e.dispatch("PAY-214")
@@ -93,10 +91,9 @@ func TestRecheckRefusesDirtyOrEditedTests(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := setup(t)
-			e.subagent("critic")
 			t.Setenv("FAKE_HARNESS_MODE", "delegate_script")
 			t.Setenv("FAKE_HARNESS_DELEGATIONS", script(t, []args{
-				{"agent": "critic", "task": "Review the change. FILE=checks/fix_test.sh", "allowed_paths": []string{"*_test.sh"}},
+				{"task": "Review the change. FILE=checks/fix_test.sh", "allowed_paths": []string{"*_test.sh"}},
 			}))
 			t.Setenv("FAKE_HARNESS_CHILD_REPRO", tc.repro)
 			t.Setenv("FAKE_HARNESS_CHILD_COVERS_ALL", "1")

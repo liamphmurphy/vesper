@@ -81,7 +81,7 @@ func (r *Runner) prepareWorktree(ctx context.Context, c runCtx, env map[string]s
 	}
 	if contract.Worktree == "" {
 		contract.Worktree = worktreesDir + "/" + c.run.ID.String()
-		contract.Branch = fmt.Sprintf("%s--%s-%s", parentBranch, c.agent.Handle, c.run.ID.String()[:8])
+		contract.Branch = fmt.Sprintf("%s--%s-%s", parentBranch, c.agent.Handle, runs.ShortRunID(c.run.ID))
 	}
 	wt, br, pb := shellQuote(contract.Worktree), shellQuote(contract.Branch), shellQuote(parentBranch)
 	script := `set -eu

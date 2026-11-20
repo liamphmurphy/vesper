@@ -117,7 +117,6 @@ func TestNewRunSkipsLimitedHarness(t *testing.T) {
 
 func TestDelegatedChildSkipsLimitedHarness(t *testing.T) {
 	e := setup(t)
-	e.subagent("scribe")
 	logPath := filepath.Join(t.TempDir(), "log.jsonl")
 	t.Setenv("FAKE_HARNESS_LOG", logPath)
 	t.Setenv("FAKE_HARNESS_MODE", "delegate")

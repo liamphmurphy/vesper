@@ -620,14 +620,14 @@ func epicReviewSection(r *agentdef.Repository) string {
 // testServices says where tests get the services they need, for every run that tests.
 const testServices = "If `TEST_DATABASE_URL` is set, database tests use it: don't start your own database. If `DOCKER_HOST` is set, start what your tests need that isn't installed (a database, a queue, a cloud emulator) with `docker` or Testcontainers: containers run sandboxed (no host mounts, privileges or host network), their published ports are reachable at `$TESTCONTAINERS_HOST_OVERRIDE`, and everything is removed when the turn ends. If `VESPER_MACOS` is set, `mac COMMAND` runs a command in a macOS VM for what Linux can't build or test (Swift with AppKit or SwiftUI, `xcodebuild`, e.g. `mac make -C macos mac-test`): it mirrors your git checkout there first, runs in the matching directory and exits with the command's code. The first `mac` in a run boots macOS, which can take a minute or two, so give it a long timeout; the VM has no network, and `mac --help` lists its options."
 
-// delegationSection tells a main agent it can hand work to sub agents.
+// delegationSection tells a lead it can hand work to fresh copies of itself.
 func delegationSection(spec agentdef.Resolved) string {
 	checks := "allowed_paths and test_command"
 	if r := spec.Repository; r != nil && r.EpicBranch != "" && !r.EpicReview {
 		checks = "allowed_paths and a test_command running only the tests over that slice (the full suite runs in the epic review)"
 	}
 	return fmt.Sprintf("Before finishing, verify every acceptance criterion against evidence and call check_criterion only when satisfied. If anything is missing, implement it yourself or delegate a substantial independent slice. Commit and push changes, record the PR with set_pr, and complete_run(status=done). Use await_human or request_approval for a person; status=todo hands back unfinished work.\n\n"+
-		"Only when delegation is justified, use list_subagents then delegate with acceptance_criteria, %s. Commit first. Each child gets a worktree; the server checks and merges successful results. Up to %d children may run in parallel on disjoint paths. End your turn after delegating. Review the returned diff, reuse passing checks, and use continue_run_id for follow-up fixes.\n\n", checks, runs.MaxParallelDelegations)
+		"Only when delegation is justified, delegate a slice to a fresh copy of yourself with acceptance_criteria, %s (read_only for a review). Commit first. Each child gets a worktree; the server checks and merges successful results. Up to %d children may run in parallel on disjoint paths. End your turn after delegating. Review the returned diff, reuse passing checks, and use continue_run_id for follow-up fixes.\n\n", checks, runs.MaxParallelDelegations)
 }
 
 // UsageLimit reports provider exhaustion from an error, never ordinary tool output.
