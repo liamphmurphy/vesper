@@ -37,6 +37,7 @@ type AppSummary struct {
 	CurrentSeq   int32         `json:"current_seq"`
 	Manifest     Manifest      `json:"manifest"`
 	Capabilities Capabilities  `json:"capabilities"`
+	Mounts       Mounts        `json:"mounts"`
 	DBSizeBytes  int32         `json:"db_size_bytes"`
 	HasMCPServer bool          `json:"has_mcp_server"`
 	MCPTools     []MCPToolSpec `json:"mcp_tools,omitempty"`
@@ -54,6 +55,7 @@ type MCPServerApp struct {
 	Description  string
 	Manifest     Manifest
 	Capabilities Capabilities
+	Mounts       Mounts
 	CurrentSeq   int32
 	BundleMCPJS  string
 	Tools        []MCPToolSpec
@@ -91,6 +93,7 @@ type CreateInput struct {
 	Manifest     *Manifest
 	Files        map[string]string
 	Capabilities Capabilities
+	Mounts       Mounts
 	Note         string
 	AuthorType   string
 	AgentID      *uuid.UUID
@@ -107,6 +110,7 @@ type UpdateInput struct {
 	// Edits are find/replace changes applied after Files and RemoveFiles.
 	Edits        []FileEdit
 	Capabilities Capabilities
+	Mounts       *Mounts
 	Note         string
 	RestoreSeq   *int32
 	AuthorType   string
@@ -134,6 +138,7 @@ func (s *Service) List(ctx context.Context, ws, userID uuid.UUID) ([]AppSummary,
 			CurrentSeq:   r.CurrentSeq,
 			Manifest:     decodeManifest(r.Manifest),
 			Capabilities: decodeCapabilities(r.Capabilities),
+			Mounts:       decodeMounts(r.Mounts),
 			DBSizeBytes:  dbSize,
 			HasMCPServer: r.HasMcpServer,
 			MCPTools:     decodeMCPTools(r.McpTools),
@@ -202,6 +207,7 @@ func (s *Service) Get(ctx context.Context, ws, userID uuid.UUID, slug string) (A
 			CurrentSeq:   app.CurrentSeq,
 			Manifest:     decodeManifest(app.Manifest),
 			Capabilities: decodeCapabilities(app.Capabilities),
+			Mounts:       decodeMounts(app.Mounts),
 			DBSizeBytes:  dbSize,
 			HasMCPServer: app.HasMcpServer,
 			MCPTools:     decodeMCPTools(app.McpTools),
@@ -319,6 +325,9 @@ func (s *Service) Create(ctx context.Context, ws, userID uuid.UUID, in CreateInp
 			if len(in.Manifest.RequestedCapabilities) > 0 {
 				manifest.RequestedCapabilities = in.Manifest.RequestedCapabilities
 			}
+			if len(in.Manifest.RequestedMounts) > 0 {
+				manifest.RequestedMounts = in.Manifest.RequestedMounts
+			}
 		}
 	}
 	manifest, err = NormalizeManifest(manifest, files)
@@ -334,6 +343,13 @@ func (s *Service) Create(ctx context.Context, ws, userID uuid.UUID, in CreateInp
 		}
 	} else {
 		caps = DefaultCapabilities(manifest.RequestedCapabilities)
+	}
+	mounts := Mounts{}
+	if in.Mounts != nil {
+		mounts, err = NormalizeMounts(in.Mounts)
+		if err != nil {
+			return AppDetail{}, err
+		}
 	}
 
 	authorType := in.AuthorType
@@ -359,6 +375,10 @@ func (s *Service) Create(ctx context.Context, ws, userID uuid.UUID, in CreateInp
 		return AppDetail{}, err
 	}
 	capsJSON, err := json.Marshal(caps)
+	if err != nil {
+		return AppDetail{}, err
+	}
+	mountsJSON, err := json.Marshal(mounts)
 	if err != nil {
 		return AppDetail{}, err
 	}
@@ -392,6 +412,7 @@ func (s *Service) Create(ctx context.Context, ws, userID uuid.UUID, in CreateInp
 			CurrentSeq:   1,
 			Manifest:     manifestJSON,
 			Capabilities: capsJSON,
+			Mounts:       mountsJSON,
 		})
 		if err != nil {
 			var pgErr *pgconn.PgError
@@ -484,6 +505,24 @@ func (s *Service) Update(ctx context.Context, ws, userID uuid.UUID, slug string,
 		if in.Capabilities != nil {
 			curCaps, err = NormalizeCapabilities(in.Capabilities)
 			if err != nil {
+				return err
+			}
+		}
+		if in.Mounts != nil {
+			normMounts, err := NormalizeMounts(*in.Mounts)
+			if err != nil {
+				return err
+			}
+			mBytes, err := json.Marshal(normMounts)
+			if err != nil {
+				return err
+			}
+			if _, err := q.UpdateCustomAppMounts(ctx, store.UpdateCustomAppMountsParams{
+				WorkspaceID: ws,
+				Mounts:      mBytes,
+				UserID:      userID,
+				Slug:        slug,
+			}); err != nil {
 				return err
 			}
 		}
@@ -669,6 +708,30 @@ func (s *Service) SetCapabilities(ctx context.Context, ws, userID uuid.UUID, slu
 	return decodeCapabilities(row.Capabilities), nil
 }
 
+func (s *Service) SetMounts(ctx context.Context, ws, userID uuid.UUID, slug string, mounts Mounts) (Mounts, error) {
+	norm, err := NormalizeMounts(mounts)
+	if err != nil {
+		return nil, err
+	}
+	b, err := json.Marshal(norm)
+	if err != nil {
+		return nil, err
+	}
+	row, err := store.New(s.Pool).UpdateCustomAppMounts(ctx, store.UpdateCustomAppMountsParams{
+		WorkspaceID: ws,
+		Mounts:      b,
+		UserID:      userID,
+		Slug:        slug,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apperr.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return decodeMounts(row.Mounts), nil
+}
+
 func (s *Service) Delete(ctx context.Context, ws, userID uuid.UUID, slug string) error {
 	var media []store.ListCustomAppMediaBlobKeysRow
 	err := pgx.BeginTxFunc(ctx, s.Pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
@@ -725,6 +788,7 @@ func (s *Service) ListMCPServers(ctx context.Context, ws, userID uuid.UUID) ([]M
 			Description:  r.Description,
 			Manifest:     decodeManifest(r.Manifest),
 			Capabilities: decodeCapabilities(r.Capabilities),
+			Mounts:       decodeMounts(r.Mounts),
 			CurrentSeq:   r.CurrentSeq,
 			BundleMCPJS:  r.BundleMcpJs,
 			Tools:        decodeMCPTools(r.McpTools),
@@ -745,7 +809,7 @@ func (s *Service) GetMCPServer(ctx context.Context, ws, userID uuid.UUID, slug s
 	if err != nil {
 		return MCPServerApp{}, err
 	}
-	return mcpServerFromRow(row.ID, row.WorkspaceID, row.UserID, row.Slug, row.Name, row.Description, row.Manifest, row.Capabilities, row.CurrentSeq, row.BundleMcpJs, row.McpTools), nil
+	return mcpServerFromRow(row.ID, row.WorkspaceID, row.UserID, row.Slug, row.Name, row.Description, row.Manifest, row.Capabilities, row.Mounts, row.CurrentSeq, row.BundleMcpJs, row.McpTools), nil
 }
 
 func (s *Service) GetMCPServerByID(ctx context.Context, ws, userID, id uuid.UUID) (MCPServerApp, error) {
@@ -760,10 +824,10 @@ func (s *Service) GetMCPServerByID(ctx context.Context, ws, userID, id uuid.UUID
 	if err != nil {
 		return MCPServerApp{}, err
 	}
-	return mcpServerFromRow(row.ID, row.WorkspaceID, row.UserID, row.Slug, row.Name, row.Description, row.Manifest, row.Capabilities, row.CurrentSeq, row.BundleMcpJs, row.McpTools), nil
+	return mcpServerFromRow(row.ID, row.WorkspaceID, row.UserID, row.Slug, row.Name, row.Description, row.Manifest, row.Capabilities, row.Mounts, row.CurrentSeq, row.BundleMcpJs, row.McpTools), nil
 }
 
-func mcpServerFromRow(id, ws, userID uuid.UUID, slug, name, desc string, manifest, caps json.RawMessage, seq int32, bundle string, tools json.RawMessage) MCPServerApp {
+func mcpServerFromRow(id, ws, userID uuid.UUID, slug, name, desc string, manifest, caps, mounts json.RawMessage, seq int32, bundle string, tools json.RawMessage) MCPServerApp {
 	return MCPServerApp{
 		ID:           id,
 		WorkspaceID:  ws,
@@ -773,6 +837,7 @@ func mcpServerFromRow(id, ws, userID uuid.UUID, slug, name, desc string, manifes
 		Description:  desc,
 		Manifest:     decodeManifest(manifest),
 		Capabilities: decodeCapabilities(caps),
+		Mounts:       decodeMounts(mounts),
 		CurrentSeq:   seq,
 		BundleMCPJS:  bundle,
 		Tools:        decodeMCPTools(tools),

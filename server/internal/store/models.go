@@ -632,6 +632,7 @@ type CustomApp struct {
 	Capabilities json.RawMessage
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+	Mounts       json.RawMessage
 }
 
 type CustomAppDatabase struct {
@@ -653,6 +654,21 @@ type CustomAppMedium struct {
 	Error       string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+}
+
+type CustomAppNixJob struct {
+	ID        uuid.UUID
+	AppID     uuid.UUID
+	Packages  []string
+	Command   string
+	State     string
+	ExitCode  *int32
+	WorkDir   string
+	Stdout    string
+	Stderr    string
+	Error     string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type CustomAppVersion struct {
