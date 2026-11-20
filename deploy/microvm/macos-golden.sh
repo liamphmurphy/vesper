@@ -10,7 +10,7 @@
 # Vesper picks the image up on its next start (RUNNER_MACOS_IMAGE_DIR overrides
 # where it looks).
 #
-# Needs: tart and sshpass (brew install cirruslabs/cli/tart cirruslabs/cli/sshpass),
+# Needs: tart and sshpass (brew install openai/tools/tart sshpass),
 # Go, and ~60 GB free. VESPER_MACOS_SOURCE picks the Tart image
 # (default ghcr.io/cirruslabs/macos-sequoia-xcode:latest, whose account is
 # admin/admin; set VESPER_MACOS_SSH_USER/VESPER_MACOS_SSH_PASSWORD for others).
