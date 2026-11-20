@@ -182,10 +182,18 @@ func (s *Service) StartChatAsideWith(ctx context.Context, ws, user, parentID uui
 			if anchor == nil && (parent.State != "running" || parent.CurrentRunID == nil) {
 				return apperr.Conflict("nothing is running: send it as a message instead")
 			}
+			// An aside has no checkout of its own (NoRepo), so the parent's code
+			// changes reach it only here: the branch diff the runner keeps live
+			// while the reply runs, else a thread's anchored message's changes.
+			var reviews []store.ChatCodeReview
+			if reviews, err = loadSecondOpinionReviews(ctx, q, parent, ""); err != nil {
+				return err
+			}
+			diff := formatSecondOpinionDiff(reviews, anchored)
 			if anchored != nil {
-				preamble, err = threadPreamble(ctx, q, parent, *anchored)
+				preamble, err = threadPreamble(ctx, q, parent, *anchored, diff)
 			} else {
-				preamble, err = asidePreamble(ctx, q, parent)
+				preamble, err = asidePreamble(ctx, q, parent, diff)
 			}
 			if err != nil {
 				return err
@@ -344,8 +352,9 @@ func loadAsideHistory(ctx context.Context, q *store.Queries, parentID uuid.UUID,
 }
 
 // threadPreamble is what a thread's first turn is told ahead of the question:
-// the parent's recent conversation, then the message the thread is about.
-func threadPreamble(ctx context.Context, q *store.Queries, parent store.ChatSession, m store.ChatMessage) (string, error) {
+// the parent's recent conversation, the message the thread is about, then the
+// code changes (diff, "" when there are none).
+func threadPreamble(ctx context.Context, q *store.Queries, parent store.ChatSession, m store.ChatMessage, diff string) (string, error) {
 	hist, total, hc, err := loadAsideHistory(ctx, q, parent.ID, 0)
 	if err != nil {
 		return "", err
@@ -355,7 +364,7 @@ func threadPreamble(ctx context.Context, q *store.Queries, parent store.ChatSess
 		who = "You"
 	}
 	about := fmt.Sprintf("---\nThe message this thread is about (%s wrote it, message %d of the conversation):\n\n%s\n\n", who, m.Seq, quote(clip(m.BodyMd, asideSnapshotRunes)))
-	rendered := renderHandoff(hist, total, asideHistoryChars, hc, about+threadFooter, "")
+	rendered := renderHandoff(hist, total, asideHistoryChars, hc, about+diff+threadFooter, "")
 	return strings.Replace(rendered, handoffLead, "You are answering a thread about one message of the conversation below.", 1), nil
 }
 
@@ -571,8 +580,9 @@ func EndAside(ctx context.Context, q *store.Queries, chatID uuid.UUID) error {
 }
 
 // asidePreamble is what an aside's turn is told ahead of the question: the
-// parent's recent conversation, then the snapshot of its running reply.
-func asidePreamble(ctx context.Context, q *store.Queries, parent store.ChatSession) (string, error) {
+// parent's recent conversation, the snapshot of its running reply, then its
+// code changes so far (diff, "" when there are none).
+func asidePreamble(ctx context.Context, q *store.Queries, parent store.ChatSession, diff string) (string, error) {
 	hist, total, hc, err := loadAsideHistory(ctx, q, parent.ID, 0)
 	if err != nil {
 		return "", err
@@ -582,7 +592,7 @@ func asidePreamble(ctx context.Context, q *store.Queries, parent store.ChatSessi
 		return "", err
 	}
 	// The handoff's lead would say other models answered; here it's the same persona, still working.
-	rendered := renderHandoff(hist, total, asideHistoryChars, hc, snapshot+asideFooter, "")
+	rendered := renderHandoff(hist, total, asideHistoryChars, hc, snapshot+diff+asideFooter, "")
 	return strings.Replace(rendered, handoffLead, "You are answering an aside in the conversation below, the one you are working on right now.", 1), nil
 }
 
