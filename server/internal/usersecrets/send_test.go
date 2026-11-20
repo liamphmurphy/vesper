@@ -338,8 +338,10 @@ func TestBlockedAddrCoversTransitionAndReservedRanges(t *testing.T) {
 
 func TestSendPublicBinaryAndText(t *testing.T) {
 	pngBytes := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0x00, 0x01, 0x02, 0xff}
-	exactCap := bytes.Repeat([]byte{0xab}, maxResponse)
-	overCap := bytes.Repeat([]byte{0xcd}, maxResponse+32)
+	exactCap := bytes.Repeat([]byte{0xab}, maxPublicResponse)
+	overCap := bytes.Repeat([]byte{0xcd}, maxPublicResponse+32)
+	// A 1080p60 Twitch segment is about 2 MB; a custom app's fetch used to cut it at 1 MB.
+	segment := bytes.Repeat([]byte{0x47}, 2<<20)
 
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -355,6 +357,9 @@ func TestSendPublicBinaryAndText(t *testing.T) {
 		case "/over.bin":
 			w.Header().Set("Content-Type", "application/octet-stream")
 			_, _ = w.Write(overCap)
+		case "/segment.ts":
+			w.Header().Set("Content-Type", "video/mp2t")
+			_, _ = w.Write(segment)
 		case "/icon.svg":
 			w.Header().Set("Content-Type", "image/svg+xml")
 			_, _ = io.WriteString(w, `<svg xmlns="http://www.w3.org/2000/svg"/>`)
@@ -390,7 +395,8 @@ func TestSendPublicBinaryAndText(t *testing.T) {
 		t.Fatalf("empty.png = %+v", res)
 	}
 
-	// Exact maxResponse bytes is not truncated; exceeding maxResponse sets Truncated=true and caps BodyBase64.
+	// Exact maxPublicResponse bytes (25 MB, a 1080p video segment fits) is not truncated; exceeding it sets
+	// Truncated=true and caps BodyBase64.
 	res, err = sendPublic(context.Background(), Request{URL: srv.URL + "/exact.bin"}, srv.Client().Transport)
 	if err != nil || res.Truncated {
 		t.Fatalf("exact.bin: truncated=%v err=%v", res.Truncated, err)
@@ -399,8 +405,16 @@ func TestSendPublicBinaryAndText(t *testing.T) {
 	if err != nil || !res.Truncated {
 		t.Fatalf("over.bin: truncated=%v err=%v", res.Truncated, err)
 	}
-	if got, _ := base64.StdEncoding.DecodeString(res.BodyBase64); len(got) != maxResponse {
-		t.Fatalf("over.bin decoded len = %d, want %d", len(got), maxResponse)
+	if got, _ := base64.StdEncoding.DecodeString(res.BodyBase64); len(got) != maxPublicResponse {
+		t.Fatalf("over.bin decoded len = %d, want %d", len(got), maxPublicResponse)
+	}
+
+	res, err = sendPublic(context.Background(), Request{URL: srv.URL + "/segment.ts"}, srv.Client().Transport)
+	if err != nil || res.Truncated {
+		t.Fatalf("segment.ts: truncated=%v err=%v", res.Truncated, err)
+	}
+	if got, _ := base64.StdEncoding.DecodeString(res.BodyBase64); len(got) != len(segment) {
+		t.Fatalf("segment.ts decoded len = %d, want %d", len(got), len(segment))
 	}
 
 	// Textual image (SVG) stays in Body without BodyBase64.

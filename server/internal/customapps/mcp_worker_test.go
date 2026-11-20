@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/liamphmurphy/vesper/server/internal/agentdef"
 	"github.com/liamphmurphy/vesper/server/internal/usersecrets"
@@ -341,5 +342,56 @@ export default defineServer({
 	data, _ := res.(map[string]any)["data"].(string)
 	if len(data) != 3*1024*1024+3 || !strings.HasSuffix(data, "end") {
 		t.Fatalf("result length = %d, want %d ending in \"end\"", len(data), 3*1024*1024+3)
+	}
+}
+
+// A plain fetch may return up to 25 MB, about 33 MB once base64-encoded in a tool result, so the
+// result line has to fit that (it used to stop at 8 MB).
+func TestMCPWorkerReturnsFetchSizedResults(t *testing.T) {
+	bundle, err := BundleMCPServer("server.ts", map[string]string{
+		"app.tsx": "export default function App() { return null; }",
+		"server.ts": `
+import { defineServer } from "@vesper/server";
+export default defineServer({
+  tools: {
+    big: { description: "big", inputSchema: { type: "object" }, handler: async () => ({ data: "x".repeat(34 * 1024 * 1024) }) },
+  },
+});`,
+	})
+	if err != nil {
+		t.Fatalf("BundleMCPServer: %v", err)
+	}
+	res, err := CallMCPTool(context.Background(), MCPCallContext{Slug: "big-app", AppName: "Big", BundleJS: bundle}, "big", nil)
+	if err != nil {
+		t.Fatalf("CallMCPTool: %v", err)
+	}
+	if data, _ := res.(map[string]any)["data"].(string); len(data) != 34*1024*1024 {
+		t.Fatalf("result length = %d, want %d", len(data), 34*1024*1024)
+	}
+}
+
+// A result over the limit fails at once with a clear error, instead of the worker blocking on a
+// pipe nobody reads until the call times out.
+func TestMCPWorkerOversizedResultFailsFast(t *testing.T) {
+	bundle, err := BundleMCPServer("server.ts", map[string]string{
+		"app.tsx": "export default function App() { return null; }",
+		"server.ts": `
+import { defineServer } from "@vesper/server";
+export default defineServer({
+  tools: {
+    huge: { description: "huge", inputSchema: { type: "object" }, handler: async () => ({ data: "x".repeat(45 * 1024 * 1024) }) },
+  },
+});`,
+	})
+	if err != nil {
+		t.Fatalf("BundleMCPServer: %v", err)
+	}
+	start := time.Now()
+	_, err = CallMCPTool(context.Background(), MCPCallContext{Slug: "huge-app", AppName: "Huge", BundleJS: bundle}, "huge", nil)
+	if err == nil || !strings.Contains(err.Error(), "larger than the 40 MB limit") {
+		t.Fatalf("err = %v, want the size limit error", err)
+	}
+	if took := time.Since(start); took > 20*time.Second {
+		t.Fatalf("took %s to fail; it should fail as soon as the limit is hit", took)
 	}
 }

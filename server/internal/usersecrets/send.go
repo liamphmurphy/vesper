@@ -22,10 +22,13 @@ import (
 )
 
 const (
-	sendTimeout  = 30 * time.Second
-	maxBody      = 1 << 20
-	maxResponse  = 1 << 20
-	maxRedirects = 5
+	sendTimeout = 30 * time.Second
+	maxBody     = 1 << 20
+	maxResponse = 1 << 20
+	// maxPublicResponse caps a custom app's plain fetch (no secret attached): big enough for a
+	// 1080p video segment or a script bundle. Secret requests keep maxResponse.
+	maxPublicResponse = 25 << 20
+	maxRedirects      = 5
 )
 
 // Request is what a run asks to send. The secret isn't in it anywhere.
@@ -341,13 +344,13 @@ func sendPublic(ctx context.Context, req Request, transport http.RoundTripper) (
 		return Response{}, err
 	}
 	defer res.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(res.Body, maxResponse+1))
+	raw, err := io.ReadAll(io.LimitReader(res.Body, maxPublicResponse+1))
 	if err != nil {
 		return Response{}, fmt.Errorf("reading the response: %w", err)
 	}
-	truncated := len(raw) > maxResponse
+	truncated := len(raw) > maxPublicResponse
 	if truncated {
-		raw = raw[:maxResponse]
+		raw = raw[:maxPublicResponse]
 	}
 	contentType := res.Header.Get("Content-Type")
 	resp := Response{Status: res.StatusCode, Headers: map[string]string{}, ContentType: contentType, Truncated: truncated}
