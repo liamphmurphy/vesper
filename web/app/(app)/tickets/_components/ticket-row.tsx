@@ -1,9 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { ViewTransition, type MouseEvent } from "react";
-import type { TicketSummary } from "@/lib/api/client";
+import { useRouter } from "next/navigation";
+import { useRef, ViewTransition, type MouseEvent, type RefObject } from "react";
+import type { TicketStatus, TicketSummary } from "@/lib/api/client";
+import { useUpdateTicket } from "@/lib/api/hooks";
 import { usePersonas } from "@/lib/api/persona-hooks";
+import { useNativeContextMenu } from "@/lib/native-shell/hooks";
+import { toast } from "@/lib/toast";
 import { cx } from "@/lib/cx";
 import { shortAgo } from "@/lib/format";
 import { stateText, type NeedsYou } from "@/lib/work-rows";
@@ -12,9 +16,79 @@ import { AgentAvatar, UnassignedAvatar } from "@/components/domain/avatars";
 import { PersonaAvatar } from "@/components/domain/persona-avatar";
 import { PriorityGlyph, StatusGlyph } from "@/components/domain/glyphs";
 import { LabelChip } from "@/components/domain/labels";
+import { STATUS_NAME, STATUS_ORDER } from "@/components/domain/meta";
 import { hoverReveal } from "@/lib/reveal";
 
 export type Density = "comfortable" | "compact";
+
+function useTicketRowContextMenu(
+  rowRef: RefObject<HTMLDivElement | null>,
+  t: TicketSummary,
+  needs?: NeedsYou,
+  onStart?: () => void,
+) {
+  const router = useRouter();
+  const update = useUpdateTicket(t.key);
+  const ticketHref = `/tickets/${encodeURIComponent(t.key)}`;
+  const copy = (text: string, title: string) => {
+    void navigator.clipboard?.writeText(text).then(() => toast({ title, tone: "success" }));
+  };
+
+  useNativeContextMenu(
+    rowRef,
+    () => [
+      {
+        id: "open",
+        label: needs ? "Open what it needs" : "Open ticket",
+        icon: "tickets",
+        onSelect: () => router.push(needs?.href ?? ticketHref),
+      },
+      {
+        id: "open-tab",
+        label: "Open in new tab",
+        icon: "external",
+        onSelect: () => window.open(ticketHref, "_blank"),
+      },
+      ...(onStart ? [{ id: "start", label: "Start run", icon: "play", onSelect: onStart }] : []),
+      { id: "sep-status", separator: true },
+      {
+        id: "status",
+        label: "Set status",
+        icon: "sliders",
+        disabled: update.isPending,
+        children: STATUS_ORDER.map((status: TicketStatus) => ({
+          id: `status:${status}`,
+          label: STATUS_NAME[status],
+          checked: status === t.status,
+          disabled: status === t.status || update.isPending,
+          onSelect: () => {
+            update.mutate(
+              { status },
+              {
+                onSuccess: () => toast({ title: `${t.key} → ${STATUS_NAME[status]}`, tone: "success" }),
+                onError: (e) =>
+                  toast({
+                    title: `Couldn’t update ${t.key}`,
+                    description: e instanceof Error ? e.message : undefined,
+                    tone: "error",
+                  }),
+              },
+            );
+          },
+        })),
+      },
+      { id: "sep-copy", separator: true },
+      { id: "copy-key", label: `Copy ${t.key}`, icon: "copy", onSelect: () => copy(t.key, `${t.key} copied`) },
+      {
+        id: "copy-link",
+        label: "Copy link",
+        icon: "link",
+        onSelect: () => copy(new URL(ticketHref, window.location.href).href, "Link copied"),
+      },
+    ],
+    { links: "menu" },
+  );
+}
 
 /** Criteria done/total with a small progress bar (green when complete). */
 export function CriteriaProgress({ done, total, compact }: { done: number; total: number; compact?: boolean }) {
@@ -131,10 +205,13 @@ export function TicketRow({
   onFocusRow: () => void;
   onStart?: (t: TicketSummary) => void;
 }) {
+  const rowRef = useRef<HTMLDivElement>(null);
   const compact = density === "compact";
   const canStart = !compact && !needs && t.status === "todo" && t.unmet_dependencies === 0 && !!t.assignee && !!onStart;
+  useTicketRowContextMenu(rowRef, t, needs, canStart ? () => onStart(t) : undefined);
   return (
     <div
+      ref={rowRef}
       data-ticket-row={t.key}
       data-focused={focused || undefined}
       data-needs-you={needs ? true : undefined}
@@ -231,8 +308,10 @@ export function TicketRow({
  * get an Open button beside the link. Nothing in it waits for hover.
  */
 export function CompactTicketRow({ t, needs }: { t: TicketSummary; needs?: NeedsYou }) {
+  const rowRef = useRef<HTMLDivElement>(null);
+  useTicketRowContextMenu(rowRef, t, needs);
   return (
-    <div data-ticket-row={t.key} data-needs-you={needs ? true : undefined} className="relative flex h-[64px] items-center gap-3 px-4 active:bg-row-hover">
+    <div ref={rowRef} data-ticket-row={t.key} data-needs-you={needs ? true : undefined} className="relative flex h-[64px] items-center gap-3 px-4 active:bg-row-hover">
       <StatusGlyph state={t.status} />
       <span className="flex min-w-0 flex-1 flex-col gap-1">
         <Link href={`/tickets/${t.key}`} className="truncate text-15 font-medium text-fg after:absolute after:inset-0">

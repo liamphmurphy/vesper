@@ -2,10 +2,12 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useRef } from "react";
 import { HOME_TAB, KINDS, ago, kindHref, pageHref, pageIcon, type PageKind } from "@/lib/knowledge";
 import { useAllPages, useCreatePage, usePages, type PageRow } from "@/lib/api/knowledge-hooks";
 import { useCreateDesign } from "@/lib/api/designs-hooks";
 import { useNewDeck } from "@/components/domain/use-new-deck";
+import { useNativeContextMenu } from "@/lib/native-shell/hooks";
 import { toast } from "@/lib/toast";
 import { cx } from "@/lib/cx";
 import { useBootstrap } from "@/lib/api/hooks";
@@ -85,19 +87,7 @@ export function KnowledgeHome() {
             </section>
           )}
 
-          {latest && (
-            <section aria-label="Pick up where you left off" className="mt-8">
-              <h2 className="text-10 font-bold uppercase tracking-[0.06em] text-fg-tertiary">Pick up where you left off</h2>
-              <Link href={pageHref(latest.id, latest.title)} className="mt-2 flex items-center gap-3 rounded-xl border border-border bg-surface p-4 hover:bg-hover">
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-14 font-semibold text-fg">{displayTitle(latest)}</span>
-                  <span className="mt-0.5 block truncate text-12 text-fg-secondary">{latest.summary || "Empty page"}</span>
-                  <span className="mt-0.5 block text-11 text-fg-tertiary">{folderOf(latest.path)} · edited {ago(latest.updated_at)}</span>
-                </span>
-                <Icon name="chevr" size={14} className="flex-none text-accent" />
-              </Link>
-            </section>
-          )}
+          {latest && <LatestPageCard row={latest} />}
 
           <div className="mt-8 flex items-baseline justify-between">
             <h2 className="text-10 font-bold uppercase tracking-[0.06em] text-fg-tertiary">Recent</h2>
@@ -113,23 +103,7 @@ export function KnowledgeHome() {
                 </li>
               ))}
             {rest.map((r) => (
-              <li key={r.id} className="border-b border-border-row">
-                <Link href={pageHref(r.id, r.title)} className="grid grid-cols-[20px_1fr_auto] items-center gap-3 rounded-md px-2 py-2 hover:bg-hover">
-                  <Icon name={pageIcon(r)} size={14} className="text-fg-tertiary" />
-                  <span className="min-w-0">
-                    <span className={cx("block truncate text-14 font-medium", isUntitled(r) ? "italic text-fg-secondary" : "text-fg")}>{displayTitle(r)}</span>
-                    <span className="block truncate text-12 text-fg-tertiary">
-                      {folderOf(r.path)}
-                      {r.summary && !isUntitled(r) ? ` · ${r.summary}` : !r.summary ? " · empty" : ""}
-                    </span>
-                  </span>
-                  <span className="flex items-center gap-1.5 text-12 text-fg-tertiary" title={AUDIENCE[r.audience].label}>
-                    <Icon name={AUDIENCE[r.audience].icon} size={12} />
-                    <span className="sr-only">{AUDIENCE[r.audience].label} · </span>
-                    {ago(r.updated_at)}
-                  </span>
-                </Link>
-              </li>
+              <RecentPageRow key={r.id} r={r} />
             ))}
             {recent.data && recent.data.rows.length === 0 && <li className="py-6 text-center text-13 text-fg-tertiary">No pages yet. Capture a thought with ⌥⌘N or import your Obsidian vault from the explorer.</li>}
           </ul>
@@ -188,6 +162,67 @@ function StartRow({ pages }: { pages?: PageRow[] }) {
         })}
       </div>
     </section>
+  );
+}
+
+function useKnowledgeRowContextMenu(ref: React.RefObject<HTMLElement | null>, row: PageRow) {
+  const router = useRouter();
+  const href = pageHref(row.id, row.title);
+  const copy = (text: string, title: string) => {
+    void navigator.clipboard?.writeText(text).then(() => toast({ title, tone: "success" }));
+  };
+  useNativeContextMenu(
+    ref,
+    () => [
+      { id: "open", label: "Open", icon: "doc", onSelect: () => router.push(href) },
+      { id: "open-tab", label: "Open in new tab", icon: "external", onSelect: () => window.open(href, "_blank") },
+      { id: "sep-copy", separator: true },
+      { id: "copy-link", label: "Copy link", icon: "link", onSelect: () => copy(new URL(href, window.location.href).href, "Link copied") },
+      { id: "copy-wikilink", label: "Copy wikilink", icon: "copy", onSelect: () => copy(`[[${row.path || row.title}]]`, "Wikilink copied") },
+    ],
+    { links: "menu" },
+  );
+}
+
+function LatestPageCard({ row }: { row: PageRow }) {
+  const linkRef = useRef<HTMLAnchorElement>(null);
+  useKnowledgeRowContextMenu(linkRef, row);
+  return (
+    <section aria-label="Pick up where you left off" className="mt-8">
+      <h2 className="text-10 font-bold uppercase tracking-[0.06em] text-fg-tertiary">Pick up where you left off</h2>
+      <Link ref={linkRef} href={pageHref(row.id, row.title)} className="mt-2 flex items-center gap-3 rounded-xl border border-border bg-surface p-4 hover:bg-hover">
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-14 font-semibold text-fg">{displayTitle(row)}</span>
+          <span className="mt-0.5 block truncate text-12 text-fg-secondary">{row.summary || "Empty page"}</span>
+          <span className="mt-0.5 block text-11 text-fg-tertiary">{folderOf(row.path)} · edited {ago(row.updated_at)}</span>
+        </span>
+        <Icon name="chevr" size={14} className="flex-none text-accent" />
+      </Link>
+    </section>
+  );
+}
+
+function RecentPageRow({ r }: { r: PageRow }) {
+  const linkRef = useRef<HTMLAnchorElement>(null);
+  useKnowledgeRowContextMenu(linkRef, r);
+  return (
+    <li className="border-b border-border-row">
+      <Link ref={linkRef} href={pageHref(r.id, r.title)} className="grid grid-cols-[20px_1fr_auto] items-center gap-3 rounded-md px-2 py-2 hover:bg-hover">
+        <Icon name={pageIcon(r)} size={14} className="text-fg-tertiary" />
+        <span className="min-w-0">
+          <span className={cx("block truncate text-14 font-medium", isUntitled(r) ? "italic text-fg-secondary" : "text-fg")}>{displayTitle(r)}</span>
+          <span className="block truncate text-12 text-fg-tertiary">
+            {folderOf(r.path)}
+            {r.summary && !isUntitled(r) ? ` · ${r.summary}` : !r.summary ? " · empty" : ""}
+          </span>
+        </span>
+        <span className="flex items-center gap-1.5 text-12 text-fg-tertiary" title={AUDIENCE[r.audience].label}>
+          <Icon name={AUDIENCE[r.audience].icon} size={12} />
+          <span className="sr-only">{AUDIENCE[r.audience].label} · </span>
+          {ago(r.updated_at)}
+        </span>
+      </Link>
+    </li>
   );
 }
 

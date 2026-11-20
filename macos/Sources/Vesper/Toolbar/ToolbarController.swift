@@ -167,9 +167,9 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
         if sender.selectedIndex == 0 { web?.goBack() } else { web?.goForward() }
     }
 
-    /// ⌥⌘F and the toolbar button both open the page's command palette (⌘K).
+    /// ⌥⌘F and the toolbar button both open the native floating command palette (⌘K).
     func focusSearch() { searchTapped() }
-    @objc private func searchTapped() { owner?.send(.command(.openCommandMenu)) }
+    @objc private func searchTapped() { owner?.openCommandPalette(nil) }
 
 
     // MARK: Title menu and page-contributed items

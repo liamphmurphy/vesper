@@ -69,6 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 return
             }
             app.saveSessionNow()
+            app.aux.cleanupQuickLook()
             vlog("quit: stopping the stack")
             if let stack = app.stack { await stack.stop() }
             vlog("quit: replying yes")
@@ -158,6 +159,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     @objc func screenshotToChat(_ sender: Any?) { actions.screenshotToChat() }
     @objc func importBackup(_ sender: Any?) { actions.importBackup() }
     @objc func openSettings(_ sender: Any?) { actions.openSettings() }
+    @objc func showShortcuts(_ sender: Any?) { actions.showShortcuts() }
     @objc func checkForUpdates(_ sender: Any?) { actions.checkForUpdates() }
     @objc func restartStack(_ sender: Any?) { actions.restartStack() }
     @objc func showLogs(_ sender: Any?) { actions.showLogs() }
@@ -169,9 +171,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     private var web: WKWebView? { app.keyController?.webView }
 
-    @objc func find(_ sender: Any?) { app.keyController?.send(.command(.find)) }
-    /// ⌥⌘F: opens the page's command palette, like the toolbar's search button.
-    @objc func focusSearch(_ sender: Any?) { app.keyController?.send(.command(.openCommandMenu)) }
+    @objc func find(_ sender: Any?) { app.keyController?.showFindBar() }
+    @objc func findNext(_ sender: Any?) { app.keyController?.findNext() }
+    @objc func findPrevious(_ sender: Any?) { app.keyController?.findPrevious() }
+    @objc func useSelectionForFind(_ sender: Any?) { app.keyController?.useSelectionForFind() }
+    /// ⌘K: opens (or toggles) the native floating command palette.
+    @objc func openCommandPalette(_ sender: Any?) {
+        app.aux.openCommandPalette(request: CommandPaletteRequest(scope: .all), from: app.keyController)
+    }
+    /// ⇧⌘K: opens the floating command palette scoped to the current view.
+    @objc func openScopedCommandPalette(_ sender: Any?) {
+        app.aux.openCommandPalette(request: CommandPaletteRequest(scope: .page), from: app.keyController)
+    }
+    /// ⌥⌘F: opens the floating command palette, like the toolbar's search button.
+    @objc func focusSearch(_ sender: Any?) {
+        app.aux.openCommandPalette(request: CommandPaletteRequest(scope: .all), from: app.keyController)
+    }
     @objc func toggleSidebarAction(_ sender: Any?) { app.keyController?.split.toggleSidebar(sender) }
     @objc func toggleInspectorAction(_ sender: Any?) { app.keyController?.toggleInspector(sender) }
     @objc func reload(_ sender: Any?) { web?.reload() }
@@ -271,9 +286,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             let isOpen = (controller.state.inspector?.open ?? false) || !controller.isInspectorCollapsed
             item.title = isOpen ? "Hide Inspector" : "Show Inspector"
             return true
-        case #selector(find(_:)), #selector(reload(_:)), #selector(forceReload(_:)), #selector(zoomIn(_:)), #selector(zoomOut(_:)),
-             #selector(zoomReset(_:)), #selector(showInspector(_:)):
+        case #selector(find(_:)), #selector(useSelectionForFind(_:)), #selector(reload(_:)), #selector(forceReload(_:)),
+             #selector(zoomIn(_:)), #selector(zoomOut(_:)), #selector(zoomReset(_:)), #selector(showInspector(_:)):
             return web != nil
+        case #selector(findNext(_:)), #selector(findPrevious(_:)):
+            guard let controller = app.keyController else { return false }
+            return controller.isFindBarVisible && controller.hasFindQuery
+        case #selector(openCommandPalette(_:)), #selector(openScopedCommandPalette(_:)), #selector(focusSearch(_:)):
+            guard let controller = app.keyController, controller.kind == .vesper else { return false }
+            let route = controller.state.route
+            return route != "/dev" && route?.hasPrefix("/dev/") != true
         case #selector(nextTab(_:)), #selector(previousTab(_:)):
             if let c = compactController { return c.tabs.list.count > 1 }
             return (tabs()?.windows.count ?? 0) > 1

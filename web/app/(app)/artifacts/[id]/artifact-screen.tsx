@@ -26,28 +26,61 @@ import { MockupReviewBanner, MockupViewer } from "./mockup-parts";
 import { wikiHref } from "@/lib/wikilinks";
 import { useStartChat } from "@/components/domain/start-chat";
 import { toast } from "@/lib/toast";
+import { isNativeShell, nativeQuickLook } from "@/lib/native-shell/bridge";
+import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { buildArtifactActions } from "@/lib/native-shell/models/mockup-editor";
+import { shortcutBlocked } from "@/components/shell/shortcuts";
 import { TopBar } from "@/components/shell/topbar";
 
 function FileView({ a, versionId }: { a: Artifact; versionId: string }) {
+  const native = useIsNativeShell();
   const v = a.versions.find((x) => x.id === versionId) ?? a.current_version;
   const c = v.content;
   const src = contentUrl(a.id, v.id);
+  const openQuickLook = () =>
+    nativeQuickLook([{ url: src, title: artifactTitle(a), filename: c.filename ?? a.title, contentType: c.content_type }], 0);
+  const quickLookBtn = native ? (
+    <Button variant="secondary" icon="expand" onClick={openQuickLook}>
+      Quick Look
+    </Button>
+  ) : null;
   if (c.content_type.startsWith("image/")) {
     return (
-      // user uploads, served by the API
-      <img src={src} alt={a.title} className="max-h-[70vh] w-full rounded-xl border border-border bg-surface object-contain" />
+      <div className="flex flex-col gap-3">
+        {quickLookBtn && <div className="flex justify-end">{quickLookBtn}</div>}
+        {/* user uploads, served by the API */}
+        <img src={src} alt={a.title} className="max-h-[70vh] w-full rounded-xl border border-border bg-surface object-contain" />
+      </div>
     );
   }
   // Only MP4 is served inline (inlineSafe in the API); other video types download.
   if (c.content_type === "video/mp4") {
-    return <video src={src} controls preload="metadata" className="max-h-[70vh] w-full rounded-xl border border-border bg-black" aria-label={a.title} />;
+    return (
+      <div className="flex flex-col gap-3">
+        {quickLookBtn && <div className="flex justify-end">{quickLookBtn}</div>}
+        <video src={src} controls preload="metadata" className="max-h-[70vh] w-full rounded-xl border border-border bg-black" aria-label={a.title} />
+      </div>
+    );
   }
   if (isPdfContentType(c.content_type)) {
-    return <PdfViewer url={src} title={a.title} heightClass="h-[75vh]" downloadUrl={contentUrl(a.id, v.id, true)} />;
+    return (
+      <div className="flex flex-col gap-3">
+        {quickLookBtn && <div className="flex justify-end">{quickLookBtn}</div>}
+        <PdfViewer url={src} title={a.title} heightClass="h-[75vh]" downloadUrl={contentUrl(a.id, v.id, true)} />
+      </div>
+    );
   }
   return (
-    <EmptyState icon="artifacts" title={c.filename ?? a.title} actions={<ButtonLink href={contentUrl(a.id, v.id, true)} variant="outline" icon="download">Download</ButtonLink>}>
+    <EmptyState
+      icon="artifacts"
+      title={c.filename ?? a.title}
+      actions={
+        <div className="flex items-center gap-2">
+          {quickLookBtn}
+          <ButtonLink href={contentUrl(a.id, v.id, true)} variant="outline" icon="download">Download</ButtonLink>
+        </div>
+      }
+    >
       {fileKind(c.content_type, c.filename)} · {formatBytes(c.size_bytes)}. This file type can&apos;t be previewed here.
     </EmptyState>
   );
@@ -107,6 +140,25 @@ export function ArtifactScreen({ id }: { id: string }) {
     if (!a || !window.location.hash) return;
     document.getElementById(decodeURIComponent(window.location.hash.slice(1)))?.scrollIntoView();
   }, [a]);
+
+  // Space opens native Quick Look on file artifacts in the Mac app.
+  useEffect(() => {
+    if (!isNativeShell() || !a || !viewing || editing || viewing.content.kind !== "file") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.key !== " " || shortcutBlocked(e)) return;
+      e.preventDefault();
+      nativeQuickLook([
+        {
+          url: contentUrl(a.id, viewing.id),
+          title: artifactTitle(a),
+          filename: viewing.content.filename ?? a.title,
+          contentType: viewing.content.content_type,
+        },
+      ], 0);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [a, viewing, editing]);
 
   if (isError) {
     const missing = "status" in error && error.status === 404;

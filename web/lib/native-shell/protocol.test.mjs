@@ -78,3 +78,24 @@ test("inspector and companion commands validate required fields", () => {
   assert.equal(isPageMessage({ v: 1, type: "panel.event", tabId: "playground", event: "close", payloadJson: "{}" }), true);
   assert.equal(isPageMessage({ v: 1, type: "panel.event", tabId: "playground" }), false);
 });
+
+test("prompt, toast, shortcuts, commandPalette, and quickLook messages validate fields", () => {
+  assert.equal(isPageMessage({ v: 1, type: "prompt", requestId: "p1", title: "Rename", confirmLabel: "Save", maxLength: 100 }), true);
+  assert.equal(isPageMessage({ v: 1, type: "prompt", requestId: "p1", title: "Rename", confirmLabel: "Save", maxLength: 0 }), false);
+  assert.equal(isPageMessage({ v: 1, type: "toast.show", id: "t1", title: "Saved", tone: "success", durationMs: 3000 }), true);
+  assert.equal(isPageMessage({ v: 1, type: "toast.show", id: "t1", title: "Saved", tone: "info", durationMs: 3000 }), false);
+  assert.equal(isPageMessage({ v: 1, type: "toast.dismiss", id: "t1" }), true);
+  assert.equal(isPageMessage({ v: 1, type: "showShortcuts" }), true);
+  assert.equal(isPageMessage({ v: 1, type: "commandPalette.open", request: { path: "/work", scope: "all" } }), true);
+  assert.equal(isPageMessage({ v: 1, type: "commandPalette.open", request: { path: "//evil" } }), false);
+  assert.equal(isPageMessage({ v: 1, type: "commandPalette.close" }), true);
+  assert.equal(isPageMessage({ v: 1, type: "quickLook", items: [{ url: "/api/v1/library/1/content", title: "File" }] }), true);
+  assert.equal(isPageMessage({ v: 1, type: "quickLook", items: [] }), false);
+  assert.equal(isPageMessage({ v: 1, type: "quickLook", items: [{ url: "javascript:alert(1)", title: "Bad" }] }), false);
+
+  assert.equal(isNativeCommand({ v: 1, type: "reply", requestId: "p1", ok: true, value: "Renamed" }), true);
+  assert.equal(isNativeCommand({ v: 1, type: "toast.event", id: "t1", event: "timeout" }), true);
+  assert.equal(isNativeCommand({ v: 1, type: "toast.event", id: "t1", event: "bogus" }), false);
+  assert.equal(isNativeCommand({ v: 1, type: "palette.open", request: { path: "/chat", scope: "all" } }), true);
+  assert.equal(isNativeCommand({ v: 1, type: "palette.open", request: { path: "relative" } }), false);
+});

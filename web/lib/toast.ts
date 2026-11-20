@@ -1,9 +1,11 @@
 import type { ReactNode } from "react";
+import { isNativeShell, onCommand, post } from "./native-shell/bridge.ts";
 
 /**
  * App-wide toasts: what an action just did, or why it didn't. Call `toast()` from anywhere
- * (event handlers, mutation callbacks, hooks); the one <Toaster> (components/ui/toast.tsx)
- * shows them along the bottom edge, newest last, at most MAX_TOASTS at a time.
+ * (event handlers, mutation callbacks, hooks); in browsers the one <Toaster> (components/ui/toast.tsx)
+ * shows them along the bottom edge, whereas in the native macOS shell plain-text toasts route to
+ * a window-level native Liquid Glass HUD.
  */
 export type ToastTone = "neutral" | "success" | "error";
 export type ToastInput = {
@@ -29,11 +31,70 @@ let next = 0;
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((l) => l());
 
+type NativeToastEntry = {
+  action?: () => void;
+  onClose?: (reason: ToastCloseReason) => void;
+};
+const nativeCallbacks = new Map<string, NativeToastEntry>();
+let listeningWindow: unknown = null;
+let offNativeCommand: (() => void) | null = null;
+
+function ensureNativeListener(): void {
+  const currentWin = (globalThis as { window?: unknown }).window;
+  if (!currentWin) return;
+  if (offNativeCommand && listeningWindow === currentWin) return;
+  offNativeCommand?.();
+  listeningWindow = currentWin;
+  offNativeCommand = onCommand((cmd) => {
+    if (cmd.type !== "toast.event") return;
+    const entry = nativeCallbacks.get(cmd.id);
+    if (!entry) return;
+    nativeCallbacks.delete(cmd.id);
+    if (cmd.event === "action") entry.action?.();
+    entry.onClose?.(cmd.event);
+  });
+}
+
+function canUseNativeHud(t: ToastInput): t is ToastInput & { title: string; description?: string } {
+  return (
+    isNativeShell() &&
+    typeof t.title === "string" &&
+    (t.description === undefined || typeof t.description === "string")
+  );
+}
+
 export function toast(input: ToastInput | string): string {
   const t = typeof input === "string" ? { title: input } : input;
   const tone = t.tone ?? "neutral";
   const id = t.id ?? `toast-${++next}`;
-  const item: Toast = { title: t.title, description: t.description, action: t.action, onClose: t.onClose, tone, id, duration: t.duration ?? (tone === "error" ? 8000 : 4500), leaving: false };
+  const duration = t.duration ?? (tone === "error" ? 8000 : 4500);
+
+  if (canUseNativeHud(t)) {
+    ensureNativeListener();
+    const previousNative = nativeCallbacks.get(id);
+    nativeCallbacks.set(id, { action: t.action?.onClick, onClose: t.onClose });
+    if (previousNative) previousNative.onClose?.("replaced");
+    while (nativeCallbacks.size > MAX_TOASTS) {
+      const oldestId = nativeCallbacks.keys().next().value;
+      if (oldestId === undefined) break;
+      const oldest = nativeCallbacks.get(oldestId);
+      nativeCallbacks.delete(oldestId);
+      oldest?.onClose?.("replaced");
+    }
+    post({
+      v: 1,
+      type: "toast.show",
+      id,
+      title: t.title,
+      ...(t.description !== undefined ? { description: t.description } : {}),
+      tone,
+      ...(t.action ? { actionLabel: t.action.label } : {}),
+      durationMs: duration,
+    });
+    return id;
+  }
+
+  const item: Toast = { title: t.title, description: t.description, action: t.action, onClose: t.onClose, tone, id, duration, leaving: false };
   const previous = toasts.find((x) => x.id === id);
   const kept = toasts.filter((x) => x.id !== id);
   const all = previous ? toasts.map((x) => (x.id === id ? item : x)) : [...kept, item];
@@ -48,6 +109,13 @@ export function toast(input: ToastInput | string): string {
 }
 
 export function dismissToast(id: string, reason: ToastCloseReason = "dismissed") {
+  const nativeEntry = nativeCallbacks.get(id);
+  if (nativeEntry) {
+    nativeCallbacks.delete(id);
+    nativeEntry.onClose?.(reason);
+    post({ v: 1, type: "toast.dismiss", id });
+    return;
+  }
   const target = toasts.find((t) => t.id === id && !t.leaving);
   if (!target) return;
   toasts = toasts.map((t) => (t === target ? { ...t, leaving: true } : t));
@@ -57,6 +125,22 @@ export function dismissToast(id: string, reason: ToastCloseReason = "dismissed")
     toasts = toasts.filter((t) => t.id !== id || !t.leaving);
     emit();
   }, EXIT_MS);
+}
+
+/** Clears both web and native toast state (unit tests). */
+export function clearToasts(): void {
+  for (const [id, entry] of [...nativeCallbacks.entries()]) {
+    nativeCallbacks.delete(id);
+    entry.onClose?.("dismissed");
+  }
+  offNativeCommand?.();
+  offNativeCommand = null;
+  listeningWindow = null;
+  for (const t of [...toasts]) {
+    if (!t.leaving) t.onClose?.("dismissed");
+  }
+  toasts = [];
+  emit();
 }
 
 export function subscribeToasts(listener: () => void) {

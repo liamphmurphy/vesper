@@ -747,5 +747,64 @@
     "type": "panel.event",
     "tabId": "playground",
     "event": "fullscreen"
+  },
+  {
+    "v": 1,
+    "type": "prompt",
+    "requestId": "r6",
+    "title": "Rename frame",
+    "label": "Frame name",
+    "value": "Overview",
+    "placeholder": "Untitled frame",
+    "confirmLabel": "Save",
+    "cancelLabel": "Cancel",
+    "maxLength": 120
+  },
+  {
+    "v": 1,
+    "type": "toast.show",
+    "id": "toast-1",
+    "title": "Removed item",
+    "description": "Archived from Library",
+    "tone": "neutral",
+    "actionLabel": "Undo",
+    "durationMs": 6000
+  },
+  {
+    "v": 1,
+    "type": "toast.dismiss",
+    "id": "toast-1"
+  },
+  {
+    "v": 1,
+    "type": "showShortcuts"
+  },
+  {
+    "v": 1,
+    "type": "commandPalette.open",
+    "request": {
+      "path": "/knowledge",
+      "search": "?view=yours",
+      "scope": "knowledge",
+      "includeAgent": false,
+      "query": "shell"
+    }
+  },
+  {
+    "v": 1,
+    "type": "commandPalette.close"
+  },
+  {
+    "v": 1,
+    "type": "quickLook",
+    "index": 0,
+    "items": [
+      {
+        "url": "/api/v1/library/0b5c9a6e-0000-4000-8000-000000000001/content",
+        "title": "Architecture diagram",
+        "filename": "architecture.png",
+        "contentType": "image/png"
+      }
+    ]
   }
 ]

@@ -608,6 +608,52 @@ public enum ApprovalScope: String, Codable, Sendable, Hashable {
     case secretApprovals = "secret_approvals"
 }
 
+public enum ToastTone: String, Codable, Sendable, Hashable {
+    case neutral, success, error
+
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = ToastTone(rawValue: raw) ?? .neutral
+    }
+}
+
+public enum ToastEventKind: String, Codable, Sendable, Hashable {
+    case action, dismissed, timeout
+}
+
+public enum CommandPaletteScope: String, Codable, Sendable, Hashable {
+    case all, page, knowledge, type
+}
+
+public struct CommandPaletteRequest: Codable, Sendable, Hashable {
+    public var path: String?
+    public var search: String?
+    public var scope: CommandPaletteScope?
+    public var scopeType: String?
+    public var scopeLabel: String?
+    public var includeAgent: Bool?
+    public var query: String?
+
+    public init(path: String? = nil, search: String? = nil, scope: CommandPaletteScope? = nil,
+                scopeType: String? = nil, scopeLabel: String? = nil, includeAgent: Bool? = nil,
+                query: String? = nil) {
+        self.path = path; self.search = search; self.scope = scope
+        self.scopeType = scopeType; self.scopeLabel = scopeLabel
+        self.includeAgent = includeAgent; self.query = query
+    }
+}
+
+public struct QuickLookItem: Codable, Sendable, Hashable {
+    public var url: String
+    public var title: String
+    public var filename: String?
+    public var contentType: String?
+
+    public init(url: String, title: String, filename: String? = nil, contentType: String? = nil) {
+        self.url = url; self.title = title; self.filename = filename; self.contentType = contentType
+    }
+}
+
 // MARK: - Page -> shell
 
 /// Page → shell. Decoded from `window.webkit.messageHandlers.vesper.postMessage`.
@@ -635,11 +681,21 @@ public enum PageMessage: Sendable, Equatable, Decodable {
     case contextMenu(requestId: String, items: [MenuItem], x: Double, y: Double)
     /// An "Are you sure?" shown as a sheet on the window; reply ok only for the confirm button.
     case confirm(requestId: String, title: String, body: String?, confirmLabel: String, cancelLabel: String?, destructive: Bool)
+    /// A single-line text input sheet on the window; reply ok with `value` when confirmed.
+    case prompt(requestId: String, title: String, body: String?, label: String?, value: String?,
+                placeholder: String?, confirmLabel: String, cancelLabel: String?, maxLength: Int?)
+    case toastShow(id: String, title: String, description: String?, tone: ToastTone, actionLabel: String?, durationMs: Int)
+    case toastDismiss(id: String)
+    case showShortcuts
+    case commandPaletteOpen(request: CommandPaletteRequest?)
+    case commandPaletteClose
+    case quickLook(items: [QuickLookItem], index: Int?)
 
     private enum Keys: String, CodingKey {
         case v, type, path, area, title, subtitle, model, active, items, requestId, scope, folder, x, y, mode, menu
         case body, confirmLabel, cancelLabel, destructive, background, newTab
         case tabId, event, payloadJson
+        case label, value, placeholder, maxLength, id, description, tone, actionLabel, durationMs, request, index
     }
 
     public init(from decoder: Decoder) throws {
@@ -690,6 +746,27 @@ public enum PageMessage: Sendable, Equatable, Decodable {
                             body: try c.decodeIfPresent(String.self, forKey: .body), confirmLabel: try c.decode(String.self, forKey: .confirmLabel),
                             cancelLabel: try c.decodeIfPresent(String.self, forKey: .cancelLabel),
                             destructive: try c.decodeIfPresent(Bool.self, forKey: .destructive) ?? true)
+        case "prompt":
+            self = .prompt(requestId: try c.decode(String.self, forKey: .requestId), title: try c.decode(String.self, forKey: .title),
+                           body: try c.decodeIfPresent(String.self, forKey: .body), label: try c.decodeIfPresent(String.self, forKey: .label),
+                           value: try c.decodeIfPresent(String.self, forKey: .value), placeholder: try c.decodeIfPresent(String.self, forKey: .placeholder),
+                           confirmLabel: try c.decode(String.self, forKey: .confirmLabel), cancelLabel: try c.decodeIfPresent(String.self, forKey: .cancelLabel),
+                           maxLength: try c.decodeIfPresent(Int.self, forKey: .maxLength))
+        case "toast.show":
+            self = .toastShow(id: try c.decode(String.self, forKey: .id), title: try c.decode(String.self, forKey: .title),
+                              description: try c.decodeIfPresent(String.self, forKey: .description), tone: try c.decode(ToastTone.self, forKey: .tone),
+                              actionLabel: try c.decodeIfPresent(String.self, forKey: .actionLabel), durationMs: try c.decode(Int.self, forKey: .durationMs))
+        case "toast.dismiss":
+            self = .toastDismiss(id: try c.decode(String.self, forKey: .id))
+        case "showShortcuts":
+            self = .showShortcuts
+        case "commandPalette.open":
+            self = .commandPaletteOpen(request: try c.decodeIfPresent(CommandPaletteRequest.self, forKey: .request))
+        case "commandPalette.close":
+            self = .commandPaletteClose
+        case "quickLook":
+            self = .quickLook(items: try c.decode([QuickLookItem].self, forKey: .items),
+                              index: try c.decodeIfPresent(Int.self, forKey: .index))
         default:
             throw DecodingError.dataCorruptedError(forKey: .type, in: c, debugDescription: "unknown page message type \(type)")
         }
@@ -738,14 +815,17 @@ public enum NativeCommand: Sendable, Equatable, Codable {
     case appearance(accent: String, mode: ColorMode)
     /// `query` only means something for openCommandMenu: the text to open the palette with.
     case command(ShellCommandName, query: String? = nil)
-    /// `selectedId`: `nil` omits the field, `.some(nil)` sends JSON null (menu dismissed), `.some("x")` a value.
-    case reply(requestId: String, ok: Bool, selectedId: String?? = nil, error: String? = nil)
+    /// `selectedId`/`value`: `nil` omits the field, `.some(nil)` sends JSON null, `.some("x")` a value.
+    case reply(requestId: String, ok: Bool, selectedId: String?? = nil, value: String?? = nil, error: String? = nil)
+    case toastEvent(id: String, event: ToastEventKind)
+    case paletteOpen(request: CommandPaletteRequest)
 
     private enum Keys: String, CodingKey {
         case v, type, path, navigatorId, itemId, actionId, menuItemId, pickerId, searchId, filterId, value, expanded, checked, name, query, newTab
         case open, tabId, fieldId, context, event, payloadJson
         case accent, mode
         case requestId, ok, selectedId, error
+        case id, request
     }
 
     public init(from decoder: Decoder) throws {
@@ -806,8 +886,18 @@ public enum NativeCommand: Sendable, Equatable, Codable {
             } else {
                 selected = nil
             }
+            let value: String??
+            if c.contains(.value) {
+                value = .some(try c.decodeIfPresent(String.self, forKey: .value))
+            } else {
+                value = nil
+            }
             self = .reply(requestId: try c.decode(String.self, forKey: .requestId), ok: try c.decode(Bool.self, forKey: .ok),
-                          selectedId: selected, error: try c.decodeIfPresent(String.self, forKey: .error))
+                          selectedId: selected, value: value, error: try c.decodeIfPresent(String.self, forKey: .error))
+        case "toast.event":
+            self = .toastEvent(id: try c.decode(String.self, forKey: .id), event: try c.decode(ToastEventKind.self, forKey: .event))
+        case "palette.open":
+            self = .paletteOpen(request: try c.decode(CommandPaletteRequest.self, forKey: .request))
         default:
             throw DecodingError.dataCorruptedError(forKey: .type, in: c, debugDescription: "unknown command type \(type)")
         }
@@ -863,10 +953,15 @@ public enum NativeCommand: Sendable, Equatable, Codable {
         case .command(let name, let query):
             try c.encode("command", forKey: .type); try c.encode(name, forKey: .name)
             try c.encodeIfPresent(query, forKey: .query)
-        case .reply(let requestId, let ok, let selected, let error):
+        case .reply(let requestId, let ok, let selected, let value, let error):
             try c.encode("reply", forKey: .type); try c.encode(requestId, forKey: .requestId); try c.encode(ok, forKey: .ok)
             if let selected { try c.encode(selected, forKey: .selectedId) }
+            if let value { try c.encode(value, forKey: .value) }
             try c.encodeIfPresent(error, forKey: .error)
+        case .toastEvent(let id, let event):
+            try c.encode("toast.event", forKey: .type); try c.encode(id, forKey: .id); try c.encode(event, forKey: .event)
+        case .paletteOpen(let request):
+            try c.encode("palette.open", forKey: .type); try c.encode(request, forKey: .request)
         }
     }
 

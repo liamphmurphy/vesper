@@ -77,6 +77,12 @@ enum MainMenu {
             item("Select All", #selector(NSText.selectAll(_:)), "a", target: nil),
             sep(),
             item("Find…", #selector(AppDelegate.find(_:)), "f"),
+            item("Find Next", #selector(AppDelegate.findNext(_:)), "g"),
+            item("Find Previous", #selector(AppDelegate.findPrevious(_:)), "g", [.command, .shift]),
+            item("Use Selection for Find", #selector(AppDelegate.useSelectionForFind(_:)), "e"),
+            sep(),
+            item("Command Palette…", #selector(AppDelegate.openCommandPalette(_:)), "k"),
+            item("Search Current View…", #selector(AppDelegate.openScopedCommandPalette(_:)), "k", [.command, .shift]),
             item("Search…", #selector(AppDelegate.focusSearch(_:)), "f", [.command, .option]),
         ])
 
@@ -129,6 +135,8 @@ enum MainMenu {
 
         // Help
         let helpMenu = add("Help", [
+            item("Keyboard Shortcuts", #selector(AppDelegate.showShortcuts(_:)), "/"),
+            sep(),
             item("Show Logs…", #selector(AppDelegate.showLogs(_:))),
             item("Vesper Repository & Docs", #selector(AppDelegate.openDocs(_:))),
         ])

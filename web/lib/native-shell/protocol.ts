@@ -389,6 +389,28 @@ export type ApprovalScope = "run_approvals" | "push_requests" | "connector_appro
 
 export type ColorMode = "dark" | "light";
 
+export type ToastTone = "neutral" | "success" | "error";
+export type ToastEventKind = "action" | "dismissed" | "timeout";
+
+export type CommandPaletteScope = "all" | "page" | "knowledge" | "type";
+
+export interface CommandPaletteRequest {
+  path?: string;
+  search?: string;
+  scope?: CommandPaletteScope;
+  scopeType?: string;
+  scopeLabel?: string;
+  includeAgent?: boolean;
+  query?: string;
+}
+
+export interface QuickLookItem {
+  url: string;
+  title: string;
+  filename?: string;
+  contentType?: string;
+}
+
 /** Page → shell. */
 export type PageMessage =
   | { v: 1; type: "ready"; path: string }
@@ -418,7 +440,36 @@ export type PageMessage =
   | { v: 1; type: "openWorkspaceMenu"; requestId: string; folder: string }
   | { v: 1; type: "contextMenu"; requestId: string; items: MenuItem[]; x: number; y: number }
   /** An "Are you sure?" as a sheet on the window; the reply's ok is true only for the confirm button. */
-  | { v: 1; type: "confirm"; requestId: string; title: string; body?: string; confirmLabel: string; cancelLabel?: string; destructive?: boolean };
+  | { v: 1; type: "confirm"; requestId: string; title: string; body?: string; confirmLabel: string; cancelLabel?: string; destructive?: boolean }
+  /** A single-line text input sheet on the window; the reply's ok is true on save, with `value`. */
+  | {
+      v: 1;
+      type: "prompt";
+      requestId: string;
+      title: string;
+      body?: string;
+      label?: string;
+      value?: string;
+      placeholder?: string;
+      confirmLabel: string;
+      cancelLabel?: string;
+      maxLength?: number;
+    }
+  | {
+      v: 1;
+      type: "toast.show";
+      id: string;
+      title: string;
+      description?: string;
+      tone: ToastTone;
+      actionLabel?: string;
+      durationMs: number;
+    }
+  | { v: 1; type: "toast.dismiss"; id: string }
+  | { v: 1; type: "showShortcuts" }
+  | { v: 1; type: "commandPalette.open"; request?: CommandPaletteRequest }
+  | { v: 1; type: "commandPalette.close" }
+  | { v: 1; type: "quickLook"; items: QuickLookItem[]; index?: number };
 
 /** Shell → page. */
 export type NativeCommand =
@@ -445,7 +496,9 @@ export type NativeCommand =
   | { v: 1; type: "appearance"; accent: string; mode: ColorMode }
   /** query only applies to openCommandMenu: the text to open the palette with (the toolbar search field). */
   | { v: 1; type: "command"; name: ShellCommandName; query?: string }
-  | { v: 1; type: "reply"; requestId: string; ok: boolean; selectedId?: string | null; error?: string };
+  | { v: 1; type: "reply"; requestId: string; ok: boolean; selectedId?: string | null; value?: string | null; error?: string }
+  | { v: 1; type: "toast.event"; id: string; event: ToastEventKind }
+  | { v: 1; type: "palette.open"; request: CommandPaletteRequest };
 
 export type ShellCommandName =
   | "openCommandMenu"
@@ -481,6 +534,13 @@ const PAGE_TYPES = new Set([
   "openWorkspaceMenu",
   "contextMenu",
   "confirm",
+  "prompt",
+  "toast.show",
+  "toast.dismiss",
+  "showShortcuts",
+  "commandPalette.open",
+  "commandPalette.close",
+  "quickLook",
 ]);
 const COMMAND_TYPES = new Set([
   "navigate",
@@ -504,10 +564,23 @@ const COMMAND_TYPES = new Set([
   "command",
   "reply",
   "appearance",
+  "toast.event",
+  "palette.open",
 ]);
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const isInAppPath = (p: unknown): p is string => typeof p === "string" && p.startsWith("/") && !p.startsWith("//");
+const isSafeUrlRef = (u: unknown): u is string => isInAppPath(u) || (typeof u === "string" && /^https?:\/\/\S+$/i.test(u));
+const isOptStr = (v: unknown): boolean => v === undefined || typeof v === "string";
+
+function isPaletteRequest(v: unknown): v is CommandPaletteRequest {
+  if (!isObj(v)) return false;
+  if (v.path !== undefined && !isInAppPath(v.path)) return false;
+  if (!isOptStr(v.search) || !isOptStr(v.scopeType) || !isOptStr(v.scopeLabel) || !isOptStr(v.query)) return false;
+  if (v.scope !== undefined && v.scope !== "all" && v.scope !== "page" && v.scope !== "knowledge" && v.scope !== "type") return false;
+  if (v.includeAgent !== undefined && typeof v.includeAgent !== "boolean") return false;
+  return true;
+}
 
 /** A shallow check that a value is a v1 page message of a known type. */
 export function isPageMessage(v: unknown): v is PageMessage {
@@ -517,6 +590,43 @@ export function isPageMessage(v: unknown): v is PageMessage {
     return typeof v.tabId === "string" && typeof v.event === "string" && (v.payloadJson === undefined || typeof v.payloadJson === "string");
   }
   if (v.type === "openInMain") return isInAppPath(v.path) && (v.newTab === undefined || typeof v.newTab === "boolean");
+  if (v.type === "prompt") {
+    return (
+      typeof v.requestId === "string" &&
+      typeof v.title === "string" &&
+      typeof v.confirmLabel === "string" &&
+      isOptStr(v.body) &&
+      isOptStr(v.label) &&
+      isOptStr(v.value) &&
+      isOptStr(v.placeholder) &&
+      isOptStr(v.cancelLabel) &&
+      (v.maxLength === undefined || (typeof v.maxLength === "number" && Number.isInteger(v.maxLength) && v.maxLength > 0))
+    );
+  }
+  if (v.type === "toast.show") {
+    return (
+      typeof v.id === "string" &&
+      typeof v.title === "string" &&
+      isOptStr(v.description) &&
+      (v.tone === "neutral" || v.tone === "success" || v.tone === "error") &&
+      isOptStr(v.actionLabel) &&
+      typeof v.durationMs === "number" &&
+      Number.isFinite(v.durationMs) &&
+      v.durationMs > 0
+    );
+  }
+  if (v.type === "toast.dismiss") return typeof v.id === "string";
+  if (v.type === "commandPalette.open") return v.request === undefined || isPaletteRequest(v.request);
+  if (v.type === "quickLook") {
+    return (
+      Array.isArray(v.items) &&
+      v.items.length > 0 &&
+      v.items.every(
+        (it) => isObj(it) && isSafeUrlRef(it.url) && typeof it.title === "string" && isOptStr(it.filename) && isOptStr(it.contentType),
+      ) &&
+      (v.index === undefined || (typeof v.index === "number" && Number.isInteger(v.index) && v.index >= 0))
+    );
+  }
   return true;
 }
 
@@ -541,5 +651,18 @@ export function isNativeCommand(v: unknown): v is NativeCommand {
   if (v.type === "panel.event") {
     return typeof v.tabId === "string" && typeof v.event === "string" && (v.payloadJson === undefined || typeof v.payloadJson === "string");
   }
+  if (v.type === "reply") {
+    return (
+      typeof v.requestId === "string" &&
+      typeof v.ok === "boolean" &&
+      (v.selectedId === undefined || v.selectedId === null || typeof v.selectedId === "string") &&
+      (v.value === undefined || v.value === null || typeof v.value === "string") &&
+      isOptStr(v.error)
+    );
+  }
+  if (v.type === "toast.event") {
+    return typeof v.id === "string" && (v.event === "action" || v.event === "dismissed" || v.event === "timeout");
+  }
+  if (v.type === "palette.open") return isPaletteRequest(v.request);
   return true;
 }

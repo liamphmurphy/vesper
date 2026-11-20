@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Dialog, DropdownMenu } from "radix-ui";
 import { useRouter, useSearchParams } from "next/navigation";
 import { buildKeepsakesNavModel, LIBRARY_SOURCE_PICKER, librarySourceHref, type LibrarySourceValue } from "@/lib/native-shell/models/library";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { libraryItemUrl } from "@/lib/api/client";
 import {
   useClearLibraryReference,
@@ -17,6 +17,10 @@ import {
   type LibraryItem,
   type LibraryItemKind,
 } from "@/lib/api/library-hooks";
+import { isNativeShell, nativePrompt, nativeQuickLook } from "@/lib/native-shell/bridge";
+import { useIsNativeShell, useNativeContextMenu } from "@/lib/native-shell/hooks";
+import { toast } from "@/lib/toast";
+import type { QuickLookItem } from "@/lib/native-shell/protocol";
 import { usePersonas } from "@/lib/api/persona-hooks";
 import { cx } from "@/lib/cx";
 import { formatBytes } from "@/lib/files";
@@ -120,8 +124,117 @@ function ReferenceBadge({ item }: { item: LibraryItem }) {
   );
 }
 
+function toQuickLookItem(item: LibraryItem): QuickLookItem {
+  return {
+    url: libraryItemUrl(item.id),
+    title: item.title,
+    filename: item.filename,
+    ...(item.content_type ? { contentType: item.content_type } : {}),
+  };
+}
+
+function useLibraryTileActions({
+  item,
+  allItems,
+  index,
+  onOpenDetails,
+}: {
+  item: LibraryItem;
+  allItems: LibraryItem[];
+  index: number;
+  onOpenDetails?: () => void;
+}) {
+  const router = useRouter();
+  const rename = useRenameLibraryItem();
+  const del = useDeleteLibraryItem();
+  const tileRef = useRef<HTMLLIElement>(null);
+  const noun =
+    item.kind === "diagram"
+      ? "diagram"
+      : item.kind === "video"
+        ? "video"
+        : item.kind === "audio"
+          ? "audio file"
+          : item.kind === "file"
+            ? "file"
+            : item.kind === "export"
+              ? "export"
+              : item.kind === "document"
+                ? "document"
+                : "image";
+
+  const openQuickLook = () => {
+    const list = allItems.length > 0 ? allItems.map(toQuickLookItem) : [toQuickLookItem(item)];
+    nativeQuickLook(list, index);
+  };
+
+  useNativeContextMenu(tileRef, () => [
+    { id: "quick-look", label: "Quick Look", icon: "eye", onSelect: openQuickLook },
+    ...(onOpenDetails ? [{ id: "open-details", label: "Open details", icon: "expand", onSelect: onOpenDetails }] : []),
+    ...(item.kind === "document" ? [{ id: "open-doc", label: "Open", icon: "external", onSelect: () => window.open(libraryItemUrl(item.id), "_blank") }] : []),
+    ...(item.chat_id ? [{ id: "open-chat", label: "Open chat", icon: "msg", onSelect: () => router.push(`/chat/${item.chat_id}`) }] : []),
+    { id: "sep-1", separator: true },
+    ...(item.kind !== "document"
+      ? [{
+          id: "rename",
+          label: "Rename…",
+          icon: "edit",
+          onSelect: () => {
+            void nativePrompt({
+              title: `Rename “${item.title}”`,
+              label: "Title",
+              value: item.title,
+              confirmLabel: "Save",
+              maxLength: 300,
+            }).then((next) => {
+              const trimmed = next?.trim();
+              if (trimmed && trimmed !== item.title) {
+                rename.mutate({ itemId: item.id, title: trimmed });
+              }
+            });
+          },
+        }]
+      : []),
+    { id: "download", label: "Download", icon: "download", onSelect: () => window.location.assign(libraryItemUrl(item.id, true)) },
+    {
+      id: "copy-link",
+      label: "Copy link",
+      icon: "link",
+      onSelect: () => {
+        const href = new URL(libraryItemUrl(item.id), window.location.href).href;
+        void navigator.clipboard?.writeText(href).then(() => toast({ title: "Link copied", tone: "success" }));
+      },
+    },
+    { id: "sep-2", separator: true },
+    {
+      id: "remove",
+      label: "Remove from Library",
+      icon: "trash",
+      destructive: true,
+      onSelect: () => {
+        const body = item.source === "upload" ? undefined : "It stays in its chat while that chat exists.";
+        void confirmAction({ title: `Remove this ${noun} from your Library?`, body, confirmLabel: "Remove" }).then((ok) => {
+          if (ok) del.mutate(item.id);
+        });
+      },
+    },
+  ]);
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
+    if (!isNativeShell() || e.key !== " " || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+    const target = e.target as HTMLElement | null;
+    if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
+    if (document.querySelector('[role="dialog"]')) return;
+    e.preventDefault();
+    openQuickLook();
+  };
+
+  return { tileRef, onKeyDown };
+}
+
 /** The dialog a Library tile opens: the item's header with Download and Remove, over the item itself. */
 function ItemDialog({ item, open, onOpenChange, trigger, extra, children }: { item: LibraryItem; open?: boolean; onOpenChange?: (open: boolean) => void; trigger: React.ReactNode; extra?: React.ReactNode; children: React.ReactNode }) {
+  const native = useIsNativeShell();
   const del = useDeleteLibraryItem();
   const noun = item.kind === "diagram" ? "diagram" : item.kind === "video" ? "video" : item.kind === "audio" ? "audio file" : item.kind === "file" ? "file" : item.kind === "export" ? "export" : "image";
   return (
@@ -143,6 +256,11 @@ function ItemDialog({ item, open, onOpenChange, trigger, extra, children }: { it
               </span>
             </div>
             {extra}
+            {native && (
+              <Button variant="secondary" icon="expand" onClick={() => nativeQuickLook([toQuickLookItem(item)], 0)}>
+                Quick Look
+              </Button>
+            )}
             <a
               href={libraryItemUrl(item.id, true)}
               download={item.filename}
@@ -180,13 +298,14 @@ function ItemDialog({ item, open, onOpenChange, trigger, extra, children }: { it
  * preview, and a click opens the player. The one a chat's "Open in Library"
  * names starts open.
  */
-function VideoTile({ item, initiallyOpen }: { item: LibraryItem; initiallyOpen: boolean }) {
+function VideoTile({ item, initiallyOpen, allItems, index }: { item: LibraryItem; initiallyOpen: boolean; allItems: LibraryItem[]; index: number }) {
   const [open, setOpen] = useState(initiallyOpen);
   const [hover, setHover] = useState(false);
   const url = libraryItemUrl(item.id);
   const poster = item.has_poster ? `/api/v1/library/${item.id}/poster` : undefined;
+  const { tileRef, onKeyDown } = useLibraryTileActions({ item, allItems, index, onOpenDetails: () => setOpen(true) });
   return (
-    <li className="flex min-w-0 flex-col gap-1.5" data-testid="library-item" data-kind="video">
+    <li ref={tileRef} onKeyDown={onKeyDown} className="flex min-w-0 flex-col gap-1.5" data-testid="library-item" data-kind="video">
       <ItemDialog
         item={item}
         open={open}
@@ -252,12 +371,13 @@ function RenameField({ item }: { item: LibraryItem }) {
  * Audio: its waveform with the length and an Audio tag, and a click opens the player (waveform
  * scrubbing, speed, loop, download, rename). The one a chat's "Open in Library" names starts open.
  */
-function AudioTile({ item, initiallyOpen }: { item: LibraryItem; initiallyOpen: boolean }) {
+function AudioTile({ item, initiallyOpen, allItems, index }: { item: LibraryItem; initiallyOpen: boolean; allItems: LibraryItem[]; index: number }) {
   const [open, setOpen] = useState(initiallyOpen);
   // A click on the tile plays at once; arriving from a chat's "Open in Library" waits for Play.
   const [autoPlay, setAutoPlay] = useState(false);
+  const { tileRef, onKeyDown } = useLibraryTileActions({ item, allItems, index, onOpenDetails: () => setOpen(true) });
   return (
-    <li className="flex min-w-0 flex-col gap-1.5" data-testid="library-item" data-kind="audio">
+    <li ref={tileRef} onKeyDown={onKeyDown} className="flex min-w-0 flex-col gap-1.5" data-testid="library-item" data-kind="audio">
       <ItemDialog
         item={item}
         open={open}
@@ -392,10 +512,11 @@ function FilePreviewPane({ item, open }: { item: LibraryItem; open: boolean }) {
 }
 
 /** A file: a type badge, its name, a summary line and the source. A click opens a read-only preview with Download, Rename and Remove. */
-function FileTile({ item, initiallyOpen }: { item: LibraryItem; initiallyOpen: boolean }) {
+function FileTile({ item, initiallyOpen, allItems, index }: { item: LibraryItem; initiallyOpen: boolean; allItems: LibraryItem[]; index: number }) {
   const [open, setOpen] = useState(initiallyOpen);
+  const { tileRef, onKeyDown } = useLibraryTileActions({ item, allItems, index, onOpenDetails: () => setOpen(true) });
   return (
-    <li className="flex min-w-0 flex-col gap-1.5" data-testid="library-item" data-kind="file">
+    <li ref={tileRef} onKeyDown={onKeyDown} className="flex min-w-0 flex-col gap-1.5" data-testid="library-item" data-kind="file">
       <ItemDialog
         item={item}
         open={open}
@@ -420,11 +541,12 @@ function FileTile({ item, initiallyOpen }: { item: LibraryItem; initiallyOpen: b
 }
 
 /** An export: a frozen copy of what Slides, Designs or Docs made, with a line saying whether its source has changed since. */
-function ExportTile({ item, initiallyOpen }: { item: LibraryItem; initiallyOpen: boolean }) {
+function ExportTile({ item, initiallyOpen, allItems, index }: { item: LibraryItem; initiallyOpen: boolean; allItems: LibraryItem[]; index: number }) {
   const [open, setOpen] = useState(initiallyOpen);
   const app = item.export_source ? SOURCE_APP[item.export_source.kind].label : "";
+  const { tileRef, onKeyDown } = useLibraryTileActions({ item, allItems, index, onOpenDetails: () => setOpen(true) });
   return (
-    <li className="flex min-w-0 flex-col gap-1.5 rounded-xl border border-border bg-surface-sunken p-3" data-testid="library-item" data-kind="export">
+    <li ref={tileRef} onKeyDown={onKeyDown} className="flex min-w-0 flex-col gap-1.5 rounded-xl border border-border bg-surface-sunken p-3" data-testid="library-item" data-kind="export">
       <span className="text-12 font-semibold text-accent">{typeBadge(item)}{app && ` · from ${app}`}</span>
       <ItemDialog
         item={item}
@@ -447,30 +569,32 @@ function ExportTile({ item, initiallyOpen }: { item: LibraryItem; initiallyOpen:
   );
 }
 
-/** One tile; a click opens the full item with Download, Remove and, for an image, the reference actions. */
-function ItemTile({ item, openItem }: { item: LibraryItem; openItem?: string | null }) {
+function DocumentTile({ item, allItems, index }: { item: LibraryItem; allItems: LibraryItem[]; index: number }) {
   const del = useDeleteLibraryItem();
   const url = libraryItemUrl(item.id);
-  if (item.kind === "video") return <VideoTile item={item} initiallyOpen={openItem === item.id} />;
-  if (item.kind === "audio") return <AudioTile item={item} initiallyOpen={openItem === item.id} />;
-  if (item.kind === "file") return <FileTile item={item} initiallyOpen={openItem === item.id} />;
-  if (item.kind === "export") return <ExportTile item={item} initiallyOpen={openItem === item.id} />;
-  if (item.kind === "document") {
-    return (
-      <li className="flex min-w-0 flex-col gap-1.5 rounded-lg border border-border bg-surface p-3" data-testid="library-item">
-        <p className="truncate text-13 font-medium text-fg" title={item.title}>{item.title}</p>
-        <div className="flex items-center gap-3 text-13">
-          <a className="text-accent hover:underline" href={url} target="_blank" rel="noreferrer">Open</a>
-          <button type="button" className="text-fg-secondary hover:text-fg" disabled={del.isPending} onClick={() => del.mutate(item.id)}>Remove</button>
-        </div>
-      </li>
-    );
-  }
-  const diagram = item.kind === "diagram";
+  const { tileRef, onKeyDown } = useLibraryTileActions({ item, allItems, index });
   return (
-    <li className="flex min-w-0 flex-col gap-1.5" data-testid="library-item">
+    <li ref={tileRef} onKeyDown={onKeyDown} className="flex min-w-0 flex-col gap-1.5 rounded-lg border border-border bg-surface p-3" data-testid="library-item">
+      <p className="truncate text-13 font-medium text-fg" title={item.title}>{item.title}</p>
+      <div className="flex items-center gap-3 text-13">
+        <a className="text-accent hover:underline" href={url} target="_blank" rel="noreferrer">Open</a>
+        <button type="button" className="text-fg-secondary hover:text-fg" disabled={del.isPending} onClick={() => del.mutate(item.id)}>Remove</button>
+      </div>
+    </li>
+  );
+}
+
+function ImageOrDiagramTile({ item, initiallyOpen, allItems, index }: { item: LibraryItem; initiallyOpen: boolean; allItems: LibraryItem[]; index: number }) {
+  const [open, setOpen] = useState(initiallyOpen);
+  const url = libraryItemUrl(item.id);
+  const diagram = item.kind === "diagram";
+  const { tileRef, onKeyDown } = useLibraryTileActions({ item, allItems, index, onOpenDetails: () => setOpen(true) });
+  return (
+    <li ref={tileRef} onKeyDown={onKeyDown} className="flex min-w-0 flex-col gap-1.5" data-testid="library-item">
       <ItemDialog
         item={item}
+        open={open}
+        onOpenChange={setOpen}
         extra={!diagram && <ReferenceActions item={item} />}
         trigger={
           <button
@@ -490,6 +614,16 @@ function ItemTile({ item, openItem }: { item: LibraryItem; openItem?: string | n
       <Source item={item} />
     </li>
   );
+}
+
+/** One tile; a click opens the full item with Download, Remove and, for an image, the reference actions. */
+function ItemTile({ item, openItem, allItems, index }: { item: LibraryItem; openItem?: string | null; allItems: LibraryItem[]; index: number }) {
+  if (item.kind === "video") return <VideoTile item={item} initiallyOpen={openItem === item.id} allItems={allItems} index={index} />;
+  if (item.kind === "audio") return <AudioTile item={item} initiallyOpen={openItem === item.id} allItems={allItems} index={index} />;
+  if (item.kind === "file") return <FileTile item={item} initiallyOpen={openItem === item.id} allItems={allItems} index={index} />;
+  if (item.kind === "export") return <ExportTile item={item} initiallyOpen={openItem === item.id} allItems={allItems} index={index} />;
+  if (item.kind === "document") return <DocumentTile item={item} allItems={allItems} index={index} />;
+  return <ImageOrDiagramTile item={item} initiallyOpen={openItem === item.id} allItems={allItems} index={index} />;
 }
 
 /** Adds a file of the person's own: an image (e.g. a photo to use as their reference), audio, or any other file. */
@@ -571,8 +705,8 @@ function Items({ kind, openItem }: { kind: LibraryItemKind; openItem?: string | 
   return (
     <>
       <ul className={grid}>
-        {items.map((it) => (
-          <ItemTile key={it.id} item={it} openItem={openItem} />
+        {items.map((it, index) => (
+          <ItemTile key={it.id} item={it} openItem={openItem} allItems={items} index={index} />
         ))}
       </ul>
       {lib.hasNextPage && (

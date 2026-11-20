@@ -1,20 +1,65 @@
 "use client";
 
 import { Dialog } from "radix-ui";
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { isNativeShell, nativePrompt } from "@/lib/native-shell/bridge";
+import { useIsNativeShell } from "@/lib/native-shell/hooks";
 import { Button } from "@/components/ui/button";
 import { TextInput } from "@/components/ui/primitives";
 
 /**
  * A rename box for the Mac app, where a sidebar row or the title's menu has no inline field: a
- * dialog with one text field. `request` is what is being renamed (null while closed); `onSubmit`
- * gets the trimmed, non-empty new name. Closing without saving, or saving the same name, changes nothing.
+ * native prompt sheet inside the Mac shell (and a dialog fallback outside it). `request` is what
+ * is being renamed (null while closed); `onSubmit` gets the trimmed, non-empty new name. Closing
+ * without saving, or saving the same name, changes nothing.
  */
 export function NativeRenameDialog({ request, onClose, onSubmit }: {
   request: { heading: string; label: string; value: string; maxLength?: number } | null;
   onClose: () => void;
   onSubmit: (name: string) => void;
 }) {
+  const native = useIsNativeShell();
+  const onCloseRef = useRef(onClose);
+  const onSubmitRef = useRef(onSubmit);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+    onSubmitRef.current = onSubmit;
+  });
+
+  const open = !!request;
+  const heading = request?.heading ?? "";
+  const label = request?.label ?? "";
+  const value = request?.value ?? "";
+  const maxLength = request?.maxLength;
+
+  useEffect(() => {
+    if (!open || !isNativeShell()) return;
+    let cancelled = false;
+    // Defer with a microtask so React StrictMode's mount -> cleanup -> remount doesn't post two sheets.
+    queueMicrotask(() => {
+      if (cancelled) return;
+      void nativePrompt({
+        title: heading,
+        label,
+        value,
+        confirmLabel: "Save",
+        maxLength,
+      }).then((entered) => {
+        if (cancelled) return;
+        const trimmed = entered?.trim();
+        if (trimmed && trimmed !== value) {
+          onSubmitRef.current(trimmed);
+        }
+        onCloseRef.current();
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, heading, label, value, maxLength]);
+
+  if (native) return null;
+
   return (
     <Dialog.Root open={!!request} onOpenChange={(o) => { if (!o) onClose(); }}>
       <Dialog.Portal>

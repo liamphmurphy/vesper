@@ -18,6 +18,8 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
     var onOpenInMain: ((String, Bool) -> Void)?
     /// Called when an embedded panel asks to forward an event back to the main page.
     var onPanelEvent: ((String, String, String?) -> Void)?
+    /// Window host for overlays shared across tabs (toast HUD, shortcuts, command palette, Quick Look).
+    weak var shellHost: (any ShellHostActions)?
 
     private var appearanceMonitor: AppearanceMonitor?
 
@@ -102,6 +104,28 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
                 let ok = await self.confirmSheet(title: title, body: body, confirmLabel: confirmLabel, cancelLabel: cancelLabel, destructive: destructive)
                 self.send(.reply(requestId: requestId, ok: ok))
             }
+        case .prompt(let requestId, let title, let body, let label, let value, let placeholder, let confirmLabel, let cancelLabel, let maxLength):
+            Task { [weak self] in
+                guard let self else { return }
+                let entered = await Self.promptSheet(
+                    title: title, body: body, label: label, value: value, placeholder: placeholder,
+                    confirmLabel: confirmLabel, cancelLabel: cancelLabel, maxLength: maxLength, window: self.webView?.window
+                )
+                self.send(.reply(requestId: requestId, ok: entered != nil, value: .some(entered)))
+            }
+        case .toastShow(let id, let title, let description, let tone, let actionLabel, let durationMs):
+            let toast = ToastItemModel(id: id, title: title, description: description, tone: tone, actionLabel: actionLabel, durationMs: durationMs)
+            shellHost?.showToast(toast, from: webView)
+        case .toastDismiss(let id):
+            shellHost?.dismissToast(id: id)
+        case .showShortcuts:
+            shellHost?.showShortcuts()
+        case .commandPaletteOpen(let request):
+            shellHost?.openCommandPalette(request)
+        case .commandPaletteClose:
+            shellHost?.closeCommandPalette()
+        case .quickLook(let items, let index):
+            shellHost?.showQuickLook(items: items, index: index)
         }
     }
 
@@ -124,6 +148,53 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
         // invisibly; answer no instead, as the in-app dialog does when replaced.
         guard window.attachedSheet == nil else { return false }
         return await alert.beginSheetModal(for: window) == .alertFirstButtonReturn
+    }
+
+    static func promptSheet(
+        title: String,
+        body: String?,
+        label: String?,
+        value: String?,
+        placeholder: String?,
+        confirmLabel: String,
+        cancelLabel: String?,
+        maxLength: Int?,
+        window: NSWindow?
+    ) async -> String? {
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = title
+        alert.informativeText = body ?? label ?? ""
+        let confirm = alert.addButton(withTitle: confirmLabel)
+        alert.addButton(withTitle: cancelLabel ?? "Cancel").keyEquivalent = "\u{1b}"
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+        field.usesSingleLineMode = true
+        field.lineBreakMode = .byTruncatingHead
+        field.placeholderString = placeholder ?? label
+        if let value {
+            field.stringValue = maxLength.map { String(value.prefix($0)) } ?? value
+        }
+        let delegate = PromptFieldDelegate(confirmButton: confirm, maxLength: maxLength)
+        field.delegate = delegate
+        confirm.isEnabled = !field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.layout()
+
+        let accepted: Bool
+        if let window {
+            guard window.attachedSheet == nil else { return nil }
+            Task { @MainActor in
+                field.selectText(nil)
+            }
+            accepted = await alert.beginSheetModal(for: window) == .alertFirstButtonReturn
+        } else {
+            field.selectText(nil)
+            accepted = alert.runModal() == .alertFirstButtonReturn
+        }
+        withExtendedLifetime(delegate) {}
+        return accepted ? field.stringValue : nil
     }
 
     private func showContextMenu(requestId: String, items: [MenuItem], x: Double, y: Double) {
@@ -196,6 +267,13 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
         case .openWorkspaceMenu(let r, _): "openWorkspaceMenu \(r)"
         case .contextMenu(let r, let i, _, _): "contextMenu \(r) \(i.count) items"
         case .confirm(let r, _, _, _, _, _): "confirm \(r)"
+        case .prompt(let r, _, _, _, _, _, _, _, _): "prompt \(r)"
+        case .toastShow(let id, _, _, let tone, _, _): "toastShow \(id) \(tone.rawValue)"
+        case .toastDismiss(let id): "toastDismiss \(id)"
+        case .showShortcuts: "showShortcuts"
+        case .commandPaletteOpen(let req): "commandPaletteOpen \(req?.scope?.rawValue ?? "all")"
+        case .commandPaletteClose: "commandPaletteClose"
+        case .quickLook(let items, let idx): "quickLook \(items.count) items index=\(idx.map(String.init) ?? "nil")"
         }
     }
 }
@@ -241,6 +319,25 @@ final class ClosureMenuItem: NSMenuItem {
     required init(coder: NSCoder) { fatalError("not used") }
 
     @objc private func fire() { handler(itemId) }
+}
+
+@MainActor
+private final class PromptFieldDelegate: NSObject, NSTextFieldDelegate {
+    weak var confirmButton: NSButton?
+    let maxLength: Int?
+
+    init(confirmButton: NSButton, maxLength: Int?) {
+        self.confirmButton = confirmButton
+        self.maxLength = maxLength
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        guard let field = obj.object as? NSTextField else { return }
+        if let maxLength, field.stringValue.count > maxLength {
+            field.stringValue = String(field.stringValue.prefix(maxLength))
+        }
+        confirmButton?.isEnabled = !field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 }
 
 /// Watches macOS's accent colour and light/dark setting and calls `onChange` when either may have changed.

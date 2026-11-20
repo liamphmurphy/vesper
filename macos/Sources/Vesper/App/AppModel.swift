@@ -61,9 +61,11 @@ final class AppModel {
         guard new != connection else { return }
         connection = new
         AvatarImages.shared.connection = new
+        aux.quickLook.connection = new
         guard let new else { return }
         Task {
             await installCookieIfNeeded(new)
+            aux.commandPalette.connect(new)
             for window in windows { window.connect(new) }
             if windows.isEmpty { restoreOrOpenFirstWindow() }
         }
@@ -261,7 +263,8 @@ final class AppModel {
     }
 
     var keyController: MainWindowController? {
-        (NSApp.keyWindow ?? NSApp.mainWindow)?.windowController as? MainWindowController
+        (NSApp.keyWindow?.windowController as? MainWindowController)
+            ?? (NSApp.mainWindow?.windowController as? MainWindowController)
             ?? windows.first
     }
 

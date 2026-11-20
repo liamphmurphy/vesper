@@ -1,4 +1,5 @@
 import AppKit
+import Quartz
 import SwiftUI
 import VesperCore
 import WebKit
@@ -7,7 +8,7 @@ import WebKit
 /// separate layout it holds one tab (and the system groups windows into tabs); in the compact
 /// layout it holds several tabs, drawn in its toolbar, and shows the active one.
 @MainActor
-final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolbarItemValidation {
+final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolbarItemValidation, ShellHostActions {
     static let tabbingIdentifier = "vesper"
     static let defaultSize = NSSize(width: 1280, height: 840)
     static let minSize = NSSize(width: 760, height: 540)
@@ -17,6 +18,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     let compact: Bool
     let tabs = TabsModel()
     let split = NSSplitViewController()
+    let toastStore = ToastStore()
     private let container = TabContainerController()
     private var rootController: WindowRootController?
     private var sidebarItem: NSSplitViewItem?
@@ -43,9 +45,40 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     var inspectorDividerIndex: Int { InspectorLogic.inspectorDividerIndex(hasSidebar: hasSidebar) }
     var currentURLString: String? { content.currentURLString }
 
-    /// ⌥⌘F: the toolbar's search field, which opens the page's command palette.
+    /// ⌥⌘F: open the native floating command palette anchored to this window.
     func focusSearch() {
-        toolbarController?.focusSearch()
+        openCommandPalette(CommandPaletteRequest(scope: .all))
+    }
+
+    var isFindBarVisible: Bool { container.findBar.isVisible }
+    var hasFindQuery: Bool { container.findBar.hasQuery }
+
+    func showFindBar(initialQuery: String? = nil) {
+        container.updateFindTarget(content.webView)
+        container.findBar.present(initialQuery: initialQuery)
+    }
+
+    func findNext() {
+        container.updateFindTarget(content.webView)
+        container.findBar.findNext()
+    }
+
+    func findPrevious() {
+        container.updateFindTarget(content.webView)
+        container.findBar.findPrevious()
+    }
+
+    func useSelectionForFind() {
+        let target = content.webView
+        Task { @MainActor [weak self, weak target] in
+            guard let self, let target, self.content.webView === target else { return }
+            let raw = (try? await target.callAsyncJavaScript(
+                "return window.getSelection()?.toString() ?? ''",
+                arguments: [:], in: nil, contentWorld: .page
+            )) as? String
+            guard let normalized = FindLogic.normalizeSelection(raw) else { return }
+            self.showFindBar(initialQuery: normalized)
+        }
     }
 
     init(app: AppModel, compact: Bool, tabs initial: [WebContentController], activeIndex: Int = 0) {
@@ -107,6 +140,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             inspItem.isCollapsed = true
             // AppKit requires the inspector split item to be the final item in NSSplitViewController.
             split.addSplitViewItem(inspItem)
+            inspector.shellHost = self
             inspectorItem = inspItem
             inspectorController = inspector
 
@@ -134,6 +168,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             send: { [weak self] in self?.handleRailCommand($0) },
             services: { [weak app] in app?.system }
         )
+        root.installToasts(store: toastStore)
         root.onToggleSidebar = { [weak self] sender in self?.split.toggleSidebar(sender) }
         root.onToggleInspector = { [weak self] sender in self?.toggleInspector(sender) }
         root.canToggleSidebar = { [weak self] in self?.hasSidebar == true }
@@ -151,6 +186,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         }
         tabs.list.select(activeIndex)
         container.show(content)
+        container.updateFindTarget(content.webView)
+        container.findBar.onDismiss = { [weak self] in
+            guard let self else { return }
+            self.window?.makeFirstResponder(self.content.webView)
+        }
 
         if hasNativeChrome {
             toolbarController = ToolbarController(owner: self)
@@ -376,6 +416,53 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         tab.bridge?.onOpenInMain = { [weak self] path, newTab in
             self?.openInMain(path: path, newTab: newTab)
         }
+        tab.bridge?.shellHost = self
+    }
+
+    // MARK: ShellHostActions
+
+    func showToast(_ toast: ToastItemModel, from webView: WKWebView?) {
+        toastStore.show(toast, from: webView)
+    }
+
+    func dismissToast(id: String) {
+        toastStore.dismissFromPage(id: id)
+    }
+
+    func showShortcuts() {
+        app.aux.showShortcuts()
+    }
+
+    func openCommandPalette(_ request: CommandPaletteRequest?) {
+        app.aux.openCommandPalette(request: request, from: self)
+    }
+
+    func closeCommandPalette() {
+        app.aux.closeCommandPalette()
+    }
+
+    func showQuickLook(items: [QuickLookItem], index: Int?) {
+        app.aux.previewQuickLook(items: items, index: index, from: window)
+    }
+
+    // MARK: QLPreviewPanelController
+
+    nonisolated override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
+        MainActor.assumeIsolated { app.aux.quickLook.hasItems }
+    }
+
+    nonisolated override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        MainActor.assumeIsolated {
+            guard let active = QLPreviewPanel.shared() else { return }
+            app.aux.quickLook.attach(to: active)
+        }
+    }
+
+    nonisolated override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        MainActor.assumeIsolated {
+            guard let active = QLPreviewPanel.shared() else { return }
+            app.aux.quickLook.detach(from: active)
+        }
     }
 
     /// Match the window to the page's effective mode, so a person who forces Dark in Vesper while macOS is
@@ -460,6 +547,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     func windowWillClose(_ notification: Notification) {
         inspectorCollapseObservation = nil
         inspectorController?.teardown()
+        container.teardown()
+        toastStore.teardown()
         for tab in tabs.list.items {
             app.recordClosed(url: tab.currentURLString)
             tab.teardown()
@@ -524,6 +613,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         let tab = content
         lastContent = tab
         container.show(tab)
+        container.updateFindTarget(tab.webView)
         window?.title = tab.displayTitle
         window?.toolbar?.validateVisibleItems()
         if focus { window?.makeFirstResponder(tab.webView) }
