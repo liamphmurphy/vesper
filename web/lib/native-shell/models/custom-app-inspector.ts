@@ -45,7 +45,7 @@ export function buildCustomAppCapabilities(input: BuildCustomAppCapabilitiesInpu
         : `${s.handle} · authenticated secretFetch calls`,
   }));
 
-  const knownKeys = new Set<string>(["vesper.api:read", "vesper.api:write", "app.http:outbound"]);
+  const knownKeys = new Set<string>(["vesper.api:read", "vesper.api:write", "app.http:outbound", "app.media:download"]);
   for (const c of connectorRows) knownKeys.add(c.key);
   for (const s of secretRows) knownKeys.add(s.key);
   for (const k of Object.keys(input.requestedCapabilities ?? {})) {
@@ -68,7 +68,9 @@ export function buildCustomAppCapabilities(input: BuildCustomAppCapabilitiesInpu
           ? "Vesper API · Write"
           : capKey === "app.http:outbound"
             ? "Outbound HTTPS"
-            : sInfo?.label ??
+            : capKey === "app.media:download"
+              ? "Download videos"
+              : sInfo?.label ??
               (capKey.startsWith("secret:")
                 ? `Secret · ${capKey.slice("secret:".length)}`
                 : cInfo?.label ?? capKey);
@@ -79,7 +81,9 @@ export function buildCustomAppCapabilities(input: BuildCustomAppCapabilitiesInpu
           ? "POST, PATCH, PUT, DELETE requests to Vesper APIs"
           : capKey === "app.http:outbound"
             ? "Public HTTPS fetches from the app's MCP server and remote image proxy"
-            : sInfo?.hint ??
+            : capKey === "app.media:download"
+              ? "Save direct video files into Vesper so they play locally"
+              : sInfo?.hint ??
               (capKey.startsWith("secret:")
                 ? "Authenticated secretFetch calls using this Vesper secret"
                 : cInfo?.hint ?? "Requested by app manifest");

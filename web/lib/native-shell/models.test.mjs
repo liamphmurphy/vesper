@@ -205,6 +205,13 @@ test("buildCustomAppCapabilities surfaces configured API secrets without manifes
       requested: undefined,
     },
     {
+      key: "app.media:download",
+      label: "Download videos",
+      hint: "Save direct video files into Vesper so they play locally",
+      mode: "denied",
+      requested: undefined,
+    },
+    {
       key: "mcp:github:*",
       label: "MCP · GitHub",
       hint: "12 tools · connected",
@@ -249,17 +256,18 @@ test("buildCustomAppCapabilities deduplicates requested/granted secrets, keeps u
     "vesper.api:read",
     "vesper.api:write",
     "app.http:outbound",
+    "app.media:download",
     "secret:youtube-data-api",
     "secret:missing-key",
   ]);
-  assert.deepEqual(caps[3], {
+  assert.deepEqual(caps[4], {
     key: "secret:youtube-data-api",
     label: "Secret · YouTube Data API",
     hint: "youtube-data-api · www.googleapis.com",
     mode: "denied",
     requested: "requires_approval",
   });
-  assert.deepEqual(caps[4], {
+  assert.deepEqual(caps[5], {
     key: "secret:missing-key",
     label: "Secret · missing-key",
     hint: "Authenticated secretFetch calls using this Vesper secret",
