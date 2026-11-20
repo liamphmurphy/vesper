@@ -29,6 +29,10 @@ func localGuest(_ context.Context, conn net.Conn) {
 	if err != nil {
 		return
 	}
+	serveLocalGuest(conn, f)
+}
+
+func serveLocalGuest(conn net.Conn, f guestproto.Frame) {
 	var req guestproto.Request
 	_ = json.Unmarshal(f.Data, &req)
 	ok := func() {
@@ -623,5 +627,85 @@ func TestMacOSGuestFailedBootDoesntWaitOnAStuckStop(t *testing.T) {
 		if err := acquireWithin(t, g, "run-1", 5*time.Second); err == nil {
 			t.Fatalf("call %d: acquire succeeded against a guest that drops exec", i+1)
 		}
+	}
+}
+
+// logGuest serves the guest agent's log (logText) through Stat and ReadFile,
+// like the real agent, and hands everything else to exec (nil: localGuest).
+func logGuest(logText string, exec func(net.Conn)) func(context.Context, net.Conn) {
+	return func(_ context.Context, conn net.Conn) {
+		f, err := guestproto.ReadFrame(conn)
+		if err != nil {
+			return
+		}
+		var req guestproto.Request
+		_ = json.Unmarshal(f.Data, &req)
+		reply := func(v any) {
+			raw, _ := json.Marshal(v)
+			resp, _ := json.Marshal(guestproto.Response{ID: f.ID, V: raw})
+			_ = guestproto.WriteFrame(conn, guestproto.Frame{Type: guestproto.FrameResp, ID: f.ID, Data: resp})
+		}
+		switch req.Op {
+		case guestproto.OpStat:
+			var in guestproto.StatReq
+			_ = json.Unmarshal(req.V, &in)
+			if in.Path != guestproto.MacAgentLogPath {
+				reply(guestproto.StatResp{})
+				return
+			}
+			reply(guestproto.StatResp{Exists: true, IsRegular: true, Size: int64(len(logText))})
+		case guestproto.OpReadFile:
+			var in guestproto.ReadFileReq
+			_ = json.Unmarshal(req.V, &in)
+			reply(nil)
+			data := logText[min(int(in.Offset), len(logText)):]
+			if in.Limit > 0 && int64(len(data)) > in.Limit {
+				data = data[:in.Limit]
+			}
+			_ = guestproto.WriteFrame(conn, guestproto.Frame{Type: guestproto.FrameFileChunk, ID: f.ID, Data: []byte(data)})
+			_ = guestproto.WriteFrame(conn, guestproto.Frame{Type: guestproto.FrameFileEOF, ID: f.ID})
+		case guestproto.OpExecStart:
+			if exec != nil {
+				exec(conn)
+				return
+			}
+			serveLocalGuest(conn, f)
+		default:
+			serveLocalGuest(conn, f)
+		}
+	}
+}
+
+func TestMacOSGuestFailedBootCarriesTheAgentLog(t *testing.T) {
+	drv := &microvm.MemDriver{Handler: logGuest("boot\npanic: exec went wrong\n", func(conn net.Conn) { _ = conn.Close() })}
+	g := newTestMacGuests(t, drv)
+	c, _ := macClient(t, g, "run-1")
+
+	err := c.Start(context.Background())
+	if err == nil {
+		t.Fatal("start succeeded against a guest that drops exec")
+	}
+	for _, want := range []string{"prepare workspace", "end of " + guestproto.MacAgentLogPath, "panic: exec went wrong"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("start error lacks %q:\n%v", want, err)
+		}
+	}
+}
+
+func TestMacOSGuestAgentLogReturnsItsTail(t *testing.T) {
+	head := strings.Repeat("old line\n", 20000) // well past the tail limit
+	drv := &microvm.MemDriver{Handler: logGuest(head+"newest line\n", nil)}
+	g := newTestMacGuests(t, drv)
+	c, _ := macClient(t, g, "run-1")
+
+	log, err := c.AgentLog(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(log, "newest line\n") {
+		t.Fatalf("log doesn't end with the newest line: ...%q", log[max(0, len(log)-40):])
+	}
+	if len(log) != macAgentLogTail {
+		t.Fatalf("log is %d bytes, want the last %d", len(log), macAgentLogTail)
 	}
 }

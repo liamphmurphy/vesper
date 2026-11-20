@@ -357,6 +357,8 @@ func (g *MacOSGuests) boot(ctx context.Context, dir string) (microvm.VM, int, in
 	uid, gid, err := g.prepareWorkspace(pctx, vm)
 	cancel()
 	if err != nil {
+		// Read the guest's side of the failure before stopping takes it away.
+		err = withAgentLog(ctx, vm, err)
 		g.stopVM(vm, dir)
 		return nil, 0, 0, err
 	}
@@ -400,6 +402,57 @@ func durationOr(d, def time.Duration) time.Duration {
 		return d
 	}
 	return def
+}
+
+// macAgentLogTail is how much of the end of the guest agent's log
+// `mac --agent-log` returns; macBootLogTail, how much a failed boot's error
+// carries.
+const (
+	macAgentLogTail    = 64 << 10
+	macBootLogTail     = 8 << 10
+	macAgentLogTimeout = 10 * time.Second
+)
+
+// agentLogTail reads the last limit bytes of the guest agent's log through
+// the agent's own file reads, which can work when running commands doesn't.
+// Only this one fixed path is ever read.
+func agentLogTail(ctx context.Context, vm microvm.VM, limit int64) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, macAgentLogTimeout)
+	defer cancel()
+	c := vm.Client()
+	st, err := c.Stat(ctx, guestproto.MacAgentLogPath)
+	if err != nil {
+		return "", err
+	}
+	if !st.Exists {
+		return "", fmt.Errorf("%s doesn't exist in the guest", guestproto.MacAgentLogPath)
+	}
+	rc, err := c.OpenFile(ctx, guestproto.MacAgentLogPath, max(0, st.Size-limit), limit)
+	if err != nil {
+		return "", err
+	}
+	defer rc.Close()
+	stop := context.AfterFunc(ctx, func() { _ = rc.Close() })
+	defer stop()
+	b, err := io.ReadAll(io.LimitReader(rc, limit))
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// withAgentLog adds the end of the guest agent's log to err, a failure inside
+// the guest, so it says why from the guest's side.
+func withAgentLog(ctx context.Context, vm microvm.VM, err error) error {
+	tail, lerr := agentLogTail(ctx, vm, macBootLogTail)
+	if lerr != nil {
+		return fmt.Errorf("%w (the guest agent's log couldn't be read: %v)", err, lerr)
+	}
+	tail = strings.TrimRight(tail, "\n")
+	if tail == "" {
+		return fmt.Errorf("%w (the guest agent's log is empty)", err)
+	}
+	return fmt.Errorf("%w\n--- end of %s in the macOS guest ---\n%s", err, guestproto.MacAgentLogPath, tail)
 }
 
 // cloneOnce copies src to dst unless dst exists, never leaving half a copy.
@@ -631,6 +684,7 @@ func (g *MacOSGuests) Handler(runID string) http.Handler {
 	mux.HandleFunc("POST "+guestproto.MacPathUpload, func(w http.ResponseWriter, r *http.Request) { g.serveUpload(w, r, runID) })
 	mux.HandleFunc("POST "+guestproto.MacPathExec, func(w http.ResponseWriter, r *http.Request) { g.serveExec(w, r, runID) })
 	mux.HandleFunc("POST "+guestproto.MacPathPull, func(w http.ResponseWriter, r *http.Request) { g.servePull(w, r, runID) })
+	mux.HandleFunc("POST "+guestproto.MacPathAgentLog, func(w http.ResponseWriter, r *http.Request) { g.serveAgentLog(w, r, runID) })
 	return mux
 }
 
@@ -805,6 +859,24 @@ func (g *MacOSGuests) serveExec(w http.ResponseWriter, r *http.Request, runID st
 		exec.Env[k] = val
 	}
 	g.streamGuest(w, r, v, exec)
+}
+
+// serveAgentLog returns the end of the guest agent's log, booting the VM if
+// it isn't running (a boot that fails carries the log in its error instead).
+func (g *MacOSGuests) serveAgentLog(w http.ResponseWriter, r *http.Request, runID string) {
+	v, err := g.acquire(r.Context(), runID, nil)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	defer g.release(v)
+	tail, err := agentLogTail(r.Context(), v.vm, macAgentLogTail)
+	if err != nil {
+		http.Error(w, "mac: read the guest agent's log: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = io.WriteString(w, tail)
 }
 
 func (g *MacOSGuests) servePull(w http.ResponseWriter, r *http.Request, runID string) {

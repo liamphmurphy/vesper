@@ -239,7 +239,11 @@ in the Linux VM; the macOS VM only receives files and runs commands.
   `cmd/vesper-mac` installed as `/usr/local/bin/mac` in the rootfs):
   `POST /v1/start` (NDJSON status), `/v1/sync/plan`, `/v1/sync/upload`,
   `/v1/exec` and `/v1/pull` (guestproto stdout/stderr/exit frames). Hanging up
-  an exec kills its process group in the guest.
+  an exec kills its process group in the guest. `/v1/agent-log` (`mac
+  --agent-log`) returns the end of the guest agent's own log
+  (`/var/log/vesper-guest-agent.log`), read through the agent's file op so it
+  works when commands don't; a boot whose first command fails carries that
+  log's end in its error, read before the VM is stopped.
 - **Guest agent.** `vesper-guest-agent` cross-compiles to `darwin/arm64`
   (`CGO_ENABLED=0`) and runs as the LaunchDaemon `dev.vesper.guest-agent`: no
   init, cgroups, networking, Docker or Nix; a process group is the unit of

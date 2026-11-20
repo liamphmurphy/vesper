@@ -24,13 +24,21 @@ import (
 //     output as FrameStdout, FrameStderr and a final FrameExecExit.
 //  5. POST MacPathPull with a MacPullReq (optional): a tar of those paths,
 //     streamed as FrameStdout chunks, then FrameExecExit.
+//
+// POST MacPathAgentLog, on its own, returns the end of the macOS guest
+// agent's log as text, for when the guest itself misbehaves.
 const (
-	MacPathStart  = "/v1/start"
-	MacPathPlan   = "/v1/sync/plan"
-	MacPathUpload = "/v1/sync/upload"
-	MacPathExec   = "/v1/exec"
-	MacPathPull   = "/v1/pull"
+	MacPathStart    = "/v1/start"
+	MacPathPlan     = "/v1/sync/plan"
+	MacPathUpload   = "/v1/sync/upload"
+	MacPathExec     = "/v1/exec"
+	MacPathPull     = "/v1/pull"
+	MacPathAgentLog = "/v1/agent-log"
 )
+
+// MacAgentLogPath is where launchd writes the macOS guest agent's stderr
+// (StandardErrorPath in deploy/microvm/macos-golden.sh).
+const MacAgentLogPath = "/var/log/vesper-guest-agent.log"
 
 // MacMaxManifestBytes bounds a manifest: about 200k files of typical path length.
 const MacMaxManifestBytes = 32 << 20

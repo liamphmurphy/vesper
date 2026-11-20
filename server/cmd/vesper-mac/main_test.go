@@ -16,6 +16,7 @@ func TestUsageErrorsExitBeforeReachingTheVM(t *testing.T) {
 		{"no command", nil, 2, "usage: mac"},
 		{"help", []string{"-h"}, 0, "usage: mac"},
 		{"bad env", []string{"-e", "NOEQUALS", "swift", "build"}, 2, "-e wants KEY=VALUE"},
+		{"agent log with a command", []string{"--agent-log", "swift", "build"}, 2, "--agent-log takes no command"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var out, errOut bytes.Buffer

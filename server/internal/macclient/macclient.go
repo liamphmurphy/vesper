@@ -101,6 +101,21 @@ func (c *Client) Start(ctx context.Context) error {
 	return errors.New("the broker ended the start without saying the VM is ready")
 }
 
+// AgentLog returns the end of the macOS guest agent's own log, booting the VM
+// first if it isn't running.
+func (c *Client) AgentLog(ctx context.Context) (string, error) {
+	res, err := c.post(ctx, guestproto.MacPathAgentLog, "application/json", nil)
+	if err != nil {
+		return "", err
+	}
+	defer res.Body.Close()
+	b, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
 // ListFiles is the manifest of the git checkout at root: its tracked files and
 // the untracked ones git doesn't ignore, with paths relative to workspace
 // (which must contain root).
