@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"slices"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/liamphmurphy/vesper/server/internal/blob"
 	"github.com/liamphmurphy/vesper/server/internal/config"
+	"github.com/liamphmurphy/vesper/server/internal/customapps"
 	"github.com/liamphmurphy/vesper/server/internal/db"
 	"github.com/liamphmurphy/vesper/server/internal/testdb"
 	"github.com/liamphmurphy/vesper/server/internal/transfer"
@@ -592,5 +594,221 @@ func TestRoundTripLocalBlobStore(t *testing.T) {
 				t.Errorf("object %s/%s changed across local export/import", b.Name, o.Key)
 			}
 		}
+	}
+}
+
+func seedCustomApp(t *testing.T, pool *pgxpool.Pool) (appID string) {
+	t.Helper()
+	ctx := t.Context()
+	var ws, user string
+	if err := pool.QueryRow(ctx, `SELECT workspace_id, id FROM users LIMIT 1`).Scan(&ws, &user); err != nil {
+		t.Fatalf("lookup user: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `INSERT INTO custom_apps(workspace_id, user_id, slug, name) VALUES($1, $2, 'feed', 'Watch Feed') RETURNING id`, ws, user).Scan(&appID); err != nil {
+		t.Fatalf("insert custom app: %v", err)
+	}
+	return appID
+}
+
+func TestExportExcludesCustomAppMedia(t *testing.T) {
+	ctx := t.Context()
+	src := testdb.New(t)
+	seed(t, src)
+	appID := seedCustomApp(t, src)
+
+	mediaKey := customapps.MediaBlobPrefix + "/" + appID + "/clip1"
+	otherPrefixKey := customapps.MediaBlobPrefix + "-other/keep.txt"
+	if _, err := src.Exec(ctx,
+		`INSERT INTO custom_app_media(app_id, source_url, state, blob_key, content_type, bytes_done) VALUES($1, 'https://example.com/v.mp4', 'done', $2, 'video/mp4', 4)`,
+		appID, mediaKey,
+	); err != nil {
+		t.Fatalf("insert custom_app_media: %v", err)
+	}
+
+	srcBlobs := newMemBlobs()
+	srcBlobs.put("artifacts", mediaKey, "video/mp4", []byte("mp4!"))
+	srcBlobs.put("artifacts", "a/one.png", "image/png", []byte("png"))
+	srcBlobs.put("artifacts", otherPrefixKey, "text/plain", []byte("keep"))
+
+	zr, m := exportToZip(t, src, srcBlobs, "")
+
+	if slices.ContainsFunc(m.Tables, func(te transfer.TableEntry) bool { return te.Name == "custom_app_media" }) {
+		t.Error("manifest.Tables unexpectedly includes custom_app_media")
+	}
+	if !slices.ContainsFunc(m.Tables, func(te transfer.TableEntry) bool { return te.Name == "custom_apps" }) {
+		t.Error("manifest.Tables missing custom_apps")
+	}
+	if slices.ContainsFunc(zr.File, func(f *zip.File) bool { return f.Name == "db/custom_app_media.csv" }) {
+		t.Error("archive unexpectedly contains db/custom_app_media.csv")
+	}
+	artIdx := slices.IndexFunc(m.Buckets, func(b transfer.BucketEntry) bool { return b.Name == "artifacts" })
+	if artIdx < 0 {
+		t.Fatal("artifacts bucket missing from manifest")
+	}
+	artKeys := map[string]bool{}
+	for _, o := range m.Buckets[artIdx].Objects {
+		artKeys[o.Key] = true
+	}
+	if artKeys[mediaKey] {
+		t.Errorf("exported artifacts bucket unexpectedly includes %q", mediaKey)
+	}
+	if !artKeys["a/one.png"] || !artKeys[otherPrefixKey] {
+		t.Errorf("exported artifacts keys = %v, want a/one.png and %s", artKeys, otherPrefixKey)
+	}
+
+	dst := testdb.New(t)
+	dstBlobs := newMemBlobs()
+	if err := (&transfer.Importer{Pool: dst, Blobs: dstBlobs}).Import(ctx, zr); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	var appsCount, mediaCount int
+	if err := dst.QueryRow(ctx, `SELECT count(*) FROM custom_apps WHERE id = $1`, appID).Scan(&appsCount); err != nil || appsCount != 1 {
+		t.Errorf("dst custom_apps count = %d (%v), want 1", appsCount, err)
+	}
+	if err := dst.QueryRow(ctx, `SELECT count(*) FROM custom_app_media`).Scan(&mediaCount); err != nil || mediaCount != 0 {
+		t.Errorf("dst custom_app_media count = %d (%v), want 0", mediaCount, err)
+	}
+	if _, err := dstBlobs.Get(ctx, "artifacts", "a/one.png"); err != nil {
+		t.Errorf("dst missing a/one.png: %v", err)
+	}
+	if _, err := dstBlobs.Get(ctx, "artifacts", otherPrefixKey); err != nil {
+		t.Errorf("dst missing %s: %v", otherPrefixKey, err)
+	}
+	if _, err := dstBlobs.Get(ctx, "artifacts", mediaKey); err != blob.ErrNotFound {
+		t.Errorf("dst Get(%q) err = %v, want blob.ErrNotFound", mediaKey, err)
+	}
+}
+
+func TestImportSkipsLegacyExcludedCustomAppMedia(t *testing.T) {
+	ctx := t.Context()
+	src := testdb.New(t)
+	seed(t, src)
+	appID := seedCustomApp(t, src)
+
+	srcBlobs := newMemBlobs()
+	srcBlobs.put("artifacts", "a/one.png", "image/png", []byte("png"))
+	baseZR, _ := exportToZip(t, src, srcBlobs, "")
+
+	// Build a legacy archive that still includes db/custom_app_media.csv and a custom-app-media/ blob.
+	legacyMediaKey := customapps.MediaBlobPrefix + "/legacy/clip"
+	mediaBytes := []byte("legacy-mp4")
+	mediaSum := sha256.Sum256(mediaBytes)
+	csvBody := []byte(fmt.Sprintf(
+		"01950000-0000-7000-8000-000000000001,%s,https://example.com/legacy.mp4,done,%s,video/mp4,%d,%d,\"\",2026-11-01T00:00:00Z,2026-11-01T00:00:00Z\n",
+		appID, legacyMediaKey, len(mediaBytes), len(mediaBytes),
+	))
+	csvSum := sha256.Sum256(csvBody)
+
+	var out bytes.Buffer
+	zw := zip.NewWriter(&out)
+	var manifest transfer.Manifest
+	for _, f := range baseZR.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if f.Name == "manifest.json" {
+			if err := json.Unmarshal(raw, &manifest); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		w, err := zw.Create(f.Name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write(raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	csvEntry := "db/custom_app_media.csv"
+	w, err := zw.Create(csvEntry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write(csvBody); err != nil {
+		t.Fatal(err)
+	}
+	manifest.Tables = append(manifest.Tables, transfer.TableEntry{
+		Name: "custom_app_media",
+		Columns: []transfer.Column{
+			{Name: "id", Type: "uuid"},
+			{Name: "app_id", Type: "uuid"},
+			{Name: "source_url", Type: "text"},
+			{Name: "state", Type: "text"},
+			{Name: "blob_key", Type: "text"},
+			{Name: "content_type", Type: "text"},
+			{Name: "bytes_done", Type: "bigint"},
+			{Name: "bytes_total", Type: "bigint"},
+			{Name: "error", Type: "text"},
+			{Name: "created_at", Type: "timestamp with time zone"},
+			{Name: "updated_at", Type: "timestamp with time zone"},
+		},
+		Rows:   1,
+		SHA256: hex.EncodeToString(csvSum[:]),
+		Entry:  csvEntry,
+	})
+
+	blobEntry := "blobs/9999999"
+	bw, err := zw.Create(blobEntry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bw.Write(mediaBytes); err != nil {
+		t.Fatal(err)
+	}
+	artIdx := slices.IndexFunc(manifest.Buckets, func(b transfer.BucketEntry) bool { return b.Name == "artifacts" })
+	if artIdx < 0 {
+		t.Fatal("artifacts bucket missing from base manifest")
+	}
+	manifest.Buckets[artIdx].Objects = append(manifest.Buckets[artIdx].Objects, transfer.ObjectEntry{
+		Key:         legacyMediaKey,
+		Size:        int64(len(mediaBytes)),
+		SHA256:      hex.EncodeToString(mediaSum[:]),
+		ContentType: "video/mp4",
+		Entry:       blobEntry,
+	})
+
+	mw, err := zw.Create("manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.NewEncoder(mw).Encode(&manifest); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	legacyZR, err := zip.NewReader(bytes.NewReader(out.Bytes()), int64(out.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dst := testdb.New(t)
+	dstBlobs := newMemBlobs()
+	if err := (&transfer.Importer{Pool: dst, Blobs: dstBlobs}).Import(ctx, legacyZR); err != nil {
+		t.Fatalf("import legacy archive: %v", err)
+	}
+	var appsCount, mediaCount, ticketsCount int
+	if err := dst.QueryRow(ctx, `SELECT count(*) FROM custom_apps WHERE id = $1`, appID).Scan(&appsCount); err != nil || appsCount != 1 {
+		t.Errorf("dst custom_apps count = %d (%v), want 1", appsCount, err)
+	}
+	if err := dst.QueryRow(ctx, `SELECT count(*) FROM custom_app_media`).Scan(&mediaCount); err != nil || mediaCount != 0 {
+		t.Errorf("dst custom_app_media count = %d (%v), want 0", mediaCount, err)
+	}
+	if err := dst.QueryRow(ctx, `SELECT count(*) FROM tickets`).Scan(&ticketsCount); err != nil || ticketsCount != 3 {
+		t.Errorf("dst tickets count = %d (%v), want 3", ticketsCount, err)
+	}
+	if _, err := dstBlobs.Get(ctx, "artifacts", "a/one.png"); err != nil {
+		t.Errorf("dst missing a/one.png: %v", err)
+	}
+	if _, err := dstBlobs.Get(ctx, "artifacts", legacyMediaKey); err != blob.ErrNotFound {
+		t.Errorf("dst Get(%q) err = %v, want blob.ErrNotFound", legacyMediaKey, err)
 	}
 }

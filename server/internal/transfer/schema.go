@@ -27,6 +27,7 @@ var excluded = map[string]string{
 	"browser_extension_tokens":  "the Safari extension's credential: the Mac app mints a new one at launch",
 	"browser_share_screenshots": "the latest screenshot of a shared Safari tab, replaced at every snapshot",
 	"backup_encryption":         "backup encryption password: never exported inside the archive it protects",
+	"custom_app_media":          "custom-app downloaded media: large video files that apps can re-download",
 }
 
 // excludedPrefixes are table-name prefixes owned by a library with its own
@@ -42,6 +43,22 @@ func excludeReason(table string) string {
 	}
 	for p, r := range excludedPrefixes {
 		if strings.HasPrefix(table, p) {
+			return r
+		}
+	}
+	return ""
+}
+
+// excludedBlobPrefixes are blob key prefixes an export leaves out, each with
+// the reason. Keep prefixes ending in "/" so they match only that namespace.
+var excludedBlobPrefixes = map[string]string{
+	"custom-app-media/": "custom-app downloaded media: large video files that apps can re-download",
+}
+
+// excludeBlobReason returns why a blob isn't exported, or "" when it is.
+func excludeBlobReason(key string) string {
+	for p, r := range excludedBlobPrefixes {
+		if strings.HasPrefix(key, p) {
 			return r
 		}
 	}

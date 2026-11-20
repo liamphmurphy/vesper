@@ -172,6 +172,9 @@ func (e *Exporter) exportBlobs(ctx context.Context, zw *zip.Writer, m *Manifest,
 		}
 		be := BucketEntry{Name: bucket, Objects: []ObjectEntry{}}
 		for _, info := range infos {
+			if excludeBlobReason(info.Key) != "" {
+				continue
+			}
 			oe, err := e.exportObject(ctx, zw, m.ExportedAt, bucket, info.Key, n)
 			if errors.Is(err, blob.ErrNotFound) {
 				log.Warn("object deleted during export, skipped", "bucket", bucket, "key", info.Key)

@@ -382,6 +382,9 @@ func (i *Importer) checkTarget(ctx context.Context, m *Manifest) error {
 	}
 	var withRows []string
 	for _, te := range m.Tables {
+		if excludeReason(te.Name) != "" {
+			continue
+		}
 		t, ok := have[te.Name]
 		if !ok {
 			return fmt.Errorf("transfer: the target has no table %q", te.Name)
@@ -424,6 +427,10 @@ func (i *Importer) importBlobs(ctx context.Context, m *Manifest, files map[strin
 			return err
 		}
 		for _, o := range b.Objects {
+			if excludeBlobReason(o.Key) != "" {
+				log.Info("skipping excluded object from archive", "bucket", b.Name, "key", o.Key)
+				continue
+			}
 			if err := i.importObject(ctx, b.Name, o, files[o.Entry]); err != nil {
 				return err
 			}

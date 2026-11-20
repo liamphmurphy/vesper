@@ -29,10 +29,12 @@ import (
 const DefaultMaxMediaBytes int64 = 8 << 30
 
 const (
-	mediaHeaderTimeout   = 30 * time.Second
-	mediaMaxRedirects    = 5
-	mediaProgressEvery   = time.Second
-	mediaBlobPrefix      = "custom-app-media"
+	mediaHeaderTimeout = 30 * time.Second
+	mediaMaxRedirects  = 5
+	mediaProgressEvery = time.Second
+	// MediaBlobPrefix is the blob key prefix for downloaded videos; internal/transfer
+	// excludes this prefix from instance exports.
+	MediaBlobPrefix      = "custom-app-media"
 	mediaInterruptedText = "download was interrupted (Vesper restarted); start it again"
 )
 
@@ -224,7 +226,7 @@ func (m *Media) Start(ctx context.Context, appID uuid.UUID, rawURL string) (Medi
 	}
 
 	id := uuid.New()
-	key := fmt.Sprintf("%s/%s/%s", mediaBlobPrefix, appID, id)
+	key := fmt.Sprintf("%s/%s/%s", MediaBlobPrefix, appID, id)
 	row, err := store.New(m.Pool).InsertCustomAppMedia(ctx, store.InsertCustomAppMediaParams{
 		AppID:       appID,
 		SourceUrl:   u.String(),
