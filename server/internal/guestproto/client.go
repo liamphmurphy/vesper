@@ -188,11 +188,19 @@ func (c *Client) StartExec(ctx context.Context, req ExecReq) (*RemoteProcess, er
 	if err != nil {
 		return nil, err
 	}
-	if err := WriteRequest(conn, 1, OpExecStart, req); err != nil {
-		_ = conn.Close()
-		return nil, err
+	// ctx bounds starting the process: a guest that takes the request and never
+	// answers would otherwise block here forever. Once it's running, the
+	// caller's Close (or Wait) governs the stream instead.
+	hangUp := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	err = WriteRequest(conn, 1, OpExecStart, req)
+	if err == nil {
+		err = ReadResponse(conn, nil)
 	}
-	if err := ReadResponse(conn, nil); err != nil {
+	if !hangUp() {
+		_ = conn.Close()
+		return nil, ctx.Err()
+	}
+	if err != nil {
 		_ = conn.Close()
 		return nil, err
 	}

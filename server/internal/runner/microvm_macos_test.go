@@ -528,3 +528,100 @@ func TestMicroVMTurnsGetMacHandlerWithoutBooting(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// stuckStopDriver starts MemVMs whose Stop blocks until release closes, like
+// a Virtualization.framework stop that never completes.
+type stuckStopDriver struct {
+	microvm.MemDriver
+	release chan struct{}
+}
+
+type stuckStopVM struct {
+	microvm.VM
+	release chan struct{}
+}
+
+func (d *stuckStopDriver) Start(ctx context.Context, cfg microvm.VMConfig) (microvm.VM, error) {
+	vm, err := d.MemDriver.Start(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return stuckStopVM{VM: vm, release: d.release}, nil
+}
+
+func (v stuckStopVM) Stop(ctx context.Context) error {
+	<-v.release
+	return v.VM.Stop(ctx)
+}
+
+// execGuest answers everything but exec like localGuest, and handles exec
+// with onExec instead.
+func execGuest(onExec func(net.Conn)) func(context.Context, net.Conn) {
+	return func(ctx context.Context, conn net.Conn) {
+		f, err := guestproto.ReadFrame(conn)
+		if err != nil {
+			return
+		}
+		var req guestproto.Request
+		_ = json.Unmarshal(f.Data, &req)
+		if req.Op == guestproto.OpExecStart {
+			onExec(conn)
+			return
+		}
+		resp, _ := json.Marshal(guestproto.Response{ID: f.ID})
+		_ = guestproto.WriteFrame(conn, guestproto.Frame{Type: guestproto.FrameResp, ID: f.ID, Data: resp})
+	}
+}
+
+func acquireWithin(t *testing.T, g *MacOSGuests, runID string, limit time.Duration) error {
+	t.Helper()
+	got := make(chan error, 1)
+	go func() {
+		v, err := g.acquire(context.Background(), runID, nil)
+		if err == nil {
+			g.release(v)
+		}
+		got <- err
+	}()
+	select {
+	case err := <-got:
+		return err
+	case <-time.After(limit):
+		t.Fatalf("acquire still waiting after %s", limit)
+		return nil
+	}
+}
+
+func TestMacOSGuestBootGivesUpWhenTheGuestNeverAnswers(t *testing.T) {
+	never := make(chan struct{})
+	t.Cleanup(func() { close(never) })
+	drv := &microvm.MemDriver{Handler: execGuest(func(net.Conn) { <-never })}
+	g := newTestMacGuests(t, drv)
+	g.prepareTimeout = 100 * time.Millisecond
+
+	err := acquireWithin(t, g, "run-1", 5*time.Second)
+	if err == nil || !strings.Contains(err.Error(), "prepare workspace") {
+		t.Fatalf("acquire = %v, want a prepare workspace error", err)
+	}
+	if g.RunningVMs() != 0 {
+		t.Fatalf("running = %d after the failed boot, want 0", g.RunningVMs())
+	}
+}
+
+func TestMacOSGuestFailedBootDoesntWaitOnAStuckStop(t *testing.T) {
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	drv := &stuckStopDriver{
+		MemDriver: microvm.MemDriver{Handler: execGuest(func(conn net.Conn) { _ = conn.Close() })},
+		release:   release,
+	}
+	g := &MacOSGuests{Driver: drv, Image: testMacImage(t), StateDir: t.TempDir(), GuestWorkspace: t.TempDir()}
+	g.stopTimeout = 100 * time.Millisecond
+
+	// Both calls fail fast; the second doesn't hang behind the first's stop.
+	for i := 0; i < 2; i++ {
+		if err := acquireWithin(t, g, "run-1", 5*time.Second); err == nil {
+			t.Fatalf("call %d: acquire succeeded against a guest that drops exec", i+1)
+		}
+	}
+}
