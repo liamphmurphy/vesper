@@ -26,7 +26,8 @@ import (
 //     streamed as FrameStdout chunks, then FrameExecExit.
 //
 // POST MacPathAgentLog, on its own, returns the end of the macOS guest
-// agent's log as text, for when the guest itself misbehaves.
+// agent's log and the start of the guest's newest kernel panic report as
+// text, for when the guest itself misbehaves.
 const (
 	MacPathStart    = "/v1/start"
 	MacPathPlan     = "/v1/sync/plan"
@@ -39,6 +40,10 @@ const (
 // MacAgentLogPath is where launchd writes the macOS guest agent's stderr
 // (StandardErrorPath in deploy/microvm/macos-golden.sh).
 const MacAgentLogPath = "/var/log/vesper-guest-agent.log"
+
+// MacPanicReportDirs are where macOS saves kernel panic reports, written on
+// the boot after the panic. `mac --agent-log` shows the newest.
+var MacPanicReportDirs = []string{"/Library/Logs/DiagnosticReports", "/private/var/db/PanicReporter"}
 
 // MacMaxManifestBytes bounds a manifest: about 200k files of typical path length.
 const MacMaxManifestBytes = 32 << 20

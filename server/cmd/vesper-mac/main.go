@@ -45,8 +45,9 @@ reuse it. The macOS VM has no network access.
   --pull PATH    after COMMAND, copy PATH (relative to the current directory)
                  back from the macOS VM (repeatable; even if COMMAND fails)
   --no-sync      skip mirroring the checkout
-  --agent-log    print the end of the macOS VM's guest agent log and exit, to
-                 see why mac itself is failing (booting the VM if needed)
+  --agent-log    print the end of the macOS VM's guest agent log and its newest
+                 kernel panic report, then exit, to see why mac itself is
+                 failing (booting the VM if needed)
 
 Examples:
   mac make -C macos mac-test

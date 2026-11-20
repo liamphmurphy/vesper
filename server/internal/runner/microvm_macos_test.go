@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -631,9 +632,22 @@ func TestMacOSGuestFailedBootDoesntWaitOnAStuckStop(t *testing.T) {
 	}
 }
 
-// logGuest serves the guest agent's log (logText) through Stat and ReadFile,
-// like the real agent, and hands everything else to exec (nil: localGuest).
+// guestFile is a file the fake guest serves through Stat, ReadFile and
+// WalkDir, like the real agent.
+type guestFile struct {
+	data  string
+	mtime time.Time
+}
+
+// logGuest serves the guest agent's log (logText) and hands everything else
+// to exec (nil: localGuest).
 func logGuest(logText string, exec func(net.Conn)) func(context.Context, net.Conn) {
+	return filesGuest(map[string]guestFile{guestproto.MacAgentLogPath: {data: logText}}, exec)
+}
+
+// filesGuest serves files through the agent's file ops and hands exec to
+// exec (nil: localGuest).
+func filesGuest(files map[string]guestFile, exec func(net.Conn)) func(context.Context, net.Conn) {
 	return func(_ context.Context, conn net.Conn) {
 		f, err := guestproto.ReadFrame(conn)
 		if err != nil {
@@ -650,16 +664,33 @@ func logGuest(logText string, exec func(net.Conn)) func(context.Context, net.Con
 		case guestproto.OpStat:
 			var in guestproto.StatReq
 			_ = json.Unmarshal(req.V, &in)
-			if in.Path != guestproto.MacAgentLogPath {
+			gf, ok := files[in.Path]
+			if !ok {
 				reply(guestproto.StatResp{})
 				return
 			}
-			reply(guestproto.StatResp{Exists: true, IsRegular: true, Size: int64(len(logText))})
+			reply(guestproto.StatResp{Exists: true, IsRegular: true, Size: int64(len(gf.data))})
+		case guestproto.OpWalkDir:
+			var in guestproto.WalkDirReq
+			_ = json.Unmarshal(req.V, &in)
+			var out guestproto.WalkDirResp
+			for p, gf := range files {
+				if path.Dir(p) == in.Root {
+					out.Entries = append(out.Entries, guestproto.DirEntry{Rel: path.Base(p), Size: int64(len(gf.data)), ModTimeUnixNS: gf.mtime.UnixNano()})
+				}
+			}
+			reply(out)
 		case guestproto.OpReadFile:
 			var in guestproto.ReadFileReq
 			_ = json.Unmarshal(req.V, &in)
+			gf, ok := files[in.Path]
+			if !ok {
+				resp, _ := json.Marshal(guestproto.Response{ID: f.ID, Err: "no such file"})
+				_ = guestproto.WriteFrame(conn, guestproto.Frame{Type: guestproto.FrameResp, ID: f.ID, Data: resp})
+				return
+			}
 			reply(nil)
-			data := logText[min(int(in.Offset), len(logText)):]
+			data := gf.data[min(int(in.Offset), len(gf.data)):]
 			if in.Limit > 0 && int64(len(data)) > in.Limit {
 				data = data[:in.Limit]
 			}
@@ -699,10 +730,15 @@ func TestMacOSGuestAgentLogReturnsItsTail(t *testing.T) {
 	g := newTestMacGuests(t, drv)
 	c, _ := macClient(t, g, "run-1")
 
-	log, err := c.AgentLog(context.Background())
+	out, err := c.AgentLog(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
+	i := strings.LastIndex(out, "--- no kernel panic reports")
+	if i < 0 {
+		t.Fatalf("output lacks the panic report section: ...%q", out[max(0, len(out)-200):])
+	}
+	log := out[:i]
 	if !strings.HasSuffix(log, "newest line\n") {
 		t.Fatalf("log doesn't end with the newest line: ...%q", log[max(0, len(log)-40):])
 	}
@@ -711,11 +747,43 @@ func TestMacOSGuestAgentLogReturnsItsTail(t *testing.T) {
 	}
 }
 
+func TestMacOSGuestAgentLogShowsTheNewestPanicReport(t *testing.T) {
+	base := time.Date(2026, 11, 20, 16, 0, 0, 0, time.UTC)
+	reports := "/Library/Logs/DiagnosticReports/"
+	drv := &microvm.MemDriver{Handler: filesGuest(map[string]guestFile{
+		guestproto.MacAgentLogPath:            {data: "ready\n"},
+		reports + "panic-full-old.panic":      {data: "panic(cpu 1): an older panic", mtime: base},
+		reports + "panic-full-new.panic":      {data: "panic(cpu 0): watchdog timeout", mtime: base.Add(time.Hour)},
+		reports + "Finder-2026-11-20.crash":   {data: "not a panic", mtime: base.Add(2 * time.Hour)},
+		"/private/var/db/PanicReporter/x.txt": {data: "not a panic either", mtime: base.Add(3 * time.Hour)},
+	}, nil)}
+	g := newTestMacGuests(t, drv)
+	c, _ := macClient(t, g, "run-1")
+
+	out, err := c.AgentLog(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"ready", "newest of 2 kernel panic reports: " + reports + "panic-full-new.panic (2026-11-20T17:00:00Z)", "panic(cpu 0): watchdog timeout"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("agent log output lacks %q:\n%s", want, out)
+		}
+	}
+	for _, unwanted := range []string{"an older panic", "not a panic"} {
+		if strings.Contains(out, unwanted) {
+			t.Fatalf("agent log output has %q:\n%s", unwanted, out)
+		}
+	}
+}
+
 func TestMacOSGuestFailedBootFallsBackToTheLogReadAtBoot(t *testing.T) {
 	// The agent serves its log until the first exec, which takes it down for
 	// good, so the log can't be read after the failure.
 	var dead atomic.Bool
-	serve := logGuest("earlier boot\npanic: crashed on exec\n", func(conn net.Conn) {
+	serve := filesGuest(map[string]guestFile{
+		guestproto.MacAgentLogPath:                               {data: "earlier boot\npanic: crashed on exec\n"},
+		"/Library/Logs/DiagnosticReports/panic-full-boot1.panic": {data: "panic(cpu 2): from the earlier boot"},
+	}, func(conn net.Conn) {
 		dead.Store(true)
 		_ = conn.Close()
 	})
@@ -733,7 +801,7 @@ func TestMacOSGuestFailedBootFallsBackToTheLogReadAtBoot(t *testing.T) {
 	if err == nil {
 		t.Fatal("start succeeded against a guest that dies on exec")
 	}
-	for _, want := range []string{"prepare workspace", "stopped answering", "as of this boot", "panic: crashed on exec"} {
+	for _, want := range []string{"prepare workspace", "stopped answering", "as of this boot", "panic: crashed on exec", "panic(cpu 2): from the earlier boot"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("start error lacks %q:\n%v", want, err)
 		}
