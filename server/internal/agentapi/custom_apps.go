@@ -54,7 +54,9 @@ func listCustomApps(ctx context.Context, d Deps, c agents.Caller, _ ListCustomAp
 }
 
 type GetCustomAppIn struct {
-	Slug string `json:"slug" jsonschema:"Custom app URL slug, e.g. finance"`
+	Slug      string   `json:"slug" jsonschema:"Custom app URL slug, e.g. finance"`
+	Files     []string `json:"files,omitempty" jsonschema:"Only return these source files, e.g. [\"app.tsx\"]; omit for all"`
+	OmitFiles bool     `json:"omit_files,omitempty" jsonschema:"Return no file contents, only file_sizes (useful before reading or editing a large app)"`
 }
 
 func getCustomApp(ctx context.Context, d Deps, c agents.Caller, in GetCustomAppIn) (any, error) {
@@ -74,6 +76,14 @@ func getCustomApp(ctx context.Context, d Deps, c agents.Caller, in GetCustomAppI
 	if err != nil {
 		return nil, err
 	}
+	sizes := make(map[string]int, len(app.Current.Files))
+	for name, content := range app.Current.Files {
+		sizes[name] = len(content)
+	}
+	files, err := selectAppFiles(app.Current.Files, in.Files, in.OmitFiles)
+	if err != nil {
+		return nil, err
+	}
 	return map[string]any{
 		"slug":           app.Slug,
 		"name":           app.Name,
@@ -85,11 +95,32 @@ func getCustomApp(ctx context.Context, d Deps, c agents.Caller, in GetCustomAppI
 		"has_mcp_server": app.HasMCPServer,
 		"mcp_tools":      app.MCPTools,
 		"db_size_bytes":  app.DBSizeBytes,
-		"files":          app.Current.Files,
+		"file_sizes":     sizes,
+		"files":          files,
 		"versions":       app.Versions,
 		"schema":         app.Schema,
 		"url":            "/apps/" + app.Slug,
 	}, nil
+}
+
+// selectAppFiles narrows get_custom_app's file contents so large apps can be read
+// one file at a time. Asking for a file the app doesn't have is an error.
+func selectAppFiles(all map[string]string, want []string, omit bool) (map[string]string, error) {
+	if omit {
+		return map[string]string{}, nil
+	}
+	if len(want) == 0 {
+		return all, nil
+	}
+	out := make(map[string]string, len(want))
+	for _, name := range want {
+		content, ok := all[name]
+		if !ok {
+			return nil, apperr.Invalid("files", "%q is not a file in this app", name)
+		}
+		out[name] = content
+	}
+	return out, nil
 }
 
 type CreateCustomAppIn struct {
@@ -139,16 +170,17 @@ func createCustomApp(ctx context.Context, d Deps, c agents.Caller, in CreateCust
 }
 
 type UpdateCustomAppIn struct {
-	Slug         string               `json:"slug" jsonschema:"Custom app slug to update"`
-	Name         *string              `json:"name,omitempty"`
-	Description  *string              `json:"description,omitempty"`
-	Icon         *string              `json:"icon,omitempty"`
-	Manifest     *customapps.Manifest `json:"manifest,omitempty"`
-	Files        map[string]string    `json:"files,omitempty" jsonschema:"Files to add or overwrite (merged with existing unless replace_files is true)"`
-	ReplaceFiles bool                 `json:"replace_files,omitempty" jsonschema:"Replace all source files with the passed files map"`
-	RemoveFiles  []string             `json:"remove_files,omitempty" jsonschema:"Relative file paths to delete"`
-	Note         string               `json:"note,omitempty" jsonschema:"Short version note"`
-	RestoreSeq   *int32               `json:"restore_seq,omitempty" jsonschema:"Restore files and manifest from this earlier version number as a new version"`
+	Slug         string                `json:"slug" jsonschema:"Custom app slug to update"`
+	Name         *string               `json:"name,omitempty"`
+	Description  *string               `json:"description,omitempty"`
+	Icon         *string               `json:"icon,omitempty"`
+	Manifest     *customapps.Manifest  `json:"manifest,omitempty"`
+	Files        map[string]string     `json:"files,omitempty" jsonschema:"Files to add or overwrite (merged with existing unless replace_files is true)"`
+	ReplaceFiles bool                  `json:"replace_files,omitempty" jsonschema:"Replace all source files with the passed files map"`
+	RemoveFiles  []string              `json:"remove_files,omitempty" jsonschema:"Relative file paths to delete"`
+	Edits        []customapps.FileEdit `json:"edits,omitempty" jsonschema:"Find/replace edits to existing files, applied in order after files and remove_files. Prefer these over resending whole files for small changes."`
+	Note         string                `json:"note,omitempty" jsonschema:"Short version note"`
+	RestoreSeq   *int32                `json:"restore_seq,omitempty" jsonschema:"Restore files and manifest from this earlier version number as a new version"`
 }
 
 func updateCustomApp(ctx context.Context, d Deps, c agents.Caller, in UpdateCustomAppIn) (any, error) {
@@ -172,6 +204,7 @@ func updateCustomApp(ctx context.Context, d Deps, c agents.Caller, in UpdateCust
 		Files:        in.Files,
 		ReplaceFiles: in.ReplaceFiles,
 		RemoveFiles:  in.RemoveFiles,
+		Edits:        in.Edits,
 		Note:         in.Note,
 		RestoreSeq:   in.RestoreSeq,
 		AuthorType:   "persona",

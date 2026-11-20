@@ -243,6 +243,70 @@ func TestCustomAppMCPToolsAndScope(t *testing.T) {
 	}
 }
 
+// Personas can patch one file with find/replace edits and read large apps a file at a time.
+func TestCustomAppAgentEditsAndFileSelection(t *testing.T) {
+	e := newChatEnv(t)
+	token := e.canvasToken(uuid.MustParse(e.newChat(nil)["id"].(string)))
+
+	code, created := e.tool(token, "create_custom_app", map[string]any{
+		"slug": "notes",
+		"name": "Notes",
+		"files": map[string]string{
+			"app.tsx":    `export default function App() { return <div className="n">Hello</div>; }`,
+			"styles.css": ".n { color: red; }\n.m { color: red; }\n",
+		},
+	})
+	if code != http.StatusOK || created["version"] != float64(1) {
+		t.Fatalf("create_custom_app = %d %v", code, created)
+	}
+
+	code, up := e.tool(token, "update_custom_app", map[string]any{
+		"slug": "notes",
+		"edits": []map[string]any{
+			{"path": "app.tsx", "find": ">Hello<", "replace": ">Hi there<"},
+			{"path": "styles.css", "find": "red", "replace": "blue", "replace_all": true},
+		},
+	})
+	if code != http.StatusOK || up["version"] != float64(2) {
+		t.Fatalf("update_custom_app edits = %d %v", code, up)
+	}
+
+	code, got := e.tool(token, "get_custom_app", map[string]any{"slug": "notes", "files": []string{"app.tsx"}})
+	files, _ := got["files"].(map[string]any)
+	if code != http.StatusOK || len(files) != 1 || !strings.Contains(files["app.tsx"].(string), "Hi there") {
+		t.Fatalf("get_custom_app files=[app.tsx] = %d %v", code, got)
+	}
+	sizes, _ := got["file_sizes"].(map[string]any)
+	if sizes["styles.css"] == nil || sizes["app.tsx"] == nil {
+		t.Fatalf("file_sizes = %v, want every file", got["file_sizes"])
+	}
+
+	code, got = e.tool(token, "get_custom_app", map[string]any{"slug": "notes", "omit_files": true})
+	if files, _ := got["files"].(map[string]any); code != http.StatusOK || len(files) != 0 {
+		t.Fatalf("get_custom_app omit_files = %d files=%v", code, got["files"])
+	}
+	code, got = e.tool(token, "get_custom_app", map[string]any{"slug": "notes", "files": []string{"styles.css"}})
+	if css, _ := got["files"].(map[string]any)["styles.css"].(string); code != http.StatusOK || strings.Contains(css, "red") || strings.Count(css, "blue") != 2 {
+		t.Fatalf("replace_all edit not applied: %d %q", code, css)
+	}
+
+	// An edit whose find text matches more than once is refused, and nothing is saved.
+	code, out := e.tool(token, "update_custom_app", map[string]any{
+		"slug":  "notes",
+		"edits": []map[string]any{{"path": "styles.css", "find": "blue", "replace": "green"}},
+	})
+	if code != http.StatusUnprocessableEntity || !strings.Contains(out["message"].(string), "matches 2 times") {
+		t.Fatalf("ambiguous edit = %d %v, want 422", code, out)
+	}
+	if code, got = e.tool(token, "get_custom_app", map[string]any{"slug": "notes", "omit_files": true}); got["version"] != float64(2) {
+		t.Fatalf("failed edit created a version: %d %v", code, got["version"])
+	}
+
+	if code, out = e.tool(token, "get_custom_app", map[string]any{"slug": "notes", "files": []string{"nope.ts"}}); code != http.StatusUnprocessableEntity {
+		t.Fatalf("unknown file = %d %v, want 422", code, out)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

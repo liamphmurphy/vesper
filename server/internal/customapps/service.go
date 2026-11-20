@@ -102,6 +102,8 @@ type UpdateInput struct {
 	Files        map[string]string
 	ReplaceFiles bool
 	RemoveFiles  []string
+	// Edits are find/replace changes applied after Files and RemoveFiles.
+	Edits        []FileEdit
 	Capabilities Capabilities
 	Note         string
 	RestoreSeq   *int32
@@ -432,6 +434,9 @@ func (s *Service) Update(ctx context.Context, ws, userID uuid.UUID, slug string,
 	if authorType == "" {
 		authorType = "user"
 	}
+	if in.RestoreSeq != nil && len(in.Edits) > 0 {
+		return AppDetail{}, apperr.Invalid("edits", "edits can't be combined with restore_seq")
+	}
 
 	err := pgx.BeginTxFunc(ctx, s.Pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
 		q := store.New(tx)
@@ -505,7 +510,7 @@ func (s *Service) Update(ctx context.Context, ws, userID uuid.UUID, slug string,
 				in.Note = fmt.Sprintf("Restored from v%d", *in.RestoreSeq)
 			}
 		} else {
-			if len(in.Files) > 0 || len(in.RemoveFiles) > 0 {
+			if len(in.Files) > 0 || len(in.RemoveFiles) > 0 || len(in.Edits) > 0 {
 				if in.ReplaceFiles && len(in.Files) > 0 {
 					nextFiles = make(map[string]string, len(in.Files))
 					for k, v := range in.Files {
@@ -529,6 +534,11 @@ func (s *Service) Update(ctx context.Context, ws, userID uuid.UUID, slug string,
 				if in.ReplaceFiles && in.Manifest == nil {
 					if _, ok := nextFiles[nextManifest.MCPEntry]; !ok {
 						nextManifest.MCPEntry = ""
+					}
+				}
+				if len(in.Edits) > 0 {
+					if nextFiles, err = ApplyEdits(nextFiles, in.Edits); err != nil {
+						return err
 					}
 				}
 				createVersion = true
