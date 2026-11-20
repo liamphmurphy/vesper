@@ -236,7 +236,10 @@ test("space, workflow, custom-app, knowledge, and chat inspector models validate
     schemaObjects: [{ type: "table", name: "notes" }],
     capabilities: [
       { key: "vesper.api:read", label: "Vesper API · Read", hint: "GET requests", mode: "allowed" },
+      { key: "nix:yt-dlp", label: "Nix · yt-dlp", hint: "Run nixpkgs#yt-dlp in a background tool job", mode: "requires_approval" },
     ],
+    mounts: { cookies: "~/cookies.txt" },
+    requestedMounts: [{ name: "cookies", description: "YouTube cookies" }],
     toolScope: "app_only",
     versions: [{ seq: 3, authorLabel: "You", age: "2m ago", current: true }],
   });

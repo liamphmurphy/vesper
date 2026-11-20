@@ -70,10 +70,12 @@ export function buildCustomAppCapabilities(input: BuildCustomAppCapabilitiesInpu
             ? "Outbound HTTPS"
             : capKey === "app.media:download"
               ? "Download videos"
-              : sInfo?.label ??
-              (capKey.startsWith("secret:")
-                ? `Secret · ${capKey.slice("secret:".length)}`
-                : cInfo?.label ?? capKey);
+              : capKey.startsWith("nix:")
+                ? `Nix · ${capKey.slice("nix:".length)}`
+                : sInfo?.label ??
+                  (capKey.startsWith("secret:")
+                    ? `Secret · ${capKey.slice("secret:".length)}`
+                    : cInfo?.label ?? capKey);
     const hint =
       capKey === "vesper.api:read"
         ? "GET requests to Vesper REST APIs"
@@ -83,10 +85,12 @@ export function buildCustomAppCapabilities(input: BuildCustomAppCapabilitiesInpu
             ? "Public HTTPS fetches from the app's MCP server and remote image proxy"
             : capKey === "app.media:download"
               ? "Save direct video files into Vesper so they play locally"
-              : sInfo?.hint ??
-              (capKey.startsWith("secret:")
-                ? "Authenticated secretFetch calls using this Vesper secret"
-                : cInfo?.hint ?? "Requested by app manifest");
+              : capKey.startsWith("nix:")
+                ? `Run nixpkgs#${capKey.slice("nix:".length)} in a background tool job`
+                : sInfo?.hint ??
+                  (capKey.startsWith("secret:")
+                    ? "Authenticated secretFetch calls using this Vesper secret"
+                    : cInfo?.hint ?? "Requested by app manifest");
     const mode: CustomAppCapabilityInput["mode"] = input.grantedCapabilities?.[capKey] ?? "denied";
     const requested = input.requestedCapabilities?.[capKey];
     return { key: capKey, label, hint, mode, requested };
@@ -101,6 +105,11 @@ export interface CustomAppVersionInput {
   current: boolean;
 }
 
+export interface CustomAppMountRequestInput {
+  name: string;
+  description?: string;
+}
+
 export interface CustomAppInspectorInput {
   hasMcpServer: boolean;
   mcpEntry: string;
@@ -110,6 +119,8 @@ export interface CustomAppInspectorInput {
   schemaCount: number;
   schemaObjects: readonly { type: string; name: string }[];
   capabilities: readonly CustomAppCapabilityInput[];
+  mounts?: Readonly<Record<string, string>>;
+  requestedMounts?: readonly CustomAppMountRequestInput[];
   toolScope: "chats" | "app_only";
   versions: readonly CustomAppVersionInput[];
   updating?: boolean;
@@ -206,6 +217,61 @@ export function buildCustomAppInspectorSections(input: CustomAppInspectorInput):
         ...(input.updating ? { disabled: true } : {}),
       }),
     ),
+  });
+
+  sections.push({
+    id: "nix_packages",
+    title: "Nix packages",
+    items: [
+      {
+        id: "nix_add",
+        kind: "text",
+        label: "Add package",
+        value: "",
+        placeholder: "nixpkgs name, e.g. yt-dlp, ffmpeg",
+        ...(input.updating ? { disabled: true } : {}),
+      },
+    ],
+  });
+
+  const reqMountDesc = new Map<string, string>();
+  const mountNames: string[] = [];
+  const seenMountNames = new Set<string>();
+  for (const rm of input.requestedMounts ?? []) {
+    if (!rm.name || seenMountNames.has(rm.name)) continue;
+    seenMountNames.add(rm.name);
+    mountNames.push(rm.name);
+    reqMountDesc.set(rm.name, rm.description ?? "");
+  }
+  for (const name of Object.keys(input.mounts ?? {}).sort()) {
+    if (!seenMountNames.has(name)) {
+      seenMountNames.add(name);
+      mountNames.push(name);
+    }
+  }
+  const mountItems: InspectorItem[] = mountNames.map((name) => {
+    const desc = reqMountDesc.get(name);
+    return {
+      id: `mount:${name}`,
+      kind: "text",
+      label: name,
+      value: input.mounts?.[name] ?? "",
+      placeholder: desc ? `${desc} (/path or ~/...)` : "/path/to/file or ~/...",
+      ...(input.updating ? { disabled: true } : {}),
+    };
+  });
+  mountItems.push({
+    id: "mount_add",
+    kind: "text",
+    label: "Add mount",
+    value: "",
+    placeholder: "name=/path/to/file or ~/...",
+    ...(input.updating ? { disabled: true } : {}),
+  });
+  sections.push({
+    id: "mounts",
+    title: "Host mounts (read-only)",
+    items: mountItems,
   });
 
   sections.push({
