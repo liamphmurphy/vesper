@@ -80,6 +80,7 @@ func main() {
 		// launchd (KeepAlive) restarts the agent, which beats a listener
 		// that refuses every host connection while the process looks alive.
 		srv.maxAcceptFailures = 20
+		srv.trace = true
 	}
 	if err := srv.serve(ctx, ln); err != nil {
 		log.Error("rpc listener broken; exiting for a restart", "err", err)
