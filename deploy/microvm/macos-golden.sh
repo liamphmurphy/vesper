@@ -79,29 +79,49 @@ tart run --no-graphics "${vm_name}" >"${tmpdir}/run.log" 2>&1 &
 run_pid=$!
 ip="$(tart ip --wait 180 "${vm_name}")"
 
-ssh_opts=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5)
+# Password only: keys from the host's ssh agent would count against the
+# guest's MaxAuthTries before the password is ever tried.
+ssh_opts=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=5
+  -o PubkeyAuthentication=no -o PreferredAuthentications=password,keyboard-interactive)
 remote() { SSHPASS="${ssh_password}" sshpass -e ssh "${ssh_opts[@]}" "${ssh_user}@${ip}" "$@"; }
-for _ in $(seq 1 60); do
-  remote true 2>/dev/null && break
+# sshd answers before the guest finishes booting, and rejects the right
+# password until it has, so keep trying for a while.
+ssh_ready=""
+for _ in $(seq 1 100); do
+  if ssh_err="$(remote true 2>&1)"; then
+    ssh_ready=1
+    break
+  fi
   sleep 3
 done
+if [[ -z "${ssh_ready}" ]]; then
+  echo "Could not ssh into the VM at ${ip} as ${ssh_user}: ${ssh_err}" >&2
+  echo "Check VESPER_MACOS_SSH_USER/VESPER_MACOS_SSH_PASSWORD, and that a VPN isn't routing ${ip} away from the VM." >&2
+  exit 1
+fi
+# ssh joins its arguments into one string the guest's shell parses again, so
+# a multi-line script passed inline loses its quoting. Copy it over instead.
+cat > "${tmpdir}/vesper-golden-setup.sh" <<'SETUP'
+set -eu
+install -d -o root -g wheel -m 0755 /usr/local/libexec
+install -o root -g wheel -m 0755 /tmp/vesper-guest-agent /usr/local/libexec/vesper-guest-agent
+install -o root -g wheel -m 0644 /tmp/dev.vesper.guest-agent.plist /Library/LaunchDaemons/dev.vesper.guest-agent.plist
+rm -f /tmp/vesper-guest-agent /tmp/dev.vesper.guest-agent.plist /tmp/vesper-golden-setup.sh
+# A build VM never sleeps, and Xcode is ready before the first build.
+pmset -a sleep 0 displaysleep 0 disksleep 0 >/dev/null 2>&1 || true
+if command -v xcodebuild >/dev/null 2>&1; then
+  xcodebuild -license accept >/dev/null 2>&1 || true
+  xcodebuild -runFirstLaunch >/dev/null 2>&1 || true
+fi
+mkdir -p /opt/vesper/workspace
+SETUP
+
 SSHPASS="${ssh_password}" sshpass -e scp "${ssh_opts[@]}" \
-  "${tmpdir}/vesper-guest-agent" "${tmpdir}/dev.vesper.guest-agent.plist" "${ssh_user}@${ip}:/tmp/"
+  "${tmpdir}/vesper-guest-agent" "${tmpdir}/dev.vesper.guest-agent.plist" \
+  "${tmpdir}/vesper-golden-setup.sh" "${ssh_user}@${ip}:/tmp/"
 
 # sudo -S reads the password from stdin; Tart's images also allow it without.
-echo "${ssh_password}" | remote sudo -S sh -euc '
-  install -d -o root -g wheel -m 0755 /usr/local/libexec
-  install -o root -g wheel -m 0755 /tmp/vesper-guest-agent /usr/local/libexec/vesper-guest-agent
-  install -o root -g wheel -m 0644 /tmp/dev.vesper.guest-agent.plist /Library/LaunchDaemons/dev.vesper.guest-agent.plist
-  rm -f /tmp/vesper-guest-agent /tmp/dev.vesper.guest-agent.plist
-  # A build VM never sleeps, and Xcode is ready before the first build.
-  pmset -a sleep 0 displaysleep 0 disksleep 0 >/dev/null 2>&1 || true
-  if command -v xcodebuild >/dev/null 2>&1; then
-    xcodebuild -license accept >/dev/null 2>&1 || true
-    xcodebuild -runFirstLaunch >/dev/null 2>&1 || true
-  fi
-  mkdir -p /opt/vesper/workspace
-'
+echo "${ssh_password}" | remote sudo -S sh /tmp/vesper-golden-setup.sh
 
 echo "Shutting it down..."
 echo "${ssh_password}" | remote sudo -S shutdown -h now >/dev/null 2>&1 || true
