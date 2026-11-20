@@ -88,3 +88,42 @@ for agy. That wasn't done here, so the Codex adapter is unchanged.
   and could change.
 - Codex: revisit with a Codex probe if Codex runs show the same serial
   exploration.
+
+## Addendum: sub agents for every persona run
+
+- **Status:** Accepted for Claude Code 2.1.325 and agy 1.5.9.
+- **Evidence:** `TestClaudeProbe/helper` (real claude, stub Messages API) and
+  `TestAgyProbe/helper` (real agy, stub Gemini API), both in
+  `server/internal/harness`.
+
+The explorer is no longer lead-only, and it has a sibling. Every run with tools
+on Claude Code or agy, chats and delegated runs included, gets
+`agentdef.SubagentTypes`: `explorer` and `helper`. `helper` takes a
+self-contained task on the lead's own model with the file, shell and web tools
+the run allows (`claudeHelperTools`, `agyHelperAgent`) and none of Vesper's MCP
+tools, so plans, steps and `complete_run` stay the lead's. A read-only run's
+helper only reads. `subagents: "false"` turns both off; `explorer: "false"`
+drops only the explorer. Asides and `no_tools` turns get neither.
+`runs.CheckTool` allows exactly the declared types.
+
+Verified on both harnesses:
+- the policy hook sees the sub agent's own tool calls (the helper's `Bash`), so
+  scopes, approvals and read-only chats hold inside it; Claude Code sends them
+  with `agent_id` and `agent_type`;
+- the helper runs on the lead's model and gets only its declared tools.
+
+**Claude Code runs sub agents in the background by default** in 2.1.325: the
+`Agent` call returns "Async agent launched", the lead ends its turn, and it is
+woken again when the sub agent finishes, so the stream carries one `result`
+per wake, each with only its segment's usage (the explorer had this too).
+Vesper sets `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` whenever sub agents are
+on; the lead then waits for the report within its turn and the stream has one
+result. `TestClaudeProbe/helper` fails without it.
+
+Known gap: Claude Code's `result.usage` counts only the lead's tokens;
+`total_cost_usd` includes the sub agents'. Token counts on a run with sub
+agents therefore read low while its cost is right.
+
+Codex is still left out, for the reason above: `features.multi_agent` would
+hand the model Codex's own spawn tools for any role, and nobody has checked
+their names, arguments and the children's tool calls through the hook.

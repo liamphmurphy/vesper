@@ -3,6 +3,7 @@ package harness
 import (
 	"encoding/base64"
 	"encoding/json"
+	"slices"
 	"strings"
 
 	"github.com/liamphmurphy/vesper/server/internal/agentdef"
@@ -108,7 +109,7 @@ func (ClaudeCode) Invocation(ws Workspace, t Turn) (Invocation, error) {
 			}
 		}
 		// The web tools are handled below: a denied tool beats an allowed one.
-		deny = append(deny, "Edit", "Write", "NotebookEdit", "Bash", "Agent")
+		deny = append(deny, "Edit", "Write", "NotebookEdit", "Bash")
 	}
 	// The assistant's web_search option grants web tools even to read-only
 	// chat; otherwise read-only runs never get the web.
@@ -120,23 +121,38 @@ func (ClaudeCode) Invocation(ws Workspace, t Turn) (Invocation, error) {
 	if denied(spec, "repo:write") {
 		deny = append(deny, "Bash(git push:*)", "Bash(gh pr create:*)")
 	}
-	explorer := agentdef.ExplorerOn(spec, t.Lead)
+	subagents := agentdef.SubagentsOn(spec)
 	var agents []byte
-	if explorer {
-		// The policy hook still allows only the explorer (runs.CheckTool).
-		allow = append(allow, "Agent")
-		model := spec.HarnessOptions[agentdef.OptionExplorerModel]
-		if model == "" {
-			model = agentdef.DefaultExplorerModel
+	if subagents {
+		// The policy hook still allows only these types (runs.CheckTool), and
+		// it sees every tool call a sub agent makes, as it does the lead's.
+		roster := map[string]any{agentdef.HelperAgent: map[string]any{
+			"description": agentdef.HelperDescription,
+			"prompt":      agentdef.HelperPrompt,
+			"tools":       claudeHelperTools(allow, deny),
+			"model":       "inherit",
+		}}
+		if agentdef.ExplorerOn(spec) {
+			model := spec.HarnessOptions[agentdef.OptionExplorerModel]
+			if model == "" {
+				model = agentdef.DefaultExplorerModel
+			}
+			roster[agentdef.ExplorerAgent] = map[string]any{
+				"description": agentdef.ExplorerDescription,
+				"prompt":      agentdef.ExplorerPrompt,
+				"tools":       []string{"Read", "Grep", "Glob"},
+				"model":       AnthropicModel(model),
+			}
 		}
-		if agents, err = json.MarshalIndent(map[string]any{agentdef.ExplorerAgent: map[string]any{
-			"description": agentdef.ExplorerDescription,
-			"prompt":      agentdef.ExplorerPrompt,
-			"tools":       []string{"Read", "Grep", "Glob"},
-			"model":       AnthropicModel(model),
-		}}, "", "  "); err != nil {
+		allow = append(allow, "Agent")
+		if agents, err = json.MarshalIndent(roster, "", "  "); err != nil {
 			return Invocation{}, err
 		}
+		// Sub agents run in the background by default (claude 2.1.325): the
+		// lead ends its turn, is woken when they finish, and the stream carries
+		// one result per wake, each with only that segment's usage. In the
+		// foreground the lead waits for the report inside its one turn.
+		env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = "1"
 	}
 
 	argv := []string{"claude", "-p", t.Prompt,
@@ -157,7 +173,7 @@ func (ClaudeCode) Invocation(ws Workspace, t Turn) (Invocation, error) {
 	if len(deny) > 0 {
 		argv = append(argv, "--disallowedTools", strings.Join(deny, ","))
 	}
-	if explorer {
+	if subagents {
 		argv = append(argv, "--agents", claudeAgentsFile)
 	}
 	if noTools {
@@ -187,7 +203,7 @@ func (ClaudeCode) Invocation(ws Workspace, t Turn) (Invocation, error) {
 		argv = append(argv, "--input-format", "stream-json")
 	}
 	files[claudeMCPFile] = cfg
-	if explorer {
+	if subagents {
 		files[claudeAgentsFile] = agents
 	}
 	files[toolHookPath] = toolHook
@@ -199,6 +215,19 @@ func (ClaudeCode) Invocation(ws Workspace, t Turn) (Invocation, error) {
 		Env:   env,
 		Files: files,
 	}, nil
+}
+
+// claudeHelperTools are the lead's file, shell and web tools that the run
+// allows and doesn't deny, for the helper sub agent. Vesper's MCP tools stay
+// with the lead, which owns the run's plan, steps and completion.
+func claudeHelperTools(allow, deny []string) []string {
+	var tools []string
+	for _, tool := range []string{"Read", "Grep", "Glob", "Edit", "Write", "Bash", "WebSearch", "WebFetch"} {
+		if slices.Contains(allow, tool) && !slices.Contains(deny, tool) {
+			tools = append(tools, tool)
+		}
+	}
+	return tools
 }
 
 func (c ClaudeCode) NewParser(string) Parser {

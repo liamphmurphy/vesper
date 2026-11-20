@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -140,9 +141,13 @@ func (Antigravity) Invocation(ws Workspace, t Turn) (Invocation, error) {
 	}
 
 	files := SkillFilesFor(spec.Skills, agentdef.HarnessAntigravity) // agy 1.5.8 lists .agents/skills/*/SKILL.md to the model
-	if agentdef.ExplorerOn(spec, t.Lead) {
+	if agentdef.ExplorerOn(spec) {
 		files[agyExplorerPath] = agyExplorerAgent
 		files[SkillsExcludeFile] = append(files[SkillsExcludeFile], []byte("/"+agyExplorerPath+"\n")...)
+	}
+	if agentdef.SubagentsOn(spec) {
+		files[agyHelperPath] = agyHelperAgent(spec)
+		files[SkillsExcludeFile] = append(files[SkillsExcludeFile], []byte("/"+agyHelperPath+"\n")...)
 	}
 	files[agyPolicyPath] = agyPolicyHook
 	files[agyLaunchPath] = agyLauncher
@@ -159,6 +164,25 @@ const agyExplorerPath = ".agents/agents/" + agentdef.ExplorerAgent + ".md"
 
 var agyExplorerAgent = []byte("---\nname: " + agentdef.ExplorerAgent + "\ndescription: " + strconv.Quote(agentdef.ExplorerDescription) +
 	"\nsubagent: true\nmainAgent: false\ninheritMcp: false\nmodel: flash\ntools: [read_file]\n---\n\n# Explorer\n\n" + agentdef.ExplorerPrompt + "\n")
+
+const agyHelperPath = ".agents/agents/" + agentdef.HelperAgent + ".md"
+
+// agyHelperAgent is the helper as an agy custom agent (agy 1.5.9,
+// TestAgyProbe/helper): the lead's model, the file and shell tools the run's
+// deny rules leave open, and none of its MCP servers. Its tool calls reach
+// Vesper's policy hook like the lead's.
+func agyHelperAgent(spec agentdef.Resolved) []byte {
+	deny := agyDenyRules(spec)
+	tools := []string{"read_file"}
+	if !slices.Contains(deny, "write_file(*)") && spec.HarnessOptions["readonly"] != "true" {
+		tools = append(tools, "write_file", "edit_file")
+	}
+	if !slices.Contains(deny, "command(*)") {
+		tools = append(tools, "run_command")
+	}
+	return []byte("---\nname: " + agentdef.HelperAgent + "\ndescription: " + strconv.Quote(agentdef.HelperDescription) +
+		"\nsubagent: true\nmainAgent: false\ninheritMcp: false\ntools: [" + strings.Join(tools, ", ") + "]\n---\n\n# Helper\n\n" + agentdef.HelperPrompt + "\n")
+}
 
 // agySessionSettings turns agy's terminal sandbox off for this session only.
 // The container is the boundary, as for Codex. settings.json can't do it on

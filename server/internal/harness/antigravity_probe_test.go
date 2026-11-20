@@ -171,13 +171,12 @@ func TestAgyProbe(t *testing.T) {
 		}
 	})
 
-	// A lead run gets the read-only explorer as an agy custom agent: the lead
+	// A run gets the read-only explorer as an agy custom agent: the lead
 	// sees it in its subagent roster, invoke_subagent reaches Vesper's policy
 	// as Agent/explorer, and the explorer runs on the flash tier with read_file
 	// and none of the lead's write, shell or MCP tools (LAZYAGENTS-258).
 	t.Run("explorer", func(t *testing.T) {
 		p := newAgyProbe(t, bin)
-		p.lead = true
 		p.gemini.script(
 			agyReply{call: agyCall("invoke_subagent", map[string]any{"TypeName": "explorer", "Role": "explorer", "Prompt": "Where is the greeting?"})},
 			agyReply{text: "notes.txt:1"},
@@ -216,6 +215,64 @@ func TestAgyProbe(t *testing.T) {
 		for _, tool := range []string{"run_command", "write_file", "edit_file", "mcp_lazyagents_list_tickets", "call_mcp_tool", "invoke_subagent"} {
 			if strings.Contains(body, `"name":"`+tool+`"`) {
 				t.Errorf("the explorer was given %s", tool)
+			}
+		}
+	})
+
+	// The helper is an agy custom agent on the lead's model with the file and
+	// shell tools the run allows and none of its MCP servers, and its own tool
+	// calls reach Vesper's policy hook, so scopes hold inside it too.
+	t.Run("helper", func(t *testing.T) {
+		p := newAgyProbe(t, bin)
+		var helperCalls int
+		p.gemini.route = func(body string) (agyReply, bool) {
+			if !strings.Contains(body, agentdef.HelperPrompt) {
+				return agyReply{}, false
+			}
+			if helperCalls++; helperCalls == 1 {
+				return agyReply{call: agyCall("run_command", map[string]any{"CommandLine": "echo from-helper", "toolSummary": "Probe", "WaitMsBeforeAsync": 5000})}, true
+			}
+			return agyReply{text: "Ran it."}, true
+		}
+		p.gemini.script(
+			agyReply{call: agyCall("invoke_subagent", map[string]any{"TypeName": "helper", "Role": "helper", "Prompt": "Run the probe command."})},
+			agyReply{text: "Done."},
+		)
+		s := spec("repo:read", "allowed", "repo:write", "allowed", "tests:run", "allowed")
+		s.Harness, s.Model = agentdef.HarnessAntigravity, ""
+		out := p.run(t, s, "")
+		if out.exit != 0 || out.res.IsError {
+			t.Fatalf("exit=%d result=%+v", out.exit, out.res)
+		}
+		if !strings.Contains(p.gemini.firstRequest(), agentdef.HelperDescription) {
+			t.Error("the lead must see the helper in its subagent roster")
+		}
+		if got := p.policy.tools(); !slices.Equal(got, []string{"Agent", "Bash"}) || p.policy.input(0)["subagent_type"] != agentdef.HelperAgent ||
+			!strings.Contains(fmt.Sprint(p.policy.input(1)["command"]), "from-helper") {
+			t.Errorf("policy saw %v %v", got, p.policy.inputs)
+		}
+		helper := -1
+		for i, body := range p.gemini.all {
+			if strings.Contains(string(body), agentdef.HelperPrompt) {
+				helper = i
+				break
+			}
+		}
+		if helper < 0 {
+			t.Fatal("the helper never ran")
+		}
+		body, path := string(p.gemini.all[helper]), p.gemini.paths[helper]
+		if path != p.gemini.paths[0] {
+			t.Errorf("helper on %s, lead on %s: the helper runs on the lead's model", path, p.gemini.paths[0])
+		}
+		for _, tool := range []string{"read_file", "write_file", "edit_file", "run_command"} {
+			if !strings.Contains(body, `"name":"`+tool+`"`) {
+				t.Errorf("the helper wasn't given %s", tool)
+			}
+		}
+		for _, tool := range []string{"mcp_lazyagents_list_tickets", "call_mcp_tool", "invoke_subagent"} {
+			if strings.Contains(body, `"name":"`+tool+`"`) {
+				t.Errorf("the helper was given %s", tool)
 			}
 		}
 	})
@@ -281,7 +338,6 @@ type agyProbe struct {
 	accountSettings map[string]any
 	// withoutSessionSettings drops Vesper's --settings, to show what they change.
 	withoutSessionSettings bool
-	lead                   bool // a lead ticket run's turn
 }
 
 func newAgyProbe(t *testing.T, bin string) *agyProbe {
@@ -314,7 +370,7 @@ func (p *agyProbe) run(t *testing.T, spec agentdef.Resolved, record string) agyO
 func (p *agyProbe) runWithSettings(t *testing.T, spec agentdef.Resolved, record, settingsJSON string) agyOutcome {
 	t.Helper()
 	inv, err := (Antigravity{}).Invocation(Workspace{Dir: p.ws, MCPURL: p.vesperURL + "/mcp", Token: "probe-token", TokenEnv: "LAZYAGENTS_TOKEN", ContainerSandbox: true},
-		Turn{Spec: spec, Prompt: "Do the probe task.", Lead: p.lead})
+		Turn{Spec: spec, Prompt: "Do the probe task."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -430,9 +486,12 @@ type agyGemini struct {
 	url     string
 	mu      sync.Mutex
 	replies []agyReply
-	first   []byte
-	all     [][]byte
-	paths   []string
+	// route, when set, answers a request whose body it recognizes (a sub
+	// agent's, which agy runs alongside the lead) out of the scripted order.
+	route func(body string) (agyReply, bool)
+	first []byte
+	all   [][]byte
+	paths []string
 }
 
 func (g *agyGemini) script(r ...agyReply) { g.replies = r }
@@ -451,9 +510,17 @@ func (g *agyGemini) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	g.all = append(g.all, body)
 	g.paths = append(g.paths, r.URL.Path)
-	reply := agyReply{text: "done"}
-	if len(g.replies) > 0 {
+	var reply agyReply
+	var routed bool
+	if g.route != nil {
+		reply, routed = g.route(string(body))
+	}
+	switch {
+	case routed:
+	case len(g.replies) > 0:
 		reply, g.replies = g.replies[0], g.replies[1:]
+	default:
+		reply = agyReply{text: "done"}
 	}
 	g.mu.Unlock()
 	if reply.status != 0 {

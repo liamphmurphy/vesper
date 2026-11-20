@@ -40,8 +40,6 @@ type Turn struct {
 	// InlineImages are the same pictures for Claude Code, which takes them as
 	// content blocks in its first message rather than as file arguments.
 	InlineImages []InlineImage
-	// Lead is an undelegated ticket run (agentdef.ExplorerOn).
-	Lead bool
 }
 
 // InlineImage is an image delivered as bytes.
@@ -356,11 +354,18 @@ func ChatAgentsMDInSpace(spec agentdef.Resolved, contextFiles []string, project,
 	switch {
 	case allowed(spec, "repo:write"):
 		// A persona that can code (runs.ChatSpec): the instructions below say where.
-		b.WriteString("Work on code only as the Instructions allow. Do not delegate work.\n\n")
+		b.WriteString("Work on code only as the Instructions allow.")
 	case spec.HarnessOptions[agentdef.OptionImageGeneration] == "true":
-		b.WriteString("Do not modify files or run shell commands, except to copy generated images into `.lazyagents/outbox/`. Do not delegate work.\n\n")
+		b.WriteString("Do not modify files or run shell commands, except to copy generated images into `.lazyagents/outbox/`.")
 	default:
-		b.WriteString("Do not modify files, run shell commands or delegate work.\n\n")
+		b.WriteString("Do not modify files or run shell commands.")
+	}
+	// Other personas take work through tickets the person starts; a chat's own
+	// sub agents (agentdef.SubagentsOn) are the only help it starts itself.
+	if guide := agentdef.SubagentGuide(spec); guide != "" {
+		b.WriteString(" Don't hand work to other personas. " + guide + "\n\n")
+	} else {
+		b.WriteString(" Do not delegate work.\n\n")
 	}
 	if !denied(spec, "wiki:write") {
 		b.WriteString("write_note saves a wiki note, but only as a suggestion the person accepts or rejects; say so when you use it. Write one when the person asks, or when you've solved something worth keeping for agents (a runbook, a decision), linked with [[…]]. If they are drafting in a Doc and seem to want it kept, suggest the Doc's \"Promote to wiki\" action instead. Your private notes about the person stay in memory, not the wiki.\n")
@@ -427,11 +432,11 @@ func agentsMD(existing string, spec agentdef.Resolved, contextFiles []string, ti
 	if !denied(spec, "repo:read") {
 		b.WriteString(agentdef.BatchExplorationGuide + "\n\n")
 	}
+	if guide := agentdef.SubagentGuide(spec); guide != "" {
+		b.WriteString(guide + "\n\n")
+	}
 	if !delegated {
 		b.WriteString("## Execution policy\n\nWork directly by default, within your scopes. Standing role routines to call a scoper, hand implementation to an implementer, hand shipping to a shipper, or curate memory after every ticket are optional; do not perform them mechanically. Delegate only substantial independent work, a capability you lack, an explicit task request, or a necessary independent review. Do not start fresh agents for small fixes, routine shipping, or checks already completed. AGENTS.md already contains your instructions and scopes; claim_ticket returns your handle, so skip whoami. Search conventions only when needed and not already available. Write memory only for a durable new lesson.\n\n")
-		if agentdef.ExplorerOn(spec, true) {
-			b.WriteString("Use the explorer sub agent for broad searches and for reading you only need the conclusion of. Read a file yourself when you are about to edit it.\n\n")
-		}
 		if spec.ReviewRequired {
 			b.WriteString("Independent review is required for Done: obtain delegated reviewer/QA approval.\n\n")
 		} else {

@@ -50,8 +50,9 @@ skips when `AGY_PROBE`/`AGY_BIN` aren't set.
    `write_file`, `edit_file`, `run_command`, `search_web`. All MCP tools go through
    `call_mcp_tool`, which Vesper names `mcp__<server>__<tool>` for its policy.
    agy's subagent tools (`invoke_subagent`, `swarm`…) are mapped to `Agent`, which
-   Vesper's policy refuses as it does for Claude Code (only its explorer may run,
-   and agy has none). The policy keeps one rule set for all three harnesses.
+   Vesper's policy allows only for the run's declared sub agent types, as for
+   Claude Code (`explorer` and `helper`, see ADR-explorer.md). The policy keeps
+   one rule set for all three harnesses.
 5. **Quota:** Google's 429 text ("exceeded your current quota", `RESOURCE_EXHAUSTED`)
    is a usage limit, so fallbacks apply, and `retryDelay` is the reset time.
 6. **Credentials:** native Antigravity login (`agy acp --login` -> `harness:google`

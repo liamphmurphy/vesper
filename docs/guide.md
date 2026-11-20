@@ -223,13 +223,23 @@ independent review before Done** in an agent's Runtime settings to enforce an
 approval gate for every ticket that agent runs. Acceptance criteria, scopes, and
 human approvals remain required.
 
-A main agent's ticket run on Claude Code (the lead, not a delegated sub agent)
-gets one read-only sub agent, `explorer`, that searches and reads code on a
-cheap model (`explorer_model`, default `haiku-5.5`) and returns only its
-conclusions, keeping file dumps out of the lead's context. It is on by default;
-set the harness option `explorer` to `"false"` in an agent's definition to turn
-it off. Sub agent runs, chats, `readonly` or `no_tools` agents, and Codex or
-Antigravity runs never get it.
+Every persona run on Claude Code or Antigravity, chats and ticket runs alike,
+can start the harness's own sub agents, and its prompt encourages it to when the
+work splits into independent parts or needs a broad read it only wants the
+conclusion of:
+
+- `explorer` searches and reads code on a cheap model (`explorer_model`,
+  default `haiku-5.5`; agy's flash tier) and returns only its conclusions.
+- `helper` takes a self-contained task on the lead's model, with the file,
+  shell and web tools the run itself may use and none of Vesper's MCP tools.
+  In a read-only chat it only reads.
+
+Every tool call a sub agent makes goes through the run's policy hook, so scopes
+and approvals hold inside it. They share the lead's checkout; for parallel edits
+that need their own worktree and checks, a ticket run uses `delegate`. Set the
+harness option `subagents` to `"false"` in a persona's definition to turn both
+off, or `explorer` to `"false"` to drop only the explorer. Codex runs, asides
+and `no_tools` turns never get them (see `docs/contracts/ADR-explorer.md`).
 
 Context rollover continues a main agent in a fresh session, briefed from the
 ticket, its plan, git and the delegation report, so a long run stops re-reading

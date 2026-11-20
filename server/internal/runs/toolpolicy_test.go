@@ -144,9 +144,9 @@ func TestToolPolicyExactApproval(t *testing.T) {
 
 }
 
-// Claude Code's and agy's sub agent tool: only the explorer, only for a lead
-// run whose spec has the option on.
-func TestToolPolicyExplorerSubagent(t *testing.T) {
+// Sub agents: the types the run declared (agentdef.SubagentTypes), on any
+// run with them, chats and delegated runs included; every other type is denied.
+func TestToolPolicySubagents(t *testing.T) {
 	ctx := context.Background()
 	pool := testdb.New(t)
 	if _, err := seed.Run(ctx, pool, seed.Options{Demo: true}); err != nil {
@@ -164,16 +164,26 @@ func TestToolPolicyExplorerSubagent(t *testing.T) {
 	c.RunID = &run.ID
 	spec, _ := runs.Spec(run)
 	spec.Harness = agentdef.HarnessClaudeCode
-	setOption := func(v string) {
+	if spec.HarnessOptions == nil {
+		spec.HarnessOptions = map[string]string{}
+	}
+	save := func() {
 		t.Helper()
-		if spec.HarnessOptions == nil {
-			spec.HarnessOptions = map[string]string{}
-		}
-		spec.HarnessOptions[agentdef.OptionExplorer] = v
 		raw, _ := json.Marshal(spec)
 		if _, err := pool.Exec(ctx, "UPDATE runs SET resolved_spec=$2 WHERE id=$1", run.ID, raw); err != nil {
 			t.Fatal(err)
 		}
+	}
+	setOptions := func(kv ...string) {
+		t.Helper()
+		for i := 0; i+1 < len(kv); i += 2 {
+			if kv[i+1] == "" {
+				delete(spec.HarnessOptions, kv[i])
+			} else {
+				spec.HarnessOptions[kv[i]] = kv[i+1]
+			}
+		}
+		save()
 	}
 	check := func(tool, typ, want string) {
 		t.Helper()
@@ -181,71 +191,68 @@ func TestToolPolicyExplorerSubagent(t *testing.T) {
 		if err != nil || d.Decision != want {
 			t.Fatalf("%s %s: %+v %v, want %s", tool, typ, d, err, want)
 		}
-		if want == "deny" && d.Reason != "Only the explorer sub agent is available; delegate other work with the delegate tool" {
-			t.Fatalf("reason %q", d.Reason)
-		}
 	}
-	// Default (no option): the explorer is on for a Claude Code lead, and
-	// it's the only sub agent.
-	check("Agent", "explorer", "allow")
-	check("Agent", "general-purpose", "deny")
-	// explorer: "false": no sub agent at all, though the run has tests:run.
-	setOption("false")
-	check("Agent", "explorer", "deny")
-	check("Agent", "general-purpose", "deny")
-	setOption("true")
-	check("Agent", "explorer", "allow")
-	check("Agent", "general-purpose", "deny")
-	check("Agent", "", "deny")
-	check("Task", "general-purpose", "deny")
-	// The explorer's own reads pass the same hook under repo:read.
-	if d, err := svc.CheckTool(ctx, c, runs.ToolCheck{Tool: "Grep", Input: map[string]any{"pattern": "x"}}); err != nil || d.Decision != "allow" {
-		t.Fatalf("grep: %+v %v", d, err)
-	}
-	// With the option on, still only for a Claude Code lead with tools.
-	for _, opt := range []string{"readonly", agentdef.OptionNoTools} {
-		spec.HarnessOptions[opt] = "true"
-		setOption("true")
-		check("Agent", "explorer", "deny")
-		delete(spec.HarnessOptions, opt)
-	}
-	spec.Harness = agentdef.HarnessCodex
-	setOption("true")
-	check("Agent", "explorer", "deny")
-	// agy's invoke_subagent reaches the hook as Agent with subagent_type
-	// (LAZYAGENTS-258): the same explorer, and only it.
-	spec.Harness = agentdef.HarnessAntigravity
-	setOption("true")
-	check("Agent", "explorer", "allow")
-	check("Agent", "general", "deny")
-	setOption("false")
-	check("Agent", "explorer", "deny")
-	spec.Harness = agentdef.HarnessClaudeCode
-	setOption("true")
 	exec := func(sql string) {
 		t.Helper()
 		if _, err := pool.Exec(ctx, sql, run.ID); err != nil {
 			t.Fatal(err)
 		}
 	}
-	exec("UPDATE runs SET parent_run_id=$1 WHERE id=$1") // a delegated run
-	check("Agent", "explorer", "deny")
-	exec("UPDATE runs SET parent_run_id=NULL WHERE id=$1")
+	// Default: the explorer and the helper, and nothing else.
+	save()
 	check("Agent", "explorer", "allow")
-	setOption("false")
-	check("Agent", "explorer", "deny")
-	// The default (option unset) never reaches sub agents or chats either.
-	delete(spec.HarnessOptions, agentdef.OptionExplorer)
-	raw, _ := json.Marshal(spec)
-	if _, err := pool.Exec(ctx, "UPDATE runs SET resolved_spec=$2 WHERE id=$1", run.ID, raw); err != nil {
-		t.Fatal(err)
+	check("Agent", "helper", "allow")
+	check("Agent", "general-purpose", "deny")
+	check("Agent", "", "deny")
+	check("Task", "general-purpose", "deny")
+	if d, _ := svc.CheckTool(ctx, c, runs.ToolCheck{Tool: "Agent", Input: map[string]any{"subagent_type": "general-purpose"}}); d.Reason != "Only these sub agent types are available: explorer, helper" {
+		t.Fatalf("reason %q", d.Reason)
 	}
+	// A sub agent's own calls pass the same hook as the lead's.
+	if d, err := svc.CheckTool(ctx, c, runs.ToolCheck{Tool: "Grep", Input: map[string]any{"pattern": "x"}}); err != nil || d.Decision != "allow" {
+		t.Fatalf("grep: %+v %v", d, err)
+	}
+	// explorer: "false" leaves the helper; subagents: "false" leaves none.
+	setOptions(agentdef.OptionExplorer, "false")
+	check("Agent", "explorer", "deny")
+	check("Agent", "helper", "allow")
+	setOptions(agentdef.OptionExplorer, "", agentdef.OptionSubagents, "false")
+	check("Agent", "helper", "deny")
+	if d, _ := svc.CheckTool(ctx, c, runs.ToolCheck{Tool: "Agent", Input: map[string]any{"subagent_type": "helper"}}); d.Reason != "This run has no sub agents; do the work yourself" {
+		t.Fatalf("reason %q", d.Reason)
+	}
+	setOptions(agentdef.OptionSubagents, "")
+	// No tools, or an aside: none.
+	for _, opt := range []string{agentdef.OptionNoTools, agentdef.OptionAside} {
+		setOptions(opt, "true")
+		check("Agent", "helper", "deny")
+		setOptions(opt, "")
+	}
+	// Codex has none; agy's invoke_subagent reaches the hook as Agent with
+	// subagent_type (LAZYAGENTS-258) and gets the same roster.
+	spec.Harness = agentdef.HarnessCodex
+	save()
+	check("Agent", "helper", "deny")
+	spec.Harness = agentdef.HarnessAntigravity
+	save()
 	check("Agent", "explorer", "allow")
+	check("Agent", "helper", "allow")
+	check("Agent", "general", "deny")
+	spec.Harness = agentdef.HarnessClaudeCode
+	// A delegated run and a read-only chat have them too.
+	save()
 	exec("UPDATE runs SET parent_run_id=$1 WHERE id=$1")
-	check("Agent", "explorer", "deny")
+	check("Agent", "helper", "allow")
 	exec("UPDATE runs SET parent_run_id=NULL WHERE id=$1")
+	spec = runs.ChatSpec(spec, runs.ChatCaps{})
+	save()
 	exec("UPDATE runs SET purpose='chat', ticket_id=NULL WHERE id=$1")
-	check("Agent", "explorer", "deny")
+	check("Agent", "explorer", "allow")
+	check("Agent", "helper", "allow")
+	// The read-only chat's helper still can't write: its calls are the chat's.
+	if d, err := svc.CheckTool(ctx, c, runs.ToolCheck{Tool: "Write", Input: map[string]any{"file_path": "x.go"}}); err != nil || d.Decision != "deny" {
+		t.Fatalf("write from a read-only chat: %+v %v", d, err)
+	}
 }
 
 // The assistant's web tools: only on chat runs with the option, and a fetch
