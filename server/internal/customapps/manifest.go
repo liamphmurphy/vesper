@@ -14,7 +14,7 @@ import (
 
 const (
 	MaxFiles            = 20
-	MaxTotalFileBytes   = 256 << 10
+	MaxTotalFileBytes   = 10 << 20
 	MaxSQLiteBytes      = 25 << 20
 	MaxNameRunes        = 80
 	MaxDescriptionRunes = 500
@@ -24,6 +24,13 @@ const (
 	ToolScopeChats   = "chats"
 	ToolScopeAppOnly = "app_only"
 )
+
+// MaxStoredVersions is how many versions of an app are kept. Each version holds
+// the full sources plus compiled bundles, so older ones are pruned on every save.
+const MaxStoredVersions = 10
+
+// MaxEditsPerUpdate bounds the find/replace edits one update may carry.
+const MaxEditsPerUpdate = 100
 
 var (
 	slugRE    = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,47}$`)
@@ -224,9 +231,49 @@ func NormalizeFiles(files map[string]string) (map[string]string, error) {
 		}
 		total += len(content)
 		if total > MaxTotalFileBytes {
-			return nil, apperr.Invalid("files", "total source size exceeds %d KB", MaxTotalFileBytes>>10)
+			return nil, apperr.Invalid("files", "total source size exceeds %d MB", MaxTotalFileBytes>>20)
 		}
 		out[name] = content
+	}
+	return out, nil
+}
+
+// FileEdit replaces Find with Replace in one existing source file. Find must
+// match exactly once unless ReplaceAll is set, so an edit can't silently land
+// in the wrong place.
+type FileEdit struct {
+	Path       string `json:"path" jsonschema:"Existing source file to edit, e.g. app.tsx"`
+	Find       string `json:"find" jsonschema:"Exact text to find; must match once unless replace_all is true"`
+	Replace    string `json:"replace" jsonschema:"Text to put in its place"`
+	ReplaceAll bool   `json:"replace_all,omitempty" jsonschema:"Replace every match instead of requiring exactly one"`
+}
+
+// ApplyEdits returns a copy of files with edits applied in order; each edit
+// sees the result of the ones before it. The input map is not modified.
+func ApplyEdits(files map[string]string, edits []FileEdit) (map[string]string, error) {
+	if len(edits) > MaxEditsPerUpdate {
+		return nil, apperr.Invalid("edits", "at most %d edits per update", MaxEditsPerUpdate)
+	}
+	out := make(map[string]string, len(files))
+	for k, v := range files {
+		out[k] = v
+	}
+	for i, e := range edits {
+		name := path.Clean(strings.TrimPrefix(strings.TrimSpace(e.Path), "/"))
+		content, ok := out[name]
+		if !ok {
+			return nil, apperr.Invalid("edits", "edit %d: %q is not a file in this app", i+1, e.Path)
+		}
+		if e.Find == "" {
+			return nil, apperr.Invalid("edits", "edit %d: find text is required", i+1)
+		}
+		switch n := strings.Count(content, e.Find); {
+		case n == 0:
+			return nil, apperr.Invalid("edits", "edit %d: find text not found in %s", i+1, name)
+		case n > 1 && !e.ReplaceAll:
+			return nil, apperr.Invalid("edits", "edit %d: find text matches %d times in %s; include more surrounding text or set replace_all", i+1, n, name)
+		}
+		out[name] = strings.ReplaceAll(content, e.Find, e.Replace)
 	}
 	return out, nil
 }
