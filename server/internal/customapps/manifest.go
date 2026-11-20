@@ -14,7 +14,7 @@ import (
 
 const (
 	MaxFiles            = 20
-	MaxTotalFileBytes   = 256 << 10
+	MaxTotalFileBytes   = 10 << 20
 	MaxSQLiteBytes      = 25 << 20
 	MaxNameRunes        = 80
 	MaxDescriptionRunes = 500
@@ -224,7 +224,7 @@ func NormalizeFiles(files map[string]string) (map[string]string, error) {
 		}
 		total += len(content)
 		if total > MaxTotalFileBytes {
-			return nil, apperr.Invalid("files", "total source size exceeds %d KB", MaxTotalFileBytes>>10)
+			return nil, apperr.Invalid("files", "total source size exceeds %d MB", MaxTotalFileBytes>>20)
 		}
 		out[name] = content
 	}
