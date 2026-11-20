@@ -31,6 +31,7 @@ import (
 const workspaceRoot = "/workspace"
 
 const usage = `usage: mac [-e KEY=VALUE]... [--pull PATH]... [--no-sync] [--] COMMAND [ARG...]
+       mac --agent-log
 
 Runs COMMAND in this run's macOS VM, in the directory matching the current
 one. Before it runs, the git checkout you're in is mirrored there (tracked
@@ -44,6 +45,8 @@ reuse it. The macOS VM has no network access.
   --pull PATH    after COMMAND, copy PATH (relative to the current directory)
                  back from the macOS VM (repeatable; even if COMMAND fails)
   --no-sync      skip mirroring the checkout
+  --agent-log    print the end of the macOS VM's guest agent log and exit, to
+                 see why mac itself is failing (booting the VM if needed)
 
 Examples:
   mac make -C macos mac-test
@@ -68,6 +71,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.Var(&envs, "e", "")
 	fs.Var(&pulls, "pull", "")
 	noSync := fs.Bool("no-sync", false, "")
+	agentLog := fs.Bool("agent-log", false, "")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -75,6 +79,22 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	argv := fs.Args()
+	if *agentLog {
+		if len(argv) > 0 || len(envs) > 0 || len(pulls) > 0 || *noSync {
+			fmt.Fprintln(stderr, "mac: --agent-log takes no command or other flags")
+			return 2
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		c := &macclient.Client{BaseURL: "http://" + microvm.InternalMacHost, Status: stderr}
+		log, err := c.AgentLog(ctx)
+		if err != nil {
+			fmt.Fprintf(stderr, "mac: %v\n", err)
+			return 1
+		}
+		fmt.Fprint(stdout, log)
+		return 0
+	}
 	if len(argv) == 0 {
 		fs.Usage()
 		return 2
