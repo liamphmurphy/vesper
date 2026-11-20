@@ -265,8 +265,8 @@ func (p *fakeProc) Close() error {
 func (p *fakeProc) Stdin() io.WriteCloser { return p.in }
 func (p *fakeProc) Stdout() io.Reader     { return p.out }
 func (p *fakeProc) Stderr() io.Reader     { return p.err }
-func (p *fakeProc) Interrupt() error  { return syscall.Kill(-p.cmd.Process.Pid, syscall.SIGINT) }
-func (p *fakeProc) Kill() error       { return syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL) }
+func (p *fakeProc) Interrupt() error      { return syscall.Kill(-p.cmd.Process.Pid, syscall.SIGINT) }
+func (p *fakeProc) Kill() error           { return syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL) }
 
 func (p *fakeProc) Wait() (int, error) {
 	err := p.cmd.Wait()

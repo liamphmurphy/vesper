@@ -2,15 +2,15 @@ package agentdef
 
 // Caps is what Vesper can enforce or observe on a harness (§6.2).
 type Caps struct {
-	ToolGating              bool `json:"tool_gating"`                        // allow/deny individual tools
-	PermissionPrompt        bool `json:"permission_prompt"`                  // route permission prompts to Vesper
-	NativeCost              bool `json:"native_cost"`                        // harness reports cost itself
-	Resume                  bool `json:"resume"`                             // resume a session by id
-	ChatInlineImageGen      bool `json:"chat_inline_image_gen,omitempty"`    // generates images in-turn into .lazyagents/outbox/
-	WorkflowImageGen        bool `json:"workflow_image_gen,omitempty"`       // can run workflow image steps
+	ToolGating              bool `json:"tool_gating"`                         // allow/deny individual tools
+	PermissionPrompt        bool `json:"permission_prompt"`                   // route permission prompts to Vesper
+	NativeCost              bool `json:"native_cost"`                         // harness reports cost itself
+	Resume                  bool `json:"resume"`                              // resume a session by id
+	ChatInlineImageGen      bool `json:"chat_inline_image_gen,omitempty"`     // generates images in-turn into .lazyagents/outbox/
+	WorkflowImageGen        bool `json:"workflow_image_gen,omitempty"`        // can run workflow image steps
 	CollectsGeneratedImages bool `json:"collects_generated_images,omitempty"` // runner harvests saved image paths instead of agent copying to outbox
-	ReportsContextTokens    bool `json:"reports_context_tokens,omitempty"`   // reports latest request prompt size in tokens
-	CumulativeSessionUsage  bool `json:"cumulative_session_usage,omitempty"` // resumed turns include earlier turns' session totals
+	ReportsContextTokens    bool `json:"reports_context_tokens,omitempty"`    // reports latest request prompt size in tokens
+	CumulativeSessionUsage  bool `json:"cumulative_session_usage,omitempty"`  // resumed turns include earlier turns' session totals
 }
 
 // Claude Code, Codex and Antigravity run over stateful bidirectional stdio
