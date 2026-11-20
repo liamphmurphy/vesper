@@ -40,8 +40,6 @@ type Turn struct {
 	// InlineImages are the same pictures for Claude Code, which takes them as
 	// content blocks in its first message rather than as file arguments.
 	InlineImages []InlineImage
-	// Lead is an undelegated ticket run (agentdef.ExplorerOn).
-	Lead bool
 }
 
 // InlineImage is an image delivered as bytes.
@@ -356,11 +354,18 @@ func ChatAgentsMDInSpace(spec agentdef.Resolved, contextFiles []string, project,
 	switch {
 	case allowed(spec, "repo:write"):
 		// A persona that can code (runs.ChatSpec): the instructions below say where.
-		b.WriteString("Work on code only as the Instructions allow. Do not delegate work.\n\n")
+		b.WriteString("Work on code only as the Instructions allow.")
 	case spec.HarnessOptions[agentdef.OptionImageGeneration] == "true":
-		b.WriteString("Do not modify files or run shell commands, except to copy generated images into `.lazyagents/outbox/`. Do not delegate work.\n\n")
+		b.WriteString("Do not modify files or run shell commands, except to copy generated images into `.lazyagents/outbox/`.")
 	default:
-		b.WriteString("Do not modify files, run shell commands or delegate work.\n\n")
+		b.WriteString("Do not modify files or run shell commands.")
+	}
+	// Other personas take work through tickets the person starts; a chat's own
+	// sub agents (agentdef.SubagentsOn) are the only help it starts itself.
+	if guide := agentdef.SubagentGuide(spec); guide != "" {
+		b.WriteString(" Don't hand work to other personas. " + guide + "\n\n")
+	} else {
+		b.WriteString(" Do not delegate work.\n\n")
 	}
 	if !denied(spec, "wiki:write") {
 		b.WriteString("write_note saves a wiki note, but only as a suggestion the person accepts or rejects; say so when you use it. Write one when the person asks, or when you've solved something worth keeping for agents (a runbook, a decision), linked with [[…]]. If they are drafting in a Doc and seem to want it kept, suggest the Doc's \"Promote to wiki\" action instead. Your private notes about the person stay in memory, not the wiki.\n")
@@ -427,11 +432,11 @@ func agentsMD(existing string, spec agentdef.Resolved, contextFiles []string, ti
 	if !denied(spec, "repo:read") {
 		b.WriteString(agentdef.BatchExplorationGuide + "\n\n")
 	}
+	if guide := agentdef.SubagentGuide(spec); guide != "" {
+		b.WriteString(guide + "\n\n")
+	}
 	if !delegated {
 		b.WriteString("## Execution policy\n\nWork directly by default, within your scopes. Standing role routines to call a scoper, hand implementation to an implementer, hand shipping to a shipper, or curate memory after every ticket are optional; do not perform them mechanically. Delegate only substantial independent work, a capability you lack, an explicit task request, or a necessary independent review. Do not start fresh agents for small fixes, routine shipping, or checks already completed. AGENTS.md already contains your instructions and scopes; claim_ticket returns your handle, so skip whoami. Search conventions only when needed and not already available. Write memory only for a durable new lesson.\n\n")
-		if agentdef.ExplorerOn(spec, true) {
-			b.WriteString("Use the explorer sub agent for broad searches and for reading you only need the conclusion of. Read a file yourself when you are about to edit it.\n\n")
-		}
 		if spec.ReviewRequired {
 			b.WriteString("Independent review is required for Done: obtain delegated reviewer/QA approval.\n\n")
 		} else {
@@ -615,14 +620,14 @@ func epicReviewSection(r *agentdef.Repository) string {
 // testServices says where tests get the services they need, for every run that tests.
 const testServices = "If `TEST_DATABASE_URL` is set, database tests use it: don't start your own database. If `DOCKER_HOST` is set, start what your tests need that isn't installed (a database, a queue, a cloud emulator) with `docker` or Testcontainers: containers run sandboxed (no host mounts, privileges or host network), their published ports are reachable at `$TESTCONTAINERS_HOST_OVERRIDE`, and everything is removed when the turn ends. If `VESPER_MACOS` is set, `mac COMMAND` runs a command in a macOS VM for what Linux can't build or test (Swift with AppKit or SwiftUI, `xcodebuild`, e.g. `mac make -C macos mac-test`): it mirrors your git checkout there first, runs in the matching directory and exits with the command's code. The first `mac` in a run boots macOS, which can take a minute or two, so give it a long timeout; the VM has no network, and `mac --help` lists its options."
 
-// delegationSection tells a main agent it can hand work to sub agents.
+// delegationSection tells a lead it can hand work to fresh copies of itself.
 func delegationSection(spec agentdef.Resolved) string {
 	checks := "allowed_paths and test_command"
 	if r := spec.Repository; r != nil && r.EpicBranch != "" && !r.EpicReview {
 		checks = "allowed_paths and a test_command running only the tests over that slice (the full suite runs in the epic review)"
 	}
 	return fmt.Sprintf("Before finishing, verify every acceptance criterion against evidence and call check_criterion only when satisfied. If anything is missing, implement it yourself or delegate a substantial independent slice. Commit and push changes, record the PR with set_pr, and complete_run(status=done). Use await_human or request_approval for a person; status=todo hands back unfinished work.\n\n"+
-		"Only when delegation is justified, use list_subagents then delegate with acceptance_criteria, %s. Commit first. Each child gets a worktree; the server checks and merges successful results. Up to %d children may run in parallel on disjoint paths. End your turn after delegating. Review the returned diff, reuse passing checks, and use continue_run_id for follow-up fixes.\n\n", checks, runs.MaxParallelDelegations)
+		"Only when delegation is justified, delegate a slice to a fresh copy of yourself with acceptance_criteria, %s (read_only for a review). Commit first. Each child gets a worktree; the server checks and merges successful results. Up to %d children may run in parallel on disjoint paths. End your turn after delegating. Review the returned diff, reuse passing checks, and use continue_run_id for follow-up fixes.\n\n", checks, runs.MaxParallelDelegations)
 }
 
 // UsageLimit reports provider exhaustion from an error, never ordinary tool output.

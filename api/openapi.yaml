@@ -908,33 +908,6 @@ paths:
               schema: { type: string, format: binary }
         default: { $ref: "#/components/responses/Error" }
 
-  /agents:
-    post:
-      operationId: createAgent
-      summary: Create an agent with a default definition
-      tags: [agents]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [handle, name]
-              properties:
-                handle: { type: string }
-                name: { type: string }
-                role: { type: string }
-                specialty: { type: string }
-                color_index: { type: integer }
-                kind: { $ref: "#/components/schemas/AgentKind" }
-      responses:
-        "201":
-          description: Created
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/AgentDetail" }
-        default: { $ref: "#/components/responses/Error" }
-
   /agents/{handle}:
     parameters:
       - $ref: "#/components/parameters/AgentHandle"
@@ -976,7 +949,6 @@ paths:
                 role: { type: string }
                 specialty: { type: string }
                 color_index: { type: integer }
-                kind: { $ref: "#/components/schemas/AgentKind", description: "Omit to keep the current kind. A sub agent can't have open tickets assigned." }
                 spec: { $ref: "#/components/schemas/AgentSpec" }
                 note: { type: string, description: "What changed, for the version list" }
       responses:
@@ -6441,8 +6413,8 @@ components:
         space_id: { type: string, format: uuid, description: "The space whose work this is (LAZYAGENTS-213); absent only for work a space stopped tracking (then archived)" }
     AgentKind:
       type: string
-      enum: [main, sub, assistant]
-      description: "main agents are assigned tickets and may delegate parts of them; sub agents only run when a main agent delegates to them; the assistant is the workspace's Personal Assistant, which every chat runs as (it can't be created, edited, deleted or assigned tickets)"
+      enum: [main, assistant]
+      description: "main is a persona's work record: it is assigned tickets and may delegate parts of them to fresh copies of itself; the assistant is the workspace's Personal Assistant, which every chat runs as (it can't be created, edited, deleted or assigned tickets)"
     Agent:
       type: object
       required: [id, name, handle, kind, color_index, role, specialty, model, status]
@@ -10395,7 +10367,7 @@ components:
         name: { type: string }
         in_chat_list: { type: boolean, description: "Offered in the chat switcher and the @ menu. A chat opened from its profile works either way." }
         work: { $ref: "#/components/schemas/PersonaWork" }
-        handle: { type: string, description: "Its @handle for tickets, runs and helpers; absent for a persona that has never worked" }
+        handle: { type: string, description: "Its @handle for tickets and runs; absent for a persona that has never worked" }
         work_model: { type: string, description: "The model its runs use; absent when it doesn't work" }
         work_status: { type: string, enum: [running, waiting, blocked, idle], description: "Its work record's status; absent when it doesn't work" }
         default_harness: { $ref: "#/components/schemas/Harness", description: "Default harness for new chats and runs; absent means Auto" }
@@ -10416,13 +10388,12 @@ components:
         updated_at: { type: string, format: date-time }
     PersonaWork:
       type: string
-      enum: [none, tickets, helper]
+      enum: [none, tickets]
       description: |
         What the persona does besides chatting. tickets: it can be assigned tickets and runs
-        them. helper: another persona's run can hand it part of the work. Its harness, model,
-        work brief, permissions and limits are its work definition (/agents/{handle}, by its
-        handle). Turning work off is refused (409) while it holds open tickets or has a run in
-        progress; switching to helper is refused while it holds open tickets.
+        them. Its harness, model, work brief, permissions and limits are its work definition
+        (/agents/{handle}, by its handle). Turning work off is refused (409) while it holds open
+        tickets or has a run in progress.
     PersonaList:
       type: object
       required: [personas]

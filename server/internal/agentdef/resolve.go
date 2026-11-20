@@ -15,6 +15,8 @@ const (
 	FromProject Source = "project"
 	// FromPersona marks scopes a persona's structured capabilities grant a chat.
 	FromPersona Source = "persona"
+	// FromDelegation marks the repo:write denial of a read-only delegated copy.
+	FromDelegation Source = "delegation"
 )
 
 // ResolvedScope is one scope after merging, with where its mode came from.

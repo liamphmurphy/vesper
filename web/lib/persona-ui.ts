@@ -378,13 +378,12 @@ export function inChatList<P extends { id: string; in_chat_list?: boolean }>(per
   return personas.filter((p) => p.in_chat_list !== false || p.id === keep);
 }
 
-export type PersonaWork = "none" | "tickets" | "helper";
+export type PersonaWork = "none" | "tickets";
 
 /** What a persona does besides chatting, as the Personas list and its Work section say it. */
 export const WORK: { value: PersonaWork; label: string; hint: string }[] = [
   { value: "none", label: "Chat only", hint: "Talks with you. It can't be assigned tickets." },
-  { value: "tickets", label: "Takes tickets", hint: "Can be assigned tickets and started from a Start card. Works in its own workspace and branch." },
-  { value: "helper", label: "Helps on runs", hint: "Another persona's run can hand it part of the work, such as a review or a search. It can't hold tickets." },
+  { value: "tickets", label: "Takes tickets", hint: "Can be assigned tickets and started from a Start card. Works in its own workspace and branch, and can start sub agents or copies of itself for parts of the work." },
 ];
 
 export function mentionSuggestions<P extends { name: string; in_chat_list?: boolean }>(personas: P[], query: string, max = 6): P[] {

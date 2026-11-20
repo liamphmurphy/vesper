@@ -697,23 +697,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/agents": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Create an agent with a default definition */
-        post: operations["createAgent"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/agents/{handle}": {
         parameters: {
             query?: never;
@@ -5275,10 +5258,10 @@ export interface components {
             space_id?: string;
         };
         /**
-         * @description main agents are assigned tickets and may delegate parts of them; sub agents only run when a main agent delegates to them; the assistant is the workspace's Personal Assistant, which every chat runs as (it can't be created, edited, deleted or assigned tickets)
+         * @description main is a persona's work record: it is assigned tickets and may delegate parts of them to fresh copies of itself; the assistant is the workspace's Personal Assistant, which every chat runs as (it can't be created, edited, deleted or assigned tickets)
          * @enum {string}
          */
-        AgentKind: "main" | "sub" | "assistant";
+        AgentKind: "main" | "assistant";
         Agent: {
             kind: components["schemas"]["AgentKind"];
             /** Format: uuid */
@@ -9671,7 +9654,7 @@ export interface components {
             /** @description Offered in the chat switcher and the @ menu. A chat opened from its profile works either way. */
             in_chat_list: boolean;
             work: components["schemas"]["PersonaWork"];
-            /** @description Its @handle for tickets, runs and helpers; absent for a persona that has never worked */
+            /** @description Its @handle for tickets and runs; absent for a persona that has never worked */
             handle?: string;
             /** @description The model its runs use; absent when it doesn't work */
             work_model?: string;
@@ -9716,13 +9699,12 @@ export interface components {
         };
         /**
          * @description What the persona does besides chatting. tickets: it can be assigned tickets and runs
-         *     them. helper: another persona's run can hand it part of the work. Its harness, model,
-         *     work brief, permissions and limits are its work definition (/agents/{handle}, by its
-         *     handle). Turning work off is refused (409) while it holds open tickets or has a run in
-         *     progress; switching to helper is refused while it holds open tickets.
+         *     them. Its harness, model, work brief, permissions and limits are its work definition
+         *     (/agents/{handle}, by its handle). Turning work off is refused (409) while it holds open
+         *     tickets or has a run in progress.
          * @enum {string}
          */
-        PersonaWork: "none" | "tickets" | "helper";
+        PersonaWork: "none" | "tickets";
         PersonaList: {
             personas: components["schemas"]["Persona"][];
             /**
@@ -11120,38 +11102,6 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    createAgent: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    handle: string;
-                    name: string;
-                    role?: string;
-                    specialty?: string;
-                    color_index?: number;
-                    kind?: components["schemas"]["AgentKind"];
-                };
-            };
-        };
-        responses: {
-            /** @description Created */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AgentDetail"];
-                };
-            };
-            default: components["responses"]["Error"];
-        };
-    };
     getAgent: {
         parameters: {
             query?: never;
@@ -11212,8 +11162,6 @@ export interface operations {
                     role: string;
                     specialty: string;
                     color_index: number;
-                    /** @description Omit to keep the current kind. A sub agent can't have open tickets assigned. */
-                    kind?: components["schemas"]["AgentKind"];
                     spec: components["schemas"]["AgentSpec"];
                     /** @description What changed, for the version list */
                     note?: string;

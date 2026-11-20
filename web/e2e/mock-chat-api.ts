@@ -65,11 +65,11 @@ const TICKET = { kind: "ticket", id: "33333333-3333-4333-8333-333333333333", tit
 const OTHER = { kind: "ticket", id: "44444444-4444-4444-8444-444444444444", title: "Elsewhere", display_id: "OTHER-9", href: "/tickets/OTHER-9", status: "todo" };
 const TARGETS: Array<{ title: string; path?: string; display_id?: string }> = [PLAN, REPORT, TICKET, OTHER];
 
-// Bootstrap agents: two main agents a chat can answer as, and a sub agent that can't.
+// Bootstrap agents: two main agents a chat can answer as, and the Personal Assistant, which can't be picked.
 export const AGENTS = [
   { id: "aaaaaaaa-0000-4000-8000-000000000001", name: "Atlas", handle: "atlas", kind: "main", color_index: 0, role: "Tech lead", specialty: "Plans and reviews", model: "opus-5.5", status: "idle" },
   { id: "aaaaaaaa-0000-4000-8000-000000000002", name: "Juno", handle: "juno", kind: "main", color_index: 3, role: "Mastermind", specialty: "Product and UX", model: "opus-5.5", status: "idle" },
-  { id: "aaaaaaaa-0000-4000-8000-000000000003", name: "Helper", handle: "helper", kind: "sub", color_index: 5, role: "Implementer", specialty: "Code", model: "sonnet-5.5", status: "idle" },
+  { id: "aaaaaaaa-0000-4000-8000-000000000003", name: "Helper", handle: "helper", kind: "assistant", color_index: 5, role: "Implementer", specialty: "Code", model: "sonnet-5.5", status: "idle" },
 ];
 const USAGE = { input_tokens: 48200, output_tokens: 1300, cached_input_tokens: 41000, uncached_input_tokens: 7200, unreported_input_tokens: 0, cost_usd: 0.0421 };
 

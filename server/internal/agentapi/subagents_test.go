@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/liamphmurphy/vesper/server/internal/agentdef"
 	"github.com/liamphmurphy/vesper/server/internal/agents"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
@@ -15,9 +17,12 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/tracker"
 )
 
-// list_subagents tells the lead what each sub agent may do, and lists one whose
-// definition doesn't resolve as unavailable instead of failing.
-func TestListSubagentsCapabilities(t *testing.T) {
+// delegate hands work to a fresh copy of the caller: there's no roster to pick
+// from, and read_only gives a copy without repo:write.
+func TestDelegateToolStartsACopy(t *testing.T) {
+	if _, ok := ByName["list_subagents"]; ok {
+		t.Fatal("list_subagents is still a tool")
+	}
 	pool := testdb.New(t)
 	ctx := context.Background()
 	if _, err := seed.Run(ctx, pool, seed.Options{Demo: true}); err != nil {
@@ -26,20 +31,22 @@ func TestListSubagentsCapabilities(t *testing.T) {
 	q := store.New(pool)
 	me, _ := q.GetLocalUser(ctx)
 	ws := me.WorkspaceID
-	agentSvc := &agents.Service{Pool: pool}
-	readOnly := agents.DefaultSpec()
-	readOnly.Scopes["repo:write"] = agentdef.Denied
-	for handle, spec := range map[string]*agentdef.Spec{"scribe": nil, "critic": &readOnly, "broken": nil} {
-		if _, err := agentSvc.Create(ctx, ws, me.ID, handle, agents.Identity{Name: handle, Kind: agents.KindSub}, spec); err != nil {
-			t.Fatal(err)
-		}
+	svc := &runs.Service{Pool: pool, Tracker: &tracker.Service{Pool: pool}, Poll: 20 * time.Millisecond}
+	out, err := svc.Dispatch(ctx, ws, me.ID, []string{"PAY-214"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE agent_definition_versions v SET spec = jsonb_set(v.spec, '{harness}', '"nope"')
-		FROM agents a WHERE a.current_definition_version_id = v.id AND a.handle = 'broken' AND a.workspace_id = $1`, ws); err != nil {
+	parent := out[0]
+	vol := parent.ID.String()
+	if err := q.SetRunWorkspace(ctx, store.SetRunWorkspaceParams{ID: parent.ID, WorkspaceVolume: &vol}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.SetRunState(ctx, store.SetRunStateParams{ID: parent.ID, State: "running"}); err != nil {
 		t.Fatal(err)
 	}
 	atlas, _ := q.GetAgentByHandle(ctx, store.GetAgentByHandleParams{WorkspaceID: ws, Handle: "atlas"})
-	tok, _, err := agents.IssueToken(ctx, q, atlas.ID, "unmanaged", "", nil, nil, nil)
+	exp := time.Now().Add(time.Hour)
+	tok, _, err := agents.IssueToken(ctx, q, atlas.ID, "run", "", &parent.ID, nil, &exp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,23 +54,20 @@ func TestListSubagentsCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := Deps{Q: q, Runs: &runs.Service{Pool: pool, Tracker: &tracker.Service{Pool: pool}, Poll: 20 * time.Millisecond}}
-	out, err := ByName["list_subagents"].call(ctx, d, c, json.RawMessage(`{}`))
+	res, err := ByName["delegate"].call(ctx, Deps{Q: q, Runs: svc}, c, json.RawMessage(`{"task":"Review the diff","read_only":true}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := map[string]map[string]any{}
-	for _, it := range out.(map[string]any)["subagents"].([]map[string]any) {
-		got[it["handle"].(string)] = it
+	got := res.(map[string]any)
+	if got["state"] != "delegated" || got["agent"] != "atlas" || got["read_only"] != true {
+		t.Fatalf("delegate = %v", got)
 	}
-	if s := got["scribe"]; s["can_write"] != true || s["can_run_tests"] != true || s["harness"] != agentdef.HarnessClaudeCode || s["model"] == "" ||
-		s["scopes"].(map[string]string)["repo:write"] != "allowed" {
-		t.Errorf("scribe = %v", s)
+	child, err := q.GetRun(ctx, store.GetRunParams{ID: got["run_id"].(uuid.UUID), WorkspaceID: ws})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if s := got["critic"]; s["can_write"] != false || s["can_run_tests"] != true || s["scopes"].(map[string]string)["repo:write"] != "denied" {
-		t.Errorf("critic = %v", s)
-	}
-	if s := got["broken"]; s["unavailable"] == nil || s["unavailable"] == "" || s["can_write"] != nil {
-		t.Errorf("broken = %v", s)
+	spec, _ := runs.Spec(child)
+	if child.AgentID != atlas.ID || child.ParentRunID == nil || *child.ParentRunID != parent.ID || spec.Mode("repo:write") != agentdef.Denied {
+		t.Fatalf("child %+v, repo:write %v", child, spec.Mode("repo:write"))
 	}
 }

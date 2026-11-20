@@ -556,12 +556,12 @@ type RecheckReviewIn struct {
 
 type DelegateIn struct {
 	TicketArg
-	Agent              string   `json:"agent" jsonschema:"Handle of a persona that helps on runs, from list_subagents, e.g. docs-writer"`
 	Task               string   `json:"task" jsonschema:"What it should do, with the context it needs: it can't see your conversation. Name files, constraints and the done condition."`
-	AcceptanceCriteria []string `json:"acceptance_criteria,omitempty" jsonschema:"Checkable conditions that make the task done. Shown to the sub agent; you verify them against the automated check results."`
-	AllowedPaths       []string `json:"allowed_paths,omitempty" jsonschema:"Repo-relative files, directories (trailing slash) or globs the sub agent may change. Changes outside them fail the automated checks."`
-	TestCommand        string   `json:"test_command,omitempty" jsonschema:"Command that must exit 0 in the sub agent's worktree, e.g. go test ./internal/runs/. The server runs it when the sub agent finishes and reports the result to you."`
-	ContinueRunID      string   `json:"continue_run_id,omitempty" jsonschema:"run_id of a finished delegation to the same sub agent to carry on, e.g. to send it fixes. Keeps that agent's context: same worktree and branch, and its conversation is resumed. The server tells it which commits changed since its last run; don't paste SHAs."`
+	AcceptanceCriteria []string `json:"acceptance_criteria,omitempty" jsonschema:"Checkable conditions that make the task done. Shown to the copy; you verify them against the automated check results."`
+	ReadOnly           bool     `json:"read_only,omitempty" jsonschema:"Run the copy without repo:write, e.g. for a review: it reports findings instead of committing, so it takes no allowed_paths. A continued read-only run stays read-only."`
+	AllowedPaths       []string `json:"allowed_paths,omitempty" jsonschema:"Repo-relative files, directories (trailing slash) or globs the copy may change. Changes outside them fail the automated checks."`
+	TestCommand        string   `json:"test_command,omitempty" jsonschema:"Command that must exit 0 in the copy's worktree, e.g. go test ./internal/runs/. The server runs it when the copy finishes and reports the result to you."`
+	ContinueRunID      string   `json:"continue_run_id,omitempty" jsonschema:"run_id of a finished delegation to carry on, e.g. to send it fixes. Keeps that run's context: same worktree and branch, and its conversation is resumed. The server tells it which commits changed since its last run; don't paste SHAs."`
 }
 
 type SearchIn struct {
@@ -1307,39 +1307,14 @@ var Tools = []Tool{
 	define("suggest_links", "Find unlinked mentions and related pages; submit chosen changes with patch_page for review.", suggestLinks),
 	define("write_note", "Write a wiki note. Under agents/<your handle>/ (always writable) keep only durable lessons that would help a future run on this codebase, not a log of what you did. General, reusable lessons go through propose_pattern; project decisions go in ADR/Architecture notes. Other pages follow your wiki:write scope (allowed edits directly, requires_approval saves a suggestion). Link what it's about with [[…]].", writeNote),
 	define("get_backlinks", "What links to a page, document, ticket, epic or agent, with the sentence around each link.", getBacklinks),
-	define("list_subagents", "Sub agents you can delegate part of a ticket to with delegate: handle, role, specialty, model and what each may do (can_write, can_run_tests). A sub agent that can't write can't take allowed_paths; ask it for findings in its report. Main agents only.",
-		func(ctx context.Context, d Deps, c agents.Caller, _ Empty) (any, error) {
-			subs, err := d.Runs.ListSubagents(ctx, c)
-			if err != nil {
-				return nil, err
-			}
-			items := make([]map[string]any, len(subs))
-			for i, sa := range subs {
-				a := sa.Agent
-				item := map[string]any{"handle": a.Handle, "name": a.Name, "role": a.Role, "specialty": a.Specialty}
-				if sa.Unavailable != "" {
-					item["unavailable"] = sa.Unavailable
-				} else {
-					scopes := map[string]string{}
-					for _, s := range sa.Spec.Scopes {
-						scopes[s.Scope] = string(s.Mode)
-					}
-					item["harness"], item["model"], item["scopes"] = sa.Spec.Harness, sa.Spec.Model, scopes
-					item["can_write"] = sa.CanWrite()
-					item["can_run_tests"] = sa.Spec.Mode("tests:run") == agentdef.Allowed
-				}
-				items[i] = item
-			}
-			return map[string]any{"subagents": items}, nil
-		}),
-	define("delegate", fmt.Sprintf("Hand a self-contained part of your ticket (implementation, docs, tests) to a sub agent. Commit your work first: a delegated run fails to start if your checkout has uncommitted changes. The sub agent works in its own git worktree on its own branch cut from yours, and the server merges that branch into yours automatically when its checks pass. You can run up to %d delegations in parallel: call delegate once per sub agent in the same turn, each with non-empty allowed_paths that don't overlap (a delegation without disjoint allowed_paths is refused while another is running; delegate sequentially instead). Then end your turn: you're resumed once, when all of them have finished, with a report covering each (summary, checks, merge result). Unmerged work (failed checks, conflicts) stays on its branch for you to inspect and merge. To send fixes back to the same sub agent, pass its earlier run_id as continue_run_id: that keeps its context (same worktree and branch, conversation resumed) instead of starting a fresh agent. Delegating costs a fresh agent startup, a handoff and a verification pass, so keep small or tightly coupled changes (a few lines, one file) to yourself and delegate work that is substantial or needs a specialist. Pass acceptance_criteria, allowed_paths and test_command so the server can check the result for you: you're resumed with those results and a diff summary, and should read the diff only for what they can't judge. For a review by a sub agent that can write, pass allowed_paths limited to test files (e.g. *_test.go) and ask for a failing test per blocking finding (and give it no test_command that runs them): it returns repro_command, the server merges those tests into your branch when they fail, and recheck_review verifies your fix without another review run.", runs.MaxParallelDelegations),
+	define("delegate", fmt.Sprintf("Hand a self-contained part of your ticket (implementation, docs, tests, a review) to a fresh copy of yourself: same persona, instructions and scopes, none of your conversation. For a quick search or a second opinion that changes no files, use your harness's own sub agents instead; delegate is for work that needs its own branch and checks. Commit your work first: a delegated run fails to start if your checkout has uncommitted changes. The copy works in its own git worktree on its own branch cut from yours, and the server merges that branch into yours automatically when its checks pass. You can run up to %d delegations in parallel: call delegate once per part in the same turn, each with non-empty allowed_paths that don't overlap (a delegation without disjoint allowed_paths is refused while another is running; delegate sequentially instead). Then end your turn: you're resumed once, when all of them have finished, with a report covering each (summary, checks, merge result). Unmerged work (failed checks, conflicts) stays on its branch for you to inspect and merge. To send fixes back to the same copy, pass its earlier run_id as continue_run_id: that keeps its context (same worktree and branch, conversation resumed) instead of starting a fresh one. Delegating costs a fresh agent startup, a handoff and a verification pass, so keep small or tightly coupled changes (a few lines, one file) to yourself and delegate work that is substantial or independent. Pass acceptance_criteria, allowed_paths and test_command so the server can check the result for you: you're resumed with those results and a diff summary, and should read the diff only for what they can't judge. For an independent review, pass read_only to get findings without commits, or pass allowed_paths limited to test files (e.g. *_test.go) and ask for a failing test per blocking finding (and give it no test_command that runs them): it returns repro_command, the server merges those tests into your branch when they fail, and recheck_review verifies your fix without another review run.", runs.MaxParallelDelegations),
 		func(ctx context.Context, d Deps, c agents.Caller, in DelegateIn) (any, error) {
-			dg, err := d.Runs.DelegateWithContract(ctx, c, in.Ticket, in.Agent, in.Task, runs.Contract{
-				AcceptanceCriteria: in.AcceptanceCriteria, AllowedPaths: in.AllowedPaths, TestCommand: in.TestCommand, ContinueRunID: in.ContinueRunID})
+			dg, err := d.Runs.DelegateWithContract(ctx, c, in.Ticket, in.Task, runs.Contract{
+				AcceptanceCriteria: in.AcceptanceCriteria, ReadOnly: in.ReadOnly, AllowedPaths: in.AllowedPaths, TestCommand: in.TestCommand, ContinueRunID: in.ContinueRunID})
 			if err != nil {
 				return nil, err
 			}
-			msg := "@" + dg.Agent.Handle + " is working on it in its own worktree. Delegate any other disjoint parts now, then end your turn: you'll be resumed once, when every delegated run has finished."
+			msg := "A copy of you is working on it in its own worktree. Delegate any other disjoint parts now, then end your turn: you'll be resumed once, when every delegated run has finished."
 			out := map[string]any{"state": "delegated", "agent": dg.Agent.Handle, "run_id": dg.Run.ID}
 			if dg.ReadOnly {
 				msg += " It can't change files, so it will report findings instead of committing."
@@ -1348,7 +1323,7 @@ var Tools = []Tool{
 			out["message"] = msg
 			return out, nil
 		}),
-	define("complete_run", "Finish the run: In Review and Done require all acceptance criteria verified and checked. Implement or delegate remaining work before finishing; use todo only to explicitly hand unfinished work back. Use status=done only when every reviewer/QA sub agent you delegated to completed with verdict=approved. If you were delegated a task, this reports your summary back to the main agent instead and leaves the ticket alone; a reviewer/QA agent sets verdict=approved or changes_requested.",
+	define("complete_run", "Finish the run: In Review and Done require all acceptance criteria verified and checked. Implement or delegate remaining work before finishing; use todo only to explicitly hand unfinished work back. Use status=done only when every review you delegated completed with verdict=approved. If you were delegated a task, this reports your summary back to the main agent instead and leaves the ticket alone; a delegated review sets verdict=approved or changes_requested.",
 		func(ctx context.Context, d Deps, c agents.Caller, in CompleteIn) (any, error) {
 			return ok(nil), d.Runs.CompleteWithRepro(ctx, c, in.Ticket, in.Outcome, in.Report, in.Status, in.Verdict,
 				runs.Repro{Command: in.ReproCommand, CoversAll: in.ReproCoversAll})

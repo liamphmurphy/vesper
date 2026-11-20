@@ -15,13 +15,12 @@ import { useMarkAgentsReviewed } from "@/components/domain/setup";
 import { PersonaAvatar, PersonaName } from "../chat/_components/persona";
 import { DefaultBadge } from "./persona-profile";
 
-export type PersonaFilter = "all" | "chat" | "tickets" | "helper";
+export type PersonaFilter = "all" | "chat" | "tickets";
 
 const FILTERS: { value: PersonaFilter; label: string; keep: (p: Persona) => boolean }[] = [
   { value: "all", label: "All", keep: () => true },
   { value: "chat", label: "In chat", keep: (p) => p.in_chat_list !== false },
   { value: "tickets", label: "Takes tickets", keep: (p) => workOf(p) === "tickets" },
-  { value: "helper", label: "Helps on runs", keep: (p) => workOf(p) === "helper" },
 ];
 
 /** What a persona does besides chatting; "none" when the server didn't say. */
@@ -109,7 +108,7 @@ export function PersonasList({ personas, filter: initial = "all", onOpen, onNew,
                       </span>
                     </button>
                   </td>
-                  <td className={cx("truncate py-2 pr-2", workOf(p) === "tickets" ? "text-accent" : workOf(p) === "helper" ? "text-pill-review-fg" : "text-fg-secondary")}>{does(p)}</td>
+                  <td className={cx("truncate py-2 pr-2", workOf(p) === "tickets" ? "text-accent" : "text-fg-secondary")}>{does(p)}</td>
                   <td className="truncate py-2 pr-2 font-mono text-12 text-fg-secondary max-md:hidden">{working ? p.work_model : ""}</td>
                   <td className="py-2">
                     {ticket ? (
@@ -129,7 +128,7 @@ export function PersonasList({ personas, filter: initial = "all", onOpen, onNew,
         </table>
       )}
       <p className="text-12 text-fg-tertiary">
-        A persona that takes tickets can be assigned and started; one that helps on runs is handed parts of other personas&rsquo; work. Open one to change what it does.
+        A persona that takes tickets can be assigned and started. Open one to change what it does.
       </p>
     </section>
   );

@@ -124,7 +124,7 @@ func (r *Runner) delegatedTasks(ctx context.Context, parent store.Run, seq int32
 		if a, err := r.q().GetAgent(ctx, store.GetAgentParams{ID: k.AgentID, WorkspaceID: k.WorkspaceID}); err == nil {
 			handle = "@" + a.Handle
 		}
-		fmt.Fprintf(&b, "\n### %s (run %s, %s)\n\n%s\n", handle, k.ID.String()[:8], k.State, clipTask(task))
+		fmt.Fprintf(&b, "\n### %s (run %s, %s)\n\n%s\n", handle, runs.ShortRunID(k.ID), k.State, clipTask(task))
 		if len(contract.AcceptanceCriteria) > 0 {
 			b.WriteString("\nAcceptance criteria:\n")
 			for _, a := range contract.AcceptanceCriteria {

@@ -26,7 +26,7 @@ func TestEnsureAssistant(t *testing.T) {
 	ws := me.WorkspaceID
 	svc := &agents.Service{Pool: pool}
 	// Someone already uses @assistant for a ticket agent.
-	if _, err := svc.Create(ctx, ws, me.ID, "assistant", agents.Identity{Name: "Helper"}, nil); err != nil {
+	if _, err := q.CreateAgent(ctx, store.CreateAgentParams{WorkspaceID: ws, Name: "Helper", Handle: "assistant", Status: "idle", Model: "fake"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -55,7 +55,7 @@ func TestEnsureAssistant(t *testing.T) {
 	if _, err := (&tracker.Service{Pool: pool}).Create(ctx, ws, tracker.UserActor(me.ID), tracker.NewTicket{ProjectKey: "PAY", Title: "For the assistant", AssigneeAgentID: &a.ID}); err == nil || !strings.Contains(err.Error(), "Personal Assistant") {
 		t.Fatal("assigned a ticket to the assistant")
 	}
-	if _, err := svc.SaveDefinition(ctx, ws, me.ID, a.Handle, agents.Identity{Name: "PA", Kind: agents.KindMain}, spec, "Make it main"); err == nil || !strings.Contains(err.Error(), "managed by Vesper") {
+	if _, err := svc.SaveDefinition(ctx, ws, me.ID, a.Handle, agents.Identity{Name: "PA"}, spec, "Edit it"); err == nil || !strings.Contains(err.Error(), "managed by Vesper") {
 		t.Fatal("edited the assistant into a main agent")
 	}
 	if err := svc.Delete(ctx, ws, a.Handle); err == nil || !strings.Contains(err.Error(), "can't be deleted") {

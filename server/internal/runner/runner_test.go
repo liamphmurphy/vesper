@@ -729,9 +729,6 @@ func TestDelegatedRunWorksInWorktreeOfParentWorkspace(t *testing.T) {
 	t.Setenv("FAKE_HARNESS_MODE", "delegate")
 	report := "## Findings\n\n- child.txt:1 written as asked"
 	t.Setenv("FAKE_HARNESS_CHILD_REPORT", report)
-	if _, err := (&agents.Service{Pool: e.pool}).Create(e.ctx, e.ws, e.me.ID, "scribe", agents.Identity{Name: "Scribe", Role: "Docs", Kind: agents.KindSub}, nil); err != nil {
-		t.Fatal(err)
-	}
 	e.dispatch("PAY-214")
 	e.until("completed", e.state("PAY-214=completed"))
 	parent := e.run("PAY-214")
@@ -773,9 +770,6 @@ func TestDelegatedRunWorksInWorktreeOfParentWorkspace(t *testing.T) {
 func TestDelegationChecksRunBeforeParentResumes(t *testing.T) {
 	e := setup(t)
 	t.Setenv("FAKE_HARNESS_MODE", "delegate_contract")
-	if _, err := (&agents.Service{Pool: e.pool}).Create(e.ctx, e.ws, e.me.ID, "scribe", agents.Identity{Name: "Scribe", Role: "Docs", Kind: agents.KindSub}, nil); err != nil {
-		t.Fatal(err)
-	}
 	e.dispatch("PAY-214")
 	e.until("completed", e.state("PAY-214=completed"))
 	parent := e.run("PAY-214")

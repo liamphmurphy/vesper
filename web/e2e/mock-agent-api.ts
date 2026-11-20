@@ -98,12 +98,6 @@ export async function installAgentApi(page: Page, opts: AgentApiOptions = {}) {
     stats: { completed: 5, median_cycle_seconds: 3600, merged_prs: 4, closed_prs: 5, spend_usd: 12.5 },
     scopes: Object.entries(spec.scopes).map(([scope, mode]) => ({ scope, mode, enforcement: "harness", how: "" })),
   });
-  const helper = {
-    agent: { id: UUID(9), kind: "sub", name: "Scout", handle: "scout", color_index: 2, role: "Read-only fact gathering", specialty: "", model: "haiku-5.5", status: "idle" },
-    max_concurrency: 1, harness: "claude-code", planning_runs: [], assignments: [], queue: [], queue_count: 0,
-    stats: { completed: 0, median_cycle_seconds: null, merged_prs: 0, closed_prs: 0, spend_usd: 0.4 },
-    scopes: [{ scope: "repo:read", mode: "allowed", enforcement: "credential", how: "" }],
-  };
 
   const CHAT_MODELS = [
     {
@@ -147,10 +141,7 @@ export async function installAgentApi(page: Page, opts: AgentApiOptions = {}) {
       default_harness: spec.harness, default_model: spec.model,
       ...(spec.harness_options[spec.harness]?.effort ? { default_effort: spec.harness_options[spec.harness].effort } : {}),
     }),
-    persona(UUID(9), "Scout", "#b42f48", {
-      work: "helper", handle: "scout", work_model: "haiku-5.5", work_status: "idle", in_chat_list: false,
-      default_harness: "claude-code", default_model: "haiku-5.5",
-    }),
+    persona(UUID(9), "Scout", "#b42f48", { in_chat_list: false, default_harness: "claude-code", default_model: "haiku-5.5" }),
     persona(UUID(10), "Hackerman", "#9b8cff", { capabilities: { code: true, images: false }, is_default: true }),
   ];
 
@@ -196,7 +187,7 @@ export async function installAgentApi(page: Page, opts: AgentApiOptions = {}) {
       override = Object.keys(b).some((k) => b[k] !== undefined && !(Array.isArray(b[k]) && (b[k] as unknown[]).length === 0)) ? b : undefined;
       return json(detail());
     }
-    if (path === "/agent-overviews") return json({ agents: [overview(), helper], stats_as_of: now() });
+    if (path === "/agent-overviews") return json({ agents: [overview()], stats_as_of: now() });
     if (path === "/agents/atlas/runs") {
       const run = (n: number, state: string, key: string, title: string, cost: number, source: string) => ({
         id: UUID(700 + n), ticket: { id: UUID(800 + n), key, title, status: "done" }, state, harness: "claude-code", model: "opus-5.5",

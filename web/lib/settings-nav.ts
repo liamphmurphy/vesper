@@ -18,7 +18,7 @@ export type SettingsSectionId =
   | "backup";
 
 export type SecretsTab = "provider" | "api";
-export type PersonaFilterParam = "all" | "chat" | "tickets" | "helper";
+export type PersonaFilterParam = "all" | "chat" | "tickets";
 
 export type SettingsRoute =
   | { section: "you" }
@@ -49,7 +49,7 @@ const SIMPLE_SECTIONS = new Set<string>([
   "backup",
 ]);
 
-const PERSONA_FILTERS = new Set<PersonaFilterParam>(["all", "chat", "tickets", "helper"]);
+const PERSONA_FILTERS = new Set<PersonaFilterParam>(["all", "chat", "tickets"]);
 
 function parsePersonaFilter(raw: string | null): PersonaFilterParam {
   return raw && PERSONA_FILTERS.has(raw as PersonaFilterParam) ? (raw as PersonaFilterParam) : "all";
@@ -181,7 +181,7 @@ export const SETTINGS_FILTER_KEYWORDS: Record<string, string> = {
   you: "profile account name email avatar bio about",
   appearance: "theme dark light mode font text size palette colors harness activity",
   memory: "memories facts import export forget everything",
-  "all-personas": "personas agents models roles permissions tickets helpers",
+  "all-personas": "personas agents models roles permissions tickets",
   secrets: "provider credentials api secrets keys tokens oauth anthropic openai google github ssh pat",
   connectors: "mcp servers tools oauth integration",
   repositories: "repos github owners organizations presets discovery",

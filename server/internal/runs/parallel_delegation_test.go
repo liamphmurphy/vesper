@@ -53,15 +53,6 @@ func TestParallelDelegationRulesAndWake(t *testing.T) {
 	me, _ := q.GetLocalUser(ctx)
 	ws := me.WorkspaceID
 	svc := &runs.Service{Pool: pool, Tracker: &tracker.Service{Pool: pool}, Artifacts: &artifacts.Service{Pool: pool}, Poll: 20 * time.Millisecond}
-	agentSvc := &agents.Service{Pool: pool}
-	scribe, err := agentSvc.Create(ctx, ws, me.ID, "scribe", agents.Identity{Name: "Scribe", Role: "Docs", Kind: agents.KindSub}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tester, err := agentSvc.Create(ctx, ws, me.ID, "tester", agents.Identity{Name: "Tester", Role: "QA", Kind: agents.KindSub}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
 	callerFor := func(a store.Agent, runID *uuid.UUID) runs.Caller {
 		exp := time.Now().Add(time.Hour)
 		tok, _, err := agents.IssueToken(ctx, q, a.ID, "run", "", runID, nil, &exp)
@@ -88,8 +79,8 @@ func TestParallelDelegationRulesAndWake(t *testing.T) {
 		t.Fatal(err)
 	}
 	main := callerFor(atlas, &parent.ID)
-	delegate := func(handle, task string, c runs.Contract) (runs.Delegation, error) {
-		return svc.DelegateWithContract(ctx, main, "", handle, task, c)
+	delegate := func(task string, c runs.Contract) (runs.Delegation, error) {
+		return svc.DelegateWithContract(ctx, main, "", task, c)
 	}
 	state := func(id uuid.UUID) store.Run {
 		r, err := q.GetRun(ctx, store.GetRunParams{ID: id, WorkspaceID: ws})
@@ -100,7 +91,7 @@ func TestParallelDelegationRulesAndWake(t *testing.T) {
 	}
 
 	// First delegation, with paths, parks the parent.
-	d1, err := delegate("scribe", "docs", runs.Contract{AllowedPaths: []string{"docs/"}})
+	d1, err := delegate("docs", runs.Contract{AllowedPaths: []string{"docs/"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,33 +99,33 @@ func TestParallelDelegationRulesAndWake(t *testing.T) {
 		t.Fatalf("parent %s", p.State)
 	}
 	// A parked parent whose process has gone can't delegate again...
-	if _, err := delegate("tester", "x", runs.Contract{AllowedPaths: []string{"src/"}}); !isConflict(err) {
+	if _, err := delegate("x", runs.Contract{AllowedPaths: []string{"src/"}}); !isConflict(err) {
 		t.Fatalf("delegated from a parked parent with no live turn: %v", err)
 	}
 	// ...but within the same turn (process still running) it can.
 	if _, err := pool.Exec(ctx, "UPDATE run_turns SET status = 'running' WHERE run_id = $1", parent.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := delegate("tester", "no paths", runs.Contract{}); err == nil || !strings.Contains(err.Error(), "allowed_paths") {
+	if _, err := delegate("no paths", runs.Contract{}); err == nil || !strings.Contains(err.Error(), "allowed_paths") {
 		t.Fatalf("concurrent child without allowed_paths: %v", err)
 	}
 	for _, overlap := range []string{"docs/guide.md", "docs", "*.md", "docs/*.md"} {
-		if _, err := delegate("tester", "overlap", runs.Contract{AllowedPaths: []string{overlap}}); !isConflict(err) || !strings.Contains(err.Error(), "overlap") {
+		if _, err := delegate("overlap", runs.Contract{AllowedPaths: []string{overlap}}); !isConflict(err) || !strings.Contains(err.Error(), "overlap") {
 			t.Fatalf("overlapping %q: %v", overlap, err)
 		}
 	}
-	d2, err := delegate("tester", "src", runs.Contract{AllowedPaths: []string{"src/"}, TestCommand: "go test ./..."})
+	d2, err := delegate("src", runs.Contract{AllowedPaths: []string{"src/"}, TestCommand: "go test ./..."})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if p := state(parent.ID); p.State != "waiting" || deref(p.WaitReason) != "delegation" {
 		t.Fatalf("parent %s/%s", p.State, deref(p.WaitReason))
 	}
-	d3, err := delegate("scribe", "third", runs.Contract{AllowedPaths: []string{"web/"}})
+	d3, err := delegate("third", runs.Contract{AllowedPaths: []string{"web/"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := delegate("scribe", "fourth", runs.Contract{AllowedPaths: []string{"api/"}}); !isConflict(err) || !strings.Contains(err.Error(), "limit") {
+	if _, err := delegate("fourth", runs.Contract{AllowedPaths: []string{"api/"}}); !isConflict(err) || !strings.Contains(err.Error(), "limit") {
 		t.Fatalf("4th concurrent child: %v", err)
 	}
 
@@ -151,12 +142,12 @@ func TestParallelDelegationRulesAndWake(t *testing.T) {
 		}
 		passChecks(t, pool, d.Run.ID)
 	}
-	finish(d1, scribe, "docs done", "- docs/guide.md:3 DOCS-FINDING")
-	finish(d3, scribe, "web done")
+	finish(d1, atlas, "docs done", "- docs/guide.md:3 DOCS-FINDING")
+	finish(d3, atlas, "web done")
 	if p := state(parent.ID); p.State != "waiting" {
 		t.Fatalf("parent resumed with a child still live: %s", p.State)
 	}
-	finish(d2, tester, "tests done", "- src/a.go:9 SRC-FINDING")
+	finish(d2, atlas, "tests done", "- src/a.go:9 SRC-FINDING")
 	if p := state(parent.ID); p.State != "running" {
 		t.Fatalf("parent after all children: %s", p.State)
 	}
@@ -170,7 +161,7 @@ func TestParallelDelegationRulesAndWake(t *testing.T) {
 	if len(wakes) != 1 {
 		t.Fatalf("parent got %d delegation turns", len(wakes))
 	}
-	for _, want := range []string{"3 delegated runs have ended", "docs done", "web done", "tests done", "@scribe", "@tester", "continue_run_id"} {
+	for _, want := range []string{"3 delegated runs have ended", "docs done", "web done", "tests done", "@atlas", "continue_run_id"} {
 		if !strings.Contains(wakes[0].InputMessage, want) {
 			t.Errorf("resume message lacks %q:\n%s", want, wakes[0].InputMessage)
 		}
@@ -195,34 +186,33 @@ func TestParallelDelegationRulesAndWake(t *testing.T) {
 	if _, err := pool.Exec(ctx, "UPDATE run_turns SET status = 'done' WHERE run_id = $1", parent.ID); err != nil {
 		t.Fatal(err)
 	}
-	// continue_run_id: only a finished run of this parent and this sub agent that got a worktree.
+	// continue_run_id: only a finished run of this parent that got a worktree.
 	if _, err := q.SetRunState(ctx, store.SetRunStateParams{ID: parent.ID, State: "running"}); err != nil {
 		t.Fatal(err)
 	}
-	cont := func(handle string, id string) error {
-		_, err := delegate(handle, "fix it", runs.Contract{ContinueRunID: id})
+	cont := func(id string) error {
+		_, err := delegate("fix it", runs.Contract{ContinueRunID: id})
 		return err
 	}
-	for name, c := range map[string]struct{ handle, id string }{
-		"not a uuid":    {"scribe", "nope"},
-		"unknown run":   {"scribe", uuid.NewString()},
-		"other agent":   {"tester", d1.Run.ID.String()},
-		"never started": {"scribe", d1.Run.ID.String()},
-		"the parent":    {"scribe", parent.ID.String()},
+	for name, id := range map[string]string{
+		"not a uuid":    "nope",
+		"unknown run":   uuid.NewString(),
+		"never started": d1.Run.ID.String(),
+		"the parent":    parent.ID.String(),
 	} {
-		err := cont(c.handle, c.id)
+		err := cont(id)
 		if err == nil || isConflict(err) || !strings.Contains(err.Error(), "continue_run_id") {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
-	if _, err := delegate("scribe", "unchecked", runs.Contract{ContinueRunID: d1.Run.ID.String()}); err == nil || !strings.Contains(err.Error(), "hasn't been checked") {
+	if _, err := delegate("unchecked", runs.Contract{ContinueRunID: d1.Run.ID.String()}); err == nil || !strings.Contains(err.Error(), "hasn't been checked") {
 		t.Fatalf("unchecked continuation: %v", err)
 	}
 	// Checked when it completed but not yet reported to the parent: still not continuable.
 	if err := q.SetRunChecks(ctx, store.SetRunChecksParams{ID: d1.Run.ID, Checks: []byte(`{"ran":true}`)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := delegate("scribe", "unreported", runs.Contract{ContinueRunID: d1.Run.ID.String()}); err == nil || !strings.Contains(err.Error(), "hasn't been checked") {
+	if _, err := delegate("unreported", runs.Contract{ContinueRunID: d1.Run.ID.String()}); err == nil || !strings.Contains(err.Error(), "hasn't been checked") {
 		t.Fatalf("unreported continuation: %v", err)
 	}
 	if err := q.SetRunChecks(ctx, store.SetRunChecksParams{ID: d1.Run.ID, Checks: []byte(`{"ran":true,"reported_turn":2}`)}); err != nil {
@@ -240,7 +230,7 @@ func TestParallelDelegationRulesAndWake(t *testing.T) {
 	if _, err := pool.Exec(ctx, "UPDATE run_turns SET status='running' WHERE run_id=$1 AND seq=1", parent.ID); err != nil {
 		t.Fatal(err)
 	}
-	d4, err := delegate("scribe", "fix docs", runs.Contract{ContinueRunID: d1.Run.ID.String(), AllowedPaths: []string{"docs/"}})
+	d4, err := delegate("fix docs", runs.Contract{ContinueRunID: d1.Run.ID.String(), AllowedPaths: []string{"docs/"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,14 +242,14 @@ func TestParallelDelegationRulesAndWake(t *testing.T) {
 		t.Fatalf("continued run %+v", got)
 	}
 	// The same worktree can't be continued twice, nor while the continuation runs.
-	if err := cont("scribe", d1.Run.ID.String()); err == nil || !strings.Contains(err.Error(), "continue_run_id") {
+	if err := cont(d1.Run.ID.String()); err == nil || !strings.Contains(err.Error(), "continue_run_id") {
 		t.Fatalf("second continuation of one run: %v", err)
 	}
-	if err := cont("scribe", d4.Run.ID.String()); err == nil || !strings.Contains(err.Error(), "still in progress") {
+	if err := cont(d4.Run.ID.String()); err == nil || !strings.Contains(err.Error(), "still in progress") {
 		t.Fatalf("continuing a live run: %v", err)
 	}
 	// A different harness starts fresh: no session is copied.
-	finish(d4, scribe, "fixed")
+	finish(d4, atlas, "fixed")
 	if _, err := pool.Exec(ctx, "UPDATE run_turns SET status = 'done' WHERE run_id = $1", parent.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +262,7 @@ func TestParallelDelegationRulesAndWake(t *testing.T) {
 	if _, err := q.SetRunState(ctx, store.SetRunStateParams{ID: parent.ID, State: "running"}); err != nil {
 		t.Fatal(err)
 	}
-	d5, err := delegate("scribe", "again", runs.Contract{ContinueRunID: d4.Run.ID.String(), AllowedPaths: []string{"docs/"}})
+	d5, err := delegate("again", runs.Contract{ContinueRunID: d4.Run.ID.String(), AllowedPaths: []string{"docs/"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,10 +283,6 @@ func TestParallelDelegationLifecycle(t *testing.T) {
 			q := store.New(pool)
 			me, _ := q.GetLocalUser(ctx)
 			svc := &runs.Service{Pool: pool, Tracker: &tracker.Service{Pool: pool}, Artifacts: &artifacts.Service{Pool: pool}}
-			sub, err := (&agents.Service{Pool: pool}).Create(ctx, me.WorkspaceID, me.ID, "scribe", agents.Identity{Name: "Scribe", Role: "Docs", Kind: agents.KindSub}, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
 			caller := func(a store.Agent, id uuid.UUID) runs.Caller {
 				exp := time.Now().Add(time.Hour)
 				tok, _, err := agents.IssueToken(ctx, q, a.ID, "run", "", &id, nil, &exp)
@@ -334,7 +320,7 @@ func TestParallelDelegationLifecycle(t *testing.T) {
 					t.Fatal(err)
 				}
 				done := make(chan error, 1)
-				go func() { _, err := svc.Delegate(ctx, main, "", "scribe", "docs"); done <- err }()
+				go func() { _, err := svc.Delegate(ctx, main, "", "docs"); done <- err }()
 				deadline := time.Now().Add(5 * time.Second)
 				for {
 					var blocked bool
@@ -364,18 +350,18 @@ func TestParallelDelegationLifecycle(t *testing.T) {
 				}
 				return
 			}
-			d1, err := svc.DelegateWithContract(ctx, main, "", "scribe", "docs", runs.Contract{AllowedPaths: []string{"docs/"}})
+			d1, err := svc.DelegateWithContract(ctx, main, "", "docs", runs.Contract{AllowedPaths: []string{"docs/"}})
 			if err != nil {
 				t.Fatal(err)
 			}
 			if _, err := pool.Exec(ctx, "UPDATE run_turns SET status='running' WHERE run_id=$1", parent.ID); err != nil {
 				t.Fatal(err)
 			}
-			d2, err := svc.DelegateWithContract(ctx, main, "", "scribe", "src", runs.Contract{AllowedPaths: []string{"src/"}})
+			d2, err := svc.DelegateWithContract(ctx, main, "", "src", runs.Contract{AllowedPaths: []string{"src/"}})
 			if err != nil {
 				t.Fatal(err)
 			}
-			c1, c2 := caller(sub, d1.Run.ID), caller(sub, d2.Run.ID)
+			c1, c2 := caller(atlas, d1.Run.ID), caller(atlas, d2.Run.ID)
 			for _, id := range []uuid.UUID{d1.Run.ID, d2.Run.ID} {
 				if _, err := q.SetRunState(ctx, store.SetRunStateParams{ID: id, State: "running"}); err != nil {
 					t.Fatal(err)
@@ -397,7 +383,7 @@ func TestParallelDelegationLifecycle(t *testing.T) {
 				if r.State != "waiting" {
 					t.Fatalf("unmatched reply resumed child: %s", r.State)
 				}
-				if err := svc.OnHumanComment(ctx, me.WorkspaceID, "PAY-214", "@scribe the guide"); err != nil {
+				if err := svc.OnHumanComment(ctx, me.WorkspaceID, "PAY-214", "@atlas the guide"); err != nil {
 					t.Fatal(err)
 				}
 				turns, _ := q.ListTurns(ctx, d1.Run.ID)
@@ -457,7 +443,7 @@ func TestParallelDelegationLifecycle(t *testing.T) {
 				}
 			}
 			if scenario == "pending report" {
-				if _, err := svc.Delegate(ctx, main, "", "scribe", "again"); !isConflict(err) || !strings.Contains(err.Error(), "end your turn") {
+				if _, err := svc.Delegate(ctx, main, "", "again"); !isConflict(err) || !strings.Contains(err.Error(), "end your turn") {
 					t.Fatalf("delegate before report: %v", err)
 				}
 			}
@@ -479,5 +465,71 @@ func TestParallelDelegationLifecycle(t *testing.T) {
 				t.Fatalf("reports=%d state=%s", count, r.State)
 			}
 		})
+	}
+}
+
+// Delegated runs are copies of the lead's own agent: two parallel copies must
+// both start even though the agent's max_concurrency is 1, as two different
+// sub agents did before copies.
+func TestParallelCopiesDontWaitForTheAgentSlot(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	if _, err := seed.Run(ctx, pool, seed.Options{Demo: true}); err != nil {
+		t.Fatal(err)
+	}
+	q := store.New(pool)
+	me, _ := q.GetLocalUser(ctx)
+	ws := me.WorkspaceID
+	svc := &runs.Service{Pool: pool, Tracker: &tracker.Service{Pool: pool}, Artifacts: &artifacts.Service{Pool: pool}}
+	out, err := svc.Dispatch(ctx, ws, me.ID, []string{"PAY-214"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := out[0]
+	if spec, _ := runs.Spec(parent); spec.MaxConcurrency != 1 {
+		t.Fatalf("max_concurrency %d, want 1", spec.MaxConcurrency)
+	}
+	vol := parent.ID.String()
+	if err := q.SetRunWorkspace(ctx, store.SetRunWorkspaceParams{ID: parent.ID, WorkspaceVolume: &vol}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.SetRunState(ctx, store.SetRunStateParams{ID: parent.ID, State: "running"}); err != nil {
+		t.Fatal(err)
+	}
+	atlas, _ := q.GetAgentByHandle(ctx, store.GetAgentByHandleParams{WorkspaceID: ws, Handle: "atlas"})
+	exp := time.Now().Add(time.Hour)
+	tok, _, err := agents.IssueToken(ctx, q, atlas.ID, "run", "", &parent.ID, nil, &exp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	main, err := agents.ResolveToken(ctx, q, tok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d1, err := svc.DelegateWithContract(ctx, main, "", "docs", runs.Contract{AllowedPaths: []string{"docs/"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE run_turns SET status='running' WHERE run_id=$1", parent.ID); err != nil {
+		t.Fatal(err)
+	}
+	d2, err := svc.DelegateWithContract(ctx, main, "", "src", runs.Contract{AllowedPaths: []string{"src/"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The lead's process has exited; the queue may start its children.
+	if _, err := pool.Exec(ctx, "UPDATE run_turns SET status='done' WHERE run_id=$1", parent.ID); err != nil {
+		t.Fatal(err)
+	}
+	started := map[uuid.UUID]bool{}
+	for {
+		r, err := q.ClaimQueuedRun(ctx, store.ClaimQueuedRunParams{})
+		if err != nil {
+			break
+		}
+		started[r.ID] = true
+	}
+	if !started[d1.Run.ID] || !started[d2.Run.ID] {
+		t.Fatalf("started %v; want both copies %s and %s", started, d1.Run.ID, d2.Run.ID)
 	}
 }

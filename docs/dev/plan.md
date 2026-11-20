@@ -308,6 +308,12 @@ A River periodic job (about every 60s, plus right away when an agent calls `set_
 
 ### 6.8 Main agents, sub agents and delegation
 
+> **Superseded.** There are no `sub` agents any more: `delegate(task)` starts a
+> fresh copy of the lead (its persona and frozen spec) in its own worktree, with
+> `read_only` for reviews, and every persona run on Claude Code or Antigravity
+> also has the harness's own sub agents (`docs/contracts/ADR-explorer.md`). The
+> section below is the original plan.
+
 Every agent has a **kind**: `main` (the default) or `sub`. This is identity, not part of the versioned definition.
 
 - **Main agents take tickets.** People assign and dispatch tickets to them as in §6.6. Assigning (or proposing in a plan) a sub agent is rejected, and an agent with open assigned tickets can't be switched to `sub`.

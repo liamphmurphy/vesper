@@ -10,7 +10,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/liamphmurphy/vesper/server/internal/agents"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/seed"
 	"github.com/liamphmurphy/vesper/server/internal/store"
@@ -132,9 +131,6 @@ func TestDelegationCancellationPatchLockOrder(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	q := store.New(pool)
-	if _, err := (&agents.Service{Pool: pool}).Create(ctx, u.WorkspaceID, u.ID, "race-sub", agents.Identity{Name: "Race sub", Role: "Test", Kind: agents.KindSub}, nil); err != nil {
-		t.Fatal(err)
-	}
 	dispatched, err := svc.Dispatch(ctx, u.WorkspaceID, u.ID, []string{ticket.Key})
 	if err != nil {
 		t.Fatal(err)
@@ -151,7 +147,7 @@ func TestDelegationCancellationPatchLockOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	caller := runs.Caller{Agent: a, Kind: "run", RunID: &parent.ID}
-	first, err := svc.DelegateWithContract(ctx, caller, ticket.Key, "race-sub", "first task", runs.Contract{AllowedPaths: []string{"first/"}})
+	first, err := svc.DelegateWithContract(ctx, caller, ticket.Key, "first task", runs.Contract{AllowedPaths: []string{"first/"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +172,7 @@ func TestDelegationCancellationPatchLockOrder(t *testing.T) {
 	boardWaitBlocked(t, ctx, pool, "LockTicketByKey") // PATCH owns project, waits on FK
 	delegateResult := make(chan error, 1)
 	go func() {
-		_, e := svc.DelegateWithContract(ctx, caller, ticket.Key, "race-sub", "second task", runs.Contract{AllowedPaths: []string{"second/"}})
+		_, e := svc.DelegateWithContract(ctx, caller, ticket.Key, "second task", runs.Contract{AllowedPaths: []string{"second/"}})
 		delegateResult <- e
 	}()
 	boardWaitBlocked(t, ctx, pool, "LockProject") // delegation must not yet own parent

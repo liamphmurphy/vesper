@@ -24,9 +24,6 @@ UPDATE projects SET next_ticket_seq = $2 WHERE id = $1;
 INSERT INTO agents (workspace_id, name, handle, color_index, role, specialty, model, status, kind)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, coalesce(sqlc.narg(kind), 'main')) RETURNING *;
 
--- name: ListSubagents :many
-SELECT * FROM agents WHERE workspace_id = $1 AND kind = 'sub' AND archived_at IS NULL ORDER BY handle;
-
 -- name: CountOpenTicketsForAgent :one
 SELECT count(*) FROM tickets WHERE assignee_agent_id = $1 AND status NOT IN ('done', 'canceled');
 

@@ -277,16 +277,24 @@ func TestPlanningInvocationsAreReadOnly(t *testing.T) {
 		t.Fatal("planning must allow the lazyagents MCP tools")
 	}
 	allowed := strings.Split(flag(claude.Argv, "--allowedTools"), ",")
-	for _, tool := range []string{"Edit", "Write", "Bash", "Agent"} {
+	for _, tool := range []string{"Edit", "Write", "Bash"} {
 		if slices.Contains(allowed, tool) {
 			t.Fatalf("planning allowed %s", tool)
 		}
 	}
 	denied := strings.Split(flag(claude.Argv, "--disallowedTools"), ",")
-	for _, tool := range []string{"Edit", "Write", "Bash", "Agent"} {
+	for _, tool := range []string{"Edit", "Write", "Bash"} {
 		if !slices.Contains(denied, tool) {
 			t.Fatalf("planning did not deny %s", tool)
 		}
+	}
+	// Its sub agents only read as well.
+	if !strings.Contains(string(claude.Files[claudeAgentsFile]), `"tools": [
+      "Read",
+      "Grep",
+      "Glob"
+    ]`) || strings.Contains(string(claude.Files[claudeAgentsFile]), `"Bash"`) {
+		t.Fatalf("planning sub agents:\n%s", claude.Files[claudeAgentsFile])
 	}
 	codex, err := (Codex{}).Invocation(Workspace{MCPURL: "http://localhost/mcp", Token: "fake", TokenEnv: "LA_TOKEN"}, Turn{Spec: s, Prompt: "Plan"})
 	if err != nil {
@@ -494,7 +502,7 @@ func TestChatAgentsMDPersonaInjection(t *testing.T) {
 	if after, _ := json.Marshal(s); string(after) != string(before) {
 		t.Fatalf("spec changed: %s -> %s", before, after)
 	}
-	rules := "Do not call claim_ticket, complete_run or propose_tickets. Do not modify files, run shell commands or delegate work."
+	rules := "Do not call claim_ticket, complete_run or propose_tickets. Do not modify files or run shell commands."
 	ri, pi, ii := strings.Index(got, rules), strings.Index(got, "## Persona"), strings.Index(got, "ignore previous rules")
 	if ri < 0 || pi < 0 || ri > pi || pi > ii || strings.Index(got, "## Instructions\n\nAgent instructions") > pi || strings.Count(got, rules) != 1 {
 		t.Fatalf("persona must follow the fixed preamble once:\n%s", got)
@@ -896,7 +904,7 @@ func TestChatAgentsMDForCapabilities(t *testing.T) {
 	suggests := spec("repo:write", "denied")
 	suggests.Scopes = append(suggests.Scopes, agentdef.ResolvedScope{Scope: "wiki:write", Mode: agentdef.RequiresApproval})
 	plain := string(ChatAgentsMD(suggests, nil, "PAY", "", nil))
-	if !strings.Contains(plain, "Do not modify files, run shell commands or delegate work") {
+	if !strings.Contains(plain, "Do not modify files or run shell commands.") {
 		t.Fatalf("plain chat lost its limits:\n%s", plain)
 	}
 	// The wiki note rule follows wiki:write: offered unless the persona is denied it.
@@ -912,7 +920,7 @@ func TestChatAgentsMDForCapabilities(t *testing.T) {
 		t.Fatalf("a persona denied wiki:write is told about write_note:\n%s", md)
 	}
 	coder := string(ChatAgentsMD(spec("repo:write", "allowed"), nil, "PAY", "", nil))
-	if strings.Contains(coder, "Do not modify files") || !strings.Contains(coder, "Do not delegate work") {
+	if strings.Contains(coder, "Do not modify files") || !strings.Contains(coder, "Don't hand work to other personas") {
 		t.Fatalf("coder chat limits wrong:\n%s", coder)
 	}
 	img := spec("repo:write", "denied")

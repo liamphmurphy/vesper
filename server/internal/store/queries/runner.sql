@@ -2,8 +2,10 @@
 
 -- name: ClaimQueuedRun :one
 -- The oldest queued run whose agent has a free slot (max_concurrency from
--- the frozen definition; waiting runs don't hold a slot). A ticket run whose
--- blocker tickets aren't Done stays queued.
+-- the frozen definition; waiting runs don't hold a slot). A delegated run is
+-- a copy of its parent's agent, bounded by the parent's own parallel limit
+-- instead, so it neither needs nor holds a slot. A ticket run whose blocker
+-- tickets aren't Done stays queued.
 UPDATE runs SET state = 'starting', runner_id = sqlc.arg(runner_id),
   execution_token = sqlc.narg(execution_token), execution_expires_at = sqlc.narg(execution_expires_at)
 WHERE id = (
@@ -13,7 +15,7 @@ WHERE id = (
     AND (r.parent_run_id IS NOT NULL OR NOT EXISTS (
       SELECT 1 FROM ticket_dependencies d JOIN tickets bt ON bt.id = d.blocker_id
       WHERE d.ticket_id = r.ticket_id AND bt.status <> 'done'))
-    AND (r.purpose = 'chat' OR (SELECT count(*) FROM runs o WHERE o.agent_id = r.agent_id AND o.purpose <> 'chat' AND o.state IN ('starting', 'running'))
+    AND (r.purpose = 'chat' OR r.parent_run_id IS NOT NULL OR (SELECT count(*) FROM runs o WHERE o.agent_id = r.agent_id AND o.purpose <> 'chat' AND o.parent_run_id IS NULL AND o.state IN ('starting', 'running'))
         < greatest(coalesce((r.resolved_spec->>'max_concurrency')::int, 1), 1))
   -- Research waits behind every other kind of run.
   ORDER BY r.purpose IN ('research', 'workflow', 'learning'), r.started_at

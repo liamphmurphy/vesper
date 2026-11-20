@@ -401,7 +401,7 @@ func (q *Queries) RevokeAgentTokensForAgent(ctx context.Context, agentID uuid.UU
 
 const updateAgentFromDefinition = `-- name: UpdateAgentFromDefinition :one
 UPDATE agents SET name = $2, role = $3, specialty = $4, color_index = $5, model = $6,
-  max_concurrency = $7, current_definition_version_id = $8, kind = coalesce($9, kind)
+  max_concurrency = $7, current_definition_version_id = $8
 WHERE id = $1 RETURNING id, workspace_id, name, handle, color_index, role, specialty, model, status, max_concurrency, created_at, updated_at, current_definition_version_id, kind, archived_at
 `
 
@@ -414,7 +414,6 @@ type UpdateAgentFromDefinitionParams struct {
 	Model                      string
 	MaxConcurrency             int32
 	CurrentDefinitionVersionID *uuid.UUID
-	Kind                       *string
 }
 
 // Identity lives on the agent row; model and concurrency are denormalized
@@ -429,7 +428,6 @@ func (q *Queries) UpdateAgentFromDefinition(ctx context.Context, arg UpdateAgent
 		arg.Model,
 		arg.MaxConcurrency,
 		arg.CurrentDefinitionVersionID,
-		arg.Kind,
 	)
 	var i Agent
 	err := row.Scan(

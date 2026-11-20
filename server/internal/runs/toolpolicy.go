@@ -67,19 +67,23 @@ func WebTool(tool string) bool {
 	return false
 }
 
-// LeadRun reports an undelegated ticket run: the only kind that may get the
-// explorer sub agent (agentdef.ExplorerOn).
+// LeadRun reports an undelegated ticket run.
 func LeadRun(run store.Run) bool {
 	return run.Purpose == "ticket" && run.ParentRunID == nil
 }
 
-// subagentDecision rules on Claude Code's sub agent tool: only the explorer,
-// and only when the run has it.
-func subagentDecision(spec agentdef.Resolved, run store.Run, input map[string]any) ToolDecision {
-	if typ, _ := input["subagent_type"].(string); typ == agentdef.ExplorerAgent && agentdef.ExplorerOn(spec, LeadRun(run)) {
+// subagentDecision rules on the harness's sub agent tool: only the types the
+// run declared (agentdef.SubagentTypes). A sub agent's own tool calls come
+// through CheckTool too, under the same spec as the lead's.
+func subagentDecision(spec agentdef.Resolved, input map[string]any) ToolDecision {
+	types := agentdef.SubagentTypes(spec)
+	if typ, _ := input["subagent_type"].(string); slices.Contains(types, typ) {
 		return ToolDecision{Decision: "allow"}
 	}
-	return ToolDecision{Decision: "deny", Reason: "Only the explorer sub agent is available; delegate other work with the delegate tool"}
+	if len(types) == 0 {
+		return ToolDecision{Decision: "deny", Reason: "This run has no sub agents; do the work yourself"}
+	}
+	return ToolDecision{Decision: "deny", Reason: "Only these sub agent types are available: " + strings.Join(types, ", ")}
 }
 
 func (s *Service) CheckTool(ctx context.Context, c Caller, in ToolCheck) (ToolDecision, error) {
@@ -180,7 +184,7 @@ func (s *Service) CheckTool(ctx context.Context, c Caller, in ToolCheck) (ToolDe
 	}
 	if in.Tool == "Agent" || in.Tool == "Task" { // Task: its name before Claude Code 2.1
 		// ToolScopes would send it to tests:run, which a lead has.
-		return subagentDecision(spec, run, in.Input), nil
+		return subagentDecision(spec, in.Input), nil
 	}
 	scopes := ToolScopes(in.Tool, in.Input)
 	if (spec.HarnessOptions["readonly"] == "true" || stepRunning) && len(scopes) > 0 {

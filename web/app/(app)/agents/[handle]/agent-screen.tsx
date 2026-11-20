@@ -248,7 +248,7 @@ export function AgentScreen({ handle }: { handle: string }) {
                   <Pill tone={status.tone}>{status.label}</Pill>
                 </div>
                 <span className="text-13 text-fg-secondary">
-                  {detail.agent.kind === "sub" ? "Helps on runs" : detail.agent.kind === "assistant" ? "Personal Assistant (managed by Vesper)" : "Takes tickets"}
+                  {detail.agent.kind === "assistant" ? "Personal Assistant (managed by Vesper)" : "Takes tickets"}
                   {detail.agent.role && ` · ${detail.agent.role}`} · definition <b className="font-mono font-medium text-fg">v{detail.definition.version}</b>
                   {detail.definition.created_by && ` saved by ${detail.definition.created_by.name}`} {ago(detail.definition.created_at)}
                 </span>

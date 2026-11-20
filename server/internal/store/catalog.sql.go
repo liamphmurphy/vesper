@@ -546,46 +546,6 @@ func (q *Queries) ListProjects(ctx context.Context, workspaceID uuid.UUID) ([]Pr
 	return items, nil
 }
 
-const listSubagents = `-- name: ListSubagents :many
-SELECT id, workspace_id, name, handle, color_index, role, specialty, model, status, max_concurrency, created_at, updated_at, current_definition_version_id, kind, archived_at FROM agents WHERE workspace_id = $1 AND kind = 'sub' AND archived_at IS NULL ORDER BY handle
-`
-
-func (q *Queries) ListSubagents(ctx context.Context, workspaceID uuid.UUID) ([]Agent, error) {
-	rows, err := q.db.Query(ctx, listSubagents, workspaceID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Agent{}
-	for rows.Next() {
-		var i Agent
-		if err := rows.Scan(
-			&i.ID,
-			&i.WorkspaceID,
-			&i.Name,
-			&i.Handle,
-			&i.ColorIndex,
-			&i.Role,
-			&i.Specialty,
-			&i.Model,
-			&i.Status,
-			&i.MaxConcurrency,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.CurrentDefinitionVersionID,
-			&i.Kind,
-			&i.ArchivedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const setEpicRequiresMockup = `-- name: SetEpicRequiresMockup :one
 UPDATE epics SET requires_mockup = $2, updated_at = now() WHERE id = $1 RETURNING id, workspace_id, project_id, name, objective, owner_user_id, start_date, target_date, health, icon, created_at, updated_at, requires_mockup, status
 `

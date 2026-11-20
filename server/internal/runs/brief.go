@@ -84,7 +84,7 @@ func RunBrief(ctx context.Context, q *store.Queries, run store.Run) (string, err
 			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return "", err
 			}
-			fmt.Fprintf(&b, "- @%s (run %s): %s", handle, child.ID.String()[:8], child.State)
+			fmt.Fprintf(&b, "- @%s (run %s): %s", handle, ShortRunID(child.ID), child.State)
 			if verdict != "" {
 				b.WriteString(", verdict " + verdict)
 			}

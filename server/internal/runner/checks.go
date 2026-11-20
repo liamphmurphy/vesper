@@ -160,7 +160,7 @@ func (r *Runner) delegationReport(ctx context.Context, parent runCtx, env map[st
 			if a, err := r.q().GetAgent(ctx, store.GetAgentParams{ID: child.AgentID, WorkspaceID: child.WorkspaceID}); err == nil {
 				handle = "@" + a.Handle
 			}
-			report.WriteString("---\n\n# " + handle + " (run " + child.ID.String()[:8] + ", " + child.State + ")\n\n")
+			report.WriteString("---\n\n# " + handle + " (run " + runs.ShortRunID(child.ID) + ", " + child.State + ")\n\n")
 		}
 		report.WriteString(k.Report())
 	}

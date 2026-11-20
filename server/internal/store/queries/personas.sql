@@ -180,7 +180,7 @@ RETURNING *;
 -- The work records of the person's personas: the agents rows sharing a persona's id, archived
 -- ones included (an archived row is work turned off; turning it back on revives it).
 SELECT a.* FROM agents a JOIN personas p ON p.id = a.id
-WHERE p.workspace_id = $1 AND p.user_id = $2 AND a.kind IN ('main', 'sub');
+WHERE p.workspace_id = $1 AND p.user_id = $2 AND a.kind = 'main';
 
 -- name: PersonaOwnerOf :one
 -- The person whose persona shares this agent's id; no row for a chat-only agent (the

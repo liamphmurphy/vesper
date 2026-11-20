@@ -281,10 +281,6 @@ func TestMockupChildRunNeverWaits(t *testing.T) {
 	ws := me.WorkspaceID
 	tr := &tracker.Service{Pool: pool}
 	svc := &runs.Service{Pool: pool, Tracker: tr, Artifacts: &artifacts.Service{Pool: pool}}
-	scribe, err := (&agents.Service{Pool: pool}).Create(ctx, ws, me.ID, "scribe", agents.Identity{Name: "Scribe", Role: "Docs", Kind: agents.KindSub}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
 	yes := true
 	if _, err := tr.Update(ctx, ws, tracker.UserActor(me.ID), "PAY-214", tracker.Patch{RequiresMockup: &yes}); err != nil {
 		t.Fatal(err)
@@ -310,12 +306,12 @@ func TestMockupChildRunNeverWaits(t *testing.T) {
 		}
 		return c
 	}
-	d, err := svc.Delegate(ctx, caller(atlas, parent.ID), "", "scribe", "Draft the screen")
+	d, err := svc.Delegate(ctx, caller(atlas, parent.ID), "", "Draft the screen")
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, _ = q.SetRunState(ctx, store.SetRunStateParams{ID: d.Run.ID, State: "running"})
-	out, err := svc.CreateMockup(ctx, caller(scribe, d.Run.ID), "", "Screen", testSVG, "", nil)
+	out, err := svc.CreateMockup(ctx, caller(atlas, d.Run.ID), "", "Screen", testSVG, "", nil)
 	if err != nil || out.Waiting || !out.ChildRun {
 		t.Fatalf("child create: %+v %v", out, err)
 	}

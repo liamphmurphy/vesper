@@ -84,9 +84,11 @@ and Antigravity installed). Before dispatching:
 ### Personas that do the work
 
 Agents are personas. Open **Customization › All personas** to see who chats and who works. On a
-persona's profile, **What it does** picks *Chat only*, *Takes tickets* or *Helps on runs*, and
+persona's profile, **What it does** picks *Chat only* or *Takes tickets*, and
 **Show in chat list** keeps a worker out of the chat switcher. **Work settings** opens its harness,
-model, work brief, permissions, helpers and limits. Its tone and style reach its runs too; its
+model, work brief, permissions and limits. A persona gets help within its own runs: the
+harness's sub agents, and `delegate`, which starts a fresh copy of the persona on a slice
+of the ticket (see *Token-efficient execution* below). Its tone and style reach its runs too; its
 work brief reaches runs only. A run can search your project and work memories and the persona's
 own, nothing else you've told your personas. Turning work off waits until it has no open tickets
 or runs.
@@ -223,13 +225,23 @@ independent review before Done** in an agent's Runtime settings to enforce an
 approval gate for every ticket that agent runs. Acceptance criteria, scopes, and
 human approvals remain required.
 
-A main agent's ticket run on Claude Code (the lead, not a delegated sub agent)
-gets one read-only sub agent, `explorer`, that searches and reads code on a
-cheap model (`explorer_model`, default `haiku-5.5`) and returns only its
-conclusions, keeping file dumps out of the lead's context. It is on by default;
-set the harness option `explorer` to `"false"` in an agent's definition to turn
-it off. Sub agent runs, chats, `readonly` or `no_tools` agents, and Codex or
-Antigravity runs never get it.
+Every persona run on Claude Code or Antigravity, chats and ticket runs alike,
+can start the harness's own sub agents, and its prompt encourages it to when the
+work splits into independent parts or needs a broad read it only wants the
+conclusion of:
+
+- `explorer` searches and reads code on a cheap model (`explorer_model`,
+  default `haiku-5.5`; agy's flash tier) and returns only its conclusions.
+- `helper` takes a self-contained task on the lead's model, with the file,
+  shell and web tools the run itself may use and none of Vesper's MCP tools.
+  In a read-only chat it only reads.
+
+Every tool call a sub agent makes goes through the run's policy hook, so scopes
+and approvals hold inside it. They share the lead's checkout; for parallel edits
+that need their own worktree and checks, a ticket run uses `delegate`. Set the
+harness option `subagents` to `"false"` in a persona's definition to turn both
+off, or `explorer` to `"false"` to drop only the explorer. Codex runs, asides
+and `no_tools` turns never get them (see `docs/contracts/ADR-explorer.md`).
 
 Context rollover continues a main agent in a fresh session, briefed from the
 ticket, its plan, git and the delegation report, so a long run stops re-reading

@@ -76,7 +76,7 @@ export function PersonaModelSection({ p }: { p: Persona }) {
           <h3 className="type-heading">Default model</h3>
           <p className="text-12 text-fg-secondary">
             {work !== "none"
-              ? `Used for new chats and work items (tickets and helper runs) with ${p.name}.`
+              ? `Used for new chats and tickets with ${p.name}.`
               : `Used for new chats with ${p.name}, and its starting model if you turn work on.`}
           </p>
         </div>

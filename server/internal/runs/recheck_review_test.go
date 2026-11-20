@@ -31,10 +31,6 @@ func TestReproAndRecheckReview(t *testing.T) {
 	me, _ := q.GetLocalUser(ctx)
 	ws := me.WorkspaceID
 	svc := &runs.Service{Pool: pool, Tracker: &tracker.Service{Pool: pool}, Poll: 20 * time.Millisecond}
-	critic, err := (&agents.Service{Pool: pool}).Create(ctx, ws, me.ID, "critic", agents.Identity{Name: "Critic", Role: "Review", Kind: agents.KindSub}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
 	callerFor := func(a store.Agent, runID uuid.UUID) runs.Caller {
 		e := time.Now().Add(time.Hour)
 		tok, _, err := agents.IssueToken(ctx, q, a.ID, "run", "", &runID, nil, &e)
@@ -69,14 +65,14 @@ func TestReproAndRecheckReview(t *testing.T) {
 		t.Fatalf("covers_all without a command: %v", err)
 	}
 
-	d, err := svc.DelegateWithContract(ctx, main, "", "critic", "Review it", runs.Contract{AllowedPaths: []string{"*_test.go"}})
+	d, err := svc.DelegateWithContract(ctx, main, "", "Review it", runs.Contract{AllowedPaths: []string{"*_test.go"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := q.SetRunState(ctx, store.SetRunStateParams{ID: d.Run.ID, State: "running"}); err != nil {
 		t.Fatal(err)
 	}
-	sub := callerFor(critic, d.Run.ID)
+	sub := callerFor(atlas, d.Run.ID)
 	if err := svc.RecheckReview(ctx, sub, "", d.Run.ID.String()); !isConflict(err) {
 		t.Fatalf("sub agent rechecked: %v", err)
 	}

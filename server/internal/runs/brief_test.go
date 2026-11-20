@@ -54,7 +54,7 @@ func TestRunBrief(t *testing.T) {
 		"2. [current] Write the fix  <- current step",
 		"3. [pending] Ship it",
 		"https://github.com/acme/pay/pull/7",
-		"(run " + child.String()[:8] + "): completed, verdict approved, checks passed, branch merged",
+		"(run " + runs.ShortRunID(child) + "): completed, verdict approved, checks passed, branch merged",
 		"Outcome: Reviewed it.",
 		"don't call claim_ticket or post_plan again",
 	} {

@@ -3,17 +3,14 @@ package runs
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"path"
 	"slices"
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/liamphmurphy/vesper/server/internal/agentdef"
-	"github.com/liamphmurphy/vesper/server/internal/agents"
 	"github.com/liamphmurphy/vesper/server/internal/apperr"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 	"github.com/liamphmurphy/vesper/server/internal/tracker"
@@ -47,6 +44,9 @@ const (
 // runner checks the result against it before waking the main agent.
 type Contract struct {
 	AcceptanceCriteria []string `json:"acceptance_criteria,omitempty"`
+	// ReadOnly runs the copy without repo:write: it reports findings instead
+	// of committing. A continued run stays read-only.
+	ReadOnly bool `json:"read_only,omitempty"`
 	// AllowedPaths are repo-relative files, directories (trailing "/") or
 	// globs the sub agent may change. Empty means unrestricted.
 	AllowedPaths []string `json:"allowed_paths,omitempty"`
@@ -256,19 +256,20 @@ func ChildPrompt(ticket, parentHandle, task string, contract Contract, canWrite 
 type Delegation struct {
 	Run   store.Run
 	Agent store.Agent
-	// ReadOnly: the sub agent can't change files (repo:write isn't allowed).
+	// ReadOnly: the copy can't change files (repo:write isn't allowed).
 	ReadOnly bool
 }
 
-// Delegate starts a sub agent's run under the caller's run and parks the
-// caller until it finishes.
-func (s *Service) Delegate(ctx context.Context, c Caller, ticketKey, handle, task string) (Delegation, error) {
-	return s.DelegateWithContract(ctx, c, ticketKey, handle, task, Contract{})
+// Delegate starts a fresh copy of the caller (its persona and the run's
+// frozen spec) on a task under the caller's run, and parks the caller until
+// it finishes.
+func (s *Service) Delegate(ctx context.Context, c Caller, ticketKey, task string) (Delegation, error) {
+	return s.DelegateWithContract(ctx, c, ticketKey, task, Contract{})
 }
 
-// DelegateWithContract is Delegate with acceptance criteria, file boundaries
-// and a test command the runner checks the result against.
-func (s *Service) DelegateWithContract(ctx context.Context, c Caller, ticketKey, handle, task string, contract Contract) (Delegation, error) {
+// DelegateWithContract is Delegate with acceptance criteria, file boundaries,
+// a test command the runner checks the result against, and read-only reviews.
+func (s *Service) DelegateWithContract(ctx context.Context, c Caller, ticketKey, task string, contract Contract) (Delegation, error) {
 	var out Delegation
 	task = strings.TrimSpace(task)
 	if task == "" {
@@ -281,11 +282,7 @@ func (s *Service) DelegateWithContract(ctx context.Context, c Caller, ticketKey,
 	if err != nil {
 		return out, err
 	}
-	handle = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(handle), "@"))
 	err = s.tx(ctx, func(q *store.Queries) error {
-		if c.Agent.Kind == agents.KindSub {
-			return apperr.Conflict("sub agents can't delegate")
-		}
 		run, t, err := s.delegating(ctx, q, c, ticketKey)
 		if err != nil {
 			return err
@@ -324,15 +321,6 @@ func (s *Service) DelegateWithContract(ctx context.Context, c Caller, ticketKey,
 			return apperr.Conflict("delegating needs a managed run with a ready workspace; unmanaged sessions can't delegate")
 		}
 		ws := run.WorkspaceID
-		sub, err := q.GetAgentByHandle(ctx, store.GetAgentByHandleParams{WorkspaceID: ws, Handle: handle})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return apperr.Invalid("agent", "no agent @%s; call list_subagents", handle)
-		} else if err != nil {
-			return err
-		}
-		if sub.Kind != agents.KindSub {
-			return apperr.Invalid("agent", "@%s is a main agent; delegate to a sub agent (list_subagents)", handle)
-		}
 		kids, err := q.ChildRuns(ctx, &run.ID)
 		if err != nil {
 			return err
@@ -340,7 +328,7 @@ func (s *Service) DelegateWithContract(ctx context.Context, c Caller, ticketKey,
 		if len(kids) >= MaxDelegations {
 			return apperr.Conflict("this run has already delegated %d times; finish the rest yourself or hand back with complete_run", len(kids))
 		}
-		prev, err := continuedRun(contract, kids, run, sub)
+		prev, err := continuedRun(contract, kids)
 		if err != nil {
 			return err
 		}
@@ -348,17 +336,23 @@ func (s *Service) DelegateWithContract(ctx context.Context, c Caller, ticketKey,
 			var pc Contract
 			_ = json.Unmarshal(prev.Contract, &pc)
 			contract.Branch, contract.Worktree = pc.Branch, pc.Worktree
+			contract.ReadOnly = contract.ReadOnly || pc.ReadOnly
 		}
 		if err := checkParallel(kids, contract); err != nil {
 			return err
 		}
-		resolved, err := agents.ResolveRunnable(ctx, q, ws, sub, p.Key)
+		// The copy runs on the caller's frozen spec, so it has the same
+		// harness, model, instructions and scopes as the run it helps.
+		resolved, err := Spec(run)
 		if err != nil {
 			return err
 		}
+		if contract.ReadOnly {
+			resolved = withoutRepoWrite(resolved)
+		}
 		canWrite := resolved.Mode("repo:write") == agentdef.Allowed
 		if !canWrite && len(contract.AllowedPaths) > 0 {
-			return apperr.Invalid("allowed_paths", "@%s can't change files (repo:write is %s), so allowed_paths has nothing to bound; drop it and ask for findings in its report", sub.Handle, resolved.Mode("repo:write"))
+			return apperr.Invalid("allowed_paths", "the copy can't change files (repo:write is %s), so allowed_paths has nothing to bound; drop it and ask for findings in its report", resolved.Mode("repo:write"))
 		}
 		// The child inherits the ticket's epic context so an epic ticket's
 		// children also leave the full suite to the epic review.
@@ -371,8 +365,8 @@ func (s *Service) DelegateWithContract(ctx context.Context, c Caller, ticketKey,
 			return err
 		}
 		child, err := q.CreateRun(ctx, store.CreateRunParams{
-			WorkspaceID: ws, TicketID: &t.ID, AgentID: sub.ID, Mode: "managed", State: "queued",
-			ResolvedSpec: raw, DefinitionVersionID: sub.CurrentDefinitionVersionID, Harness: resolved.Harness, Model: resolved.Model, Purpose: "ticket",
+			WorkspaceID: ws, TicketID: &t.ID, AgentID: c.Agent.ID, Mode: "managed", State: "queued",
+			ResolvedSpec: raw, DefinitionVersionID: run.DefinitionVersionID, Harness: resolved.Harness, Model: resolved.Model, Purpose: "ticket",
 			ParentRunID: &run.ID,
 		})
 		if err != nil {
@@ -393,7 +387,7 @@ func (s *Service) DelegateWithContract(ctx context.Context, c Caller, ticketKey,
 			}
 			contract.ResumeSession = true
 		}
-		if !contract.Empty() || prev != nil {
+		if !contract.Empty() || contract.ReadOnly || prev != nil {
 			raw, err := json.Marshal(contract)
 			if err != nil {
 				return err
@@ -414,21 +408,18 @@ func (s *Service) DelegateWithContract(ctx context.Context, c Caller, ticketKey,
 				return err
 			}
 		}
-		if err := event(ctx, q, run.ID, "lifecycle", map[string]any{"state": "waiting", "reason": "delegation", "child_run_id": child.ID, "agent": sub.Handle}); err != nil {
+		if err := event(ctx, q, run.ID, "lifecycle", map[string]any{"state": "waiting", "reason": "delegation", "child_run_id": child.ID, "agent": c.Agent.Handle}); err != nil {
 			return err
 		}
 		if err := tracker.Record(ctx, q, ws, t.ID, t.EpicID, agentActor(c), VerbDelegated, map[string]any{
-			"run_id": run.ID, "child_run_id": child.ID, "agent_id": sub.ID, "agent_name": sub.Name, "task": truncate(task, 300), "has_contract": !contract.Empty(), "continues": contract.ContinueRunID,
+			"run_id": run.ID, "child_run_id": child.ID, "agent_id": c.Agent.ID, "agent_name": c.Agent.Name, "task": truncate(task, 300), "has_contract": !contract.Empty(), "continues": contract.ContinueRunID,
 		}, nil); err != nil {
 			return err
 		}
 		if err := RecomputeAgentStatus(ctx, q, c.Agent.ID); err != nil {
 			return err
 		}
-		if err := RecomputeAgentStatus(ctx, q, sub.ID); err != nil {
-			return err
-		}
-		out = Delegation{Run: child, Agent: sub, ReadOnly: !canWrite}
+		out = Delegation{Run: child, Agent: c.Agent, ReadOnly: !canWrite}
 		return nil
 	})
 	return out, err
@@ -452,9 +443,25 @@ func (s *Service) delegating(ctx context.Context, q *store.Queries, c Caller, ke
 	return s.running(ctx, q, c, key)
 }
 
+// ShortRunID names a delegated run in branch names and reports. It's the
+// UUIDv7's random tail: its first characters are a timestamp that changes
+// about once a minute, so parallel copies of one agent would share them.
+func ShortRunID(id uuid.UUID) string {
+	s := id.String()
+	return s[len(s)-8:]
+}
+
+// withoutRepoWrite is spec with repo:write denied, for a read-only copy. The
+// strictest matching entry wins, so a denied entry also beats a repo:* grant.
+func withoutRepoWrite(spec agentdef.Resolved) agentdef.Resolved {
+	spec.Scopes = slices.DeleteFunc(slices.Clone(spec.Scopes), func(s agentdef.ResolvedScope) bool { return s.Scope == "repo:write" })
+	spec.Scopes = append(spec.Scopes, agentdef.ResolvedScope{Scope: "repo:write", Mode: agentdef.Denied, Source: agentdef.FromDelegation})
+	return spec
+}
+
 // continuedRun resolves contract.ContinueRunID: a finished delegated run of
-// this parent and this sub agent that no later run has already taken over.
-func continuedRun(contract Contract, kids []store.Run, parent store.Run, sub store.Agent) (*store.Run, error) {
+// this parent that no later run has already taken over.
+func continuedRun(contract Contract, kids []store.Run) (*store.Run, error) {
 	if contract.ContinueRunID == "" {
 		return nil, nil
 	}
@@ -468,8 +475,6 @@ func continuedRun(contract Contract, kids []store.Run, parent store.Run, sub sto
 	switch {
 	case prev == nil:
 		return nil, apperr.Invalid("continue_run_id", "%s isn't a delegated run of this run; use the run_id delegate returned", contract.ContinueRunID)
-	case prev.AgentID != sub.ID:
-		return nil, apperr.Invalid("continue_run_id", "that run was delegated to a different agent; to continue it delegate to the same sub agent")
 	case !slices.Contains(Terminal, prev.State):
 		return nil, apperr.Invalid("continue_run_id", "that run is still in progress; wait for it to finish")
 	}
@@ -520,56 +525,6 @@ func checkParallel(kids []store.Run, contract Contract) error {
 		}
 	}
 	return nil
-}
-
-// Subagent is a sub agent with its spec resolved for the caller's project, as
-// delegate would resolve it. Unavailable says why it couldn't be resolved.
-type Subagent struct {
-	Agent       store.Agent
-	Spec        agentdef.Resolved
-	Unavailable string
-}
-
-// CanWrite reports whether the sub agent may change files.
-func (a Subagent) CanWrite() bool { return a.Spec.Mode("repo:write") == agentdef.Allowed }
-
-// ListSubagents is who a main agent can delegate to, resolved for the project
-// of the caller's live run (no project when it has none).
-func (s *Service) ListSubagents(ctx context.Context, c Caller) ([]Subagent, error) {
-	if c.Agent.Kind == agents.KindSub {
-		return nil, apperr.Conflict("sub agents can't delegate")
-	}
-	q := store.New(s.Pool)
-	ws := c.Agent.WorkspaceID
-	projectKey := ""
-	if _, t, err := s.Active(ctx, q, c, ""); err == nil && t.ProjectID != uuid.Nil {
-		if p, err := q.GetProject(ctx, store.GetProjectParams{ID: t.ProjectID, WorkspaceID: ws}); err == nil {
-			projectKey = p.Key
-		}
-	}
-	rows, err := q.ListSubagents(ctx, ws)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]Subagent, len(rows))
-	for i, a := range rows {
-		out[i].Agent = a
-		if out[i].Spec, err = agents.ResolveRunnable(ctx, q, ws, a, projectKey); err != nil {
-			out[i].Unavailable = unavailableReason(err)
-		}
-	}
-	return out, nil
-}
-
-// unavailableReason is what the lead sees for a sub agent whose spec doesn't
-// resolve: domain errors verbatim, anything else generic.
-func unavailableReason(err error) string {
-	var ve *apperr.ValidationError
-	var ce *apperr.ConflictError
-	if errors.As(err, &ve) || errors.As(err, &ce) {
-		return err.Error()
-	}
-	return "its definition can't be resolved; ask a person to check it"
 }
 
 // WakeParent resumes a waiting parent once its last live delegated run has
@@ -659,9 +614,6 @@ func delegationWakeMessage(ctx context.Context, q *store.Queries, parent store.R
 // at once with a "delegation" turn; the runner runs the command before that
 // turn starts and appends the result. No sub agent run starts.
 func (s *Service) RecheckReview(ctx context.Context, c Caller, ticketKey, childRunID string) error {
-	if c.Agent.Kind == agents.KindSub {
-		return apperr.Conflict("only the main agent can recheck a review")
-	}
 	childID, err := uuid.Parse(strings.TrimSpace(childRunID))
 	if err != nil {
 		return apperr.Invalid("run_id", "%q isn't a run id", childRunID)

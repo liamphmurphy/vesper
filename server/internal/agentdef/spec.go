@@ -208,13 +208,18 @@ const OptionNoTools = "no_tools"
 // sets it, and the MCP surface it gets is read-only.
 const OptionAside = "aside"
 
-// OptionExplorer gives a Claude Code or Antigravity lead ticket run one
-// read-only sub agent, "explorer", that searches and reads code on a cheap
-// model and returns conclusions, keeping that output out of the lead's
-// context. It is on unless set to "false". OptionExplorerModel picks its model
-// on Claude Code (default DefaultExplorerModel); agy runs it on its flash
-// tier. Codex has none (docs/contracts/ADR-explorer.md). See ExplorerOn for
-// when it applies.
+// OptionSubagents ("false" turns them off) gives a Claude Code or Antigravity
+// run, chat or ticket, the harness's own sub agents: the explorer and the
+// helper (SubagentTypes). They run inside the turn, in the same checkout, and
+// every tool call they make goes through the run's policy hook like the
+// lead's (docs/contracts/ADR-explorer.md). Codex has none.
+const OptionSubagents = "subagents"
+
+// OptionExplorer ("false" drops it) gives a run with sub agents the read-only
+// "explorer", which searches and reads code on a cheap model and returns
+// conclusions, keeping that output out of the lead's context.
+// OptionExplorerModel picks its model on Claude Code (default
+// DefaultExplorerModel); agy runs it on its flash tier.
 const (
 	OptionExplorer       = "explorer"
 	OptionExplorerModel  = "explorer_model"
@@ -225,6 +230,60 @@ const (
 	ExplorerDescription = "Read-only code search. Use it for any question that needs a broad grep or reading more than about three files, when you need the conclusion and not the file contents."
 	ExplorerPrompt      = "Answer the question from the code. Reply in at most 300 words with file:line references. Never paste whole files or long excerpts. Say what you could not find."
 )
+
+// HelperAgent is the general-purpose sub agent every run with sub agents
+// gets: the lead's own model and its file, shell and web tools (those the run
+// may use), without Vesper's MCP tools, so the run's state stays the lead's.
+const (
+	HelperAgent       = "helper"
+	HelperDescription = "General-purpose helper for a self-contained piece of work: research, a second-opinion review, or an independent task. Give it a complete brief; it returns a short report, not its transcript."
+	HelperPrompt      = "Do the task in your brief and nothing else. You can't ask follow-up questions, so make reasonable assumptions and say which. Finish with a short report: what you found or changed, with file:line references, and what you couldn't do. Never paste whole files."
+)
+
+// SubagentGuide is what the prompt of a run with sub agents says about using
+// them: when they pay off and when they don't. Empty when the run has none.
+func SubagentGuide(spec Resolved) string {
+	if !SubagentsOn(spec) {
+		return ""
+	}
+	roster := "`" + HelperAgent + "` for a self-contained task"
+	if ExplorerOn(spec) {
+		roster = "`" + ExplorerAgent + "` for broad read-only code searches, " + roster
+	}
+	guide := "You can start sub agents with your Agent tool: " + roster + ". " +
+		"Use them when the work splits into independent parts you can run in parallel, or when answering means reading across many files and you only need the conclusion; their output stays out of your context. " +
+		"Do the work yourself when it's a handful of tool calls or you already know where to look. A sub agent knows only its brief, so make the brief complete."
+	if spec.HarnessOptions["readonly"] != "true" && spec.Mode("repo:write") != Denied {
+		guide += " Helpers share your checkout: never give two of them edits to the same files, and check what they changed before you rely on it."
+	}
+	return guide
+}
+
+// SubagentsOn reports whether a run gets native sub agents: the harness is
+// Claude Code or Antigravity, the option isn't "false", and the turn has tools
+// and isn't an aside (a quick answer about another chat's reply).
+func SubagentsOn(spec Resolved) bool {
+	o := spec.HarnessOptions
+	return (spec.Harness == HarnessClaudeCode || spec.Harness == HarnessAntigravity) &&
+		o[OptionSubagents] != "false" && o[OptionNoTools] != "true" && o[OptionAside] != "true"
+}
+
+// ExplorerOn reports whether a run with sub agents also gets the explorer.
+func ExplorerOn(spec Resolved) bool {
+	return SubagentsOn(spec) && spec.HarnessOptions[OptionExplorer] != "false"
+}
+
+// SubagentTypes are the sub agent types a run may start, in roster order;
+// runs.CheckTool denies any other.
+func SubagentTypes(spec Resolved) []string {
+	if !SubagentsOn(spec) {
+		return nil
+	}
+	if ExplorerOn(spec) {
+		return []string{ExplorerAgent, HelperAgent}
+	}
+	return []string{HelperAgent}
+}
 
 // EagerVesperTools are the lazyagents tools almost every chat turn or ticket run
 // calls. Harnesses that defer MCP tools until the model looks them up load these
@@ -243,16 +302,6 @@ var EagerVesperTools = []string{
 // run, on every harness) carries about exploring a codebase. Each model turn
 // costs seconds of latency, so independent lookups belong in one turn.
 const BatchExplorationGuide = "Explore in batches: make independent file reads and searches together in one turn, don't repeat a lookup you've already answered, and start editing once you know where the change goes and the local conventions."
-
-// ExplorerOn reports whether a run gets the explorer sub agent: the option
-// isn't "false", the harness is Claude Code or Antigravity, the run is a lead
-// (an undelegated ticket run), and the spec is neither readonly nor no_tools.
-// Only main agents run leads, so sub agents and chats never get it.
-func ExplorerOn(spec Resolved, lead bool) bool {
-	o := spec.HarnessOptions
-	return lead && (spec.Harness == HarnessClaudeCode || spec.Harness == HarnessAntigravity) && o[OptionExplorer] != "false" &&
-		o["readonly"] != "true" && o[OptionNoTools] != "true"
-}
 
 // Efforts are the allowed values of the "effort" harness option.
 var Efforts = []string{"low", "medium", "high", "xhigh", "max"}
