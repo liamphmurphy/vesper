@@ -32,14 +32,23 @@ const (
 	MaxLiveAsides = 3
 	// asideHistoryChars bounds the parent's conversation an aside gets.
 	asideHistoryChars = 12000
-	// asideEvents is how many of the running reply's latest events it gets.
-	asideEvents = 60
+	// asideEvents bounds the running reply's events an aside reads. It is far
+	// above what a reply usually has, so the rune budgets below, not a row
+	// count, decide what the aside sees: a long reply's opening steps (often
+	// where it says what it set out to do) used to fall off after 60 events.
+	asideEvents = 2000
 	// asideInputRunes and asideOutputRunes clip one tool call's input and output.
 	asideInputRunes  = 240
 	asideOutputRunes = 600
 	asideTextRunes   = 2000
-	// asideSnapshotRunes bounds the whole snapshot of the running reply.
+	// asideSnapshotRunes bounds the latest steps of the running reply, in full.
 	asideSnapshotRunes = 16000
+	// asideOutlineRunes bounds the older steps, kept one short line each so the
+	// aside still sees the reply from its start.
+	asideOutlineRunes = 6000
+	// asideBriefInputRunes and asideBriefTextRunes clip a step in that outline.
+	asideBriefInputRunes = 80
+	asideBriefTextRunes  = 200
 	// secondOpinionDiffRunes bounds the diff/commit snapshot on a second opinion.
 	secondOpinionDiffRunes = 24000
 )
@@ -594,10 +603,16 @@ func liveTurnSnapshot(ctx context.Context, q *store.Queries, runID uuid.UUID, no
 	return renderLiveTurn(rows, now.Sub(since)), nil
 }
 
+// liveStep is one step of a running reply: in full, and as a one-line brief
+// ("" when the step is left out of the outline, as a successful result is).
+type liveStep struct{ full, brief string }
+
 // renderLiveTurn is liveTurnSnapshot's text, from the reply's events oldest
-// first. When it runs long, the oldest lines go first.
+// first. The latest steps are given in full within asideSnapshotRunes; older
+// ones as an outline of one-line briefs within asideOutlineRunes, so the aside
+// sees the whole reply from its start. Only past both do the oldest go.
 func renderLiveTurn(rows []store.LiveTurnEventsRow, elapsed time.Duration) string {
-	var lines []string
+	var steps []liveStep
 	for _, r := range rows {
 		var p struct {
 			Text    string          `json:"text"`
@@ -612,47 +627,85 @@ func renderLiveTurn(rows []store.LiveTurnEventsRow, elapsed time.Duration) strin
 		switch r.Type {
 		case "message":
 			if t := strings.TrimSpace(p.Text); t != "" {
-				lines = append(lines, "You wrote:\n"+quote(clip(t, asideTextRunes)))
+				steps = append(steps, liveStep{
+					full:  "You wrote:\n" + quote(clip(t, asideTextRunes)),
+					brief: "You wrote: " + head(oneLine(t), asideBriefTextRunes),
+				})
 			}
 		case "tool_call":
 			if p.Tool == "" {
 				continue
 			}
-			line := "Called " + p.Tool
+			s := liveStep{full: "Called " + p.Tool, brief: "Called " + p.Tool}
 			if in := strings.TrimSpace(string(p.Input)); in != "" && in != "{}" && in != "null" {
-				line += " " + head(in, asideInputRunes)
+				s.full += " " + head(in, asideInputRunes)
+				s.brief += " " + head(oneLine(in), asideBriefInputRunes)
 			}
-			lines = append(lines, line)
+			steps = append(steps, s)
 		case "tool_result":
 			out := strings.TrimSpace(p.Output)
 			if out == "" {
 				continue
 			}
-			label := "Result"
+			s := liveStep{full: "Result:\n" + quote(clip(out, asideOutputRunes))}
 			if p.IsError {
-				label = "Error"
+				// A failure can explain what the reply did next, so it stays in the outline.
+				s.full = "Error:\n" + quote(clip(out, asideOutputRunes))
+				s.brief = "Error: " + head(oneLine(out), asideBriefTextRunes)
 			}
-			lines = append(lines, label+":\n"+quote(clip(out, asideOutputRunes)))
+			steps = append(steps, s)
 		}
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "---\nYour reply in the main conversation is still running (for %s so far). What it has done, oldest first:\n\n", elapsed.Round(time.Second))
-	if len(lines) == 0 {
+	if len(steps) == 0 {
 		b.WriteString("Nothing yet: it hasn't written anything or used any tools.\n\n")
 		return b.String()
 	}
-	size := 0
-	keep := len(lines)
-	for keep > 0 && size+len([]rune(lines[keep-1])) <= asideSnapshotRunes {
-		keep--
-		size += len([]rune(lines[keep])) + 2
+	// Walk back from the newest step: in full while it fits, then briefly.
+	full := len(steps)
+	for size := 0; full > 0; full-- {
+		n := utf8.RuneCountInString(steps[full-1].full) + 2
+		if size+n > asideSnapshotRunes {
+			break
+		}
+		size += n
 	}
-	if keep > 0 {
-		fmt.Fprintf(&b, "(%d earlier steps left out)\n\n", keep)
+	outline := full
+	var briefs []string
+	for size := 0; outline > 0; outline-- {
+		s := steps[outline-1].brief
+		if s == "" {
+			continue
+		}
+		n := utf8.RuneCountInString(s) + 1
+		if size+n > asideOutlineRunes {
+			break
+		}
+		size += n
+		briefs = append(briefs, "- "+s)
 	}
-	b.WriteString(strings.Join(lines[keep:], "\n\n"))
+	if outline > 0 {
+		fmt.Fprintf(&b, "(%d earliest steps left out)\n\n", outline)
+	}
+	if len(briefs) > 0 {
+		slices.Reverse(briefs)
+		b.WriteString("Earlier steps, in brief:\n")
+		b.WriteString(strings.Join(briefs, "\n"))
+		b.WriteString("\n\nLatest steps, in full:\n\n")
+	}
+	latest := make([]string, 0, len(steps)-full)
+	for _, s := range steps[full:] {
+		latest = append(latest, s.full)
+	}
+	b.WriteString(strings.Join(latest, "\n\n"))
 	b.WriteString("\n\n")
 	return b.String()
+}
+
+// oneLine folds s onto one line for an outline.
+func oneLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // head keeps the start of s within max runes.
