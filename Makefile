@@ -116,8 +116,8 @@ mac-golden: ## Set up the macOS VM golden image for `mac` (installs tart/sshpass
 	  echo "mac-golden needs an Apple Silicon Mac (Darwin/arm64)." >&2; exit 1; \
 	fi; \
 	pkgs=""; \
-	command -v tart >/dev/null 2>&1 || pkgs="$$pkgs cirruslabs/cli/tart"; \
-	command -v sshpass >/dev/null 2>&1 || pkgs="$$pkgs cirruslabs/cli/sshpass"; \
+	command -v tart >/dev/null 2>&1 || pkgs="$$pkgs openai/tools/tart"; \
+	command -v sshpass >/dev/null 2>&1 || pkgs="$$pkgs sshpass"; \
 	if [ -n "$$pkgs" ]; then \
 	  if ! command -v brew >/dev/null 2>&1; then \
 	    echo "Missing prerequisites ($${pkgs# }) and Homebrew is not installed." >&2; exit 1; \
