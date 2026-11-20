@@ -241,9 +241,11 @@ in the Linux VM; the macOS VM only receives files and runs commands.
   `/v1/exec` and `/v1/pull` (guestproto stdout/stderr/exit frames). Hanging up
   an exec kills its process group in the guest. `/v1/agent-log` (`mac
   --agent-log`) returns the end of the guest agent's own log
-  (`/var/log/vesper-guest-agent.log`), read through the agent's file op so it
-  works when commands don't; a boot whose first command fails carries that
-  log's end in its error, read before the VM is stopped (or, if that command
+  (`/var/log/vesper-guest-agent.log`) and the start of the guest's newest
+  kernel panic report (`/Library/Logs/DiagnosticReports`,
+  `/private/var/db/PanicReporter`), read through the agent's file ops so it
+  works when commands don't; a boot whose first command fails carries both in
+  its error, read before the VM is stopped (or, if that command
   took the agent down, as read when the VM booted, which holds what earlier
   boots of the run's disk wrote).
 - **Guest agent.** `vesper-guest-agent` cross-compiles to `darwin/arm64`

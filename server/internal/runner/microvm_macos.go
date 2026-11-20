@@ -353,16 +353,17 @@ func (g *MacOSGuests) boot(ctx context.Context, dir string) (microvm.VM, int, in
 	if err != nil {
 		return nil, 0, 0, fmt.Errorf("mac: boot macOS VM: %w", err)
 	}
-	// The log as the freshly booted agent sees it, which still holds what
-	// earlier boots of this run's disk wrote: if the first command takes the
-	// agent down, this copy is the only one left to read.
+	// The log and newest panic report as the freshly booted agent sees them,
+	// which still hold what earlier boots of this run's disk wrote: if the
+	// first command takes the guest down, this copy is the only one left.
 	logAtBoot, logAtBootErr := agentLogTail(ctx, vm, macBootLogTail)
+	panicAtBoot := panicReport(ctx, vm)
 	pctx, cancel := context.WithTimeout(ctx, durationOr(g.prepareTimeout, defaultMacPrepareTimeout))
 	uid, gid, err := g.prepareWorkspace(pctx, vm)
 	cancel()
 	if err != nil {
 		// Read the guest's side of the failure before stopping takes it away.
-		err = withAgentLog(ctx, vm, err, logAtBoot, logAtBootErr)
+		err = withAgentLog(ctx, vm, err, logAtBoot, logAtBootErr, panicAtBoot)
 		g.stopVM(vm, dir)
 		return nil, 0, 0, err
 	}
@@ -415,6 +416,9 @@ const (
 	macAgentLogTail    = 64 << 10
 	macBootLogTail     = 8 << 10
 	macAgentLogTimeout = 10 * time.Second
+	// macPanicReportHead is how much of the start of a panic report to show:
+	// the panic string and backtrace come first.
+	macPanicReportHead = 16 << 10
 )
 
 // agentLogTail reads the last limit bytes of the guest agent's log through
@@ -431,7 +435,13 @@ func agentLogTail(ctx context.Context, vm microvm.VM, limit int64) (string, erro
 	if !st.Exists {
 		return "", fmt.Errorf("%s doesn't exist in the guest", guestproto.MacAgentLogPath)
 	}
-	rc, err := c.OpenFile(ctx, guestproto.MacAgentLogPath, max(0, st.Size-limit), limit)
+	return readGuestFile(ctx, c, guestproto.MacAgentLogPath, max(0, st.Size-limit), limit)
+}
+
+// readGuestFile reads up to limit bytes of a guest file from off, giving up
+// when ctx ends.
+func readGuestFile(ctx context.Context, c *guestproto.Client, p string, off, limit int64) (string, error) {
+	rc, err := c.OpenFile(ctx, p, off, limit)
 	if err != nil {
 		return "", err
 	}
@@ -445,20 +455,64 @@ func agentLogTail(ctx context.Context, vm microvm.VM, limit int64) (string, erro
 	return string(b), nil
 }
 
-// withAgentLog adds the end of the guest agent's log to err, a failure inside
-// the guest, so it says why from the guest's side. When the agent is gone and
-// can't be asked, it falls back to atBoot, the log read when the VM came up,
-// which has what earlier boots of the same disk wrote.
-func withAgentLog(ctx context.Context, vm microvm.VM, err error, atBoot string, atBootErr error) error {
+// panicReport is a section of text on the guest's newest kernel panic report:
+// where it is, when it was written, and its start. Failures to read it become
+// part of the text, which is only ever read by a person.
+func panicReport(ctx context.Context, vm microvm.VM) string {
+	ctx, cancel := context.WithTimeout(ctx, macAgentLogTimeout)
+	defer cancel()
+	c := vm.Client()
+	var newest string
+	var newestNS int64
+	count := 0
+	for _, dir := range guestproto.MacPanicReportDirs {
+		entries, err := c.WalkDir(ctx, dir, 1)
+		if err != nil {
+			return fmt.Sprintf("--- kernel panic reports in %s couldn't be listed: %v ---", dir, err)
+		}
+		for _, e := range entries {
+			if e.IsDir || !isPanicReport(e.Rel) {
+				continue
+			}
+			count++
+			if newest == "" || e.ModTimeUnixNS > newestNS {
+				newest, newestNS = path.Join(dir, e.Rel), e.ModTimeUnixNS
+			}
+		}
+	}
+	if newest == "" {
+		return "--- no kernel panic reports in " + strings.Join(guestproto.MacPanicReportDirs, " or ") + " ---"
+	}
+	header := fmt.Sprintf("--- newest of %d kernel panic reports: %s (%s) ---", count, newest, time.Unix(0, newestNS).UTC().Format(time.RFC3339))
+	head, err := readGuestFile(ctx, c, newest, 0, macPanicReportHead)
+	if err != nil {
+		return header + "\n(it couldn't be read: " + err.Error() + ")"
+	}
+	return header + "\n" + strings.TrimRight(head, "\n")
+}
+
+// isPanicReport matches macOS kernel panic reports: panic-full-*.panic, and
+// .ips reports with panic in their name.
+func isPanicReport(name string) bool {
+	n := strings.ToLower(path.Base(name))
+	return strings.HasSuffix(n, ".panic") || (strings.HasSuffix(n, ".ips") && strings.Contains(n, "panic"))
+}
+
+// withAgentLog adds the end of the guest agent's log and the guest's newest
+// panic report to err, a failure inside the guest, so it says why from the
+// guest's side. When the agent is gone and can't be asked, it falls back to
+// what was read when the VM came up (atBoot, panicAtBoot), which has what
+// earlier boots of the same disk wrote.
+func withAgentLog(ctx context.Context, vm microvm.VM, err error, atBoot string, atBootErr error, panicAtBoot string) error {
 	tail, lerr := agentLogTail(ctx, vm, macBootLogTail)
 	if lerr == nil {
-		return appendAgentLog(err, "end of "+guestproto.MacAgentLogPath+" in the macOS guest", tail)
+		return fmt.Errorf("%w\n%s", appendAgentLog(err, "end of "+guestproto.MacAgentLogPath+" in the macOS guest", tail), panicReport(ctx, vm))
 	}
 	if atBootErr != nil {
-		return fmt.Errorf("%w (the guest agent's log couldn't be read now: %v, or at boot: %v)", err, lerr, atBootErr)
+		return fmt.Errorf("%w (the guest agent's log couldn't be read now: %v, or at boot: %v)\n%s", err, lerr, atBootErr, panicAtBoot)
 	}
-	return appendAgentLog(fmt.Errorf("%w (the guest agent stopped answering: %v)", err, lerr),
-		"end of "+guestproto.MacAgentLogPath+" as of this boot, from earlier boots of this run's disk", atBoot)
+	return fmt.Errorf("%w\n%s", appendAgentLog(fmt.Errorf("%w (the guest agent stopped answering: %v)", err, lerr),
+		"end of "+guestproto.MacAgentLogPath+" as of this boot, from earlier boots of this run's disk", atBoot), panicAtBoot)
 }
 
 func appendAgentLog(err error, label, tail string) error {
@@ -890,7 +944,7 @@ func (g *MacOSGuests) serveAgentLog(w http.ResponseWriter, r *http.Request, runI
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	_, _ = io.WriteString(w, tail)
+	_, _ = io.WriteString(w, strings.TrimRight(tail, "\n")+"\n"+panicReport(r.Context(), v.vm)+"\n")
 }
 
 func (g *MacOSGuests) servePull(w http.ResponseWriter, r *http.Request, runID string) {
