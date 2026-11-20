@@ -87,27 +87,67 @@ func subagentDecision(spec agentdef.Resolved, input map[string]any) ToolDecision
 }
 
 func (s *Service) CheckTool(ctx context.Context, c Caller, in ToolCheck) (ToolDecision, error) {
-	deny := func(reason string) (ToolDecision, error) { return ToolDecision{Decision: "deny", Reason: reason}, nil }
+	run, err := s.checkToolRun(ctx, c)
+	if err != nil {
+		return ToolDecision{}, err
+	}
+	if run == nil {
+		return ToolDecision{Decision: "deny", Reason: checkToolRunDenyReason(c)}, nil
+	}
+	spec, err := Spec(*run)
+	if err != nil {
+		return ToolDecision{}, err
+	}
+	return s.checkToolWithRun(ctx, c, *run, spec, in)
+}
+
+// CheckToolWithSpec evaluates in against the supplied spec instead of the run's
+// stored spec while still verifying the run is live and owned by c.
+func (s *Service) CheckToolWithSpec(ctx context.Context, c Caller, spec agentdef.Resolved, in ToolCheck) (ToolDecision, error) {
+	run, err := s.checkToolRun(ctx, c)
+	if err != nil {
+		return ToolDecision{}, err
+	}
+	if run == nil {
+		return ToolDecision{Decision: "deny", Reason: checkToolRunDenyReason(c)}, nil
+	}
+	return s.checkToolWithRun(ctx, c, *run, spec, in)
+}
+
+func checkToolRunDenyReason(c Caller) string {
 	if c.RunID == nil {
-		return deny("Tool policy requires a run-scoped token")
+		return "Tool policy requires a run-scoped token"
+	}
+	return "Run is not running; end this turn and wait for a person"
+}
+
+func (s *Service) checkToolRun(ctx context.Context, c Caller) (*store.Run, error) {
+	if c.RunID == nil {
+		return nil, nil
 	}
 	q := store.New(s.Pool)
 	run, err := q.GetRun(ctx, store.GetRunParams{ID: *c.RunID, WorkspaceID: c.Agent.WorkspaceID})
 	if err != nil {
-		return ToolDecision{}, err
+		return nil, err
 	}
 	if run.AgentID != c.Agent.ID || run.State != "running" {
-		return deny("Run is not running; end this turn and wait for a person")
+		return nil, nil
 	}
-	spec, err := Spec(run)
-	if err != nil {
-		return ToolDecision{}, err
+	return &run, nil
+}
+
+func (s *Service) checkToolWithRun(ctx context.Context, c Caller, run store.Run, spec agentdef.Resolved, in ToolCheck) (ToolDecision, error) {
+	deny := func(reason string) (ToolDecision, error) { return ToolDecision{Decision: "deny", Reason: reason}, nil }
+	q := store.New(s.Pool)
+	if spec.HarnessOptions[agentdef.OptionNoTools] == "true" {
+		return deny("This turn has no tools")
 	}
 	if WebTool(in.Tool) && run.Purpose == PurposeLearning {
 		// Only a reviewer has the web, and only to open what the course cites.
 		url, _ := in.Input["url"].(string)
 		cited := false
 		if in.Tool == "WebFetch" && spec.HarnessOptions[agentdef.OptionWebSearch] == "true" {
+			var err error
 			if cited, err = q.LearningSourceForRun(ctx, store.LearningSourceForRunParams{RunID: run.ID, Url: url}); err != nil {
 				return ToolDecision{}, err
 			}

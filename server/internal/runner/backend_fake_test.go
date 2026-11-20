@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,5 +43,36 @@ func TestFakeRefusesHarnessWithoutStandIn(t *testing.T) {
 	}
 	if code, err := p.Wait(); err != nil || code != 0 {
 		t.Fatalf("stand-in exit %d, %v", code, err)
+	}
+}
+
+func TestFakeStdinRoundTrip(t *testing.T) {
+	b := &Fake{Dir: t.TempDir()}
+	ctx := context.Background()
+	if err := b.EnsureWorkspace(ctx, "stdin-1"); err != nil {
+		t.Fatal(err)
+	}
+	p, err := b.Start(ctx, "stdin-1", ExecSpec{Argv: []string{"cat"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(p.Stdin(), "hello stdin\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Stdin().Close(); err != nil {
+		t.Fatal(err)
+	}
+	out, err := io.ReadAll(p.Stdout())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code, err := p.Wait(); err != nil || code != 0 {
+		t.Fatalf("cat exit %d, %v", code, err)
+	}
+	if c, ok := p.(io.Closer); ok {
+		_ = c.Close()
+	}
+	if string(out) != "hello stdin\n" {
+		t.Fatalf("stdout = %q, want %q", out, "hello stdin\n")
 	}
 }

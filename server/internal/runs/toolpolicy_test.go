@@ -381,3 +381,45 @@ func TestToolPolicyAllowedPathsBeforeWrite(t *testing.T) {
 	check("apply_patch", patch("*** Update File: internal/runs/x_test.go", "*** Delete File: main.go"), "deny")
 	check("apply_patch", map[string]any{"input": "garbled"}, "allow")
 }
+
+func TestCheckToolWithSpec(t *testing.T) {
+	ctx := context.Background()
+	pool := testdb.New(t)
+	if _, err := seed.Run(ctx, pool, seed.Options{Demo: true}); err != nil {
+		t.Fatal(err)
+	}
+	q := store.New(pool)
+	me, _ := q.GetLocalUser(ctx)
+	a, _ := q.GetAgentByHandle(ctx, store.GetAgentByHandleParams{WorkspaceID: me.WorkspaceID, Handle: "atlas"})
+	svc := &runs.Service{Pool: pool, Tracker: &tracker.Service{Pool: pool}}
+	c := agents.Caller{Agent: a, Kind: "unmanaged"}
+	run, err := svc.Claim(ctx, c, "PAY-214")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.RunID = &run.ID
+
+	// A restricted override spec (e.g. read-only explorer) denies Write/Bash
+	// even while the run's stored spec permits them.
+	readOnly := agentdef.Resolved{
+		Harness: agentdef.HarnessClaudeCode,
+		Scopes:  []agentdef.ResolvedScope{{Scope: "repo:read", Mode: agentdef.Allowed}},
+		HarnessOptions: map[string]string{
+			"readonly": "true",
+		},
+	}
+	if d, err := svc.CheckToolWithSpec(ctx, c, readOnly, runs.ToolCheck{Tool: "Read", Input: map[string]any{"file_path": "main.go"}}); err != nil || d.Decision != "allow" {
+		t.Fatalf("readonly Read = %+v, %v", d, err)
+	}
+	if d, err := svc.CheckToolWithSpec(ctx, c, readOnly, runs.ToolCheck{Tool: "Write", Input: map[string]any{"file_path": "main.go"}}); err != nil || d.Decision != "deny" {
+		t.Fatalf("readonly Write = %+v, %v", d, err)
+	}
+	noTools := agentdef.Resolved{
+		Harness:        agentdef.HarnessClaudeCode,
+		Scopes:         []agentdef.ResolvedScope{{Scope: "repo:read", Mode: agentdef.Allowed}},
+		HarnessOptions: map[string]string{agentdef.OptionNoTools: "true"},
+	}
+	if d, err := svc.CheckToolWithSpec(ctx, c, noTools, runs.ToolCheck{Tool: "Read", Input: map[string]any{"file_path": "main.go"}}); err != nil || d.Decision != "deny" {
+		t.Fatalf("no_tools Read = %+v, %v", d, err)
+	}
+}

@@ -203,6 +203,10 @@ const OptionImageGeneration = "image_generation"
 // carry a person's private context and have no run to scope tools to.
 const OptionNoTools = "no_tools"
 
+// OptionNoMCP ("true") keeps Vesper and connector MCP servers off a turn while
+// leaving built-in file, shell, and web tools governed by scopes.
+const OptionNoMCP = "no_mcp"
+
 // OptionAside ("true") marks a chat segment that answers an aside: a question
 // about another chat's running reply. Only the Personal Assistant's chat spec
 // sets it, and the MCP surface it gets is read-only.
@@ -326,6 +330,9 @@ func validOptions(field string, opts map[string]string) error {
 	}
 	if _, ok := opts[OptionAside]; ok {
 		return invalid(field, "%s is set by Vesper for the Personal Assistant only", OptionAside)
+	}
+	if _, ok := opts[OptionNoMCP]; ok {
+		return invalid(field, "%s is set by Vesper only", OptionNoMCP)
 	}
 	if e, ok := opts["effort"]; ok && !slices.Contains(Efforts, e) {
 		return invalid(field, "effort must be one of %s", strings.Join(Efforts, ", "))

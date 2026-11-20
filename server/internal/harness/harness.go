@@ -40,6 +40,8 @@ type Turn struct {
 	// InlineImages are the same pictures for Claude Code, which takes them as
 	// content blocks in its first message rather than as file arguments.
 	InlineImages []InlineImage
+	// SystemAppend appends per-turn instructions without touching AGENTS.md.
+	SystemAppend string
 }
 
 // InlineImage is an image delivered as bytes.

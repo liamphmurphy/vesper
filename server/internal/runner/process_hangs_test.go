@@ -53,13 +53,19 @@ func TestOversizedHarnessLineFailsWithoutBlockingWriter(t *testing.T) {
 	}
 }
 
+type nopWriteCloser struct{}
+
+func (nopWriteCloser) Write(p []byte) (int, error) { return len(p), nil }
+func (nopWriteCloser) Close() error                { return nil }
+
 type heldProcess struct {
 	killed chan struct{}
 	once   sync.Once
 }
 
-func (*heldProcess) Stdout() io.Reader    { return strings.NewReader("") }
-func (*heldProcess) Stderr() io.Reader    { return strings.NewReader("") }
+func (*heldProcess) Stdin() io.WriteCloser { return nopWriteCloser{} }
+func (*heldProcess) Stdout() io.Reader     { return strings.NewReader("") }
+func (*heldProcess) Stderr() io.Reader     { return strings.NewReader("") }
 func (*heldProcess) Interrupt() error     { return nil }
 func (p *heldProcess) Kill() error        { p.once.Do(func() { close(p.killed) }); return nil }
 func (p *heldProcess) Wait() (int, error) { <-p.killed; return 137, nil }

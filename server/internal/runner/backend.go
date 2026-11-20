@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 )
 
@@ -32,6 +33,7 @@ type ExecSpec struct {
 
 // Process is a running ExecSpec.
 type Process interface {
+	Stdin() io.WriteCloser
 	Stdout() io.Reader // the harness event stream
 	Stderr() io.Reader
 	Interrupt() error // SIGINT: let the harness end its turn
@@ -202,42 +204,67 @@ func (l *Fake) Start(ctx context.Context, runID string, spec ExecSpec) (Process,
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // signal the whole tree
 	// Our own pipes, not StdoutPipe: cmd.Wait closes those as soon as the
 	// process exits, which can drop the stream's last lines (the result).
+	inR, inW, err := os.Pipe()
+	if err != nil {
+		return nil, err
+	}
 	outR, outW, err := os.Pipe()
 	if err != nil {
+		inR.Close()
+		inW.Close()
 		return nil, err
 	}
 	errR, errW, err := os.Pipe()
 	if err != nil {
+		inR.Close()
+		inW.Close()
 		outR.Close()
 		outW.Close()
 		return nil, err
 	}
-	cmd.Stdout, cmd.Stderr = outW, errW
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = inR, outW, errW
 	err = cmd.Start()
+	inR.Close()  // the child holds its read end
 	outW.Close() // the child holds its copies; EOF arrives when it exits
 	errW.Close()
 	if err != nil {
+		inW.Close()
 		outR.Close()
 		errR.Close()
 		return nil, err
 	}
-	return &fakeProc{cmd: cmd, out: outR, err: errR}, nil
+	return &fakeProc{cmd: cmd, in: &onceWriteCloser{f: inW}, out: outR, err: errR}, nil
+}
+
+type onceWriteCloser struct {
+	f    *os.File
+	once sync.Once
+	err  error
+}
+
+func (w *onceWriteCloser) Write(p []byte) (int, error) { return w.f.Write(p) }
+func (w *onceWriteCloser) Close() error {
+	w.once.Do(func() { w.err = w.f.Close() })
+	return w.err
 }
 
 type fakeProc struct {
 	cmd *exec.Cmd
+	in  io.WriteCloser
 	out *os.File
 	err *os.File
 }
 
 // Close releases the read ends once the stream has been drained.
 func (p *fakeProc) Close() error {
+	_ = p.in.Close()
 	p.out.Close()
 	return p.err.Close()
 }
 
-func (p *fakeProc) Stdout() io.Reader { return p.out }
-func (p *fakeProc) Stderr() io.Reader { return p.err }
+func (p *fakeProc) Stdin() io.WriteCloser { return p.in }
+func (p *fakeProc) Stdout() io.Reader     { return p.out }
+func (p *fakeProc) Stderr() io.Reader     { return p.err }
 func (p *fakeProc) Interrupt() error  { return syscall.Kill(-p.cmd.Process.Pid, syscall.SIGINT) }
 func (p *fakeProc) Kill() error       { return syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL) }
 
