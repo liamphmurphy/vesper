@@ -76,8 +76,11 @@ test("theater mode folds the shell's sidebar and gives it back", async ({ page }
   await frame.locator("#play").click();
   const player = page.getByTestId("custom-app-player");
 
-  await player.getByRole("button", { name: /^Theater mode/ }).click();
+  const theaterButton = player.getByRole("button", { name: "Theater", exact: true });
+  await expect(theaterButton).toHaveAttribute("aria-pressed", "false");
+  await theaterButton.click();
   await expect(player).toHaveAttribute("data-theater", "true");
+  await expect(theaterButton).toHaveAttribute("aria-pressed", "true");
   await expect.poll(() => sidebarMessages(page)).toEqual([true]);
   await expect.poll(() => playerStates(page)).toContainEqual({ open: true, theater: true });
 

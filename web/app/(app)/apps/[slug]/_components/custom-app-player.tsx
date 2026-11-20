@@ -106,12 +106,19 @@ export function CustomAppPlayerStage({
               {video.provider === "youtube" ? "Open on YouTube" : "Open on Twitch"}
             </a>
           )}
-          <IconButton
-            icon={theater ? "shrink" : "expand"}
-            label={theater ? "Exit theater mode (T)" : "Theater mode (T)"}
+          <button
+            type="button"
             aria-pressed={theater}
+            title={theater ? "Leave theater mode (T)" : "Theater mode: wide player, sidebar hidden (T)"}
             onClick={() => onTheaterChange(!theater)}
-          />
+            className={cx(
+              "inline-flex h-7 flex-none items-center gap-1.5 rounded-full border px-3 text-12 font-medium transition-colors",
+              theater ? "border-accent bg-accent-soft text-fg" : "border-border-strong text-fg-secondary hover:bg-hover hover:text-fg",
+            )}
+          >
+            <Icon name="play" size={13} />
+            Theater
+          </button>
           <IconButton icon="x" label="Close video player (Esc)" onClick={onClose} />
         </div>
       </div>
