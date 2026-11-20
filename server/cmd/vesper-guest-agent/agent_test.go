@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -169,5 +170,77 @@ func TestServeKeepsRetryingWithoutALimit(t *testing.T) {
 	// Backed off rather than spinning: ~10 tries a second, not millions.
 	if n := ln.count(); n < 3 || n > 100 {
 		t.Fatalf("Accept called %d times, want a few with backoff between", n)
+	}
+}
+
+// syncBuffer is a bytes.Buffer safe to write from the agent's goroutines and
+// read from the test.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func runTracedExec(t *testing.T, trace bool) string {
+	t.Helper()
+	logs := &syncBuffer{}
+	srv := newAgentServer(slog.New(slog.NewTextHandler(logs, nil)))
+	srv.trace = trace
+	c := &guestproto.Client{Dial: func(ctx context.Context) (net.Conn, error) {
+		a, b := net.Pipe()
+		go func() {
+			defer b.Close()
+			srv.handleConn(ctx, b)
+		}()
+		return a, nil
+	}}
+	proc, err := c.StartExec(context.Background(), guestproto.ExecReq{Argv: []string{"/bin/sh", "-c", "exit 3"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = proc.Stdin().Close()
+	_, _ = io.Copy(io.Discard, proc.Stdout())
+	if exit, err := proc.Wait(); err != nil || exit.Code != 3 {
+		t.Fatalf("exit = %+v, %v; want code 3", exit, err)
+	}
+	_ = proc.Close()
+	if !trace {
+		time.Sleep(100 * time.Millisecond) // give a stray log line time to land
+		return logs.String()
+	}
+	// The finish line is written just after the exit frame the client waited for.
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(logs.String(), "exec finished") && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	return logs.String()
+}
+
+func TestAgentTraceLogsExecLifecycle(t *testing.T) {
+	out := runTracedExec(t, true)
+	for _, want := range []string{"msg=request op=" + guestproto.OpExecStart, `msg="exec started"`, "argv0=/bin/sh", `msg="exec finished"`, "code=3"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("trace lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestAgentWithoutTraceLogsNoExecLifecycle(t *testing.T) {
+	out := runTracedExec(t, false)
+	for _, unwanted := range []string{"msg=request", "exec started", "exec finished", "exec connection read ended"} {
+		if strings.Contains(out, unwanted) {
+			t.Fatalf("untraced agent logged %q:\n%s", unwanted, out)
+		}
 	}
 }

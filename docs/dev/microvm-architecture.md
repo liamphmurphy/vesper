@@ -255,8 +255,9 @@ in the Linux VM; the macOS VM only receives files and runs commands.
   command can't reach the root-run agent. Every command runs as the image's
   user (`RUNNER_MACOS_USER`, default `admin`) except one fixed root command at
   boot that makes `/opt/vesper/workspace` and looks the user's ids up.
-  When its vsock listener fails 20 times in a row it logs that to
-  `/var/log/vesper-guest-agent.log` and exits, so launchd (`KeepAlive`)
+  It logs every request and each command's start, finish and connection
+  errors to `/var/log/vesper-guest-agent.log` (read with `mac --agent-log`).
+  When its vsock listener fails 20 times in a row it logs that and exits, so launchd (`KeepAlive`)
   restarts it instead of leaving a live process that refuses the host.
 - **Trust.** The macOS VM has no NIC and no egress listeners: no network, no
   harness, no OAuth token, no git credential, no API. Its inputs are the run's

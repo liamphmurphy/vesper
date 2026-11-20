@@ -89,6 +89,17 @@ type agentServer struct {
 	// maxAcceptFailures, when positive, makes serve give up after that many
 	// Accept errors in a row (see serve).
 	maxAcceptFailures int
+	// trace logs every request and each exec's lifecycle and connection
+	// errors. On in macOS guests, where the log is a file read back through
+	// `mac --agent-log`; off in Linux guests, where stderr is the console.
+	trace bool
+}
+
+// tracef logs at Info when tracing is on.
+func (s *agentServer) tracef(msg string, args ...any) {
+	if s.trace {
+		s.log.Info(msg, args...)
+	}
 }
 
 func newAgentServer(log *slog.Logger) *agentServer {
@@ -160,6 +171,7 @@ func (s *agentServer) handleConn(ctx context.Context, conn net.Conn) {
 		_ = writeRPCError(conn, f.ID, fmt.Sprintf("invalid request: %v", err))
 		return
 	}
+	s.tracef("request", "op", req.Op)
 
 	switch req.Op {
 	case guestproto.OpPing:
@@ -579,7 +591,12 @@ func (s *agentServer) handleExec(ctx context.Context, conn net.Conn, id uint32, 
 		}
 	}
 
+	started := time.Now()
+	if cmd.Process != nil {
+		s.tracef("exec started", "id", id, "argv0", in.Argv[0], "uid", in.UID, "tty", in.TTY, "pid", cmd.Process.Pid)
+	}
 	if err := writeRPCOK(conn, id, nil); err != nil {
+		s.tracef("exec start reply failed", "id", id, "err", err)
 		_ = signalProcessGroup(cmd, 9)
 		_, _ = cmd.Process.Wait()
 		if cmd.Process != nil {
@@ -605,6 +622,7 @@ func (s *agentServer) handleExec(ctx context.Context, conn net.Conn, id uint32, 
 					chunk := make([]byte, n)
 					copy(chunk, buf[:n])
 					if werr := sw.WriteFrame(guestproto.Frame{Type: typ, ID: id, Data: chunk}); werr != nil {
+						s.tracef("exec output write failed", "id", id, "frame", typ, "err", werr)
 						return
 					}
 				}
@@ -627,6 +645,7 @@ func (s *agentServer) handleExec(ctx context.Context, conn net.Conn, id uint32, 
 		for {
 			rf, rerr := guestproto.ReadFrame(conn)
 			if rerr != nil {
+				s.tracef("exec connection read ended", "id", id, "err", rerr)
 				// Host closed or disconnected unexpectedly -> terminate child group.
 				_ = signalProcessGroup(cmd, 9)
 				return
@@ -687,5 +706,6 @@ func (s *agentServer) handleExec(ctx context.Context, conn net.Conn, id uint32, 
 	if ctx.Err() != nil && exit.Error == "" && exit.Code == 0 {
 		exit.Code = 130
 	}
-	_ = guestproto.WriteJSONFrame(sw, guestproto.FrameExecExit, id, exit)
+	werr := guestproto.WriteJSONFrame(sw, guestproto.FrameExecExit, id, exit)
+	s.tracef("exec finished", "id", id, "code", exit.Code, "error", exit.Error, "took", time.Since(started).Round(time.Millisecond), "exit_frame_err", werr)
 }
