@@ -78,6 +78,7 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
         case .shell(let model): state.shell = model
         case .navigator(let model): state.navigator = model
         case .navigatorFallback(let active): state.navigatorFallback = active
+        case .sidebarHidden(let hidden): state.sidebarHidden = hidden
         case .toolbar(let items): state.toolbarItems = items
         case .appearance(let mode, let background):
             state.pageMode = mode
@@ -261,6 +262,7 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
         case .shell(let s): "shell areas=\(s.areas.count) apps=\(s.apps.count)"
         case .navigator(let n): "navigator \(n?.id ?? "nil") selected=\(n?.selectedId ?? "nil") rows=\(n?.sections.flatMap { $0.items.map(\.id) }.prefix(12).joined(separator: ",") ?? "")"
         case .navigatorFallback(let a): "navigatorFallback \(a)"
+        case .sidebarHidden(let h): "sidebarHidden \(h)"
         case .toolbar(let i): "toolbar \(i.count) items"
         case .appearance(let m, _): "appearance \(m.rawValue)"
         case .confirmApproval(let r, let s): "confirmApproval \(r) \(s.rawValue)"

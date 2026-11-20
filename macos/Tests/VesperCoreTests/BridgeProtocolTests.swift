@@ -22,6 +22,16 @@ final class BridgeProtocolTests: XCTestCase {
         }
     }
 
+    func testSidebarHiddenDecodes() throws {
+        let all = try entries("page-messages.json").map { try PageMessage.decode(fromJSONObject: $0) }
+        let hidden = all.compactMap { message -> Bool? in
+            if case .sidebarHidden(let h) = message { return h }
+            return nil
+        }
+        XCTAssertEqual(hidden, [true, false])
+        XCTAssertThrowsError(try PageMessage.decode(fromJSONObject: ["v": 1, "type": "sidebarHidden"]))
+    }
+
     func testPageMessageDetails() throws {
         let all = try entries("page-messages.json").map { try PageMessage.decode(fromJSONObject: $0) }
         XCTAssertEqual(all[0], .ready(path: "/work"))
