@@ -15,6 +15,47 @@ public struct BackupInspection: Sendable, Equatable, Decodable {
     public var secretsKeyFingerprint: String?
     public var encryptedSecretRows: Int
     public var matchesCurrentKey: Bool
+    public var encrypted: Bool
+    public var needsPassword: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case exportedAt, appVersion, schemaVersion, tableCount, totalRows, objectCount
+        case secretsKeyFingerprint, encryptedSecretRows, matchesCurrentKey
+        case encrypted, needsPassword
+    }
+
+    public init(
+        exportedAt: String, appVersion: String, schemaVersion: Int, tableCount: Int, totalRows: Int,
+        objectCount: Int, secretsKeyFingerprint: String? = nil, encryptedSecretRows: Int, matchesCurrentKey: Bool,
+        encrypted: Bool = false, needsPassword: Bool = false
+    ) {
+        self.exportedAt = exportedAt
+        self.appVersion = appVersion
+        self.schemaVersion = schemaVersion
+        self.tableCount = tableCount
+        self.totalRows = totalRows
+        self.objectCount = objectCount
+        self.secretsKeyFingerprint = secretsKeyFingerprint
+        self.encryptedSecretRows = encryptedSecretRows
+        self.matchesCurrentKey = matchesCurrentKey
+        self.encrypted = encrypted
+        self.needsPassword = needsPassword
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        exportedAt = try c.decode(String.self, forKey: .exportedAt)
+        appVersion = try c.decode(String.self, forKey: .appVersion)
+        schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
+        tableCount = try c.decode(Int.self, forKey: .tableCount)
+        totalRows = try c.decode(Int.self, forKey: .totalRows)
+        objectCount = try c.decode(Int.self, forKey: .objectCount)
+        secretsKeyFingerprint = try c.decodeIfPresent(String.self, forKey: .secretsKeyFingerprint)
+        encryptedSecretRows = try c.decode(Int.self, forKey: .encryptedSecretRows)
+        matchesCurrentKey = try c.decode(Bool.self, forKey: .matchesCurrentKey)
+        encrypted = try c.decodeIfPresent(Bool.self, forKey: .encrypted) ?? false
+        needsPassword = try c.decodeIfPresent(Bool.self, forKey: .needsPassword) ?? false
+    }
 
     /// The archive holds secrets sealed with a key, so importing needs that key (or dropping the secrets).
     public var hasEncryptedSecrets: Bool { !(secretsKeyFingerprint ?? "").isEmpty }
@@ -37,18 +78,30 @@ public enum BackupImport {
     }
 
     /// The environment for `inspect`: SECRETS_KEY is the current key (so it can report a match), or "".
-    public static func inspectEnvironment(base: [String: String], currentKey: String?) -> [String: String] {
+    public static func inspectEnvironment(base: [String: String], currentKey: String?, backupPassword: String? = nil) -> [String: String] {
         var env = base
         env["SECRETS_KEY"] = (currentKey ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if let pw = backupPassword, !pw.isEmpty {
+            env["VESPER_BACKUP_PASSWORD"] = pw
+        } else {
+            env.removeValue(forKey: "VESPER_BACKUP_PASSWORD")
+        }
         return env
     }
 
     /// The environment for the import itself: Postgres location, the archive's key (or "" when dropping secrets).
-    public static func importEnvironment(base: [String: String], postgresBinDir: String, secretsKey: String?, dropSecrets: Bool) -> [String: String] {
+    public static func importEnvironment(
+        base: [String: String], postgresBinDir: String, secretsKey: String?, dropSecrets: Bool, backupPassword: String? = nil
+    ) -> [String: String] {
         var env = base
         env["VESPER_POSTGRES_BIN_DIR"] = postgresBinDir
         env["SECRETS_KEY"] = dropSecrets ? "" : (secretsKey ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         env.removeValue(forKey: "VESPER_NO_SIGNIN")
+        if let pw = backupPassword, !pw.isEmpty {
+            env["VESPER_BACKUP_PASSWORD"] = pw
+        } else {
+            env.removeValue(forKey: "VESPER_BACKUP_PASSWORD")
+        }
         return env
     }
 
@@ -74,10 +127,13 @@ public enum BackupImport {
     }
 
     /// Asks the bundled binary what the archive carries.
-    public static func inspect(vesperBin: URL, archive: String, currentKey: String?, environment: [String: String] = ProcessInfo.processInfo.environment) async throws -> BackupInspection {
+    public static func inspect(
+        vesperBin: URL, archive: String, currentKey: String?, backupPassword: String? = nil,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) async throws -> BackupInspection {
         let out = try await run(
             executable: vesperBin, arguments: inspectArguments(archive: archive),
-            environment: inspectEnvironment(base: environment, currentKey: currentKey), timeout: 30
+            environment: inspectEnvironment(base: environment, currentKey: currentKey, backupPassword: backupPassword), timeout: 30
         )
         guard out.status == 0 else {
             throw BackupImportError(extractCLIError(stdout: out.stdout, stderr: out.stderr, fallback: "Vesper couldn't read that archive."))
@@ -91,12 +147,15 @@ public enum BackupImport {
     /// Runs the import into `dataDirectory`. The stack must already be stopped.
     public static func run(
         vesperBin: URL, postgresBinDir: URL, dataDirectory: String, archive: String, secretsKey: String?, dropSecrets: Bool,
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        backupPassword: String? = nil, environment: [String: String] = ProcessInfo.processInfo.environment
     ) async throws {
         let out = try await run(
             executable: vesperBin,
             arguments: importArguments(dataDirectory: dataDirectory, archive: archive, dropSecrets: dropSecrets),
-            environment: importEnvironment(base: environment, postgresBinDir: postgresBinDir.path, secretsKey: secretsKey, dropSecrets: dropSecrets),
+            environment: importEnvironment(
+                base: environment, postgresBinDir: postgresBinDir.path, secretsKey: secretsKey, dropSecrets: dropSecrets,
+                backupPassword: backupPassword
+            ),
             timeout: 15 * 60
         )
         guard out.status == 0 else {
