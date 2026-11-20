@@ -241,11 +241,16 @@ function parseTimestampSeconds(raw: string | null): number | null {
   return total > 0 ? total : null;
 }
 
+export type TwitchTarget =
+  | { kind: "live"; channel: string }
+  | { kind: "vod"; vodId: string; startSec?: number };
+
 export type VideoEmbed = {
   provider: "youtube" | "twitch";
   embedUrl: string;
   externalUrl: string;
   titleFallback: string;
+  twitchTarget?: TwitchTarget;
 };
 
 export function resolveVideoEmbed(rawUrl: string, parentHost?: string): VideoEmbed | null {
@@ -297,11 +302,13 @@ export function resolveVideoEmbed(rawUrl: string, parentHost?: string): VideoEmb
     }
     if (segments.length === 2 && segments[0] === "videos" && TWITCH_VOD_RE.test(segments[1])) {
       const vodId = segments[1];
+      const start = parseTimestampSeconds(u.searchParams.get("t"));
       return {
         provider: "twitch",
         embedUrl: `https://player.twitch.tv/?video=${vodId}&parent=${encodeURIComponent(parent)}&autoplay=true`,
         externalUrl: `https://www.twitch.tv/videos/${vodId}`,
         titleFallback: "Twitch video",
+        twitchTarget: start && start > 0 ? { kind: "vod", vodId, startSec: start } : { kind: "vod", vodId },
       };
     }
     if (segments.length === 1 && TWITCH_CHANNEL_RE.test(segments[0]) && !TWITCH_RESERVED_PATHS.has(segments[0].toLowerCase())) {
@@ -311,6 +318,7 @@ export function resolveVideoEmbed(rawUrl: string, parentHost?: string): VideoEmb
         embedUrl: `https://player.twitch.tv/?channel=${encodeURIComponent(channel)}&parent=${encodeURIComponent(parent)}&autoplay=true`,
         externalUrl: `https://www.twitch.tv/${encodeURIComponent(channel)}`,
         titleFallback: `${segments[0]} on Twitch`,
+        twitchTarget: { kind: "live", channel },
       };
     }
   }

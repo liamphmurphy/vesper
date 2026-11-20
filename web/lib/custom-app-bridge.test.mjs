@@ -149,13 +149,21 @@ test("resolveVideoEmbed resolves YouTube and Twitch URLs safely", () => {
     embedUrl: "https://player.twitch.tv/?channel=somestreamer&parent=vesper.local&autoplay=true",
     externalUrl: "https://www.twitch.tv/somestreamer",
     titleFallback: "SomeStreamer on Twitch",
+    twitchTarget: { kind: "live", channel: "somestreamer" },
   });
   assert.deepEqual(resolveVideoEmbed("https://www.twitch.tv/videos/123456789", "vesper.local"), {
     provider: "twitch",
     embedUrl: "https://player.twitch.tv/?video=123456789&parent=vesper.local&autoplay=true",
     externalUrl: "https://www.twitch.tv/videos/123456789",
     titleFallback: "Twitch video",
+    twitchTarget: { kind: "vod", vodId: "123456789" },
   });
+  assert.deepEqual(resolveVideoEmbed("https://www.twitch.tv/videos/123456789?t=1h2m3s", "vesper.local")?.twitchTarget, {
+    kind: "vod",
+    vodId: "123456789",
+    startSec: 3723,
+  });
+  assert.equal(resolveVideoEmbed("https://clips.twitch.tv/FriendlyClipSlug-123", "vesper.local")?.twitchTarget, undefined);
   assert.equal(
     resolveVideoEmbed("https://clips.twitch.tv/FriendlyClipSlug-123", "vesper.local")?.embedUrl,
     "https://clips.twitch.tv/embed?clip=FriendlyClipSlug-123&parent=vesper.local&autoplay=true",

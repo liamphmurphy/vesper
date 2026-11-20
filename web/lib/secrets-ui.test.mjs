@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { expiryPill, expiryText, handleFor, hostOf, jwtExpiry, oauthStatus, placementLabel, secretCall, sentAs, splitScopes } from "./secrets-ui.ts";
+import { OAUTH_PRESETS, expiryPill, expiryText, handleFor, hostOf, jwtExpiry, oauthStatus, placementLabel, secretCall, sentAs, splitScopes } from "./secrets-ui.ts";
 
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
 
@@ -62,4 +62,17 @@ test("an OAuth secret is usable only once signed in, until a refresh is refused"
   assert.deepEqual(oauthStatus({ error: "" }), { label: "Not signed in", tone: "human", action: "Sign in" });
   assert.equal(oauthStatus({ signed_in_at: "2026-11-15T00:00:00Z", error: "" })?.tone, "done");
   assert.equal(oauthStatus({ signed_in_at: "2026-11-15T00:00:00Z", error: "invalid_grant" })?.tone, "blocked");
+});
+
+test("Twitch OAuth preset configures Twitch authorize, token, and Helix host", () => {
+  const twitch = OAUTH_PRESETS.find((p) => p.value === "twitch");
+  assert.deepEqual(twitch, {
+    value: "twitch",
+    label: "Twitch",
+    authorize_url: "https://id.twitch.tv/oauth2/authorize",
+    token_url: "https://id.twitch.tv/oauth2/token",
+    hosts: ["api.twitch.tv"],
+    scopes_hint: "user:read:follows",
+    scopes_required: true,
+  });
 });

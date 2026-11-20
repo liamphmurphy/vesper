@@ -153,6 +153,15 @@ export const OAUTH_PRESETS: ReadonlyArray<OAuthPreset> = [
     scopes_hint: "https://www.googleapis.com/auth/drive.readonly",
     scopes_required: true,
   },
+  {
+    value: "twitch",
+    label: "Twitch",
+    authorize_url: "https://id.twitch.tv/oauth2/authorize",
+    token_url: "https://id.twitch.tv/oauth2/token",
+    hosts: ["api.twitch.tv"],
+    scopes_hint: "user:read:follows",
+    scopes_required: true,
+  },
   { value: "custom", label: "Other provider", authorize_url: "", token_url: "", hosts: [], scopes_hint: "read write", scopes_required: false },
 ];
 
