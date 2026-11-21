@@ -124,7 +124,7 @@ async function installKnowledgePrintMock(page: BrowserPage) {
   return { note, chat };
 }
 
-test("Knowledge print view strips editor chrome, renders Obsidian syntax cleanly, and prints in neutral light", async ({ page }) => {
+test("Knowledge print view strips editor chrome, renders Obsidian syntax cleanly, keeps window dark theme, and defaults metadata off", async ({ page }) => {
   await page.emulateMedia({ colorScheme: "dark" });
   await installKnowledgePrintMock(page);
   await page.addInitScript(() => {
@@ -137,12 +137,16 @@ test("Knowledge print view strips editor chrome, renders Obsidian syntax cleanly
 
   await page.goto(`/print/knowledge/${ID}?style=clean`);
   const doc = page.getByTestId("print-knowledge");
+  const metaCheckbox = page.getByRole("checkbox", { name: "Include metadata" });
 
   await expect(doc).toHaveAttribute("data-print-style", "clean");
+  await expect(doc).toHaveAttribute("data-theme", "light");
   await expect(doc.getByRole("heading", { name: "Release Architecture" })).toHaveCount(1);
-  await expect(doc.getByText("Engineering / Specs")).toBeVisible();
-  await expect(doc.getByText("Ada Lovelace", { exact: true })).toBeVisible();
-  await expect(doc.getByText("#architecture", { exact: true })).toBeVisible();
+  await expect(metaCheckbox).toBeVisible();
+  await expect(metaCheckbox).not.toBeChecked();
+  await expect(doc.getByText("Engineering / Specs")).toHaveCount(0);
+  await expect(doc.getByText("Ada Lovelace", { exact: true })).toHaveCount(0);
+  await expect(doc.getByText("#architecture", { exact: true })).toHaveCount(0);
   await expect(doc.getByText("Context Doc", { exact: true })).toBeVisible();
   await expect(doc.getByText("Page", { exact: true })).toBeVisible();
   await expect(doc.getByRole("button", { name: /Add property|Remove / })).toHaveCount(0);
@@ -164,13 +168,21 @@ test("Knowledge print view strips editor chrome, renders Obsidian syntax cleanly
   await expect(doc.locator(".print-embed-ref")).toContainText("PDF");
   await expect(doc.locator(".print-embed-ref")).toContainText("handbook.pdf");
   await expect(doc.locator(".print-embed-page")).toContainText("Shared background note.");
-  await expect(doc.getByTestId("mermaid").locator("img")).toBeVisible();
+  const mermaidImg = doc.getByTestId("mermaid").locator("img");
+  await expect(mermaidImg).toBeVisible();
+  const mermaidSvg = decodeURIComponent((await mermaidImg.getAttribute("src")) ?? "").toLowerCase();
+  expect(mermaidSvg).toContain("#ffffff");
+  expect(mermaidSvg).not.toContain("#3b4252");
+  expect(mermaidSvg).not.toContain("#15141f");
   await expect(doc.locator(".katex").first()).toBeVisible();
   await expect(doc.locator("table td", { hasText: "Ada" })).toBeVisible();
 
   await expect.poll(() => page.evaluate(() => (window as unknown as { __prints: number }).__prints)).toBe(1);
-  expect(await page.evaluate(() => (window as unknown as { __themeAtPrint?: string }).__themeAtPrint)).toBe("light");
-  expect(await page.evaluate(() => document.documentElement.style.getPropertyValue("--bg"))).toBe("#f5f5f7");
+  // Export window keeps the user's dark theme and custom palette while the paper sheet stays neutral light.
+  expect(await page.evaluate(() => (window as unknown as { __themeAtPrint?: string }).__themeAtPrint)).toBe("dark");
+  expect(await page.evaluate(() => document.documentElement.getAttribute("data-theme"))).toBe("dark");
+  expect(await page.evaluate(() => document.documentElement.style.getPropertyValue("--bg"))).toBe("#112233");
+  expect(await doc.evaluate((el) => (el as HTMLElement).style.getPropertyValue("--bg"))).toBe("#f5f5f7");
   expect(await page.evaluate(() => localStorage.getItem("la-theme"))).toBe("dark");
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem("la-appearance")!).palette)).toBe("custom");
   await expect(page).toHaveTitle("Release Architecture");
@@ -178,15 +190,21 @@ test("Knowledge print view strips editor chrome, renders Obsidian syntax cleanly
   await page.emulateMedia({ media: "print" });
   await expect(page.getByRole("button", { name: "Print / Save as PDF" })).toBeHidden();
   await expect(page.getByRole("group", { name: "PDF style" })).toBeHidden();
+  await expect(metaCheckbox).toBeHidden();
   await expect(doc.getByRole("button", { name: "Show code" })).toBeHidden();
 });
 
-test("PDF style switching and Properties toggle update the preview without extra auto-prints", async ({ page }) => {
+test("PDF style switching and Include metadata checkbox update the preview without extra auto-prints", async ({ page }) => {
   await installKnowledgePrintMock(page);
   await page.goto(`/print/knowledge/${ID}?style=clean`);
   const doc = page.getByTestId("print-knowledge");
+  const metaCheckbox = page.getByRole("checkbox", { name: "Include metadata" });
 
   await expect.poll(() => page.evaluate(() => (window as unknown as { __prints: number }).__prints)).toBe(1);
+  await expect(metaCheckbox).not.toBeChecked();
+  await expect(doc.getByText("Engineering / Specs")).toHaveCount(0);
+  await expect(doc.getByText("Ada Lovelace", { exact: true })).toHaveCount(0);
+  await expect(doc.getByText("#architecture", { exact: true })).toHaveCount(0);
 
   await page.getByRole("button", { name: "Editorial", exact: true }).click();
   await expect(doc).toHaveAttribute("data-print-style", "editorial");
@@ -202,18 +220,22 @@ test("PDF style switching and Properties toggle update the preview without extra
   await expect(doc).toHaveAttribute("data-print-style", "technical");
   await expect(page).toHaveURL(new RegExp(`/print/knowledge/${ID}\\?style=technical$`));
 
-  // Switching styles never re-triggers the initial auto-print; clicking the print button prints again.
+  await metaCheckbox.check();
+  await expect(metaCheckbox).toBeChecked();
+  await expect(doc.getByText("Engineering / Specs")).toBeVisible();
+  await expect(doc.getByText("Ada Lovelace", { exact: true })).toBeVisible();
+  await expect(doc.getByText("#architecture", { exact: true })).toBeVisible();
+
+  // Switching styles or toggling metadata never re-triggers auto-print; clicking the print button prints again.
   expect(await page.evaluate(() => (window as unknown as { __prints: number }).__prints)).toBe(1);
   await page.getByRole("button", { name: "Print / Save as PDF" }).click();
   expect(await page.evaluate(() => (window as unknown as { __prints: number }).__prints)).toBe(2);
 
-  await page.getByRole("button", { name: "Properties", exact: true }).click();
+  await metaCheckbox.uncheck();
+  await expect(metaCheckbox).not.toBeChecked();
   await expect(doc.getByText("Engineering / Specs")).toHaveCount(0);
   await expect(doc.getByText("Ada Lovelace", { exact: true })).toHaveCount(0);
-
-  await page.getByRole("button", { name: "Properties", exact: true }).click();
-  await expect(doc.getByText("Engineering / Specs")).toBeVisible();
-  await expect(doc.getByText("Ada Lovelace", { exact: true })).toBeVisible();
+  await expect(doc.getByText("#architecture", { exact: true })).toHaveCount(0);
 });
 
 test("live Knowledge editor hides formatting toolbar, status bar, and property controls under print media", async ({ page }) => {
