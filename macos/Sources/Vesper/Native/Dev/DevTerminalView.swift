@@ -36,17 +36,16 @@ final class DevTerminalNSView: TerminalView {
     /// Set from SwiftTerm's focus hook, which runs before the window records its new first responder.
     private var focused = false
     private var keyMonitor: Any?
-    private var settingObserver: NSObjectProtocol?
-    private var windowObservers: [NSObjectProtocol] = []
+    /// The window whose key state drives Secure Keyboard Entry (selector observers capture nothing,
+    /// which Swift 6's region checks require for an NSView).
+    private weak var observedWindow: NSWindow?
 
     init() {
         super.init(frame: .zero, font: NSFont.monospacedSystemFont(ofSize: DevTerminalTheme.fontSize, weight: .regular))
         applyTheme()
         // xterm.js rings no bell by default; tmux and zsh bells would otherwise beep at every Tab.
         bellStyle = .none
-        settingObserver = NotificationCenter.default.addObserver(forName: DevSecureKeyboardEntry.didChange, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.updateSecureInput() }
-        }
+        NotificationCenter.default.addObserver(self, selector: #selector(secureInputInputsChanged), name: DevSecureKeyboardEntry.didChange, object: nil)
     }
 
     @available(*, unavailable)
@@ -99,10 +98,9 @@ final class DevTerminalNSView: TerminalView {
         removeKeyMonitor()
         if let window {
             for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
-                windowObservers.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.updateSecureInput() }
-                })
+                NotificationCenter.default.addObserver(self, selector: #selector(secureInputInputsChanged), name: name, object: window)
             }
+            observedWindow = window
             installKeyMonitor()
         }
         updateSecureInput()
@@ -150,9 +148,16 @@ final class DevTerminalNSView: TerminalView {
         }
     }
 
+    @objc private func secureInputInputsChanged(_ note: Notification) {
+        updateSecureInput()
+    }
+
     private func removeWindowObservers() {
-        for observer in windowObservers { NotificationCenter.default.removeObserver(observer) }
-        windowObservers = []
+        guard let observedWindow else { return }
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+            NotificationCenter.default.removeObserver(self, name: name, object: observedWindow)
+        }
+        self.observedWindow = nil
     }
 
     private func removeKeyMonitor() {
@@ -164,8 +169,7 @@ final class DevTerminalNSView: TerminalView {
     func teardown() {
         removeKeyMonitor()
         removeWindowObservers()
-        if let settingObserver { NotificationCenter.default.removeObserver(settingObserver) }
-        settingObserver = nil
+        NotificationCenter.default.removeObserver(self, name: DevSecureKeyboardEntry.didChange, object: nil)
         if secureInput.update(wanted: false) == .disable { DisableSecureEventInput() }
         terminalDelegate = nil
     }
