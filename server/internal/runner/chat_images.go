@@ -215,9 +215,15 @@ func (r *Runner) runChatImageJob(ctx context.Context, c runCtx, turn store.RunTu
 	if engine == agentdef.HarnessAntigravity {
 		h = harness.Antigravity{}
 	}
-	inv, err := h.Invocation(harness.Workspace{
+	sh, ok := h.(harness.SessionHarness)
+	if !ok {
+		return finish(label + " doesn't support session protocol")
+	}
+	ws := harness.Workspace{
 		DependencyCacheDir: cacheDir, Dir: r.Backend.WorkspaceDir(wsID(c.run)), MCPURL: r.Cfg.MCPURL, Token: token, TokenEnv: tokenEnv, ContainerSandbox: r.Backend.Isolates(),
-	}, harness.Turn{Spec: spec, Prompt: imageStepPrompt + imageStepReferencePrompt(refs) + "Request: " + job.Prompt, Images: refs.images()})
+	}
+	hTurn := harness.Turn{Spec: spec, Prompt: imageStepPrompt + imageStepReferencePrompt(refs) + "Request: " + job.Prompt, Images: refs.images()}
+	inv, err := sh.SessionInvocation(ws, hTurn)
 	if err != nil {
 		r.Log.Warn("image step invocation", "run", c.run.ID, "err", err)
 		return finish(label + " couldn't be started")
@@ -262,12 +268,12 @@ func (r *Runner) runChatImageJob(ctx context.Context, c runCtx, turn store.RunTu
 	// run's resumable session: the policy hook lets a Codex step copy from its
 	// thread's directory only.
 	thread := ""
-	res, _, code, waitErr := r.watchSession(ctx, c, proc, h.NewParser(spec.Model), sensitive, timeout, func(s string) {
+	res, _, code, waitErr := r.runSession(ctx, c, sh, proc, ws, hTurn, sensitive, timeout, r.policyCheckWithSpec(c, spec), func(s string) {
 		thread = s
 		if err := q.SetChatImageJobSession(context.Background(), store.SetChatImageJobSessionParams{ID: job.ID, CodexSessionID: &s}); err != nil {
 			r.Log.Warn("record image step session", "job", job.ID, "err", err)
 		}
-	})
+	}, false)
 	if res.Usage != (harness.Usage{}) {
 		var source *string
 		if res.Usage.CostSource != "" {
@@ -308,7 +314,7 @@ func (r *Runner) runChatImageJob(ctx context.Context, c runCtx, turn store.RunTu
 		// phrased it. Only when the step left nothing, so no image shows twice.
 		if err == nil && len(produced) == 0 && thread != "" {
 			var cerr error
-			if engine == agentdef.HarnessAntigravity {
+			if agentdef.CapsOf(engine).CollectsGeneratedImages {
 				cerr = collectAntigravityImages(ctx, r.Backend, wsID(c.run), thread, res.Images)
 			} else {
 				cerr = collectGeneratedImages(ctx, r.Backend, wsID(c.run), thread)

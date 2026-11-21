@@ -174,7 +174,7 @@ func TestCodexInvocation(t *testing.T) {
 	}
 	inv, _ = Codex{}.Invocation(ws, Turn{Spec: spec(), Prompt: "next", SessionID: "th1"})
 	n := len(inv.Argv)
-	if inv.Argv[4] != "resume" || inv.Argv[n-2] != "th1" || inv.Argv[n-1] != "next" || strings.Contains(strings.Join(inv.Argv, " "), "network_access") {
+	if inv.Argv[2] != "resume" || inv.Argv[n-2] != "th1" || inv.Argv[n-1] != "next" || strings.Contains(strings.Join(inv.Argv, " "), "network_access") {
 		t.Fatalf("resume argv %v", inv.Argv)
 	}
 }
@@ -288,13 +288,9 @@ func TestPlanningInvocationsAreReadOnly(t *testing.T) {
 			t.Fatalf("planning did not deny %s", tool)
 		}
 	}
-	// Its sub agents only read as well.
-	if !strings.Contains(string(claude.Files[claudeAgentsFile]), `"tools": [
-      "Read",
-      "Grep",
-      "Glob"
-    ]`) || strings.Contains(string(claude.Files[claudeAgentsFile]), `"Bash"`) {
-		t.Fatalf("planning sub agents:\n%s", claude.Files[claudeAgentsFile])
+	// Native --agents subagent files are no longer emitted; subagents run via Vesper MCP.
+	if slices.Contains(claude.Argv, "--agents") {
+		t.Fatalf("unexpected --agents flag in %v", claude.Argv)
 	}
 	codex, err := (Codex{}).Invocation(Workspace{MCPURL: "http://localhost/mcp", Token: "fake", TokenEnv: "LA_TOKEN"}, Turn{Spec: s, Prompt: "Plan"})
 	if err != nil {

@@ -119,11 +119,10 @@ func ChatSpec(r agentdef.Resolved, caps ChatCaps) agentdef.Resolved {
 	if coding {
 		r.HarnessOptions = map[string]string{"sandbox": "workspace-write", agentdef.OptionWebSearch: "true"}
 	}
-	// Codex generates images with its own tool and copies them into the
-	// workspace outbox (the Codex harness grants write to only that directory
-	// for an image-only chat). Other harnesses can't, and never receive the option.
-	images := caps.Images && r.Harness == agentdef.HarnessCodex
-	if images {
+	// Inline-image harnesses (Codex) generate images with their own tool and copy
+	// them into the workspace outbox; other harnesses use generate_image instead.
+	inlineImages := agentdef.CapsOf(r.Harness).ChatInlineImageGen
+	if caps.Images && inlineImages {
 		r.HarnessOptions[agentdef.OptionImageGeneration] = "true"
 	}
 	if caps.Aside {
@@ -132,7 +131,7 @@ func ChatSpec(r agentdef.Resolved, caps ChatCaps) agentdef.Resolved {
 	r.Repository = nil
 	r.Fallbacks = nil // A chat segment never switches harness or model implicitly.
 	// Every chat is the Personal Assistant, whichever agent it was started with.
-	r.Instructions = agents.AssistantInstructionsFor(coding, caps.RepoCoding(), caps.WorkBranches, caps.Images, r.Harness == agentdef.HarnessCodex)
+	r.Instructions = agents.AssistantInstructionsFor(coding, caps.RepoCoding(), caps.WorkBranches, caps.Images, inlineImages)
 	return r
 }
 

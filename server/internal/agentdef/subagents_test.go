@@ -23,8 +23,10 @@ func TestSubagentTypes(t *testing.T) {
 		{"aside", HarnessClaudeCode, map[string]string{OptionAside: "true"}, nil},
 		{"antigravity", HarnessAntigravity, nil, both},
 		{"antigravity explorer off", HarnessAntigravity, map[string]string{OptionExplorer: "false"}, []string{HelperAgent}},
-		{"codex", HarnessCodex, nil, nil},
-		{"codex with options on", HarnessCodex, map[string]string{OptionSubagents: "true", OptionExplorer: "true"}, nil},
+		{"codex", HarnessCodex, nil, both},
+		{"codex with options on", HarnessCodex, map[string]string{OptionSubagents: "true", OptionExplorer: "true"}, both},
+		{"codex explorer off", HarnessCodex, map[string]string{OptionExplorer: "false"}, []string{HelperAgent}},
+		{"no MCP", HarnessClaudeCode, map[string]string{OptionNoMCP: "true"}, nil},
 	} {
 		spec := Resolved{Harness: c.harness, HarnessOptions: c.opts}
 		if got := SubagentTypes(spec); !slices.Equal(got, c.want) {

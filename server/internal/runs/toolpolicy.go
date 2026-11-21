@@ -72,42 +72,68 @@ func LeadRun(run store.Run) bool {
 	return run.Purpose == "ticket" && run.ParentRunID == nil
 }
 
-// subagentDecision rules on the harness's sub agent tool: only the types the
-// run declared (agentdef.SubagentTypes). A sub agent's own tool calls come
-// through CheckTool too, under the same spec as the lead's.
-func subagentDecision(spec agentdef.Resolved, input map[string]any) ToolDecision {
-	types := agentdef.SubagentTypes(spec)
-	if typ, _ := input["subagent_type"].(string); slices.Contains(types, typ) {
-		return ToolDecision{Decision: "allow"}
+func (s *Service) CheckTool(ctx context.Context, c Caller, in ToolCheck) (ToolDecision, error) {
+	run, err := s.checkToolRun(ctx, c)
+	if err != nil {
+		return ToolDecision{}, err
 	}
-	if len(types) == 0 {
-		return ToolDecision{Decision: "deny", Reason: "This run has no sub agents; do the work yourself"}
+	if run == nil {
+		return ToolDecision{Decision: "deny", Reason: checkToolRunDenyReason(c)}, nil
 	}
-	return ToolDecision{Decision: "deny", Reason: "Only these sub agent types are available: " + strings.Join(types, ", ")}
+	spec, err := Spec(*run)
+	if err != nil {
+		return ToolDecision{}, err
+	}
+	return s.checkToolWithRun(ctx, c, *run, spec, in)
 }
 
-func (s *Service) CheckTool(ctx context.Context, c Caller, in ToolCheck) (ToolDecision, error) {
-	deny := func(reason string) (ToolDecision, error) { return ToolDecision{Decision: "deny", Reason: reason}, nil }
+// CheckToolWithSpec evaluates in against the supplied spec instead of the run's
+// stored spec while still verifying the run is live and owned by c.
+func (s *Service) CheckToolWithSpec(ctx context.Context, c Caller, spec agentdef.Resolved, in ToolCheck) (ToolDecision, error) {
+	run, err := s.checkToolRun(ctx, c)
+	if err != nil {
+		return ToolDecision{}, err
+	}
+	if run == nil {
+		return ToolDecision{Decision: "deny", Reason: checkToolRunDenyReason(c)}, nil
+	}
+	return s.checkToolWithRun(ctx, c, *run, spec, in)
+}
+
+func checkToolRunDenyReason(c Caller) string {
 	if c.RunID == nil {
-		return deny("Tool policy requires a run-scoped token")
+		return "Tool policy requires a run-scoped token"
+	}
+	return "Run is not running; end this turn and wait for a person"
+}
+
+func (s *Service) checkToolRun(ctx context.Context, c Caller) (*store.Run, error) {
+	if c.RunID == nil {
+		return nil, nil
 	}
 	q := store.New(s.Pool)
 	run, err := q.GetRun(ctx, store.GetRunParams{ID: *c.RunID, WorkspaceID: c.Agent.WorkspaceID})
 	if err != nil {
-		return ToolDecision{}, err
+		return nil, err
 	}
 	if run.AgentID != c.Agent.ID || run.State != "running" {
-		return deny("Run is not running; end this turn and wait for a person")
+		return nil, nil
 	}
-	spec, err := Spec(run)
-	if err != nil {
-		return ToolDecision{}, err
+	return &run, nil
+}
+
+func (s *Service) checkToolWithRun(ctx context.Context, c Caller, run store.Run, spec agentdef.Resolved, in ToolCheck) (ToolDecision, error) {
+	deny := func(reason string) (ToolDecision, error) { return ToolDecision{Decision: "deny", Reason: reason}, nil }
+	q := store.New(s.Pool)
+	if spec.HarnessOptions[agentdef.OptionNoTools] == "true" {
+		return deny("This turn has no tools")
 	}
 	if WebTool(in.Tool) && run.Purpose == PurposeLearning {
 		// Only a reviewer has the web, and only to open what the course cites.
 		url, _ := in.Input["url"].(string)
 		cited := false
 		if in.Tool == "WebFetch" && spec.HarnessOptions[agentdef.OptionWebSearch] == "true" {
+			var err error
 			if cited, err = q.LearningSourceForRun(ctx, store.LearningSourceForRunParams{RunID: run.ID, Url: url}); err != nil {
 				return ToolDecision{}, err
 			}
@@ -183,8 +209,10 @@ func (s *Service) CheckTool(ctx context.Context, c Caller, in ToolCheck) (ToolDe
 		}
 	}
 	if in.Tool == "Agent" || in.Tool == "Task" { // Task: its name before Claude Code 2.1
-		// ToolScopes would send it to tests:run, which a lead has.
-		return subagentDecision(spec, in.Input), nil
+		if agentdef.SubagentsOn(spec) {
+			return deny("Use the Vesper MCP tool `run_subagent` instead of native Agent subagents.")
+		}
+		return deny("This run has no sub agents; do the work yourself")
 	}
 	scopes := ToolScopes(in.Tool, in.Input)
 	if (spec.HarnessOptions["readonly"] == "true" || stepRunning) && len(scopes) > 0 {

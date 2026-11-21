@@ -59,28 +59,30 @@ func TestPolicyHookFailsClosed(t *testing.T) {
 }
 
 func TestCodexPreflightRejectsUnreviewedHooks(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "launcher.py")
-	if err := os.WriteFile(file, codexLauncher, 0600); err != nil {
-		t.Fatal(err)
+	expected := "python3 '/generated/policy.py'"
+	own := `{"enabled":true,"source":"sessionFlags","handlerType":"command","command":"python3 '/generated/policy.py'","eventName":"preToolUse","matcher":"*","trustStatus":"untrusted"}`
+	check := func(hooks ...string) error {
+		return validateCodexHooks(json.RawMessage(`{"data":[{"errors":[],"hooks":[`+strings.Join(hooks, ",")+`]}]}`), expected)
 	}
-	script := `import runpy,sys
-validate=runpy.run_path(sys.argv[1])["validate_hooks"]
-expected="python3 '/generated/policy.py'"
-own={"enabled":True,"source":"sessionFlags","handlerType":"command","command":expected,"eventName":"preToolUse","matcher":"*","trustStatus":"untrusted"}
-def check(hooks):
-    validate({"data":[{"errors":[],"hooks":hooks}]},expected)
-check([own])
-check([own,{"enabled":True,"trustStatus":"trusted"}])
-for hooks in ([],[own,{"enabled":True,"trustStatus":"untrusted"}],[own,{"enabled":True,"trustStatus":"modified"}],[dict(own,command="unexpected")],[dict(own,**{"async":True})]):
-    try:
-        check(hooks)
-    except RuntimeError:
-        continue
-    raise AssertionError("unreviewed or missing hook was accepted")
-`
-	cmd := exec.Command("python3", "-B", "-c", script, file)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("trust preflight: %v %s", err, out)
+	if err := check(own); err != nil {
+		t.Fatalf("own hook rejected: %v", err)
+	}
+	if err := check(own, `{"enabled":true,"trustStatus":"trusted"}`); err != nil {
+		t.Fatalf("own + trusted hook rejected: %v", err)
+	}
+	for _, tc := range []struct {
+		name  string
+		hooks []string
+	}{
+		{"empty", nil},
+		{"untrusted", []string{own, `{"enabled":true,"trustStatus":"untrusted"}`}},
+		{"modified", []string{own, `{"enabled":true,"trustStatus":"modified"}`}},
+		{"wrong_cmd", []string{`{"enabled":true,"source":"sessionFlags","handlerType":"command","command":"unexpected","eventName":"preToolUse","matcher":"*","trustStatus":"untrusted"}`}},
+		{"async", []string{`{"enabled":true,"source":"sessionFlags","handlerType":"command","command":"python3 '/generated/policy.py'","eventName":"preToolUse","matcher":"*","async":true,"trustStatus":"untrusted"}`}},
+	} {
+		if err := check(tc.hooks...); err == nil {
+			t.Errorf("%s: unreviewed or missing hook was accepted", tc.name)
+		}
 	}
 }
 
@@ -156,23 +158,9 @@ func TestPolicyHookWithRelativeWorkspace(t *testing.T) {
 	}
 }
 
-func TestCodexPreflightRejectsMissingHookBeforeStartingCLI(t *testing.T) {
-	dir := t.TempDir()
-	launcher := filepath.Join(dir, "launcher.py")
-	if err := os.WriteFile(launcher, codexLauncher, 0600); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command("python3", launcher, "this-program-must-never-start", "exec", "unused-prompt")
-	cmd.Env = append(os.Environ(), "LAZYAGENTS_POLICY_HOOK_PATH="+filepath.Join(dir, "missing.py"), "LAZYAGENTS_POLICY_HOOK_COMMAND=python3 missing.py")
-	out, err := cmd.Output()
-	if err == nil {
-		t.Fatal("missing hook was accepted")
-	}
-	var event struct{ Type, Message string }
-	if err := json.Unmarshal(out, &event); err != nil {
-		t.Fatalf("missing actionable error event: %s", out)
-	}
-	if event.Type != "error" || !strings.Contains(event.Message, "Policy hook script is missing") {
-		t.Fatalf("unexpected failure: %s", out)
+func TestCodexPreflightRejectsHookGroupErrors(t *testing.T) {
+	raw := json.RawMessage(`{"data":[{"errors":["invalid config"],"hooks":[{"enabled":true,"source":"sessionFlags","handlerType":"command","command":"python3 '/ws/.lazyagents/tool-policy.py'","eventName":"preToolUse","matcher":"*","trustStatus":"untrusted"}]}]}`)
+	if err := validateCodexHooks(raw, "python3 '/ws/.lazyagents/tool-policy.py'"); err == nil {
+		t.Fatal("expected group error in hooks/list to be rejected")
 	}
 }

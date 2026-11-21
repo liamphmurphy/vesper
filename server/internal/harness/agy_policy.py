@@ -65,10 +65,14 @@ def main():
         call = event["toolCall"]
         args = call.get("args")
         tool, tool_input = canonical(call["name"], args)
+        headers = {"Content-Type": "application/json", "Authorization": "Bearer " + os.environ["LAZYAGENTS_POLICY_TOKEN"]}
+        job_id = os.environ.get("LAZYAGENTS_SUBAGENT_JOB_ID", "")
+        if job_id:
+            headers["X-Vesper-Subagent-Job"] = job_id
         request = urllib.request.Request(
             os.environ["LAZYAGENTS_POLICY_URL"],
             data=json.dumps({"tool": tool, "input": tool_input}).encode(),
-            headers={"Content-Type": "application/json", "Authorization": "Bearer " + os.environ["LAZYAGENTS_POLICY_TOKEN"]},
+            headers=headers,
             method="POST",
         )
 
@@ -80,10 +84,11 @@ def main():
         with urllib.request.build_opener(NoRedirect).open(request, timeout=15) as response:
             decision = json.load(response)
         if decision.get("decision") == "allow":
-            # The terminal sandbox is off for the session (--settings), so
-            # commands run as they are: adding BypassSandbox here would send
-            # each one through agy's safety monitor.
-            print(json.dumps({"decision": "auto_approve"}))
+            # In ACP mode return "allow" (not "auto_approve") so agy still emits
+            # session/request_permission and RunSession's CheckTool runs as a
+            # second gate while this hook continues to block denied writes early.
+            hook_decision = "allow" if os.environ.get("LAZYAGENTS_AGY_ACP") == "1" else "auto_approve"
+            print(json.dumps({"decision": hook_decision}))
             return
         reason = decision.get("reason", "Vesper denied the tool")
     except Exception:

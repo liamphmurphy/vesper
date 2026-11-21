@@ -802,11 +802,12 @@ var (
 	_ NixManifestProcess = (*microvmProc)(nil)
 )
 
-func (p *microvmProc) Stdout() io.Reader   { return p.rp.Stdout() }
-func (p *microvmProc) Stderr() io.Reader   { return p.rp.Stderr() }
-func (p *microvmProc) Interrupt() error    { return p.rp.Signal(2) }
-func (p *microvmProc) Kill() error         { return p.rp.Signal(9) }
-func (p *microvmProc) NixManifest() []byte { return p.nixManifest }
+func (p *microvmProc) Stdin() io.WriteCloser { return p.rp.Stdin() }
+func (p *microvmProc) Stdout() io.Reader     { return p.rp.Stdout() }
+func (p *microvmProc) Stderr() io.Reader     { return p.rp.Stderr() }
+func (p *microvmProc) Interrupt() error      { return p.rp.Signal(2) }
+func (p *microvmProc) Kill() error           { return p.rp.Signal(9) }
+func (p *microvmProc) NixManifest() []byte   { return p.nixManifest }
 
 func (p *microvmProc) Wait() (int, error) {
 	defer func() {

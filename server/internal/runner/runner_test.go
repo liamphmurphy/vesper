@@ -530,8 +530,8 @@ func TestCodexOverride(t *testing.T) {
 	if !strings.Contains(evs, "tool_call:request_approval") || run.HarnessSessionID == nil || run.CostSource == nil || *run.CostSource != "computed" {
 		t.Fatalf("codex turn: %s cost=%v", evs, run.CostSource)
 	}
-	if run.ContextTokens != 0 { // Codex doesn't report it: 0 is unknown
-		t.Fatalf("codex context_tokens %d", run.ContextTokens)
+	if run.ContextTokens <= 0 {
+		t.Fatalf("codex context_tokens %d, want > 0", run.ContextTokens)
 	}
 	tk, _ := tracker.Get(e.ctx, e.q, e.ws, "PAY-214")
 	aps, _ := e.q.PendingApprovalsForTicket(e.ctx, tk.ID)

@@ -52,7 +52,7 @@ var Harnesses = []string{HarnessClaudeCode, HarnessCodex, HarnessAntigravity}
 
 // CanMakeImages reports whether a harness has a built-in image generator a
 // one-shot image step can use (ImageHarnesses, in preference order).
-func CanMakeImages(harness string) bool { return slices.Contains(ImageHarnesses, harness) }
+func CanMakeImages(harness string) bool { return CapsOf(harness).WorkflowImageGen }
 
 // ImageHarnesses are the harnesses that can generate images, in the order
 // "Auto" prefers them.
@@ -203,16 +203,19 @@ const OptionImageGeneration = "image_generation"
 // carry a person's private context and have no run to scope tools to.
 const OptionNoTools = "no_tools"
 
+// OptionNoMCP ("true") keeps Vesper and connector MCP servers off a turn while
+// leaving built-in file, shell, and web tools governed by scopes.
+const OptionNoMCP = "no_mcp"
+
 // OptionAside ("true") marks a chat segment that answers an aside: a question
 // about another chat's running reply. Only the Personal Assistant's chat spec
 // sets it, and the MCP surface it gets is read-only.
 const OptionAside = "aside"
 
-// OptionSubagents ("false" turns them off) gives a Claude Code or Antigravity
-// run, chat or ticket, the harness's own sub agents: the explorer and the
-// helper (SubagentTypes). They run inside the turn, in the same checkout, and
-// every tool call they make goes through the run's policy hook like the
-// lead's (docs/contracts/ADR-explorer.md). Codex has none.
+// OptionSubagents ("false" turns them off) gives a run (chat, planning, or
+// ticket) Vesper-managed sub agents via the `run_subagent` MCP tool: the
+// explorer and the helper (SubagentTypes). They run inside the turn in the
+// same checkout with isolated specs and per-call tool policy enforcement.
 const OptionSubagents = "subagents"
 
 // OptionExplorer ("false" drops it) gives a run with sub agents the read-only
@@ -250,22 +253,20 @@ func SubagentGuide(spec Resolved) string {
 	if ExplorerOn(spec) {
 		roster = "`" + ExplorerAgent + "` for broad read-only code searches, " + roster
 	}
-	guide := "You can start sub agents with your Agent tool: " + roster + ". " +
+	guide := "You can start sub agents with `run_subagent`: " + roster + ". " +
 		"Use them when the work splits into independent parts you can run in parallel, or when answering means reading across many files and you only need the conclusion; their output stays out of your context. " +
-		"Do the work yourself when it's a handful of tool calls or you already know where to look. A sub agent knows only its brief, so make the brief complete."
+		"Do the work yourself when it's a handful of tool calls or you already know where to look. A sub agent knows only its prompt, so make the brief complete."
 	if spec.HarnessOptions["readonly"] != "true" && spec.Mode("repo:write") != Denied {
 		guide += " Helpers share your checkout: never give two of them edits to the same files, and check what they changed before you rely on it."
 	}
 	return guide
 }
 
-// SubagentsOn reports whether a run gets native sub agents: the harness is
-// Claude Code or Antigravity, the option isn't "false", and the turn has tools
-// and isn't an aside (a quick answer about another chat's reply).
+// SubagentsOn reports whether a run gets Vesper MCP sub agents: the option
+// isn't "false", and the turn has tools and MCP enabled and isn't an aside.
 func SubagentsOn(spec Resolved) bool {
 	o := spec.HarnessOptions
-	return (spec.Harness == HarnessClaudeCode || spec.Harness == HarnessAntigravity) &&
-		o[OptionSubagents] != "false" && o[OptionNoTools] != "true" && o[OptionAside] != "true"
+	return o[OptionSubagents] != "false" && o[OptionNoTools] != "true" && o[OptionNoMCP] != "true" && o[OptionAside] != "true"
 }
 
 // ExplorerOn reports whether a run with sub agents also gets the explorer.
@@ -296,6 +297,8 @@ var EagerVesperTools = []string{
 	"set_chat_title", "list_projects", "list_tickets", "get_ticket", "update_ticket", "request_push",
 	// Ticket runs.
 	"claim_ticket", "post_plan", "update_step", "check_criterion", "complete_run",
+	// Shared in-turn subagents.
+	"run_subagent",
 }
 
 // BatchExplorationGuide is the one line every coding prompt (chat and ticket
@@ -326,6 +329,9 @@ func validOptions(field string, opts map[string]string) error {
 	}
 	if _, ok := opts[OptionAside]; ok {
 		return invalid(field, "%s is set by Vesper for the Personal Assistant only", OptionAside)
+	}
+	if _, ok := opts[OptionNoMCP]; ok {
+		return invalid(field, "%s is set by Vesper only", OptionNoMCP)
 	}
 	if e, ok := opts["effort"]; ok && !slices.Contains(Efforts, e) {
 		return invalid(field, "effort must be one of %s", strings.Join(Efforts, ", "))

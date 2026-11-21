@@ -2,6 +2,8 @@ package harness
 
 import (
 	"encoding/json"
+	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -23,27 +25,52 @@ func tomlString(s string) string { return strconv.Quote(s) }
 // CodexProjectDocMaxBytes is the AGENTS.md budget Vesper gives Codex.
 const CodexProjectDocMaxBytes = 128 * 1024
 
-func (Codex) Invocation(ws Workspace, t Turn) (Invocation, error) {
-	spec := t.Spec
-	env, err := hookEnvironment(ws)
-	if err != nil {
-		return Invocation{}, err
+func codexHookRelPath(tag string) string {
+	if tag == "" {
+		return toolHookPath
 	}
-	env[ws.TokenEnv] = ws.Token
+	return path.Join(".lazyagents", tag+"-tool-policy.py")
+}
+
+type codexConfigBuild struct {
+	env     map[string]string
+	files   map[string][]byte
+	cfg     []string
+	sandbox string
+	noTools bool
+}
+
+func codexHookEnv(ws Workspace, rel string, noTools bool) (map[string]string, error) {
+	if noTools && ws.MCPURL == "" {
+		hookPath, err := filepath.Abs(filepath.Join(ws.Dir, rel))
+		if err != nil {
+			return nil, err
+		}
+		command := "python3 '" + strings.ReplaceAll(hookPath, "'", "'\"'\"'") + "'"
+		return map[string]string{
+			"LAZYAGENTS_POLICY_HOOK_PATH":    hookPath,
+			"LAZYAGENTS_POLICY_HOOK_COMMAND": command,
+		}, nil
+	}
+	return hookEnvironmentAt(ws, rel)
+}
+
+func buildCodexConfig(ws Workspace, t Turn, includeCacheInPerm bool) (codexConfigBuild, error) {
+	spec := t.Spec
+	noTools := spec.HarnessOptions[agentdef.OptionNoTools] == "true"
+	noMCP := noTools || spec.HarnessOptions[agentdef.OptionNoMCP] == "true"
+	hookRel := codexHookRelPath(t.ConfigTag)
+	env, err := codexHookEnv(ws, hookRel, noTools)
+	if err != nil {
+		return codexConfigBuild{}, err
+	}
+	if ws.TokenEnv != "" {
+		env[ws.TokenEnv] = ws.Token
+	}
 	command := env["LAZYAGENTS_POLICY_HOOK_COMMAND"]
 	sandbox := spec.HarnessOptions["sandbox"]
 	if sandbox == "" {
 		sandbox = "workspace-write"
-	}
-	opts := []string{"--json", "--skip-git-repo-check", "--dangerously-bypass-hook-trust", "--strict-config"}
-	if len(t.Images) > 0 {
-		// --image takes several comma-separated files (exec and exec resume,
-		// codex-cli 0.167.0) and keeps consuming values, so it goes first: the
-		// flags after it end the list before the positional prompt.
-		opts = append([]string{"--image", strings.Join(t.Images, ",")}, opts...)
-	}
-	if spec.Model != "" {
-		opts = append(opts, "-m", spec.Model)
 	}
 	cfg := []string{
 		"features.hooks=true",
@@ -56,10 +83,7 @@ func (Codex) Invocation(ws Workspace, t Turn) (Invocation, error) {
 		// AGENTS.md at the end was cut off. Room for both (LAZYAGENTS-253).
 		"project_doc_max_bytes=" + strconv.Itoa(CodexProjectDocMaxBytes),
 	}
-	// Codex can't switch its shell off here, so a no-tools turn gets a policy
-	// hook that denies every call (and still passes the launcher's preflight).
-	noTools := spec.HarnessOptions[agentdef.OptionNoTools] == "true"
-	if !noTools {
+	if !noMCP {
 		cfg = append(cfg,
 			"mcp_servers."+lazyagentsServer+".url="+tomlString(ws.MCPURL),
 			"mcp_servers."+lazyagentsServer+".bearer_token_env_var="+tomlString(ws.TokenEnv),
@@ -69,16 +93,17 @@ func (Codex) Invocation(ws Workspace, t Turn) (Invocation, error) {
 			// checks and human approvals still happen inside Vesper.
 			"mcp_servers."+lazyagentsServer+".default_tools_approval_mode="+tomlString("approve"),
 			"mcp_servers."+lazyagentsServer+".required=true",
+			"mcp_servers."+lazyagentsServer+".tool_timeout_sec=2400",
 		)
-	}
-	for _, m := range spec.MCPServers {
-		if m.Connector {
-			// Vesper enforces each tool's permission; a call can wait on a person.
-			cfg = append(cfg, "mcp_servers."+m.Name+".url="+tomlString(ws.MCPURL+"/connectors/"+m.Name), "mcp_servers."+m.Name+".bearer_token_env_var="+tomlString(ws.TokenEnv),
-				"mcp_servers."+m.Name+".default_tools_approval_mode="+tomlString("approve"), "mcp_servers."+m.Name+".tool_timeout_sec=2400")
-			continue
+		for _, m := range spec.MCPServers {
+			if m.Connector {
+				// Vesper enforces each tool's permission; a call can wait on a person.
+				cfg = append(cfg, "mcp_servers."+m.Name+".url="+tomlString(ws.MCPURL+"/connectors/"+m.Name), "mcp_servers."+m.Name+".bearer_token_env_var="+tomlString(ws.TokenEnv),
+					"mcp_servers."+m.Name+".default_tools_approval_mode="+tomlString("approve"), "mcp_servers."+m.Name+".tool_timeout_sec=2400")
+				continue
+			}
+			cfg = append(cfg, "mcp_servers."+m.Name+".url="+tomlString(m.URL), "mcp_servers."+m.Name+".default_tools_approval_mode="+tomlString("approve"))
 		}
-		cfg = append(cfg, "mcp_servers."+m.Name+".url="+tomlString(m.URL), "mcp_servers."+m.Name+".default_tools_approval_mode="+tomlString("approve"))
 	}
 	// Legacy workspace-write protects .git even when the workspace is writable.
 	// Headless turns cannot request an exception, so explicitly grant Git writes
@@ -87,11 +112,15 @@ func (Codex) Invocation(ws Workspace, t Turn) (Invocation, error) {
 		// The policy hook still holds read-only turns to read-only tools.
 		cfg = append(cfg, "sandbox_mode="+tomlString("danger-full-access"))
 	} else if sandbox == "workspace-write" && allowed(spec, "repo:write") {
+		fsRules := `":workspace_roots"={".git"="write"}`
+		if includeCacheInPerm && ws.DependencyCacheDir != "" {
+			fsRules += `,` + tomlString(ws.DependencyCacheDir) + `="write"`
+		}
 		cfg = append(cfg,
 			`default_permissions="lazyagents-repo-write"`,
 			// One TOML table preserves quoted path keys; dotted -c keys split
 			// the dot in ".git" and produce an invalid filesystem rule.
-			`permissions.lazyagents-repo-write={extends=":workspace",filesystem={":workspace_roots"={".git"="write"}},network={enabled=true}}`,
+			`permissions.lazyagents-repo-write={extends=":workspace",filesystem={`+fsRules+`},network={enabled=true}}`,
 		)
 	} else if sandbox == "read-only" && spec.HarnessOptions[agentdef.OptionImageGeneration] == "true" {
 		// An image-generating chat copies pictures into the workspace outbox
@@ -124,7 +153,37 @@ func (Codex) Invocation(ws Workspace, t Turn) (Invocation, error) {
 	if effort := spec.HarnessOptions["effort"]; effort != "" {
 		cfg = append(cfg, "model_reasoning_effort="+tomlString(effort))
 	}
-	for _, c := range cfg {
+	files := SkillFilesFor(spec.Skills, agentdef.HarnessCodex)
+	files[hookRel] = toolHook
+	if noTools {
+		files[hookRel] = noToolsHook
+	}
+	return codexConfigBuild{
+		env:     env,
+		files:   files,
+		cfg:     cfg,
+		sandbox: sandbox,
+		noTools: noTools,
+	}, nil
+}
+
+func (Codex) Invocation(ws Workspace, t Turn) (Invocation, error) {
+	b, err := buildCodexConfig(ws, t, false)
+	if err != nil {
+		return Invocation{}, err
+	}
+	spec := t.Spec
+	opts := []string{"--json", "--skip-git-repo-check", "--dangerously-bypass-hook-trust", "--strict-config"}
+	if len(t.Images) > 0 {
+		// --image takes several comma-separated files (exec and exec resume,
+		// codex-cli 0.167.0) and keeps consuming values, so it goes first: the
+		// flags after it end the list before the positional prompt.
+		opts = append([]string{"--image", strings.Join(t.Images, ",")}, opts...)
+	}
+	if spec.Model != "" {
+		opts = append(opts, "-m", spec.Model)
+	}
+	for _, c := range b.cfg {
 		opts = append(opts, "-c", c)
 	}
 	argv := []string{"codex", "exec"}
@@ -141,14 +200,7 @@ func (Codex) Invocation(ws Workspace, t Turn) (Invocation, error) {
 		argv = append(argv, opts...)
 		argv = append(argv, t.Prompt)
 	}
-	files := SkillFilesFor(spec.Skills, agentdef.HarnessCodex)
-	files[toolHookPath] = toolHook
-	if noTools {
-		files[toolHookPath] = noToolsHook
-	}
-	files[".lazyagents/codex-launch.py"] = codexLauncher
-	argv = append([]string{"python3", ".lazyagents/codex-launch.py"}, argv...)
-	return Invocation{Argv: argv, Env: env, Files: files}, nil
+	return Invocation{Argv: argv, Env: b.env, Files: b.files}, nil
 }
 
 func (c Codex) NewParser(model string) Parser {

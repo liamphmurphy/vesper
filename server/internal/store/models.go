@@ -1662,6 +1662,25 @@ type SignIn struct {
 	ExpiresAt   time.Time
 }
 
+type SubagentJob struct {
+	ID           uuid.UUID
+	RunID        uuid.UUID
+	AgentType    string
+	Role         string
+	Prompt       string
+	Status       string
+	ResultText   string
+	Error        string
+	InputTokens  int64
+	OutputTokens int64
+	CachedTokens int64
+	CostUsd      *float64
+	ToolCalls    int32
+	CreatedAt    time.Time
+	StartedAt    *time.Time
+	CompletedAt  *time.Time
+}
+
 type TestEnvironment struct {
 	WorkspaceID      uuid.UUID
 	Repo             string

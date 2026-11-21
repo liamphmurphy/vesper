@@ -7,10 +7,14 @@ import urllib.request
 def main():
     try:
         event = {"tool_name": "mcp__lazyagents__whoami", "tool_input": {}} if sys.argv[1:] == ["--check"] else json.load(sys.stdin)
+        headers = {"Content-Type": "application/json", "Authorization": "Bearer " + os.environ["LAZYAGENTS_POLICY_TOKEN"]}
+        job_id = os.environ.get("LAZYAGENTS_SUBAGENT_JOB_ID", "")
+        if job_id:
+            headers["X-Vesper-Subagent-Job"] = job_id
         request = urllib.request.Request(
             os.environ["LAZYAGENTS_POLICY_URL"],
             data=json.dumps({"tool": event["tool_name"], "input": event.get("tool_input", {})}).encode(),
-            headers={"Content-Type": "application/json", "Authorization": "Bearer " + os.environ["LAZYAGENTS_POLICY_TOKEN"]},
+            headers=headers,
             method="POST",
         )
         # Credentials must never follow a redirect to another origin.

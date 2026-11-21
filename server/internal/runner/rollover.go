@@ -18,8 +18,7 @@ const rolloverTaskRunes = 1500
 
 // shouldRollOver reports whether a main agent woken by its delegations should
 // continue in a fresh session: the setting is on, it has a session to drop,
-// and its last recorded context is at least the setting. An unknown context
-// size (0, e.g. Codex) never rolls over.
+// and its last recorded context is at least the setting.
 func (r *Runner) shouldRollOver(c runCtx) bool {
 	limit := r.Cfg.RolloverContextTokens
 	return limit > 0 && c.run.HarnessSessionID != nil && c.run.ContextTokens > 0 && c.run.ContextTokens >= limit

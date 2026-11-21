@@ -1,7 +1,6 @@
 package runner
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -136,8 +135,14 @@ func (r *Runner) generateChatSuggestions(ctx context.Context, due store.NextChat
 			r.Log.Warn("remove chat suggestions workspace", "err", err)
 		}
 	}()
+	sh, ok := h.(harness.SessionHarness)
+	if !ok {
+		return errors.New("harness does not support bidirectional sessions")
+	}
+	ws := harness.Workspace{Dir: r.Backend.WorkspaceDir(workspace), MCPURL: r.Cfg.MCPURL, TokenEnv: tokenEnv, ContainerSandbox: r.Backend.Isolates()}
+	hTurn := harness.Turn{Spec: spec, Prompt: chatSuggestionRequest(background)}
 	// No token: this turn has nothing to say to Vesper.
-	inv, err := h.Invocation(harness.Workspace{Dir: r.Backend.WorkspaceDir(workspace), MCPURL: r.Cfg.MCPURL, TokenEnv: tokenEnv, ContainerSandbox: r.Backend.Isolates()}, harness.Turn{Spec: spec, Prompt: chatSuggestionRequest(background)})
+	inv, err := sh.SessionInvocation(ws, hTurn)
 	if err != nil {
 		return err
 	}
@@ -155,7 +160,7 @@ func (r *Runner) generateChatSuggestions(ctx context.Context, due store.NextChat
 	if err != nil {
 		return err
 	}
-	res, err := readChatSuggestionTurn(ctx, proc, h.NewParser(spec.Model))
+	res, err := readChatSuggestionTurn(ctx, proc, sh, ws, hTurn)
 	if err != nil {
 		return err
 	}
@@ -254,7 +259,7 @@ func chatSuggestionRequest(background string) string {
 }
 
 // readChatSuggestionTurn waits out one process and returns what it answered.
-func readChatSuggestionTurn(ctx context.Context, proc Process, p harness.Parser) (harness.Result, error) {
+func readChatSuggestionTurn(ctx context.Context, proc Process, sh harness.SessionHarness, ws harness.Workspace, t harness.Turn) (harness.Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, chatSuggestionTimeout)
 	defer cancel()
 	exited := make(chan struct{})
@@ -272,23 +277,27 @@ func readChatSuggestionTurn(ctx context.Context, proc Process, p harness.Parser)
 		defer readers.Done()
 		_, _ = io.Copy(io.Discard, proc.Stderr())
 	}()
+	var res harness.Result
+	var sessErr error
 	go func() {
 		defer readers.Done()
-		sc := bufio.NewScanner(proc.Stdout())
-		sc.Buffer(make([]byte, 256<<10), 32<<20)
-		for sc.Scan() {
-			p.Line(sc.Bytes())
-		}
+		res, sessErr = sh.RunSession(ctx, proc.Stdin(), proc.Stdout(), ws, t, harness.SessionCallbacks{
+			CheckTool: func(context.Context, string, map[string]any) (bool, string) {
+				return false, "chat suggestions allow no tools"
+			},
+		})
+		_, _ = io.Copy(io.Discard, proc.Stdout())
 	}()
 	code, err := proc.Wait()
 	readers.Wait()
 	if c, ok := proc.(io.Closer); ok {
 		_ = c.Close()
 	}
-	res := p.Result()
 	switch {
 	case err != nil:
 		return res, err
+	case sessErr != nil:
+		return res, sessErr
 	case code != 0:
 		return res, fmt.Errorf("harness exited %d", code)
 	case res.IsError:

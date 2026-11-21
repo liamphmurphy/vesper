@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -47,21 +46,61 @@ func (Antigravity) Name() string { return agentdef.HarnessAntigravity }
 // agyConfig is .lazyagents/agy-config.json, which agy_launch.py installs.
 type agyConfig struct {
 	// Install is set in a turn container, whose home is the turn's own.
-	Install     bool           `json:"install"`
-	TokenEnv    string         `json:"token_env"`
-	HookCommand string         `json:"hook_command"`
-	Settings    map[string]any `json:"settings"`
-	MCPServers  map[string]any `json:"mcp_servers"`
+	Install      bool           `json:"install"`
+	IsolatedHome bool           `json:"isolated_home,omitempty"`
+	TokenEnv     string         `json:"token_env"`
+	HookCommand  string         `json:"hook_command"`
+	Settings     map[string]any `json:"settings"`
+	MCPServers   map[string]any `json:"mcp_servers"`
 }
 
-func (Antigravity) Invocation(ws Workspace, t Turn) (Invocation, error) {
-	spec := t.Spec
-	env, err := hookEnvironmentAt(ws, agyPolicyPath)
-	if err != nil {
-		return Invocation{}, err
+func agyConfigPathForTag(tag string) string {
+	if tag == "" {
+		return agyConfigPath
 	}
-	env[ws.TokenEnv] = ws.Token
+	return filepath.ToSlash(filepath.Join(".lazyagents", tag+"-agy-config.json"))
+}
+
+func agyPolicyPathForTag(tag string) string {
+	if tag == "" {
+		return agyPolicyPath
+	}
+	return filepath.ToSlash(filepath.Join(".lazyagents", tag+"-agy-policy.py"))
+}
+
+type agyConfigBuild struct {
+	env       map[string]string
+	files     map[string][]byte
+	configRel string
+	noTools   bool
+}
+
+func buildAgyConfig(ws Workspace, t Turn) (agyConfigBuild, error) {
+	spec := t.Spec
+	policyRel := agyPolicyPathForTag(t.ConfigTag)
 	noTools := spec.HarnessOptions[agentdef.OptionNoTools] == "true"
+	noMCP := noTools || spec.HarnessOptions[agentdef.OptionNoMCP] == "true"
+
+	var env map[string]string
+	var err error
+	if noTools && ws.MCPURL == "" {
+		hookPath, absErr := filepath.Abs(filepath.Join(ws.Dir, policyRel))
+		if absErr != nil {
+			return agyConfigBuild{}, absErr
+		}
+		env = map[string]string{
+			"LAZYAGENTS_POLICY_HOOK_PATH":    hookPath,
+			"LAZYAGENTS_POLICY_HOOK_COMMAND": "python3 '" + strings.ReplaceAll(hookPath, "'", "'\"'\"'") + "'",
+		}
+	} else {
+		env, err = hookEnvironmentAt(ws, policyRel)
+		if err != nil {
+			return agyConfigBuild{}, err
+		}
+	}
+	if ws.TokenEnv != "" {
+		env[ws.TokenEnv] = ws.Token
+	}
 
 	servers := map[string]any{}
 	var allow []string
@@ -78,8 +117,8 @@ func (Antigravity) Invocation(ws Workspace, t Turn) (Invocation, error) {
 		// approval) itself; without a rule agy would ask, and headless asks are denied.
 		allow = append(allow, "mcp("+name+"/*)")
 	}
-	if !noTools {
-		addServer(lazyagentsServer, ws.MCPURL, true, 0)
+	if !noMCP {
+		addServer(lazyagentsServer, ws.MCPURL, true, 2400)
 		// agy lists MCP tools lazily (the model reads a schema file before its
 		// first call); the ones nearly every turn starts with load up front.
 		eager := map[string]any{}
@@ -87,17 +126,17 @@ func (Antigravity) Invocation(ws Workspace, t Turn) (Invocation, error) {
 			eager[name] = map[string]any{"eager": true}
 		}
 		servers[lazyagentsServer].(map[string]any)["tools"] = eager
-	}
-	for _, m := range spec.MCPServers {
-		if m.Connector {
-			addServer(m.Name, ws.MCPURL+"/connectors/"+m.Name, true, 2400)
-			continue
+		for _, m := range spec.MCPServers {
+			if m.Connector {
+				addServer(m.Name, ws.MCPURL+"/connectors/"+m.Name, true, 2400)
+				continue
+			}
+			addServer(m.Name, m.URL, false, 0)
 		}
-		addServer(m.Name, m.URL, false, 0)
 	}
 
 	cfg := agyConfig{
-		Install: ws.ContainerSandbox, TokenEnv: ws.TokenEnv, HookCommand: env["LAZYAGENTS_POLICY_HOOK_COMMAND"], MCPServers: servers,
+		Install: ws.ContainerSandbox, IsolatedHome: t.ConfigTag != "", TokenEnv: ws.TokenEnv, HookCommand: env["LAZYAGENTS_POLICY_HOOK_COMMAND"], MCPServers: servers,
 		Settings: map[string]any{
 			"toolPermission":        "request-review",
 			"agentMode":             "",    // Default mode; agy 1.5.7+ otherwise defaults to "auto" (which forces terminal sandbox)
@@ -108,19 +147,43 @@ func (Antigravity) Invocation(ws Workspace, t Turn) (Invocation, error) {
 	}
 	body, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
+		return agyConfigBuild{}, err
+	}
+
+	files := SkillFilesFor(spec.Skills, agentdef.HarnessAntigravity) // agy 1.5.8 lists .agents/skills/*/SKILL.md to the model
+	cfgRel := agyConfigPathForTag(t.ConfigTag)
+	files[policyRel] = agyPolicyHook
+	files[agyLaunchPath] = agyLauncher
+	files[cfgRel] = body
+	return agyConfigBuild{
+		env:       env,
+		files:     files,
+		configRel: cfgRel,
+		noTools:   noTools,
+	}, nil
+}
+
+func (Antigravity) Invocation(ws Workspace, t Turn) (Invocation, error) {
+	b, err := buildAgyConfig(ws, t)
+	if err != nil {
 		return Invocation{}, err
 	}
+	spec := t.Spec
 
 	// agy loads AGENTS.md and the always-on rules InstructionFiles writes into
 	// its prompt itself (agy 1.5.9 docs/rules.md, TestAgyProbe/instructions),
 	// so the prompt no longer asks for a read_file of AGENTS.md first.
 	prompt := t.Prompt
-	if !noTools {
+	if !b.noTools {
 		if note := agyImageNote(t.Images); note != "" {
 			prompt += "\n\n" + note
 		}
 	}
-	argv := []string{"python3", agyLaunchPath, "agy", "-p", prompt, "--output-format", "stream-json", "--settings", agySessionSettings}
+	argv := []string{"python3", agyLaunchPath}
+	if t.ConfigTag != "" {
+		argv = append(argv, "--config", b.configRel)
+	}
+	argv = append(argv, "agy", "-p", prompt, "--output-format", "stream-json", "--settings", agySessionSettings)
 	model := spec.Model
 	effort := spec.HarnessOptions["effort"]
 	if effort != "" {
@@ -139,49 +202,7 @@ func (Antigravity) Invocation(ws Workspace, t Turn) (Invocation, error) {
 	if t.SessionID != "" {
 		argv = append(argv, "--conversation", t.SessionID)
 	}
-
-	files := SkillFilesFor(spec.Skills, agentdef.HarnessAntigravity) // agy 1.5.8 lists .agents/skills/*/SKILL.md to the model
-	if agentdef.ExplorerOn(spec) {
-		files[agyExplorerPath] = agyExplorerAgent
-		files[SkillsExcludeFile] = append(files[SkillsExcludeFile], []byte("/"+agyExplorerPath+"\n")...)
-	}
-	if agentdef.SubagentsOn(spec) {
-		files[agyHelperPath] = agyHelperAgent(spec)
-		files[SkillsExcludeFile] = append(files[SkillsExcludeFile], []byte("/"+agyHelperPath+"\n")...)
-	}
-	files[agyPolicyPath] = agyPolicyHook
-	files[agyLaunchPath] = agyLauncher
-	files[agyConfigPath] = body
-	return Invocation{Argv: argv, Env: env, Files: files}, nil
-}
-
-// agyExplorerAgent is the explorer as an agy custom agent (agy 1.5.9,
-// TestAgyProbe/explorer): a subagent only, on agy's flash tier, with read-only
-// tools and none of the run's MCP servers. The lead calls it with
-// invoke_subagent, whose TypeName the policy hook sends as subagent_type, so
-// runs.CheckTool allows it exactly as it does Claude Code's explorer.
-const agyExplorerPath = ".agents/agents/" + agentdef.ExplorerAgent + ".md"
-
-var agyExplorerAgent = []byte("---\nname: " + agentdef.ExplorerAgent + "\ndescription: " + strconv.Quote(agentdef.ExplorerDescription) +
-	"\nsubagent: true\nmainAgent: false\ninheritMcp: false\nmodel: flash\ntools: [read_file]\n---\n\n# Explorer\n\n" + agentdef.ExplorerPrompt + "\n")
-
-const agyHelperPath = ".agents/agents/" + agentdef.HelperAgent + ".md"
-
-// agyHelperAgent is the helper as an agy custom agent (agy 1.5.9,
-// TestAgyProbe/helper): the lead's model, the file and shell tools the run's
-// deny rules leave open, and none of its MCP servers. Its tool calls reach
-// Vesper's policy hook like the lead's.
-func agyHelperAgent(spec agentdef.Resolved) []byte {
-	deny := agyDenyRules(spec)
-	tools := []string{"read_file"}
-	if !slices.Contains(deny, "write_file(*)") && spec.HarnessOptions["readonly"] != "true" {
-		tools = append(tools, "write_file", "edit_file")
-	}
-	if !slices.Contains(deny, "command(*)") {
-		tools = append(tools, "run_command")
-	}
-	return []byte("---\nname: " + agentdef.HelperAgent + "\ndescription: " + strconv.Quote(agentdef.HelperDescription) +
-		"\nsubagent: true\nmainAgent: false\ninheritMcp: false\ntools: [" + strings.Join(tools, ", ") + "]\n---\n\n# Helper\n\n" + agentdef.HelperPrompt + "\n")
+	return Invocation{Argv: argv, Env: b.env, Files: b.files}, nil
 }
 
 // agySessionSettings turns agy's terminal sandbox off for this session only.
@@ -220,6 +241,9 @@ func agyDenyRules(spec agentdef.Resolved) []string {
 	}
 	if o[agentdef.OptionWebSearch] != "true" && !allowed(spec, "web:read") {
 		deny = append(deny, "read_url(*)", "execute_url(*)")
+	}
+	if o[agentdef.OptionNoMCP] == "true" {
+		deny = append(deny, "mcp(*)")
 	}
 	return nonNil(deny)
 }

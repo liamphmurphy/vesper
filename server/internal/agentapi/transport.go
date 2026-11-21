@@ -214,11 +214,11 @@ var researchTools = []string{"submit_findings"}
 var learningTools = []string{"submit_outline", "submit_lesson", "submit_review"}
 
 // planningTools is the whole MCP surface of a planning run.
-var planningTools = []string{"whoami", "get_ticket", "read_artifact", "search_knowledge", "read_page", "get_backlinks", "propose_tickets"}
+var planningTools = []string{"whoami", "get_ticket", "read_artifact", "search_knowledge", "read_page", "get_backlinks", "propose_tickets", "run_subagent"}
 
 // subagentTools is the whole MCP surface of a delegated run: its brief is
 // already in hand, so no claiming, planning or step bookkeeping.
-var subagentTools = []string{"get_ticket", "search_memory", "read_memory", "read_artifact", "create_artifact", "comment", "request_approval", "wait_for_approval", "run_gated", "await_human", "search_knowledge", "find_pattern", "propose_pattern", "list_proposed_patterns", "read_page", "write_note", "get_backlinks", "complete_run"}
+var subagentTools = []string{"get_ticket", "search_memory", "read_memory", "read_artifact", "create_artifact", "comment", "request_approval", "wait_for_approval", "run_gated", "await_human", "search_knowledge", "find_pattern", "propose_pattern", "list_proposed_patterns", "read_page", "write_note", "get_backlinks", "complete_run", "run_subagent"}
 
 // leadHidden are the tools a managed ticket run never needs: usage is reported
 // by the runner, the ticket is already assigned, and changing personal memory belongs
@@ -361,7 +361,13 @@ func RESTHandler(d Deps) http.Handler {
 			writeJSON(w, 400, map[string]string{"decision": "deny", "reason": "Invalid tool policy input"})
 			return
 		}
-		out, err := d.Runs.CheckTool(r.Context(), c, in)
+		var out runs.ToolDecision
+		var err error
+		if rawJob := strings.TrimSpace(r.Header.Get("X-Vesper-Subagent-Job")); rawJob != "" {
+			out, err = checkSubagentJobPolicy(r.Context(), d, c, rawJob, in)
+		} else {
+			out, err = d.Runs.CheckTool(r.Context(), c, in)
+		}
 		if err != nil {
 			writeJSON(w, 503, map[string]string{"decision": "deny", "reason": "Tool policy unavailable; retry after the service recovers"})
 			return

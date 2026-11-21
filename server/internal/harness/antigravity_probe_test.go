@@ -171,112 +171,6 @@ func TestAgyProbe(t *testing.T) {
 		}
 	})
 
-	// A run gets the read-only explorer as an agy custom agent: the lead
-	// sees it in its subagent roster, invoke_subagent reaches Vesper's policy
-	// as Agent/explorer, and the explorer runs on the flash tier with read_file
-	// and none of the lead's write, shell or MCP tools (LAZYAGENTS-258).
-	t.Run("explorer", func(t *testing.T) {
-		p := newAgyProbe(t, bin)
-		p.gemini.script(
-			agyReply{call: agyCall("invoke_subagent", map[string]any{"TypeName": "explorer", "Role": "explorer", "Prompt": "Where is the greeting?"})},
-			agyReply{text: "notes.txt:1"},
-			agyReply{text: "Done."},
-		)
-		s := spec("repo:read", "allowed", "repo:write", "allowed", "tests:run", "allowed")
-		s.Harness, s.Model = agentdef.HarnessAntigravity, ""
-		out := p.run(t, s, "")
-		// The explorer runs asynchronously, so how many turns the lead takes
-		// to finish varies; that it finished is what counts.
-		if out.exit != 0 || out.res.IsError {
-			t.Fatalf("exit=%d result=%+v", out.exit, out.res)
-		}
-		if !strings.Contains(p.gemini.firstRequest(), agentdef.ExplorerDescription) {
-			t.Error("the lead must see the explorer in its subagent roster")
-		}
-		if got := p.policy.tools(); !slices.Equal(got, []string{"Agent"}) || p.policy.input(0)["subagent_type"] != agentdef.ExplorerAgent {
-			t.Errorf("policy saw %v %v", got, p.policy.input(0))
-		}
-		explorer := -1
-		for i, body := range p.gemini.all {
-			if strings.Contains(string(body), agentdef.ExplorerPrompt) {
-				explorer = i
-			}
-		}
-		if explorer < 0 {
-			t.Fatal("the explorer never ran")
-		}
-		body, path := string(p.gemini.all[explorer]), p.gemini.paths[explorer]
-		if !strings.Contains(path, "flash") || strings.Contains(p.gemini.paths[0], "flash") {
-			t.Errorf("explorer on %s, lead on %s: the explorer runs on the flash tier", path, p.gemini.paths[0])
-		}
-		if !strings.Contains(body, `"name":"read_file"`) {
-			t.Error("the explorer must be able to read")
-		}
-		for _, tool := range []string{"run_command", "write_file", "edit_file", "mcp_lazyagents_list_tickets", "call_mcp_tool", "invoke_subagent"} {
-			if strings.Contains(body, `"name":"`+tool+`"`) {
-				t.Errorf("the explorer was given %s", tool)
-			}
-		}
-	})
-
-	// The helper is an agy custom agent on the lead's model with the file and
-	// shell tools the run allows and none of its MCP servers, and its own tool
-	// calls reach Vesper's policy hook, so scopes hold inside it too.
-	t.Run("helper", func(t *testing.T) {
-		p := newAgyProbe(t, bin)
-		var helperCalls int
-		p.gemini.route = func(body string) (agyReply, bool) {
-			if !strings.Contains(body, agentdef.HelperPrompt) {
-				return agyReply{}, false
-			}
-			if helperCalls++; helperCalls == 1 {
-				return agyReply{call: agyCall("run_command", map[string]any{"CommandLine": "echo from-helper", "toolSummary": "Probe", "WaitMsBeforeAsync": 5000})}, true
-			}
-			return agyReply{text: "Ran it."}, true
-		}
-		p.gemini.script(
-			agyReply{call: agyCall("invoke_subagent", map[string]any{"TypeName": "helper", "Role": "helper", "Prompt": "Run the probe command."})},
-			agyReply{text: "Done."},
-		)
-		s := spec("repo:read", "allowed", "repo:write", "allowed", "tests:run", "allowed")
-		s.Harness, s.Model = agentdef.HarnessAntigravity, ""
-		out := p.run(t, s, "")
-		if out.exit != 0 || out.res.IsError {
-			t.Fatalf("exit=%d result=%+v", out.exit, out.res)
-		}
-		if !strings.Contains(p.gemini.firstRequest(), agentdef.HelperDescription) {
-			t.Error("the lead must see the helper in its subagent roster")
-		}
-		if got := p.policy.tools(); !slices.Equal(got, []string{"Agent", "Bash"}) || p.policy.input(0)["subagent_type"] != agentdef.HelperAgent ||
-			!strings.Contains(fmt.Sprint(p.policy.input(1)["command"]), "from-helper") {
-			t.Errorf("policy saw %v %v", got, p.policy.inputs)
-		}
-		helper := -1
-		for i, body := range p.gemini.all {
-			if strings.Contains(string(body), agentdef.HelperPrompt) {
-				helper = i
-				break
-			}
-		}
-		if helper < 0 {
-			t.Fatal("the helper never ran")
-		}
-		body, path := string(p.gemini.all[helper]), p.gemini.paths[helper]
-		if path != p.gemini.paths[0] {
-			t.Errorf("helper on %s, lead on %s: the helper runs on the lead's model", path, p.gemini.paths[0])
-		}
-		for _, tool := range []string{"read_file", "write_file", "edit_file", "run_command"} {
-			if !strings.Contains(body, `"name":"`+tool+`"`) {
-				t.Errorf("the helper wasn't given %s", tool)
-			}
-		}
-		for _, tool := range []string{"mcp_lazyagents_list_tickets", "call_mcp_tool", "invoke_subagent"} {
-			if strings.Contains(body, `"name":"`+tool+`"`) {
-				t.Errorf("the helper was given %s", tool)
-			}
-		}
-	})
-
 	// An OAuth account's synced preferences can turn agy's terminal sandbox on
 	// whatever settings.json says. Vesper's session settings turn it off again,
 	// so commands run unsandboxed without BypassSandbox, whose presence sent each
@@ -317,6 +211,205 @@ func TestAgyProbe(t *testing.T) {
 			if e.Type == "tool_call" && strings.Contains(fmt.Sprint(e.Payload), "BypassSandbox") {
 				t.Errorf("a command ran with BypassSandbox: %v", e.Payload)
 			}
+		}
+	})
+
+	runACPTurn := func(t *testing.T, p *agyProbe, spec agentdef.Resolved, turn Turn, check PolicyFunc) (Result, []Event) {
+		t.Helper()
+		ws := Workspace{Dir: p.ws, MCPURL: p.vesperURL + "/mcp", Token: "probe-token", TokenEnv: "LAZYAGENTS_TOKEN", ContainerSandbox: true}
+		inv, err := (Antigravity{}).SessionInvocation(ws, turn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cfg map[string]any
+		cfgRel := agyConfigPathForTag(turn.ConfigTag)
+		if err := json.Unmarshal(inv.Files[cfgRel], &cfg); err != nil {
+			t.Fatal(err)
+		}
+		cfg["settings"].(map[string]any)["modelProvider"] = "gemini"
+		inv.Files[cfgRel], _ = json.Marshal(cfg)
+		for rel, body := range inv.Files {
+			dst := filepath.Join(p.ws, rel)
+			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(dst, body, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		binDir := t.TempDir()
+		if err := os.Symlink(p.bin, filepath.Join(binDir, "agy")); err != nil {
+			t.Fatal(err)
+		}
+		env := []string{
+			"HOME=" + p.home,
+			"PATH=" + binDir + ":/usr/bin:/bin",
+			"NO_COLOR=1",
+			"GEMINI_API_KEY=AIzaProbeNotARealKey",
+			"GOOGLE_GEMINI_BASE_URL=" + p.gemini.url,
+			"HTTPS_PROXY=http://127.0.0.1:9",
+			"HTTP_PROXY=http://127.0.0.1:9",
+			"ALL_PROXY=http://127.0.0.1:9",
+			"NO_PROXY=127.0.0.1,localhost",
+		}
+		for k, v := range inv.Env {
+			env = append(env, k+"="+v)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, inv.Argv[0], inv.Argv[1:]...)
+		cmd.Dir, cmd.Env = p.ws, env
+		stdin, err := cmd.StdinPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		var mu sync.Mutex
+		var evs []Event
+		res, runErr := (Antigravity{}).RunSession(ctx, stdin, stdout, ws, turn, SessionCallbacks{
+			OnEvent: func(ev Event) {
+				mu.Lock()
+				evs = append(evs, ev)
+				mu.Unlock()
+			},
+			CheckTool: check,
+		})
+		waitErr := cmd.Wait()
+		if runErr != nil || waitErr != nil {
+			t.Fatalf("runErr=%v waitErr=%v res=%+v stderr=%s", runErr, waitErr, res, stderr.String())
+		}
+		return res, evs
+	}
+
+	t.Run("session", func(t *testing.T) {
+		p := newAgyProbe(t, bin)
+		p.policy.deny("Write")
+		p.gemini.route = func(body string) (agyReply, bool) {
+			if strings.Contains(body, "conversation title generator") {
+				return agyReply{text: "Probe Title"}, true
+			}
+			return agyReply{}, false
+		}
+		p.gemini.script(
+			agyReply{call: agyCall("write_file", map[string]any{"Path": filepath.Join(p.ws, "nope.txt"), "Content": "x"})},
+			agyReply{call: agyCall("run_command", map[string]any{"CommandLine": "echo allowed-acp", "toolSummary": "Allowed", "WaitMsBeforeAsync": 5000})},
+			agyReply{text: "ACP done."},
+		)
+		s := spec("repo:read", "allowed", "repo:write", "allowed", "tests:run", "allowed")
+		s.Harness = agentdef.HarnessAntigravity
+		var mu sync.Mutex
+		var checked []string
+		res, evs := runACPTurn(t, p, s, Turn{
+			Spec:         s,
+			Prompt:       "Run probe commands.",
+			SystemAppend: "AGY_SYSTEM_APPEND",
+			ConfigTag:    "probe-agy",
+		}, func(_ context.Context, tool string, in map[string]any) (bool, string) {
+			mu.Lock()
+			checked = append(checked, tool)
+			mu.Unlock()
+			return true, ""
+		})
+		if res.IsError || res.SessionID == "" || res.Final != "ACP done." {
+			t.Fatalf("unexpected res=%+v events=%v", res, evs)
+		}
+		if res.Usage.InputTokens != 3600 || res.Usage.CachedTokens != 3000 || res.Usage.OutputTokens != 111 {
+			t.Fatalf("unexpected usage %+v", res.Usage)
+		}
+		if _, err := os.Stat(filepath.Join(p.ws, "nope.txt")); !os.IsNotExist(err) {
+			t.Fatalf("nope.txt should not exist; err=%v", err)
+		}
+		if !slices.Contains(checked, "Bash") {
+			t.Fatalf("expected CheckTool to run for ACP permission request (Bash), got %v", checked)
+		}
+		if !strings.Contains(p.gemini.firstRequest(), "AGY_SYSTEM_APPEND") {
+			t.Errorf("SystemAppend missing from first request")
+		}
+	})
+
+	t.Run("session_deny", func(t *testing.T) {
+		p := newAgyProbe(t, bin)
+		p.gemini.route = func(body string) (agyReply, bool) {
+			if strings.Contains(body, "conversation title generator") {
+				return agyReply{text: "Probe Title"}, true
+			}
+			return agyReply{}, false
+		}
+		p.gemini.script(
+			agyReply{call: agyCall("run_command", map[string]any{"CommandLine": "echo bad > blocked.txt", "toolSummary": "Blocked", "WaitMsBeforeAsync": 5000})},
+		)
+		s := spec("repo:read", "allowed", "repo:write", "allowed", "tests:run", "allowed")
+		s.Harness = agentdef.HarnessAntigravity
+		var mu sync.Mutex
+		var checked []string
+		_, _ = runACPTurn(t, p, s, Turn{Spec: s, Prompt: "Try blocked command."}, func(_ context.Context, tool string, in map[string]any) (bool, string) {
+			mu.Lock()
+			checked = append(checked, tool)
+			mu.Unlock()
+			return false, "denied by probe policy"
+		})
+		if !slices.Contains(checked, "Bash") {
+			t.Fatalf("expected CheckTool to see Bash, got %v", checked)
+		}
+		if _, err := os.Stat(filepath.Join(p.ws, "blocked.txt")); !os.IsNotExist(err) {
+			t.Fatalf("blocked.txt should not exist after ACP reject_once; err=%v", err)
+		}
+	})
+
+	t.Run("session_resume", func(t *testing.T) {
+		p := newAgyProbe(t, bin)
+		p.gemini.route = func(body string) (agyReply, bool) {
+			if strings.Contains(body, "conversation title generator") {
+				return agyReply{text: "Probe Title"}, true
+			}
+			return agyReply{}, false
+		}
+		p.gemini.script(
+			agyReply{text: "First ACP turn."},
+			agyReply{text: "Resumed ACP turn."},
+		)
+		s := spec("repo:read", "allowed")
+		s.Harness = agentdef.HarnessAntigravity
+		allowAll := func(context.Context, string, map[string]any) (bool, string) { return true, "" }
+		res1, _ := runACPTurn(t, p, s, Turn{Spec: s, Prompt: "First turn."}, allowAll)
+		if res1.IsError || res1.SessionID == "" || res1.Final != "First ACP turn." {
+			t.Fatalf("turn 1 unexpected: %+v", res1)
+		}
+		res2, evs2 := runACPTurn(t, p, s, Turn{Spec: s, Prompt: "Second turn.", SessionID: res1.SessionID}, allowAll)
+		if res2.IsError || res2.SessionID != res1.SessionID || res2.Final != "Resumed ACP turn." {
+			t.Fatalf("turn 2 unexpected: %+v (evs=%v)", res2, evs2)
+		}
+		if res2.Usage.InputTokens != 1200 || res2.Usage.CachedTokens != 1000 || res2.Usage.OutputTokens != 37 {
+			t.Errorf("resumed turn usage %+v (want single-turn counts)", res2.Usage)
+		}
+		for _, ev := range evs2 {
+			if ev.Type == "message" && strings.Contains(fmt.Sprint(ev.Payload), "First ACP turn.") {
+				t.Errorf("replayed turn 1 message leaked into turn 2 events: %v", ev)
+			}
+		}
+	})
+
+	t.Run("session_quota", func(t *testing.T) {
+		p := newAgyProbe(t, bin)
+		p.gemini.route = func(body string) (agyReply, bool) {
+			if strings.Contains(body, "conversation title generator") {
+				return agyReply{text: "Probe Title"}, true
+			}
+			return agyReply{status: 429, body: `{"error":{"code":429,"message":"You exceeded your current quota, please check your plan and billing details.","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"41s"}]}}`}, true
+		}
+		s := spec("repo:read", "allowed")
+		s.Harness = agentdef.HarnessAntigravity
+		res, _ := runACPTurn(t, p, s, Turn{Spec: s, Prompt: "Hello"}, func(context.Context, string, map[string]any) (bool, string) { return true, "" })
+		if !res.IsError || !res.UsageLimited {
+			t.Fatalf("expected IsError && UsageLimited for 429, got %+v", res)
 		}
 	})
 }

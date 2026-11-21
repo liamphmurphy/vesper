@@ -1,7 +1,6 @@
 package harness
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -21,10 +20,9 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/agentdef"
 )
 
-// TestClaudeProbe runs the real claude CLI against a stub Messages API, as
-// TestAgyProbe does for agy. It checks what Vesper's sub agents rely on:
-// a sub agent's own tool calls reach the policy hook, and with background
-// tasks off the lead waits for the report within one turn and one result.
+// TestClaudeProbe runs the real claude CLI against a stub Messages API over
+// Claude Code's bidirectional stream-json stdio protocol, verifying CheckTool
+// policy gating, inline image blocks, SystemAppend, and OptionNoMCP.
 func TestClaudeProbe(t *testing.T) {
 	bin := os.Getenv("CLAUDE_BIN")
 	if os.Getenv("CLAUDE_PROBE") != "1" || bin == "" {
@@ -39,21 +37,35 @@ func TestClaudeProbe(t *testing.T) {
 		t.Logf("claude --version: %s", strings.TrimSpace(string(out)))
 	}
 
-	t.Run("helper", func(t *testing.T) {
-		api := &claudeStub{}
-		policy, mcp := &agyPolicyStub{}, &agyMCPStub{}
+	t.Run("session", func(t *testing.T) {
+		api := &claudeSessionStub{}
 		dir := t.TempDir()
-		mux := http.NewServeMux()
-		mux.Handle("/api/v1/agent/tool-policy", policy)
-		mux.Handle("/mcp", mcp)
-		vesper := httptest.NewServer(mux)
+		if err := os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("hello-session\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		vesper := httptest.NewServer(http.NotFoundHandler())
 		t.Cleanup(vesper.Close)
 		anthropic := httptest.NewServer(api)
 		t.Cleanup(anthropic.Close)
 
 		s := spec("repo:read", "allowed", "repo:write", "allowed", "tests:run", "allowed")
-		inv, err := ClaudeCode{}.Invocation(Workspace{Dir: dir, MCPURL: vesper.URL + "/mcp", Token: "probe-token", TokenEnv: "LAZYAGENTS_TOKEN"},
-			Turn{Spec: s, Prompt: "Do the probe task."})
+		s.HarnessOptions[agentdef.OptionNoMCP] = "true"
+		turn := Turn{
+			Spec:         s,
+			Prompt:       "PROBE_SESSION_TASK: run blocked bash then read.",
+			SystemAppend: "APPEND_SYSTEM_MARKER",
+			ConfigTag:    "probe-sess",
+			InlineImages: []InlineImage{{
+				MediaType: "image/png",
+				Data:      tinyProbePNG(),
+			}},
+		}
+		inv, err := ClaudeCode{}.SessionInvocation(Workspace{
+			Dir:      dir,
+			MCPURL:   vesper.URL + "/mcp",
+			Token:    "probe-token",
+			TokenEnv: "LAZYAGENTS_TOKEN",
+		}, turn)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -66,6 +78,7 @@ func TestClaudeProbe(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		cmd := exec.CommandContext(ctx, bin, inv.Argv[1:]...)
@@ -74,87 +87,100 @@ func TestClaudeProbe(t *testing.T) {
 		for k, v := range inv.Env {
 			cmd.Env = append(cmd.Env, k+"="+v)
 		}
-		var stdout, stderr bytes.Buffer
-		cmd.Stdin, cmd.Stdout, cmd.Stderr = strings.NewReader(""), &stdout, &stderr
-		if err := cmd.Run(); err != nil || ctx.Err() != nil {
-			t.Fatalf("claude: %v\nstderr: %s", err, stderr.String())
+		stdin, err := cmd.StdinPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
 		}
 
-		parser := ClaudeCode{}.NewParser("")
-		results := 0
-		sc := bufio.NewScanner(&stdout)
-		sc.Buffer(make([]byte, 1<<20), 8<<20)
-		for sc.Scan() {
-			var l struct {
-				Type string `json:"type"`
+		var mu sync.Mutex
+		var checked []string
+		var gotSession string
+		var gotEvents []Event
+		res, runErr := ClaudeCode{}.RunSession(ctx, stdin, stdout, Workspace{Dir: dir}, turn, SessionCallbacks{
+			OnEvent: func(ev Event) {
+				mu.Lock()
+				gotEvents = append(gotEvents, ev)
+				mu.Unlock()
+			},
+			OnSession: func(sid string) {
+				mu.Lock()
+				gotSession = sid
+				mu.Unlock()
+			},
+			CheckTool: func(_ context.Context, tool string, input map[string]any) (bool, string) {
+				mu.Lock()
+				checked = append(checked, tool)
+				mu.Unlock()
+				if tool == "Bash" {
+					return false, "blocked by probe policy"
+				}
+				return true, ""
+			},
+		})
+		waitErr := cmd.Wait()
+		if runErr != nil || waitErr != nil {
+			t.Fatalf("runErr=%v waitErr=%v stderr=%s", runErr, waitErr, stderr.String())
+		}
+		if res.Final != "Session done." || gotSession == "" || len(gotEvents) == 0 {
+			t.Fatalf("unexpected result=%+v session=%q events=%d", res, gotSession, len(gotEvents))
+		}
+		if _, err := os.Stat(filepath.Join(dir, "blocked.txt")); !os.IsNotExist(err) {
+			t.Fatalf("blocked.txt should not exist; err=%v", err)
+		}
+		mu.Lock()
+		gotChecked := slices.Clone(checked)
+		mu.Unlock()
+		if !slices.Contains(gotChecked, "Bash") || !slices.Contains(gotChecked, "Read") {
+			t.Fatalf("expected Bash and Read to hit CheckTool, got %v", gotChecked)
+		}
+		if len(api.reqs) == 0 {
+			t.Fatal("API never received a request")
+		}
+		firstReq := api.reqs[0]
+		if !strings.Contains(string(firstReq.System), "APPEND_SYSTEM_MARKER") {
+			t.Errorf("SystemAppend missing from API system prompt: %s", string(firstReq.System))
+		}
+		if !strings.Contains(firstReq.raw, "data:image/png") && !strings.Contains(firstReq.raw, `"type":"image"`) {
+			t.Errorf("inline image missing from API request")
+		}
+		for _, tn := range firstReq.toolNames() {
+			if strings.HasPrefix(tn, "mcp__") {
+				t.Errorf("expected noMCP to omit mcp tool %q", tn)
 			}
-			if json.Unmarshal(sc.Bytes(), &l) == nil && l.Type == "result" {
-				results++
-			}
-			parser.Line(sc.Bytes())
-		}
-		if results != 1 {
-			t.Errorf("want exactly one result line, got %d: the lead didn't wait for its sub agent", results)
-		}
-		if res := parser.Result(); res.Final != "Lead done." || res.Usage.SubagentToolCalls != 1 {
-			t.Errorf("result %+v", res)
-		}
-		if got := policy.tools(); !slices.Equal(got, []string{"Agent", "Bash"}) || policy.input(0)["subagent_type"] != agentdef.HelperAgent ||
-			!strings.Contains(fmt.Sprint(policy.input(1)["command"]), "from-helper") {
-			t.Errorf("policy saw %v %v", got, policy.inputs)
-		}
-		lead, helper := api.request("Do the probe task."), api.request(agentdef.HelperPrompt)
-		if lead == nil || helper == nil {
-			t.Fatal("the lead or the helper never reached the API")
-		}
-		if helper.Model != lead.Model {
-			t.Errorf("helper on %s, lead on %s: the helper inherits the lead's model", helper.Model, lead.Model)
-		}
-		if names := helper.toolNames(); !slices.Equal(names, []string{"Bash", "Edit", "Glob", "Grep", "Read", "Write"}) {
-			t.Errorf("helper tools %v", names)
 		}
 	})
 }
 
-type claudeRequest struct {
-	Model    string            `json:"model"`
-	System   json.RawMessage   `json:"system"`
-	Messages []json.RawMessage `json:"messages"`
-	Tools    []struct {
-		Name string `json:"name"`
-	} `json:"tools"`
-	raw string
-}
-
-func (r *claudeRequest) toolNames() []string {
-	var names []string
-	for _, tool := range r.Tools {
-		names = append(names, tool.Name)
+func tinyProbePNG() []byte {
+	// Valid 1x1 transparent PNG.
+	return []byte{
+		0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+		0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+		0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+		0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+		0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41,
+		0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
+		0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00,
+		0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae,
+		0x42, 0x60, 0x82,
 	}
-	slices.Sort(names)
-	return names
 }
 
-// claudeStub is the Messages API: the lead starts the helper and finishes once
-// it reports; the helper runs one command and reports; anything else (a title,
-// a summary) gets "ok".
-type claudeStub struct {
+type claudeSessionStub struct {
 	mu   sync.Mutex
 	reqs []*claudeRequest
 }
 
-func (s *claudeStub) request(marker string) *claudeRequest {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, r := range s.reqs {
-		if strings.Contains(r.raw, marker) {
-			return r
-		}
-	}
-	return nil
-}
-
-func (s *claudeStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (s *claudeSessionStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 	if !strings.HasPrefix(r.URL.Path, "/v1/messages") || strings.Contains(r.URL.Path, "count_tokens") {
 		w.Header().Set("Content-Type", "application/json")
@@ -166,27 +192,19 @@ func (s *claudeStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.reqs = append(s.reqs, req)
 	s.mu.Unlock()
-	var first string
-	if len(req.Messages) > 0 {
-		first = string(req.Messages[0])
-	}
+
 	var block map[string]any
 	switch {
-	case strings.Contains(string(req.System), agentdef.HelperPrompt) || strings.Contains(first, "PROBE_HELPER_TASK"):
-		if strings.Contains(req.raw, "toolu_helper_1") {
-			block = map[string]any{"type": "text", "text": "Ran it: from-helper."}
-		} else {
-			block = map[string]any{"type": "tool_use", "id": "toolu_helper_1", "name": "Bash", "input": map[string]any{"command": "echo from-helper", "description": "Probe"}}
-		}
-	case strings.Contains(first, "Do the probe task."):
-		if strings.Contains(req.raw, "toolu_lead_1") {
-			block = map[string]any{"type": "text", "text": "Lead done."}
-		} else {
-			block = map[string]any{"type": "tool_use", "id": "toolu_lead_1", "name": "Agent", "input": map[string]any{"subagent_type": agentdef.HelperAgent, "description": "Probe", "prompt": "PROBE_HELPER_TASK: run the probe command."}}
-		}
-	default:
+	case !strings.Contains(req.raw, "PROBE_SESSION_TASK"):
 		block = map[string]any{"type": "text", "text": "ok"}
+	case !strings.Contains(req.raw, "toolu_bash_1"):
+		block = map[string]any{"type": "tool_use", "id": "toolu_bash_1", "name": "Bash", "input": map[string]any{"command": "echo bad > blocked.txt", "description": "Blocked"}}
+	case !strings.Contains(req.raw, "toolu_read_1"):
+		block = map[string]any{"type": "tool_use", "id": "toolu_read_1", "name": "Read", "input": map[string]any{"file_path": "hello.txt"}}
+	default:
+		block = map[string]any{"type": "text", "text": "Session done."}
 	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	event := func(v map[string]any) {
 		b, _ := json.Marshal(v)
@@ -208,4 +226,23 @@ func (s *claudeStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	event(map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": stop}, "usage": map[string]any{"output_tokens": 5}})
 	event(map[string]any{"type": "message_stop"})
+}
+
+type claudeRequest struct {
+	Model    string            `json:"model"`
+	System   json.RawMessage   `json:"system"`
+	Messages []json.RawMessage `json:"messages"`
+	Tools    []struct {
+		Name string `json:"name"`
+	} `json:"tools"`
+	raw string
+}
+
+func (r *claudeRequest) toolNames() []string {
+	var names []string
+	for _, tool := range r.Tools {
+		names = append(names, tool.Name)
+	}
+	slices.Sort(names)
+	return names
 }

@@ -117,7 +117,7 @@ func (s *Service) prepareChatImage(ctx context.Context, ws, runID uuid.UUID, pro
 	if run.State != "running" {
 		return none, apperr.Conflict("generate_image only works while you are answering a message")
 	}
-	if run.Harness == agentdef.HarnessCodex {
+	if agentdef.CapsOf(run.Harness).ChatInlineImageGen {
 		return none, apperr.Conflict("This chat runs on Codex: use your own image generation tool, then copy the image into .lazyagents/outbox/. generate_image is for other models.")
 	}
 	chat, err := q.ChatSessionForRun(ctx, &run.ID)

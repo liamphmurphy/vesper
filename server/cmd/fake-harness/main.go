@@ -106,12 +106,11 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
-	"syscall"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -132,6 +131,14 @@ var (
 )
 
 func emit(v map[string]any) {
+	switch sessionProto {
+	case protoCodexServer:
+		emitCodexAppServer(v)
+		return
+	case protoAgyACP:
+		emitAgyACP(v)
+		return
+	}
 	if agy {
 		translateToAgy(v)
 		return
@@ -142,17 +149,13 @@ func emit(v map[string]any) {
 			m["usage"] = contextUsage()
 		}
 	}
-	b, _ := json.Marshal(v)
-	fmt.Println(string(b))
+	writeOutJSON(v)
 }
 
 // contextUsage is the usage of a Claude assistant line: a request whose
 // prompt is FAKE_HARNESS_CONTEXT_TOKENS (default 2000) tokens, mostly cached.
 func contextUsage() map[string]any {
-	n := int64(2000)
-	if v := os.Getenv("FAKE_HARNESS_CONTEXT_TOKENS"); v != "" {
-		fmt.Sscan(v, &n)
-	}
+	n := contextTokenCount()
 	cached := n * 9 / 10
 	return map[string]any{"input_tokens": n - cached, "cache_read_input_tokens": cached, "cache_creation_input_tokens": 0, "output_tokens": 1}
 }
@@ -176,25 +179,32 @@ func result(isError bool, msg string) {
 			emit(map[string]any{"type": "turn.failed", "error": map[string]any{"message": msg}})
 			return
 		}
-		counts := map[string]int{}
-		raw, _ := os.ReadFile(".lazyagents/fake-codex-usage.json")
-		_ = json.Unmarshal(raw, &counts)
-		counts[session]++
-		raw, _ = json.Marshal(counts)
-		_ = os.WriteFile(".lazyagents/fake-codex-usage.json", raw, 0600)
-		count := counts[session]
+		count := 1
+		if os.Getenv("LAZYAGENTS_SUBAGENT_JOB_ID") == "" {
+			counts := map[string]int{}
+			raw, _ := os.ReadFile(".lazyagents/fake-codex-usage.json")
+			_ = json.Unmarshal(raw, &counts)
+			counts[session]++
+			raw, _ = json.Marshal(counts)
+			_ = os.WriteFile(".lazyagents/fake-codex-usage.json", raw, 0600)
+			count = counts[session]
+		}
 		emit(map[string]any{"type": "turn.completed", "usage": map[string]any{"input_tokens": 1000 * count, "cached_input_tokens": 500 * count, "output_tokens": 200 * count}})
 		return
 	}
 	// Like the real CLI: tokens are this process's, total_cost_usd is the session's so far.
-	counts := map[string]int{}
-	raw, _ := os.ReadFile(".lazyagents/fake-claude-usage.json")
-	_ = json.Unmarshal(raw, &counts)
-	counts[session]++
-	raw, _ = json.Marshal(counts)
-	_ = os.WriteFile(".lazyagents/fake-claude-usage.json", raw, 0600)
+	count := 1
+	if os.Getenv("LAZYAGENTS_SUBAGENT_JOB_ID") == "" {
+		counts := map[string]int{}
+		raw, _ := os.ReadFile(".lazyagents/fake-claude-usage.json")
+		_ = json.Unmarshal(raw, &counts)
+		counts[session]++
+		raw, _ = json.Marshal(counts)
+		_ = os.WriteFile(".lazyagents/fake-claude-usage.json", raw, 0600)
+		count = counts[session]
+	}
 	emit(map[string]any{"type": "result", "subtype": "success", "is_error": isError, "result": msg, "num_turns": 3,
-		"total_cost_usd": 0.0125 * float64(counts[session]), "usage": map[string]any{"input_tokens": 1000, "output_tokens": 200, "cache_read_input_tokens": 500}})
+		"total_cost_usd": 0.0125 * float64(count), "usage": map[string]any{"input_tokens": 1000, "output_tokens": 200, "cache_read_input_tokens": 500}})
 }
 
 func newUUID() string {
@@ -254,36 +264,29 @@ func main() {
 			return
 		}
 	}
-	if len(args) > 0 && args[0] == "app-server" {
-		scanner := bufio.NewScanner(os.Stdin)
-		for scanner.Scan() {
-			var request struct {
-				ID     any    `json:"id"`
-				Method string `json:"method"`
-			}
-			if json.Unmarshal(scanner.Bytes(), &request) != nil || request.ID == nil {
-				continue
-			}
-			result := any(map[string]any{})
-			if request.Method == "model/list" {
-				// Chat model discovery (chatmodels.DiscoverLocal).
-				result = map[string]any{"data": []any{map[string]any{"model": "gpt-5-codex", "displayName": "GPT-5 Codex (fake)", "isDefault": true}}}
-			}
-			if request.Method == "account/rateLimits/read" {
-				// The usage check (usage.Probe).
-				result = map[string]any{"rateLimits": map[string]any{"limitId": "codex", "planType": "plus",
-					"primary":   map[string]any{"usedPercent": 46, "windowDurationMins": 300, "resetsAt": time.Now().Add(3 * time.Hour).Unix()},
-					"secondary": map[string]any{"usedPercent": 72, "windowDurationMins": 10080, "resetsAt": time.Now().Add(120 * time.Hour).Unix()}}}
-			}
-			if request.Method == "hooks/list" {
-				result = map[string]any{"data": []any{map[string]any{"errors": []any{}, "hooks": []any{map[string]any{"enabled": true, "source": "sessionFlags", "handlerType": "command", "command": os.Getenv("LAZYAGENTS_POLICY_HOOK_COMMAND"), "eventName": "preToolUse", "matcher": "*", "trustStatus": "untrusted"}}}}}
-			}
-			b, _ := json.Marshal(map[string]any{"id": request.ID, "result": result})
-			fmt.Println(string(b))
+	var inline []string
+	waitSessionEOF := false
+	defer func() {
+		if waitSessionEOF {
+			waitEOFOrTimeout(5 * time.Second)
 		}
-		return
-	}
-	if len(args) > 0 && args[0] == "exec" {
+	}()
+
+	if len(args) > 0 && args[0] == "app-server" {
+		var ok bool
+		prompt, resume, model, mcpURL, tokenEnv, mcpApproval, images, ok = runCodexAppServer(args[1:])
+		if !ok {
+			return
+		}
+		waitSessionEOF = true
+	} else if agy && len(args) > 0 && args[0] == "acp" {
+		var ok bool
+		prompt, resume, model, inline, ok = runAgyACPSession()
+		if !ok {
+			return
+		}
+		waitSessionEOF = true
+	} else if len(args) > 0 && args[0] == "exec" {
 		codex = true
 		args = args[1:]
 		// exec's own flags (--add-dir <dir>) come before the resume subcommand.
@@ -294,22 +297,12 @@ func main() {
 		if isResume {
 			args = args[1:]
 		}
+		mcpURL, tokenEnv, mcpApproval = parseCodexConfigArgs(args)
 		var pos []string
 		for i := 0; i < len(args); i++ {
 			switch args[i] {
 			case "-c":
-				kv := args[i+1]
 				i++
-				k, v, _ := strings.Cut(kv, "=")
-				v = strings.Trim(v, `"`)
-				switch k {
-				case "mcp_servers.lazyagents.url":
-					mcpURL = v
-				case "mcp_servers.lazyagents.bearer_token_env_var":
-					tokenEnv = v
-				case "mcp_servers.lazyagents.default_tools_approval_mode":
-					mcpApproval = v
-				}
 			case "-m":
 				model = args[i+1]
 				i++
@@ -329,65 +322,72 @@ func main() {
 		} else if len(pos) > 0 {
 			prompt = pos[len(pos)-1]
 		}
-	}
-	if codex && mcpApproval != "approve" {
-		result(true, "MCP tool call requires approval, but approval policy is never")
-		os.Exit(1)
-	}
-	if agy {
+	} else if agy {
 		prompt, model, resume = agyArgs(args)
-	}
-	for i := 0; !codex && !agy && i < len(args); i++ {
-		switch args[i] {
-		case "-p", "--print":
-			if i+1 < len(args) {
-				prompt = args[i+1]
+	} else {
+		for i := 0; i < len(args); i++ {
+			switch args[i] {
+			case "-p", "--print":
+				if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+					prompt = args[i+1]
+					i++
+				}
+			case "--resume":
+				resume = args[i+1]
+				i++
+			case "--model":
+				model = args[i+1]
+				i++
+			case "--mcp-config":
+				cfgPath = args[i+1]
 				i++
 			}
-		case "--resume":
-			resume = args[i+1]
-			i++
-		case "--model":
-			model = args[i+1]
-			i++
-		case "--mcp-config":
-			cfgPath = args[i+1]
-			i++
 		}
+		if slices.Contains(args, "--input-format") {
+			if slices.Contains(args, "--mcp-config") && !slices.Contains(args, "--no-session-persistence") {
+				if resume != "" && os.Getenv("FAKE_HARNESS_RESUME") == "gone" {
+					fmt.Fprintln(os.Stderr, "No conversation found with session ID: "+resume)
+					os.Exit(1)
+				}
+				prompt, inline = claudeSessionHandshake()
+				waitSessionEOF = true
+			} else {
+				var m struct {
+					Message struct {
+						Content []struct {
+							Text   string `json:"text"`
+							Source struct {
+								Data string `json:"data"`
+							} `json:"source"`
+						} `json:"content"`
+					} `json:"message"`
+				}
+				_ = json.NewDecoder(os.Stdin).Decode(&m)
+				for _, c := range m.Message.Content {
+					if c.Source.Data == "" {
+						prompt = c.Text
+						continue
+					}
+					b, _ := base64.StdEncoding.DecodeString(c.Source.Data)
+					inline = append(inline, string(b))
+				}
+			}
+		}
+	}
+	if codex && mcpURL != "" && mcpApproval != "approve" {
+		result(true, "MCP tool call requires approval, but approval policy is never")
+		os.Exit(1)
 	}
 	if resume != "" && os.Getenv("FAKE_HARNESS_RESUME") == "gone" {
 		fmt.Fprintln(os.Stderr, "No conversation found with session ID: "+resume)
 		os.Exit(1)
 	}
-	// A chat's first prompt carries a note for the agent; the scripted prompts
-	// ("slow", "quota", "read <id>") are what remains without it.
-	// A Claude turn with image inputs sends its message on stdin.
-	var inline []string
-	if slices.Contains(args, "--input-format") {
-		var m struct {
-			Message struct {
-				Content []struct {
-					Text   string `json:"text"`
-					Source struct {
-						Data string `json:"data"`
-					} `json:"source"`
-				} `json:"content"`
-			} `json:"message"`
-		}
-		_ = json.NewDecoder(os.Stdin).Decode(&m)
-		for _, c := range m.Message.Content {
-			if c.Source.Data == "" {
-				prompt = c.Text
-				continue
-			}
-			b, _ := base64.StdEncoding.DecodeString(c.Source.Data)
-			inline = append(inline, string(b))
-		}
-	}
 	prompt = regexp.MustCompile(`(?s)\n\n\(Vesper: this is the first message[^)]*\)`).ReplaceAllString(prompt, "")
-	session = resume
 	if session == "" {
-		session = newUUID()
+		session = resume
+		if session == "" {
+			session = newUUID()
+		}
 	}
 	if path := os.Getenv("FAKE_HARNESS_LOG"); path != "" {
 		wd, _ := os.Getwd()
@@ -396,7 +396,11 @@ func main() {
 		var imageFiles []string
 		for _, p := range images {
 			b, _ := os.ReadFile(p)
-			imageFiles = append(imageFiles, p+"="+string(b))
+			label := p
+			if rel, err := filepath.Rel(wd, p); err == nil && !strings.HasPrefix(rel, "..") {
+				label = filepath.ToSlash(rel)
+			}
+			imageFiles = append(imageFiles, label+"="+string(b))
 		}
 		for _, b := range inline {
 			imageFiles = append(imageFiles, "inline="+b)
@@ -433,7 +437,15 @@ func main() {
 	// A chat can answer successfully without connecting to MCP or calling tools.
 	if os.Getenv("FAKE_HARNESS_MODE") == "chat" {
 		if prompt == "slow" && resume == "" {
-			time.Sleep(60 * time.Second)
+			if sessionProto != protoLegacy {
+				select {
+				case <-interrupted:
+					return
+				case <-time.After(60 * time.Second):
+				}
+			} else {
+				time.Sleep(60 * time.Second)
+			}
 		}
 		if prompt == "slow partial" && !codex {
 			// Test hook: write a little and call a tool, then hang until stopped,
@@ -519,6 +531,75 @@ func main() {
 		result(false, "Image step done.")
 		return
 	}
+	// In-turn Vesper MCP subagents run with OptionNoMCP ("true"), so handle them
+	// before opening any lazyagents MCP server config.
+	if jobID := os.Getenv("LAZYAGENTS_SUBAGENT_JOB_ID"); jobID != "" {
+		if codex {
+			items++
+			cid := fmt.Sprintf("sub_item_%d", items)
+			item("item.started", map[string]any{"id": cid, "type": "command_execution", "command": "echo subagent"})
+			item("item.completed", map[string]any{"id": cid, "type": "command_execution", "command": "echo subagent", "aggregated_output": "subagent", "exit_code": 0})
+		} else {
+			toolName, toolInput := "Read", map[string]any{"file_path": "README.md"}
+			if agy {
+				toolName, toolInput = "read_file", map[string]any{"Path": "README.md"}
+			}
+			emit(map[string]any{"type": "assistant", "message": map[string]any{"role": "assistant", "content": []any{
+				map[string]any{"type": "tool_use", "id": "sub_read_1", "name": toolName, "input": toolInput}}}})
+			emit(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": []any{
+				map[string]any{"type": "tool_result", "tool_use_id": "sub_read_1", "content": "ok", "is_error": false}}}})
+		}
+
+		if _, rest, ok := strings.Cut(prompt, "HOLD="); ok {
+			holdPath := strings.Fields(rest)[0]
+			_ = os.MkdirAll(filepath.Dir(holdPath), 0o755)
+			_ = os.WriteFile(holdPath+".started", []byte(jobID), 0o644)
+			if sessionProto == protoLegacy {
+				watchSignals()
+			}
+			deadline := time.NewTimer(30 * time.Second)
+			tick := time.NewTicker(20 * time.Millisecond)
+		holdLoop:
+			for {
+				if _, err := os.Stat(holdPath); err == nil {
+					break holdLoop
+				}
+				select {
+				case <-interrupted:
+					deadline.Stop()
+					tick.Stop()
+					result(false, "Interrupted")
+					os.Exit(130)
+				case <-deadline.C:
+					tick.Stop()
+					result(true, "hold timed out")
+					os.Exit(2)
+				case <-tick.C:
+				}
+			}
+			deadline.Stop()
+			tick.Stop()
+		}
+
+		reply := "subagent result: " + prompt
+		switch {
+		case strings.Contains(prompt, "TRY_WRITE"):
+			wOK, _ := checkSessionPolicy("Write", map[string]any{"file_path": "blocked-by-explorer.txt"})
+			bOK, _ := checkSessionPolicy("Bash", map[string]any{"command": "echo hi"})
+			rOK, _ := checkSessionPolicy("Read", map[string]any{"file_path": "README.md"})
+			reply = fmt.Sprintf("policy write=%v bash=%v read=%v", wOK, bOK, rOK)
+		case strings.Contains(prompt, "DO_WRITE"):
+			wOK, _ := checkSessionPolicy("Write", map[string]any{"file_path": "helper.txt"})
+			if wOK {
+				_ = os.WriteFile("helper.txt", []byte("written by helper\n"), 0o644)
+			}
+			reply = fmt.Sprintf("wrote=%v", wOK)
+		}
+		text(reply)
+		result(false, reply)
+		return
+	}
+
 	var cfg struct {
 		MCPServers map[string]struct {
 			URL     string            `json:"url"`
@@ -551,7 +632,17 @@ func main() {
 		result(true, "no lazyagents MCP server configured")
 		os.Exit(2)
 	}
-	ctx := context.Background()
+	ctx, cancelTurn := context.WithCancel(context.Background())
+	defer cancelTurn()
+	if sessionProto != protoLegacy {
+		go func() {
+			select {
+			case <-interrupted:
+				cancelTurn()
+			case <-ctx.Done():
+			}
+		}()
+	}
 	client := mcp.NewClient(&mcp.Implementation{Name: "fake-harness", Version: "1"}, nil)
 	sess, err := client.Connect(ctx, &mcp.StreamableClientTransport{
 		Endpoint: srv.URL, HTTPClient: &http.Client{Transport: bearer{srv.Headers["Authorization"]}}, DisableStandaloneSSE: true,
@@ -562,6 +653,7 @@ func main() {
 	}
 	defer sess.Close()
 
+	var callMu sync.Mutex
 	n := 0
 	var call func(string, map[string]any) map[string]any
 	call = func(name string, a map[string]any) map[string]any {
@@ -575,6 +667,7 @@ func main() {
 				}
 			}
 		}
+		callMu.Lock()
 		n++
 		id := fmt.Sprintf("toolu_%02d", n)
 		if codex {
@@ -585,6 +678,7 @@ func main() {
 			emit(map[string]any{"type": "assistant", "message": map[string]any{"role": "assistant", "content": []any{
 				map[string]any{"type": "tool_use", "id": id, "name": "mcp__lazyagents__" + name, "input": a}}}})
 		}
+		callMu.Unlock()
 		res, err := sess.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: a})
 		out := map[string]any{}
 		body, isErr := "", false
@@ -599,6 +693,7 @@ func main() {
 			body = string(b)
 			_ = json.Unmarshal(b, &out)
 		}
+		callMu.Lock()
 		if codex {
 			status := "completed"
 			if isErr {
@@ -610,6 +705,7 @@ func main() {
 			emit(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": []any{
 				map[string]any{"type": "tool_result", "tool_use_id": id, "content": body, "is_error": isErr}}}})
 		}
+		callMu.Unlock()
 		return out
 	}
 	ticket := os.Getenv("LAZYAGENTS_TICKET")
@@ -639,9 +735,13 @@ func main() {
 					name := "map-" + newUUID() + ".png"
 					_ = os.MkdirAll(dir, 0o755)
 					_ = os.WriteFile(filepath.Join(dir, name), []byte("\x89PNG\r\n\x1a\n"+content), 0o644)
-					agyStep++
-					agyStepUpdate("ACTIVE", "tool", map[string]any{"tool_name": "generate_image", "tool_info": map[string]any{"name": "generate_image", "parameters": map[string]any{"prompt": "map"}}})
-					agyLine("step_update", map[string]any{"conversation_id": session, "step_index": agyStep, "state": "DONE", "step_type": "tool", "tool_info": map[string]any{"output": "Saved " + filepath.Join(dir, name)}})
+					if sessionProto == protoAgyACP {
+						emitAgyACPImageStep(dir, name)
+					} else {
+						agyStep++
+						agyStepUpdate("ACTIVE", "tool", map[string]any{"tool_name": "generate_image", "tool_info": map[string]any{"name": "generate_image", "parameters": map[string]any{"prompt": "map"}}})
+						agyLine("step_update", map[string]any{"conversation_id": session, "step_index": agyStep, "state": "DONE", "step_type": "tool", "tool_info": map[string]any{"output": "Saved " + filepath.Join(dir, name)}})
+					}
 				} else {
 					_ = os.WriteFile(".lazyagents/outbox/map-"+newUUID()+".png", []byte("\x89PNG\r\n\x1a\n"+content), 0o644)
 				}
@@ -785,17 +885,85 @@ func main() {
 		result(false, "Draft submitted.")
 		return
 	}
+	if os.Getenv("FAKE_HARNESS_MODE") == "subagent" {
+		if ticket != "" {
+			call("claim_ticket", map[string]any{"ticket": ticket})
+		}
+		type subCall struct {
+			Type   string `json:"type"`
+			Role   string `json:"role"`
+			Prompt string `json:"prompt"`
+		}
+		calls := []subCall{{Type: "explorer", Role: "Searcher", Prompt: "inspect"}}
+		if rawCalls := os.Getenv("FAKE_SUBAGENT_CALLS"); rawCalls != "" {
+			if err := json.Unmarshal([]byte(rawCalls), &calls); err != nil {
+				result(true, "bad FAKE_SUBAGENT_CALLS: "+err.Error())
+				os.Exit(2)
+			}
+		}
+		results := make([]string, len(calls))
+		runOne := func(idx int, c subCall) {
+			out := call("run_subagent", map[string]any{"type": c.Type, "role": c.Role, "prompt": c.Prompt})
+			if errMsg, ok := out["error"].(string); ok && errMsg != "" {
+				results[idx] = fmt.Sprintf("%s:ERR:%s", c.Type, errMsg)
+				return
+			}
+			resStr, _ := out["result"].(string)
+			results[idx] = fmt.Sprintf("%s:%s", c.Type, resStr)
+		}
+		if os.Getenv("FAKE_SUBAGENT_PARALLEL") != "" {
+			var pwg sync.WaitGroup
+			for i, c := range calls {
+				pwg.Add(1)
+				go func(idx int, sc subCall) {
+					defer pwg.Done()
+					runOne(idx, sc)
+				}(i, c)
+			}
+			pwg.Wait()
+		} else {
+			for i, c := range calls {
+				if ctx.Err() != nil {
+					break
+				}
+				runOne(i, c)
+			}
+		}
+		if ctx.Err() != nil {
+			text("Interrupted")
+			result(false, "Interrupted")
+			os.Exit(130)
+		}
+		summary := strings.Join(results, " | ")
+		if ticket != "" {
+			call("complete_run", map[string]any{"outcome": summary})
+		}
+		text(summary)
+		result(false, summary)
+		return
+	}
 
 	if os.Getenv("FAKE_HARNESS_MODE") == "policy" {
 		call("claim_ticket", map[string]any{"ticket": ticket})
-		check := exec.Command("python3", ".lazyagents/tool-policy.py")
-		check.Stdin = strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"go test ./..."}}`)
-		body, err := check.CombinedOutput()
-		if err != nil {
-			result(true, "policy hook failed")
-			os.Exit(2)
+		allowed := false
+		if sessionProto != protoLegacy {
+			var ok bool
+			allowed, ok = checkSessionPolicy("Bash", map[string]any{"command": "go test ./..."})
+			if !ok {
+				result(true, "policy check failed")
+				os.Exit(2)
+			}
+		} else {
+			check := exec.Command("python3", ".lazyagents/tool-policy.py")
+			check.Stdin = strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"go test ./..."}}`)
+			body, err := check.CombinedOutput()
+			if err != nil {
+				result(true, "policy hook failed")
+				os.Exit(2)
+			}
+			allowed = !strings.Contains(string(body), `"deny"`)
 		}
-		if strings.Contains(string(body), `"deny"`) {
+		if !allowed {
 			text("Tool blocked; waiting for Vesper approval.")
 			result(false, "Waiting for tool approval")
 			return
@@ -1009,10 +1177,11 @@ func main() {
 		return
 	case "slow":
 		call("claim_ticket", map[string]any{"ticket": ticket})
-		sig := make(chan os.Signal, 1)
-		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+		if sessionProto == protoLegacy {
+			watchSignals()
+		}
 		select {
-		case <-sig:
+		case <-interrupted:
 			text("Interrupted; stopping here.")
 			result(false, "Interrupted")
 			os.Exit(130)

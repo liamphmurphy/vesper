@@ -15,9 +15,6 @@ var toolHook []byte
 //go:embed no_tools_hook.py
 var noToolsHook []byte
 
-//go:embed codex_launch.py
-var codexLauncher []byte
-
 const toolHookPath = ".lazyagents/tool-policy.py"
 
 func hookEnvironment(ws Workspace) (map[string]string, error) {

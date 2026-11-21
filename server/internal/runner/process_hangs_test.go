@@ -36,7 +36,7 @@ func TestOversizedHarnessLineFailsWithoutBlockingWriter(t *testing.T) {
 			r := &Runner{Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 			done := make(chan error, 1)
 			go func() {
-				_, _, _, err := r.watchSession(ctx, runCtx{run: store.Run{Purpose: "chat"}}, p, harness.ClaudeCode{}.NewParser(""), nil, 0, func(string) {})
+				_, _, _, err := r.runSession(ctx, runCtx{run: store.Run{Purpose: "chat"}}, harness.ClaudeCode{}, p, harness.Workspace{}, harness.Turn{}, nil, 0, nil, nil, false)
 				done <- err
 			}()
 			select {
@@ -53,16 +53,22 @@ func TestOversizedHarnessLineFailsWithoutBlockingWriter(t *testing.T) {
 	}
 }
 
+type nopWriteCloser struct{}
+
+func (nopWriteCloser) Write(p []byte) (int, error) { return len(p), nil }
+func (nopWriteCloser) Close() error                { return nil }
+
 type heldProcess struct {
 	killed chan struct{}
 	once   sync.Once
 }
 
-func (*heldProcess) Stdout() io.Reader    { return strings.NewReader("") }
-func (*heldProcess) Stderr() io.Reader    { return strings.NewReader("") }
-func (*heldProcess) Interrupt() error     { return nil }
-func (p *heldProcess) Kill() error        { p.once.Do(func() { close(p.killed) }); return nil }
-func (p *heldProcess) Wait() (int, error) { <-p.killed; return 137, nil }
+func (*heldProcess) Stdin() io.WriteCloser { return nopWriteCloser{} }
+func (*heldProcess) Stdout() io.Reader     { return strings.NewReader("") }
+func (*heldProcess) Stderr() io.Reader     { return strings.NewReader("") }
+func (*heldProcess) Interrupt() error      { return nil }
+func (p *heldProcess) Kill() error         { p.once.Do(func() { close(p.killed) }); return nil }
+func (p *heldProcess) Wait() (int, error)  { <-p.killed; return 137, nil }
 
 func TestWatchdogStopsProcessWhileDatabaseIsBlocked(t *testing.T) {
 	for _, runtime := range []bool{false, true} {
@@ -87,7 +93,7 @@ func TestWatchdogStopsProcessWhileDatabaseIsBlocked(t *testing.T) {
 				remaining = 1500 * time.Millisecond
 			}
 			go func() {
-				r.watchSession(ctx, runCtx{run: store.Run{ID: uuid.New(), Purpose: "chat"}}, p, harness.ClaudeCode{}.NewParser(""), nil, remaining, func(string) {})
+				r.runSession(ctx, runCtx{run: store.Run{ID: uuid.New(), Purpose: "chat"}}, harness.ClaudeCode{}, p, harness.Workspace{}, harness.Turn{}, nil, remaining, nil, nil, false)
 				close(done)
 			}()
 			deadline := time.Now().Add(4 * time.Second)

@@ -192,66 +192,104 @@ func TestToolPolicySubagents(t *testing.T) {
 			t.Fatalf("%s %s: %+v %v, want %s", tool, typ, d, err, want)
 		}
 	}
-	exec := func(sql string) {
-		t.Helper()
-		if _, err := pool.Exec(ctx, sql, run.ID); err != nil {
-			t.Fatal(err)
+	// Native Agent / Task are always denied: subagents run through Vesper MCP run_subagent.
+	save()
+	for _, tc := range []struct {
+		tool, typ string
+	}{
+		{"Agent", "explorer"},
+		{"Agent", "helper"},
+		{"Agent", "general-purpose"},
+		{"Agent", ""},
+		{"Task", "general-purpose"},
+	} {
+		check(tc.tool, tc.typ, "deny")
+		if d, _ := svc.CheckTool(ctx, c, runs.ToolCheck{Tool: tc.tool, Input: map[string]any{"subagent_type": tc.typ}}); d.Reason != "Use the Vesper MCP tool `run_subagent` instead of native Agent subagents." {
+			t.Fatalf("%s/%s reason %q", tc.tool, tc.typ, d.Reason)
 		}
 	}
-	// Default: the explorer and the helper, and nothing else.
-	save()
-	check("Agent", "explorer", "allow")
-	check("Agent", "helper", "allow")
-	check("Agent", "general-purpose", "deny")
-	check("Agent", "", "deny")
-	check("Task", "general-purpose", "deny")
-	if d, _ := svc.CheckTool(ctx, c, runs.ToolCheck{Tool: "Agent", Input: map[string]any{"subagent_type": "general-purpose"}}); d.Reason != "Only these sub agent types are available: explorer, helper" {
-		t.Fatalf("reason %q", d.Reason)
-	}
-	// A sub agent's own calls pass the same hook as the lead's.
-	if d, err := svc.CheckTool(ctx, c, runs.ToolCheck{Tool: "Grep", Input: map[string]any{"pattern": "x"}}); err != nil || d.Decision != "allow" {
-		t.Fatalf("grep: %+v %v", d, err)
-	}
-	// explorer: "false" leaves the helper; subagents: "false" leaves none.
-	setOptions(agentdef.OptionExplorer, "false")
-	check("Agent", "explorer", "deny")
-	check("Agent", "helper", "allow")
-	setOptions(agentdef.OptionExplorer, "", agentdef.OptionSubagents, "false")
-	check("Agent", "helper", "deny")
-	if d, _ := svc.CheckTool(ctx, c, runs.ToolCheck{Tool: "Agent", Input: map[string]any{"subagent_type": "helper"}}); d.Reason != "This run has no sub agents; do the work yourself" {
-		t.Fatalf("reason %q", d.Reason)
-	}
-	setOptions(agentdef.OptionSubagents, "")
-	// No tools, or an aside: none.
-	for _, opt := range []string{agentdef.OptionNoTools, agentdef.OptionAside} {
-		setOptions(opt, "true")
+	// Disabled via subagents: "false", no_tools, aside, or no_mcp -> disabled reason.
+	for _, opt := range []string{agentdef.OptionSubagents, agentdef.OptionNoTools, agentdef.OptionAside, agentdef.OptionNoMCP} {
+		val := "true"
+		if opt == agentdef.OptionSubagents {
+			val = "false"
+		}
+		setOptions(opt, val)
 		check("Agent", "helper", "deny")
+		wantReason := "This run has no sub agents; do the work yourself"
+		if opt == agentdef.OptionNoTools {
+			wantReason = "This turn has no tools"
+		}
+		if d, _ := svc.CheckTool(ctx, c, runs.ToolCheck{Tool: "Agent", Input: map[string]any{"subagent_type": "helper"}}); d.Reason != wantReason {
+			t.Fatalf("%s=%s reason %q, want %q", opt, val, d.Reason, wantReason)
+		}
 		setOptions(opt, "")
 	}
-	// Codex has none; agy's invoke_subagent reaches the hook as Agent with
-	// subagent_type (LAZYAGENTS-258) and gets the same roster.
-	spec.Harness = agentdef.HarnessCodex
-	save()
-	check("Agent", "helper", "deny")
-	spec.Harness = agentdef.HarnessAntigravity
-	save()
-	check("Agent", "explorer", "allow")
-	check("Agent", "helper", "allow")
-	check("Agent", "general", "deny")
+	// Codex and Antigravity deny native Agent too (when subagents are on via MCP).
+	for _, h := range []string{agentdef.HarnessCodex, agentdef.HarnessAntigravity} {
+		spec.Harness = h
+		save()
+		check("Agent", "explorer", "deny")
+		check("Agent", "helper", "deny")
+	}
 	spec.Harness = agentdef.HarnessClaudeCode
-	// A delegated run and a read-only chat have them too.
+
+	// SubagentSpec isolates explorer (read-only, fast model, OptionNoMCP) and helper (parent scopes + model).
 	save()
-	exec("UPDATE runs SET parent_run_id=$1 WHERE id=$1")
-	check("Agent", "helper", "allow")
-	exec("UPDATE runs SET parent_run_id=NULL WHERE id=$1")
-	spec = runs.ChatSpec(spec, runs.ChatCaps{})
-	save()
-	exec("UPDATE runs SET purpose='chat', ticket_id=NULL WHERE id=$1")
-	check("Agent", "explorer", "allow")
-	check("Agent", "helper", "allow")
-	// The read-only chat's helper still can't write: its calls are the chat's.
-	if d, err := svc.CheckTool(ctx, c, runs.ToolCheck{Tool: "Write", Input: map[string]any{"file_path": "x.go"}}); err != nil || d.Decision != "deny" {
-		t.Fatalf("write from a read-only chat: %+v %v", d, err)
+	exSpec, err := runs.SubagentSpec(spec, agentdef.ExplorerAgent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exSpec.Model != agentdef.DefaultExplorerModel || exSpec.HarnessOptions[agentdef.OptionNoMCP] != "true" ||
+		exSpec.HarnessOptions[agentdef.OptionSubagents] != "false" || exSpec.HarnessOptions["readonly"] != "true" ||
+		exSpec.HarnessOptions["sandbox"] != "read-only" {
+		t.Fatalf("explorer spec = %+v", exSpec)
+	}
+	if d, err := svc.CheckToolWithSpec(ctx, c, exSpec, runs.ToolCheck{Tool: "Read", Input: map[string]any{"file_path": "a.go"}}); err != nil || d.Decision != "allow" {
+		t.Fatalf("explorer Read = %+v %v", d, err)
+	}
+	if d, err := svc.CheckToolWithSpec(ctx, c, exSpec, runs.ToolCheck{Tool: "Write", Input: map[string]any{"file_path": "a.go"}}); err != nil || d.Decision != "deny" {
+		t.Fatalf("explorer Write = %+v %v", d, err)
+	}
+	if d, err := svc.CheckToolWithSpec(ctx, c, exSpec, runs.ToolCheck{Tool: "Bash", Input: map[string]any{"command": "echo hi"}}); err != nil || d.Decision != "deny" {
+		t.Fatalf("explorer Bash = %+v %v", d, err)
+	}
+	// Explorer fast models per harness + override.
+	for h, wantModel := range map[string]string{
+		agentdef.HarnessClaudeCode:  agentdef.DefaultExplorerModel,
+		agentdef.HarnessCodex:       "gpt-5-mini",
+		agentdef.HarnessAntigravity: "gemini-3.8-flash",
+	} {
+		p := spec
+		p.Harness = h
+		if sub, err := runs.SubagentSpec(p, agentdef.ExplorerAgent); err != nil || sub.Model != wantModel {
+			t.Fatalf("%s explorer model = %q (%v), want %q", h, sub.Model, err, wantModel)
+		}
+	}
+	setOptions(agentdef.OptionExplorerModel, "custom-fast")
+	if sub, err := runs.SubagentSpec(spec, agentdef.ExplorerAgent); err != nil || sub.Model != "custom-fast" {
+		t.Fatalf("explorer model override = %q (%v)", sub.Model, err)
+	}
+	setOptions(agentdef.OptionExplorerModel, "")
+
+	hSpec, err := runs.SubagentSpec(spec, agentdef.HelperAgent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hSpec.Model != spec.Model || hSpec.HarnessOptions[agentdef.OptionNoMCP] != "true" || hSpec.HarnessOptions[agentdef.OptionSubagents] != "false" {
+		t.Fatalf("helper spec = %+v", hSpec)
+	}
+	if d, err := svc.CheckToolWithSpec(ctx, c, hSpec, runs.ToolCheck{Tool: "Write", Input: map[string]any{"file_path": "x.go"}}); err != nil || d.Decision != "allow" {
+		t.Fatalf("helper Write on writable run = %+v %v", d, err)
+	}
+	// Read-only chat helper cannot write either.
+	chatParent := runs.ChatSpec(spec, runs.ChatCaps{})
+	chatHelper, err := runs.SubagentSpec(chatParent, agentdef.HelperAgent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d, err := svc.CheckToolWithSpec(ctx, c, chatHelper, runs.ToolCheck{Tool: "Write", Input: map[string]any{"file_path": "x.go"}}); err != nil || d.Decision != "deny" {
+		t.Fatalf("helper Write on readonly chat = %+v %v", d, err)
 	}
 }
 
@@ -380,4 +418,46 @@ func TestToolPolicyAllowedPathsBeforeWrite(t *testing.T) {
 	check("apply_patch", patch("*** Add File: internal/runs/x_test.go", "*** Update File: docs/a.md"), "allow")
 	check("apply_patch", patch("*** Update File: internal/runs/x_test.go", "*** Delete File: main.go"), "deny")
 	check("apply_patch", map[string]any{"input": "garbled"}, "allow")
+}
+
+func TestCheckToolWithSpec(t *testing.T) {
+	ctx := context.Background()
+	pool := testdb.New(t)
+	if _, err := seed.Run(ctx, pool, seed.Options{Demo: true}); err != nil {
+		t.Fatal(err)
+	}
+	q := store.New(pool)
+	me, _ := q.GetLocalUser(ctx)
+	a, _ := q.GetAgentByHandle(ctx, store.GetAgentByHandleParams{WorkspaceID: me.WorkspaceID, Handle: "atlas"})
+	svc := &runs.Service{Pool: pool, Tracker: &tracker.Service{Pool: pool}}
+	c := agents.Caller{Agent: a, Kind: "unmanaged"}
+	run, err := svc.Claim(ctx, c, "PAY-214")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.RunID = &run.ID
+
+	// A restricted override spec (e.g. read-only explorer) denies Write/Bash
+	// even while the run's stored spec permits them.
+	readOnly := agentdef.Resolved{
+		Harness: agentdef.HarnessClaudeCode,
+		Scopes:  []agentdef.ResolvedScope{{Scope: "repo:read", Mode: agentdef.Allowed}},
+		HarnessOptions: map[string]string{
+			"readonly": "true",
+		},
+	}
+	if d, err := svc.CheckToolWithSpec(ctx, c, readOnly, runs.ToolCheck{Tool: "Read", Input: map[string]any{"file_path": "main.go"}}); err != nil || d.Decision != "allow" {
+		t.Fatalf("readonly Read = %+v, %v", d, err)
+	}
+	if d, err := svc.CheckToolWithSpec(ctx, c, readOnly, runs.ToolCheck{Tool: "Write", Input: map[string]any{"file_path": "main.go"}}); err != nil || d.Decision != "deny" {
+		t.Fatalf("readonly Write = %+v, %v", d, err)
+	}
+	noTools := agentdef.Resolved{
+		Harness:        agentdef.HarnessClaudeCode,
+		Scopes:         []agentdef.ResolvedScope{{Scope: "repo:read", Mode: agentdef.Allowed}},
+		HarnessOptions: map[string]string{agentdef.OptionNoTools: "true"},
+	}
+	if d, err := svc.CheckToolWithSpec(ctx, c, noTools, runs.ToolCheck{Tool: "Read", Input: map[string]any{"file_path": "main.go"}}); err != nil || d.Decision != "deny" {
+		t.Fatalf("no_tools Read = %+v, %v", d, err)
+	}
 }
