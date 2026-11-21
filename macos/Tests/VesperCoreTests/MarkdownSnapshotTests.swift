@@ -53,10 +53,7 @@ final class MarkdownSnapshotTests: XCTestCase {
         var languages = Set<String>()
         for fixture in try fixtures() {
             let expectedBlocks = try XCTUnwrap(try expected(fixture.name)["code"] as? [[String: Any]])
-            let blocks = try document(fixture).allBlocks.compactMap { block -> (String, String)? in
-                guard case .code(let info, let code) = block, let language = MarkdownSource.language(fromFence: info) else { return nil }
-                return (code, language)
-            }
+            let blocks = try document(fixture).codeBlocks.compactMap { block in block.language.map { (block.code, $0) } }
             XCTAssertEqual(blocks.count, expectedBlocks.count, "fixture \(fixture.name): highlighted blocks")
             for ((code, language), want) in zip(blocks, expectedBlocks) {
                 XCTAssertEqual(language, want["lang"] as? String)
@@ -95,21 +92,5 @@ final class MarkdownSnapshotTests: XCTestCase {
         XCTAssertNil(tokens)
         let error = await highlighter.loadError
         XCTAssertNotNil(error)
-    }
-}
-
-extension MarkdownDocument {
-    /// Every block, depth first, footnotes last.
-    var allBlocks: [MarkdownBlock] {
-        func walk(_ blocks: [MarkdownBlock]) -> [MarkdownBlock] {
-            blocks.flatMap { block -> [MarkdownBlock] in
-                switch block {
-                case .blockquote(let inner): return [block] + walk(inner)
-                case .list(let list): return [block] + list.items.flatMap { walk($0.blocks) }
-                default: return [block]
-                }
-            }
-        }
-        return walk(blocks) + footnotes.flatMap { walk($0.blocks) }
     }
 }

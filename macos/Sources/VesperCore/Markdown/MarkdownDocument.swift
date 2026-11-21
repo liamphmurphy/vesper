@@ -95,6 +95,79 @@ public indirect enum MarkdownInline: Sendable, Equatable {
     case footnoteReference(Int)
 }
 
+/// A code block, for highlighting and Copy.
+public struct MarkdownCodeBlock: Sendable, Hashable {
+    public var code: String
+    /// Shiki's language from the fence, nil for plain text.
+    public var language: String?
+
+    public init(code: String, language: String?) {
+        self.code = code
+        self.language = language
+    }
+}
+
+extension MarkdownDocument {
+    /// Every block, depth first in reading order, footnotes last: the order the renderer numbers
+    /// code blocks in.
+    public var allBlocks: [MarkdownBlock] {
+        func walk(_ blocks: [MarkdownBlock]) -> [MarkdownBlock] {
+            blocks.flatMap { block -> [MarkdownBlock] in
+                switch block {
+                case .blockquote(let inner): return [block] + walk(inner)
+                case .list(let list): return [block] + list.items.flatMap { walk($0.blocks) }
+                default: return [block]
+                }
+            }
+        }
+        return walk(blocks) + footnotes.flatMap { walk($0.blocks) }
+    }
+
+    /// The code blocks, indexed as `MarkdownRenderOptions.highlights` keys them.
+    public var codeBlocks: [MarkdownCodeBlock] {
+        allBlocks.compactMap { block in
+            guard case .code(let info, let code) = block else { return nil }
+            return MarkdownCodeBlock(code: code, language: MarkdownSource.language(fromFence: info))
+        }
+    }
+
+    /// Every inline, depth first (paragraphs, headings, table cells, link text).
+    public var allInlines: [MarkdownInline] {
+        func walk(_ inlines: [MarkdownInline]) -> [MarkdownInline] {
+            inlines.flatMap { inline -> [MarkdownInline] in
+                switch inline {
+                case .emphasis(let c), .strong(let c), .strikethrough(let c), .link(_, _, let c): return [inline] + walk(c)
+                default: return [inline]
+                }
+            }
+        }
+        return allBlocks.flatMap { block -> [MarkdownInline] in
+            switch block {
+            case .paragraph(let inlines), .heading(_, let inlines): return walk(inlines)
+            case .table(let table): return ([table.header] + table.rows).flatMap { $0.flatMap(walk) }
+            default: return []
+            }
+        }
+    }
+
+    /// The `[[refs]]` to resolve with GET /knowledge/resolve, each once, in order.
+    public var wikiRefs: [String] {
+        var out: [String] = []
+        for case .link(let url, _, _) in allInlines where url.hasPrefix(MarkdownSource.wikiLinkScheme) {
+            let ref = String(url.dropFirst(MarkdownSource.wikiLinkScheme.count)).removingPercentEncoding ?? ""
+            if !ref.isEmpty && !out.contains(ref) { out.append(ref) }
+        }
+        return out
+    }
+
+    /// Image URLs, each once, in order.
+    public var imageURLs: [String] {
+        var out: [String] = []
+        for case .image(let url, _, _) in allInlines where !out.contains(url) { out.append(url) }
+        return out
+    }
+}
+
 // MARK: - Snapshots
 
 extension MarkdownDocument {
