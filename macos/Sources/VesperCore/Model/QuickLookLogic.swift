@@ -8,14 +8,16 @@ public enum QuickLookLogic: Sendable {
     }
 
     /// Produces a safe local filename for a downloaded preview item, ensuring a valid extension
-    /// when a MIME type or fallback extension is known.
+    /// when a MIME type or fallback extension is known. A URL leaf of `content` (the API's
+    /// generic file route) says nothing about the file, so the title wins over it.
     public static func safeFilename(
         filename: String?,
         fallbackTitle: String,
         urlPathComponent: String?,
         preferredExtension: String?
     ) -> String {
-        let candidates = [filename, urlPathComponent, fallbackTitle]
+        let leaf = urlPathComponent == genericContentLeaf ? nil : urlPathComponent
+        let candidates = [filename, leaf, fallbackTitle]
         var base = ""
         for candidate in candidates {
             if let sanitized = sanitizeComponent(candidate), !sanitized.isEmpty {
@@ -31,6 +33,8 @@ public enum QuickLookLogic: Sendable {
         }
         return String(base.prefix(180))
     }
+
+    private static let genericContentLeaf = "content"
 
     private static func sanitizeComponent(_ raw: String?) -> String? {
         guard let raw else { return nil }
