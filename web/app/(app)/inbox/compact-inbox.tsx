@@ -5,8 +5,6 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Schemas } from "@/lib/api/client";
 import { useAddressTicketPRFeedback, useComment, useDecideApproval, useInbox, useRunLog, useTicket } from "@/lib/api/hooks";
 import { useAddressPushPRFeedback } from "@/lib/api/code-review-hooks";
-import { AgentAvatar } from "@/components/domain/avatars";
-import { useComment, useDecideApproval, useInbox, useTicket } from "@/lib/api/hooks";
 import { WorkPersonaAvatar } from "@/components/domain/work-persona-avatar";
 import { useRememberedProject } from "@/components/shell/project-scope";
 import { TopBar } from "@/components/shell/topbar";
