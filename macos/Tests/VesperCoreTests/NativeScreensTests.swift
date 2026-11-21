@@ -76,4 +76,13 @@ final class NativeFindAndCommandTests: XCTestCase {
         XCTAssertFalse(NativeCommandRouting.isScreenCommand(.railAction(itemId: "r")))
         XCTAssertFalse(NativeCommandRouting.isScreenCommand(.command(.find)))
     }
+
+    func testAScreensOwnNavigatorCommandsGoToTheScreen() {
+        XCTAssertTrue(NativeCommandRouting.isScreenCommand(.navActivate(navigatorId: "work-activity", itemId: "i"), navigatorId: "work-activity"))
+        XCTAssertTrue(NativeCommandRouting.isScreenCommand(.navSearch(navigatorId: "work-activity", searchId: "s", value: ""), navigatorId: "work-activity"))
+        XCTAssertTrue(NativeCommandRouting.isScreenCommand(.navToggle(navigatorId: "work-activity", itemId: "s", expanded: false), navigatorId: "work-activity"))
+        XCTAssertFalse(NativeCommandRouting.isScreenCommand(.navActivate(navigatorId: "runs", itemId: "i"), navigatorId: "work-activity"))
+        XCTAssertFalse(NativeCommandRouting.isScreenCommand(.navFilter(navigatorId: "work-activity", filterId: "f", value: "", checked: true)))
+        XCTAssertFalse(NativeCommandRouting.isScreenCommand(.navigate(path: "/work"), navigatorId: "work-activity"))
+    }
 }

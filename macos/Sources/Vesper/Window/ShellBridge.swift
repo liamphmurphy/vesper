@@ -76,7 +76,7 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
         case .panelEvent(let tabId, let event, let payloadJson): onPanelEvent?(tabId, event, payloadJson)
         case .openInMain(let path, let newTab): onOpenInMain?(path, newTab)
         case .shell(let model): state.shell = model
-        case .navigator(let model): state.navigator = model
+        case .navigator(let model): state.pageNavigator = model
         case .navigatorFallback(let active): state.navigatorFallback = active
         case .sidebarHidden(let hidden): state.sidebarHidden = hidden
         case .toolbar(let items): state.pageToolbarItems = items
