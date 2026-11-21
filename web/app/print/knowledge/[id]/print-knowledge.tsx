@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { usePage, useSavedQuery, type Page, type PageTable } from "@/lib/api/knowledge-hooks";
 import { ago, pageHref, visibleProperties } from "@/lib/knowledge";
 import {
@@ -16,8 +16,9 @@ import {
   type PrintSegment,
 } from "@/lib/knowledge-print";
 import { isNativeShell, post } from "@/lib/native-shell/bridge";
+import { PALETTES } from "@/lib/palettes";
 import { isPdfContentType } from "@/lib/pdf-viewer";
-import { settled, useLightTheme } from "@/lib/print-ready";
+import { settled } from "@/lib/print-ready";
 import { cx } from "@/lib/cx";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
@@ -31,8 +32,11 @@ const AUDIENCE_LABEL: Record<Page["audience"], string> = {
   agent: "Agent",
 };
 
+const PAPER_LIGHT_STYLE = Object.fromEntries(
+  Object.entries(PALETTES[0].light).map(([k, v]) => [`--${k}`, v]),
+) as CSSProperties;
+
 export function PrintKnowledge({ id }: { id: string }) {
-  const themed = useLightTheme();
   const urlStyle = parseKnowledgePrintStyle(useSearchParams().get("style"));
   const [style, setStyle] = useState<KnowledgePrintStyle>(urlStyle);
   const [prevUrlStyle, setPrevUrlStyle] = useState(urlStyle);
@@ -40,7 +44,7 @@ export function PrintKnowledge({ id }: { id: string }) {
     setPrevUrlStyle(urlStyle);
     setStyle(urlStyle);
   }
-  const [showMeta, setShowMeta] = useState(true);
+  const [showMeta, setShowMeta] = useState(false);
 
   const pageQuery = usePage(id);
   const p = pageQuery.data;
@@ -75,9 +79,9 @@ export function PrintKnowledge({ id }: { id: string }) {
     }
   }, [p, styleInfo.label]);
 
-  const readyToPrint = themed && !!p && printable && (!hasQuery || !savedQuery.isPending);
+  const readyToPrint = !!p && printable && (!hasQuery || !savedQuery.isPending);
 
-  // Open the print dialog once, when theme, saved query, diagrams, and images have settled.
+  // Open the print dialog once, when saved query, diagrams, and images have settled.
   useEffect(() => {
     if (!readyToPrint || printed.current || !ref.current) return;
     printed.current = true;
@@ -104,14 +108,16 @@ export function PrintKnowledge({ id }: { id: string }) {
 
   if (pageQuery.error) {
     return (
-      <div className="mx-auto max-w-[720px] p-8">
-        <Banner tone="blocked" title="Couldn't load this page">{pageQuery.error.message}</Banner>
+      <div className="min-h-dvh bg-bg p-8 text-fg">
+        <div className="mx-auto max-w-[720px]">
+          <Banner tone="blocked" title="Couldn't load this page">{pageQuery.error.message}</Banner>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-dvh bg-[#f0f1f4] text-fg print:bg-white">
+    <div className="min-h-dvh bg-bg text-fg print:bg-white">
       <div className="sticky top-0 z-10 flex flex-wrap items-center gap-3 border-b border-border-subtle bg-panel px-6 py-2.5 print:hidden">
         <Link href={p ? pageHref(p.id, p.title) : `/knowledge/${id}`} className="text-13 text-fg-secondary hover:text-fg">
           ← Back to page
@@ -135,21 +141,21 @@ export function PrintKnowledge({ id }: { id: string }) {
           ))}
         </div>
         {hasMeta && (
-          <button
-            type="button"
-            aria-pressed={showMeta}
-            onClick={() => setShowMeta((v) => !v)}
-            className={cx(
-              "inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-12 font-medium transition-colors",
-              showMeta ? "border-border-strong bg-surface text-fg" : "border-border-subtle text-fg-tertiary hover:bg-hover hover:text-fg-secondary",
-            )}
+          <label
+            title="Show folder path, tags, dates, and page properties"
+            className="inline-flex h-8 cursor-pointer select-none items-center gap-2 rounded-md border border-border-subtle bg-surface px-2.5 text-12 font-medium text-fg-secondary transition-colors hover:border-border-strong hover:text-fg"
           >
-            <Icon name="sliders" size={12} />
-            Properties
-          </button>
+            <input
+              type="checkbox"
+              checked={showMeta}
+              onChange={(e) => setShowMeta(e.target.checked)}
+              className="size-3.5 accent-[var(--accent)]"
+            />
+            <span>Include metadata</span>
+          </label>
         )}
         <span className="ml-auto text-12 text-fg-tertiary max-lg:hidden">Choose “Save as PDF” as the destination.</span>
-        <Button variant="primary" icon="printer" disabled={!themed || !p || !printable} onClick={() => window.print()}>
+        <Button variant="primary" icon="printer" disabled={!p || !printable} onClick={() => window.print()}>
           Print / Save as PDF
         </Button>
       </div>
@@ -158,9 +164,11 @@ export function PrintKnowledge({ id }: { id: string }) {
         ref={ref}
         data-testid="print-knowledge"
         data-print-style={style}
-        className="print-doc print-knowledge mx-auto my-8 flex w-full max-w-[780px] flex-col rounded-sm border border-black/10 bg-white px-12 py-12 shadow-sm print:my-0 print:max-w-none print:rounded-none print:border-0 print:bg-transparent print:p-0 print:shadow-none"
+        data-theme="light"
+        style={PAPER_LIGHT_STYLE}
+        className="print-doc print-knowledge mx-auto my-8 flex w-full max-w-[780px] flex-col rounded-sm border border-border-strong/60 bg-white px-12 py-12 shadow-[0_2px_8px_rgba(0,0,0,0.08),0_12px_32px_rgba(0,0,0,0.16)] print:my-0 print:max-w-none print:rounded-none print:border-0 print:bg-transparent print:p-0 print:shadow-none"
       >
-        {!themed || !p ? (
+        {!p ? (
           <div aria-busy="true" className="flex flex-col gap-4">
             <Skeleton className="h-8 w-2/3" />
             <Skeleton className="h-3 w-full" />

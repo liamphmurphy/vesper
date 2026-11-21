@@ -1294,7 +1294,7 @@ details[open]::details-content { height: auto; }
  */
 @media print {
   @page { margin: 16mm 14mm; }
-  html, body { background: white !important; }
+  html, body { background: white !important; color-scheme: light !important; }
   .print-doc { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
   .print-doc :is(h1, h2, h3, h4, h5, h6) { break-after: avoid; break-inside: avoid; }
   .print-doc :is(figure, img, svg, table, blockquote, .print-callout, .print-embed-ref, .print-kn-header, .print-kn-props) { break-inside: avoid; }
@@ -1313,6 +1313,8 @@ details[open]::details-content { height: auto; }
  * Uses fixed print tokens so user dark/text-size settings never distort the exported PDF.
  */
 .print-knowledge {
+  --type-scale: 1;
+  color-scheme: light;
   --kn-ink: #18181b;
   --kn-ink-2: #27272a;
   --kn-muted: #52525b;
@@ -1327,6 +1329,10 @@ details[open]::details-content { height: auto; }
   font-size: 15px;
   line-height: 1.68;
   gap: 20px;
+}
+
+.print-knowledge .shiki-tok {
+  color: var(--shiki-light);
 }
 
 .print-knowledge .print-kn-header {

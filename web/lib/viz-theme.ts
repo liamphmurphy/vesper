@@ -1,7 +1,20 @@
 "use client";
 
 import { useMemo, useSyncExternalStore } from "react";
-import { VIZ_DARK, type VizPalette } from "@/lib/chat-svg";
+import { usePrintMode } from "@/components/domain/print-mode";
+import { VIZ_DARK, VIZ_LIGHT, type VizPalette } from "@/lib/chat-svg";
+import { PALETTES } from "@/lib/palettes";
+
+const LIGHT_TOKENS = PALETTES[0].light;
+const PRINT_LIGHT_VIZ: VizPalette = {
+  surface: LIGHT_TOKENS["viz-surface"] || VIZ_LIGHT.surface,
+  panel: LIGHT_TOKENS["viz-panel"] || VIZ_LIGHT.panel,
+  ink: LIGHT_TOKENS["viz-ink"] || VIZ_LIGHT.ink,
+  muted: LIGHT_TOKENS["viz-muted"] || VIZ_LIGHT.muted,
+  line: LIGHT_TOKENS["viz-line"] || VIZ_LIGHT.line,
+  grid: LIGHT_TOKENS["viz-grid"] || VIZ_LIGHT.grid,
+  series: VIZ_LIGHT.series.map((fallback, i) => LIGHT_TOKENS[`viz-${i + 1}`] || fallback),
+};
 
 function subscribe(onChange: () => void) {
   const attr = new MutationObserver(onChange);
@@ -23,6 +36,7 @@ function snapshot(): string {
 
 /** Concrete colors for isolated SVG images, charts, Mermaid and code tokens. */
 export function useVizPalette(): VizPalette {
+  const printing = usePrintMode();
   const value = useSyncExternalStore(subscribe, snapshot, () => server);
-  return useMemo(() => JSON.parse(value) as VizPalette, [value]);
+  return useMemo(() => (printing ? PRINT_LIGHT_VIZ : (JSON.parse(value) as VizPalette)), [printing, value]);
 }
