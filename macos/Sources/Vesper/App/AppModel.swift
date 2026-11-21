@@ -33,6 +33,8 @@ final class AppModel {
     let settings: SettingsStore
     /// Menu bar, notifications, Dock, power, Touch ID, workspace menu, logs, quit policy.
     @ObservationIgnored lazy var system = SystemServices(app: self)
+    /// Which in-app paths tabs draw natively (docs/dev/native-mac-app.md, "Native screens").
+    @ObservationIgnored lazy var nativeRoutes = NativeRouteRegistry.standard(debug: NativeDebug.isEnabled)
     /// Settings, Quick Capture, Screenshot, files in, Import Backup, backups, updates, login item.
     @ObservationIgnored lazy var aux = AuxWindows(app: self)
 

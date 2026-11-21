@@ -37,12 +37,12 @@ final class TabContainerController: NSViewController {
         attach(controller.view)
     }
 
-    func updateFindTarget(_ webView: WKWebView?) {
-        if findBar.targetWebView !== webView {
+    func updateFindTarget(_ target: (any FindTarget)?) {
+        if findBar.target !== target {
             if findBar.isVisible {
                 findBar.dismiss(restoreFocus: false)
             }
-            findBar.targetWebView = webView
+            findBar.target = target
         }
     }
 

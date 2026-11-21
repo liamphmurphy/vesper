@@ -56,17 +56,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     var hasFindQuery: Bool { container.findBar.hasQuery }
 
     func showFindBar(initialQuery: String? = nil) {
-        container.updateFindTarget(content.webView)
+        container.updateFindTarget(content.findTarget)
         container.findBar.present(initialQuery: initialQuery)
     }
 
     func findNext() {
-        container.updateFindTarget(content.webView)
+        container.updateFindTarget(content.findTarget)
         container.findBar.findNext()
     }
 
     func findPrevious() {
-        container.updateFindTarget(content.webView)
+        container.updateFindTarget(content.findTarget)
         container.findBar.findPrevious()
     }
 
@@ -188,10 +188,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         }
         tabs.list.select(activeIndex)
         container.show(content)
-        container.updateFindTarget(content.webView)
+        container.updateFindTarget(content.findTarget)
         container.findBar.onDismiss = { [weak self] in
             guard let self else { return }
-            self.window?.makeFirstResponder(self.content.webView)
+            self.window?.makeFirstResponder(self.content.focusView)
         }
 
         if hasNativeChrome {
@@ -217,11 +217,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     // MARK: Commands
 
     func send(_ command: NativeCommand) {
-        if case .navigate(let path) = command {
-            content.navigate(path: path)
-        } else {
-            content.bridge?.send(command)
-        }
+        content.dispatch(command)
+    }
+
+    /// A tab switched between its web view and a native screen: the find bar follows the active one.
+    func findTargetChanged(_ tab: WebContentController) {
+        guard tab === content else { return }
+        container.updateFindTarget(tab.findTarget)
     }
 
     @objc func toggleInspector(_ sender: Any?) {
@@ -639,7 +641,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         let tab = content
         lastContent = tab
         container.show(tab)
-        container.updateFindTarget(tab.webView)
+        container.updateFindTarget(tab.findTarget)
         window?.title = tab.displayTitle
         window?.toolbar?.validateVisibleItems()
         if focus { window?.makeFirstResponder(tab.webView) }

@@ -68,18 +68,18 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
             state.area = area
             onRouteChange?()
         case .title(let title, let subtitle, let menu):
-            state.title = title
-            state.subtitle = subtitle
-            state.titleMenu = menu
+            state.pageTitle = title
+            state.pageSubtitle = subtitle
+            state.pageTitleMenu = menu
         case .rail(let model): state.rail = model
-        case .inspector(let model): state.inspector = model
+        case .inspector(let model): state.pageInspector = model
         case .panelEvent(let tabId, let event, let payloadJson): onPanelEvent?(tabId, event, payloadJson)
         case .openInMain(let path, let newTab): onOpenInMain?(path, newTab)
         case .shell(let model): state.shell = model
         case .navigator(let model): state.navigator = model
         case .navigatorFallback(let active): state.navigatorFallback = active
         case .sidebarHidden(let hidden): state.sidebarHidden = hidden
-        case .toolbar(let items): state.toolbarItems = items
+        case .toolbar(let items): state.pageToolbarItems = items
         case .appearance(let mode, let background, let theme):
             state.pageMode = mode
             if let theme { state.theme = theme }
