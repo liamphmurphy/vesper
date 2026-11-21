@@ -35,6 +35,15 @@ final class NativeRoutesTests: XCTestCase {
         XCTAssertEqual(NativeRouteRegistry.standard(debug: true).resolve("/native-debug/7")?.params["id"], "7")
     }
 
+    func testWorkAndBareRunsAreNativeButARunStaysOnTheWeb() {
+        let standard = NativeRouteRegistry.standard(debug: false)
+        XCTAssertEqual(standard.resolve("/work?project=VES")?.screen, .work)
+        XCTAssertEqual(standard.resolve("/work?project=VES")?.query, ["project": "VES"])
+        XCTAssertEqual(standard.resolve("/runs")?.screen, .work)
+        XCTAssertNil(standard.resolve("/runs/r1"))
+        XCTAssertNil(standard.resolve("/workflows"))
+    }
+
     func testOnlyInAppPathsResolve() {
         XCTAssertNil(registry.resolve("https://example.com/native-debug"))
         XCTAssertNil(registry.resolve("//evil.example/native-debug"))
