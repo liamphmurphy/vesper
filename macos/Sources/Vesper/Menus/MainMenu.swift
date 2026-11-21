@@ -36,6 +36,8 @@ enum MainMenu {
             sep(),
             item("Check for Updates…", #selector(AppDelegate.checkForUpdates(_:))),
             item("Settings…", #selector(AppDelegate.openSettings(_:)), ","),
+            // Terminal.app's item: reaches the focused Dev terminal through the responder chain.
+            item("Secure Keyboard Entry", DevSecureKeyboardEntry.toggleAction, target: nil),
             sep(),
             item("Restart Stack", #selector(AppDelegate.restartStack(_:))),
             item("Show Logs…", #selector(AppDelegate.showLogs(_:))),
