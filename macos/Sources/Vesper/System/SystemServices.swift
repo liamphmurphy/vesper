@@ -15,6 +15,8 @@ final class SystemServices {
     private let eventStream = EventStream()
     private let inboxMonitor = InboxMonitor()
     private let runMonitor = RunMonitor()
+    /// The native screens' shared data cache: one per app, so every window reads the same answers.
+    let store = QueryStore()
     private var client: APIClient?
     private var monitoredConnection: Connection?
 
@@ -73,6 +75,7 @@ final class SystemServices {
             self?.inboxMonitor.handleServerEvent(type)
             self?.runMonitor.handleServerEvent(type)
         }
+        eventStream.onServerEvent = { [weak self] event in self?.store.handle(event) }
         inboxMonitor.onBadgeChange = { [weak self] text, count in
             guard let self else { return }
             badgeCount = count
@@ -133,12 +136,14 @@ final class SystemServices {
         dock.setBadge("")
         guard let connection else {
             client = nil
+            store.setClient(nil)
             power.update()
             refreshTray()
             return
         }
         let client = APIClient(baseURL: connection.baseURL, sessionToken: connection.sessionToken)
         self.client = client
+        store.setClient(client)
         eventStream.start(client: client)
         inboxMonitor.start(client: client)
         runMonitor.start(client: client)
