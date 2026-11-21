@@ -327,7 +327,6 @@ function NativePaletteProxy() {
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "k") {
-        if (e.target instanceof Element && e.target.closest("[data-dev-terminal]")) return;
         e.preventDefault();
         openCommandPalette({ scope: e.shiftKey ? "page" : "all" });
       }
@@ -1086,7 +1085,6 @@ function CommandMenuDialog({ embedded }: { embedded: boolean }) {
     };
     const key = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "k") {
-        if (e.target instanceof Element && e.target.closest("[data-dev-terminal]")) return;
         e.preventDefault();
         show({ scope: e.shiftKey ? "page" : "all" });
       }
