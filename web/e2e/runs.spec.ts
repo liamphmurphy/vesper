@@ -114,8 +114,8 @@ const list = (page: Page) => page.getByRole("complementary", { name: "Runs" });
 test("the list groups runs beside the selected run, and the URL keeps the selection", async ({ page }) => {
   await installRuns(page);
   await page.goto("/runs");
-  // /runs opens Work's Activity, the first Needs you run selected.
-  await expect(page).toHaveURL(/\/work\?view=activity$/);
+  // /runs opens Work's Runs overview.
+  await expect(page).toHaveURL(/\/work$/);
   const active = list(page).getByRole("region", { name: "Active" });
   await expect(active.getByRole("listitem")).toHaveText([/Partition ledger entries/, /Payout retries/, /Search index/]);
   await expect(list(page).getByRole("region", { name: "Other needs you" }).getByRole("link", { name: /Billing plan/ })).toHaveAttribute("href", "/plans/p1");
@@ -135,7 +135,7 @@ test("the list groups runs beside the selected run, and the URL keeps the select
 
   // Selecting a row updates the URL; a reload restores the selection.
   await list(page).getByRole("link", { name: /Search index/ }).click();
-  await expect(page).toHaveURL(new RegExp(`/work\\?run=${RUNNING}&view=activity$`));
+  await expect(page).toHaveURL(new RegExp(`/work\\?run=${RUNNING}$`));
   await expect(page.getByRole("heading", { name: "Search index" })).toBeVisible();
   await page.reload();
   await expect(list(page).locator("a[aria-current=page]")).toContainText("Search index");
@@ -332,6 +332,31 @@ test("the Context panel shows the ticket, code and run, opens the views, and rem
   await expect(ctx).toHaveCount(0);
   await page.getByRole("navigation", { name: "Panel rail" }).getByRole("button", { name: "Open Context" }).click();
   await expect(ctx).toBeVisible();
+});
+
+test("Run views tabs show Graph only when the run has child runs", async ({ page }) => {
+  await installRuns(page);
+  await page.goto(`/runs/${APPROVING}`);
+  const viewTabs = page.getByRole("tablist", { name: "Run views" });
+  await expect(viewTabs.getByRole("tab", { name: "Thread" })).toBeVisible();
+  await expect(viewTabs.getByRole("tab", { name: /^Trace/ })).toBeVisible();
+  await expect(viewTabs.getByRole("tab", { name: "Graph" })).toBeVisible();
+  await expect(viewTabs.getByRole("tab", { name: /^Files/ })).toBeVisible();
+
+  await viewTabs.getByRole("tab", { name: "Graph" }).click();
+  await expect(page).toHaveURL(/view=graph/);
+  await viewTabs.getByRole("tab", { name: /^Files/ }).click();
+  await expect(page.getByRole("region", { name: "Files" })).toContainText("db/migrations/0042_partition.sql");
+  await viewTabs.getByRole("tab", { name: "Thread" }).click();
+  await expect(page).toHaveURL(new RegExp(`/runs/${APPROVING}$`));
+
+  await page.goto(`/runs/${RUNNING}`);
+  await expect(viewTabs.getByRole("tab", { name: "Thread" })).toBeVisible();
+  await expect(viewTabs.getByRole("tab", { name: /^Graph/ })).toHaveCount(0);
+
+  await page.goto(`/runs/${DONE}`);
+  await expect(viewTabs.getByRole("tab", { name: "Thread" })).toBeVisible();
+  await expect(viewTabs.getByRole("tab", { name: /^Graph/ })).toHaveCount(0);
 });
 
 test("Costs and Highlights moved to Reports; the old tabs redirect", async ({ page }) => {

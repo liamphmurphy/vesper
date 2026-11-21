@@ -5,6 +5,8 @@ import { buildSavedViewsSection, savedViewRowId, type SavedViewRow } from "./sav
 import { workModel, type WorkHeaderInput } from "./work.ts";
 
 export const TICKETS_NAV_ID = "tickets";
+export const TICKETS_OPEN_EPICS = "tickets.open-epics";
+export const TICKETS_OPEN_EPIC_DETAIL = "epic.open-detail";
 
 export type TicketQueue = "needs_you" | "in_progress" | "ready" | "blocked" | "all";
 
@@ -57,7 +59,13 @@ export function buildTicketsNavModel(input: TicketsNavInput): NavModel {
       id: "by-epic",
       title: "By epic",
       badge: { text: String(input.epics.length) },
-      items: input.epics.map((e) => ({ id: ticketEpicId(e.id), title: e.name, trailing: `${e.done}/${e.total}` })),
+      actions: [{ id: TICKETS_OPEN_EPICS, label: "All epics", icon: "epics" }],
+      items: input.epics.map((e) => ({
+        id: ticketEpicId(e.id),
+        title: e.name,
+        trailing: `${e.done}/${e.total}`,
+        contextMenu: [{ id: TICKETS_OPEN_EPIC_DETAIL, label: "Open epic details", icon: "epics" }],
+      })),
     });
   }
   sections.push(buildSavedViewsSection(input.views));

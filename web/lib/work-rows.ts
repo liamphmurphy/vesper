@@ -168,13 +168,15 @@ export const FILTER_KEYS = ["project", "epic", "agent", "status"] as const;
 export type FilterKey = (typeof FILTER_KEYS)[number];
 export type FilterToken = { key: FilterKey; value: string };
 
-/** Splits the box into key:value tokens (values may be "quoted") and the free text left over. */
+/** Splits the box into key:value tokens (values may be "quoted") and the free text left over. Accepts `persona:` as well as legacy `agent:`. */
 export function parseFilterText(text: string): { tokens: FilterToken[]; text: string } {
   const tokens: FilterToken[] = [];
-  const re = /(?:^|\s)(project|epic|agent|status):(?:"([^"]*)"?|(\S*))/gi;
-  const free = text.replace(re, (_m, key: string, quoted?: string, bare?: string) => {
+  const re = /(?:^|\s)(project|epic|persona|agent|status):(?:"([^"]*)"?|(\S*))/gi;
+  const free = text.replace(re, (_m, rawKey: string, quoted?: string, bare?: string) => {
     const value = (quoted ?? bare ?? "").trim();
-    if (value) tokens.push({ key: key.toLowerCase() as FilterKey, value });
+    const k = rawKey.toLowerCase();
+    const key = (k === "persona" ? "agent" : k) as FilterKey;
+    if (value) tokens.push({ key, value });
     return " ";
   });
   return { tokens, text: free.replace(/\s+/g, " ").trim() };
@@ -191,7 +193,7 @@ export function withoutProjectToken(text: string): string {
 /** The box's text for the list's current filters. */
 export function filterText(f: { project?: string; epic?: string; agent?: string; status?: string; q?: string }): string {
   const parts: string[] = [];
-  for (const k of FILTER_KEYS) if (f[k]) parts.push(`${k}:${quote(f[k]!)}`);
+  for (const k of FILTER_KEYS) if (f[k]) parts.push(`${k === "agent" ? "persona" : k}:${quote(f[k]!)}`);
   if (f.q) parts.push(f.q);
   return parts.join(" ");
 }

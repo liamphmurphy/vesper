@@ -2,34 +2,25 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { workHref, workTarget, workView } from "./work-navigation.ts";
 
-test("opening a brief keeps the selected run and filters in a restorable URL", () => {
-  const p = new URLSearchParams(
-    "view=activity&run=r1&project=WEB&agent=builder&q=nav",
-  );
-  const href = workTarget("/tickets/WEB-1", p);
+test("workTarget only translates /runs/:id onto /work; tickets and epics open canonically", () => {
+  const p = new URLSearchParams("run=r1&project=WEB&agent=builder&q=nav&context=ticket");
+  assert.equal(workTarget("/tickets/WEB-1", p), null);
+  assert.equal(workTarget("/epics/e1", p), null);
+  assert.equal(workTarget("/tickets/new", p), null);
+  assert.equal(workTarget("/knowledge/p1", p), null);
   assert.equal(
-    href,
-    "/work?view=activity&run=r1&project=WEB&agent=builder&q=nav&ticket=WEB-1&context=ticket",
-  );
-  assert.equal(
-    workTarget("/epics/e1", new URLSearchParams(href.split("?")[1])),
-    `${href.replace("context=ticket", "context=epic")}&epic=e1`,
+    workTarget("/runs/r2", p),
+    "/work?run=r2&project=WEB&agent=builder&q=nav",
   );
 });
 
-test("focus changes preserve context selections and closing context removes only the pane", () => {
-  const p = new URLSearchParams(
-    "run=r1&ticket=WEB-1&context=ticket&status=todo",
-  );
+test("workHref updates Work query params and workView defaults unknown views to activity", () => {
+  const p = new URLSearchParams("run=r1&project=WEB&status=todo");
   assert.equal(
-    workHref(p, { view: "tickets", context: null }),
-    "/work?run=r1&ticket=WEB-1&status=todo&view=tickets",
+    workHref(p, { run: null, filter: "needs_you" }),
+    "/work?project=WEB&status=todo&filter=needs_you",
   );
-  assert.equal(
-    workTarget("/runs/r2", p),
-    "/work?run=r2&ticket=WEB-1&status=todo&view=activity",
-  );
-  assert.equal(workTarget("/tickets/new", p), null);
-  assert.equal(workTarget("/knowledge/p1", p), null);
+  assert.equal(workView(new URLSearchParams("view=tickets")), "tickets");
+  assert.equal(workView(new URLSearchParams("view=epics")), "epics");
   assert.equal(workView(new URLSearchParams("view=unknown")), "activity");
 });

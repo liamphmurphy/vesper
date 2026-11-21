@@ -11,7 +11,7 @@ import {
   useReviewMockup,
   useTicket,
 } from "@/lib/api/hooks";
-import { AgentAvatar } from "@/components/domain/avatars";
+import { WorkPersonaAvatar } from "@/components/domain/work-persona-avatar";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Kbd, Skeleton, TextArea } from "@/components/ui/primitives";
 import { cx } from "@/lib/cx";
@@ -162,7 +162,7 @@ export function DetailPane(props: PaneProps) {
         </Link>
       </div>
       <div className="flex items-center gap-3">
-        {agent && <AgentAvatar name={agent.name} colorIndex={agent.color_index} size="md" label={false} />}
+        {agent && <WorkPersonaAvatar agent={agent} size="md" />}
         <div className="flex min-w-0 flex-col gap-0.5">
           <h2
             className={cx(

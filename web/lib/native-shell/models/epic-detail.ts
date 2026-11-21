@@ -10,7 +10,7 @@ export function buildEpicDetailNavModel(input: {
 }): NavModel {
   return workModel(
     "epic-detail",
-    { active: "epics", project: input.project, agent: "", noFilters: true },
+    { active: "tickets", project: input.project, agent: "", noFilters: true },
     [
       {
         id: "epics",

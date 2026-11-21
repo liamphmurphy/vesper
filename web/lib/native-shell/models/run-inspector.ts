@@ -205,7 +205,7 @@ export function buildRunInspectorSections(input: RunInspectorInput): InspectorSe
     { id: "elapsed", kind: "fact", label: "Elapsed", value: r.elapsed, mono: true },
     { id: "cost", kind: "fact", label: "Cost", value: r.cost, mono: true },
     { id: "tokens", kind: "fact", label: "Tokens", value: r.tokens, mono: true },
-    { id: "sub_runs", kind: "fact", label: "Sub runs", value: String(r.subRuns), mono: true },
+    ...(r.subRuns > 0 ? [{ id: "sub_runs", kind: "fact" as const, label: "Sub runs", value: String(r.subRuns), mono: true }] : []),
     { id: "slot", kind: "fact", label: "Runner slot", value: r.slot, mono: true },
   ];
   if (r.dispatchedBy) {
@@ -246,13 +246,16 @@ export function buildRunInspectorSections(input: RunInspectorInput): InspectorSe
     sections.push({ id: "usage", title: "Usage", items: usageItems });
   }
 
+  const hasChildren = (input.subAgents && input.subAgents.length > 0) || r.subRuns > 0;
   const openItems: InspectorItem[] = [
     {
       id: "views",
       kind: "actions",
       actions: [
         { id: "view:details", label: "Raw log", icon: "terminal", active: input.viewMode === "details" },
-        { id: "view:graph", label: "Graph", icon: "graph", active: input.viewMode === "graph" },
+        ...(hasChildren || input.viewMode === "graph"
+          ? [{ id: "view:graph", label: "Graph", icon: "graph", active: input.viewMode === "graph" }]
+          : []),
         { id: "view:files", label: "Files", icon: "folder", active: input.viewMode === "files" },
       ],
     },

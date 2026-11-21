@@ -17,7 +17,7 @@ export function workHref(
   return `/work${next.size ? `?${next}` : ""}`;
 }
 
-/** Translate links in shared ticket/run components without remounting the work page. */
+/** Translate `/runs/:id` into `/work?run=:id`; tickets and epics open their canonical routes. */
 export function workTarget(
   pathname: string,
   params: URLSearchParams,
@@ -26,24 +26,8 @@ export function workTarget(
   if (run)
     return workHref(params, {
       run: decodeURIComponent(run[1]),
-      view: "activity",
+      view: null,
       context: null,
-    });
-  const ticket = /^\/tickets\/([^/]+)$/.exec(pathname);
-  if (ticket && ticket[1] !== "new")
-    return workHref(params, {
-      ticket: decodeURIComponent(ticket[1]),
-      ...(workView(params) === "activity"
-        ? { context: "ticket" }
-        : { view: "tickets", context: null }),
-    });
-  const epic = /^\/epics\/([^/]+)$/.exec(pathname);
-  if (epic)
-    return workHref(params, {
-      epic: decodeURIComponent(epic[1]),
-      ...(workView(params) === "activity"
-        ? { context: "epic" }
-        : { view: "epics", context: null }),
     });
   return null;
 }
