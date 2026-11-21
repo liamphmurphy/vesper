@@ -33,6 +33,7 @@ import { isDispatchFence } from "@/lib/chat-dispatch";
 import { DispatchFence } from "./dispatch-cards";
 import { CiteMarker, MomentLink } from "./cite-marker";
 import { CodeFence } from "./code-fence";
+import { usePrintMode } from "./print-mode";
 import { RecommendFence } from "./recommend-fence";
 import { visualFence } from "./visuals";
 import { LinkTargets, WikiLink } from "./wikilink";
@@ -56,6 +57,7 @@ function SlotContent({ id }: { id: string }) {
  * default, so agent-written content can't inject markup.
  */
 export function Markdown({ children, className, anchors, codeBlocks, visualBlocks, sourceSpans, slots }: { children: string; className?: string; anchors?: boolean; codeBlocks?: boolean; visualBlocks?: boolean; sourceSpans?: boolean; slots?: Slot[] }) {
+  const print = usePrintMode();
   // Heading ids come from source lines, so they match the API's outline
   // anchors and stay stable across re-renders.
   const ids = useMemo(() => (anchors ? headingAnchors(children) : undefined), [anchors, children]);
@@ -63,7 +65,7 @@ export function Markdown({ children, className, anchors, codeBlocks, visualBlock
   // With sourceSpans the text is parsed as written, so positions match its source.
   const refs = useMemo(() => (sourceSpans ? [] : parseWikiLinks(children).map((r) => r.ref)), [children, sourceSpans]);
   const md = useMemo(() => (refs.length ? linkify(children) : children), [children, refs.length]);
-  const resolved = useResolvedLinks(refs);
+  const resolved = useResolvedLinks(print ? [] : refs);
   const targets = useMemo(() => {
     const m = new Map<string, LinkTarget>();
     for (const l of resolved.data ?? []) m.set(l.ref, l.target);
