@@ -4,6 +4,7 @@ import Foundation
 /// case and route; the placeholder only exists to prove the path end to end.
 public enum NativeScreen: String, Sendable, CaseIterable {
     case debugPlaceholder
+    case inbox
 }
 
 /// A path resolved to a native screen, with its path parameters and query items (decoded).
@@ -41,6 +42,7 @@ public struct NativeRouteRegistry: Sendable {
     public static let allRoutes: [NativeRoute] = [
         NativeRoute("/native-debug", .debugPlaceholder),
         NativeRoute("/native-debug/:id", .debugPlaceholder),
+        NativeRoute("/inbox", .inbox),
     ]
 
     /// The app's registry. Debug-only screens are enabled only when `debug` is set.

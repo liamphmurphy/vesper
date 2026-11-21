@@ -45,7 +45,7 @@ final class NativeRoutesTests: XCTestCase {
         guard case .ok(.navigate(let path)) = DeepLinks.parse("vesper://ticket/PAY-214") else { return XCTFail("parse") }
         XCTAssertEqual(registry.resolve(path)?.params["key"], "PAY-214")
         guard case .ok(.navigate(let inbox)) = DeepLinks.parse("vesper://inbox") else { return XCTFail("parse") }
-        XCTAssertNil(registry.resolve(inbox), "no native inbox yet: the web view keeps it")
+        XCTAssertEqual(NativeRouteRegistry.standard(debug: false).resolve(inbox)?.screen, .inbox)
     }
 }
 

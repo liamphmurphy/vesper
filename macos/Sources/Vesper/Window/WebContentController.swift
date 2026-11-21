@@ -203,6 +203,7 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
                 if newTab { self.app.openVesperTab(path: path, nextTo: self.ownerWindow) } else { self.navigate(path: path) }
             }
             context.onChromeChange = { [weak self] chrome in self?.state.native = chrome }
+            context.window = { [weak self] in self?.host }
             state.native = context.chrome
             let host = NativeScreenHostController(context: context, state: state)
             nativeHost = host
