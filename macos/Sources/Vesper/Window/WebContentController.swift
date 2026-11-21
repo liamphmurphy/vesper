@@ -173,12 +173,13 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
     /// What takes keyboard focus when the tab's content should have it.
     var focusView: NSView { nativeHost?.view ?? webView }
 
-    /// Sends a shell command to the screen it belongs to: the native screen's toolbar, title-menu and
-    /// inspector commands go to it while it shows; everything else goes to the page.
+    /// Sends a shell command to the screen it belongs to: the native screen's toolbar, title-menu,
+    /// inspector and navigator commands go to it while it shows; everything else goes to the page.
     func dispatch(_ command: NativeCommand) {
         if case .navigate(let path) = command {
             navigate(path: path)
-        } else if let nativeHost, NativeCommandRouting.isScreenCommand(command) {
+        } else if let nativeHost,
+                  NativeCommandRouting.isScreenCommand(command, navigatorId: nativeHost.context.chrome.navigator?.id) {
             nativeHost.context.onCommand?(command)
         } else {
             bridge?.send(command)

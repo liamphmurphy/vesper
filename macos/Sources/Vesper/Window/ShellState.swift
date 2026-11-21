@@ -7,9 +7,12 @@ import VesperCore
 @Observable
 final class ShellState {
     var shell: ShellModel?
-    var navigator: NavModel? {
-        didSet { dropStaleOverrides(old: oldValue, new: navigator) }
+    /// The sidebar's list as the page describes it. A native screen's own navigator shows instead.
+    var pageNavigator: NavModel? {
+        didSet { dropStaleOverrides(old: native?.navigator ?? oldValue, new: navigator) }
     }
+    /// The list the sidebar shows: the native screen's when it has one, else the page's.
+    var navigator: NavModel? { native?.navigator ?? pageNavigator }
     /// The page's effective color mode (it may differ from macOS's when the person forces Dark or Light).
     var pageMode: ColorMode?
     /// True while the page draws a screen's list in its own fallback column.
@@ -31,7 +34,12 @@ final class ShellState {
     var pageToolbarItems: [ToolbarItem] = []
     var pageInspector: InspectorModel?
     /// The native screen showing in this tab and the chrome it describes; nil while the web view shows.
-    var native: NativeChrome?
+    var native: NativeChrome? {
+        didSet {
+            let old = oldValue?.navigator ?? pageNavigator
+            if old != navigator { dropStaleOverrides(old: old, new: navigator) }
+        }
+    }
 
     var title: String? { native.map(\.title) ?? pageTitle }
     var subtitle: String? { native.map(\.subtitle) ?? pageSubtitle }

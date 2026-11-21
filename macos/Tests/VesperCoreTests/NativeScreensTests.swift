@@ -76,4 +76,21 @@ final class NativeFindAndCommandTests: XCTestCase {
         XCTAssertFalse(NativeCommandRouting.isScreenCommand(.railAction(itemId: "r")))
         XCTAssertFalse(NativeCommandRouting.isScreenCommand(.command(.find)))
     }
+
+    func testNavigatorCommandsGoToTheScreenThatPublishesTheNavigator() {
+        let commands: [NativeCommand] = [
+            .navActivate(navigatorId: "library", itemId: "videos"),
+            .navAction(navigatorId: "library", actionId: "project", menuItemId: "space:PAY"),
+            .navPicker(navigatorId: "library", pickerId: "source", value: "projects"),
+            .navFilter(navigatorId: "library", filterId: "f", value: "v", checked: true),
+            .navSearch(navigatorId: "library", searchId: "library-search", value: "spec"),
+            .navToggle(navigatorId: "library", itemId: "i", expanded: true),
+        ]
+        for command in commands {
+            XCTAssertTrue(NativeCommandRouting.isScreenCommand(command, navigatorId: "library"), "\(command)")
+            // Another navigator's commands (the page's, still running underneath) stay with the page.
+            XCTAssertFalse(NativeCommandRouting.isScreenCommand(command, navigatorId: "inbox"), "\(command)")
+            XCTAssertFalse(NativeCommandRouting.isScreenCommand(command), "\(command)")
+        }
+    }
 }

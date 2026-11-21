@@ -27,18 +27,22 @@ extension WKWebView: FindTarget {
 }
 
 /// Find for a native screen: the screen lists each row's searchable text in `texts`, then
-/// highlights the rows that match and scrolls to `current`.
+/// highlights the rows that match and scrolls to `current`. A screen whose content isn't rows (a
+/// PDF) sets `searcher` instead, and the find bar searches that.
 @MainActor
 @Observable
 final class NativeFindModel: FindTarget {
     /// Each row's searchable text, in display order. The screen keeps it current.
     var texts: [String] = []
+    /// Searches the screen's own content in place of `texts`; the screen clears it when it goes.
+    @ObservationIgnored weak var searcher: (any FindTarget)?
     private(set) var query = ""
     private(set) var caseSensitive = false
     /// The row with the current match, to scroll to and mark; nil when nothing matches.
     private(set) var current: Int?
 
     func find(_ query: String, backwards: Bool, caseSensitive: Bool) async -> Bool {
+        if let searcher { return await searcher.find(query, backwards: backwards, caseSensitive: caseSensitive) }
         let changed = query != self.query || caseSensitive != self.caseSensitive
         self.query = query
         self.caseSensitive = caseSensitive
@@ -49,6 +53,7 @@ final class NativeFindModel: FindTarget {
     }
 
     func clearFind() {
+        searcher?.clearFind()
         query = ""
         current = nil
     }
