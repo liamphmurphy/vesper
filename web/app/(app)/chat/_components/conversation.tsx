@@ -73,11 +73,12 @@ import { AskAboutSelection, quoteForComposer, ResearchToggle, TemporaryToggle } 
 import { ChatSuggestions } from "./suggestions";
 import { Composer, type CommandRun } from "./composer";
 import { ForkDialog, type ForkTarget } from "./fork-dialog";
+import { GenerateMusicDialog, type MusicDialogInitial } from "./generate-music-dialog";
 import { RecommendActions, SaveSummary, VideoPlayers } from "@/components/domain/recommend-fence";
 import { VideoCards, VideoRendererNotes } from "@/components/domain/video-card";
 import { AudioCards } from "@/components/domain/audio-card";
-import { useChatAudio } from "@/lib/api/audio-hooks";
-import type { ChatAudio } from "@/lib/chat-audio";
+import { useChatAudio, useStopChatAudio } from "@/lib/api/audio-hooks";
+import { placeStandaloneAudio, type ChatAudio } from "@/lib/chat-audio";
 import { useChatVideos } from "@/lib/api/video-hooks";
 import type { ChatVideo } from "@/lib/chat-video";
 import { CiteContext } from "@/components/domain/cite-marker";
@@ -163,7 +164,7 @@ function Divider({ children, testId }: { children: string; testId?: string }) {
 
 type ChatInfo = { id: string; title: string; project?: string; agent: { name: string } };
 
-const Bubble = memo(function Bubble({ m, chat, persona, saveable, names, turn, ended, summaryUrl, editable, archived, onEdit, onRetry, highlighted, videos, audio, pushRequests, asides, secondOpinions, thread }: { m: Message; chat: ChatInfo; persona: PersonaLook; saveable: boolean; names: Map<string, string>; turn?: TurnWindow; ended?: EndedTurn; summaryUrl?: string | null; editable?: boolean; archived?: boolean; onEdit?: (body: string) => void; onRetry?: () => void; highlighted?: boolean; videos?: ChatVideo[]; audio?: ChatAudio[]; pushRequests?: PushRequest[]; asides?: ReactNode; secondOpinions?: ReactNode; thread?: { count: number; running: boolean } }) {
+const Bubble = memo(function Bubble({ m, chat, persona, saveable, names, turn, ended, summaryUrl, editable, archived, onEdit, onRetry, highlighted, videos, audio, onStopAudio, onRetryMusic, pushRequests, asides, secondOpinions, thread }: { m: Message; chat: ChatInfo; persona: PersonaLook; saveable: boolean; names: Map<string, string>; turn?: TurnWindow; ended?: EndedTurn; summaryUrl?: string | null; editable?: boolean; archived?: boolean; onEdit?: (body: string) => void; onRetry?: () => void; highlighted?: boolean; videos?: ChatVideo[]; audio?: ChatAudio[]; onStopAudio?: (audioId: string) => void; onRetryMusic?: (a: ChatAudio) => void; pushRequests?: PushRequest[]; asides?: ReactNode; secondOpinions?: ReactNode; thread?: { count: number; running: boolean } }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(m.body_md);
   const self = useRef<HTMLLIElement>(null);
@@ -191,7 +192,7 @@ const Bubble = memo(function Bubble({ m, chat, persona, saveable, names, turn, e
       <>
         {endedSteps}
         {videos?.length ? <li className="flex flex-col items-start"><VideoCards chatId={chat.id} videos={videos} messageId={m.id} /></li> : null}
-        {audio?.length ? <li className="flex flex-col items-start"><AudioCards chatId={chat.id} audio={audio} messageId={m.id} /></li> : null}
+        {audio?.length ? <li className="flex flex-col items-start"><AudioCards chatId={chat.id} audio={audio} messageId={m.id} onStopAudio={onStopAudio} onRetryMusic={onRetryMusic} /></li> : null}
         {pushRequests?.length ? <li className="flex flex-col items-start"><PushRequests chatId={chat.id} requests={pushRequests} disabled={archived} /></li> : null}
         <Divider testId="system-message">{m.body_md}</Divider>
       </>
@@ -216,7 +217,7 @@ const Bubble = memo(function Bubble({ m, chat, persona, saveable, names, turn, e
       {/* The live card's steps, folded to a line once the turn ended. Its events all precede the reply. */}
       {!mine && turn && <TurnSteps runId={m.run_id} outcome="done" since={turn.since} until={m.created_at} end={Date.parse(m.created_at)} replyId={m.id} />}
       {!mine && videos?.length ? <VideoCards chatId={chat.id} videos={videos} messageId={m.id} /> : null}
-      {!mine && audio?.length ? <AudioCards chatId={chat.id} audio={audio} messageId={m.id} /> : null}
+      {!mine && audio?.length ? <AudioCards chatId={chat.id} audio={audio} messageId={m.id} onStopAudio={onStopAudio} onRetryMusic={onRetryMusic} /> : null}
       {/* Replies read as prose on the page; only real objects (canvases, runs, sources) get a card. */}
       <div
         className={cx(
@@ -286,7 +287,7 @@ type ChatAsides = NonNullable<ReturnType<typeof useChatAsides>["data"]>;
  * a ref when it is a callback) and a keystroke only re-checks props instead of re-rendering
  * every message's markdown.
  */
-function BubbleList({ unreadFrom, list, chat, persona, speakerName, names, highlight, running, since, locked, archived, editPending, lastUser, videosByMessage, audioByMessage, pushRequestsByMessage, afterMessagePushRequests, asideList, pinnedRef, editLast, onQuoteSecondOpinion }: {
+function BubbleList({ unreadFrom, list, chat, persona, speakerName, names, highlight, running, since, locked, archived, editPending, lastUser, videosByMessage, audioByMessage, afterMessageAudio, onStopAudio, onRetryMusic, pushRequestsByMessage, afterMessagePushRequests, asideList, pinnedRef, editLast, onQuoteSecondOpinion }: {
   /** The first reply since the person last read the chat: "New" goes above it. */
   unreadFrom?: string;
   list: Message[];
@@ -303,6 +304,9 @@ function BubbleList({ unreadFrom, list, chat, persona, speakerName, names, highl
   lastUser?: Message;
   videosByMessage: Map<string, ChatVideo[]>;
   audioByMessage: Map<string, ChatAudio[]>;
+  afterMessageAudio: Map<string, ChatAudio[]>;
+  onStopAudio?: (audioId: string) => void;
+  onRetryMusic?: (a: ChatAudio) => void;
   pushRequestsByMessage: Map<string, PushRequest[]>;
   afterMessagePushRequests: Map<string, PushRequest[]>;
   asideList?: ChatAsides;
@@ -365,10 +369,17 @@ function BubbleList({ unreadFrom, list, chat, persona, speakerName, names, highl
       archived={archived}
       videos={videosByMessage.get(m.id)}
       audio={audioByMessage.get(m.id)}
+      onStopAudio={onStopAudio}
+      onRetryMusic={onRetryMusic}
       pushRequests={pushRequestsByMessage.get(m.id)}
       asides={asideNodes.get(m.id) ?? null}
       secondOpinions={secondOpinionNodes.get(m.id) ?? null}
       thread={threads.get(m.id)} />
+    {afterMessageAudio.get(m.id)?.length ? (
+      <li className="flex flex-col gap-2">
+        <AudioCards chatId={chat.id} audio={afterMessageAudio.get(m.id)!} onStopAudio={onStopAudio} onRetryMusic={onRetryMusic} />
+      </li>
+    ) : null}
     {afterMessagePushRequests.get(m.id)?.length ? (
       <li className="flex flex-col gap-2">
         <PushRequests chatId={chat.id} requests={afterMessagePushRequests.get(m.id)!} disabled={archived} />
@@ -692,6 +703,25 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   const liveVideos = useMemo(() => (videos.data?.videos ?? []).filter((v) => !v.message_id && running && v.run_id === c?.current_run_id), [videos.data, running, c?.current_run_id]);
   // Audio the same way.
   const audioJobs = useChatAudio(c?.id, running);
+  const stopChatAudio = useStopChatAudio(c?.id ?? "");
+  const stopChatAudioRef = useRef(stopChatAudio.mutate);
+  useEffect(() => {
+    stopChatAudioRef.current = stopChatAudio.mutate;
+  });
+  const onStopAudio = useCallback((audioId: string) => stopChatAudioRef.current(audioId), []);
+  const [musicDialog, setMusicDialog] = useState<{ open: boolean; initial?: MusicDialogInitial }>({ open: false });
+  const onRetryMusic = useCallback((a: ChatAudio) => {
+    setMusicDialog({
+      open: true,
+      initial: {
+        title: a.title,
+        prompt: a.prompt ?? "",
+        lyrics: a.lyrics ?? "",
+        instrumental: a.instrumental ?? false,
+        length: a.duration_ms >= 60_000 ? "full" : "clip",
+      },
+    });
+  }, []);
   const audioByMessage = useMemo(() => {
     const out = new Map<string, ChatAudio[]>();
     for (const a of audioJobs.data?.audio ?? []) if (a.message_id) out.set(a.message_id, [...(out.get(a.message_id) ?? []), a]);
@@ -730,6 +760,10 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
         hasMore: messages.data?.has_more,
       }),
     [pushRequests.data?.requests, list, running, c?.current_run_id, messages.data?.has_more],
+  );
+  const placedAudio = useMemo(
+    () => placeStandaloneAudio(audioJobs.data?.audio ?? [], list ?? [], { running, currentRunId: c?.current_run_id }),
+    [audioJobs.data?.audio, list, running, c?.current_run_id],
   );
   // Where "New" goes: before the first reply that arrived since the person last read this chat,
   // fixed when the chat opens so it doesn't move as they read on.
@@ -1100,7 +1134,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
       </div>
     );
   }
-  const actionError = send.error ?? queue.error ?? steer.error ?? aside.error ?? secondOpinion.error ?? compactChat.error ?? edit.error ?? cancel.error ?? create.error ?? setCommitEmail.error;
+  const actionError = send.error ?? queue.error ?? steer.error ?? aside.error ?? secondOpinion.error ?? compactChat.error ?? edit.error ?? cancel.error ?? create.error ?? setCommitEmail.error ?? stopChatAudio.error;
   // A chat without a persona, or whose persona was deleted, is the built-in Assistant.
   const persona = personaLook(c.persona);
   const full = personas.data?.personas.find((p) => p.id === c.persona?.id);
@@ -1145,9 +1179,13 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
     const qs = q.toString();
     router.replace(qs ? `/chat/${id}?${qs}` : `/chat/${id}`);
   };
-  // The + menu's "Create with {persona}": Doc and Design start a draft for the person to finish; a deck is made and opened.
+  // The + menu's "Create with {persona}": Doc and Design start a draft for the person to finish; a deck is made and opened; Music opens the generator modal.
   const createWith = (kind: CreateKind) => {
     if (kind === "slides") return startDeck();
+    if (kind === "music") {
+      setMusicDialog({ open: true, initial: text.trim() ? { prompt: text.trim() } : undefined });
+      return;
+    }
     setText((t) => (kind === "design" ? `/design ${t.trim()}` : `${DOC_DRAFT}${t.trim()}`));
     requestAnimationFrame(() => {
       const el = area.current;
@@ -1336,7 +1374,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
               <Skeleton className="h-12 w-1/2" />
               <Skeleton className="h-16 w-2/3" />
             </div>
-          ) : list.length === 0 && !running ? (
+          ) : list.length === 0 && !running && placedAudio.total === 0 ? (
             c.archived ? (
               <EmptyState icon="msg" title="A new conversation">
                 Ask about your runs, tickets, epics and wiki, or have me draft tickets. I save useful things to your private memory and tell you when I do.
@@ -1384,10 +1422,21 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
                   <PushRequests chatId={c.id} requests={placedPushes.leading} disabled={c.archived} />
                 </li>
               )}
+              {placedAudio.leading.length > 0 && (
+                <li className="flex flex-col gap-2">
+                  <AudioCards chatId={c.id} audio={placedAudio.leading} onStopAudio={onStopAudio} onRetryMusic={onRetryMusic} />
+                </li>
+              )}
               <BubbleList unreadFrom={unreadFrom?.message ?? undefined} list={list} chat={c} persona={persona} speakerName={speaker.name} names={names} highlight={highlight} running={running} since={since}
                 locked={locked} archived={c.archived} editPending={edit.isPending} lastUser={lastUser} videosByMessage={videosByMessage} audioByMessage={audioByMessage}
+                afterMessageAudio={placedAudio.afterMessage} onStopAudio={onStopAudio} onRetryMusic={onRetryMusic}
                 pushRequestsByMessage={placedPushes.byMessage} afterMessagePushRequests={placedPushes.afterMessage} asideList={asideList}
                 pinnedRef={pinned} editLast={edit.mutate} onQuoteSecondOpinion={onQuoteSecondOpinion} />
+              {placedAudio.trailing.length > 0 && (
+                <li className="flex flex-col gap-2">
+                  <AudioCards chatId={c.id} audio={placedAudio.trailing} onStopAudio={onStopAudio} onRetryMusic={onRetryMusic} />
+                </li>
+              )}
               {placedPushes.trailing.length > 0 && (
                 <li className="flex flex-col gap-2">
                   <PushRequests chatId={c.id} requests={placedPushes.trailing} disabled={c.archived} />
@@ -1428,7 +1477,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
                 <li className="flex flex-col gap-2" data-testid="thinking">
                   <InterimReply runId={c.current_run_id} since={since} persona={speaker} />
                   <VideoCards chatId={c.id} videos={liveVideos} onStop={stopping ? undefined : () => cancel.mutate()} />
-                  <AudioCards chatId={c.id} audio={liveAudio} onStop={stopping ? undefined : () => cancel.mutate()} />
+                  <AudioCards chatId={c.id} audio={liveAudio} onStop={stopping ? undefined : () => cancel.mutate()} onStopAudio={onStopAudio} onRetryMusic={onRetryMusic} />
                   <PushRequests chatId={c.id} requests={placedPushes.live} disabled={c.archived} />
                   <div ref={statusRef} className="contents">
                   <ChatStatus chatId={c.id} disabled={c.archived} runId={c.current_run_id} since={since} persona={speaker} stopping={stopping} folded={docked} onOpenStep={openStep}
@@ -1669,6 +1718,10 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
                 ),
                 // The persona starts it with design_create, which opens it beside the chat.
                 design: (brief: string) => (running ? sendWhileRunning("followup", designRequest(brief)) : submit(designRequest(brief))),
+                music: (brief: string) => {
+                  if (c.archived) return "This chat is archived.";
+                  setMusicDialog({ open: true, initial: brief.trim() ? { prompt: brief.trim() } : undefined });
+                },
                 compact: (arg: string) => {
                   if (c.archived) return "This chat is archived.";
                   if (running) return "Wait for the current reply to finish (or /stop) before compacting.";
@@ -1776,6 +1829,12 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
           hasRepo={!!c.repo_url}
           target={forkTarget}
           onClose={() => setForkTarget(null)}
+        />
+        <GenerateMusicDialog
+          open={musicDialog.open}
+          chatId={c.id}
+          initial={musicDialog.initial}
+          onClose={() => setMusicDialog({ open: false })}
         />
       </section>
     </Tooltip.Provider>
