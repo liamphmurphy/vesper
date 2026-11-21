@@ -15,6 +15,7 @@ export interface RunRowData {
   agentName?: string;
   /** The persona's literal identity color (common.ts agentAvatarColor), for the avatar. */
   agentColor?: string;
+  agentImageUrl?: string;
   trailing: string;
   dot: RunDot;
 }
@@ -25,6 +26,7 @@ export interface NeedsRowData {
   subtitle?: string;
   agentName?: string;
   agentColor?: string;
+  agentImageUrl?: string;
   trailing: string;
   /** Blocked kinds read as failures. */
   tone: "human" | "blocked";
@@ -53,13 +55,17 @@ export const RUN_STATUS_ITEM = "status";
 export const runItemId = (id: string) => `run:${id}`;
 export const needsItemId = (id: string) => `needs:${id}`;
 
-const initial = (name: string, color?: string): Avatar => ({ initials: name.trim().slice(0, 1).toUpperCase() || "?", ...(color ? { color } : {}) });
+const initial = (name: string, color?: string, imageUrl?: string): Avatar => ({
+  initials: name.trim().slice(0, 1).toUpperCase() || "?",
+  ...(color ? { color } : {}),
+  ...(imageUrl ? { imageUrl } : {}),
+});
 
 function runItem(r: RunRowData, withHref: boolean): NavItem {
   const item: NavItem = { id: runItemId(r.id), title: r.title, trailing: r.trailing };
   if (withHref) item.href = r.href;
   if (r.subtitle) item.subtitle = r.subtitle;
-  if (r.agentName) item.avatar = initial(r.agentName, r.agentColor);
+  if (r.agentName) item.avatar = initial(r.agentName, r.agentColor, r.agentImageUrl);
   const tone = DOT_TONE[r.dot];
   if (tone) item.status = tone;
   return item;
@@ -69,7 +75,7 @@ function needsItem(n: NeedsRowData, withHref: boolean): NavItem {
   const item: NavItem = { id: needsItemId(n.id), title: n.title, trailing: n.trailing, status: n.tone };
   if (withHref) item.href = n.href;
   if (n.subtitle) item.subtitle = n.subtitle;
-  if (n.agentName) item.avatar = initial(n.agentName, n.agentColor);
+  if (n.agentName) item.avatar = initial(n.agentName, n.agentColor, n.agentImageUrl);
   else item.icon = "inbox";
   return item;
 }

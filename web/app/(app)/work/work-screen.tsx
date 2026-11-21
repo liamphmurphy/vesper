@@ -11,6 +11,8 @@ import {
   useTickets,
   type TicketView,
 } from "@/lib/api/hooks";
+import { usePersonas } from "@/lib/api/persona-hooks";
+import { pageOrigin } from "@/lib/native-shell/models/common";
 import {
   workHref,
   workTarget,
@@ -85,6 +87,7 @@ export function WorkScreen() {
   const params = useSearchParams();
   const compact = useCompact();
   const boot = useBootstrap();
+  const personas = usePersonas();
   const scope = useProjectScope("optional");
   const view = workView(params);
   const project = params.has("project")
@@ -256,7 +259,7 @@ export function WorkScreen() {
               search: { value: search, placeholder: "Filter work…" },
             },
             body: {
-              ...activityNativeBody(runs, activityLists, { search, query: listQuery(params), now: nowDate }),
+              ...activityNativeBody(runs, activityLists, { search, query: listQuery(params), now: nowDate, personas: personas.data?.personas, origin: pageOrigin() }),
               hasMore: runs.hasMore && activityFilterNow === "all",
             },
             filter: activityFilterNow as ActivityFilter,

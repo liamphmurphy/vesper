@@ -7,7 +7,8 @@ import { useComment } from "@/lib/api/hooks";
 import { absoluteTime, dueDate, timelineTime } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { TextArea } from "@/components/ui/primitives";
-import { AgentAvatar, HumanAvatar, agentHue } from "@/components/domain/avatars";
+import { HumanAvatar, agentHue } from "@/components/domain/avatars";
+import { WorkPersonaAvatar } from "@/components/domain/work-persona-avatar";
 import { StatusGlyph } from "@/components/domain/glyphs";
 import { Markdown } from "@/components/domain/markdown";
 import { PRIORITY_NAME, STATUS_NAME } from "@/components/domain/meta";
@@ -18,7 +19,14 @@ type P = Record<string, unknown>;
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 
 export function ActorAvatar({ actor }: { actor: Actor }) {
-  if (actor.type === "agent") return <AgentAvatar name={actor.name} colorIndex={actor.color_index ?? 0} size="stack" label={false} />;
+  if (actor.type === "agent") {
+    return (
+      <WorkPersonaAvatar
+        agent={{ id: actor.id ?? undefined, name: actor.name, color_index: actor.color_index ?? 0 }}
+        size="stack"
+      />
+    );
+  }
   if (actor.type === "system")
     return <span aria-hidden className="grid size-[22px] place-items-center rounded-full bg-selected text-10 text-fg-tertiary">⚙</span>;
   return <HumanAvatar name={actor.name} initials={actor.initials} color={actor.avatar_color} size={22} label={false} />;

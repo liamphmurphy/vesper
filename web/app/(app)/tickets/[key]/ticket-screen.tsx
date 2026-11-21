@@ -20,7 +20,7 @@ import { Button, ButtonLink, IconButton } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Banner, EmptyState, Skeleton, TextArea } from "@/components/ui/primitives";
 import { Sheet } from "@/components/ui/sheet";
-import { AgentAvatar } from "@/components/domain/avatars";
+import { WorkPersonaAvatar } from "@/components/domain/work-persona-avatar";
 import { Markdown } from "@/components/domain/markdown";
 import { StartChatButton } from "@/components/domain/start-chat";
 import { DispatchDialog } from "@/components/domain/dispatch-dialog";
@@ -215,7 +215,7 @@ function Header({
             </span>
             {t.assignee && (
               <span className="inline-flex items-center gap-1.5 font-medium text-fg">
-                <AgentAvatar name={t.assignee.name} colorIndex={t.assignee.color_index} label={false} size="sm" />
+                <WorkPersonaAvatar agent={t.assignee} size="sm" />
                 {t.assignee.name}
               </span>
             )}
@@ -267,7 +267,7 @@ function LatestRunRow({ t }: { t: Ticket }) {
       href={`/runs/${run.id}`}
       className="flex items-center gap-3 rounded-xl border border-border bg-surface px-4 py-3 transition-colors hover:border-border-hover hover:bg-hover/40"
     >
-      <AgentAvatar name={run.agent.name} colorIndex={run.agent.color_index} label={false} size="sm" />
+      <WorkPersonaAvatar agent={run.agent} size="sm" />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5 leading-tight">
         <span className="flex flex-wrap items-center gap-2 text-13 font-medium text-fg">
           <span>Latest run · {run.agent.name}</span>

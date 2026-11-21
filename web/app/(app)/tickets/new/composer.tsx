@@ -11,7 +11,8 @@ import { dueDate } from "@/lib/format";
 import { Button, ButtonLink, IconButton } from "@/components/ui/button";
 import { Toggle } from "@/components/ui/controls";
 import { Icon } from "@/components/ui/icon";
-import { AgentAvatar, HumanAvatar } from "@/components/domain/avatars";
+import { HumanAvatar } from "@/components/domain/avatars";
+import { WorkPersonaAvatar } from "@/components/domain/work-persona-avatar";
 import { PriorityGlyph, StatusGlyph } from "@/components/domain/glyphs";
 import { PRIORITY_NAME, STATUS_NAME } from "@/components/domain/meta";
 import { AgentPicker, EpicMenu, floatPanel, LabelPicker, PriorityMenu, StatusMenu, UserMenu } from "@/components/domain/pickers";
@@ -219,7 +220,7 @@ export function Composer() {
                 </EpicMenu>
                 <AgentPicker agents={boot.data.agents.filter((a) => a.kind === "main")} value={agentId} onChange={setAgentId}>
                   <Chip>
-                    {agent ? <AgentAvatar name={agent.name} colorIndex={agent.color_index} label={false} /> : <Icon name="agents" size={13} className="text-fg-tertiary" />}
+                    {agent ? <WorkPersonaAvatar agent={agent} size="sm" /> : <Icon name="agents" size={13} className="text-fg-tertiary" />}
                     {agent?.name ?? <span className="text-fg-tertiary">Persona</span>}
                   </Chip>
                 </AgentPicker>

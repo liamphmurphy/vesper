@@ -6,7 +6,8 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNod
 import type { Priority, Schemas, TicketStatus } from "@/lib/api/client";
 import { cx } from "@/lib/cx";
 import { Icon } from "@/components/ui/icon";
-import { AgentAvatar, HumanAvatar, UnassignedAvatar } from "./avatars";
+import { HumanAvatar, UnassignedAvatar } from "./avatars";
+import { WorkPersonaAvatar } from "./work-persona-avatar";
 import { PriorityGlyph, StatusGlyph } from "./glyphs";
 import { PRIORITY_NAME, PRIORITY_ORDER, STATUS_NAME, STATUS_ORDER } from "./meta";
 
@@ -243,7 +244,7 @@ export function AgentPicker({
                   onClick={() => pick(i)}
                   className={cx("flex h-10 cursor-default items-center gap-2.5 rounded-md px-2", i === active && "bg-hover")}
                 >
-                  <AgentAvatar name={a.name} colorIndex={a.color_index} size="md" label={false} />
+                  <WorkPersonaAvatar agent={a} size="md" />
                   <span className="flex min-w-0 flex-1 flex-col leading-tight">
                     <span className="font-medium">{a.name}</span>
                     <span className="truncate text-12 text-fg-tertiary">

@@ -22,7 +22,8 @@ import { Button } from "@/components/ui/button";
 import { Tabs, Toggle } from "@/components/ui/controls";
 import { Icon } from "@/components/ui/icon";
 import { Banner, EmptyState, Skeleton, TextInput } from "@/components/ui/primitives";
-import { AgentAvatar } from "@/components/domain/avatars";
+import { WorkPersonaAvatar } from "@/components/domain/work-persona-avatar";
+import { runCharacterState } from "@/lib/work-persona";
 import { Flag, SmallPill } from "@/components/domain/labels";
 import { Markdown } from "@/components/domain/markdown";
 import { RUN_ENDED, RUN_STATE as STATE, StatusPill } from "@/components/domain/run-status";
@@ -572,7 +573,7 @@ export function RunLogScreen({ id }: { id: string }) {
               meta={
                 <>
                   <span className="inline-flex items-center gap-1.5 font-medium text-fg">
-                    <AgentAvatar name={run.agent.name} colorIndex={run.agent.color_index} label={false} size="sm" />
+                    <WorkPersonaAvatar agent={run.agent} size="sm" state={runCharacterState(run)} />
                     {run.agent.name}
                   </span>
                   <StatusPill run={run} />

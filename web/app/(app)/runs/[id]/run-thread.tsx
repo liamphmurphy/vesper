@@ -20,7 +20,8 @@ import { itemHref, nextNeedsItem, runTitle } from "@/lib/run-list";
 import { stepProgress } from "@/lib/run-mobile";
 import { latestQuestion } from "@/lib/run-question";
 import { condenseFeed, delegateChild, finalMessage, nowLine, workHref, type FeedItem } from "@/lib/run-view";
-import { AgentAvatar } from "@/components/domain/avatars";
+import { WorkPersonaAvatar } from "@/components/domain/work-persona-avatar";
+import { runCharacterState } from "@/lib/work-persona";
 import { Markdown } from "@/components/domain/markdown";
 import { RUN_ENDED, StatusPill } from "@/components/domain/run-status";
 import { Button, ButtonLink } from "@/components/ui/button";
@@ -139,7 +140,7 @@ function SubRunCard({ child, agent, task, at }: { child?: Run; agent: string; ta
   return (
     <li className="py-1.5">
       <div className="flex items-start gap-3 rounded-xl border border-border bg-surface px-3.5 py-3">
-        {child ? <AgentAvatar name={child.agent.name} colorIndex={child.agent.color_index} label={false} size="md" /> : <span aria-hidden className="size-7 flex-none rounded-full bg-surface-sunken" />}
+        {child ? <WorkPersonaAvatar agent={child.agent} size="md" state={runCharacterState(child)} /> : <span aria-hidden className="size-7 flex-none rounded-full bg-surface-sunken" />}
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <p className="flex flex-wrap items-center gap-2 text-13">
             <span className="font-medium text-fg">{child?.agent.name ?? agent}</span>
@@ -174,7 +175,7 @@ function FeedRow({ item, d, onOpenTurn }: { item: FeedItem; d: RunDetail; onOpen
     case "message":
       return (
         <li className="flex gap-3 py-2">
-          <AgentAvatar name={run.agent.name} colorIndex={run.agent.color_index} label={false} size="md" />
+          <WorkPersonaAvatar agent={run.agent} size="md" />
           <div className="min-w-0 flex-1">
             <p className="mb-0.5 flex items-baseline gap-2 text-13">
               <span className="font-semibold text-fg">{run.agent.name}</span>
@@ -333,7 +334,7 @@ function Composer({ run, lastSeq, unified, col }: { run: Run; lastSeq: number; u
         {!unified && <div data-testid="run-composer-to" className="flex items-center gap-1.5 px-1">
           <span className="text-12 text-fg-tertiary">To</span>
           <span className="inline-flex h-[24px] items-center gap-1.5 rounded-md border border-border bg-surface pl-0.5 pr-2 text-12 font-medium text-fg-2">
-            <AgentAvatar name={run.agent.name} colorIndex={run.agent.color_index} label={false} size="sm" />
+            <WorkPersonaAvatar agent={run.agent} size="sm" />
             {run.agent.name}{run.ticket_key ? ` · ${run.ticket_key}` : ""}
           </span>
         </div>}
@@ -405,7 +406,7 @@ export function RunThread({
     <section aria-label="Run thread" className="flex min-h-0 min-w-0 flex-1 flex-col">
       {!embeddedHeader && (unified ? (
         <div className="flex flex-none items-center gap-2.5 border-b border-border-subtle px-4 py-2 md:px-6">
-          <AgentAvatar name={run.agent.name} colorIndex={run.agent.color_index} label={false} size="sm" />
+          <WorkPersonaAvatar agent={run.agent} size="sm" state={runCharacterState(run)} />
           <h1 className="min-w-0 flex-1 truncate text-14 font-semibold leading-snug text-fg">{runTitle(run)}</h1>
           <p data-run-inline-meta className="hidden shrink-0 truncate font-mono text-11 text-fg-tertiary sm:block">
             {run.agent.name} · {run.harness} · {duration(run.started_at, run.ended_at)}
@@ -422,7 +423,7 @@ export function RunThread({
         </div>
       ) : (
         <div className={cx(col, "flex flex-none items-center gap-3 py-3")}>
-          <AgentAvatar name={run.agent.name} colorIndex={run.agent.color_index} label={false} size="md" />
+          <WorkPersonaAvatar agent={run.agent} size="md" state={runCharacterState(run)} />
           <div className="flex min-w-0 flex-1 flex-col leading-tight">
             <h1 className="truncate text-16 font-semibold text-fg">{runTitle(run)}</h1>
             <span className="flex min-w-0 flex-wrap items-center gap-x-2 text-12 text-fg-tertiary">

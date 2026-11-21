@@ -33,7 +33,8 @@ import { DispatchDialog } from "@/components/domain/dispatch-dialog";
 import { Tabs } from "@/components/ui/controls";
 import { Icon } from "@/components/ui/icon";
 import { Banner, EmptyState, FilterChip, Kbd, Skeleton } from "@/components/ui/primitives";
-import { AgentAvatar, UnassignedAvatar } from "@/components/domain/avatars";
+import { UnassignedAvatar } from "@/components/domain/avatars";
+import { WorkPersonaAvatar } from "@/components/domain/work-persona-avatar";
 import { PriorityGlyph } from "@/components/domain/glyphs";
 import { PRIORITY_NAME } from "@/components/domain/meta";
 import { floatPanel } from "@/components/domain/pickers";
@@ -132,7 +133,7 @@ function GroupLabel({ g }: { g: WorkGroup }) {
   const a = g.tickets[0]?.assignee;
   return a ? (
     <>
-      <AgentAvatar name={a.name} colorIndex={a.color_index} label={false} />
+      <WorkPersonaAvatar agent={a} size="sm" />
       <span>{a.name}</span>
     </>
   ) : (

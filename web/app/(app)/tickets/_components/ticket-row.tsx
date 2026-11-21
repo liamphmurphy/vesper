@@ -5,15 +5,14 @@ import { useRouter } from "next/navigation";
 import { useRef, ViewTransition, type MouseEvent, type RefObject } from "react";
 import type { TicketStatus, TicketSummary } from "@/lib/api/client";
 import { useUpdateTicket } from "@/lib/api/hooks";
-import { usePersonas } from "@/lib/api/persona-hooks";
 import { useNativeContextMenu } from "@/lib/native-shell/hooks";
 import { toast } from "@/lib/toast";
 import { cx } from "@/lib/cx";
 import { shortAgo } from "@/lib/format";
 import { stateText, type NeedsYou } from "@/lib/work-rows";
 import { Icon } from "@/components/ui/icon";
-import { AgentAvatar, UnassignedAvatar } from "@/components/domain/avatars";
-import { PersonaAvatar } from "@/components/domain/persona-avatar";
+import { UnassignedAvatar } from "@/components/domain/avatars";
+import { WorkPersonaAvatar } from "@/components/domain/work-persona-avatar";
 import { PriorityGlyph, StatusGlyph } from "@/components/domain/glyphs";
 import { LabelChip } from "@/components/domain/labels";
 import { STATUS_NAME, STATUS_ORDER } from "@/components/domain/meta";
@@ -133,7 +132,7 @@ export function EpicChip({ epic }: { epic?: TicketSummary["epic"] }) {
   );
 }
 
-/** Match a ticket/run assignee to its PersonaAvatar when available, falling back to AgentAvatar. */
+/** Match a ticket/run assignee to its PersonaAvatar when available, falling back to circular hue initial. */
 export function AgentOrPersonaAvatar({
   agent,
   size = "sm",
@@ -141,25 +140,7 @@ export function AgentOrPersonaAvatar({
   agent: { id?: string; handle?: string; name: string; color_index: number };
   size?: "sm" | "md";
 }) {
-  const personas = usePersonas();
-  const match = personas.data?.personas.find(
-    (p) =>
-      (agent.id && p.id === agent.id) ||
-      (agent.handle && p.id === agent.handle) ||
-      p.name.toLowerCase() === agent.name.toLowerCase(),
-  );
-  if (match) {
-    return (
-      <PersonaAvatar
-        name={match.name}
-        color={match.color}
-        src={match.avatar_url ?? undefined}
-        characterSvg={match.character_svg ?? undefined}
-        size={size === "md" ? 24 : 20}
-      />
-    );
-  }
-  return <AgentAvatar name={agent.name} colorIndex={agent.color_index} label={false} size={size} />;
+  return <WorkPersonaAvatar agent={agent} size={size} />;
 }
 
 /** The ticket's agent as an avatar, its name on hover and for screen readers. */
