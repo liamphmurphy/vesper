@@ -140,6 +140,10 @@ final class LibraryLogicTests: XCTestCase {
         XCTAssertEqual(LibraryLogic.linkCount(items, queue: .done), 2)
         XCTAssertEqual(LibraryLogic.host("https://www.youtube.com/watch?v=1"), "youtube.com")
         XCTAssertEqual(LibraryLogic.host("not a url"), "not a url")
+        XCTAssertEqual(LibraryLogic.summaryText("It scales [1] well [2].\n\n---\n\n**Sources:**\n1. [Docs](https://a.dev)\n2. https://b.dev"),
+                       "It scales well.")
+        XCTAssertEqual(LibraryLogic.summaryText("Links: see below for more [x](https://a.dev)"), "Links: see below for more [x](https://a.dev)")
+        XCTAssertEqual(LibraryLogic.summaryText("Sources\nwere unclear."), "Sources\nwere unclear.", "prose after the word stays")
     }
 
     func testArtifactHelpers() {

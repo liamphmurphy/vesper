@@ -35,6 +35,19 @@ final class NativeRoutesTests: XCTestCase {
         XCTAssertEqual(NativeRouteRegistry.standard(debug: true).resolve("/native-debug/7")?.params["id"], "7")
     }
 
+    func testLibraryAndPDFViewerAreNative() {
+        let standard = NativeRouteRegistry.standard(debug: false)
+        let library = standard.resolve("/library?tab=videos&item=v1")
+        XCTAssertEqual(library?.screen, .library)
+        XCTAssertEqual(library?.query, ["tab": "videos", "item": "v1"])
+        XCTAssertEqual(standard.resolve("/library?source=projects&type=report")?.query["source"], "projects")
+        let pdf = standard.resolve("/pdf?src=%2Fapi%2Fv1%2Fknowledge%2Fassets%2Fa1&title=Spec")
+        XCTAssertEqual(pdf?.screen, .pdf)
+        XCTAssertEqual(pdf?.query["src"], "/api/v1/knowledge/assets/a1")
+        // Only the Library's own path: other screens under it stay on the web view until they move.
+        XCTAssertNil(standard.resolve("/library/anything"))
+    }
+
     func testOnlyInAppPathsResolve() {
         XCTAssertNil(registry.resolve("https://example.com/native-debug"))
         XCTAssertNil(registry.resolve("//evil.example/native-debug"))

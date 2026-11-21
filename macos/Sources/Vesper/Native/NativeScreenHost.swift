@@ -98,6 +98,8 @@ struct NativeScreenRoot: View {
         switch context.match.screen {
         case .debugPlaceholder: DebugPlaceholderScreen()
         case .inbox: InboxScreen()
+        case .library: LibraryScreen()
+        case .pdf: PDFScreen()
         }
     }
 }

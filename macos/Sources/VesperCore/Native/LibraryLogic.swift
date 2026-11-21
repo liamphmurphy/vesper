@@ -302,6 +302,27 @@ public enum LibraryLogic {
         items.filter { (queue == .done) == isDone($0) }.count
     }
 
+    /// A saved summary as it reads on the card: without its trailing "Sources:" list (a heading whose
+    /// following lines all carry a link) or the [1]-style markers pointing into it (web `summaryText`,
+    /// for the common shape of that list).
+    public static func summaryText(_ markdown: String) -> String {
+        var lines = markdown.components(separatedBy: "\n")
+        let heading = #"^\s*(?:#{1,6}\s+)?[*_]*(?:web\s+)?(?:sources?|references?|links?|urls?)(?:\s+(?:i\s+)?(?:used|consulted))?[*_]*\s*:?\s*[*_]*\s*$"#
+        if let start = lines.lastIndex(where: { $0.range(of: heading, options: [.regularExpression, .caseInsensitive]) != nil }) {
+            let rest = lines[(start + 1)...].filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            let body = lines[..<start].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !rest.isEmpty, rest.allSatisfy({ $0.contains("http://") || $0.contains("https://") || $0.contains("[[") }), !body.isEmpty {
+                lines = Array(lines[..<start])
+                while let last = lines.last, last.trimmingCharacters(in: .whitespaces).isEmpty || last.range(of: #"^\s*(?:-{3,}|\*{3,}|_{3,})\s*$"#, options: .regularExpression) != nil {
+                    lines.removeLast()
+                }
+            }
+        }
+        return lines.joined(separator: "\n")
+            .replacingOccurrences(of: #" ?\[\d{1,2}\](?![(:])"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// "youtube.com" from a URL, without "www." (web lib/web-search.ts `hostOf`).
     public static func host(_ url: String) -> String {
         guard let host = URL(string: url)?.host else { return url }
