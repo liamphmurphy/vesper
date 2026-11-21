@@ -395,6 +395,62 @@ Lessons from the pilot, for the next screens:
 - The web page under a native route now renders its 404; nothing redirects unknown paths, so the native screen
   stays. Don't add a catch-all redirect to the web router.
 
+## Native screen: Markdown renderer
+
+`MarkdownView` (`macos/Sources/Vesper/Native/Shared/MarkdownView.swift`) is the one markdown renderer for
+native screens (ticket descriptions, chat messages, Learn, Knowledge previews); no screen uses it yet
+(the Inbox shows its summaries as plain text, as the web does). It reproduces the web's `<Markdown>`
+(`web/components/domain/markdown.tsx`): `textStyle`/`textColor` are the container's type and colour,
+`anchors` the document headings, `chat` ChatMarkdown (ticket keys and `citations` link, code blocks get
+the header, Shiki and the fold of `code-fence.tsx`).
+
+- **Parsing** (VesperCore `Markdown/`): `MarkdownSource` ports the web's rewrites (wiki links,
+  ticket keys, citations) and marks `$$` math; `MarkdownParser` parses with cmark-gfm, vendored in
+  `macos/Vendor/cmark-gfm` (no SwiftPM dependency); `MarkdownRenderer` builds the attributed text
+  with the theme tokens, and `MarkdownDecoration` describes the boxes, rules and quote bars a TextKit 2
+  layout fragment draws behind each paragraph.
+- **Code colours**: Shiki with the JavaScript regex engine, the web's themes and languages, in
+  JavaScriptCore (`CodeHighlighter`, an actor, cached per code and language), re-hued onto the
+  palette as `web/lib/code-colors.ts` does. `macos/scripts/build-shiki-bundle.mjs` builds
+  `Sources/VesperCore/Resources/shiki/shiki.js` from `web/node_modules` (checked in; re-run after a
+  Shiki upgrade or a change to `web/lib/highlight.ts`); `scripts/build-app.sh` copies VesperCore's
+  resource bundle into `Contents/Resources`. The bundle uses ES2018 regexes: with ES2024 ones
+  JavaScriptCore mis-colours a grammar's first highlight.
+- **Fixtures**: `protocol/markdown` (see its README). `web/scripts/markdown-fixtures.mjs` writes the
+  web's normalized tree and token colours; `MarkdownSnapshotTests` fails on any difference.
+- **Links**: in-app paths navigate (⌘-click opens a new tab), web links open in the browser,
+  `[[links]]` resolve through the store (`GET /knowledge/resolve`) and an unresolved one is a ghost
+  that creates the page, `#anchors` and footnotes scroll, citations go to the screen's `onLink`.
+- **Find**: give the view its row (`findRow`) in `context.find.texts`; it tints the matches and scrolls
+  the current row's first match into view.
+
+Not matching the web yet: math shows its TeX source (no KaTeX); the chat's special fences (app,
+canvas, pdf, mermaid, charts, choices, recommend, dispatch, workflow runs) show as plain code blocks
+until their screens move over; wiki links have no kind mark (status glyph, page icon); hover underlines
+on links; wide tables wrap instead of scrolling sideways, and long code lines wrap; inline code has no
+border.
+
+Manual click-through (with `VESPER_NATIVE_DEBUG=1`), on `/native-debug/markdown`:
+
+1. The three samples (ticket description, document, chat reply) show headings, lists with numbers and
+   bullets, task checkboxes, a quote with its bar (and a nested one), a full-width table with a sunken
+   header and aligned columns, a rule, code boxes, display math, raw HTML as text and a footnote list.
+2. In the chat sample, code blocks have a language header with Copy; Go, TypeScript and Python are
+   coloured like the web's (compare with a chat reply in the browser) and follow Light/Dark and the
+   palette; Copy copies the code and says Copied; the 24-line block shows "Show 4 more lines", which
+   unfolds and folds.
+3. Drag-select across paragraphs, the table and code, ⌘C, and paste: the text comes out in order.
+   Force-click (or Control-⌘-D) a word: Look Up opens. Right-click a selection: Copy, Look Up, Services.
+4. Links: "web link" opens the browser; "in-app link" opens the Inbox in place, ⌘-click in a new tab;
+   [[Roadmap]] links to its page when it exists, otherwise it is grey with a dashed underline; the
+   ghost "No such page yet" creates that page and opens it for editing (delete it afterwards);
+   PAY-214 (chat sample) opens the ticket.
+5. Citations [1] and [2] in the chat sample are chips (a toast names the number); [3] stays text.
+6. The footnote mark scrolls to the footnote and its ↩ scrolls back; in the document sample, "link"
+   in the footnote jumps to the "Links" heading.
+7. ⌘F "quote": matches tint in all three samples; Return moves between samples and scrolls to them.
+8. Settings → Appearance: palette, Light/Dark and Text size restyle the text, boxes and code colours live.
+
 ## Build and test
 
 - `make -C macos test` → `swift test` (VesperCore).
