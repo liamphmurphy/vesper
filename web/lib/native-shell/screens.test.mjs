@@ -401,7 +401,8 @@ test("knowledge page: audience, persona mode, copy link and More as toolbar item
     mode: { label: "Meow suggests changes", avatar: { initials: "M" }, open: () => calls.push("mode") },
     copyLink: () => calls.push("copy"),
     exportMarkdown: () => calls.push("export"),
-    print: () => calls.push("print"),
+    print: (style) => calls.push(`print:${style}`),
+    askPersonaPdf: () => calls.push("ask-persona-pdf"),
     history: () => calls.push("history"),
   };
   const { items, dispatch } = splitActions(knowledgePageActions(input));
@@ -417,6 +418,10 @@ test("knowledge page: audience, persona mode, copy link and More as toolbar item
   assert.deepEqual(items[1].avatar, { initials: "M" });
   assert.equal(items[1].showsLabel, true);
   assert.deepEqual(items[3].menu.map((m) => m.id), ["export-md", "print", "history"]);
+  assert.deepEqual(
+    items[3].menu[1].children.map((c) => (c.separator ? "---" : c.id)),
+    ["print:clean", "print:editorial", "print:compact", "print:technical", "---", "print:ask-persona"],
+  );
   json(items);
 
   dispatch(KP.audience, KP.audienceOption("shared"));
@@ -424,8 +429,29 @@ test("knowledge page: audience, persona mode, copy link and More as toolbar item
   dispatch(KP.audience, KP.audienceOption("agent")); // only agents' own pages are Agent
   dispatch(KP.mode);
   dispatch(KP.copyLink);
-  for (const id of ["export-md", "print", "history"]) dispatch(KP.more, id);
-  assert.deepEqual(calls, ["audience:shared", "mode", "copy", "export", "print", "history"]);
+  for (const id of [
+    "export-md",
+    "print:clean",
+    "print:editorial",
+    "print:compact",
+    "print:technical",
+    "print:ask-persona",
+    "history",
+  ]) {
+    dispatch(KP.more, id);
+  }
+  assert.deepEqual(calls, [
+    "audience:shared",
+    "mode",
+    "copy",
+    "export",
+    "print:clean",
+    "print:editorial",
+    "print:compact",
+    "print:technical",
+    "ask-persona-pdf",
+    "history",
+  ]);
 
   const agentPage = splitActions(knowledgePageActions({ ...input, audience: "agent", mode: { ...input.mode, avatar: undefined } })).items;
   assert.equal(agentPage[0].label, "Agent");

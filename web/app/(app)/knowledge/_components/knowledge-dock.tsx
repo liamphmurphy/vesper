@@ -22,7 +22,7 @@ import { buildKnowledgeHistorySections, buildKnowledgeLinksSections, buildKnowle
 import { KNOWLEDGE_CONTEXT_MARKER, refKey } from "@/lib/chat-context";
 import { makePanelSpec } from "@/lib/native-shell/panel-events";
 import { actOnDock, dockShortcut, loadDock, saveDock, type DockAction, type DockState } from "@/lib/editor-layout";
-import { isFolder, useKnowledgeChat, type Attachment, type FolderAttachment, type PageAttachment } from "./chat-context";
+import { isFolder, useKnowledgeChat, type Attachment, type FolderAttachment, type PageAttachment, type PromptDraft } from "./chat-context";
 import { SIDE_TABS } from "./page-side";
 
 const APP = "knowledge";
@@ -45,7 +45,7 @@ function screenOf(pathname: string): string {
  * folded in each new browser tab. On a page it is that page's chat; elsewhere one general Knowledge chat.
  */
 export function KnowledgeDock({ pageId }: { pageId?: string }) {
-  const { attachments, request, remove, readDraft, panel } = useKnowledgeChat();
+  const { attachments, request, remove, readDraft, panel, prompt, consumePrompt } = useKnowledgeChat();
   const screen = screenOf(usePathname());
   const uid = useId();
   const page = usePage(pageId).data;
@@ -239,16 +239,19 @@ export function KnowledgeDock({ pageId }: { pageId?: string }) {
           attachments,
           request,
           draftText: pageId ? readDraft(pageId) : undefined,
+          prompt,
         }),
         onEvent: (event, payloadJson) => {
           if (!payloadJson) return;
           try {
-            const payload = JSON.parse(payloadJson) as { keys?: string[]; chatId?: string };
+            const payload = JSON.parse(payloadJson) as { keys?: string[]; chatId?: string; key?: number };
             if (event === "removeAttachments" && Array.isArray(payload.keys)) {
               remove(payload.keys);
             } else if (event === "generalChat" && typeof payload.chatId === "string" && payload.chatId) {
               window.localStorage.setItem(GENERAL_CHAT_KEY, payload.chatId);
               setGeneral(payload.chatId);
+            } else if (event === "consumePrompt" && typeof payload.key === "number") {
+              consumePrompt(payload.key);
             }
           } catch {
             // Ignore malformed panel event payloads.
@@ -278,9 +281,11 @@ export function KnowledgeDock({ pageId }: { pageId?: string }) {
 export type KnowledgeChatHost = {
   attachments: Attachment[];
   request: number;
+  prompt?: PromptDraft | null;
   draftText?: string;
   readDraft?: (id: string) => string | undefined;
   onRemove: (keys: string[]) => void;
+  onConsumePrompt?: (key: number) => void;
   onClaimRequest?: (n: number) => boolean;
   onGeneral: (id: string) => void;
 };
@@ -304,7 +309,7 @@ export function KnowledgeChatPanel({
   const create = useCreateChat();
   const attach = useAttachChat(page?.id ?? "");
   const addDockChat = useAddDockChat();
-  const { attachments, request, onRemove: remove, readDraft: hostReadDraft, draftText, onClaimRequest, onGeneral } = host;
+  const { attachments, request, prompt, onRemove: remove, onConsumePrompt, readDraft: hostReadDraft, draftText, onClaimRequest, onGeneral } = host;
   const handledRequest = useRef(0);
   const claimRequest = useCallback(
     (n: number) => {
@@ -446,7 +451,18 @@ export function KnowledgeChatPanel({
   if (id) return (
     <div ref={hostRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
       {attach.error && <p role="alert" className="p-2 text-12 text-state-blocked">Couldn’t link this chat to the page. <button className="underline" onClick={() => attach.mutate(id)}>Retry</button></p>}
-      <Conversation key={id} id={id} docked hideTitle onNew={start} onReplace={selectChat} context={context} actions={switcher} />
+      <Conversation
+        key={id}
+        id={id}
+        docked
+        hideTitle
+        onNew={start}
+        onReplace={selectChat}
+        context={context}
+        actions={switcher}
+        prefill={prompt ?? undefined}
+        onPrefillApplied={onConsumePrompt}
+      />
     </div>
   );
   return (

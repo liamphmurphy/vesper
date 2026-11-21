@@ -8,7 +8,7 @@ import { DesignPanel } from "@/app/(app)/chat/_components/design-panel";
 import { ThreadPanel } from "@/app/(app)/chat/_components/thread-panel";
 import { CustomAppChatPanel, CustomAppCodePanel } from "@/app/(app)/apps/[slug]/_components/custom-app-screen";
 import { DeckReview } from "@/app/(app)/apps/slides/_components/deck-review";
-import type { Attachment } from "@/app/(app)/knowledge/_components/chat-context";
+import type { Attachment, PromptDraft } from "@/app/(app)/knowledge/_components/chat-context";
 import { KnowledgeChatPanel } from "@/app/(app)/knowledge/_components/knowledge-dock";
 import { CalendarPanel } from "@/app/(app)/knowledge/_components/page-side";
 import { CanvasDock } from "@/components/domain/canvas-view";
@@ -305,7 +305,16 @@ function PanelEntry({ spec }: { spec: InspectorPanelSpec }) {
           <CalendarPanel onNavigate={(path) => post({ v: 1, type: "openInMain", path })} />
         </div>
       );
-    case "knowledge.chat":
+    case "knowledge.chat": {
+      const rawPrompt = props.prompt;
+      const prompt =
+        rawPrompt &&
+        typeof rawPrompt === "object" &&
+        !Array.isArray(rawPrompt) &&
+        typeof (rawPrompt as { text?: unknown }).text === "string" &&
+        typeof (rawPrompt as { key?: unknown }).key === "number"
+          ? (rawPrompt as PromptDraft)
+          : null;
       return (
         <KnowledgeChatPanel
           pageId={typeof props.pageId === "string" ? props.pageId : undefined}
@@ -314,12 +323,15 @@ function PanelEntry({ spec }: { spec: InspectorPanelSpec }) {
           host={{
             attachments: Array.isArray(props.attachments) ? (props.attachments as Attachment[]) : [],
             request: typeof props.request === "number" ? props.request : 0,
+            prompt,
             draftText: typeof props.draftText === "string" ? props.draftText : undefined,
             onRemove: (keys) => emitPanelEvent(tabId, "removeAttachments", { keys }),
+            onConsumePrompt: (key) => emitPanelEvent(tabId, "consumePrompt", { key }),
             onGeneral: (chatId) => emitPanelEvent(tabId, "generalChat", { chatId }),
           }}
         />
       );
+    }
     case "customApp.chat": {
       if (typeof props.slug !== "string") return null;
       return (
