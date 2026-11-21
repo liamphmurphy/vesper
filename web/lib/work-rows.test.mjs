@@ -58,7 +58,7 @@ test("needsYouByTicket ranks by the Inbox's urgency order, then the longest wait
 });
 
 test("stateText gives every needs-you kind a state text", () => {
-  for (const kind of ["approval", "question", "blocked", "stalled", "mockup", "planning", "review", "dispatch", "mention", "suggestion", "workflow_gate", "scheduled", "connector_approval", "secret_approval", "secret_expiring", "merged"]) {
+  for (const kind of ["approval", "question", "blocked", "stalled", "pr_ci_failed", "pr_review_comments", "mockup", "planning", "review", "dispatch", "mention", "suggestion", "workflow_gate", "scheduled", "connector_approval", "secret_approval", "secret_expiring", "merged"]) {
     const s = stateText(t("A"), { kind, summary: "" });
     assert.equal(s.tone, "human");
     assert.ok(s.text && s.text !== "Needs you", kind);
@@ -70,6 +70,10 @@ test("stateText: needs you is amber, then blocked, then status", () => {
   assert.deepEqual(stateText(t("A"), { kind: "approval", summary: "Push" }), { text: "Wants approval: Push", tone: "human" });
   assert.deepEqual(stateText(t("A", { unmet_dependencies: 2 })), { text: "Blocked by 2", tone: "blocked" });
   assert.equal(stateText(t("A", { status: "done", unmet_dependencies: 2, pr: { number: 9, state: "merged" } })).text, "Done · PR #9 merged");
+  assert.equal(
+    stateText(t("A", { status: "in_review", pr: { number: 14, state: "open", feedback: { ci_state: "failing", failed_checks_count: 1, failed_checks: [], unresolved_threads: 2, review_threads: [], updated_at: "2026-11-12T10:00:00Z" } } })).text,
+    "In review · PR #14 · CI failed · 2 comments",
+  );
   assert.equal(stateText(t("A", { status: "in_review" })).text, "In review");
 });
 

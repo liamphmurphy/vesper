@@ -65,7 +65,7 @@ final class NotificationPolicyTests: XCTestCase {
     }
 
     func testShouldRefreshForSSEEventPrefixes() {
-        for t in ["reset", "inbox.updated", "run.completed", "approval.requested", "ticket.updated", "workflow.x"] {
+        for t in ["reset", "inbox.updated", "run.completed", "approval.requested", "ticket.updated", "workflow.x", "pr_feedback.updated"] {
             XCTAssertTrue(NotificationLogic.shouldRefreshInbox(forEvent: t), t)
         }
         XCTAssertFalse(NotificationLogic.shouldRefreshInbox(forEvent: "video.updated"))

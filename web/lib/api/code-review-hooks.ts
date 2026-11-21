@@ -59,3 +59,18 @@ export function useSetPushPolicy() {
     onSettled: () => qc.invalidateQueries({ queryKey: ["push-policies"] }),
   });
 }
+
+export function useAddressPushPRFeedback(chatId?: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: string; mode: Schemas["AddressPRFeedbackRequest"]["mode"] }) =>
+      unwrap(api.POST("/push-requests/{id}/address-pr-feedback", { params: { path: { id: v.id } }, body: { mode: v.mode } })),
+    onSettled: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: chatId ? pushKey(chatId) : ["push-requests"] }),
+        qc.invalidateQueries({ queryKey: ["chats"] }),
+        qc.invalidateQueries({ queryKey: ["inbox"] }),
+        qc.invalidateQueries({ queryKey: ["bootstrap"] }),
+      ]),
+  });
+}

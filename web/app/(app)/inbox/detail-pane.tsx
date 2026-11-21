@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { Schemas } from "@/lib/api/client";
 import {
+  useAddressTicketPRFeedback,
   useComment,
   useControlRunById,
   useDecideApproval,
@@ -12,6 +13,8 @@ import {
   useRunLog,
   useTicket,
 } from "@/lib/api/hooks";
+import { useAddressPushPRFeedback } from "@/lib/api/code-review-hooks";
+import { PRFeedbackStrip } from "@/components/domain/pr-feedback-strip";
 import { AgentAvatar } from "@/components/domain/avatars";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Kbd, Skeleton, TextArea } from "@/components/ui/primitives";
@@ -136,6 +139,8 @@ const HEADLINE: Record<string, (agent: string) => string> = {
   question: (a) => `${a} is asking you`,
   blocked: (a) => `${a}’s run failed`,
   stalled: (a) => `${a} has been quiet`,
+  pr_ci_failed: () => "Pull request checks failed",
+  pr_review_comments: () => "New pull request review comments",
   mockup: (a) => `${a} needs a mockup decision`,
   planning: (a) => `${a} drafted tickets`,
   review: () => "Ready for your review",
@@ -185,6 +190,8 @@ export function DetailPane(props: PaneProps) {
         <QuestionPane {...props} />
       ) : item.kind === "blocked" || item.kind === "stalled" ? (
         <RunPane {...props} />
+      ) : item.kind === "pr_ci_failed" || item.kind === "pr_review_comments" ? (
+        <PRFeedbackPane {...props} />
       ) : item.kind === "mockup" ? (
         <MockupPane {...props} />
       ) : (
@@ -471,6 +478,65 @@ const OPEN_LABEL: Record<string, string> = {
   dispatch: "Open ticket ↗",
   mention: "Open ticket ↗",
 };
+
+/** Pull request CI failure or unresolved review threads: details and one-click resume/fix action. */
+function PRFeedbackPane({ item, register, onSent }: PaneProps) {
+  const { done, open, read } = useDone(item, onSent);
+  const ticket = useTicket(item.ticket_key);
+  const addressTicket = useAddressTicketPRFeedback(item.ticket_key);
+  const addressPush = useAddressPushPRFeedback();
+  const pushId = item.id.startsWith("pr_ci_failed:push:")
+    ? item.id.slice("pr_ci_failed:push:".length)
+    : item.id.startsWith("pr_review_comments:push:")
+      ? item.id.slice("pr_review_comments:push:".length)
+      : "";
+  const isCI = item.kind === "pr_ci_failed";
+  const mode = isCI ? "ci" : "review";
+  const busy = addressTicket.isPending || addressPush.isPending;
+  const actionError = addressTicket.error ?? addressPush.error;
+
+  useEffect(() => {
+    register({ done });
+  });
+
+  const triggerFix = () => {
+    if (busy) return;
+    if (item.ticket_key) {
+      addressTicket.mutate(mode, { onSuccess: () => onSent(item.id) });
+    } else if (pushId) {
+      addressPush.mutate({ id: pushId, mode }, { onSuccess: () => onSent(item.id) });
+    }
+  };
+
+  const feedback = ticket.data?.pr?.feedback;
+  const prState = ticket.data?.pr?.state;
+
+  return (
+    <>
+      <Section label={isCI ? "Failing checks" : "Unresolved review threads"}>
+        <Quote tone={isCI ? "blocked" : "human"}>{item.summary}</Quote>
+        <Hint>
+          {item.ticket_key
+            ? `Sends a focused prompt to ${item.ticket_key}’s existing branch with the latest details attached.`
+            : "Starts a follow-up turn in the originating chat on the pull request’s branch."}
+        </Hint>
+      </Section>
+      {feedback && <PRFeedbackStrip feedback={feedback} prState={prState} />}
+      <Actions>
+        {open ? <DoneButton onClick={done} disabled={read.isPending} /> : <span />}
+        <ButtonLink href={item.href} variant="outline">
+          {item.ticket_key ? "Open ticket ↗" : "Open chat ↗"}
+        </ButtonLink>
+        {(item.ticket_key || pushId) && (
+          <Button variant="primary" disabled={busy || !open} onClick={triggerFix} data-testid="inbox-pr-feedback-action">
+            {busy ? "Sending…" : isCI ? "Fix CI" : "Address review comments"}
+          </Button>
+        )}
+      </Actions>
+      <Failure error={actionError ?? read.error} />
+    </>
+  );
+}
 
 /** Proposals, reviews, dispatch, mentions and wiki edits: summary, Mark done and a deep link. */
 function InfoPane({ item, register, onSent }: PaneProps) {

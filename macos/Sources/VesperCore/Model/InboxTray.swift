@@ -31,7 +31,7 @@ public enum InboxTray {
     /// Kinds in the Inbox's urgency order (web GROUPS).
     private static let groups: [[String]] = [
         ["approval", "connector_approval", "secret_approval"], ["secret_expiring"], ["scheduled"],
-        ["question"], ["blocked", "stalled"], ["mockup"], ["planning"], ["review"], ["dispatch"], ["mention"],
+        ["question"], ["blocked", "stalled"], ["pr_ci_failed", "pr_review_comments"], ["mockup"], ["planning"], ["review"], ["dispatch"], ["mention"],
         ["suggestion"], ["merged"], ["pr_approved"],
     ]
 
@@ -74,6 +74,7 @@ public enum InboxTray {
             "review": "Open review", "mockup": "Open review", "planning": "Review plan", "suggestion": "Review edit",
             "workflow_gate": "Review", "connector_approval": "Review", "secret_approval": "Review",
             "secret_expiring": "Replace", "pr_approved": "Open on GitHub",
+            "pr_ci_failed": "Fix CI", "pr_review_comments": "Address comments",
             "blocked": "Open run", "stalled": "Open run",
         ]
         return .open(label: labels[kind] ?? "Open")

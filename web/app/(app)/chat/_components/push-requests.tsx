@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import { ApiError } from "@/lib/api/client";
-import { useDecidePush, usePushPolicies, useSetPushPolicy, type PushRequest } from "@/lib/api/code-review-hooks";
+import { useAddressPushPRFeedback, useDecidePush, usePushPolicies, useSetPushPolicy, type PushRequest } from "@/lib/api/code-review-hooks";
 import { pushStateLabel, repoName } from "@/lib/code-review";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { OpenInDevWorkspaceButton } from "@/components/domain/open-in-dev-button";
+import { PRFeedbackStrip } from "@/components/domain/pr-feedback-strip";
 import { CodeChanges } from "./code-changes";
 import { PersonaAvatar, PersonaName, personaLook } from "./persona";
 
@@ -31,7 +32,9 @@ export function PushRequests({ chatId, requests, disabled }: { chatId: string; r
 
 function PushCard({ chatId, r, disabled }: { chatId: string; r: PushRequest; disabled: boolean }) {
   const decide = useDecidePush(chatId);
+  const addressFeedback = useAddressPushPRFeedback(chatId);
   const error = message(decide.error);
+  const feedbackError = message(addressFeedback.error);
   const busy = decide.isPending || disabled;
   const onDecide = (d: { decision: "push" | "always" | "deny"; title?: string; body?: string; draft?: boolean }) =>
     decide.mutate({ id: r.id, ...d });
@@ -118,6 +121,17 @@ function PushCard({ chatId, r, disabled }: { chatId: string; r: PushRequest; dis
         <p role="alert" className="text-13 text-pill-blocked-fg">
           {devError}
         </p>
+      )}
+      {r.pr_url && (
+        <PRFeedbackStrip
+          feedback={r.feedback}
+          prState={r.pr_state}
+          busy={addressFeedback.isPending}
+          activeMode={addressFeedback.variables?.mode}
+          disabled={disabled}
+          error={feedbackError}
+          onAddress={(mode) => addressFeedback.mutate({ id: r.id, mode })}
+        />
       )}
       {r.auto && <AlwaysAllowed repository={r.repository} />}
       {waiting && (

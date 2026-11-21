@@ -674,6 +674,19 @@ export function useControlRun(key: string) {
   });
 }
 
+export function useAddressTicketPRFeedback(key: string) {
+  const qc = useQueryClient();
+  const refresh = useTicketRefresh(key);
+  return useMutation({
+    mutationFn: (mode: Schemas["AddressPRFeedbackRequest"]["mode"]) =>
+      unwrap(api.POST("/tickets/{key}/address-pr-feedback", { params: { path: { key } }, body: { mode } })),
+    onSettled: () => {
+      refresh();
+      void qc.invalidateQueries({ queryKey: keys.tickets });
+    },
+  });
+}
+
 // ----------------------------------------------------- dispatch & runs (§6)
 
 export function useDispatchPreview(key: string | undefined) {

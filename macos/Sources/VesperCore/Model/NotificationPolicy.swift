@@ -5,6 +5,7 @@ import Foundation
 public enum NotificationLogic {
     public static let kindLabels: [String: String] = [
         "approval": "Approval needed", "question": "Question", "blocked": "Run failed", "stalled": "Run stalled",
+        "pr_ci_failed": "CI failed", "pr_review_comments": "Review comments",
         "mockup": "Mockup review", "planning": "Proposal", "review": "Review ready", "dispatch": "Ready to start",
         "mention": "Mention", "suggestion": "Wiki edit", "workflow_gate": "Workflow gate", "scheduled": "Scheduled task",
         "connector_approval": "Connector approval", "secret_approval": "Secret approval",
@@ -59,7 +60,7 @@ public enum NotificationLogic {
     public static func shouldRefreshInbox(forEvent type: String) -> Bool {
         if type == "reset" { return true }
         let entity = type.split(separator: ".", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? ""
-        return ["inbox", "run", "approval", "ticket", "workflow"].contains(entity)
+        return ["inbox", "run", "approval", "ticket", "workflow", "pr_feedback"].contains(entity)
     }
 
     // MARK: Quiet hours, grouping, actions
