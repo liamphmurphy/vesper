@@ -1,0 +1,389 @@
+{
+  "ast": {
+    "type": "root",
+    "children": [
+      {
+        "type": "heading",
+        "depth": 1,
+        "children": [
+          {
+            "type": "text",
+            "value": "Release plan"
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "children": [
+          {
+            "type": "text",
+            "value": "Intro paragraph with a soft\nbreak and a hard"
+          },
+          {
+            "type": "break"
+          },
+          {
+            "type": "text",
+            "value": "break, then trailing spaces for another"
+          },
+          {
+            "type": "break"
+          },
+          {
+            "type": "text",
+            "value": "hard break."
+          }
+        ]
+      },
+      {
+        "type": "heading",
+        "depth": 2,
+        "children": [
+          {
+            "type": "text",
+            "value": "Goals"
+          }
+        ]
+      },
+      {
+        "type": "heading",
+        "depth": 2,
+        "children": [
+          {
+            "type": "text",
+            "value": "Setext heading"
+          }
+        ]
+      },
+      {
+        "type": "heading",
+        "depth": 3,
+        "children": [
+          {
+            "type": "text",
+            "value": "Third level"
+          }
+        ]
+      },
+      {
+        "type": "heading",
+        "depth": 4,
+        "children": [
+          {
+            "type": "text",
+            "value": "Fourth level"
+          }
+        ]
+      },
+      {
+        "type": "heading",
+        "depth": 5,
+        "children": [
+          {
+            "type": "text",
+            "value": "Fifth level"
+          }
+        ]
+      },
+      {
+        "type": "blockquote",
+        "children": [
+          {
+            "type": "paragraph",
+            "children": [
+              {
+                "type": "text",
+                "value": "A quote with "
+              },
+              {
+                "type": "strong",
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "bold"
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "value": " text."
+              }
+            ]
+          },
+          {
+            "type": "list",
+            "ordered": false,
+            "children": [
+              {
+                "type": "listItem",
+                "children": [
+                  {
+                    "type": "paragraph",
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "a list inside"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "listItem",
+                "children": [
+                  {
+                    "type": "paragraph",
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "with two items"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "blockquote",
+            "children": [
+              {
+                "type": "paragraph",
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "nested quote"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "thematicBreak"
+      },
+      {
+        "type": "list",
+        "ordered": true,
+        "start": 1,
+        "children": [
+          {
+            "type": "listItem",
+            "children": [
+              {
+                "type": "paragraph",
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "First"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "listItem",
+            "children": [
+              {
+                "type": "paragraph",
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "Second"
+                  }
+                ]
+              },
+              {
+                "type": "list",
+                "ordered": false,
+                "children": [
+                  {
+                    "type": "listItem",
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "value": "nested bullet"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "listItem",
+                    "children": [
+                      {
+                        "type": "paragraph",
+                        "children": [
+                          {
+                            "type": "text",
+                            "value": "another"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "listItem",
+            "children": [
+              {
+                "type": "paragraph",
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "Third"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "listItem",
+            "children": [
+              {
+                "type": "paragraph",
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "Starts at seven"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "listItem",
+            "children": [
+              {
+                "type": "paragraph",
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "Continues"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "list",
+        "ordered": false,
+        "children": [
+          {
+            "type": "listItem",
+            "children": [
+              {
+                "type": "paragraph",
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "loose item one"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "listItem",
+            "children": [
+              {
+                "type": "paragraph",
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "loose item two"
+                  }
+                ]
+              },
+              {
+                "type": "paragraph",
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "with a second paragraph"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "list",
+        "ordered": false,
+        "children": [
+          {
+            "type": "listItem",
+            "children": [
+              {
+                "type": "paragraph",
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "star bullet"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "list",
+        "ordered": false,
+        "children": [
+          {
+            "type": "listItem",
+            "children": [
+              {
+                "type": "paragraph",
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "plus bullet"
+                  }
+                ]
+              },
+              {
+                "type": "paragraph",
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "indented code block\nsecond line"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "html",
+        "value": "<div class=\"raw\">raw html block</div>"
+      },
+      {
+        "type": "thematicBreak"
+      },
+      {
+        "type": "paragraph",
+        "children": [
+          {
+            "type": "text",
+            "value": "Last paragraph."
+          }
+        ]
+      }
+    ],
+    "footnotes": []
+  },
+  "code": []
+}

@@ -101,6 +101,7 @@ struct NativeScreenRoot: View {
         case .work: WorkScreen()
         case .library: LibraryScreen()
         case .pdf: PDFScreen()
+        case .markdownDebug: MarkdownDebugScreen()
         }
     }
 }

@@ -33,6 +33,8 @@ final class NativeRoutesTests: XCTestCase {
         XCTAssertNil(off.resolve("/native-debug"))
         XCTAssertNil(NativeRouteRegistry.standard(debug: false).resolve("/native-debug"))
         XCTAssertEqual(NativeRouteRegistry.standard(debug: true).resolve("/native-debug/7")?.params["id"], "7")
+        XCTAssertEqual(NativeRouteRegistry.standard(debug: true).resolve("/native-debug/markdown")?.screen, .markdownDebug)
+        XCTAssertNil(NativeRouteRegistry.standard(debug: false).resolve("/native-debug/markdown"))
     }
 
     func testWorkAndBareRunsAreNativeButARunStaysOnTheWeb() {

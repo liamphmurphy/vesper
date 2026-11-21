@@ -8,6 +8,8 @@ public enum NativeScreen: String, Sendable, CaseIterable {
     case work
     case library
     case pdf
+    /// /native-debug/markdown: every markdown feature through `MarkdownView` (debug only).
+    case markdownDebug
 }
 
 /// A path resolved to a native screen, with its path parameters and query items (decoded).
@@ -44,6 +46,7 @@ public struct NativeRouteRegistry: Sendable {
     /// Every native route in the app. Order matters: put specific patterns before general ones.
     public static let allRoutes: [NativeRoute] = [
         NativeRoute("/native-debug", .debugPlaceholder),
+        NativeRoute("/native-debug/markdown", .markdownDebug),
         NativeRoute("/native-debug/:id", .debugPlaceholder),
         NativeRoute("/inbox", .inbox),
         // Work's Runs view; bare /runs was an alias of it (a run's own page stays on the web).
@@ -56,7 +59,7 @@ public struct NativeRouteRegistry: Sendable {
     /// The app's registry. Debug-only screens are enabled only when `debug` is set.
     public static func standard(debug: Bool) -> NativeRouteRegistry {
         var enabled = Set(NativeScreen.allCases)
-        if !debug { enabled.remove(.debugPlaceholder) }
+        if !debug { enabled.subtract([.debugPlaceholder, .markdownDebug]) }
         return NativeRouteRegistry(routes: allRoutes, enabled: enabled)
     }
 

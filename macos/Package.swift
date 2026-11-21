@@ -12,7 +12,21 @@ let package = Package(
         // Logic with no AppKit UI, unit-tested.
         .target(
             name: "VesperCore",
-            path: "Sources/VesperCore"
+            dependencies: ["cmark-gfm", "cmark-gfm-extensions"],
+            path: "Sources/VesperCore",
+            // Shiki for code blocks, built by scripts/build-shiki-bundle.mjs (Markdown/CodeHighlighter.swift).
+            resources: [.copy("Resources/shiki")]
+        ),
+        // The markdown parser, vendored from swiftlang/swift-cmark (Vendor/cmark-gfm/README.md) so the
+        // build fetches nothing.
+        .target(
+            name: "cmark-gfm",
+            path: "Vendor/cmark-gfm/src"
+        ),
+        .target(
+            name: "cmark-gfm-extensions",
+            dependencies: ["cmark-gfm"],
+            path: "Vendor/cmark-gfm/extensions"
         ),
         // The app: AppKit windows, SwiftUI views, WKWebView.
         .executableTarget(
