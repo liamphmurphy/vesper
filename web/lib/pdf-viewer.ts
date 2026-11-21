@@ -45,6 +45,15 @@ export function pdfDownloadUrl(url: string): string {
   return `${base}?${params.toString()}${hash}`;
 }
 
+/**
+ * The Mac app's native PDF viewer for a same-origin API file (`/pdf` is a native route there, and
+ * nothing in a browser). Knowledge opens its PDF embeds with it in the Mac app.
+ */
+export function nativePdfHref(url: string, title: string): string {
+  // %20 rather than URLSearchParams' "+": the Mac app's route parser reads "+" literally.
+  return `/pdf?src=${encodeURIComponent(url)}&title=${encodeURIComponent(title)}`;
+}
+
 export function clampPage(page: number, numPages: number): number {
   if (numPages <= 0 || !Number.isFinite(page)) return 1;
   return Math.min(Math.max(1, Math.trunc(page)), numPages);
