@@ -160,11 +160,10 @@ final class QuickLookController: NSObject, QLPreviewPanelDataSource, QLPreviewPa
                 .first
                 .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
             let preferredExt = mime.flatMap { UTType(mimeType: $0)?.preferredFilenameExtension }
-            let leaf = url.lastPathComponent == "content" ? nil : url.lastPathComponent
             let name = QuickLookLogic.safeFilename(
                 filename: item.filename,
                 fallbackTitle: item.title,
-                urlPathComponent: leaf,
+                urlPathComponent: url.lastPathComponent,
                 preferredExtension: preferredExt
             )
 
