@@ -5,6 +5,7 @@ import Foundation
 public enum NativeScreen: String, Sendable, CaseIterable {
     case debugPlaceholder
     case inbox
+    case work
 }
 
 /// A path resolved to a native screen, with its path parameters and query items (decoded).
@@ -43,6 +44,9 @@ public struct NativeRouteRegistry: Sendable {
         NativeRoute("/native-debug", .debugPlaceholder),
         NativeRoute("/native-debug/:id", .debugPlaceholder),
         NativeRoute("/inbox", .inbox),
+        // Work's Runs view; bare /runs was an alias of it (a run's own page stays on the web).
+        NativeRoute("/work", .work),
+        NativeRoute("/runs", .work),
     ]
 
     /// The app's registry. Debug-only screens are enabled only when `debug` is set.

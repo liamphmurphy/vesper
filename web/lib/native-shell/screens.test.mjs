@@ -8,7 +8,7 @@ import { buildBoardNavModel } from "./models/board.ts";
 import { buildEpicsNavModel } from "./models/epics.ts";
 import { buildTicketNavModel } from "./models/ticket.ts";
 import { buildEpicDetailNavModel } from "./models/epic-detail.ts";
-import { buildRunsNavModel, buildWorkActivityNavModel } from "./models/runs.ts";
+import { buildRunsNavModel } from "./models/runs.ts";
 import { buildStudyNavModel } from "./models/study.ts";
 import { buildWikiNavModel } from "./models/wiki.ts";
 import { buildKeepsakesNavModel, buildProjectDocsNavModel } from "./models/library.ts";
@@ -122,9 +122,6 @@ test("work header commands call the screen's handlers", () => {
   assert.deepEqual(calls, [["push", "/tickets/new?project=VES"], ["project", ""], ["agent", "ada"], ["push", "/tickets?project=VES"], ["search", "q"]]);
   assert.equal(workTabHref("activity", "VES"), "/work?project=VES");
   assert.equal(workTabHref("activity"), "/work");
-  let act = 0;
-  handleWorkHeaderCommand(nav({ type: "nav.picker", pickerId: "work-view", value: "activity" }), { ...ctx, onActivity: () => act++ });
-  assert.equal(act, 1);
 });
 
 test("board: By epic with All epics first, selection follows the epic filter", () => {
@@ -179,7 +176,6 @@ const body = (o = {}) => ({
   hasMore: false,
   loadingMore: false,
   emptyText: "No runs",
-  withHref: true,
   ...o,
 });
 const run = { id: "r1", href: "/runs/r1?agent=ada", title: "Fix bug", subtitle: "VES-1 · Ada", agentName: "Ada", agentColor: "#A3A6FF", trailing: "4m", dot: "running" };
@@ -218,40 +214,6 @@ test("runs: loading, error with retry and empty states", () => {
   const err = buildRunsNavModel({ body: body({ error: "boom" }), filters: f, search: "" });
   assert.equal(err.sections[0].items[0].id, "retry");
   assert.equal(buildRunsNavModel({ body: body(), filters: f, search: "" }).sections[0].emptyText, "No runs");
-});
-
-test("work activity: header, Overview row, View menu with counts, runs without hrefs, waiting after active", () => {
-  const m = buildWorkActivityNavModel({
-    header: { active: "activity", project: "VES", projects, agents, agent: "", search: { value: "", placeholder: "Filter runs…" } },
-    body: body({
-      withHref: false,
-      needsLabel: "Waiting",
-      needsAfterGroups: true,
-      needs: [{ id: "n1", href: "/inbox", title: "Review", trailing: "2h", tone: "human" }],
-      groups: [{ key: "Active", label: "Active", count: 1, runs: [{ ...run, dot: "human", trailing: "wait" }] }],
-    }),
-    filter: "needs_you",
-    counts: { all: 5, needs_you: 2, active: 1, failed: 0 },
-    statusLine: { text: "1 busy · $2 this week", href: "/reports" },
-    selectedId: "run:r1",
-  });
-  assert.deepEqual(m.actions.map((a) => a.id), ["new-ticket"]);
-  assert.deepEqual(m.filters.map((f) => f.id), ["filter-space", "filter-agent", "view"]);
-  const view = m.filters[2];
-  assert.deepEqual(view.options.map((i) => [i.value, i.label, i.checked]), [
-    ["all", "All runs (5)", false],
-    ["needs_you", "Needs you (2)", true],
-    ["active", "Running & queued (1)", false],
-    ["failed", "Failed today (0)", false],
-  ]);
-  assert.deepEqual(m.sections.map((s) => s.id), ["overview", "runs-Active", "needs-you", "status"]);
-  assert.equal(m.sections[0].items[0].id, "work:overview");
-  assert.deepEqual(m.sections[0].items[0].badge, { text: "2", tone: "human" });
-  assert.deepEqual(m.sections.slice(1, 3).map((s) => s.title), ["Active", "Waiting"]);
-  assert.deepEqual(m.sections.slice(1, 3).map((s) => s.badge), [{ text: "1" }, { text: "1" }]);
-  assert.equal(m.sections[1].items[0].href, undefined);
-  assert.equal(m.sections[2].items[0].icon, "inbox");
-  assert.equal(m.picker.value, "activity");
 });
 
 test("study: progress, next part actions, lessons by unit", () => {

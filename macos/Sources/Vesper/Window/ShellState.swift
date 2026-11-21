@@ -7,8 +7,13 @@ import VesperCore
 @Observable
 final class ShellState {
     var shell: ShellModel?
-    var navigator: NavModel? {
+    /// The sidebar's list: the native screen's when it publishes one, else the page's.
+    private(set) var navigator: NavModel? {
         didSet { dropStaleOverrides(old: oldValue, new: navigator) }
+    }
+    /// The list the page describes; it keeps updating under a native screen's.
+    var pageNavigator: NavModel? {
+        didSet { syncNavigator() }
     }
     /// The page's effective color mode (it may differ from macOS's when the person forces Dark or Light).
     var pageMode: ColorMode?
@@ -31,7 +36,9 @@ final class ShellState {
     var pageToolbarItems: [ToolbarItem] = []
     var pageInspector: InspectorModel?
     /// The native screen showing in this tab and the chrome it describes; nil while the web view shows.
-    var native: NativeChrome?
+    var native: NativeChrome? {
+        didSet { syncNavigator() }
+    }
 
     var title: String? { native.map(\.title) ?? pageTitle }
     var subtitle: String? { native.map(\.subtitle) ?? pageSubtitle }
@@ -80,6 +87,11 @@ final class ShellState {
             self?.pendingToggles[id] = nil
             send()
         }
+    }
+
+    private func syncNavigator() {
+        let next = native?.navigator ?? pageNavigator
+        if next != navigator { navigator = next }
     }
 
     private func dropStaleOverrides(old: NavModel?, new: NavModel?) {

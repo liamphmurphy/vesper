@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { buildSavedViewsSection, parseSavedViewCommand, parseSavedViewTitleAction, savedViewMenu, workViewPatch, workViewQuery } from "./models/saved-views.ts";
 import { buildTicketsNavModel, parseTicketsRow } from "./models/tickets.ts";
 import { buildBoardExtras, buildTicketsListExtras, buildTicketsToolbar, parseBoardToggle, parseTicketsListAction, parseTicketsToolbarAction } from "./models/tickets-toolbar.ts";
-import { buildEpicToolbar, buildTicketToolbar, buildWorkToolbar, parseTicketToolbarAction, parseWorkToolbarAction } from "./models/work-toolbars.ts";
+import { buildEpicToolbar, buildTicketToolbar, parseTicketToolbarAction } from "./models/work-toolbars.ts";
 import { workHeader } from "./models/work.ts";
 import { findNavItem } from "./nav-model.ts";
 
@@ -147,13 +147,6 @@ test("ticket toolbar: cost and position when known, prev/next disabled at the en
   json(items);
 });
 
-test("epic and work toolbars", () => {
+test("epic toolbar", () => {
   assert.deepEqual(buildEpicToolbar().map((i) => i.label), ["View on board"]);
-  assert.deepEqual(buildWorkToolbar({ needs: 0 }), []);
-  const w = buildWorkToolbar({ needs: 3 });
-  assert.deepEqual([w[0].label, w[0].accent], ["Needs you · 3", true]);
-  assert.equal(parseWorkToolbarAction("work.needs"), "needs");
-  assert.equal(parseWorkToolbarAction("work.details"), null);
-  assert.equal(parseWorkToolbarAction("work.nope"), null);
-  assert.equal(parseWorkToolbarAction("chat.runs"), null);
 });

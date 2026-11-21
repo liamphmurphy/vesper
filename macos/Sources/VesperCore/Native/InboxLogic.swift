@@ -60,6 +60,11 @@ public enum InboxLogic {
         kinds[name] ?? (name, .info)
     }
 
+    /// A kind's urgency: its group's place in the Inbox, unknown kinds last (web `kindRank`).
+    public static func kindRank(_ kind: String) -> Int {
+        groups.firstIndex { $0.kinds.contains(kind) } ?? groups.count
+    }
+
     /// Open: still waiting and not marked done since it last changed.
     public static func isOpen(_ item: some InboxListItem) -> Bool { !item.resolved && !item.read }
 

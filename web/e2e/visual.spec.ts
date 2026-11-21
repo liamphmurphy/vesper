@@ -32,7 +32,6 @@ const SCREENS: Screen[] = [
     await installChatApi(page, { personas: [persona(1, { name: "Atlas", is_default: true }), persona(2, { name: "Nova" })] });
     await openEmptyChat(page);
   } },
-  { name: "runs", open: board("/runs") },
   { name: "tickets-list", open: board("/tickets?project=WEB") },
   { name: "tickets-board", open: board("/tickets?layout=board&project=WEB") },
   { name: "tickets-epics", open: board("/tickets?layout=epics&project=WEB") },

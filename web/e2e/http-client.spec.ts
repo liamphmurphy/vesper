@@ -128,7 +128,7 @@ test("bottom-right launcher opens HTTP utility, switches environments, inherits 
     return route.fulfill({ status: 404, json: { code: "not_found", message: "unhandled" } });
   });
 
-  await page.goto("/runs");
+  await page.goto("/tickets");
   // HTTP Client lives in the Apps menu's Tools, beside Workflows and Reports.
   await page.getByRole("button", { name: "Apps" }).click();
   await page.getByRole("link", { name: "HTTP Client" }).click();

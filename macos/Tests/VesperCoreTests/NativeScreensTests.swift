@@ -35,6 +35,15 @@ final class NativeRoutesTests: XCTestCase {
         XCTAssertEqual(NativeRouteRegistry.standard(debug: true).resolve("/native-debug/7")?.params["id"], "7")
     }
 
+    func testWorkAndBareRunsAreNativeButARunStaysOnTheWeb() {
+        let standard = NativeRouteRegistry.standard(debug: false)
+        XCTAssertEqual(standard.resolve("/work?project=VES")?.screen, .work)
+        XCTAssertEqual(standard.resolve("/work?project=VES")?.query, ["project": "VES"])
+        XCTAssertEqual(standard.resolve("/runs")?.screen, .work)
+        XCTAssertNil(standard.resolve("/runs/r1"))
+        XCTAssertNil(standard.resolve("/workflows"))
+    }
+
     func testOnlyInAppPathsResolve() {
         XCTAssertNil(registry.resolve("https://example.com/native-debug"))
         XCTAssertNil(registry.resolve("//evil.example/native-debug"))
@@ -75,5 +84,14 @@ final class NativeFindAndCommandTests: XCTestCase {
         XCTAssertFalse(NativeCommandRouting.isScreenCommand(.navActivate(navigatorId: "n", itemId: "i")))
         XCTAssertFalse(NativeCommandRouting.isScreenCommand(.railAction(itemId: "r")))
         XCTAssertFalse(NativeCommandRouting.isScreenCommand(.command(.find)))
+    }
+
+    func testAScreensOwnNavigatorCommandsGoToTheScreen() {
+        XCTAssertTrue(NativeCommandRouting.isScreenCommand(.navActivate(navigatorId: "work-activity", itemId: "i"), navigatorId: "work-activity"))
+        XCTAssertTrue(NativeCommandRouting.isScreenCommand(.navSearch(navigatorId: "work-activity", searchId: "s", value: ""), navigatorId: "work-activity"))
+        XCTAssertTrue(NativeCommandRouting.isScreenCommand(.navToggle(navigatorId: "work-activity", itemId: "s", expanded: false), navigatorId: "work-activity"))
+        XCTAssertFalse(NativeCommandRouting.isScreenCommand(.navActivate(navigatorId: "runs", itemId: "i"), navigatorId: "work-activity"))
+        XCTAssertFalse(NativeCommandRouting.isScreenCommand(.navFilter(navigatorId: "work-activity", filterId: "f", value: "", checked: true)))
+        XCTAssertFalse(NativeCommandRouting.isScreenCommand(.navigate(path: "/work"), navigatorId: "work-activity"))
     }
 }

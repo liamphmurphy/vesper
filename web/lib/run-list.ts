@@ -51,8 +51,6 @@ export function runDot(run: Pick<ListRun, "state" | "wait_reason">, needsYou = f
   return "running";
 }
 
-export const DOT_LABEL: Record<Dot, string> = { human: "Needs you", running: "Running", queued: "Queued", done: "Done", failed: "Failed", idle: "Cancelled" };
-
 /** Case-insensitive match on title, ticket key, agent and purpose. */
 export function matchesRun(run: ListRun, query: string): boolean {
   const q = query.trim().toLowerCase();

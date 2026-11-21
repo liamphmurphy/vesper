@@ -395,6 +395,54 @@ Lessons from the pilot, for the next screens:
 - The web page under a native route now renders its 404; nothing redirects unknown paths, so the native screen
   stays. Don't add a catch-all redirect to the web router.
 
+## Native screen: Work
+
+`/work` and the old bare `/runs` are native (`macos/Sources/Vesper/Native/Work/`); a run's own page
+(`/runs/:id`), tickets and epics stay on the web and open with `context.navigate`. Logic is in VesperCore
+`Native/WorkLogic.swift` (a port of the Activity parts of `web/lib/work-overview.ts`, with what it reads from
+`run-list.ts`, `format.ts` and `costs.ts`), `Native/WorkNav.swift` (the Work header and Runs NavModel of
+`native-shell/models/work.ts` and `runs.ts`) and `Native/DispatchLogic.swift` (the dispatch dialog's checks).
+The web routes and their dead code are gone; in a browser `/work` and `/runs` are 404s.
+
+- The page is the Overview: telemetry strip (Runner, Needs you, Today, 7d spend), Needs you cards, Running now
+  with plan progress, Ready to start with Start ready, Finished today. View "Failed today" leaves only Finished
+  today, as on the web.
+- The sidebar's list is the screen's own (`NativeChrome.navigator`, see Hosting): Space, Persona and View
+  menus with counts, Runs/Tasks switcher, New ticket, filter box, Overview row, Active and day groups, runs
+  without a run row under Needs you or Waiting, Load older runs, Retry, and the runner/spend status line.
+  `ShellState` keeps the page's list underneath; nav commands carrying `work-activity` go to the screen.
+- Filters start from the URL (`?project=`, `?agent=`, `?filter=`, `?q=`, the old `?done=hide`) and then live in
+  the screen; they aren't written back to the URL. The Space choice is remembered in the app's defaults
+  (`VesperNativeWorkProject`) for a bare `/work`, not shared with the web's page storage; so is the Chat
+  companion's open state (`VesperNativeWorkCompanionOpen`).
+- Old links redirect: `?run=` opens `/runs/:id`, `?view=tickets`/`?view=epics` (and `?layout=epics`) open
+  Tickets, as the web's did. The redirect is a push, so Back from such a run returns to the redirect.
+- Live: every query is observed, so `/events` hints refetch it; on top, live runs refresh every 10 s, the
+  runner every 15 s (2 s while offline) and spend every 30 s, like the web's intervals.
+- Added natively: row context menus (Open, Open in New Tab, Open ticket, Copy Run ID, Copy Link) and ⌘-click
+  for a new tab. Start ready shows the bulk dispatch sheet for any count (the web's single-ticket preview with
+  the full scope table isn't ported). Persona avatars show photo or initial; animated persona characters come
+  with Native 10.
+
+1. Open Work from the sidebar: title "Runs", the Overview, and the Work list in the sidebar with Overview
+   selected. Narrow the window: the strip keeps four cells.
+2. Space menu → another space: the strip's spend, Needs you, running and ready tickets follow; relaunch and
+   open `/work` again: the space is kept. Persona menu narrows the runs list and Needs you.
+3. View → Needs you / Running & queued / Failed today: the list and counts follow; Failed today hides Needs you,
+   Running now and Ready to start.
+4. Type in the sidebar's filter box: runs and waiting items filter; clear it.
+5. Start a run from a ticket elsewhere: it shows under Running now and in Active without a refresh; its step
+   and progress bar move; when it ends it lands in Finished today and the Today cell counts it.
+6. With a waiting approval: the toolbar shows "Needs you · N"; pressing it switches View to Needs you. "Review →"
+   on the card opens the run's page; Back returns to Work.
+7. Right-click a running row: Open in New Tab opens the run in a tab; Copy Link copies a `vesper://` link.
+8. Start ready (N): the sheet lists each ticket with harness, model and its note; Approve & dispatch starts
+   them and the rows move to Running now. With no harness key stored, the banner offers Add a key.
+9. Scroll to the end of the runs list: Load older runs adds a page. Stop the server: the list shows the
+   error row with Retry; start it and Retry.
+10. ⌘F "WEB-": matching cards tint, Return steps and scrolls. ⌘\ opens and folds the Chat companion.
+11. Open `/work?view=epics` and `/work?run=<id>` from the address: Tickets' Epics and the run's page open.
+
 ## Build and test
 
 - `make -C macos test` → `swift test` (VesperCore).
