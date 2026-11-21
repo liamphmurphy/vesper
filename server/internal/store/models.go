@@ -369,21 +369,23 @@ type ChatImageJob struct {
 }
 
 type ChatMessage struct {
-	ID          uuid.UUID
-	SessionID   uuid.UUID
-	Seq         int64
-	Role        string
-	BodyMd      string
-	Harness     *string
-	Model       *string
-	RunID       *uuid.UUID
-	RunTurnID   *uuid.UUID
-	ContextRefs json.RawMessage
-	Citations   json.RawMessage
-	Usage       []byte
-	CreatedAt   time.Time
-	CodeChanges json.RawMessage
-	PersonaID   *uuid.UUID
+	ID           uuid.UUID
+	SessionID    uuid.UUID
+	Seq          int64
+	Role         string
+	BodyMd       string
+	Harness      *string
+	Model        *string
+	RunID        *uuid.UUID
+	RunTurnID    *uuid.UUID
+	ContextRefs  json.RawMessage
+	Citations    json.RawMessage
+	Usage        []byte
+	CreatedAt    time.Time
+	CodeChanges  json.RawMessage
+	PersonaID    *uuid.UUID
+	GitBranch    *string
+	GitCommitSha *string
 }
 
 type ChatParticipant struct {
@@ -398,46 +400,52 @@ type ChatRepository struct {
 	Directory        string
 	WorkBranches     []string
 	CheckpointBranch *string
+	ForkBranch       *string
 }
 
 type ChatSession struct {
-	ID                 uuid.UUID
-	WorkspaceID        uuid.UUID
-	ProjectID          *uuid.UUID
-	Title              string
-	CreatedBy          uuid.UUID
-	AgentID            uuid.UUID
-	Harness            string
-	Model              string
-	CurrentRunID       *uuid.UUID
-	State              string
-	Archived           bool
-	Revision           int32
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
-	LastMessageAt      *time.Time
-	PersonaID          *uuid.UUID
-	RepoUrl            *string
-	Effort             string
-	SpeakerPersonaID   *uuid.UUID
-	QueuedPersonaIds   []uuid.UUID
-	RelayTurns         int32
-	RelayLimit         int32
-	InterruptMessageID *uuid.UUID
-	LastReadSeq        int64
-	Hidden             bool
-	ConnectorIds       []uuid.UUID
-	SpaceID            *uuid.UUID
-	WorkBranches       []string
-	CommitEmail        *string
-	SecretIds          []uuid.UUID
-	Temporary          bool
-	PendingRepoUrl     *string
-	ParentChatID       *uuid.UUID
-	AutoModel          bool
-	AnchorMessageID    *uuid.UUID
-	SecondOpinion      bool
-	LastAssistantSeq   int64
+	ID                  uuid.UUID
+	WorkspaceID         uuid.UUID
+	ProjectID           *uuid.UUID
+	Title               string
+	CreatedBy           uuid.UUID
+	AgentID             uuid.UUID
+	Harness             string
+	Model               string
+	CurrentRunID        *uuid.UUID
+	State               string
+	Archived            bool
+	Revision            int32
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	LastMessageAt       *time.Time
+	PersonaID           *uuid.UUID
+	RepoUrl             *string
+	Effort              string
+	SpeakerPersonaID    *uuid.UUID
+	QueuedPersonaIds    []uuid.UUID
+	RelayTurns          int32
+	RelayLimit          int32
+	InterruptMessageID  *uuid.UUID
+	LastReadSeq         int64
+	Hidden              bool
+	ConnectorIds        []uuid.UUID
+	SpaceID             *uuid.UUID
+	WorkBranches        []string
+	CommitEmail         *string
+	SecretIds           []uuid.UUID
+	Temporary           bool
+	PendingRepoUrl      *string
+	ParentChatID        *uuid.UUID
+	AutoModel           bool
+	AnchorMessageID     *uuid.UUID
+	SecondOpinion       bool
+	LastAssistantSeq    int64
+	CompactPending      bool
+	CompactFocus        string
+	AutoRolloverTokens  *int64
+	ForkedFromChatID    *uuid.UUID
+	ForkedFromMessageID *uuid.UUID
 }
 
 type ChatSpace struct {

@@ -14,6 +14,13 @@ SELECT * FROM chat_repositories WHERE chat_id = $1 ORDER BY directory;
 INSERT INTO chat_repositories (chat_id, repo_url, directory) VALUES ($1, $2, $3)
 ON CONFLICT (chat_id, repo_url) DO UPDATE SET repo_url = excluded.repo_url RETURNING *;
 
+-- name: AttachChatRepositoryWithFork :one
+INSERT INTO chat_repositories (chat_id, repo_url, directory, checkpoint_branch, fork_branch)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (chat_id, repo_url) DO UPDATE
+SET checkpoint_branch = excluded.checkpoint_branch, fork_branch = excluded.fork_branch
+RETURNING *;
+
 -- name: ActivateChatRepository :one
 UPDATE chat_sessions SET repo_url = r.repo_url, work_branches = r.work_branches, revision = revision + 1, updated_at = now()
 FROM chat_repositories r WHERE chat_sessions.id = $1 AND r.chat_id = chat_sessions.id AND r.repo_url = $2

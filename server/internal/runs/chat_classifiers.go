@@ -236,11 +236,15 @@ func classifyChatTurn(ctx context.Context, q *store.Queries, chat store.ChatSess
 // startClassifiedChatTurn starts the turn for a person's message under the
 // rules' verdict and logs what fired.
 func startClassifiedChatTurn(ctx context.Context, q *store.Queries, chat store.ChatSession, project, prompt, body string, interrupted, edited bool, handoffChars int) (store.ChatSession, store.Run, store.RunTurn, error) {
+	return startClassifiedChatTurnWithRollover(ctx, q, chat, project, prompt, body, interrupted, edited, handoffChars, 0)
+}
+
+func startClassifiedChatTurnWithRollover(ctx context.Context, q *store.Queries, chat store.ChatSession, project, prompt, body string, interrupted, edited bool, handoffChars int, autoRolloverDefault int64) (store.ChatSession, store.Run, store.RunTurn, error) {
 	d, err := classifyChatTurn(ctx, q, chat, body, interrupted, edited)
 	if err != nil {
 		return chat, store.Run{}, store.RunTurn{}, err
 	}
-	chat, run, turn, err := startChatTurn(ctx, q, chat, project, d.prompt(prompt), d.Level, false, handoffChars)
+	chat, run, turn, err := startChatTurnWithRollover(ctx, q, chat, project, d.prompt(prompt), d.Level, false, handoffChars, autoRolloverDefault)
 	if err != nil || len(d.Fired) == 0 {
 		return chat, run, turn, err
 	}

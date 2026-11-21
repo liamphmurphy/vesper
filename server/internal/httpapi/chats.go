@@ -122,6 +122,22 @@ func (s *Server) toChats(ctx context.Context, chats []store.ChatSession) ([]api.
 	if err != nil {
 		return nil, err
 	}
+	ctxTokens := map[uuid.UUID]int64{}
+	var runIDs []uuid.UUID
+	for _, c := range chats {
+		if c.CurrentRunID != nil {
+			runIDs = append(runIDs, *c.CurrentRunID)
+		}
+	}
+	if len(runIDs) > 0 {
+		tokRows, err := s.Q.RunContextTokens(ctx, runIDs)
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range tokRows {
+			ctxTokens[r.ID] = r.ContextTokens
+		}
+	}
 	reasons := map[uuid.UUID]string{}
 	if len(failed) > 0 {
 		errs, err := s.Q.ChatLastErrors(ctx, failed)
@@ -212,6 +228,24 @@ func (s *Server) toChats(ctx context.Context, chats []store.ChatSession) ([]api.
 			if p, ok := paths[*c.CurrentRunID]; ok {
 				item.WorkspacePath = &p
 			}
+			if n := ctxTokens[*c.CurrentRunID]; n > 0 {
+				item.ContextTokens = &n
+			}
+		}
+		if c.CompactPending {
+			item.CompactPending = &c.CompactPending
+		}
+		if c.CompactFocus != "" {
+			item.CompactFocus = &c.CompactFocus
+		}
+		if c.AutoRolloverTokens != nil {
+			item.AutoRolloverTokens = nullableOf(c.AutoRolloverTokens)
+		}
+		if c.ForkedFromChatID != nil {
+			item.ForkedFromChatId = nullUUID(c.ForkedFromChatID)
+		}
+		if c.ForkedFromMessageID != nil {
+			item.ForkedFromMessageId = nullUUID(c.ForkedFromMessageID)
 		}
 		if r, ok := reasons[c.ID]; ok && c.State == "failed" {
 			item.Error = &r
@@ -302,6 +336,8 @@ func (s *Server) toMessages(ctx context.Context, msgs []store.ChatMessage) ([]ap
 		if m.Role == "user" {
 			item.Author = toUserRef(u)
 		}
+		item.GitBranch = m.GitBranch
+		item.GitCommitSha = m.GitCommitSha
 		// Which persona wrote a reply; absent is the chat's host.
 		if p, ok := authors[deref(m.PersonaID)]; ok && m.Role == "assistant" {
 			item.Persona = toPersonaSummary(p)
@@ -527,7 +563,21 @@ func (s *Server) UpdateChat(ctx context.Context, req api.UpdateChatRequestObject
 	if req.Body.Revision < 1 || req.Body.Revision > 2147483647 {
 		return nil, apperr.Invalid("revision", "invalid revision")
 	}
-	c, err := s.Runs.UpdateChat(ctx, ws, u.ID, req.Id, runs.ChatPatchInput{Revision: int32(req.Body.Revision), Title: req.Body.Title, Archived: req.Body.Archived, Project: req.Body.Project, Space: req.Body.SpaceId})
+	patch := runs.ChatPatchInput{
+		Revision: int32(req.Body.Revision),
+		Title:    req.Body.Title,
+		Archived: req.Body.Archived,
+		Project:  req.Body.Project,
+		Space:    req.Body.SpaceId,
+	}
+	if req.Body.AutoRolloverTokens.IsSpecified() {
+		patch.AutoRolloverSet = true
+		if !req.Body.AutoRolloverTokens.IsNull() {
+			v := req.Body.AutoRolloverTokens.MustGet()
+			patch.AutoRolloverTokens = &v
+		}
+	}
+	c, err := s.Runs.UpdateChat(ctx, ws, u.ID, req.Id, patch)
 	if err != nil {
 		return nil, err
 	}
@@ -654,6 +704,38 @@ func (s *Server) CancelChatTurn(ctx context.Context, req api.CancelChatTurnReque
 	}
 	out, err := s.toChat(ctx, c)
 	return api.CancelChatTurn200JSONResponse(out), err
+}
+
+func (s *Server) CompactChat(ctx context.Context, req api.CompactChatRequestObject) (api.CompactChatResponseObject, error) {
+	u, _, ws := me(ctx)
+	var focus string
+	if req.Body != nil && req.Body.Focus != nil {
+		focus = *req.Body.Focus
+	}
+	c, err := s.Runs.CompactChat(ctx, ws, u.ID, req.Id, focus)
+	if err != nil {
+		return nil, err
+	}
+	out, err := s.toChat(ctx, c)
+	return api.CompactChat200JSONResponse(out), err
+}
+
+func (s *Server) ForkChat(ctx context.Context, req api.ForkChatRequestObject) (api.ForkChatResponseObject, error) {
+	u, _, ws := me(ctx)
+	if req.Body == nil {
+		return nil, apperr.Invalid("body", "required")
+	}
+	c, err := s.Runs.ForkChat(ctx, ws, u.ID, req.Id, runs.ForkChatInput{
+		MessageID:  req.Body.MessageId,
+		Title:      deref(req.Body.Title),
+		BranchRepo: deref(req.Body.BranchRepo),
+		BranchName: deref(req.Body.BranchName),
+	})
+	if err != nil {
+		return nil, err
+	}
+	out, err := s.toChat(ctx, c)
+	return api.ForkChat201JSONResponse(out), err
 }
 
 func (s *Server) toProposals(ctx context.Context, rows []store.PersonaProposal) ([]api.PersonaProposal, error) {

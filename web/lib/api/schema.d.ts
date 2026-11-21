@@ -4584,6 +4584,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/chats/{id}/compact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Compact this chat onto a fresh context window
+         * @description Clears the current harness CLI session and arms a handoff compaction for
+         *     the next turn while keeping the chat's existing run and workspace volume
+         *     intact. 409 while a turn is running or when the chat is archived.
+         */
+        post: operations["compactChat"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chats/{id}/fork": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fork this chat into an independent conversation at a message
+         * @description Creates a new chat seeded with the message prefix up to `message_id`.
+         *     For coding chats with `branch_repo: true`, attaches the repository on a
+         *     new fork branch seeded from the fork point's commit or branch.
+         */
+        post: operations["forkChat"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/chats/{id}/tool-approvals": {
         parameters: {
             query?: never;
@@ -7989,6 +8037,43 @@ export interface components {
             space?: components["schemas"]["ChatSpaceRef"];
             /** @description The start of the newest reply as plain text; only when listing one space's chats */
             preview?: string;
+            /** @description Set after /compact; the next turn starts a fresh context window with handoff + workspace git brief */
+            compact_pending?: boolean;
+            /** @description Optional user focus note saved with /compact for the next turn */
+            compact_focus?: string;
+            /**
+             * Format: int64
+             * @description Per-chat auto-compaction threshold in context tokens (0 disables auto-compaction; null inherits the server default)
+             */
+            auto_rollover_tokens?: number | null;
+            /**
+             * Format: int64
+             * @description Current segment's last reported context window size in tokens
+             */
+            context_tokens?: number;
+            /**
+             * Format: uuid
+             * @description Source chat this conversation was forked from
+             */
+            forked_from_chat_id?: string | null;
+            /**
+             * Format: uuid
+             * @description Fork anchor message in the source chat
+             */
+            forked_from_message_id?: string | null;
+        };
+        CompactChatRequest: {
+            /** @description Optional instruction telling the compacted context window what to prioritize */
+            focus?: string;
+        };
+        ForkChatRequest: {
+            /** Format: uuid */
+            message_id: string;
+            title?: string;
+            /** @description When true on a coding chat, check out a new fork branch seeded from the fork point's commit or branch */
+            branch_repo?: boolean;
+            /** @description Optional work branch name (TYPE/slug) when branch_repo is true; defaults to feat/fork-<short-id> */
+            branch_name?: string;
         };
         NewChat: {
             /** @description Project to attach from the start; omit for a chat with no project */
@@ -8026,6 +8111,11 @@ export interface components {
             project?: string;
             /** @description Move the chat into one of your spaces (not an app's), or empty for none. Its instructions, sources and memory reach the chat from the next message, and the chat files tickets where the space does unless project is given too. */
             space_id?: string;
+            /**
+             * Format: int64
+             * @description Auto-compact this chat's context window when a turn reaches this many tokens (0 disables auto-compaction; null inherits the server default).
+             */
+            auto_rollover_tokens?: number | null;
         };
         NewChatMessage: {
             /** @description Ask for a research plan to approve instead of an answer */
@@ -8989,6 +9079,10 @@ export interface components {
             effort_level?: "low" | "medium" | "high" | "xhigh";
             /** @description Rules that raised effort_level above the message's own: confirmation (a go-ahead takes the weight of what it approves), effort_mismatch (a retry or edit steps it up) */
             effort_reasons?: ("confirmation" | "effort_mismatch")[];
+            /** @description Primary repository branch at the end of the turn that produced this assistant message */
+            git_branch?: string;
+            /** @description Primary repository HEAD commit SHA at the end of the turn that produced this assistant message */
+            git_commit_sha?: string;
             /** Format: date-time */
             created_at: string;
         };
@@ -17638,6 +17732,65 @@ export interface operations {
             };
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    compactChat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CompactChatRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated chat */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSession"];
+                };
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    forkChat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ForkChatRequest"];
+            };
+        };
+        responses: {
+            /** @description Forked chat */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSession"];
+                };
+            };
+            404: components["responses"]["Error"];
             422: components["responses"]["Error"];
             default: components["responses"]["Error"];
         };

@@ -64,7 +64,7 @@ func chatSetupScript(ctx context.Context, q *store.Queries, c runCtx) (string, e
 	}
 	script += "\n" + sshSetup
 	for _, repo := range repos {
-		script += repositories.SetupScript(repo.RepoUrl, repo.Directory, repo.WorkBranches, repo.CheckpointBranch, name, email)
+		script += repositories.SetupScriptWithFork(repo.RepoUrl, repo.Directory, repo.WorkBranches, repo.CheckpointBranch, repo.ForkBranch, name, email)
 		if repo.Directory == "." {
 			script += "if [ ! -f .lazyagents/chat-checkout-ready ]; then\n" + keepOurFilesOutOfGit + "touch .lazyagents/chat-checkout-ready\nfi\n"
 		}
@@ -384,6 +384,30 @@ func (r *Runner) finishChatTurn(ctx context.Context, c runCtx, turn store.RunTur
 				if len(codeChanges) > 2 { // more than "[]"
 					if err := q.SetChatMessageCodeChanges(ctx, store.SetChatMessageCodeChangesParams{ID: msg.ID, CodeChanges: codeChanges}); err != nil {
 						return err
+					}
+				}
+				reviews, rerr := q.ChatCodeReviews(ctx, chat.ID)
+				if rerr != nil {
+					return rerr
+				}
+				if len(reviews) > 0 {
+					rev := reviews[0]
+					if chat.RepoUrl != nil {
+						for _, candidate := range reviews {
+							if candidate.RepoUrl == *chat.RepoUrl {
+								rev = candidate
+								break
+							}
+						}
+					}
+					if rev.Branch != nil || rev.HeadSha != nil {
+						if err := q.SetChatMessageGitRef(ctx, store.SetChatMessageGitRefParams{
+							ID:           msg.ID,
+							GitBranch:    rev.Branch,
+							GitCommitSha: rev.HeadSha,
+						}); err != nil {
+							return err
+						}
 					}
 				}
 				// The image jobs this turn ran, by the outbox files they made, so

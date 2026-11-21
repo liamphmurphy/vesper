@@ -5539,6 +5539,59 @@ paths:
         "422": { $ref: "#/components/responses/Error" }
         default: { $ref: "#/components/responses/Error" }
 
+  /chats/{id}/compact:
+    parameters:
+      - { $ref: "#/components/parameters/ChatId" }
+    post:
+      operationId: compactChat
+      summary: Compact this chat onto a fresh context window
+      description: |
+        Clears the current harness CLI session and arms a handoff compaction for
+        the next turn while keeping the chat's existing run and workspace volume
+        intact. 409 while a turn is running or when the chat is archived.
+      tags: [chats]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CompactChatRequest" }
+      responses:
+        "200":
+          description: Updated chat
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatSession" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /chats/{id}/fork:
+    parameters:
+      - { $ref: "#/components/parameters/ChatId" }
+    post:
+      operationId: forkChat
+      summary: Fork this chat into an independent conversation at a message
+      description: |
+        Creates a new chat seeded with the message prefix up to `message_id`.
+        For coding chats with `branch_repo: true`, attaches the repository on a
+        new fork branch seeded from the fork point's commit or branch.
+      tags: [chats]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ForkChatRequest" }
+      responses:
+        "201":
+          description: Forked chat
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatSession" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
   /chats/{id}/tool-approvals:
     parameters:
       - { $ref: "#/components/parameters/ChatId" }
@@ -8961,6 +9014,24 @@ components:
         last_message_at: { type: string, format: date-time }
         space: { $ref: "#/components/schemas/ChatSpaceRef" }
         preview: { type: string, description: "The start of the newest reply as plain text; only when listing one space's chats" }
+        compact_pending: { type: boolean, description: "Set after /compact; the next turn starts a fresh context window with handoff + workspace git brief" }
+        compact_focus: { type: string, description: "Optional user focus note saved with /compact for the next turn" }
+        auto_rollover_tokens: { type: integer, format: int64, nullable: true, description: "Per-chat auto-compaction threshold in context tokens (0 disables auto-compaction; null inherits the server default)" }
+        context_tokens: { type: integer, format: int64, description: "Current segment's last reported context window size in tokens" }
+        forked_from_chat_id: { type: string, format: uuid, nullable: true, description: "Source chat this conversation was forked from" }
+        forked_from_message_id: { type: string, format: uuid, nullable: true, description: "Fork anchor message in the source chat" }
+    CompactChatRequest:
+      type: object
+      properties:
+        focus: { type: string, maxLength: 500, description: "Optional instruction telling the compacted context window what to prioritize" }
+    ForkChatRequest:
+      type: object
+      required: [message_id]
+      properties:
+        message_id: { type: string, format: uuid }
+        title: { type: string, maxLength: 200 }
+        branch_repo: { type: boolean, description: "When true on a coding chat, check out a new fork branch seeded from the fork point's commit or branch" }
+        branch_name: { type: string, maxLength: 80, description: "Optional work branch name (TYPE/slug) when branch_repo is true; defaults to feat/fork-<short-id>" }
     NewChat:
       type: object
       properties:
@@ -8985,6 +9056,7 @@ components:
         archived: { type: boolean }
         project: { type: string, description: "Key of the project to attach; empty detaches. The next message starts a fresh session with the conversation handed off." }
         space_id: { type: string, description: "Move the chat into one of your spaces (not an app's), or empty for none. Its instructions, sources and memory reach the chat from the next message, and the chat files tickets where the space does unless project is given too." }
+        auto_rollover_tokens: { type: integer, format: int64, minimum: 0, nullable: true, description: "Auto-compact this chat's context window when a turn reaches this many tokens (0 disables auto-compaction; null inherits the server default)." }
     NewChatMessage:
       type: object
       required: [body]
@@ -9826,6 +9898,8 @@ components:
           type: array
           items: { type: string, enum: [confirmation, effort_mismatch] }
           description: "Rules that raised effort_level above the message's own: confirmation (a go-ahead takes the weight of what it approves), effort_mismatch (a retry or edit steps it up)"
+        git_branch: { type: string, description: "Primary repository branch at the end of the turn that produced this assistant message" }
+        git_commit_sha: { type: string, description: "Primary repository HEAD commit SHA at the end of the turn that produced this assistant message" }
         created_at: { type: string, format: date-time }
     ChatCodeChange:
       type: object

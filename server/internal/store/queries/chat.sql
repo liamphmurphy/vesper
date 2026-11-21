@@ -619,3 +619,50 @@ RETURNING *;
 
 -- name: ExpireRunChatSteers :exec
 UPDATE chat_steers SET state = 'expired' WHERE run_id = $1 AND state = 'pending';
+
+-- name: SetChatCompactPending :one
+UPDATE chat_sessions
+SET compact_pending = $2, compact_focus = $3, updated_at = now(), revision = revision + 1
+WHERE id = $1
+RETURNING *;
+
+-- name: SetChatAutoRollover :one
+UPDATE chat_sessions
+SET auto_rollover_tokens = $2, updated_at = now(), revision = revision + 1
+WHERE id = $1
+RETURNING *;
+
+-- name: SetChatForkOrigin :one
+UPDATE chat_sessions
+SET forked_from_chat_id = $2, forked_from_message_id = $3
+WHERE id = $1
+RETURNING *;
+
+-- name: CreateForkedChatSession :one
+INSERT INTO chat_sessions (
+  workspace_id, project_id, title, created_by, agent_id, harness, model, effort, auto_model,
+  persona_id, speaker_persona_id, repo_url, commit_email, space_id, connector_ids, secret_ids,
+  auto_rollover_tokens, forked_from_chat_id, forked_from_message_id, last_message_at
+)
+VALUES (
+  $1, $2, $3, $4, $5, $6, $7, $8, $9,
+  $10, $11, $12, $13, $14, $15, $16,
+  $17, $18, $19, $20
+)
+RETURNING *;
+
+-- name: GetChatMessageByID :one
+SELECT * FROM chat_messages WHERE id = $1 AND session_id = $2;
+
+-- name: ListChatMessagesUpToSeq :many
+SELECT * FROM chat_messages WHERE session_id = $1 AND seq <= $2 ORDER BY seq ASC;
+
+-- name: CopyChatMessageForFork :one
+INSERT INTO chat_messages (
+  session_id, seq, role, body_md, harness, model, context_refs, citations, code_changes, persona_id, git_branch, git_commit_sha
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+RETURNING *;
+
+-- name: SetChatMessageGitRef :exec
+UPDATE chat_messages SET git_branch = $2, git_commit_sha = $3 WHERE id = $1;
