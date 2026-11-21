@@ -80,8 +80,9 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
         case .navigatorFallback(let active): state.navigatorFallback = active
         case .sidebarHidden(let hidden): state.sidebarHidden = hidden
         case .toolbar(let items): state.toolbarItems = items
-        case .appearance(let mode, let background):
+        case .appearance(let mode, let background, let theme):
             state.pageMode = mode
+            if let theme { state.theme = theme }
             if let color = NSColor.fromCSS(background) {
                 webView?.underPageBackgroundColor = color
                 WebViewFactory.lastPageBackground = color
@@ -264,7 +265,7 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
         case .navigatorFallback(let a): "navigatorFallback \(a)"
         case .sidebarHidden(let h): "sidebarHidden \(h)"
         case .toolbar(let i): "toolbar \(i.count) items"
-        case .appearance(let m, _): "appearance \(m.rawValue)"
+        case .appearance(let m, _, _): "appearance \(m.rawValue)"
         case .confirmApproval(let r, let s): "confirmApproval \(r) \(s.rawValue)"
         case .openWorkspaceMenu(let r, _): "openWorkspaceMenu \(r)"
         case .contextMenu(let r, let i, _, _): "contextMenu \(r) \(i.count) items"

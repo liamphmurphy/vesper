@@ -436,8 +436,11 @@ export type PageMessage =
    * The page's effective color mode, whenever it changes; the shell matches each window's appearance to it.
    * background: the palette's page colour ("#RRGGBB"), which the shell shows past the page's edges
    * (overscroll) and behind a tab that hasn't painted yet.
+   * tokens: the palette's resolved colours by CSS variable name without "--" ("text", "accent"…,
+   * "#RRGGBB" or "#RRGGBBAA" only), and textSize the Settings text size, so native screens draw
+   * with exactly what the page does.
    */
-  | { v: 1; type: "appearance"; mode: ColorMode; background?: string }
+  | { v: 1; type: "appearance"; mode: ColorMode; background?: string; tokens?: Record<string, string>; textSize?: string }
   | { v: 1; type: "confirmApproval"; requestId: string; scope: ApprovalScope }
   | { v: 1; type: "openWorkspaceMenu"; requestId: string; folder: string }
   | { v: 1; type: "contextMenu"; requestId: string; items: MenuItem[]; x: number; y: number }

@@ -25,6 +25,8 @@ final class ShellState {
     var titleMenu: [MenuItem]?
     /// The right rail the page describes; nil when it has none.
     var rail: RailModel?
+    /// The page's palette and text size, for native screens; nil until the page sends them.
+    var theme: ThemeTokens?
     /// The native inspector the page describes; nil when it has none.
     var inspector: InspectorModel?
     var route: String?
