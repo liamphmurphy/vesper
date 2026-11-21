@@ -13,6 +13,7 @@ export const CHAT_COMMANDS: ChatCommand[] = [
   { name: "repo", args: "repository", hint: "Select a repository in this conversation" },
   { name: "memory", hint: "Open your memory" },
   { name: "stop", hint: "Stop the current reply" },
+  { name: "steer", args: "guidance", free: true, hint: "Steer the current reply mid-turn without discarding work" },
   { name: "aside", args: "question", free: true, hint: "Ask about the current reply without stopping it" },
   { name: "queue", args: "message", free: true, hint: "Send this once the current reply ends" },
   { name: "design", args: "what to design", free: true, hint: "Create a design (flow, diagram or wireframe) beside the chat" },

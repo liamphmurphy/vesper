@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { LinkTarget } from "@/lib/api/client";
-import { useChatRunEvents, useResolvedLinks } from "@/lib/api/hooks";
+import { useChatRunEvents, useChatToolApprovals, useResolvedLinks } from "@/lib/api/hooks";
 import { activityOf, chatCalls, chatStatus, chatStatusOf, chatSteps, finishedTurn, foldSteps, formatSpan, interimLine, NEXT_STEP_KEY, quietFor, turnActivity, turnClock, turnNotes, turnPulse, turnTrace, type Activity, type ChatStep, type IntentTag, type ToolCall, type TraceStep, type TurnOutcome, type TurnPulse } from "@/lib/chat-ui";
 import { useConnectorApprovals } from "@/lib/api/connector-hooks";
 import { useApiSecretApprovals } from "@/lib/api/secret-hooks";
@@ -12,6 +12,7 @@ import { Icon } from "@/components/ui/icon";
 import { ActivityScene, useHeldScene } from "./activity-scene";
 import { ConnectorApprovalCards } from "./connector-requests";
 import { SecretApprovalCards } from "./secret-requests";
+import { ChatToolApprovalCards } from "./tool-approvals";
 import { StepGlyph } from "./step-glyph";
 import { PersonaAvatar, PersonaName, usePersonaCharacterSvg, type PersonaLook } from "./persona";
 import { characterStateForStatus } from "@/lib/persona-character";
@@ -255,7 +256,8 @@ export function ChatStatus({ chatId, disabled, runId, since, persona, stopping, 
   // A tool call or API request waiting on the person is part of this turn, so it opens in this card.
   const connectorWaiting = useConnectorApprovals(chatId).data?.approvals.length ?? 0;
   const secretWaiting = useApiSecretApprovals(chatId).data?.approvals.length ?? 0;
-  const awaiting = !stopping && connectorWaiting + secretWaiting > 0;
+  const toolWaiting = useChatToolApprovals(chatId, true).data?.approvals.length ?? 0;
+  const awaiting = !stopping && connectorWaiting + secretWaiting + toolWaiting > 0;
   const quiet = !stopping && !awaiting && pulse.quiet;
   const asked = askedAt !== undefined && askedAt >= (clock.last ?? 0);
   const newest = calls.at(-1);
@@ -322,6 +324,7 @@ export function ChatStatus({ chatId, disabled, runId, since, persona, stopping, 
       <div className={`grid transition-[grid-template-rows] duration-(--motion-slow) ease-out motion-reduce:transition-none ${awaiting ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
         <div className="overflow-hidden">
           <div role="group" aria-label="Waiting for your approval" className="flex flex-col gap-2 px-3 pb-3">
+            <ChatToolApprovalCards chatId={chatId} disabled={disabled} />
             <ConnectorApprovalCards chatId={chatId} disabled={disabled} />
             <SecretApprovalCards chatId={chatId} disabled={disabled} />
           </div>

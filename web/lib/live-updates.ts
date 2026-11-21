@@ -7,7 +7,7 @@ const prefixes: Record<string, string[]> = {
   ticket: ["planning", "tickets", "boards", "inbox", "bootstrap", "knowledge", "search"],
   epic: ["projects", "planning", "bootstrap", "tickets", "boards", "epics", "inbox", "search"],
   activity: ["tickets", "inbox", "bootstrap"],
-  approval: ["tickets", "runs", "inbox", "bootstrap"],
+  approval: ["tickets", "runs", "chats", "inbox", "bootstrap"],
   // "dock" is the activity orb: which harnesses are running.
   run: ["planning", "runs", "boards", "tickets", "agents", "inbox", "bootstrap", "runner", "search", "dock"],
   agent: ["agents", "bootstrap", "search"],

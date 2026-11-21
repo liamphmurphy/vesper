@@ -28,6 +28,7 @@ import {
   useSetChatCommitEmail,
   useStartAside,
   useStartSecondOpinion,
+  useSteerChat,
 } from "@/lib/api/hooks";
 import { DOC_DRAFT, designRequest, resolveCompareTarget, type CreateKind } from "@/lib/chat-commands";
 import { asidesInWindow, commandSendMode, cycleSendMode, SEND_MODE_ENTER, SEND_MODE_HINT, SEND_MODE_LABEL, sendModeAction, sendModePlaceholder, type SendMode } from "@/lib/send-mode";
@@ -547,6 +548,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   const models = useChatModels();
   const send = useSendChatMessage(id, context?.prepare);
   const queue = useQueueFollowup(id, context?.prepareText);
+  const steer = useSteerChat(id, context?.prepareText);
   const aside = useStartAside(id, context?.prepareText);
   const secondOpinion = useStartSecondOpinion(id);
   const asideList = useChatAsides(id).data;
@@ -955,13 +957,13 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
     );
   }
 
-  // Queues the message, or asks it as an aside, without stopping the reply; Interrupt
-  // sends it as usual. Neither of the first two carries context, files or research.
+  // Queues, steers live mid-turn, or asks on the side without stopping the reply;
+  // Interrupt sends as usual. The first three carry text only (no files/context/research).
   function sendWhileRunning(mode: SendMode, body: string): string | void {
     if (mode === "interrupt") return submit(body);
-    if (!body.trim() || locked || queue.isPending || aside.isPending) return;
+    if (!body.trim() || locked || queue.isPending || steer.isPending || aside.isPending) return;
     if (chips.length || files.ids.length || files.pending || research) {
-      const what = mode === "aside" ? "An aside" : "A follow-up";
+      const what = mode === "aside" ? "An aside" : mode === "steer" ? "A steer" : "A follow-up";
       return `${what} is text only: remove the context and files, or pick Interrupt to send them now.`;
     }
     setModeError(null);
@@ -972,6 +974,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
       snippets.clear();
     };
     if (mode === "aside") aside.mutate(body, { onSuccess: sent });
+    else if (mode === "steer") steer.mutate(body, { onSuccess: sent });
     else queue.mutate(body, { onSuccess: sent });
   }
 
@@ -1054,7 +1057,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
       </div>
     );
   }
-  const actionError = send.error ?? queue.error ?? aside.error ?? secondOpinion.error ?? edit.error ?? cancel.error ?? create.error ?? setCommitEmail.error;
+  const actionError = send.error ?? queue.error ?? steer.error ?? aside.error ?? secondOpinion.error ?? edit.error ?? cancel.error ?? create.error ?? setCommitEmail.error;
   // A chat without a persona, or whose persona was deleted, is the built-in Assistant.
   const persona = personaLook(c.persona);
   const full = personas.data?.personas.find((p) => p.id === c.persona?.id);
@@ -1585,18 +1588,19 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
               onCycle={running ? (back) => setSendMode((m) => cycleSendMode(m, back)) : undefined}
               hints={
                 running
-                  ? `Enter ${SEND_MODE_ENTER[sendMode]}  ·  Tab switches mode  ·  /aside  ·  /queue  ·  Shift+Enter for a new line`
+                  ? `Enter ${SEND_MODE_ENTER[sendMode]}  ·  Tab switches mode  ·  /steer  ·  /aside  ·  /queue  ·  Shift+Enter for a new line`
                   : undefined
               }
               commands={{ plain: plainCommands, options: commandOptions,
               free: {
                 ...Object.fromEntries(
-                  (["aside", "queue"] as const).map((name) => [
+                  (["aside", "queue", "steer"] as const).map((name) => [
                     name,
                     (body: string) => {
                       const mode = commandSendMode(name)!;
                       if (running) return sendWhileRunning(mode, body);
                       if (mode === "aside") return `Nothing is running, so there's nothing to ask about on the side: send it as a message.`;
+                      if (mode === "steer") return `Nothing is running to steer: send it as a message.`;
                       submit(body);
                     },
                   ]),
