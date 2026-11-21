@@ -19,6 +19,7 @@ import {
   useChatFollowups,
   useChatTicketRuns,
   useChatMessages,
+  useCompactChat,
   useEditLastChatMessage,
   useChatModels,
   useCreateChat,
@@ -71,6 +72,7 @@ import { splitSourceList } from "@/lib/chat-sources";
 import { AskAboutSelection, quoteForComposer, ResearchToggle, TemporaryToggle } from "./reply-tools";
 import { ChatSuggestions } from "./suggestions";
 import { Composer, type CommandRun } from "./composer";
+import { ForkDialog, type ForkTarget } from "./fork-dialog";
 import { RecommendActions, SaveSummary, VideoPlayers } from "@/components/domain/recommend-fence";
 import { VideoCards, VideoRendererNotes } from "@/components/domain/video-card";
 import { AudioCards } from "@/components/domain/audio-card";
@@ -557,6 +559,8 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   const [modeError, setModeError] = useState<string | null>(null);
   const [players] = useState(() => new Map<string, (seconds: number) => void>());
   const cancel = useCancelChat(id);
+  const compactChat = useCompactChat(id);
+  const [forkTarget, setForkTarget] = useState<ForkTarget | null>(null);
   const boot = useBootstrap();
   const personas = usePersonas();
   const create = useCreateChat();
@@ -880,6 +884,14 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
     ...(threadDock ? { thread: (messageId: string) => router.replace(`${window.location.pathname}?${openThread(new URLSearchParams(window.location.search), messageId).toString()}`, { scroll: false }) } : {}),
     ...(!archivedChat
       ? {
+          fork: (messageId: string) => {
+            const m = list?.find((x) => x.id === messageId);
+            setForkTarget({
+              messageId,
+              gitBranch: m?.git_branch,
+              gitCommitSha: m?.git_commit_sha,
+            });
+          },
           secondOpinion: {
             groups,
             currentHarness: current?.harness,
@@ -888,7 +900,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
           },
         }
       : {}),
-  }), [threadDock, router, archivedChat, groups, current?.harness, current?.model]);
+  }), [threadDock, router, archivedChat, list, groups, current?.harness, current?.model]);
 
   // J/K move between messages, R replies to the one in focus, T threads it, E edits your last
   // message, Esc goes back to the box: the messaging-app keys, listed in the ? reference.
@@ -1057,7 +1069,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
       </div>
     );
   }
-  const actionError = send.error ?? queue.error ?? steer.error ?? aside.error ?? secondOpinion.error ?? edit.error ?? cancel.error ?? create.error ?? setCommitEmail.error;
+  const actionError = send.error ?? queue.error ?? steer.error ?? aside.error ?? secondOpinion.error ?? compactChat.error ?? edit.error ?? cancel.error ?? create.error ?? setCommitEmail.error;
   // A chat without a persona, or whose persona was deleted, is the built-in Assistant.
   const persona = personaLook(c.persona);
   const full = personas.data?.personas.find((p) => p.id === c.persona?.id);
@@ -1323,6 +1335,18 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
             <OpenTurnStep.Provider value={openTurnStep}>
             <MessageActionsContext.Provider value={c.archived ? null : messageActions}>
             <ol ref={log} aria-label="Conversation" role="log" aria-live="polite" className="mx-auto flex max-w-[768px] flex-col gap-6">
+              {c.forked_from_chat_id && (
+                <li className="flex justify-center">
+                  <Link
+                    href={c.forked_from_message_id ? `/chat/${c.forked_from_chat_id}?message=${c.forked_from_message_id}` : `/chat/${c.forked_from_chat_id}`}
+                    data-testid="forked-from-banner"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-border-subtle bg-surface px-3 py-1 text-12 text-fg-secondary hover:bg-hover hover:text-fg"
+                  >
+                    <Icon name="branch" size={12} />
+                    <span>Forked from earlier chat</span>
+                  </Link>
+                </li>
+              )}
               {messages.data?.has_more && <Divider>Earlier messages are not shown</Divider>}
               {placedPushes.leading.length > 0 && (
                 <li className="flex flex-col gap-2">
@@ -1361,6 +1385,13 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
               )}
               {effortPending && (
                 <Divider testId="pending-effort">{`Next message will use ${effortLabel(effort).toLowerCase()} effort`}</Divider>
+              )}
+              {c.compact_pending && (
+                <Divider testId="pending-compact">
+                  {c.compact_focus
+                    ? `Context compacted — next message starts fresh (focus: ${c.compact_focus})`
+                    : "Context compacted — next message starts a fresh context window"}
+                </Divider>
               )}
               {running && (
                 <li className="flex flex-col gap-2" data-testid="thinking">
@@ -1607,6 +1638,14 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
                 ),
                 // The persona starts it with design_create, which opens it beside the chat.
                 design: (brief: string) => (running ? sendWhileRunning("followup", designRequest(brief)) : submit(designRequest(brief))),
+                compact: (arg: string) => {
+                  if (c.archived) return "This chat is archived.";
+                  if (running) return "Wait for the current reply to finish (or /stop) before compacting.";
+                  setModeError(null);
+                  compactChat.mutate(arg.trim() || undefined, {
+                    onError: (e) => setModeError(errorText(e)),
+                  });
+                },
               },
               compare: (arg: string) => {
                 const res = resolveCompareTarget(compareOptions, arg);
@@ -1700,6 +1739,13 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
             }}
           />
         )}
+        <ForkDialog
+          chatId={c.id}
+          defaultTitle={chatTitle(c)}
+          hasRepo={!!c.repo_url}
+          target={forkTarget}
+          onClose={() => setForkTarget(null)}
+        />
       </section>
     </Tooltip.Provider>
   );

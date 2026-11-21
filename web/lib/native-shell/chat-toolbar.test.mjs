@@ -91,4 +91,21 @@ test("the title menu: rename first (off when archived), then workspace, secrets,
   assert.deepEqual(buildChatTitleMenu({ archived: false, canOpenWorkspace: true, participants: ["Ada"] }).map((i) => i.id), ["rename"]);
   assert.equal(parseTitleAction("workspace.open"), "openWorkspace");
   assert.equal(parseTitleAction("participant:0"), null);
+
+  const compacted = buildChatTitleMenu({
+    archived: false,
+    canOpenWorkspace: false,
+    compact: { disabled: false, pending: false, contextTokens: 42000 },
+    autoCompact: { value: 150000, disabled: false },
+    participants: ["Ada"],
+  });
+  const cItem = compacted.find((i) => i.id === "compact");
+  const aItem = compacted.find((i) => i.id === "auto-compact");
+  assert.equal(cItem?.label, "Compact context (42k ctx)");
+  assert.equal(aItem?.label, "Auto-compact: 150k");
+  assert.equal(aItem?.children?.find((c) => c.checked)?.id, "auto-compact:150000");
+  assert.equal(parseTitleAction("compact"), "compact");
+  assert.deepEqual(parseTitleAction("auto-compact:default"), { type: "autoCompact", tokens: null });
+  assert.deepEqual(parseTitleAction("auto-compact:0"), { type: "autoCompact", tokens: 0 });
+  assert.deepEqual(parseTitleAction("auto-compact:100000"), { type: "autoCompact", tokens: 100000 });
 });

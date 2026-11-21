@@ -95,3 +95,13 @@ test("resolveCompareTarget matches harness names, model ids, labels, and optiona
     error: "No model matches “unknown-model”.",
   });
 });
+
+test("compact parses with or without focus and leaves argument menu closed", () => {
+  assert.deepEqual(parseCommand("/compact"), { name: "compact", arg: "" });
+  assert.deepEqual(parseCommand("/compact keep auth invariants"), {
+    name: "compact",
+    arg: "keep auth invariants",
+  });
+  assert.equal(commandMenu("/compact "), null);
+  assert.equal(commandMenu("/compact keep"), null);
+});

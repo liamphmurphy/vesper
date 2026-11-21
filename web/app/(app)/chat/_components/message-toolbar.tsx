@@ -18,6 +18,8 @@ export type MessageActions = {
   reply: (body: string, authorId?: string, author?: string) => void;
   /** Starts a thread on the message: a side conversation about it, in the right panel. */
   thread?: (messageId: string) => void;
+  /** Branches a new conversation from this message (optionally branching the git repo). */
+  fork?: (messageId: string) => void;
   /** Requests a read-only cross-harness second opinion anchored to the message. */
   secondOpinion?: {
     groups: Schemas["ChatHarnessModels"][] | undefined;
@@ -75,6 +77,7 @@ export function MessageToolbar({
   const [menuOpen, setMenuOpen] = useState(false);
   const [secondOpinionOpen, setSecondOpinionOpen] = useState(false);
   const more: MoreItem[] = [
+    ...(actions?.fork ? [{ icon: "branch" as const, label: "Fork from here", onSelect: () => actions.fork!(messageId) }] : []),
     ...(onRetry ? [{ icon: "refresh" as const, label: "Retry", onSelect: onRetry }] : []),
     ...(onTop ? [{ icon: "chev" as const, label: "Top of reply", onSelect: onTop }] : []),
     ...(!mine ? [

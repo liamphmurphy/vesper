@@ -1344,6 +1344,32 @@ export function useUpdateChat() {
   });
 }
 
+export function useCompactChat(id: string) {
+  const qc = useQueryClient();
+  const done = useChatInvalidate();
+  return useMutation({
+    mutationFn: (focus?: string) =>
+      unwrap(api.POST("/chats/{id}/compact", { params: { path: { id } }, body: focus ? { focus } : {} })),
+    onSuccess: (chat) => qc.setQueryData(chatKeys.detail(id), chat),
+    onSettled: async () => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: chatKeys.detail(id) }),
+        qc.invalidateQueries({ queryKey: chatKeys.messages(id) }),
+        done(),
+      ]);
+    },
+  });
+}
+
+export function useForkChat(id: string) {
+  const done = useChatInvalidate();
+  return useMutation({
+    mutationFn: (body: Schemas["ForkChatRequest"]) =>
+      unwrap(api.POST("/chats/{id}/fork", { params: { path: { id } }, body })),
+    onSettled: done,
+  });
+}
+
 /** Picks which of your addresses a coding chat commits as; it applies from the next turn, so it works mid-reply. */
 export function useSetChatCommitEmail() {
   const qc = useQueryClient();

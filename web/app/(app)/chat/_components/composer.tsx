@@ -177,7 +177,10 @@ export function Composer({
       return runCommand(() => commands.compare!(arg));
     }
     const free = command.free ? commands.free?.[name] : undefined;
-    if (free) return arg ? runCommand(() => free(arg)) : setCommandError(`Say ${name === "design" ? "what to design" : "what to send"}: /${name} <${command.args}>`);
+    if (free) {
+      if (arg || command.optionalArg) return runCommand(() => free(arg));
+      return setCommandError(`Say ${name === "design" ? "what to design" : "what to send"}: /${name} <${command.args}>`);
+    }
     if (command.free) return setCommandError(`/${name} works once the conversation has started.`);
     if (!command.args) return arg ? setCommandError(`/${name} doesn’t take anything after it.`) : runCommand(commands.plain[name]);
     if (name === "workflow" && !commands.hasWorkflows) return setCommandError("You have no published workflows yet. Build one under Workflows.");
