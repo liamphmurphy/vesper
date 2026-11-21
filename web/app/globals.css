@@ -1288,21 +1288,509 @@ details[open]::details-content { height: auto; }
 }
 
 /*
- * Export PDF (app/print/artifacts): the browser's print engine lays the page out.
- * Keep backgrounds (code, charts), keep headings with what follows, and don't split visuals.
+ * Export PDF (app/print/artifacts, app/print/docs, app/print/knowledge): the browser's print
+ * engine lays the page out. Keep backgrounds (code, charts, callouts), keep headings with what
+ * follows, and don't split visuals.
  */
 @media print {
   @page { margin: 16mm 14mm; }
-  html, body { background: white; }
+  html, body { background: white !important; }
   .print-doc { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
   .print-doc :is(h1, h2, h3, h4, h5, h6) { break-after: avoid; break-inside: avoid; }
-  .print-doc :is(figure, img, svg, table, blockquote) { break-inside: avoid; }
+  .print-doc :is(figure, img, svg, table, blockquote, .print-callout, .print-embed-ref, .print-kn-header, .print-kn-props) { break-inside: avoid; }
+  .print-knowledge :is(table, .print-kn-query-wrap) { break-inside: auto; }
+  .print-doc thead { display: table-header-group; }
   .print-doc tr { break-inside: avoid; }
   /* Long lines wrap instead of being cut off at the page edge. */
   .print-doc pre { overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere; }
   .print-doc :is(div, figure)[class*="overflow-"] { overflow: visible; }
   .print-doc img { max-height: 240mm; }
   .print-doc a { color: inherit; text-decoration: underline; }
+}
+
+/*
+ * Knowledge PDF export styles (app/print/knowledge): four paper-first typographic themes.
+ * Uses fixed print tokens so user dark/text-size settings never distort the exported PDF.
+ */
+.print-knowledge {
+  --kn-ink: #18181b;
+  --kn-ink-2: #27272a;
+  --kn-muted: #52525b;
+  --kn-border: #e4e4e7;
+  --kn-surface: #f4f4f5;
+  --kn-accent: #2563eb;
+  --kn-font-sans: "Inter", "Inter Fallback", system-ui, -apple-system, sans-serif;
+  --kn-font-serif: Georgia, "Iowan Old Style", "Palatino Linotype", "Times New Roman", serif;
+  --kn-font-mono: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--kn-ink);
+  font-family: var(--kn-font-sans);
+  font-size: 15px;
+  line-height: 1.68;
+  gap: 20px;
+}
+
+.print-knowledge .print-kn-header {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--kn-border);
+}
+
+.print-knowledge .print-kn-folder {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--kn-muted);
+}
+
+.print-knowledge .print-kn-title {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  color: var(--kn-ink);
+}
+
+.print-knowledge .print-kn-props {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--kn-border);
+}
+
+.print-knowledge .print-kn-prop-row {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 12px;
+  align-items: baseline;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.print-knowledge .print-kn-prop-key {
+  color: var(--kn-muted);
+  font-weight: 500;
+}
+
+.print-knowledge .print-kn-prop-val {
+  margin: 0;
+  color: var(--kn-ink-2);
+}
+
+.print-knowledge .print-kn-tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.print-knowledge .print-kn-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--kn-surface);
+  border: 1px solid var(--kn-border);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--kn-ink-2);
+}
+
+.print-knowledge .print-kn-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.print-knowledge .print-kn-prose {
+  gap: 10px;
+  color: var(--kn-ink-2);
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.print-knowledge .print-kn-prose :is(h1, h2) {
+  margin: 1.15em 0 0.15em;
+  font-size: 1.38em;
+  font-weight: 650;
+  line-height: 1.3;
+  letter-spacing: -0.015em;
+  color: var(--kn-ink);
+}
+
+.print-knowledge .print-kn-prose h3 {
+  margin: 1.05em 0 0.15em;
+  font-size: 1.18em;
+  font-weight: 650;
+  line-height: 1.32;
+  letter-spacing: -0.01em;
+  color: var(--kn-ink);
+}
+
+.print-knowledge .print-kn-prose h4 {
+  margin: 0.85em 0 0.1em;
+  font-size: 1.04em;
+  font-weight: 600;
+  color: var(--kn-ink);
+}
+
+.print-knowledge .print-kn-prose h5 {
+  margin: 0.7em 0 0.05em;
+  font-size: 0.96em;
+  font-weight: 600;
+  color: var(--kn-ink);
+}
+
+.print-knowledge .print-kn-prose > :first-child {
+  margin-top: 0;
+}
+
+.print-knowledge .print-kn-prose blockquote {
+  border-left: 2.5px solid var(--kn-border);
+  padding: 2px 0 2px 14px;
+  color: var(--kn-muted);
+}
+
+.print-knowledge .print-kn-prose code {
+  font-family: var(--kn-font-mono);
+  font-size: 0.86em;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--kn-surface);
+  border: 1px solid var(--kn-border);
+  color: var(--kn-ink);
+}
+
+.print-knowledge .print-kn-prose pre {
+  font-family: var(--kn-font-mono);
+  font-size: 0.84em;
+  line-height: 1.55;
+  padding: 11px 13px;
+  border-radius: 6px;
+  background: var(--kn-surface);
+  border: 1px solid var(--kn-border);
+  color: var(--kn-ink);
+}
+
+.print-knowledge .print-kn-prose pre code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.print-knowledge .print-kn-prose table,
+.print-knowledge .print-kn-query {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9em;
+  line-height: 1.45;
+  text-align: left;
+}
+
+.print-knowledge .print-kn-prose th,
+.print-knowledge .print-kn-prose td,
+.print-knowledge .print-kn-query th,
+.print-knowledge .print-kn-query td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--kn-border);
+  vertical-align: top;
+}
+
+.print-knowledge .print-kn-prose th,
+.print-knowledge .print-kn-query th {
+  background: var(--kn-surface);
+  font-weight: 600;
+  color: var(--kn-ink);
+}
+
+.print-knowledge .print-kn-query-wrap {
+  border: 1px solid var(--kn-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.print-knowledge .print-kn-query-title {
+  font-weight: 600;
+  color: var(--kn-ink);
+}
+
+.print-knowledge .print-kn-query-more {
+  padding: 6px 10px;
+  font-size: 11.5px;
+  color: var(--kn-muted);
+  border-top: 1px solid var(--kn-border);
+  background: var(--kn-surface);
+}
+
+.print-knowledge .print-wikilink {
+  font-weight: 500;
+  color: var(--kn-ink);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--kn-muted) 40%, transparent);
+  text-underline-offset: 2px;
+}
+
+.print-knowledge .print-callout {
+  padding: 11px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--kn-border);
+  border-left: 3px solid var(--kn-accent);
+  background: #f8fafc;
+}
+
+.print-knowledge .print-callout[data-callout="tip"] {
+  border-left-color: #15803d;
+  background: #f4fbf6;
+}
+
+.print-knowledge .print-callout[data-callout="warning"] {
+  border-left-color: #b45309;
+  background: #fffaf0;
+}
+
+.print-knowledge .print-callout[data-callout="danger"] {
+  border-left-color: #b91c1c;
+  background: #fef5f5;
+}
+
+.print-knowledge .print-callout[data-callout="quote"] {
+  border-left-color: var(--kn-muted);
+  background: var(--kn-surface);
+}
+
+.print-knowledge .print-callout-title {
+  margin: 0;
+  font-size: 0.92em;
+  font-weight: 650;
+  color: var(--kn-ink);
+}
+
+.print-knowledge .print-callout-body {
+  margin-top: 6px;
+}
+
+.print-knowledge .print-embed-image {
+  margin: 4px 0;
+}
+
+.print-knowledge .print-embed-image img {
+  max-width: 100%;
+  max-height: 460px;
+  border-radius: 6px;
+  object-fit: contain;
+}
+
+.print-knowledge .print-embed-page {
+  margin: 4px 0;
+  padding: 12px 16px;
+  border-left: 3px solid var(--kn-border);
+  background: #fafafa;
+  border-radius: 0 8px 8px 0;
+}
+
+.print-knowledge .print-embed-caption {
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--kn-muted);
+}
+
+.print-knowledge .print-embed-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.print-knowledge .print-embed-ref {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--kn-border);
+  border-radius: 6px;
+  background: var(--kn-surface);
+  font-size: 12.5px;
+}
+
+.print-knowledge .print-embed-kind {
+  font-family: var(--kn-font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: white;
+  border: 1px solid var(--kn-border);
+  color: var(--kn-muted);
+}
+
+.print-knowledge .print-embed-name {
+  font-weight: 500;
+  color: var(--kn-ink);
+}
+
+.print-knowledge .print-embed-missing {
+  font-size: 12.5px;
+  font-style: italic;
+  color: var(--kn-muted);
+}
+
+/* Style: Editorial (classic serif long-form) */
+.print-knowledge[data-print-style="editorial"] {
+  --kn-ink: #1c1917;
+  --kn-ink-2: #292524;
+  --kn-muted: #57534e;
+  --kn-border: #d6d3d1;
+  --kn-surface: #f5f5f4;
+  --kn-accent: #9a3412;
+  font-family: var(--kn-font-serif);
+  font-size: 16px;
+  line-height: 1.78;
+}
+
+.print-knowledge[data-print-style="editorial"] .print-kn-header {
+  padding-bottom: 18px;
+  border-bottom: 1.5px solid var(--kn-ink);
+}
+
+.print-knowledge[data-print-style="editorial"] .print-kn-folder,
+.print-knowledge[data-print-style="editorial"] .print-kn-prop-key,
+.print-knowledge[data-print-style="editorial"] .print-kn-tag,
+.print-knowledge[data-print-style="editorial"] .print-kn-query th {
+  font-family: var(--kn-font-sans);
+}
+
+.print-knowledge[data-print-style="editorial"] .print-kn-title {
+  font-family: var(--kn-font-serif);
+  font-size: 31px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+
+.print-knowledge[data-print-style="editorial"] .print-kn-prose :is(h1, h2, h3, h4, h5) {
+  font-family: var(--kn-font-serif);
+  margin-top: 1.35em;
+}
+
+.print-knowledge[data-print-style="editorial"] .print-kn-prose blockquote {
+  font-style: italic;
+  border-left-color: var(--kn-muted);
+}
+
+/* Style: Compact (tighter type & spacing for dense notes) */
+.print-knowledge[data-print-style="compact"] {
+  font-size: 13px;
+  line-height: 1.48;
+  gap: 12px;
+}
+
+.print-knowledge[data-print-style="compact"] .print-kn-header {
+  gap: 6px;
+  padding-bottom: 10px;
+}
+
+.print-knowledge[data-print-style="compact"] .print-kn-title {
+  font-size: 22px;
+}
+
+.print-knowledge[data-print-style="compact"] .print-kn-props {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  padding-top: 8px;
+}
+
+.print-knowledge[data-print-style="compact"] .print-kn-prop-row {
+  display: inline-flex;
+  gap: 6px;
+  font-size: 11.5px;
+}
+
+.print-knowledge[data-print-style="compact"] .print-kn-body,
+.print-knowledge[data-print-style="compact"] .print-kn-prose {
+  gap: 8px;
+}
+
+.print-knowledge[data-print-style="compact"] .print-kn-prose :is(h1, h2) {
+  margin: 0.85em 0 0.1em;
+  font-size: 1.2em;
+}
+
+.print-knowledge[data-print-style="compact"] .print-kn-prose h3 {
+  margin: 0.75em 0 0.08em;
+  font-size: 1.1em;
+}
+
+.print-knowledge[data-print-style="compact"] .print-kn-prose th,
+.print-knowledge[data-print-style="compact"] .print-kn-prose td,
+.print-knowledge[data-print-style="compact"] .print-kn-query th,
+.print-knowledge[data-print-style="compact"] .print-kn-query td {
+  padding: 4px 8px;
+}
+
+.print-knowledge[data-print-style="compact"] .print-callout {
+  padding: 8px 11px;
+}
+
+/* Style: Technical (structured spec layout with monospace accents) */
+.print-knowledge[data-print-style="technical"] {
+  --kn-border: #d4d4d8;
+  --kn-surface: #f4f4f5;
+  --kn-accent: #0f766e;
+  font-size: 14px;
+  line-height: 1.58;
+}
+
+.print-knowledge[data-print-style="technical"] .print-kn-header {
+  padding: 14px 16px;
+  border: 1px solid var(--kn-border);
+  border-left: 3.5px solid var(--kn-accent);
+  border-radius: 6px;
+  background: #fafafa;
+}
+
+.print-knowledge[data-print-style="technical"] .print-kn-folder,
+.print-knowledge[data-print-style="technical"] .print-kn-prop-key,
+.print-knowledge[data-print-style="technical"] .print-kn-tag,
+.print-knowledge[data-print-style="technical"] .print-callout-title {
+  font-family: var(--kn-font-mono);
+}
+
+.print-knowledge[data-print-style="technical"] .print-kn-props {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px 18px;
+}
+
+.print-knowledge[data-print-style="technical"] .print-kn-prop-row {
+  grid-template-columns: 108px 1fr;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.print-knowledge[data-print-style="technical"] .print-kn-prose :is(h1, h2, h3) {
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--kn-border);
+}
+
+.print-knowledge[data-print-style="technical"] .print-kn-prose table {
+  border-style: hidden;
+}
+
+.print-knowledge[data-print-style="technical"] .print-kn-query {
+  border: 1px solid var(--kn-border);
+}
+
+.print-knowledge[data-print-style="technical"] .print-kn-prose th,
+.print-knowledge[data-print-style="technical"] .print-kn-prose td,
+.print-knowledge[data-print-style="technical"] .print-kn-query th,
+.print-knowledge[data-print-style="technical"] .print-kn-query td {
+  border: 1px solid var(--kn-border);
 }
 
 /*
