@@ -453,6 +453,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         toastStore.show(toast, from: webView)
     }
 
+    /// A toast a native screen shows; its action, dismissal or timeout comes back to `onEvent`.
+    func showNativeToast(_ toast: ToastItemModel, onEvent: @escaping @MainActor (ToastEventKind) -> Void) {
+        toastStore.show(toast, from: nil, onEvent: onEvent)
+    }
+
     func dismissToast(id: String) {
         toastStore.dismissFromPage(id: id)
     }

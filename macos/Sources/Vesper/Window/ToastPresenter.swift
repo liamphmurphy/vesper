@@ -26,12 +26,14 @@ final class ToastStore {
 
     private struct TimerEntry {
         weak var webView: WKWebView?
+        /// A native screen's handler, for a toast it showed itself (no page to tell).
+        var onEvent: (@MainActor (ToastEventKind) -> Void)?
         var remainingMs: Int
         var hovered: Bool
         var task: Task<Void, Never>?
     }
 
-    func show(_ toast: ToastItemModel, from webView: WKWebView?) {
+    func show(_ toast: ToastItemModel, from webView: WKWebView?, onEvent: (@MainActor (ToastEventKind) -> Void)? = nil) {
         let clampedDuration = max(500, toast.durationMs)
         let normalized = ToastItemModel(
             id: toast.id,
@@ -47,12 +49,13 @@ final class ToastStore {
             if let entry = entries.removeValue(forKey: gone.id) {
                 entry.task?.cancel()
                 ShellBridge.send(.toastEvent(id: gone.id, event: .dismissed), to: entry.webView)
+                entry.onEvent?(.dismissed)
             }
         }
         if let existing = entries.removeValue(forKey: normalized.id) {
             existing.task?.cancel()
         }
-        var entry = TimerEntry(webView: webView, remainingMs: clampedDuration, hovered: false, task: nil)
+        var entry = TimerEntry(webView: webView, onEvent: onEvent, remainingMs: clampedDuration, hovered: false, task: nil)
         entry.task = makeTimerTask(for: normalized.id)
         entries[normalized.id] = entry
     }
@@ -108,6 +111,7 @@ final class ToastStore {
         if let entry = entries.removeValue(forKey: id) {
             entry.task?.cancel()
             ShellBridge.send(.toastEvent(id: id, event: event), to: entry.webView)
+            entry.onEvent?(event)
         }
     }
 }

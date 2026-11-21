@@ -358,6 +358,43 @@ Manual click-through for the hosting path (with the debug screen enabled):
 6. Navigate to `/inbox` from the sidebar: the web Inbox shows with its own title and toolbar.
 7. Resolve an inbox item in another window: the Data section's count updates without Refresh.
 
+## Native screen: Inbox
+
+`/inbox` is native (`macos/Sources/Vesper/Native/Inbox/`, logic in VesperCore `Native/InboxLogic.swift`, a port
+of `web/lib/inbox.ts`, which stays for the web tray and dashboard). The web route is gone; in a browser `/inbox`
+is a 404. Grouping, Open/Done, sort, project filter, All clear with Still running, the detail pane's actions per
+kind, Sent markers and J/K/A/D/R/E/↵/? match the web. Added natively: ⌘/⇧-click multi-select with bulk Mark
+done/Reopen, a row context menu, and Undo of Mark done from the toast or ⌘Z (`POST /inbox/unread`). The project
+filter is remembered in the app's defaults (`VesperNativeInboxProject`), not shared with the web's page storage.
+Not ported yet: the PR feedback strip in PR feedback items and the dispatch banner in dispatch items (they come
+with the native Tickets screen); animated persona characters show as their initial (Native 10).
+
+1. Open Inbox from the sidebar: groups in urgency order with counts, title "Inbox", subtitle "N waiting on you".
+2. J/K move the selection (wrapping) and the pane follows; ↵ opens the item; ? opens the shortcuts window.
+3. On an approval: A approves (the row shows Sent, then leaves on the live update); D denies; R focuses the
+   note; ⌘↵ in the note approves; Esc returns to the list.
+4. On a question: R, type, ⌘↵: a comment mentioning the agent lands on the ticket.
+5. E marks done: the toast offers Undo; Undo (or ⌘Z) puts it back in Open.
+6. ⌘-click two rows, right-click: Mark 2 Done; switch to Done, select both, Reopen.
+7. Switch Project: the list filters and the choice survives a relaunch.
+8. Resolve an item from another window or the web: the row leaves without a refresh.
+9. Empty Open view: All clear, Still running lists live runs; "View all runs" opens Runs.
+
+Lessons from the pilot, for the next screens:
+
+- The store's `mutate(optimistic:)` covered every action; `invalidating:` must name the resources the web's
+  hook invalidated (inbox, tickets, runs…), or other open screens stay stale until the next hint.
+- Window services (toasts with actions, shortcuts, Quick Look, the undo manager, external links) are on
+  `NativeScreenContext`; native toasts report their action back through `showToast(_:onEvent:)`.
+- Shared views live in `Native/Shared/NativeComponents.swift` (`WorkPersonaAvatarView`, `TonePill`, `KeyCap`,
+  `SkeletonBar`, `.buttonStyle(.vesper(.primary))`, `QueryErrorView`); reuse them instead of re-deriving tokens.
+- Generated types follow the spec strictly: `InboxItem.ticketKey` is a required string ("" when none), not
+  optional. Check `required` in api/openapi.yaml rather than the web's optional chaining.
+- Keyboard: `.onKeyPress` on the screen with a `FocusState` for the list, so typing in a text box never
+  triggers list shortcuts.
+- The web page under a native route now renders its 404; nothing redirects unknown paths, so the native screen
+  stays. Don't add a catch-all redirect to the web router.
+
 ## Build and test
 
 - `make -C macos test` → `swift test` (VesperCore).

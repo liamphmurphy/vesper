@@ -399,3 +399,17 @@ func (q *Queries) SearchAttentionTargets(ctx context.Context, arg SearchAttentio
 	}
 	return items, nil
 }
+
+const unreadInboxItem = `-- name: UnreadInboxItem :exec
+DELETE FROM inbox_reads WHERE user_id=$1 AND item_id=$2
+`
+
+type UnreadInboxItemParams struct {
+	UserID uuid.UUID
+	ItemID string
+}
+
+func (q *Queries) UnreadInboxItem(ctx context.Context, arg UnreadInboxItemParams) error {
+	_, err := q.db.Exec(ctx, unreadInboxItem, arg.UserID, arg.ItemID)
+	return err
+}

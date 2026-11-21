@@ -17,6 +17,8 @@ final class NativeScreenContext {
     /// The screen's handler for its toolbar, title-menu and inspector commands.
     @ObservationIgnored var onCommand: ((NativeCommand) -> Void)?
     @ObservationIgnored var onChromeChange: ((NativeChrome) -> Void)?
+    /// The window around the tab, for toasts, shortcuts, Quick Look and its undo manager.
+    @ObservationIgnored var window: () -> MainWindowController? = { nil }
     @ObservationIgnored private let open: (String, Bool) -> Void
 
     init(match: NativeRouteMatch, store: QueryStore, open: @escaping (_ path: String, _ newTab: Bool) -> Void) {
@@ -29,6 +31,23 @@ final class NativeScreenContext {
     func navigate(_ path: String) { open(path, false) }
 
     func openInNewTab(_ path: String) { open(path, true) }
+
+    /// Shows a toast in the window; `onEvent` hears its action button, dismissal or timeout.
+    func showToast(_ toast: ToastItemModel, onEvent: @escaping @MainActor (ToastEventKind) -> Void = { _ in }) {
+        window()?.showNativeToast(toast, onEvent: onEvent)
+    }
+
+    func showShortcuts() { window()?.showShortcuts() }
+
+    func showQuickLook(_ items: [QuickLookItem], index: Int? = nil) { window()?.showQuickLook(items: items, index: index) }
+
+    /// The window's undo manager, so ⌘Z (Edit ▸ Undo) undoes a screen's action.
+    var undoManager: UndoManager? { window()?.window?.undoManager }
+
+    /// Opens an http(s) link in the default browser (pull requests, results on GitHub).
+    func openExternal(_ href: String) {
+        if let url = URL(string: href), url.scheme == "https" || url.scheme == "http" { NSWorkspace.shared.open(url) }
+    }
 
     /// The same screen with new parameters (e.g. another ticket): the screen keeps its state.
     func update(match: NativeRouteMatch) {
@@ -78,6 +97,7 @@ struct NativeScreenRoot: View {
     @ViewBuilder private var screen: some View {
         switch context.match.screen {
         case .debugPlaceholder: DebugPlaceholderScreen()
+        case .inbox: InboxScreen()
         }
     }
 }
