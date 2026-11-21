@@ -655,6 +655,8 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
     schemaCount: app.schema.length,
     schemaObjects: app.schema.map((o) => ({ type: o.type, name: o.name })),
     capabilities: perms.capabilities,
+    mounts: app.mounts,
+    requestedMounts: app.manifest.requested_mounts,
     toolScope: app.manifest.tool_scope === "app_only" ? "app_only" : "chats",
     versions: perms.versions.map((v) => ({
       seq: v.seq,
@@ -724,6 +726,13 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
           } else if (fieldId.startsWith("cap:")) {
             const capKey = fieldId.slice("cap:".length);
             perms.setCapabilityMode(capKey, value as CustomAppCapabilityMode);
+          } else if (fieldId === "nix_add") {
+            perms.addNixPackages(value);
+          } else if (fieldId === "mount_add") {
+            perms.addMount(value);
+          } else if (fieldId.startsWith("mount:")) {
+            const mountName = fieldId.slice("mount:".length);
+            perms.setMount(mountName, value);
           }
         },
         onAction: (actionId, itemId) => {
@@ -949,6 +958,9 @@ function useCustomAppPermissions(app: CustomAppDetail) {
 
   const versions = useMemo(() => [...app.versions].sort((a, b) => b.seq - a.seq), [app.versions]);
 
+  const NIX_PKG_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/;
+  const MOUNT_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,47}$/;
+
   const setCapabilityMode = (capKey: string, mode: CustomAppCapabilityMode) => {
     update.mutate(
       { capabilities: { ...app.capabilities, [capKey]: mode } },
@@ -956,6 +968,96 @@ function useCustomAppPermissions(app: CustomAppDetail) {
         onError: (e) => toast({ id: `cap-${app.slug}`, tone: "error", title: "Couldn’t update capability", description: errorText(e) }),
       },
     );
+  };
+
+  const addNixPackages = (raw: string) => {
+    const names = raw
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (names.length === 0) return;
+    for (const pkg of names) {
+      if (pkg === "." || pkg === ".." || !NIX_PKG_RE.test(pkg)) {
+        toast({
+          id: `nix-${app.slug}`,
+          tone: "error",
+          title: "Invalid Nix package name",
+          description: `“${pkg}” must be a nixpkgs attribute name like yt-dlp or ffmpeg.`,
+        });
+        return;
+      }
+    }
+    const nextCaps = { ...app.capabilities };
+    for (const pkg of names) {
+      nextCaps[`nix:${pkg}`] = "allowed";
+    }
+    update.mutate(
+      { capabilities: nextCaps },
+      {
+        onError: (e) => toast({ id: `nix-${app.slug}`, tone: "error", title: "Couldn’t add Nix package", description: errorText(e) }),
+      },
+    );
+  };
+
+  const setMount = (name: string, rawPath: string) => {
+    const trimmed = rawPath.trim();
+    if (trimmed && !trimmed.startsWith("/") && !(trimmed.startsWith("~/") && trimmed.length > 2)) {
+      toast({
+        id: `mount-${app.slug}`,
+        tone: "error",
+        title: "Invalid host mount path",
+        description: "Enter an absolute path (/...) or ~/... path.",
+      });
+      return;
+    }
+    const nextMounts = { ...(app.mounts ?? {}) };
+    if (trimmed === "") {
+      delete nextMounts[name];
+    } else {
+      nextMounts[name] = trimmed;
+    }
+    update.mutate(
+      { mounts: nextMounts },
+      {
+        onError: (e) => toast({ id: `mount-${app.slug}`, tone: "error", title: "Couldn’t update mount", description: errorText(e) }),
+      },
+    );
+  };
+
+  const addMount = (raw: string) => {
+    const trimmed = raw.trim();
+    if (!trimmed) return;
+    const eq = trimmed.indexOf("=");
+    if (eq <= 0) {
+      toast({
+        id: `mount-${app.slug}`,
+        tone: "error",
+        title: "Invalid mount format",
+        description: "Enter name=/path/to/file or name=~/...",
+      });
+      return;
+    }
+    const name = trimmed.slice(0, eq).trim();
+    const hostPath = trimmed.slice(eq + 1).trim();
+    if (!MOUNT_NAME_RE.test(name)) {
+      toast({
+        id: `mount-${app.slug}`,
+        tone: "error",
+        title: "Invalid mount name",
+        description: "Use 1–48 lowercase letters, digits, hyphens, or underscores.",
+      });
+      return;
+    }
+    if (!hostPath) {
+      toast({
+        id: `mount-${app.slug}`,
+        tone: "error",
+        title: "Mount path required",
+        description: "Enter name=/path/to/file or name=~/...",
+      });
+      return;
+    }
+    setMount(name, hostPath);
   };
 
   const setToolScope = (nextScope: "chats" | "app_only") => {
@@ -969,7 +1071,7 @@ function useCustomAppPermissions(app: CustomAppDetail) {
     update.mutate({ restore_seq: seq, note: `Restored v${seq}` });
   };
 
-  return { capabilities, versions, setCapabilityMode, setToolScope, restoreVersion, updating: update.isPending };
+  return { capabilities, versions, setCapabilityMode, addNixPackages, setMount, addMount, setToolScope, restoreVersion, updating: update.isPending };
 }
 
 function useCustomAppDockChat({

@@ -82,6 +82,14 @@ type Server struct {
 	// shared, because downloads outlive the request that starts them.
 	customAppMedia     *customapps.Media
 	customAppMediaOnce sync.Once
+	// CustomAppNixResolve overrides Nix package resolution, for tests.
+	CustomAppNixResolve func(context.Context, string) (string, error)
+	// CustomAppNixScratchDir sets where Nix job scratch directories live.
+	CustomAppNixScratchDir string
+	// CustomAppNixDisableSandbox disables Seatbelt sandboxing for Nix jobs, for tests.
+	CustomAppNixDisableSandbox bool
+	customAppNix               *customapps.Nix
+	customAppNixOnce           sync.Once
 	// GitHubAPIURL is GitHub's REST API for shipping approved pushes;
 	// api.github.com when empty (tests point elsewhere).
 	GitHubAPIURL string

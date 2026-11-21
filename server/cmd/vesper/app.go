@@ -262,16 +262,19 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 			Transcripts:           transcript.Shared,
 			RolloverContextTokens: int64(appCfg.RolloverContextTokens),
 		},
-		Wiki:           &wiki.Service{Pool: pool, Artifacts: arts, Tracker: trackerSvc},
-		PublicURL:      baseURL,
-		Blobs:          blobs,
-		ArtifactBucket: blobCfg.ArtifactBucket,
-		DesignWorker:   &designs.Worker{URL: designWorkerURL, Token: designToken},
-		Log:            log,
-		Usage:          &usage.Service{Q: q, Log: log, Queued: true},
-		Exporter:       exporter(appCfg, pool, log),
-		RunnerStarting: runnerStarting.Load,
+		Wiki:                   &wiki.Service{Pool: pool, Artifacts: arts, Tracker: trackerSvc},
+		PublicURL:              baseURL,
+		Blobs:                  blobs,
+		ArtifactBucket:         blobCfg.ArtifactBucket,
+		DesignWorker:           &designs.Worker{URL: designWorkerURL, Token: designToken},
+		Log:                    log,
+		Usage:                  &usage.Service{Q: q, Log: log, Queued: true},
+		Exporter:               exporter(appCfg, pool, log),
+		RunnerStarting:         runnerStarting.Load,
+		CustomAppNixScratchDir: filepath.Join(dataDir, "custom-app-nix"),
 	}
+	srv.Runs.CustomApps = srv.CustomApps()
+	defer srv.CloseCustomApps()
 	go srv.Wiki.RunVaultWorker(ctx, log)
 	if appCfg.PRSyncInterval > 0 {
 		prSyncer := &prsync.Syncer{Pool: pool, Secrets: secretsSvc, Tracker: trackerSvc, Log: log, MinAge: time.Duration(appCfg.PRSyncInterval) * time.Second}

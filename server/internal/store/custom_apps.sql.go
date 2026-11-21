@@ -16,7 +16,7 @@ import (
 const deleteCustomApp = `-- name: DeleteCustomApp :one
 DELETE FROM custom_apps
 WHERE workspace_id = $1 AND user_id = $2 AND slug = $3
-RETURNING id, workspace_id, user_id, slug, name, description, icon, space_id, current_seq, manifest, capabilities, created_at, updated_at
+RETURNING id, workspace_id, user_id, slug, name, description, icon, space_id, current_seq, manifest, capabilities, created_at, updated_at, mounts
 `
 
 type DeleteCustomAppParams struct {
@@ -42,6 +42,7 @@ func (q *Queries) DeleteCustomApp(ctx context.Context, arg DeleteCustomAppParams
 		&i.Capabilities,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Mounts,
 	)
 	return i, err
 }
@@ -77,6 +78,23 @@ func (q *Queries) DeleteCustomAppMedia(ctx context.Context, arg DeleteCustomAppM
 	var blob_key string
 	err := row.Scan(&blob_key)
 	return blob_key, err
+}
+
+const deleteCustomAppNixJob = `-- name: DeleteCustomAppNixJob :one
+DELETE FROM custom_app_nix_jobs WHERE id = $1 AND app_id = $2
+RETURNING work_dir
+`
+
+type DeleteCustomAppNixJobParams struct {
+	ID    uuid.UUID
+	AppID uuid.UUID
+}
+
+func (q *Queries) DeleteCustomAppNixJob(ctx context.Context, arg DeleteCustomAppNixJobParams) (string, error) {
+	row := q.db.QueryRow(ctx, deleteCustomAppNixJob, arg.ID, arg.AppID)
+	var work_dir string
+	err := row.Scan(&work_dir)
+	return work_dir, err
 }
 
 const deleteCustomAppSpace = `-- name: DeleteCustomAppSpace :exec
@@ -127,8 +145,39 @@ func (q *Queries) FinishCustomAppMedia(ctx context.Context, arg FinishCustomAppM
 	return result.RowsAffected(), nil
 }
 
+const finishCustomAppNixJob = `-- name: FinishCustomAppNixJob :execrows
+UPDATE custom_app_nix_jobs
+SET state = $1, exit_code = $2, stdout = $3, stderr = $4, error = $5, updated_at = now()
+WHERE id = $6 AND state IN ('resolving', 'running')
+`
+
+type FinishCustomAppNixJobParams struct {
+	State    string
+	ExitCode *int32
+	Stdout   string
+	Stderr   string
+	Error    string
+	ID       uuid.UUID
+}
+
+// Only an active job can finish, so a deleted row stays gone.
+func (q *Queries) FinishCustomAppNixJob(ctx context.Context, arg FinishCustomAppNixJobParams) (int64, error) {
+	result, err := q.db.Exec(ctx, finishCustomAppNixJob,
+		arg.State,
+		arg.ExitCode,
+		arg.Stdout,
+		arg.Stderr,
+		arg.Error,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getCustomAppBySlug = `-- name: GetCustomAppBySlug :one
-SELECT a.id, a.workspace_id, a.user_id, a.slug, a.name, a.description, a.icon, a.space_id, a.current_seq, a.manifest, a.capabilities, a.created_at, a.updated_at, db.size_bytes,
+SELECT a.id, a.workspace_id, a.user_id, a.slug, a.name, a.description, a.icon, a.space_id, a.current_seq, a.manifest, a.capabilities, a.created_at, a.updated_at, a.mounts, db.size_bytes,
        (COALESCE(v.bundle_mcp_js, '') <> '')::bool AS has_mcp_server,
        COALESCE(v.mcp_tools, '[]'::jsonb)::jsonb AS mcp_tools
 FROM custom_apps a
@@ -157,6 +206,7 @@ type GetCustomAppBySlugRow struct {
 	Capabilities json.RawMessage
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+	Mounts       json.RawMessage
 	SizeBytes    *int32
 	HasMcpServer bool
 	McpTools     json.RawMessage
@@ -179,6 +229,7 @@ func (q *Queries) GetCustomAppBySlug(ctx context.Context, arg GetCustomAppBySlug
 		&i.Capabilities,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Mounts,
 		&i.SizeBytes,
 		&i.HasMcpServer,
 		&i.McpTools,
@@ -224,7 +275,7 @@ func (q *Queries) GetCustomAppDatabaseForUpdate(ctx context.Context, appID uuid.
 }
 
 const getCustomAppForUpdate = `-- name: GetCustomAppForUpdate :one
-SELECT id, workspace_id, user_id, slug, name, description, icon, space_id, current_seq, manifest, capabilities, created_at, updated_at FROM custom_apps
+SELECT id, workspace_id, user_id, slug, name, description, icon, space_id, current_seq, manifest, capabilities, created_at, updated_at, mounts FROM custom_apps
 WHERE workspace_id = $1 AND user_id = $2 AND slug = $3
 FOR UPDATE
 `
@@ -252,6 +303,7 @@ func (q *Queries) GetCustomAppForUpdate(ctx context.Context, arg GetCustomAppFor
 		&i.Capabilities,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Mounts,
 	)
 	return i, err
 }
@@ -277,6 +329,35 @@ func (q *Queries) GetCustomAppMedia(ctx context.Context, arg GetCustomAppMediaPa
 		&i.ContentType,
 		&i.BytesDone,
 		&i.BytesTotal,
+		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getCustomAppNixJob = `-- name: GetCustomAppNixJob :one
+SELECT id, app_id, packages, command, state, exit_code, work_dir, stdout, stderr, error, created_at, updated_at FROM custom_app_nix_jobs WHERE id = $1 AND app_id = $2
+`
+
+type GetCustomAppNixJobParams struct {
+	ID    uuid.UUID
+	AppID uuid.UUID
+}
+
+func (q *Queries) GetCustomAppNixJob(ctx context.Context, arg GetCustomAppNixJobParams) (CustomAppNixJob, error) {
+	row := q.db.QueryRow(ctx, getCustomAppNixJob, arg.ID, arg.AppID)
+	var i CustomAppNixJob
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.Packages,
+		&i.Command,
+		&i.State,
+		&i.ExitCode,
+		&i.WorkDir,
+		&i.Stdout,
+		&i.Stderr,
 		&i.Error,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -316,7 +397,7 @@ func (q *Queries) GetCustomAppVersion(ctx context.Context, arg GetCustomAppVersi
 }
 
 const getCustomAppWithMCPByID = `-- name: GetCustomAppWithMCPByID :one
-SELECT a.id, a.workspace_id, a.user_id, a.slug, a.name, a.description, a.manifest, a.capabilities, a.current_seq, v.bundle_mcp_js, v.mcp_tools
+SELECT a.id, a.workspace_id, a.user_id, a.slug, a.name, a.description, a.manifest, a.capabilities, a.mounts, a.current_seq, v.bundle_mcp_js, v.mcp_tools
 FROM custom_apps a
 JOIN custom_app_versions v ON v.app_id = a.id AND v.seq = a.current_seq
 WHERE a.workspace_id = $1 AND a.user_id = $2 AND a.id = $3
@@ -337,6 +418,7 @@ type GetCustomAppWithMCPByIDRow struct {
 	Description  string
 	Manifest     json.RawMessage
 	Capabilities json.RawMessage
+	Mounts       json.RawMessage
 	CurrentSeq   int32
 	BundleMcpJs  string
 	McpTools     json.RawMessage
@@ -354,6 +436,7 @@ func (q *Queries) GetCustomAppWithMCPByID(ctx context.Context, arg GetCustomAppW
 		&i.Description,
 		&i.Manifest,
 		&i.Capabilities,
+		&i.Mounts,
 		&i.CurrentSeq,
 		&i.BundleMcpJs,
 		&i.McpTools,
@@ -362,7 +445,7 @@ func (q *Queries) GetCustomAppWithMCPByID(ctx context.Context, arg GetCustomAppW
 }
 
 const getCustomAppWithMCPBySlug = `-- name: GetCustomAppWithMCPBySlug :one
-SELECT a.id, a.workspace_id, a.user_id, a.slug, a.name, a.description, a.manifest, a.capabilities, a.current_seq, v.bundle_mcp_js, v.mcp_tools
+SELECT a.id, a.workspace_id, a.user_id, a.slug, a.name, a.description, a.manifest, a.capabilities, a.mounts, a.current_seq, v.bundle_mcp_js, v.mcp_tools
 FROM custom_apps a
 JOIN custom_app_versions v ON v.app_id = a.id AND v.seq = a.current_seq
 WHERE a.workspace_id = $1 AND a.user_id = $2 AND a.slug = $3
@@ -383,6 +466,7 @@ type GetCustomAppWithMCPBySlugRow struct {
 	Description  string
 	Manifest     json.RawMessage
 	Capabilities json.RawMessage
+	Mounts       json.RawMessage
 	CurrentSeq   int32
 	BundleMcpJs  string
 	McpTools     json.RawMessage
@@ -400,6 +484,7 @@ func (q *Queries) GetCustomAppWithMCPBySlug(ctx context.Context, arg GetCustomAp
 		&i.Description,
 		&i.Manifest,
 		&i.Capabilities,
+		&i.Mounts,
 		&i.CurrentSeq,
 		&i.BundleMcpJs,
 		&i.McpTools,
@@ -408,9 +493,9 @@ func (q *Queries) GetCustomAppWithMCPBySlug(ctx context.Context, arg GetCustomAp
 }
 
 const insertCustomApp = `-- name: InsertCustomApp :one
-INSERT INTO custom_apps (workspace_id, user_id, slug, name, description, icon, space_id, current_seq, manifest, capabilities)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-RETURNING id, workspace_id, user_id, slug, name, description, icon, space_id, current_seq, manifest, capabilities, created_at, updated_at
+INSERT INTO custom_apps (workspace_id, user_id, slug, name, description, icon, space_id, current_seq, manifest, capabilities, mounts)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+RETURNING id, workspace_id, user_id, slug, name, description, icon, space_id, current_seq, manifest, capabilities, created_at, updated_at, mounts
 `
 
 type InsertCustomAppParams struct {
@@ -424,6 +509,7 @@ type InsertCustomAppParams struct {
 	CurrentSeq   int32
 	Manifest     json.RawMessage
 	Capabilities json.RawMessage
+	Mounts       json.RawMessage
 }
 
 func (q *Queries) InsertCustomApp(ctx context.Context, arg InsertCustomAppParams) (CustomApp, error) {
@@ -438,6 +524,7 @@ func (q *Queries) InsertCustomApp(ctx context.Context, arg InsertCustomAppParams
 		arg.CurrentSeq,
 		arg.Manifest,
 		arg.Capabilities,
+		arg.Mounts,
 	)
 	var i CustomApp
 	err := row.Scan(
@@ -454,6 +541,7 @@ func (q *Queries) InsertCustomApp(ctx context.Context, arg InsertCustomAppParams
 		&i.Capabilities,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Mounts,
 	)
 	return i, err
 }
@@ -490,6 +578,85 @@ func (q *Queries) InsertCustomAppMedia(ctx context.Context, arg InsertCustomAppM
 		&i.ContentType,
 		&i.BytesDone,
 		&i.BytesTotal,
+		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const insertCustomAppMediaDone = `-- name: InsertCustomAppMediaDone :one
+INSERT INTO custom_app_media (app_id, source_url, state, blob_key, content_type, bytes_done, bytes_total)
+VALUES ($1, $2, 'done', $3, $4, $5, $6)
+RETURNING id, app_id, source_url, state, blob_key, content_type, bytes_done, bytes_total, error, created_at, updated_at
+`
+
+type InsertCustomAppMediaDoneParams struct {
+	AppID       uuid.UUID
+	SourceUrl   string
+	BlobKey     string
+	ContentType string
+	BytesDone   int64
+	BytesTotal  *int64
+}
+
+func (q *Queries) InsertCustomAppMediaDone(ctx context.Context, arg InsertCustomAppMediaDoneParams) (CustomAppMedium, error) {
+	row := q.db.QueryRow(ctx, insertCustomAppMediaDone,
+		arg.AppID,
+		arg.SourceUrl,
+		arg.BlobKey,
+		arg.ContentType,
+		arg.BytesDone,
+		arg.BytesTotal,
+	)
+	var i CustomAppMedium
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.SourceUrl,
+		&i.State,
+		&i.BlobKey,
+		&i.ContentType,
+		&i.BytesDone,
+		&i.BytesTotal,
+		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const insertCustomAppNixJob = `-- name: InsertCustomAppNixJob :one
+INSERT INTO custom_app_nix_jobs (app_id, packages, command, state, work_dir)
+VALUES ($1, $2, $3, 'resolving', $4)
+RETURNING id, app_id, packages, command, state, exit_code, work_dir, stdout, stderr, error, created_at, updated_at
+`
+
+type InsertCustomAppNixJobParams struct {
+	AppID    uuid.UUID
+	Packages []string
+	Command  string
+	WorkDir  string
+}
+
+func (q *Queries) InsertCustomAppNixJob(ctx context.Context, arg InsertCustomAppNixJobParams) (CustomAppNixJob, error) {
+	row := q.db.QueryRow(ctx, insertCustomAppNixJob,
+		arg.AppID,
+		arg.Packages,
+		arg.Command,
+		arg.WorkDir,
+	)
+	var i CustomAppNixJob
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.Packages,
+		&i.Command,
+		&i.State,
+		&i.ExitCode,
+		&i.WorkDir,
+		&i.Stdout,
+		&i.Stderr,
 		&i.Error,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -579,6 +746,35 @@ func (q *Queries) ListCustomAppMediaBlobKeys(ctx context.Context, appID uuid.UUI
 	return items, nil
 }
 
+const listCustomAppNixJobWorkDirs = `-- name: ListCustomAppNixJobWorkDirs :many
+SELECT id, work_dir FROM custom_app_nix_jobs WHERE app_id = $1
+`
+
+type ListCustomAppNixJobWorkDirsRow struct {
+	ID      uuid.UUID
+	WorkDir string
+}
+
+func (q *Queries) ListCustomAppNixJobWorkDirs(ctx context.Context, appID uuid.UUID) ([]ListCustomAppNixJobWorkDirsRow, error) {
+	rows, err := q.db.Query(ctx, listCustomAppNixJobWorkDirs, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCustomAppNixJobWorkDirsRow{}
+	for rows.Next() {
+		var i ListCustomAppNixJobWorkDirsRow
+		if err := rows.Scan(&i.ID, &i.WorkDir); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCustomAppVersions = `-- name: ListCustomAppVersions :many
 SELECT id, app_id, seq, note, author_type, agent_id, created_at
 FROM custom_app_versions
@@ -626,7 +822,7 @@ func (q *Queries) ListCustomAppVersions(ctx context.Context, appID uuid.UUID) ([
 
 const listCustomApps = `-- name: ListCustomApps :many
 
-SELECT a.id, a.workspace_id, a.user_id, a.slug, a.name, a.description, a.icon, a.space_id, a.current_seq, a.manifest, a.capabilities, a.created_at, a.updated_at, db.size_bytes,
+SELECT a.id, a.workspace_id, a.user_id, a.slug, a.name, a.description, a.icon, a.space_id, a.current_seq, a.manifest, a.capabilities, a.created_at, a.updated_at, a.mounts, db.size_bytes,
        (COALESCE(v.bundle_mcp_js, '') <> '')::bool AS has_mcp_server,
        COALESCE(v.mcp_tools, '[]'::jsonb)::jsonb AS mcp_tools
 FROM custom_apps a
@@ -655,6 +851,7 @@ type ListCustomAppsRow struct {
 	Capabilities json.RawMessage
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+	Mounts       json.RawMessage
 	SizeBytes    *int32
 	HasMcpServer bool
 	McpTools     json.RawMessage
@@ -684,6 +881,7 @@ func (q *Queries) ListCustomApps(ctx context.Context, arg ListCustomAppsParams) 
 			&i.Capabilities,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Mounts,
 			&i.SizeBytes,
 			&i.HasMcpServer,
 			&i.McpTools,
@@ -699,7 +897,7 @@ func (q *Queries) ListCustomApps(ctx context.Context, arg ListCustomAppsParams) 
 }
 
 const listCustomAppsWithMCP = `-- name: ListCustomAppsWithMCP :many
-SELECT a.id, a.slug, a.name, a.description, a.manifest, a.capabilities, a.current_seq, v.bundle_mcp_js, v.mcp_tools
+SELECT a.id, a.slug, a.name, a.description, a.manifest, a.capabilities, a.mounts, a.current_seq, v.bundle_mcp_js, v.mcp_tools
 FROM custom_apps a
 JOIN custom_app_versions v ON v.app_id = a.id AND v.seq = a.current_seq
 WHERE a.workspace_id = $1 AND a.user_id = $2 AND v.bundle_mcp_js <> ''
@@ -718,6 +916,7 @@ type ListCustomAppsWithMCPRow struct {
 	Description  string
 	Manifest     json.RawMessage
 	Capabilities json.RawMessage
+	Mounts       json.RawMessage
 	CurrentSeq   int32
 	BundleMcpJs  string
 	McpTools     json.RawMessage
@@ -739,6 +938,7 @@ func (q *Queries) ListCustomAppsWithMCP(ctx context.Context, arg ListCustomAppsW
 			&i.Description,
 			&i.Manifest,
 			&i.Capabilities,
+			&i.Mounts,
 			&i.CurrentSeq,
 			&i.BundleMcpJs,
 			&i.McpTools,
@@ -784,6 +984,22 @@ func (q *Queries) SetCustomAppMediaProgress(ctx context.Context, arg SetCustomAp
 	return err
 }
 
+const setCustomAppNixJobRunning = `-- name: SetCustomAppNixJobRunning :exec
+UPDATE custom_app_nix_jobs
+SET state = 'running', work_dir = $1, updated_at = now()
+WHERE id = $2 AND state = 'resolving'
+`
+
+type SetCustomAppNixJobRunningParams struct {
+	WorkDir string
+	ID      uuid.UUID
+}
+
+func (q *Queries) SetCustomAppNixJobRunning(ctx context.Context, arg SetCustomAppNixJobRunningParams) error {
+	_, err := q.db.Exec(ctx, setCustomAppNixJobRunning, arg.WorkDir, arg.ID)
+	return err
+}
+
 const syncAppSpaceMeta = `-- name: SyncAppSpaceMeta :exec
 UPDATE chat_spaces
 SET name = $2, instructions = $3, updated_at = now()
@@ -805,7 +1021,7 @@ const updateCustomAppCapabilities = `-- name: UpdateCustomAppCapabilities :one
 UPDATE custom_apps
 SET capabilities = $2, updated_at = now()
 WHERE workspace_id = $1 AND user_id = $3 AND slug = $4
-RETURNING id, workspace_id, user_id, slug, name, description, icon, space_id, current_seq, manifest, capabilities, created_at, updated_at
+RETURNING id, workspace_id, user_id, slug, name, description, icon, space_id, current_seq, manifest, capabilities, created_at, updated_at, mounts
 `
 
 type UpdateCustomAppCapabilitiesParams struct {
@@ -837,6 +1053,7 @@ func (q *Queries) UpdateCustomAppCapabilities(ctx context.Context, arg UpdateCus
 		&i.Capabilities,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Mounts,
 	)
 	return i, err
 }
@@ -862,7 +1079,7 @@ const updateCustomAppHead = `-- name: UpdateCustomAppHead :one
 UPDATE custom_apps
 SET name = $2, description = $3, icon = $4, current_seq = $5, manifest = $6, capabilities = $7, updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, user_id, slug, name, description, icon, space_id, current_seq, manifest, capabilities, created_at, updated_at
+RETURNING id, workspace_id, user_id, slug, name, description, icon, space_id, current_seq, manifest, capabilities, created_at, updated_at, mounts
 `
 
 type UpdateCustomAppHeadParams struct {
@@ -900,6 +1117,65 @@ func (q *Queries) UpdateCustomAppHead(ctx context.Context, arg UpdateCustomAppHe
 		&i.Capabilities,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Mounts,
 	)
 	return i, err
+}
+
+const updateCustomAppMounts = `-- name: UpdateCustomAppMounts :one
+UPDATE custom_apps
+SET mounts = $2, updated_at = now()
+WHERE workspace_id = $1 AND user_id = $3 AND slug = $4
+RETURNING id, workspace_id, user_id, slug, name, description, icon, space_id, current_seq, manifest, capabilities, created_at, updated_at, mounts
+`
+
+type UpdateCustomAppMountsParams struct {
+	WorkspaceID uuid.UUID
+	Mounts      json.RawMessage
+	UserID      uuid.UUID
+	Slug        string
+}
+
+func (q *Queries) UpdateCustomAppMounts(ctx context.Context, arg UpdateCustomAppMountsParams) (CustomApp, error) {
+	row := q.db.QueryRow(ctx, updateCustomAppMounts,
+		arg.WorkspaceID,
+		arg.Mounts,
+		arg.UserID,
+		arg.Slug,
+	)
+	var i CustomApp
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.Slug,
+		&i.Name,
+		&i.Description,
+		&i.Icon,
+		&i.SpaceID,
+		&i.CurrentSeq,
+		&i.Manifest,
+		&i.Capabilities,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Mounts,
+	)
+	return i, err
+}
+
+const updateCustomAppNixJobOutput = `-- name: UpdateCustomAppNixJobOutput :exec
+UPDATE custom_app_nix_jobs
+SET stdout = $1, stderr = $2, updated_at = now()
+WHERE id = $3 AND state IN ('resolving', 'running')
+`
+
+type UpdateCustomAppNixJobOutputParams struct {
+	Stdout string
+	Stderr string
+	ID     uuid.UUID
+}
+
+func (q *Queries) UpdateCustomAppNixJobOutput(ctx context.Context, arg UpdateCustomAppNixJobOutputParams) error {
+	_, err := q.db.Exec(ctx, updateCustomAppNixJobOutput, arg.Stdout, arg.Stderr, arg.ID)
+	return err
 }

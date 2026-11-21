@@ -235,7 +235,7 @@ test("buildCustomAppCapabilities surfaces configured API secrets without manifes
   ]);
 });
 
-test("buildCustomAppCapabilities deduplicates requested/granted secrets, keeps unknown secrets, and drops app.sql:*", () => {
+test("buildCustomAppCapabilities deduplicates requested/granted secrets, keeps unknown secrets, formats nix packages, and drops app.sql:*", () => {
   const caps = buildCustomAppCapabilities({
     connectors: [],
     secrets: [{ handle: "youtube-data-api", name: "YouTube Data API", allowedHosts: ["www.googleapis.com"] }],
@@ -243,12 +243,14 @@ test("buildCustomAppCapabilities deduplicates requested/granted secrets, keeps u
       "app.sql:read": "allowed",
       "secret:youtube-data-api": "requires_approval",
       "secret:missing-key": "requires_approval",
+      "nix:yt-dlp": "requires_approval",
     },
     grantedCapabilities: {
       "app.sql:read": "allowed",
       "app.sql:write": "allowed",
       "secret:youtube-data-api": "denied",
       "app.http:outbound": "allowed",
+      "nix:yt-dlp": "allowed",
     },
   });
 
@@ -259,6 +261,7 @@ test("buildCustomAppCapabilities deduplicates requested/granted secrets, keeps u
     "app.media:download",
     "secret:youtube-data-api",
     "secret:missing-key",
+    "nix:yt-dlp",
   ]);
   assert.deepEqual(caps[4], {
     key: "secret:youtube-data-api",
@@ -274,6 +277,13 @@ test("buildCustomAppCapabilities deduplicates requested/granted secrets, keeps u
     mode: "denied",
     requested: "requires_approval",
   });
+  assert.deepEqual(caps[6], {
+    key: "nix:yt-dlp",
+    label: "Nix · yt-dlp",
+    hint: "Run nixpkgs#yt-dlp in a background tool job",
+    mode: "allowed",
+    requested: "requires_approval",
+  });
 
   const sections = buildCustomAppInspectorSections({
     hasMcpServer: true,
@@ -284,10 +294,28 @@ test("buildCustomAppCapabilities deduplicates requested/granted secrets, keeps u
     schemaCount: 1,
     schemaObjects: [{ type: "table", name: "items" }],
     capabilities: caps,
+    mounts: { extra: "/tmp/extra", cookies: "~/cookies.txt" },
+    requestedMounts: [{ name: "cookies", description: "YouTube cookies.txt" }, { name: "profile", description: "Firefox profile" }],
     toolScope: "chats",
     versions: [],
   });
   const capSection = sections.find((s) => s.id === "capabilities");
   const ytItem = capSection?.items.find((i) => i.id === "cap:secret:youtube-data-api");
   assert.equal(ytItem?.detail, "youtube-data-api · www.googleapis.com (manifest requests ask)");
+
+  const nixSection = sections.find((s) => s.id === "nix_packages");
+  assert.equal(nixSection?.items[0]?.id, "nix_add");
+  assert.equal(nixSection?.items[0]?.kind, "text");
+
+  const mountsSection = sections.find((s) => s.id === "mounts");
+  assert.deepEqual(
+    mountsSection?.items.map((i) => ({ id: i.id, value: i.value })),
+    [
+      { id: "mount:cookies", value: "~/cookies.txt" },
+      { id: "mount:profile", value: "" },
+      { id: "mount:extra", value: "/tmp/extra" },
+      { id: "mount_add", value: "" },
+    ],
+  );
+  assert.equal(mountsSection?.items[1]?.placeholder, "Firefox profile (/path or ~/...)");
 });

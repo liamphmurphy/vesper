@@ -164,3 +164,128 @@ func TestClassifySQLAndServiceLifecycle(t *testing.T) {
 		t.Fatalf("Delete: %v", err)
 	}
 }
+
+func TestNixCapabilityAndMountValidation(t *testing.T) {
+	for _, pkg := range []string{"yt-dlp", "ffmpeg", "python3.12", "g++", "node_24"} {
+		if got, err := ValidNixPackage(pkg); err != nil || got != pkg {
+			t.Errorf("ValidNixPackage(%q) = %q, %v", pkg, got, err)
+		}
+		if err := ValidCapabilityKey("nix:" + pkg); err != nil {
+			t.Errorf("ValidCapabilityKey(nix:%s) failed: %v", pkg, err)
+		}
+	}
+	for _, bad := range []string{"", "*", ".", "..", "-flag", "github:a/b", "a/b", "a b"} {
+		if _, err := ValidNixPackage(bad); err == nil {
+			t.Errorf("ValidNixPackage(%q) succeeded, want error", bad)
+		}
+		if err := ValidCapabilityKey("nix:" + bad); err == nil {
+			t.Errorf("ValidCapabilityKey(nix:%s) succeeded, want error", bad)
+		}
+	}
+
+	caps := DefaultCapabilities(Capabilities{
+		"nix:yt-dlp":         agentdef.Allowed,
+		"app.sql:read":       agentdef.Allowed,
+		"app.media:download": agentdef.Allowed,
+	})
+	if caps["nix:yt-dlp"] != agentdef.RequiresApproval {
+		t.Fatalf("DefaultCapabilities(nix:yt-dlp) = %q, want requires_approval", caps["nix:yt-dlp"])
+	}
+	if caps["app.media:download"] != agentdef.RequiresApproval {
+		t.Fatalf("DefaultCapabilities(app.media:download) = %q, want requires_approval", caps["app.media:download"])
+	}
+
+	mounts, err := NormalizeMounts(Mounts{
+		"cookies": "  ~/cookies.txt  ",
+		"empty":   "   ",
+		"media":   "/tmp/media",
+	})
+	if err != nil {
+		t.Fatalf("NormalizeMounts valid: %v", err)
+	}
+	if mounts["cookies"] != "~/cookies.txt" || mounts["media"] != "/tmp/media" {
+		t.Fatalf("NormalizeMounts = %#v", mounts)
+	}
+	if _, hasEmpty := mounts["empty"]; hasEmpty {
+		t.Fatalf("NormalizeMounts kept empty value: %#v", mounts)
+	}
+	for name, path := range map[string]string{
+		"BAD":     "/tmp/x",
+		"cookies": "relative/path.txt",
+		"tilde":   "~/",
+		"nul":     "/tmp/a\x00b",
+	} {
+		if _, err := NormalizeMounts(Mounts{name: path}); err == nil {
+			t.Errorf("NormalizeMounts(%q: %q) succeeded, want error", name, path)
+		}
+	}
+
+	m, err := NormalizeManifest(Manifest{
+		Entry: "app.tsx",
+		RequestedMounts: []MountRequest{
+			{Name: "cookies", Description: "  YouTube cookies.txt  "},
+		},
+	}, map[string]string{"app.tsx": "export default () => null;"})
+	if err != nil || len(m.RequestedMounts) != 1 || m.RequestedMounts[0].Description != "YouTube cookies.txt" {
+		t.Fatalf("NormalizeManifest valid requested_mounts = %+v, err=%v", m.RequestedMounts, err)
+	}
+	if _, err := NormalizeManifest(Manifest{
+		Entry: "app.tsx",
+		RequestedMounts: []MountRequest{
+			{Name: "cookies"},
+			{Name: "cookies"},
+		},
+	}, map[string]string{"app.tsx": "export default () => null;"}); err == nil {
+		t.Fatal("duplicate requested mount succeeded, want error")
+	}
+}
+
+func TestServiceUpdatePreservesMountsWhenNil(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	if _, err := seed.Run(ctx, pool, seed.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	u, err := store.New(pool).GetLocalUser(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	svc := &Service{Pool: pool}
+	app, err := svc.Create(ctx, u.WorkspaceID, u.ID, CreateInput{
+		Slug:     "mount-test",
+		Name:     "Mount Test",
+		Template: "blank",
+		Mounts:   Mounts{"cookies": "~/cookies.txt"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if app.Mounts["cookies"] != "~/cookies.txt" {
+		t.Fatalf("created Mounts = %#v", app.Mounts)
+	}
+
+	// Updating files/name with Mounts == nil leaves configured mounts intact.
+	newName := "Mount Test 2"
+	updated, err := svc.Update(ctx, u.WorkspaceID, u.ID, "mount-test", UpdateInput{
+		Name: &newName,
+	})
+	if err != nil {
+		t.Fatalf("Update name only: %v", err)
+	}
+	if updated.Mounts["cookies"] != "~/cookies.txt" {
+		t.Fatalf("Update with Mounts==nil clobbered mounts: %#v", updated.Mounts)
+	}
+
+	// Clearing via empty value removes the mount.
+	cleared := Mounts{"cookies": ""}
+	updated, err = svc.Update(ctx, u.WorkspaceID, u.ID, "mount-test", UpdateInput{
+		Mounts: &cleared,
+	})
+	if err != nil {
+		t.Fatalf("Update clear mount: %v", err)
+	}
+	if len(updated.Mounts) != 0 {
+		t.Fatalf("expected empty mounts after clearing, got %#v", updated.Mounts)
+	}
+}
