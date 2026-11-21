@@ -61,13 +61,14 @@ web-deps: $(WEB_DEPS) ## Install web dependencies if the lockfile changed
 web: web-deps ## Run the Vite dev server
 	cd web && DESIGN_WORKER_TOKEN=$${DESIGN_WORKER_TOKEN:-vesper-local-design-worker} npm run dev
 
-gen: web-deps ## Regenerate API code (Go + TS) and sqlc queries. Needs sqlc 1.31+ on PATH.
+gen: web-deps ## Regenerate API code (Go, TS and the Mac app's Swift) and sqlc queries. Needs sqlc 1.31+ on PATH.
 	cd server && go generate ./...
 	cd server && sqlc generate
 	cd web && npm run gen
+	cd server && go run ./cmd/gen-swift-api -spec ../api/openapi.yaml -out ../macos/Sources/VesperCore/API/Generated
 
 gen-check: gen ## Fail if generated code is out of date
-	@git diff --exit-code -- server/internal/api server/internal/store web/lib/api || \
+	@git diff --exit-code -- server/internal/api server/internal/store web/lib/api macos/Sources/VesperCore/API/Generated || \
 	  (echo "generated code is stale: run 'make gen' and commit" && exit 1)
 
 test: test-server test-web ## Run backend and UI tests

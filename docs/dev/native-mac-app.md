@@ -283,7 +283,8 @@ macos/Package.swift                 SwiftPM; macOS 15+
 macos/Sources/VesperCore/           logic with no AppKit UI (unit-tested)
   Bridge/       Protocol.swift (Codable mirror), BridgeOrigin.swift
   Stack/        StackController, SecretsKey (+ safeStorage migration), StackHealth, BundledResources
-  API/          APIClient (session cookie), InboxMonitor, RunMonitor, EventStream (SSE)
+  API/          APIClient (session cookie), InboxMonitor, RunMonitor, EventStream (SSE), APIRuntime,
+                QueryStore + LiveUpdates (native screens' cache), Generated/ (from api/openapi.yaml)
   Settings/     NativeSettings (config.json "native"), SessionStore (session.json)
   Model/        DeepLinks, Routing, InspectorLogic, FindLogic, ShortcutsCatalog, ToastQueueLogic, QuickLookLogic, NotificationPolicy, TrayModel, DockModel, Capture, Drop, Power, Thermal, Backups, Updates, WorkspaceOpen
 macos/Sources/Vesper/               the app (AppKit + SwiftUI)
@@ -302,6 +303,23 @@ macos/scripts/gen-icon.mjs, gen-tray-icons.mjs   regenerate Resources/AppIcon.ic
 macos/Makefile                      build, test, app, dmg, run, reinstall
 macos/staged/                       staged resources (git-ignored; scripts/stage-mac-resources.sh)
 ```
+
+## Native screens: API client and data store
+
+Native screens (epic "Native Swift screens") talk to the API through generated Swift, not the bridge:
+
+- `make gen` runs `server/cmd/gen-swift-api`, which writes `API/Generated/API+Schemas.gen.swift`
+  (a Codable struct per schema, under the `API` namespace) and `API+Operations.gen.swift` (one
+  `API.<operationId>(…)` per operation returning an `APIRequest<Response>`). It's Go on kin-openapi
+  rather than swift-openapi-generator because the package fetches no SwiftPM dependency (the macOS
+  VM has no network). `make gen-check` and `go test ./cmd/gen-swift-api` fail when it's stale.
+- Decoding is strict for required scalars and lenient where Go is loose: a required array or map
+  decodes `null` as empty, and string enums are open (`APIStringEnum`), so a newer server's value
+  still decodes. A nullable optional member is `APINullable<T>?`: nil omits it, `.null` clears it.
+- `QueryStore` (one per app, `AppModel.system.store`) is the React Query counterpart: entries keyed by
+  path and query, `load` from `.task`/`onAppear` (never a view body), `observe`/`stopObserving` so
+  `/events` hints refetch visible entries at once (`LiveUpdates`, a port of
+  `web/lib/live-updates.ts`: keep them in step), and `mutate` with optimistic updates that roll back.
 
 ## Build and test
 
