@@ -27,6 +27,13 @@ WITH items AS (
  FROM approval_requests a JOIN tickets t ON t.id=a.ticket_id JOIN projects p ON p.id=t.project_id
  WHERE a.workspace_id=$3
  UNION ALL
+ SELECT ('approval:'||a.id)::text AS id, 'approval'::text AS kind,
+ coalesce(nullif(cs.title, ''), 'Chat')::text AS title, a.action_summary AS summary,
+ ('/chat/'||cs.id)::text AS href, ''::text AS project, ''::text AS ticket_key, a.created_at,
+ a.state <> 'pending' AS resolved, a.agent_id, a.run_id, NULL
+ FROM approval_requests a JOIN chat_sessions cs ON cs.id=a.chat_id
+ WHERE a.workspace_id=$3 AND a.ticket_id IS NULL AND cs.created_by=$1
+ UNION ALL
  SELECT 'dispatch:'||t.id,'dispatch',t.title,ag.name||' is waiting for dispatch','/tickets/'||t.key,p.key,t.key,greatest(t.updated_at,(SELECT max(b.updated_at) FROM ticket_dependencies d JOIN tickets b ON b.id=d.blocker_id WHERE d.ticket_id=t.id))::timestamptz,false,
  ag.id,NULL,NULL
  FROM tickets t JOIN projects p ON p.id=t.project_id JOIN agents ag ON ag.id=t.assignee_agent_id
@@ -67,6 +74,48 @@ WITH items AS (
  AND strpos(c.body_md, '@') > 0
  AND (lower(c.body_md) ~ ('@'||regexp_replace(lower(split_part(u.email,'@',1)), '([^a-z0-9_])', '\\\1','g')||'\y')
  OR lower(c.body_md) LIKE CASE WHEN u.name = '' THEN 'A' ELSE '%@'||regexp_replace(lower(u.name), '([%_\\])', '\\\1', 'g')||'%' END ESCAPE '\')
+ UNION ALL
+ SELECT ('pr_ci_failed:ticket:'||t.id)::text, 'pr_ci_failed'::text, t.title,
+ ('PR #'||coalesce(t.pr_number::text,'')||' has '||pf.failed_checks_count||' failing CI check'||CASE WHEN pf.failed_checks_count=1 THEN '' ELSE 's' END)::text,
+ ('/tickets/'||t.key)::text, p.key, t.key, coalesce(pf.ci_failed_at, pf.updated_at)::timestamptz, false,
+ t.assignee_agent_id, NULL::uuid, NULL::uuid
+ FROM tickets t JOIN projects p ON p.id=t.project_id
+ JOIN pr_feedback pf ON pf.workspace_id=t.workspace_id AND pf.pr_url=t.pr_url
+ WHERE t.workspace_id=$3 AND NOT p.archived AND t.status NOT IN ('done', 'canceled')
+ AND t.pr_url IS NOT NULL AND coalesce(t.pr_state, 'open') IN ('open', 'draft')
+ AND pf.ci_state='failing' AND pf.failed_checks_count > 0
+ UNION ALL
+ SELECT ('pr_review_comments:ticket:'||t.id)::text, 'pr_review_comments'::text, t.title,
+ ('PR #'||coalesce(t.pr_number::text,'')||' has '||pf.unresolved_threads||' unresolved review comment'||CASE WHEN pf.unresolved_threads=1 THEN '' ELSE 's' END)::text,
+ ('/tickets/'||t.key)::text, p.key, t.key, coalesce(pf.review_updated_at, pf.updated_at)::timestamptz, false,
+ t.assignee_agent_id, NULL::uuid, NULL::uuid
+ FROM tickets t JOIN projects p ON p.id=t.project_id
+ JOIN pr_feedback pf ON pf.workspace_id=t.workspace_id AND pf.pr_url=t.pr_url
+ WHERE t.workspace_id=$3 AND NOT p.archived AND t.status NOT IN ('done', 'canceled')
+ AND t.pr_url IS NOT NULL AND coalesce(t.pr_state, 'open') IN ('open', 'draft')
+ AND pf.unresolved_threads > 0
+ UNION ALL
+ SELECT ('pr_ci_failed:push:'||pr.id)::text, 'pr_ci_failed'::text,
+ coalesce(nullif(pr.title,''), nullif(cs.title,''), 'Pull request')::text,
+ ('PR #'||coalesce(pr.pr_number::text,'')||' has '||pf.failed_checks_count||' failing CI check'||CASE WHEN pf.failed_checks_count=1 THEN '' ELSE 's' END)::text,
+ ('/chat/'||pr.chat_id)::text, coalesce(p.key,'')::text, ''::text, coalesce(pf.ci_failed_at, pf.updated_at)::timestamptz, false,
+ pr.agent_id, pr.run_id, NULL::uuid
+ FROM push_requests pr JOIN chat_sessions cs ON cs.id=pr.chat_id LEFT JOIN projects p ON p.id=cs.project_id
+ JOIN pr_feedback pf ON pf.workspace_id=pr.workspace_id AND pf.pr_url=pr.pr_url
+ WHERE pr.workspace_id=$3 AND pr.user_id=$1
+ AND NOT cs.archived AND pr.state='pushed' AND pr.pr_url IS NOT NULL AND coalesce(pr.pr_state, 'open') IN ('open', 'draft')
+ AND pf.ci_state='failing' AND pf.failed_checks_count > 0
+ UNION ALL
+ SELECT ('pr_review_comments:push:'||pr.id)::text, 'pr_review_comments'::text,
+ coalesce(nullif(pr.title,''), nullif(cs.title,''), 'Pull request')::text,
+ ('PR #'||coalesce(pr.pr_number::text,'')||' has '||pf.unresolved_threads||' unresolved review comment'||CASE WHEN pf.unresolved_threads=1 THEN '' ELSE 's' END)::text,
+ ('/chat/'||pr.chat_id)::text, coalesce(p.key,'')::text, ''::text, coalesce(pf.review_updated_at, pf.updated_at)::timestamptz, false,
+ pr.agent_id, pr.run_id, NULL::uuid
+ FROM push_requests pr JOIN chat_sessions cs ON cs.id=pr.chat_id LEFT JOIN projects p ON p.id=cs.project_id
+ JOIN pr_feedback pf ON pf.workspace_id=pr.workspace_id AND pf.pr_url=pr.pr_url
+ WHERE pr.workspace_id=$3 AND pr.user_id=$1
+ AND NOT cs.archived AND pr.state='pushed' AND pr.pr_url IS NOT NULL AND coalesce(pr.pr_state, 'open') IN ('open', 'draft')
+ AND pf.unresolved_threads > 0
  UNION ALL
  -- A pull request merged in the last two weeks: news for the Updates tab, nothing to act on.
  SELECT 'merged:'||e.id,'merged',t.title,'Pull request '||coalesce('#'||(e.payload->>'number')||' ','')||'merged','/tickets/'||t.key,p.key,t.key,e.created_at,false,

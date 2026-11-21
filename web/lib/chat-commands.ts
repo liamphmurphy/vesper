@@ -2,7 +2,7 @@
 // never sent to the model; the actions live in chat/_components/conversation.tsx.
 
 /** free: the argument is text to send (no options to pick from). */
-export type ChatCommand = { name: string; args?: string; hint: string; free?: boolean };
+export type ChatCommand = { name: string; args?: string; hint: string; free?: boolean; optionalArg?: boolean };
 
 export const CHAT_COMMANDS: ChatCommand[] = [
   { name: "model", args: "model", hint: "Switch the model for the next message" },
@@ -10,9 +10,11 @@ export const CHAT_COMMANDS: ChatCommand[] = [
   { name: "persona", args: "persona", hint: "Start a new chat with another persona" },
   { name: "workflow", args: "workflow", hint: "Run one of your published workflows" },
   { name: "new", hint: "Start a new conversation" },
+  { name: "compact", args: "focus", free: true, optionalArg: true, hint: "Compact context onto a fresh window (optional focus)" },
   { name: "repo", args: "repository", hint: "Select a repository in this conversation" },
   { name: "memory", hint: "Open your memory" },
   { name: "stop", hint: "Stop the current reply" },
+  { name: "steer", args: "guidance", free: true, hint: "Steer the current reply mid-turn without discarding work" },
   { name: "aside", args: "question", free: true, hint: "Ask about the current reply without stopping it" },
   { name: "queue", args: "message", free: true, hint: "Send this once the current reply ends" },
   { name: "design", args: "what to design", free: true, hint: "Create a design (flow, diagram or wireframe) beside the chat" },

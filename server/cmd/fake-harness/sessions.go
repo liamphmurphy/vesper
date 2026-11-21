@@ -33,7 +33,18 @@ var (
 	acpPromptID  json.RawMessage
 	codexTurnID  = "turn_1"
 	policySeq    atomic.Int64
+	steers       = make(chan string, 16)
 )
+
+func pushSteer(msg string) {
+	if msg == "" {
+		return
+	}
+	select {
+	case steers <- msg:
+	default:
+	}
+}
 
 func signalInterrupt() {
 	interruptOne.Do(func() { close(interrupted) })
@@ -135,6 +146,7 @@ func claudeSessionHandshake() (prompt string, inline []string) {
 	}
 	userReady := make(chan struct{})
 	var userOnce sync.Once
+	initialSeen := false
 	go func() {
 		defer close(stdinClosed)
 		sc := bufio.NewScanner(os.Stdin)
@@ -166,9 +178,8 @@ func claudeSessionHandshake() (prompt string, inline []string) {
 				resolvePending(m.Response.RequestID, raw)
 			case "user":
 				var txt string
-				if json.Unmarshal(m.Message.Content, &txt) == nil {
-					prompt = txt
-				} else {
+				var curInline []string
+				if json.Unmarshal(m.Message.Content, &txt) != nil {
 					var blocks []struct {
 						Text   string `json:"text"`
 						Source struct {
@@ -178,15 +189,22 @@ func claudeSessionHandshake() (prompt string, inline []string) {
 					if json.Unmarshal(m.Message.Content, &blocks) == nil {
 						for _, bl := range blocks {
 							if bl.Source.Data == "" {
-								prompt = bl.Text
+								txt = bl.Text
 								continue
 							}
 							b, _ := base64.StdEncoding.DecodeString(bl.Source.Data)
-							inline = append(inline, string(b))
+							curInline = append(curInline, string(b))
 						}
 					}
 				}
-				userOnce.Do(func() { close(userReady) })
+				if !initialSeen {
+					initialSeen = true
+					prompt = txt
+					inline = curInline
+					userOnce.Do(func() { close(userReady) })
+				} else {
+					pushSteer(txt)
+				}
 			}
 		}
 		userOnce.Do(func() { close(userReady) })
@@ -232,6 +250,36 @@ func runCodexAppServer(args []string) (turnPrompt, turnResume, turnModel, mcpURL
 					writeOutJSON(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{}})
 				}
 				signalInterrupt()
+				continue
+			}
+			if msg.Method == "turn/steer" {
+				if os.Getenv("FAKE_HARNESS_REJECT_STEER") != "" {
+					if len(msg.ID) > 0 && string(msg.ID) != "null" {
+						writeOutJSON(map[string]any{
+							"jsonrpc": "2.0",
+							"id":      msg.ID,
+							"error":   map[string]any{"code": -32601, "message": "turn/steer unsupported"},
+						})
+					}
+					continue
+				}
+				var p struct {
+					Input []struct {
+						Type string `json:"type"`
+						Text string `json:"text"`
+					} `json:"input"`
+				}
+				_ = json.Unmarshal(msg.Params, &p)
+				var parts []string
+				for _, in := range p.Input {
+					if in.Text != "" {
+						parts = append(parts, in.Text)
+					}
+				}
+				pushSteer(strings.Join(parts, "\n"))
+				if len(msg.ID) > 0 && string(msg.ID) != "null" {
+					writeOutJSON(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{}})
+				}
 				continue
 			}
 			reqs <- msg

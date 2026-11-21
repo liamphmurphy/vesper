@@ -64,7 +64,7 @@ func chatSetupScript(ctx context.Context, q *store.Queries, c runCtx) (string, e
 	}
 	script += "\n" + sshSetup
 	for _, repo := range repos {
-		script += repositories.SetupScript(repo.RepoUrl, repo.Directory, repo.WorkBranches, repo.CheckpointBranch, name, email)
+		script += repositories.SetupScriptWithFork(repo.RepoUrl, repo.Directory, repo.WorkBranches, repo.CheckpointBranch, repo.ForkBranch, name, email)
 		if repo.Directory == "." {
 			script += "if [ ! -f .lazyagents/chat-checkout-ready ]; then\n" + keepOurFilesOutOfGit + "touch .lazyagents/chat-checkout-ready\nfi\n"
 		}
@@ -386,6 +386,30 @@ func (r *Runner) finishChatTurn(ctx context.Context, c runCtx, turn store.RunTur
 						return err
 					}
 				}
+				reviews, rerr := q.ChatCodeReviews(ctx, chat.ID)
+				if rerr != nil {
+					return rerr
+				}
+				if len(reviews) > 0 {
+					rev := reviews[0]
+					if chat.RepoUrl != nil {
+						for _, candidate := range reviews {
+							if candidate.RepoUrl == *chat.RepoUrl {
+								rev = candidate
+								break
+							}
+						}
+					}
+					if rev.Branch != nil || rev.HeadSha != nil {
+						if err := q.SetChatMessageGitRef(ctx, store.SetChatMessageGitRefParams{
+							ID:           msg.ID,
+							GitBranch:    rev.Branch,
+							GitCommitSha: rev.HeadSha,
+						}); err != nil {
+							return err
+						}
+					}
+				}
 				// The image jobs this turn ran, by the outbox files they made, so
 				// each job is linked to the attachment its image became.
 				jobRows, err := q.ChatImageJobsForTurn(ctx, store.ChatImageJobsForTurnParams{RunID: run.ID, TurnID: turn.ID})
@@ -481,10 +505,14 @@ func (r *Runner) finishChatTurn(ctx context.Context, c runCtx, turn store.RunTur
 		if err := runs.ResumeInterruptedChat(ctx, q, chat.ID, run.ID, &turn.StartedAt, 0); err != nil {
 			return err
 		}
-		// Only a turn that ended with a reply sends the next queued follow-up;
-		// after a stop or a failure the queue waits for the person.
+		// Only a turn that ended with a reply sends a remaining pending steer
+		// or the next queued follow-up; after a stop or a failure, expire
+		// pending steers and hold the follow-up queue for the person.
 		if !replied {
-			return nil
+			return q.ExpireRunChatSteers(ctx, run.ID)
+		}
+		if err := runs.ResumePendingChatSteer(ctx, q, chat.ID, run.ID, 0); err != nil {
+			return err
 		}
 		return runs.SendNextFollowup(ctx, q, chat.ID, 0)
 	})
@@ -581,6 +609,9 @@ func (r *Runner) failChat(ctx context.Context, c runCtx, outcome string) {
 			return err
 		}
 		if err := idleChat(ctx, q, chat, run, "failed"); err != nil {
+			return err
+		}
+		if err := q.ExpireRunChatSteers(ctx, run.ID); err != nil {
 			return err
 		}
 		return runs.ResumeInterruptedChat(ctx, q, chat.ID, run.ID, nil, 0)

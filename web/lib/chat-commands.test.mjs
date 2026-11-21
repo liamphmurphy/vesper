@@ -38,11 +38,14 @@ test("/workflow takes a workflow to pick", () => {
   assert.deepEqual(parseCommand("/workflow Research to wiki"), { name: "workflow", arg: "Research to wiki" });
 });
 
-test("/aside and /queue take free text, with nothing to pick", () => {
+test("/aside, /queue, and /steer take free text, with nothing to pick", () => {
   assert.equal(commandMenu("/aside how far along?"), null);
   assert.equal(commandMenu("/queue "), null);
+  assert.equal(commandMenu("/steer switch to sqlite"), null);
   assert.deepEqual(commandMenu("/as"), { stage: "command", query: "as" });
+  assert.deepEqual(commandMenu("/st"), { stage: "command", query: "st" });
   assert.deepEqual(parseCommand("/aside how far along?"), { name: "aside", arg: "how far along?" });
+  assert.deepEqual(parseCommand("/steer switch to sqlite"), { name: "steer", arg: "switch to sqlite" });
 });
 
 test("/design takes what to design as free text and asks the persona for a design", () => {
@@ -91,4 +94,14 @@ test("resolveCompareTarget matches harness names, model ids, labels, and optiona
   assert.deepEqual(resolveCompareTarget(options, "unknown-model hi"), {
     error: "No model matches “unknown-model”.",
   });
+});
+
+test("compact parses with or without focus and leaves argument menu closed", () => {
+  assert.deepEqual(parseCommand("/compact"), { name: "compact", arg: "" });
+  assert.deepEqual(parseCommand("/compact keep auth invariants"), {
+    name: "compact",
+    arg: "keep auth invariants",
+  });
+  assert.equal(commandMenu("/compact "), null);
+  assert.equal(commandMenu("/compact keep"), null);
 });

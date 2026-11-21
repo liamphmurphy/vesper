@@ -3,7 +3,11 @@ package runs_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/liamphmurphy/vesper/server/internal/agentdef"
 	"github.com/liamphmurphy/vesper/server/internal/agents"
@@ -460,4 +464,196 @@ func TestCheckToolWithSpec(t *testing.T) {
 	if d, err := svc.CheckToolWithSpec(ctx, c, noTools, runs.ToolCheck{Tool: "Read", Input: map[string]any{"file_path": "main.go"}}); err != nil || d.Decision != "deny" {
 		t.Fatalf("no_tools Read = %+v, %v", d, err)
 	}
+}
+
+func TestToolPolicyLiveWait(t *testing.T) {
+	ctx := context.Background()
+	pool := testdb.New(t)
+	if _, err := seed.Run(ctx, pool, seed.Options{Demo: true}); err != nil {
+		t.Fatal(err)
+	}
+	q := store.New(pool)
+	me, _ := q.GetLocalUser(ctx)
+	atlas, _ := q.GetAgentByHandle(ctx, store.GetAgentByHandleParams{WorkspaceID: me.WorkspaceID, Handle: "atlas"})
+	svc := &runs.Service{Pool: pool, Tracker: &tracker.Service{Pool: pool}, Poll: 15 * time.Millisecond}
+
+	requireApprovalOnRun := func(t *testing.T, runID uuid.UUID) {
+		t.Helper()
+		run, err := q.GetRun(ctx, store.GetRunParams{ID: runID, WorkspaceID: me.WorkspaceID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		spec, err := runs.Spec(run)
+		if err != nil {
+			t.Fatal(err)
+		}
+		delete(spec.HarnessOptions, agentdef.OptionNoTools)
+		delete(spec.HarnessOptions, "readonly")
+		kept := spec.Scopes[:0]
+		for _, sc := range spec.Scopes {
+			if _, covers := agentdef.ModeFor(map[string]agentdef.Mode{sc.Scope: agentdef.Denied}, "tests:run"); !covers {
+				kept = append(kept, sc)
+			}
+		}
+		spec.Scopes = append(kept, agentdef.ResolvedScope{Scope: "tests:run", Mode: agentdef.RequiresApproval})
+		raw, _ := json.Marshal(spec)
+		if _, err := pool.Exec(ctx, "UPDATE runs SET resolved_spec=$2 WHERE id=$1", runID, raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	waitForPending := func(t *testing.T, runID uuid.UUID) store.ApprovalRequest {
+		t.Helper()
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			aps, err := q.ListApprovalsForRun(ctx, runID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, ap := range aps {
+				if ap.State == "pending" {
+					return ap
+				}
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatalf("timed out waiting for pending approval on run %s", runID)
+		return store.ApprovalRequest{}
+	}
+
+	t.Run("ticket_approve_deny_and_timeout", func(t *testing.T) {
+		c := agents.Caller{Agent: atlas, Kind: "unmanaged"}
+		run, err := svc.Claim(ctx, c, "PAY-214")
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.RunID = &run.ID
+		requireApprovalOnRun(t, run.ID)
+
+		type result struct {
+			d   runs.ToolDecision
+			err error
+		}
+		ch := make(chan result, 1)
+		go func() {
+			d, err := svc.CheckTool(ctx, c, runs.ToolCheck{
+				Tool:  "Bash",
+				Input: map[string]any{"command": "echo live-ticket"},
+				Wait:  2 * time.Second,
+			})
+			ch <- result{d, err}
+		}()
+
+		ap := waitForPending(t, run.ID)
+		if _, err := svc.Decide(ctx, me.WorkspaceID, me.ID, ap.ID, true, ""); err != nil {
+			t.Fatal(err)
+		}
+		res := <-ch
+		if res.err != nil || res.d.Decision != "allow" {
+			t.Fatalf("approved CheckTool = %+v, %v", res.d, res.err)
+		}
+		got, _ := q.GetApproval(ctx, store.GetApprovalParams{ID: ap.ID, WorkspaceID: me.WorkspaceID})
+		if got.ExecutedAt == nil || got.State != "approved" {
+			t.Fatalf("expected consumed approval, got state=%s executed=%v", got.State, got.ExecutedAt)
+		}
+
+		// Denied live approval returns deny reason with reviewer note.
+		go func() {
+			d, err := svc.CheckTool(ctx, c, runs.ToolCheck{
+				Tool:  "Bash",
+				Input: map[string]any{"command": "echo live-ticket-deny"},
+				Wait:  2 * time.Second,
+			})
+			ch <- result{d, err}
+		}()
+		ap = waitForPending(t, run.ID)
+		if _, err := svc.Decide(ctx, me.WorkspaceID, me.ID, ap.ID, false, "skip it"); err != nil {
+			t.Fatal(err)
+		}
+		res = <-ch
+		if res.err != nil || res.d.Decision != "deny" || !strings.Contains(res.d.Reason, "skip it") {
+			t.Fatalf("denied CheckTool = %+v, %v", res.d, res.err)
+		}
+
+		// Timeout falls back to waiting/approval on a live ticket run.
+		d, err := svc.CheckTool(ctx, c, runs.ToolCheck{
+			Tool:  "Bash",
+			Input: map[string]any{"command": "echo live-ticket-timeout"},
+			Wait:  60 * time.Millisecond,
+		})
+		if err != nil || d.Decision != "deny" {
+			t.Fatalf("timeout CheckTool = %+v, %v", d, err)
+		}
+		gotRun, _ := q.GetRun(ctx, store.GetRunParams{ID: run.ID, WorkspaceID: me.WorkspaceID})
+		if gotRun.State != "waiting" || gotRun.WaitReason == nil || *gotRun.WaitReason != "approval" {
+			t.Fatalf("expected run waiting/approval, got state=%s reason=%v", gotRun.State, gotRun.WaitReason)
+		}
+	})
+
+	t.Run("chat_approve_and_timeout_expires", func(t *testing.T) {
+		chat, err := svc.StartChat(ctx, me.WorkspaceID, me.ID, runs.ChatInput{Project: "PAY"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := svc.PostChatMessage(ctx, me.WorkspaceID, me.ID, chat.ID, runs.ChatMessageInput{Body: "run tool check"}); err != nil {
+			t.Fatal(err)
+		}
+		chat, _ = q.GetChatSession(ctx, store.GetChatSessionParams{ID: chat.ID, WorkspaceID: me.WorkspaceID})
+		runID := *chat.CurrentRunID
+		if _, err := pool.Exec(ctx, "UPDATE runs SET state='running' WHERE id=$1", runID); err != nil {
+			t.Fatal(err)
+		}
+		run, _ := q.GetRun(ctx, store.GetRunParams{ID: runID, WorkspaceID: me.WorkspaceID})
+		chatAgent, err := q.GetAgent(ctx, store.GetAgentParams{ID: run.AgentID, WorkspaceID: me.WorkspaceID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := agents.Caller{Agent: chatAgent, Kind: "run", RunID: &runID}
+		requireApprovalOnRun(t, runID)
+
+		type result struct {
+			d   runs.ToolDecision
+			err error
+		}
+		ch := make(chan result, 1)
+		go func() {
+			d, err := svc.CheckTool(ctx, c, runs.ToolCheck{
+				Tool:  "Bash",
+				Input: map[string]any{"command": "echo live-chat"},
+				Wait:  2 * time.Second,
+			})
+			ch <- result{d, err}
+		}()
+
+		ap := waitForPending(t, runID)
+		if ap.TicketID != nil || ap.ChatID == nil || *ap.ChatID != chat.ID {
+			t.Fatalf("expected chat-scoped approval, got %+v", ap)
+		}
+		if _, err := svc.Decide(ctx, me.WorkspaceID, me.ID, ap.ID, true, ""); err != nil {
+			t.Fatal(err)
+		}
+		res := <-ch
+		if res.err != nil || res.d.Decision != "allow" {
+			t.Fatalf("approved chat CheckTool = %+v, %v", res.d, res.err)
+		}
+
+		// Timeout on a chat run expires the approval rather than pausing the run.
+		d, err := svc.CheckTool(ctx, c, runs.ToolCheck{
+			Tool:  "Bash",
+			Input: map[string]any{"command": "echo live-chat-timeout"},
+			Wait:  60 * time.Millisecond,
+		})
+		if err != nil || d.Decision != "deny" {
+			t.Fatalf("chat timeout CheckTool = %+v, %v", d, err)
+		}
+		aps, _ := q.ListApprovalsForRun(ctx, runID)
+		last := aps[len(aps)-1]
+		if last.State != "expired" {
+			t.Fatalf("expected timed-out chat approval to expire, got %s", last.State)
+		}
+		gotRun, _ := q.GetRun(ctx, store.GetRunParams{ID: runID, WorkspaceID: me.WorkspaceID})
+		if gotRun.State != "running" {
+			t.Fatalf("chat run state = %s, want running", gotRun.State)
+		}
+	})
 }

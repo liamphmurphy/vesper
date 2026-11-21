@@ -29,12 +29,34 @@ type HandoffMessage struct {
 const handoffClip = "\n[…message clipped]"
 
 // handoffLead opens a handoff's header; an aside replaces it with its own.
-const handoffLead = "This conversation continues from earlier turns answered by a different harness or model."
+const (
+	handoffLead = "This conversation continues from earlier turns answered by a different harness or model."
+	compactLead = "This conversation was compacted onto a fresh context window on the same harness. Prior messages are below, oldest first, as context only."
+	forkLead    = "This conversation was forked from an earlier chat at this point. The prior messages up to the fork point are below, oldest first, as context only."
+)
+
+// HandoffOptions customizes a rendered handoff header, git summary, and footer.
+type HandoffOptions struct {
+	Lead     string
+	Focus    string
+	GitBrief string
+	Footer   string
+}
 
 func handoffHeader(omitted int) string {
-	h := handoffLead + " Their messages are below, oldest first, as context only."
+	return handoffHeaderWith(omitted, "", "")
+}
+
+func handoffHeaderWith(omitted int, lead, focus string) string {
+	h := lead
+	if h == "" {
+		h = handoffLead + " Their messages are below, oldest first, as context only."
+	}
 	if omitted > 0 {
 		h += fmt.Sprintf(" %d earlier message(s) were omitted to fit.", omitted)
+	}
+	if focus = strings.TrimSpace(focus); focus != "" {
+		h += "\nCompaction focus requested by the user: " + focus
 	}
 	return h + "\n\n"
 }
@@ -72,6 +94,10 @@ func RenderHandoff(history []HandoffMessage, total int, budget int, hc HandoffCo
 }
 
 func renderHandoff(history []HandoffMessage, total int, budget int, hc HandoffContext, footer, body string) string {
+	return renderHandoffWith(history, total, budget, hc, HandoffOptions{Footer: footer}, body)
+}
+
+func renderHandoffWith(history []HandoffMessage, total int, budget int, hc HandoffContext, opts HandoffOptions, body string) string {
 	history, pinned := compactArtifacts(history)
 	if budget <= 0 {
 		budget = DefaultHandoffChars
@@ -79,8 +105,12 @@ func renderHandoff(history []HandoffMessage, total int, budget int, hc HandoffCo
 	if total < len(history) {
 		total = len(history)
 	}
+	footer := opts.Footer
+	if footer == "" {
+		footer = handoffFooter
+	}
 	// Reserve for the longest header this call can produce.
-	left := budget - utf8.RuneCountInString(handoffHeader(total))
+	left := budget - utf8.RuneCountInString(handoffHeaderWith(total, opts.Lead, opts.Focus))
 	var kept []string
 	for _, m := range history {
 		entry := handoffEntry(m, m.Body)
@@ -101,11 +131,16 @@ func renderHandoff(history []HandoffMessage, total int, budget int, hc HandoffCo
 		left -= n
 	}
 	var b strings.Builder
-	b.WriteString(handoffHeader(total - len(kept)))
+	b.WriteString(handoffHeaderWith(total-len(kept), opts.Lead, opts.Focus))
 	for i := len(kept) - 1; i >= 0; i-- {
 		b.WriteString(kept[i])
 	}
 	b.WriteString(renderArtifacts(pinned, hc))
+	if brief := strings.TrimSpace(opts.GitBrief); brief != "" {
+		b.WriteString("## Workspace git state\n")
+		b.WriteString(brief)
+		b.WriteString("\n\n")
+	}
 	b.WriteString(footer)
 	b.WriteString(body)
 	return b.String()

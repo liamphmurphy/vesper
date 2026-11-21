@@ -39,7 +39,7 @@ RETURNING *;
 -- name: ListTickets :many
 SELECT
   t.id, t.key, t.number, t.title, t.status, t.priority, t.due_date, t.estimate, t.estimate_points,
-  t.pr_number, t.pr_state, t.sort_order, t.created_at, t.updated_at,
+  t.pr_number, t.pr_state, t.pr_url, t.sort_order, t.created_at, t.updated_at,
   (SELECT count(*) FROM ticket_dependencies d JOIN tickets b ON b.id=d.blocker_id WHERE d.ticket_id=t.id AND b.status<>'done')::int AS unmet_dependencies,
   p.key AS project_key, p.color AS project_color,
   e.id AS epic_id, e.name AS epic_name,

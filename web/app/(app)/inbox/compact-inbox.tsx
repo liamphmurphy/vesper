@@ -3,6 +3,9 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Schemas } from "@/lib/api/client";
+import { useAddressTicketPRFeedback, useComment, useDecideApproval, useInbox, useRunLog, useTicket } from "@/lib/api/hooks";
+import { useAddressPushPRFeedback } from "@/lib/api/code-review-hooks";
+import { AgentAvatar } from "@/components/domain/avatars";
 import { useComment, useDecideApproval, useInbox, useTicket } from "@/lib/api/hooks";
 import { WorkPersonaAvatar } from "@/components/domain/work-persona-avatar";
 import { useRememberedProject } from "@/components/shell/project-scope";
@@ -30,6 +33,7 @@ const FILTERS: ReadonlyArray<{ key: string; label: string; kinds?: readonly stri
   { key: "approval", label: "Approvals", kinds: kindsOf("approval") },
   { key: "question", label: "Questions", kinds: kindsOf("question") },
   { key: "blocked", label: "Blocked", kinds: kindsOf("runs") },
+  { key: "pr_feedback", label: "PR feedback", kinds: kindsOf("pr_feedback") },
   { key: "mockup", label: "Mockups", kinds: kindsOf("mockup") },
 ];
 
@@ -42,11 +46,14 @@ function pill(kind: string) {
 /** Touch-sized buttons: 44px tall (DESIGN.md §3). */
 const TOUCH = "!h-[44px] justify-center px-4 text-14";
 
-/** The ticket's pending approval behind an approval item, and approve/deny on the same endpoint as desktop. */
+/** The ticket's (or chat run's) pending approval behind an approval item, and approve/deny on the same endpoint as desktop. */
 function useApproval(item: Item, onSent: (id: string) => void) {
+  const isTicket = !!item.ticket_key;
   const ticket = useTicket(item.ticket_key);
+  const run = useRunLog(item.run_id ?? "", !isTicket && !!item.run_id);
+  const source = isTicket ? ticket : run;
   const decide = useDecideApproval(item.ticket_key);
-  const ap = ticket.data?.approvals.find((a) => `approval:${a.id}` === item.id);
+  const ap = (isTicket ? ticket.data?.approvals : run.data?.approvals)?.find((a) => `approval:${a.id}` === item.id);
   const live = isOpen(item) && !!ap && ap.state === "pending";
   const send = (decision: "approve" | "deny", after?: () => void) => {
     if (!live || decide.isPending) return;
@@ -60,7 +67,7 @@ function useApproval(item: Item, onSent: (id: string) => void) {
       },
     );
   };
-  return { ticket, ap, live, send, pending: decide.isPending, error: decide.error };
+  return { ticket: source, ap, live, send, pending: decide.isPending, error: decide.error };
 }
 
 function Failure({ error }: { error?: Error | null }) {
@@ -132,6 +139,39 @@ function Reply({ item, onSent }: { item: Item; onSent: (id: string) => void }) {
   );
 }
 
+function PRFeedbackAction({ item, onSent }: { item: Item; onSent: (id: string) => void }) {
+  const addressTicket = useAddressTicketPRFeedback(item.ticket_key);
+  const addressPush = useAddressPushPRFeedback();
+  const pushId = item.id.startsWith("pr_ci_failed:push:")
+    ? item.id.slice("pr_ci_failed:push:".length)
+    : item.id.startsWith("pr_review_comments:push:")
+      ? item.id.slice("pr_review_comments:push:".length)
+      : "";
+  const isCI = item.kind === "pr_ci_failed";
+  const mode = isCI ? "ci" : "review";
+  const busy = addressTicket.isPending || addressPush.isPending;
+  const trigger = () => {
+    if (busy) return;
+    if (item.ticket_key) addressTicket.mutate(mode, { onSuccess: () => onSent(item.id) });
+    else if (pushId) addressPush.mutate({ id: pushId, mode }, { onSuccess: () => onSent(item.id) });
+  };
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex gap-2">
+        <ButtonLink href={item.href} variant="outline" className={cx(TOUCH, "flex-1")}>
+          {item.ticket_key ? "Open ticket" : "Open chat"}
+        </ButtonLink>
+        {(item.ticket_key || pushId) && (
+          <Button variant="primary" className={cx(TOUCH, "flex-1")} disabled={busy} onClick={trigger}>
+            {busy ? "Sending…" : isCI ? "Fix CI" : "Address comments"}
+          </Button>
+        )}
+      </div>
+      <Failure error={addressTicket.error ?? addressPush.error} />
+    </div>
+  );
+}
+
 function Card({ item, sent, onSent, onOpen }: { item: Item; sent: boolean; onSent: (id: string) => void; onOpen: () => void }) {
   const kind = pill(item.kind);
   const approval = item.kind === "approval";
@@ -184,6 +224,7 @@ function Card({ item, sent, onSent, onOpen }: { item: Item; sent: boolean; onSen
             Open run
           </ButtonLink>
         )}
+        {(item.kind === "pr_ci_failed" || item.kind === "pr_review_comments") && <PRFeedbackAction item={item} onSent={onSent} />}
         {item.kind === "mockup" && (
           <ButtonLink href={item.href} variant="outline" className={TOUCH}>
             Open review

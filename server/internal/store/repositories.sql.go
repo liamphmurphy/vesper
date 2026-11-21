@@ -14,7 +14,7 @@ import (
 const activateChatRepository = `-- name: ActivateChatRepository :one
 UPDATE chat_sessions SET repo_url = r.repo_url, work_branches = r.work_branches, revision = revision + 1, updated_at = now()
 FROM chat_repositories r WHERE chat_sessions.id = $1 AND r.chat_id = chat_sessions.id AND r.repo_url = $2
-RETURNING chat_sessions.id, chat_sessions.workspace_id, chat_sessions.project_id, chat_sessions.title, chat_sessions.created_by, chat_sessions.agent_id, chat_sessions.harness, chat_sessions.model, chat_sessions.current_run_id, chat_sessions.state, chat_sessions.archived, chat_sessions.revision, chat_sessions.created_at, chat_sessions.updated_at, chat_sessions.last_message_at, chat_sessions.persona_id, chat_sessions.repo_url, chat_sessions.effort, chat_sessions.speaker_persona_id, chat_sessions.queued_persona_ids, chat_sessions.relay_turns, chat_sessions.relay_limit, chat_sessions.interrupt_message_id, chat_sessions.last_read_seq, chat_sessions.hidden, chat_sessions.connector_ids, chat_sessions.space_id, chat_sessions.work_branches, chat_sessions.commit_email, chat_sessions.secret_ids, chat_sessions.temporary, chat_sessions.pending_repo_url, chat_sessions.parent_chat_id, chat_sessions.auto_model, chat_sessions.anchor_message_id, chat_sessions.second_opinion, chat_sessions.last_assistant_seq
+RETURNING chat_sessions.id, chat_sessions.workspace_id, chat_sessions.project_id, chat_sessions.title, chat_sessions.created_by, chat_sessions.agent_id, chat_sessions.harness, chat_sessions.model, chat_sessions.current_run_id, chat_sessions.state, chat_sessions.archived, chat_sessions.revision, chat_sessions.created_at, chat_sessions.updated_at, chat_sessions.last_message_at, chat_sessions.persona_id, chat_sessions.repo_url, chat_sessions.effort, chat_sessions.speaker_persona_id, chat_sessions.queued_persona_ids, chat_sessions.relay_turns, chat_sessions.relay_limit, chat_sessions.interrupt_message_id, chat_sessions.last_read_seq, chat_sessions.hidden, chat_sessions.connector_ids, chat_sessions.space_id, chat_sessions.work_branches, chat_sessions.commit_email, chat_sessions.secret_ids, chat_sessions.temporary, chat_sessions.pending_repo_url, chat_sessions.parent_chat_id, chat_sessions.auto_model, chat_sessions.anchor_message_id, chat_sessions.second_opinion, chat_sessions.last_assistant_seq, chat_sessions.compact_pending, chat_sessions.compact_focus, chat_sessions.auto_rollover_tokens, chat_sessions.forked_from_chat_id, chat_sessions.forked_from_message_id
 `
 
 type ActivateChatRepositoryParams struct {
@@ -63,6 +63,11 @@ func (q *Queries) ActivateChatRepository(ctx context.Context, arg ActivateChatRe
 		&i.AnchorMessageID,
 		&i.SecondOpinion,
 		&i.LastAssistantSeq,
+		&i.CompactPending,
+		&i.CompactFocus,
+		&i.AutoRolloverTokens,
+		&i.ForkedFromChatID,
+		&i.ForkedFromMessageID,
 	)
 	return i, err
 }
@@ -90,7 +95,7 @@ func (q *Queries) AddRepositorySource(ctx context.Context, arg AddRepositorySour
 
 const attachChatRepository = `-- name: AttachChatRepository :one
 INSERT INTO chat_repositories (chat_id, repo_url, directory) VALUES ($1, $2, $3)
-ON CONFLICT (chat_id, repo_url) DO UPDATE SET repo_url = excluded.repo_url RETURNING chat_id, repo_url, directory, work_branches, checkpoint_branch
+ON CONFLICT (chat_id, repo_url) DO UPDATE SET repo_url = excluded.repo_url RETURNING chat_id, repo_url, directory, work_branches, checkpoint_branch, fork_branch
 `
 
 type AttachChatRepositoryParams struct {
@@ -108,12 +113,49 @@ func (q *Queries) AttachChatRepository(ctx context.Context, arg AttachChatReposi
 		&i.Directory,
 		&i.WorkBranches,
 		&i.CheckpointBranch,
+		&i.ForkBranch,
+	)
+	return i, err
+}
+
+const attachChatRepositoryWithFork = `-- name: AttachChatRepositoryWithFork :one
+INSERT INTO chat_repositories (chat_id, repo_url, directory, checkpoint_branch, fork_branch)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (chat_id, repo_url) DO UPDATE
+SET checkpoint_branch = excluded.checkpoint_branch, fork_branch = excluded.fork_branch
+RETURNING chat_id, repo_url, directory, work_branches, checkpoint_branch, fork_branch
+`
+
+type AttachChatRepositoryWithForkParams struct {
+	ChatID           uuid.UUID
+	RepoUrl          string
+	Directory        string
+	CheckpointBranch *string
+	ForkBranch       *string
+}
+
+func (q *Queries) AttachChatRepositoryWithFork(ctx context.Context, arg AttachChatRepositoryWithForkParams) (ChatRepository, error) {
+	row := q.db.QueryRow(ctx, attachChatRepositoryWithFork,
+		arg.ChatID,
+		arg.RepoUrl,
+		arg.Directory,
+		arg.CheckpointBranch,
+		arg.ForkBranch,
+	)
+	var i ChatRepository
+	err := row.Scan(
+		&i.ChatID,
+		&i.RepoUrl,
+		&i.Directory,
+		&i.WorkBranches,
+		&i.CheckpointBranch,
+		&i.ForkBranch,
 	)
 	return i, err
 }
 
 const chatRepositories = `-- name: ChatRepositories :many
-SELECT chat_id, repo_url, directory, work_branches, checkpoint_branch FROM chat_repositories WHERE chat_id = $1 ORDER BY directory
+SELECT chat_id, repo_url, directory, work_branches, checkpoint_branch, fork_branch FROM chat_repositories WHERE chat_id = $1 ORDER BY directory
 `
 
 func (q *Queries) ChatRepositories(ctx context.Context, chatID uuid.UUID) ([]ChatRepository, error) {
@@ -131,6 +173,7 @@ func (q *Queries) ChatRepositories(ctx context.Context, chatID uuid.UUID) ([]Cha
 			&i.Directory,
 			&i.WorkBranches,
 			&i.CheckpointBranch,
+			&i.ForkBranch,
 		); err != nil {
 			return nil, err
 		}
@@ -143,7 +186,7 @@ func (q *Queries) ChatRepositories(ctx context.Context, chatID uuid.UUID) ([]Cha
 }
 
 const chatRepositoriesForChats = `-- name: ChatRepositoriesForChats :many
-SELECT chat_id, repo_url, directory, work_branches, checkpoint_branch FROM chat_repositories WHERE chat_id = ANY($1::uuid[]) ORDER BY chat_id, directory
+SELECT chat_id, repo_url, directory, work_branches, checkpoint_branch, fork_branch FROM chat_repositories WHERE chat_id = ANY($1::uuid[]) ORDER BY chat_id, directory
 `
 
 func (q *Queries) ChatRepositoriesForChats(ctx context.Context, dollar_1 []uuid.UUID) ([]ChatRepository, error) {
@@ -161,6 +204,7 @@ func (q *Queries) ChatRepositoriesForChats(ctx context.Context, dollar_1 []uuid.
 			&i.Directory,
 			&i.WorkBranches,
 			&i.CheckpointBranch,
+			&i.ForkBranch,
 		); err != nil {
 			return nil, err
 		}
@@ -317,7 +361,7 @@ func (q *Queries) PreviousChatWorkspaces(ctx context.Context, arg PreviousChatWo
 }
 
 const queueChatRepository = `-- name: QueueChatRepository :one
-UPDATE chat_sessions SET pending_repo_url = $2, revision = revision + 1, updated_at = now() WHERE id = $1 RETURNING id, workspace_id, project_id, title, created_by, agent_id, harness, model, current_run_id, state, archived, revision, created_at, updated_at, last_message_at, persona_id, repo_url, effort, speaker_persona_id, queued_persona_ids, relay_turns, relay_limit, interrupt_message_id, last_read_seq, hidden, connector_ids, space_id, work_branches, commit_email, secret_ids, temporary, pending_repo_url, parent_chat_id, auto_model, anchor_message_id, second_opinion, last_assistant_seq
+UPDATE chat_sessions SET pending_repo_url = $2, revision = revision + 1, updated_at = now() WHERE id = $1 RETURNING id, workspace_id, project_id, title, created_by, agent_id, harness, model, current_run_id, state, archived, revision, created_at, updated_at, last_message_at, persona_id, repo_url, effort, speaker_persona_id, queued_persona_ids, relay_turns, relay_limit, interrupt_message_id, last_read_seq, hidden, connector_ids, space_id, work_branches, commit_email, secret_ids, temporary, pending_repo_url, parent_chat_id, auto_model, anchor_message_id, second_opinion, last_assistant_seq, compact_pending, compact_focus, auto_rollover_tokens, forked_from_chat_id, forked_from_message_id
 `
 
 type QueueChatRepositoryParams struct {
@@ -366,6 +410,11 @@ func (q *Queries) QueueChatRepository(ctx context.Context, arg QueueChatReposito
 		&i.AnchorMessageID,
 		&i.SecondOpinion,
 		&i.LastAssistantSeq,
+		&i.CompactPending,
+		&i.CompactFocus,
+		&i.AutoRolloverTokens,
+		&i.ForkedFromChatID,
+		&i.ForkedFromMessageID,
 	)
 	return i, err
 }

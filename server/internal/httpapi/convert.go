@@ -1,12 +1,16 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
+	"slices"
 	"time"
 
+	"github.com/google/uuid"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
 	"github.com/liamphmurphy/vesper/server/internal/api"
+	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 )
 
@@ -78,6 +82,80 @@ func withSync(pr *api.PullRequest, t store.Ticket) *api.PullRequest {
 	}
 	pr.SyncedAt = t.PrSyncedAt
 	return pr
+}
+
+func (s *Server) prFeedbackByURLs(ctx context.Context, ws uuid.UUID, urls []string) (map[string]store.PrFeedback, error) {
+	out := map[string]store.PrFeedback{}
+	var clean []string
+	for _, u := range urls {
+		if u != "" && !slices.Contains(clean, u) {
+			clean = append(clean, u)
+		}
+	}
+	if len(clean) == 0 {
+		return out, nil
+	}
+	rows, err := s.Q.ListPRFeedbackByURLs(ctx, store.ListPRFeedbackByURLsParams{WorkspaceID: ws, PrUrls: clean})
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		out[r.PrUrl] = r
+	}
+	return out, nil
+}
+
+func toPRFeedback(row store.PrFeedback) *api.PRFeedback {
+	data := runs.DecodePRFeedback(row)
+	checks := make([]api.PRCheckFailure, 0, len(data.FailedChecks))
+	for _, c := range data.FailedChecks {
+		checks = append(checks, api.PRCheckFailure{
+			Name:       c.Name,
+			Conclusion: c.Conclusion,
+			DetailsUrl: nonEmpty(c.DetailsURL),
+			Title:      nonEmpty(c.Title),
+			Summary:    nonEmpty(c.Summary),
+		})
+	}
+	threads := make([]api.PRReviewThread, 0, len(data.ReviewThreads))
+	for _, th := range data.ReviewThreads {
+		comments := make([]api.PRReviewComment, 0, len(th.Comments))
+		for _, c := range th.Comments {
+			comments = append(comments, api.PRReviewComment{
+				Author:    c.Author,
+				Body:      c.Body,
+				Url:       nonEmpty(c.URL),
+				CreatedAt: c.CreatedAt,
+			})
+		}
+		item := api.PRReviewThread{
+			Id:        th.ID,
+			Path:      th.Path,
+			Url:       nonEmpty(th.URL),
+			DiffHunk:  nonEmpty(th.DiffHunk),
+			UpdatedAt: th.UpdatedAt,
+			Comments:  comments,
+		}
+		if th.Line > 0 {
+			l := th.Line
+			item.Line = &l
+		}
+		if th.Outdated {
+			o := true
+			item.Outdated = &o
+		}
+		threads = append(threads, item)
+	}
+	return &api.PRFeedback{
+		CiState:           api.PRCIState(data.CIState),
+		FailedChecksCount: data.FailedChecksCount,
+		FailedChecks:      checks,
+		UnresolvedThreads: data.UnresolvedThreads,
+		ReviewThreads:     threads,
+		CiFailedAt:        row.CiFailedAt,
+		ReviewUpdatedAt:   row.ReviewUpdatedAt,
+		UpdatedAt:         row.UpdatedAt,
+	}
 }
 
 // actorDirectory resolves activity actors to display data.

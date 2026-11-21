@@ -186,6 +186,8 @@ final class InboxTrayTests: XCTestCase {
         XCTAssertEqual(InboxTray.action(kind: "review"), .open(label: "Open review"))
         XCTAssertEqual(InboxTray.action(kind: "planning"), .open(label: "Review plan"))
         XCTAssertEqual(InboxTray.action(kind: "pr_approved"), .open(label: "Open on GitHub"))
+        XCTAssertEqual(InboxTray.action(kind: "pr_ci_failed"), .open(label: "Fix CI"))
+        XCTAssertEqual(InboxTray.action(kind: "pr_review_comments"), .open(label: "Address comments"))
         XCTAssertEqual(InboxTray.action(kind: "stalled"), .open(label: "Open run"))
     }
 

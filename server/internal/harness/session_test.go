@@ -2,6 +2,7 @@ package harness
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -53,4 +54,85 @@ func TestLineWriterCloseIdempotent(t *testing.T) {
 	if s.closed != 1 || s.sb.String() != "{\"ok\":\"1\"}\n" {
 		t.Fatalf("closed=%d body=%q", s.closed, s.sb.String())
 	}
+}
+
+func TestSessionControlSteer(t *testing.T) {
+	t.Run("claude", func(t *testing.T) {
+		spy := &spyWriteCloser{}
+		c := &claudeControl{w: newLineWriter(spy)}
+		if err := c.Steer("   "); err == nil {
+			t.Fatal("expected error for blank steer")
+		}
+		if err := c.Steer("pivot to tests"); err != nil {
+			t.Fatalf("Steer: %v", err)
+		}
+		got := spy.sb.String()
+		if !strings.Contains(got, `"type":"user"`) || !strings.Contains(got, `"pivot to tests"`) {
+			t.Fatalf("unexpected claude steer frame: %q", got)
+		}
+	})
+
+	t.Run("codex_ack_error_and_close", func(t *testing.T) {
+		spy := &spyWriteCloser{}
+		c := &codexControl{w: newLineWriter(spy), thread: "thr-1", turn: "turn-1"}
+		errCh := make(chan error, 1)
+		go func() { errCh <- c.Steer("focus on api") }()
+
+		// Wait until the request is registered in c.pending.
+		for {
+			c.mu.Lock()
+			var id int64
+			for k := range c.pending {
+				id = k
+			}
+			c.mu.Unlock()
+			if id != 0 {
+				c.resolve(id, nil)
+				break
+			}
+		}
+		if err := <-errCh; err != nil {
+			t.Fatalf("expected ack nil err, got %v", err)
+		}
+		if !strings.Contains(spy.sb.String(), `"method":"turn/steer"`) || !strings.Contains(spy.sb.String(), `"expectedTurnId":"turn-1"`) {
+			t.Fatalf("unexpected codex steer RPC: %q", spy.sb.String())
+		}
+
+		go func() { errCh <- c.Steer("unsupported turn") }()
+		for {
+			c.mu.Lock()
+			var id int64
+			for k := range c.pending {
+				id = k
+			}
+			c.mu.Unlock()
+			if id != 0 {
+				c.resolve(id, &codexRPCError{Code: -32601, Message: "method not found"})
+				break
+			}
+		}
+		if err := <-errCh; !errors.Is(err, ErrSteerUnsupported) {
+			t.Fatalf("got %v, want ErrSteerUnsupported", err)
+		}
+
+		go func() { errCh <- c.Steer("closed stream") }()
+		for {
+			c.mu.Lock()
+			n := len(c.pending)
+			c.mu.Unlock()
+			if n > 0 {
+				c.closeAll()
+				break
+			}
+		}
+		if err := <-errCh; !errors.Is(err, ErrSteerUnsupported) {
+			t.Fatalf("closeAll got %v, want ErrSteerUnsupported", err)
+		}
+	})
+
+	t.Run("antigravity_unsupported", func(t *testing.T) {
+		if err := (&agyControl{}).Steer("anything"); !errors.Is(err, ErrSteerUnsupported) {
+			t.Fatalf("got %v, want ErrSteerUnsupported", err)
+		}
+	})
 }

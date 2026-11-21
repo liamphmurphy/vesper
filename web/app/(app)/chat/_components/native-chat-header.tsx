@@ -3,8 +3,8 @@
 import { Dialog } from "radix-ui";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
-import type { Schemas } from "@/lib/api/client";
-import { useUpdateChat } from "@/lib/api/hooks";
+import { ApiError, type Schemas } from "@/lib/api/client";
+import { useCompactChat, useUpdateChat } from "@/lib/api/hooks";
 import { usePersonas } from "@/lib/api/persona-hooks";
 import { useRepositories } from "@/lib/api/repository-hooks";
 import { canOpenWorkspaceFolder, openWorkspaceFolder } from "@/lib/desktop-bridge";
@@ -50,6 +50,7 @@ export function NativeChatHeader({ chat: c, participants, fresh, running, person
   const secrets = useChatSecrets(c.id);
   const saved = useRepositories();
   const update = useUpdateChat();
+  const compact = useCompactChat(c.id);
   const canvas = useCanvasEntry(c.id, running);
   const runs = useChatLiveRuns(c.id);
   const [renaming, setRenaming] = useState(false);
@@ -86,9 +87,11 @@ export function NativeChatHeader({ chat: c, participants, fresh, running, person
         canOpenWorkspace: canOpenWorkspaceFolder(),
         secrets: secrets.any ? { label: secrets.label } : undefined,
         commitEmail,
+        compact: { disabled: c.archived || running || compact.isPending, pending: c.compact_pending, contextTokens: c.context_tokens },
+        autoCompact: { value: c.auto_rollover_tokens ?? null, disabled: c.archived || running || update.isPending },
         participants: participants.map((p) => p.name),
       }),
-    [c.archived, c.workspace_path, secrets.any, secrets.label, commitEmail, participants],
+    [c.archived, c.workspace_path, c.compact_pending, c.context_tokens, c.auto_rollover_tokens, running, compact.isPending, update.isPending, secrets.any, secrets.label, commitEmail, participants],
   );
 
   // The toolbar's title is the chat's own title, as the web header shows it (not the page's "Chat").
@@ -126,9 +129,19 @@ export function NativeChatHeader({ chat: c, participants, fresh, running, person
     },
     titleMenu,
     onTitleAction: (menuItemId) => {
-      switch (parseTitleAction(menuItemId)) {
+      const action = parseTitleAction(menuItemId);
+      if (!action) return;
+      if (typeof action === "object") {
+        void update.mutateAsync({ id: c.id, patch: { revision: c.revision, auto_rollover_tokens: action.tokens } }).catch(() => toast({ title: "Couldn’t update auto-compact threshold.", tone: "error" }));
+        return;
+      }
+      switch (action) {
         case "rename":
           return setRenaming(true);
+        case "compact":
+          return compact.mutate(undefined, {
+            onError: (e) => toast({ title: e instanceof ApiError ? e.message : "Couldn’t compact context right now.", tone: "error" }),
+          });
         case "copyWorkspace":
           return void navigator.clipboard?.writeText(c.workspace_path ?? "");
         case "openWorkspace":

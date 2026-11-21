@@ -107,7 +107,7 @@ WHERE epic_id = sqlc.arg(epic_id) AND position BETWEEN least(sqlc.arg(old_positi
 -- name: BoardTickets :many
 WITH ranked AS (
  SELECT t.id, t.key, t.number, t.title, t.status, t.priority, t.due_date, t.estimate_points,
- t.pr_number, t.pr_state, t.updated_at, t.sort_order,
+ t.pr_number, t.pr_state, t.pr_url, t.updated_at, t.sort_order,
  p.key AS project_key, e.id AS epic_id, e.name AS epic_name,
  a.id AS agent_id, a.name AS agent_name, a.handle AS agent_handle, a.color_index AS agent_color_index,
  (SELECT count(*) FROM ticket_dependencies d JOIN tickets b ON b.id=d.blocker_id WHERE d.ticket_id=t.id AND b.status <> 'done')::int AS unmet_dependencies,

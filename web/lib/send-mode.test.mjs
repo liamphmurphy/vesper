@@ -7,22 +7,27 @@ test("follow-up is the default, so Enter never interrupts unless asked to", () =
 });
 
 test("Tab cycles the modes both ways and wraps", () => {
-  assert.equal(cycleSendMode("followup"), "aside");
+  assert.equal(cycleSendMode("followup"), "steer");
+  assert.equal(cycleSendMode("steer"), "aside");
   assert.equal(cycleSendMode("aside"), "interrupt");
   assert.equal(cycleSendMode("interrupt"), "followup");
   assert.equal(cycleSendMode("followup", true), "interrupt");
-  assert.equal(cycleSendMode("aside", true), "followup");
+  assert.equal(cycleSendMode("steer", true), "followup");
+  assert.equal(cycleSendMode("aside", true), "steer");
 });
 
 test("the Send button and placeholder say what each mode does", () => {
   assert.equal(sendModeAction("followup"), "Queue");
+  assert.equal(sendModeAction("steer"), "Steer");
   assert.equal(sendModeAction("aside"), "Ask aside");
   assert.equal(sendModeAction("interrupt"), "Interrupt");
+  assert.match(sendModePlaceholder("steer", "Hackerman"), /Steer Hackerman mid-turn/);
   assert.match(sendModePlaceholder("aside", "Hackerman"), /Hackerman keeps working/);
   assert.match(sendModePlaceholder("followup", "Hackerman"), /when Hackerman finishes/);
 });
 
-test("/aside and /queue pick their mode; other commands don't", () => {
+test("/aside, /queue, and /steer pick their mode; other commands don't", () => {
+  assert.equal(commandSendMode("steer"), "steer");
   assert.equal(commandSendMode("aside"), "aside");
   assert.equal(commandSendMode("queue"), "followup");
   assert.equal(commandSendMode("stop"), null);

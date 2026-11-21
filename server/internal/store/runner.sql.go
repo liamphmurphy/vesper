@@ -937,6 +937,35 @@ func (q *Queries) RunActiveSeconds(ctx context.Context, runID uuid.UUID) (RunAct
 	return i, err
 }
 
+const runContextTokens = `-- name: RunContextTokens :many
+SELECT id, context_tokens FROM runs WHERE id = ANY($1::uuid[])
+`
+
+type RunContextTokensRow struct {
+	ID            uuid.UUID
+	ContextTokens int64
+}
+
+func (q *Queries) RunContextTokens(ctx context.Context, dollar_1 []uuid.UUID) ([]RunContextTokensRow, error) {
+	rows, err := q.db.Query(ctx, runContextTokens, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RunContextTokensRow{}
+	for rows.Next() {
+		var i RunContextTokensRow
+		if err := rows.Scan(&i.ID, &i.ContextTokens); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const runToolOutputBytes = `-- name: RunToolOutputBytes :one
 SELECT
   coalesce(sum((usage->>'explore_output_bytes')::bigint), 0)::bigint AS explore_output_bytes,

@@ -61,7 +61,7 @@ func (s *Service) RequestApproval(ctx context.Context, c Caller, key, scope, sum
 		}
 		raw, _ := json.Marshal(detail)
 		ap, err := q.CreateApproval(ctx, store.CreateApprovalParams{
-			WorkspaceID: run.WorkspaceID, RunID: run.ID, TicketID: t.ID, AgentID: c.Agent.ID,
+			WorkspaceID: run.WorkspaceID, RunID: run.ID, TicketID: &t.ID, AgentID: c.Agent.ID,
 			Scope: scope, ActionSummary: summary, ActionDetail: raw, RiskSummary: strings.TrimSpace(risk),
 		})
 		if err != nil {
@@ -283,6 +283,7 @@ func (s *Service) AwaitSignal(ctx context.Context, c Caller, key string, since t
 // with a new turn carrying the decision (§6.4).
 func (s *Service) Decide(ctx context.Context, ws, userID uuid.UUID, approvalID uuid.UUID, approve bool, note string) (store.ApprovalRequest, error) {
 	var ap store.ApprovalRequest
+	var chatBump *uuid.UUID
 	err := s.tx(ctx, func(q *store.Queries) error {
 		cur, err := q.LockApproval(ctx, store.LockApprovalParams{ID: approvalID, WorkspaceID: ws})
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -293,6 +294,16 @@ func (s *Service) Decide(ctx context.Context, ws, userID uuid.UUID, approvalID u
 		if cur.State != "pending" {
 			return apperr.Conflict("this request was already %s", cur.State)
 		}
+		if cur.ChatID != nil {
+			chat, err := q.GetChatSession(ctx, store.GetChatSessionParams{ID: *cur.ChatID, WorkspaceID: ws})
+			if errors.Is(err, pgx.ErrNoRows) || (err == nil && chat.CreatedBy != userID) {
+				return apperr.ErrNotFound
+			}
+			if err != nil {
+				return err
+			}
+			chatBump = &chat.ID
+		}
 		state, verb := "denied", VerbApprovalDenied
 		if approve {
 			state, verb = "approved", VerbApprovalApproved
@@ -302,11 +313,14 @@ func (s *Service) Decide(ctx context.Context, ws, userID uuid.UUID, approvalID u
 		if err != nil {
 			return err
 		}
+		if cur.TicketID == nil {
+			return nil
+		}
 		run, err := q.LockRun(ctx, cur.RunID)
 		if err != nil {
 			return err
 		}
-		t, err := q.GetTicketByID(ctx, cur.TicketID)
+		t, err := q.GetTicketByID(ctx, *cur.TicketID)
 		if err != nil {
 			return err
 		}
@@ -315,7 +329,7 @@ func (s *Service) Decide(ctx context.Context, ws, userID uuid.UUID, approvalID u
 			return err
 		}
 		if run.State != "waiting" || deref(run.WaitReason) != "approval" {
-			return nil // the run moved on (cancelled, etc.)
+			return nil // the run moved on (cancelled, etc.) or is blocked live in CheckTool
 		}
 		msg := "Approved: " + ap.ActionSummary
 		if !approve {
@@ -326,6 +340,11 @@ func (s *Service) Decide(ctx context.Context, ws, userID uuid.UUID, approvalID u
 		}
 		return resume(ctx, q, run, "approval", msg)
 	})
+	if err == nil && chatBump != nil {
+		// Bump after releasing the approval lock so chat_sessions and approval_requests
+		// locks never invert with deleteChat (chat_sessions -> approval_requests).
+		_, _ = store.New(s.Pool).BumpChatRevision(ctx, *chatBump)
+	}
 	return ap, err
 }
 

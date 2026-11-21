@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/liamphmurphy/vesper/server/internal/api"
@@ -42,16 +43,17 @@ func (s *Server) GetChatCodeReview(ctx context.Context, req api.GetChatCodeRevie
 
 // ListPushRequests is the push cards under a chat.
 func (s *Server) ListPushRequests(ctx context.Context, req api.ListPushRequestsRequestObject) (api.ListPushRequestsResponseObject, error) {
-	if _, err := s.ownChat(ctx, req.Id); err != nil {
+	c, err := s.ownChat(ctx, req.Id)
+	if err != nil {
 		return nil, err
 	}
 	rows, err := s.Q.ChatPushRequests(ctx, req.Id)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]api.PushRequest, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, s.toPushRequest(ctx, r))
+	out, err := s.toPushRequests(ctx, c.WorkspaceID, rows)
+	if err != nil {
+		return nil, err
 	}
 	return api.ListPushRequests200JSONResponse{Requests: out}, nil
 }
@@ -99,7 +101,11 @@ func (s *Server) DecidePushRequest(ctx context.Context, req api.DecidePushReques
 		if gh.Token != "" {
 			pushreq.Discard(context.WithoutCancel(ctx), gh, r)
 		}
-		return api.DecidePushRequest200JSONResponse(s.toPushRequest(ctx, r)), nil
+		out, err := s.toPushRequests(ctx, ws, []store.PushRequest{r})
+		if err != nil {
+			return nil, err
+		}
+		return api.DecidePushRequest200JSONResponse(out[0]), nil
 	}
 	if gh.Token == "" {
 		return nil, apperr.Conflict("no GitHub token: add git:pat in Settings → Connections & secrets")
@@ -142,7 +148,27 @@ func (s *Server) DecidePushRequest(ctx context.Context, req api.DecidePushReques
 			s.Log.Warn("cleanup chat checkpoints", "push_request", done.ID, "err", cerr)
 		}
 	}
-	return api.DecidePushRequest200JSONResponse(s.toPushRequest(ctx, done)), nil
+	out, err := s.toPushRequests(ctx, ws, []store.PushRequest{done})
+	if err != nil {
+		return nil, err
+	}
+	return api.DecidePushRequest200JSONResponse(out[0]), nil
+}
+
+func (s *Server) AddressPushRequestPRFeedback(ctx context.Context, req api.AddressPushRequestPRFeedbackRequestObject) (api.AddressPushRequestPRFeedbackResponseObject, error) {
+	u, _, ws := me(ctx)
+	if req.Body == nil {
+		return nil, apperr.Invalid("body", "required")
+	}
+	msg, err := s.Runs.AddressPushRequestPRFeedback(ctx, ws, u.ID, req.Id, string(req.Body.Mode))
+	if err != nil {
+		return nil, err
+	}
+	msgs, err := s.toMessages(ctx, []store.ChatMessage{msg})
+	if err != nil {
+		return nil, err
+	}
+	return api.AddressPushRequestPRFeedback201JSONResponse(msgs[0]), nil
 }
 
 // ListRepositoryPushPolicies is the repositories the person always allows.
@@ -170,6 +196,30 @@ func (s *Server) SetRepositoryPushPolicy(ctx context.Context, req api.SetReposit
 		return nil, err
 	}
 	return api.SetRepositoryPushPolicy200JSONResponse{Repository: r.RepoUrl, AutoPush: r.AutoPush}, nil
+}
+
+func (s *Server) toPushRequests(ctx context.Context, ws uuid.UUID, rows []store.PushRequest) ([]api.PushRequest, error) {
+	var prURLs []string
+	for _, r := range rows {
+		if r.PrUrl != nil && *r.PrUrl != "" {
+			prURLs = append(prURLs, *r.PrUrl)
+		}
+	}
+	feedbackByURL, err := s.prFeedbackByURLs(ctx, ws, prURLs)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]api.PushRequest, 0, len(rows))
+	for _, r := range rows {
+		item := s.toPushRequest(ctx, r)
+		if r.PrUrl != nil {
+			if fb, ok := feedbackByURL[*r.PrUrl]; ok {
+				item.Feedback = toPRFeedback(fb)
+			}
+		}
+		out = append(out, item)
+	}
+	return out, nil
 }
 
 func (s *Server) toPushRequest(ctx context.Context, r store.PushRequest) api.PushRequest {

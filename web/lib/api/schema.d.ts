@@ -992,6 +992,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tickets/{key}/address-pr-feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Ticket key, e.g. PAY-214 */
+                key: components["parameters"]["TicketKey"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Dispatch or resume a run on this ticket's branch to fix CI failures or address review comments */
+        post: operations["addressTicketPRFeedback"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tickets/dispatch": {
         parameters: {
             query?: never;
@@ -3379,6 +3399,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/push-requests/{id}/address-pr-feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Send failing CI logs or unresolved PR review comments back to the originating chat on this branch */
+        post: operations["addressPushRequestPRFeedback"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repository-push-policies": {
         parameters: {
             query?: never;
@@ -4521,6 +4560,97 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/chats/{id}/steer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Steer an active chat reply mid-turn without discarding work
+         * @description Injects guidance into a live chat session mid-turn when supported by
+         *     the harness (or falls back to an interrupt/next-turn handoff otherwise).
+         *     Returns 201 with the steer record and saved user message id.
+         */
+        post: operations["steerChat"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chats/{id}/compact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Compact this chat onto a fresh context window
+         * @description Clears the current harness CLI session and arms a handoff compaction for
+         *     the next turn while keeping the chat's existing run and workspace volume
+         *     intact. 409 while a turn is running or when the chat is archived.
+         */
+        post: operations["compactChat"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chats/{id}/fork": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fork this chat into an independent conversation at a message
+         * @description Creates a new chat seeded with the message prefix up to `message_id`.
+         *     For coding chats with `branch_repo: true`, attaches the repository on a
+         *     new fork branch seeded from the fork point's commit or branch.
+         */
+        post: operations["forkChat"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chats/{id}/tool-approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+            };
+            cookie?: never;
+        };
+        /** Pending in-turn tool approvals for this chat */
+        get: operations["listChatToolApprovals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/chats/{id}/asides": {
         parameters: {
             query?: never;
@@ -5404,6 +5534,50 @@ export interface components {
         };
         /** @enum {string} */
         PullRequestState: "draft" | "open" | "merged" | "closed";
+        /** @enum {string} */
+        PRCIState: "unknown" | "pending" | "passing" | "failing";
+        PRCheckFailure: {
+            name: string;
+            conclusion: string;
+            details_url?: string;
+            title?: string;
+            summary?: string;
+        };
+        PRReviewComment: {
+            author: string;
+            body: string;
+            url?: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        PRReviewThread: {
+            id: string;
+            path: string;
+            line?: number;
+            url?: string;
+            diff_hunk?: string;
+            outdated?: boolean;
+            /** Format: date-time */
+            updated_at: string;
+            comments: components["schemas"]["PRReviewComment"][];
+        };
+        PRFeedback: {
+            ci_state: components["schemas"]["PRCIState"];
+            failed_checks_count: number;
+            failed_checks: components["schemas"]["PRCheckFailure"][];
+            unresolved_threads: number;
+            review_threads: components["schemas"]["PRReviewThread"][];
+            /** Format: date-time */
+            ci_failed_at?: string;
+            /** Format: date-time */
+            review_updated_at?: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        AddressPRFeedbackRequest: {
+            /** @enum {string} */
+            mode: "ci" | "review" | "all";
+        };
         PullRequest: {
             number: number;
             state: components["schemas"]["PullRequestState"];
@@ -5414,6 +5588,7 @@ export interface components {
             closed_unmerged?: boolean;
             /** Format: date-time */
             synced_at?: string;
+            feedback?: components["schemas"]["PRFeedback"];
         };
         TicketSummary: {
             /** Format: uuid */
@@ -6896,6 +7071,8 @@ export interface components {
             /** Format: uuid */
             run_id: string;
             ticket_key: string;
+            /** Format: uuid */
+            chat_id?: string;
             agent: components["schemas"]["AgentRef"];
             scope: string;
             action_summary: string;
@@ -7388,10 +7565,10 @@ export interface components {
         InboxItem: {
             id: string;
             /**
-             * @description question is a run waiting on await_human (summary is the question); blocked is a failed or blocked run; stalled is a running run with no event for 30 minutes; merged is a pull request merged in the last 14 days; pr_approved is a pull request you authored on GitHub that a reviewer approved in the last 14 days (href is the pull request's GitHub URL)
+             * @description question is a run waiting on await_human (summary is the question); blocked is a failed or blocked run; stalled is a running run with no event for 30 minutes; pr_ci_failed is an open Vesper-tracked PR with failing CI check runs; pr_review_comments is an open Vesper-tracked PR with unresolved review threads; merged is a pull request merged in the last 14 days; pr_approved is a pull request you authored on GitHub that a reviewer approved in the last 14 days (href is the pull request's GitHub URL)
              * @enum {string}
              */
-            kind: "approval" | "question" | "blocked" | "stalled" | "mockup" | "planning" | "review" | "dispatch" | "mention" | "suggestion" | "workflow_gate" | "scheduled" | "connector_approval" | "secret_approval" | "secret_expiring" | "merged" | "pr_approved";
+            kind: "approval" | "question" | "blocked" | "stalled" | "pr_ci_failed" | "pr_review_comments" | "mockup" | "planning" | "review" | "dispatch" | "mention" | "suggestion" | "workflow_gate" | "scheduled" | "connector_approval" | "secret_approval" | "secret_expiring" | "merged" | "pr_approved";
             title: string;
             summary: string;
             href: string;
@@ -7860,6 +8037,43 @@ export interface components {
             space?: components["schemas"]["ChatSpaceRef"];
             /** @description The start of the newest reply as plain text; only when listing one space's chats */
             preview?: string;
+            /** @description Set after /compact; the next turn starts a fresh context window with handoff + workspace git brief */
+            compact_pending?: boolean;
+            /** @description Optional user focus note saved with /compact for the next turn */
+            compact_focus?: string;
+            /**
+             * Format: int64
+             * @description Per-chat auto-compaction threshold in context tokens (0 disables auto-compaction; null inherits the server default)
+             */
+            auto_rollover_tokens?: number | null;
+            /**
+             * Format: int64
+             * @description Current segment's last reported context window size in tokens
+             */
+            context_tokens?: number;
+            /**
+             * Format: uuid
+             * @description Source chat this conversation was forked from
+             */
+            forked_from_chat_id?: string | null;
+            /**
+             * Format: uuid
+             * @description Fork anchor message in the source chat
+             */
+            forked_from_message_id?: string | null;
+        };
+        CompactChatRequest: {
+            /** @description Optional instruction telling the compacted context window what to prioritize */
+            focus?: string;
+        };
+        ForkChatRequest: {
+            /** Format: uuid */
+            message_id: string;
+            title?: string;
+            /** @description When true on a coding chat, check out a new fork branch seeded from the fork point's commit or branch */
+            branch_repo?: boolean;
+            /** @description Optional work branch name (TYPE/slug) when branch_repo is true; defaults to feat/fork-<short-id> */
+            branch_name?: string;
         };
         NewChat: {
             /** @description Project to attach from the start; omit for a chat with no project */
@@ -7897,6 +8111,11 @@ export interface components {
             project?: string;
             /** @description Move the chat into one of your spaces (not an app's), or empty for none. Its instructions, sources and memory reach the chat from the next message, and the chat files tickets where the space does unless project is given too. */
             space_id?: string;
+            /**
+             * Format: int64
+             * @description Auto-compact this chat's context window when a turn reaches this many tokens (0 disables auto-compaction; null inherits the server default).
+             */
+            auto_rollover_tokens?: number | null;
         };
         NewChatMessage: {
             /** @description Ask for a research plan to approve instead of an answer */
@@ -7962,6 +8181,20 @@ export interface components {
         };
         ChatFollowupList: {
             followups: components["schemas"]["ChatFollowup"][];
+        };
+        ChatSteer: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            message_id: string;
+            body: string;
+            /** @enum {string} */
+            state: "pending" | "delivered" | "fallback" | "expired";
+            /** Format: date-time */
+            created_at: string;
+        };
+        ChatToolApprovalList: {
+            approvals: components["schemas"]["Approval"][];
         };
         ChatAsideList: {
             asides: components["schemas"]["ChatSession"][];
@@ -8846,6 +9079,10 @@ export interface components {
             effort_level?: "low" | "medium" | "high" | "xhigh";
             /** @description Rules that raised effort_level above the message's own: confirmation (a go-ahead takes the weight of what it approves), effort_mismatch (a retry or edit steps it up) */
             effort_reasons?: ("confirmation" | "effort_mismatch")[];
+            /** @description Primary repository branch at the end of the turn that produced this assistant message */
+            git_branch?: string;
+            /** @description Primary repository HEAD commit SHA at the end of the turn that produced this assistant message */
+            git_commit_sha?: string;
             /** Format: date-time */
             created_at: string;
         };
@@ -8930,6 +9167,7 @@ export interface components {
             pr_url?: string;
             pr_number?: number;
             pr_state?: components["schemas"]["PullRequestState"];
+            feedback?: components["schemas"]["PRFeedback"];
             /** @description Why it failed or was replaced */
             error?: string;
             persona?: components["schemas"]["PersonaSummary"];
@@ -11665,6 +11903,34 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Ticket"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    addressTicketPRFeedback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Ticket key, e.g. PAY-214 */
+                key: components["parameters"]["TicketKey"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddressPRFeedbackRequest"];
+            };
+        };
+        responses: {
+            /** @description Run queued or resumed */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Run"];
                 };
             };
             default: components["responses"]["Error"];
@@ -15560,6 +15826,33 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    addressPushRequestPRFeedback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddressPRFeedbackRequest"];
+            };
+        };
+        responses: {
+            /** @description Follow-up turn queued on the originating chat */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatMessage"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     listRepositoryPushPolicies: {
         parameters: {
             query?: never;
@@ -17408,6 +17701,119 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            404: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    steerChat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatMessageEdit"];
+            };
+        };
+        responses: {
+            /** @description Steered */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSteer"];
+                };
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    compactChat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CompactChatRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated chat */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSession"];
+                };
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    forkChat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ForkChatRequest"];
+            };
+        };
+        responses: {
+            /** @description Forked chat */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSession"];
+                };
+            };
+            404: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    listChatToolApprovals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pending approvals */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatToolApprovalList"];
+                };
             };
             404: components["responses"]["Error"];
             default: components["responses"]["Error"];

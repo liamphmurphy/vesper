@@ -72,6 +72,25 @@ type Config struct {
 	// RepoMap delivers a generated map of a ticket run's repository at its
 	// base commit as a context file (repomap.go, RUNNER_REPO_MAP).
 	RepoMap bool
+	// ToolApprovalWait bounds how long a requires_approval tool call blocks
+	// in-process waiting on a person before timing out. 0 uses
+	// defaultToolApprovalWait (90s); < 0 disables blocking wait.
+	ToolApprovalWait time.Duration
+	// ToolApprovalPoll overrides the poll interval while waiting (0 uses
+	// runs.Service's default).
+	ToolApprovalPoll time.Duration
+}
+
+const defaultToolApprovalWait = 90 * time.Second
+
+func (c Config) toolApprovalWait() time.Duration {
+	if c.ToolApprovalWait < 0 {
+		return 0
+	}
+	if c.ToolApprovalWait > 0 {
+		return c.ToolApprovalWait
+	}
+	return defaultToolApprovalWait
 }
 
 // DefaultChatIdleTTL is how long an idle chat segment keeps its workspace.
@@ -420,7 +439,7 @@ func (r *Runner) runsService() *runs.Service {
 	if r.Scheduled != nil {
 		return r.Scheduled
 	}
-	return &runs.Service{Pool: r.Pool}
+	return &runs.Service{Pool: r.Pool, Poll: r.Cfg.ToolApprovalPoll}
 }
 
 func (r *Runner) policyCheck(c runCtx) harness.PolicyFunc {
@@ -428,7 +447,7 @@ func (r *Runner) policyCheck(c runCtx) harness.PolicyFunc {
 		if r.Pool == nil && r.Scheduled == nil {
 			return false, "Vesper tool policy service unavailable"
 		}
-		d, err := r.runsService().CheckTool(ctx, c.caller(), runs.ToolCheck{Tool: tool, Input: input})
+		d, err := r.runsService().CheckTool(ctx, c.caller(), runs.ToolCheck{Tool: tool, Input: input, Wait: r.Cfg.toolApprovalWait()})
 		if err != nil {
 			return false, "Vesper tool policy check failed"
 		}
@@ -441,7 +460,7 @@ func (r *Runner) policyCheckWithSpec(c runCtx, spec agentdef.Resolved) harness.P
 		if r.Pool == nil && r.Scheduled == nil {
 			return false, "Vesper tool policy service unavailable"
 		}
-		d, err := r.runsService().CheckToolWithSpec(ctx, c.caller(), spec, runs.ToolCheck{Tool: tool, Input: input})
+		d, err := r.runsService().CheckToolWithSpec(ctx, c.caller(), spec, runs.ToolCheck{Tool: tool, Input: input, Wait: r.Cfg.toolApprovalWait()})
 		if err != nil {
 			return false, "Vesper tool policy check failed"
 		}
@@ -1971,6 +1990,8 @@ func (r *Runner) runSession(ctx context.Context, c runCtx, sh harness.SessionHar
 
 	readCtx, cancelReads := context.WithCancel(ctx)
 	defer cancelReads()
+	toolCtx, cancelTools := context.WithCancel(readCtx)
+	defer cancelTools()
 	var raw bytes.Buffer
 	var rawMu sync.Mutex
 	appendRaw := func(prefix string, b []byte) {
@@ -2042,7 +2063,12 @@ func (r *Runner) runSession(ctx context.Context, c runCtx, sh harness.SessionHar
 					ctrl.Store(&sc)
 				}
 			},
-			CheckTool: check,
+			CheckTool: func(_ context.Context, tool string, input map[string]any) (bool, string) {
+				if check == nil {
+					return false, "Vesper tool policy unavailable"
+				}
+				return check(toolCtx, tool, input)
+			},
 		})
 		sessMu.Lock()
 		sessRes = res
@@ -2060,6 +2086,7 @@ func (r *Runner) runSession(ctx context.Context, c runCtx, sh harness.SessionHar
 		return nil
 	})
 	code, err := proc.Wait()
+	cancelTools()
 	drainErr := drainProcess(proc, &readers, cancelReads)
 	expired, readErr := stop()
 	for len(streamErrors) > 0 {

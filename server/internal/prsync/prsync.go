@@ -95,123 +95,168 @@ func (s *Syncer) Once(ctx context.Context) (int, error) {
 	return len(rows) + len(pushRows), nil
 }
 
-func (s *Syncer) fetch(ctx context.Context, token, owner, repo string, n int) (PR, error) {
-	base := s.BaseURL
-	if base == "" {
-		base = "https://api.github.com"
-	}
-	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/repos/%s/%s/pulls/%d", base, owner, repo, n), nil)
+func (s *Syncer) fetch(ctx context.Context, token, owner, repo string, n int, prevETag string) (pr PR, newETag string, notModified bool, err error) {
+	url := fmt.Sprintf("%s/repos/%s/%s/pulls/%d", s.baseURL(), owner, repo, n)
+	status, newETag, raw, err := s.doConditionalGET(ctx, url, token, prevETag)
 	if err != nil {
-		return PR{}, err
+		return PR{}, "", false, err
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+	if status == http.StatusNotModified {
+		return PR{}, prevETag, true, nil
 	}
-	hc := s.HTTP
-	if hc == nil {
-		hc = &http.Client{Timeout: 15 * time.Second}
-	}
-	res, err := hc.Do(req)
-	if err != nil {
-		return PR{}, err
-	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		return PR{}, fmt.Errorf("github: %s", res.Status)
-	}
-	var pr PR
-	return pr, json.NewDecoder(res.Body).Decode(&pr)
+	return pr, newETag, false, json.Unmarshal(raw, &pr)
 }
 
-func (s *Syncer) fetchPRState(ctx context.Context, workspaceID uuid.UUID, projectID *uuid.UUID, rawURL string) (PR, int, string, string, bool, error) {
+type prFetchResult struct {
+	pr          PR
+	owner       string
+	repo        string
+	number      int
+	state       string
+	token       string
+	etag        string
+	notModified bool
+	valid       bool
+}
+
+func (s *Syncer) fetchPRState(ctx context.Context, workspaceID uuid.UUID, projectID *uuid.UUID, rawURL, prevETag, prevState string) (prFetchResult, error) {
 	m := prURL.FindStringSubmatch(rawURL)
 	if m == nil {
-		return PR{}, 0, "", "", false, nil
+		return prFetchResult{}, nil
 	}
 	n, _ := strconv.Atoi(m[3])
 	token := ""
 	if s.Secrets != nil {
 		token, _ = s.Secrets.Reveal(ctx, workspaceID, projectID, "git:pat") // public repos work without
 	}
-	pr, err := s.fetch(ctx, token, m[1], m[2], n)
+	pr, newETag, notModified, err := s.fetch(ctx, token, m[1], m[2], n, prevETag)
 	if err != nil {
-		return PR{}, 0, "", "", true, err
+		return prFetchResult{valid: true}, err
 	}
-	state := "open"
-	switch {
-	case pr.Merged:
-		state = "merged"
-	case pr.State == "closed":
-		state = "closed"
-	case pr.Draft:
-		state = "draft"
+	state := prevState
+	if state == "" {
+		state = "open"
 	}
-	return pr, n, state, token, true, nil
+	if !notModified {
+		state = "open"
+		switch {
+		case pr.Merged:
+			state = "merged"
+		case pr.State == "closed":
+			state = "closed"
+		case pr.Draft:
+			state = "draft"
+		}
+	}
+	return prFetchResult{
+		pr:          pr,
+		owner:       m[1],
+		repo:        m[2],
+		number:      n,
+		state:       state,
+		token:       token,
+		etag:        newETag,
+		notModified: notModified,
+		valid:       true,
+	}, nil
+}
+
+func derefStr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 func (s *Syncer) syncPushRequest(ctx context.Context, q *store.Queries, p store.PushRequestsWithOpenPRsRow) error {
-	pr, _, state, token, valid, err := s.fetchPRState(ctx, p.WorkspaceID, p.ProjectID, *p.PrUrl)
+	prevFB, hasPrev := s.loadPrevFeedback(ctx, q, p.WorkspaceID, *p.PrUrl)
+	prevETag := ""
+	if hasPrev {
+		prevETag = prevFB.PrEtag
+	}
+	res, err := s.fetchPRState(ctx, p.WorkspaceID, p.ProjectID, *p.PrUrl, prevETag, derefStr(p.PrState))
 	if err != nil {
 		return err
 	}
-	if !valid {
+	if !res.valid {
 		return q.TouchPushRequestPRSync(ctx, p.ID)
 	}
-	if err := q.UpdatePushRequestPRSync(ctx, store.UpdatePushRequestPRSyncParams{ID: p.ID, PrState: &state}); err != nil {
-		return err
-	}
-	if (state == "open" || state == "draft" || state == "merged") && token != "" && pr.Head.SHA != "" {
-		gh := &pushreq.GitHub{BaseURL: s.BaseURL, HTTP: s.HTTP, Token: token}
-		if _, cerr := pushreq.CleanupChatCheckpointsAtPR(ctx, gh, q, p.ChatID, p.RepoUrl, *p.PrUrl, p.Branch, pr.Head.SHA, p.RunID, true); cerr != nil {
-			s.Log.Warn("cleanup chat checkpoints", "push_request", p.ID, "err", cerr)
+	headSHA := prevFB.HeadSha
+	if res.notModified {
+		if err := q.TouchPushRequestPRSync(ctx, p.ID); err != nil {
+			return err
+		}
+	} else {
+		headSHA = res.pr.Head.SHA
+		if err := q.UpdatePushRequestPRSync(ctx, store.UpdatePushRequestPRSyncParams{ID: p.ID, PrState: &res.state}); err != nil {
+			return err
+		}
+		if (res.state == "open" || res.state == "draft" || res.state == "merged") && res.token != "" && headSHA != "" {
+			gh := &pushreq.GitHub{BaseURL: s.BaseURL, HTTP: s.HTTP, Token: res.token}
+			if _, cerr := pushreq.CleanupChatCheckpointsAtPR(ctx, gh, q, p.ChatID, p.RepoUrl, *p.PrUrl, p.Branch, headSHA, p.RunID, true); cerr != nil {
+				s.Log.Warn("cleanup chat checkpoints", "push_request", p.ID, "err", cerr)
+			}
 		}
 	}
+	s.syncFeedback(ctx, q, p.WorkspaceID, prevFB, hasPrev, res.token, res.owner, res.repo, res.number, *p.PrUrl, res.state, headSHA, res.etag, res.notModified)
 	return nil
 }
 
 func (s *Syncer) sync(ctx context.Context, q *store.Queries, t store.TicketsWithOpenPRsRow) error {
-	pr, n, state, token, valid, err := s.fetchPRState(ctx, t.WorkspaceID, &t.ProjectID, *t.PrUrl)
+	prevFB, hasPrev := s.loadPrevFeedback(ctx, q, t.WorkspaceID, *t.PrUrl)
+	prevETag := ""
+	if hasPrev {
+		prevETag = prevFB.PrEtag
+	}
+	res, err := s.fetchPRState(ctx, t.WorkspaceID, &t.ProjectID, *t.PrUrl, prevETag, derefStr(t.PrState))
 	if err != nil {
 		return err
 	}
-	if !valid {
+	if !res.valid {
 		return q.TouchPRSync(ctx, t.ID)
 	}
-	err = pgx.BeginFunc(ctx, s.Pool, func(tx pgx.Tx) error {
-		q := store.New(tx)
-		if err := q.UpdatePRSync(ctx, store.UpdatePRSyncParams{ID: t.ID, PrState: &state, PrAdditions: &pr.Additions,
-			PrDeletions: &pr.Deletions, PrClosedUnmerged: state == "closed"}); err != nil {
+	headSHA := prevFB.HeadSha
+	if res.notModified {
+		if err := q.TouchPRSync(ctx, t.ID); err != nil {
 			return err
 		}
-		payload := map[string]any{"number": n, "url": *t.PrUrl}
-		switch state {
-		case "merged":
-			return tracker.Record(ctx, q, t.WorkspaceID, t.ID, t.EpicID, tracker.Actor{Type: "system"}, runs.VerbPRMerged, payload, nil)
-		case "closed":
-			return tracker.Record(ctx, q, t.WorkspaceID, t.ID, t.EpicID, tracker.Actor{Type: "system"}, runs.VerbPRClosed, payload, nil)
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	if state == "merged" && t.Status != "done" {
-		done := "done"
-		_, err = s.Tracker.Update(ctx, t.WorkspaceID, tracker.Actor{Type: "system"}, t.Key, tracker.Patch{Status: &done})
-		if errors.Is(err, tracker.ErrNotFound) {
-			err = nil
-		}
+	} else {
+		headSHA = res.pr.Head.SHA
+		err = pgx.BeginFunc(ctx, s.Pool, func(tx pgx.Tx) error {
+			q := store.New(tx)
+			if err := q.UpdatePRSync(ctx, store.UpdatePRSyncParams{ID: t.ID, PrState: &res.state, PrAdditions: &res.pr.Additions,
+				PrDeletions: &res.pr.Deletions, PrClosedUnmerged: res.state == "closed"}); err != nil {
+				return err
+			}
+			payload := map[string]any{"number": res.number, "url": *t.PrUrl}
+			switch res.state {
+			case "merged":
+				return tracker.Record(ctx, q, t.WorkspaceID, t.ID, t.EpicID, tracker.Actor{Type: "system"}, runs.VerbPRMerged, payload, nil)
+			case "closed":
+				return tracker.Record(ctx, q, t.WorkspaceID, t.ID, t.EpicID, tracker.Actor{Type: "system"}, runs.VerbPRClosed, payload, nil)
+			}
+			return nil
+		})
 		if err != nil {
 			return err
 		}
-	}
-	if (state == "open" || state == "draft" || state == "merged") && token != "" && pr.Head.SHA != "" {
-		gh := &pushreq.GitHub{BaseURL: s.BaseURL, HTTP: s.HTTP, Token: token}
-		if _, cerr := pushreq.CleanupTicketCheckpoints(ctx, gh, q, t.ID, *t.PrUrl, pr.Head.Ref, pr.Head.SHA, nil, false, true); cerr != nil {
-			s.Log.Warn("cleanup ticket checkpoints", "ticket", t.Key, "err", cerr)
+		if res.state == "merged" && t.Status != "done" {
+			done := "done"
+			_, err = s.Tracker.Update(ctx, t.WorkspaceID, tracker.Actor{Type: "system"}, t.Key, tracker.Patch{Status: &done})
+			if errors.Is(err, tracker.ErrNotFound) {
+				err = nil
+			}
+			if err != nil {
+				return err
+			}
+		}
+		if (res.state == "open" || res.state == "draft" || res.state == "merged") && res.token != "" && headSHA != "" {
+			gh := &pushreq.GitHub{BaseURL: s.BaseURL, HTTP: s.HTTP, Token: res.token}
+			if _, cerr := pushreq.CleanupTicketCheckpoints(ctx, gh, q, t.ID, *t.PrUrl, res.pr.Head.Ref, headSHA, nil, false, true); cerr != nil {
+				s.Log.Warn("cleanup ticket checkpoints", "ticket", t.Key, "err", cerr)
+			}
 		}
 	}
+	s.syncFeedback(ctx, q, t.WorkspaceID, prevFB, hasPrev, res.token, res.owner, res.repo, res.number, *t.PrUrl, res.state, headSHA, res.etag, res.notModified)
 	return nil
 }

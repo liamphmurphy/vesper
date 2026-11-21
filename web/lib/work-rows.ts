@@ -54,6 +54,8 @@ export const NEEDS_PREFIX: Record<NeedsKind, string> = {
   question: "Asked you",
   blocked: "Run stopped",
   stalled: "Run stalled",
+  pr_ci_failed: "PR CI failed",
+  pr_review_comments: "PR review comments",
   mockup: "Mockup to review",
   planning: "Plan to review",
   review: "Review requested",
@@ -92,6 +94,11 @@ export function stateText(t: Pick<TicketSummary, "status" | "unmet_dependencies"
   if (needs) return { text: needs.summary ? `${NEEDS_PREFIX[needs.kind] ?? "Needs you"}: ${needs.summary}` : NEEDS_PREFIX[needs.kind] ?? "Needs you", tone: "human" };
   if (isBlocked(t as TicketSummary)) return { text: `Blocked by ${t.unmet_dependencies}`, tone: "blocked" };
   const pr = t.pr ? ` · PR #${t.pr.number}${t.pr.state === "merged" ? " merged" : ""}` : "";
+  const fb = t.pr?.feedback;
+  const fbSuffix =
+    t.pr && (t.pr.state === "open" || t.pr.state === "draft") && fb
+      ? `${fb.failed_checks_count > 0 ? " · CI failed" : ""}${fb.unresolved_threads > 0 ? ` · ${fb.unresolved_threads} ${fb.unresolved_threads === 1 ? "comment" : "comments"}` : ""}`
+      : "";
   const text: Record<TicketStatus, string> = {
     backlog: "Backlog",
     todo: "Ready",
@@ -100,7 +107,7 @@ export function stateText(t: Pick<TicketSummary, "status" | "unmet_dependencies"
     done: "Done",
     canceled: "Canceled",
   };
-  return { text: text[t.status] + pr, tone: "quiet" };
+  return { text: text[t.status] + pr + fbSuffix, tone: "quiet" };
 }
 
 /* ----------------------------------------------------------------- groups */

@@ -253,3 +253,41 @@ func TestSpaceChatsPutChatsWaitingOnThePersonAfterWorkingOnes(t *testing.T) {
 		t.Fatalf("got %v", got)
 	}
 }
+
+func TestPersonaDockLiveToolApproval(t *testing.T) {
+	e := newChatEnv(t)
+	gwen := e.dockPersona("Gwen")
+	chat := e.dockChat(gwen)
+	seq := e.reply(chat, &gwen, "Checking the repo.")
+	e.want("POST", fmt.Sprintf("/chats/%s/read", chat), map[string]any{"seq": seq}, 204)
+
+	agents, err := e.q.ListAgents(context.Background(), e.me.WorkspaceID)
+	if err != nil || len(agents) == 0 {
+		t.Fatalf("list agents: %v", err)
+	}
+	run, err := e.q.CreateRun(context.Background(), store.CreateRunParams{
+		WorkspaceID: e.me.WorkspaceID, AgentID: agents[0].ID, Mode: "managed", State: "running",
+		Harness: "claude", Model: "claude-sonnet-4-6", Purpose: "chat", ResolvedSpec: json.RawMessage("{}"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ap, err := e.q.CreateApproval(context.Background(), store.CreateApprovalParams{
+		WorkspaceID: e.me.WorkspaceID, RunID: run.ID, ChatID: &chat, AgentID: agents[0].ID,
+		Scope: "tests:run", ActionSummary: "Allow Bash for tests:run", ActionDetail: json.RawMessage(`{"tool_name":"Bash"}`),
+		RiskSummary: "Harness tool requested this exact input",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := e.dock()
+	if len(got) != 1 || field(got[0], "state") != "needs_you" || field(got[0], "unread") != float64(0) {
+		t.Fatalf("dock with pending chat tool approval: %v", got)
+	}
+
+	e.want("POST", fmt.Sprintf("/approvals/%s/approve", ap.ID), map[string]any{}, 200)
+	if got := e.dock(); len(got) != 0 {
+		t.Fatalf("dock after approval resolved: %v", got)
+	}
+}
