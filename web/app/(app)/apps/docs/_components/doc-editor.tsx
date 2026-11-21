@@ -272,7 +272,7 @@ function Toolbar({ editor, disabled }: { editor: Editor; disabled: boolean }) {
   );
   const sep = <span aria-hidden className="mx-1 h-[18px] w-px bg-border-strong" />;
   return (
-    <div role="toolbar" aria-label="Formatting" className="sticky top-0 z-10 flex flex-wrap items-center gap-0.5 border-b border-border-subtle bg-bg/95 px-4 py-1.5 backdrop-blur">
+    <div role="toolbar" aria-label="Formatting" className="sticky top-0 z-10 flex flex-wrap items-center gap-0.5 border-b border-border-subtle bg-bg/95 px-4 py-1.5 backdrop-blur print:hidden">
       {b("Undo", false, () => run().undo().run(), "↶", !s.undo)}
       {b("Redo", false, () => run().redo().run(), "↷", !s.redo)}
       {sep}
@@ -338,7 +338,7 @@ function SelectionMenu({ editor, persona, onPick }: { editor: Editor; persona: s
   const item = "rounded-md px-2 py-1 text-13 text-fg-2 hover:bg-hover hover:text-fg";
   const visible = !!pos && (sel.focused || open);
   return (
-    <div ref={box} data-testid="doc-selection-menu" hidden={!visible} style={pos} className="absolute z-20 flex items-center gap-0.5 rounded-lg border border-border-strong bg-surface-raised p-1 shadow-[var(--shadow-float)]" onMouseDown={(e) => !(e.target instanceof HTMLInputElement) && e.preventDefault()}>
+    <div ref={box} data-testid="doc-selection-menu" hidden={!visible} style={pos} className="absolute z-20 flex items-center gap-0.5 rounded-lg border border-border-strong bg-surface-raised p-1 shadow-[var(--shadow-float)] print:hidden" onMouseDown={(e) => !(e.target instanceof HTMLInputElement) && e.preventDefault()}>
       {open ? (
         <form
           className="flex items-center gap-1"

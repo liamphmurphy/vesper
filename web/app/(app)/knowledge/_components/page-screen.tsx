@@ -337,7 +337,7 @@ function PropertiesBlock({ properties, onChange }: { properties: Page["propertie
   };
   if (!rows.length && !adding)
     return (
-      <button onClick={() => setAdding(true)} className="mb-6 flex items-center gap-1.5 text-12 text-fg-tertiary hover:text-fg-secondary">
+      <button onClick={() => setAdding(true)} className="mb-6 flex items-center gap-1.5 text-12 text-fg-tertiary hover:text-fg-secondary print:hidden">
         <Icon name="plus" size={12} /> Add property
       </button>
     );
@@ -361,7 +361,7 @@ function PropertiesBlock({ properties, onChange }: { properties: Page["propertie
                 delete next[k];
                 onChange(next);
               }}
-              className="grid size-5 place-items-center rounded text-fg-tertiary opacity-0 hover:bg-hover group-hover:opacity-100"
+              className="grid size-5 place-items-center rounded text-fg-tertiary opacity-0 hover:bg-hover group-hover:opacity-100 print:hidden"
             >
               <Icon name="x" size={11} />
             </button>
@@ -384,7 +384,7 @@ function PropertiesBlock({ properties, onChange }: { properties: Page["propertie
           </button>
         </div>
       ) : (
-        <button onClick={() => setAdding(true)} className="mt-1 flex items-center gap-1.5 text-12 text-fg-tertiary hover:text-fg-secondary">
+        <button onClick={() => setAdding(true)} className="mt-1 flex items-center gap-1.5 text-12 text-fg-tertiary hover:text-fg-secondary print:hidden">
           <Icon name="plus" size={12} /> Add property
         </button>
       )}

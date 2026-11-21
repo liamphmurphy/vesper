@@ -26,7 +26,7 @@ export function ReviewBar({ page, persona, direct }: { page: Page; persona: stri
     }
   };
   return (
-    <div className="mx-4 mt-3 flex items-center gap-3 rounded-xl border border-state-human/35 bg-pill-human-bg px-4 py-2.5">
+    <div className="mx-4 mt-3 flex items-center gap-3 rounded-xl border border-state-human/35 bg-pill-human-bg px-4 py-2.5 print:hidden">
       <Icon name="bulb" size={15} className="text-state-human" />
       <p className="flex-1 text-13 text-fg">
         <b>
@@ -51,7 +51,7 @@ export function ReviewList({ page, direct }: { page: Page; direct: boolean }) {
   const items = page.reviews.flatMap((review) => (review.changes ?? []).map((change) => ({ review, change })));
   if (!items.some((i) => pending(i.change) || i.change.state === "stale")) return null;
   return (
-    <section aria-label="Changes to review" className="mb-8 space-y-3">
+    <section aria-label="Changes to review" className="mb-8 space-y-3 print:hidden">
       {items
         .filter((i) => pending(i.change) || i.change.state === "stale")
         .map(({ review, change }) => (
