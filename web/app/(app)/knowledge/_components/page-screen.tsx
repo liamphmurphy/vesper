@@ -34,8 +34,10 @@ import { useKnowledgeTab } from "./shell";
 import { useKnowledgeChat } from "./chat-context";
 import { useNativeTitle } from "../../tickets/_components/native-title";
 import { useNativeActions } from "@/lib/native-shell/use-native-actions";
+import { isNativeShell, post } from "@/lib/native-shell/bridge";
 import { knowledgePageActions } from "@/lib/native-shell/models/knowledge-page";
 import { navAvatar, pageOrigin } from "@/lib/native-shell/models/common";
+import { buildPersonaPdfPrompt, knowledgePrintHref, type KnowledgePrintStyle } from "@/lib/knowledge-print";
 
 const SAVE_LABEL: Record<SaveState, string> = { saved: "Saved", unsaved: "Unsaved changes", saving: "Saving…", conflict: "Changed elsewhere", error: "Not saved" };
 const item = "flex cursor-default select-none items-start gap-2.5 rounded-md px-2 py-2 outline-none data-[highlighted]:bg-hover data-[disabled]:opacity-50";
@@ -73,7 +75,7 @@ export function PageScreen({ id }: { id: string }) {
 }
 
 function Loaded({ page: p }: { page: Page }) {
-  const { ask, registerDraft, openPanel } = useKnowledgeChat();
+  const { ask, askWithPrompt, registerDraft, openPanel } = useKnowledgeChat();
   const router = useRouter();
   const save = useSavePage(p.id);
   const chat = useChat(p.chat_id ?? undefined).data;
@@ -201,6 +203,15 @@ function Loaded({ page: p }: { page: Page }) {
   // In the Mac app the header row's controls are window toolbar items and the page is the window's
   // (and so its tab's) title; the folder path sits above the title.
   useNativeTitle(p.title || "Untitled");
+  const openPrint = (style: KnowledgePrintStyle) => {
+    const href = knowledgePrintHref(p.id, style);
+    const flush = editor.current?.flush() ?? Promise.resolve();
+    if (isNativeShell()) {
+      void flush.finally(() => post({ v: 1, type: "openInMain", path: href, newTab: true }));
+    } else {
+      void flush.finally(() => window.open(href, "_blank", "noopener"));
+    }
+  };
   useNativeActions(
     knowledgePageActions({
       audience: p.audience,
@@ -208,7 +219,11 @@ function Loaded({ page: p }: { page: Page }) {
       mode: { label: modeLabel, avatar: navAvatar(look.name, look.color, look.avatar_url, pageOrigin()), open: () => openPanel("history") },
       copyLink,
       exportMarkdown: () => exportMarkdown(p),
-      print: () => window.print(),
+      print: openPrint,
+      askPersonaPdf: () => {
+        void (editor.current?.flush() ?? Promise.resolve());
+        askWithPrompt(p, buildPersonaPdfPrompt(p));
+      },
       history: () => openPanel("history"),
     }),
   );
