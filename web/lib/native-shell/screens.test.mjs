@@ -100,12 +100,12 @@ test("work header: new ticket, space and persona menus, tab picker with counts, 
   assert.deepEqual(h.filters.map((f) => f.id), ["filter-space", "filter-agent"]);
   assert.deepEqual(h.filters[0].options.map((o) => [o.value, o.checked]), [["", false], ["VES", true]]);
   assert.deepEqual(h.filters[1].options.map((o) => [o.value, o.checked]), [["", false], ["ada", true]]);
-  assert.deepEqual(h.picker.options.map((o) => o.label), ["Activity 3", "Tasks 12", "Epics"]);
+  assert.deepEqual(h.picker.options.map((o) => o.label), ["Runs 3", "Tasks 12"]);
   assert.equal(h.picker.value, "tickets");
   assert.equal(h.search.value, "x");
-  assert.deepEqual(workHeader({ active: "epics", agent: "", allowAllProjects: false, projects }).filters[0].options.map((i) => i.value), ["VES"]);
-  assert.deepEqual(workHeader({ active: "epics", agent: "", noFilters: true }).filters, []);
-  assert.equal(workHeader({ active: "epics", agent: "" }).search, undefined);
+  assert.deepEqual(workHeader({ active: "tickets", agent: "", allowAllProjects: false, projects }).filters[0].options.map((i) => i.value), ["VES"]);
+  assert.deepEqual(workHeader({ active: "tickets", agent: "", noFilters: true }).filters, []);
+  assert.equal(workHeader({ active: "tickets", agent: "" }).search, undefined);
 });
 
 test("work header commands call the screen's handlers", () => {
@@ -116,11 +116,11 @@ test("work header commands call the screen's handlers", () => {
   assert.ok(handleWorkHeaderCommand(nav({ type: "nav.filter", filterId: "filter-space", value: "", checked: true }), ctx));
   assert.ok(handleWorkHeaderCommand(nav({ type: "nav.filter", filterId: "filter-agent", value: "ada", checked: true }), ctx));
   assert.ok(!handleWorkHeaderCommand(nav({ type: "nav.filter", filterId: "other", value: "x", checked: true }), ctx));
-  assert.ok(handleWorkHeaderCommand(nav({ type: "nav.picker", pickerId: "work-view", value: "epics" }), ctx));
+  assert.ok(handleWorkHeaderCommand(nav({ type: "nav.picker", pickerId: "work-view", value: "tickets" }), ctx));
   assert.ok(handleWorkHeaderCommand(nav({ type: "nav.search", searchId: "work-search", value: "q" }), ctx));
   assert.ok(!handleWorkHeaderCommand(nav({ type: "nav.activate", itemId: "i" }), ctx));
-  assert.deepEqual(calls, [["push", "/tickets/new?project=VES"], ["project", ""], ["agent", "ada"], ["push", "/tickets?layout=epics&project=VES"], ["search", "q"]]);
-  assert.equal(workTabHref("activity", "VES"), "/work?view=activity&project=VES");
+  assert.deepEqual(calls, [["push", "/tickets/new?project=VES"], ["project", ""], ["agent", "ada"], ["push", "/tickets?project=VES"], ["search", "q"]]);
+  assert.equal(workTabHref("activity", "VES"), "/work?project=VES");
   assert.equal(workTabHref("activity"), "/work");
   let act = 0;
   handleWorkHeaderCommand(nav({ type: "nav.picker", pickerId: "work-view", value: "activity" }), { ...ctx, onActivity: () => act++ });
@@ -167,7 +167,7 @@ test("ticket and epic detail pages list siblings with the Work header", () => {
   assert.equal(e.sections[0].title, "Vesper");
   assert.deepEqual(e.sections[0].badge, { text: "1" });
   assert.deepEqual(e.sections[0].items[0], { id: "e1", title: "Launch", href: "/epics/e1", trailing: "1/2" });
-  assert.equal(e.picker.value, "epics");
+  assert.equal(e.picker.value, "tickets");
 });
 
 const body = (o = {}) => ({
@@ -220,9 +220,9 @@ test("runs: loading, error with retry and empty states", () => {
   assert.equal(buildRunsNavModel({ body: body(), filters: f, search: "" }).sections[0].emptyText, "No runs");
 });
 
-test("work activity: header, View menu with counts, runs without hrefs, waiting after active", () => {
+test("work activity: header, Overview row, View menu with counts, runs without hrefs, waiting after active", () => {
   const m = buildWorkActivityNavModel({
-    header: { active: "activity", project: "VES", projects, agents, agent: "", search: { value: "", placeholder: "Filter work…" } },
+    header: { active: "activity", project: "VES", projects, agents, agent: "", search: { value: "", placeholder: "Filter runs…" } },
     body: body({
       withHref: false,
       needsLabel: "Waiting",
@@ -232,21 +232,25 @@ test("work activity: header, View menu with counts, runs without hrefs, waiting 
     }),
     filter: "needs_you",
     counts: { all: 5, needs_you: 2, active: 1, failed: 0 },
+    statusLine: { text: "1 busy · $2 this week", href: "/reports" },
     selectedId: "run:r1",
   });
   assert.deepEqual(m.actions.map((a) => a.id), ["new-ticket"]);
   assert.deepEqual(m.filters.map((f) => f.id), ["filter-space", "filter-agent", "view"]);
   const view = m.filters[2];
   assert.deepEqual(view.options.map((i) => [i.value, i.label, i.checked]), [
-    ["all", "All activity (5)", false],
+    ["all", "All runs (5)", false],
     ["needs_you", "Needs you (2)", true],
     ["active", "Running & queued (1)", false],
     ["failed", "Failed today (0)", false],
   ]);
-  assert.deepEqual(m.sections.map((s) => s.title), ["Active", "Waiting"]);
-  assert.deepEqual(m.sections.map((s) => s.badge), [{ text: "1" }, { text: "1" }]);
-  assert.equal(m.sections[0].items[0].href, undefined);
-  assert.equal(m.sections[1].items[0].icon, "inbox");
+  assert.deepEqual(m.sections.map((s) => s.id), ["overview", "runs-Active", "needs-you", "status"]);
+  assert.equal(m.sections[0].items[0].id, "work:overview");
+  assert.deepEqual(m.sections[0].items[0].badge, { text: "2", tone: "human" });
+  assert.deepEqual(m.sections.slice(1, 3).map((s) => s.title), ["Active", "Waiting"]);
+  assert.deepEqual(m.sections.slice(1, 3).map((s) => s.badge), [{ text: "1" }, { text: "1" }]);
+  assert.equal(m.sections[1].items[0].href, undefined);
+  assert.equal(m.sections[2].items[0].icon, "inbox");
   assert.equal(m.picker.value, "activity");
 });
 

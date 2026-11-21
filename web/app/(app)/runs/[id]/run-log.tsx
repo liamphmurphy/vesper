@@ -12,7 +12,7 @@ import { useControlRunById, useDelegatedRunLogs, useRunLog } from "@/lib/api/hoo
 import { cx } from "@/lib/cx";
 import { absoluteTime, compact, duration } from "@/lib/format";
 import {
-  argSummary, delegateChild, groupByTurn, isFailedRow, parseRunAnchor, pickRunView, rowEvent, rowsOf, str,
+  argSummary, delegateChild, groupByTurn, isFailedRow, parseRunAnchor, pickRunView, rowEvent, rowsOf, runViewTabs, str,
   toolLink, toolName, triggerLine, turnAt, turnByEvent, turnStarts, workHref, type Row, type RunViewMode,
 } from "@/lib/run-view";
 import type { NativeAction } from "@/lib/native-shell/actions";
@@ -22,7 +22,8 @@ import { Button } from "@/components/ui/button";
 import { Tabs, Toggle } from "@/components/ui/controls";
 import { Icon } from "@/components/ui/icon";
 import { Banner, EmptyState, Skeleton, TextInput } from "@/components/ui/primitives";
-import { AgentAvatar } from "@/components/domain/avatars";
+import { WorkPersonaAvatar } from "@/components/domain/work-persona-avatar";
+import { runCharacterState } from "@/lib/work-persona";
 import { Flag, SmallPill } from "@/components/domain/labels";
 import { Markdown } from "@/components/domain/markdown";
 import { RUN_ENDED, RUN_STATE as STATE, StatusPill } from "@/components/domain/run-status";
@@ -375,7 +376,7 @@ function TurnGroup({ turn, t, items, open, onToggle, runId }: { turn: number; t?
   );
 }
 
-export function RunLogScreen({ id }: { id: string }) {
+export function RunLogScreen({ id, inWork = false }: { id: string; inWork?: boolean }) {
   const { data: d, isError, error } = useRunLog(id);
   useRecordVisit(d ? { id: `run-${id}`, title: runTitle(d.run), meta: [d.run.ticket_key, d.run.agent.name].filter(Boolean).join(" · "), href: `/runs/${id}`, kind: "Runs" } : undefined);
   const children = useDelegatedRunLogs(d?.child_runs ?? []);
@@ -412,7 +413,28 @@ export function RunLogScreen({ id }: { id: string }) {
             : { id: "run.pause", label: "Pause", kind: "button" as const, icon: "pause", showsLabel: true, disabled: control.isPending || run.state === "queued", run: () => control.mutate("pause") }]
           : []),
         ...((run.state === "failed" || run.state === "cancelled") && run.ticket_key && !run.parent_run_id
-          ? [{ id: "run.retry", label: "Retry run", kind: "button" as const, icon: "refresh", showsLabel: true, accent: true, disabled: control.isPending, run: () => control.mutate("retry", { onSuccess: (r) => router.push(`/runs/${r.id}`) }) }]
+          ? [{
+              id: "run.retry",
+              label: "Retry run",
+              kind: "button" as const,
+              icon: "refresh",
+              showsLabel: true,
+              accent: true,
+              disabled: control.isPending,
+              run: () =>
+                control.mutate("retry", {
+                  onSuccess: (r) => {
+                    if (inWork) {
+                      const q = new URLSearchParams(params.toString());
+                      q.set("run", r.id);
+                      q.delete("view");
+                      router.push(`/work?${q}`);
+                    } else {
+                      router.push(`/runs/${r.id}`);
+                    }
+                  },
+                }),
+            }]
           : []),
         ...(live
           ? [{ id: "run.cancel", label: "Cancel run", kind: "button" as const, icon: "x", showsLabel: true, disabled: control.isPending, run: async () => { if (await confirmCancel(run.agent.name)) control.mutate("cancel"); } }]
@@ -466,7 +488,12 @@ export function RunLogScreen({ id }: { id: string }) {
     const q = new URLSearchParams(params.toString());
     if (m === "simple") q.delete("view");
     else q.set("view", m);
-    router.replace(`/runs/${id}${q.size ? `?${q}` : ""}${hash}`, { scroll: false });
+    if (inWork) {
+      q.set("run", id);
+      router.replace(`/work${q.size ? `?${q}` : ""}${hash}`, { scroll: false });
+    } else {
+      router.replace(`/runs/${id}${q.size ? `?${q}` : ""}${hash}`, { scroll: false });
+    }
   };
   const openTurn = (n: number) => {
     setFollow(false);
@@ -572,7 +599,7 @@ export function RunLogScreen({ id }: { id: string }) {
               meta={
                 <>
                   <span className="inline-flex items-center gap-1.5 font-medium text-fg">
-                    <AgentAvatar name={run.agent.name} colorIndex={run.agent.color_index} label={false} size="sm" />
+                    <WorkPersonaAvatar agent={run.agent} size="sm" state={runCharacterState(run)} />
                     {run.agent.name}
                   </span>
                   <StatusPill run={run} />
@@ -609,12 +636,12 @@ export function RunLogScreen({ id }: { id: string }) {
                   label="Run views"
                   value={mode}
                   onChange={(k) => switchMode(k as RunViewMode)}
-                  items={[
-                    { key: "simple", label: "Thread" },
-                    { key: "details", label: "Trace", count: counts.all },
-                    { key: "graph", label: "Graph" },
-                    { key: "files", label: "Files", count: fileCount || undefined },
-                  ]}
+                  items={runViewTabs({
+                    countsAll: counts.all,
+                    fileCount,
+                    childRunCount: Math.max(d.child_runs.length, run.child_count ?? 0),
+                    mode,
+                  })}
                   trailing={
                     <>
                       <span>{run.harness}</span>

@@ -15,6 +15,7 @@ export interface RunRowData {
   agentName?: string;
   /** The persona's literal identity color (common.ts agentAvatarColor), for the avatar. */
   agentColor?: string;
+  agentImageUrl?: string;
   trailing: string;
   dot: RunDot;
 }
@@ -25,6 +26,7 @@ export interface NeedsRowData {
   subtitle?: string;
   agentName?: string;
   agentColor?: string;
+  agentImageUrl?: string;
   trailing: string;
   /** Blocked kinds read as failures. */
   tone: "human" | "blocked";
@@ -49,17 +51,22 @@ export const RUN_SEARCH = "run-search";
 /** Work's Activity view filter. */
 export const RUN_VIEW_FILTER = "view";
 export const RUN_STATUS_ITEM = "status";
+export const RUN_OVERVIEW_ITEM = "work:overview";
 
 export const runItemId = (id: string) => `run:${id}`;
 export const needsItemId = (id: string) => `needs:${id}`;
 
-const initial = (name: string, color?: string): Avatar => ({ initials: name.trim().slice(0, 1).toUpperCase() || "?", ...(color ? { color } : {}) });
+const initial = (name: string, color?: string, imageUrl?: string): Avatar => ({
+  initials: name.trim().slice(0, 1).toUpperCase() || "?",
+  ...(color ? { color } : {}),
+  ...(imageUrl ? { imageUrl } : {}),
+});
 
 function runItem(r: RunRowData, withHref: boolean): NavItem {
   const item: NavItem = { id: runItemId(r.id), title: r.title, trailing: r.trailing };
   if (withHref) item.href = r.href;
   if (r.subtitle) item.subtitle = r.subtitle;
-  if (r.agentName) item.avatar = initial(r.agentName, r.agentColor);
+  if (r.agentName) item.avatar = initial(r.agentName, r.agentColor, r.agentImageUrl);
   const tone = DOT_TONE[r.dot];
   if (tone) item.status = tone;
   return item;
@@ -69,7 +76,7 @@ function needsItem(n: NeedsRowData, withHref: boolean): NavItem {
   const item: NavItem = { id: needsItemId(n.id), title: n.title, trailing: n.trailing, status: n.tone };
   if (withHref) item.href = n.href;
   if (n.subtitle) item.subtitle = n.subtitle;
-  if (n.agentName) item.avatar = initial(n.agentName, n.agentColor);
+  if (n.agentName) item.avatar = initial(n.agentName, n.agentColor, n.agentImageUrl);
   else item.icon = "inbox";
   return item;
 }
@@ -160,17 +167,18 @@ export function buildRunsNavModel(input: {
 
 export type ActivityFilter = "all" | "needs_you" | "active" | "failed";
 
-/** Work's Activity view: the Work header, a View menu and the compact list. */
+/** Work's Runs view: the Work header, Overview entry, a View menu and the run list. */
 export function buildWorkActivityNavModel(input: {
   header: WorkHeaderInput;
   body: RunListBody;
   filter: ActivityFilter;
   counts: Record<ActivityFilter, number>;
+  statusLine?: { text: string; href: string };
   selectedId?: string | null;
 }): NavModel {
   const head = workHeader(input.header);
   const options: { value: ActivityFilter; label: string }[] = [
-    { value: "all", label: "All activity" },
+    { value: "all", label: "All runs" },
     { value: "needs_you", label: "Needs you" },
     { value: "active", label: "Running & queued" },
     { value: "failed", label: "Failed today" },
@@ -186,5 +194,25 @@ export function buildWorkActivityNavModel(input: {
   ];
   const picker: NavPicker = head.picker;
   const search: NavSearch | undefined = head.search;
-  return { id: "work-activity", title: head.title, actions: head.actions, filters, picker, ...(search ? { search } : {}), sections: bodySections(input.body), selectedId: input.selectedId ?? null };
+  const sections: NavModel["sections"] = [
+    {
+      id: "overview",
+      items: [
+        {
+          id: RUN_OVERVIEW_ITEM,
+          title: "Overview",
+          icon: "activity",
+          ...(input.counts.needs_you > 0 ? { badge: { text: String(input.counts.needs_you), tone: "human" as const } } : {}),
+        },
+      ],
+    },
+    ...bodySections(input.body),
+  ];
+  if (input.statusLine) {
+    sections.push({
+      id: "status",
+      items: [{ id: RUN_STATUS_ITEM, title: input.statusLine.text, href: input.statusLine.href, icon: "activity" }],
+    });
+  }
+  return { id: "work-activity", title: head.title, actions: head.actions, filters, picker, ...(search ? { search } : {}), sections, selectedId: input.selectedId ?? null };
 }

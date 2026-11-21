@@ -31,7 +31,7 @@ export function LegacyWork({
   }
   return redirect(
     workHref(next, {
-      view: layout === "epics" ? "epics" : view,
+      view: layout === "epics" ? "epics" : view === "activity" ? null : view,
       ...(run ? { run } : {}),
       ...(ticket ? { ticket } : {}),
       ...(epic ? { epic } : {}),

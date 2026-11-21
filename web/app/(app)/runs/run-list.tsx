@@ -8,10 +8,12 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { useBootstrap, useCosts, useInbox, useRunnerStatus, useRunPages } from "@/lib/api/hooks";
+import { usePersonas } from "@/lib/api/persona-hooks";
 import { presetRange, spendLabel } from "@/lib/costs";
 import { ago } from "@/lib/format";
 import { KIND, trayItems, waited } from "@/lib/inbox";
 import { groupRuns, itemHref, matchesItem, matchesRun, runDot, runLine, runTitle } from "@/lib/run-list";
+import { personaNavAvatar, type WorkPersonaLike } from "@/lib/work-persona";
 import {
   compactRunTime,
   computeActivityViewCounts,
@@ -35,7 +37,7 @@ import {
   type NeedsRowData,
   type RunListBody,
 } from "@/lib/native-shell/models/runs";
-import { agentAvatarColor } from "@/lib/native-shell/models/common";
+import { pageOrigin } from "@/lib/native-shell/models/common";
 import type { NativeCommand } from "@/lib/native-shell/protocol";
 
 /** The list's filters live in the URL, so a selected run keeps them: ?project=, ?agent=, ?done=hide, ?filter=. */
@@ -123,17 +125,25 @@ export function useActivityLists(data: RunListData, search: string, filter: Acti
   return { needsRunIds, viewCounts, embeddedGroups, nonRunNeeds };
 }
 
-function standaloneBody(data: RunListData, search: string, query: string): RunListBody {
+function standaloneBody(
+  data: RunListData,
+  search: string,
+  query: string,
+  personas?: readonly WorkPersonaLike[],
+  origin?: string,
+): RunListBody {
   return {
     needs: data.shownNeeds.map((i): NeedsRowData => {
       const kind = KIND[i.kind] ?? { label: i.kind, tone: "human" };
+      const avatar = i.agent ? personaNavAvatar(personas, i.agent, origin) : undefined;
       return {
         id: i.id,
         href: itemHref(i, query),
         title: i.title,
         subtitle: [kind.label, i.ticket_key || i.project, i.agent?.name].filter(Boolean).join(" · "),
         agentName: i.agent?.name,
-        agentColor: i.agent ? agentAvatarColor(i.agent.color_index) : undefined,
+        agentColor: avatar?.color,
+        agentImageUrl: avatar?.imageUrl,
         trailing: waited(i.created_at),
         tone: kind.tone === "blocked" ? "blocked" : "human",
       };
@@ -143,16 +153,20 @@ function standaloneBody(data: RunListData, search: string, query: string): RunLi
       key: g.key,
       label: g.label,
       count: g.key === "running" || g.key === "queued" ? g.runs.length : undefined,
-      runs: g.runs.map((r) => ({
-        id: r.id,
-        href: `/runs/${r.id}${query ? `?${query}` : ""}`,
-        title: runTitle(r),
-        subtitle: runLine(r),
-        agentName: r.agent.name,
-        agentColor: agentAvatarColor(r.agent.color_index),
-        trailing: ago(r.started_at),
-        dot: runDot(r),
-      })),
+      runs: g.runs.map((r) => {
+        const avatar = personaNavAvatar(personas, r.agent, origin);
+        return {
+          id: r.id,
+          href: `/runs/${r.id}${query ? `?${query}` : ""}`,
+          title: runTitle(r),
+          subtitle: runLine(r),
+          agentName: r.agent.name,
+          agentColor: avatar.color,
+          agentImageUrl: avatar.imageUrl,
+          trailing: ago(r.started_at),
+          dot: runDot(r),
+        };
+      }),
     })),
     loading: !!data.loading,
     error: data.error?.message ?? null,
@@ -169,6 +183,7 @@ function useRunsNative(selected?: string) {
   const router = useRouter();
   const pathname = usePathname();
   const boot = useBootstrap();
+  const personas = usePersonas();
   const [search, setSearch] = useState("");
   const data = useRunList(search);
   const query = listQuery(params);
@@ -181,7 +196,7 @@ function useRunsNative(selected?: string) {
     else q.set(k, v);
     router.replace(`${pathname}${q.size ? `?${q}` : ""}`, { scroll: false });
   };
-  const body = standaloneBody(data, search, query);
+  const body = standaloneBody(data, search, query, personas.data?.personas, pageOrigin());
   const selectedNeeds = data.shownNeeds.find((i) => i.run_id === selected)?.id;
   const statusText = [
     runner &&
@@ -227,7 +242,7 @@ export function RunsNavigator({ selected }: { selected?: string }) {
 export function activityNativeBody(
   data: RunListData,
   lists: ReturnType<typeof useActivityLists>,
-  opts: { search: string; query: string; now: Date },
+  opts: { search: string; query: string; now: Date; personas?: readonly WorkPersonaLike[]; origin?: string },
 ): RunListBody {
   const hasActiveGroup = lists.embeddedGroups.some((g) => g.kind === "active");
   const empty = !data.loading && !data.error && lists.embeddedGroups.length === 0 && lists.nonRunNeeds.length === 0;
@@ -248,12 +263,14 @@ export function activityNativeBody(
       count: g.runs.length,
       runs: g.runs.map((r) => {
         const dot = runDot(r, isRunNeedsYou(r, lists.needsRunIds));
+        const avatar = personaNavAvatar(opts.personas, r.agent, opts.origin);
         return {
           id: r.id,
           href: `/runs/${r.id}${opts.query ? `?${opts.query}` : ""}`,
           title: runTitle(r),
           agentName: r.agent.name,
-          agentColor: agentAvatarColor(r.agent.color_index),
+          agentColor: avatar.color,
+          agentImageUrl: avatar.imageUrl,
           trailing: compactRunTime(r, dot, opts.now),
           dot,
         };

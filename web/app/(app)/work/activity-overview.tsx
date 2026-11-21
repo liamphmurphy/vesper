@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useRef, useState } from "react";
 import type { Schemas } from "@/lib/api/client";
-import { useCosts, useRunnerStatus } from "@/lib/api/hooks";
+import { useCosts, useRunnerStatus, useTickets } from "@/lib/api/hooks";
 import { useNativeContextMenu } from "@/lib/native-shell/hooks";
 import { toast } from "@/lib/toast";
 import { presetRange, spendLabel } from "@/lib/costs";
@@ -17,36 +17,13 @@ import {
   isSameLocalDay,
   type ActivityFilter,
 } from "@/lib/work-overview";
+import { runCharacterState } from "@/lib/work-persona";
+import { UnassignedAvatar } from "@/components/domain/avatars";
+import { DispatchDialog } from "@/components/domain/dispatch-dialog";
+import { WorkPersonaAvatar } from "@/components/domain/work-persona-avatar";
+import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/primitives";
-import { AgentOrPersonaAvatar } from "../tickets/_components/ticket-row";
-
-function WorkSectionLabel({
-  children,
-  count,
-  right,
-  tone,
-}: {
-  children: string;
-  count?: number;
-  right?: React.ReactNode;
-  tone?: "human";
-}) {
-  return (
-    <div
-      className={cx(
-        "flex items-center justify-between px-2 pt-2.5 pb-1 text-10 font-semibold tracking-[0.06em] uppercase",
-        tone === "human" ? "text-pill-human-fg" : "text-fg-tertiary",
-      )}
-    >
-      <span className="flex items-center gap-1.5">
-        <span>{children}</span>
-        {count != null && <span className="font-mono font-normal">{count}</span>}
-      </span>
-      {right}
-    </div>
-  );
-}
 
 type Run = Schemas["Run"];
 type InboxItem = Schemas["InboxItem"];
@@ -60,24 +37,51 @@ const DOT_BG: Record<ReturnType<typeof runDot>, string> = {
   idle: "bg-fg-tertiary/40",
 };
 
+function SectionHeading({
+  children,
+  count,
+  tone,
+  right,
+}: {
+  children: string;
+  count?: number;
+  tone?: "human";
+  right?: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 px-0.5">
+      <h2
+        className={cx(
+          "flex items-center gap-1.5 text-11 font-semibold uppercase tracking-[0.06em]",
+          tone === "human" ? "text-pill-human-fg" : "text-fg-tertiary",
+        )}
+      >
+        <span>{children}</span>
+        {count != null && count > 0 && (
+          <span className="font-mono font-normal">{count}</span>
+        )}
+      </h2>
+      {right}
+    </div>
+  );
+}
+
 function needsBadgeTone(tone: string) {
   if (tone === "blocked") return "bg-pill-blocked-bg text-pill-blocked-fg";
   return "bg-pill-human-bg text-pill-human-fg";
 }
 
-function ActivityNeedsCard({
+function NeedsYouCard({
   item,
-  active,
   onSelectRun,
 }: {
   item: InboxItem;
-  active: boolean;
   onSelectRun: (runId: string) => void;
 }) {
   const router = useRouter();
   const cardRef = useRef<HTMLDivElement>(null);
   const kind = KIND[item.kind] ?? { label: item.kind, tone: "human" };
-  const targetHref = item.href || (item.run_id ? `/runs/${item.run_id}` : "/work");
+  const targetHref = item.href || (item.run_id ? `/work?run=${encodeURIComponent(item.run_id)}` : "/work");
   const copy = (text: string, title: string) => {
     void navigator.clipboard?.writeText(text).then(() => toast({ title, tone: "success" }));
   };
@@ -86,7 +90,7 @@ function ActivityNeedsCard({
     cardRef,
     () => [
       ...(item.run_id
-        ? [{ id: "inspect", label: "Inspect run", icon: "activity", onSelect: () => onSelectRun(item.run_id!) }]
+        ? [{ id: "inspect", label: "Open run", icon: "activity", onSelect: () => onSelectRun(item.run_id!) }]
         : []),
       { id: "open", label: "Open", icon: "inbox", onSelect: () => router.push(targetHref) },
       { id: "open-tab", label: "Open in new tab", icon: "external", onSelect: () => window.open(targetHref, "_blank") },
@@ -102,17 +106,14 @@ function ActivityNeedsCard({
   return (
     <div
       ref={cardRef}
-      className={cx(
-        "flex items-center justify-between gap-3 rounded-lg border bg-surface px-3 py-2.5 transition-colors",
-        active ? "border-accent bg-selected/40" : "border-pill-human-bg/70 hover:bg-hover/40",
-      )}
+      className="flex items-center justify-between gap-3 rounded-xl border border-state-human/40 bg-pill-human-bg/15 px-3.5 py-2.5 transition-colors hover:bg-pill-human-bg/25"
     >
       <div className="flex min-w-0 flex-1 items-start gap-2.5">
         {item.agent ? (
-          <AgentOrPersonaAvatar agent={item.agent} size="sm" />
+          <WorkPersonaAvatar agent={item.agent} size="sm" state="needs_you" />
         ) : (
-          <span className="grid size-5 flex-none place-items-center rounded bg-pill-human-bg text-pill-human-fg">
-            <Icon name="inbox" size={12} />
+          <span className="grid size-5 flex-none place-items-center rounded-full bg-pill-human-bg text-pill-human-fg">
+            <Icon name="inbox" size={11} />
           </span>
         )}
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -136,18 +137,13 @@ function ActivityNeedsCard({
       </div>
       <div className="flex flex-none items-center gap-1.5">
         {item.run_id ? (
-          <button
-            type="button"
+          <Button
+            variant="approve-outline"
             onClick={() => onSelectRun(item.run_id!)}
-            className={cx(
-              "inline-flex h-7 items-center rounded-md border px-2.5 text-12 font-medium transition-colors",
-              active
-                ? "border-accent bg-accent text-on-accent"
-                : "border-pill-human-bg text-pill-human-fg hover:bg-pill-human-bg",
-            )}
+            className="h-7 px-2.5 text-12"
           >
-            {active ? "Inspecting" : "Review →"}
-          </button>
+            Review →
+          </Button>
         ) : (
           <Link
             href={item.href}
@@ -172,8 +168,8 @@ function useRunRowContextMenu(
     void navigator.clipboard?.writeText(text).then(() => toast({ title, tone: "success" }));
   };
   useNativeContextMenu(ref, () => [
-    { id: "inspect", label: "Inspect in Activity", icon: "activity", onSelect: () => onSelectRun(r.id) },
-    { id: "open", label: "Open run details", icon: "play", onSelect: () => router.push(`${href}?view=details`) },
+    { id: "inspect", label: "Open run", icon: "activity", onSelect: () => onSelectRun(r.id) },
+    { id: "open", label: "Open full page", icon: "play", onSelect: () => router.push(href) },
     { id: "open-tab", label: "Open in new tab", icon: "external", onSelect: () => window.open(href, "_blank") },
     ...(r.ticket_key
       ? [{ id: "open-ticket", label: `Open ${r.ticket_key}`, icon: "tickets", onSelect: () => router.push(`/tickets/${r.ticket_key}`) }]
@@ -184,13 +180,11 @@ function useRunRowContextMenu(
   ]);
 }
 
-function RunningRunCard({
+function RunningRunRow({
   r,
-  active,
   onSelectRun,
 }: {
   r: Run;
-  active: boolean;
   onSelectRun: (runId: string) => void;
 }) {
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -205,16 +199,12 @@ function RunningRunCard({
     <button
       ref={btnRef}
       type="button"
-      aria-current={active ? "true" : undefined}
       onClick={() => onSelectRun(r.id)}
-      className={cx(
-        "flex flex-col gap-1.5 rounded-lg border px-3 py-2.5 text-left transition-colors",
-        active ? "border-accent bg-selected/50" : "border-border-subtle bg-surface hover:bg-hover/40",
-      )}
+      className="flex flex-col gap-1.5 rounded-xl border border-border bg-surface px-3.5 py-2.5 text-left transition-colors hover:border-border-hover hover:bg-hover/40"
     >
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
-          <AgentOrPersonaAvatar agent={r.agent} size="sm" />
+          <WorkPersonaAvatar agent={r.agent} size="sm" state={runCharacterState(r)} />
           <span aria-hidden className={cx("size-2 flex-none rounded-full", DOT_BG[dot])} />
           {r.ticket_key && (
             <span className="flex-none font-mono text-11 text-fg-tertiary">{r.ticket_key}</span>
@@ -230,12 +220,6 @@ function RunningRunCard({
         <span className="text-fg-tertiary">
           {r.agent.name} · {r.harness}/{r.model}
         </span>
-        {r.branch && (
-          <span className="inline-flex items-center gap-1 truncate font-mono text-10 text-fg-tertiary">
-            <Icon name="branch" size={11} />
-            {r.branch}
-          </span>
-        )}
         {currentStep && (
           <span className="truncate text-state-done">
             Step {currentStep.position}/{totalSteps} · {currentStep.text}
@@ -253,11 +237,9 @@ function RunningRunCard({
 
 function FinishedRunRow({
   r,
-  active,
   onSelectRun,
 }: {
   r: Run;
-  active: boolean;
   onSelectRun: (runId: string) => void;
 }) {
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -268,19 +250,18 @@ function FinishedRunRow({
     <button
       ref={btnRef}
       type="button"
-      aria-current={active ? "true" : undefined}
       onClick={() => onSelectRun(r.id)}
-      className={cx(
-        "flex w-full items-center gap-2.5 px-3 py-2 text-left text-12 transition-colors",
-        active ? "bg-selected/60 text-fg" : "hover:bg-hover/50",
-      )}
+      className="flex w-full items-center gap-2.5 px-3.5 py-2 text-left text-12 transition-colors hover:bg-hover/50"
     >
       <span title={DOT_LABEL[dot]} aria-hidden className={cx("size-2 flex-none rounded-full", DOT_BG[dot])} />
       {r.ticket_key && (
         <span className="w-16 flex-none truncate font-mono text-11 text-fg-tertiary">{r.ticket_key}</span>
       )}
       <span className="min-w-0 flex-1 truncate font-medium text-fg">{runTitle(r)}</span>
-      <span className="hidden flex-none text-11 text-fg-tertiary sm:inline">{r.agent.name}</span>
+      <span className="hidden flex-none items-center gap-1.5 text-11 text-fg-tertiary sm:inline-flex">
+        <WorkPersonaAvatar agent={r.agent} size="sm" />
+        <span>{r.agent.name}</span>
+      </span>
       {r.pr_number && (
         <span className="flex-none rounded bg-surface-sunken px-1.5 py-[1px] font-mono text-10 text-fg-secondary">
           PR #{r.pr_number}
@@ -297,28 +278,29 @@ function FinishedRunRow({
 }
 
 /**
- * Center telemetry + actionable queue + live execution overview for Work -> Activity.
- * Sits beside the Run Companion on wide desktop viewports without touching LiveRun mount state.
+ * Calm single-column overview shown on `/work` when no run is selected:
+ * one hairline telemetry strip, items needing your decision, any active runs,
+ * and ready tasks you can dispatch next.
  */
 export function ActivityOverview({
   project,
   runs,
   needs,
-  selectedRunId,
   filter,
   onSelectRun,
 }: {
   project?: string;
   runs: readonly Run[];
   needs: readonly InboxItem[];
-  selectedRunId?: string;
   filter: ActivityFilter;
   onSelectRun: (runId: string) => void;
 }) {
   const [now] = useState(() => new Date());
   const [range7d] = useState(() => presetRange(7, now));
+  const [dispatchOpen, setDispatchOpen] = useState(false);
   const runner = useRunnerStatus().data;
   const costs7d = useCosts({ ...range7d, project }).data;
+  const tickets = useTickets({ project, view: "all" });
 
   const stats = useMemo(
     () => computeActivityStats(runs, needs, runner, costs7d, now),
@@ -343,25 +325,53 @@ export function ActivityOverview({
     () =>
       uniqueRuns
         .filter((r) => isEnded(r.state) && isSameLocalDay(r.ended_at ?? r.started_at, now))
-        .slice(0, 12),
+        .slice(0, 6),
     [uniqueRuns, now],
   );
 
+  const activeTicketKeys = useMemo(
+    () => new Set(runningNow.map((r) => r.ticket_key).filter(Boolean)),
+    [runningNow],
+  );
+
+  const readyTickets = useMemo(
+    () =>
+      (tickets.data ?? [])
+        .filter((t) => t.status === "todo" && t.unmet_dependencies === 0 && !activeTicketKeys.has(t.key))
+        .slice(0, 6),
+    [tickets.data, activeTicketKeys],
+  );
+  const assignedReadyKeys = useMemo(
+    () =>
+      (tickets.data ?? [])
+        .filter(
+          (t) =>
+            t.status === "todo" &&
+            t.unmet_dependencies === 0 &&
+            !activeTicketKeys.has(t.key) &&
+            !!t.assignee,
+        )
+        .map((t) => t.key),
+    [tickets.data, activeTicketKeys],
+  );
+
   const reportsHref = `/reports?tab=costs&range=7${project ? `&project=${encodeURIComponent(project)}` : ""}`;
-  const slotPct =
-    stats.slotsMax > 0
-      ? Math.min(100, Math.round((stats.slotsBusy / stats.slotsMax) * 100))
-      : 0;
+  const tasksHref = `/tickets${project ? `?project=${encodeURIComponent(project)}` : ""}`;
 
   return (
     <section
       aria-label="Activity overview"
-      className="work-activity-main"
+      className="mx-auto flex w-full max-w-[780px] flex-1 flex-col gap-6 px-6 py-7 max-sm:px-4"
     >
-      <div className="work-telemetry-strip" role="region" aria-label="Activity telemetry">
-        <div className="work-telemetry-cell">
+      {/* Single hairline telemetry strip */}
+      <div
+        role="region"
+        aria-label="Activity telemetry"
+        className="grid grid-cols-4 divide-x divide-border-subtle overflow-hidden rounded-xl border border-border bg-surface max-sm:grid-cols-2 max-sm:divide-y"
+      >
+        <div className="flex flex-col gap-0.5 px-3.5 py-2.5">
           <div className="flex items-center justify-between text-11 text-fg-tertiary">
-            <span>Runner slots</span>
+            <span>Runner</span>
             <span
               className={cx(
                 "font-mono text-10",
@@ -371,32 +381,17 @@ export function ActivityOverview({
               {stats.online ? "online" : stats.starting ? "starting" : "offline"}
             </span>
           </div>
-          <div className="flex items-baseline gap-2">
-            <span className="font-mono text-16 font-semibold leading-tight text-fg tabular-nums">
-              {stats.slotsBusy}
-              <span className="text-12 font-normal text-fg-tertiary">
-                {" "}
-                / {stats.slotsMax}
-              </span>
-            </span>
-            <span className="text-11 text-fg-tertiary">
-              {stats.queued} queued
-            </span>
+          <div className="font-mono text-16 font-semibold leading-tight text-fg tabular-nums">
+            {stats.slotsBusy}
+            <span className="text-12 font-normal text-fg-tertiary"> / {stats.slotsMax}</span>
           </div>
-          <div className="h-1 w-full overflow-hidden rounded-full bg-surface-sunken">
-            <div
-              className="h-full rounded-full bg-state-done transition-all"
-              style={{ width: `${slotPct}%` }}
-            />
-          </div>
+          <div className="text-11 text-fg-tertiary">{stats.queued} queued</div>
         </div>
 
-        <div className="work-telemetry-cell">
+        <div className="flex flex-col gap-0.5 px-3.5 py-2.5">
           <div className="flex items-center justify-between text-11 text-fg-tertiary">
             <span>Needs you</span>
-            {stats.needsYouCount > 0 && (
-              <span className="size-1.5 rounded-full bg-state-human" />
-            )}
+            {stats.needsYouCount > 0 && <span className="size-1.5 rounded-full bg-state-human" />}
           </div>
           <div
             className={cx(
@@ -419,62 +414,55 @@ export function ActivityOverview({
           </div>
         </div>
 
-        <div className="work-telemetry-cell">
-          <div className="text-11 text-fg-tertiary">Today&apos;s velocity</div>
-          <div className="flex items-baseline gap-2">
+        <div className="flex flex-col gap-0.5 px-3.5 py-2.5">
+          <div className="text-11 text-fg-tertiary">Today</div>
+          <div className="flex items-baseline gap-1.5">
             <span className="font-mono text-16 font-semibold leading-tight text-fg tabular-nums">
               {stats.completedToday}
             </span>
-            <span className="text-11 text-fg-tertiary">runs done</span>
+            <span className="text-11 text-fg-tertiary">done</span>
           </div>
           <div className="truncate text-11 text-fg-tertiary">
-            {stats.prsToday} PR{stats.prsToday === 1 ? "" : "s"} ·{" "}
-            {stats.passRatePct != null
-              ? `${stats.passRatePct}% 24h pass`
-              : "no 24h runs"}
+            {stats.prsToday} PR{stats.prsToday === 1 ? "" : "s"}
+            {stats.passRatePct != null ? ` · ${stats.passRatePct}% pass` : ""}
           </div>
         </div>
 
-        <div className="work-telemetry-cell">
+        <div className="flex flex-col gap-0.5 px-3.5 py-2.5">
           <div className="flex items-center justify-between text-11 text-fg-tertiary">
-            <span>7-day spend</span>
+            <span>7d spend</span>
             <Link href={reportsHref} className="text-accent hover:underline">
               Reports →
             </Link>
           </div>
           <div className="font-mono text-16 font-semibold leading-tight text-fg tabular-nums">
-            {costs7d
-              ? spendLabel(costs7d.total.cost_micros, costs7d.unpriced_runs)
-              : "–"}
+            {costs7d ? spendLabel(costs7d.total.cost_micros, costs7d.unpriced_runs) : "–"}
           </div>
           <div className="truncate text-11 text-fg-tertiary">
-            {costs7d
-              ? `${costs7d.total.runs} run${costs7d.total.runs === 1 ? "" : "s"} in range`
-              : <Skeleton className="h-3 w-20" />}
+            {costs7d ? (
+              `${costs7d.total.runs} run${costs7d.total.runs === 1 ? "" : "s"}`
+            ) : (
+              <Skeleton className="h-3 w-16" />
+            )}
           </div>
         </div>
       </div>
 
-      {/* Needs you right now */}
+      {/* Needs you */}
       {filter !== "failed" && (
-        <div className="flex flex-col gap-1.5">
-          <WorkSectionLabel count={needs.length} tone={needs.length > 0 ? "human" : undefined}>
-            Needs you right now
-          </WorkSectionLabel>
+        <div id="needs-you" className="flex flex-col gap-2">
+          <SectionHeading count={needs.length} tone={needs.length > 0 ? "human" : undefined}>
+            Needs you
+          </SectionHeading>
           {needs.length === 0 ? (
-            <div className="flex items-center gap-2 rounded-lg border border-border-subtle bg-surface px-3 py-2.5 text-12 text-fg-tertiary">
+            <div className="flex items-center gap-2 rounded-xl border border-border bg-surface px-3.5 py-3 text-13 text-fg-tertiary">
               <Icon name="check" size={14} className="text-state-done" />
               All caught up — no approvals or questions waiting on you.
             </div>
           ) : (
-            <div className="flex flex-col gap-1.5">
+            <div className="flex flex-col gap-2">
               {needs.map((item) => (
-                <ActivityNeedsCard
-                  key={item.id}
-                  item={item}
-                  active={Boolean(item.run_id && item.run_id === selectedRunId)}
-                  onSelectRun={onSelectRun}
-                />
+                <NeedsYouCard key={item.id} item={item} onSelectRun={onSelectRun} />
               ))}
             </div>
           )}
@@ -483,45 +471,105 @@ export function ActivityOverview({
 
       {/* Running now */}
       {filter !== "failed" && runningNow.length > 0 && (
-        <div className="flex flex-col gap-1.5">
-          <WorkSectionLabel count={runningNow.length}>Running now</WorkSectionLabel>
-          <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-2">
+          <SectionHeading count={runningNow.length}>Running now</SectionHeading>
+          <div className="flex flex-col gap-2">
             {runningNow.map((r) => (
-              <RunningRunCard
-                key={r.id}
-                r={r}
-                active={r.id === selectedRunId}
-                onSelectRun={onSelectRun}
-              />
+              <RunningRunRow key={r.id} r={r} onSelectRun={onSelectRun} />
             ))}
           </div>
         </div>
       )}
 
-      {/* Finished today */}
-      <div className="flex flex-col gap-1">
-        <WorkSectionLabel count={finishedToday.length}>
-          Finished today
-        </WorkSectionLabel>
-        {finishedToday.length === 0 ? (
-          <p className="rounded-lg border border-border-subtle bg-surface px-3 py-3 text-12 text-fg-tertiary">
-            No completed runs recorded earlier today.
-          </p>
-        ) : (
-          <div className="overflow-hidden rounded-lg border border-border-subtle bg-surface">
-            <div className="divide-y divide-border-subtle">
-              {finishedToday.map((r) => (
-                <FinishedRunRow
-                  key={r.id}
-                  r={r}
-                  active={r.id === selectedRunId}
-                  onSelectRun={onSelectRun}
-                />
+      {/* Ready to start */}
+      {filter !== "failed" && (
+        <div className="flex flex-col gap-2">
+          <SectionHeading
+            count={readyTickets.length}
+            right={
+              <div className="flex items-center gap-2">
+                {assignedReadyKeys.length > 0 && (
+                  <Button
+                    variant="approve-outline"
+                    icon="play"
+                    onClick={() => setDispatchOpen(true)}
+                    className="h-7 px-2.5 text-12"
+                  >
+                    Start ready ({assignedReadyKeys.length})
+                  </Button>
+                )}
+                <Link href={tasksHref} className="text-12 text-accent hover:underline">
+                  All tasks →
+                </Link>
+              </div>
+            }
+          >
+            Ready to start
+          </SectionHeading>
+          {tickets.isPending ? (
+            <Skeleton className="h-16 rounded-xl" />
+          ) : readyTickets.length === 0 ? (
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface px-3.5 py-3 text-13 text-fg-tertiary">
+              <span>No unblocked tasks queued for dispatch.</span>
+              <Link href={tasksHref} className="flex-none text-12 font-medium text-accent hover:underline">
+                Open Tasks →
+              </Link>
+            </div>
+          ) : (
+            <div className="divide-y divide-border-subtle overflow-hidden rounded-xl border border-border bg-surface">
+              {readyTickets.map((t) => (
+                <Link
+                  key={t.id}
+                  href={`/tickets/${encodeURIComponent(t.key)}`}
+                  className="flex items-center gap-3 px-3.5 py-2.5 text-13 transition-colors hover:bg-hover/50"
+                >
+                  <span className="w-16 flex-none truncate font-mono text-11 text-fg-tertiary">
+                    {t.key}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate font-medium text-fg">
+                    {t.title}
+                  </span>
+                  {t.estimate_points != null && (
+                    <span className="flex-none font-mono text-11 text-fg-tertiary">
+                      {t.estimate_points} pt
+                    </span>
+                  )}
+                  <span className="flex flex-none items-center gap-1.5 text-12 text-fg-secondary">
+                    {t.assignee ? (
+                      <>
+                        <WorkPersonaAvatar agent={t.assignee} size="sm" />
+                        <span className="hidden sm:inline">{t.assignee.name}</span>
+                      </>
+                    ) : (
+                      <UnassignedAvatar size={18} />
+                    )}
+                  </span>
+                </Link>
               ))}
             </div>
+          )}
+        </div>
+      )}
+
+      {/* Finished today */}
+      {finishedToday.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <SectionHeading count={finishedToday.length}>Finished today</SectionHeading>
+          <div className="divide-y divide-border-subtle overflow-hidden rounded-xl border border-border bg-surface">
+            {finishedToday.map((r) => (
+              <FinishedRunRow key={r.id} r={r} onSelectRun={onSelectRun} />
+            ))}
           </div>
-        )}
-      </div>
+        </div>
+      )}
+
+      {dispatchOpen && assignedReadyKeys.length > 0 && (
+        <DispatchDialog
+          keys={assignedReadyKeys}
+          open
+          onOpenChange={setDispatchOpen}
+        />
+      )}
     </section>
   );
 }

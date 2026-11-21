@@ -6,7 +6,7 @@ import { hasLiveRun, useTicketRuns } from "@/lib/api/hooks";
 import { absoluteTime, ago, duration, runCost, timelineTime } from "@/lib/format";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/primitives";
-import { AgentAvatar } from "@/components/domain/avatars";
+import { WorkPersonaAvatar } from "@/components/domain/work-persona-avatar";
 import { SmallPill } from "@/components/domain/labels";
 import { RUN_STATE } from "./run-parts";
 
@@ -52,7 +52,7 @@ export function RunsHistory({ t }: { t: Ticket }) {
                   aria-label={`${r.agent.name} run, ${st.label}, ${runCost(r.cost_usd, r.cost_source)}, started ${absoluteTime(r.started_at)}`}
                   className="flex min-h-11 items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-hover"
                 >
-                  <AgentAvatar name={r.agent.name} colorIndex={r.agent.color_index} label={false} />
+                  <WorkPersonaAvatar agent={r.agent} size="sm" />
                   <span className="flex min-w-0 flex-1 flex-col leading-tight">
                     <span className="flex items-center gap-1.5 text-13">
                       <span className="truncate">@{r.agent.handle}</span>

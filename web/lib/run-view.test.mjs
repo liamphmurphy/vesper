@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  advancedFilterCount, argSummary, cacheShare, condenseFeed, delegateChild, finalMessage, groupByTurn, nowLine, parseRunAnchor, pickRunView, hasActiveFilters, parseRunFilters, rowsOf, runColumns, runFilterQuery,
+  advancedFilterCount, argSummary, cacheShare, condenseFeed, delegateChild, finalMessage, groupByTurn, nowLine, parseRunAnchor, pickRunView, hasActiveFilters, parseRunFilters, rowsOf, runColumns, runFilterQuery, runViewTabs,
   toolLink, toolName, turnAt, turnByEvent, turnStarts, usageByModel, workHref,
 } from "./run-view.ts";
 
@@ -169,4 +169,19 @@ test("nowLine and finalMessage", () => {
   assert.equal(nowLine({ state: "queued", plan: [] }, []), "Waiting for a runner slot");
   assert.equal(finalMessage([...events, ev(3, "message", { kind: "plan" })]), "Thinking\nmore");
   assert.equal(finalMessage([]), null);
+});
+
+test("runViewTabs hides Graph unless child runs exist or Graph mode is active", () => {
+  assert.deepEqual(
+    runViewTabs({ countsAll: 4, fileCount: 2, childRunCount: 0, mode: "simple" }).map((t) => t.key),
+    ["simple", "details", "files"],
+  );
+  assert.deepEqual(
+    runViewTabs({ countsAll: 4, fileCount: 0, childRunCount: 1, mode: "simple" }).map((t) => t.key),
+    ["simple", "details", "graph", "files"],
+  );
+  assert.deepEqual(
+    runViewTabs({ countsAll: 4, fileCount: 0, childRunCount: 0, mode: "graph" }).map((t) => t.key),
+    ["simple", "details", "graph", "files"],
+  );
 });

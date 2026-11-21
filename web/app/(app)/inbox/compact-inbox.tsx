@@ -6,6 +6,8 @@ import type { Schemas } from "@/lib/api/client";
 import { useAddressTicketPRFeedback, useComment, useDecideApproval, useInbox, useRunLog, useTicket } from "@/lib/api/hooks";
 import { useAddressPushPRFeedback } from "@/lib/api/code-review-hooks";
 import { AgentAvatar } from "@/components/domain/avatars";
+import { useComment, useDecideApproval, useInbox, useTicket } from "@/lib/api/hooks";
+import { WorkPersonaAvatar } from "@/components/domain/work-persona-avatar";
 import { useRememberedProject } from "@/components/shell/project-scope";
 import { TopBar } from "@/components/shell/topbar";
 import { Button, ButtonLink } from "@/components/ui/button";
@@ -177,7 +179,7 @@ function Card({ item, sent, onSent, onOpen }: { item: Item; sent: boolean; onSen
     <>
       <span className="flex min-w-0 items-center gap-2 text-13">
         {item.agent ? (
-          <AgentAvatar name={item.agent.name} colorIndex={item.agent.color_index} label={false} size="md" />
+          <WorkPersonaAvatar agent={item.agent} size="md" />
         ) : (
           <span aria-hidden className="grid size-6 flex-none place-items-center rounded-md bg-track text-fg-tertiary">
             <Icon name="inbox" size={13} />
@@ -272,7 +274,7 @@ function ApprovalSheet({ item, onSent, onClose }: { item: Item; onSent: (id: str
         className="relative flex max-h-[90dvh] flex-col rounded-t-2xl border-t border-border bg-panel"
       >
         <div className="flex items-center gap-2 px-4 pt-3">
-          {item.agent && <AgentAvatar name={item.agent.name} colorIndex={item.agent.color_index} label={false} size="md" />}
+          {item.agent && <WorkPersonaAvatar agent={item.agent} size="md" />}
           <span className="min-w-0 flex-1 truncate text-13 text-fg-secondary">
             {item.agent?.name ?? "An agent"} {item.ticket_key && <span className="font-mono text-12 text-fg-tertiary">· {item.ticket_key}</span>}
           </span>

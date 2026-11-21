@@ -10,7 +10,7 @@ import { cx } from "@/lib/cx";
 import { Button, ButtonLink, IconButton } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Banner, Skeleton } from "@/components/ui/primitives";
-import { AgentAvatar } from "./avatars";
+import { WorkPersonaAvatar } from "./work-persona-avatar";
 import { EnforcementChip, MonoChip, ScopeMode, type Enforcement } from "./labels";
 
 type Preview = Schemas["DispatchPreview"];
@@ -196,7 +196,7 @@ function BulkPreview({ previews }: { previews: Array<Preview | undefined> }) {
           p ? (
             <li key={p.ticket_key} className="flex flex-wrap items-center gap-2.5 px-3.5 py-2.5 text-13">
               <span className="w-16 font-mono text-12 text-fg-tertiary">{p.ticket_key}</span>
-              {p.agent.name && <AgentAvatar name={p.agent.name} colorIndex={p.agent.color_index} label={false} />}
+              {p.agent.name && <WorkPersonaAvatar agent={p.agent} size="sm" />}
               <span className="font-medium">{p.agent.name || "No agent"}</span>
               {p.resolved && <MonoChip>{p.resolved.harness}</MonoChip>}
               {p.resolved && <MonoChip>{p.resolved.model}</MonoChip>}
@@ -267,7 +267,7 @@ export function DispatchDialog({ keys, open, onOpenChange, onDone }: { keys: str
           className="motion-dialog fixed left-1/2 top-[6vh] z-50 flex max-h-[88vh] w-[min(720px,calc(100%-32px))] -translate-x-1/2 flex-col overflow-hidden rounded-2xl border border-border-float bg-surface-raised shadow-[var(--shadow-float)] outline-none"
         >
           <div className="flex items-start gap-3 border-b border-border-subtle px-[18px] py-3.5">
-            {single && p?.agent.name && <AgentAvatar name={p.agent.name} colorIndex={p.agent.color_index} size="md" label={false} />}
+            {single && p?.agent.name && <WorkPersonaAvatar agent={p.agent} size="md" />}
             <div className="flex flex-1 flex-col">
               <Dialog.Title className="type-heading">
                 {single ? (

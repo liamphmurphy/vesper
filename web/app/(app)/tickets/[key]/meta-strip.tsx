@@ -4,7 +4,8 @@ import { useState, type ReactNode } from "react";
 import type { Bootstrap, Ticket } from "@/lib/api/client";
 import { Icon } from "@/components/ui/icon";
 import { Sheet, SheetOptions } from "@/components/ui/sheet";
-import { AgentAvatar, UnassignedAvatar } from "@/components/domain/avatars";
+import { UnassignedAvatar } from "@/components/domain/avatars";
+import { WorkPersonaAvatar } from "@/components/domain/work-persona-avatar";
 import { PriorityGlyph, StatusGlyph } from "@/components/domain/glyphs";
 import { PRIORITY_NAME, PRIORITY_ORDER, STATUS_NAME, STATUS_ORDER } from "@/components/domain/meta";
 import { pickerName } from "@/components/domain/pickers";
@@ -47,7 +48,7 @@ export function MetaStrip({ t, boot, save }: { t: Ticket; boot: Bootstrap; save:
           {STATUS_NAME[t.status]}
         </Chip>
         <Chip label="Persona" value={t.assignee?.name ?? null} onOpen={() => setOpen("agent")}>
-          {t.assignee ? <AgentAvatar name={t.assignee.name} colorIndex={t.assignee.color_index} label={false} /> : <UnassignedAvatar size={16} />}
+          {t.assignee ? <WorkPersonaAvatar agent={t.assignee} size="sm" /> : <UnassignedAvatar size={16} />}
           <span className="truncate">{t.assignee?.name ?? "Unassigned"}</span>
         </Chip>
         <Chip label="Priority" value={PRIORITY_NAME[t.priority]} onOpen={() => setOpen("priority")}>
@@ -77,7 +78,7 @@ export function MetaStrip({ t, boot, save }: { t: Ticket; boot: Bootstrap; save:
               label="Personas"
               value={t.assignee?.id ?? ""}
               options={[
-                ...agents.map((a) => ({ value: a.id, label: a.name, detail: `${a.model} · ${a.specialty}`, icon: <AgentAvatar name={a.name} colorIndex={a.color_index} size="md" label={false} /> })),
+                ...agents.map((a) => ({ value: a.id, label: a.name, detail: `${a.model} · ${a.specialty}`, icon: <WorkPersonaAvatar agent={a} size="md" /> })),
                 { value: "", label: "Unassigned", icon: <UnassignedAvatar size={24} /> },
               ]}
               onPick={(id) => {
