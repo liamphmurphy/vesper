@@ -1314,6 +1314,26 @@ paths:
               schema: { $ref: "#/components/schemas/Ticket" }
         default: { $ref: "#/components/responses/Error" }
 
+  /tickets/{key}/address-pr-feedback:
+    parameters:
+      - $ref: "#/components/parameters/TicketKey"
+    post:
+      operationId: addressTicketPRFeedback
+      summary: Dispatch or resume a run on this ticket's branch to fix CI failures or address review comments
+      tags: [runs]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddressPRFeedbackRequest" }
+      responses:
+        "201":
+          description: Run queued or resumed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Run" }
+        default: { $ref: "#/components/responses/Error" }
+
   /tickets/dispatch:
     post:
       operationId: dispatchTickets
@@ -4134,6 +4154,25 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/PushRequest" }
         default: { $ref: "#/components/responses/Error" }
+  /push-requests/{id}/address-pr-feedback:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: addressPushRequestPRFeedback
+      summary: Send failing CI logs or unresolved PR review comments back to the originating chat on this branch
+      tags: [chats]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddressPRFeedbackRequest" }
+      responses:
+        "201":
+          description: Follow-up turn queued on the originating chat
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatMessage" }
+        default: { $ref: "#/components/responses/Error" }
   /repository-push-policies:
     get:
       operationId: listRepositoryPushPolicies
@@ -5473,6 +5512,102 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
         default: { $ref: "#/components/responses/Error" }
 
+  /chats/{id}/steer:
+    parameters:
+      - { $ref: "#/components/parameters/ChatId" }
+    post:
+      operationId: steerChat
+      summary: Steer an active chat reply mid-turn without discarding work
+      description: |
+        Injects guidance into a live chat session mid-turn when supported by
+        the harness (or falls back to an interrupt/next-turn handoff otherwise).
+        Returns 201 with the steer record and saved user message id.
+      tags: [chats]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChatMessageEdit" }
+      responses:
+        "201":
+          description: Steered
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatSteer" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /chats/{id}/compact:
+    parameters:
+      - { $ref: "#/components/parameters/ChatId" }
+    post:
+      operationId: compactChat
+      summary: Compact this chat onto a fresh context window
+      description: |
+        Clears the current harness CLI session and arms a handoff compaction for
+        the next turn while keeping the chat's existing run and workspace volume
+        intact. 409 while a turn is running or when the chat is archived.
+      tags: [chats]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CompactChatRequest" }
+      responses:
+        "200":
+          description: Updated chat
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatSession" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /chats/{id}/fork:
+    parameters:
+      - { $ref: "#/components/parameters/ChatId" }
+    post:
+      operationId: forkChat
+      summary: Fork this chat into an independent conversation at a message
+      description: |
+        Creates a new chat seeded with the message prefix up to `message_id`.
+        For coding chats with `branch_repo: true`, attaches the repository on a
+        new fork branch seeded from the fork point's commit or branch.
+      tags: [chats]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ForkChatRequest" }
+      responses:
+        "201":
+          description: Forked chat
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatSession" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /chats/{id}/tool-approvals:
+    parameters:
+      - { $ref: "#/components/parameters/ChatId" }
+    get:
+      operationId: listChatToolApprovals
+      summary: Pending in-turn tool approvals for this chat
+      tags: [chats]
+      responses:
+        "200":
+          description: Pending approvals
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatToolApprovalList" }
+        "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
   /chats/{id}/asides:
     parameters:
       - { $ref: "#/components/parameters/ChatId" }
@@ -6563,6 +6698,58 @@ components:
       type: string
       enum: [draft, open, merged, closed]
 
+    PRCIState:
+      type: string
+      enum: [unknown, pending, passing, failing]
+    PRCheckFailure:
+      type: object
+      required: [name, conclusion]
+      properties:
+        name: { type: string }
+        conclusion: { type: string }
+        details_url: { type: string }
+        title: { type: string }
+        summary: { type: string }
+    PRReviewComment:
+      type: object
+      required: [author, body, created_at]
+      properties:
+        author: { type: string }
+        body: { type: string }
+        url: { type: string }
+        created_at: { type: string, format: date-time }
+    PRReviewThread:
+      type: object
+      required: [id, path, updated_at, comments]
+      properties:
+        id: { type: string }
+        path: { type: string }
+        line: { type: integer }
+        url: { type: string }
+        diff_hunk: { type: string }
+        outdated: { type: boolean }
+        updated_at: { type: string, format: date-time }
+        comments: { type: array, items: { $ref: "#/components/schemas/PRReviewComment" } }
+    PRFeedback:
+      type: object
+      required: [ci_state, failed_checks_count, failed_checks, unresolved_threads, review_threads, updated_at]
+      properties:
+        ci_state: { $ref: "#/components/schemas/PRCIState" }
+        failed_checks_count: { type: integer }
+        failed_checks: { type: array, items: { $ref: "#/components/schemas/PRCheckFailure" } }
+        unresolved_threads: { type: integer }
+        review_threads: { type: array, items: { $ref: "#/components/schemas/PRReviewThread" } }
+        ci_failed_at: { type: string, format: date-time }
+        review_updated_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    AddressPRFeedbackRequest:
+      type: object
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [ci, review, all]
+
     PullRequest:
       type: object
       required: [number, state]
@@ -6574,6 +6761,7 @@ components:
         deletions: { type: integer }
         closed_unmerged: { type: boolean, description: Closed without merging; a person should look }
         synced_at: { type: string, format: date-time }
+        feedback: { $ref: "#/components/schemas/PRFeedback" }
 
     TicketSummary:
       type: object
@@ -7922,6 +8110,7 @@ components:
         id: { type: string, format: uuid }
         run_id: { type: string, format: uuid }
         ticket_key: { type: string }
+        chat_id: { type: string, format: uuid }
         agent: { $ref: "#/components/schemas/AgentRef" }
         scope: { type: string }
         action_summary: { type: string }
@@ -8412,8 +8601,8 @@ components:
         id: { type: string }
         kind:
           type: string
-          description: "question is a run waiting on await_human (summary is the question); blocked is a failed or blocked run; stalled is a running run with no event for 30 minutes; merged is a pull request merged in the last 14 days; pr_approved is a pull request you authored on GitHub that a reviewer approved in the last 14 days (href is the pull request's GitHub URL)"
-          enum: [approval, question, blocked, stalled, mockup, planning, review, dispatch, mention, suggestion, workflow_gate, scheduled, connector_approval, secret_approval, secret_expiring, merged, pr_approved]
+          description: "question is a run waiting on await_human (summary is the question); blocked is a failed or blocked run; stalled is a running run with no event for 30 minutes; pr_ci_failed is an open Vesper-tracked PR with failing CI check runs; pr_review_comments is an open Vesper-tracked PR with unresolved review threads; merged is a pull request merged in the last 14 days; pr_approved is a pull request you authored on GitHub that a reviewer approved in the last 14 days (href is the pull request's GitHub URL)"
+          enum: [approval, question, blocked, stalled, pr_ci_failed, pr_review_comments, mockup, planning, review, dispatch, mention, suggestion, workflow_gate, scheduled, connector_approval, secret_approval, secret_expiring, merged, pr_approved]
         title: { type: string }
         summary: { type: string }
         href: { type: string }
@@ -8825,6 +9014,24 @@ components:
         last_message_at: { type: string, format: date-time }
         space: { $ref: "#/components/schemas/ChatSpaceRef" }
         preview: { type: string, description: "The start of the newest reply as plain text; only when listing one space's chats" }
+        compact_pending: { type: boolean, description: "Set after /compact; the next turn starts a fresh context window with handoff + workspace git brief" }
+        compact_focus: { type: string, description: "Optional user focus note saved with /compact for the next turn" }
+        auto_rollover_tokens: { type: integer, format: int64, nullable: true, description: "Per-chat auto-compaction threshold in context tokens (0 disables auto-compaction; null inherits the server default)" }
+        context_tokens: { type: integer, format: int64, description: "Current segment's last reported context window size in tokens" }
+        forked_from_chat_id: { type: string, format: uuid, nullable: true, description: "Source chat this conversation was forked from" }
+        forked_from_message_id: { type: string, format: uuid, nullable: true, description: "Fork anchor message in the source chat" }
+    CompactChatRequest:
+      type: object
+      properties:
+        focus: { type: string, maxLength: 500, description: "Optional instruction telling the compacted context window what to prioritize" }
+    ForkChatRequest:
+      type: object
+      required: [message_id]
+      properties:
+        message_id: { type: string, format: uuid }
+        title: { type: string, maxLength: 200 }
+        branch_repo: { type: boolean, description: "When true on a coding chat, check out a new fork branch seeded from the fork point's commit or branch" }
+        branch_name: { type: string, maxLength: 80, description: "Optional work branch name (TYPE/slug) when branch_repo is true; defaults to feat/fork-<short-id>" }
     NewChat:
       type: object
       properties:
@@ -8849,6 +9056,7 @@ components:
         archived: { type: boolean }
         project: { type: string, description: "Key of the project to attach; empty detaches. The next message starts a fresh session with the conversation handed off." }
         space_id: { type: string, description: "Move the chat into one of your spaces (not an app's), or empty for none. Its instructions, sources and memory reach the chat from the next message, and the chat files tickets where the space does unless project is given too." }
+        auto_rollover_tokens: { type: integer, format: int64, minimum: 0, nullable: true, description: "Auto-compact this chat's context window when a turn reaches this many tokens (0 disables auto-compaction; null inherits the server default)." }
     NewChatMessage:
       type: object
       required: [body]
@@ -8917,6 +9125,22 @@ components:
         followups:
           type: array
           items: { $ref: "#/components/schemas/ChatFollowup" }
+    ChatSteer:
+      type: object
+      required: [id, message_id, body, state, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        message_id: { type: string, format: uuid }
+        body: { type: string }
+        state: { type: string, enum: [pending, delivered, fallback, expired] }
+        created_at: { type: string, format: date-time }
+    ChatToolApprovalList:
+      type: object
+      required: [approvals]
+      properties:
+        approvals:
+          type: array
+          items: { $ref: "#/components/schemas/Approval" }
     ChatAsideList:
       type: object
       required: [asides]
@@ -9674,6 +9898,8 @@ components:
           type: array
           items: { type: string, enum: [confirmation, effort_mismatch] }
           description: "Rules that raised effort_level above the message's own: confirmation (a go-ahead takes the weight of what it approves), effort_mismatch (a retry or edit steps it up)"
+        git_branch: { type: string, description: "Primary repository branch at the end of the turn that produced this assistant message" }
+        git_commit_sha: { type: string, description: "Primary repository HEAD commit SHA at the end of the turn that produced this assistant message" }
         created_at: { type: string, format: date-time }
     ChatCodeChange:
       type: object
@@ -9743,6 +9969,7 @@ components:
         pr_url: { type: string }
         pr_number: { type: integer }
         pr_state: { $ref: "#/components/schemas/PullRequestState" }
+        feedback: { $ref: "#/components/schemas/PRFeedback" }
         error: { type: string, description: Why it failed or was replaced }
         persona: { $ref: "#/components/schemas/PersonaSummary" }
         run_id: { type: string, format: uuid }

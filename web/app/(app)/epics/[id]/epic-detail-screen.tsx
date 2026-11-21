@@ -20,6 +20,7 @@ import { Button, ButtonLink } from "@/components/ui/button";
 import { Banner, EmptyState, Skeleton } from "@/components/ui/primitives";
 import { Content } from "@/components/shell/topbar";
 import { HealthPill, type EpicOverview } from "@/components/domain/overview";
+import { WorkPersonaAvatar } from "@/components/domain/work-persona-avatar";
 import { Pill } from "@/components/domain/labels";
 import { DependencyMap } from "@/components/domain/dependency-map";
 import { WorkDetailHeader, WorkEyebrow, WorkViewTabs } from "@/components/domain/work-detail-header";
@@ -333,7 +334,12 @@ function TicketChecklist({ tickets, needs }: { tickets: TicketSummary[]; needs: 
             >
               {t.title}
             </Link>
-            {t.assignee && <span className="hidden text-12 text-fg-tertiary sm:inline">{t.assignee.name}</span>}
+            {t.assignee && (
+              <span className="hidden items-center gap-1.5 text-12 text-fg-tertiary sm:inline-flex">
+                <WorkPersonaAvatar agent={t.assignee} size="sm" />
+                <span>{t.assignee.name}</span>
+              </span>
+            )}
             <span className="w-10 flex-none text-right font-mono text-12 text-fg-tertiary">{t.estimate_points != null ? `${t.estimate_points} pt` : "—"}</span>
             <StateText t={t} needs={itemNeeds} className="w-[200px] flex-none text-right max-sm:w-[110px]" />
           </li>
@@ -392,17 +398,17 @@ function StartReady({ epic }: { epic: EpicOverview }) {
             {loading ? "Checking which tickets can start…" : ready.length ? `${ready.length} ${ready.length === 1 ? "ticket is" : "tickets are"} ready to start` : "Nothing is ready to start"}
           </h2>
           <p className="text-12 text-fg-secondary">
-            Starts only tickets whose blockers are done. Existing agent assignments are kept; runs begin as runner slots free up.
+            Starts only tickets whose blockers are done. Existing persona assignments are kept; runs begin as runner slots free up.
           </p>
         </div>
         <Button variant="approve" disabled={epic.epic.status === "done" || loading || failed || incomplete || !dispatchKeys.length || start.isPending || (unassigned > 0 && !selectedAgent)}
           onClick={() => start.mutate({ ticketKeys: dispatchKeys, unassignedKeys, assignee: selectedAgent?.id })}>
-          {start.isPending ? "Starting…" : loading ? "Loading tickets…" : `${unassigned ? "Assign & start ready" : "Start ready"} (${dispatchKeys.length})`}
+          {start.isPending ? "Starting…" : loading ? "Checking" : `${unassigned ? "Assign & start ready" : "Start ready"} (${dispatchKeys.length})`}
         </Button>
       </div>
       {unassigned > 0 && (
         <label className="flex flex-wrap items-center gap-2 text-12 text-fg-secondary">
-          Agent for unassigned tickets
+          Persona for unassigned tickets
           <select aria-label="Persona for unassigned tickets" value={selectedAgent?.id ?? ""}
             disabled={start.isPending || bootstrap.isPending}
             onChange={(e) => { setAgentId(e.target.value); start.reset(); }}
@@ -410,7 +416,7 @@ function StartReady({ epic }: { epic: EpicOverview }) {
             {!agents.length && <option value="">No persona takes tickets yet</option>}
             {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
-          <span>{unassigned} {unassigned === 1 ? "ticket" : "tickets"} will be assigned to {selectedAgent?.name ?? "the agent you choose"} first.</span>
+          <span>{unassigned} {unassigned === 1 ? "ticket" : "tickets"} will be assigned to {selectedAgent?.name ?? "the persona you choose"} first.</span>
         </label>
       )}
       {!loading && blocked.length > 0 && (
@@ -428,7 +434,7 @@ function StartReady({ epic }: { epic: EpicOverview }) {
       )}
       {!loading && live.size > 0 && <p className="text-12 text-fg-tertiary">{live.size} already {live.size === 1 ? "has a run" : "have runs"}.</p>}
       {unassigned > 0 && !bootstrap.isPending && !agents.length && <p role="alert" className="text-12 text-pill-blocked-fg">{bootstrap.isError ? "Couldn’t load personas. Refresh to try again." : "Turn on Takes tickets for a persona to assign and start these tickets."}</p>}
-      {start.isError && <p role="alert" className="text-12 text-pill-blocked-fg">Couldn’t start the tickets: {start.error.message}{bulk.isSuccess && " Agent assignments were saved; retry to start."}</p>}
+      {start.isError && <p role="alert" className="text-12 text-pill-blocked-fg">Couldn’t start the tickets: {start.error.message}{bulk.isSuccess && " Persona assignments were saved; retry to start."}</p>}
       {failed && <p role="alert" className="text-12 text-pill-blocked-fg">Couldn’t load all ticket details. Refresh to try again.</p>}
       {incomplete && <p role="alert" className="text-12 text-pill-blocked-fg">The ticket list is incomplete. Open the ticket list to start tickets in smaller batches.</p>}
       {start.isSuccess && <p role="status" className="text-12 text-fg-secondary">{start.data} epic tickets queued. Follow their progress above.</p>}

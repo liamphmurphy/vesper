@@ -1,10 +1,9 @@
-// The Work navigator's shared header (WorkNavHeader + the Space/Persona filters in
-// app/(app)/work/work-nav-header.tsx) as NavModel parts, used by the Activity, Tasks, Epics and
-// Board screens. Pure: the screens add their own sections.
+// The Work navigator's shared header (Space/Persona filters and Runs/Tasks switcher)
+// as NavModel parts, used by the Runs, Tasks, Epics and Board screens.
 import { ticketsHref } from "../../tickets-layout.ts";
 import type { NativeCommand, NavAction, NavFilterMenu, NavModel, NavPicker, NavSearch } from "../protocol.ts";
 
-export type WorkTab = "activity" | "tickets" | "epics";
+export type WorkTab = "activity" | "tickets";
 
 export const WORK_NEW_TICKET_ACTION = "new-ticket";
 export const WORK_SPACE_FILTER = "filter-space";
@@ -21,7 +20,7 @@ export interface WorkHeaderInput {
   agent: string;
   /** Offer "All spaces" (Board has no all-spaces view). */
   allowAllProjects?: boolean;
-  counts?: { activity?: number; tickets?: number; epics?: number };
+  counts?: { activity?: number; tickets?: number };
   /** A detail screen shows no Space or Persona filters. */
   noFilters?: boolean;
   /** Epics has no Persona filter. */
@@ -41,8 +40,8 @@ export interface WorkHeader {
 }
 
 export function workTabHref(tab: WorkTab, project?: string): string {
-  if (tab === "activity") return project ? `/work?view=activity&project=${encodeURIComponent(project)}` : "/work";
-  return ticketsHref(tab === "tickets" ? "list" : "epics", project ? { project } : undefined);
+  if (tab === "activity") return project ? `/work?project=${encodeURIComponent(project)}` : "/work";
+  return ticketsHref("list", project ? { project } : undefined);
 }
 
 export const workNewTicketHref = (project?: string) => (project ? `/tickets/new?project=${encodeURIComponent(project)}` : "/tickets/new");
@@ -69,9 +68,8 @@ export function workHeader(input: WorkHeaderInput): WorkHeader {
       id: WORK_VIEW_PICKER,
       value: input.active,
       options: [
-        { value: "activity", label: withCount("Activity", input.counts?.activity) },
+        { value: "activity", label: withCount("Runs", input.counts?.activity) },
         { value: "tickets", label: withCount("Tasks", input.counts?.tickets) },
-        { value: "epics", label: withCount("Epics", input.counts?.epics) },
       ],
     },
   };

@@ -13,6 +13,11 @@ test("harness log lines and video and audio progress refetch only their own quer
   assert.deepEqual(invalidatedBy("audio.updated"), ["audio"]);
   assert.deepEqual(invalidatedBy("custom_app.updated"), ["custom-apps"]);
   assert.deepEqual(invalidatedBy("browser_share.updated"), ["browser-shares"]);
+  assert.deepEqual(invalidatedBy("pr_feedback.updated"), ["tickets", "push-requests", "inbox", "bootstrap"]);
+});
+
+test("approval hints also refresh chat tool approvals", () => {
+  assert.deepEqual(invalidatedBy("approval.updated"), ["tickets", "runs", "chats", "inbox", "bootstrap", "dashboard", "epics", "agent-overviews"]);
 });
 
 test("an unknown hint refetches only the overview counts", () => {

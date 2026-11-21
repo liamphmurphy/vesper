@@ -103,8 +103,8 @@ UPDATE plan_steps SET state = 'pending' WHERE run_id = $1 AND state = 'current' 
 UPDATE agents SET status = $2 WHERE id = $1;
 
 -- name: CreateApproval :one
-INSERT INTO approval_requests (workspace_id, run_id, ticket_id, agent_id, scope, action_summary, action_detail, risk_summary)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *;
+INSERT INTO approval_requests (workspace_id, run_id, ticket_id, chat_id, agent_id, scope, action_summary, action_detail, risk_summary)
+VALUES ($1, $2, sqlc.narg(ticket_id), sqlc.narg(chat_id), $3, $4, $5, $6, $7) RETURNING *;
 
 -- name: GetApproval :one
 SELECT * FROM approval_requests WHERE id = $1 AND workspace_id = $2;
@@ -123,8 +123,14 @@ WHERE id = $1 AND state = 'approved' AND executed_at IS NULL RETURNING *;
 -- name: ExpireRunApprovals :exec
 UPDATE approval_requests SET state = 'expired' WHERE run_id = $1 AND state = 'pending';
 
+-- name: ExpireApprovalByID :exec
+UPDATE approval_requests SET state = 'expired' WHERE id = $1 AND state = 'pending';
+
 -- name: PendingApprovalsForTicket :many
-SELECT * FROM approval_requests WHERE ticket_id = $1 AND state = 'pending' ORDER BY created_at;
+SELECT * FROM approval_requests WHERE ticket_id = sqlc.arg(ticket_id)::uuid AND state = 'pending' ORDER BY created_at;
+
+-- name: ListPendingApprovalsForChat :many
+SELECT * FROM approval_requests WHERE chat_id = sqlc.arg(chat_id)::uuid AND state = 'pending' ORDER BY created_at, id;
 
 -- name: CountPendingApprovals :one
 SELECT count(*)::int FROM approval_requests WHERE workspace_id = $1 AND state = 'pending';

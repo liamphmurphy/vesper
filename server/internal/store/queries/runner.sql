@@ -364,3 +364,6 @@ SELECT image_engine FROM workspaces WHERE id = $1;
 
 -- name: SetWorkspaceImageEngine :exec
 UPDATE workspaces SET image_engine = $2, updated_at = now() WHERE id = $1;
+
+-- name: RunContextTokens :many
+SELECT id, context_tokens FROM runs WHERE id = ANY($1::uuid[]);

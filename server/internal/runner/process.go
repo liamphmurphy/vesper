@@ -9,7 +9,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/liamphmurphy/vesper/server/internal/harness"
+	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 )
 
@@ -90,11 +92,16 @@ func captureProcess(ctx context.Context, proc Process) (string, int, error) {
 func (r *Runner) supervise(ctx context.Context, c runCtx, proc Process, runtime time.Duration, streamErrors <-chan error, control func() harness.SessionControl) func() (bool, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	states := make(chan string, 1)
+	steers := make(chan store.ChatSteer, 1)
 	var workers sync.WaitGroup
 	workers.Add(2)
 	go func() {
 		defer workers.Done()
-		t := time.NewTicker(time.Second)
+		interval := time.Second
+		if c.run.Purpose == "chat" {
+			interval = 300 * time.Millisecond
+		}
+		t := time.NewTicker(interval)
 		defer t.Stop()
 		for {
 			select {
@@ -107,11 +114,24 @@ func (r *Runner) supervise(ctx context.Context, c runCtx, proc Process, runtime 
 				qctx, stop := context.WithTimeout(ctx, controlTimeout)
 				run, err := r.q().GetRun(qctx, store.GetRunParams{ID: c.run.ID, WorkspaceID: c.run.WorkspaceID})
 				stop()
-				if err == nil {
-					select {
-					case states <- run.State:
-					case <-ctx.Done():
-						return
+				if err != nil {
+					continue
+				}
+				select {
+				case states <- run.State:
+				case <-ctx.Done():
+					return
+				}
+				if c.run.Purpose == "chat" && run.State == "running" && control != nil && control() != nil {
+					sctx, sstop := context.WithTimeout(ctx, controlTimeout)
+					steer, serr := r.q().ClaimNextChatSteer(sctx, c.run.ID)
+					sstop()
+					if serr == nil {
+						select {
+						case steers <- steer:
+						case <-ctx.Done():
+							return
+						}
 					}
 				}
 			}
@@ -153,6 +173,11 @@ func (r *Runner) supervise(ctx context.Context, c runCtx, proc Process, runtime 
 			case <-grace:
 				_ = proc.Kill()
 				return
+			case steer := <-steers:
+				if r.deliverChatSteer(ctx, c, steer, control) {
+					_ = proc.Kill()
+					return
+				}
 			case state := <-states:
 				switch {
 				case state == "failed" || state == "cancelled" || (state == "paused" && c.run.Purpose == "chat"):
@@ -180,6 +205,50 @@ func (r *Runner) supervise(ctx context.Context, c runCtx, proc Process, runtime 
 		workers.Wait()
 		return expired, streamErr
 	}
+}
+
+// deliverChatSteer injects a claimed mid-turn steer into the live harness
+// session, falling back to an interrupt/next-turn handoff if the session cannot
+// accept steering input. It reports whether the process should be killed to
+// complete an interrupt fallback.
+func (r *Runner) deliverChatSteer(ctx context.Context, c runCtx, steer store.ChatSteer, control func() harness.SessionControl) bool {
+	var ctrl harness.SessionControl
+	if control != nil {
+		ctrl = control()
+	}
+	if ctrl == nil {
+		return r.fallbackChatSteer(ctx, c, steer)
+	}
+	if err := ctrl.Steer(steer.Body); err == nil {
+		r.event(context.WithoutCancel(ctx), c.run.ID, "lifecycle", map[string]any{
+			"state":    "chat_steered",
+			"steer_id": steer.ID,
+			"body":     steer.Body,
+		})
+		return false
+	} else if errors.Is(err, harness.ErrSteerUnsupported) {
+		return r.fallbackChatSteer(ctx, c, steer)
+	} else {
+		r.Log.Warn("steer chat session", "run", c.run.ID, "steer", steer.ID, "err", err)
+		return r.fallbackChatSteer(ctx, c, steer)
+	}
+}
+
+func (r *Runner) fallbackChatSteer(ctx context.Context, c runCtx, steer store.ChatSteer) bool {
+	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	var killProc bool
+	err := pgx.BeginFunc(fctx, r.Pool, func(tx pgx.Tx) error {
+		var ferr error
+		killProc, ferr = runs.FallbackChatSteerToInterrupt(fctx, store.New(tx), steer.SessionID, steer.RunID, steer.ID, steer.MessageID, 0)
+		return ferr
+	})
+	if err != nil {
+		r.Log.Warn("fallback chat steer", "run", c.run.ID, "steer", steer.ID, "err", err)
+		_ = r.q().MarkChatSteerState(fctx, store.MarkChatSteerStateParams{ID: steer.ID, State: "pending"})
+		return false
+	}
+	return killProc
 }
 
 func streamError(stream string, err error) error { return fmt.Errorf("harness %s: %w", stream, err) }

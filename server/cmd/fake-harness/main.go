@@ -434,6 +434,46 @@ func main() {
 		return
 	}
 
+	// steer-live: emits an initial chunk, waits for a mid-turn steer (or interrupt), and echoes it.
+	if os.Getenv("FAKE_HARNESS_MODE") == "steer-live" {
+		if resume != "" && os.Getenv("FAKE_HARNESS_STEER_ON_RESUME") == "" {
+			answer := "Resumed after fallback: " + prompt
+			text(answer)
+			result(false, answer)
+			return
+		}
+		text("Starting live work.")
+		select {
+		case msg := <-steers:
+			answer := "steered:" + msg
+			text(answer)
+			result(false, answer)
+		case <-interrupted:
+			text("interrupted")
+			result(false, "interrupted")
+		case <-time.After(15 * time.Second):
+			text("steer timeout")
+			result(false, "steer timeout")
+		}
+		return
+	}
+
+	// tool-approval-live: tests in-turn blocking approval on a chat or ticket run without MCP.
+	if os.Getenv("FAKE_HARNESS_MODE") == "tool-approval-live" && os.Getenv("LAZYAGENTS_TICKET") == "" {
+		allowed, ok := checkSessionPolicy("Bash", map[string]any{"command": "echo approved-live"})
+		if !ok {
+			result(true, "policy check failed")
+			os.Exit(2)
+		}
+		reply := "tool_denied"
+		if allowed {
+			reply = "tool_allowed"
+		}
+		text(reply)
+		result(false, reply)
+		return
+	}
+
 	// A chat can answer successfully without connecting to MCP or calling tools.
 	if os.Getenv("FAKE_HARNESS_MODE") == "chat" {
 		if prompt == "slow" && resume == "" {
@@ -940,6 +980,27 @@ func main() {
 		}
 		text(summary)
 		result(false, summary)
+		return
+	}
+
+	if os.Getenv("FAKE_HARNESS_MODE") == "tool-approval-live" {
+		if ticket != "" {
+			call("claim_ticket", map[string]any{"ticket": ticket})
+		}
+		allowed, ok := checkSessionPolicy("Bash", map[string]any{"command": "echo approved-live"})
+		if !ok {
+			result(true, "policy check failed")
+			os.Exit(2)
+		}
+		reply := "tool_denied"
+		if allowed {
+			reply = "tool_allowed"
+			if ticket != "" {
+				call("complete_run", map[string]any{"outcome": "Live approval succeeded"})
+			}
+		}
+		text(reply)
+		result(false, reply)
 		return
 	}
 

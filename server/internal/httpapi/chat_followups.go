@@ -46,6 +46,45 @@ func (s *Server) DeleteChatFollowup(ctx context.Context, req api.DeleteChatFollo
 	return api.DeleteChatFollowup204Response{}, nil
 }
 
+func (s *Server) SteerChat(ctx context.Context, req api.SteerChatRequestObject) (api.SteerChatResponseObject, error) {
+	u, _, ws := me(ctx)
+	if req.Body == nil {
+		return nil, apperr.Invalid("body", "required")
+	}
+	steer, msg, err := s.Runs.SteerChat(ctx, ws, u.ID, req.Id, req.Body.Body)
+	if err != nil {
+		return nil, err
+	}
+	return api.SteerChat201JSONResponse{
+		Id:        steer.ID,
+		MessageId: msg.ID,
+		Body:      steer.Body,
+		State:     api.ChatSteerState(steer.State),
+		CreatedAt: steer.CreatedAt,
+	}, nil
+}
+
+func (s *Server) ListChatToolApprovals(ctx context.Context, req api.ListChatToolApprovalsRequestObject) (api.ListChatToolApprovalsResponseObject, error) {
+	u, _, ws := me(ctx)
+	rows, err := s.Runs.ListPendingChatApprovals(ctx, ws, u.ID, req.Id)
+	if err != nil {
+		return nil, err
+	}
+	dir, err := s.directory(ctx, ws)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]api.Approval, 0, len(rows))
+	for _, ap := range rows {
+		item, err := s.toApproval(ctx, ap, dir)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return api.ListChatToolApprovals200JSONResponse{Approvals: out}, nil
+}
+
 func (s *Server) ListChatAsides(ctx context.Context, req api.ListChatAsidesRequestObject) (api.ListChatAsidesResponseObject, error) {
 	u, _, ws := me(ctx)
 	rows, err := s.Runs.ListChatAsides(ctx, ws, u.ID, req.Id)

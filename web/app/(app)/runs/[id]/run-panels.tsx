@@ -7,7 +7,8 @@ import type { Schemas } from "@/lib/api/client";
 import { useComment, useControlRunById, useDecideRunApproval } from "@/lib/api/hooks";
 import { workHref } from "@/lib/run-view";
 import { latestQuestion, withMention } from "@/lib/run-question";
-import { AgentAvatar } from "@/components/domain/avatars";
+import { WorkPersonaAvatar } from "@/components/domain/work-persona-avatar";
+import { runCharacterState } from "@/lib/work-persona";
 import { MonoChip } from "@/components/domain/labels";
 import { RUN_ENDED, StatusPill } from "@/components/domain/run-status";
 import { Button, ButtonLink } from "@/components/ui/button";
@@ -332,7 +333,7 @@ export function ActionBox({ d, compact, inThread, keys, onDecided }: { d: RunDet
             <ul className="flex flex-col gap-1">
               {liveChildren.map((c) => (
                 <li key={c.id} className="flex items-center gap-2 text-13">
-                  <AgentAvatar name={c.agent.name} colorIndex={c.agent.color_index} label={false} />
+                  <WorkPersonaAvatar agent={c.agent} size="sm" state={runCharacterState(c)} />
                   <Link href={`/runs/${c.id}`} className="font-medium text-accent hover:underline">{c.agent.name} ↗</Link>
                   <StatusPill run={c} />
                 </li>
@@ -354,7 +355,7 @@ export function ActionBox({ d, compact, inThread, keys, onDecided }: { d: RunDet
   if (!body) return null;
   return (
     <div className={compact ? "px-3 py-3" : inThread ? "py-2" : "border-b border-border-subtle px-6 py-3"}>
-      <div id={ACTION_BOX_ID} tabIndex={-1} aria-label="Needs attention" role="group" className="flex flex-col gap-2 rounded-xl border border-state-human/40 bg-surface p-3.5">
+      <div id={ACTION_BOX_ID} tabIndex={-1} aria-label="Needs attention" role="group" className="flex flex-col gap-2 rounded-xl border border-state-human/50 bg-pill-human-bg/20 p-3.5">
         {body}
         {control.isError && (
           <Banner tone="blocked" title="Couldn't change the run">{control.error.message}</Banner>

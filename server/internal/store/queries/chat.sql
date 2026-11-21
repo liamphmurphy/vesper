@@ -424,6 +424,9 @@ WITH candidates AS (
   SELECT tc.chat_id AS id FROM ticket_change_requests tc
   WHERE tc.state = 'pending'
   UNION
+  SELECT ar.chat_id AS id FROM approval_requests ar
+  WHERE ar.chat_id IS NOT NULL AND ar.state = 'pending'
+  UNION
   SELECT ctr.chat_id AS id FROM runs r
   JOIN chat_ticket_runs ctr ON ctr.run_id = r.id
   WHERE r.workspace_id = $1 AND r.state = 'waiting' AND r.wait_reason IN ('human_reply', 'approval')
@@ -438,10 +441,11 @@ SELECT c.id, c.title, c.state, c.persona_id, c.speaker_persona_id, c.space_id,
 FROM candidates cand
 JOIN chat_sessions c ON c.id = cand.id
 CROSS JOIN LATERAL (SELECT count(*)::int AS unread FROM chat_messages m WHERE m.session_id = c.id AND m.role = 'assistant' AND m.seq > c.last_read_seq) u
--- waiting_approval: a persona, character or ticket change proposal to decide, or a run this chat started waiting on the person.
+-- waiting_approval: a persona, character, ticket change proposal, live tool approval, or a run this chat started waiting on the person.
 CROSS JOIN LATERAL (SELECT coalesce(EXISTS(SELECT 1 FROM persona_proposals pp WHERE pp.chat_id = c.id AND pp.state = 'pending')
   OR EXISTS(SELECT 1 FROM persona_character_proposals pcp WHERE pcp.chat_id = c.id AND pcp.state = 'pending')
   OR EXISTS(SELECT 1 FROM ticket_change_requests tc WHERE tc.chat_id = c.id AND tc.state = 'pending')
+  OR EXISTS(SELECT 1 FROM approval_requests ar WHERE ar.chat_id = c.id AND ar.state = 'pending')
   OR EXISTS(SELECT 1 FROM chat_ticket_runs ctr JOIN runs r ON r.id = ctr.run_id
     WHERE ctr.chat_id = c.id AND r.state = 'waiting' AND r.wait_reason IN ('human_reply', 'approval')), false)::bool AS waiting_approval) p
 LEFT JOIN LATERAL (SELECT m.persona_id, m.body_md, m.seq FROM chat_messages m WHERE m.session_id = c.id AND m.role = 'assistant' ORDER BY m.seq DESC LIMIT 1) l ON true
@@ -589,3 +593,76 @@ SELECT id, workspace_id, created_by FROM chat_sessions
 WHERE temporary AND state <> 'running' AND COALESCE(last_message_at, created_at) < sqlc.arg(cutoff)
 ORDER BY COALESCE(last_message_at, created_at)
 LIMIT sqlc.arg(row_limit);
+
+-- name: CreateChatSteer :one
+INSERT INTO chat_steers (session_id, run_id, message_id, body)
+VALUES ($1, $2, $3, $4) RETURNING *;
+
+-- name: ClaimNextChatSteer :one
+UPDATE chat_steers SET state = 'delivered', delivered_at = now()
+WHERE chat_steers.id = (
+  SELECT cs.id FROM chat_steers cs WHERE cs.run_id = $1 AND cs.state = 'pending'
+  ORDER BY cs.created_at, cs.id LIMIT 1 FOR UPDATE SKIP LOCKED
+)
+RETURNING *;
+
+-- name: MarkChatSteerState :exec
+UPDATE chat_steers SET state = $2 WHERE id = $1;
+
+-- name: TakeNextPendingChatSteer :one
+UPDATE chat_steers SET state = 'fallback', delivered_at = now()
+WHERE chat_steers.id = (
+  SELECT cs.id FROM chat_steers cs WHERE cs.run_id = $1 AND cs.state = 'pending'
+  ORDER BY cs.created_at, cs.id LIMIT 1 FOR UPDATE SKIP LOCKED
+)
+RETURNING *;
+
+-- name: ExpireRunChatSteers :exec
+UPDATE chat_steers SET state = 'expired' WHERE run_id = $1 AND state = 'pending';
+
+-- name: SetChatCompactPending :one
+UPDATE chat_sessions
+SET compact_pending = $2, compact_focus = $3, updated_at = now(), revision = revision + 1
+WHERE id = $1
+RETURNING *;
+
+-- name: SetChatAutoRollover :one
+UPDATE chat_sessions
+SET auto_rollover_tokens = $2, updated_at = now(), revision = revision + 1
+WHERE id = $1
+RETURNING *;
+
+-- name: SetChatForkOrigin :one
+UPDATE chat_sessions
+SET forked_from_chat_id = $2, forked_from_message_id = $3
+WHERE id = $1
+RETURNING *;
+
+-- name: CreateForkedChatSession :one
+INSERT INTO chat_sessions (
+  workspace_id, project_id, title, created_by, agent_id, harness, model, effort, auto_model,
+  persona_id, speaker_persona_id, repo_url, commit_email, space_id, connector_ids, secret_ids,
+  auto_rollover_tokens, forked_from_chat_id, forked_from_message_id, last_message_at
+)
+VALUES (
+  $1, $2, $3, $4, $5, $6, $7, $8, $9,
+  $10, $11, $12, $13, $14, $15, $16,
+  $17, $18, $19, $20
+)
+RETURNING *;
+
+-- name: GetChatMessageByID :one
+SELECT * FROM chat_messages WHERE id = $1 AND session_id = $2;
+
+-- name: ListChatMessagesUpToSeq :many
+SELECT * FROM chat_messages WHERE session_id = $1 AND seq <= $2 ORDER BY seq ASC;
+
+-- name: CopyChatMessageForFork :one
+INSERT INTO chat_messages (
+  session_id, seq, role, body_md, harness, model, context_refs, citations, code_changes, persona_id, git_branch, git_commit_sha
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+RETURNING *;
+
+-- name: SetChatMessageGitRef :exec
+UPDATE chat_messages SET git_branch = $2, git_commit_sha = $3 WHERE id = $1;

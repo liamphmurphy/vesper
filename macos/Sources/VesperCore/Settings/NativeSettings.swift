@@ -7,7 +7,7 @@ import Foundation
 public enum NotificationKind {
     /// Inbox kinds the app can alert on, in the order Settings lists them.
     public static let all = [
-        "approval", "question", "blocked", "stalled", "mockup", "planning", "review", "workflow_gate",
+        "approval", "question", "blocked", "stalled", "pr_ci_failed", "pr_review_comments", "mockup", "planning", "review", "workflow_gate",
         "connector_approval", "secret_approval", "merged", "pr_approved",
     ]
 }

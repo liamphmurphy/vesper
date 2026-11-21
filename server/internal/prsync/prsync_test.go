@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -307,4 +308,255 @@ func TestPRSyncCleansUpContainedCheckpointsAndKeepsDiverged(t *testing.T) {
 	if len(openChat) != 0 {
 		t.Fatalf("expected 0 open chat checkpoints, got %+v", openChat)
 	}
+}
+
+func TestPRFeedbackCheckRunsAndReviewThreadsWithETag(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	if _, err := seed.Run(ctx, pool, seed.Options{Demo: true}); err != nil {
+		t.Fatal(err)
+	}
+	q := store.New(pool)
+	me, _ := q.GetLocalUser(ctx)
+	ws := me.WorkspaceID
+	tk, _ := tracker.Get(ctx, q, ws, "PAY-214")
+	prURL := "https://github.com/northwind/payments/pull/701"
+	num, openState := int32(701), "open"
+	if err := q.SetTicketPR(ctx, store.SetTicketPRParams{ID: tk.ID, PrNumber: &num, PrUrl: &prURL, PrState: &openState}); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	phase := 1
+	var seenPRIfNoneMatch, seenChecksIfNoneMatch, seenCommentsIfNoneMatch []string
+	var graphqlCalls, checkCalls, commentCalls int
+
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		p := phase
+		mu.Unlock()
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/northwind/payments/pulls/701":
+			if inm := r.Header.Get("If-None-Match"); inm != "" {
+				mu.Lock()
+				seenPRIfNoneMatch = append(seenPRIfNoneMatch, inm)
+				mu.Unlock()
+			}
+			switch p {
+			case 1:
+				w.Header().Set("ETag", `"pr-1"`)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"state": "open", "merged": false, "draft": false,
+					"head": map[string]any{"sha": "sha1", "ref": "atlas/pay-214"},
+				})
+			case 2:
+				if r.Header.Get("If-None-Match") == `"pr-1"` {
+					w.WriteHeader(http.StatusNotModified)
+					return
+				}
+				t.Errorf("expected If-None-Match \"pr-1\" in phase 2, got %q", r.Header.Get("If-None-Match"))
+			case 3:
+				w.Header().Set("ETag", `"pr-2"`)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"state": "open", "merged": false, "draft": false,
+					"head": map[string]any{"sha": "sha2", "ref": "atlas/pay-214"},
+				})
+			case 4:
+				w.Header().Set("ETag", `"pr-3"`)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"state": "closed", "merged": true, "draft": false,
+					"head": map[string]any{"sha": "sha2", "ref": "atlas/pay-214"},
+				})
+			}
+
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/northwind/payments/commits/"):
+			mu.Lock()
+			checkCalls++
+			if inm := r.Header.Get("If-None-Match"); inm != "" {
+				seenChecksIfNoneMatch = append(seenChecksIfNoneMatch, inm)
+			}
+			mu.Unlock()
+			switch {
+			case p == 1 && strings.HasSuffix(r.URL.Path, "/sha1/check-runs"):
+				w.Header().Set("ETag", `"chk-1"`)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"check_runs": []map[string]any{
+						{"id": 10, "name": "lint", "status": "completed", "conclusion": "failure", "completed_at": "2026-11-20T10:00:00Z"},
+						{"id": 11, "name": "lint", "status": "completed", "conclusion": "success", "completed_at": "2026-11-20T10:05:00Z"},
+						{
+							"id": 12, "name": "test", "status": "completed", "conclusion": "failure",
+							"details_url":  "https://github.com/northwind/payments/runs/12",
+							"completed_at": "2026-11-20T10:02:00Z",
+							"output":       map[string]any{"title": "Unit tests failed", "summary": "FAIL TestFoo"},
+						},
+						{"id": 13, "name": "build", "status": "completed", "conclusion": "success", "completed_at": "2026-11-20T10:01:00Z"},
+					},
+				})
+			case p == 2 && strings.HasSuffix(r.URL.Path, "/sha1/check-runs"):
+				if r.Header.Get("If-None-Match") == `"chk-1"` {
+					w.WriteHeader(http.StatusNotModified)
+					return
+				}
+				t.Errorf("expected If-None-Match \"chk-1\" in phase 2, got %q", r.Header.Get("If-None-Match"))
+			case p == 3 && strings.HasSuffix(r.URL.Path, "/sha2/check-runs"):
+				if inm := r.Header.Get("If-None-Match"); inm != "" {
+					t.Errorf("new head SHA sha2 must not send stale ETag %q", inm)
+				}
+				w.Header().Set("ETag", `"chk-2"`)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"check_runs": []map[string]any{
+						{"id": 20, "name": "test", "status": "completed", "conclusion": "success", "completed_at": "2026-11-20T10:10:00Z"},
+					},
+				})
+			default:
+				http.NotFound(w, r)
+			}
+
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/northwind/payments/pulls/701/comments":
+			mu.Lock()
+			commentCalls++
+			if inm := r.Header.Get("If-None-Match"); inm != "" {
+				seenCommentsIfNoneMatch = append(seenCommentsIfNoneMatch, inm)
+			}
+			mu.Unlock()
+			switch p {
+			case 1:
+				w.Header().Set("ETag", `"rev-1"`)
+				_, _ = io.WriteString(w, `[]`)
+			case 2:
+				if r.Header.Get("If-None-Match") == `"rev-1"` {
+					w.WriteHeader(http.StatusNotModified)
+					return
+				}
+				t.Errorf("expected If-None-Match \"rev-1\" in phase 2, got %q", r.Header.Get("If-None-Match"))
+			case 3:
+				w.Header().Set("ETag", `"rev-2"`)
+				_, _ = io.WriteString(w, `[]`)
+			default:
+				http.NotFound(w, r)
+			}
+
+		case r.Method == http.MethodPost && r.URL.Path == "/graphql":
+			mu.Lock()
+			graphqlCalls++
+			mu.Unlock()
+			nodes := []map[string]any{}
+			if p == 1 {
+				nodes = []map[string]any{
+					{
+						"id": "T1", "isResolved": true, "path": "old.go", "line": 1,
+						"comments": map[string]any{"nodes": []map[string]any{{"author": map[string]any{"login": "bob"}, "body": "Resolved", "createdAt": "2026-11-20T09:00:00Z"}}},
+					},
+					{
+						"id": "T2", "isResolved": false, "path": "server/main.go", "line": 42,
+						"comments": map[string]any{"nodes": []map[string]any{{
+							"author": map[string]any{"login": "alice"}, "body": "Handle nil error here",
+							"url":       "https://github.com/northwind/payments/pull/701#discussion_r2",
+							"createdAt": "2026-11-20T10:03:00Z", "diffHunk": "@@ -40,3 +40,3 @@\n+foo",
+						}}},
+					},
+				}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"repository": map[string]any{
+						"pullRequest": map[string]any{
+							"reviewThreads": map[string]any{"nodes": nodes},
+						},
+					},
+				},
+			})
+
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer gh.Close()
+
+	s := &prsync.Syncer{
+		Pool:    pool,
+		Secrets: staticRevealer("ghp_testtoken123"),
+		Tracker: &tracker.Service{Pool: pool},
+		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		BaseURL: gh.URL,
+		MinAge:  0,
+	}
+
+	// Phase 1: Initial poll captures failing test check (deduplicating re-run lint) & unresolved GraphQL thread T2.
+	if _, err := s.Once(ctx); err != nil {
+		t.Fatal(err)
+	}
+	fb1, err := q.GetPRFeedback(ctx, store.GetPRFeedbackParams{WorkspaceID: ws, PrUrl: prURL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fb1.CiState != "failing" || fb1.FailedChecksCount != 1 || fb1.UnresolvedThreads != 1 || fb1.HeadSha != "sha1" {
+		t.Fatalf("phase 1 feedback = %+v", fb1)
+	}
+	if fb1.PrEtag != `"pr-1"` || fb1.ChecksEtag != `"chk-1"` || fb1.ReviewsEtag != `"rev-1"` {
+		t.Fatalf("phase 1 etags = (%q, %q, %q)", fb1.PrEtag, fb1.ChecksEtag, fb1.ReviewsEtag)
+	}
+	if !strings.Contains(string(fb1.FailedChecks), `"test"`) || strings.Contains(string(fb1.FailedChecks), `"lint"`) {
+		t.Fatalf("unexpected failed checks JSON: %s", fb1.FailedChecks)
+	}
+	if !strings.Contains(string(fb1.ReviewThreads), `"T2"`) || strings.Contains(string(fb1.ReviewThreads), `"T1"`) {
+		t.Fatalf("unexpected review threads JSON: %s", fb1.ReviewThreads)
+	}
+
+	// Phase 2: 304 Not Modified skips GraphQL and preserves timestamps/feedback.
+	mu.Lock()
+	phase = 2
+	beforeGQL := graphqlCalls
+	mu.Unlock()
+	if _, err := s.Once(ctx); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	afterGQL := graphqlCalls
+	mu.Unlock()
+	if afterGQL != beforeGQL {
+		t.Fatalf("expected 0 GraphQL calls on 304 cache hit, got %d", afterGQL-beforeGQL)
+	}
+	fb2, err := q.GetPRFeedback(ctx, store.GetPRFeedbackParams{WorkspaceID: ws, PrUrl: prURL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fb2.CiFailedAt == nil || fb1.CiFailedAt == nil || !fb2.CiFailedAt.Equal(*fb1.CiFailedAt) {
+		t.Fatalf("phase 2 ci_failed_at changed: %v vs %v", fb2.CiFailedAt, fb1.CiFailedAt)
+	}
+	if len(seenPRIfNoneMatch) == 0 || len(seenChecksIfNoneMatch) == 0 || len(seenCommentsIfNoneMatch) == 0 {
+		t.Fatalf("expected conditional If-None-Match headers, got pr=%v checks=%v comments=%v", seenPRIfNoneMatch, seenChecksIfNoneMatch, seenCommentsIfNoneMatch)
+	}
+
+	// Phase 3: New head SHA clears failing state and resolved threads.
+	mu.Lock()
+	phase = 3
+	mu.Unlock()
+	if _, err := s.Once(ctx); err != nil {
+		t.Fatal(err)
+	}
+	fb3, err := q.GetPRFeedback(ctx, store.GetPRFeedbackParams{WorkspaceID: ws, PrUrl: prURL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fb3.CiState != "passing" || fb3.FailedChecksCount != 0 || fb3.UnresolvedThreads != 0 || fb3.CiFailedAt != nil || fb3.ReviewUpdatedAt != nil || fb3.HeadSha != "sha2" {
+		t.Fatalf("phase 3 feedback = %+v", fb3)
+	}
+
+	// Phase 4: Merged PR does not query check-runs or comments/GraphQL.
+	mu.Lock()
+	phase = 4
+	beforeChecks, beforeComments, beforeGQL4 := checkCalls, commentCalls, graphqlCalls
+	mu.Unlock()
+	if _, err := s.Once(ctx); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	gotChecks, gotComments, gotGQL4 := checkCalls, commentCalls, graphqlCalls
+	mu.Unlock()
+	if gotChecks != beforeChecks || gotComments != beforeComments || gotGQL4 != beforeGQL4 {
+		t.Fatalf("merged PR should skip feedback calls: checks %d->%d, comments %d->%d, gql %d->%d",
+			beforeChecks, gotChecks, beforeComments, gotComments, beforeGQL4, gotGQL4)
+	}
+	_ = time.Second
 }

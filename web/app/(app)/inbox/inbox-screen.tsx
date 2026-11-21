@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Schemas } from "@/lib/api/client";
 import { useAgentOverviews, useBootstrap, useInbox } from "@/lib/api/hooks";
-import { AgentAvatar } from "@/components/domain/avatars";
+import { WorkPersonaAvatar } from "@/components/domain/work-persona-avatar";
 import { rememberProject, useRememberedProject } from "@/components/shell/project-scope";
 import { openShortcuts } from "@/components/shell/shortcuts";
 import { TopBar } from "@/components/shell/topbar";
@@ -54,7 +54,7 @@ function Row({ item, selected, sent, onSelect }: { item: Item; selected: boolean
       >
         {selected && <span aria-hidden className="absolute inset-y-0 left-0 w-0.5 bg-accent" />}
         {item.agent ? (
-          <AgentAvatar name={item.agent.name} colorIndex={item.agent.color_index} label={false} size="md" />
+          <WorkPersonaAvatar agent={item.agent} size="md" />
         ) : (
           <span aria-hidden className="grid size-6 flex-none place-items-center rounded-md bg-track text-fg-tertiary">
             <Icon name="inbox" size={13} />
@@ -129,7 +129,7 @@ export function AllClear({ project, done, onShowDone }: { project: string; done:
             {running.map((w) => (
               <li key={w.run_id} className="border-b border-border-subtle last:border-b-0">
                 <Link href={`/runs/${w.run_id}`} className="flex min-h-[44px] items-center gap-3 px-5 py-2 text-13 hover:bg-hover">
-                  <AgentAvatar name={w.agent.name} colorIndex={w.agent.color_index} label={false} />
+                  <WorkPersonaAvatar agent={w.agent} size="sm" />
                   <span className="w-28 flex-none truncate font-mono text-12 text-fg-tertiary">{w.ticket.key}</span>
                   <span className="min-w-0 flex-1 truncate text-fg">
                     {w.ticket.title} <span className="text-fg-tertiary">· {w.agent.name}</span>

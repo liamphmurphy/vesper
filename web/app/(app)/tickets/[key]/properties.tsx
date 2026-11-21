@@ -10,6 +10,8 @@ import { HumanAvatar, UnassignedAvatar } from "@/components/domain/avatars";
 import { AgentOrPersonaAvatar } from "../_components/ticket-row";
 import { PriorityGlyph, StatusGlyph } from "@/components/domain/glyphs";
 import { Flag, LabelChip } from "@/components/domain/labels";
+import { PRFeedbackStrip } from "@/components/domain/pr-feedback-strip";
+import { useAddressTicketPRFeedback } from "@/lib/api/hooks";
 import { needsDispatch } from "./run-parts";
 import { PRIORITY_NAME, STATUS_NAME } from "@/components/domain/meta";
 import { AgentPicker, EpicMenu, EstimatePicker, LabelPicker, PriorityMenu, StatusMenu, UserMenu } from "@/components/domain/pickers";
@@ -242,8 +244,10 @@ export function Properties({ t, boot, save, error }: { t: Ticket; boot: Bootstra
 
 /** Code section: branch and PR (set by agents in Phase 4, synced from GitHub in Phase 5). */
 export function CodeSection({ t }: { t: Ticket }) {
+  const addressFeedback = useAddressTicketPRFeedback(t.key);
   if (!t.branch && !t.pr) return null;
   const prState = t.pr ? t.pr.state[0].toUpperCase() + t.pr.state.slice(1) : "";
+  const liveRun = !!t.run && !["completed", "failed", "cancelled", "waiting"].includes(t.run.state);
   return (
     <section className="flex flex-col gap-3 px-2">
       <h2 className="text-13 text-fg-tertiary">Code</h2>
@@ -274,6 +278,17 @@ export function CodeSection({ t }: { t: Ticket }) {
         </div>
       )}
       {t.pr?.closed_unmerged && <Flag tone="blocked">PR closed without merging</Flag>}
+      {t.pr && (
+        <PRFeedbackStrip
+          feedback={t.pr.feedback}
+          prState={t.pr.state}
+          busy={addressFeedback.isPending}
+          activeMode={addressFeedback.variables}
+          disabled={liveRun || t.status === "done" || t.status === "canceled"}
+          error={addressFeedback.error?.message}
+          onAddress={(mode) => addressFeedback.mutate(mode)}
+        />
+      )}
       {t.pr?.synced_at && (
         <span className="text-12 text-fg-tertiary" title={absoluteTime(t.pr.synced_at)}>
           Synced from GitHub {ago(t.pr.synced_at)}

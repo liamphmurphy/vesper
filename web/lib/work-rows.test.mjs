@@ -58,7 +58,7 @@ test("needsYouByTicket ranks by the Inbox's urgency order, then the longest wait
 });
 
 test("stateText gives every needs-you kind a state text", () => {
-  for (const kind of ["approval", "question", "blocked", "stalled", "mockup", "planning", "review", "dispatch", "mention", "suggestion", "workflow_gate", "scheduled", "connector_approval", "secret_approval", "secret_expiring", "merged"]) {
+  for (const kind of ["approval", "question", "blocked", "stalled", "pr_ci_failed", "pr_review_comments", "mockup", "planning", "review", "dispatch", "mention", "suggestion", "workflow_gate", "scheduled", "connector_approval", "secret_approval", "secret_expiring", "merged"]) {
     const s = stateText(t("A"), { kind, summary: "" });
     assert.equal(s.tone, "human");
     assert.ok(s.text && s.text !== "Needs you", kind);
@@ -70,6 +70,10 @@ test("stateText: needs you is amber, then blocked, then status", () => {
   assert.deepEqual(stateText(t("A"), { kind: "approval", summary: "Push" }), { text: "Wants approval: Push", tone: "human" });
   assert.deepEqual(stateText(t("A", { unmet_dependencies: 2 })), { text: "Blocked by 2", tone: "blocked" });
   assert.equal(stateText(t("A", { status: "done", unmet_dependencies: 2, pr: { number: 9, state: "merged" } })).text, "Done · PR #9 merged");
+  assert.equal(
+    stateText(t("A", { status: "in_review", pr: { number: 14, state: "open", feedback: { ci_state: "failing", failed_checks_count: 1, failed_checks: [], unresolved_threads: 2, review_threads: [], updated_at: "2026-11-12T10:00:00Z" } } })).text,
+    "In review · PR #14 · CI failed · 2 comments",
+  );
   assert.equal(stateText(t("A", { status: "in_review" })).text, "In review");
 });
 
@@ -101,14 +105,18 @@ test("workGroups puts Needs you first and buckets the rest by status", () => {
 });
 
 test("parseFilterText and filterText round-trip tokens and free text", () => {
-  assert.deepEqual(parseFilterText('fix login epic:"Mobile UI" agent:@atlas status:ready'), {
+  assert.deepEqual(parseFilterText('fix login epic:"Mobile UI" persona:@atlas status:ready'), {
     tokens: [{ key: "epic", value: "Mobile UI" }, { key: "agent", value: "@atlas" }, { key: "status", value: "ready" }],
     text: "fix login",
   });
+  assert.deepEqual(parseFilterText("agent:@atlas"), {
+    tokens: [{ key: "agent", value: "@atlas" }],
+    text: "",
+  });
   assert.deepEqual(parseFilterText("project: hello"), { tokens: [], text: "hello" });
-  const s = filterText({ project: "LA", epic: "Mobile UI", q: "login" });
-  assert.equal(s, 'project:LA epic:"Mobile UI" login');
-  assert.deepEqual(parseFilterText(s).tokens.map((x) => x.value), ["LA", "Mobile UI"]);
+  const s = filterText({ project: "LA", epic: "Mobile UI", agent: "atlas", q: "login" });
+  assert.equal(s, 'project:LA epic:"Mobile UI" persona:atlas login');
+  assert.deepEqual(parseFilterText(s).tokens.map((x) => x.value), ["LA", "Mobile UI", "atlas"]);
 });
 
 test("resolveFilter maps tokens to URL filters and reports unknown ones", () => {

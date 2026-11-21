@@ -38,7 +38,7 @@ export function buildEpicsNavModel(input: EpicsNavInput): NavModel {
     label: h.value === "at_risk" && input.atRiskCount > 0 ? `${h.label} (${input.atRiskCount})` : h.label,
     checked: input.health === h.value,
   }));
-  const head = workHeader({ ...input.header, active: "epics", agent: "", noPersona: true });
+  const head = workHeader({ ...input.header, active: "tickets", agent: "", noPersona: true });
   head.filters.push(
     { id: EPICS_STATUS_FILTER, label: "Status", icon: "sliders", options: statusMenu },
     { id: EPICS_HEALTH_FILTER, label: "Health", icon: "activity", options: healthMenu },

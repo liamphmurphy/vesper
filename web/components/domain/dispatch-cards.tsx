@@ -13,7 +13,7 @@ import { cx } from "@/lib/cx";
 import { repoShortName } from "@/lib/persona-ui";
 import { Button, IconButton, buttonClass } from "@/components/ui/button";
 import { usePulse } from "@/components/ui/motion";
-import { AgentAvatar } from "./avatars";
+import { WorkPersonaAvatar } from "./work-persona-avatar";
 import { CodeFence } from "./code-fence";
 import { StartsLine } from "./dispatch-dialog";
 import { RecommendActions } from "./recommend-fence";
@@ -99,7 +99,7 @@ function HandOff({ run, from }: { run: TicketRun; from?: ReactNode }) {
         </span>
       </span>
       <span className="handoff-agent flex-none">
-        <AgentAvatar name={run.agent} colorIndex={0} label={false} />
+        <WorkPersonaAvatar agent={{ handle: run.agent, name: run.agent, color_index: 0 }} size="sm" />
       </span>
       <p className="min-w-0 truncate text-13 text-fg-secondary">
         Handing <span className="font-medium text-fg">{run.ticket}</span> to <span className="font-medium text-fg">@{run.agent}</span>
@@ -178,7 +178,7 @@ function GroupHandOff({ runs, from, leaving }: { runs: TicketRun[]; from?: React
         <ul className="flex min-w-0 flex-1 flex-col">
           {shown.map((r, i) => (
             <li key={r.run_id} data-testid="handoff-lane" className="flex min-w-0 items-center gap-2" style={{ ...delay(i), height: HANDOFF_LANE_PX }}>
-              <span className="handoff-land flex-none"><AgentAvatar name={r.agent} colorIndex={0} label={false} /></span>
+              <span className="handoff-land flex-none"><WorkPersonaAvatar agent={{ handle: r.agent, name: r.agent, color_index: 0 }} size="sm" /></span>
               <span className="truncate text-13 text-fg">@{r.agent}</span>
               <span className="handoff-key flex-none rounded-md border border-accent bg-accent-soft px-1.5 py-px font-mono text-11 text-accent">{r.ticket}</span>
             </li>
@@ -340,7 +340,7 @@ function RunGroupCard({ runs, from, scene }: { runs: TicketRun[]; from?: ReactNo
         <ul className="flex min-w-0 flex-1 flex-col">
           {shown.map((r) => (
             <li key={r.run_id} data-testid="group-lane" className="flex min-w-0 items-center gap-2" style={{ height: HANDOFF_LANE_PX }}>
-              <AgentAvatar name={r.agent} colorIndex={0} label={false} />
+              <WorkPersonaAvatar agent={{ handle: r.agent, name: r.agent, color_index: 0 }} size="sm" />
               <span className="truncate text-13 text-fg">@{r.agent}</span>
               <span className="flex-none rounded-md border border-accent bg-accent-soft px-1.5 py-px font-mono text-11 text-accent">{r.ticket}</span>
               <RunDot run={r} />
@@ -460,7 +460,7 @@ function StartCard({ ticketKey, chatId, messageId, onDismiss }: { ticketKey: str
       {ticket.data && <p className="truncate text-13 text-fg">{ticket.data.title}</p>}
       <dl className="grid grid-cols-[92px_1fr] items-center gap-x-3 gap-y-1.5 text-13">
         <dt className={TERM}>Persona</dt>
-        <dd className="flex items-center gap-1.5"><AgentAvatar name={p.agent.name} colorIndex={p.agent.color_index} label={false} />@{p.agent.handle}</dd>
+        <dd className="flex items-center gap-1.5"><WorkPersonaAvatar agent={p.agent} size="sm" />@{p.agent.handle}</dd>
         {p.repo_url && (
           <>
             <dt className={TERM}>Repository</dt>

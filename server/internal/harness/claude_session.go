@@ -192,6 +192,13 @@ func (c *claudeControl) Interrupt() error {
 	})
 }
 
+func (c *claudeControl) Steer(message string) error {
+	if strings.TrimSpace(message) == "" {
+		return fmt.Errorf("claude steer: empty message")
+	}
+	return c.w.writeJSON(claudeUserMessage(message, nil))
+}
+
 func handleClaudeControlRequest(ctx context.Context, w *lineWriter, fn PolicyFunc, noTools bool, reqID string, rawReq json.RawMessage) {
 	var req struct {
 		Subtype  string          `json:"subtype"`

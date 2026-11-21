@@ -91,6 +91,11 @@ test("a pull request's GitHub URL is external, an app route is not", () => {
   assert.equal(isExternalHref("https://github.com/o/r/pull/1"), true);
   assert.equal(isExternalHref("/tickets/WEB-4"), false);
   assert.equal(trayAction("pr_approved").label, "Open on GitHub");
+  assert.deepEqual(trayAction("pr_ci_failed"), { type: "open", label: "Fix CI" });
+  assert.deepEqual(trayAction("pr_review_comments"), { type: "open", label: "Address comments" });
   const g = groupItems([item("pr_approved:1", "pr_approved", 5)], "open", "oldest");
   assert.deepEqual(g.map((x) => x.key), ["pr_approved"]);
+  const fbGroups = groupItems([item("ci1", "pr_ci_failed", 10), item("rev1", "pr_review_comments", 5), item("m1", "mockup", 20)], "open", "oldest");
+  assert.deepEqual(fbGroups.map((x) => x.key), ["pr_feedback", "mockup"]);
+  assert.deepEqual(fbGroups[0].items.map((x) => x.id), ["ci1", "rev1"]);
 });

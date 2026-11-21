@@ -30,6 +30,8 @@ var excluded = map[string]string{
 	"custom_app_media":          "custom-app downloaded media: large video files that apps can re-download",
 	"subagent_jobs":             "ephemeral in-turn subagent execution jobs, scoped to a live run turn",
 	"custom_app_nix_jobs":       "custom-app Nix job state and scratch paths: ephemeral per-machine runs",
+	"chat_steers":               "ephemeral mid-turn steering messages scoped to a live chat turn",
+	"pr_feedback":               "cached GitHub PR check runs, review threads and ETags, refreshed by prsync",
 }
 
 // excludedPrefixes are table-name prefixes owned by a library with its own

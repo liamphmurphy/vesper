@@ -240,6 +240,31 @@ export const RUN_VIEW_MODES = ["simple", "details", "graph", "files"] as const;
 export type RunViewMode = (typeof RUN_VIEW_MODES)[number];
 export const RUN_VIEW_STORAGE_KEY = "lazyagents.runs.view";
 
+export type RunViewTab = { key: RunViewMode; label: string; count?: number };
+
+/** Tabs for a run detail page; Graph appears only when child runs exist or Graph is active. */
+export function runViewTabs({
+  countsAll,
+  fileCount,
+  childRunCount,
+  mode,
+}: {
+  countsAll?: number;
+  fileCount: number;
+  childRunCount: number;
+  mode: RunViewMode;
+}): RunViewTab[] {
+  const items: RunViewTab[] = [
+    { key: "simple", label: "Thread" },
+    { key: "details", label: "Trace", ...(countsAll !== undefined ? { count: countsAll } : {}) },
+  ];
+  if (childRunCount > 0 || mode === "graph") {
+    items.push({ key: "graph", label: "Graph" });
+  }
+  items.push({ key: "files", label: "Files", count: fileCount || undefined });
+  return items;
+}
+
 const isMode = (v: string | null | undefined): v is RunViewMode => (RUN_VIEW_MODES as readonly string[]).includes(v ?? "");
 
 /** The turn or event a hash deep-links to: `#turn-3` or `#event-42`. */

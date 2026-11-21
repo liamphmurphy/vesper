@@ -2,7 +2,7 @@
 // switch and the primary action) as native toolbar items. Pure: the screen adds its own items
 // (group by, density, board toggles) and acts on the decoded press. Ids are the protocol between
 // the builder and the parser.
-import { TICKETS_LAYOUTS, TICKETS_LAYOUT_LABEL, type TicketsLayout } from "../../tickets-layout.ts";
+import { TICKETS_LAYOUTS, TICKETS_LAYOUT_LABEL, TICKETS_PRIMARY_LAYOUTS, type TicketsLayout } from "../../tickets-layout.ts";
 import type { MenuItem, ToolbarItem } from "../protocol.ts";
 
 export const TT = { space: "tickets.space", layout: "tickets.layout", action: "tickets.action" } as const;
@@ -20,12 +20,13 @@ export interface TicketsToolbarInput {
 }
 
 export function buildTicketsToolbar(i: TicketsToolbarInput): ToolbarItem[] {
+  const layouts: readonly TicketsLayout[] = i.layout === "epics" ? [...TICKETS_PRIMARY_LAYOUTS, "epics"] : TICKETS_PRIMARY_LAYOUTS;
   const items: ToolbarItem[] = [
     { id: TT.space, label: i.space.label.replace(/^Space: /, ""), kind: "menu", icon: "folder", showsLabel: true, placement: "leading", menu: i.space.menu },
     ...(i.extra ?? []),
     {
       id: TT.layout, label: TICKETS_LAYOUT_LABEL[i.layout], kind: "menu", icon: LAYOUT_ICON[i.layout], showsLabel: true,
-      menu: TICKETS_LAYOUTS.map((l) => ({ id: `layout:${l}`, label: TICKETS_LAYOUT_LABEL[l], icon: LAYOUT_ICON[l], checked: l === i.layout })),
+      menu: layouts.map((l) => ({ id: `layout:${l}`, label: TICKETS_LAYOUT_LABEL[l], icon: LAYOUT_ICON[l], checked: l === i.layout })),
     },
   ];
   if (i.action) items.push({ id: TT.action, label: i.action.label, kind: "button", icon: i.action.primary ? "plus" : "gear", showsLabel: true, accent: i.action.primary });

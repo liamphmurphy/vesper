@@ -75,6 +75,8 @@ export function turnWindows(list: MessageLike[] | undefined): Map<string, TurnWi
   const turnOf = (m: MessageLike) => (m.turn_seq === undefined ? undefined : `${m.run_id}:${m.turn_seq}`);
   for (const m of list ?? []) {
     if (m.role === "user") {
+      // Mid-turn steer messages carry no run/turn until a fallback turn claims them; keep the active turn's window open.
+      if (!reply && since !== undefined && m.run_id === undefined && m.turn_seq === undefined) continue;
       close(m.created_at);
       since = m.created_at;
       reply = undefined;
@@ -99,7 +101,14 @@ export function turnWindows(list: MessageLike[] | undefined): Map<string, TurnWi
  * shown again.
  */
 export function runningSince(list: MessageLike[] | undefined): string | undefined {
-  return list?.at(-1)?.created_at;
+  if (!list?.length) return undefined;
+  let i = list.length - 1;
+  if (list[i].role === "user") {
+    while (i > 0 && list[i - 1].role === "user" && list[i].run_id === undefined && list[i].turn_seq === undefined) {
+      i--;
+    }
+  }
+  return list[i].created_at;
 }
 
 /** "mcp__lazyagents__read_page" (Claude) and "read_page" (Codex) are the same tool. */

@@ -3,7 +3,8 @@
 import { DropdownMenu, Tooltip } from "radix-ui";
 import { useRef, useState, type FormEvent, type ReactNode } from "react";
 import type { Schemas } from "@/lib/api/client";
-import { useUpdateChat } from "@/lib/api/hooks";
+import { useCompactChat, useUpdateChat } from "@/lib/api/hooks";
+import { AUTO_COMPACT_PRESETS, formatAutoCompactLabel, formatContextTokens } from "@/lib/native-shell/chat-toolbar";
 import { chatTitle } from "@/lib/chat-ui";
 import { cx } from "@/lib/cx";
 import { canOpenWorkspaceFolder, openWorkspaceFolder } from "@/lib/desktop-bridge";
@@ -38,6 +39,7 @@ export function ChatTitleMenu({ chat: c, participants, running, commitEmail, onC
   onCommitEmail: () => void;
 }) {
   const update = useUpdateChat();
+  const compactChat = useCompactChat(c.id);
   const space = useChatSpace(c, running);
   const secrets = useChatSecrets(c.id);
   const [editing, setEditing] = useState(false);
@@ -112,6 +114,54 @@ export function ChatTitleMenu({ chat: c, participants, running, commitEmail, onC
               <Icon name="edit" size={14} />
               <span className="flex-1">Rename…</span>
             </DropdownMenu.Item>
+            <DropdownMenu.Separator className={sep} />
+            <DropdownMenu.Item
+              className={item}
+              disabled={c.archived || running || compactChat.isPending}
+              data-testid="compact-context-item"
+              onSelect={() => {
+                compactChat.mutate(undefined, {
+                  onError: () => toast({ title: "Couldn’t compact context right now.", tone: "error" }),
+                });
+              }}
+            >
+              <Icon name="shrink" size={14} />
+              <span className="flex-1">Compact context</span>
+              {c.compact_pending && <span className={value}>Pending</span>}
+            </DropdownMenu.Item>
+            <DropdownMenu.Sub>
+              <DropdownMenu.SubTrigger className={item} disabled={c.archived || running || update.isPending} data-testid="auto-compact-menu">
+                <Icon name="sliders" size={14} />
+                <span className="flex-1">Auto-compact</span>
+                <span className={value}>{formatAutoCompactLabel(c.auto_rollover_tokens)}</span>
+                <Icon name="chevr" size={12} className="text-fg-tertiary" />
+              </DropdownMenu.SubTrigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.SubContent sideOffset={6} className={cx(floatPanel, "w-[210px]")}>
+                  <DropdownMenu.RadioGroup
+                    value={c.auto_rollover_tokens === undefined || c.auto_rollover_tokens === null ? "default" : String(c.auto_rollover_tokens)}
+                    onValueChange={(raw) => {
+                      const next = raw === "default" ? null : Number(raw);
+                      update.mutateAsync({ id: c.id, patch: { revision: c.revision, auto_rollover_tokens: next } }).catch(() => {
+                        toast({ title: "Couldn’t update auto-compact threshold.", tone: "error" });
+                      });
+                    }}
+                  >
+                    {AUTO_COMPACT_PRESETS.map((p) => {
+                      const val = p.value === null ? "default" : String(p.value);
+                      return (
+                        <DropdownMenu.RadioItem key={p.id} value={val} className={item}>
+                          <DropdownMenu.ItemIndicator className="w-4 text-accent">
+                            <Icon name="check" size={12} />
+                          </DropdownMenu.ItemIndicator>
+                          <span className="flex-1">{p.label}</span>
+                        </DropdownMenu.RadioItem>
+                      );
+                    })}
+                  </DropdownMenu.RadioGroup>
+                </DropdownMenu.SubContent>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Sub>
             <DropdownMenu.Separator className={sep} />
             {/* Which space the chat is in (LAZYAGENTS-213): its context, and where its tickets go. */}
             <DropdownMenu.Sub>
@@ -199,9 +249,19 @@ export function ChatTitleMenu({ chat: c, participants, running, commitEmail, onC
       <span className="flex flex-none items-center gap-1 text-fg-tertiary" data-testid="chat-title-status">
         {c.archived && <StatusIcon icon="lock" label="Archived: read-only until restored" />}
         {c.temporary && <StatusIcon icon="clock" label="Temporary chat: no memory, no past chats, and it's deleted after a day without messages" />}
+        {c.compact_pending && <StatusIcon icon="shrink" label="Context compacted: next message starts a fresh window" />}
         {c.workspace_path && <StatusIcon icon="folder" label={`Workspace folder: ${c.workspace_path}`} />}
         {commitEmail && <StatusIcon icon="at" label={`Commits are authored as ${commitEmail}`} />}
         {secrets.any && <StatusIcon icon="key" label={secrets.live ? `Secret ${secrets.label}` : `Secrets: ${secrets.label}`} className="text-pill-human-fg" />}
+        {formatContextTokens(c.context_tokens) && (
+          <span
+            data-testid="chat-context-tokens"
+            title={`Current context window: ${(c.context_tokens ?? 0).toLocaleString()} tokens`}
+            className="ml-0.5 rounded bg-surface px-1.5 py-0.5 font-mono text-11 text-fg-tertiary"
+          >
+            {formatContextTokens(c.context_tokens)}
+          </span>
+        )}
       </span>
     </div>
   );

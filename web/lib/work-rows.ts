@@ -54,6 +54,8 @@ export const NEEDS_PREFIX: Record<NeedsKind, string> = {
   question: "Asked you",
   blocked: "Run stopped",
   stalled: "Run stalled",
+  pr_ci_failed: "PR CI failed",
+  pr_review_comments: "PR review comments",
   mockup: "Mockup to review",
   planning: "Plan to review",
   review: "Review requested",
@@ -92,6 +94,11 @@ export function stateText(t: Pick<TicketSummary, "status" | "unmet_dependencies"
   if (needs) return { text: needs.summary ? `${NEEDS_PREFIX[needs.kind] ?? "Needs you"}: ${needs.summary}` : NEEDS_PREFIX[needs.kind] ?? "Needs you", tone: "human" };
   if (isBlocked(t as TicketSummary)) return { text: `Blocked by ${t.unmet_dependencies}`, tone: "blocked" };
   const pr = t.pr ? ` · PR #${t.pr.number}${t.pr.state === "merged" ? " merged" : ""}` : "";
+  const fb = t.pr?.feedback;
+  const fbSuffix =
+    t.pr && (t.pr.state === "open" || t.pr.state === "draft") && fb
+      ? `${fb.failed_checks_count > 0 ? " · CI failed" : ""}${fb.unresolved_threads > 0 ? ` · ${fb.unresolved_threads} ${fb.unresolved_threads === 1 ? "comment" : "comments"}` : ""}`
+      : "";
   const text: Record<TicketStatus, string> = {
     backlog: "Backlog",
     todo: "Ready",
@@ -100,7 +107,7 @@ export function stateText(t: Pick<TicketSummary, "status" | "unmet_dependencies"
     done: "Done",
     canceled: "Canceled",
   };
-  return { text: text[t.status] + pr, tone: "quiet" };
+  return { text: text[t.status] + pr + fbSuffix, tone: "quiet" };
 }
 
 /* ----------------------------------------------------------------- groups */
@@ -168,13 +175,15 @@ export const FILTER_KEYS = ["project", "epic", "agent", "status"] as const;
 export type FilterKey = (typeof FILTER_KEYS)[number];
 export type FilterToken = { key: FilterKey; value: string };
 
-/** Splits the box into key:value tokens (values may be "quoted") and the free text left over. */
+/** Splits the box into key:value tokens (values may be "quoted") and the free text left over. Accepts `persona:` as well as legacy `agent:`. */
 export function parseFilterText(text: string): { tokens: FilterToken[]; text: string } {
   const tokens: FilterToken[] = [];
-  const re = /(?:^|\s)(project|epic|agent|status):(?:"([^"]*)"?|(\S*))/gi;
-  const free = text.replace(re, (_m, key: string, quoted?: string, bare?: string) => {
+  const re = /(?:^|\s)(project|epic|persona|agent|status):(?:"([^"]*)"?|(\S*))/gi;
+  const free = text.replace(re, (_m, rawKey: string, quoted?: string, bare?: string) => {
     const value = (quoted ?? bare ?? "").trim();
-    if (value) tokens.push({ key: key.toLowerCase() as FilterKey, value });
+    const k = rawKey.toLowerCase();
+    const key = (k === "persona" ? "agent" : k) as FilterKey;
+    if (value) tokens.push({ key, value });
     return " ";
   });
   return { tokens, text: free.replace(/\s+/g, " ").trim() };
@@ -191,7 +200,7 @@ export function withoutProjectToken(text: string): string {
 /** The box's text for the list's current filters. */
 export function filterText(f: { project?: string; epic?: string; agent?: string; status?: string; q?: string }): string {
   const parts: string[] = [];
-  for (const k of FILTER_KEYS) if (f[k]) parts.push(`${k}:${quote(f[k]!)}`);
+  for (const k of FILTER_KEYS) if (f[k]) parts.push(`${k === "agent" ? "persona" : k}:${quote(f[k]!)}`);
   if (f.q) parts.push(f.q);
   return parts.join(" ");
 }

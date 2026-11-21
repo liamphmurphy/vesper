@@ -5,15 +5,16 @@ import { cx } from "@/lib/cx";
 import { SEND_MODE_HINT, SEND_MODE_LABEL, SEND_MODES, type SendMode } from "@/lib/send-mode";
 import type { SendTone } from "./reply-tools";
 
-const ICON: Record<SendMode, IconName> = { followup: "clock", aside: "branch", interrupt: "bolt" };
+const ICON: Record<SendMode, IconName> = { followup: "clock", steer: "compass", aside: "branch", interrupt: "bolt" };
 
 const ON: Record<SendMode, string> = {
   followup: "bg-accent-soft text-accent",
+  steer: "bg-pill-done-bg text-pill-done-fg",
   aside: "bg-pill-review-bg text-pill-review-fg",
   interrupt: "bg-pill-human-bg text-pill-human-fg",
 };
 
-export const SEND_TONE: Record<SendMode, SendTone> = { followup: "accent", aside: "aside", interrupt: "interrupt" };
+export const SEND_TONE: Record<SendMode, SendTone> = { followup: "accent", steer: "steer", aside: "aside", interrupt: "interrupt" };
 
 /** While a reply runs: whether Send queues a follow-up, asks an aside or interrupts. Icons only, beside Send; each says its mode on hover and to screen readers. */
 export function SendModeSwitch({ value, onChange, disabled }: { value: SendMode; onChange: (mode: SendMode) => void; disabled?: boolean }) {

@@ -78,6 +78,32 @@ test("run inspector builds plan, ticket, code, sub-agents, run, usage, and view 
   assert.deepEqual(sections.map((s) => s.id), ["plan", "ticket", "criteria", "code", "sub_agents", "run", "usage", "open"]);
   const graphBtn = sections.at(-1).items[0].actions.find((a) => a.id === "view:graph");
   assert.equal(graphBtn.active, true);
+
+  const withoutChildren = buildRunInspectorSections({
+    plan: [],
+    subAgents: [],
+    run: {
+      id: "r2",
+      purpose: "Ticket",
+      model: "claude-opus-4-6",
+      harness: "claude-code",
+      mode: "sandbox",
+      started: "5m ago",
+      elapsed: "1m",
+      cost: "$0.10",
+      tokens: "1k · 1 tool calls",
+      subRuns: 0,
+      slot: "slot-1",
+    },
+    usage: { turns: [], models: [] },
+    viewMode: "simple",
+    environmentHref: "/settings/runner?run_id=r2",
+  });
+  assert.equal(withoutChildren.find((s) => s.id === "run").items.some((i) => i.id === "sub_runs"), false);
+  assert.deepEqual(
+    withoutChildren.find((s) => s.id === "open").items[0].actions.map((a) => a.id),
+    ["view:details", "view:files"],
+  );
 });
 
 test("ticket inspector builds pickers, chips, blockers, runs, code, and backlinks", () => {

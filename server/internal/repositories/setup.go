@@ -45,21 +45,50 @@ func PrePushHook(known []string) string {
 // is prepared during the same agent turn, including the branch guard.
 // Inputs are validated identities or server-owned paths, still shell quoted.
 func SetupScript(url, dir string, branches []string, checkpoint *string, name, email string) string {
+	return SetupScriptWithFork(url, dir, branches, checkpoint, nil, name, email)
+}
+
+// SetupScriptWithFork prepares a checkout and, when forkBranch is non-empty,
+// creates/checks out forkBranch seeded from checkpoint (branch or commit SHA)
+// and registers it with vesper.branch + the pre-push hook.
+func SetupScriptWithFork(url, dir string, branches []string, checkpoint, forkBranch *string, name, email string) string {
+	allBranches := append([]string(nil), branches...)
+	hasFork := forkBranch != nil && *forkBranch != ""
+	if hasFork {
+		found := false
+		for _, b := range allBranches {
+			if b == *forkBranch {
+				found = true
+				break
+			}
+		}
+		if !found {
+			allBranches = append(allBranches, *forkBranch)
+		}
+	}
 	var b strings.Builder
 	b.WriteString("(set -eu\nmkdir -p " + quote(dir) + "\ncd " + quote(dir) + "\n")
 	b.WriteString(`helper='!f() { echo username=x-access-token; echo "password=$GH_TOKEN"; }; f'` + "\n")
 	b.WriteString("if [ ! -d .git ]; then\nmkdir -p .lazyagents\nrm -rf .lazyagents/clone\n")
 	b.WriteString(`git -c credential.helper= -c "credential.https://github.com.helper=$helper" clone --quiet --no-checkout -- ` + quote(url) + " .lazyagents/clone\n")
 	b.WriteString("mv .lazyagents/clone/.git .git\nrm -rf .lazyagents/clone\nif git rev-parse -q --verify HEAD >/dev/null; then git reset -q --hard; fi\n")
-	// Recovery restores the exact unsaved snapshot before accepting new work.
-	if checkpoint != nil && *checkpoint != "" {
+	if hasFork {
+		if checkpoint != nil && *checkpoint != "" {
+			cleanRef := strings.ReplaceAll(*checkpoint, "'", "")
+			b.WriteString("if git fetch --quiet origin " + quote(*checkpoint) + " 2>/dev/null; then git checkout --quiet -B " + quote(*forkBranch) + " FETCH_HEAD; echo '→ branched " + strings.ReplaceAll(*forkBranch, "'", "") + " from " + cleanRef + "'; elif git rev-parse -q --verify " + quote(*checkpoint+"^{commit}") + " >/dev/null 2>&1; then git checkout --quiet -B " + quote(*forkBranch) + " " + quote(*checkpoint) + "; echo '→ branched " + strings.ReplaceAll(*forkBranch, "'", "") + " from " + cleanRef + "'; else git checkout --quiet -B " + quote(*forkBranch) + "; echo '→ ref " + cleanRef + " unavailable: branched " + strings.ReplaceAll(*forkBranch, "'", "") + " from HEAD'; fi\n")
+		} else {
+			b.WriteString("git checkout --quiet -B " + quote(*forkBranch) + "\n")
+		}
+		b.WriteString("git config --add " + BranchConfig + " " + quote(*forkBranch) + "\n")
+	} else if checkpoint != nil && *checkpoint != "" {
+		// Recovery restores the exact unsaved snapshot before accepting new work.
 		b.WriteString("if git fetch --quiet origin " + quote(*checkpoint) + " 2>/dev/null; then git checkout --quiet --detach FETCH_HEAD; echo '→ recovered checkpoint " + strings.ReplaceAll(*checkpoint, "'", "") + "'; else echo '→ checkpoint " + strings.ReplaceAll(*checkpoint, "'", "") + " is no longer on origin: starting without it'; fi\n")
 	}
 	b.WriteString("git config vesper.base \"$(git rev-parse HEAD 2>/dev/null || true)\"\nfi\n")
 	b.WriteString("git config user.name " + quote(name) + "\ngit config user.email " + quote(email) + "\n")
 	b.WriteString(`git config credential.https://github.com.helper "$helper"` + "\n")
 	b.WriteString(`if [ -n "${GIT_SSH_COMMAND:-}" ]; then git config core.sshCommand "$GIT_SSH_COMMAND"; fi` + "\n")
-	b.WriteString("mkdir -p .git/hooks\nprintf '%s\\n' " + PrePushHook(branches) + " > .git/hooks/pre-push\nchmod +x .git/hooks/pre-push\n")
+	b.WriteString("mkdir -p .git/hooks\nprintf '%s\\n' " + PrePushHook(allBranches) + " > .git/hooks/pre-push\nchmod +x .git/hooks/pre-push\n")
 	b.WriteString("mkdir -p .git/info\nprintf '%s\\n' '/.lazyagents/' >> .git/info/exclude\n)\n")
 	return b.String()
 }

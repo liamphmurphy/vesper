@@ -133,14 +133,46 @@ export interface ChatTitleMenuInput {
   /** Secrets this chat used, with the web menu's one-line summary. */
   secrets?: { label: string };
   commitEmail?: string;
+  /** Context compaction controls; omitted in compact legacy callers. */
+  compact?: { disabled: boolean; pending?: boolean; contextTokens?: number };
+  /** Per-chat auto-compaction threshold controls. */
+  autoCompact?: { value: number | null; disabled: boolean };
   /** Everyone in a group chat; fewer than two adds nothing. */
   participants: string[];
 }
 
-export type TitleAction = "rename" | "copyWorkspace" | "openWorkspace" | "secrets" | "commitEmail";
+export const AUTO_COMPACT_PRESETS: { value: number | null; id: string; label: string }[] = [
+  { value: null, id: "auto-compact:default", label: "Default" },
+  { value: 0, id: "auto-compact:0", label: "Off" },
+  { value: 100000, id: "auto-compact:100000", label: "100k tokens" },
+  { value: 150000, id: "auto-compact:150000", label: "150k tokens" },
+  { value: 200000, id: "auto-compact:200000", label: "200k tokens" },
+];
 
-const TITLE_IDS: Record<string, TitleAction> = {
+export function formatAutoCompactLabel(tokens?: number | null): string {
+  if (tokens === undefined || tokens === null) return "Default";
+  if (tokens === 0) return "Off";
+  return `${Math.round(tokens / 1000)}k`;
+}
+
+export function formatContextTokens(tokens?: number): string {
+  if (!tokens || tokens <= 0) return "";
+  if (tokens < 1000) return `${tokens} ctx`;
+  return `${Math.round(tokens / 1000)}k ctx`;
+}
+
+export type TitleAction =
+  | "rename"
+  | "compact"
+  | { type: "autoCompact"; tokens: number | null }
+  | "copyWorkspace"
+  | "openWorkspace"
+  | "secrets"
+  | "commitEmail";
+
+const TITLE_IDS: Record<string, Exclude<TitleAction, { type: "autoCompact" }>> = {
   rename: "rename",
+  compact: "compact",
   "workspace.copy": "copyWorkspace",
   "workspace.open": "openWorkspace",
   secrets: "secrets",
@@ -150,6 +182,28 @@ const TITLE_IDS: Record<string, TitleAction> = {
 /** The chat title's menu: what the web's title dropdown offers, minus the space (it has its own item). */
 export function buildChatTitleMenu(i: ChatTitleMenuInput): MenuItem[] {
   const menu: MenuItem[] = [{ id: "rename", label: "Rename…", icon: "edit", disabled: i.archived }];
+  if (i.compact || i.autoCompact) {
+    menu.push(SEP);
+    if (i.compact) {
+      const ctx = formatContextTokens(i.compact.contextTokens);
+      const label = i.compact.pending ? "Compact context (pending)" : ctx ? `Compact context (${ctx})` : "Compact context";
+      menu.push({ id: "compact", label, icon: "shrink", disabled: i.compact.disabled });
+    }
+    if (i.autoCompact) {
+      const cur = i.autoCompact.value;
+      menu.push({
+        id: "auto-compact",
+        label: `Auto-compact: ${formatAutoCompactLabel(cur)}`,
+        icon: "sliders",
+        disabled: i.autoCompact.disabled,
+        children: AUTO_COMPACT_PRESETS.map((p) => ({
+          id: p.id,
+          label: p.label,
+          checked: (cur ?? null) === p.value,
+        })),
+      });
+    }
+  }
   const rest: MenuItem[] = [];
   if (i.workspacePath) {
     rest.push({ id: "workspace.copy", label: "Copy workspace folder path", icon: "folder" });
@@ -164,4 +218,12 @@ export function buildChatTitleMenu(i: ChatTitleMenuInput): MenuItem[] {
   return menu;
 }
 
-export const parseTitleAction = (menuItemId: string): TitleAction | null => TITLE_IDS[menuItemId] ?? null;
+export function parseTitleAction(menuItemId: string): TitleAction | null {
+  if (menuItemId.startsWith("auto-compact:")) {
+    const raw = menuItemId.slice("auto-compact:".length);
+    if (raw === "default") return { type: "autoCompact", tokens: null };
+    const n = Number(raw);
+    return Number.isInteger(n) && n >= 0 ? { type: "autoCompact", tokens: n } : null;
+  }
+  return TITLE_IDS[menuItemId] ?? null;
+}

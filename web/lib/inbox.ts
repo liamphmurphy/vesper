@@ -8,6 +8,8 @@ export type InboxKind =
   | "question"
   | "blocked"
   | "stalled"
+  | "pr_ci_failed"
+  | "pr_review_comments"
   | "mockup"
   | "planning"
   | "review"
@@ -26,6 +28,7 @@ export const GROUPS: ReadonlyArray<{ key: string; label: string; kinds: readonly
   { key: "scheduled", label: "Scheduled tasks", kinds: ["scheduled"] },
   { key: "question", label: "Questions", kinds: ["question"] },
   { key: "runs", label: "Failed & stalled runs", kinds: ["blocked", "stalled"] },
+  { key: "pr_feedback", label: "PR feedback", kinds: ["pr_ci_failed", "pr_review_comments"] },
   { key: "mockup", label: "Mockups", kinds: ["mockup"] },
   { key: "planning", label: "Proposals", kinds: ["planning"] },
   { key: "review", label: "Reviews", kinds: ["review"] },
@@ -42,6 +45,8 @@ export const KIND: Record<string, { label: string; tone: "human" | "blocked" | "
   question: { label: "Question", tone: "human" },
   blocked: { label: "Failed", tone: "blocked" },
   stalled: { label: "Stalled", tone: "blocked" },
+  pr_ci_failed: { label: "CI failed", tone: "blocked" },
+  pr_review_comments: { label: "Review comments", tone: "human" },
   mockup: { label: "Mockup", tone: "human" },
   planning: { label: "Proposal", tone: "human" },
   review: { label: "Review", tone: "info" },
@@ -158,6 +163,8 @@ export function trayAction(kind: string, hasRun = true): TrayAction {
     secret_approval: "Review",
     secret_expiring: "Replace",
     pr_approved: "Open on GitHub",
+    pr_ci_failed: "Fix CI",
+    pr_review_comments: "Address comments",
     blocked: "Open run",
     stalled: "Open run",
   };

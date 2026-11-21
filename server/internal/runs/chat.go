@@ -581,7 +581,7 @@ func (s *Service) startChat(ctx context.Context, q *store.Queries, ws, user uuid
 			}
 		}
 		if in.Message != nil {
-			out, _, err = postChatMessage(ctx, q, s.ChatCatalog(), out, *in.Message, s.HandoffChars)
+			out, _, err = postChatMessageWithRollover(ctx, q, s.ChatCatalog(), out, *in.Message, s.HandoffChars, s.RolloverContextTokens)
 		}
 		return err
 	}()
@@ -617,7 +617,7 @@ func (s *Service) PostChatMessage(ctx context.Context, ws, user, id uuid.UUID, i
 			return err
 		}
 
-		_, out, err = postChatMessage(ctx, q, s.ChatCatalog(), chat, in, s.HandoffChars)
+		_, out, err = postChatMessageWithRollover(ctx, q, s.ChatCatalog(), chat, in, s.HandoffChars, s.RolloverContextTokens)
 		return err
 	})
 	if err == nil && s.Transcripts != nil {
@@ -650,6 +650,10 @@ func lockChat(ctx context.Context, q *store.Queries, ws, user, id uuid.UUID) (st
 const firstTurnNote = "\n\n(Vesper: this is the first message of a new conversation. Call set_chat_title once with a concise title of 2 to 6 words that says what the person wants, then answer as usual. Don't mention the title in your reply.)"
 
 func postChatMessage(ctx context.Context, q *store.Queries, cat chatmodels.Catalog, chat store.ChatSession, in ChatMessageInput, handoffChars int) (store.ChatSession, store.ChatMessage, error) {
+	return postChatMessageWithRollover(ctx, q, cat, chat, in, handoffChars, 0)
+}
+
+func postChatMessageWithRollover(ctx context.Context, q *store.Queries, cat chatmodels.Catalog, chat store.ChatSession, in ChatMessageInput, handoffChars int, autoRolloverDefault int64) (store.ChatSession, store.ChatMessage, error) {
 	var msg store.ChatMessage
 	if chat.State != "running" && chat.PendingRepoUrl != nil {
 		var err error
@@ -776,9 +780,9 @@ func postChatMessage(ctx context.Context, q *store.Queries, cat chatmodels.Catal
 	var run store.Run
 	var turn store.RunTurn
 	if in.Research {
-		chat, run, turn, err = startChatTurn(ctx, q, chat, p.Key, prompt, "xhigh", false, handoffChars)
+		chat, run, turn, err = startChatTurnWithRollover(ctx, q, chat, p.Key, prompt, "xhigh", false, handoffChars, autoRolloverDefault)
 	} else {
-		chat, run, turn, err = startClassifiedChatTurn(ctx, q, chat, p.Key, prompt, body, interrupt, false, handoffChars)
+		chat, run, turn, err = startClassifiedChatTurnWithRollover(ctx, q, chat, p.Key, prompt, body, interrupt, false, handoffChars, autoRolloverDefault)
 	}
 	if err != nil {
 		return chat, msg, err
@@ -815,6 +819,10 @@ func bindChatAttachments(ctx context.Context, q *store.Queries, chat store.ChatS
 // another, which has no new message from the person. level is the effort an
 // automatic chat aims for this turn. The caller holds the chat lock.
 func startChatTurn(ctx context.Context, q *store.Queries, chat store.ChatSession, project, body, level string, relay bool, handoffChars int) (store.ChatSession, store.Run, store.RunTurn, error) {
+	return startChatTurnWithRollover(ctx, q, chat, project, body, level, relay, handoffChars, 0)
+}
+
+func startChatTurnWithRollover(ctx context.Context, q *store.Queries, chat store.ChatSession, project, body, level string, relay bool, handoffChars int, autoRolloverDefault int64) (store.ChatSession, store.Run, store.RunTurn, error) {
 	var run store.Run
 	var turn store.RunTurn
 	if id := ChatSpeakerID(chat); id != nil {
@@ -948,6 +956,61 @@ func startChatTurn(ctx context.Context, q *store.Queries, chat store.ChatSession
 					return chat, run, turn, err
 				}
 			}
+			needsCompact := chat.CompactPending
+			compactFocus := chat.CompactFocus
+			limit := effectiveAutoRollover(chat, autoRolloverDefault)
+			if !needsCompact && limit > 0 && run.HarnessSessionID != nil && run.ContextTokens >= limit {
+				prevTokens := run.ContextTokens
+				if err = q.SetRunSession(ctx, store.SetRunSessionParams{ID: run.ID, HarnessSessionID: nil}); err != nil {
+					return chat, run, turn, err
+				}
+				if err = q.SetRunContextTokens(ctx, store.SetRunContextTokensParams{ID: run.ID, ContextTokens: 0}); err != nil {
+					return chat, run, turn, err
+				}
+				run.HarnessSessionID = nil
+				run.ContextTokens = 0
+				if err = event(ctx, q, run.ID, "lifecycle", map[string]any{
+					"state":          "chat_compacted",
+					"reason":         "auto_rollover",
+					"context_tokens": prevTokens,
+					"threshold":      limit,
+				}); err != nil {
+					return chat, run, turn, err
+				}
+				note := fmt.Sprintf("Context compacted automatically (reached %d tokens) — continuing on a fresh context window.", prevTokens)
+				if _, err = q.AppendChatMessage(ctx, store.AppendChatMessageParams{
+					SessionID:   chat.ID,
+					Role:        "system",
+					BodyMd:      note,
+					RunID:       &run.ID,
+					ContextRefs: []byte("[]"),
+					Citations:   []byte("[]"),
+				}); err != nil {
+					return chat, run, turn, err
+				}
+				needsCompact = true
+			}
+			if needsCompact {
+				total, err := q.CountChatHistory(ctx, chat.ID)
+				if err != nil {
+					return chat, run, turn, err
+				}
+				if total > 0 {
+					footer := handoffFooter
+					if relay {
+						footer = relayFooter
+					}
+					prompt, err = buildCompactOrForkPrompt(ctx, q, chat, total, handoffChars, compactLead, compactFocus, footer, prompt)
+					if err != nil {
+						return chat, run, turn, err
+					}
+				}
+				if chat.CompactPending || chat.CompactFocus != "" {
+					if chat, err = q.SetChatCompactPending(ctx, store.SetChatCompactPendingParams{ID: chat.ID, CompactPending: false, CompactFocus: ""}); err != nil {
+						return chat, run, turn, err
+					}
+				}
+			}
 		}
 	}
 	if fresh {
@@ -998,23 +1061,40 @@ func startChatTurn(ctx context.Context, q *store.Queries, chat store.ChatSession
 			prompt += firstTurnNote
 		}
 		if total > 0 {
-			rows, err := q.ListRecentChatMessages(ctx, store.ListRecentChatMessagesParams{SessionID: chat.ID, RowLimit: handoffRows, MaxChars: handoffFetchChars})
-			if err != nil {
-				return chat, run, turn, err
-			}
-			hist := make([]HandoffMessage, len(rows))
-			for i, r := range rows {
-				hist[i] = HandoffMessage{Seq: r.Seq, Role: r.Role, Harness: deref(r.Harness), Model: deref(r.Model), Persona: r.PersonaName, Body: r.BodyMd}
-			}
-			hc, err := loadHandoffContext(ctx, q, chat.ID)
-			if err != nil {
-				return chat, run, turn, err
-			}
 			footer := handoffFooter
 			if relay {
 				footer = relayFooter
 			}
-			prompt = renderHandoff(hist, int(total), handoffChars, hc, footer, prompt)
+			if chat.CompactPending {
+				prompt, err = buildCompactOrForkPrompt(ctx, q, chat, total, handoffChars, compactLead, chat.CompactFocus, footer, prompt)
+				if err != nil {
+					return chat, run, turn, err
+				}
+			} else if chat.ForkedFromChatID != nil {
+				prompt, err = buildCompactOrForkPrompt(ctx, q, chat, total, handoffChars, forkLead, "", footer, prompt)
+				if err != nil {
+					return chat, run, turn, err
+				}
+			} else {
+				rows, err := q.ListRecentChatMessages(ctx, store.ListRecentChatMessagesParams{SessionID: chat.ID, RowLimit: handoffRows, MaxChars: handoffFetchChars})
+				if err != nil {
+					return chat, run, turn, err
+				}
+				hist := make([]HandoffMessage, len(rows))
+				for i, r := range rows {
+					hist[i] = HandoffMessage{Seq: r.Seq, Role: r.Role, Harness: deref(r.Harness), Model: deref(r.Model), Persona: r.PersonaName, Body: r.BodyMd}
+				}
+				hc, err := loadHandoffContext(ctx, q, chat.ID)
+				if err != nil {
+					return chat, run, turn, err
+				}
+				prompt = renderHandoff(hist, int(total), handoffChars, hc, footer, prompt)
+			}
+		}
+		if chat.CompactPending || chat.CompactFocus != "" {
+			if chat, err = q.SetChatCompactPending(ctx, store.SetChatCompactPendingParams{ID: chat.ID, CompactPending: false, CompactFocus: ""}); err != nil {
+				return chat, run, turn, err
+			}
 		}
 	}
 	state := "running"
@@ -1058,6 +1138,9 @@ func (s *Service) CancelChat(ctx context.Context, ws, user, id uuid.UUID) (store
 			if chat, err = q.SetChatInterrupt(ctx, store.SetChatInterruptParams{ID: chat.ID}); err != nil {
 				return err
 			}
+		}
+		if err = q.ExpireRunChatSteers(ctx, *chat.CurrentRunID); err != nil {
+			return err
 		}
 		out, _, _, err = stopChatTurn(ctx, q, chat)
 		return err
@@ -1135,6 +1218,9 @@ type ChatPatchInput struct {
 	// Space moves the chat into one of the person's spaces; "" takes it out. nil leaves it.
 	// Unless Project is given too, the chat then files tickets where the space does.
 	Space *string
+	// AutoRolloverSet toggles updating auto_rollover_tokens (nil clears back to server default, 0 disables, >0 overrides).
+	AutoRolloverSet    bool
+	AutoRolloverTokens *int64
 }
 
 // UpdateChat renames, archives or restores a chat, or changes its project. Archiving ends the chat's
@@ -1142,6 +1228,9 @@ type ChatPatchInput struct {
 // segment on its next message. 409 on a stale revision or while a turn runs.
 func (s *Service) UpdateChat(ctx context.Context, ws, user, id uuid.UUID, in ChatPatchInput) (store.ChatSession, error) {
 	var out store.ChatSession
+	if in.AutoRolloverSet && in.AutoRolloverTokens != nil && *in.AutoRolloverTokens < 0 {
+		return out, apperr.Invalid("auto_rollover_tokens", "must be 0 or positive")
+	}
 	err := s.tx(ctx, func(q *store.Queries) error {
 		chat, err := lockChat(ctx, q, ws, user, id)
 		if err != nil {
@@ -1157,8 +1246,8 @@ func (s *Service) UpdateChat(ctx context.Context, ws, user, id uuid.UUID, in Cha
 		if in.Archived != nil {
 			archived = *in.Archived
 		}
-		if in.Title == nil && in.Archived == nil && in.Project == nil && in.Space == nil {
-			return apperr.Invalid("title", "provide a title, archived, project or space_id")
+		if in.Title == nil && in.Archived == nil && in.Project == nil && in.Space == nil && !in.AutoRolloverSet {
+			return apperr.Invalid("title", "provide a title, archived, project, space_id or auto_rollover_tokens")
 		}
 		if chat.Revision != in.Revision {
 			return apperr.Conflict("the chat changed; reload and try again")
@@ -1214,6 +1303,15 @@ func (s *Service) UpdateChat(ctx context.Context, ws, user, id uuid.UUID, in Cha
 			if _, err = q.SetChatRunState(ctx, store.SetChatRunStateParams{ID: chat.ID, State: chat.State}); err != nil {
 				return err
 			}
+		}
+		if in.AutoRolloverSet {
+			if chat, err = q.SetChatAutoRollover(ctx, store.SetChatAutoRolloverParams{ID: chat.ID, AutoRolloverTokens: in.AutoRolloverTokens}); err != nil {
+				return err
+			}
+		}
+		if in.Title == nil && in.Archived == nil && in.AutoRolloverSet && in.Project == nil && in.Space == nil {
+			out = chat
+			return nil
 		}
 		out, err = q.UpdateChatTitleArchived(ctx, store.UpdateChatTitleArchivedParams{ID: chat.ID, Title: title, Archived: archived})
 		return err

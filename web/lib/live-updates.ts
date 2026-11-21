@@ -7,7 +7,7 @@ const prefixes: Record<string, string[]> = {
   ticket: ["planning", "tickets", "boards", "inbox", "bootstrap", "knowledge", "search"],
   epic: ["projects", "planning", "bootstrap", "tickets", "boards", "epics", "inbox", "search"],
   activity: ["tickets", "inbox", "bootstrap"],
-  approval: ["tickets", "runs", "inbox", "bootstrap"],
+  approval: ["tickets", "runs", "chats", "inbox", "bootstrap"],
   // "dock" is the activity orb: which harnesses are running.
   run: ["planning", "runs", "boards", "tickets", "agents", "inbox", "bootstrap", "runner", "search", "dock"],
   agent: ["agents", "bootstrap", "search"],
@@ -29,6 +29,8 @@ const prefixes: Record<string, string[]> = {
   code_review: ["code-review"],
   // A persona's push request staged, approved, pushed or failed.
   push_request: ["push-requests"],
+  // PR check runs and unresolved review threads synced from GitHub.
+  pr_feedback: ["tickets", "push-requests", "inbox", "bootstrap"],
   // A persona edit changes the name, color and avatar every chat using it embeds.
   persona: ["personas", "chats", "dock"],
   // A Safari tab shared with a chat: started, re-snapshotted, read by a persona or stopped.
@@ -41,7 +43,7 @@ const prefixes: Record<string, string[]> = {
 export function invalidatedBy(type: string): string[] {
   if (type === "run.events") return ["runs"];
   const keys = prefixes[type.split(".")[0]] ?? [];
-  const quiet = ["video.updated", "audio.updated", "code_review.updated", "push_request.updated", "custom_app.updated", "browser_share.updated"];
+  const quiet = ["video.updated", "audio.updated", "code_review.updated", "push_request.updated", "pr_feedback.updated", "custom_app.updated", "browser_share.updated"];
   return quiet.includes(type) ? keys : [...keys, "dashboard", "epics", "agent-overviews"];
 }
 

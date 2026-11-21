@@ -73,10 +73,18 @@ func (s *Server) GetProjectBoard(ctx context.Context, req api.GetProjectBoardReq
 		return nil, err
 	}
 	ids := make([]uuid.UUID, 0, len(rows))
+	var prURLs []string
 	for _, r := range rows {
 		ids = append(ids, r.ID)
+		if r.PrUrl != nil && *r.PrUrl != "" {
+			prURLs = append(prURLs, *r.PrUrl)
+		}
 	}
 	labels, err := s.labelsByTicket(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	feedbackByURL, err := s.prFeedbackByURLs(ctx, ws, prURLs)
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +101,13 @@ func (s *Server) GetProjectBoard(ctx context.Context, req api.GetProjectBoardReq
 			col.Count = int(r.ColumnCount)
 			col.Points = int(r.ColumnPoints)
 			col.Truncated = col.Count > 50 && (status == "done" || status == "canceled")
-			t := api.TicketSummary{Id: r.ID, Key: r.Key, ProjectKey: r.ProjectKey, Title: r.Title, Status: api.TicketStatus(r.Status), Priority: api.Priority(r.Priority), DueDate: toDate(r.DueDate), Pr: toPR(r.PrNumber, r.PrState, nil, nil, nil), UpdatedAt: r.UpdatedAt, Labels: labels[r.ID], UnmetDependencies: int(r.UnmetDependencies), CriteriaTotal: int(r.CriteriaTotal), CriteriaDone: int(r.CriteriaDone)}
+			pr := toPR(r.PrNumber, r.PrState, nil, nil, nil)
+			if pr != nil && r.PrUrl != nil {
+				if fb, ok := feedbackByURL[*r.PrUrl]; ok {
+					pr.Feedback = toPRFeedback(fb)
+				}
+			}
+			t := api.TicketSummary{Id: r.ID, Key: r.Key, ProjectKey: r.ProjectKey, Title: r.Title, Status: api.TicketStatus(r.Status), Priority: api.Priority(r.Priority), DueDate: toDate(r.DueDate), Pr: pr, UpdatedAt: r.UpdatedAt, Labels: labels[r.ID], UnmetDependencies: int(r.UnmetDependencies), CriteriaTotal: int(r.CriteriaTotal), CriteriaDone: int(r.CriteriaDone)}
 			if r.EstimatePoints != nil {
 				v := int(*r.EstimatePoints)
 				t.EstimatePoints = &v
