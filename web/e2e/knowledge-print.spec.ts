@@ -140,7 +140,6 @@ test("Knowledge print view strips editor chrome, renders Obsidian syntax cleanly
   const metaCheckbox = page.getByRole("checkbox", { name: "Include metadata" });
 
   await expect(doc).toHaveAttribute("data-print-style", "clean");
-  await expect(doc).toHaveAttribute("data-theme", "light");
   await expect(doc.getByRole("heading", { name: "Release Architecture" })).toHaveCount(1);
   await expect(metaCheckbox).toBeVisible();
   await expect(metaCheckbox).not.toBeChecked();
@@ -178,11 +177,14 @@ test("Knowledge print view strips editor chrome, renders Obsidian syntax cleanly
   await expect(doc.locator("table td", { hasText: "Ada" })).toBeVisible();
 
   await expect.poll(() => page.evaluate(() => (window as unknown as { __prints: number }).__prints)).toBe(1);
-  // Export window keeps the user's dark theme and custom palette while the paper sheet stays neutral light.
+  // Export window keeps the user's dark theme with light text on a dark preview sheet.
   expect(await page.evaluate(() => (window as unknown as { __themeAtPrint?: string }).__themeAtPrint)).toBe("dark");
   expect(await page.evaluate(() => document.documentElement.getAttribute("data-theme"))).toBe("dark");
   expect(await page.evaluate(() => document.documentElement.style.getPropertyValue("--bg"))).toBe("#112233");
-  expect(await doc.evaluate((el) => (el as HTMLElement).style.getPropertyValue("--bg"))).toBe("#f5f5f7");
+  expect(await doc.locator(".print-kn-title").evaluate((el) => getComputedStyle(el).color)).toBe("rgb(244, 244, 245)");
+  const darkSheetBg = await doc.evaluate((el) => getComputedStyle(el).backgroundColor);
+  expect(darkSheetBg).not.toBe("rgba(0, 0, 0, 0)");
+  expect(darkSheetBg).not.toBe("rgb(255, 255, 255)");
   expect(await page.evaluate(() => localStorage.getItem("la-theme"))).toBe("dark");
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem("la-appearance")!).palette)).toBe("custom");
   await expect(page).toHaveTitle("Release Architecture");
@@ -192,6 +194,25 @@ test("Knowledge print view strips editor chrome, renders Obsidian syntax cleanly
   await expect(page.getByRole("group", { name: "PDF style" })).toBeHidden();
   await expect(metaCheckbox).toBeHidden();
   await expect(doc.getByRole("button", { name: "Show code" })).toBeHidden();
+  // Printed PDF always uses black ink on white paper, even from dark mode.
+  expect(await doc.locator(".print-kn-title").evaluate((el) => getComputedStyle(el).color)).toBe("rgb(24, 24, 27)");
+  expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe("rgb(255, 255, 255)");
+});
+
+test("Knowledge print view renders black text on white paper in light mode", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "light" });
+  await installKnowledgePrintMock(page);
+  await page.addInitScript(() => {
+    localStorage.setItem("la-theme", "light");
+  });
+
+  await page.goto(`/print/knowledge/${ID}?style=clean`);
+  const doc = page.getByTestId("print-knowledge");
+  await expect(doc.getByRole("heading", { name: "Release Architecture" })).toHaveCount(1);
+
+  expect(await page.evaluate(() => document.documentElement.getAttribute("data-theme"))).toBe("light");
+  expect(await doc.locator(".print-kn-title").evaluate((el) => getComputedStyle(el).color)).toBe("rgb(24, 24, 27)");
+  expect(await doc.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe("rgb(255, 255, 255)");
 });
 
 test("PDF style switching and Include metadata checkbox update the preview without extra auto-prints", async ({ page }) => {

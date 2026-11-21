@@ -1310,20 +1310,31 @@ details[open]::details-content { height: auto; }
 
 /*
  * Knowledge PDF export styles (app/print/knowledge): four paper-first typographic themes.
- * Uses fixed print tokens so user dark/text-size settings never distort the exported PDF.
+ * Uses dark tokens on screen by default, switches to black-on-white in light mode, and
+ * always forces black-on-white paper tokens under @media print.
  */
 .print-knowledge {
   --type-scale: 1;
-  color-scheme: light;
-  --kn-ink: #18181b;
-  --kn-ink-2: #27272a;
-  --kn-muted: #52525b;
-  --kn-border: #e4e4e7;
-  --kn-surface: #f4f4f5;
-  --kn-accent: #2563eb;
+  --kn-paper: var(--surface);
+  --kn-ink: #f4f4f5;
+  --kn-ink-2: #d4d4d8;
+  --kn-muted: #a1a1aa;
+  --kn-border: #32323a;
+  --kn-surface: #27272e;
+  --kn-surface-subtle: #1f1f25;
+  --kn-badge-bg: #18181d;
+  --kn-accent: #60a5fa;
+  --kn-callout-note-bg: #1b2333;
+  --kn-callout-tip-bg: #16261d;
+  --kn-callout-tip-border: #4ade80;
+  --kn-callout-warning-bg: #292014;
+  --kn-callout-warning-border: #fbbf24;
+  --kn-callout-danger-bg: #2b1819;
+  --kn-callout-danger-border: #f87171;
   --kn-font-sans: "Inter", "Inter Fallback", system-ui, -apple-system, sans-serif;
   --kn-font-serif: Georgia, "Iowan Old Style", "Palatino Linotype", "Times New Roman", serif;
   --kn-font-mono: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--kn-paper);
   color: var(--kn-ink);
   font-family: var(--kn-font-sans);
   font-size: 15px;
@@ -1331,8 +1342,20 @@ details[open]::details-content { height: auto; }
   gap: 20px;
 }
 
-.print-knowledge .shiki-tok {
-  color: var(--shiki-light);
+.print-knowledge [data-testid="mermaid"] img {
+  background: #ffffff;
+}
+
+.print-knowledge :is([data-testid="chart"], [data-testid="svg-visual"]) {
+  --surface: #ffffff;
+  --surface-sunken: #f4f4f5;
+  --border: #e4e4e7;
+  --border-row: #e4e4e7;
+  --text: #18181b;
+  --text-2: #27272a;
+  --text-secondary: #52525b;
+  --text-tertiary: #52525b;
+  color: #18181b;
 }
 
 .print-knowledge .print-kn-header {
@@ -1545,22 +1568,22 @@ details[open]::details-content { height: auto; }
   border-radius: 8px;
   border: 1px solid var(--kn-border);
   border-left: 3px solid var(--kn-accent);
-  background: #f8fafc;
+  background: var(--kn-callout-note-bg);
 }
 
 .print-knowledge .print-callout[data-callout="tip"] {
-  border-left-color: #15803d;
-  background: #f4fbf6;
+  border-left-color: var(--kn-callout-tip-border);
+  background: var(--kn-callout-tip-bg);
 }
 
 .print-knowledge .print-callout[data-callout="warning"] {
-  border-left-color: #b45309;
-  background: #fffaf0;
+  border-left-color: var(--kn-callout-warning-border);
+  background: var(--kn-callout-warning-bg);
 }
 
 .print-knowledge .print-callout[data-callout="danger"] {
-  border-left-color: #b91c1c;
-  background: #fef5f5;
+  border-left-color: var(--kn-callout-danger-border);
+  background: var(--kn-callout-danger-bg);
 }
 
 .print-knowledge .print-callout[data-callout="quote"] {
@@ -1594,7 +1617,7 @@ details[open]::details-content { height: auto; }
   margin: 4px 0;
   padding: 12px 16px;
   border-left: 3px solid var(--kn-border);
-  background: #fafafa;
+  background: var(--kn-surface-subtle);
   border-radius: 0 8px 8px 0;
 }
 
@@ -1630,7 +1653,7 @@ details[open]::details-content { height: auto; }
   letter-spacing: 0.04em;
   padding: 1px 6px;
   border-radius: 4px;
-  background: white;
+  background: var(--kn-badge-bg);
   border: 1px solid var(--kn-border);
   color: var(--kn-muted);
 }
@@ -1648,12 +1671,12 @@ details[open]::details-content { height: auto; }
 
 /* Style: Editorial (classic serif long-form) */
 .print-knowledge[data-print-style="editorial"] {
-  --kn-ink: #1c1917;
-  --kn-ink-2: #292524;
-  --kn-muted: #57534e;
-  --kn-border: #d6d3d1;
-  --kn-surface: #f5f5f4;
-  --kn-accent: #9a3412;
+  --kn-ink: #f5f5f4;
+  --kn-ink-2: #d6d3d1;
+  --kn-muted: #a8a29e;
+  --kn-border: #3d3835;
+  --kn-surface: #262321;
+  --kn-accent: #fb923c;
   font-family: var(--kn-font-serif);
   font-size: 16px;
   line-height: 1.78;
@@ -1745,9 +1768,10 @@ details[open]::details-content { height: auto; }
 
 /* Style: Technical (structured spec layout with monospace accents) */
 .print-knowledge[data-print-style="technical"] {
-  --kn-border: #d4d4d8;
-  --kn-surface: #f4f4f5;
-  --kn-accent: #0f766e;
+  --kn-border: #36363f;
+  --kn-surface: #23232a;
+  --kn-surface-subtle: #1d1d23;
+  --kn-accent: #2dd4bf;
   font-size: 14px;
   line-height: 1.58;
 }
@@ -1757,7 +1781,7 @@ details[open]::details-content { height: auto; }
   border: 1px solid var(--kn-border);
   border-left: 3.5px solid var(--kn-accent);
   border-radius: 6px;
-  background: #fafafa;
+  background: var(--kn-surface-subtle);
 }
 
 .print-knowledge[data-print-style="technical"] .print-kn-folder,
@@ -1797,6 +1821,134 @@ details[open]::details-content { height: auto; }
 .print-knowledge[data-print-style="technical"] .print-kn-query th,
 .print-knowledge[data-print-style="technical"] .print-kn-query td {
   border: 1px solid var(--kn-border);
+}
+
+/* Light mode on screen: black ink on white paper */
+:root[data-theme="light"] .print-knowledge {
+  --kn-paper: #ffffff;
+  --kn-ink: #18181b;
+  --kn-ink-2: #27272a;
+  --kn-muted: #52525b;
+  --kn-border: #e4e4e7;
+  --kn-surface: #f4f4f5;
+  --kn-surface-subtle: #fafafa;
+  --kn-badge-bg: #ffffff;
+  --kn-accent: #2563eb;
+  --kn-callout-note-bg: #f8fafc;
+  --kn-callout-tip-bg: #f4fbf6;
+  --kn-callout-tip-border: #15803d;
+  --kn-callout-warning-bg: #fffaf0;
+  --kn-callout-warning-border: #b45309;
+  --kn-callout-danger-bg: #fef5f5;
+  --kn-callout-danger-border: #b91c1c;
+}
+
+:root[data-theme="light"] .print-knowledge[data-print-style="editorial"] {
+  --kn-ink: #1c1917;
+  --kn-ink-2: #292524;
+  --kn-muted: #57534e;
+  --kn-border: #d6d3d1;
+  --kn-surface: #f5f5f4;
+  --kn-accent: #9a3412;
+}
+
+:root[data-theme="light"] .print-knowledge[data-print-style="technical"] {
+  --kn-border: #d4d4d8;
+  --kn-surface: #f4f4f5;
+  --kn-surface-subtle: #fafafa;
+  --kn-accent: #0f766e;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .print-knowledge {
+    --kn-paper: #ffffff;
+    --kn-ink: #18181b;
+    --kn-ink-2: #27272a;
+    --kn-muted: #52525b;
+    --kn-border: #e4e4e7;
+    --kn-surface: #f4f4f5;
+    --kn-surface-subtle: #fafafa;
+    --kn-badge-bg: #ffffff;
+    --kn-accent: #2563eb;
+    --kn-callout-note-bg: #f8fafc;
+    --kn-callout-tip-bg: #f4fbf6;
+    --kn-callout-tip-border: #15803d;
+    --kn-callout-warning-bg: #fffaf0;
+    --kn-callout-warning-border: #b45309;
+    --kn-callout-danger-bg: #fef5f5;
+    --kn-callout-danger-border: #b91c1c;
+  }
+
+  :root:not([data-theme]) .print-knowledge[data-print-style="editorial"] {
+    --kn-ink: #1c1917;
+    --kn-ink-2: #292524;
+    --kn-muted: #57534e;
+    --kn-border: #d6d3d1;
+    --kn-surface: #f5f5f4;
+    --kn-accent: #9a3412;
+  }
+
+  :root:not([data-theme]) .print-knowledge[data-print-style="technical"] {
+    --kn-border: #d4d4d8;
+    --kn-surface: #f4f4f5;
+    --kn-surface-subtle: #fafafa;
+    --kn-accent: #0f766e;
+  }
+}
+
+/* Printed PDF always uses black ink on white paper, even when previewed in dark mode */
+@media print {
+  :root .print-knowledge {
+    color-scheme: light;
+    --kn-paper: transparent;
+    --kn-ink: #18181b;
+    --kn-ink-2: #27272a;
+    --kn-muted: #52525b;
+    --kn-border: #e4e4e7;
+    --kn-surface: #f4f4f5;
+    --kn-surface-subtle: #fafafa;
+    --kn-badge-bg: #ffffff;
+    --kn-accent: #2563eb;
+    --kn-callout-note-bg: #f8fafc;
+    --kn-callout-tip-bg: #f4fbf6;
+    --kn-callout-tip-border: #15803d;
+    --kn-callout-warning-bg: #fffaf0;
+    --kn-callout-warning-border: #b45309;
+    --kn-callout-danger-bg: #fef5f5;
+    --kn-callout-danger-border: #b91c1c;
+    --bg: #f5f5f7;
+    --surface: #ffffff;
+    --surface-sunken: #f4f4f5;
+    --border: #e4e4e7;
+    --border-subtle: #e4e4e7;
+    --border-row: #e4e4e7;
+    --border-strong: #d4d4d8;
+    --text: #18181b;
+    --text-2: #27272a;
+    --text-secondary: #52525b;
+    --text-tertiary: #52525b;
+    --accent: #2563eb;
+  }
+
+  :root .print-knowledge[data-print-style="editorial"] {
+    --kn-ink: #1c1917;
+    --kn-ink-2: #292524;
+    --kn-muted: #57534e;
+    --kn-border: #d6d3d1;
+    --kn-surface: #f5f5f4;
+    --kn-accent: #9a3412;
+  }
+
+  :root .print-knowledge[data-print-style="technical"] {
+    --kn-border: #d4d4d8;
+    --kn-surface: #f4f4f5;
+    --kn-surface-subtle: #fafafa;
+    --kn-accent: #0f766e;
+  }
+
+  .print-knowledge .shiki-tok {
+    color: var(--shiki-light);
+  }
 }
 
 /*
