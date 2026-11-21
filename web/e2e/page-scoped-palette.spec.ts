@@ -246,7 +246,7 @@ test("⌘⇧K on Tickets, Epics, Chats, and Settings scopes appropriately", asyn
     }
     if (kind === "epic") {
       return json(route, {
-        hits: [{ target: { kind: "epic", id: "epic-1", title: "Payments rollout", display_id: "EP-1", href: "/work?view=epics&epic=epic-1" }, snippet: "", score: 3 }],
+        hits: [{ target: { kind: "epic", id: "epic-1", title: "Payments rollout", display_id: "EP-1", href: "/epics/epic-1" }, snippet: "", score: 3 }],
       });
     }
     return json(route, { hits: [] });
@@ -263,7 +263,7 @@ test("⌘⇧K on Tickets, Epics, Chats, and Settings scopes appropriately", asyn
 
   // Epics view -> Search Epics (passes kind=epic).
   await page.keyboard.press("Escape");
-  await page.goto("/work?view=epics");
+  await page.goto("/tickets?layout=epics&project=WEB");
   await pressScopedPalette(page, "Search Epics");
   await scopedInput(page, "Search Epics").fill("pay");
   await expect(results(page).getByRole("option", { name: /Payments rollout/ })).toBeVisible();

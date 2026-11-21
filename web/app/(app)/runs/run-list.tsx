@@ -14,13 +14,6 @@ import { ago } from "@/lib/format";
 import { KIND, trayItems, waited } from "@/lib/inbox";
 import { groupRuns, itemHref, matchesItem, matchesRun, runDot, runLine, runTitle } from "@/lib/run-list";
 import { personaNavAvatar, type WorkPersonaLike } from "@/lib/work-persona";
-import {
-  compactRunTime,
-  computeActivityViewCounts,
-  filterActivityRuns,
-  groupActivitySidebarRuns,
-  isRunNeedsYou,
-} from "@/lib/work-overview";
 import { useProjectScope } from "@/components/shell/project-scope";
 import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import {
@@ -87,10 +80,8 @@ export function useRunList(search = "") {
     project,
     agent,
     hideDone,
-    needs,
     shownNeeds,
     groups,
-    runs,
     loading: live.isPending || scope.status === "loading" || (!hideDone && recent[0]?.isPending),
     error: live.error ?? recent[0]?.error ?? null,
     retry: () => {
@@ -106,24 +97,6 @@ export function useRunList(search = "") {
 }
 
 type RunListData = ReturnType<typeof useRunList>;
-type ActivityFilterValue = "all" | "needs_you" | "active" | "failed";
-
-/** What Work's Activity list shows: counts for the View filter, the filtered run groups and the Needs you items that have no run row. Shared by the list and by the native sidebar model. */
-export function useActivityLists(data: RunListData, search: string, filter: ActivityFilterValue, now: Date) {
-  const needsRunIds = useMemo(() => new Set(data.shownNeeds.flatMap((i) => (i.run_id ? [i.run_id] : []))), [data.shownNeeds]);
-  const searchedRuns = useMemo(() => data.runs.filter((r) => matchesRun(r, search)), [data.runs, search]);
-  const viewCounts = useMemo(() => computeActivityViewCounts(searchedRuns, needsRunIds, now), [searchedRuns, needsRunIds, now]);
-  const embeddedGroups = useMemo(() => {
-    const filtered = filterActivityRuns(searchedRuns, filter, needsRunIds, now);
-    return groupActivitySidebarRuns(filtered, now);
-  }, [searchedRuns, filter, needsRunIds, now]);
-  const runIds = useMemo(() => new Set(data.runs.map((r) => r.id)), [data.runs]);
-  const nonRunNeeds = useMemo(
-    () => (filter === "all" || filter === "needs_you" ? data.shownNeeds.filter((i) => !i.run_id || !runIds.has(i.run_id)) : []),
-    [filter, data.shownNeeds, runIds],
-  );
-  return { needsRunIds, viewCounts, embeddedGroups, nonRunNeeds };
-}
 
 function standaloneBody(
   data: RunListData,
@@ -173,7 +146,6 @@ function standaloneBody(
     hasMore: data.hasMore,
     loadingMore: data.loadingMore,
     emptyText: search ? "No runs match." : "No runs yet. Start one from a ticket or a chat.",
-    withHref: true,
   };
 }
 
@@ -236,51 +208,4 @@ function useRunsNative(selected?: string) {
 export function RunsNavigator({ selected }: { selected?: string }) {
   const native = useRunsNative(selected);
   return <NavigatorPortal native={native} />;
-}
-
-/** Work's Activity list for the native sidebar. */
-export function activityNativeBody(
-  data: RunListData,
-  lists: ReturnType<typeof useActivityLists>,
-  opts: { search: string; query: string; now: Date; personas?: readonly WorkPersonaLike[]; origin?: string },
-): RunListBody {
-  const hasActiveGroup = lists.embeddedGroups.some((g) => g.kind === "active");
-  const empty = !data.loading && !data.error && lists.embeddedGroups.length === 0 && lists.nonRunNeeds.length === 0;
-  return {
-    needs: lists.nonRunNeeds.map((i) => ({
-      id: i.id,
-      href: itemHref(i, opts.query),
-      title: i.title,
-      agentName: undefined,
-      trailing: waited(i.created_at),
-      tone: "human" as const,
-    })),
-    needsLabel: hasActiveGroup ? "Waiting" : "Needs you",
-    needsAfterGroups: hasActiveGroup,
-    groups: lists.embeddedGroups.map((g) => ({
-      key: g.label,
-      label: g.label,
-      count: g.runs.length,
-      runs: g.runs.map((r) => {
-        const dot = runDot(r, isRunNeedsYou(r, lists.needsRunIds));
-        const avatar = personaNavAvatar(opts.personas, r.agent, opts.origin);
-        return {
-          id: r.id,
-          href: `/runs/${r.id}${opts.query ? `?${opts.query}` : ""}`,
-          title: runTitle(r),
-          agentName: r.agent.name,
-          agentColor: avatar.color,
-          agentImageUrl: avatar.imageUrl,
-          trailing: compactRunTime(r, dot, opts.now),
-          dot,
-        };
-      }),
-    })),
-    loading: !!data.loading,
-    error: data.error?.message ?? null,
-    hasMore: data.hasMore,
-    loadingMore: data.loadingMore,
-    emptyText: empty && opts.search ? "No runs match." : "No runs in this view.",
-    withHref: false,
-  };
 }

@@ -88,8 +88,6 @@ export interface WorkCommandContext {
   onProject: (key: string) => void;
   onAgent: (handle: string) => void;
   onSearch?: (value: string) => void;
-  /** Overrides navigating to Activity (the Work screen switches its own view). */
-  onActivity?: () => void;
 }
 
 /** Handles the header's commands; returns whether it did. */
@@ -106,8 +104,7 @@ export function handleWorkHeaderCommand(cmd: NativeCommand, ctx: WorkCommandCont
     return true;
   }
   if (cmd.type === "nav.picker" && cmd.pickerId === WORK_VIEW_PICKER) {
-    if (cmd.value === "activity" && ctx.onActivity) ctx.onActivity();
-    else ctx.push(workTabHref(cmd.value as WorkTab, ctx.project));
+    ctx.push(workTabHref(cmd.value as WorkTab, ctx.project));
     return true;
   }
   if (cmd.type === "nav.search" && cmd.searchId === WORK_SEARCH && ctx.onSearch) {

@@ -376,7 +376,7 @@ function TurnGroup({ turn, t, items, open, onToggle, runId }: { turn: number; t?
   );
 }
 
-export function RunLogScreen({ id, inWork = false }: { id: string; inWork?: boolean }) {
+export function RunLogScreen({ id }: { id: string }) {
   const { data: d, isError, error } = useRunLog(id);
   useRecordVisit(d ? { id: `run-${id}`, title: runTitle(d.run), meta: [d.run.ticket_key, d.run.agent.name].filter(Boolean).join(" · "), href: `/runs/${id}`, kind: "Runs" } : undefined);
   const children = useDelegatedRunLogs(d?.child_runs ?? []);
@@ -423,16 +423,7 @@ export function RunLogScreen({ id, inWork = false }: { id: string; inWork?: bool
               disabled: control.isPending,
               run: () =>
                 control.mutate("retry", {
-                  onSuccess: (r) => {
-                    if (inWork) {
-                      const q = new URLSearchParams(params.toString());
-                      q.set("run", r.id);
-                      q.delete("view");
-                      router.push(`/work?${q}`);
-                    } else {
-                      router.push(`/runs/${r.id}`);
-                    }
-                  },
+                  onSuccess: (r) => router.push(`/runs/${r.id}`),
                 }),
             }]
           : []),
@@ -488,12 +479,7 @@ export function RunLogScreen({ id, inWork = false }: { id: string; inWork?: bool
     const q = new URLSearchParams(params.toString());
     if (m === "simple") q.delete("view");
     else q.set("view", m);
-    if (inWork) {
-      q.set("run", id);
-      router.replace(`/work${q.size ? `?${q}` : ""}${hash}`, { scroll: false });
-    } else {
-      router.replace(`/runs/${id}${q.size ? `?${q}` : ""}${hash}`, { scroll: false });
-    }
+    router.replace(`/runs/${id}${q.size ? `?${q}` : ""}${hash}`, { scroll: false });
   };
   const openTurn = (n: number) => {
     setFollow(false);

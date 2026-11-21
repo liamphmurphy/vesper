@@ -1,7 +1,5 @@
-// The Runs list as a NavModel: the standalone list (/runs) and the compact one in Work's Activity
-// view (app/(app)/runs/run-list.tsx).
-import type { Avatar, NavFilterMenu, NavItem, NavModel, NavPicker, NavSearch, Tone } from "../protocol.ts";
-import { workHeader, type WorkHeaderInput } from "./work.ts";
+// The Runs list as a NavModel: the standalone list beside a run (app/(app)/runs/run-list.tsx).
+import type { Avatar, NavFilterMenu, NavItem, NavModel, Tone } from "../protocol.ts";
 
 export type RunDot = "human" | "running" | "queued" | "done" | "failed" | "idle";
 
@@ -48,10 +46,7 @@ export const RUN_OPTIONS_FILTER = "run-options";
 export const RUN_SPACE_FILTER = "run-space";
 export const RUN_AGENT_FILTER = "run-agent";
 export const RUN_SEARCH = "run-search";
-/** Work's Activity view filter. */
-export const RUN_VIEW_FILTER = "view";
 export const RUN_STATUS_ITEM = "status";
-export const RUN_OVERVIEW_ITEM = "work:overview";
 
 export const runItemId = (id: string) => `run:${id}`;
 export const needsItemId = (id: string) => `needs:${id}`;
@@ -62,9 +57,8 @@ const initial = (name: string, color?: string, imageUrl?: string): Avatar => ({
   ...(imageUrl ? { imageUrl } : {}),
 });
 
-function runItem(r: RunRowData, withHref: boolean): NavItem {
-  const item: NavItem = { id: runItemId(r.id), title: r.title, trailing: r.trailing };
-  if (withHref) item.href = r.href;
+function runItem(r: RunRowData): NavItem {
+  const item: NavItem = { id: runItemId(r.id), title: r.title, trailing: r.trailing, href: r.href };
   if (r.subtitle) item.subtitle = r.subtitle;
   if (r.agentName) item.avatar = initial(r.agentName, r.agentColor, r.agentImageUrl);
   const tone = DOT_TONE[r.dot];
@@ -72,9 +66,8 @@ function runItem(r: RunRowData, withHref: boolean): NavItem {
   return item;
 }
 
-function needsItem(n: NeedsRowData, withHref: boolean): NavItem {
-  const item: NavItem = { id: needsItemId(n.id), title: n.title, trailing: n.trailing, status: n.tone };
-  if (withHref) item.href = n.href;
+function needsItem(n: NeedsRowData): NavItem {
+  const item: NavItem = { id: needsItemId(n.id), title: n.title, trailing: n.trailing, status: n.tone, href: n.href };
   if (n.subtitle) item.subtitle = n.subtitle;
   if (n.agentName) item.avatar = initial(n.agentName, n.agentColor, n.agentImageUrl);
   else item.icon = "inbox";
@@ -84,22 +77,18 @@ function needsItem(n: NeedsRowData, withHref: boolean): NavItem {
 export interface RunListBody {
   needs: NeedsRowData[];
   needsLabel: string;
-  /** Needs you rows after the run groups (Work lists non-run items last when runs are active). */
-  needsAfterGroups?: boolean;
   groups: RunGroupData[];
   loading: boolean;
   error?: string | null;
   hasMore: boolean;
   loadingMore: boolean;
   emptyText: string;
-  /** Rows carry hrefs the shell opens itself (the standalone list); Work handles activation. */
-  withHref: boolean;
 }
 
 function bodySections(b: RunListBody): NavModel["sections"] {
   const counted = (count?: number) => (count != null ? { badge: { text: String(count) } } : {});
   const needs: NavModel["sections"] = b.needs.length
-    ? [{ id: "needs-you", title: b.needsLabel, ...counted(b.needs.length), items: b.needs.map((n) => needsItem(n, b.withHref)) }]
+    ? [{ id: "needs-you", title: b.needsLabel, ...counted(b.needs.length), items: b.needs.map(needsItem) }]
     : [];
   const tail: NavItem[] = [];
   if (b.error) tail.push({ id: RUN_RETRY, title: `Couldn’t load runs. ${b.error}`, subtitle: "Retry", icon: "refresh" });
@@ -110,10 +99,10 @@ function bodySections(b: RunListBody): NavModel["sections"] {
     id: `runs-${g.key}`,
     title: g.label,
     ...counted(g.count),
-    items: g.runs.map((r) => runItem(r, b.withHref)),
+    items: g.runs.map(runItem),
   }));
   if (groups.length === 0 && b.needs.length === 0) return [{ id: "empty", items: [], emptyText: b.emptyText }];
-  const out = b.needsAfterGroups ? [...groups, ...needs] : [...needs, ...groups];
+  const out = [...needs, ...groups];
   if (tail.length) out.push({ id: "more", items: tail });
   return out;
 }
@@ -163,56 +152,4 @@ export function buildRunsNavModel(input: {
     sections,
     selectedId: input.selectedId ?? null,
   };
-}
-
-export type ActivityFilter = "all" | "needs_you" | "active" | "failed";
-
-/** Work's Runs view: the Work header, Overview entry, a View menu and the run list. */
-export function buildWorkActivityNavModel(input: {
-  header: WorkHeaderInput;
-  body: RunListBody;
-  filter: ActivityFilter;
-  counts: Record<ActivityFilter, number>;
-  statusLine?: { text: string; href: string };
-  selectedId?: string | null;
-}): NavModel {
-  const head = workHeader(input.header);
-  const options: { value: ActivityFilter; label: string }[] = [
-    { value: "all", label: "All runs" },
-    { value: "needs_you", label: "Needs you" },
-    { value: "active", label: "Running & queued" },
-    { value: "failed", label: "Failed today" },
-  ];
-  const filters: NavFilterMenu[] = [
-    ...head.filters,
-    {
-      id: RUN_VIEW_FILTER,
-      label: "View",
-      icon: "activity",
-      options: options.map((o) => ({ value: o.value, label: `${o.label} (${input.counts[o.value]})`, checked: input.filter === o.value })),
-    },
-  ];
-  const picker: NavPicker = head.picker;
-  const search: NavSearch | undefined = head.search;
-  const sections: NavModel["sections"] = [
-    {
-      id: "overview",
-      items: [
-        {
-          id: RUN_OVERVIEW_ITEM,
-          title: "Overview",
-          icon: "activity",
-          ...(input.counts.needs_you > 0 ? { badge: { text: String(input.counts.needs_you), tone: "human" as const } } : {}),
-        },
-      ],
-    },
-    ...bodySections(input.body),
-  ];
-  if (input.statusLine) {
-    sections.push({
-      id: "status",
-      items: [{ id: RUN_STATUS_ITEM, title: input.statusLine.text, href: input.statusLine.href, icon: "activity" }],
-    });
-  }
-  return { id: "work-activity", title: head.title, actions: head.actions, filters, picker, ...(search ? { search } : {}), sections, selectedId: input.selectedId ?? null };
 }
