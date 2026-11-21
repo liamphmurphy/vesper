@@ -3,6 +3,7 @@
 // as `run`. The folder path stays in the page, above the title.
 import type { NativeAction } from "../actions.ts";
 import type { Avatar } from "../protocol.ts";
+import { KNOWLEDGE_PRINT_STYLES, type KnowledgePrintStyle } from "../../knowledge-print.ts";
 
 export type PageAudience = "private" | "shared" | "agent";
 
@@ -21,6 +22,8 @@ export const KP = {
   more: "kn.more",
   exportMarkdown: "export-md",
   print: "print",
+  printStyle: (s: KnowledgePrintStyle) => `print:${s}` as const,
+  printAskPersona: "print:ask-persona",
   history: "history",
 } as const;
 
@@ -32,7 +35,8 @@ export interface KnowledgePageInput {
   mode: { label: string; avatar?: Avatar; open: () => void };
   copyLink: () => void;
   exportMarkdown: () => void;
-  print: () => void;
+  print: (style: KnowledgePrintStyle) => void;
+  askPersonaPdf: () => void;
   history: () => void;
 }
 
@@ -63,7 +67,21 @@ export function knowledgePageActions(i: KnowledgePageInput): NativeAction[] {
       kind: "menu",
       menu: [
         { id: KP.exportMarkdown, label: "Export Markdown", icon: "download", run: i.exportMarkdown },
-        { id: KP.print, label: "Print or save as PDF", icon: "printer", run: i.print },
+        {
+          id: KP.print,
+          label: "Print or save as PDF",
+          icon: "printer",
+          children: [
+            ...KNOWLEDGE_PRINT_STYLES.map((s) => ({
+              id: KP.printStyle(s.id),
+              label: s.label,
+              icon: s.icon,
+              run: () => i.print(s.id),
+            })),
+            { id: "print:sep", separator: true },
+            { id: KP.printAskPersona, label: "Ask a Persona…", icon: "msg", run: i.askPersonaPdf },
+          ],
+        },
         { id: KP.history, label: "Version history", icon: "history", run: i.history },
       ],
     },

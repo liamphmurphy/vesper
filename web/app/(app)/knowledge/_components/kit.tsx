@@ -83,7 +83,7 @@ export function Tag({ children }: { children: ReactNode }) {
 /** The thin bar under a Knowledge screen: what's going on at the left, counts at the right. */
 export function StatusBar({ left, right }: { left?: ReactNode; right?: ReactNode }) {
   return (
-    <div className="flex h-6 flex-none items-center gap-4 border-t border-border-subtle bg-panel px-4 text-11 text-fg-tertiary">
+    <div className="flex h-6 flex-none items-center gap-4 border-t border-border-subtle bg-panel px-4 text-11 text-fg-tertiary print:hidden">
       <span className="min-w-0 flex-1 truncate">{left}</span>
       <span className="flex flex-none items-center gap-4">{right}</span>
     </div>

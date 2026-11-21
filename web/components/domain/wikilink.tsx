@@ -8,6 +8,7 @@ import { useCreateWikiPage } from "@/lib/api/hooks";
 import { cx } from "@/lib/cx";
 import { parseWikiLinks, wikiHref } from "@/lib/wikilinks";
 import { Icon } from "@/components/ui/icon";
+import { usePrintMode } from "./print-mode";
 import { agentHue } from "./avatars";
 import { StatusGlyph, type GlyphState } from "./glyphs";
 
@@ -79,7 +80,11 @@ function GhostLink({ target, children }: { target: string; children: ReactNode }
 
 /** Renders one [[link]] with its type mark; unresolved links are ghosts. */
 export function WikiLink({ refText, children }: { refText: string; children: ReactNode }) {
+  const print = usePrintMode();
   const targets = useContext(LinkTargets);
+  if (print) {
+    return <span className="print-wikilink">{children}</span>;
+  }
   const t = targets?.get(refText);
   if (!t) {
     // Still resolving (or rendered outside Markdown): plain text, no jump.

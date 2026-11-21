@@ -539,7 +539,7 @@ function InSlot({ slot, children }: { slot: HTMLElement | null; children: ReactN
 }
 
 /** `docked`: the conversation sits in an app's or a side panel's dock, narrow beside the work, so a live reply's steps start folded. */
-export function Conversation({ id, onNew, actions, activityInDock = false, docked = false, hideTitle = false, context, onReplace }: { id: string; onNew: () => void; actions?: ReactNode; activityInDock?: boolean; docked?: boolean; hideTitle?: boolean; context?: ConversationContext; onReplace?: (id: string) => void | Promise<void> }) {
+export function Conversation({ id, onNew, actions, activityInDock = false, docked = false, hideTitle = false, context, onReplace, prefill, onPrefillApplied }: { id: string; onNew: () => void; actions?: ReactNode; activityInDock?: boolean; docked?: boolean; hideTitle?: boolean; context?: ConversationContext; onReplace?: (id: string) => void | Promise<void>; prefill?: { text: string; key: number }; onPrefillApplied?: (key: number) => void }) {
   const chat = useChat(id);
   // In an app's dock the chat's header is the dock's first row, which continues the page's top bar.
   const headerSlot = useDockHeaderSlot();
@@ -573,6 +573,22 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   const [text, setText] = useState(() => readDraft(id));
   // Read once into state, then forget it (an effect, so a StrictMode re-render still sees it).
   useEffect(() => dropDraft(id), [id]);
+  const [seenPrefill, setSeenPrefill] = useState(0);
+  if (prefill && prefill.key > seenPrefill) {
+    setSeenPrefill(prefill.key);
+    setText((t) => {
+      const trimmed = prefill.text.trim();
+      if (!t.trim()) return prefill.text;
+      if (t.includes(trimmed)) return t;
+      return `${t}\n\n${prefill.text}`;
+    });
+  }
+  const notifiedPrefill = useRef(0);
+  const focusedPrefill = useRef(0);
+  const onPrefillAppliedRef = useRef(onPrefillApplied);
+  useEffect(() => {
+    onPrefillAppliedRef.current = onPrefillApplied;
+  });
   const [picked, setPicked] = useState<Selection | null>(null);
   // null keeps the chat's effort; "default" clears it.
   const [pickedEffort, setPickedEffort] = useState<Effort | "default" | null>(null);
@@ -650,6 +666,21 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   useRecordVisit(c && !docked && !context?.hidden && c.message_count > 0
     ? { id: `chat-${c.id}`, title: c.title || "Untitled chat", meta: (c.speaker ?? c.persona)?.name ?? "Assistant", href: `/chat/${c.id}`, kind: "Chats" } : undefined);
   const loaded = !!c;
+  useEffect(() => {
+    if (seenPrefill > notifiedPrefill.current) {
+      notifiedPrefill.current = seenPrefill;
+      onPrefillAppliedRef.current?.(seenPrefill);
+    }
+    if (!seenPrefill || !loaded || focusedPrefill.current >= seenPrefill) return;
+    const frame = requestAnimationFrame(() => {
+      const el = area.current;
+      if (!el) return;
+      focusedPrefill.current = seenPrefill;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [seenPrefill, loaded]);
   const running = c?.state === "running";
   // Videos sit on the reply their turn stored; the running turn's show live under it.
   const videos = useChatVideos(c?.id, running);
