@@ -1,18 +1,24 @@
-// While a reply runs, the composer sends in one of three ways: queue the message
-// for when the reply ends, ask a side instance about the reply without
-// stopping it, or interrupt it. Pure helpers; the components live in
-// app/(app)/chat/_components (send-modes.tsx, followups.tsx, asides.tsx).
+// While a reply runs, the composer sends in one of four ways: queue the
+// message for when the reply ends, steer the live turn in-place, ask a side
+// instance about the reply without stopping it, or interrupt it. Pure helpers;
+// the components live in app/(app)/chat/_components (send-modes.tsx, followups.tsx, asides.tsx).
 
-export type SendMode = "followup" | "aside" | "interrupt";
+export type SendMode = "followup" | "steer" | "aside" | "interrupt";
 
-/** In switcher order. Follow-up comes first: Enter never throws away work in progress unless asked to. */
-export const SEND_MODES: SendMode[] = ["followup", "aside", "interrupt"];
+/** In switcher order. Follow-up comes first: Enter never changes or throws away work in progress unless asked to. */
+export const SEND_MODES: SendMode[] = ["followup", "steer", "aside", "interrupt"];
 
-export const SEND_MODE_LABEL: Record<SendMode, string> = { followup: "Follow-up", aside: "Aside", interrupt: "Interrupt" };
+export const SEND_MODE_LABEL: Record<SendMode, string> = {
+  followup: "Follow-up",
+  steer: "Steer",
+  aside: "Aside",
+  interrupt: "Interrupt",
+};
 
 /** What each mode does, for its title and the Send button's. */
 export const SEND_MODE_HINT: Record<SendMode, string> = {
   followup: "Send this once the current reply ends",
+  steer: "Steer the active reply mid-turn without losing progress",
   aside: "Ask about the current reply without stopping it",
   interrupt: "Stop the reply and answer this together with your last message",
 };
@@ -25,16 +31,32 @@ export function cycleSendMode(mode: SendMode, back = false): SendMode {
 
 /** The Send button's name: what pressing it does. */
 export function sendModeAction(mode: SendMode): string {
-  return mode === "followup" ? "Queue" : mode === "aside" ? "Ask aside" : "Interrupt";
+  switch (mode) {
+    case "followup":
+      return "Queue";
+    case "steer":
+      return "Steer";
+    case "aside":
+      return "Ask aside";
+    case "interrupt":
+      return "Interrupt";
+  }
 }
 
 /** What Enter does in each mode, for the hint under the box. */
-export const SEND_MODE_ENTER: Record<SendMode, string> = { followup: "queues it", aside: "asks it on the side", interrupt: "interrupts" };
+export const SEND_MODE_ENTER: Record<SendMode, string> = {
+  followup: "queues it",
+  steer: "steers mid-turn",
+  aside: "asks it on the side",
+  interrupt: "interrupts",
+};
 
 export function sendModePlaceholder(mode: SendMode, name: string): string {
   switch (mode) {
     case "followup":
       return `Queue a follow-up for when ${name} finishes…`;
+    case "steer":
+      return `Steer ${name} mid-turn without discarding work…`;
     case "aside":
       return `Ask on the side. ${name} keeps working…`;
     case "interrupt":
@@ -42,9 +64,9 @@ export function sendModePlaceholder(mode: SendMode, name: string): string {
   }
 }
 
-/** /aside and /queue send their text in that mode, whichever one is picked. */
+/** /aside, /queue, and /steer send their text in that mode, whichever one is picked. */
 export function commandSendMode(name: string): SendMode | null {
-  return name === "aside" ? "aside" : name === "queue" ? "followup" : null;
+  return name === "aside" ? "aside" : name === "queue" ? "followup" : name === "steer" ? "steer" : null;
 }
 
 type Dated = { created_at: string; anchor_message_id?: string; second_opinion?: boolean };

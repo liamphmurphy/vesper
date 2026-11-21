@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Schemas } from "@/lib/api/client";
-import { useComment, useDecideApproval, useInbox, useTicket } from "@/lib/api/hooks";
+import { useComment, useDecideApproval, useInbox, useRunLog, useTicket } from "@/lib/api/hooks";
 import { AgentAvatar } from "@/components/domain/avatars";
 import { useRememberedProject } from "@/components/shell/project-scope";
 import { TopBar } from "@/components/shell/topbar";
@@ -42,11 +42,14 @@ function pill(kind: string) {
 /** Touch-sized buttons: 44px tall (DESIGN.md §3). */
 const TOUCH = "!h-[44px] justify-center px-4 text-14";
 
-/** The ticket's pending approval behind an approval item, and approve/deny on the same endpoint as desktop. */
+/** The ticket's (or chat run's) pending approval behind an approval item, and approve/deny on the same endpoint as desktop. */
 function useApproval(item: Item, onSent: (id: string) => void) {
+  const isTicket = !!item.ticket_key;
   const ticket = useTicket(item.ticket_key);
+  const run = useRunLog(item.run_id ?? "", !isTicket && !!item.run_id);
+  const source = isTicket ? ticket : run;
   const decide = useDecideApproval(item.ticket_key);
-  const ap = ticket.data?.approvals.find((a) => `approval:${a.id}` === item.id);
+  const ap = (isTicket ? ticket.data?.approvals : run.data?.approvals)?.find((a) => `approval:${a.id}` === item.id);
   const live = isOpen(item) && !!ap && ap.state === "pending";
   const send = (decision: "approve" | "deny", after?: () => void) => {
     if (!live || decide.isPending) return;
@@ -60,7 +63,7 @@ function useApproval(item: Item, onSent: (id: string) => void) {
       },
     );
   };
-  return { ticket, ap, live, send, pending: decide.isPending, error: decide.error };
+  return { ticket: source, ap, live, send, pending: decide.isPending, error: decide.error };
 }
 
 function Failure({ error }: { error?: Error | null }) {

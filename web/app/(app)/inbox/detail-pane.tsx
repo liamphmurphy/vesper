@@ -9,6 +9,7 @@ import {
   useDecideApproval,
   useReadInbox,
   useReviewMockup,
+  useRunLog,
   useTicket,
 } from "@/lib/api/hooks";
 import { AgentAvatar } from "@/components/domain/avatars";
@@ -207,12 +208,14 @@ function useDone(item: Item, onSent: (id: string) => void) {
 }
 
 function ApprovalPane({ item, register, onSent, onLeave }: PaneProps) {
+  const isTicket = !!item.ticket_key;
   const ticket = useTicket(item.ticket_key);
+  const run = useRunLog(item.run_id ?? "", !isTicket && !!item.run_id);
   const decide = useDecideApproval(item.ticket_key);
   const { done, open, read } = useDone(item, onSent);
   const [note, setNote] = useState("");
   const noteRef = useRef<HTMLTextAreaElement>(null);
-  const ap = ticket.data?.approvals.find((a) => `approval:${a.id}` === item.id);
+  const ap = (isTicket ? ticket.data?.approvals : run.data?.approvals)?.find((a) => `approval:${a.id}` === item.id);
   const live = open && !!ap && ap.state === "pending";
   const send = (decision: "approve" | "deny") => {
     if (!live || decide.isPending) return;
@@ -221,8 +224,9 @@ function ApprovalPane({ item, register, onSent, onLeave }: PaneProps) {
   useEffect(() => {
     register({ approve: () => send("approve"), deny: () => send("deny"), focus: () => noteRef.current?.focus(), done });
   });
-  if (ticket.isPending) return <Skeleton className="h-40" />;
-  if (ticket.isError) return <Failure error={ticket.error} />;
+  const source = isTicket ? ticket : run;
+  if (source.isPending) return <Skeleton className="h-40" />;
+  if (source.isError) return <Failure error={source.error} />;
   return (
     <>
       <Section label="Exact action">
@@ -261,7 +265,9 @@ function ApprovalPane({ item, register, onSent, onLeave }: PaneProps) {
               Approve &amp; continue <Kbd className="border-transparent text-inherit">A</Kbd>
             </Button>
           </Actions>
-          <Hint>Approving resumes {ap.agent.name} with your note.</Hint>
+          <Hint>
+            {ap.chat_id ? `Approving lets ${ap.agent.name} run this tool right away.` : `Approving resumes ${ap.agent.name} with your note.`}
+          </Hint>
         </>
       ) : (
         <Hint>{ap && ap.state !== "pending" ? `This request was ${ap.state}.` : "This item is done."}</Hint>

@@ -285,6 +285,23 @@ test("the running turn starts at the newest message", () => {
   assert.equal(runningSince(undefined), undefined);
 });
 
+test("mid-turn steers preserve the active turn window in runningSince and turnWindows", () => {
+  const t = (m) => `2026-11-06T10:${String(m).padStart(2, "0")}:00Z`;
+  const u1 = { id: "u1", role: "user", created_at: t(0), run_id: "r1", turn_seq: 1 };
+  const s1 = { id: "s1", role: "user", created_at: t(1) };
+  const s2 = { id: "s2", role: "user", created_at: t(2) };
+  const a1 = { id: "a1", role: "assistant", created_at: t(3), run_id: "r1", turn_seq: 1 };
+  const u2 = { id: "u2", role: "user", created_at: t(4), run_id: "r1", turn_seq: 2 };
+  const u3 = { id: "u3", role: "user", created_at: t(5), run_id: "r1", turn_seq: 3 };
+  assert.equal(runningSince([u1, s1]), t(0));
+  assert.equal(runningSince([u1, s1, s2]), t(0));
+  // Consecutive normal turns (with run_id set) still advance since.
+  assert.equal(runningSince([u1, a1, u2, u3]), t(5));
+
+  const w = turnWindows([u1, s1, s2, a1, u2]);
+  assert.deepEqual(w.get("a1"), { since: t(0), until: t(4), followup: false });
+});
+
 const stepsOf = (calls) => chatSteps(calls.map((c, key) => ({ key, done: true, input: {}, ...c })));
 
 test("chatSteps follows the newest whole-list plan and marks steps added after work began", () => {

@@ -26,12 +26,14 @@ export function CopyButton({ text, label = "Copy" }: { text: string; label?: str
 
 /**
  * How the composer sends while a reply runs, in color: accent queues (and is the
- * ordinary Send), review blue asks an aside, and human amber interrupts.
+ * ordinary Send), steer guides in-turn (done green), review blue asks an aside, and
+ * human amber interrupts.
  */
-export type SendTone = "accent" | "aside" | "interrupt";
+export type SendTone = "accent" | "steer" | "aside" | "interrupt";
 
 const frameFocus: Record<SendTone, string> = {
   accent: "focus-within:border-accent focus-within:ring-accent/30",
+  steer: "focus-within:border-state-done focus-within:ring-state-done/30",
   aside: "focus-within:border-state-review focus-within:ring-state-review/30",
   interrupt: "focus-within:border-state-human focus-within:ring-state-human/30",
 };
@@ -59,9 +61,9 @@ export const composerPill = (on = false) =>
 export const composerGhost =
   "flex h-[30px] max-w-full items-center gap-1 rounded-full px-2 text-13 text-fg-secondary hover:bg-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-50";
 
-const sendFill: Record<SendTone, string> = { accent: "bg-accent", aside: "bg-state-review", interrupt: "bg-state-human" };
+const sendFill: Record<SendTone, string> = { accent: "bg-accent", steer: "bg-state-done", aside: "bg-state-review", interrupt: "bg-state-human" };
 
-/** The round send button. Its name says what pressing it does: Send, Plan it, Queue, Ask aside or Interrupt. */
+/** The round send button. Its name says what pressing it does: Send, Plan it, Queue, Steer, Ask aside or Interrupt. */
 export function SendButton({ label, disabled, title, tone = "accent" }: { label: string; disabled?: boolean; title?: string; tone?: SendTone }) {
   return (
     <button
@@ -75,7 +77,9 @@ export function SendButton({ label, disabled, title, tone = "accent" }: { label:
         sendFill[tone],
       )}
     >
-      {tone === "aside" ? (
+      {tone === "steer" ? (
+        <Icon name="compass" size={16} strokeWidth={1.9} />
+      ) : tone === "aside" ? (
         <Icon name="branch" size={16} strokeWidth={1.9} />
       ) : tone === "interrupt" ? (
         <Icon name="bolt" size={16} strokeWidth={1.9} />

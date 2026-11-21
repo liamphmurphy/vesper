@@ -424,6 +424,9 @@ WITH candidates AS (
   SELECT tc.chat_id AS id FROM ticket_change_requests tc
   WHERE tc.state = 'pending'
   UNION
+  SELECT ar.chat_id AS id FROM approval_requests ar
+  WHERE ar.chat_id IS NOT NULL AND ar.state = 'pending'
+  UNION
   SELECT ctr.chat_id AS id FROM runs r
   JOIN chat_ticket_runs ctr ON ctr.run_id = r.id
   WHERE r.workspace_id = $1 AND r.state = 'waiting' AND r.wait_reason IN ('human_reply', 'approval')
@@ -438,10 +441,11 @@ SELECT c.id, c.title, c.state, c.persona_id, c.speaker_persona_id, c.space_id,
 FROM candidates cand
 JOIN chat_sessions c ON c.id = cand.id
 CROSS JOIN LATERAL (SELECT count(*)::int AS unread FROM chat_messages m WHERE m.session_id = c.id AND m.role = 'assistant' AND m.seq > c.last_read_seq) u
--- waiting_approval: a persona, character or ticket change proposal to decide, or a run this chat started waiting on the person.
+-- waiting_approval: a persona, character, ticket change proposal, live tool approval, or a run this chat started waiting on the person.
 CROSS JOIN LATERAL (SELECT coalesce(EXISTS(SELECT 1 FROM persona_proposals pp WHERE pp.chat_id = c.id AND pp.state = 'pending')
   OR EXISTS(SELECT 1 FROM persona_character_proposals pcp WHERE pcp.chat_id = c.id AND pcp.state = 'pending')
   OR EXISTS(SELECT 1 FROM ticket_change_requests tc WHERE tc.chat_id = c.id AND tc.state = 'pending')
+  OR EXISTS(SELECT 1 FROM approval_requests ar WHERE ar.chat_id = c.id AND ar.state = 'pending')
   OR EXISTS(SELECT 1 FROM chat_ticket_runs ctr JOIN runs r ON r.id = ctr.run_id
     WHERE ctr.chat_id = c.id AND r.state = 'waiting' AND r.wait_reason IN ('human_reply', 'approval')), false)::bool AS waiting_approval) p
 LEFT JOIN LATERAL (SELECT m.persona_id, m.body_md, m.seq FROM chat_messages m WHERE m.session_id = c.id AND m.role = 'assistant' ORDER BY m.seq DESC LIMIT 1) l ON true

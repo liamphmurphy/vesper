@@ -643,8 +643,12 @@ export function useCancelSignIn() {
 function useTicketRefresh(key: string) {
   const qc = useQueryClient();
   return () => {
-    qc.invalidateQueries({ queryKey: keys.ticket(key) });
-    qc.invalidateQueries({ queryKey: keys.activity(key) });
+    if (key) {
+      qc.invalidateQueries({ queryKey: keys.ticket(key) });
+      qc.invalidateQueries({ queryKey: keys.activity(key) });
+    }
+    qc.invalidateQueries({ queryKey: ["runs"] });
+    qc.invalidateQueries({ queryKey: ["chats"] });
     qc.invalidateQueries({ queryKey: keys.bootstrap });
     qc.invalidateQueries({ queryKey: ["inbox"] });
   };
@@ -749,8 +753,9 @@ const RUN_DONE = ["completed", "failed", "cancelled"];
  * A run with its turns and events. SSE invalidates this query; polling is a
  * fallback. Events are fetched incrementally with ?after=seq.
  */
-function runLogOptions(qc: ReturnType<typeof useQueryClient>, id: string) {
+function runLogOptions(qc: ReturnType<typeof useQueryClient>, id: string, enabled = true) {
   return {
+    enabled: enabled && !!id,
     queryKey: ["runs", id] as const,
     queryFn: async () => {
       const prev = qc.getQueryData<Schemas["RunDetail"]>(["runs", id]);
@@ -763,9 +768,9 @@ function runLogOptions(qc: ReturnType<typeof useQueryClient>, id: string) {
   };
 }
 
-export function useRunLog(id: string) {
+export function useRunLog(id: string, enabled = true) {
   const qc = useQueryClient();
-  return useQuery(runLogOptions(qc, id));
+  return useQuery(runLogOptions(qc, id, enabled));
 }
 
 /** Each delegated run has its own event cursor and live query. */
@@ -1407,6 +1412,26 @@ export function useCancelChat(id: string) {
 
 const followupsKey = (id: string) => ["chats", "followups", id] as const;
 const asidesKey = (id: string) => ["chats", "asides", id] as const;
+const toolApprovalsKey = (id: string) => ["chats", "tool-approvals", id] as const;
+
+/** Pending in-turn tool approvals for this chat; polled every 1.5s while open or running. */
+export function useChatToolApprovals(id?: string, live = true) {
+  return useQuery({
+    enabled: !!id,
+    queryKey: toolApprovalsKey(id ?? ""),
+    queryFn: () => unwrap(api.GET("/chats/{id}/tool-approvals", { params: { path: { id: id! } } })),
+    refetchInterval: live ? 1_500 : false,
+  });
+}
+
+/** Steers an active chat turn mid-flight (or falls back cleanly when unsupported). */
+export function useSteerChat(id: string, prepare?: (body: string) => Promise<string>) {
+  const done = useChatInvalidate();
+  return useMutation({
+    mutationFn: async (body: string) => unwrap(api.POST("/chats/{id}/steer", { params: { path: { id } }, body: { body: prepare ? await prepare(body) : body } })),
+    onSettled: done,
+  });
+}
 
 /** Messages queued behind the running reply, next to send first. */
 export function useChatFollowups(id?: string) {
