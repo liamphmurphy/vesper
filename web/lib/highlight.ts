@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import type { HighlighterCore } from "shiki/core";
 import { useVizPalette } from "@/lib/viz-theme";
-import { hexToHsl } from "@/lib/persona-ui";
+import { tokenColor } from "@/lib/code-colors";
 
 /** One highlighted token; `style` carries shiki's --shiki-light/--shiki-dark variables (see globals.css). */
 export type Tok = { content: string; style?: CSSProperties };
@@ -96,13 +96,7 @@ export function useHighlighted(lines: string[][], lang: string | null, enabled: 
   }, [enabled, lang, key]);
   return useMemo(() => {
     if (!done || done.key !== key || done.lang !== lang) return null;
-    const color = (source: unknown) => {
-      if (typeof source !== "string" || !/^#[\da-f]{6}$/i.test(source)) return palette.ink;
-      const { h, s, l } = hexToHsl(source);
-      if (s < 0.2) return l < 0.65 ? palette.muted : palette.ink;
-      const slot = h < 15 || h >= 345 ? 7 : h < 45 ? 1 : h < 75 ? 3 : h < 160 ? 2 : h < 195 ? 5 : h < 255 ? 0 : h < 290 ? 6 : 4;
-      return palette.series[slot];
-    };
+    const color = (source: unknown) => tokenColor(source, palette);
     return done.toks.map((block) => block.map((line) => line.map((t) => ({ ...t, style: {
       ...t.style,
       "--shiki-dark": color((t.style as Record<string, unknown>)?.["--shiki-dark"]),
