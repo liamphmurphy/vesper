@@ -3716,9 +3716,9 @@ paths:
       summary: The chat's audio, oldest first
       description: |
         Audio a coding chat renders with code during its turn (MIDI through a
-        soundfont, a synth script, ffmpeg). Each follows its stages (compose,
-        render, check, save) as the agent and its renderer report them; a
-        finished one is also kept in the Library.
+        soundfont, a synth script, ffmpeg), or music generated via a configured
+        media provider. Each follows its stages and a finished file is saved to
+        the Library.
       tags: [chats]
       responses:
         "200":
@@ -3727,6 +3727,47 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ChatAudios" }
         "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /chats/{id}/music:
+    parameters:
+      - { $ref: "#/components/parameters/ChatId" }
+    post:
+      operationId: startChatMusic
+      summary: Generate music in a chat using the active music provider
+      tags: [chats]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StartChatMusicRequest" }
+      responses:
+        "201":
+          description: Music job started
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatAudio" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /chats/{id}/audio/{audioId}/stop:
+    parameters:
+      - { $ref: "#/components/parameters/ChatId" }
+      - { name: audioId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: stopChatAudio
+      summary: Stop an in-flight music generation job
+      tags: [chats]
+      responses:
+        "200":
+          description: Updated audio job
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatAudio" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
         default: { $ref: "#/components/responses/Error" }
 
   /chats/{id}/audio/{audioId}/content:
@@ -9946,6 +9987,16 @@ components:
       required: [audio]
       properties:
         audio: { type: array, items: { $ref: "#/components/schemas/ChatAudio" } }
+    StartChatMusicRequest:
+      type: object
+      required: [prompt]
+      properties:
+        title: { type: string, maxLength: 200 }
+        prompt: { type: string, minLength: 1, maxLength: 4000 }
+        lyrics: { type: string, maxLength: 8000 }
+        instrumental: { type: boolean }
+        length: { type: string, enum: [clip, full] }
+        provider_id: { type: string }
     LibraryItemKind:
       type: string
       enum: [image, diagram, link, document, video, audio, file, export]

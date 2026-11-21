@@ -103,6 +103,8 @@ type Server struct {
 	MediaRegistry   *media.Registry
 	defaultMediaReg *media.Registry
 	mediaRegOnce    sync.Once
+	musicRun        *media.MusicRunner
+	musicRunOnce    sync.Once
 
 	logins       loginLimiter
 	apiOnce      sync.Once

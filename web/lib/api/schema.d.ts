@@ -2975,13 +2975,52 @@ export interface paths {
         /**
          * The chat's audio, oldest first
          * @description Audio a coding chat renders with code during its turn (MIDI through a
-         *     soundfont, a synth script, ffmpeg). Each follows its stages (compose,
-         *     render, check, save) as the agent and its renderer report them; a
-         *     finished one is also kept in the Library.
+         *     soundfont, a synth script, ffmpeg), or music generated via a configured
+         *     media provider. Each follows its stages and a finished file is saved to
+         *     the Library.
          */
         get: operations["listChatAudio"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chats/{id}/music": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Generate music in a chat using the active music provider */
+        post: operations["startChatMusic"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chats/{id}/audio/{audioId}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+                audioId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stop an in-flight music generation job */
+        post: operations["stopChatAudio"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9036,6 +9075,15 @@ export interface components {
         };
         ChatAudios: {
             audio: components["schemas"]["ChatAudio"][];
+        };
+        StartChatMusicRequest: {
+            title?: string;
+            prompt: string;
+            lyrics?: string;
+            instrumental?: boolean;
+            /** @enum {string} */
+            length?: "clip" | "full";
+            provider_id?: string;
         };
         /** @enum {string} */
         LibraryItemKind: "image" | "diagram" | "link" | "document" | "video" | "audio" | "file" | "export";
@@ -15362,6 +15410,62 @@ export interface operations {
                 };
             };
             404: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    startChatMusic: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartChatMusicRequest"];
+            };
+        };
+        responses: {
+            /** @description Music job started */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatAudio"];
+                };
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    stopChatAudio: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+                audioId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Updated audio job */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatAudio"];
+                };
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
             default: components["responses"]["Error"];
         };
     };

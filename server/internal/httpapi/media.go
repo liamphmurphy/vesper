@@ -38,6 +38,26 @@ func (s *Server) mediaService() *media.Service {
 	}
 }
 
+func (s *Server) musicRunner() *media.MusicRunner {
+	s.musicRunOnce.Do(func() {
+		s.musicRun = &media.MusicRunner{
+			Service: s.mediaService(),
+			Pool:    s.Pool,
+			Blobs:   s.Blobs,
+			Bucket:  s.ArtifactBucket,
+			Log:     s.Log,
+		}
+	})
+	return s.musicRun
+}
+
+// CloseMedia cancels any in-flight media generation jobs and waits for them to exit.
+func (s *Server) CloseMedia() {
+	if s != nil && s.musicRun != nil {
+		s.musicRun.Close()
+	}
+}
+
 func toAPIMediaProvider(v media.ProviderView) api.MediaProvider {
 	caps := make([]api.MediaCapability, len(v.Descriptor.Capabilities))
 	for i, c := range v.Descriptor.Capabilities {
