@@ -203,6 +203,7 @@ func serve(ctx context.Context, log *slog.Logger) error {
 	}
 	srv.Runs.CustomApps = srv.CustomApps()
 	defer srv.CloseCustomApps()
+	defer srv.CloseMedia()
 	go srv.Wiki.RunVaultWorker(ctx, log)
 	// In isolated backends (Docker, microVM) the CLIs and logins live inside the
 	// sandbox, so the API queues usage checks for a runner to answer. The fake

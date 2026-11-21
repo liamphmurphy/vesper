@@ -1120,6 +1120,99 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/media/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Registered media providers, masked config, and workspace defaults */
+        get: operations["listMediaProviders"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/media/providers/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Update a media provider's settings and write-only secrets */
+        put: operations["updateMediaProvider"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/media/providers/{id}/secret": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Clear one or all stored secrets for a media provider */
+        delete: operations["clearMediaProviderSecret"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/media/providers/{id}/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Verify a media provider's credentials and reachability */
+        post: operations["checkMediaProvider"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/media/defaults/{capability}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                capability: components["schemas"]["MediaCapability"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Set or clear the workspace's active provider for a media capability */
+        put: operations["setMediaDefault"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/runner/environment": {
         parameters: {
             query?: never;
@@ -2882,13 +2975,52 @@ export interface paths {
         /**
          * The chat's audio, oldest first
          * @description Audio a coding chat renders with code during its turn (MIDI through a
-         *     soundfont, a synth script, ffmpeg). Each follows its stages (compose,
-         *     render, check, save) as the agent and its renderer report them; a
-         *     finished one is also kept in the Library.
+         *     soundfont, a synth script, ffmpeg), or music generated via a configured
+         *     media provider. Each follows its stages and a finished file is saved to
+         *     the Library.
          */
         get: operations["listChatAudio"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chats/{id}/music": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Generate music in a chat using the active music provider */
+        post: operations["startChatMusic"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chats/{id}/audio/{audioId}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+                audioId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stop an in-flight music generation job */
+        post: operations["stopChatAudio"];
         delete?: never;
         options?: never;
         head?: never;
@@ -7452,6 +7584,66 @@ export interface components {
                 reason?: string;
             }[];
         };
+        /** @enum {string} */
+        MediaCapability: "music" | "tts" | "script";
+        MediaFieldOption: {
+            value: string;
+            label: string;
+        };
+        MediaFieldSpec: {
+            key: string;
+            label: string;
+            /** @enum {string} */
+            kind: "text" | "secret" | "select" | "segmented";
+            required?: boolean;
+            default?: string;
+            placeholder?: string;
+            help?: string;
+            options?: components["schemas"]["MediaFieldOption"][];
+            show_when?: {
+                [key: string]: string;
+            };
+        };
+        MediaProvider: {
+            id: string;
+            label: string;
+            description?: string;
+            capabilities: components["schemas"]["MediaCapability"][];
+            coming_soon: boolean;
+            enabled: boolean;
+            available: boolean;
+            unavailable_reason?: string;
+            fields: components["schemas"]["MediaFieldSpec"][];
+            settings: {
+                [key: string]: string;
+            };
+            secrets_set: {
+                [key: string]: boolean;
+            };
+        };
+        MediaProvidersResponse: {
+            providers: components["schemas"]["MediaProvider"][];
+            defaults: {
+                [key: string]: string;
+            };
+        };
+        UpdateMediaProviderRequest: {
+            enabled?: boolean;
+            settings?: {
+                [key: string]: string;
+            };
+            secrets?: {
+                [key: string]: string;
+            };
+        };
+        MediaProviderCheckResponse: {
+            ok: boolean;
+            message: string;
+            error_kind?: components["schemas"]["ChatAudioErrorKind"];
+        };
+        SetMediaDefaultRequest: {
+            provider_id: string;
+        };
         RunnerSettings: {
             host_folder_workspaces: boolean;
         };
@@ -8818,6 +9010,10 @@ export interface components {
          * @enum {string}
          */
         ChatAudioStage: "compose" | "render" | "check" | "save";
+        /** @enum {string} */
+        ChatAudioSourceKind: "code" | "music";
+        /** @enum {string} */
+        ChatAudioErrorKind: "auth" | "quota" | "rate_limit" | "filtered" | "unavailable" | "error";
         ChatAudioOutput: {
             filename: string;
             content_type: string;
@@ -8833,6 +9029,11 @@ export interface components {
             duration_ms: number;
             /** @description How it was made, e.g. MIDI → FluidSynth; empty until named */
             method: string;
+            source_kind?: components["schemas"]["ChatAudioSourceKind"];
+            provider_id?: string;
+            prompt?: string;
+            lyrics?: string;
+            instrumental?: boolean;
             stage: components["schemas"]["ChatAudioStage"];
             /** @enum {string} */
             state: "running" | "done" | "failed";
@@ -8841,6 +9042,7 @@ export interface components {
              * @enum {string}
              */
             failure_kind?: "error" | "stopped";
+            error_kind?: components["schemas"]["ChatAudioErrorKind"];
             error?: string;
             /** @description The failing command's output */
             error_log?: string;
@@ -8873,6 +9075,15 @@ export interface components {
         };
         ChatAudios: {
             audio: components["schemas"]["ChatAudio"][];
+        };
+        StartChatMusicRequest: {
+            title?: string;
+            prompt: string;
+            lyrics?: string;
+            instrumental?: boolean;
+            /** @enum {string} */
+            length?: "clip" | "full";
+            provider_id?: string;
         };
         /** @enum {string} */
         LibraryItemKind: "image" | "diagram" | "link" | "document" | "video" | "audio" | "file" | "export";
@@ -12087,6 +12298,128 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    listMediaProviders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Providers and defaults */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaProvidersResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    updateMediaProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateMediaProviderRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated provider state (without secret values) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaProvider"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    clearMediaProviderSecret: {
+        parameters: {
+            query?: {
+                /** @description Specific secret field key to clear; clears all secrets for this provider when omitted */
+                field?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cleared */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    checkMediaProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Verification outcome */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaProviderCheckResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    setMediaDefault: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                capability: components["schemas"]["MediaCapability"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetMediaDefaultRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated providers and defaults */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaProvidersResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     getRunnerEnvironment: {
         parameters: {
             query?: {
@@ -15077,6 +15410,62 @@ export interface operations {
                 };
             };
             404: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    startChatMusic: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartChatMusicRequest"];
+            };
+        };
+        responses: {
+            /** @description Music job started */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatAudio"];
+                };
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    stopChatAudio: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+                audioId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Updated audio job */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatAudio"];
+                };
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
             default: components["responses"]["Error"];
         };
     };

@@ -530,6 +530,8 @@ export function chatStatusOf(call: { tool: string; input: unknown }): ChatStatus
       return status("video-render", "reporting a failed render");
     case "start_audio":
       return status("audio-render", "setting up audio");
+    case "generate_music":
+      return status("audio-render", "generating music");
     case "update_audio":
       return status("audio-render", "rendering audio");
     case "finish_audio":

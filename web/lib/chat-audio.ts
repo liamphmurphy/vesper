@@ -3,24 +3,153 @@ import type { components } from "./api/schema";
 export type ChatAudio = components["schemas"]["ChatAudio"];
 export type AudioStage = components["schemas"]["ChatAudioStage"];
 
-/** The pipeline the card shows, in order. */
-export const AUDIO_STAGES: { id: AudioStage; label: string; failed: string; retry: string }[] = [
+export interface AudioStageDef {
+  id: AudioStage;
+  label: string;
+  failed: string;
+  retry: string;
+}
+
+/** The pipeline code-rendered audio shows, in order. */
+export const AUDIO_STAGES: AudioStageDef[] = [
   { id: "compose", label: "Compose", failed: "Composing failed", retry: "Retry composing" },
   { id: "render", label: "Render", failed: "Rendering failed", retry: "Retry render" },
   { id: "check", label: "Mix check", failed: "Checking the mix failed", retry: "Retry mix check" },
   { id: "save", label: "Save to Library", failed: "Saving failed", retry: "Retry save" },
 ];
 
+/** The pipeline AI music generation shows, in order. */
+export const MUSIC_STAGES: AudioStageDef[] = [
+  { id: "compose", label: "Queued", failed: "Couldn’t start generation", retry: "Retry" },
+  { id: "render", label: "Generating", failed: "Music generation failed", retry: "Retry" },
+  { id: "save", label: "Save to Library", failed: "Saving failed", retry: "Retry" },
+];
+
 export type AudioStageState = "done" | "active" | "failed" | "pending";
 
+export function isMusicAudio(a: Pick<ChatAudio, "source_kind">): boolean {
+  return a.source_kind === "music";
+}
+
+export function stagesForAudio(a: Pick<ChatAudio, "source_kind">): AudioStageDef[] {
+  return isMusicAudio(a) ? MUSIC_STAGES : AUDIO_STAGES;
+}
+
 /** Each stage's state: done before the job's stage, its stage active (or failed), the rest pending. A finished file is done throughout. */
-export function audioStageStates(a: Pick<ChatAudio, "stage" | "state">): AudioStageState[] {
-  const at = AUDIO_STAGES.findIndex((s) => s.id === a.stage);
-  return AUDIO_STAGES.map((_, i) => {
+export function audioStageStates(a: Pick<ChatAudio, "stage" | "state" | "source_kind">): AudioStageState[] {
+  const stages = stagesForAudio(a);
+  const at = stages.findIndex((s) => s.id === a.stage);
+  return stages.map((_, i) => {
     if (a.state === "done" || i < at) return "done";
     if (i > at) return "pending";
     return a.state === "failed" ? "failed" : "active";
   });
+}
+
+export interface PlacedStandaloneAudio<T extends ChatAudio = ChatAudio> {
+  leading: T[];
+  afterMessage: Map<string, T[]>;
+  trailing: T[];
+  total: number;
+}
+
+/**
+ * Places chat audio that isn't attached to a reply message or the active live turn
+ * chronologically among messages so standalone music generations appear where created.
+ */
+export function placeStandaloneAudio<T extends ChatAudio>(
+  audio: readonly T[],
+  messages: readonly { id: string; created_at: string }[],
+  opts: { running: boolean; currentRunId?: string | null },
+): PlacedStandaloneAudio<T> {
+  const leading: T[] = [];
+  const afterMessage = new Map<string, T[]>();
+  const trailing: T[] = [];
+  let total = 0;
+
+  for (const a of audio) {
+    if (a.message_id) continue;
+    const isLiveTurnAudio = opts.running && !!a.run_id && a.run_id === opts.currentRunId;
+    if (isLiveTurnAudio) continue;
+
+    total++;
+    const at = Date.parse(a.created_at);
+    const idx = Number.isNaN(at) ? -1 : messages.findIndex((m) => Date.parse(m.created_at) >= at);
+    if (idx === -1) {
+      trailing.push(a);
+    } else if (idx === 0) {
+      leading.push(a);
+    } else {
+      const key = messages[idx - 1].id;
+      const list = afterMessage.get(key);
+      if (list) list.push(a);
+      else afterMessage.set(key, [a]);
+    }
+  }
+
+  return { leading, afterMessage, trailing, total };
+}
+
+export interface MusicErrorCopy {
+  title: string;
+  body: string;
+  actionLabel: string;
+  showSettingsLink: boolean;
+}
+
+export function musicErrorCopy(a: Pick<ChatAudio, "error" | "error_kind" | "failure_kind">): MusicErrorCopy {
+  if (a.failure_kind === "stopped") {
+    return {
+      title: "Stopped",
+      body: a.error || "Music generation was stopped.",
+      actionLabel: "Retry",
+      showSettingsLink: false,
+    };
+  }
+  switch (a.error_kind) {
+    case "auth":
+      return {
+        title: "API key rejected",
+        body: a.error || "The active media provider rejected your credentials.",
+        actionLabel: "Retry",
+        showSettingsLink: true,
+      };
+    case "quota":
+      return {
+        title: "Quota or spending limit reached",
+        body: a.error || "Your monthly credit or API quota limit was reached.",
+        actionLabel: "Retry",
+        showSettingsLink: true,
+      };
+    case "rate_limit":
+      return {
+        title: "Rate limited",
+        body: a.error || "Too many requests right now. Try again in a moment.",
+        actionLabel: "Retry",
+        showSettingsLink: false,
+      };
+    case "filtered":
+      return {
+        title: "Blocked by safety filter",
+        body: a.error || "The prompt or lyrics were rejected by the provider’s safety filter.",
+        actionLabel: "Edit prompt",
+        showSettingsLink: false,
+      };
+    case "unavailable":
+      return {
+        title: "Music provider not ready",
+        body: a.error || "Configure a music provider in Settings → Workspace → Media providers.",
+        actionLabel: "Retry",
+        showSettingsLink: true,
+      };
+    default:
+      return {
+        title: "Music generation failed",
+        body: a.error || "Could not generate music.",
+        actionLabel: "Retry",
+        showSettingsLink: false,
+      };
+  }
 }
 
 /** What Retry asks the persona to do for failed audio. */

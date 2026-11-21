@@ -11,6 +11,7 @@ import (
 
 	"github.com/liamphmurphy/vesper/server/internal/api"
 	"github.com/liamphmurphy/vesper/server/internal/apperr"
+	"github.com/liamphmurphy/vesper/server/internal/media"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 )
@@ -20,6 +21,30 @@ func toChatAudio(j store.ChatAudioJob, peaks []byte) api.ChatAudio {
 		Id: j.ID, Title: j.Title, DurationMs: int(j.DurationMs), Method: j.Method, Stage: api.ChatAudioStage(j.Stage), State: api.ChatAudioState(j.State), Error: j.Error,
 		ScriptPath: j.ScriptPath, Checks: []api.ChatVideoCheck{}, Percent: int(j.Percent), StageNote: j.StageNote,
 		RunId: j.RunID, MessageId: j.MessageID, LibraryItemId: j.LibraryItemID, CreatedAt: j.CreatedAt, UpdatedAt: j.UpdatedAt, FinishedAt: j.FinishedAt,
+	}
+	if j.SourceKind != "" {
+		sk := api.ChatAudioSourceKind(j.SourceKind)
+		out.SourceKind = &sk
+	}
+	if j.ProviderID != "" {
+		p := j.ProviderID
+		out.ProviderId = &p
+	}
+	if j.Prompt != "" {
+		pr := j.Prompt
+		out.Prompt = &pr
+	}
+	if j.Lyrics != "" {
+		ly := j.Lyrics
+		out.Lyrics = &ly
+	}
+	if j.SourceKind == "music" || j.Instrumental {
+		inst := j.Instrumental
+		out.Instrumental = &inst
+	}
+	if j.ErrorKind != "" {
+		ek := api.ChatAudioErrorKind(j.ErrorKind)
+		out.ErrorKind = &ek
 	}
 	if j.FailureKind != nil {
 		k := api.ChatAudioFailureKind(*j.FailureKind)
@@ -109,4 +134,51 @@ func (s *Server) GetChatAudioContent(ctx context.Context, req api.GetChatAudioCo
 
 func (r rangedResponse) VisitGetChatAudioContentResponse(w http.ResponseWriter) error {
 	return r.write(w)
+}
+
+func (s *Server) StartChatMusic(ctx context.Context, req api.StartChatMusicRequestObject) (api.StartChatMusicResponseObject, error) {
+	c, err := s.ownChat(ctx, req.Id)
+	if err != nil {
+		return nil, err
+	}
+	u, _, _ := me(ctx)
+	var in media.StartChatMusicInput
+	in.WorkspaceID = c.WorkspaceID
+	in.UserID = u.ID
+	in.ChatID = c.ID
+	if req.Body != nil {
+		in.Prompt = req.Body.Prompt
+		in.Title = deref(req.Body.Title)
+		in.Lyrics = deref(req.Body.Lyrics)
+		if req.Body.Instrumental != nil {
+			in.Instrumental = *req.Body.Instrumental
+		}
+		if req.Body.Length != nil {
+			in.Length = media.MusicLength(*req.Body.Length)
+		}
+		in.ProviderID = deref(req.Body.ProviderId)
+	}
+	job, err := s.musicRunner().StartAsync(ctx, in)
+	if err != nil {
+		return nil, err
+	}
+	return api.StartChatMusic201JSONResponse(toChatAudio(job, nil)), nil
+}
+
+func (s *Server) StopChatAudio(ctx context.Context, req api.StopChatAudioRequestObject) (api.StopChatAudioResponseObject, error) {
+	c, err := s.ownChat(ctx, req.Id)
+	if err != nil {
+		return nil, err
+	}
+	job, err := s.musicRunner().StopJob(ctx, c.WorkspaceID, c.ID, req.AudioId)
+	if err != nil {
+		return nil, err
+	}
+	var peaks []byte
+	if job.LibraryItemID != nil && job.State == "done" {
+		if l, err := s.Q.GetLibraryItem(ctx, store.GetLibraryItemParams{ID: *job.LibraryItemID, WorkspaceID: c.WorkspaceID, UserID: job.UserID}); err == nil {
+			peaks = l.Peaks
+		}
+	}
+	return api.StopChatAudio200JSONResponse(toChatAudio(job, peaks)), nil
 }
