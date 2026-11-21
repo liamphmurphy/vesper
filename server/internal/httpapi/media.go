@@ -5,11 +5,13 @@ import (
 
 	"github.com/liamphmurphy/vesper/server/internal/api"
 	"github.com/liamphmurphy/vesper/server/internal/media"
+	"github.com/liamphmurphy/vesper/server/internal/media/providers/gemini"
 	"github.com/liamphmurphy/vesper/server/internal/secrets"
 )
 
 func defaultMediaRegistry() *media.Registry {
 	reg := media.NewRegistry()
+	gemini.Register(reg)
 	media.RegisterLocalMLXPlaceholder(reg)
 	return reg
 }
