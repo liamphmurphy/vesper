@@ -12,7 +12,7 @@
 #
 # Needs: tart (brew install openai/tools/tart), Go, and ~60 GB free.
 # VESPER_MACOS_SOURCE picks the Tart image (default
-# ghcr.io/cirruslabs/macos-sequoia-xcode:latest). It must run the Tart Guest
+# ghcr.io/cirruslabs/macos-golden-gate-xcode:latest). It must run the Tart Guest
 # Agent, as every non-vanilla Cirrus Labs image does, and allow passwordless
 # sudo: the script works inside the VM with `tart exec`, not SSH.
 set -euo pipefail
@@ -21,7 +21,7 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/../.." && pwd)"
 data_dir="${VESPER_USER_DATA_DIR:-${HOME}/Library/Application Support/vesper-desktop}"
 out_dir="${1:-${data_dir}/vm/macos-golden}"
-source_image="${VESPER_MACOS_SOURCE:-ghcr.io/cirruslabs/macos-sequoia-xcode:latest}"
+source_image="${VESPER_MACOS_SOURCE:-ghcr.io/cirruslabs/macos-golden-gate-xcode:latest}"
 vm_name="vesper-macos-golden-$$"
 
 if [[ "$(uname -s)/$(uname -m)" != "Darwin/arm64" ]]; then

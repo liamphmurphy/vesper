@@ -265,7 +265,7 @@ in the Linux VM; the macOS VM only receives files and runs commands.
   fetching therefore fail there (Vesper's `macos/` package has none).
 - **Golden image.** `make mac-golden` (wrapping `deploy/microvm/macos-golden.sh`)
   installs `tart` via Homebrew if missing, pulls a Tart image with
-  Xcode (`ghcr.io/cirruslabs/macos-sequoia-xcode` by default), installs the
+  Xcode (`ghcr.io/cirruslabs/macos-golden-gate-xcode` by default), installs the
   agent and its LaunchDaemon with `tart exec` (the image must run the Tart
   Guest Agent), shuts it down and copies `disk.img`,
   `nvram.bin` and `config.json` (Tart's layout, which `microvm.LoadMacOSImage`
