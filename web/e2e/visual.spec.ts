@@ -49,7 +49,6 @@ const SCREENS: Screen[] = [
     await page.goto(`/runs/${run.id}`);
   } },
   { name: "settings", open: board("/settings") },
-  { name: "library", open: board("/library") },
   { name: "knowledge-home", open: chat("/knowledge") },
   { name: "slides-editor", open: async (page) => { await installDeck(page, [{ seq: 1, body: JSON.stringify(deckWith("Quarterly review")), author: "user" }]); } },
 ];

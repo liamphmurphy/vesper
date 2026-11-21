@@ -19,7 +19,7 @@ import { downloadFile } from "@/lib/api/docs-hooks";
 import { floatPanel } from "@/components/domain/pickers";
 import { Markdown } from "@/components/domain/markdown";
 import { PdfViewer } from "@/components/domain/pdf-viewer";
-import { isPdfContentType, pdfDownloadUrl } from "@/lib/pdf-viewer";
+import { isPdfContentType, nativePdfHref, pdfDownloadUrl } from "@/lib/pdf-viewer";
 import { Icon } from "@/components/ui/icon";
 import { Banner, Skeleton } from "@/components/ui/primitives";
 import { toast } from "@/lib/toast";
@@ -425,6 +425,7 @@ function PropValue({ v }: { v: unknown }) {
 
 /** A resolved ![[…]] preview, mounted at its position inside the editor. */
 function EmbedPreview({ embed: e }: { embed: Embed }) {
+  const router = useRouter();
   const [viewerOpen, setViewerOpen] = useState(false);
   const [page, setPage] = useState(1);
 
@@ -442,7 +443,12 @@ function EmbedPreview({ embed: e }: { embed: Embed }) {
         <span className="truncate">{e.title ?? e.ref}</span>
         {isPdf && e.url ? (
           <span className="ml-auto flex flex-none items-center gap-3">
-            <button type="button" onClick={() => setViewerOpen(true)} className="text-accent hover:underline">
+            <button
+              type="button"
+              // The Mac app opens it in its native PDF viewer (search, thumbnails, Look Up); browsers keep pdf.js.
+              onClick={() => (isNativeShell() && e.url ? router.push(nativePdfHref(e.url, e.title ?? "PDF")) : setViewerOpen(true))}
+              className="text-accent hover:underline"
+            >
               Open
             </button>
             <a href={downloadHref} download={e.title ?? "document.pdf"} className="text-fg-secondary hover:text-fg hover:underline">

@@ -44,6 +44,19 @@ final class NativeRoutesTests: XCTestCase {
         XCTAssertNil(standard.resolve("/workflows"))
     }
 
+    func testLibraryAndPDFViewerAreNative() {
+        let standard = NativeRouteRegistry.standard(debug: false)
+        let library = standard.resolve("/library?tab=videos&item=v1")
+        XCTAssertEqual(library?.screen, .library)
+        XCTAssertEqual(library?.query, ["tab": "videos", "item": "v1"])
+        XCTAssertEqual(standard.resolve("/library?source=projects&type=report")?.query["source"], "projects")
+        let pdf = standard.resolve("/pdf?src=%2Fapi%2Fv1%2Fknowledge%2Fassets%2Fa1&title=Spec")
+        XCTAssertEqual(pdf?.screen, .pdf)
+        XCTAssertEqual(pdf?.query["src"], "/api/v1/knowledge/assets/a1")
+        // Only the Library's own path: other screens under it stay on the web view until they move.
+        XCTAssertNil(standard.resolve("/library/anything"))
+    }
+
     func testOnlyInAppPathsResolve() {
         XCTAssertNil(registry.resolve("https://example.com/native-debug"))
         XCTAssertNil(registry.resolve("//evil.example/native-debug"))
@@ -93,5 +106,22 @@ final class NativeFindAndCommandTests: XCTestCase {
         XCTAssertFalse(NativeCommandRouting.isScreenCommand(.navActivate(navigatorId: "runs", itemId: "i"), navigatorId: "work-activity"))
         XCTAssertFalse(NativeCommandRouting.isScreenCommand(.navFilter(navigatorId: "work-activity", filterId: "f", value: "", checked: true)))
         XCTAssertFalse(NativeCommandRouting.isScreenCommand(.navigate(path: "/work"), navigatorId: "work-activity"))
+    }
+
+    func testNavigatorCommandsGoToTheScreenThatPublishesTheNavigator() {
+        let commands: [NativeCommand] = [
+            .navActivate(navigatorId: "library", itemId: "videos"),
+            .navAction(navigatorId: "library", actionId: "project", menuItemId: "space:PAY"),
+            .navPicker(navigatorId: "library", pickerId: "source", value: "projects"),
+            .navFilter(navigatorId: "library", filterId: "f", value: "v", checked: true),
+            .navSearch(navigatorId: "library", searchId: "library-search", value: "spec"),
+            .navToggle(navigatorId: "library", itemId: "i", expanded: true),
+        ]
+        for command in commands {
+            XCTAssertTrue(NativeCommandRouting.isScreenCommand(command, navigatorId: "library"), "\(command)")
+            // Another navigator's commands (the page's, still running underneath) stay with the page.
+            XCTAssertFalse(NativeCommandRouting.isScreenCommand(command, navigatorId: "inbox"), "\(command)")
+            XCTAssertFalse(NativeCommandRouting.isScreenCommand(command), "\(command)")
+        }
     }
 }

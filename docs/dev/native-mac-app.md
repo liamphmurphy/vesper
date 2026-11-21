@@ -442,6 +442,56 @@ The web routes and their dead code are gone; in a browser `/work` and `/runs` ar
    error row with Retry; start it and Retry.
 10. ⌘F "WEB-": matching cards tint, Return steps and scrolls. ⌘\ opens and folds the Chat companion.
 11. Open `/work?view=epics` and `/work?run=<id>` from the address: Tickets' Epics and the run's page open.
+## Native screen: Library
+
+`/library` is native (`macos/Sources/Vesper/Native/Library/`, logic in VesperCore `Native/LibraryLogic.swift` and
+`LibrarySelection.swift`, ports of `web/lib/library-ui.ts` and the helpers the web screen used). The web route,
+its navigator model and the Library-only hooks are gone; in a browser `/library` is a 404. Both halves moved:
+
+- **Yours** (keepsakes): a `LazyVGrid` per kind (Images, Videos, Audio, Files, Exports, Diagrams, Documents) with
+  the web's tiles, empty states, Show more and item dialogs (image, video and audio players with speed and loop,
+  rename, file previews, export source line, reference images), plus Links (To read/Done, Videos/Pages, Undo on
+  remove) and the Fridge (persona filter, Add a moment, Undo on delete). `?tab=…&item=…` (a chat's "Open in
+  Library") opens the tab and the item. Added natively: click, ⌘-click and ⇧-click selection, arrow keys, ⌘A,
+  Esc, Space for Quick Look over the selection (or all tiles from the focused one), Return to open, ⌘⌫ to remove,
+  a context menu per tile (bulk Quick Look and Remove for a multi-selection), and dragging a tile out: its
+  `NSItemProvider` fetches the file with the session when the drop asks for it. Double-click opens a tile (single
+  click selects, as in Finder; the web opened on click).
+- **From spaces** (`?source=projects`): a native `Table` with the type filters (counts), search and the space
+  picker in the sidebar navigator, the preview pane (outline, readers, tickets, Edit / New version / Export PDF /
+  Generate tickets), the drop zone, and native Upload, New mockup and New version sheets. The space comes from
+  `?project=` (All spaces otherwise); the web's remembered space isn't read.
+- **PDFs** open in PDFKit (`Native/PDF/PDFViewer.swift`): thumbnails, search with match count, zoom, and text
+  selection whose menu has Look Up. `/pdf?src=/api/v1/…&title=…` shows one PDF on its own with the window's find
+  bar searching it (`NativeFindModel.searcher`); web Knowledge's PDF embed **Open** goes there in the Mac app
+  (`nativePdfHref`), while browsers keep the pdf.js dialog. The inline embed on the Knowledge page is still
+  pdf.js, so `pdf-viewer.tsx` and `pdfjs-dist` stay (also used by chat PDF cards and `/artifacts/[id]`).
+- A screen can now publish the sidebar navigator (`NativeChrome.navigator`, shown over the page's
+  `ShellState.pageNavigator`); `nav.*` commands for its id go to the screen (`NativeCommandRouting`).
+
+Not ported: a video tile doesn't play a muted preview on hover; a YouTube link's card opens the video in the
+browser instead of embedding the player; dragging several selected tiles drags only the one under the pointer.
+
+1. Open Library from the sidebar: title "Library", the source picker (Yours / From spaces) and the nine tabs in
+   the sidebar, Upload in the toolbar, the Images grid with sources under each tile.
+2. Click a tile, ⇧-click another, ⌘-click a third: the selection follows; arrows move it, ⇧-arrows extend it.
+   Space opens Quick Look on the selection; Esc clears it.
+3. Double-click an image: the dialog shows it with Quick Look, Download, Remove and Use as reference; pick "Use as
+   my reference": the tile shows "You · reference"; Clear reference removes it.
+4. Right-click a tile: Quick Look, Open Details, Open Chat, Rename…, Download…, Copy Link, Remove from Library.
+   Rename it; Download saves a copy where you choose; Copy Link copies the content URL.
+5. Drag a tile to the Desktop: the real file lands there under its filename.
+6. Upload a PNG, then a `.exe`: the PNG appears; the `.exe` is refused with the web's message.
+7. Videos and Audio: double-click plays; in audio, scrub the waveform, change speed, toggle loop, rename.
+8. Files: open a `.py`, a `.csv`, a `.zip` and a PDF: text, table, file list, and the PDF in PDFKit; search a
+   word in the PDF (count, ↑/↓), toggle thumbnails, select text and choose Look Up.
+9. From a chat's video card, Open in Library: Videos opens with that video's dialog.
+10. Links: Mark done moves a card to Done; remove one, then Undo in the toast: it comes back.
+11. Fridge: filter by a persona, Add a moment, delete it, Undo.
+12. Switch the source to From spaces: filter by type (counts in the sidebar), search, switch space; select a
+    row for the preview; double-click opens the artifact; Upload two files; New mockup opens the editor.
+13. Open a Knowledge page with a PDF embed and click Open: the PDF opens natively (title in the toolbar,
+    Download); ⌘F searches it; Back returns to the page. In a browser, Open still shows the pdf.js dialog.
 
 ## Build and test
 

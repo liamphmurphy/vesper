@@ -11,7 +11,6 @@ import { buildEpicDetailNavModel } from "./models/epic-detail.ts";
 import { buildRunsNavModel } from "./models/runs.ts";
 import { buildStudyNavModel } from "./models/study.ts";
 import { buildWikiNavModel } from "./models/wiki.ts";
-import { buildKeepsakesNavModel, buildProjectDocsNavModel } from "./models/library.ts";
 import { projectPickerAction } from "./models/project-picker.ts";
 import { buildKnowledgeNavModel, K } from "./models/knowledge.ts";
 import { knowledgePageActions, KP } from "./models/knowledge-page.ts";
@@ -283,21 +282,8 @@ test("wiki: namespaces with index rows, open state, suggestions, reports, select
   json(m);
 });
 
-test("library: keepsake tabs and the project documents' filters", () => {
-  const k = buildKeepsakesNavModel({ tabs: [{ key: "images", label: "Images" }, { key: "links", label: "Links" }], tab: "links" });
-  assert.equal(k.picker.value, "yours");
-  assert.equal(k.selectedId, "links");
+test("project picker: All spaces, each active space, then Open or New space", () => {
   const action = projectPickerAction({ projects: projects.filter((x) => !x.archived), current: projects[0] });
-  const p = buildProjectDocsNavModel({
-    tabs: [{ key: "all", label: "All", href: "/library?source=projects" }, { key: "prd", label: "PRDs", href: "/library?type=prd&source=projects" }],
-    type: "prd",
-    counts: { all: 9, prd: 3 },
-    search: "q",
-    projectAction: action,
-  });
-  assert.equal(p.picker.value, "projects");
-  assert.deepEqual(p.sections[0].items.map((i) => [i.id, i.trailing, i.href]), [["all", "9", "/library?source=projects"], ["prd", "3", "/library?type=prd&source=projects"]]);
-  assert.equal(p.search.value, "q");
   assert.equal(action.label, "Space: Vesper");
   assert.deepEqual(action.menu.map((i) => i.id), ["space:", "sep-all", "space:VES", "sep-open", "space-open"]);
   assert.equal(action.menu.at(-1).label, "Open Vesper");
