@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -451,13 +452,16 @@ func truncate(s string, n int) string {
 	return s[:n]
 }
 
-// handleMediaRPC serves server.ts's media.download/status/delete. Only starting
-// a download needs app.media:download; status and delete touch only this app's
-// own downloads, so cleanup still works after the permission is revoked.
+// handleMediaRPC serves server.ts's media.download/import/status/delete. Only
+// starting a download or importing a file needs app.media:download; status and
+// delete touch only this app's own downloads, so cleanup still works after the
+// permission is revoked.
 func handleMediaRPC(ctx context.Context, mc *MCPCallContext, method string, raw json.RawMessage) (any, error) {
 	var in struct {
-		URL string `json:"url"`
-		ID  string `json:"id"`
+		URL   string `json:"url"`
+		ID    string `json:"id"`
+		JobID string `json:"job_id"`
+		Path  string `json:"path"`
 	}
 	if err := json.Unmarshal(raw, &in); err != nil {
 		return nil, err
@@ -471,6 +475,23 @@ func handleMediaRPC(ctx context.Context, mc *MCPCallContext, method string, raw 
 		}
 		return mc.Media.Start(ctx, mc.AppID, in.URL)
 	}
+	if method == "media_import" {
+		if err := checkWorkerCapability(ctx, mc, "app.media:download", fmt.Sprintf("Import video %s from Nix job into Vesper", strings.TrimSpace(in.Path))); err != nil {
+			return nil, err
+		}
+		if mc.Nix == nil {
+			return nil, errors.New("nix package runner is unavailable")
+		}
+		jobID, err := uuid.Parse(strings.TrimSpace(in.JobID))
+		if err != nil {
+			return nil, apperr.Invalid("job_id", "invalid job id")
+		}
+		absPath, cleanRel, _, err := mc.Nix.ResolveJobFile(ctx, mc.AppID, jobID, in.Path)
+		if err != nil {
+			return nil, err
+		}
+		return mc.Media.ImportFile(ctx, mc.AppID, "nix-job:"+jobID.String()+"/"+cleanRel, absPath)
+	}
 	id, err := uuid.Parse(strings.TrimSpace(in.ID))
 	if err != nil {
 		return nil, apperr.Invalid("id", "invalid media id")
@@ -482,4 +503,70 @@ func handleMediaRPC(ctx context.Context, mc *MCPCallContext, method string, raw 
 		return nil, err
 	}
 	return map[string]any{"deleted": id}, nil
+}
+
+// ImportFile validates a local video file (such as an output produced by a
+// Nix job), stores it in the blob store, and registers it in custom_app_media
+// as "done" so the app can play it immediately via PlayURL.
+func (m *Media) ImportFile(ctx context.Context, appID uuid.UUID, sourceLabel, filePath string) (MediaItem, error) {
+	if m == nil || m.Pool == nil || m.Blobs == nil {
+		return MediaItem{}, errors.New("media downloads are unavailable")
+	}
+	f, err := os.Open(filePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return MediaItem{}, apperr.ErrNotFound
+		}
+		return MediaItem{}, err
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		return MediaItem{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return MediaItem{}, apperr.Invalid("path", "imported media must be a regular file")
+	}
+	size := info.Size()
+	if size <= 0 {
+		return MediaItem{}, apperr.Invalid("path", "video file is empty")
+	}
+	if size > m.maxBytes() {
+		return MediaItem{}, apperr.Invalid("path", "video is %d MB, over the %d MB limit", size>>20, m.maxBytes()>>20)
+	}
+
+	var head [512]byte
+	n, err := io.ReadFull(f, head[:])
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return MediaItem{}, err
+	}
+	sniffed := http.DetectContentType(head[:n])
+	contentType, err := videoContentType(sniffed, &url.URL{Path: filepath.ToSlash(filePath)})
+	if err != nil {
+		return MediaItem{}, err
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return MediaItem{}, err
+	}
+
+	id := uuid.New()
+	key := fmt.Sprintf("%s/%s/%s", MediaBlobPrefix, appID, id)
+	if err := m.Blobs.Put(ctx, m.Bucket, key, f, size, contentType); err != nil {
+		return MediaItem{}, err
+	}
+	total := size
+	row, err := store.New(m.Pool).InsertCustomAppMediaDone(ctx, store.InsertCustomAppMediaDoneParams{
+		AppID:       appID,
+		SourceUrl:   truncate(sourceLabel, 1000),
+		BlobKey:     key,
+		ContentType: contentType,
+		BytesDone:   size,
+		BytesTotal:  &total,
+	})
+	if err != nil {
+		_ = m.Blobs.Delete(context.WithoutCancel(ctx), m.Bucket, key)
+		return MediaItem{}, err
+	}
+	return mediaItemFrom(row), nil
 }

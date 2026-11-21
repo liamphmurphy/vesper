@@ -20,20 +20,20 @@ LEFT JOIN custom_app_versions v ON v.app_id = a.id AND v.seq = a.current_seq
 WHERE a.workspace_id = $1 AND a.user_id = $2 AND a.slug = $3;
 
 -- name: ListCustomAppsWithMCP :many
-SELECT a.id, a.slug, a.name, a.description, a.manifest, a.capabilities, a.current_seq, v.bundle_mcp_js, v.mcp_tools
+SELECT a.id, a.slug, a.name, a.description, a.manifest, a.capabilities, a.mounts, a.current_seq, v.bundle_mcp_js, v.mcp_tools
 FROM custom_apps a
 JOIN custom_app_versions v ON v.app_id = a.id AND v.seq = a.current_seq
 WHERE a.workspace_id = $1 AND a.user_id = $2 AND v.bundle_mcp_js <> ''
 ORDER BY lower(a.name), a.id;
 
 -- name: GetCustomAppWithMCPBySlug :one
-SELECT a.id, a.workspace_id, a.user_id, a.slug, a.name, a.description, a.manifest, a.capabilities, a.current_seq, v.bundle_mcp_js, v.mcp_tools
+SELECT a.id, a.workspace_id, a.user_id, a.slug, a.name, a.description, a.manifest, a.capabilities, a.mounts, a.current_seq, v.bundle_mcp_js, v.mcp_tools
 FROM custom_apps a
 JOIN custom_app_versions v ON v.app_id = a.id AND v.seq = a.current_seq
 WHERE a.workspace_id = $1 AND a.user_id = $2 AND a.slug = $3;
 
 -- name: GetCustomAppWithMCPByID :one
-SELECT a.id, a.workspace_id, a.user_id, a.slug, a.name, a.description, a.manifest, a.capabilities, a.current_seq, v.bundle_mcp_js, v.mcp_tools
+SELECT a.id, a.workspace_id, a.user_id, a.slug, a.name, a.description, a.manifest, a.capabilities, a.mounts, a.current_seq, v.bundle_mcp_js, v.mcp_tools
 FROM custom_apps a
 JOIN custom_app_versions v ON v.app_id = a.id AND v.seq = a.current_seq
 WHERE a.workspace_id = $1 AND a.user_id = $2 AND a.id = $3;
@@ -44,8 +44,8 @@ WHERE workspace_id = $1 AND user_id = $2 AND slug = $3
 FOR UPDATE;
 
 -- name: InsertCustomApp :one
-INSERT INTO custom_apps (workspace_id, user_id, slug, name, description, icon, space_id, current_seq, manifest, capabilities)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+INSERT INTO custom_apps (workspace_id, user_id, slug, name, description, icon, space_id, current_seq, manifest, capabilities, mounts)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 RETURNING *;
 
 -- name: UpdateCustomAppHead :one
@@ -57,6 +57,12 @@ RETURNING *;
 -- name: UpdateCustomAppCapabilities :one
 UPDATE custom_apps
 SET capabilities = $2, updated_at = now()
+WHERE workspace_id = $1 AND user_id = $3 AND slug = $4
+RETURNING *;
+
+-- name: UpdateCustomAppMounts :one
+UPDATE custom_apps
+SET mounts = $2, updated_at = now()
 WHERE workspace_id = $1 AND user_id = $3 AND slug = $4
 RETURNING *;
 
@@ -124,6 +130,11 @@ INSERT INTO custom_app_media (app_id, source_url, state, blob_key, content_type,
 VALUES (@app_id, @source_url, 'downloading', @blob_key, @content_type, @bytes_total)
 RETURNING *;
 
+-- name: InsertCustomAppMediaDone :one
+INSERT INTO custom_app_media (app_id, source_url, state, blob_key, content_type, bytes_done, bytes_total)
+VALUES (@app_id, @source_url, 'done', @blob_key, @content_type, @bytes_done, @bytes_total)
+RETURNING *;
+
 -- name: GetCustomAppMedia :one
 SELECT * FROM custom_app_media WHERE id = @id AND app_id = @app_id;
 
@@ -143,3 +154,34 @@ RETURNING blob_key;
 
 -- name: ListCustomAppMediaBlobKeys :many
 SELECT id, blob_key FROM custom_app_media WHERE app_id = @app_id;
+
+-- name: InsertCustomAppNixJob :one
+INSERT INTO custom_app_nix_jobs (app_id, packages, command, state, work_dir)
+VALUES (@app_id, @packages, @command, 'resolving', @work_dir)
+RETURNING *;
+
+-- name: GetCustomAppNixJob :one
+SELECT * FROM custom_app_nix_jobs WHERE id = @id AND app_id = @app_id;
+
+-- name: SetCustomAppNixJobRunning :exec
+UPDATE custom_app_nix_jobs
+SET state = 'running', work_dir = @work_dir, updated_at = now()
+WHERE id = @id AND state = 'resolving';
+
+-- name: UpdateCustomAppNixJobOutput :exec
+UPDATE custom_app_nix_jobs
+SET stdout = @stdout, stderr = @stderr, updated_at = now()
+WHERE id = @id AND state IN ('resolving', 'running');
+
+-- name: FinishCustomAppNixJob :execrows
+-- Only an active job can finish, so a deleted row stays gone.
+UPDATE custom_app_nix_jobs
+SET state = @state, exit_code = @exit_code, stdout = @stdout, stderr = @stderr, error = @error, updated_at = now()
+WHERE id = @id AND state IN ('resolving', 'running');
+
+-- name: DeleteCustomAppNixJob :one
+DELETE FROM custom_app_nix_jobs WHERE id = @id AND app_id = @app_id
+RETURNING work_dir;
+
+-- name: ListCustomAppNixJobWorkDirs :many
+SELECT id, work_dir FROM custom_app_nix_jobs WHERE app_id = @app_id;

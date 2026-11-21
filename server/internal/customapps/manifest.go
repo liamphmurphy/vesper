@@ -3,6 +3,7 @@ package customapps
 import (
 	"encoding/json"
 	"path"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -13,13 +14,16 @@ import (
 )
 
 const (
-	MaxFiles            = 20
-	MaxTotalFileBytes   = 10 << 20
-	MaxSQLiteBytes      = 25 << 20
-	MaxNameRunes        = 80
-	MaxDescriptionRunes = 500
-	MaxInstructions     = 4000
-	MaxNavItems         = 32
+	MaxFiles                 = 20
+	MaxTotalFileBytes        = 10 << 20
+	MaxSQLiteBytes           = 25 << 20
+	MaxNameRunes             = 80
+	MaxDescriptionRunes      = 500
+	MaxInstructions          = 4000
+	MaxNavItems              = 32
+	MaxMounts                = 16
+	MaxMountPathBytes        = 1024
+	MaxMountDescriptionRunes = 200
 
 	ToolScopeChats   = "chats"
 	ToolScopeAppOnly = "app_only"
@@ -33,11 +37,14 @@ const MaxStoredVersions = 10
 const MaxEditsPerUpdate = 100
 
 var (
-	slugRE    = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,47}$`)
-	iconRE    = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
-	mcpCap    = regexp.MustCompile(`^mcp:([a-z0-9][a-z0-9-]{0,63}):(\*|[A-Za-z0-9_.:-]{1,128})$`)
-	secretCap = regexp.MustCompile(`^secret:(\*|[a-z0-9][a-z0-9-]{0,35})$`)
-	toolRe    = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,128}$`)
+	slugRE       = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,47}$`)
+	iconRE       = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
+	mcpCap       = regexp.MustCompile(`^mcp:([a-z0-9][a-z0-9-]{0,63}):(\*|[A-Za-z0-9_.:-]{1,128})$`)
+	secretCap    = regexp.MustCompile(`^secret:(\*|[a-z0-9][a-z0-9-]{0,35})$`)
+	nixPkgNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$`)
+	nixCap       = regexp.MustCompile(`^nix:([A-Za-z0-9][A-Za-z0-9._+-]{0,63})$`)
+	mountNameRE  = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,47}$`)
+	toolRe       = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,128}$`)
 )
 
 // reservedSlugs protects built-in workbench routes; "finance" is explicitly allowed.
@@ -59,13 +66,21 @@ type MCPToolSpec struct {
 
 type Capabilities map[string]agentdef.Mode
 
+type MountRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+type Mounts map[string]string
+
 type Manifest struct {
-	Entry                 string       `json:"entry"`
-	MCPEntry              string       `json:"mcp_entry,omitempty"`
-	ToolScope             string       `json:"tool_scope"`
-	Instructions          string       `json:"instructions,omitempty"`
-	Nav                   []NavItem    `json:"nav,omitempty"`
-	RequestedCapabilities Capabilities `json:"requested_capabilities,omitempty"`
+	Entry                 string         `json:"entry"`
+	MCPEntry              string         `json:"mcp_entry,omitempty"`
+	ToolScope             string         `json:"tool_scope"`
+	Instructions          string         `json:"instructions,omitempty"`
+	Nav                   []NavItem      `json:"nav,omitempty"`
+	RequestedCapabilities Capabilities   `json:"requested_capabilities,omitempty"`
+	RequestedMounts       []MountRequest `json:"requested_mounts,omitempty"`
 }
 
 func ValidSlug(slug string) (string, error) {
@@ -107,6 +122,22 @@ func ValidateIcon(icon string) (string, error) {
 	return s, nil
 }
 
+func ValidNixPackage(name string) (string, error) {
+	s := strings.TrimSpace(name)
+	if s == "." || s == ".." || !nixPkgNameRE.MatchString(s) {
+		return "", apperr.Invalid("packages", "invalid nix package name %q", name)
+	}
+	return s, nil
+}
+
+func ValidMountName(name string) (string, error) {
+	s := strings.TrimSpace(name)
+	if !mountNameRE.MatchString(s) {
+		return "", apperr.Invalid("mounts", "mount name %q must be 1–48 lowercase letters, digits, hyphens, or underscores starting with a letter or digit", name)
+	}
+	return s, nil
+}
+
 func ValidCapabilityKey(key string) error {
 	switch key {
 	case "app.sql:read", "app.sql:write", "app.http:outbound", "app.media:download", "vesper.api:read", "vesper.api:write":
@@ -115,8 +146,39 @@ func ValidCapabilityKey(key string) error {
 		if mcpCap.MatchString(key) || secretCap.MatchString(key) {
 			return nil
 		}
+		if m := nixCap.FindStringSubmatch(key); len(m) == 2 && m[1] != "." && m[1] != ".." {
+			return nil
+		}
 		return apperr.Invalid("capabilities", "unknown capability %q", key)
 	}
+}
+
+func NormalizeMounts(mounts Mounts) (Mounts, error) {
+	if len(mounts) > MaxMounts {
+		return nil, apperr.Invalid("mounts", "at most %d mounts allowed", MaxMounts)
+	}
+	out := make(Mounts, len(mounts))
+	for rawName, rawPath := range mounts {
+		name, err := ValidMountName(rawName)
+		if err != nil {
+			return nil, err
+		}
+		p := strings.TrimSpace(rawPath)
+		if p == "" {
+			continue
+		}
+		if len(p) > MaxMountPathBytes || !utf8.ValidString(p) || strings.ContainsAny(p, "\x00\r\n") {
+			return nil, apperr.Invalid("mounts", "mount %q has an invalid path", name)
+		}
+		if !filepath.IsAbs(p) && !(strings.HasPrefix(p, "~/") && len(p) > 2) {
+			return nil, apperr.Invalid("mounts", "mount %q path must be an absolute path or ~/...", name)
+		}
+		if _, dup := out[name]; dup {
+			return nil, apperr.Invalid("mounts", "duplicate mount name %q", name)
+		}
+		out[name] = p
+	}
+	return out, nil
 }
 
 func ValidMode(mode agentdef.Mode) error {
@@ -341,7 +403,34 @@ func NormalizeManifest(m Manifest, files map[string]string) (Manifest, error) {
 			}
 		}
 	}
+	if len(m.RequestedMounts) > MaxMounts {
+		return Manifest{}, apperr.Invalid("manifest", "at most %d requested mounts allowed", MaxMounts)
+	}
+	seenMounts := make(map[string]struct{}, len(m.RequestedMounts))
+	for i := range m.RequestedMounts {
+		name, err := ValidMountName(m.RequestedMounts[i].Name)
+		if err != nil {
+			return Manifest{}, apperr.Invalid("manifest", "requested_mounts[%d].name invalid", i)
+		}
+		if _, dup := seenMounts[name]; dup {
+			return Manifest{}, apperr.Invalid("manifest", "duplicate requested mount %q", name)
+		}
+		seenMounts[name] = struct{}{}
+		m.RequestedMounts[i].Name = name
+		m.RequestedMounts[i].Description = strings.TrimSpace(m.RequestedMounts[i].Description)
+		if utf8.RuneCountInString(m.RequestedMounts[i].Description) > MaxMountDescriptionRunes {
+			return Manifest{}, apperr.Invalid("manifest", "requested_mounts[%d].description exceeds %d characters", i, MaxMountDescriptionRunes)
+		}
+	}
 	return m, nil
+}
+
+func decodeMounts(raw json.RawMessage) Mounts {
+	out := Mounts{}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &out)
+	}
+	return out
 }
 
 func decodeManifest(raw json.RawMessage) Manifest {

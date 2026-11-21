@@ -54,6 +54,7 @@ type MCPCallContext struct {
 	Slug              string
 	AppName           string
 	Capabilities      Capabilities
+	Mounts            Mounts
 	BundleJS          string
 	Interactive       bool
 	Approved          bool
@@ -69,8 +70,10 @@ type MCPCallContext struct {
 	PublicFetch       func(ctx context.Context, req usersecrets.Request) (usersecrets.Response, error)
 	NodeBinary        string
 
-	// Media serves media.download/status/delete; nil reports them unavailable.
+	// Media serves media.download/import/status/delete; nil reports them unavailable.
 	Media *Media
+	// Nix serves nix.start/run/status/cancel/delete/readFile; nil reports them unavailable.
+	Nix *Nix
 }
 
 type workerInitMsg struct {
@@ -423,8 +426,11 @@ func handleWorkerRPC(ctx context.Context, mc *MCPCallContext, method string, raw
 		}
 		return mc.APICall(ctx, m, in.Path, in.Body)
 
-	case "media_download", "media_status", "media_delete":
+	case "media_download", "media_import", "media_status", "media_delete":
 		return handleMediaRPC(ctx, mc, method, raw)
+
+	case "nix_start", "nix_run", "nix_status", "nix_cancel", "nix_delete", "nix_read_file":
+		return handleNixRPC(ctx, mc, method, raw)
 
 	case "http_fetch":
 		var in struct {

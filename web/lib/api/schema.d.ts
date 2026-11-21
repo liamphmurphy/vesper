@@ -9769,6 +9769,13 @@ export interface components {
         CustomAppCapabilities: {
             [key: string]: components["schemas"]["CustomAppCapabilityMode"];
         };
+        CustomAppMountRequest: {
+            name: string;
+            description?: string;
+        };
+        CustomAppMounts: {
+            [key: string]: string;
+        };
         CustomAppMCPTool: {
             name: string;
             description: string;
@@ -9784,6 +9791,7 @@ export interface components {
             instructions?: string;
             nav?: components["schemas"]["CustomAppNavItem"][];
             requested_capabilities?: components["schemas"]["CustomAppCapabilities"];
+            requested_mounts?: components["schemas"]["CustomAppMountRequest"][];
         };
         CustomAppSummary: {
             /** Format: uuid */
@@ -9797,6 +9805,7 @@ export interface components {
             current_seq: number;
             manifest: components["schemas"]["CustomAppManifest"];
             capabilities: components["schemas"]["CustomAppCapabilities"];
+            mounts?: components["schemas"]["CustomAppMounts"];
             db_size_bytes: number;
             has_mcp_server: boolean;
             mcp_tools?: components["schemas"]["CustomAppMCPTool"][];
@@ -9848,6 +9857,7 @@ export interface components {
             current_seq: number;
             manifest: components["schemas"]["CustomAppManifest"];
             capabilities: components["schemas"]["CustomAppCapabilities"];
+            mounts?: components["schemas"]["CustomAppMounts"];
             db_size_bytes: number;
             has_mcp_server: boolean;
             mcp_tools?: components["schemas"]["CustomAppMCPTool"][];
@@ -9871,6 +9881,7 @@ export interface components {
                 [key: string]: string;
             };
             capabilities?: components["schemas"]["CustomAppCapabilities"];
+            mounts?: components["schemas"]["CustomAppMounts"];
             note?: string;
         };
         UpdateCustomApp: {
@@ -9884,6 +9895,7 @@ export interface components {
             replace_files?: boolean;
             remove_files?: string[];
             capabilities?: components["schemas"]["CustomAppCapabilities"];
+            mounts?: components["schemas"]["CustomAppMounts"];
             note?: string;
             restore_seq?: number;
         };
