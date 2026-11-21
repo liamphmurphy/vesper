@@ -25653,6 +25653,30 @@ extension API {
         }
     }
 
+    public struct UnreadInboxItemBody: Codable, Sendable, Equatable {
+        public var id: Swift.String
+
+        public init(
+            id: Swift.String
+        ) {
+            self.id = id
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case id
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.id = try c.decode(Swift.String.self, forKey: .id)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(id, forKey: .id)
+        }
+    }
+
     public struct SetBackupEncryptionBody: Codable, Sendable, Equatable {
         public var password: Swift.String
 

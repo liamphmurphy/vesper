@@ -2161,6 +2161,17 @@ extension API {
         )
     }
 
+    /// Undo marking an inbox item done, so it is open again (if it is still unresolved)
+    ///
+    /// `POST /inbox/unread`
+    public static func unreadInboxItem(body: UnreadInboxItemBody) -> APIRequest<APIEmpty> {
+        return APIRequest(
+            method: "POST", template: "/inbox/unread",
+            path: "/api/v1/inbox/unread",
+            query: [], headers: [:], body: APIRequestBody.json(body), decode: .empty
+        )
+    }
+
     /// Whether instance exports are encrypted with a backup password
     ///
     /// `GET /instance/backup-encryption`

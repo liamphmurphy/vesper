@@ -104,6 +104,19 @@ func TestAttentionAndCrossTabApproval(t *testing.T) {
 			t.Fatal("read state did not persist")
 		}
 	}
+	// Undo: the item is open again.
+	if _, err = srv.UnreadInboxItem(authctx, api.UnreadInboxItemRequestObject{Body: &api.UnreadInboxItemJSONRequestBody{Id: id}}); err != nil {
+		t.Fatal(err)
+	}
+	inbox, err = srv.ListInbox(authctx, api.ListInboxRequestObject{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range inbox.(api.ListInbox200JSONResponse).Items {
+		if item.Id == id && item.Read {
+			t.Fatal("unread did not reopen the item")
+		}
+	}
 
 	// Human mentions are matched by @email-local-part or @full name, with
 	// self-comments excluded and read state isolated per user.
