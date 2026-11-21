@@ -37,6 +37,7 @@ func (s *Server) agentDeps() agentapi.Deps {
 		},
 		Files: s,
 		PDF:   s.DesignWorker,
+		Music: s.musicRunner(),
 		DiscardPush: func(ctx context.Context, r store.PushRequest) {
 			if s.Secrets == nil || r.StagingRef == nil || *r.StagingRef == "" {
 				return

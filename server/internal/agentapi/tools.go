@@ -23,6 +23,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/connectors"
 	"github.com/liamphmurphy/vesper/server/internal/customapps"
 	"github.com/liamphmurphy/vesper/server/internal/designs"
+	"github.com/liamphmurphy/vesper/server/internal/media"
 	"github.com/liamphmurphy/vesper/server/internal/pageview"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/store"
@@ -46,6 +47,8 @@ type Deps struct {
 	Files FileKeeper
 	// PDF renders HTML/CSS into a PDF via the design worker (render_pdf); nil when unconfigured.
 	PDF PDFRenderer
+	// Music runs generate_music against the configured workspace media provider; nil when unconfigured.
+	Music *media.MusicRunner
 	// DiscardPush removes a superseded staging branch on GitHub, best effort.
 	DiscardPush func(ctx context.Context, r store.PushRequest)
 }
@@ -1044,6 +1047,7 @@ var Tools = []Tool{
 	define("save_file", "Keep a file you made in the person's Library under Files: a script, a zip, a spreadsheet, a CSV. Give its text, or base64 data for a binary, at most 25 MB. Executables and disk images are refused. It is only kept, never run.", saveFile),
 	define("render_pdf", "Render styled HTML and CSS into a polished PDF in an offline sandboxed renderer, save it to the person's Library under Files, and return PNG previews of the rendered pages so you can visually inspect layout and page breaks. Embed Knowledge attachment images with <img src=\"attachment:<asset-id>\"> or <img src=\"attachment:<asset-id>/<filename>\"> (copied from ![[attachment:...]]), or Library images with <img src=\"library:<library_item_id>\">; the server inlines them as data: URIs before rendering. Bundled offline fonts: Inter, Liberation Serif, Liberation Sans, Liberation Mono. Pass preview_only: true to inspect before saving, or attach_to_knowledge: true to also get a ![[attachment:...]] embed for Knowledge pages.", renderPDF),
 	define("start_audio", "Start audio you'll render with code in this chat's workspace (MIDI through a soundfont, a synth script, ffmpeg). The chat shows a card that follows its stages; returns the audio_id and where the renderer writes its progress and the finished file. You can't hear audio: say so, and check numbers instead.", startAudio),
+	define("generate_music", "Generate music directly using the workspace's configured media provider (e.g. Gemini Lyria). Works in any chat (coding or non-coding), shows a live music card in the chat, and saves the finished track to the person's Library. Prefer this over start_audio when the person asks for generated music and a provider is configured.", generateMusic),
 	define("update_audio", "Move audio on: stage render as the renderer starts, check once the file is written (with the numbers you measured on it).", updateAudio),
 	define("finish_audio", "Save the finished audio once its file is written; Vesper stores it in the chat and the person's Library.", finishAudio),
 	define("fail_audio", "End audio that can't be finished, with what went wrong and the failing command's log tail. The card shows the error.", failAudio),

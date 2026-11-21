@@ -2,12 +2,16 @@ package agentapi
 
 import (
 	"context"
+	"errors"
 	"path"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
 	"github.com/liamphmurphy/vesper/server/internal/agents"
 	"github.com/liamphmurphy/vesper/server/internal/apperr"
+	"github.com/liamphmurphy/vesper/server/internal/media"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 )
@@ -138,4 +142,81 @@ func failAudio(ctx context.Context, d Deps, c agents.Caller, in FailAudioIn) (an
 		return nil, err
 	}
 	return map[string]any{"audio_id": job.ID, "state": job.State, "stage": job.Stage}, nil
+}
+
+type GenerateMusicIn struct {
+	Title        string `json:"title,omitempty" jsonschema:"Optional track title, up to 200 characters (auto-named from prompt if omitted)"`
+	Prompt       string `json:"prompt" jsonschema:"Detailed music prompt (style, mood, tempo, instruments; 1–4000 characters)"`
+	Lyrics       string `json:"lyrics,omitempty" jsonschema:"Optional lyrics when instrumental is false, up to 8000 characters"`
+	Instrumental bool   `json:"instrumental,omitempty" jsonschema:"Set true for purely instrumental music without vocals"`
+	Length       string `json:"length,omitempty" jsonschema:"clip (30s preview, default) or full (full track)"`
+}
+
+func generateMusic(ctx context.Context, d Deps, c agents.Caller, in GenerateMusicIn) (any, error) {
+	prompt := strings.TrimSpace(in.Prompt)
+	if n := utf8.RuneCountInString(prompt); n < 1 || n > media.MaxMusicPromptRunes {
+		return nil, apperr.Invalid("prompt", "provide 1–%d characters", media.MaxMusicPromptRunes)
+	}
+	title := strings.TrimSpace(strings.ReplaceAll(in.Title, "\n", " "))
+	if utf8.RuneCountInString(title) > media.MaxMusicTitleRunes {
+		return nil, apperr.Invalid("title", "at most %d characters", media.MaxMusicTitleRunes)
+	}
+	if !in.Instrumental && utf8.RuneCountInString(strings.TrimSpace(in.Lyrics)) > media.MaxMusicLyricsRunes {
+		return nil, apperr.Invalid("lyrics", "at most %d characters", media.MaxMusicLyricsRunes)
+	}
+	length := media.MusicLength(strings.TrimSpace(in.Length))
+	if length == "" {
+		length = media.LengthClip
+	}
+	if length != media.LengthClip && length != media.LengthFull {
+		return nil, apperr.Invalid("length", "use clip or full")
+	}
+	if err := audioChat(ctx, d, c); err != nil {
+		return nil, err
+	}
+	if d.Music == nil {
+		return nil, apperr.Conflict("music generation is not available on this server")
+	}
+	run, chat, turn, err := d.Runs.ChatTurnForMusic(ctx, c.Agent.WorkspaceID, *c.RunID)
+	if err != nil {
+		return nil, err
+	}
+	job, err := d.Music.RunSync(ctx, media.StartChatMusicInput{
+		WorkspaceID:  c.Agent.WorkspaceID,
+		UserID:       chat.CreatedBy,
+		ChatID:       chat.ID,
+		RunID:        &run.ID,
+		TurnID:       &turn.ID,
+		PersonaID:    runs.ChatSpeakerID(chat),
+		Title:        title,
+		Prompt:       prompt,
+		Lyrics:       in.Lyrics,
+		Instrumental: in.Instrumental,
+		Length:       length,
+	})
+	if err != nil {
+		if job.ID == uuid.Nil || errors.Is(err, context.Canceled) {
+			return nil, err
+		}
+		errMsg := ""
+		if job.Error != nil {
+			errMsg = *job.Error
+		}
+		return map[string]any{
+			"audio_id":        job.ID,
+			"state":           job.State,
+			"error_kind":      job.ErrorKind,
+			"error":           errMsg,
+			"tell_the_person": "Music generation failed; the card in the chat shows the error and Retry/Settings actions. Tell the person plainly what went wrong.",
+		}, nil
+	}
+	return map[string]any{
+		"audio_id":        job.ID,
+		"library_item_id": job.LibraryItemID,
+		"title":           job.Title,
+		"duration_ms":     job.OutputDurationMs,
+		"provider":        job.Method,
+		"state":           job.State,
+		"tell_the_person": "The finished track is on the music card in this chat and saved to the person's Library. Don't embed or link raw audio paths; describe what you generated and let them listen.",
+	}, nil
 }

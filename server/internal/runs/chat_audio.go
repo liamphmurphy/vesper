@@ -220,6 +220,34 @@ func (s *Service) audioTurn(ctx context.Context, q *store.Queries, ws, runID uui
 	return s.codingChatTurn(ctx, q, ws, runID, "audio", "Rendering audio")
 }
 
+// ChatTurnForMusic validates that runID is an active chat turn capable of hosting a
+// generate_music job. Unlike start_audio, music generation works in non-coding chats too.
+func (s *Service) ChatTurnForMusic(ctx context.Context, ws, runID uuid.UUID) (store.Run, store.ChatSession, store.RunTurn, error) {
+	q := store.New(s.Pool)
+	run, err := q.GetRun(ctx, store.GetRunParams{ID: runID, WorkspaceID: ws})
+	if err != nil {
+		return run, store.ChatSession{}, store.RunTurn{}, err
+	}
+	if run.Purpose != "chat" {
+		return run, store.ChatSession{}, store.RunTurn{}, apperr.Conflict("generate_music only works in a chat")
+	}
+	if run.State != "running" {
+		return run, store.ChatSession{}, store.RunTurn{}, apperr.Conflict("generate_music only works while you are answering a message")
+	}
+	chat, err := q.ChatSessionForRun(ctx, &run.ID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return run, chat, store.RunTurn{}, apperr.Conflict("this chat run is no longer attached to a chat")
+	}
+	if err != nil {
+		return run, chat, store.RunTurn{}, err
+	}
+	turn, err := q.RunningChatTurn(ctx, run.ID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return run, chat, turn, apperr.Conflict("generate_music only works while you are answering a message")
+	}
+	return run, chat, turn, err
+}
+
 // cleanAudioMethod trims the one line that says how the audio was made, e.g.
 // "MIDI → FluidSynth (GeneralUser GS)".
 func cleanAudioMethod(m string) (string, error) {
