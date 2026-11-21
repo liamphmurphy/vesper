@@ -15,7 +15,7 @@ import (
 const boardTickets = `-- name: BoardTickets :many
 WITH ranked AS (
  SELECT t.id, t.key, t.number, t.title, t.status, t.priority, t.due_date, t.estimate_points,
- t.pr_number, t.pr_state, t.updated_at, t.sort_order,
+ t.pr_number, t.pr_state, t.pr_url, t.updated_at, t.sort_order,
  p.key AS project_key, e.id AS epic_id, e.name AS epic_name,
  a.id AS agent_id, a.name AS agent_name, a.handle AS agent_handle, a.color_index AS agent_color_index,
  (SELECT count(*) FROM ticket_dependencies d JOIN tickets b ON b.id=d.blocker_id WHERE d.ticket_id=t.id AND b.status <> 'done')::int AS unmet_dependencies,
@@ -34,7 +34,7 @@ WITH ranked AS (
  AND ($4::text IS NULL OR a.handle=$4)
  AND ($5::bool OR t.status <> 'canceled')
 )
-SELECT id, key, number, title, status, priority, due_date, estimate_points, pr_number, pr_state, updated_at, sort_order, project_key, epic_id, epic_name, agent_id, agent_name, agent_handle, agent_color_index, unmet_dependencies, criteria_total, criteria_done, column_count, column_points, row_num FROM ranked WHERE status NOT IN ('done','canceled') OR row_num <= 50
+SELECT id, key, number, title, status, priority, due_date, estimate_points, pr_number, pr_state, pr_url, updated_at, sort_order, project_key, epic_id, epic_name, agent_id, agent_name, agent_handle, agent_color_index, unmet_dependencies, criteria_total, criteria_done, column_count, column_points, row_num FROM ranked WHERE status NOT IN ('done','canceled') OR row_num <= 50
 ORDER BY status, row_num
 `
 
@@ -57,6 +57,7 @@ type BoardTicketsRow struct {
 	EstimatePoints    *int32
 	PrNumber          *int32
 	PrState           *string
+	PrUrl             *string
 	UpdatedAt         time.Time
 	SortOrder         float64
 	ProjectKey        string
@@ -100,6 +101,7 @@ func (q *Queries) BoardTickets(ctx context.Context, arg BoardTicketsParams) ([]B
 			&i.EstimatePoints,
 			&i.PrNumber,
 			&i.PrState,
+			&i.PrUrl,
 			&i.UpdatedAt,
 			&i.SortOrder,
 			&i.ProjectKey,

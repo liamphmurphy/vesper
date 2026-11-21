@@ -672,7 +672,7 @@ func (q *Queries) ListTicketComments(ctx context.Context, ticketID uuid.UUID) ([
 const listTickets = `-- name: ListTickets :many
 SELECT
   t.id, t.key, t.number, t.title, t.status, t.priority, t.due_date, t.estimate, t.estimate_points,
-  t.pr_number, t.pr_state, t.sort_order, t.created_at, t.updated_at,
+  t.pr_number, t.pr_state, t.pr_url, t.sort_order, t.created_at, t.updated_at,
   (SELECT count(*) FROM ticket_dependencies d JOIN tickets b ON b.id=d.blocker_id WHERE d.ticket_id=t.id AND b.status<>'done')::int AS unmet_dependencies,
   p.key AS project_key, p.color AS project_color,
   e.id AS epic_id, e.name AS epic_name,
@@ -735,6 +735,7 @@ type ListTicketsRow struct {
 	EstimatePoints    *int32
 	PrNumber          *int32
 	PrState           *string
+	PrUrl             *string
 	SortOrder         float64
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
@@ -783,6 +784,7 @@ func (q *Queries) ListTickets(ctx context.Context, arg ListTicketsParams) ([]Lis
 			&i.EstimatePoints,
 			&i.PrNumber,
 			&i.PrState,
+			&i.PrUrl,
 			&i.SortOrder,
 			&i.CreatedAt,
 			&i.UpdatedAt,

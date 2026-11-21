@@ -259,6 +259,10 @@ func (s *Service) Dispatch(ctx context.Context, ws, userID uuid.UUID, keys []str
 // transaction, which must already hold the ticket's project lock
 // (tracker.LockTicketProjects). field names the request field in errors.
 func dispatchTicket(ctx context.Context, q *store.Queries, ws, userID uuid.UUID, key, field string) (store.Run, error) {
+	return dispatchTicketWithPrompt(ctx, q, ws, userID, key, field, "")
+}
+
+func dispatchTicketWithPrompt(ctx context.Context, q *store.Queries, ws, userID uuid.UUID, key, field, extraPrompt string) (store.Run, error) {
 	t, err := q.LockTicketByKey(ctx, store.LockTicketByKeyParams{WorkspaceID: ws, Key: strings.ToUpper(strings.TrimSpace(key))})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return store.Run{}, apperr.Invalid(field, "no ticket %s", key)
@@ -311,7 +315,11 @@ func dispatchTicket(ctx context.Context, q *store.Queries, ws, userID uuid.UUID,
 	if err := q.SetRunDispatcher(ctx, store.SetRunDispatcherParams{ID: run.ID, DispatchedByUserID: &userID}); err != nil {
 		return store.Run{}, err
 	}
-	if _, err := q.StartTurn(ctx, store.StartTurnParams{RunID: run.ID, Trigger: "start", InputMessage: StartPrompt(t.Key)}); err != nil {
+	input := StartPrompt(t.Key)
+	if extraPrompt != "" {
+		input += "\n\n" + strings.TrimSpace(extraPrompt)
+	}
+	if _, err := q.StartTurn(ctx, store.StartTurnParams{RunID: run.ID, Trigger: "start", InputMessage: input}); err != nil {
 		return store.Run{}, err
 	}
 	if err := event(ctx, q, run.ID, "lifecycle", map[string]any{"state": "queued", "mode": "managed"}); err != nil {

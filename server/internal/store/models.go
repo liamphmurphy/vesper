@@ -1370,6 +1370,23 @@ type PlaygroundSpec struct {
 	UpdatedAt       time.Time
 }
 
+type PrFeedback struct {
+	WorkspaceID       uuid.UUID
+	PrUrl             string
+	HeadSha           string
+	PrEtag            string
+	ChecksEtag        string
+	ReviewsEtag       string
+	CiState           string
+	FailedChecksCount int32
+	FailedChecks      json.RawMessage
+	UnresolvedThreads int32
+	ReviewThreads     json.RawMessage
+	CiFailedAt        *time.Time
+	ReviewUpdatedAt   *time.Time
+	UpdatedAt         time.Time
+}
+
 type Project struct {
 	ID            uuid.UUID
 	WorkspaceID   uuid.UUID

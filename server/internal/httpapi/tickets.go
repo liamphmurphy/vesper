@@ -2,14 +2,17 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/oapi-codegen/nullable"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
 	"github.com/liamphmurphy/vesper/server/internal/api"
+	"github.com/liamphmurphy/vesper/server/internal/apperr"
 	"github.com/liamphmurphy/vesper/server/internal/auth"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 	"github.com/liamphmurphy/vesper/server/internal/tracker"
@@ -84,20 +87,34 @@ func (s *Server) ListTickets(ctx context.Context, req api.ListTicketsRequestObje
 		return nil, err
 	}
 	ids := make([]uuid.UUID, len(rows))
+	var prURLs []string
 	for i, r := range rows {
 		ids[i] = r.ID
+		if r.PrUrl != nil && *r.PrUrl != "" {
+			prURLs = append(prURLs, *r.PrUrl)
+		}
 	}
 	labels, err := s.labelsByTicket(ctx, ids)
 	if err != nil {
 		return nil, err
 	}
+	feedbackByURL, err := s.prFeedbackByURLs(ctx, ws, prURLs)
+	if err != nil {
+		return nil, err
+	}
 	out := api.ListTickets200JSONResponse{Tickets: make([]api.TicketSummary, 0, len(rows))}
 	for _, r := range rows {
+		pr := toPR(r.PrNumber, r.PrState, nil, nil, nil)
+		if pr != nil && r.PrUrl != nil {
+			if fb, ok := feedbackByURL[*r.PrUrl]; ok {
+				pr.Feedback = toPRFeedback(fb)
+			}
+		}
 		t := api.TicketSummary{
 			Id: r.ID, Key: r.Key, ProjectKey: r.ProjectKey, Title: r.Title,
 			UnmetDependencies: int(r.UnmetDependencies), Status: api.TicketStatus(r.Status), Priority: api.Priority(r.Priority),
 			Labels: labels[r.ID], DueDate: toDate(r.DueDate),
-			Pr:            toPR(r.PrNumber, r.PrState, nil, nil, nil),
+			Pr:            pr,
 			CriteriaTotal: int(r.CriteriaTotal), CriteriaDone: int(r.CriteriaDone), UpdatedAt: r.UpdatedAt,
 		}
 		if r.EstimatePoints != nil {
@@ -142,6 +159,13 @@ func (s *Server) ticketDetail(ctx context.Context, ws uuid.UUID, t store.Ticket)
 		Estimate: t.Estimate, DueDate: toDate(t.DueDate), Branch: t.Branch,
 		Pr:        withSync(toPR(t.PrNumber, t.PrState, t.PrUrl, t.PrAdditions, t.PrDeletions), t),
 		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt, RequiresMockup: t.RequiresMockup, EpicReview: t.EpicReview,
+	}
+	if out.Pr != nil && t.PrUrl != nil && *t.PrUrl != "" {
+		if fb, err := s.Q.GetPRFeedback(ctx, store.GetPRFeedbackParams{WorkspaceID: ws, PrUrl: *t.PrUrl}); err == nil {
+			out.Pr.Feedback = toPRFeedback(fb)
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return api.Ticket{}, err
+		}
 	}
 	out.Revision = int(t.Revision)
 	if t.EstimatePoints != nil {
@@ -436,6 +460,22 @@ func (s *Server) DeleteCriterion(ctx context.Context, req api.DeleteCriterionReq
 		return nil, err
 	}
 	return api.DeleteCriterion204Response{}, nil
+}
+
+func (s *Server) AddressTicketPRFeedback(ctx context.Context, req api.AddressTicketPRFeedbackRequestObject) (api.AddressTicketPRFeedbackResponseObject, error) {
+	u, _, ws := me(ctx)
+	if req.Body == nil {
+		return nil, apperr.Invalid("body", "required")
+	}
+	run, err := s.Runs.AddressTicketPRFeedback(ctx, ws, u.ID, req.Key, string(req.Body.Mode))
+	if err != nil {
+		return nil, err
+	}
+	out, err := s.toRun(ctx, run)
+	if err != nil {
+		return nil, err
+	}
+	return api.AddressTicketPRFeedback201JSONResponse(out), nil
 }
 
 // me returns the acting user; the localUser middleware guarantees one.

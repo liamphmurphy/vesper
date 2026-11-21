@@ -1314,6 +1314,26 @@ paths:
               schema: { $ref: "#/components/schemas/Ticket" }
         default: { $ref: "#/components/responses/Error" }
 
+  /tickets/{key}/address-pr-feedback:
+    parameters:
+      - $ref: "#/components/parameters/TicketKey"
+    post:
+      operationId: addressTicketPRFeedback
+      summary: Dispatch or resume a run on this ticket's branch to fix CI failures or address review comments
+      tags: [runs]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddressPRFeedbackRequest" }
+      responses:
+        "201":
+          description: Run queued or resumed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Run" }
+        default: { $ref: "#/components/responses/Error" }
+
   /tickets/dispatch:
     post:
       operationId: dispatchTickets
@@ -4134,6 +4154,25 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/PushRequest" }
         default: { $ref: "#/components/responses/Error" }
+  /push-requests/{id}/address-pr-feedback:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: addressPushRequestPRFeedback
+      summary: Send failing CI logs or unresolved PR review comments back to the originating chat on this branch
+      tags: [chats]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddressPRFeedbackRequest" }
+      responses:
+        "201":
+          description: Follow-up turn queued on the originating chat
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatMessage" }
+        default: { $ref: "#/components/responses/Error" }
   /repository-push-policies:
     get:
       operationId: listRepositoryPushPolicies
@@ -6606,6 +6645,58 @@ components:
       type: string
       enum: [draft, open, merged, closed]
 
+    PRCIState:
+      type: string
+      enum: [unknown, pending, passing, failing]
+    PRCheckFailure:
+      type: object
+      required: [name, conclusion]
+      properties:
+        name: { type: string }
+        conclusion: { type: string }
+        details_url: { type: string }
+        title: { type: string }
+        summary: { type: string }
+    PRReviewComment:
+      type: object
+      required: [author, body, created_at]
+      properties:
+        author: { type: string }
+        body: { type: string }
+        url: { type: string }
+        created_at: { type: string, format: date-time }
+    PRReviewThread:
+      type: object
+      required: [id, path, updated_at, comments]
+      properties:
+        id: { type: string }
+        path: { type: string }
+        line: { type: integer }
+        url: { type: string }
+        diff_hunk: { type: string }
+        outdated: { type: boolean }
+        updated_at: { type: string, format: date-time }
+        comments: { type: array, items: { $ref: "#/components/schemas/PRReviewComment" } }
+    PRFeedback:
+      type: object
+      required: [ci_state, failed_checks_count, failed_checks, unresolved_threads, review_threads, updated_at]
+      properties:
+        ci_state: { $ref: "#/components/schemas/PRCIState" }
+        failed_checks_count: { type: integer }
+        failed_checks: { type: array, items: { $ref: "#/components/schemas/PRCheckFailure" } }
+        unresolved_threads: { type: integer }
+        review_threads: { type: array, items: { $ref: "#/components/schemas/PRReviewThread" } }
+        ci_failed_at: { type: string, format: date-time }
+        review_updated_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    AddressPRFeedbackRequest:
+      type: object
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [ci, review, all]
+
     PullRequest:
       type: object
       required: [number, state]
@@ -6617,6 +6708,7 @@ components:
         deletions: { type: integer }
         closed_unmerged: { type: boolean, description: Closed without merging; a person should look }
         synced_at: { type: string, format: date-time }
+        feedback: { $ref: "#/components/schemas/PRFeedback" }
 
     TicketSummary:
       type: object
@@ -8456,8 +8548,8 @@ components:
         id: { type: string }
         kind:
           type: string
-          description: "question is a run waiting on await_human (summary is the question); blocked is a failed or blocked run; stalled is a running run with no event for 30 minutes; merged is a pull request merged in the last 14 days; pr_approved is a pull request you authored on GitHub that a reviewer approved in the last 14 days (href is the pull request's GitHub URL)"
-          enum: [approval, question, blocked, stalled, mockup, planning, review, dispatch, mention, suggestion, workflow_gate, scheduled, connector_approval, secret_approval, secret_expiring, merged, pr_approved]
+          description: "question is a run waiting on await_human (summary is the question); blocked is a failed or blocked run; stalled is a running run with no event for 30 minutes; pr_ci_failed is an open Vesper-tracked PR with failing CI check runs; pr_review_comments is an open Vesper-tracked PR with unresolved review threads; merged is a pull request merged in the last 14 days; pr_approved is a pull request you authored on GitHub that a reviewer approved in the last 14 days (href is the pull request's GitHub URL)"
+          enum: [approval, question, blocked, stalled, pr_ci_failed, pr_review_comments, mockup, planning, review, dispatch, mention, suggestion, workflow_gate, scheduled, connector_approval, secret_approval, secret_expiring, merged, pr_approved]
         title: { type: string }
         summary: { type: string }
         href: { type: string }
@@ -9803,6 +9895,7 @@ components:
         pr_url: { type: string }
         pr_number: { type: integer }
         pr_state: { $ref: "#/components/schemas/PullRequestState" }
+        feedback: { $ref: "#/components/schemas/PRFeedback" }
         error: { type: string, description: Why it failed or was replaced }
         persona: { $ref: "#/components/schemas/PersonaSummary" }
         run_id: { type: string, format: uuid }

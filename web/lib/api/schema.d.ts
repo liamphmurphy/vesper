@@ -992,6 +992,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tickets/{key}/address-pr-feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Ticket key, e.g. PAY-214 */
+                key: components["parameters"]["TicketKey"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Dispatch or resume a run on this ticket's branch to fix CI failures or address review comments */
+        post: operations["addressTicketPRFeedback"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tickets/dispatch": {
         parameters: {
             query?: never;
@@ -3379,6 +3399,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/push-requests/{id}/address-pr-feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Send failing CI logs or unresolved PR review comments back to the originating chat on this branch */
+        post: operations["addressPushRequestPRFeedback"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/repository-push-policies": {
         parameters: {
             query?: never;
@@ -5447,6 +5486,50 @@ export interface components {
         };
         /** @enum {string} */
         PullRequestState: "draft" | "open" | "merged" | "closed";
+        /** @enum {string} */
+        PRCIState: "unknown" | "pending" | "passing" | "failing";
+        PRCheckFailure: {
+            name: string;
+            conclusion: string;
+            details_url?: string;
+            title?: string;
+            summary?: string;
+        };
+        PRReviewComment: {
+            author: string;
+            body: string;
+            url?: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        PRReviewThread: {
+            id: string;
+            path: string;
+            line?: number;
+            url?: string;
+            diff_hunk?: string;
+            outdated?: boolean;
+            /** Format: date-time */
+            updated_at: string;
+            comments: components["schemas"]["PRReviewComment"][];
+        };
+        PRFeedback: {
+            ci_state: components["schemas"]["PRCIState"];
+            failed_checks_count: number;
+            failed_checks: components["schemas"]["PRCheckFailure"][];
+            unresolved_threads: number;
+            review_threads: components["schemas"]["PRReviewThread"][];
+            /** Format: date-time */
+            ci_failed_at?: string;
+            /** Format: date-time */
+            review_updated_at?: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        AddressPRFeedbackRequest: {
+            /** @enum {string} */
+            mode: "ci" | "review" | "all";
+        };
         PullRequest: {
             number: number;
             state: components["schemas"]["PullRequestState"];
@@ -5457,6 +5540,7 @@ export interface components {
             closed_unmerged?: boolean;
             /** Format: date-time */
             synced_at?: string;
+            feedback?: components["schemas"]["PRFeedback"];
         };
         TicketSummary: {
             /** Format: uuid */
@@ -7433,10 +7517,10 @@ export interface components {
         InboxItem: {
             id: string;
             /**
-             * @description question is a run waiting on await_human (summary is the question); blocked is a failed or blocked run; stalled is a running run with no event for 30 minutes; merged is a pull request merged in the last 14 days; pr_approved is a pull request you authored on GitHub that a reviewer approved in the last 14 days (href is the pull request's GitHub URL)
+             * @description question is a run waiting on await_human (summary is the question); blocked is a failed or blocked run; stalled is a running run with no event for 30 minutes; pr_ci_failed is an open Vesper-tracked PR with failing CI check runs; pr_review_comments is an open Vesper-tracked PR with unresolved review threads; merged is a pull request merged in the last 14 days; pr_approved is a pull request you authored on GitHub that a reviewer approved in the last 14 days (href is the pull request's GitHub URL)
              * @enum {string}
              */
-            kind: "approval" | "question" | "blocked" | "stalled" | "mockup" | "planning" | "review" | "dispatch" | "mention" | "suggestion" | "workflow_gate" | "scheduled" | "connector_approval" | "secret_approval" | "secret_expiring" | "merged" | "pr_approved";
+            kind: "approval" | "question" | "blocked" | "stalled" | "pr_ci_failed" | "pr_review_comments" | "mockup" | "planning" | "review" | "dispatch" | "mention" | "suggestion" | "workflow_gate" | "scheduled" | "connector_approval" | "secret_approval" | "secret_expiring" | "merged" | "pr_approved";
             title: string;
             summary: string;
             href: string;
@@ -8989,6 +9073,7 @@ export interface components {
             pr_url?: string;
             pr_number?: number;
             pr_state?: components["schemas"]["PullRequestState"];
+            feedback?: components["schemas"]["PRFeedback"];
             /** @description Why it failed or was replaced */
             error?: string;
             persona?: components["schemas"]["PersonaSummary"];
@@ -11724,6 +11809,34 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Ticket"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    addressTicketPRFeedback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Ticket key, e.g. PAY-214 */
+                key: components["parameters"]["TicketKey"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddressPRFeedbackRequest"];
+            };
+        };
+        responses: {
+            /** @description Run queued or resumed */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Run"];
                 };
             };
             default: components["responses"]["Error"];
@@ -15614,6 +15727,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PushRequest"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    addressPushRequestPRFeedback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddressPRFeedbackRequest"];
+            };
+        };
+        responses: {
+            /** @description Follow-up turn queued on the originating chat */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatMessage"];
                 };
             };
             default: components["responses"]["Error"];
