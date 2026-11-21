@@ -4,6 +4,7 @@
  * leaves it out, so existing /tickets links stay the list.
  */
 
+export const TICKETS_PRIMARY_LAYOUTS = ["list", "board"] as const;
 export const TICKETS_LAYOUTS = ["list", "board", "epics"] as const;
 export type TicketsLayout = (typeof TICKETS_LAYOUTS)[number];
 

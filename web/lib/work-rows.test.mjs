@@ -101,14 +101,18 @@ test("workGroups puts Needs you first and buckets the rest by status", () => {
 });
 
 test("parseFilterText and filterText round-trip tokens and free text", () => {
-  assert.deepEqual(parseFilterText('fix login epic:"Mobile UI" agent:@atlas status:ready'), {
+  assert.deepEqual(parseFilterText('fix login epic:"Mobile UI" persona:@atlas status:ready'), {
     tokens: [{ key: "epic", value: "Mobile UI" }, { key: "agent", value: "@atlas" }, { key: "status", value: "ready" }],
     text: "fix login",
   });
+  assert.deepEqual(parseFilterText("agent:@atlas"), {
+    tokens: [{ key: "agent", value: "@atlas" }],
+    text: "",
+  });
   assert.deepEqual(parseFilterText("project: hello"), { tokens: [], text: "hello" });
-  const s = filterText({ project: "LA", epic: "Mobile UI", q: "login" });
-  assert.equal(s, 'project:LA epic:"Mobile UI" login');
-  assert.deepEqual(parseFilterText(s).tokens.map((x) => x.value), ["LA", "Mobile UI"]);
+  const s = filterText({ project: "LA", epic: "Mobile UI", agent: "atlas", q: "login" });
+  assert.equal(s, 'project:LA epic:"Mobile UI" persona:atlas login');
+  assert.deepEqual(parseFilterText(s).tokens.map((x) => x.value), ["LA", "Mobile UI", "atlas"]);
 });
 
 test("resolveFilter maps tokens to URL filters and reports unknown ones", () => {

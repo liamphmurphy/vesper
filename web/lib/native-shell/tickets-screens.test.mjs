@@ -63,6 +63,8 @@ test("tickets list: queues with badges, epics, saved views; the selection follow
   const q = m.sections[0].items;
   assert.deepEqual(q.map((i) => i.badge?.text), ["2", undefined, "3", "1", "9"]);
   assert.equal(q[0].badge.tone, "human");
+  assert.deepEqual(m.sections[1].actions.map((a) => a.id), ["tickets.open-epics"]);
+  assert.deepEqual(m.sections[1].items[0].contextMenu.map((c) => c.id), ["epic.open-detail"]);
   assert.equal(m.selectedId, "queue:all");
   assert.equal(buildTicketsNavModel({ ...input, queue: null, epic: "e1" }).selectedId, "epic:e1");
   const open = buildTicketsNavModel({ ...input, queue: null, viewId: "a" });
@@ -92,7 +94,9 @@ test("tickets toolbar: the project and layout are menus, New ticket is the accen
   ]);
   assert.equal(items[0].label, "Vesper");
   assert.equal(items[1].label, "Board");
-  assert.deepEqual(items[1].menu.map((m) => [m.id, m.checked]), [["layout:list", false], ["layout:board", true], ["layout:epics", false]]);
+  assert.deepEqual(items[1].menu.map((m) => [m.id, m.checked]), [["layout:list", false], ["layout:board", true]]);
+  const onEpics = buildTicketsToolbar({ space, layout: "epics" });
+  assert.deepEqual(onEpics[1].menu.map((m) => [m.id, m.checked]), [["layout:list", false], ["layout:board", false], ["layout:epics", true]]);
   assert.equal(items[2].accent, true);
   const archived = buildTicketsToolbar({ space, layout: "list", action: { label: "Open the space", primary: false } });
   assert.equal(archived.at(-1).accent, false);

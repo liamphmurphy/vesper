@@ -43,7 +43,13 @@ import { NavigatorPortal } from "@/components/shell/navigator-slot";
 import { rememberProject, ProjectScopeState, projectCrumbs, useProjectScope } from "@/components/shell/project-scope";
 import { ticketsHref } from "@/lib/tickets-layout";
 import type { NativeCommand } from "@/lib/native-shell/protocol";
-import { buildTicketsNavModel, parseTicketsRow, type TicketQueue } from "@/lib/native-shell/models/tickets";
+import {
+  buildTicketsNavModel,
+  parseTicketsRow,
+  TICKETS_OPEN_EPIC_DETAIL,
+  TICKETS_OPEN_EPICS,
+  type TicketQueue,
+} from "@/lib/native-shell/models/tickets";
 import { buildTicketsListExtras, parseTicketsListAction } from "@/lib/native-shell/models/tickets-toolbar";
 import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
 import { BulkBar, BulkResultPanel } from "./bulk-bar";
@@ -54,8 +60,6 @@ const VIEWS: Array<{ key: TicketView; label: string }> = [
   { key: "all", label: "All tickets" },
   { key: "active", label: "Active" },
   { key: "backlog", label: "Backlog" },
-  { key: "agent_owned", label: "Agent-owned" },
-  { key: "needs_human", label: "Needs human" },
 ];
 
 // Density is a per-browser preference, not part of the URL or a saved view.
@@ -405,7 +409,7 @@ export function TicketsScreen() {
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Filter… project: epic: agent: status:"
+          placeholder="Filter… project: epic: persona: status:"
           aria-describedby={resolved.unknown.length ? "ticket-filter-unknown" : undefined}
           className="min-w-0 flex-1 bg-transparent text-fg-2 outline-none placeholder:text-fg-tertiary"
         />
@@ -498,7 +502,7 @@ export function TicketsScreen() {
       agent: assignee ?? "",
       counts: { tickets: queueCounts.all || undefined },
       hideNewTicket: true,
-      search: { value: search, placeholder: "Filter tasks… epic: agent:" },
+      search: { value: search, placeholder: "Filter tasks… epic: persona:" },
     },
     counts: { needs_you: queueCounts.needs_you, in_progress: queueCounts.in_progress, ready: queueCounts.ready, blocked: queueCounts.blocked, all: queueCounts.all },
     queue: activeQueue,
@@ -510,6 +514,14 @@ export function TicketsScreen() {
   const nativeCommand = (cmd: NativeCommand) => {
     if (handleWorkHeaderCommand(cmd, { project, push: (href) => router.push(href), onProject: pickProject, onAgent: (v) => setParam("assignee", v || null), onSearch: setSearch })) return;
     if (savedNav.handle(cmd)) return;
+    if (cmd.type === "nav.action") {
+      if (cmd.actionId === TICKETS_OPEN_EPICS) {
+        router.push(ticketsHref("epics", project ? { project } : undefined));
+      } else if (cmd.actionId === TICKETS_OPEN_EPIC_DETAIL && cmd.itemId?.startsWith("epic:")) {
+        router.push(`/epics/${encodeURIComponent(cmd.itemId.slice(5))}`);
+      }
+      return;
+    }
     if (cmd.type === "nav.activate") {
       const row = parseTicketsRow(cmd.itemId);
       if (row?.type === "queue") selectQueue(row.queue);
