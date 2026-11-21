@@ -14,6 +14,17 @@ let package = Package(
             name: "VesperCore",
             path: "Sources/VesperCore"
         ),
+        // The markdown parser, vendored from swiftlang/swift-cmark (Vendor/cmark-gfm/README.md) so the
+        // build fetches nothing.
+        .target(
+            name: "cmark-gfm",
+            path: "Vendor/cmark-gfm/src"
+        ),
+        .target(
+            name: "cmark-gfm-extensions",
+            dependencies: ["cmark-gfm"],
+            path: "Vendor/cmark-gfm/extensions"
+        ),
         // The app: AppKit windows, SwiftUI views, WKWebView.
         .executableTarget(
             name: "Vesper",
