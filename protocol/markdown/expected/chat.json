@@ -1,0 +1,191 @@
+{
+  "ast": {
+    "type": "root",
+    "children": [
+      {
+        "type": "paragraph",
+        "children": [
+          {
+            "type": "text",
+            "value": "I looked at "
+          },
+          {
+            "type": "link",
+            "url": "wikilink:PAY-214",
+            "children": [
+              {
+                "type": "text",
+                "value": "PAY-214"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": " and "
+          },
+          {
+            "type": "link",
+            "url": "wikilink:LAZYAGENTS-12",
+            "children": [
+              {
+                "type": "text",
+                "value": "LAZYAGENTS-12"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": " "
+          },
+          {
+            "type": "link",
+            "url": "cite:1",
+            "children": [
+              {
+                "type": "text",
+                "value": "1"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": ", and the fix in "
+          },
+          {
+            "type": "link",
+            "url": "wikilink:PAY-215",
+            "children": [
+              {
+                "type": "text",
+                "value": "PAY-215"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": " is linked "
+          },
+          {
+            "type": "link",
+            "url": "cite:2",
+            "children": [
+              {
+                "type": "text",
+                "value": "2"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "."
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "children": [
+          {
+            "type": "text",
+            "value": "Not keys: "
+          },
+          {
+            "type": "inlineCode",
+            "value": "PAY-999"
+          },
+          {
+            "type": "text",
+            "value": " in code, lower-case pay-1, and A-1 is too short? "
+          },
+          {
+            "type": "link",
+            "url": "wikilink:A1-2",
+            "children": [
+              {
+                "type": "text",
+                "value": "A1-2"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": " counts."
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "children": [
+          {
+            "type": "text",
+            "value": "An unknown citation [3] stays, "
+          },
+          {
+            "type": "link",
+            "url": "https://example.com",
+            "children": [
+              {
+                "type": "text",
+                "value": "1"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": " is a link, and [2] is escaped."
+          }
+        ]
+      },
+      {
+        "type": "code",
+        "info": "text",
+        "value": "PAY-300 inside a fence [1]"
+      },
+      {
+        "type": "list",
+        "ordered": false,
+        "children": [
+          {
+            "type": "listItem",
+            "children": [
+              {
+                "type": "paragraph",
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "Item mentioning "
+                  },
+                  {
+                    "type": "link",
+                    "url": "wikilink:OPS-7",
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "OPS-7"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "text",
+                    "value": " "
+                  },
+                  {
+                    "type": "link",
+                    "url": "cite:2",
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "2"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "footnotes": []
+  },
+  "code": []
+}

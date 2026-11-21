@@ -1,0 +1,8 @@
+[
+  { "name": "blocks" },
+  { "name": "inline" },
+  { "name": "gfm" },
+  { "name": "wikilinks" },
+  { "name": "chat", "chat": true, "cites": [1, 2] },
+  { "name": "code", "chat": true, "cites": [] }
+]
