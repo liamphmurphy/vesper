@@ -6,7 +6,6 @@ import { createPortal } from "react-dom";
 import { useNavCounts } from "@/lib/use-nav-counts";
 import { useDismissedReviewRequests, useGitHubReviewRequests, useRefreshGitHubReviewRequests, useReviewFilterPrefs } from "@/lib/api/github-reviews-hooks";
 import { useInbox, usePersonaDock } from "@/lib/api/hooks";
-import { COMPANION_OPEN_EVENT } from "@/lib/dev-workspace";
 import { claimCompanion, companionClaimed, companionSlot, setCompanionSlot, subscribeCompanion } from "@/lib/companion";
 import { cx } from "@/lib/cx";
 import { actOnDock, dockReducer, dockShortcut, loadDock, saveDock, type DockAction, type DockState } from "@/lib/editor-layout";
@@ -98,11 +97,6 @@ function DefaultCompanion() {
   const uid = useId();
   const tabs: DockTab[] = [{ id: "chat", label: "Chat", icon: "msg", native: { kind: "companion" } }];
   const [state, dispatch] = useDockState("companion", ["chat"], false);
-  useEffect(() => {
-    const onOpen = () => dispatch({ type: "open", tab: "chat" });
-    window.addEventListener(COMPANION_OPEN_EVENT, onOpen);
-    return () => window.removeEventListener(COMPANION_OPEN_EVENT, onOpen);
-  }, [dispatch]);
   return <Dock uid={uid} tabs={tabs} state={state} dispatch={dispatch} unmountWhenClosed />;
 }
 

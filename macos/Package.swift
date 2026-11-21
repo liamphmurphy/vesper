@@ -31,8 +31,15 @@ let package = Package(
         // The app: AppKit windows, SwiftUI views, WKWebView.
         .executableTarget(
             name: "Vesper",
-            dependencies: ["VesperCore", "VesperSafariBridge"],
+            dependencies: ["VesperCore", "VesperSafariBridge", "SwiftTerm"],
             path: "Sources/Vesper"
+        ),
+        // The Dev workspace's terminal emulator, vendored from migueldeicaza/SwiftTerm
+        // (Vendor/SwiftTerm/README.md) so the build fetches nothing. Swift 5 mode, as upstream builds it.
+        .target(
+            name: "SwiftTerm",
+            path: "Vendor/SwiftTerm/Sources",
+            swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         // Vesper for Safari's native half, shared by the app (writes the connection file) and the
         // extension (scripts/build-app.sh compiles it into PlugIns/VesperSafari.appex with

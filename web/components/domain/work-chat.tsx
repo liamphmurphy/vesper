@@ -12,8 +12,6 @@ import { useAddDockChat, useDockChats, type DockScope } from "@/lib/api/dock-hoo
 import { ApiError, type Schemas } from "@/lib/api/client";
 import { useChat, useCreateChat } from "@/lib/api/hooks";
 import { parsePin, sameSubject, withWorkContext, workSubjectLabel, type WorkSubject } from "@/lib/work-context";
-import { clearCompanionDrop, COMPANION_DROP_EVENT, peekCompanionDrop } from "@/lib/dev-workspace";
-import { sendToComposer } from "@/lib/playground-report";
 
 /** One list of work chats, shared by every run and ticket, so the conversation follows you between them. */
 const SCOPE: DockScope = "app:work";
@@ -124,18 +122,6 @@ export function WorkChat({ subject }: { subject?: WorkSubject }) {
   const gone = remembered.error instanceof ApiError && remembered.error.status === 404;
   const id = gone ? undefined : (current ?? undefined);
   const chat = gone ? undefined : remembered.data;
-
-  useEffect(() => {
-    if (!id) return;
-    const flush = () => {
-      const drop = peekCompanionDrop();
-      if (!drop) return;
-      if (sendToComposer(id, drop)) clearCompanionDrop();
-    };
-    flush();
-    window.addEventListener(COMPANION_DROP_EVENT, flush);
-    return () => window.removeEventListener(COMPANION_DROP_EVENT, flush);
-  }, [id]);
 
   const list = useDockChats(SCOPE);
   const add = useAddDockChat();
