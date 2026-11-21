@@ -53,6 +53,7 @@ import { AppearanceSection } from "./appearance-section";
 import { BackupSection } from "./backup-section";
 import { DevWorkspaceSection } from "./dev-workspace-section";
 import { ImageEngineSection } from "./image-engine-section";
+import { MediaProvidersSection } from "./media-providers-section";
 import { RepositorySourcesSection } from "./repositories-section";
 import { SecretsSection } from "./secrets-section";
 import { SignInSection, useAuthStatus } from "./sign-in-section";
@@ -423,6 +424,13 @@ export function SettingsScreen() {
                     <p className="mt-1 text-14 text-fg-secondary">Which harness makes the images personas and workflows ask for.</p>
                   </div>
                   <ImageEngineSection />
+                </section>
+                <section id="media" aria-labelledby="media-title" className="flex scroll-mt-6 flex-col gap-3 border-t border-border-subtle pt-6">
+                  <div>
+                    <h2 id="media-title" className="type-title">Media providers</h2>
+                    <p className="mt-1 text-14 text-fg-secondary">Configure cloud or local providers for music generation (and future audio tools).</p>
+                  </div>
+                  <MediaProvidersSection />
                 </section>
               </div>
             )}
