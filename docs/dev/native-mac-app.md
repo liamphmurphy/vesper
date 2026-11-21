@@ -493,6 +493,68 @@ browser instead of embedding the player; dragging several selected tiles drags o
 13. Open a Knowledge page with a PDF embed and click Open: the PDF opens natively (title in the toolbar,
     Download); ⌘F searches it; Back returns to the page. In a browser, Open still shows the pdf.js dialog.
 
+## Native screen: Dev terminal
+
+`/dev` is native (`macos/Sources/Vesper/Native/Dev/`, logic in VesperCore `Native/DevTerminalLogic.swift`, a port of
+the terminal half of `web/lib/dev-workspace.ts`). The terminal is the page's whole content, so the route moved
+whole. The web route, `dev-terminal.tsx` and the `@xterm/xterm` and `@xterm/addon-fit` dependencies are gone; in a
+browser `/dev` is a 404. Settings' Dev workspace section and "Open in Dev workspace" buttons stay on the web, and
+their link to `/dev` opens the native screen.
+
+- **Emulator.** SwiftTerm, vendored in `macos/Vendor/SwiftTerm` (MIT, tag `v1.18.0`, about 1.5 MB of Swift, no
+  modifications; see its README). It builds with SwiftPM alone, so the package still fetches nothing.
+  libghostty would have needed Zig and a prebuilt xcframework. `v1.18.0` is the last tag whose library target
+  needs no build-tool plugin.
+- **Stream.** The same PTY WebSocket the web used: `ws(s)://<host the app reaches Vesper at>:<workspace
+  port>/ws?cols=&rows=` with the session cookie and Vesper's `Origin` (the runner refuses other origins).
+  Output is binary frames, keystrokes go out as binary frames, and resizes go as `{"type":"resize",…}` text
+  frames whenever the view's size changes and once the socket opens. Reconnect makes a new emulator and socket,
+  as the web made a new xterm.js.
+- **Look.** The web's Gruvbox palette, 13 pt system monospace (`ui-monospace`), no bell. The header, status pill,
+  buttons and states use the theme tokens like the web's Tailwind classes.
+- **Input.** Native text input and IME, Option as Meta, ⌘C/⌘V and Edit ▸ Copy/Paste, Shift+drag to select past
+  tmux's mouse mode. Esc and Ctrl+W/T/N always reach the terminal (there's no browser to take them), so the web's
+  keyboard-lock hints are gone. tmux and Neovim copies over OSC 52 go to the pasteboard, with the web's size limit.
+  Reads are never answered. Only http(s) links open.
+- **Secure Keyboard Entry.** Vesper ▸ Secure Keyboard Entry (enabled while a Dev terminal has the keyboard) or the
+  title menu's item toggles it. It's remembered in the app's defaults (`VesperDevSecureKeyboardEntry`). While it's
+  on, `EnableSecureEventInput` holds whenever a Dev terminal is first responder in the key window. Each view
+  balances its calls (`SecureInputBalance`) and releases them when it goes.
+- **Full screen** (Fullscreen, ⌘⇧↵ or ⌃⇧↵ from anywhere in the window). The window enters macOS full screen
+  (unless it already is), the sidebar folds and the header gives way to the faint floating bar (status dot,
+  Reconnect, Exit). Leaving restores both. The unified toolbar still shows at the top. Leaving macOS full screen
+  another way (green button, ⌃⌘F) leaves the terminal's too.
+- **Send to chat** writes the snapshot Markdown (selection plus the last 120 lines) to a temporary file and opens
+  the app's send picker, as Screenshot to Chat does. The web attached it to the companion chat directly, but the
+  companion lives in its own web view now. The companion-drop channel that only this fed is gone from the web.
+- While the container starts or an action runs, the workspace is refetched every 2 s, as the web's query was.
+
+1. Settings → Dev workspace off: open `/dev` from the sidebar. "Dev workspace is disabled" shows; Configure in
+   Settings opens the Dev workspace section.
+2. Turn it on and start: the pill reads "Starting · <step>" and the step updates without a refresh. The terminal
+   area says the container isn't ready, with Start container when stopped.
+3. When ready, the terminal attaches: the pill reads "Connected · tmux" and the keyboard is in the terminal.
+   Gruvbox colours, monospace font and LazyVim's icons draw as on the web.
+4. Resize the window and fold the sidebar: tmux and Neovim reflow to the new size (`tmux display -p
+   '#{window_width}x#{window_height}'` matches).
+5. Type in Japanese with an IME: the composition shows inline and commits. Option+f in zsh moves a word forward.
+6. Select text with Shift+drag and press ⌘C, then ⌘V into the terminal. Yank a line in Neovim (`"+yy`) and paste
+   in TextEdit: OSC 52 put it on the pasteboard.
+7. Vesper ▸ Secure Keyboard Entry with the terminal focused: it's checked, and the title menu's item agrees.
+   Click into the sidebar search: secure input is released (`ioreg -l -w 0 | grep kCGSSessionSecureInputPID`
+   no longer shows Vesper's pid). Click back into the terminal: it's held again. Turn it off.
+8. ⌘⇧↵: the window goes full screen, the sidebar folds, the floating bar fades in on hover. Esc and Ctrl+W reach
+   Neovim. ⌘⇧↵ again (or Exit) returns the window and the sidebar. Enter again and leave with ⌃⌘F: the header
+   comes back.
+9. Shortcuts: the sheet lists LazyVim, tmux with your configured prefix, and the Mac app's keys. Esc closes it
+   and the terminal has the keyboard again.
+10. Sync repos: the button disables while it runs and the pill follows the workspace state.
+11. Send to chat: the send picker offers `dev-terminal-<stamp>.md`. Send it to a chat; it holds the selection and
+    the visible output. The button reads "Sent to chat" for a moment.
+12. Stop the container from Settings: the socket drops, the pill shows the workspace state, and Reconnect appears.
+    Start it and Reconnect: a fresh session attaches.
+13. From a chat's ticket card with an open PR, Open in Dev workspace: `/dev` opens natively on that branch.
+
 ## Build and test
 
 - `make -C macos test` → `swift test` (VesperCore).
