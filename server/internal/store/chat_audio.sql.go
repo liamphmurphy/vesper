@@ -29,7 +29,7 @@ func (q *Queries) CountChatAudioJobsForTurn(ctx context.Context, arg CountChatAu
 
 const createChatAudioJob = `-- name: CreateChatAudioJob :one
 INSERT INTO chat_audio_jobs (workspace_id, user_id, chat_id, run_id, turn_id, persona_id, title, duration_ms, script_path, method)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id, workspace_id, user_id, chat_id, run_id, turn_id, message_id, persona_id, title, duration_ms, script_path, method, stage, state, checks, percent, stage_note, error, failure_kind, error_log, output_blob_key, output_filename, output_content_type, output_size_bytes, output_duration_ms, library_item_id, created_at, updated_at, finished_at
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id, workspace_id, user_id, chat_id, run_id, turn_id, message_id, persona_id, title, duration_ms, script_path, method, stage, state, checks, percent, stage_note, error, failure_kind, error_log, output_blob_key, output_filename, output_content_type, output_size_bytes, output_duration_ms, library_item_id, created_at, updated_at, finished_at, source_kind, provider_id, prompt, lyrics, instrumental, error_kind
 `
 
 type CreateChatAudioJobParams struct {
@@ -89,6 +89,97 @@ func (q *Queries) CreateChatAudioJob(ctx context.Context, arg CreateChatAudioJob
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.FinishedAt,
+		&i.SourceKind,
+		&i.ProviderID,
+		&i.Prompt,
+		&i.Lyrics,
+		&i.Instrumental,
+		&i.ErrorKind,
+	)
+	return i, err
+}
+
+const createMusicAudioJob = `-- name: CreateMusicAudioJob :one
+INSERT INTO chat_audio_jobs (
+  workspace_id, user_id, chat_id, run_id, turn_id, persona_id,
+  title, duration_ms, method, stage, stage_note,
+  source_kind, provider_id, prompt, lyrics, instrumental
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'compose', $10, 'music', $11, $12, $13, $14)
+RETURNING id, workspace_id, user_id, chat_id, run_id, turn_id, message_id, persona_id, title, duration_ms, script_path, method, stage, state, checks, percent, stage_note, error, failure_kind, error_log, output_blob_key, output_filename, output_content_type, output_size_bytes, output_duration_ms, library_item_id, created_at, updated_at, finished_at, source_kind, provider_id, prompt, lyrics, instrumental, error_kind
+`
+
+type CreateMusicAudioJobParams struct {
+	WorkspaceID  uuid.UUID
+	UserID       uuid.UUID
+	ChatID       *uuid.UUID
+	RunID        *uuid.UUID
+	TurnID       *uuid.UUID
+	PersonaID    *uuid.UUID
+	Title        string
+	DurationMs   int32
+	Method       string
+	StageNote    string
+	ProviderID   string
+	Prompt       string
+	Lyrics       string
+	Instrumental bool
+}
+
+func (q *Queries) CreateMusicAudioJob(ctx context.Context, arg CreateMusicAudioJobParams) (ChatAudioJob, error) {
+	row := q.db.QueryRow(ctx, createMusicAudioJob,
+		arg.WorkspaceID,
+		arg.UserID,
+		arg.ChatID,
+		arg.RunID,
+		arg.TurnID,
+		arg.PersonaID,
+		arg.Title,
+		arg.DurationMs,
+		arg.Method,
+		arg.StageNote,
+		arg.ProviderID,
+		arg.Prompt,
+		arg.Lyrics,
+		arg.Instrumental,
+	)
+	var i ChatAudioJob
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.ChatID,
+		&i.RunID,
+		&i.TurnID,
+		&i.MessageID,
+		&i.PersonaID,
+		&i.Title,
+		&i.DurationMs,
+		&i.ScriptPath,
+		&i.Method,
+		&i.Stage,
+		&i.State,
+		&i.Checks,
+		&i.Percent,
+		&i.StageNote,
+		&i.Error,
+		&i.FailureKind,
+		&i.ErrorLog,
+		&i.OutputBlobKey,
+		&i.OutputFilename,
+		&i.OutputContentType,
+		&i.OutputSizeBytes,
+		&i.OutputDurationMs,
+		&i.LibraryItemID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+		&i.SourceKind,
+		&i.ProviderID,
+		&i.Prompt,
+		&i.Lyrics,
+		&i.Instrumental,
+		&i.ErrorKind,
 	)
 	return i, err
 }
@@ -129,7 +220,7 @@ func (q *Queries) DeleteDetachedChatAudioJobs(ctx context.Context, rowLimit int3
 const failChatAudioJob = `-- name: FailChatAudioJob :one
 UPDATE chat_audio_jobs SET state = 'failed', error = $1, failure_kind = $2, error_log = $3, updated_at = now(), finished_at = now()
 WHERE id = $4 AND state = 'running'
-RETURNING id, workspace_id, user_id, chat_id, run_id, turn_id, message_id, persona_id, title, duration_ms, script_path, method, stage, state, checks, percent, stage_note, error, failure_kind, error_log, output_blob_key, output_filename, output_content_type, output_size_bytes, output_duration_ms, library_item_id, created_at, updated_at, finished_at
+RETURNING id, workspace_id, user_id, chat_id, run_id, turn_id, message_id, persona_id, title, duration_ms, script_path, method, stage, state, checks, percent, stage_note, error, failure_kind, error_log, output_blob_key, output_filename, output_content_type, output_size_bytes, output_duration_ms, library_item_id, created_at, updated_at, finished_at, source_kind, provider_id, prompt, lyrics, instrumental, error_kind
 `
 
 type FailChatAudioJobParams struct {
@@ -178,6 +269,74 @@ func (q *Queries) FailChatAudioJob(ctx context.Context, arg FailChatAudioJobPara
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.FinishedAt,
+		&i.SourceKind,
+		&i.ProviderID,
+		&i.Prompt,
+		&i.Lyrics,
+		&i.Instrumental,
+		&i.ErrorKind,
+	)
+	return i, err
+}
+
+const failMusicAudioJob = `-- name: FailMusicAudioJob :one
+UPDATE chat_audio_jobs
+SET state = 'failed', error = $1, failure_kind = $2, error_kind = $3, updated_at = now(), finished_at = now()
+WHERE id = $4 AND state = 'running'
+RETURNING id, workspace_id, user_id, chat_id, run_id, turn_id, message_id, persona_id, title, duration_ms, script_path, method, stage, state, checks, percent, stage_note, error, failure_kind, error_log, output_blob_key, output_filename, output_content_type, output_size_bytes, output_duration_ms, library_item_id, created_at, updated_at, finished_at, source_kind, provider_id, prompt, lyrics, instrumental, error_kind
+`
+
+type FailMusicAudioJobParams struct {
+	Error       *string
+	FailureKind *string
+	ErrorKind   string
+	ID          uuid.UUID
+}
+
+func (q *Queries) FailMusicAudioJob(ctx context.Context, arg FailMusicAudioJobParams) (ChatAudioJob, error) {
+	row := q.db.QueryRow(ctx, failMusicAudioJob,
+		arg.Error,
+		arg.FailureKind,
+		arg.ErrorKind,
+		arg.ID,
+	)
+	var i ChatAudioJob
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.ChatID,
+		&i.RunID,
+		&i.TurnID,
+		&i.MessageID,
+		&i.PersonaID,
+		&i.Title,
+		&i.DurationMs,
+		&i.ScriptPath,
+		&i.Method,
+		&i.Stage,
+		&i.State,
+		&i.Checks,
+		&i.Percent,
+		&i.StageNote,
+		&i.Error,
+		&i.FailureKind,
+		&i.ErrorLog,
+		&i.OutputBlobKey,
+		&i.OutputFilename,
+		&i.OutputContentType,
+		&i.OutputSizeBytes,
+		&i.OutputDurationMs,
+		&i.LibraryItemID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+		&i.SourceKind,
+		&i.ProviderID,
+		&i.Prompt,
+		&i.Lyrics,
+		&i.Instrumental,
+		&i.ErrorKind,
 	)
 	return i, err
 }
@@ -186,7 +345,7 @@ const finishChatAudioJob = `-- name: FinishChatAudioJob :one
 UPDATE chat_audio_jobs SET state = 'done', percent = 100, output_blob_key = $2, output_filename = $3, output_content_type = $4, output_size_bytes = $5,
   output_duration_ms = $6, library_item_id = $7, updated_at = now(), finished_at = now()
 WHERE id = $1 AND state = 'running'
-RETURNING id, workspace_id, user_id, chat_id, run_id, turn_id, message_id, persona_id, title, duration_ms, script_path, method, stage, state, checks, percent, stage_note, error, failure_kind, error_log, output_blob_key, output_filename, output_content_type, output_size_bytes, output_duration_ms, library_item_id, created_at, updated_at, finished_at
+RETURNING id, workspace_id, user_id, chat_id, run_id, turn_id, message_id, persona_id, title, duration_ms, script_path, method, stage, state, checks, percent, stage_note, error, failure_kind, error_log, output_blob_key, output_filename, output_content_type, output_size_bytes, output_duration_ms, library_item_id, created_at, updated_at, finished_at, source_kind, provider_id, prompt, lyrics, instrumental, error_kind
 `
 
 type FinishChatAudioJobParams struct {
@@ -241,12 +400,18 @@ func (q *Queries) FinishChatAudioJob(ctx context.Context, arg FinishChatAudioJob
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.FinishedAt,
+		&i.SourceKind,
+		&i.ProviderID,
+		&i.Prompt,
+		&i.Lyrics,
+		&i.Instrumental,
+		&i.ErrorKind,
 	)
 	return i, err
 }
 
 const getChatAudioJob = `-- name: GetChatAudioJob :one
-SELECT id, workspace_id, user_id, chat_id, run_id, turn_id, message_id, persona_id, title, duration_ms, script_path, method, stage, state, checks, percent, stage_note, error, failure_kind, error_log, output_blob_key, output_filename, output_content_type, output_size_bytes, output_duration_ms, library_item_id, created_at, updated_at, finished_at FROM chat_audio_jobs WHERE id = $1 AND workspace_id = $2
+SELECT id, workspace_id, user_id, chat_id, run_id, turn_id, message_id, persona_id, title, duration_ms, script_path, method, stage, state, checks, percent, stage_note, error, failure_kind, error_log, output_blob_key, output_filename, output_content_type, output_size_bytes, output_duration_ms, library_item_id, created_at, updated_at, finished_at, source_kind, provider_id, prompt, lyrics, instrumental, error_kind FROM chat_audio_jobs WHERE id = $1 AND workspace_id = $2
 `
 
 type GetChatAudioJobParams struct {
@@ -287,6 +452,12 @@ func (q *Queries) GetChatAudioJob(ctx context.Context, arg GetChatAudioJobParams
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.FinishedAt,
+		&i.SourceKind,
+		&i.ProviderID,
+		&i.Prompt,
+		&i.Lyrics,
+		&i.Instrumental,
+		&i.ErrorKind,
 	)
 	return i, err
 }
@@ -314,7 +485,7 @@ func (q *Queries) LinkChatAudioJobsToMessage(ctx context.Context, arg LinkChatAu
 }
 
 const listChatAudioJobs = `-- name: ListChatAudioJobs :many
-SELECT id, workspace_id, user_id, chat_id, run_id, turn_id, message_id, persona_id, title, duration_ms, script_path, method, stage, state, checks, percent, stage_note, error, failure_kind, error_log, output_blob_key, output_filename, output_content_type, output_size_bytes, output_duration_ms, library_item_id, created_at, updated_at, finished_at FROM chat_audio_jobs WHERE chat_id = $1 ORDER BY created_at, id
+SELECT id, workspace_id, user_id, chat_id, run_id, turn_id, message_id, persona_id, title, duration_ms, script_path, method, stage, state, checks, percent, stage_note, error, failure_kind, error_log, output_blob_key, output_filename, output_content_type, output_size_bytes, output_duration_ms, library_item_id, created_at, updated_at, finished_at, source_kind, provider_id, prompt, lyrics, instrumental, error_kind FROM chat_audio_jobs WHERE chat_id = $1 ORDER BY created_at, id
 `
 
 // A chat's audio, oldest first.
@@ -357,6 +528,12 @@ func (q *Queries) ListChatAudioJobs(ctx context.Context, chatID *uuid.UUID) ([]C
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.FinishedAt,
+			&i.SourceKind,
+			&i.ProviderID,
+			&i.Prompt,
+			&i.Lyrics,
+			&i.Instrumental,
+			&i.ErrorKind,
 		); err != nil {
 			return nil, err
 		}
@@ -369,7 +546,7 @@ func (q *Queries) ListChatAudioJobs(ctx context.Context, chatID *uuid.UUID) ([]C
 }
 
 const lockChatAudioJob = `-- name: LockChatAudioJob :one
-SELECT id, workspace_id, user_id, chat_id, run_id, turn_id, message_id, persona_id, title, duration_ms, script_path, method, stage, state, checks, percent, stage_note, error, failure_kind, error_log, output_blob_key, output_filename, output_content_type, output_size_bytes, output_duration_ms, library_item_id, created_at, updated_at, finished_at FROM chat_audio_jobs WHERE id = $1 AND run_id = $2 FOR UPDATE
+SELECT id, workspace_id, user_id, chat_id, run_id, turn_id, message_id, persona_id, title, duration_ms, script_path, method, stage, state, checks, percent, stage_note, error, failure_kind, error_log, output_blob_key, output_filename, output_content_type, output_size_bytes, output_duration_ms, library_item_id, created_at, updated_at, finished_at, source_kind, provider_id, prompt, lyrics, instrumental, error_kind FROM chat_audio_jobs WHERE id = $1 AND run_id = $2 FOR UPDATE
 `
 
 type LockChatAudioJobParams struct {
@@ -411,15 +588,21 @@ func (q *Queries) LockChatAudioJob(ctx context.Context, arg LockChatAudioJobPara
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.FinishedAt,
+		&i.SourceKind,
+		&i.ProviderID,
+		&i.Prompt,
+		&i.Lyrics,
+		&i.Instrumental,
+		&i.ErrorKind,
 	)
 	return i, err
 }
 
 const runningChatAudioJobs = `-- name: RunningChatAudioJobs :many
-SELECT id, workspace_id, user_id, chat_id, run_id, turn_id, message_id, persona_id, title, duration_ms, script_path, method, stage, state, checks, percent, stage_note, error, failure_kind, error_log, output_blob_key, output_filename, output_content_type, output_size_bytes, output_duration_ms, library_item_id, created_at, updated_at, finished_at FROM chat_audio_jobs WHERE run_id = $1 AND state = 'running' ORDER BY created_at, id
+SELECT id, workspace_id, user_id, chat_id, run_id, turn_id, message_id, persona_id, title, duration_ms, script_path, method, stage, state, checks, percent, stage_note, error, failure_kind, error_log, output_blob_key, output_filename, output_content_type, output_size_bytes, output_duration_ms, library_item_id, created_at, updated_at, finished_at, source_kind, provider_id, prompt, lyrics, instrumental, error_kind FROM chat_audio_jobs WHERE run_id = $1 AND state = 'running' AND source_kind = 'code' ORDER BY created_at, id
 `
 
-// The jobs a run is working on, oldest first.
+// The code-rendered jobs a run is working on, oldest first.
 func (q *Queries) RunningChatAudioJobs(ctx context.Context, runID *uuid.UUID) ([]ChatAudioJob, error) {
 	rows, err := q.db.Query(ctx, runningChatAudioJobs, runID)
 	if err != nil {
@@ -459,6 +642,12 @@ func (q *Queries) RunningChatAudioJobs(ctx context.Context, runID *uuid.UUID) ([
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.FinishedAt,
+			&i.SourceKind,
+			&i.ProviderID,
+			&i.Prompt,
+			&i.Lyrics,
+			&i.Instrumental,
+			&i.ErrorKind,
 		); err != nil {
 			return nil, err
 		}
@@ -495,7 +684,7 @@ UPDATE chat_audio_jobs SET stage = $1,
   method = coalesce($4::text, method),
   updated_at = now()
 WHERE id = $5 AND state = 'running'
-RETURNING id, workspace_id, user_id, chat_id, run_id, turn_id, message_id, persona_id, title, duration_ms, script_path, method, stage, state, checks, percent, stage_note, error, failure_kind, error_log, output_blob_key, output_filename, output_content_type, output_size_bytes, output_duration_ms, library_item_id, created_at, updated_at, finished_at
+RETURNING id, workspace_id, user_id, chat_id, run_id, turn_id, message_id, persona_id, title, duration_ms, script_path, method, stage, state, checks, percent, stage_note, error, failure_kind, error_log, output_blob_key, output_filename, output_content_type, output_size_bytes, output_duration_ms, library_item_id, created_at, updated_at, finished_at, source_kind, provider_id, prompt, lyrics, instrumental, error_kind
 `
 
 type SetChatAudioStageParams struct {
@@ -546,6 +735,89 @@ func (q *Queries) SetChatAudioStage(ctx context.Context, arg SetChatAudioStagePa
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.FinishedAt,
+		&i.SourceKind,
+		&i.ProviderID,
+		&i.Prompt,
+		&i.Lyrics,
+		&i.Instrumental,
+		&i.ErrorKind,
+	)
+	return i, err
+}
+
+const updateMusicAudioJobProgress = `-- name: UpdateMusicAudioJobProgress :exec
+UPDATE chat_audio_jobs SET percent = $1, stage_note = $2, updated_at = now()
+WHERE id = $3 AND state = 'running'
+`
+
+type UpdateMusicAudioJobProgressParams struct {
+	Percent   int32
+	StageNote string
+	ID        uuid.UUID
+}
+
+func (q *Queries) UpdateMusicAudioJobProgress(ctx context.Context, arg UpdateMusicAudioJobProgressParams) error {
+	_, err := q.db.Exec(ctx, updateMusicAudioJobProgress, arg.Percent, arg.StageNote, arg.ID)
+	return err
+}
+
+const updateMusicAudioJobStage = `-- name: UpdateMusicAudioJobStage :one
+UPDATE chat_audio_jobs SET stage = $1, percent = $2, stage_note = $3, updated_at = now()
+WHERE id = $4 AND state = 'running'
+RETURNING id, workspace_id, user_id, chat_id, run_id, turn_id, message_id, persona_id, title, duration_ms, script_path, method, stage, state, checks, percent, stage_note, error, failure_kind, error_log, output_blob_key, output_filename, output_content_type, output_size_bytes, output_duration_ms, library_item_id, created_at, updated_at, finished_at, source_kind, provider_id, prompt, lyrics, instrumental, error_kind
+`
+
+type UpdateMusicAudioJobStageParams struct {
+	Stage     string
+	Percent   int32
+	StageNote string
+	ID        uuid.UUID
+}
+
+func (q *Queries) UpdateMusicAudioJobStage(ctx context.Context, arg UpdateMusicAudioJobStageParams) (ChatAudioJob, error) {
+	row := q.db.QueryRow(ctx, updateMusicAudioJobStage,
+		arg.Stage,
+		arg.Percent,
+		arg.StageNote,
+		arg.ID,
+	)
+	var i ChatAudioJob
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.ChatID,
+		&i.RunID,
+		&i.TurnID,
+		&i.MessageID,
+		&i.PersonaID,
+		&i.Title,
+		&i.DurationMs,
+		&i.ScriptPath,
+		&i.Method,
+		&i.Stage,
+		&i.State,
+		&i.Checks,
+		&i.Percent,
+		&i.StageNote,
+		&i.Error,
+		&i.FailureKind,
+		&i.ErrorLog,
+		&i.OutputBlobKey,
+		&i.OutputFilename,
+		&i.OutputContentType,
+		&i.OutputSizeBytes,
+		&i.OutputDurationMs,
+		&i.LibraryItemID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+		&i.SourceKind,
+		&i.ProviderID,
+		&i.Prompt,
+		&i.Lyrics,
+		&i.Instrumental,
+		&i.ErrorKind,
 	)
 	return i, err
 }

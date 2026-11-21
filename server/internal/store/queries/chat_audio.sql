@@ -29,8 +29,32 @@ WHERE id = sqlc.arg(id) AND state = 'running'
 RETURNING *;
 
 -- name: RunningChatAudioJobs :many
--- The jobs a run is working on, oldest first.
-SELECT * FROM chat_audio_jobs WHERE run_id = $1 AND state = 'running' ORDER BY created_at, id;
+-- The code-rendered jobs a run is working on, oldest first.
+SELECT * FROM chat_audio_jobs WHERE run_id = $1 AND state = 'running' AND source_kind = 'code' ORDER BY created_at, id;
+
+-- name: CreateMusicAudioJob :one
+INSERT INTO chat_audio_jobs (
+  workspace_id, user_id, chat_id, run_id, turn_id, persona_id,
+  title, duration_ms, method, stage, stage_note,
+  source_kind, provider_id, prompt, lyrics, instrumental
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'compose', $10, 'music', $11, $12, $13, $14)
+RETURNING *;
+
+-- name: UpdateMusicAudioJobProgress :exec
+UPDATE chat_audio_jobs SET percent = sqlc.arg(percent), stage_note = sqlc.arg(stage_note), updated_at = now()
+WHERE id = sqlc.arg(id) AND state = 'running';
+
+-- name: UpdateMusicAudioJobStage :one
+UPDATE chat_audio_jobs SET stage = sqlc.arg(stage), percent = sqlc.arg(percent), stage_note = sqlc.arg(stage_note), updated_at = now()
+WHERE id = sqlc.arg(id) AND state = 'running'
+RETURNING *;
+
+-- name: FailMusicAudioJob :one
+UPDATE chat_audio_jobs
+SET state = 'failed', error = sqlc.arg(error), failure_kind = sqlc.arg(failure_kind), error_kind = sqlc.arg(error_kind), updated_at = now(), finished_at = now()
+WHERE id = sqlc.arg(id) AND state = 'running'
+RETURNING *;
 
 -- name: SetChatAudioProgress :exec
 -- What the runner read from the job's progress.json (the caller skips it when

@@ -21,6 +21,30 @@ func toChatAudio(j store.ChatAudioJob, peaks []byte) api.ChatAudio {
 		ScriptPath: j.ScriptPath, Checks: []api.ChatVideoCheck{}, Percent: int(j.Percent), StageNote: j.StageNote,
 		RunId: j.RunID, MessageId: j.MessageID, LibraryItemId: j.LibraryItemID, CreatedAt: j.CreatedAt, UpdatedAt: j.UpdatedAt, FinishedAt: j.FinishedAt,
 	}
+	if j.SourceKind != "" {
+		sk := api.ChatAudioSourceKind(j.SourceKind)
+		out.SourceKind = &sk
+	}
+	if j.ProviderID != "" {
+		p := j.ProviderID
+		out.ProviderId = &p
+	}
+	if j.Prompt != "" {
+		pr := j.Prompt
+		out.Prompt = &pr
+	}
+	if j.Lyrics != "" {
+		ly := j.Lyrics
+		out.Lyrics = &ly
+	}
+	if j.SourceKind == "music" || j.Instrumental {
+		inst := j.Instrumental
+		out.Instrumental = &inst
+	}
+	if j.ErrorKind != "" {
+		ek := api.ChatAudioErrorKind(j.ErrorKind)
+		out.ErrorKind = &ek
+	}
 	if j.FailureKind != nil {
 		k := api.ChatAudioFailureKind(*j.FailureKind)
 		out.FailureKind = &k

@@ -1465,6 +1465,103 @@ paths:
               schema: { $ref: "#/components/schemas/ImageEngineSettings" }
         default: { $ref: "#/components/responses/Error" }
 
+  /media/providers:
+    get:
+      operationId: listMediaProviders
+      summary: Registered media providers, masked config, and workspace defaults
+      tags: [workspace]
+      responses:
+        "200":
+          description: Providers and defaults
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MediaProvidersResponse" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /media/providers/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      operationId: updateMediaProvider
+      summary: Update a media provider's settings and write-only secrets
+      tags: [workspace]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateMediaProviderRequest" }
+      responses:
+        "200":
+          description: Updated provider state (without secret values)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MediaProvider" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /media/providers/{id}/secret:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      operationId: clearMediaProviderSecret
+      summary: Clear one or all stored secrets for a media provider
+      tags: [workspace]
+      parameters:
+        - name: field
+          in: query
+          schema: { type: string }
+          description: Specific secret field key to clear; clears all secrets for this provider when omitted
+      responses:
+        "204":
+          description: Cleared
+        default: { $ref: "#/components/responses/Error" }
+
+  /media/providers/{id}/check:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: checkMediaProvider
+      summary: Verify a media provider's credentials and reachability
+      tags: [workspace]
+      responses:
+        "200":
+          description: Verification outcome
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MediaProviderCheckResponse" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /media/defaults/{capability}:
+    parameters:
+      - name: capability
+        in: path
+        required: true
+        schema: { $ref: "#/components/schemas/MediaCapability" }
+    put:
+      operationId: setMediaDefault
+      summary: Set or clear the workspace's active provider for a media capability
+      tags: [workspace]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SetMediaDefaultRequest" }
+      responses:
+        "200":
+          description: Updated providers and defaults
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MediaProvidersResponse" }
+        default: { $ref: "#/components/responses/Error" }
+
   /runner/environment:
     get:
       operationId: getRunnerEnvironment
@@ -8465,6 +8562,87 @@ components:
               label: { type: string }
               available: { type: boolean, description: "Connected, with a model to run the image step on" }
               reason: { type: string, description: "Why it isn't available" }
+    MediaCapability:
+      type: string
+      enum: [music, tts, script]
+    MediaFieldOption:
+      type: object
+      required: [value, label]
+      properties:
+        value: { type: string }
+        label: { type: string }
+    MediaFieldSpec:
+      type: object
+      required: [key, label, kind]
+      properties:
+        key: { type: string }
+        label: { type: string }
+        kind: { type: string, enum: [text, secret, select, segmented] }
+        required: { type: boolean }
+        default: { type: string }
+        placeholder: { type: string }
+        help: { type: string }
+        options:
+          type: array
+          items: { $ref: "#/components/schemas/MediaFieldOption" }
+        show_when:
+          type: object
+          additionalProperties: { type: string }
+    MediaProvider:
+      type: object
+      required: [id, label, capabilities, coming_soon, enabled, available, fields, settings, secrets_set]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        description: { type: string }
+        capabilities:
+          type: array
+          items: { $ref: "#/components/schemas/MediaCapability" }
+        coming_soon: { type: boolean }
+        enabled: { type: boolean }
+        available: { type: boolean }
+        unavailable_reason: { type: string }
+        fields:
+          type: array
+          items: { $ref: "#/components/schemas/MediaFieldSpec" }
+        settings:
+          type: object
+          additionalProperties: { type: string }
+        secrets_set:
+          type: object
+          additionalProperties: { type: boolean }
+    MediaProvidersResponse:
+      type: object
+      required: [providers, defaults]
+      properties:
+        providers:
+          type: array
+          items: { $ref: "#/components/schemas/MediaProvider" }
+        defaults:
+          type: object
+          additionalProperties: { type: string }
+    UpdateMediaProviderRequest:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        settings:
+          type: object
+          additionalProperties: { type: string }
+        secrets:
+          type: object
+          additionalProperties: { type: string }
+    MediaProviderCheckResponse:
+      type: object
+      required: [ok, message]
+      properties:
+        ok: { type: boolean }
+        message: { type: string }
+        error_kind: { $ref: "#/components/schemas/ChatAudioErrorKind" }
+    SetMediaDefaultRequest:
+      type: object
+      required: [provider_id]
+      properties:
+        provider_id: { type: string }
     RunnerSettings:
       type: object
       required: [host_folder_workspaces]
@@ -9718,6 +9896,12 @@ components:
       type: string
       enum: [compose, render, check, save]
       description: "compose: the music or sound is being written; render: the renderer is running; check: measuring the file (a persona can't listen, so the checks are numbers); save: storing it"
+    ChatAudioSourceKind:
+      type: string
+      enum: [code, music]
+    ChatAudioErrorKind:
+      type: string
+      enum: [auth, quota, rate_limit, filtered, unavailable, error]
     ChatAudioOutput:
       type: object
       required: [filename, content_type, size_bytes]
@@ -9734,9 +9918,15 @@ components:
         title: { type: string }
         duration_ms: { type: integer, description: The planned length }
         method: { type: string, description: "How it was made, e.g. MIDI → FluidSynth; empty until named" }
+        source_kind: { $ref: "#/components/schemas/ChatAudioSourceKind" }
+        provider_id: { type: string }
+        prompt: { type: string }
+        lyrics: { type: string }
+        instrumental: { type: boolean }
         stage: { $ref: "#/components/schemas/ChatAudioStage" }
         state: { type: string, enum: [running, done, failed] }
         failure_kind: { type: string, enum: [error, stopped], description: "Why a failed job failed: stopped when the person stopped the reply" }
+        error_kind: { $ref: "#/components/schemas/ChatAudioErrorKind" }
         error: { type: string }
         error_log: { type: string, description: The failing command's output, when the agent attached it }
         script_path: { type: string, description: "The renderer, relative to the chat's workspace; empty until named" }
