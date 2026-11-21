@@ -15,6 +15,13 @@ WITH items AS (
  FROM approval_requests a JOIN tickets t ON t.id=a.ticket_id JOIN projects p ON p.id=t.project_id
  WHERE a.workspace_id=sqlc.arg(workspace_id)
  UNION ALL
+ SELECT ('approval:'||a.id)::text AS id, 'approval'::text AS kind,
+ coalesce(nullif(cs.title, ''), 'Chat')::text AS title, a.action_summary AS summary,
+ ('/chat/'||cs.id)::text AS href, ''::text AS project, ''::text AS ticket_key, a.created_at,
+ a.state <> 'pending' AS resolved, a.agent_id, a.run_id, NULL
+ FROM approval_requests a JOIN chat_sessions cs ON cs.id=a.chat_id
+ WHERE a.workspace_id=sqlc.arg(workspace_id) AND a.ticket_id IS NULL AND cs.created_by=sqlc.arg(user_id)
+ UNION ALL
  SELECT 'dispatch:'||t.id,'dispatch',t.title,ag.name||' is waiting for dispatch','/tickets/'||t.key,p.key,t.key,greatest(t.updated_at,(SELECT max(b.updated_at) FROM ticket_dependencies d JOIN tickets b ON b.id=d.blocker_id WHERE d.ticket_id=t.id))::timestamptz,false,
  ag.id,NULL,NULL
  FROM tickets t JOIN projects p ON p.id=t.project_id JOIN agents ag ON ag.id=t.assignee_agent_id

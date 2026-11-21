@@ -589,3 +589,29 @@ SELECT id, workspace_id, created_by FROM chat_sessions
 WHERE temporary AND state <> 'running' AND COALESCE(last_message_at, created_at) < sqlc.arg(cutoff)
 ORDER BY COALESCE(last_message_at, created_at)
 LIMIT sqlc.arg(row_limit);
+
+-- name: CreateChatSteer :one
+INSERT INTO chat_steers (session_id, run_id, message_id, body)
+VALUES ($1, $2, $3, $4) RETURNING *;
+
+-- name: ClaimNextChatSteer :one
+UPDATE chat_steers SET state = 'delivered', delivered_at = now()
+WHERE chat_steers.id = (
+  SELECT cs.id FROM chat_steers cs WHERE cs.run_id = $1 AND cs.state = 'pending'
+  ORDER BY cs.created_at, cs.id LIMIT 1 FOR UPDATE SKIP LOCKED
+)
+RETURNING *;
+
+-- name: MarkChatSteerState :exec
+UPDATE chat_steers SET state = $2 WHERE id = $1;
+
+-- name: TakeNextPendingChatSteer :one
+UPDATE chat_steers SET state = 'fallback', delivered_at = now()
+WHERE chat_steers.id = (
+  SELECT cs.id FROM chat_steers cs WHERE cs.run_id = $1 AND cs.state = 'pending'
+  ORDER BY cs.created_at, cs.id LIMIT 1 FOR UPDATE SKIP LOCKED
+)
+RETURNING *;
+
+-- name: ExpireRunChatSteers :exec
+UPDATE chat_steers SET state = 'expired' WHERE run_id = $1 AND state = 'pending';

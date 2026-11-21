@@ -1059,6 +1059,9 @@ func (s *Service) CancelChat(ctx context.Context, ws, user, id uuid.UUID) (store
 				return err
 			}
 		}
+		if err = q.ExpireRunChatSteers(ctx, *chat.CurrentRunID); err != nil {
+			return err
+		}
 		out, _, _, err = stopChatTurn(ctx, q, chat)
 		return err
 	})

@@ -3,20 +3,26 @@ package harness
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"sync"
 )
 
 const sessionMaxScanBytes = 32 << 20
 
+// ErrSteerUnsupported indicates that the running harness session cannot accept
+// mid-turn steering input (by protocol capability or current turn state).
+var ErrSteerUnsupported = errors.New("harness session does not support mid-turn steering")
+
 // PolicyFunc authorizes a single tool call in-process. Returning allow=false
 // denies the tool with reason. Implementations must fail closed.
 type PolicyFunc func(ctx context.Context, tool string, input map[string]any) (allow bool, reason string)
 
-// SessionControl lets the runner request a protocol-native interrupt before
-// falling back to OS signals.
+// SessionControl lets the runner request a protocol-native interrupt or
+// mid-turn steer before falling back to OS signals or turn replacement.
 type SessionControl interface {
 	Interrupt() error
+	Steer(message string) error
 }
 
 // SessionCallbacks delivers normalized events, session IDs, raw stdout lines,

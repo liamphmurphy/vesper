@@ -885,6 +885,8 @@ func TestHarnessToolApprovalParity(t *testing.T) {
 	for _, name := range []string{"claude-code", "codex"} {
 		t.Run(name, func(t *testing.T) {
 			e := setup(t)
+			e.runner.Cfg.ToolApprovalWait = 100 * time.Millisecond
+			e.runner.Cfg.ToolApprovalPoll = 20 * time.Millisecond
 			t.Setenv("FAKE_HARNESS_MODE", "policy")
 			e.dispatch("PAY-214")
 			run := e.run("PAY-214")

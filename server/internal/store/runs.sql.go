@@ -653,7 +653,7 @@ func (q *Queries) ChildRuns(ctx context.Context, parentRunID *uuid.UUID) ([]Run,
 const claimApprovalExecution = `-- name: ClaimApprovalExecution :one
 UPDATE approval_requests SET executed_at = now()
 WHERE id = $1 AND run_id = $2 AND state = 'approved' AND executed_at IS NULL
-RETURNING id, workspace_id, run_id, ticket_id, agent_id, scope, action_summary, action_detail, risk_summary, state, decided_by_user_id, decided_at, decision_note, executed_at, result, created_at
+RETURNING id, workspace_id, run_id, ticket_id, agent_id, scope, action_summary, action_detail, risk_summary, state, decided_by_user_id, decided_at, decision_note, executed_at, result, created_at, chat_id
 `
 
 type ClaimApprovalExecutionParams struct {
@@ -682,6 +682,7 @@ func (q *Queries) ClaimApprovalExecution(ctx context.Context, arg ClaimApprovalE
 		&i.ExecutedAt,
 		&i.Result,
 		&i.CreatedAt,
+		&i.ChatID,
 	)
 	return i, err
 }
@@ -723,31 +724,33 @@ func (q *Queries) CountPendingApprovals(ctx context.Context, workspaceID uuid.UU
 }
 
 const createApproval = `-- name: CreateApproval :one
-INSERT INTO approval_requests (workspace_id, run_id, ticket_id, agent_id, scope, action_summary, action_detail, risk_summary)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, workspace_id, run_id, ticket_id, agent_id, scope, action_summary, action_detail, risk_summary, state, decided_by_user_id, decided_at, decision_note, executed_at, result, created_at
+INSERT INTO approval_requests (workspace_id, run_id, ticket_id, chat_id, agent_id, scope, action_summary, action_detail, risk_summary)
+VALUES ($1, $2, $8, $9, $3, $4, $5, $6, $7) RETURNING id, workspace_id, run_id, ticket_id, agent_id, scope, action_summary, action_detail, risk_summary, state, decided_by_user_id, decided_at, decision_note, executed_at, result, created_at, chat_id
 `
 
 type CreateApprovalParams struct {
 	WorkspaceID   uuid.UUID
 	RunID         uuid.UUID
-	TicketID      uuid.UUID
 	AgentID       uuid.UUID
 	Scope         string
 	ActionSummary string
 	ActionDetail  json.RawMessage
 	RiskSummary   string
+	TicketID      *uuid.UUID
+	ChatID        *uuid.UUID
 }
 
 func (q *Queries) CreateApproval(ctx context.Context, arg CreateApprovalParams) (ApprovalRequest, error) {
 	row := q.db.QueryRow(ctx, createApproval,
 		arg.WorkspaceID,
 		arg.RunID,
-		arg.TicketID,
 		arg.AgentID,
 		arg.Scope,
 		arg.ActionSummary,
 		arg.ActionDetail,
 		arg.RiskSummary,
+		arg.TicketID,
+		arg.ChatID,
 	)
 	var i ApprovalRequest
 	err := row.Scan(
@@ -767,6 +770,7 @@ func (q *Queries) CreateApproval(ctx context.Context, arg CreateApprovalParams) 
 		&i.ExecutedAt,
 		&i.Result,
 		&i.CreatedAt,
+		&i.ChatID,
 	)
 	return i, err
 }
@@ -859,7 +863,7 @@ func (q *Queries) CreateRun(ctx context.Context, arg CreateRunParams) (Run, erro
 
 const decideApproval = `-- name: DecideApproval :one
 UPDATE approval_requests SET state = $2, decided_by_user_id = $3, decided_at = now(), decision_note = $4
-WHERE id = $1 AND state = 'pending' RETURNING id, workspace_id, run_id, ticket_id, agent_id, scope, action_summary, action_detail, risk_summary, state, decided_by_user_id, decided_at, decision_note, executed_at, result, created_at
+WHERE id = $1 AND state = 'pending' RETURNING id, workspace_id, run_id, ticket_id, agent_id, scope, action_summary, action_detail, risk_summary, state, decided_by_user_id, decided_at, decision_note, executed_at, result, created_at, chat_id
 `
 
 type DecideApprovalParams struct {
@@ -894,12 +898,13 @@ func (q *Queries) DecideApproval(ctx context.Context, arg DecideApprovalParams) 
 		&i.ExecutedAt,
 		&i.Result,
 		&i.CreatedAt,
+		&i.ChatID,
 	)
 	return i, err
 }
 
 const decidedApprovalsSince = `-- name: DecidedApprovalsSince :many
-SELECT id, workspace_id, run_id, ticket_id, agent_id, scope, action_summary, action_detail, risk_summary, state, decided_by_user_id, decided_at, decision_note, executed_at, result, created_at FROM approval_requests WHERE run_id = $1 AND decided_at > $2 ORDER BY decided_at
+SELECT id, workspace_id, run_id, ticket_id, agent_id, scope, action_summary, action_detail, risk_summary, state, decided_by_user_id, decided_at, decision_note, executed_at, result, created_at, chat_id FROM approval_requests WHERE run_id = $1 AND decided_at > $2 ORDER BY decided_at
 `
 
 type DecidedApprovalsSinceParams struct {
@@ -933,6 +938,7 @@ func (q *Queries) DecidedApprovalsSince(ctx context.Context, arg DecidedApproval
 			&i.ExecutedAt,
 			&i.Result,
 			&i.CreatedAt,
+			&i.ChatID,
 		); err != nil {
 			return nil, err
 		}
@@ -1047,6 +1053,15 @@ func (q *Queries) EndOpenTurn(ctx context.Context, arg EndOpenTurnParams) error 
 	return err
 }
 
+const expireApprovalByID = `-- name: ExpireApprovalByID :exec
+UPDATE approval_requests SET state = 'expired' WHERE id = $1 AND state = 'pending'
+`
+
+func (q *Queries) ExpireApprovalByID(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, expireApprovalByID, id)
+	return err
+}
+
 const expireRunApprovals = `-- name: ExpireRunApprovals :exec
 UPDATE approval_requests SET state = 'expired' WHERE run_id = $1 AND state = 'pending'
 `
@@ -1057,7 +1072,7 @@ func (q *Queries) ExpireRunApprovals(ctx context.Context, runID uuid.UUID) error
 }
 
 const getApproval = `-- name: GetApproval :one
-SELECT id, workspace_id, run_id, ticket_id, agent_id, scope, action_summary, action_detail, risk_summary, state, decided_by_user_id, decided_at, decision_note, executed_at, result, created_at FROM approval_requests WHERE id = $1 AND workspace_id = $2
+SELECT id, workspace_id, run_id, ticket_id, agent_id, scope, action_summary, action_detail, risk_summary, state, decided_by_user_id, decided_at, decision_note, executed_at, result, created_at, chat_id FROM approval_requests WHERE id = $1 AND workspace_id = $2
 `
 
 type GetApprovalParams struct {
@@ -1085,6 +1100,7 @@ func (q *Queries) GetApproval(ctx context.Context, arg GetApprovalParams) (Appro
 		&i.ExecutedAt,
 		&i.Result,
 		&i.CreatedAt,
+		&i.ChatID,
 	)
 	return i, err
 }
@@ -1303,7 +1319,7 @@ func (q *Queries) LearningRunsMeta(ctx context.Context, runIds []uuid.UUID) ([]L
 }
 
 const listApprovalsForRun = `-- name: ListApprovalsForRun :many
-SELECT id, workspace_id, run_id, ticket_id, agent_id, scope, action_summary, action_detail, risk_summary, state, decided_by_user_id, decided_at, decision_note, executed_at, result, created_at FROM approval_requests WHERE run_id = $1 ORDER BY created_at
+SELECT id, workspace_id, run_id, ticket_id, agent_id, scope, action_summary, action_detail, risk_summary, state, decided_by_user_id, decided_at, decision_note, executed_at, result, created_at, chat_id FROM approval_requests WHERE run_id = $1 ORDER BY created_at
 `
 
 func (q *Queries) ListApprovalsForRun(ctx context.Context, runID uuid.UUID) ([]ApprovalRequest, error) {
@@ -1332,6 +1348,7 @@ func (q *Queries) ListApprovalsForRun(ctx context.Context, runID uuid.UUID) ([]A
 			&i.ExecutedAt,
 			&i.Result,
 			&i.CreatedAt,
+			&i.ChatID,
 		); err != nil {
 			return nil, err
 		}
@@ -1406,6 +1423,48 @@ func (q *Queries) ListMockupWaitingRuns(ctx context.Context, workspaceID uuid.UU
 			&i.Report,
 			&i.RolloverRequested,
 			&i.ChatToolNames,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPendingApprovalsForChat = `-- name: ListPendingApprovalsForChat :many
+SELECT id, workspace_id, run_id, ticket_id, agent_id, scope, action_summary, action_detail, risk_summary, state, decided_by_user_id, decided_at, decision_note, executed_at, result, created_at, chat_id FROM approval_requests WHERE chat_id = $1::uuid AND state = 'pending' ORDER BY created_at, id
+`
+
+func (q *Queries) ListPendingApprovalsForChat(ctx context.Context, chatID uuid.UUID) ([]ApprovalRequest, error) {
+	rows, err := q.db.Query(ctx, listPendingApprovalsForChat, chatID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ApprovalRequest{}
+	for rows.Next() {
+		var i ApprovalRequest
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.RunID,
+			&i.TicketID,
+			&i.AgentID,
+			&i.Scope,
+			&i.ActionSummary,
+			&i.ActionDetail,
+			&i.RiskSummary,
+			&i.State,
+			&i.DecidedByUserID,
+			&i.DecidedAt,
+			&i.DecisionNote,
+			&i.ExecutedAt,
+			&i.Result,
+			&i.CreatedAt,
+			&i.ChatID,
 		); err != nil {
 			return nil, err
 		}
@@ -1640,7 +1699,7 @@ func (q *Queries) ListTurns(ctx context.Context, runID uuid.UUID) ([]RunTurn, er
 }
 
 const lockApproval = `-- name: LockApproval :one
-SELECT id, workspace_id, run_id, ticket_id, agent_id, scope, action_summary, action_detail, risk_summary, state, decided_by_user_id, decided_at, decision_note, executed_at, result, created_at FROM approval_requests WHERE id = $1 AND workspace_id = $2 FOR UPDATE
+SELECT id, workspace_id, run_id, ticket_id, agent_id, scope, action_summary, action_detail, risk_summary, state, decided_by_user_id, decided_at, decision_note, executed_at, result, created_at, chat_id FROM approval_requests WHERE id = $1 AND workspace_id = $2 FOR UPDATE
 `
 
 type LockApprovalParams struct {
@@ -1668,6 +1727,7 @@ func (q *Queries) LockApproval(ctx context.Context, arg LockApprovalParams) (App
 		&i.ExecutedAt,
 		&i.Result,
 		&i.CreatedAt,
+		&i.ChatID,
 	)
 	return i, err
 }
@@ -1733,7 +1793,7 @@ func (q *Queries) LockRun(ctx context.Context, id uuid.UUID) (Run, error) {
 
 const markApprovalExecuted = `-- name: MarkApprovalExecuted :one
 UPDATE approval_requests SET executed_at = now(), result = $2
-WHERE id = $1 AND state = 'approved' AND executed_at IS NULL RETURNING id, workspace_id, run_id, ticket_id, agent_id, scope, action_summary, action_detail, risk_summary, state, decided_by_user_id, decided_at, decision_note, executed_at, result, created_at
+WHERE id = $1 AND state = 'approved' AND executed_at IS NULL RETURNING id, workspace_id, run_id, ticket_id, agent_id, scope, action_summary, action_detail, risk_summary, state, decided_by_user_id, decided_at, decision_note, executed_at, result, created_at, chat_id
 `
 
 type MarkApprovalExecutedParams struct {
@@ -1761,12 +1821,13 @@ func (q *Queries) MarkApprovalExecuted(ctx context.Context, arg MarkApprovalExec
 		&i.ExecutedAt,
 		&i.Result,
 		&i.CreatedAt,
+		&i.ChatID,
 	)
 	return i, err
 }
 
 const pendingApprovalsForTicket = `-- name: PendingApprovalsForTicket :many
-SELECT id, workspace_id, run_id, ticket_id, agent_id, scope, action_summary, action_detail, risk_summary, state, decided_by_user_id, decided_at, decision_note, executed_at, result, created_at FROM approval_requests WHERE ticket_id = $1 AND state = 'pending' ORDER BY created_at
+SELECT id, workspace_id, run_id, ticket_id, agent_id, scope, action_summary, action_detail, risk_summary, state, decided_by_user_id, decided_at, decision_note, executed_at, result, created_at, chat_id FROM approval_requests WHERE ticket_id = $1::uuid AND state = 'pending' ORDER BY created_at
 `
 
 func (q *Queries) PendingApprovalsForTicket(ctx context.Context, ticketID uuid.UUID) ([]ApprovalRequest, error) {
@@ -1795,6 +1856,7 @@ func (q *Queries) PendingApprovalsForTicket(ctx context.Context, ticketID uuid.U
 			&i.ExecutedAt,
 			&i.Result,
 			&i.CreatedAt,
+			&i.ChatID,
 		); err != nil {
 			return nil, err
 		}

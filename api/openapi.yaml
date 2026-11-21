@@ -5473,6 +5473,49 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
         default: { $ref: "#/components/responses/Error" }
 
+  /chats/{id}/steer:
+    parameters:
+      - { $ref: "#/components/parameters/ChatId" }
+    post:
+      operationId: steerChat
+      summary: Steer an active chat reply mid-turn without discarding work
+      description: |
+        Injects guidance into a live chat session mid-turn when supported by
+        the harness (or falls back to an interrupt/next-turn handoff otherwise).
+        Returns 201 with the steer record and saved user message id.
+      tags: [chats]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChatMessageEdit" }
+      responses:
+        "201":
+          description: Steered
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatSteer" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /chats/{id}/tool-approvals:
+    parameters:
+      - { $ref: "#/components/parameters/ChatId" }
+    get:
+      operationId: listChatToolApprovals
+      summary: Pending in-turn tool approvals for this chat
+      tags: [chats]
+      responses:
+        "200":
+          description: Pending approvals
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatToolApprovalList" }
+        "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
   /chats/{id}/asides:
     parameters:
       - { $ref: "#/components/parameters/ChatId" }
@@ -7922,6 +7965,7 @@ components:
         id: { type: string, format: uuid }
         run_id: { type: string, format: uuid }
         ticket_key: { type: string }
+        chat_id: { type: string, format: uuid }
         agent: { $ref: "#/components/schemas/AgentRef" }
         scope: { type: string }
         action_summary: { type: string }
@@ -8917,6 +8961,22 @@ components:
         followups:
           type: array
           items: { $ref: "#/components/schemas/ChatFollowup" }
+    ChatSteer:
+      type: object
+      required: [id, message_id, body, state, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        message_id: { type: string, format: uuid }
+        body: { type: string }
+        state: { type: string, enum: [pending, delivered, fallback, expired] }
+        created_at: { type: string, format: date-time }
+    ChatToolApprovalList:
+      type: object
+      required: [approvals]
+      properties:
+        approvals:
+          type: array
+          items: { $ref: "#/components/schemas/Approval" }
     ChatAsideList:
       type: object
       required: [asides]

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/liamphmurphy/vesper/server/internal/agentdef"
 )
@@ -91,6 +92,7 @@ func (c Codex) RunSession(ctx context.Context, stdin io.WriteCloser, stdout io.R
 	ctrl.nextID.Store(10)
 	var wg sync.WaitGroup
 	defer func() {
+		ctrl.closeAll()
 		_ = w.Close()
 		wg.Wait()
 	}()
@@ -249,6 +251,8 @@ func (c Codex) RunSession(ctx context.Context, stdin io.WriteCloser, stdout io.R
 				if json.Unmarshal(msg.Result, &tr) == nil && tr.Turn.ID != "" {
 					ctrl.setTurn(tr.Turn.ID)
 				}
+			default:
+				ctrl.resolve(idNum, msg.Error)
 			}
 			continue
 		}
@@ -294,12 +298,19 @@ func codexTurnStartParams(ws Workspace, t Turn, threadID string) map[string]any 
 	return params
 }
 
+type codexRPCError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
 type codexControl struct {
-	w      *lineWriter
-	nextID atomic.Int64
-	mu     sync.Mutex
-	thread string
-	turn   string
+	w       *lineWriter
+	nextID  atomic.Int64
+	mu      sync.Mutex
+	thread  string
+	turn    string
+	closed  bool
+	pending map[int64]chan *codexRPCError
 }
 
 func (c *codexControl) setThread(id string) {
@@ -312,6 +323,30 @@ func (c *codexControl) setTurn(id string) {
 	c.mu.Lock()
 	c.turn = id
 	c.mu.Unlock()
+}
+
+func (c *codexControl) closeAll() {
+	c.mu.Lock()
+	if !c.closed {
+		c.closed = true
+		for id, ch := range c.pending {
+			close(ch)
+			delete(c.pending, id)
+		}
+	}
+	c.mu.Unlock()
+}
+
+func (c *codexControl) resolve(id int64, rpcErr *codexRPCError) {
+	c.mu.Lock()
+	ch, ok := c.pending[id]
+	if ok {
+		delete(c.pending, id)
+	}
+	c.mu.Unlock()
+	if ok {
+		ch <- rpcErr
+	}
 }
 
 func (c *codexControl) Interrupt() error {
@@ -332,15 +367,65 @@ func (c *codexControl) Interrupt() error {
 	})
 }
 
+func (c *codexControl) Steer(message string) error {
+	if strings.TrimSpace(message) == "" {
+		return fmt.Errorf("codex steer: empty message")
+	}
+	id := c.nextID.Add(1)
+	ch := make(chan *codexRPCError, 1)
+	c.mu.Lock()
+	if c.closed || c.thread == "" || c.turn == "" {
+		c.mu.Unlock()
+		return ErrSteerUnsupported
+	}
+	threadID, turnID := c.thread, c.turn
+	if c.pending == nil {
+		c.pending = map[int64]chan *codexRPCError{}
+	}
+	c.pending[id] = ch
+	c.mu.Unlock()
+
+	if err := c.w.writeJSON(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"method":  "turn/steer",
+		"params": map[string]any{
+			"threadId":       threadID,
+			"expectedTurnId": turnID,
+			"input":          []map[string]any{{"type": "text", "text": message}},
+		},
+	}); err != nil {
+		c.mu.Lock()
+		delete(c.pending, id)
+		c.mu.Unlock()
+		return err
+	}
+
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	select {
+	case rpcErr, ok := <-ch:
+		if !ok {
+			return ErrSteerUnsupported
+		}
+		if rpcErr != nil {
+			return fmt.Errorf("%w: %s", ErrSteerUnsupported, rpcErr.Message)
+		}
+		return nil
+	case <-timer.C:
+		c.mu.Lock()
+		delete(c.pending, id)
+		c.mu.Unlock()
+		return fmt.Errorf("%w: timed out waiting for turn/steer ack", ErrSteerUnsupported)
+	}
+}
+
 type codexRPCMessage struct {
 	ID     json.RawMessage `json:"id"`
 	Method string          `json:"method"`
 	Params json.RawMessage `json:"params"`
 	Result json.RawMessage `json:"result"`
-	Error  *struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
-	} `json:"error"`
+	Error  *codexRPCError  `json:"error"`
 }
 
 func handleCodexServerRequest(ctx context.Context, w *lineWriter, fn PolicyFunc, noTools bool, id json.RawMessage, method string, paramsRaw json.RawMessage) {

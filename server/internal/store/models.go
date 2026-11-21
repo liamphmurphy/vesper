@@ -82,7 +82,7 @@ type ApprovalRequest struct {
 	ID              uuid.UUID
 	WorkspaceID     uuid.UUID
 	RunID           uuid.UUID
-	TicketID        uuid.UUID
+	TicketID        *uuid.UUID
 	AgentID         uuid.UUID
 	Scope           string
 	ActionSummary   string
@@ -95,6 +95,7 @@ type ApprovalRequest struct {
 	ExecutedAt      *time.Time
 	Result          []byte
 	CreatedAt       time.Time
+	ChatID          *uuid.UUID
 }
 
 type Artifact struct {
@@ -471,6 +472,17 @@ type ChatSpaceSource struct {
 	CreatedAt     time.Time
 	ResearchJobID *uuid.UUID
 	ChatID        *uuid.UUID
+}
+
+type ChatSteer struct {
+	ID          uuid.UUID
+	SessionID   uuid.UUID
+	RunID       uuid.UUID
+	MessageID   uuid.UUID
+	Body        string
+	State       string
+	CreatedAt   time.Time
+	DeliveredAt *time.Time
 }
 
 type ChatSuggestion struct {

@@ -481,10 +481,14 @@ func (r *Runner) finishChatTurn(ctx context.Context, c runCtx, turn store.RunTur
 		if err := runs.ResumeInterruptedChat(ctx, q, chat.ID, run.ID, &turn.StartedAt, 0); err != nil {
 			return err
 		}
-		// Only a turn that ended with a reply sends the next queued follow-up;
-		// after a stop or a failure the queue waits for the person.
+		// Only a turn that ended with a reply sends a remaining pending steer
+		// or the next queued follow-up; after a stop or a failure, expire
+		// pending steers and hold the follow-up queue for the person.
 		if !replied {
-			return nil
+			return q.ExpireRunChatSteers(ctx, run.ID)
+		}
+		if err := runs.ResumePendingChatSteer(ctx, q, chat.ID, run.ID, 0); err != nil {
+			return err
 		}
 		return runs.SendNextFollowup(ctx, q, chat.ID, 0)
 	})
@@ -581,6 +585,9 @@ func (r *Runner) failChat(ctx context.Context, c runCtx, outcome string) {
 			return err
 		}
 		if err := idleChat(ctx, q, chat, run, "failed"); err != nil {
+			return err
+		}
+		if err := q.ExpireRunChatSteers(ctx, run.ID); err != nil {
 			return err
 		}
 		return runs.ResumeInterruptedChat(ctx, q, chat.ID, run.ID, nil, 0)

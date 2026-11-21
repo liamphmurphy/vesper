@@ -330,6 +330,10 @@ func (c *agyControl) Interrupt() error {
 	})
 }
 
+func (c *agyControl) Steer(string) error {
+	return ErrSteerUnsupported
+}
+
 type agyRPCError struct {
 	Code    int             `json:"code"`
 	Message string          `json:"message"`

@@ -9,12 +9,16 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"mvdan.cc/sh/v3/syntax"
 
 	"github.com/liamphmurphy/vesper/server/internal/agentdef"
+	"github.com/liamphmurphy/vesper/server/internal/broker"
 	"github.com/liamphmurphy/vesper/server/internal/store"
+	"github.com/liamphmurphy/vesper/server/internal/tracker"
 )
 
 // ToolDecision is consumed by both harnesses' PreToolUse hooks. An approval
@@ -27,6 +31,9 @@ type ToolDecision struct {
 type ToolCheck struct {
 	Tool  string         `json:"tool"`
 	Input map[string]any `json:"input"`
+	// Wait bounds how long a requires_approval tool blocks in-process waiting
+	// for a person's decision before timing out (0 uses immediate deny/end-turn).
+	Wait time.Duration `json:"-"`
 }
 
 // ToolScopes mirrors the shared tool rules. Shell matching is deliberately
@@ -272,9 +279,6 @@ func (s *Service) checkToolWithRun(ctx context.Context, c Caller, run store.Run,
 		if approved {
 			continue
 		}
-		if run.TicketID == nil {
-			return deny("This action requires approval; ticket-less runs cannot request this scope")
-		}
 		summary := fmt.Sprintf("Allow %s for %s", in.Tool, scope)
 		if command, ok := in.Input["command"].(string); ok {
 			summary += ": " + command
@@ -284,10 +288,23 @@ func (s *Service) checkToolWithRun(ctx context.Context, c Caller, run store.Run,
 		if r := []rune(summary); len(r) > 300 {
 			summary = string(r[:297]) + "..."
 		}
-		if _, err := s.RequestApproval(ctx, c, "", scope, summary, detail, "Harness tool requested this exact input"); err != nil {
+		if in.Wait <= 0 {
+			if run.TicketID == nil {
+				return deny("This action requires approval; ticket-less runs cannot request this scope")
+			}
+			if _, err := s.RequestApproval(ctx, c, "", scope, summary, detail, "Harness tool requested this exact input"); err != nil {
+				return ToolDecision{}, err
+			}
+			return deny("Approval requested in Vesper. End this turn; retry the exact action after approval")
+		}
+		ap, waitDeny, err := s.waitLiveToolApproval(ctx, c, run, scope, summary, detail, raw, in.Wait)
+		if err != nil {
 			return ToolDecision{}, err
 		}
-		return deny("Approval requested in Vesper. End this turn; retry the exact action after approval")
+		if waitDeny != "" {
+			return deny(waitDeny)
+		}
+		approvedIDs = append(approvedIDs, ap)
 	}
 	if len(approvedIDs) > 0 {
 		err := pgx.BeginFunc(ctx, s.Pool, func(tx pgx.Tx) error {
@@ -311,6 +328,197 @@ func (s *Service) checkToolWithRun(ctx context.Context, c Caller, run store.Run,
 		}
 	}
 	return ToolDecision{Decision: "allow"}, nil
+}
+
+// waitLiveToolApproval creates a pending approval for a live ticket or chat turn
+// and blocks up to wait waiting for a person's decision without killing the
+// turn. On timeout, ticket runs fall back to the async waiting/approval state;
+// chat runs expire the request and return a denial so the turn can reply.
+func (s *Service) waitLiveToolApproval(ctx context.Context, c Caller, run store.Run, scope, summary string, detail map[string]any, rawDetail []byte, wait time.Duration) (store.ApprovalRequest, string, error) {
+	if a, ok := broker.For(scope); ok {
+		if err := a.Validate(detail); err != nil {
+			return store.ApprovalRequest{}, fmt.Sprintf("Invalid action detail for %s: %v", scope, err), nil
+		}
+	}
+	var ticketID, chatID *uuid.UUID
+	var epicID *uuid.UUID
+	q := store.New(s.Pool)
+	switch {
+	case run.TicketID != nil:
+		t, err := q.GetTicketByID(ctx, *run.TicketID)
+		if err != nil {
+			return store.ApprovalRequest{}, "", err
+		}
+		ticketID = &t.ID
+		epicID = t.EpicID
+	case run.Purpose == "chat":
+		chat, err := q.ChatSessionForRun(ctx, &run.ID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return store.ApprovalRequest{}, "This action requires approval; chat session unavailable", nil
+		}
+		if err != nil {
+			return store.ApprovalRequest{}, "", err
+		}
+		chatID = &chat.ID
+	default:
+		return store.ApprovalRequest{}, "This action requires approval; ticket-less runs cannot request this scope", nil
+	}
+
+	var ap store.ApprovalRequest
+	if err := s.tx(ctx, func(q *store.Queries) error {
+		cur, err := q.LockRun(ctx, run.ID)
+		if err != nil {
+			return err
+		}
+		if cur.State != "running" {
+			return fmt.Errorf("run is not running")
+		}
+		ap, err = q.CreateApproval(ctx, store.CreateApprovalParams{
+			WorkspaceID: run.WorkspaceID, RunID: run.ID, TicketID: ticketID, ChatID: chatID, AgentID: c.Agent.ID,
+			Scope: scope, ActionSummary: summary, ActionDetail: rawDetail, RiskSummary: "Harness tool requested this exact input",
+		})
+		if err != nil {
+			return err
+		}
+		if err := event(ctx, q, run.ID, "lifecycle", map[string]any{
+			"state": "waiting_approval", "approval_id": ap.ID, "scope": scope, "summary": summary, "live": true,
+		}); err != nil {
+			return err
+		}
+		if ticketID != nil {
+			if err := tracker.Record(ctx, q, run.WorkspaceID, *ticketID, epicID, agentActor(c), VerbApprovalRequested,
+				map[string]any{"approval_id": ap.ID, "scope": scope, "summary": summary}, nil); err != nil {
+				return err
+			}
+		}
+		if chatID != nil {
+			if _, err := q.BumpChatRevision(ctx, *chatID); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return store.ApprovalRequest{}, "", err
+	}
+
+	resolveEvent := func(decision string) {
+		evCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		defer cancel()
+		_ = event(evCtx, store.New(s.Pool), run.ID, "lifecycle", map[string]any{
+			"state": "approval_resolved", "approval_id": ap.ID, "decision": decision, "live": true,
+		})
+		if chatID != nil {
+			_, _ = store.New(s.Pool).BumpChatRevision(evCtx, *chatID)
+		}
+	}
+	expirePending := func() {
+		expCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		defer cancel()
+		_ = store.New(s.Pool).ExpireApprovalByID(expCtx, ap.ID)
+	}
+	deniedText := func(cur store.ApprovalRequest) string {
+		msg := "A person denied this exact tool action"
+		if cur.DecisionNote != "" {
+			msg += ": " + cur.DecisionNote
+		}
+		return msg
+	}
+
+	deadline := time.Now().Add(wait)
+	tick := time.NewTicker(s.poll())
+	defer tick.Stop()
+	for {
+		cur, err := q.GetApproval(ctx, store.GetApprovalParams{ID: ap.ID, WorkspaceID: run.WorkspaceID})
+		if err == nil {
+			switch cur.State {
+			case "approved":
+				resolveEvent("approved")
+				return cur, "", nil
+			case "denied":
+				resolveEvent("denied")
+				return store.ApprovalRequest{}, deniedText(cur), nil
+			case "expired":
+				return store.ApprovalRequest{}, "Approval request expired", nil
+			}
+		}
+		if curRun, rerr := q.GetRun(ctx, store.GetRunParams{ID: run.ID, WorkspaceID: run.WorkspaceID}); rerr == nil && curRun.State != "running" {
+			expirePending()
+			return store.ApprovalRequest{}, "Turn cancelled while waiting for approval", nil
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			expirePending()
+			return store.ApprovalRequest{}, "Turn cancelled while waiting for approval", nil
+		case <-tick.C:
+		}
+	}
+
+	// Timeout: ticket runs pause asynchronously so Decide can resume later; chat
+	// runs expire the request and return control to the assistant.
+	if ticketID != nil {
+		var resolved *store.ApprovalRequest
+		var denyReason string
+		txCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		err := s.tx(txCtx, func(tq *store.Queries) error {
+			cur, err := tq.LockApproval(txCtx, store.LockApprovalParams{ID: ap.ID, WorkspaceID: run.WorkspaceID})
+			if err != nil {
+				return err
+			}
+			switch cur.State {
+			case "approved":
+				resolved = &cur
+				return nil
+			case "denied":
+				denyReason = deniedText(cur)
+				return nil
+			case "expired":
+				denyReason = "Approval request expired"
+				return nil
+			}
+			curRun, err := tq.LockRun(txCtx, run.ID)
+			if err != nil {
+				return err
+			}
+			if curRun.State != "running" {
+				_ = tq.ExpireApprovalByID(txCtx, ap.ID)
+				denyReason = "Turn cancelled while waiting for approval"
+				return nil
+			}
+			waitReason := "approval"
+			if _, err := tq.SetRunState(txCtx, store.SetRunStateParams{ID: run.ID, State: "waiting", WaitReason: &waitReason}); err != nil {
+				return err
+			}
+			if err := tq.EndOpenTurn(txCtx, store.EndOpenTurnParams{RunID: run.ID, ExitCode: ptr[int32](0)}); err != nil {
+				return err
+			}
+			if err := event(txCtx, tq, run.ID, "lifecycle", map[string]any{"state": "waiting", "reason": "approval", "approval_id": ap.ID, "scope": scope}); err != nil {
+				return err
+			}
+			return RecomputeAgentStatus(txCtx, tq, c.Agent.ID)
+		})
+		if err != nil {
+			return store.ApprovalRequest{}, "", err
+		}
+		if resolved != nil {
+			resolveEvent("approved")
+			return *resolved, "", nil
+		}
+		if denyReason != "" {
+			if strings.HasPrefix(denyReason, "A person denied") {
+				resolveEvent("denied")
+			}
+			return store.ApprovalRequest{}, denyReason, nil
+		}
+		return store.ApprovalRequest{}, "Approval requested in Vesper. End this turn; retry the exact action after approval", nil
+	}
+
+	expirePending()
+	resolveEvent("expired")
+	return store.ApprovalRequest{}, "The person didn't approve this tool call in time. Tell them what action you wanted to run and wait for their reply.", nil
 }
 
 // writeTargets lists the files a write tool call names: file_path or

@@ -315,13 +315,17 @@ func (s *Server) toRuns(ctx context.Context, ws uuid.UUID, rows []store.Run) ([]
 }
 
 func (s *Server) toApproval(ctx context.Context, ap store.ApprovalRequest, dir actorDirectory) (api.Approval, error) {
-	t, err := s.Q.GetTicketByID(ctx, ap.TicketID)
-	if err != nil {
-		return api.Approval{}, err
+	ticketKey := ""
+	if ap.TicketID != nil {
+		t, err := s.Q.GetTicketByID(ctx, *ap.TicketID)
+		if err != nil {
+			return api.Approval{}, err
+		}
+		ticketKey = t.Key
 	}
 	detail := broker.DetailMap(ap.ActionDetail)
 	out := api.Approval{
-		Id: ap.ID, RunId: ap.RunID, TicketKey: t.Key, Scope: ap.Scope, ActionSummary: ap.ActionSummary,
+		Id: ap.ID, RunId: ap.RunID, TicketKey: ticketKey, ChatId: ap.ChatID, Scope: ap.Scope, ActionSummary: ap.ActionSummary,
 		ActionDetail: detail, RiskSummary: ap.RiskSummary, State: api.ApprovalState(ap.State),
 		DecidedAt: ap.DecidedAt, ExecutedAt: ap.ExecutedAt, CreatedAt: ap.CreatedAt,
 	}

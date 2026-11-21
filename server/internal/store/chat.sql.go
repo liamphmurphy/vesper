@@ -831,6 +831,31 @@ func (q *Queries) ChatUserMentions(ctx context.Context, arg ChatUserMentionsPara
 	return mentioned, err
 }
 
+const claimNextChatSteer = `-- name: ClaimNextChatSteer :one
+UPDATE chat_steers SET state = 'delivered', delivered_at = now()
+WHERE chat_steers.id = (
+  SELECT cs.id FROM chat_steers cs WHERE cs.run_id = $1 AND cs.state = 'pending'
+  ORDER BY cs.created_at, cs.id LIMIT 1 FOR UPDATE SKIP LOCKED
+)
+RETURNING id, session_id, run_id, message_id, body, state, created_at, delivered_at
+`
+
+func (q *Queries) ClaimNextChatSteer(ctx context.Context, runID uuid.UUID) (ChatSteer, error) {
+	row := q.db.QueryRow(ctx, claimNextChatSteer, runID)
+	var i ChatSteer
+	err := row.Scan(
+		&i.ID,
+		&i.SessionID,
+		&i.RunID,
+		&i.MessageID,
+		&i.Body,
+		&i.State,
+		&i.CreatedAt,
+		&i.DeliveredAt,
+	)
+	return i, err
+}
+
 const countChatHistory = `-- name: CountChatHistory :one
 SELECT count(*)::bigint FROM chat_messages WHERE session_id = $1 AND role IN ('user', 'assistant')
 `
@@ -1034,6 +1059,39 @@ func (q *Queries) CreateChatSession(ctx context.Context, arg CreateChatSessionPa
 		&i.AnchorMessageID,
 		&i.SecondOpinion,
 		&i.LastAssistantSeq,
+	)
+	return i, err
+}
+
+const createChatSteer = `-- name: CreateChatSteer :one
+INSERT INTO chat_steers (session_id, run_id, message_id, body)
+VALUES ($1, $2, $3, $4) RETURNING id, session_id, run_id, message_id, body, state, created_at, delivered_at
+`
+
+type CreateChatSteerParams struct {
+	SessionID uuid.UUID
+	RunID     uuid.UUID
+	MessageID uuid.UUID
+	Body      string
+}
+
+func (q *Queries) CreateChatSteer(ctx context.Context, arg CreateChatSteerParams) (ChatSteer, error) {
+	row := q.db.QueryRow(ctx, createChatSteer,
+		arg.SessionID,
+		arg.RunID,
+		arg.MessageID,
+		arg.Body,
+	)
+	var i ChatSteer
+	err := row.Scan(
+		&i.ID,
+		&i.SessionID,
+		&i.RunID,
+		&i.MessageID,
+		&i.Body,
+		&i.State,
+		&i.CreatedAt,
+		&i.DeliveredAt,
 	)
 	return i, err
 }
@@ -1327,6 +1385,15 @@ func (q *Queries) DeleteStaleChatAttachments(ctx context.Context, arg DeleteStal
 		return nil, err
 	}
 	return items, nil
+}
+
+const expireRunChatSteers = `-- name: ExpireRunChatSteers :exec
+UPDATE chat_steers SET state = 'expired' WHERE run_id = $1 AND state = 'pending'
+`
+
+func (q *Queries) ExpireRunChatSteers(ctx context.Context, runID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, expireRunChatSteers, runID)
+	return err
 }
 
 const expiredTemporaryChats = `-- name: ExpiredTemporaryChats :many
@@ -1753,7 +1820,7 @@ JOIN projects p ON p.id = t.project_id
 JOIN agents a ON a.id = r.agent_id
 LEFT JOIN LATERAL (SELECT e.payload->>'tool' AS tool, left(e.payload->'input'->>'command', 300) AS command
   FROM run_events e WHERE e.run_id = r.id AND e.type = 'tool_call' ORDER BY e.seq DESC LIMIT 1) tc ON true
-LEFT JOIN LATERAL (SELECT id, workspace_id, run_id, ticket_id, agent_id, scope, action_summary, action_detail, risk_summary, state, decided_by_user_id, decided_at, decision_note, executed_at, result, created_at FROM approval_requests x WHERE x.run_id = r.id AND x.state = 'pending' ORDER BY x.created_at DESC LIMIT 1) ap ON true
+LEFT JOIN LATERAL (SELECT id, workspace_id, run_id, ticket_id, agent_id, scope, action_summary, action_detail, risk_summary, state, decided_by_user_id, decided_at, decision_note, executed_at, result, created_at, chat_id FROM approval_requests x WHERE x.run_id = r.id AND x.state = 'pending' ORDER BY x.created_at DESC LIMIT 1) ap ON true
 WHERE ctr.chat_id = $1
 ORDER BY ctr.created_at, r.id
 `
@@ -2265,6 +2332,20 @@ func (q *Queries) MarkChatRead(ctx context.Context, arg MarkChatReadParams) erro
 	return err
 }
 
+const markChatSteerState = `-- name: MarkChatSteerState :exec
+UPDATE chat_steers SET state = $2 WHERE id = $1
+`
+
+type MarkChatSteerStateParams struct {
+	ID    uuid.UUID
+	State string
+}
+
+func (q *Queries) MarkChatSteerState(ctx context.Context, arg MarkChatSteerStateParams) error {
+	_, err := q.db.Exec(ctx, markChatSteerState, arg.ID, arg.State)
+	return err
+}
+
 const ownsChatRun = `-- name: OwnsChatRun :one
 SELECT (
   EXISTS (
@@ -2357,7 +2438,7 @@ func (q *Queries) PageChatMessages(ctx context.Context, arg PageChatMessagesPara
 }
 
 const pendingApprovalForRun = `-- name: PendingApprovalForRun :one
-SELECT id, workspace_id, run_id, ticket_id, agent_id, scope, action_summary, action_detail, risk_summary, state, decided_by_user_id, decided_at, decision_note, executed_at, result, created_at FROM approval_requests WHERE run_id = $1 AND state = 'pending' ORDER BY created_at DESC LIMIT 1
+SELECT id, workspace_id, run_id, ticket_id, agent_id, scope, action_summary, action_detail, risk_summary, state, decided_by_user_id, decided_at, decision_note, executed_at, result, created_at, chat_id FROM approval_requests WHERE run_id = $1 AND state = 'pending' ORDER BY created_at DESC LIMIT 1
 `
 
 func (q *Queries) PendingApprovalForRun(ctx context.Context, runID uuid.UUID) (ApprovalRequest, error) {
@@ -2380,6 +2461,7 @@ func (q *Queries) PendingApprovalForRun(ctx context.Context, runID uuid.UUID) (A
 		&i.ExecutedAt,
 		&i.Result,
 		&i.CreatedAt,
+		&i.ChatID,
 	)
 	return i, err
 }
@@ -3502,6 +3584,31 @@ type SupersedePendingCharacterProposalsParams struct {
 func (q *Queries) SupersedePendingCharacterProposals(ctx context.Context, arg SupersedePendingCharacterProposalsParams) error {
 	_, err := q.db.Exec(ctx, supersedePendingCharacterProposals, arg.ChatID, arg.TargetPersonaID)
 	return err
+}
+
+const takeNextPendingChatSteer = `-- name: TakeNextPendingChatSteer :one
+UPDATE chat_steers SET state = 'fallback', delivered_at = now()
+WHERE chat_steers.id = (
+  SELECT cs.id FROM chat_steers cs WHERE cs.run_id = $1 AND cs.state = 'pending'
+  ORDER BY cs.created_at, cs.id LIMIT 1 FOR UPDATE SKIP LOCKED
+)
+RETURNING id, session_id, run_id, message_id, body, state, created_at, delivered_at
+`
+
+func (q *Queries) TakeNextPendingChatSteer(ctx context.Context, runID uuid.UUID) (ChatSteer, error) {
+	row := q.db.QueryRow(ctx, takeNextPendingChatSteer, runID)
+	var i ChatSteer
+	err := row.Scan(
+		&i.ID,
+		&i.SessionID,
+		&i.RunID,
+		&i.MessageID,
+		&i.Body,
+		&i.State,
+		&i.CreatedAt,
+		&i.DeliveredAt,
+	)
+	return i, err
 }
 
 const updateChatTitleArchived = `-- name: UpdateChatTitleArchived :one

@@ -4521,6 +4521,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/chats/{id}/steer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Steer an active chat reply mid-turn without discarding work
+         * @description Injects guidance into a live chat session mid-turn when supported by
+         *     the harness (or falls back to an interrupt/next-turn handoff otherwise).
+         *     Returns 201 with the steer record and saved user message id.
+         */
+        post: operations["steerChat"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chats/{id}/tool-approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+            };
+            cookie?: never;
+        };
+        /** Pending in-turn tool approvals for this chat */
+        get: operations["listChatToolApprovals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/chats/{id}/asides": {
         parameters: {
             query?: never;
@@ -6896,6 +6939,8 @@ export interface components {
             /** Format: uuid */
             run_id: string;
             ticket_key: string;
+            /** Format: uuid */
+            chat_id?: string;
             agent: components["schemas"]["AgentRef"];
             scope: string;
             action_summary: string;
@@ -7962,6 +8007,20 @@ export interface components {
         };
         ChatFollowupList: {
             followups: components["schemas"]["ChatFollowup"][];
+        };
+        ChatSteer: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            message_id: string;
+            body: string;
+            /** @enum {string} */
+            state: "pending" | "delivered" | "fallback" | "expired";
+            /** Format: date-time */
+            created_at: string;
+        };
+        ChatToolApprovalList: {
+            approvals: components["schemas"]["Approval"][];
         };
         ChatAsideList: {
             asides: components["schemas"]["ChatSession"][];
@@ -17408,6 +17467,60 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            404: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    steerChat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatMessageEdit"];
+            };
+        };
+        responses: {
+            /** @description Steered */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSteer"];
+                };
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    listChatToolApprovals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pending approvals */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatToolApprovalList"];
+                };
             };
             404: components["responses"]["Error"];
             default: components["responses"]["Error"];
