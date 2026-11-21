@@ -16,17 +16,30 @@ final class ShellState {
     var navigatorFallback = false
     /// The page asked for the sidebar to fold (theater mode); per tab, so switching tabs restores it.
     var sidebarHidden = false
-    var toolbarItems: [ToolbarItem] = []
-    var title: String?
     /// The web view's own document title, used until the page sends its `title` message.
     var documentTitle: String?
-    var subtitle: String?
-    /// The title's own menu (rename, archive…), from the page's `title` message.
-    var titleMenu: [MenuItem]?
     /// The right rail the page describes; nil when it has none.
     var rail: RailModel?
-    /// The native inspector the page describes; nil when it has none.
-    var inspector: InspectorModel?
+    /// The page's palette and text size, for native screens; nil until the page sends them.
+    var theme: ThemeTokens?
+
+    // What the page describes (title, toolbar, inspector). While a native screen shows, its own
+    // chrome replaces these; they keep updating underneath and return when it goes away.
+    var pageTitle: String?
+    var pageSubtitle: String?
+    var pageTitleMenu: [MenuItem]?
+    var pageToolbarItems: [ToolbarItem] = []
+    var pageInspector: InspectorModel?
+    /// The native screen showing in this tab and the chrome it describes; nil while the web view shows.
+    var native: NativeChrome?
+
+    var title: String? { native.map(\.title) ?? pageTitle }
+    var subtitle: String? { native.map(\.subtitle) ?? pageSubtitle }
+    /// The title's own menu (rename, archive…).
+    var titleMenu: [MenuItem]? { native.map(\.titleMenu) ?? pageTitleMenu }
+    var toolbarItems: [ToolbarItem] { native?.toolbarItems ?? pageToolbarItems }
+    /// The native inspector the screen describes; nil when it has none.
+    var inspector: InspectorModel? { native.map(\.inspector) ?? pageInspector }
     var route: String?
     var area: AreaId?
     /// The page has sent `ready`: commands will be heard.

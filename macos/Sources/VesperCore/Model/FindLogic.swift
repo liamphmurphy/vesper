@@ -24,4 +24,18 @@ public enum FindLogic: Sendable {
         guard !query.isEmpty, hasResult, !matchFound else { return nil }
         return "No matches"
     }
+
+    /// Which of a native screen's searchable texts to show next for `query`: the first match after
+    /// `current` (before it when `backwards`), wrapping around. Nil when nothing matches.
+    public static func nextMatch(
+        in texts: [String], query: String, caseSensitive: Bool, after current: Int?, backwards: Bool
+    ) -> Int? {
+        guard shouldSearch(query: query) else { return nil }
+        let options: String.CompareOptions = caseSensitive ? [] : [.caseInsensitive, .diacriticInsensitive]
+        let matches = texts.indices.filter { texts[$0].range(of: query, options: options) != nil }
+        guard !matches.isEmpty else { return nil }
+        guard let current else { return backwards ? matches.last : matches.first }
+        if backwards { return matches.last(where: { $0 < current }) ?? matches.last }
+        return matches.first(where: { $0 > current }) ?? matches.first
+    }
 }

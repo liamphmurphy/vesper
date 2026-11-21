@@ -2,7 +2,7 @@
 
 import { useEffect, useSyncExternalStore } from "react";
 import { Segmented } from "@/components/ui/controls";
-import { DEFAULT_APPEARANCE, paletteTokens, parseAppearance, withSystemAccent, type Appearance, type ThemePref } from "@/lib/palettes";
+import { DEFAULT_APPEARANCE, colorTokens, paletteTokens, parseAppearance, withSystemAccent, type Appearance, type ThemePref } from "@/lib/palettes";
 import { isNativeShell, postDeduped } from "@/lib/native-shell/bridge";
 export type { ThemePref } from "@/lib/palettes";
 
@@ -53,7 +53,11 @@ function apply() {
   // Print views keep the default size so paper looks the same whoever prints it.
   root.dataset.textSize = printing ? "default" : settings.textSize ?? "default";
   // The Mac app matches its window to the page's effective mode (Dark forced in Vesper on a Light Mac).
-  postDeduped({ v: 1, type: "appearance", mode, ...(/^#[\da-f]{6}$/i.test(colors.bg ?? "") ? { background: colors.bg } : {}) });
+  postDeduped({
+    v: 1, type: "appearance", mode,
+    ...(/^#[\da-f]{6}$/i.test(colors.bg ?? "") ? { background: colors.bg } : {}),
+    tokens: colorTokens(colors), textSize: root.dataset.textSize,
+  });
 }
 
 /** The Mac app's accent colour ("#RRGGBB"): re-tints the macOS palette. */

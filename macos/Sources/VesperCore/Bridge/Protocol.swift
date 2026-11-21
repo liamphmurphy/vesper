@@ -677,7 +677,8 @@ public enum PageMessage: Sendable, Equatable, Decodable {
     case sidebarHidden(Bool)
     case toolbar([ToolbarItem])
     /// background: the page's "#RRGGBB" colour, shown past its edges and behind an unpainted tab.
-    case appearance(mode: ColorMode, background: String? = nil)
+    /// theme: the palette's resolved colours and text size, for native screens.
+    case appearance(mode: ColorMode, background: String? = nil, theme: ThemeTokens? = nil)
     case confirmApproval(requestId: String, scope: ApprovalScope)
     case openWorkspaceMenu(requestId: String, folder: String)
     case contextMenu(requestId: String, items: [MenuItem], x: Double, y: Double)
@@ -695,7 +696,7 @@ public enum PageMessage: Sendable, Equatable, Decodable {
 
     private enum Keys: String, CodingKey {
         case v, type, path, area, title, subtitle, model, active, hidden, items, requestId, scope, folder, x, y, mode, menu
-        case body, confirmLabel, cancelLabel, destructive, background, newTab
+        case body, confirmLabel, cancelLabel, destructive, background, newTab, tokens, textSize
         case tabId, event, payloadJson
         case label, value, placeholder, maxLength, id, description, tone, actionLabel, durationMs, request, index
     }
@@ -737,7 +738,12 @@ public enum PageMessage: Sendable, Equatable, Decodable {
         case "toolbar":
             self = .toolbar(try c.decode([ToolbarItem].self, forKey: .items))
         case "appearance":
-            self = .appearance(mode: try c.decode(ColorMode.self, forKey: .mode), background: try c.decodeIfPresent(String.self, forKey: .background))
+            let mode = try c.decode(ColorMode.self, forKey: .mode)
+            let tokens = try c.decodeIfPresent([String: String].self, forKey: .tokens)
+            let textSize = try c.decodeIfPresent(String.self, forKey: .textSize)
+            self = .appearance(
+                mode: mode, background: try c.decodeIfPresent(String.self, forKey: .background),
+                theme: tokens == nil && textSize == nil ? nil : ThemeTokens(mode: mode, colors: tokens ?? [:], textSize: textSize))
         case "confirmApproval":
             self = .confirmApproval(requestId: try c.decode(String.self, forKey: .requestId), scope: try c.decode(ApprovalScope.self, forKey: .scope))
         case "openWorkspaceMenu":

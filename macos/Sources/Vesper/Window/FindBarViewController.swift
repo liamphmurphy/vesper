@@ -35,7 +35,8 @@ private final class FindBarGlassView: NSVisualEffectView {
 /// Floating top-right Liquid Glass find bar backed by `WKWebView.find(_:configuration:)`.
 @MainActor
 final class FindBarViewController: NSViewController, NSTextFieldDelegate {
-    weak var targetWebView: WKWebView?
+    /// The web view or native screen to search.
+    weak var target: (any FindTarget)?
     var onDismiss: (() -> Void)?
 
     var isVisible: Bool { isViewLoaded && !view.isHidden }
@@ -177,7 +178,7 @@ final class FindBarViewController: NSViewController, NSTextFieldDelegate {
         debounceTask?.cancel()
         debounceTask = nil
         searchGeneration += 1
-        clearHighlights(in: targetWebView)
+        target?.clearFind()
         applyStatus(hasResult: false, matchFound: false)
         if isViewLoaded {
             view.isHidden = true
@@ -190,7 +191,7 @@ final class FindBarViewController: NSViewController, NSTextFieldDelegate {
     func teardown() {
         debounceTask?.cancel()
         debounceTask = nil
-        targetWebView = nil
+        target = nil
     }
 
     // MARK: Actions & NSTextFieldDelegate
@@ -212,7 +213,7 @@ final class FindBarViewController: NSViewController, NSTextFieldDelegate {
         let query = queryField.stringValue
         guard FindLogic.shouldSearch(query: query) else {
             searchGeneration += 1
-            clearHighlights(in: targetWebView)
+            target?.clearFind()
             applyStatus(hasResult: false, matchFound: false)
             return
         }
@@ -239,36 +240,25 @@ final class FindBarViewController: NSViewController, NSTextFieldDelegate {
         return false
     }
 
-    // MARK: WKWebView find
+    // MARK: Find
 
     private func runSearch(backwards: Bool) {
         debounceTask?.cancel()
         debounceTask = nil
         let query = queryField.stringValue
-        guard FindLogic.shouldSearch(query: query), let webView = targetWebView else {
-            clearHighlights(in: targetWebView)
+        guard FindLogic.shouldSearch(query: query), let target else {
+            target?.clearFind()
             applyStatus(hasResult: false, matchFound: false)
             return
         }
         searchGeneration += 1
         let generation = searchGeneration
         let matchCase = caseSensitive
-        Task { @MainActor [weak self, weak webView] in
-            guard let webView else { return }
-            let config = WKFindConfiguration()
-            config.backwards = backwards
-            config.caseSensitive = matchCase
-            config.wraps = true
-            let result = try? await webView.find(query, configuration: config)
-            guard let self, self.searchGeneration == generation, self.targetWebView === webView, self.isVisible else { return }
-            self.applyStatus(hasResult: true, matchFound: result?.matchFound ?? false)
-        }
-    }
-
-    private func clearHighlights(in webView: WKWebView?) {
-        guard let webView else { return }
-        Task { @MainActor in
-            _ = try? await webView.find("", configuration: WKFindConfiguration())
+        Task { @MainActor [weak self, weak target] in
+            guard let target else { return }
+            let found = await target.find(query, backwards: backwards, caseSensitive: matchCase)
+            guard let self, self.searchGeneration == generation, self.target === target, self.isVisible else { return }
+            self.applyStatus(hasResult: true, matchFound: found)
         }
     }
 

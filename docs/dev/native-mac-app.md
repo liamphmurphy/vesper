@@ -321,6 +321,43 @@ Native screens (epic "Native Swift screens") talk to the API through generated S
   `/events` hints refetch visible entries at once (`LiveUpdates`, a port of
   `web/lib/live-updates.ts`: keep them in step), and `mutate` with optimistic updates that roll back.
 
+## Native screens: hosting
+
+A tab is still a `WebContentController`; a native screen is drawn over its web view when the tab's
+path resolves in `NativeRouteRegistry` (VesperCore `Model/NativeRoutes.swift`). Screens move over
+one at a time by adding a `NativeScreen` case and a route.
+
+- **Routing.** Every way into a path ends in `WebContentController.navigate(path:)` or a URL change
+  (sidebar, links, `vesper://` deep links, back/forward, ⌘-click into a new tab), and both resolve the
+  path, so a registered screen shows wherever a link points. The web view keeps running underneath
+  (history, the sidebar's area list, the page's own chrome) and shows again when the path leaves.
+- **Chrome.** A screen describes its title, subtitle, title menu, toolbar and inspector as
+  `NativeChrome` on its `NativeScreenContext`; `ShellState` shows it instead of the page's
+  (`page*` fields) and restores the page's when the screen goes. Toolbar, title-menu and inspector
+  commands go to the screen's `onCommand` (`NativeCommandRouting`); the rest still reach the page.
+- **Theme.** The page's `appearance` message carries its resolved colours (`tokens`) and text size;
+  screens read `@Environment(\.vesperTheme)` (`palette`, `font(_:)`, `vesperText(_:_:)`), so they
+  follow the palette, accent, Light/Dark and Settings → Text size live. Fallbacks are system colours.
+- **Find.** The find bar searches a `FindTarget`: the web view, or the screen's `NativeFindModel`
+  (it lists row texts; the screen marks matches and scrolls to `current`).
+- **Debug screen.** `VESPER_NATIVE_DEBUG=1 make -C macos run` (or `defaults write <bundle id>
+  VesperNativeDebugScreens -bool YES`) enables `/native-debug` and `/native-debug/:id`.
+
+Manual click-through for the hosting path (with the debug screen enabled):
+
+1. Open `/native-debug` from the address in a new tab (⌘T, then the command palette or a link):
+   the native screen shows with title "Native screen", subtitle `/native-debug`, a Refresh toolbar
+   button and a Details inspector tab.
+2. Change Settings → Appearance (palette, Light/Dark, Text size): swatches and type samples follow
+   without reloading.
+3. ⌘F, type "milestone": matching rows tint, Return steps through them and scrolls; Esc clears.
+4. Right-click a row: Open in New Tab opens `/native-debug/<n>` natively; double-click navigates
+   in place, and Back returns to `/native-debug`.
+5. Toggle Details → Show query; the title menu's Copy Path copies the path; ⌘\ hides and shows
+   the inspector.
+6. Navigate to `/inbox` from the sidebar: the web Inbox shows with its own title and toolbar.
+7. Resolve an inbox item in another window: the Data section's count updates without Refresh.
+
 ## Build and test
 
 - `make -C macos test` → `swift test` (VesperCore).
