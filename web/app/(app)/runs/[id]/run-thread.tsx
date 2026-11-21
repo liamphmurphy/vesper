@@ -61,34 +61,35 @@ export function WorkLink({ run }: { run: Run }) {
   return <Link href={href} className="text-accent hover:underline">{run.purpose === "planning" ? "Open the plan" : "Open the chat"} ↗</Link>;
 }
 
-/** Now · step N of M, with a thin progress bar under it. */
-function NowLine({ d, unified, col }: { d: RunDetail; unified?: boolean; col: string }) {
+/** Live activity bar (with SVG scene and step progress); collapses to the progress strip once ended. */
+function NowLine({ d, col }: { d: RunDetail; col: string }) {
   const run = d.run;
   const p = stepProgress(run);
   const ended = RUN_ENDED.includes(run.state);
-  // The step is shown on its own, so the Now text leaves it out.
+  // The step is shown beside the status, so the headline leaves it out when a current step exists.
   const now = nowLine({ ...run, plan: [] }, d.events) ?? (ended ? null : p.current?.text ?? null);
-  if (!now && !p.total) return null;
-  if (unified && ended && !p.total) return null;
+  if (ended && !p.total) return null;
+  if (!ended && !now && !p.total) return null;
   const pct = p.total ? Math.round((p.done / p.total) * 100) : 0;
   return (
-    <div className={cx("flex flex-none flex-col border-b border-border-subtle", unified ? (ended ? "py-1.5" : "gap-1 py-1.5") : "gap-1.5 py-2.5")}>
-      {unified && !ended && (
+    <div className={cx("flex flex-none flex-col border-b border-border-subtle", ended ? "py-1.5" : "gap-1.5 py-2")}>
+      {!ended && (
         <div className={cx(col, "flex items-center gap-3")}>
           <ActivityScene current={chatStatus(toolCalls(d.events)).kind} stopping={false} />
-          <span role="status" className="min-w-0 flex-1 truncate text-13">
+          <span role="status" className="min-w-0 flex-1 truncate text-13 text-fg">
             {p.current?.text ?? now}
-            <small className="block text-11 text-fg-tertiary">
-              {run.harness}{p.total > 0 && ` · step ${p.current?.position ?? p.done} of ${p.total}`}
+            <small className="flex flex-wrap items-center gap-1.5 text-11 text-fg-tertiary">
+              <span>{run.harness}</span>
+              {p.total > 0 && (
+                <>
+                  <span aria-hidden>·</span>
+                  <span className="font-mono">Step {p.current?.position ?? p.done} of {p.total}</span>
+                </>
+              )}
             </small>
           </span>
         </div>
       )}
-      {!unified && <p className={cx(col, "flex items-baseline gap-3 text-13")}>
-        <span className="flex-none text-11 font-semibold uppercase tracking-wide text-fg-tertiary">{now ? "Now" : "Plan"}</span>
-        {p.total > 0 && <span title={p.current?.text} className="flex-none font-mono text-12 text-fg-tertiary">Step {p.current?.position ?? p.done} of {p.total}</span>}
-        <span role="status" className="min-w-0 flex-1 truncate text-fg-2">{now ?? (p.done === p.total ? "All steps done" : p.current?.text)}</span>
-      </p>}
       {p.total > 0 && (
         <div className={col}>
           <div
@@ -98,7 +99,7 @@ function NowLine({ d, unified, col }: { d: RunDetail; unified?: boolean; col: st
             aria-valuemax={p.total}
             aria-valuenow={p.done}
             aria-valuetext={`${p.done} of ${p.total} steps done`}
-            className={cx("overflow-hidden rounded-full bg-surface-sunken", unified ? "h-0.5" : "h-[3px]")}
+            className="h-0.5 overflow-hidden rounded-full bg-surface-sunken"
           >
             <div className={cx("h-full rounded-full", run.state === "waiting" ? "bg-state-human" : run.state === "running" ? "live-sheen bg-state-done" : "bg-state-done")} style={{ width: `${pct}%` }} />
           </div>
@@ -164,12 +165,17 @@ function FeedRow({ item, d, onOpenTurn }: { item: FeedItem; d: RunDetail; onOpen
   switch (item.kind) {
     case "turn":
       return (
-        <li className="flex items-center gap-3 pb-1 pt-4 text-11 text-fg-tertiary">
-          <span aria-hidden className="h-px flex-1 bg-border-subtle" />
-          <button type="button" onClick={() => onOpenTurn(item.turn)} aria-label={`Turn ${item.turn}, ${item.tools} tool calls. Open in the raw log`} className="rounded px-1 hover:text-fg hover:underline">
-            Turn {item.turn}{item.tools > 0 && ` · ${item.tools} tool call${item.tools === 1 ? "" : "s"}`}
+        <li className="pb-1 pt-3">
+          <button
+            type="button"
+            onClick={() => onOpenTurn(item.turn)}
+            aria-label={`Turn ${item.turn}, ${item.tools} tool calls. Open in the raw log`}
+            className="inline-flex items-center gap-1.5 rounded-full border border-border-subtle bg-surface/70 px-2.5 py-0.5 text-11 text-fg-tertiary transition-colors hover:border-border hover:bg-hover hover:text-fg"
+          >
+            <span aria-hidden>▸</span>
+            <span>Turn {item.turn}</span>
+            {item.tools > 0 && <span className="font-mono">· {item.tools} tool call{item.tools === 1 ? "" : "s"}</span>}
           </button>
-          <span aria-hidden className="h-px flex-1 bg-border-subtle" />
         </li>
       );
     case "message":
@@ -266,7 +272,7 @@ function TraceSummaryStrip({ d, onOpenTrace }: { d: RunDetail; onOpenTrace: () =
 /** The agent's open question, above the composer that answers it. */
 function Question({ run, question }: { run: Run; question: string | null }) {
   return (
-    <div role="group" aria-label="Needs attention" className="my-2 flex flex-col gap-1.5 rounded-xl border border-state-human/40 bg-surface p-3.5">
+    <div role="group" aria-label="Needs attention" className="my-2 flex flex-col gap-1.5 rounded-xl border border-state-human/50 bg-pill-human-bg/20 p-3.5">
       <p className="text-12 font-medium text-pill-human-fg">{run.agent.name} is waiting for your reply</p>
       {question && <div className="max-h-60 overflow-y-auto text-14 leading-relaxed text-fg-2"><Markdown>{question}</Markdown></div>}
       <p className="text-12 text-fg-tertiary">Answer in the box below.</p>
@@ -437,7 +443,7 @@ export function RunThread({
         </div>
       ))}
       {workLinks}
-      <NowLine d={d} unified={unified} col={col} />
+      <NowLine d={d} col={col} />
       <div
         ref={scroller}
         role="log"

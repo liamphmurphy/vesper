@@ -355,7 +355,7 @@ export function ActionBox({ d, compact, inThread, keys, onDecided }: { d: RunDet
   if (!body) return null;
   return (
     <div className={compact ? "px-3 py-3" : inThread ? "py-2" : "border-b border-border-subtle px-6 py-3"}>
-      <div id={ACTION_BOX_ID} tabIndex={-1} aria-label="Needs attention" role="group" className="flex flex-col gap-2 rounded-xl border border-state-human/40 bg-surface p-3.5">
+      <div id={ACTION_BOX_ID} tabIndex={-1} aria-label="Needs attention" role="group" className="flex flex-col gap-2 rounded-xl border border-state-human/50 bg-pill-human-bg/20 p-3.5">
         {body}
         {control.isError && (
           <Banner tone="blocked" title="Couldn't change the run">{control.error.message}</Banner>
