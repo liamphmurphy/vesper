@@ -57,6 +57,12 @@ final class NativeRoutesTests: XCTestCase {
         XCTAssertNil(standard.resolve("/library/anything"))
     }
 
+    func testDevTerminalIsNative() {
+        let standard = NativeRouteRegistry.standard(debug: false)
+        XCTAssertEqual(standard.resolve("/dev")?.screen, .dev)
+        XCTAssertNil(standard.resolve("/dev/anything"))
+    }
+
     func testOnlyInAppPathsResolve() {
         XCTAssertNil(registry.resolve("https://example.com/native-debug"))
         XCTAssertNil(registry.resolve("//evil.example/native-debug"))

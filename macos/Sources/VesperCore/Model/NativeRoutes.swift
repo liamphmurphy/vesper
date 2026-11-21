@@ -8,6 +8,7 @@ public enum NativeScreen: String, Sendable, CaseIterable {
     case work
     case library
     case pdf
+    case dev
 }
 
 /// A path resolved to a native screen, with its path parameters and query items (decoded).
@@ -51,6 +52,8 @@ public struct NativeRouteRegistry: Sendable {
         NativeRoute("/runs", .work),
         NativeRoute("/library", .library),
         NativeRoute("/pdf", .pdf),
+        // The Dev workspace terminal (SwiftTerm on the workspace's PTY socket).
+        NativeRoute("/dev", .dev),
     ]
 
     /// The app's registry. Debug-only screens are enabled only when `debug` is set.
