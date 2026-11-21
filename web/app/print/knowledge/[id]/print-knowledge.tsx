@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { usePage, useSavedQuery, type Page, type PageTable } from "@/lib/api/knowledge-hooks";
 import { ago, pageHref, visibleProperties } from "@/lib/knowledge";
 import {
@@ -16,7 +16,6 @@ import {
   type PrintSegment,
 } from "@/lib/knowledge-print";
 import { isNativeShell, post } from "@/lib/native-shell/bridge";
-import { PALETTES } from "@/lib/palettes";
 import { isPdfContentType } from "@/lib/pdf-viewer";
 import { settled } from "@/lib/print-ready";
 import { cx } from "@/lib/cx";
@@ -31,10 +30,6 @@ const AUDIENCE_LABEL: Record<Page["audience"], string> = {
   shared: "Shared",
   agent: "Agent",
 };
-
-const PAPER_LIGHT_STYLE = Object.fromEntries(
-  Object.entries(PALETTES[0].light).map(([k, v]) => [`--${k}`, v]),
-) as CSSProperties;
 
 export function PrintKnowledge({ id }: { id: string }) {
   const urlStyle = parseKnowledgePrintStyle(useSearchParams().get("style"));
@@ -117,7 +112,7 @@ export function PrintKnowledge({ id }: { id: string }) {
   }
 
   return (
-    <div className="min-h-dvh bg-bg text-fg print:bg-white">
+    <div className="min-h-dvh bg-bg text-fg print:bg-transparent">
       <div className="sticky top-0 z-10 flex flex-wrap items-center gap-3 border-b border-border-subtle bg-panel px-6 py-2.5 print:hidden">
         <Link href={p ? pageHref(p.id, p.title) : `/knowledge/${id}`} className="text-13 text-fg-secondary hover:text-fg">
           ← Back to page
@@ -164,9 +159,7 @@ export function PrintKnowledge({ id }: { id: string }) {
         ref={ref}
         data-testid="print-knowledge"
         data-print-style={style}
-        data-theme="light"
-        style={PAPER_LIGHT_STYLE}
-        className="print-doc print-knowledge mx-auto my-8 flex w-full max-w-[780px] flex-col rounded-sm border border-border-strong/60 bg-white px-12 py-12 shadow-[0_2px_8px_rgba(0,0,0,0.08),0_12px_32px_rgba(0,0,0,0.16)] print:my-0 print:max-w-none print:rounded-none print:border-0 print:bg-transparent print:p-0 print:shadow-none"
+        className="print-doc print-knowledge mx-auto my-8 flex w-full max-w-[780px] flex-col rounded-sm border border-border-strong/60 px-12 py-12 shadow-[0_2px_8px_rgba(0,0,0,0.08),0_12px_32px_rgba(0,0,0,0.16)] print:my-0 print:max-w-none print:rounded-none print:border-0 print:bg-transparent print:p-0 print:shadow-none"
       >
         {!p ? (
           <div aria-busy="true" className="flex flex-col gap-4">
