@@ -313,7 +313,7 @@ export function EpicsScreen() {
             header: {
               project: project || undefined,
               projects: boot.data?.projects,
-              counts: { epics: counts.open || undefined },
+              counts: {},
               hideNewTicket: true,
               search: { value: search, placeholder: "Filter epics…" },
             },

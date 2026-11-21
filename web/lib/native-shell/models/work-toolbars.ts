@@ -37,27 +37,19 @@ export const parseTicketToolbarAction = (itemId: string): TicketToolbarAction | 
 export const EPIC_BOARD = "epic.board";
 export const buildEpicToolbar = (): ToolbarItem[] => [{ id: EPIC_BOARD, label: "View on board", kind: "button", icon: "board", showsLabel: true }];
 
-// The Work screen: what needs you, and the open run's links.
+// The Work screen: what needs you.
 
 export interface WorkToolbarInput {
-  /** Runs waiting on the person, shown only when the page has no companion pane. */
+  /** Runs waiting on the person. */
   needs: number;
-  run?: { ticketKey?: string | null; epic?: { id: string; name: string } | null; context: string | null };
 }
 
 export function buildWorkToolbar(i: WorkToolbarInput): ToolbarItem[] {
   const items: ToolbarItem[] = [];
   if (i.needs > 0) items.push({ id: "work.needs", label: `Needs you · ${i.needs}`, kind: "button", icon: "inbox", showsLabel: true, accent: true });
-  const r = i.run;
-  if (r) {
-    if (r.ticketKey) items.push({ id: "work.ticket", label: r.ticketKey, kind: "button", icon: "tickets", showsLabel: true });
-    if (r.epic) items.push({ id: "work.epic", label: r.epic.name, kind: "button", icon: "epics", showsLabel: true });
-    if (r.ticketKey) items.push({ id: "work.details", label: "Details", kind: "toggle", icon: "sidebar", showsLabel: true, on: r.context === "ticket" });
-    items.push({ id: "work.run", label: "Run details", kind: "button", icon: "expand", showsLabel: true });
-  }
   return items;
 }
 
-export type WorkToolbarAction = "needs" | "ticket" | "epic" | "details" | "run";
+export type WorkToolbarAction = "needs";
 export const parseWorkToolbarAction = (itemId: string): WorkToolbarAction | null =>
-  itemId.startsWith("work.") && ["needs", "ticket", "epic", "details", "run"].includes(itemId.slice(5)) ? (itemId.slice(5) as WorkToolbarAction) : null;
+  itemId === "work.needs" ? "needs" : null;

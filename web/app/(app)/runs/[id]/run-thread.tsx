@@ -311,7 +311,7 @@ function NextLine({ next, query }: { next: Schemas["InboxItem"]; query: string }
  * `human_reply` resumes with it; a working agent reads it from the ticket.
  * The run API has no aside or interrupt, so this is Follow-up only.
  */
-function Composer({ run, lastSeq, unified, col }: { run: Run; lastSeq: number; unified?: boolean; col: string }) {
+function Composer({ run, lastSeq, col }: { run: Run; lastSeq: number; col: string }) {
   const { comment, body, setBody, sent, again, submit } = useReply(run, lastSeq);
   const ref = useRef<HTMLTextAreaElement>(null);
   const waiting = waitsForReply(run);
@@ -336,20 +336,20 @@ function Composer({ run, lastSeq, unified, col }: { run: Run; lastSeq: number; u
         </p>
       ) : (
         <>
-        {/* The main pane talks to what it shows: this run's agent. Your persona is in the side panel's Chat. */}
-        {!unified && <div data-testid="run-composer-to" className="flex items-center gap-1.5 px-1">
+        {/* The main pane talks to what it shows: this run's persona. Your chat persona is in the side panel's Chat. */}
+        <div data-testid="run-composer-to" className="flex items-center gap-1.5 px-1">
           <span className="text-12 text-fg-tertiary">To</span>
           <span className="inline-flex h-[24px] items-center gap-1.5 rounded-md border border-border bg-surface pl-0.5 pr-2 text-12 font-medium text-fg-2">
             <WorkPersonaAvatar agent={run.agent} size="sm" />
             {run.agent.name}{run.ticket_key ? ` · ${run.ticket_key}` : ""}
           </span>
-        </div>}
+        </div>
         <div className={cx("flex items-end gap-2 rounded-[14px] border bg-surface p-2 focus-within:border-accent", waiting ? "border-state-human/60" : "border-border-strong")}>
           <label className="sr-only" htmlFor="run-composer">{label}</label>
           <TextArea
             ref={ref}
             id="run-composer"
-            rows={unified ? 2 : 1}
+            rows={2}
             value={body}
             placeholder={waiting ? `Reply to ${run.agent.name}…` : `Follow up with ${run.agent.name}…`}
             onChange={(e) => setBody(e.target.value)}
@@ -368,7 +368,7 @@ function Composer({ run, lastSeq, unified, col }: { run: Run; lastSeq: number; u
         </>
       )}
       <p className="px-1 text-11 text-fg-tertiary">
-        {unified ? `Reply to ${run.agent.name} · ${waiting ? "Reply" : "Follow-up"}` : waiting ? "Your reply resumes the run." : `Goes to ${run.agent.name} as a comment on ${run.ticket_key}; it reads it on its next look at the ticket.`}
+        {waiting ? "Your reply resumes the run." : `Goes to ${run.agent.name} as a comment on ${run.ticket_key}; it reads it on its next look at the ticket.`}
       </p>
     </form>
   );
@@ -378,16 +378,12 @@ export function RunThread({
   d,
   onOpenTurn,
   onOpenTrace,
-  unified,
   embeddedHeader,
-  workLinks,
 }: {
   d: RunDetail;
   onOpenTurn: (turn: number) => void;
   onOpenTrace?: () => void;
-  unified?: boolean;
   embeddedHeader?: boolean;
-  workLinks?: ReactNode;
 }) {
   const run = d.run;
   const params = useSearchParams();
@@ -406,28 +402,10 @@ export function RunThread({
   }, [follow, feed.length, run.state, next?.id]);
   const asking = waitsForReply(run);
   const canWrite = !ended && run.purpose === "ticket" && !!run.ticket_key;
-  const steps = stepProgress(run);
   const col = embeddedHeader ? WORK_COLUMN : COLUMN;
   return (
     <section aria-label="Run thread" className="flex min-h-0 min-w-0 flex-1 flex-col">
-      {!embeddedHeader && (unified ? (
-        <div className="flex flex-none items-center gap-2.5 border-b border-border-subtle px-4 py-2 md:px-6">
-          <WorkPersonaAvatar agent={run.agent} size="sm" state={runCharacterState(run)} />
-          <h1 className="min-w-0 flex-1 truncate text-14 font-semibold leading-snug text-fg">{runTitle(run)}</h1>
-          <p data-run-inline-meta className="hidden shrink-0 truncate font-mono text-11 text-fg-tertiary sm:block">
-            {run.agent.name} · {run.harness} · {duration(run.started_at, run.ended_at)}
-            {run.cost_usd > 0 ? ` · ${runCost(run.cost_usd, run.cost_source)}` : ""}
-            {steps.total > 0 ? ` · step ${steps.done}/${steps.total}` : ""}
-            {run.parent_run_id && (
-              <>
-                {" · "}
-                <Link href={`/runs/${run.parent_run_id}`} className="text-accent hover:underline">Delegated by ↗</Link>
-              </>
-            )}
-          </p>
-          <StatusPill run={run} />
-        </div>
-      ) : (
+      {!embeddedHeader && (
         <div className={cx(col, "flex flex-none items-center gap-3 py-3")}>
           <WorkPersonaAvatar agent={run.agent} size="md" state={runCharacterState(run)} />
           <div className="flex min-w-0 flex-1 flex-col leading-tight">
@@ -441,8 +419,7 @@ export function RunThread({
           </div>
           <StatusPill run={run} />
         </div>
-      ))}
-      {workLinks}
+      )}
       <NowLine d={d} col={col} />
       <div
         ref={scroller}
@@ -474,7 +451,7 @@ export function RunThread({
         </div>
       </div>
       {canWrite ? (
-        <Composer run={run} unified={unified} col={col} lastSeq={d.events.at(-1)?.seq ?? 0} />
+        <Composer run={run} col={col} lastSeq={d.events.at(-1)?.seq ?? 0} />
       ) : !ended && (run.purpose === "planning" || run.purpose === "chat") && workHref(run) ? (
         <p className={cx(col, "flex-none pb-4 pt-2 text-12 text-fg-tertiary")}>
           Write to {run.agent.name} in the {run.purpose === "planning" ? <Link href={workHref(run)!} className="text-accent hover:underline">plan</Link> : <Link href={workHref(run)!} className="text-accent hover:underline">chat</Link>}.

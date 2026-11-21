@@ -1,60 +1,62 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState, type MouseEvent } from "react";
-import type { TicketStatus } from "@/lib/api/client";
+import { useEffect, useState } from "react";
 import {
   useBootstrap,
-  useEpicOverviews,
-  useRunLog,
-  useTicket,
-  useTickets,
-  type TicketView,
+  useCosts,
+  useRunnerStatus,
 } from "@/lib/api/hooks";
 import { usePersonas } from "@/lib/api/persona-hooks";
-import { pageOrigin } from "@/lib/native-shell/models/common";
+import { presetRange, spendLabel } from "@/lib/costs";
+import { itemHref } from "@/lib/run-list";
 import {
+  updateWorkUrl,
   workHref,
   workTarget,
   workView,
-  updateWorkUrl,
 } from "@/lib/work-navigation";
-import { runTitle } from "@/lib/run-list";
-import type { WorkSubject } from "@/lib/work-context";
-import { useCompact } from "@/lib/viewport";
-import { cx } from "@/lib/cx";
-import { NavigatorPortal } from "@/components/shell/navigator-slot";
-import { CompanionDock } from "@/components/shell/companion";
-import { useProjectScope } from "@/components/shell/project-scope";
-import { STATUS_NAME } from "@/components/domain/meta";
-import { Button } from "@/components/ui/button";
-import { ActivityOverview } from "./activity-overview";
 import { parseActivityFilter } from "@/lib/work-overview";
-import {
-  TicketBrief,
-  EpicBrief,
-  LiveRun,
-  type Navigate,
-} from "./work-details";
-import { BoardView } from "../tickets/_components/board-screen";
-import { activityNativeBody, useActivityLists, useRunList } from "../runs/run-list";
-import { itemHref } from "@/lib/run-list";
-import { listQuery } from "../runs/run-list";
-import { buildWorkActivityNavModel, RUN_LOAD_MORE, RUN_RETRY, RUN_VIEW_FILTER, type ActivityFilter } from "@/lib/native-shell/models/runs";
-import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
-import { buildWorkEpicsNavModel, buildWorkTicketsNavModel, WORK_LAYOUT_FILTER } from "@/lib/native-shell/models/work-lists";
-import { workViewPatch, workViewQuery } from "@/lib/native-shell/models/saved-views";
-import { buildWorkToolbar, parseWorkToolbarAction } from "@/lib/native-shell/models/work-toolbars";
-import { useNativeToolbar } from "@/lib/native-shell/use-native-toolbar";
-import { SavedViewNativeDialogs, useSavedViewsNav, useSavedViewsUi } from "@/components/domain/saved-views";
-import { useNativeTitle } from "../tickets/_components/native-title";
 import { ticketsHref } from "@/lib/tickets-layout";
+import { pageOrigin } from "@/lib/native-shell/models/common";
+import {
+  buildWorkActivityNavModel,
+  RUN_LOAD_MORE,
+  RUN_OVERVIEW_ITEM,
+  RUN_RETRY,
+  RUN_VIEW_FILTER,
+  type ActivityFilter,
+} from "@/lib/native-shell/models/runs";
+import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
+import {
+  buildWorkToolbar,
+  parseWorkToolbarAction,
+} from "@/lib/native-shell/models/work-toolbars";
 import type { NativeCommand } from "@/lib/native-shell/protocol";
-import "./work.css";
+import { useNativeToolbar } from "@/lib/native-shell/use-native-toolbar";
+import { CompanionDock } from "@/components/shell/companion";
+import { NavigatorPortal } from "@/components/shell/navigator-slot";
+import { useProjectScope } from "@/components/shell/project-scope";
+import { useCompact } from "@/lib/viewport";
+import { useNativeTitle } from "../tickets/_components/native-title";
+import { RunLogScreen } from "../runs/[id]/run-log";
+import {
+  activityNativeBody,
+  listQuery,
+  useActivityLists,
+  useRunList,
+} from "../runs/run-list";
+import { ActivityOverview } from "./activity-overview";
 
-/** The Work top bar in the Mac app: the view as the window's title, and what needs you as a toolbar button. */
-function NativeWorkHeader({ title, needs, onNeeds }: { title: string; needs: number; onNeeds: () => void }) {
-  useNativeTitle(title);
+/** Native toolbar + title when Work is showing the unselected Runs Overview. */
+function NativeOverviewHeader({
+  needs,
+  onNeeds,
+}: {
+  needs: number;
+  onNeeds: () => void;
+}) {
+  useNativeTitle("Runs");
   useNativeToolbar({
     items: buildWorkToolbar({ needs }),
     onAction: (id) => {
@@ -64,31 +66,15 @@ function NativeWorkHeader({ title, needs, onNeeds }: { title: string; needs: num
   return null;
 }
 
-/** The open run's links (its ticket, its epic, Details, Run details) as toolbar items. */
-function NativeRunLinks({ id, context, navigate }: { id: string; context: string | null; navigate: Navigate }) {
-  const router = useRouter();
-  const run = useRunLog(id).data?.run;
-  const ticketKey = run?.ticket_key ?? null;
-  const epic = useTicket(ticketKey ?? "").data?.epic;
-  useNativeToolbar({
-    items: run ? buildWorkToolbar({ needs: 0, run: { ticketKey, epic, context } }) : [],
-    onAction: (item) => {
-      const a = parseWorkToolbarAction(item);
-      if (a === "ticket" && ticketKey) navigate({ ticket: ticketKey, context: "ticket" });
-      else if (a === "epic" && epic) navigate({ epic: epic.id, context: "epic" });
-      else if (a === "details" && ticketKey) navigate({ ticket: ticketKey, context: context === "ticket" ? null : "ticket" });
-      else if (a === "run") router.push(`/runs/${id}?view=details`);
-    },
-  });
-  return null;
-}
-
 export function WorkScreen() {
   const params = useSearchParams();
+  const pathname = usePathname();
+  const router = useRouter();
   const compact = useCompact();
   const boot = useBootstrap();
   const personas = usePersonas();
   const scope = useProjectScope("optional");
+
   const view = workView(params);
   const project = params.has("project")
     ? params.get("project") || undefined
@@ -96,151 +82,88 @@ export function WorkScreen() {
       ? scope.project?.key
       : undefined;
   const agent = params.get("agent") || undefined;
-  // The box keeps its own value: reading it back from the URL each keystroke
-  // dropped characters typed before Next re-rendered the new search params.
+
+  // Keep search input local to avoid dropping characters while URL params update.
   const urlSearch = params.get("q") ?? "";
   const [search, setSearch] = useState(urlSearch);
   const [seenUrlSearch, setSeenUrlSearch] = useState(urlSearch);
   if (urlSearch !== seenUrlSearch) {
-    // Back/Forward or a saved view changed ?q=: follow it.
     setSeenUrlSearch(urlSearch);
     setSearch(urlSearch);
   }
-  const tickets = useTickets({
-    project,
-    assignee: agent,
-    view: (["active", "backlog", "agent_owned", "needs_human", "all"].includes(
-      params.get("ticket_view") ?? "",
-    )
-      ? params.get("ticket_view")
-      : "all") as TicketView,
-    status: (params.get("status") || undefined) as TicketStatus | undefined,
-    label: params.get("label") || undefined,
-    epic: params.get("filter_epic") || undefined,
-    ready: params.get("ready") === "true" || undefined,
-  });
-  const epics = useEpicOverviews();
-  const runs = useRunList(search);
-  const runId = params.get("run") ?? runs.first;
-  const selectedRun = runs.runs.find((r) => r.id === runId);
-  const ticketKey =
-    params.get("ticket") ??
-    selectedRun?.ticket_key ??
-    (view === "tickets" ? tickets.data?.[0]?.key : undefined);
-  const epicId =
-    params.get("epic") ??
-    tickets.data?.find((t) => t.key === ticketKey)?.epic?.id ??
-    (view === "epics"
-      ? epics.data?.find((e) => !project || e.project.key === project)?.epic.id
-      : undefined);
-  const context = params.get("context");
-  const selectedTicket = ticketKey ? tickets.data?.find((t) => t.key === ticketKey) : undefined;
-  const workSubject: WorkSubject | undefined =
-    (view === "tickets" || context === "ticket") && selectedTicket
-      ? { kind: "ticket", key: selectedTicket.key, title: selectedTicket.title }
-      : selectedRun
-        ? {
-            kind: "run",
-            id: selectedRun.id,
-            title: runTitle(selectedRun),
-            agent: selectedRun.agent.name,
-            ticketKey: selectedRun.ticket_key ?? undefined,
-          }
-        : undefined;
-  const companion = view !== "activity";
-  const showRun = !!runId && (!companion || params.get("companion") !== "hide");
-  const showBrief = companion || context === "ticket" || context === "epic";
-  const navigate: Navigate = updateWorkUrl;
-  const router = useRouter();
-  // Browsing tickets or epics belongs to the full Tickets screens; Work's own
-  // ticket and epic views are only for a focused item beside its run.
-  const browse =
-    (view === "tickets" && !params.get("ticket")) ||
-    (view === "epics" && !params.get("epic"));
+
+  // Redirect legacy ?view=tickets / ?view=epics URLs onto the canonical screens.
+  const legacyTicket = params.get("ticket");
+  const legacyEpic = params.get("epic");
+  const legacyLayout = params.get("layout");
   useEffect(() => {
-    if (!browse) return;
-    const keep: Record<string, string> = {};
-    if (project) keep.project = project;
-    if (view === "tickets" && params.get("layout") === "board") {
-      router.replace(ticketsHref("board", keep));
-    } else {
-      router.replace(ticketsHref(view === "epics" ? "epics" : "list", keep));
+    if (view === "tickets") {
+      if (legacyTicket) {
+        router.replace(`/tickets/${encodeURIComponent(legacyTicket)}`);
+        return;
+      }
+      const keep: Record<string, string> = {};
+      if (project) keep.project = project;
+      router.replace(ticketsHref(legacyLayout === "board" ? "board" : "list", keep));
+    } else if (view === "epics") {
+      if (legacyEpic) {
+        router.replace(`/epics/${encodeURIComponent(legacyEpic)}`);
+        return;
+      }
+      const keep: Record<string, string> = {};
+      if (project) keep.project = project;
+      router.replace(ticketsHref("epics", keep));
     }
-  }, [browse, view, project, params, router]);
-  // Pin inferred selections into the URL before opening context or changing views.
-  const go: Navigate = (patch) =>
-    navigate({
-      ...(runId ? { run: runId } : {}),
-      ...(ticketKey ? { ticket: ticketKey } : {}),
-      ...(epicId ? { epic: epicId } : {}),
-      ...patch,
-    });
-  function intercept(e: MouseEvent) {
-    if (
-      e.defaultPrevented ||
-      e.button ||
-      e.metaKey ||
-      e.ctrlKey ||
-      e.shiftKey ||
-      e.altKey
-    )
-      return;
-    const a = (e.target as HTMLElement).closest("a");
-    if (!a || a.target || a.hasAttribute("download")) return;
-    const url = new URL(a.href, window.location.href);
-    if (
-      url.origin !== window.location.origin ||
-      url.searchParams.get("view") === "details" ||
-      url.searchParams.get("full") === "1"
-    )
-      return;
-    const href = workTarget(
-      url.pathname,
-      new URLSearchParams(
-        workHref(new URLSearchParams(window.location.search), {
-          ...(runId ? { run: runId } : {}),
-        }).split("?")[1],
-      ),
-    );
-    if (href) {
-      e.preventDefault();
-      e.stopPropagation();
-      window.history.pushState(null, "", href);
-    }
-  }
-  const shownTickets = (tickets.data ?? []).filter(
-    (t) =>
-      `${t.key} ${t.title}`.toLowerCase().includes(search.toLowerCase()) &&
-      (params.get("blocked") !== "true" || t.unmet_dependencies > 0) &&
-      (params.get("unestimated") !== "true" || !t.estimate_points),
-  );
-  const shownEpics = (epics.data ?? []).filter(
-    (e) =>
-      (!project || e.project.key === project) &&
-      (!agent || e.agents.some((a) => a.handle === agent)) &&
-      e.epic.name.toLowerCase().includes(search.toLowerCase()),
-  );
-  const openEpicsCount = epics.data?.filter(
-    (e) => (!project || e.project.key === project) && e.epic.status === "open",
-  ).length;
-  const openTicketsCount = tickets.data?.filter(
-    (t) => t.status !== "done" && t.status !== "canceled",
-  ).length;
-  // The Activity list in the native sidebar; the Tickets and Epics lists are listNative, below.
-  const pathname = usePathname();
+  }, [view, legacyTicket, legacyEpic, legacyLayout, project, router]);
+
+  const runs = useRunList(search);
+  const runId = params.get("run") || undefined;
+
   const [nowDate] = useState(() => new Date());
-  const activityFilterNow = parseActivityFilter(params.get("filter"), params.get("done"));
-  const activityLists = useActivityLists(runs, search, activityFilterNow, nowDate);
-  const goActivity = () => go({ view: "activity", context: null, companion: null, list: null, layout: null });
+  const [range7d] = useState(() => presetRange(7, nowDate));
+  const runner = useRunnerStatus().data;
+  const costs7d = useCosts({ ...range7d, project }).data;
+  const activityFilter = parseActivityFilter(params.get("filter"), params.get("done"));
+  const activityLists = useActivityLists(runs, search, activityFilter, nowDate);
+
   const openWorkPath = (path: string) => {
     const url = new URL(path, window.location.href);
-    const href = workTarget(
-      url.pathname,
-      new URLSearchParams(workHref(new URLSearchParams(window.location.search), { ...(runId ? { run: runId } : {}) }).split("?")[1]),
+    const current = new URLSearchParams(
+      workHref(new URLSearchParams(window.location.search), {
+        ...(runId ? { run: runId } : {}),
+      }).split("?")[1],
     );
+    const href = workTarget(url.pathname, current);
     if (href) window.history.pushState(null, "", href);
     else router.push(path);
   };
+
+  const statusText = [
+    runner &&
+      (runner.online
+        ? `${runner.busy} busy · ${runner.slots} slots`
+        : runner.starting
+          ? "Runner starting"
+          : "Runner offline"),
+    costs7d ? `${spendLabel(costs7d.total.cost_micros, costs7d.unpriced_runs)} 7d` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  const nonRunSelected = runId
+    ? runs.shownNeeds.find(
+        (i) => i.run_id === runId && activityLists.nonRunNeeds.some((n) => n.id === i.id),
+      )
+    : undefined;
+
+  const selectedId = !runId
+    ? RUN_OVERVIEW_ITEM
+    : nonRunSelected
+      ? `needs:${nonRunSelected.id}`
+      : `run:${runId}`;
+
+  const activeCount = runs.runs.filter((r) => r.state === "running" || r.state === "queued").length;
+
   const activityNative =
     view === "activity"
       ? {
@@ -252,40 +175,46 @@ export function WorkScreen() {
               agents: boot.data?.agents,
               agent: agent ?? "",
               counts: {
-                activity: runs.needs.length + runs.runs.filter((r) => r.state === "running" || r.state === "queued").length || undefined,
-                tickets: openTicketsCount || undefined,
-                epics: openEpicsCount || undefined,
+                activity: runs.needs.length + activeCount || undefined,
               },
-              search: { value: search, placeholder: "Filter work…" },
+              search: { value: search, placeholder: "Filter runs…" },
             },
             body: {
-              ...activityNativeBody(runs, activityLists, { search, query: listQuery(params), now: nowDate, personas: personas.data?.personas, origin: pageOrigin() }),
-              hasMore: runs.hasMore && activityFilterNow === "all",
+              ...activityNativeBody(runs, activityLists, {
+                search,
+                query: listQuery(params),
+                now: nowDate,
+                personas: personas.data?.personas,
+                origin: pageOrigin(),
+              }),
+              hasMore: runs.hasMore && activityFilter === "all",
             },
-            filter: activityFilterNow as ActivityFilter,
+            filter: activityFilter as ActivityFilter,
             counts: {
               all: activityLists.viewCounts.all,
               needs_you: Math.max(activityLists.viewCounts.needs_you, runs.shownNeeds.length),
               active: activityLists.viewCounts.active,
               failed: activityLists.viewCounts.failed,
             },
-            selectedId: runs.shownNeeds.find((i) => i.run_id === runId && activityLists.nonRunNeeds.some((n) => n.id === i.id))
-              ? `needs:${runs.shownNeeds.find((i) => i.run_id === runId)!.id}`
-              : runId
-                ? `run:${runId}`
-                : null,
+            statusLine: statusText
+              ? {
+                  text: statusText,
+                  href: `/reports?tab=costs&range=7${project ? `&project=${encodeURIComponent(project)}` : ""}`,
+                }
+              : undefined,
+            selectedId,
           }),
           onCommand: (cmd: NativeCommand) => {
             const handled = handleWorkHeaderCommand(cmd, {
               project,
               push: (href) => router.push(href),
-              onProject: (v) => go({ project: v, ticket: null, epic: null }),
-              onAgent: (v) => go({ agent: v || null }),
+              onProject: (v) => updateWorkUrl({ project: v || null }),
+              onAgent: (v) => updateWorkUrl({ agent: v || null }),
               onSearch: (q) => {
                 setSearch(q);
                 updateWorkUrl({ q: q || null }, true);
               },
-              onActivity: goActivity,
+              onActivity: () => updateWorkUrl({ run: null, view: null }),
             });
             if (handled) return;
             if (cmd.type === "nav.filter" && cmd.filterId === RUN_VIEW_FILTER) {
@@ -296,10 +225,15 @@ export function WorkScreen() {
               else q.set("filter", next);
               router.replace(`${pathname}${q.size ? `?${q}` : ""}`, { scroll: false });
             } else if (cmd.type === "nav.activate") {
-              if (cmd.itemId === RUN_LOAD_MORE) runs.loadMore();
-              else if (cmd.itemId === RUN_RETRY) runs.retry();
-              else if (cmd.itemId.startsWith("run:")) openWorkPath(`/runs/${cmd.itemId.slice(4)}`);
-              else if (cmd.itemId.startsWith("needs:")) {
+              if (cmd.itemId === RUN_OVERVIEW_ITEM) {
+                updateWorkUrl({ run: null, view: null });
+              } else if (cmd.itemId === RUN_LOAD_MORE) {
+                runs.loadMore();
+              } else if (cmd.itemId === RUN_RETRY) {
+                runs.retry();
+              } else if (cmd.itemId.startsWith("run:")) {
+                openWorkPath(`/runs/${cmd.itemId.slice(4)}`);
+              } else if (cmd.itemId.startsWith("needs:")) {
                 const item = runs.shownNeeds.find((i) => i.id === cmd.itemId.slice(6));
                 if (item) openWorkPath(itemHref(item, listQuery(params)));
               }
@@ -307,206 +241,42 @@ export function WorkScreen() {
           },
         }
       : undefined;
-  // The Tickets and Epics lists beside a focused ticket or epic, with the saved views.
-  const svUi = useSavedViewsUi();
-  const savedNav = useSavedViewsNav({
-    ui: svUi,
-    current: workViewQuery(params),
-    project,
-    open: (v) => updateWorkUrl(workViewPatch(v.id, v.query)),
-    onDeleted: (v) => {
-      if (params.get("saved") === v.id) updateWorkUrl({ saved: null });
-    },
-  });
-  const listHeader = {
-    project,
-    projects: boot.data?.projects,
-    agents: boot.data?.agents,
-    agent: agent ?? "",
-    counts: { tickets: openTicketsCount || undefined, epics: openEpicsCount || undefined },
-    search: { value: search, placeholder: "Filter work…" },
-  };
-  const headerCommand = (cmd: NativeCommand) =>
-    handleWorkHeaderCommand(cmd, {
-      project,
-      push: (href) => router.push(href),
-      onProject: (v) => go({ project: v, ticket: null, epic: null }),
-      onAgent: (v) => go({ agent: v || null }),
-      onSearch: (q) => {
-        setSearch(q);
-        updateWorkUrl({ q: q || null }, true);
-      },
-      onActivity: goActivity,
-    });
-  const listNative =
-    view === "tickets"
-      ? {
-          model: buildWorkTicketsNavModel({
-            header: listHeader,
-            board: params.get("layout") === "board",
-            tickets: shownTickets.map((t) => ({ key: t.key, title: t.title, status: t.status, blocked: t.unmet_dependencies > 0 })),
-            statusNames: STATUS_NAME,
-            views: savedNav.rows,
-            loading: tickets.isPending,
-            selectedKey: ticketKey,
-          }),
-          onCommand: (cmd: NativeCommand) => {
-            if (headerCommand(cmd) || savedNav.handle(cmd)) return;
-            if (cmd.type === "nav.filter" && cmd.filterId === WORK_LAYOUT_FILTER) go({ layout: cmd.value === "board" ? "board" : null });
-            else if (cmd.type === "nav.activate" && cmd.itemId.startsWith("ticket:")) go({ ticket: cmd.itemId.slice(7), context: null, list: null });
-          },
-        }
-      : view === "epics"
-        ? {
-            model: buildWorkEpicsNavModel({
-              header: listHeader,
-              epics: shownEpics.map((e) => ({ id: e.epic.id, name: e.epic.name, done: e.counts.done, total: e.counts.total })),
-              loading: epics.isPending,
-              selectedId: epicId,
-            }),
-            onCommand: (cmd: NativeCommand) => {
-              if (headerCommand(cmd)) return;
-              if (cmd.type === "nav.activate" && cmd.itemId.startsWith("epic:")) go({ epic: cmd.itemId.slice(5), context: null, list: null });
-            },
-          }
-        : undefined;
-  const mobileBrief = compact && showBrief;
-  const activityFilter = parseActivityFilter(params.get("filter"), params.get("done"));
-  const showActivityOverview = view === "activity" && !compact && !showBrief;
+
+  if (view !== "activity") return null;
+
   return (
-    <div className="work-page" onClickCapture={intercept}>
-      <NavigatorPortal native={activityNative ?? listNative} />
-      <SavedViewNativeDialogs ui={svUi} onCreated={(v) => updateWorkUrl({ saved: v.id })} />
-      <NativeWorkHeader title={view[0].toUpperCase() + view.slice(1)} needs={!companion ? runs.needs.length : 0} onNeeds={() => go({ filter: "needs_you", context: null })} />
-      {!companion && runId && <NativeRunLinks id={runId} context={context} navigate={go} />}
-      <div
-        className={cx(
-          "work-body",
-          companion && "work-planning",
-        )}
-      >
-        {view === "activity" && (
-          <div className={cx(!showActivityOverview ? "work-hidden" : "flex min-w-0 flex-1")}>
-            <ActivityOverview
-              project={project}
-              runs={runs.runs}
-              needs={runs.needs}
-              selectedRunId={runId}
-              filter={activityFilter}
-              onSelectRun={(id) => go({ run: id })}
+    <div className="flex min-h-0 flex-1 flex-col">
+      <NavigatorPortal native={activityNative} />
+      {runId ? (
+        <RunLogScreen key={runId} id={runId} inWork />
+      ) : (
+        <>
+          <NativeOverviewHeader
+            needs={runs.needs.length}
+            onNeeds={() => updateWorkUrl({ run: null, view: null, filter: "needs_you" })}
+          />
+          <ActivityOverview
+            project={project}
+            runs={runs.runs}
+            needs={runs.needs}
+            filter={activityFilter}
+            onSelectRun={(id) => updateWorkUrl({ run: id, view: null })}
+          />
+          {!compact && (
+            <CompanionDock
+              app="work"
+              defaultOpen={false}
+              tabs={[
+                {
+                  id: "chat",
+                  label: "Chat",
+                  icon: "msg",
+                  native: { kind: "companion" },
+                },
+              ]}
             />
-          </div>
-        )}
-        <div
-          className={cx(
-            "work-run",
-            companion && "work-run-companion",
-            showActivityOverview && "work-run-panel",
-            (!showRun || mobileBrief) && "work-hidden",
           )}
-        >
-          {runId ? (
-            <LiveRun
-              key={runId}
-              id={runId}
-              companion={companion}
-              navigate={go}
-            />
-          ) : (
-            <p className="p-8 text-13 text-fg-tertiary">
-              Choose a run from Activity.
-            </p>
-          )}
-        </div>
-        {showBrief && (
-          <section
-            aria-label={companion ? "Focused work" : "Work context"}
-            className={cx("work-details", companion && "work-primary")}
-          >
-            {(!companion || compact || !showRun) && (
-              <div className="work-pane-header">
-                <button
-                  onClick={() =>
-                    go({
-                      view: "activity",
-                      context:
-                        context === "epic" && ticketKey && !compact
-                          ? "ticket"
-                          : null,
-                      list: null,
-                    })
-                  }
-                >
-                  {compact
-                    ? "‹ Back to run · draft saved"
-                    : context === "epic" && ticketKey
-                      ? "‹ Ticket / Epic"
-                      : view === "epics"
-                        ? "Epic"
-                        : "Ticket"}
-                </button>
-                {context && (
-                  <button
-                    aria-label="Close context"
-                    onClick={() => go({ context: null })}
-                  >
-                    ×
-                  </button>
-                )}
-                {companion && !showRun && runId && (
-                  <Button onClick={() => go({ companion: null })}>
-                    Show run
-                  </Button>
-                )}
-              </div>
-            )}
-            <div className="work-detail-scroll">
-              {view === "tickets" && params.get("layout") === "board" ? (
-                project ? (
-                  <BoardView
-                    project={project}
-                    filters={{
-                      assignee: agent,
-                      epic: params.get("filter_epic") || undefined,
-                      include_canceled: false,
-                    }}
-                    blockedOnly={false}
-                    onOpen={(key) => go({ ticket: key, layout: null })}
-                  />
-                ) : (
-                  <p className="p-8">Choose a space to view its board.</p>
-                )
-              ) : (context === "epic" || view === "epics") && epicId ? (
-                <EpicBrief epicId={epicId} navigate={go} focused={companion} />
-              ) : ticketKey ? (
-                <TicketBrief
-                  key={ticketKey}
-                  ticketKey={ticketKey}
-                  navigate={go}
-                  focused={companion}
-                />
-              ) : (
-                <p className="p-8 text-13 text-fg-tertiary">
-                  Choose {view === "epics" ? "an epic" : "a ticket"}.
-                </p>
-              )}
-            </div>
-          </section>
-        )}
-      </div>
-      {!compact && (
-        <CompanionDock
-          app="work"
-          defaultOpen={false}
-          tabs={[
-            {
-              id: "chat",
-              label: "Chat",
-              icon: "msg",
-              native: { kind: "companion", subject: workSubject },
-            },
-          ]}
-        />
+        </>
       )}
     </div>
   );

@@ -496,7 +496,7 @@ export function TicketsScreen() {
       projects: boot.data?.projects,
       agents: boot.data?.agents,
       agent: assignee ?? "",
-      counts: { tickets: queueCounts.all || undefined, epics: sidebarEpics.length || undefined },
+      counts: { tickets: queueCounts.all || undefined },
       hideNewTicket: true,
       search: { value: search, placeholder: "Filter tasks… epic: agent:" },
     },

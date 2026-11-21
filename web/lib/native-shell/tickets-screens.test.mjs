@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildSavedViewsSection, parseSavedViewCommand, parseSavedViewTitleAction, savedViewMenu, workViewPatch, workViewQuery } from "./models/saved-views.ts";
 import { buildTicketsNavModel, parseTicketsRow } from "./models/tickets.ts";
-import { buildWorkEpicsNavModel, buildWorkTicketsNavModel } from "./models/work-lists.ts";
 import { buildBoardExtras, buildTicketsListExtras, buildTicketsToolbar, parseBoardToggle, parseTicketsListAction, parseTicketsToolbarAction } from "./models/tickets-toolbar.ts";
 import { buildEpicToolbar, buildTicketToolbar, buildWorkToolbar, parseTicketToolbarAction, parseWorkToolbarAction } from "./models/work-toolbars.ts";
 import { workHeader } from "./models/work.ts";
@@ -84,27 +83,6 @@ test("the header keeps New ticket in the sidebar unless the toolbar has it", () 
   assert.equal(workHeader({ active: "tickets", agent: "", hideNewTicket: true }).actions.length, 0);
 });
 
-test("work: the tickets view has a List/Board filter and saved views; epics are plain rows", () => {
-  const t = buildWorkTicketsNavModel({
-    header, board: true, statusNames: { todo: "To do" }, views: [{ id: "a", name: "Mine" }], selectedKey: "VES-2",
-    tickets: [{ key: "VES-1", title: "One", status: "todo", blocked: false }, { key: "VES-2", title: "Two", status: "todo", blocked: true }],
-  });
-  assert.equal(t.id, "work-tickets");
-  assert.equal(t.picker.value, "tickets");
-  const layout = t.filters.find((f) => f.id === "work-layout");
-  assert.deepEqual(layout.options.map((o) => [o.value, o.checked]), [["list", false], ["board", true]]);
-  assert.deepEqual(t.sections.map((s) => s.id), ["saved-views", "tickets"]);
-  assert.equal(t.sections[0].items[0].href, undefined);
-  assert.deepEqual(t.sections[1].items.map((i) => [i.id, i.subtitle, i.status]), [["ticket:VES-1", "VES-1 · To do", "neutral"], ["ticket:VES-2", "VES-2 · Blocked", "blocked"]]);
-  assert.equal(t.selectedId, "ticket:VES-2");
-  json(t);
-  const e = buildWorkEpicsNavModel({ header, epics: [{ id: "e1", name: "Auth", done: 1, total: 4 }], selectedId: "e1" });
-  assert.equal(e.picker.value, "epics");
-  assert.deepEqual(e.sections[0].items.map((i) => [i.id, i.subtitle]), [["epic:e1", "1 of 4 tickets"]]);
-  assert.equal(e.selectedId, "epic:e1");
-  json(e);
-});
-
 const space = { label: "Space: Vesper", menu: [{ id: "space:", label: "All spaces" }, { id: "space:VES", label: "Vesper", checked: true }] };
 
 test("tickets toolbar: the project and layout are menus, New ticket is the accent button", () => {
@@ -170,11 +148,8 @@ test("epic and work toolbars", () => {
   assert.deepEqual(buildWorkToolbar({ needs: 0 }), []);
   const w = buildWorkToolbar({ needs: 3 });
   assert.deepEqual([w[0].label, w[0].accent], ["Needs you · 3", true]);
-  const run = buildWorkToolbar({ needs: 0, run: { ticketKey: "VES-1", epic: { id: "e", name: "Auth" }, context: "ticket" } });
-  assert.deepEqual(run.map((i) => [i.id, i.label]), [["work.ticket", "VES-1"], ["work.epic", "Auth"], ["work.details", "Details"], ["work.run", "Run details"]]);
-  assert.equal(run[2].on, true);
-  assert.deepEqual(buildWorkToolbar({ needs: 0, run: { context: null } }).map((i) => i.id), ["work.run"]);
-  assert.equal(parseWorkToolbarAction("work.details"), "details");
+  assert.equal(parseWorkToolbarAction("work.needs"), "needs");
+  assert.equal(parseWorkToolbarAction("work.details"), null);
   assert.equal(parseWorkToolbarAction("work.nope"), null);
   assert.equal(parseWorkToolbarAction("chat.runs"), null);
 });
