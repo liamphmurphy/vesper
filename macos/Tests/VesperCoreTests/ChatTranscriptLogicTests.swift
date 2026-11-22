@@ -386,6 +386,25 @@ final class ChatTranscriptLogicTests: XCTestCase {
         XCTAssertEqual(ChatNav.action(for: .navActivate(navigatorId: "chats", itemId: "space:s1", newTab: false)), .selectSpace(id: "s1", newTab: false))
         XCTAssertEqual(ChatNav.action(for: .navFilter(navigatorId: "chats", filterId: "chat-space", value: "s1", checked: true)), .filterSpace("s1"))
         XCTAssertEqual(ChatNav.action(for: .navAction(navigatorId: "chats", actionId: "pin", itemId: "c-today")), .pinChat(id: "c-today", pinned: true))
+        XCTAssertEqual(ChatNav.action(for: .navAction(navigatorId: "chats", actionId: "open-new-tab", itemId: "c-today")), .selectChat(id: "c-today", newTab: true))
+        XCTAssertEqual(ChatNav.action(for: .navAction(navigatorId: "chats", actionId: "open-new-tab", itemId: "hit:m1")), .selectSearchHit(messageId: "m1", newTab: true))
+        XCTAssertEqual(ChatNav.action(for: .navAction(navigatorId: "chats", actionId: "open-new-tab", itemId: "space:s1")), .selectSpace(id: "s1", newTab: true))
+
+        // Context menus include "Open in New Tab" for active chats, archived chats, search hits, and spaces
+        let activeMenu = ChatNav.chatMenu(archived: false, pinned: false)
+        XCTAssertEqual(activeMenu.first?.id, ChatNav.MenuAction.openInNewTab)
+        XCTAssertEqual(activeMenu.first?.label, "Open in New Tab")
+        XCTAssertEqual(activeMenu.first?.icon, "external")
+
+        let archivedMenu = ChatNav.chatMenu(archived: true, pinned: false)
+        XCTAssertEqual(archivedMenu.first?.id, ChatNav.MenuAction.openInNewTab)
+        XCTAssertEqual(archivedMenu.first?.label, "Open in New Tab")
+
+        let hit = ChatNav.hitItem(ChatNav.SearchHit(messageId: "m1", chatId: "c-today", chatTitle: "Open today", role: "user", snippet: "hello"))
+        XCTAssertEqual(hit.contextMenu?.map(\.id), [ChatNav.MenuAction.openInNewTab])
+
+        let spaceItem = model.sections.last?.items.first
+        XCTAssertEqual(spaceItem?.contextMenu?.map(\.id), [ChatNav.MenuAction.openInNewTab])
     }
 
     // MARK: - 500-Message Transcript Benchmark / Smoke Test

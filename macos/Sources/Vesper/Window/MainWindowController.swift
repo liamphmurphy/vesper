@@ -106,7 +106,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
         let hasNativeChrome = compact || firstKind == .vesper
         if hasNativeChrome {
-            let sidebar = NSHostingController(rootView: SidebarHost(tabs: tabs, send: { [weak self] in self?.send($0) }))
+            let sidebar = NSHostingController(rootView: SidebarHost(
+                tabs: tabs,
+                send: { [weak self] in self?.send($0) },
+                openInNewTab: { [weak self] path in self?.openInMain(path: path, newTab: true) }
+            ))
             sidebar.sizingOptions = []
             let item = NSSplitViewItem(sidebarWithViewController: sidebar)
             item.allowsFullHeightLayout = true

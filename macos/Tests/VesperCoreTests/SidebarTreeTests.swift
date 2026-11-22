@@ -69,4 +69,13 @@ final class SidebarTreeTests: XCTestCase {
         XCTAssertEqual(SidebarTree.appsMenuSections([tool]).map(\.title), ["Tools"])
         XCTAssertEqual(SidebarTree.appsMenuSections([]), [])
     }
+
+    func testAreaClickHandlesNavigationCommandClickAndAppsMenu() {
+        XCTAssertEqual(SidebarTree.areaClick(href: "/work", commandClick: false), .navigate("/work"))
+        XCTAssertEqual(SidebarTree.areaClick(href: "/work", commandClick: true), .openInNewTab("/work"))
+        XCTAssertEqual(SidebarTree.areaClick(href: "/apps", isAppsButton: true, hasApps: false, commandClick: false), .navigate("/apps"))
+        XCTAssertEqual(SidebarTree.areaClick(href: "/apps", isAppsButton: true, hasApps: true, commandClick: false), .showAppsMenu)
+        XCTAssertEqual(SidebarTree.areaClick(href: "/apps", isAppsButton: true, hasApps: true, commandClick: true), .openInNewTab("/apps"))
+        XCTAssertEqual(SidebarTree.areaClick(href: "/apps", isAppsButton: true, hasApps: false, commandClick: true), .openInNewTab("/apps"))
+    }
 }

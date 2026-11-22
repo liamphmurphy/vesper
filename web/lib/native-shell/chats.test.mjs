@@ -5,15 +5,16 @@ import { buildChatsNavModel, chatItem, chatMenu, hitItem } from "./chats-model.t
 const NOW = Date.parse("2026-01-02T12:00:00Z");
 const chat = (o) => ({ id: "c1", title: "Plan", state: "idle", created_at: "2026-01-02T11:00:00Z", last_message_at: "2026-01-02T11:30:00Z", ...o });
 
-test("an active row's menu: rename, archive, delete (destructive)", () => {
+test("an active row's menu: open in new tab, rename, archive, delete (destructive)", () => {
   const menu = chatItem(chat(), null, undefined, NOW).contextMenu;
-  assert.deepEqual(menu.filter((m) => !m.separator).map((m) => m.id), ["rename", "archive", "delete"]);
+  assert.deepEqual(menu.filter((m) => !m.separator).map((m) => m.id), ["open-new-tab", "rename", "archive", "delete"]);
+  assert.equal(menu.find((m) => m.id === "open-new-tab").label, "Open in New Tab");
   assert.equal(menu.find((m) => m.id === "delete").destructive, true);
 });
 
-test("an archived row: restore and delete, opening read-only", () => {
+test("an archived row: open in new tab, restore and delete, opening read-only", () => {
   const item = chatItem(chat(), null, undefined, NOW, true);
-  assert.deepEqual(item.contextMenu.filter((m) => !m.separator).map((m) => m.id), ["restore", "delete"]);
+  assert.deepEqual(item.contextMenu.filter((m) => !m.separator).map((m) => m.id), ["open-new-tab", "restore", "delete"]);
   assert.equal(item.href, "/chat/c1?view=archived");
   assert.deepEqual(chatMenu(true), item.contextMenu);
 });

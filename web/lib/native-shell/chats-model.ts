@@ -14,7 +14,7 @@ export const VIEW_ACTIVE = "view-active";
 export const VIEW_ARCHIVED = "view-archived";
 export const CHAT_SEARCH = "chat-search";
 /** Row menu item ids; the shell sends them as nav.action's actionId with the chat id as itemId. */
-export const CHAT_MENU = { rename: "rename", archive: "archive", restore: "restore", delete: "delete" } as const;
+export const CHAT_MENU = { openInNewTab: "open-new-tab", rename: "rename", archive: "archive", restore: "restore", delete: "delete" } as const;
 export const START_WITH_PREFIX = "start-with:";
 const MATCH_MARKS = /[\uE000\uE001]/g;
 
@@ -102,11 +102,16 @@ export function avatar(name: string, color: string | undefined, imageUrl: string
   return a;
 }
 
-/** The row menu the web's row offers: Rename, Archive, Delete; an archived row Restore, Delete. */
+/** The row menu the web's row offers: Open in New Tab, Rename, Archive, Delete; an archived row Open in New Tab, Restore, Delete. */
 export function chatMenu(archived: boolean): MenuItem[] {
+  const openInNewTab: MenuItem[] = [
+    { id: CHAT_MENU.openInNewTab, label: "Open in New Tab", icon: "external" },
+    { id: "sep-open", separator: true },
+  ];
   return archived
-    ? [{ id: CHAT_MENU.restore, label: "Restore", icon: "refresh" }, { id: "sep", separator: true }, { id: CHAT_MENU.delete, label: "Delete…", icon: "trash", destructive: true }]
+    ? [...openInNewTab, { id: CHAT_MENU.restore, label: "Restore", icon: "refresh" }, { id: "sep", separator: true }, { id: CHAT_MENU.delete, label: "Delete…", icon: "trash", destructive: true }]
     : [
+        ...openInNewTab,
         { id: CHAT_MENU.rename, label: "Rename…", icon: "edit" },
         { id: CHAT_MENU.archive, label: "Archive", icon: "folder" },
         { id: "sep", separator: true },

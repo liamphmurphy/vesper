@@ -19,6 +19,7 @@ public enum ChatNav {
     public static let spacePrefix = "space:"
 
     public enum MenuAction {
+        public static let openInNewTab = "open-new-tab"
         public static let rename = "rename"
         public static let pin = "pin"
         public static let unpin = "unpin"
@@ -301,14 +302,18 @@ public enum ChatNav {
     }
 
     public static func chatMenu(archived: Bool, pinned: Bool) -> [MenuItem] {
+        let openInNewTab: [MenuItem] = [
+            MenuItem(id: MenuAction.openInNewTab, label: "Open in New Tab", icon: "external"),
+            MenuItem(id: "sep-open", separator: true),
+        ]
         if archived {
-            return [
+            return openInNewTab + [
                 MenuItem(id: MenuAction.restore, label: "Restore", icon: "refresh"),
                 MenuItem(id: "sep", separator: true),
                 MenuItem(id: MenuAction.delete, label: "Delete…", icon: "trash", destructive: true),
             ]
         }
-        return [
+        return openInNewTab + [
             MenuItem(id: pinned ? MenuAction.unpin : MenuAction.pin, label: pinned ? "Unpin" : "Pin", icon: "pin"),
             MenuItem(id: MenuAction.rename, label: "Rename…", icon: "edit"),
             MenuItem(id: MenuAction.archive, label: "Archive", icon: "folder"),
@@ -359,7 +364,8 @@ public enum ChatNav {
             subtitle: cleanSnippet,
             badge: hit.archived ? NavBadge(text: "Archived") : nil,
             trailing: hit.role == "user" ? "You" : (hit.personaName ?? "Assistant"),
-            href: "/chat/\(hit.chatId)?message=\(hit.messageId)"
+            href: "/chat/\(hit.chatId)?message=\(hit.messageId)",
+            contextMenu: [MenuItem(id: MenuAction.openInNewTab, label: "Open in New Tab", icon: "external")]
         )
     }
 
@@ -437,7 +443,8 @@ public enum ChatNav {
                         subtitle: s.workKey,
                         avatar: avatar(name: s.name, color: s.color, imageUrl: nil, origin: input.origin),
                         trailing: s.chatCount.map(String.init),
-                        href: "/spaces/\(s.id)"
+                        href: "/spaces/\(s.id)",
+                        contextMenu: [MenuItem(id: MenuAction.openInNewTab, label: "Open in New Tab", icon: "external")]
                     )
                 },
                 actions: [NavAction(id: newSpaceAction, label: "New space", icon: "plus")],
@@ -522,6 +529,14 @@ public enum ChatNav {
         case .navAction(id, let actionId, let itemId, _):
             guard let itemId else { return nil }
             switch actionId {
+            case MenuAction.openInNewTab:
+                if itemId.hasPrefix(hitPrefix) {
+                    return .selectSearchHit(messageId: String(itemId.dropFirst(hitPrefix.count)), newTab: true)
+                }
+                if itemId.hasPrefix(spacePrefix) {
+                    return .selectSpace(id: String(itemId.dropFirst(spacePrefix.count)), newTab: true)
+                }
+                return .selectChat(id: itemId, newTab: true)
             case MenuAction.rename: return .renameChat(id: itemId)
             case MenuAction.pin: return .pinChat(id: itemId, pinned: true)
             case MenuAction.unpin: return .pinChat(id: itemId, pinned: false)
