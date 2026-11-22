@@ -47,6 +47,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     var inspectorDividerIndex: Int { InspectorLogic.inspectorDividerIndex(hasSidebar: hasSidebar) }
     var currentURLString: String? { content.currentURLString }
 
+    /// The active content pane's frame in screen coordinates (excluding left sidebar, inspector,
+    /// and trailing rail), used to optically center floating panels like the Command Palette.
+    var contentPaneScreenFrame: NSRect? {
+        guard let window, container.isViewLoaded, container.view.window === window else { return nil }
+        let inWindow = container.view.convert(container.view.bounds, to: nil)
+        return window.convertToScreen(inWindow)
+    }
+
     /// ⌥⌘F: open the native floating command palette anchored to this window.
     func focusSearch() {
         openCommandPalette(CommandPaletteRequest(scope: .all))

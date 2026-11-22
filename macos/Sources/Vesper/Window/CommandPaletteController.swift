@@ -1,10 +1,11 @@
 import AppKit
+import SwiftUI
 import VesperCore
-import WebKit
 
 @MainActor
 private final class CommandPalettePanel: NSPanel {
     var onEscape: (() -> Void)?
+    var onKeyEquivalent: ((NSEvent) -> Bool)?
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
@@ -12,19 +13,27 @@ private final class CommandPalettePanel: NSPanel {
     override func cancelOperation(_ sender: Any?) {
         onEscape?()
     }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if onKeyEquivalent?(event) == true {
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
 }
 
 @MainActor
 private final class CommandPaletteGlassView: NSVisualEffectView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        material = .popover
+        material = .hudWindow
         blendingMode = .behindWindow
         state = .active
         wantsLayer = true
-        layer?.cornerRadius = 14
+        layer?.cornerRadius = 16
+        layer?.cornerCurve = .continuous
         layer?.masksToBounds = true
-        layer?.borderWidth = 0.5
+        layer?.borderWidth = 1.0
         updateBorderColor()
     }
 
@@ -35,29 +44,30 @@ private final class CommandPaletteGlassView: NSVisualEffectView {
         updateBorderColor()
     }
 
-    private func updateBorderColor() {
+    func updateBorderColor() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            self.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.35).cgColor
+            let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            let border = isDark
+                ? NSColor.white.withAlphaComponent(0.14)
+                : NSColor.black.withAlphaComponent(0.14)
+            self.layer?.borderColor = border.cgColor
         }
     }
 }
 
-/// Hosts the app's persistent floating Liquid Glass Command Palette (`⌘K`) in a borderless
-/// Spotlight-style `NSPanel` backed by `/command-palette`.
+/// Hosts Vesper's native SwiftUI floating Command Palette (`⌘K` / `⇧⌘K`) in a borderless
+/// Spotlight-style `NSPanel` centered over the active window's content pane.
 @MainActor
-final class CommandPaletteController: NSObject, NSWindowDelegate, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate {
+final class CommandPaletteController: NSObject, NSWindowDelegate {
     private weak var aux: AuxWindows?
     private weak var targetController: MainWindowController?
 
-    let webView: WKWebView
-    let services = WebPageServices()
+    let model = CommandPaletteModel()
 
     private var panel: CommandPalettePanel?
     private var glassView: CommandPaletteGlassView?
+    private var hostingController: NSHostingController<CommandPaletteView>?
     private var baseURL: URL?
-    private var loaded = false
-    private var ready = false
-    private var pendingRequest: CommandPaletteRequest?
     private var lastScope: CommandPaletteScope?
     private var appearanceMonitor: AppearanceMonitor?
 
@@ -65,25 +75,13 @@ final class CommandPaletteController: NSObject, NSWindowDelegate, WKScriptMessag
 
     init(aux: AuxWindows) {
         self.aux = aux
-        self.webView = WebViewFactory.makeWebView(kind: .commandPalette, bridge: nil, services: services)
         super.init()
-        services.webView = webView
-        webView.configuration.userContentController.add(self, name: WebViewFactory.handlerName)
-        webView.navigationDelegate = self
-        webView.uiDelegate = self
+        wireModel()
         appearanceMonitor = AppearanceMonitor { [weak self] in self?.sendAppearance() }
     }
 
     func connect(_ conn: Connection) {
-        let sameServer = baseURL == conn.baseURL
         baseURL = conn.baseURL
-        services.baseURL = conn.baseURL
-        if loaded && !sameServer {
-            ready = false
-            loadPalette(from: conn.baseURL)
-        } else if loaded && webView.url == nil {
-            loadPalette(from: conn.baseURL)
-        }
     }
 
     func open(request: CommandPaletteRequest?, from source: MainWindowController?) {
@@ -102,19 +100,15 @@ final class CommandPaletteController: NSObject, NSWindowDelegate, WKScriptMessag
 
         targetController = target
         lastScope = resolved.scope
-        ensureLoaded()
 
+        let theme = currentTheme()
         let panel = ensurePanel()
-        position(panel, relativeTo: target?.window)
-
-        pendingRequest = resolved
-        if ready {
-            ShellBridge.send(.paletteOpen(request: resolved), to: webView)
-        }
+        applyPanelAppearance(mode: theme.mode)
+        model.open(request: resolved, theme: theme)
+        position(panel, relativeTo: target)
 
         panel.alphaValue = 0
         panel.makeKeyAndOrderFront(nil)
-        panel.makeFirstResponder(webView)
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.12
             panel.animator().alphaValue = 1
@@ -126,39 +120,99 @@ final class CommandPaletteController: NSObject, NSWindowDelegate, WKScriptMessag
         panel.orderOut(nil)
         if restoreFocus, let target = targetController {
             target.window?.makeKeyAndOrderFront(nil)
-            target.window?.makeFirstResponder(target.content.webView)
+            target.window?.makeFirstResponder(target.content.focusView)
         }
     }
 
     func teardown() {
         appearanceMonitor?.stop()
         appearanceMonitor = nil
-        let controller = webView.configuration.userContentController
-        controller.removeScriptMessageHandler(forName: WebViewFactory.handlerName)
-        services.teardown(from: controller)
-        webView.navigationDelegate = nil
-        webView.uiDelegate = nil
-        webView.stopLoading()
+        panel?.orderOut(nil)
+        panel = nil
+        glassView = nil
+        hostingController = nil
     }
 
-    // MARK: Private layout & loading
-
-    private func ensureLoaded() {
-        guard !loaded, let baseURL else { return }
-        loaded = true
-        loadPalette(from: baseURL)
+    func sendAppearance(_ command: NativeCommand? = nil) {
+        let theme = currentTheme()
+        model.updateTheme(theme)
+        applyPanelAppearance(mode: theme.mode)
     }
 
-    private func loadPalette(from base: URL) {
-        guard let url = URL(string: "/command-palette", relativeTo: base)?.absoluteURL else { return }
-        vlog("commandPalette: loading \(url.path)")
-        webView.load(URLRequest(url: url))
+    // MARK: - Private Setup & Layout
+
+    private func wireModel() {
+        model.storeProvider = { [weak self] in self?.aux?.store }
+        model.clientProvider = { [weak self] in self?.aux?.client() }
+        model.onClose = { [weak self] restoreFocus in
+            self?.close(restoreFocus: restoreFocus)
+        }
+        model.onNavigate = { [weak self] path, newTab in
+            guard let self else { return }
+            if SettingsRouteResolver.resolve(path) != nil {
+                _ = self.aux?.app?.handleSettingsPath(path, from: self.targetController?.window)
+                return
+            }
+            if newTab {
+                self.aux?.app?.openVesperTab(path: path, nextTo: self.targetController?.window)
+            } else if let target = self.targetController {
+                target.content.navigate(path: path)
+                target.window?.makeKeyAndOrderFront(nil)
+            } else {
+                self.aux?.app?.openVesperTab(path: path, nextTo: nil)
+            }
+        }
+        model.onOpenSettings = { [weak self] destination in
+            self?.aux?.openSettings(destination: destination)
+        }
+        model.onShowShortcuts = { [weak self] in
+            self?.aux?.showShortcuts()
+        }
+        model.onNewWindow = { [weak self] in
+            self?.aux?.app?.newWindow()
+        }
+        model.onToggleSidebar = { [weak self] in
+            self?.targetController?.split.toggleSidebar(nil)
+        }
+        model.onToggleInspector = { [weak self] in
+            self?.targetController?.toggleInspector(nil)
+        }
+        model.onToast = { [weak self] title, tone in
+            let toast = ToastItemModel(
+                id: "palette-\(UUID().uuidString)",
+                title: title,
+                description: nil,
+                tone: tone,
+                actionLabel: nil,
+                durationMs: 3200
+            )
+            self?.targetController?.showToast(toast, from: nil)
+        }
+    }
+
+    private func currentTheme() -> ThemeTokens {
+        if let app = aux?.app {
+            return app.effectiveTheme()
+        }
+        let sys = AppearanceMonitor.current()
+        return PaletteTokens.themeTokens(for: .macOSDefault, systemColorMode: sys.mode, systemAccent: sys.accent)
+    }
+
+    private func applyPanelAppearance(mode: ColorMode) {
+        guard let panel else { return }
+        if mode == AppearanceMonitor.current().mode {
+            panel.appearance = nil
+        } else {
+            panel.appearance = NSAppearance(named: mode == .dark ? .darkAqua : .aqua)
+        }
+        glassView?.updateBorderColor()
     }
 
     private func ensurePanel() -> CommandPalettePanel {
         if let panel { return panel }
+        let initialSize = NSRect(x: 0, y: 0, width: CommandPaletteLayout.defaultWidth, height: CommandPaletteLayout.defaultHeight)
         let panel = CommandPalettePanel(
-            contentRect: NSRect(x: 0, y: 0, width: 880, height: 560),
+            contentRect: initialSize,
             styleMask: [.borderless, .fullSizeContentView],
             backing: .buffered,
             defer: true
@@ -171,222 +225,137 @@ final class CommandPaletteController: NSObject, NSWindowDelegate, WKScriptMessag
         panel.hidesOnDeactivate = true
         panel.isMovableByWindowBackground = false
         panel.delegate = self
-        panel.onEscape = { [weak self] in self?.close(restoreFocus: true) }
+        panel.onEscape = { [weak self] in self?.model.handleEscape() }
+        panel.onKeyEquivalent = { [weak self] event in self?.handlePanelKeyEquivalent(event) ?? false }
 
-        let glass = CommandPaletteGlassView(frame: NSRect(x: 0, y: 0, width: 880, height: 560))
-        webView.translatesAutoresizingMaskIntoConstraints = false
-        glass.addSubview(webView)
+        let glass = CommandPaletteGlassView(frame: initialSize)
+        let host = NSHostingController(rootView: CommandPaletteView(model: model))
+        host.view.translatesAutoresizingMaskIntoConstraints = false
+        host.view.wantsLayer = true
+        host.view.layer?.backgroundColor = NSColor.clear.cgColor
+        glass.addSubview(host.view)
         NSLayoutConstraint.activate([
-            webView.leadingAnchor.constraint(equalTo: glass.leadingAnchor),
-            webView.trailingAnchor.constraint(equalTo: glass.trailingAnchor),
-            webView.topAnchor.constraint(equalTo: glass.topAnchor),
-            webView.bottomAnchor.constraint(equalTo: glass.bottomAnchor),
+            host.view.leadingAnchor.constraint(equalTo: glass.leadingAnchor),
+            host.view.trailingAnchor.constraint(equalTo: glass.trailingAnchor),
+            host.view.topAnchor.constraint(equalTo: glass.topAnchor),
+            host.view.bottomAnchor.constraint(equalTo: glass.bottomAnchor),
         ])
         panel.contentView = glass
         self.glassView = glass
+        self.hostingController = host
         self.panel = panel
         return panel
     }
 
-    private func position(_ panel: NSPanel, relativeTo parentWindow: NSWindow?) {
+    private func handlePanelKeyEquivalent(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let chars = event.charactersIgnoringModifiers?.lowercased() ?? ""
+
+        // ⌘K toggles the palette closed; ⇧⌘K switches to page-scoped (or toggles closed if already scoped).
+        if flags == .command && chars == "k" {
+            if lastScope == .all || lastScope == nil {
+                close(restoreFocus: true)
+            } else {
+                open(request: CommandPaletteRequest(scope: .all), from: targetController)
+            }
+            return true
+        }
+        if flags == [.command, .shift] && chars == "k" {
+            if lastScope == .page {
+                close(restoreFocus: true)
+            } else {
+                open(request: CommandPaletteRequest(scope: .page), from: targetController)
+            }
+            return true
+        }
+
+        // ⌘↵ opens in a new tab; ⌥↵ attaches to a new chat; ⇧↵ creates a page in Knowledge mode.
+        if event.keyCode == 36 || event.keyCode == 76 {
+            if flags == .command {
+                model.confirm(newTab: true)
+                return true
+            }
+            if flags == .option {
+                model.confirm(attach: true)
+                return true
+            }
+            if flags == .shift && model.isKnowledgeMode {
+                model.confirm(createKnowledge: true)
+                return true
+            }
+        }
+
+        // ⌃N / ⌃P move selection down/up (standard macOS Emacs-style list bindings).
+        if flags == .control {
+            if chars == "n" {
+                model.moveDown()
+                return true
+            }
+            if chars == "p" {
+                model.moveUp()
+                return true
+            }
+        }
+
+        // ⌥A / ⌥D approve or deny a selected inbox approval.
+        if flags == .option {
+            if chars == "a" && model.approveSelected() { return true }
+            if chars == "d" && model.denySelected() { return true }
+        }
+
+        return false
+    }
+
+    private func position(_ panel: NSPanel, relativeTo target: MainWindowController?) {
+        let parentWindow = target?.window
         let screen = parentWindow?.screen ?? NSScreen.main ?? NSScreen.screens.first
         let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
-        let width = min(880, max(540, visible.width - 48))
-        let height = min(560, max(360, visible.height - 80))
-        let anchor = parentWindow?.frame ?? visible
-        let rawX = anchor.midX - width / 2
-        let topOffset = min(anchor.height * 0.12, 110)
-        let rawY = anchor.maxY - topOffset - height
-        let x = min(max(rawX, visible.minX + 16), visible.maxX - width - 16)
-        let y = min(max(rawY, visible.minY + 16), visible.maxY - height - 16)
-        panel.setFrame(NSRect(x: x, y: y, width: width, height: height), display: true)
+
+        let contentRect = target?.contentPaneScreenFrame.map {
+            CommandPaletteRect(x: $0.origin.x, y: $0.origin.y, width: $0.width, height: $0.height)
+        }
+        let windowRect = parentWindow.map {
+            CommandPaletteRect(x: $0.frame.origin.x, y: $0.frame.origin.y, width: $0.frame.width, height: $0.frame.height)
+        }
+        let visibleRect = CommandPaletteRect(x: visible.origin.x, y: visible.origin.y, width: visible.width, height: visible.height)
+
+        let targetFrame = CommandPaletteLayout.panelFrame(
+            contentPane: contentRect,
+            window: windowRect,
+            visibleScreen: visibleRect
+        )
+        panel.setFrame(
+            NSRect(x: targetFrame.x, y: targetFrame.y, width: targetFrame.width, height: targetFrame.height),
+            display: true
+        )
     }
 
     private func enrich(_ initial: CommandPaletteRequest, from target: MainWindowController?, baseURL: URL) -> CommandPaletteRequest {
         var req = initial
         if req.path == nil {
-            if let url = target?.content.webView.url, BridgeOrigin.matches(url: url, base: baseURL) {
+            if let route = target?.state.route, !route.isEmpty {
+                let parts = route.split(separator: "?", maxSplits: 1)
+                req.path = parts.first.map(String.init) ?? "/"
+                if req.search == nil, parts.count > 1 {
+                    req.search = "?\(parts[1])"
+                }
+            } else if let url = target?.content.webView.url, BridgeOrigin.matches(url: url, base: baseURL) {
                 req.path = url.path.isEmpty ? "/" : url.path
                 if req.search == nil, let query = url.query, !query.isEmpty {
                     req.search = "?\(query)"
                 }
             } else {
-                req.path = target?.state.route ?? "/"
+                req.path = "/"
             }
         }
         return req
     }
 
-    func sendAppearance(_ command: NativeCommand? = nil) {
-        guard ready else { return }
-        if let command {
-            ShellBridge.send(command, to: webView)
-            return
-        }
-        if let custom = aux?.app?.currentAppearanceCommand() {
-            ShellBridge.send(custom, to: webView)
-            return
-        }
-        let (accent, mode) = AppearanceMonitor.current()
-        ShellBridge.send(.appearance(accent: accent, mode: mode), to: webView)
-    }
-
-    // MARK: NSWindowDelegate
+    // MARK: - NSWindowDelegate
 
     func windowDidResignKey(_ notification: Notification) {
-        if panel?.attachedSheet == nil {
+        if panel?.attachedSheet == nil && !model.moreMenuOpen {
             close(restoreFocus: false)
         }
-    }
-
-    // MARK: WKScriptMessageHandler
-
-    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-        let frame = message.frameInfo
-        let origin = frame.securityOrigin
-        guard frame.isMainFrame, let baseURL,
-              BridgeOrigin.matches(scheme: origin.protocol, host: origin.host, port: origin.port, base: baseURL) else {
-            vlog("commandPalette bridge: dropped message from \(origin.protocol)://\(origin.host):\(origin.port)")
-            return
-        }
-        let decoded: PageMessage
-        do {
-            decoded = try PageMessage.decode(fromJSONObject: message.body)
-        } catch {
-            vlog("commandPalette bridge: undecodable message: \(error)")
-            return
-        }
-        vlog("commandPalette bridge: \(ShellBridge.describe(decoded))")
-        handle(decoded)
-    }
-
-    private func handle(_ message: PageMessage) {
-        switch message {
-        case .ready:
-            ready = true
-            sendAppearance()
-            if let pendingRequest {
-                ShellBridge.send(.paletteOpen(request: pendingRequest), to: webView)
-            }
-        case .openInMain(let path, let newTab):
-            if SettingsRouteResolver.resolve(path) != nil {
-                close(restoreFocus: false)
-                _ = aux?.app?.handleSettingsPath(path, from: targetController?.window)
-                return
-            }
-            close(restoreFocus: true)
-            if newTab {
-                aux?.app?.openVesperTab(path: path, nextTo: targetController?.window)
-            } else if let target = targetController {
-                target.content.navigate(path: path)
-                target.window?.makeKeyAndOrderFront(nil)
-            } else {
-                aux?.app?.openVesperTab(path: path, nextTo: nil)
-            }
-        case .commandPaletteClose:
-            close(restoreFocus: true)
-        case .commandPaletteOpen(let request):
-            open(request: request, from: targetController)
-        case .showShortcuts:
-            close(restoreFocus: false)
-            aux?.showShortcuts()
-        case .toastShow(let id, let title, let description, let tone, let actionLabel, let durationMs):
-            let toast = ToastItemModel(id: id, title: title, description: description, tone: tone, actionLabel: actionLabel, durationMs: durationMs)
-            targetController?.showToast(toast, from: webView)
-        case .toastDismiss(let id):
-            targetController?.dismissToast(id: id)
-        case .quickLook(let items, let index):
-            close(restoreFocus: false)
-            targetController?.showQuickLook(items: items, index: index)
-        case .confirmApproval(let requestId, let scope):
-            Task { [weak self] in
-                let ok = await ShellBridge.services?.confirmApproval(scope: scope) ?? false
-                ShellBridge.send(.reply(requestId: requestId, ok: ok), to: self?.webView)
-            }
-        case .contextMenu(let requestId, let items, let x, let y):
-            let selected = ShellBridge.showContextMenu(items: items, x: x, y: y, in: webView)
-            ShellBridge.send(.reply(requestId: requestId, ok: true, selectedId: .some(selected)), to: webView)
-        case .confirm(let requestId, let title, let body, let confirmLabel, let cancelLabel, let destructive):
-            Task { [weak self] in
-                guard let self else { return }
-                let ok = await ShellBridge.confirmSheet(
-                    title: title, body: body, confirmLabel: confirmLabel,
-                    cancelLabel: cancelLabel, destructive: destructive, window: self.panel
-                )
-                ShellBridge.send(.reply(requestId: requestId, ok: ok), to: self.webView)
-            }
-        case .prompt(let requestId, let title, let body, let label, let value, let placeholder, let confirmLabel, let cancelLabel, let maxLength):
-            Task { [weak self] in
-                guard let self else { return }
-                let entered = await ShellBridge.promptSheet(
-                    title: title, body: body, label: label, value: value, placeholder: placeholder,
-                    confirmLabel: confirmLabel, cancelLabel: cancelLabel, maxLength: maxLength, window: self.panel
-                )
-                ShellBridge.send(.reply(requestId: requestId, ok: entered != nil, value: .some(entered)), to: self.webView)
-            }
-        default:
-            break
-        }
-    }
-
-    // MARK: WKNavigationDelegate & WKUIDelegate
-
-    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
-        if navigationAction.shouldPerformDownload { return .download }
-        guard let url = navigationAction.request.url else { return .cancel }
-        let scheme = url.scheme?.lowercased() ?? ""
-        if ["blob", "data", "about"].contains(scheme) { return .allow }
-        guard navigationAction.targetFrame?.isMainFrame ?? true else { return .allow }
-        guard let baseURL else { return .cancel }
-
-        let openingTab = navigationAction.targetFrame == nil
-        switch classifyNavigation(url.absoluteString, serverURL: baseURL.absoluteString, playgroundPorts: aux?.app?.playgroundPorts ?? defaultPlaygroundPorts) {
-        case .vesper:
-            if !openingTab && url.path == "/command-palette" { return .allow }
-            let rawPath = url.path.isEmpty ? "/" : url.path
-            let query = url.query.map { "?\($0)" } ?? ""
-            let fragment = url.fragment.map { "#\($0)" } ?? ""
-            let path = "\(rawPath)\(query)\(fragment)"
-            close(restoreFocus: true)
-            if openingTab {
-                aux?.app?.openVesperTab(path: path, nextTo: targetController?.window)
-            } else if let target = targetController {
-                target.content.navigate(path: path)
-            } else {
-                aux?.app?.openVesperTab(path: path, nextTo: nil)
-            }
-            return .cancel
-        case .playground:
-            close(restoreFocus: false)
-            aux?.app?.openPlayground(url: url, nextTo: targetController?.window)
-            return .cancel
-        case .external:
-            NSWorkspace.shared.open(url)
-            return .cancel
-        case .ignore:
-            return .cancel
-        }
-    }
-
-    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
-                 for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        guard let url = navigationAction.request.url, let baseURL else { return nil }
-        switch classifyNavigation(url.absoluteString, serverURL: baseURL.absoluteString, playgroundPorts: aux?.app?.playgroundPorts ?? defaultPlaygroundPorts) {
-        case .vesper:
-            let rawPath = url.path.isEmpty ? "/" : url.path
-            let query = url.query.map { "?\($0)" } ?? ""
-            let fragment = url.fragment.map { "#\($0)" } ?? ""
-            let path = "\(rawPath)\(query)\(fragment)"
-            close(restoreFocus: true)
-            aux?.app?.openVesperTab(path: path, nextTo: targetController?.window)
-        case .playground:
-            close(restoreFocus: false)
-            aux?.app?.openPlayground(url: url, nextTo: targetController?.window)
-        case .external:
-            NSWorkspace.shared.open(url)
-        case .ignore:
-            break
-        }
-        return nil
     }
 }
