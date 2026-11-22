@@ -1496,7 +1496,6 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
             </OpenLinkedItem.Provider>
             </ReplyActions>
             </VideoPlayers.Provider>
-            {!c.archived && <AskAboutSelection root={log} onAsk={askAboutSelection} />}
             {newReply && (
               <div className="sticky bottom-1 z-20 flex justify-center">
                 <button type="button" onClick={followLatest} className="flex items-center gap-1.5 rounded-full border border-border-float bg-surface-raised px-3 py-1 text-12 font-medium text-fg shadow-[var(--shadow-float)] hover:bg-hover">
@@ -1508,6 +1507,8 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
             </>
           )}
         </div>
+        {/* Outside [data-chat-scroller] so contain:layout on the scroller does not trap its fixed viewport positioning. */}
+        {view === "chat" && !c.archived && <AskAboutSelection root={log} onAsk={askAboutSelection} />}
         <div ref={dockRef} data-chat-dock="" className="mx-auto flex w-full min-w-0 max-w-[816px] flex-col gap-2 px-6 pb-3">
           {(() => {
             // Everything above the composer goes through one slot, ranked by STATUS_PRIORITY (lib/chat-status-slot).
