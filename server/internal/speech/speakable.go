@@ -85,3 +85,21 @@ func capWords(text string, maxWords int) (string, int) {
 	}
 	return strings.Join(kept, " "), n
 }
+
+// LeadMinWords is how much a lead must say before the rest can follow:
+// enough to cover the rest's synthesis, short enough to start quickly.
+const LeadMinWords = 8
+
+// SplitLead splits speakable text after its first whole sentences that reach
+// LeadMinWords, so the lead can be voiced and played while the rest is still
+// being voiced. rest is empty when the lead is everything.
+func SplitLead(text string) (lead, rest string) {
+	words := 0
+	for _, m := range sentence.FindAllStringIndex(text, -1) {
+		words += len(strings.Fields(text[m[0]:m[1]]))
+		if words >= LeadMinWords {
+			return strings.TrimSpace(text[:m[1]]), strings.TrimSpace(text[m[1]:])
+		}
+	}
+	return strings.TrimSpace(text), ""
+}

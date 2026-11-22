@@ -3748,8 +3748,18 @@ paths:
         WAV. Generated once and cached, so replaying is free.
         X-Speech-Words is how many words were spoken, for pacing the text
         reveal to the audio. 409 when the persona's voice is off or no speech
-        provider is configured; 422 when the reply has nothing to speak.
+        provider is configured; 422 when the reply (or the part asked for) has
+        nothing to speak.
       tags: [chats]
+      parameters:
+        - name: part
+          in: query
+          description: |
+            Speak only part of it, so playback can start sooner: lead is the
+            opening sentence or two (about 8 words or more), rest is everything
+            after it. Ask for both at once and play them back to back. Omit
+            for the whole reply.
+          schema: { type: string, enum: [lead, rest] }
       responses:
         "200":
           description: The speech
@@ -9549,6 +9559,7 @@ components:
       required: [body]
       properties:
         research: { type: boolean, description: "Ask for a research plan to approve instead of an answer" }
+        voice: { type: boolean, description: "Said out loud in Live Voice: the reply is short and conversational, at the quickest automatic effort (a chat's chosen effort still applies)" }
         body: { type: string, minLength: 1, maxLength: 100000 }
         harness: { $ref: "#/components/schemas/Harness" }
         model: { type: string, description: "From this message on; auto routes it per turn (see ChatSession.auto_model), and any other model turns that off. Omit to keep the chat's." }

@@ -1091,14 +1091,17 @@ extension API {
     /// WAV. Generated once and cached, so replaying is free.
     /// X-Speech-Words is how many words were spoken, for pacing the text
     /// reveal to the audio. 409 when the persona's voice is off or no speech
-    /// provider is configured; 422 when the reply has nothing to speak.
+    /// provider is configured; 422 when the reply (or the part asked for) has
+    /// nothing to speak.
     ///
     /// `GET /chats/{id}/messages/{messageId}/speech`
-    public static func getChatMessageSpeech(id: Swift.String, messageId: Swift.String) -> APIRequest<Foundation.Data> {
+    public static func getChatMessageSpeech(id: Swift.String, messageId: Swift.String, part: GetChatMessageSpeechPart? = nil) -> APIRequest<Foundation.Data> {
+        var _query: [URLQueryItem] = []
+        APIQuery.append(&_query, "part", part)
         return APIRequest(
             method: "GET", template: "/chats/{id}/messages/{messageId}/speech",
             path: "/api/v1/chats/\(APIPath.escape(id))/messages/\(APIPath.escape(messageId))/speech",
-            query: [], headers: [:], body: nil, decode: .raw
+            query: _query, headers: [:], body: nil, decode: .raw
         )
     }
 

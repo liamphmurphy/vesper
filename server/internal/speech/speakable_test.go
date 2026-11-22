@@ -34,3 +34,22 @@ func TestSpeakableCapsAtASentence(t *testing.T) {
 		t.Errorf("code only = %q (%d)", got, n)
 	}
 }
+
+func TestSplitLeadEndsOnTheFirstSentencesLongEnoughToLead(t *testing.T) {
+	cases := []struct{ text, lead, rest string }{
+		// A short opener takes the next sentence along, so the rest has time to be voiced.
+		{"Sure. I checked the runner and it looks fine. Want the logs?", "Sure. I checked the runner and it looks fine.", "Want the logs?"},
+		{"The runner restarted cleanly after the deploy finished. Nothing else changed.", "The runner restarted cleanly after the deploy finished.", "Nothing else changed."},
+		{"Too short to split. Really.", "Too short to split. Really.", ""},
+		// An unfinished tail (a capped reply) belongs to the rest.
+		{"This first sentence is long enough to lead. and then some words…", "This first sentence is long enough to lead.", "and then some words…"},
+		{"no punctuation at all here", "no punctuation at all here", ""},
+		{"", "", ""},
+	}
+	for _, c := range cases {
+		lead, rest := SplitLead(c.text)
+		if lead != c.lead || rest != c.rest {
+			t.Errorf("SplitLead(%q) = %q | %q, want %q | %q", c.text, lead, rest, c.lead, c.rest)
+		}
+	}
+}

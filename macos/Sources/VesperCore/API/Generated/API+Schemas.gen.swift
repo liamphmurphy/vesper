@@ -14983,6 +14983,8 @@ extension API {
         public var model: Swift.String?
         /// Ask for a research plan to approve instead of an answer
         public var research: Swift.Bool?
+        /// Said out loud in Live Voice: the reply is short and conversational, at the quickest automatic effort (a chat's chosen effort still applies)
+        public var voice: Swift.Bool?
 
         /// Reasoning effort from this message on; default clears it back to the harness's own default. Omit to keep the chat's effort.
         public struct Effort: APIStringEnum {
@@ -15004,7 +15006,8 @@ extension API {
             effort: Effort? = nil,
             harness: Harness? = nil,
             model: Swift.String? = nil,
-            research: Swift.Bool? = nil
+            research: Swift.Bool? = nil,
+            voice: Swift.Bool? = nil
         ) {
             self.attachmentIds = attachmentIds
             self.body = body
@@ -15013,6 +15016,7 @@ extension API {
             self.harness = harness
             self.model = model
             self.research = research
+            self.voice = voice
         }
 
         enum CodingKeys: Swift.String, CodingKey {
@@ -15023,6 +15027,7 @@ extension API {
             case harness
             case model
             case research
+            case voice
         }
 
         public init(from decoder: any Decoder) throws {
@@ -15034,6 +15039,7 @@ extension API {
             self.harness = try c.decodeIfPresent(Harness.self, forKey: .harness)
             self.model = try c.decodeIfPresent(Swift.String.self, forKey: .model)
             self.research = try c.decodeIfPresent(Swift.Bool.self, forKey: .research)
+            self.voice = try c.decodeIfPresent(Swift.Bool.self, forKey: .voice)
         }
 
         public func encode(to encoder: any Encoder) throws {
@@ -15045,6 +15051,7 @@ extension API {
             try c.encodeIfPresent(harness, forKey: .harness)
             try c.encodeIfPresent(model, forKey: .model)
             try c.encodeIfPresent(research, forKey: .research)
+            try c.encodeIfPresent(voice, forKey: .voice)
         }
     }
 
@@ -25941,6 +25948,14 @@ extension API {
             try c.encode(chat, forKey: .chat)
             try c.encode(message, forKey: .message)
         }
+    }
+
+    public struct GetChatMessageSpeechPart: APIStringEnum {
+        public let rawValue: Swift.String
+        public init(rawValue: Swift.String) { self.rawValue = rawValue }
+        public static let lead = GetChatMessageSpeechPart(rawValue: "lead")
+        public static let rest = GetChatMessageSpeechPart(rawValue: "rest")
+        public static let allKnown: [GetChatMessageSpeechPart] = [lead, rest]
     }
 
     public struct ListPersonaCharacterProposalsResponse: Codable, Sendable, Equatable {

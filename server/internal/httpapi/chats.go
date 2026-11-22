@@ -498,7 +498,7 @@ func (s *Server) chatPersonaFilter(ctx context.Context, raw *string) (string, *u
 
 // toMessageInput converts the contract's message body.
 func toMessageInput(b api.NewChatMessage) (runs.ChatMessageInput, error) {
-	in := runs.ChatMessageInput{Body: b.Body, Model: deref(b.Model), Research: b.Research != nil && *b.Research}
+	in := runs.ChatMessageInput{Body: b.Body, Model: deref(b.Model), Research: b.Research != nil && *b.Research, Voice: b.Voice != nil && *b.Voice}
 	if b.Harness != nil {
 		in.Harness = string(*b.Harness)
 	}

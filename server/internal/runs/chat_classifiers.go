@@ -85,6 +85,22 @@ func (d turnDecision) effortReasons() []string {
 	return out
 }
 
+// voiceLevel is the automatic effort for a turn said out loud: the person is
+// waiting in silence, so a quick answer beats a deliberate one.
+const voiceLevel = "low"
+
+// spokenReplyNote asks for a reply that sounds right read aloud.
+const spokenReplyNote = "the person said this out loud in Live Voice and will hear your reply spoken. Answer the way you'd talk: one to three short sentences, with no Markdown, lists, tables, code or links unless they ask for them. If it needs real work, say in a sentence what you'll do, then do it."
+
+// spoken shapes the turn for Live Voice: the quickest automatic effort, which
+// overrides any rule that raised it (a chat's chosen effort still wins), and a
+// note to answer briefly.
+func (d *turnDecision) spoken() {
+	d.Level = voiceLevel
+	d.Fired = slices.DeleteFunc(d.Fired, func(f string) bool { return slices.Contains(levelRules, f) })
+	d.fire("live_voice", spokenReplyNote)
+}
+
 // prompt is the turn's prompt with the decision's notes after it, at the end
 // so a note never disturbs the cached prefix.
 func (d turnDecision) prompt(prompt string) string {
@@ -236,13 +252,16 @@ func classifyChatTurn(ctx context.Context, q *store.Queries, chat store.ChatSess
 // startClassifiedChatTurn starts the turn for a person's message under the
 // rules' verdict and logs what fired.
 func startClassifiedChatTurn(ctx context.Context, q *store.Queries, chat store.ChatSession, project, prompt, body string, interrupted, edited bool, handoffChars int) (store.ChatSession, store.Run, store.RunTurn, error) {
-	return startClassifiedChatTurnWithRollover(ctx, q, chat, project, prompt, body, interrupted, edited, handoffChars, 0)
+	return startClassifiedChatTurnWithRollover(ctx, q, chat, project, prompt, body, interrupted, edited, false, handoffChars, 0)
 }
 
-func startClassifiedChatTurnWithRollover(ctx context.Context, q *store.Queries, chat store.ChatSession, project, prompt, body string, interrupted, edited bool, handoffChars int, autoRolloverDefault int64) (store.ChatSession, store.Run, store.RunTurn, error) {
+func startClassifiedChatTurnWithRollover(ctx context.Context, q *store.Queries, chat store.ChatSession, project, prompt, body string, interrupted, edited, voice bool, handoffChars int, autoRolloverDefault int64) (store.ChatSession, store.Run, store.RunTurn, error) {
 	d, err := classifyChatTurn(ctx, q, chat, body, interrupted, edited)
 	if err != nil {
 		return chat, store.Run{}, store.RunTurn{}, err
+	}
+	if voice {
+		d.spoken()
 	}
 	chat, run, turn, err := startChatTurnWithRollover(ctx, q, chat, project, d.prompt(prompt), d.Level, false, handoffChars, autoRolloverDefault)
 	if err != nil || len(d.Fired) == 0 {
