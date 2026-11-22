@@ -77,45 +77,92 @@ struct ChatComposerTextView: NSViewRepresentable {
 
         scrollView.documentView = textView
         context.coordinator.textView = textView
+        context.coordinator.appliedStyle = Coordinator.AppliedStyle(
+            fontSize: fontSize,
+            textColor: textColor,
+            placeholder: placeholder,
+            placeholderColor: placeholderColor,
+            isDisabled: isDisabled
+        )
+        context.coordinator.wasEmpty = text.isEmpty
+        context.coordinator.lastReportedHeight = measuredHeight
         context.coordinator.recalculateHeight()
         return scrollView
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        context.coordinator.parent = self
-        guard let textView = context.coordinator.textView else { return }
+        let coordinator = context.coordinator
+        coordinator.parent = self
+        guard let textView = coordinator.textView else { return }
 
-        textView.isEditable = !isDisabled
-        textView.font = NSFont.systemFont(ofSize: fontSize)
-        textView.textColor = NSColor(textColor)
-        textView.insertionPointColor = NSColor(textColor)
-        textView.placeholderText = placeholder
-        textView.placeholderColor = NSColor(placeholderColor)
+        // Only mutate NSTextView appearance when it actually changed: writing `font` or
+        // `textColor` unconditionally re-attributes the whole text storage and forces a
+        // full TextKit 2 relayout on every keystroke.
+        let prev = coordinator.appliedStyle
+        if prev?.isDisabled != isDisabled {
+            textView.isEditable = !isDisabled
+        }
+        if prev?.fontSize != fontSize {
+            textView.font = NSFont.systemFont(ofSize: fontSize)
+        }
+        if prev?.textColor != textColor {
+            let color = NSColor(textColor)
+            textView.textColor = color
+            textView.insertionPointColor = color
+        }
+        if prev?.placeholder != placeholder || prev?.placeholderColor != placeholderColor {
+            textView.placeholderText = placeholder
+            textView.placeholderColor = NSColor(placeholderColor)
+            if textView.string.isEmpty {
+                textView.needsDisplay = true
+            }
+        }
+        coordinator.appliedStyle = Coordinator.AppliedStyle(
+            fontSize: fontSize,
+            textColor: textColor,
+            placeholder: placeholder,
+            placeholderColor: placeholderColor,
+            isDisabled: isDisabled
+        )
 
         if textView.string != text {
-            context.coordinator.isProgrammaticUpdate = true
+            coordinator.isProgrammaticUpdate = true
             textView.string = text
             let clamped = max(0, min(cursorUTF16, (text as NSString).length))
             textView.setSelectedRange(NSRange(location: clamped, length: 0))
-            context.coordinator.isProgrammaticUpdate = false
+            coordinator.isProgrammaticUpdate = false
+            coordinator.wasEmpty = text.isEmpty
             textView.needsDisplay = true
-            context.coordinator.recalculateHeight()
+            coordinator.recalculateHeight()
         } else {
-            let currentLoc = textView.selectedRange().location
-            let clamped = max(0, min(cursorUTF16, (text as NSString).length))
-            if currentLoc != clamped && textView.selectedRange().length == 0 && !textView.hasMarkedText() {
-                context.coordinator.isProgrammaticUpdate = true
-                textView.setSelectedRange(NSRange(location: clamped, length: 0))
-                context.coordinator.isProgrammaticUpdate = false
+            let currentRange = textView.selectedRange()
+            if currentRange.length == 0 && currentRange.location != cursorUTF16 && !textView.hasMarkedText() {
+                let clamped = max(0, min(cursorUTF16, (text as NSString).length))
+                if currentRange.location != clamped {
+                    coordinator.isProgrammaticUpdate = true
+                    textView.setSelectedRange(NSRange(location: clamped, length: 0))
+                    coordinator.isProgrammaticUpdate = false
+                }
             }
         }
     }
 
     @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
+        struct AppliedStyle: Equatable {
+            var fontSize: CGFloat
+            var textColor: Color
+            var placeholder: String
+            var placeholderColor: Color
+            var isDisabled: Bool
+        }
+
         var parent: ChatComposerTextView
         weak var textView: ComposerNSTextView?
         var isProgrammaticUpdate = false
+        var appliedStyle: AppliedStyle?
+        var wasEmpty = true
+        var lastReportedHeight: CGFloat = 0
         private var pastedImageCounter = 0
 
         init(_ parent: ChatComposerTextView) {
@@ -124,9 +171,17 @@ struct ChatComposerTextView: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard !isProgrammaticUpdate, let textView else { return }
-            parent.text = textView.string
-            parent.cursorUTF16 = textView.selectedRange().location
-            textView.needsDisplay = true
+            let nextText = textView.string
+            let loc = textView.selectedRange().location
+            parent.text = nextText
+            if parent.cursorUTF16 != loc {
+                parent.cursorUTF16 = loc
+            }
+            let nowEmpty = nextText.isEmpty
+            if nowEmpty != wasEmpty {
+                wasEmpty = nowEmpty
+                textView.needsDisplay = true
+            }
             recalculateHeight()
         }
 
@@ -188,7 +243,8 @@ struct ChatComposerTextView: NSViewRepresentable {
             }
             let inset = textView.textContainerInset.height * 2
             let target = min(max(ceil(contentHeight + inset), parent.minHeight), parent.maxHeight)
-            if abs(parent.measuredHeight - target) > 0.5 {
+            if abs(lastReportedHeight - target) > 0.5 || abs(parent.measuredHeight - target) > 0.5 {
+                lastReportedHeight = target
                 Task { @MainActor [weak self] in
                     self?.parent.measuredHeight = target
                 }

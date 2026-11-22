@@ -54,6 +54,7 @@ struct ChatComposerView: View {
     @State private var showFileImporter = false
     @State private var completionIndex = 0
     @State private var completionDismissedText: String?
+    @State private var draftSaveTask: Task<Void, Never>?
 
     private var isRunning: Bool { session?.state == .running }
     private var personaName: String { activePersona?.name ?? session?.agent.name ?? "Vesper" }
@@ -153,20 +154,23 @@ struct ChatComposerView: View {
             handleFileImport(result)
         }
         .onAppear { loadDraft(for: chatId) }
+        .onDisappear { saveDraftImmediately(for: chatId) }
         .onChange(of: chatId) { oldId, newId in
-            saveDraft(for: oldId)
+            saveDraftImmediately(for: oldId)
             loadDraft(for: newId)
             attachments = []
             errorMessage = nil
             completionDismissedText = nil
         }
         .onChange(of: draft) { _, newValue in
-            completionIndex = 0
-            if completionDismissedText != newValue { completionDismissedText = nil }
-            saveDraft(for: chatId)
+            if completionIndex != 0 { completionIndex = 0 }
+            if completionDismissedText != nil && completionDismissedText != newValue {
+                completionDismissedText = nil
+            }
+            scheduleDraftSave(for: chatId)
         }
         .onChange(of: contextChips) { _, _ in
-            saveDraft(for: chatId)
+            saveDraftImmediately(for: chatId)
         }
     }
 
@@ -857,6 +861,8 @@ struct ChatComposerView: View {
     }
 
     private func clearComposer() {
+        draftSaveTask?.cancel()
+        draftSaveTask = nil
         draft = ""
         cursorUTF16 = 0
         attachments = []
@@ -963,7 +969,20 @@ struct ChatComposerView: View {
         }
     }
 
-    private func saveDraft(for id: String?) {
+    private func scheduleDraftSave(for id: String?) {
+        draftSaveTask?.cancel()
+        let snapshot = ChatComposerDraft(text: draft, chips: contextChips)
+        let store = draftStore
+        draftSaveTask = Task {
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            store.save(snapshot, chatId: id)
+        }
+    }
+
+    private func saveDraftImmediately(for id: String?) {
+        draftSaveTask?.cancel()
+        draftSaveTask = nil
         draftStore.save(ChatComposerDraft(text: draft, chips: contextChips), chatId: id)
     }
 
