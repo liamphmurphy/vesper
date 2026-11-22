@@ -1,13 +1,26 @@
 import AppKit
 import Observation
 import SwiftUI
+import UniformTypeIdentifiers
 import VesperCore
 
-enum SettingsSection: String, CaseIterable, Identifiable {
-    case general, notifications, shortcuts, files, workspaces, power, backups, security, updates
-    var id: String { rawValue }
-    var title: String {
+extension SettingsPane: Identifiable {
+    public var id: String { rawValue }
+
+    var settingsTitle: String {
         switch self {
+        case .you: return "You"
+        case .appearance: return "Appearance"
+        case .memory: return "Memory"
+        case .personas: return "Personas"
+        case .secrets: return "Credentials & API Secrets"
+        case .connectors: return "Connectors"
+        case .repositories: return "Repositories"
+        case .workspace: return "Workspace"
+        case .runners: return "Runners"
+        case .devWorkspace: return "Dev Workspace"
+        case .spaces: return "Spaces"
+        case .signIn: return "Sign-in"
         case .general: return "General"
         case .notifications: return "Notifications"
         case .shortcuts: return "Shortcuts"
@@ -19,8 +32,21 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .updates: return "Updates"
         }
     }
+
     var symbol: String {
         switch self {
+        case .you: return "person.crop.circle"
+        case .appearance: return "paintpalette"
+        case .memory: return "brain"
+        case .personas: return "person.2"
+        case .secrets: return "key"
+        case .connectors: return "powerplug"
+        case .repositories: return "chevron.left.forwardslash.chevron.right"
+        case .workspace: return "building.2"
+        case .runners: return "server.rack"
+        case .devWorkspace: return "terminal"
+        case .spaces: return "square.grid.2x2"
+        case .signIn: return "lock"
         case .general: return "gearshape"
         case .notifications: return "bell"
         case .shortcuts: return "keyboard"
@@ -34,10 +60,67 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     }
 }
 
+private struct SettingsSidebarGroup: Identifiable {
+    let id: String
+    let title: String
+    let panes: [SettingsPane]
+}
+
+private let settingsSidebarGroups: [SettingsSidebarGroup] = [
+    SettingsSidebarGroup(id: "personal", title: "Personal", panes: [.you, .appearance, .memory]),
+    SettingsSidebarGroup(id: "personas", title: "Personas", panes: [.personas]),
+    SettingsSidebarGroup(id: "integrations", title: "Integrations", panes: [.secrets, .connectors, .repositories]),
+    SettingsSidebarGroup(id: "workspace", title: "Workspace", panes: [.workspace, .runners, .devWorkspace, .spaces]),
+    SettingsSidebarGroup(id: "account", title: "Account", panes: [.signIn]),
+    SettingsSidebarGroup(id: "mac-app", title: "Mac App", panes: [.general, .notifications, .shortcuts, .files, .workspaces, .power, .backups, .security, .updates]),
+]
+
 @MainActor
 @Observable
 final class SettingsNavigation {
-    var selection: SettingsSection = .general
+    var selection: SettingsPane = .you
+    var searchText = ""
+    var personaId: String?
+    var personaFilter: SettingsPersonaFilter = .all
+    var memoryFocusId: String?
+    var secretsTab: SettingsSecretsTab = .provider
+    var secretId: String?
+    var spaceId: String?
+    var anchor: String?
+    var runnerRunId: String?
+
+    func apply(_ destination: SettingsDestination) {
+        switch destination {
+        case .pane(
+            let pane,
+            let personaId,
+            let personaFilter,
+            let memoryFocusId,
+            let secretsTab,
+            let secretId,
+            let spaceId,
+            let anchor,
+            let runnerRunId
+        ):
+            self.selection = pane
+            self.personaId = personaId
+            self.personaFilter = personaFilter
+            self.memoryFocusId = memoryFocusId
+            self.secretsTab = secretsTab
+            self.secretId = secretId
+            self.spaceId = spaceId
+            self.anchor = anchor
+            self.runnerRunId = runnerRunId
+        case .spaceRedirect:
+            self.selection = .spaces
+        }
+    }
+
+    func navigate(_ path: String) {
+        if let dest = SettingsRouteResolver.resolve(path) {
+            apply(dest)
+        }
+    }
 }
 
 struct SettingsView: View {
@@ -46,31 +129,112 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(SettingsSection.allCases, selection: $navigation.selection) { section in
-                Label(section.title, systemImage: section.symbol).tag(section)
+            List(selection: $navigation.selection) {
+                ForEach(filteredGroups) { group in
+                    Section(group.title) {
+                        ForEach(group.panes) { pane in
+                            Label(pane.settingsTitle, systemImage: pane.symbol).tag(pane)
+                        }
+                    }
+                }
             }
-            .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 230)
+            .listStyle(.sidebar)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                VStack(spacing: 0) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundStyle(.secondary)
+                            .font(.callout)
+                        TextField("Filter settings…", text: $navigation.searchText)
+                            .textFieldStyle(.plain)
+                        if !navigation.searchText.isEmpty {
+                            Button {
+                                navigation.searchText = ""
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.5))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    Divider()
+                }
+                .background(.bar)
+            }
             .safeAreaInset(edge: .bottom) {
-                Text("Vesper \(AuxWindows.currentVersion)").font(.caption).foregroundStyle(.secondary).padding(10)
+                Text("Vesper \(AuxWindows.currentVersion)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(10)
             }
+            .navigationSplitViewColumnWidth(min: 205, ideal: 230, max: 270)
         } detail: {
-            SettingsDetail(aux: aux, section: navigation.selection)
-                .navigationTitle(navigation.selection.title)
+            detailView
+                .navigationTitle(navigation.selection.settingsTitle)
         }
         .toolbar(removing: .sidebarToggle)
-        .frame(minWidth: 700, minHeight: 480)
+        .frame(minWidth: 780, minHeight: 520)
+    }
+
+    private var filteredGroups: [SettingsSidebarGroup] {
+        let q = navigation.searchText
+        return settingsSidebarGroups.compactMap { group in
+            let matches = group.panes.filter { SettingsRouteResolver.matchesPane($0, title: $0.settingsTitle, query: q) }
+            guard !matches.isEmpty else { return nil }
+            return SettingsSidebarGroup(id: group.id, title: group.title, panes: matches)
+        }
+    }
+
+    @ViewBuilder
+    private var detailView: some View {
+        switch navigation.selection {
+        case .you:
+            SettingsYouPane(aux: aux, navigation: navigation)
+        case .appearance:
+            SettingsAppearancePane(aux: aux)
+        case .memory:
+            SettingsMemoryPane(aux: aux, navigation: navigation)
+        case .personas:
+            SettingsPersonasPane(aux: aux, navigation: navigation)
+        case .secrets:
+            SettingsSecretsPane(aux: aux, navigation: navigation)
+        case .connectors:
+            SettingsConnectorsPane(aux: aux)
+        case .repositories:
+            SettingsRepositoriesPane(aux: aux)
+        case .workspace:
+            SettingsWorkspacePane(aux: aux, navigation: navigation)
+        case .runners:
+            SettingsRunnersPane(aux: aux, navigation: navigation)
+        case .devWorkspace:
+            SettingsDevWorkspacePane(aux: aux)
+        case .spaces:
+            SettingsSpacesPane(aux: aux, navigation: navigation)
+        case .signIn:
+            SettingsSignInPane(aux: aux)
+        case .general, .notifications, .shortcuts, .files, .workspaces, .power, .backups, .security, .updates:
+            SettingsDetail(aux: aux, section: navigation.selection)
+        }
     }
 }
 
-/// One section's form. Reads settings from the store (observed) and writes through `aux.update`.
+/// Mac App preference sections + folded web Backup actions on `.backups`.
 struct SettingsDetail: View {
     let aux: AuxWindows
-    let section: SettingsSection
+    let section: SettingsPane
 
     @State private var testMessage: String?
     @State private var quickActionsError: String?
     @State private var touchIdMessage: String?
     @State private var exportMessage: String?
+    @State private var manualExporting = false
+    @State private var manualExportMessage: String?
     @State private var editingBackupPassword = false
     @State private var backupPassword = ""
     @State private var backupPasswordConfirm = ""
@@ -99,6 +263,7 @@ struct SettingsDetail: View {
             case .backups: backups
             case .security: security
             case .updates: updates
+            default: EmptyView()
             }
         }
         .formStyle(.grouped)
@@ -179,130 +344,122 @@ struct SettingsDetail: View {
 
     // MARK: Notifications
 
-    private static let kindLabels: [String: String] = [
-        "approval": "Agent requests", "question": "Agent questions", "blocked": "Failed or blocked runs",
-        "stalled": "Stalled runs", "mockup": "Mockups to review", "planning": "Plans to approve",
-        "review": "Work ready for review", "workflow_gate": "Workflow gates", "connector_approval": "Connector tool calls",
-        "secret_approval": "Requests using a secret", "merged": "Merged pull requests", "pr_approved": "Approved pull requests",
-    ]
-
-    private func clock(_ keyPath: WritableKeyPath<NativeSettings, String>) -> Binding<Date> {
-        Binding(
-            get: {
-                let parts = s[keyPath: keyPath].split(separator: ":").compactMap { Int($0) }
-                return Calendar.current.date(bySettingHour: parts.first ?? 0, minute: parts.count > 1 ? parts[1] : 0, second: 0, of: Date()) ?? Date()
-            },
-            set: { date in
-                let c = Calendar.current.dateComponents([.hour, .minute], from: date)
-                aux.update { $0[keyPath: keyPath] = String(format: "%02d:%02d", c.hour ?? 0, c.minute ?? 0) }
-            }
-        )
-    }
-
     @ViewBuilder private var notifications: some View {
         Section {
-            Toggle("Show notifications", isOn: bind(\.notifications.enabled))
+            Toggle("Show desktop notifications", isOn: bind(\.notifications.enabled))
+            Toggle(isOn: bind(\.notifications.actions)) {
+                Text("Include quick action buttons")
+                Text("Approve or deny straight from the banner. Keeps details brief while the screen is locked.")
+            }
+            .disabled(!s.notifications.enabled)
+            Toggle(isOn: bind(\.notifications.groupByWork)) {
+                Text("Group notifications by ticket, chat or epic")
+                Text("A newer update replaces the earlier unread banner for the same thing.")
+            }
+            .disabled(!s.notifications.enabled)
+            Toggle("Notify when any ticket or plan run finishes", isOn: bind(\.notifications.runFinished))
+                .disabled(!s.notifications.enabled)
+            Toggle("Play a sound", isOn: bind(\.notifications.sound))
+                .disabled(!s.notifications.enabled)
             LabeledContent {
-                Button("Send a Test") { testMessage = aux.sendTestNotification() }.disabled(!s.notifications.enabled)
+                Button("Send Test") { testMessage = aux.sendTestNotification() }
             } label: {
                 Text("Test notification")
                 if let testMessage { Text(testMessage) }
             }
-        } footer: {
-            footer("Alerts for things that need you, from your inbox and runs.")
         }
-        Section("Notify me about") {
-            ForEach(NotificationKind.all, id: \.self) { kind in
-                Toggle(Self.kindLabels[kind] ?? kind, isOn: Binding(
+        Section("Notify when") {
+            ForEach([
+                ("approval", "An agent asks for approval"), ("question", "An agent asks a question"),
+                ("run_failed", "A run stops with a failure"), ("run_completed", "A run finishes without opening a pull request"),
+                ("merged", "A pull request is merged"), ("plan_failed", "A plan fails"),
+                ("plan_finished", "A plan finishes"), ("wiki", "A wiki suggestion waits for review"),
+            ], id: \.0) { kind, label in
+                Toggle(label, isOn: Binding(
                     get: { s.notifications.kinds[kind] ?? true },
                     set: { v in aux.update { $0.notifications.kinds[kind] = v } }
                 ))
+                .disabled(!s.notifications.enabled)
             }
         }
-        .disabled(!s.notifications.enabled)
-        Section {
-            Toggle(isOn: bind(\.notifications.runFinished)) {
-                Text("When a run finishes or fails")
-                Text("Once per ticket, planning, research or workflow run. Chat replies don't count.")
+        Section("Quiet hours") {
+            Toggle("Pause sounds and popups during quiet hours", isOn: bind(\.notifications.quietHours.enabled))
+            ValidatedField(title: "Starts", value: s.notifications.quietHours.start, validate: { isValidClockTime($0) },
+                           message: "Use 24-hour HH:MM, for example 22:00.") { v in
+                aux.update { $0.notifications.quietHours.start = v }
             }
-            Toggle(isOn: bind(\.notifications.actions)) {
-                Text("Approve, Decline and Reply in the notification")
-                Text("Buttons show when the notification style for Vesper is Alerts (System Settings › Notifications). A reply goes to the ticket, mentioning the agent.")
+            .disabled(!s.notifications.quietHours.enabled)
+            ValidatedField(title: "Ends", value: s.notifications.quietHours.end, validate: { isValidClockTime($0) },
+                           message: "Use 24-hour HH:MM, for example 08:00.") { v in
+                aux.update { $0.notifications.quietHours.end = v }
             }
-            Toggle(isOn: bind(\.notifications.groupByWork)) {
-                Text("Group by ticket or run")
-                Text("A busy run stacks into one group in Notification Center.")
-            }
-            Toggle("Play a sound", isOn: bind(\.notifications.sound))
+            .disabled(!s.notifications.quietHours.enabled)
         }
-        .disabled(!s.notifications.enabled)
-        Section {
-            Toggle(isOn: bind(\.notifications.quietHours.enabled)) {
-                Text("Quiet hours")
-                Text("No notifications in this window; they don't arrive later either. macOS Focus also applies on its own.")
-            }
-            DatePicker("From", selection: clock(\.notifications.quietHours.start), displayedComponents: .hourAndMinute)
-                .disabled(!s.notifications.quietHours.enabled)
-            DatePicker("To", selection: clock(\.notifications.quietHours.end), displayedComponents: .hourAndMinute)
-                .disabled(!s.notifications.quietHours.enabled)
-        }
-        .disabled(!s.notifications.enabled)
     }
 
     // MARK: Shortcuts
 
-    @ViewBuilder private func shortcutRow(
-        _ kind: GlobalShortcuts.Kind, title: String, hint: String, config: NativeSettings.Shortcut, enabled: Binding<Bool>
-    ) -> some View {
-        LabeledContent {
-            HStack {
-                ShortcutRecorder(accelerator: config.shortcut) { aux.setShortcut(kind, accelerator: $0) }
-                Toggle("Enabled", isOn: enabled).labelsHidden().toggleStyle(.switch)
-            }
-        } label: {
-            Text(title)
-            Text(hint)
-            if let error = state.shortcutErrors[kind] { Text(error).foregroundStyle(.red) }
+    @ViewBuilder private var shortcuts: some View {
+        Section {
+            shortcutRow(.quickCapture, setting: bind(\.quickCapture), title: "Quick Capture to Inbox",
+                        subtitle: "Opens a tiny prompt from anywhere and saves your note into the Inbox.")
+            shortcutRow(.screenshot, setting: bind(\.screenshot), title: "Screenshot to Chat",
+                        subtitle: "Crosshair selection attached straight into Quick Capture.")
+            shortcutRow(.showHide, setting: bind(\.showHide), title: "Show / Hide Vesper",
+                        subtitle: "Bring Vesper forward from any app, or hide it.")
+        } footer: {
+            footer("Global shortcuts work even when another app has focus. Turn off anything that clashes with your editor.")
         }
     }
 
-    @ViewBuilder private var shortcuts: some View {
-        Section {
-            shortcutRow(.quickCapture, title: "Quick Capture", hint: "Capture a note, message a persona, or file a ticket.",
-                        config: s.quickCapture, enabled: bind(\.quickCapture.enabled))
-            shortcutRow(.screenshot, title: "Screenshot to Chat",
-                        hint: "Drag to capture part of the screen (Space for a window, Esc to cancel), then pick a chat to send it to. macOS asks for Screen Recording permission the first time.",
-                        config: s.screenshot, enabled: bind(\.screenshot.enabled))
-            shortcutRow(.showHide, title: "Show or hide Vesper",
-                        hint: "Brings Vesper forward from any app, or hides it when it's already in front.",
-                        config: s.showHide, enabled: bind(\.showHide.enabled))
-        } footer: {
-            footer("Global shortcuts that work from any app. Click a shortcut and press the keys; use ⌘, ⌥ or ⌃ (Shift alone isn't enough).")
+    @ViewBuilder
+    private func shortcutRow(_ kind: GlobalShortcuts.Kind, setting: Binding<NativeSettings.Shortcut>, title: String, subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle(isOn: setting.enabled) {
+                Text(title)
+                Text(subtitle)
+            }
+            LabeledContent("Key combination") {
+                ShortcutRecorder(accelerator: setting.shortcut.wrappedValue) { accel in
+                    aux.setShortcut(kind, accelerator: accel)
+                }
+            }
+            .disabled(!setting.enabled.wrappedValue)
+            if let error = state.shortcutErrors[kind] {
+                Text(error).font(.callout).foregroundStyle(.red)
+            }
         }
     }
 
     // MARK: Files & Links
 
     @ViewBuilder private var files: some View {
-        Section {
+        Section("Files in") {
             Toggle(isOn: bind(\.files.dockDrop)) {
-                Text("Send files dropped on Vesper to a chat")
-                Text("Drop files on the Dock icon, on a Vesper window, or use Open With. You pick the chat first. PDF, images, text, Markdown, CSV, JSON or zip, up to 25 MB each.")
+                Text("Accept files dropped onto the Dock icon or opened with Vesper")
+                Text("PDFs and documents import into Knowledge; images and code attach to a chat or Inbox note.")
             }
             LabeledContent {
-                Button(state.servicesInstalled ? "Remove" : "Install") {
+                Button(state.servicesInstalled ? "Remove Quick Actions" : "Install Quick Actions") {
                     quickActionsError = aux.setQuickActions(installed: !state.servicesInstalled)
                 }
                 .disabled(!aux.quickActionsAvailable)
             } label: {
-                Text("\u{201C}Send to Vesper\u{201D} Quick Actions")
-                Text("Adds Send to Vesper (files, in Finder) and Send Text to Vesper (selected text) to the Services menu and Finder's Quick Actions.")
-                if let e = quickActionsError { Text(e).foregroundStyle(.red) }
-                else if !aux.quickActionsAvailable { Text("Available in the packaged Vesper.app.") }
+                Text("Finder Quick Actions")
+                Text("Adds \"Send to Vesper\" for files and \"Send Text to Vesper\" for text in Finder and Services.")
+                if let quickActionsError { Text(quickActionsError).foregroundStyle(.red) }
             }
+        }
+        Section("Links") {
             Toggle(isOn: bind(\.deepLinks.enabled)) {
-                Text("Open vesper:// links")
-                Text("vesper://run/<id>, vesper://ticket/<KEY-1>, vesper://epic/<id>, vesper://page/<id>, vesper://chat/<id>, vesper://inbox and vesper://capture. Anything else is ignored.")
+                Text("Handle vesper:// links in this app")
+                Text("Links from terminals, scripts and browsers open the ticket, run, chat or wiki page inside Vesper.")
+            }
+            LabeledContent {
+                EmptyView()
+            } label: {
+                Text("Universal links")
+                Text("Supported once Vesper is distributed as a signed app.")
             }
         }
     }
@@ -312,108 +469,80 @@ struct SettingsDetail: View {
     @ViewBuilder private var workspaces: some View {
         Section {
             ValidatedField(title: "Terminal app", value: s.workspaces.terminalApp, validate: { isValidAppName($0) },
-                           message: "Letters, digits, spaces and . _ & + ( ) ' - only, up to 64 characters.",
-                           hint: "The app \"Open in Terminal\" uses, e.g. Terminal, iTerm, Ghostty.") { v in
+                           message: "Enter an app name like Terminal, iTerm or Ghostty.",
+                           hint: "Opened when you choose Open in terminal.") { v in
                 aux.update { $0.workspaces.terminalApp = v }
             }
             Picker(selection: bind(\.workspaces.editor.kind)) {
-                Text("Command in Terminal").tag(EditorKind.terminal)
-                Text("App").tag(EditorKind.app)
+                Text("Terminal command").tag(EditorKind.terminal)
+                Text("Desktop app").tag(EditorKind.app)
             } label: {
                 Text("Editor")
-                Text(s.workspaces.editor.kind == .app ? "Open in \(s.workspaces.editor.app)." : "Open in \(s.workspaces.editor.command) in Terminal.")
+                Text("Used when you choose Open in editor on a workspace.")
             }
             if s.workspaces.editor.kind == .terminal {
                 ValidatedField(title: "Command", value: s.workspaces.editor.command, validate: { isValidTerminalCommand($0) },
-                               message: "Plain words only: a program and its arguments, no quotes or shell characters.",
-                               hint: "Runs in Terminal in the folder, with \".\" added, e.g. nvim, hx, emacs -nw.") { v in
+                               message: "Use a plain command like nvim or hx (letters, numbers and spaces, no shell operators).",
+                               hint: "Run in your terminal inside the workspace folder, e.g. nvim or hx.") { v in
                     aux.update { $0.workspaces.editor.command = v }
                 }
             } else {
-                ValidatedField(title: "App", value: s.workspaces.editor.app, validate: { isValidAppName($0) },
-                               message: "Letters, digits, spaces and . _ & + ( ) ' - only, up to 64 characters.",
-                               hint: "Opens the folder, e.g. Visual Studio Code, Zed, Cursor.") { v in
+                ValidatedField(title: "Application", value: s.workspaces.editor.app, validate: { isValidAppName($0) },
+                               message: "Enter an app name like Visual Studio Code, Cursor or Zed.",
+                               hint: "Launched via open -a with the workspace folder.") { v in
                     aux.update { $0.workspaces.editor.app = v }
                 }
             }
         } footer: {
-            footer("With host-folder workspaces on, a run's or chat's folder chip gets an Open menu: Finder, your terminal, or your editor.")
+            footer("These apply only to workspaces you open manually from a run's workspace menu; Vesper never scans them.")
         }
     }
 
     // MARK: Power & Stack
 
-    private var runnerSlotsStatus: String? {
-        guard let running = aux.app?.stack?.runnerMaxSlots, running > 0, running != s.stack.runnerSlots else { return nil }
-        if !(ProcessInfo.processInfo.environment["RUNNER_MAX_CONCURRENT"] ?? "").trimmingCharacters(in: .whitespaces).isEmpty { return nil }
-        return "The runner is using \(running). Restart the stack to use \(s.stack.runnerSlots)."
-    }
-
     @ViewBuilder private var power: some View {
-        Section("Power") {
+        Section("Sleep & Battery") {
             Toggle(isOn: bind(\.power.preventSleepWhileRunning)) {
-                Text("Keep the Mac awake while runs are working")
-                Text("Stops idle sleep while a run is starting or running. Closing the lid still sleeps.")
-            }
-            Toggle(isOn: bind(\.power.easeOffWhenHot)) {
-                Text("Take fewer runs when the Mac is hot or in Low Power Mode")
-                Text("Half the runs at once when it's hot or in Low Power Mode, one at a time when it's very hot. Runs already going finish; the cap lifts when things cool down.")
+                Text("Keep Mac awake while an agent is working")
+                Text("Prevents idle sleep while a ticket, plan or chat run is active. Closing the lid still sleeps.")
             }
             Picker(selection: bind(\.power.onSleep)) {
-                Text("Leave runs").tag(SleepPolicy.keep)
-                Text("Pause and resume").tag(SleepPolicy.pause)
+                Text("Let runs stay as they are").tag(SleepPolicy.keep)
+                Text("Pause runs when the Mac sleeps").tag(SleepPolicy.pause)
             } label: {
-                Text("When the Mac sleeps")
-                Text(s.power.onSleep == .pause
-                     ? "Working ticket runs pause before sleep and pick up again after wake with “You were paused; continue.”"
-                     : "Runs are left as they are. A run working when the Mac sleeps may fail its turn if its network connection drops; retry it from the run page.")
+                Text("When this Mac sleeps")
+                Text("Agents pause between tool calls until the Mac wakes and Vesper resumes them.")
             }
-            Toggle("Warn when switching to battery with runs working", isOn: bind(\.power.warnOnBattery))
-            Toggle("Ask before quitting with runs working", isOn: bind(\.power.confirmQuitWithActiveRuns))
+            Toggle(isOn: bind(\.power.warnOnBattery)) {
+                Text("Warn when starting a run on low battery (below 20%)")
+                Text("Shows in Vesper's tray subtitle as a gentle reminder.")
+            }
+            Toggle("Ask before quitting while a run is active", isOn: bind(\.power.confirmQuitWithActiveRuns))
+            Toggle(isOn: bind(\.power.easeOffWhenHot)) {
+                Text("Ease back concurrency while the Mac is very hot or under low power")
+                Text("Asks the runner for one active run at a time until temperature settles.")
+            }
         }
-        Section("Stack") {
+        Section("Embedded Stack") {
             Toggle(isOn: bind(\.stack.autoRestart)) {
-                Text("Restart the stack after a crash")
-                Text("Up to 3 times in 10 minutes, then Vesper tells you and stops trying.")
+                Text("Restart crashed services automatically")
+                Text("Restarts the database, API or runner if one stops unexpectedly.")
             }
-            NumberField(title: "Warn when free disk space drops below", unit: "GB", hint: "In the data directory, where runs keep their disks.",
+            NumberField(title: "Minimum free disk before starting", unit: "GB",
+                        hint: "Saves Postgres and runs from running the drive out of space.",
                         range: 1...1000, value: bind(\.stack.minFreeDiskGb))
-            NumberField(title: "Runs at once", unit: nil,
-                        hint: "How many runs the local runner works on at the same time. More runs use more memory and CPU.",
+            NumberField(title: "Concurrent runner slots", unit: nil,
+                        hint: "Applies when the runner next starts, or when you restart it below.",
                         range: 1...32, value: bind(\.stack.runnerSlots))
-            if let status = runnerSlotsStatus {
-                HStack {
-                    Text(status).foregroundStyle(.secondary).font(.callout)
-                    Spacer()
-                    Button("Restart Now") { restartStack() }
+            LabeledContent {
+                Button("Restart Local Stack") {
+                    restartMessage = "Restarting database, API and runner…"
+                    aux.app?.actions.restartStack()
                 }
+            } label: {
+                Text("Local stack")
+                if let restartMessage { Text(restartMessage) }
             }
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Data folder")
-                Text(aux.app?.dataDirectory.path ?? "").font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
-                if let restartMessage { Text(restartMessage).font(.callout).foregroundStyle(.secondary) }
-                HStack {
-                    Button("Show Logs…") { aux.app?.actions.showLogs() }
-                    Button("Open Data Folder") { if let dir = aux.app?.dataDirectory { NSWorkspace.shared.open(dir) } }
-                    Button("Restart Stack") { restartStack() }
-                }
-            }
-        }
-    }
-
-    private func restartStack() {
-        Task {
-            if await aux.hasActiveRuns() {
-                let alert = NSAlert()
-                alert.alertStyle = .warning
-                alert.messageText = "Runs are still working."
-                alert.informativeText = "Restarting the local stack interrupts them."
-                alert.addButton(withTitle: "Restart Anyway")
-                alert.addButton(withTitle: "Cancel")
-                guard alert.runModal() == .alertFirstButtonReturn else { restartMessage = "Restart cancelled."; return }
-            }
-            restartMessage = nil
-            aux.app?.actions.restartStack()
         }
     }
 
@@ -435,6 +564,24 @@ struct SettingsDetail: View {
     }
 
     @ViewBuilder private var backups: some View {
+        Section {
+            LabeledContent {
+                Button(manualExporting ? "Exporting…" : "Export Everything…") { exportArchiveNow() }
+                    .disabled(manualExporting || aux.client() == nil)
+            } label: {
+                Text("Export workspace archive")
+                Text("Downloads everything — database, git bundles, wiki, images and sealed secrets — into one archive you can move or keep as a backup.")
+                if let manualExportMessage { Text(manualExportMessage).foregroundStyle(.secondary) }
+            }
+            LabeledContent {
+                Button("Import Backup…") { aux.importBackup() }
+            } label: {
+                Text("Restore or move from an archive")
+                Text("Replaces this Mac's workspace from a .zip or encrypted .vesper.enc export.")
+            }
+        } header: {
+            Text("Manual export & import")
+        }
         Section {
             Toggle(isOn: bind(\.backups.excludeFromTimeMachine)) {
                 Text("Keep VM disks and caches out of Time Machine")
@@ -539,6 +686,29 @@ struct SettingsDetail: View {
             }
         } header: {
             Text("Backup encryption")
+        }
+    }
+
+    private func exportArchiveNow() {
+        guard let client = aux.client() else { return }
+        let encrypted = state.backupEncryption?.enabled ?? false
+        let defaultName = Backups.exportFileName(Date(), encrypted: encrypted)
+        guard let dest = SettingsFilePanels.pickSaveURL(
+            defaultName: defaultName,
+            contentTypes: encrypted ? [.data] : [.zip],
+            title: "Export Vesper Backup"
+        ) else { return }
+
+        manualExportMessage = nil
+        manualExporting = true
+        Task {
+            defer { manualExporting = false }
+            do {
+                let result = try await BackupExporter.exportToFile(client: client, destination: dest)
+                manualExportMessage = "Saved \(result.url.lastPathComponent)."
+            } catch {
+                manualExportMessage = error.localizedDescription
+            }
         }
     }
 
