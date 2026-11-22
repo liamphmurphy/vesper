@@ -1029,9 +1029,8 @@ the sidebar (`ChatNav`), filters, and search state.
   external open & summarize), `workflow-run`, `research-plan`, `sources` / context chips, tool
   approvals, push requests, API secret proposals, persona & persona-character proposals, ticket/epic
   change requests, canvases strip, and generated image/audio/video/file/PDF cards with Quick Look.
-- **Composer seam (`ChatComposerSlot`).** Functional placeholder composer calling `API.createChat` /
-  `API.postChatMessage` and `API.cancelChatTurn`; replaced by the full native composer in
-  `LAZYAGENTS-286` (after which `web/app/(app)/chat/` is removed).
+- **Composer (`ChatComposerSlot` → `ChatComposerView`).** Full native glass composer wired in
+  `LAZYAGENTS-286` (see **Native screen: Chat composer** below).
 
 Manual click-through checklist:
 
@@ -1074,4 +1073,53 @@ replacing `KnowledgeGraphScreenSlot` and `KnowledgePageSidePanelSlot`).
   imported by `web/app/inspector-panel/page.tsx` and `knowledge-dock.tsx`) as well as
   `page-review.tsx` and `query-table.tsx` (still imported by `page-screen.tsx`, retained for
   LAZYAGENTS-288).
+
+## Native screen: Chat composer
+
+The `/chat` and `/chat/:id` composer is native (`LAZYAGENTS-286`), replacing the placeholder
+`ChatComposerSlot` and removing the standalone Next.js `/chat` routes.
+
+- **Pure composer logic (`macos/Sources/VesperCore/Native/Chat/ChatComposerLogic.swift`).**
+  Foundation-only (zero `AppKit` imports, iOS-portable): `@persona` mention trigger detection,
+  ranking, and insertion; `/` slash-command parsing & argument completion (`/aside`, `/queue`,
+  `/steer`, `/compact`, `/workflow`, `/compare`, `/design`, `/music`, `/model`, `/effort`,
+  `/persona`, `/repo`, `/new`, `/stop`, `/memory`); `UserDefaults`-injectable per-chat
+  `ChatDraftStore`; attachment queue validation (`MAX_ATTACHMENT_BYTES`, `MAX_ATTACHMENTS`,
+  allowed extensions, pasted image naming); work-context & knowledge-context chip serialization
+  (`<!-- vesper:work-context -->` / `<!-- vesper:knowledge-context -->`); send mode resolution
+  (`send`, `queue`, `steer`, `aside`); and `RailUsage` formatting for harness allowance.
+- **Isolated macOS TextKit 2 editor (`macos/Sources/Vesper/Native/Chat/ChatComposerTextView.swift`).**
+  Single AppKit-only `NSViewRepresentable` wrapping `NSTextView(usingTextLayoutManager: true)` with
+  native macOS Writing Tools (`writingToolsBehavior = .complete`), dictation, continuous
+  spellcheck, IME guard (`hasMarkedText()`), native `UndoManager`, Return-to-send / Shift+Return
+  newline, completion popover keyboard navigation (↑/↓/Tab/Return/Esc), pasteboard image/file
+  paste, drag-and-drop file attachment, and auto-growing height up to 200 pt.
+- **Glass composer & popovers (`ChatComposerView.swift`, `ChatComposerPopovers.swift`, `ChatComposerSlot.swift`).**
+  `ultraThinMaterial` glass container with running-run status strip (active turn + active
+  dispatched ticket runs + Stop), floating `@mention` and `/` completion popover, attachment chips
+  (Quick Look via `context.showQuickLook`, `.fileImporter` picker, upload progress) and
+  work/knowledge context chips, persona & multi-persona picker, model/effort picker, repository
+  picker for coding personas, harness usage button + popover reusing `HarnessCharacterView` and
+  `UsageRowView`, and send/queue/steer/aside/stop actions.
+- **Web chat route cleanup.** Deleted `web/app/(app)/chat/page.tsx`,
+  `web/app/(app)/chat/[id]/page.tsx`, and the four unreachable `_components/` files
+  (`chat-screen.tsx`, `chat-panel-host.tsx`, `persona-editor.tsx`, `welcome-wizard.tsx`). Retained
+  all shared `_components/` modules still directly or transitively imported by `/companion`,
+  `/inspector-panel`, `/spaces`, `/plans`, `/agents`, Docs/Slides/Designs/Custom Apps, and
+  `native-shell.tsx`.
+
+Manual click-through checklist:
+
+1. Type `@` and `/` in the composer: verify the floating completion popover opens, navigates with
+   ↑/↓, accepts with Tab/Return, dismisses with Esc, and inserts `@persona` or completes slash
+   commands/arguments (`/model`, `/effort`, `/persona`, `/workflow`, `/repo`, `/compare`).
+2. Paste a screenshot, drag-and-drop a file, and attach via `+` file picker: verify validation,
+   upload progress, Quick Look preview on chip click, and removal.
+3. Switch between chats with unsent text: verify per-chat drafts persist and restore cleanly, and
+   clear upon sending.
+4. While a turn is running, verify the running-run status strip appears above the composer with
+   live status and Stop, and test `Queue`, `Steer`, and `Aside` send modes.
+5. Click the harness character usage pill: verify the popover displays animated
+   `HarnessCharacterView` icons and `UsageRowView` allowance bars for connected harnesses.
+
 
