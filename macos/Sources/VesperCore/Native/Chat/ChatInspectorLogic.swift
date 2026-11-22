@@ -310,16 +310,13 @@ public enum ChatInspectorLogic {
         var tabs: [InspectorTab] = []
 
         if let designId = effectiveDesignId {
-            var props: [String: JSONValue] = [
+            let props: [String: JSONValue] = [
                 "tabId": .string(designTabId),
                 "chatId": .string(chatId),
                 "live": .bool(isRunning),
                 "designId": .string(designId),
                 "reviewing": .bool(input.designReviewing),
             ]
-            if input.designReviewing {
-                props["reviewing"] = .bool(true)
-            }
             tabs.append(InspectorTab(
                 id: designTabId,
                 label: "Design",

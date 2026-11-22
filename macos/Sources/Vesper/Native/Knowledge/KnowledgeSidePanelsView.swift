@@ -16,6 +16,7 @@ struct KnowledgeInspectorHost: View {
                     KnowledgeSidePanelsView(page: page, tab: tab) { tag in
                         controller.openSearch(tag: tag, in: context)
                     }
+                    .id("\(page.id):\(tab.id)")
                 } else {
                     VStack(spacing: 8) {
                         ProgressView().controlSize(.small)

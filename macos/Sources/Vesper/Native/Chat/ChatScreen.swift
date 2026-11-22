@@ -250,7 +250,7 @@ struct ChatScreen: View {
                 applyInspectorQuery(context.match.query, canvases: updatedCanvases)
             }
         }
-        .task(id: watchKey) { watch() }
+        .task(id: watchKey(session: session)) { watch(session: session) }
         .task {
             // Usage readings land in the background with no SSE event, so keep the composer's
             // harness usage popover fresh while Chat is visible.
@@ -972,11 +972,12 @@ struct ChatScreen: View {
 
     // MARK: - Observation
 
-    private var watchKey: String {
-        "\(chatId ?? "")|\(model.viewMode.rawValue)|\(model.selectedSpaceId)|\(model.selectedPersonaId)|\(model.searchQuery)"
+    private func watchKey(session: API.ChatSession?) -> String {
+        let activeRunId = session?.state == .running ? (session?.currentRunId ?? "") : ""
+        return "\(chatId ?? "")|\(model.viewMode.rawValue)|\(model.selectedSpaceId)|\(model.selectedPersonaId)|\(model.searchQuery)|\(activeRunId)"
     }
 
-    private func watch() {
+    private func watch(session: API.ChatSession?) {
         let store = context.store
         for key in watched { store.stopObserving(key) }
         var keys: [QueryKey] = []
@@ -1002,6 +1003,9 @@ struct ChatScreen: View {
         if let canvasesRequest { track(canvasesRequest) }
         if let messagesRequest { track(messagesRequest) }
         if let costsRequest { track(costsRequest) }
+        if session?.state == .running, let runId = session?.currentRunId, !runId.isEmpty {
+            track(API.listRunEvents(id: runId))
+        }
         if let searchRequest { track(searchRequest) }
         watched = keys
     }
