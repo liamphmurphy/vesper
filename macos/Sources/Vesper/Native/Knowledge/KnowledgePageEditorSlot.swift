@@ -3,12 +3,12 @@ import VesperCore
 
 /// Editor content slot for a Knowledge page.
 ///
-/// **Seam for LAZYAGENTS-288** (native Markdown / Live-Preview knowledge page editor):
-/// switches on `KnowledgeShellLogic.editorTarget(for:query:)` and renders:
+/// Switches on `KnowledgeShellLogic.editorTarget(for:query:)` and renders:
 /// - `.deck` -> `HostedWebPageView(path: "/apps/slides/<canvasId>")`
 /// - `.design` -> `HostedWebPageView(path: "/apps/designs/<canvasId>")`
 /// - standalone PDF page -> native `PDFViewerView`
-/// - Knowledge/Doc page -> `HostedWebPageView(path: "/knowledge/<id>?embed=1")` (or `/apps/docs/<canvasId>`)
+/// - Docs (`page.kind == .document` with `page.canvasId != nil`) -> Tiptap `HostedWebPageView(path: "/apps/docs/<canvasId>")`
+/// - Standard Knowledge markdown pages (`page.kind == .document`, `page.canvasId == nil`, non-PDF) -> native `KnowledgeEditorView`
 struct KnowledgePageEditorSlot: View {
     @Environment(NativeScreenContext.self) private var context
     @Environment(\.vesperTheme) private var theme
@@ -21,7 +21,7 @@ struct KnowledgePageEditorSlot: View {
     var body: some View {
         let target = KnowledgeShellLogic.editorTarget(for: page, query: query)
         switch target {
-        case .deck(_, let hostedPath), .design(_, let hostedPath), .hostedPage(let hostedPath):
+        case .deck(_, let hostedPath), .design(_, let hostedPath):
             HostedWebPageView(path: hostedPath)
                 .id(hostedPath)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -65,6 +65,17 @@ struct KnowledgePageEditorSlot: View {
                 if context.find.searcher === pdfModel {
                     context.find.searcher = nil
                 }
+            }
+        case .hostedPage(let hostedPath):
+            if page.kind == .document, let canvasId = page.canvasId, !canvasId.isEmpty {
+                let docPath = hostedPath.hasPrefix("/apps/docs/") ? hostedPath : "/apps/docs/\(canvasId)"
+                HostedWebPageView(path: docPath)
+                    .id(docPath)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                KnowledgeEditorView(page: page)
+                    .id(page.id)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
     }
