@@ -3,7 +3,7 @@
 import { useNewDeck } from "@/components/domain/use-new-deck";
 import { canvasFenceIds } from "@/lib/chat-canvas";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { useDockHeaderSlot } from "@/components/shell/editor-layout";
 import { useQueryClient } from "@tanstack/react-query";
@@ -69,7 +69,8 @@ import { SentChips } from "./context-chips";
 import { MessageActionsContext, MessageToolbar, ThreadLink, type MessageActions } from "./message-toolbar";
 import { Sources } from "./sources";
 import { splitSourceList } from "@/lib/chat-sources";
-import { AskAboutSelection, quoteForComposer, ResearchToggle, TemporaryToggle } from "./reply-tools";
+import { AskAboutSelection, quoteForComposer, ResearchToggle, TemporaryToggle, type SendTone } from "./reply-tools";
+import { createDraftStore, createTextareaHeightState, syncTextareaHeight, type DraftStore, type TextareaHeightState } from "@/lib/chat-draft";
 import { ChatSuggestions } from "./suggestions";
 import { Composer, type CommandRun } from "./composer";
 import { ForkDialog, type ForkTarget } from "./fork-dialog";
@@ -580,21 +581,16 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   const savedRepos = useRepositories();
   const discard = useDeleteChat();
   const qc = useQueryClient();
-  // A persona switch hands the unsent draft over to the new chat.
-  const [text, setText] = useState(() => readDraft(id));
+  // A persona switch hands the unsent draft over to the new chat. Keeping draft text in a tiny
+  // external store means typing re-renders only DraftComposer instead of the whole transcript.
+  const [draft] = useState(() => createDraftStore(readDraft(id)));
   // Read once into state, then forget it (an effect, so a StrictMode re-render still sees it).
   useEffect(() => dropDraft(id), [id]);
-  const [seenPrefill, setSeenPrefill] = useState(0);
-  if (prefill && prefill.key > seenPrefill) {
-    setSeenPrefill(prefill.key);
-    setText((t) => {
-      const trimmed = prefill.text.trim();
-      if (!t.trim()) return prefill.text;
-      if (t.includes(trimmed)) return t;
-      return `${t}\n\n${prefill.text}`;
-    });
+  const [seenPrefill, setSeenPrefill] = useState<{ text: string; key: number } | null>(null);
+  if (prefill && prefill.key > (seenPrefill?.key ?? 0)) {
+    setSeenPrefill(prefill);
   }
-  const notifiedPrefill = useRef(0);
+  const appliedPrefill = useRef(0);
   const focusedPrefill = useRef(0);
   const onPrefillAppliedRef = useRef(onPrefillApplied);
   useEffect(() => {
@@ -678,20 +674,27 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
     ? { id: `chat-${c.id}`, title: c.title || "Untitled chat", meta: (c.speaker ?? c.persona)?.name ?? "Assistant", href: `/chat/${c.id}`, kind: "Chats" } : undefined);
   const loaded = !!c;
   useEffect(() => {
-    if (seenPrefill > notifiedPrefill.current) {
-      notifiedPrefill.current = seenPrefill;
-      onPrefillAppliedRef.current?.(seenPrefill);
+    if (!seenPrefill) return;
+    if (seenPrefill.key > appliedPrefill.current) {
+      appliedPrefill.current = seenPrefill.key;
+      draft.set((t) => {
+        const trimmed = seenPrefill.text.trim();
+        if (!t.trim()) return seenPrefill.text;
+        if (t.includes(trimmed)) return t;
+        return `${t}\n\n${seenPrefill.text}`;
+      });
+      onPrefillAppliedRef.current?.(seenPrefill.key);
     }
-    if (!seenPrefill || !loaded || focusedPrefill.current >= seenPrefill) return;
+    if (!loaded || focusedPrefill.current >= seenPrefill.key) return;
     const frame = requestAnimationFrame(() => {
       const el = area.current;
       if (!el) return;
-      focusedPrefill.current = seenPrefill;
+      focusedPrefill.current = seenPrefill.key;
       el.focus();
       el.setSelectionRange(el.value.length, el.value.length);
     });
     return () => cancelAnimationFrame(frame);
-  }, [seenPrefill, loaded]);
+  }, [seenPrefill, loaded, draft]);
   const running = c?.state === "running";
   // Videos sit on the reply their turn stored; the running turn's show live under it.
   const videos = useChatVideos(c?.id, running);
@@ -788,17 +791,17 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
     if (!c?.id || c.archived) return;
     return onComposerDrop(c.id, (drop) => {
       if (drop.files?.length) addFiles.current(drop.files);
-      if (drop.text) setText((t) => (t.trim() ? `${t}\n\n${drop.text}` : drop.text!));
+      if (drop.text) draft.set((t) => (t.trim() ? `${t}\n\n${drop.text}` : drop.text!));
       area.current?.focus();
     });
-  }, [c?.id, c?.archived]);
+  }, [c?.id, c?.archived, draft]);
 
   useNativeCommand("panel.event", (cmd) => {
     if (cmd.event !== "composerDrop" || !c?.id || c.archived) return;
     const decoded = decodeComposerDrop(cmd.payloadJson);
     if (!decoded || decoded.chatId !== c.id) return;
     if (decoded.drop.files?.length) addFiles.current(decoded.drop.files);
-    if (decoded.drop.text) setText((t) => (t.trim() ? `${t}\n\n${decoded.drop.text}` : decoded.drop.text!));
+    if (decoded.drop.text) draft.set((t) => (t.trim() ? `${t}\n\n${decoded.drop.text}` : decoded.drop.text!));
     area.current?.focus();
   });
 
@@ -874,13 +877,6 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
       clearTimeout(off);
     };
   }, [target, targetFound]);
-  // The composer starts at one line and grows with what's typed, up to a limit.
-  useEffect(() => {
-    const el = area.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight + 2, 220)}px`;
-  }, [text, loaded]);
   const followLatest = () => {
     pinned.current = true;
     setNewReply(false);
@@ -890,7 +886,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
     const chip = chipFromTarget({ kind: "artifact", id: artifactId, title, artifact_type: "report" });
     if (chip) setChips((cs) => addChip(cs, chip));
     setResearch(true);
-    setText("Go deeper on this report: ");
+    draft.set("Go deeper on this report: ");
     area.current?.focus();
   };
   // Sent from its own box, so the draft in the composer (and its chips and files) stays put.
@@ -900,7 +896,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
     const body = quoteForComposer(selected, authorId && authorId !== (c?.speaker ?? c?.persona)?.id ? author : undefined) + question;
     cancel.reset();
     pinned.current = true;
-    send.mutate({ body, ...nextRunSettings }, { onSuccess: context?.onSent, onError: () => setText((t) => (t ? `${body}\n\n${t}` : body)) });
+    send.mutate({ body, ...nextRunSettings }, { onSuccess: context?.onSent, onError: () => draft.set((t) => (t ? `${body}\n\n${t}` : body)) });
     return true;
   };
 
@@ -912,7 +908,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
       .map((line) => `> ${line}`)
       .join("\n");
     const prefix = `> **Second opinion (${label}):**\n${quoted}\n\n`;
-    setText((t) => prefix + t);
+    draft.set((t) => prefix + t);
     requestAnimationFrame(() => {
       const el = area.current;
       el?.focus();
@@ -934,7 +930,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   const replyTo = useRef<(body: string, authorId?: string, author?: string) => void>(() => {});
   replyTo.current = (body, authorId, author) => {
     const quote = quoteForComposer(body, authorId && authorId !== (c?.speaker ?? c?.persona)?.id ? author : undefined);
-    setText((t) => quote + t);
+    draft.set((t) => quote + t);
     requestAnimationFrame(() => {
       const el = area.current;
       el?.focus();
@@ -1024,7 +1020,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
           context?.onSent();
           files.clear();
           snippets.clear();
-          setText("");
+          draft.set("");
           setPicked(null);
           setPickedEffort(null);
           setChips([]);
@@ -1047,7 +1043,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
     pinned.current = true;
     const sent = () => {
       context?.onSent();
-      setText("");
+      draft.set("");
       snippets.clear();
     };
     if (mode === "aside") aside.mutate(body, { onSuccess: sent });
@@ -1086,12 +1082,12 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   const commitPickRequired = fresh && askCommitEmail;
   function switchPersona(personaId: string) {
     if (!c || personaId === c.persona?.id || create.isPending || send.isPending || send.isSuccess) return;
-    replaceChat(personaId, undefined, messageWithSnippets(text, snippets.items), !!c.temporary);
+    replaceChat(personaId, undefined, messageWithSnippets(draft.get(), snippets.items), !!c.temporary);
   }
   // A chat is temporary for life, so before the first message switching it is a fresh chat too.
   function switchTemporary(temporary: boolean) {
     if (!c || temporary === !!c.temporary || create.isPending || send.isPending || send.isSuccess) return;
-    replaceChat(c.persona?.id, c.repo_url, messageWithSnippets(text, snippets.items), temporary);
+    replaceChat(c.persona?.id, c.repo_url, messageWithSnippets(draft.get(), snippets.items), temporary);
   }
   // Moves to a new chat, carrying the draft over. The old one is only dropped if it is still empty.
   function replaceChat(personaId: string | undefined, repo: string | undefined, draft: string, temporary: boolean) {
@@ -1183,10 +1179,11 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   const createWith = (kind: CreateKind) => {
     if (kind === "slides") return startDeck();
     if (kind === "music") {
-      setMusicDialog({ open: true, initial: text.trim() ? { prompt: text.trim() } : undefined });
+      const prompt = draft.get().trim();
+      setMusicDialog({ open: true, initial: prompt ? { prompt } : undefined });
       return;
     }
-    setText((t) => (kind === "design" ? `/design ${t.trim()}` : `${DOC_DRAFT}${t.trim()}`));
+    draft.set((t) => (kind === "design" ? `/design ${t.trim()}` : `${DOC_DRAFT}${t.trim()}`));
     requestAnimationFrame(() => {
       const el = area.current;
       el?.focus();
@@ -1380,21 +1377,17 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
                 Ask about your runs, tickets, epics and wiki, or have me draft tickets. I save useful things to your private memory and tell you when I do.
               </EmptyState>
             ) : (
-              context?.welcome ? (
-                <DockGreeting persona={persona} tone={full?.tone} welcome={context.welcome} onPick={submit} disabled={locked || !!unavailable || !!text.trim()} />
-              ) : (
-              <>
-              <PersonaGreeting
+              <EmptyChatPrompt
+                draft={draft}
+                welcome={context?.welcome}
                 persona={persona}
                 tone={full?.tone}
                 isDefault={!!c.persona && c.persona.id === personas.data?.default_persona_id}
                 firstName={boot.data?.me.name?.split(" ")[0]}
                 canSwitch={!!personas.data?.personas.length}
+                disabled={locked || !!unavailable}
+                onPick={submit}
               />
-              {/* Picking one sends it, which would drop a half-written message. */}
-              {!text.trim() && <ChatSuggestions onPick={submit} disabled={locked || !!unavailable} />}
-              </>
-              )
             )
           ) : (
             <>
@@ -1666,7 +1659,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
                       send.mutate({ body }, { onSuccess: () => { context?.onSent(); done(); } });
                     }}
                     onEdit={(body) => {
-                      setText((t) => (t.trim() ? `${body}\n\n${t}` : body));
+                      draft.set((t) => (t.trim() ? `${body}\n\n${t}` : body));
                       setSendMode("followup");
                       area.current?.focus();
                     }}
@@ -1684,9 +1677,8 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
           ) : (
             <>
             {context?.composer}
-            <Composer
-              text={text}
-              onText={setText}
+            <DraftComposer
+              draft={draft}
               inputRef={area}
               files={files}
               snippets={snippets}
@@ -1791,12 +1783,10 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
                   </Button>
                 )
               }
-              send={{
-                label: running ? sendModeAction(sendMode) : research ? "Plan it" : "Send",
-                disabled: locked || !!unavailable || files.pending || (!text.trim() && !snippets.items.length) || commitPickRequired || queue.isPending || aside.isPending,
-                title: commitPickRequired ? "Pick which email commits use first" : running ? SEND_MODE_HINT[sendMode] : undefined,
-                tone: running ? SEND_TONE[sendMode] : "accent",
-              }}
+              sendLabel={running ? sendModeAction(sendMode) : research ? "Plan it" : "Send"}
+              sendDisabledBase={locked || !!unavailable || files.pending || commitPickRequired || queue.isPending || aside.isPending}
+              sendTitle={commitPickRequired ? "Pick which email commits use first" : running ? SEND_MODE_HINT[sendMode] : undefined}
+              sendTone={running ? SEND_TONE[sendMode] : "accent"}
             />
             </>
           )}
@@ -1838,6 +1828,82 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
         />
       </section>
     </Tooltip.Provider>
+  );
+}
+
+/**
+ * Owns the composer's draft subscription and textarea auto-sizing so typing
+ * never re-renders Conversation or the transcript above it.
+ */
+function DraftComposer({
+  draft,
+  inputRef,
+  sendDisabledBase,
+  sendLabel,
+  sendTitle,
+  sendTone,
+  ...rest
+}: Omit<ComponentProps<typeof Composer>, "text" | "onText" | "send"> & {
+  draft: DraftStore;
+  sendDisabledBase: boolean;
+  sendLabel: string;
+  sendTitle?: string;
+  sendTone?: SendTone;
+}) {
+  const text = useSyncExternalStore(draft.subscribe, draft.get, draft.get);
+  const heightState = useRef<TextareaHeightState>(createTextareaHeightState());
+  useEffect(() => {
+    const el = inputRef.current;
+    if (el) syncTextareaHeight(el, heightState.current);
+  }, [text, inputRef]);
+  return (
+    <Composer
+      {...rest}
+      text={text}
+      onText={draft.set}
+      inputRef={inputRef}
+      send={{
+        label: sendLabel,
+        disabled: sendDisabledBase || (!text.trim() && !rest.snippets.items.length),
+        title: sendTitle,
+        tone: sendTone,
+      }}
+    />
+  );
+}
+
+/** Empty-chat greeting and suggestions; only re-renders when the draft flips between empty and non-empty. */
+function EmptyChatPrompt({
+  draft,
+  welcome,
+  persona,
+  tone,
+  isDefault,
+  firstName,
+  canSwitch,
+  disabled,
+  onPick,
+}: {
+  draft: DraftStore;
+  welcome?: DockWelcome;
+  persona: PersonaLook;
+  tone?: Schemas["PersonaTone"];
+  isDefault: boolean;
+  firstName?: string;
+  canSwitch: boolean;
+  disabled: boolean;
+  onPick: (prompt: string) => void;
+}) {
+  const hasDraft = useSyncExternalStore(draft.subscribe, draft.hasText, () => false);
+  if (welcome) {
+    return <DockGreeting persona={persona} tone={tone} welcome={welcome} onPick={onPick} disabled={disabled || hasDraft} />;
+  }
+  return (
+    <>
+      <PersonaGreeting persona={persona} tone={tone} isDefault={isDefault} firstName={firstName} canSwitch={canSwitch} />
+      {/* Picking one sends it, which would drop a half-written message. */}
+      {!hasDraft && <ChatSuggestions onPick={onPick} disabled={disabled} />}
+    </>
   );
 }
 
