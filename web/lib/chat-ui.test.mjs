@@ -191,7 +191,7 @@ test("each tool call maps to the kind of scene it shows", () => {
     ...["create_custom_app", "update_custom_app", "delete_custom_app"].map((tool) => [{ tool, input: {} }, "custom-app"]),
     [{ tool: "custom_app_sql", input: {} }, "database"],
     ...["http_list_workspaces", "http_get_workspace", "http_save_request", "http_run_request"].map((tool) => [{ tool, input: {} }, "http"]),
-    ...["Agent", "Task", "delegate"].map((tool) => [{ tool, input: {} }, "subagent"]),
+    ...["Agent", "Task", "delegate", "run_subagent", "mcp__lazyagents__run_subagent"].map((tool) => [{ tool, input: {} }, "subagent"]),
     [{ tool: "reply_block", input: { kind: "pdf" } }, "pdf"],
     [{ tool: "create_space", input: {} }, "space"],
     [{ tool: "list_saved_links", input: {} }, "saved-links"],
