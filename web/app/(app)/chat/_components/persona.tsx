@@ -8,7 +8,10 @@ import { usePersonas } from "@/lib/api/persona-hooks";
 import { cx } from "@/lib/cx";
 import type { CharacterState } from "@/lib/persona-character";
 import { inChatList } from "@/lib/persona-ui";
+import type { StateMediaSummary } from "@/lib/persona-state-media";
+import { hasLoops } from "@/lib/persona-state-media";
 import { PersonaCharacterView } from "@/components/domain/persona-character";
+import { PersonaStateStage } from "@/components/domain/persona-state-stage";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { floatPanel } from "@/components/domain/pickers";
 
@@ -26,6 +29,14 @@ export function usePersonaCharacterSvg(persona: PersonaLook): string | undefined
   if (persona.character_svg) return persona.character_svg;
   if (!persona.id) return undefined;
   return q.data?.personas.find((p) => p.id === persona.id)?.character_svg;
+}
+
+/** A persona's photorealistic state loops, from the cached personas list; undefined without any. */
+export function usePersonaStateMedia(persona: PersonaLook): StateMediaSummary | undefined {
+  const q = usePersonas();
+  if (!persona.id) return undefined;
+  const media = q.data?.personas.find((p) => p.id === persona.id)?.state_media;
+  return hasLoops(media) ? media : undefined;
 }
 
 /** The built-in Assistant: chats without a persona, or whose persona was deleted. */
@@ -88,13 +99,16 @@ export function PersonaAvatar({
   className?: string;
 }) {
   const characterSvg = usePersonaCharacterSvg(persona);
+  const loops = usePersonaStateMedia(persona);
   const style: CSSProperties = { width: size, height: size };
   // An avatar that fails to load (removed, stale ?v=) falls back to the initial.
   const [broken, setBroken] = useState<string>();
   if (characterSvg) {
     return <PersonaCharacterView svg={characterSvg} color={persona.color} size={size} state={state} framed={framed} clipped={clipped} className={className} />;
   }
-  const src = avatarSrc(persona);
+  // A full loop is unreadable at avatar size; the matching head crop stands in
+  // when the persona has no picture of its own.
+  const src = avatarSrc(persona) ?? loops?.head_url;
   if (src && broken !== src) {
     return (
       // A same-origin, private, cache-busted URL: next/image would only add a proxy hop.
@@ -399,6 +413,21 @@ export function HeaderPersona({ persona, personaId, fresh, onSwitch, disabled, c
 export function PersonaPortrait({ persona, size = 92, breathe }: { persona: PersonaLook; size?: number; breathe?: boolean }) {
   const glow = Math.round(size * 1.9);
   const characterSvg = usePersonaCharacterSvg(persona);
+  const loops = usePersonaStateMedia(persona);
+  if (loops) {
+    // The full-height loop stands on the persona's glow instead of a circle.
+    const width = Math.round(size * 1.9);
+    return (
+      <span className="relative grid flex-none place-items-end justify-center" data-testid="persona-portrait">
+        <span
+          aria-hidden
+          className={cx("pointer-events-none absolute bottom-0 rounded-full", breathe && "wizard-breathe")}
+          style={{ width: width * 1.5, height: width * 1.1, background: `radial-gradient(ellipse at 50% 70%, color-mix(in srgb, ${persona.color} 18%, transparent) 0%, transparent 70%)` }}
+        />
+        <PersonaStateStage media={loops} state="idle" width={width} label={persona.name} className="relative" />
+      </span>
+    );
+  }
   return (
     <span className="relative grid flex-none place-items-center" style={{ width: size + 8, height: size + 8 }} data-testid="persona-portrait">
       <span

@@ -14,6 +14,7 @@ sql:
           acceptance_criterium: Criterion
           epic_criterium: EpicCriterion
           chat_canvase: ChatCanvas
+          persona_state_medium: PersonaStateMedia
         overrides:
           - db_type: uuid
             go_type: github.com/google/uuid.UUID

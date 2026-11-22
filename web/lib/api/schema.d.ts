@@ -5196,6 +5196,95 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/personas/{id}/state-media": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PersonaId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * The persona's photorealistic state loops
+         * @description One row per state that has been generated or is generating, in state
+         *     order. A row keeps its last good loop (loop_url) while a regeneration
+         *     runs and after one fails. Poll while any row is queued or running.
+         */
+        get: operations["listPersonaStateMedia"];
+        put?: never;
+        /**
+         * Generate or regenerate state loops
+         * @description Starts generating loops in the background, from the persona's portrait,
+         *     with the workspace's video provider (Gemini Omni), then mattes each to a
+         *     transparent Animated WebP. Omit states for the full set. With tweak, each
+         *     state's previous clip is edited conversationally instead (it must have
+         *     one). The portrait is source_library_item_id when given, else the
+         *     persona's reference image in the Library, else its avatar. 409 when no
+         *     video provider is configured, the persona has no portrait, or a
+         *     requested state is already generating.
+         */
+        post: operations["generatePersonaStateMedia"];
+        /**
+         * Remove state loops (idempotent)
+         * @description Removes one state's loop, or all of them without state, cancelling any
+         *     generation in progress. The persona falls back to its picture or SVG
+         *     character.
+         */
+        delete: operations["clearPersonaStateMedia"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/personas/{id}/state-media/{state}/loop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PersonaId"];
+                state: components["schemas"]["PersonaState"];
+            };
+            cookie?: never;
+        };
+        /**
+         * A state's transparent Animated WebP loop
+         * @description Served as image/webp with `X-Content-Type-Options: nosniff` and a
+         *     locked-down CSP, like avatars. The URL carries a cache-busting ?v=.
+         *     404 when the state has no loop.
+         */
+        get: operations["getPersonaStateLoop"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/personas/{id}/state-media/{state}/head": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PersonaId"];
+                state: components["schemas"]["PersonaState"];
+            };
+            cookie?: never;
+        };
+        /**
+         * A state loop's square, transparent head-crop PNG
+         * @description For small avatars, where the full loop is too small to read. 404 when the state has none.
+         */
+        get: operations["getPersonaStateHead"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/github/review-requests": {
         parameters: {
             query?: never;
@@ -10211,6 +10300,8 @@ export interface components {
             avatar_url?: string;
             /** @description Sanitized 64x64 animated SVG character source; absent when using a picture or initials */
             character_svg?: string;
+            /** @description Photorealistic state loops; absent when none has been generated */
+            state_media?: components["schemas"]["PersonaStateMediaSummary"];
             custom_instructions: string;
             capabilities: components["schemas"]["PersonaCapabilities"];
             /**
@@ -10231,6 +10322,72 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        /**
+         * @description A character state a persona can have a photorealistic loop for.
+         * @enum {string}
+         */
+        PersonaState: "idle" | "thinking" | "reading" | "coding" | "creating" | "needs_you";
+        /**
+         * @description The latest generation attempt. A failed attempt keeps any earlier loop.
+         * @enum {string}
+         */
+        PersonaStateMediaStatus: "queued" | "running" | "ready" | "failed";
+        PersonaStateMedia: {
+            state: components["schemas"]["PersonaState"];
+            status: components["schemas"]["PersonaStateMediaStatus"];
+            percent: number;
+            /** @description What the running attempt is doing; absent when idle */
+            stage_note?: string;
+            /** @description GET /personas/{id}/state-media/{state}/loop with a cache-busting ?v=; absent until a loop exists */
+            loop_url?: string;
+            /** @description GET /personas/{id}/state-media/{state}/head with a cache-busting ?v=; absent without a head crop */
+            head_url?: string;
+            width?: number;
+            height?: number;
+            frames?: number;
+            duration_ms?: number;
+            /** Format: int64 */
+            size_bytes?: number;
+            /** @description The matting backend that cut the loop out: vision (Apple Silicon) or ffmpeg-chroma */
+            backend?: string;
+            provider_id?: string;
+            model?: string;
+            /** @description The edit instruction of the latest attempt, when it was a tweak */
+            tweak?: string;
+            /** @description The state has an earlier clip a tweak can edit */
+            can_tweak: boolean;
+            /** @description Why the latest attempt failed */
+            error?: string;
+            /** @description auth, quota, rate_limit, filtered, unavailable, timeout, stopped or error */
+            error_kind?: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        PersonaStateMediaList: {
+            states: components["schemas"]["PersonaStateMedia"][];
+        };
+        GeneratePersonaStateMedia: {
+            /** @description Absent or empty: every state */
+            states?: components["schemas"]["PersonaState"][];
+            /** @description Edit each state's previous clip with this instruction instead of starting afresh */
+            tweak?: string;
+            /**
+             * Format: uuid
+             * @description A Library image to use as the portrait
+             */
+            source_library_item_id?: string;
+        };
+        /** @description What the clients need to play a persona's loops. */
+        PersonaStateMediaSummary: {
+            /** @description Loop URL by state (PersonaState values), for each state that has one */
+            loops: {
+                [key: string]: string;
+            };
+            /** @description Head crop for small avatars, from the idle loop when it has one */
+            head_url?: string;
+            /** @description Any state is queued or running */
+            generating: boolean;
         };
         /**
          * @description What the persona does besides chatting. tickets: it can be assigned tickets and runs
@@ -18909,6 +19066,143 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Persona"];
+                };
+            };
+            404: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    listPersonaStateMedia: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PersonaId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The persona's state loops */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonaStateMediaList"];
+                };
+            };
+            404: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    generatePersonaStateMedia: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PersonaId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GeneratePersonaStateMedia"];
+            };
+        };
+        responses: {
+            /** @description Every state loop of the persona, the requested ones queued */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonaStateMediaList"];
+                };
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    clearPersonaStateMedia: {
+        parameters: {
+            query?: {
+                state?: components["schemas"]["PersonaState"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["PersonaId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The persona's remaining state loops */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonaStateMediaList"];
+                };
+            };
+            404: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getPersonaStateLoop: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PersonaId"];
+                state: components["schemas"]["PersonaState"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The loop */
+            200: {
+                headers: {
+                    "X-Content-Type-Options"?: "nosniff";
+                    "Content-Security-Policy"?: string;
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/webp": string;
+                };
+            };
+            404: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getPersonaStateHead: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PersonaId"];
+                state: components["schemas"]["PersonaState"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The head crop */
+            200: {
+                headers: {
+                    "X-Content-Type-Options"?: "nosniff";
+                    "Content-Security-Policy"?: string;
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": string;
                 };
             };
             404: components["responses"]["Error"];

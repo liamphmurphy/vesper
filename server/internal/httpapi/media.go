@@ -53,8 +53,14 @@ func (s *Server) musicRunner() *media.MusicRunner {
 
 // CloseMedia cancels any in-flight media generation jobs and waits for them to exit.
 func (s *Server) CloseMedia() {
-	if s != nil && s.musicRun != nil {
+	if s == nil {
+		return
+	}
+	if s.musicRun != nil {
 		s.musicRun.Close()
+	}
+	if s.stateMediaRun != nil {
+		s.stateMediaRun.Close()
 	}
 }
 

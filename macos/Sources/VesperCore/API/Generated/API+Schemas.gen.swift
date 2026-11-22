@@ -11565,6 +11565,45 @@ extension API {
         }
     }
 
+    public struct GeneratePersonaStateMedia: Codable, Sendable, Equatable {
+        /// A Library image to use as the portrait
+        public var sourceLibraryItemId: Swift.String?
+        /// Absent or empty: every state
+        public var states: [PersonaState]?
+        /// Edit each state's previous clip with this instruction instead of starting afresh
+        public var tweak: Swift.String?
+
+        public init(
+            sourceLibraryItemId: Swift.String? = nil,
+            states: [PersonaState]? = nil,
+            tweak: Swift.String? = nil
+        ) {
+            self.sourceLibraryItemId = sourceLibraryItemId
+            self.states = states
+            self.tweak = tweak
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case sourceLibraryItemId = "source_library_item_id"
+            case states
+            case tweak
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.sourceLibraryItemId = try c.decodeIfPresent(Swift.String.self, forKey: .sourceLibraryItemId)
+            self.states = try c.decodeIfPresent([PersonaState].self, forKey: .states)
+            self.tweak = try c.decodeIfPresent(Swift.String.self, forKey: .tweak)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeIfPresent(sourceLibraryItemId, forKey: .sourceLibraryItemId)
+            try c.encodeIfPresent(states, forKey: .states)
+            try c.encodeIfPresent(tweak, forKey: .tweak)
+        }
+    }
+
     public struct GitHubReviewRequest: Codable, Sendable, Equatable {
         public var additions: Swift.Int
         public var authorAvatarUrl: Swift.String?
@@ -16177,6 +16216,8 @@ extension API {
         /// Legacy repository favorites and first-chat default; never an access allowlist. Use shared repository sources for discovery.
         public var repos: [Swift.String]
         public var revision: Swift.Int
+        /// What the clients need to play a persona's loops.
+        public var stateMedia: PersonaStateMediaSummary?
         /// How the assistant writes; each maps to one fixed prompt sentence on the server
         public var tone: PersonaTone
         public var updatedAt: Swift.String
@@ -16220,6 +16261,7 @@ extension API {
             name: Swift.String,
             repos: [Swift.String],
             revision: Swift.Int,
+            stateMedia: PersonaStateMediaSummary? = nil,
             tone: PersonaTone,
             updatedAt: Swift.String,
             work: PersonaWork,
@@ -16244,6 +16286,7 @@ extension API {
             self.name = name
             self.repos = repos
             self.revision = revision
+            self.stateMedia = stateMedia
             self.tone = tone
             self.updatedAt = updatedAt
             self.work = work
@@ -16270,6 +16313,7 @@ extension API {
             case name
             case repos
             case revision
+            case stateMedia = "state_media"
             case tone
             case updatedAt = "updated_at"
             case work
@@ -16297,6 +16341,7 @@ extension API {
             self.name = try c.decode(Swift.String.self, forKey: .name)
             self.repos = try c.decodeIfPresent([Swift.String].self, forKey: .repos) ?? []
             self.revision = try c.decode(Swift.Int.self, forKey: .revision)
+            self.stateMedia = try c.decodeIfPresent(PersonaStateMediaSummary.self, forKey: .stateMedia)
             self.tone = try c.decode(PersonaTone.self, forKey: .tone)
             self.updatedAt = try c.decode(Swift.String.self, forKey: .updatedAt)
             self.work = try c.decode(PersonaWork.self, forKey: .work)
@@ -16324,6 +16369,7 @@ extension API {
             try c.encode(name, forKey: .name)
             try c.encode(repos, forKey: .repos)
             try c.encode(revision, forKey: .revision)
+            try c.encodeIfPresent(stateMedia, forKey: .stateMedia)
             try c.encode(tone, forKey: .tone)
             try c.encode(updatedAt, forKey: .updatedAt)
             try c.encode(work, forKey: .work)
@@ -16972,6 +17018,236 @@ extension API {
             try c.encode(reason, forKey: .reason)
             try c.encode(state, forKey: .state)
             try c.encode(tone, forKey: .tone)
+        }
+    }
+
+    /// A character state a persona can have a photorealistic loop for.
+    public struct PersonaState: APIStringEnum {
+        public let rawValue: Swift.String
+        public init(rawValue: Swift.String) { self.rawValue = rawValue }
+        public static let idle = PersonaState(rawValue: "idle")
+        public static let thinking = PersonaState(rawValue: "thinking")
+        public static let reading = PersonaState(rawValue: "reading")
+        public static let coding = PersonaState(rawValue: "coding")
+        public static let creating = PersonaState(rawValue: "creating")
+        public static let needsYou = PersonaState(rawValue: "needs_you")
+        public static let allKnown: [PersonaState] = [idle, thinking, reading, coding, creating, needsYou]
+    }
+
+    public struct PersonaStateMedia: Codable, Sendable, Equatable {
+        /// The matting backend that cut the loop out: vision (Apple Silicon) or ffmpeg-chroma
+        public var backend: Swift.String?
+        /// The state has an earlier clip a tweak can edit
+        public var canTweak: Swift.Bool
+        public var durationMs: Swift.Int?
+        /// Why the latest attempt failed
+        public var error: Swift.String?
+        /// auth, quota, rate_limit, filtered, unavailable, timeout, stopped or error
+        public var errorKind: Swift.String?
+        public var frames: Swift.Int?
+        /// GET /personas/{id}/state-media/{state}/head with a cache-busting ?v=; absent without a head crop
+        public var headUrl: Swift.String?
+        public var height: Swift.Int?
+        /// GET /personas/{id}/state-media/{state}/loop with a cache-busting ?v=; absent until a loop exists
+        public var loopUrl: Swift.String?
+        public var model: Swift.String?
+        public var percent: Swift.Int
+        public var providerId: Swift.String?
+        public var sizeBytes: Swift.Int?
+        /// What the running attempt is doing; absent when idle
+        public var stageNote: Swift.String?
+        /// A character state a persona can have a photorealistic loop for.
+        public var state: PersonaState
+        /// The latest generation attempt. A failed attempt keeps any earlier loop.
+        public var status: PersonaStateMediaStatus
+        /// The edit instruction of the latest attempt, when it was a tweak
+        public var tweak: Swift.String?
+        public var updatedAt: Swift.String
+        public var width: Swift.Int?
+
+        public init(
+            backend: Swift.String? = nil,
+            canTweak: Swift.Bool,
+            durationMs: Swift.Int? = nil,
+            error: Swift.String? = nil,
+            errorKind: Swift.String? = nil,
+            frames: Swift.Int? = nil,
+            headUrl: Swift.String? = nil,
+            height: Swift.Int? = nil,
+            loopUrl: Swift.String? = nil,
+            model: Swift.String? = nil,
+            percent: Swift.Int,
+            providerId: Swift.String? = nil,
+            sizeBytes: Swift.Int? = nil,
+            stageNote: Swift.String? = nil,
+            state: PersonaState,
+            status: PersonaStateMediaStatus,
+            tweak: Swift.String? = nil,
+            updatedAt: Swift.String,
+            width: Swift.Int? = nil
+        ) {
+            self.backend = backend
+            self.canTweak = canTweak
+            self.durationMs = durationMs
+            self.error = error
+            self.errorKind = errorKind
+            self.frames = frames
+            self.headUrl = headUrl
+            self.height = height
+            self.loopUrl = loopUrl
+            self.model = model
+            self.percent = percent
+            self.providerId = providerId
+            self.sizeBytes = sizeBytes
+            self.stageNote = stageNote
+            self.state = state
+            self.status = status
+            self.tweak = tweak
+            self.updatedAt = updatedAt
+            self.width = width
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case backend
+            case canTweak = "can_tweak"
+            case durationMs = "duration_ms"
+            case error
+            case errorKind = "error_kind"
+            case frames
+            case headUrl = "head_url"
+            case height
+            case loopUrl = "loop_url"
+            case model
+            case percent
+            case providerId = "provider_id"
+            case sizeBytes = "size_bytes"
+            case stageNote = "stage_note"
+            case state
+            case status
+            case tweak
+            case updatedAt = "updated_at"
+            case width
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.backend = try c.decodeIfPresent(Swift.String.self, forKey: .backend)
+            self.canTweak = try c.decode(Swift.Bool.self, forKey: .canTweak)
+            self.durationMs = try c.decodeIfPresent(Swift.Int.self, forKey: .durationMs)
+            self.error = try c.decodeIfPresent(Swift.String.self, forKey: .error)
+            self.errorKind = try c.decodeIfPresent(Swift.String.self, forKey: .errorKind)
+            self.frames = try c.decodeIfPresent(Swift.Int.self, forKey: .frames)
+            self.headUrl = try c.decodeIfPresent(Swift.String.self, forKey: .headUrl)
+            self.height = try c.decodeIfPresent(Swift.Int.self, forKey: .height)
+            self.loopUrl = try c.decodeIfPresent(Swift.String.self, forKey: .loopUrl)
+            self.model = try c.decodeIfPresent(Swift.String.self, forKey: .model)
+            self.percent = try c.decode(Swift.Int.self, forKey: .percent)
+            self.providerId = try c.decodeIfPresent(Swift.String.self, forKey: .providerId)
+            self.sizeBytes = try c.decodeIfPresent(Swift.Int.self, forKey: .sizeBytes)
+            self.stageNote = try c.decodeIfPresent(Swift.String.self, forKey: .stageNote)
+            self.state = try c.decode(PersonaState.self, forKey: .state)
+            self.status = try c.decode(PersonaStateMediaStatus.self, forKey: .status)
+            self.tweak = try c.decodeIfPresent(Swift.String.self, forKey: .tweak)
+            self.updatedAt = try c.decode(Swift.String.self, forKey: .updatedAt)
+            self.width = try c.decodeIfPresent(Swift.Int.self, forKey: .width)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeIfPresent(backend, forKey: .backend)
+            try c.encode(canTweak, forKey: .canTweak)
+            try c.encodeIfPresent(durationMs, forKey: .durationMs)
+            try c.encodeIfPresent(error, forKey: .error)
+            try c.encodeIfPresent(errorKind, forKey: .errorKind)
+            try c.encodeIfPresent(frames, forKey: .frames)
+            try c.encodeIfPresent(headUrl, forKey: .headUrl)
+            try c.encodeIfPresent(height, forKey: .height)
+            try c.encodeIfPresent(loopUrl, forKey: .loopUrl)
+            try c.encodeIfPresent(model, forKey: .model)
+            try c.encode(percent, forKey: .percent)
+            try c.encodeIfPresent(providerId, forKey: .providerId)
+            try c.encodeIfPresent(sizeBytes, forKey: .sizeBytes)
+            try c.encodeIfPresent(stageNote, forKey: .stageNote)
+            try c.encode(state, forKey: .state)
+            try c.encode(status, forKey: .status)
+            try c.encodeIfPresent(tweak, forKey: .tweak)
+            try c.encode(updatedAt, forKey: .updatedAt)
+            try c.encodeIfPresent(width, forKey: .width)
+        }
+    }
+
+    public struct PersonaStateMediaList: Codable, Sendable, Equatable {
+        public var states: [PersonaStateMedia]
+
+        public init(
+            states: [PersonaStateMedia]
+        ) {
+            self.states = states
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case states
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.states = try c.decodeIfPresent([PersonaStateMedia].self, forKey: .states) ?? []
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(states, forKey: .states)
+        }
+    }
+
+    /// The latest generation attempt. A failed attempt keeps any earlier loop.
+    public struct PersonaStateMediaStatus: APIStringEnum {
+        public let rawValue: Swift.String
+        public init(rawValue: Swift.String) { self.rawValue = rawValue }
+        public static let queued = PersonaStateMediaStatus(rawValue: "queued")
+        public static let running = PersonaStateMediaStatus(rawValue: "running")
+        public static let ready = PersonaStateMediaStatus(rawValue: "ready")
+        public static let failed = PersonaStateMediaStatus(rawValue: "failed")
+        public static let allKnown: [PersonaStateMediaStatus] = [queued, running, ready, failed]
+    }
+
+    /// What the clients need to play a persona's loops.
+    public struct PersonaStateMediaSummary: Codable, Sendable, Equatable {
+        /// Any state is queued or running
+        public var generating: Swift.Bool
+        /// Head crop for small avatars, from the idle loop when it has one
+        public var headUrl: Swift.String?
+        /// Loop URL by state (PersonaState values), for each state that has one
+        public var loops: [Swift.String: Swift.String]
+
+        public init(
+            generating: Swift.Bool,
+            headUrl: Swift.String? = nil,
+            loops: [Swift.String: Swift.String]
+        ) {
+            self.generating = generating
+            self.headUrl = headUrl
+            self.loops = loops
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case generating
+            case headUrl = "head_url"
+            case loops
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.generating = try c.decode(Swift.Bool.self, forKey: .generating)
+            self.headUrl = try c.decodeIfPresent(Swift.String.self, forKey: .headUrl)
+            self.loops = try c.decodeIfPresent([Swift.String: Swift.String].self, forKey: .loops) ?? [:]
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(generating, forKey: .generating)
+            try c.encodeIfPresent(headUrl, forKey: .headUrl)
+            try c.encode(loops, forKey: .loops)
         }
     }
 
