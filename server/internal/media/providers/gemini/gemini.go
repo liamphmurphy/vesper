@@ -26,6 +26,7 @@ import (
 
 const (
 	ProviderID         = "gemini"
+	geminiAPIVersion   = "v1beta"
 	defaultPollEvery   = 2 * time.Second
 	defaultVertexLoc   = "us-central1"
 	modelAuto          = "auto"
@@ -210,6 +211,9 @@ func (p *Provider) newClient(ctx context.Context) (*genai.Client, error) {
 		}
 		cc.Backend = genai.BackendGeminiAPI
 		cc.APIKey = p.apiKey
+		// Interactions API + Lyria models require v1beta on the Gemini API backend;
+		// google.golang.org/genai defaults BackendGeminiAPI to v1 when unset.
+		cc.HTTPOptions.APIVersion = geminiAPIVersion
 	}
 	client, err := genai.NewClient(ctx, cc)
 	if err != nil {
