@@ -69,6 +69,9 @@ import { SentChips } from "./context-chips";
 import { MessageActionsContext, MessageToolbar, ThreadLink, type MessageActions } from "./message-toolbar";
 import { Sources } from "./sources";
 import { splitSourceList } from "@/lib/chat-sources";
+import { finishReveal, markRevealed, startReveal, useRevealedText } from "@/lib/companion-store";
+import { hasLoops, revealWordsPerSecond } from "@/lib/persona-state-media";
+import { PersonaCompanion, useCompanionHidden } from "./persona-companion";
 import { AskAboutSelection, quoteForComposer, ResearchToggle, TemporaryToggle, type SendTone } from "./reply-tools";
 import { createDraftStore, createTextareaHeightState, syncTextareaHeight, type DraftStore, type TextareaHeightState } from "@/lib/chat-draft";
 import { ChatSuggestions } from "./suggestions";
@@ -172,6 +175,8 @@ const Bubble = memo(function Bubble({ m, chat, persona, saveable, names, turn, e
   // The closing URL list shows as Sources cards, not as text. Saved replies keep it.
   const parts = useMemo(() => (m.role === "assistant" ? splitSourceList(m.body_md) : { body: typedText(m.body_md), listed: [] }), [m.role, m.body_md]);
   const [citeFocus, setCiteFocus] = useState<{ n: number; tick: number }>();
+  // A reply that just arrived may be revealing word by word while the persona talks.
+  const shown = useRevealedText(chat.id, m.id, parts.body);
   const cites = useMemo(() => {
     const titles = new Map<number, string>();
     for (const l of parts.listed) if (l.n !== undefined) titles.set(l.n, l.title || l.ref || hostOf(l.url));
@@ -226,6 +231,9 @@ const Bubble = memo(function Bubble({ m, chat, persona, saveable, names, turn, e
           mine ? "rounded-2xl bg-selected px-4 py-2.5" : "w-full text-fg-2",
         )}
         data-testid={mine ? undefined : "reply-body"}
+        data-revealing={shown.revealing || undefined}
+        // A click shows the rest of a revealing reply at once.
+        onClick={shown.revealing ? () => finishReveal(chat.id) : undefined}
       >
         {editing ? (
           <form
@@ -247,7 +255,7 @@ const Bubble = memo(function Bubble({ m, chat, persona, saveable, names, turn, e
           </form>
         ) : (
           <CiteContext.Provider value={cites.value}>
-            <ChatMarkdown replyId={mine ? undefined : m.id} cites={cites.numbers}>{parts.body}</ChatMarkdown>
+            <ChatMarkdown replyId={mine ? undefined : m.id} cites={cites.numbers}>{shown.text}</ChatMarkdown>
           </CiteContext.Provider>
         )}
       </div>
@@ -669,6 +677,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   const followups = useChatFollowups(id).data ?? [];
 
   const c = chat.data;
+  const [companionHidden] = useCompanionHidden(c?.persona?.id);
   // A chat you open on the chat page is a place to come back to; a dock's chat belongs to the page it sits beside.
   useRecordVisit(c && !docked && !context?.hidden && c.message_count > 0
     ? { id: `chat-${c.id}`, title: c.title || "Untitled chat", meta: (c.speaker ?? c.persona)?.name ?? "Assistant", href: `/chat/${c.id}`, kind: "Chats" } : undefined);
@@ -753,6 +762,24 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
     ...(effortPending ? { effort: effort ?? ("default" as const) } : {}),
   };
   const list = messages.data?.messages;
+  // Replies already here when the chat opens are shown whole; one that arrives while it's open
+  // is revealed at its author's pace, with the companion talking meanwhile.
+  const revealSeen = useRef<string>(undefined);
+  useEffect(() => {
+    if (!c || !list || !personas.data) return;
+    const replies = list.filter((m) => m.role === "assistant");
+    if (revealSeen.current !== c.id) {
+      revealSeen.current = c.id;
+      markRevealed(c.id, replies.map((m) => m.id));
+      return;
+    }
+    const last = replies.at(-1);
+    if (!last) return;
+    markRevealed(c.id, replies.slice(0, -1).map((m) => m.id));
+    const author = personas.data.personas.find((p) => p.id === (last.persona?.id ?? c.persona?.id));
+    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    startReveal(c.id, last.id, splitSourceList(last.body_md).body, still ? 0 : revealWordsPerSecond(author?.reveal_pace, author?.state_media));
+  }, [c, list, personas.data]);
   const pushRequests = usePushRequests(c?.id, running);
   const browserShare = useBrowserShare(c?.id);
   const placedPushes = useMemo(
@@ -1020,6 +1047,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
 
   function submit(body: string) {
     if (!body.trim() || locked || unavailable || files.pending || commitPickRequired) return;
+    if (c) finishReveal(c.id);
     cancel.reset();
     pinned.current = true;
     const context_refs = toContextRefs(chips);
@@ -1149,6 +1177,9 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   // A chat without a persona, or whose persona was deleted, is the built-in Assistant.
   const persona = personaLook(c.persona);
   const full = personas.data?.personas.find((p) => p.id === c.persona?.id);
+  // The host persona's loops stand bottom-right above the composer, unless tucked away.
+  const companion = view === "chat" && !c.archived && !docked && hasLoops(full?.state_media) ? full?.state_media : undefined;
+  const lastReply = list?.findLast((m) => m.role === "assistant");
   const participants = (c.participants ?? (c.persona ? [c.persona] : [])).map(personaLook);
   const group = participants.length > 1;
   // Who answers next (or is answering now): the last speaker, else the host.
@@ -1353,7 +1384,8 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
           aria-label="Chat"
           hidden={view !== "chat"}
           data-chat-scroller=""
-          className="relative flex-1 overflow-y-auto px-6 py-5"
+          // The docked companion stands over the transcript's right edge; keep text clear of it.
+          className={cx("relative flex-1 overflow-y-auto px-6 py-5", companion && !companionHidden && "sm:pr-[164px] 2xl:pr-6")}
           // Only the person's input lets go of the end. A scroll event alone can't tell: the one for our
           // own scroll, or for the browser clamping it as content shrinks, may land after the content grew
           // again, far from the end without anyone having moved.
@@ -1524,6 +1556,16 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
         </div>
         {/* Outside [data-chat-scroller] so contain:layout on the scroller does not trap its fixed viewport positioning. */}
         {view === "chat" && !c.archived && <AskAboutSelection root={log} onAsk={askAboutSelection} />}
+        {companion && (
+          <PersonaCompanion
+            chatId={c.id}
+            persona={persona}
+            media={companion}
+            reply={lastReply && { id: lastReply.id, body: splitSourceList(lastReply.body_md).body }}
+            disabled={locked || !!unavailable}
+            onSend={(body) => (running ? sendWhileRunning(sendMode, body) : submit(body))}
+          />
+        )}
         <div ref={dockRef} data-chat-dock="" className="mx-auto flex w-full min-w-0 max-w-[816px] flex-col gap-2 px-6 pb-3">
           {(() => {
             // Everything above the composer goes through one slot, ranked by STATUS_PRIORITY (lib/chat-status-slot).

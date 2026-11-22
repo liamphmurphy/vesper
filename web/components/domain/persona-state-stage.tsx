@@ -2,8 +2,7 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { cx } from "@/lib/cx";
-import type { CharacterState } from "@/lib/persona-character";
-import { loopFor, type StateMediaSummary } from "@/lib/persona-state-media";
+import { loopFor, type CompanionState, type StateMediaSummary } from "@/lib/persona-state-media";
 
 // The crossfade between two state loops; --motion-base in globals.css.
 const FADE_MS = 220;
@@ -37,7 +36,7 @@ export function PersonaStateStage({
   className,
 }: {
   media: StateMediaSummary;
-  state: CharacterState;
+  state: CompanionState;
   width: number;
   /** Accessible name, e.g. "Iris is thinking"; decorative without one. */
   label?: string;
