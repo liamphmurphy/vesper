@@ -22,7 +22,7 @@ struct SettingsPersonaStatesCard: View {
         let loops = Dictionary(rows.compactMap { r in r.loopUrl.map { (r.state.rawValue, $0) } }, uniquingKeysWith: { a, _ in a })
         let current = byState[selected]
 
-        SettingsCard("Animated States", subtitle: "Photorealistic loops for idle, thinking, reading, coding, creating and needs-you, made from \(persona.name)'s portrait and cut out on a transparent background.") {
+        SettingsCard("Animated States", subtitle: "Photorealistic loops for each state (idle, thinking, reading, coding, creating, needs-you and talking), made from \(persona.name)'s portrait and cut out on a transparent background.") {
             if let errorMessage {
                 SettingsBanner(tone: .blocked, title: "Couldn't update animated states", message: errorMessage)
             }
@@ -50,6 +50,21 @@ struct SettingsPersonaStatesCard: View {
                     }
                 }
             }
+
+            Picker("Reply pace", selection: Binding(
+                get: { persona.revealPace.rawValue },
+                set: { setPace($0) }
+            )) {
+                Text("Auto (natural with a Talking loop)").tag("auto")
+                Text("Off: show replies at once").tag("off")
+                Text("Relaxed (~25 words/s)").tag("relaxed")
+                Text("Natural (~15 words/s)").tag("natural")
+                Text("Deliberate (~8 words/s)").tag("deliberate")
+            }
+            .disabled(busy)
+            Text("How fast a new reply is revealed in chats while \(persona.name)'s Talking loop plays.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             Divider()
             HStack(spacing: 8) {
@@ -158,6 +173,24 @@ struct SettingsPersonaStatesCard: View {
             do {
                 _ = try await store.mutate(API.generatePersonaStateMedia(id: persona.id, body: API.GeneratePersonaStateMedia(states: states, tweak: tweak)))
                 await refresh()
+            } catch {
+                errorMessage = settingsErrorText(error)
+            }
+        }
+    }
+
+    private func setPace(_ pace: String) {
+        guard let store, pace != persona.revealPace.rawValue else { return }
+        busy = true
+        errorMessage = nil
+        Task {
+            defer { busy = false }
+            do {
+                _ = try await store.mutate(API.updatePersona(id: persona.id, body: API.PersonaPatch(
+                    revealPace: API.PersonaRevealPace(rawValue: pace),
+                    revision: persona.revision
+                )))
+                await store.refetch(API.listPersonas())
             } catch {
                 errorMessage = settingsErrorText(error)
             }

@@ -69,3 +69,27 @@ final class PersonaStateLoopsTests: XCTestCase {
         XCTAssertEqual(frames.frameIndex(at: total + 0.01), 0, "wraps at the end of the loop")
     }
 }
+
+final class PersonaRevealTests: XCTestCase {
+    func testTalkingPlaysItsLoopElseIdleNeverThinking() {
+        XCTAssertEqual(PersonaStateLoops.loop(for: .coding, talking: true, in: ["idle": "/i", "thinking": "/t", "talking": "/k"])?.state, "talking")
+        XCTAssertEqual(PersonaStateLoops.loop(for: .coding, talking: true, in: ["idle": "/i", "thinking": "/t"])?.state, "idle")
+    }
+
+    func testAutoPacesOnlyAPersonaWithATalkingLoop() {
+        XCTAssertEqual(PersonaStateLoops.revealWordsPerSecond(pace: "auto", loops: ["idle": "/i"]), 0)
+        XCTAssertEqual(PersonaStateLoops.revealWordsPerSecond(pace: "auto", loops: ["talking": "/k"]), 15)
+        XCTAssertEqual(PersonaStateLoops.revealWordsPerSecond(pace: nil, loops: nil), 0)
+        XCTAssertEqual(PersonaStateLoops.revealWordsPerSecond(pace: "off", loops: ["talking": "/k"]), 0)
+        XCTAssertEqual(PersonaStateLoops.revealWordsPerSecond(pace: "deliberate", loops: nil), 8)
+    }
+
+    func testRevealCutsAfterWholeWordsLikeTheWeb() {
+        let text = "Hello there, general Kenobi."
+        XCTAssertEqual(PersonaStateLoops.revealSlice(text, elapsed: 0, wordsPerSecond: 10).text, "")
+        XCTAssertEqual(PersonaStateLoops.revealSlice(text, elapsed: 0.1, wordsPerSecond: 10).text, "Hello ")
+        XCTAssertEqual(PersonaStateLoops.revealSlice(text, elapsed: 0.25, wordsPerSecond: 10).text, "Hello there, ")
+        XCTAssertTrue(PersonaStateLoops.revealSlice(text, elapsed: 0.4, wordsPerSecond: 10).done)
+        XCTAssertTrue(PersonaStateLoops.revealSlice(text, elapsed: 0, wordsPerSecond: 0).done)
+    }
+}
