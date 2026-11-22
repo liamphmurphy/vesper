@@ -29,6 +29,56 @@ final class KnowledgeEditorTests: XCTestCase {
         XCTAssertEqual(target?.alias, "ADR 1")
     }
 
+    func testResolveInlineEmbedsMatchesServerRawRefsAndDeduplicates() {
+        let assetRef = "![[attachment:88888888-8888-4888-8888-888888888888/map.png]]"
+        let libraryRef = "![[library:99999999-9999-4999-8999-999999999999]]"
+        let aliasedRef = "![[attachment:77777777-7777-4777-8777-777777777777/plan.webp|Floor Plan]]"
+        let missingRef = "![[attachment:66666666-6666-4666-8666-666666666666/missing.png]]"
+        let md = """
+        Intro
+        \(assetRef)
+        Repeat \(assetRef)
+        \(libraryRef)
+        \(aliasedRef)
+        \(missingRef)
+        """
+        let embeds = [
+            KnowledgeEmbed(
+                ref: libraryRef,
+                kind: "image",
+                title: "Portrait",
+                url: "/api/v1/library/99999999-9999-4999-8999-999999999999/content",
+                contentType: "image/png",
+                available: true
+            ),
+            KnowledgeEmbed(
+                ref: assetRef,
+                kind: "file",
+                title: "map.png",
+                url: "/api/v1/knowledge/assets/88888888-8888-4888-8888-888888888888",
+                contentType: "image/png",
+                available: true
+            ),
+            KnowledgeEmbed(
+                ref: aliasedRef,
+                kind: "file",
+                title: "plan.webp",
+                url: "/api/v1/knowledge/assets/77777777-7777-4777-8777-777777777777",
+                contentType: "image/webp",
+                available: true
+            ),
+            KnowledgeEmbed(
+                ref: missingRef,
+                kind: "unresolved",
+                available: false
+            ),
+        ]
+
+        let resolved = KnowledgeMarkdownSyntax.resolveInlineEmbeds(in: md, embeds: embeds)
+        XCTAssertEqual(resolved.map(\.ref), [assetRef, libraryRef, aliasedRef])
+        XCTAssertEqual(resolved.map(\.title), ["map.png", "Portrait", "plan.webp"])
+    }
+
     // MARK: - 2. Completion (`[[`, `![[`, `#`)
 
     func testWikiEmbedAndTagCompletion() {

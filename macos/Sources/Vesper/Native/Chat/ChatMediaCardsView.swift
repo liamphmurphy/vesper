@@ -23,30 +23,26 @@ struct ChatAttachmentCardView: View {
 
     private var imageCard: some View {
         let p = theme.palette
-        let url = context.resolvedURL(contentPath)
         return Button {
             openQuickLook()
         } label: {
             VStack(alignment: .leading, spacing: 4) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(maxWidth: 360, maxHeight: 280)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                    case .failure:
-                        Label(attachment.filename, systemImage: "photo")
-                            .font(.system(size: theme.pointSize(.small)))
-                            .foregroundStyle(p.secondaryText)
-                            .padding(12)
-                    default:
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.swiftUIColor("track", fallback: Color.secondary.opacity(0.12)))
-                            .frame(width: 220, height: 140)
-                            .overlay(ProgressView().controlSize(.small))
-                    }
+                AuthenticatedImageView(source: contentPath, maxPixel: 720) { image in
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(maxWidth: 360, maxHeight: 280)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                } placeholder: {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.swiftUIColor("track", fallback: Color.secondary.opacity(0.12)))
+                        .frame(width: 220, height: 140)
+                        .overlay(ProgressView().controlSize(.small))
+                } failure: {
+                    Label(attachment.filename, systemImage: "photo")
+                        .font(.system(size: theme.pointSize(.small)))
+                        .foregroundStyle(p.secondaryText)
+                        .padding(12)
                 }
                 HStack(spacing: 6) {
                     Text(attachment.filename)

@@ -139,6 +139,16 @@ final class ChatComposerLogicTests: XCTestCase {
         XCTAssertEqual(ChatAttachmentRules.badge(for: "photo.webp"), "IMG")
         XCTAssertEqual(ChatAttachmentRules.badge(for: "report.pdf"), "PDF")
         XCTAssertEqual(ChatAttachmentRules.badge(for: "unknown.bin"), "FILE")
+
+        XCTAssertEqual(ChatAttachmentRules.directMimeType(forImageTypeIdentifier: "public.png"), "image/png")
+        XCTAssertEqual(ChatAttachmentRules.directMimeType(forImageTypeIdentifier: "public.jpeg"), "image/jpeg")
+        XCTAssertEqual(ChatAttachmentRules.directMimeType(forImageTypeIdentifier: "com.compuserve.gif"), "image/gif")
+        XCTAssertEqual(ChatAttachmentRules.directMimeType(forImageTypeIdentifier: "org.webmproject.webp"), "image/webp")
+        XCTAssertNil(ChatAttachmentRules.directMimeType(forImageTypeIdentifier: "public.tiff"))
+        XCTAssertNil(ChatAttachmentRules.directMimeType(forImageTypeIdentifier: "public.heic"))
+        XCTAssertTrue(ChatAttachmentRules.pastedImageTypeIdentifiers.contains("public.png"))
+        XCTAssertTrue(ChatAttachmentRules.pastedImageTypeIdentifiers.contains("public.tiff"))
+        XCTAssertTrue(ChatAttachmentRules.pastedImageTypeIdentifiers.contains("public.heic"))
     }
 
     // MARK: - Work & Knowledge Context Serialization

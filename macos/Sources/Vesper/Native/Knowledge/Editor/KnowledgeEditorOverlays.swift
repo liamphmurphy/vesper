@@ -14,29 +14,26 @@ struct KnowledgeEmbedPreviewCard: View {
         let p = theme.palette
         let ct = embed.contentType?.lowercased() ?? ""
         let isPDF = ct.contains("pdf") || (embed.url?.lowercased().hasSuffix(".pdf") ?? false)
-        let isImage = ct.hasPrefix("image/")
+        let isImage = ct.hasPrefix("image/") || embed.kind.lowercased() == "image"
         let label = (embed.title?.isEmpty == false ? embed.title : nil) ?? embed.ref
 
-        if isImage, let rawURL = embed.url, let resolved = context.resolvedURL(rawURL) {
+        if isImage, let rawURL = embed.url, !rawURL.isEmpty {
             Button {
                 context.showQuickLook([QuickLookItem(url: rawURL, title: label, contentType: embed.contentType)], index: 0)
             } label: {
                 VStack(alignment: .leading, spacing: 4) {
-                    AsyncImage(url: resolved) { phase in
-                        switch phase {
-                        case .success(let img):
-                            img.resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(maxWidth: 460, maxHeight: 320)
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
-                        case .failure:
-                            Label(label, systemImage: "photo")
-                                .vesperText(.small, theme)
-                                .foregroundStyle(p.secondaryText)
-                                .padding(10)
-                        default:
-                            ProgressView().controlSize(.small).padding(16)
-                        }
+                    AuthenticatedImageView(source: rawURL, maxPixel: 920) { img in
+                        img.resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(maxWidth: 460, maxHeight: 320)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    } placeholder: {
+                        ProgressView().controlSize(.small).padding(16)
+                    } failure: {
+                        Label(label, systemImage: "photo")
+                            .vesperText(.small, theme)
+                            .foregroundStyle(p.secondaryText)
+                            .padding(10)
                     }
                     Text(label)
                         .font(.system(size: theme.pointSize(.micro) + 1))

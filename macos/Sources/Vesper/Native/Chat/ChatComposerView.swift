@@ -284,12 +284,18 @@ struct ChatComposerView: View {
                 repositoryPickerMenu
             }
 
-            Toggle(isOn: $researchMode) {
+            Button {
+                researchMode.toggle()
+            } label: {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(researchMode ? p.accent : p.secondaryText)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                    .background((researchMode ? p.selected : p.surface.opacity(0.8)), in: Capsule())
+                    .overlay(Capsule().stroke(researchMode ? p.accent : p.border))
             }
-            .toggleStyle(.button)
-            .controlSize(.small)
+            .buttonStyle(.plain)
             .help("Research mode (plan before answering)")
 
             Spacer(minLength: 4)
@@ -386,13 +392,18 @@ struct ChatComposerView: View {
                         .font(.system(size: theme.pointSize(.micro), weight: .semibold))
                         .foregroundStyle(p.tertiaryText)
                 }
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(p.tertiaryText)
             }
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
             .background(p.surface.opacity(0.8), in: Capsule())
             .overlay(Capsule().stroke(p.border))
         }
-        .menuStyle(.borderlessButton)
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
         .fixedSize()
         .help(chatId == nil ? "Choose persona" : "Mention or add personas")
     }
@@ -457,6 +468,9 @@ struct ChatComposerView: View {
                     .imageScale(.small)
                 Text(labelText)
                     .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(p.tertiaryText)
             }
             .font(.system(size: theme.pointSize(.micro), weight: .medium))
             .foregroundStyle(p.secondaryText)
@@ -465,7 +479,9 @@ struct ChatComposerView: View {
             .background(p.surface.opacity(0.8), in: Capsule())
             .overlay(Capsule().stroke(p.border))
         }
-        .menuStyle(.borderlessButton)
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
         .fixedSize()
         .help("Model & reasoning effort")
     }
@@ -510,6 +526,9 @@ struct ChatComposerView: View {
                     .imageScale(.small)
                 Text(shortName)
                     .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(p.tertiaryText)
             }
             .font(.system(size: theme.pointSize(.micro), weight: .medium))
             .foregroundStyle(p.secondaryText)
@@ -518,7 +537,9 @@ struct ChatComposerView: View {
             .background(p.surface.opacity(0.8), in: Capsule())
             .overlay(Capsule().stroke(p.border))
         }
-        .menuStyle(.borderlessButton)
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
         .fixedSize()
         .help("Active repository")
     }

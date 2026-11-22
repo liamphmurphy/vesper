@@ -612,6 +612,32 @@ public enum KnowledgeMarkdownSyntax: Sendable {
         return nil
     }
 
+    // MARK: Inline Embed Resolution
+
+    /// Resolves `![[...]]` embeds referenced in `markdown` against the server-resolved `embeds`
+    /// list, preserving document order and deduplicating by `embed.ref`.
+    ///
+    /// The server returns `embed.ref` as the full raw token (`![[attachment:<uuid>/name.png]]`),
+    /// so matching checks `target.raw` in addition to the inner `target.ref` and `target.target`.
+    public static func resolveInlineEmbeds(
+        in markdown: String,
+        embeds: [KnowledgeEmbed]
+    ) -> [KnowledgeEmbed] {
+        guard !embeds.isEmpty else { return [] }
+        var seen = Set<String>()
+        var result: [KnowledgeEmbed] = []
+        for token in scan(markdown) {
+            guard case .embed(let target) = token.kind else { continue }
+            if let match = embeds.first(where: {
+                $0.available && ($0.ref == target.raw || $0.ref == target.ref || $0.ref == target.target)
+            }),
+               seen.insert(match.ref).inserted {
+                result.append(match)
+            }
+        }
+        return result
+    }
+
     // MARK: Code-Exclusion Helper for Completion
 
     /// Returns `true` if `utf16Offset` falls inside a fenced code block, frontmatter, or inline code span.

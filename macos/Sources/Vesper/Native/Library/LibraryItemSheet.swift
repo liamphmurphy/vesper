@@ -17,10 +17,11 @@ struct LibraryItemSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
+            Divider().overlay(theme.palette.border)
             content
         }
         .padding(16)
-        .frame(minWidth: 720, idealWidth: 1000, maxWidth: 1100, minHeight: 360, idealHeight: 680)
+        .frame(minWidth: 720, idealWidth: 960, maxWidth: 1100, minHeight: 420, idealHeight: 680, maxHeight: 780)
         .background(theme.swiftUIColor("surface-raised", fallback: theme.palette.surface))
         .foregroundStyle(theme.palette.text)
     }
@@ -47,16 +48,23 @@ struct LibraryItemSheet: View {
                 context.showQuickLook([ql], index: 0)
             } label: { Label("Quick Look", systemImage: "eye") }
                 .buttonStyle(.vesper())
+                .fixedSize()
             Button { actions.download(item) } label: { Label("Download", systemImage: "arrow.down.circle") }
                 .buttonStyle(.vesper())
+                .fixedSize()
             Button { actions.remove([item]) { dismiss() } } label: { Label("Remove", systemImage: "trash") }
-                .buttonStyle(.plain)
-                .foregroundStyle(theme.palette.secondaryText)
-            Button { dismiss() } label: { Image(systemName: "xmark") }
-                .buttonStyle(.plain)
-                .foregroundStyle(theme.palette.tertiaryText)
-                .keyboardShortcut(.cancelAction)
-                .accessibilityLabel("Close")
+                .buttonStyle(.vesper(.danger))
+                .fixedSize()
+            Button { dismiss() } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(theme.palette.tertiaryText)
+            .keyboardShortcut(.cancelAction)
+            .accessibilityLabel("Close")
         }
     }
 
@@ -101,8 +109,16 @@ struct LibraryItemSheet: View {
             }
         default:
             LibraryImageView(path: LibraryLogic.contentPath(item.id), maxPixel: nil, fill: false)
-                .background(item.kind == .diagram ? Color.white : Color.clear)
+                .padding(item.kind == .diagram ? 12 : 0)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(
+                    item.kind == .diagram
+                        ? Color.white
+                        : theme.swiftUIColor("surface-sunken", fallback: theme.palette.surface),
+                    in: RoundedRectangle(cornerRadius: 8)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.palette.border))
         }
     }
 }
@@ -130,14 +146,31 @@ private struct LibraryReferenceActions: View {
                     Button(choice.label) { run { await actions.setReference(item, choice) } }
                 }
             } label: {
-                Label("Use as reference", systemImage: "person.2")
+                HStack(spacing: 5) {
+                    Image(systemName: "person.2")
+                        .imageScale(.small)
+                    Text("Use as reference")
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(theme.palette.tertiaryText)
+                }
+                .font(.system(size: theme.pointSize(.body), weight: .medium))
+                .foregroundStyle(theme.palette.text)
+                .padding(.horizontal, 10)
+                .frame(minHeight: 28)
+                .background(theme.swiftUIColor("btn-outline-bg", fallback: theme.palette.surface), in: RoundedRectangle(cornerRadius: 7))
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(theme.swiftUIColor("btn-secondary-border", fallback: theme.palette.border)))
             }
-            .menuStyle(.borderlessButton)
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
             .fixedSize()
             .disabled(busy)
             if LibraryLogic.referenceBadge(item) != nil {
                 Button("Clear reference") { run { await actions.clearReference(item) } }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.vesper())
+                    .fixedSize()
                     .disabled(busy)
             }
         }

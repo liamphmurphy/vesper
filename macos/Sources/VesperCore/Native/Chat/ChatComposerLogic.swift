@@ -418,6 +418,28 @@ public enum ChatAttachmentRules {
         default: "application/octet-stream"
         }
     }
+
+    /// Supported clipboard/drag image UTI identifiers in preference order.
+    public static let pastedImageTypeIdentifiers: [String] = [
+        "public.png",
+        "public.jpeg",
+        "com.compuserve.gif",
+        "org.webmproject.webp",
+        "public.tiff",
+        "public.heic",
+    ]
+
+    /// Direct upload MIME type for an image UTI that the server accepts as-is, or `nil` when
+    /// the raw bytes should be transcoded to PNG first (e.g. TIFF, HEIC).
+    public static func directMimeType(forImageTypeIdentifier uti: String) -> String? {
+        switch uti.lowercased() {
+        case "public.png": "image/png"
+        case "public.jpeg": "image/jpeg"
+        case "com.compuserve.gif": "image/gif"
+        case "org.webmproject.webp": "image/webp"
+        default: nil
+        }
+    }
 }
 
 public struct ChatComposerAttachment: Sendable, Equatable, Identifiable {

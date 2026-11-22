@@ -158,3 +158,63 @@ struct QueryErrorView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
+
+/// Loads an image from a Vesper API path (via `LibraryImages` + `APIClient` with the session cookie)
+/// or an external http(s) URL, avoiding unauthenticated `AsyncImage` 401 failures on protected routes.
+struct AuthenticatedImageView<Content: View, Placeholder: View, Failure: View>: View {
+    @Environment(NativeScreenContext.self) private var context
+
+    let source: String
+    var maxPixel: CGFloat? = 920
+    @ViewBuilder let content: (Image) -> Content
+    @ViewBuilder let placeholder: () -> Placeholder
+    @ViewBuilder let failure: () -> Failure
+
+    @State private var image: NSImage?
+    @State private var failed = false
+
+    private var apiPath: String? {
+        if source.hasPrefix("/api/v1/") { return source }
+        guard let url = URL(string: source),
+              let base = context.baseURL(),
+              BridgeOrigin.matches(url: url, base: base),
+              url.path.hasPrefix("/api/v1/") else { return nil }
+        return url.query.map { "\(url.path)?\($0)" } ?? url.path
+    }
+
+    var body: some View {
+        Group {
+            if let image {
+                content(Image(nsImage: image))
+            } else if failed {
+                failure()
+            } else {
+                placeholder()
+            }
+        }
+        .task(id: "\(source)|\(context.store.client != nil)") {
+            image = nil
+            failed = false
+            if let path = apiPath {
+                guard let client = context.store.client else { return }
+                image = await LibraryImages.shared.image(path: path, maxPixel: maxPixel, client: client)
+                failed = (image == nil)
+                return
+            }
+            guard let url = context.resolvedURL(source),
+                  let scheme = url.scheme?.lowercased(),
+                  scheme == "http" || scheme == "https" else {
+                failed = true
+                return
+            }
+            if let (data, response) = try? await URLSession.shared.data(from: url),
+               let http = response as? HTTPURLResponse,
+               (200..<300).contains(http.statusCode),
+               let decoded = NSImage(data: data) {
+                image = decoded
+            } else {
+                failed = true
+            }
+        }
+    }
+}

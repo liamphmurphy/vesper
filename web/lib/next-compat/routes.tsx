@@ -6,6 +6,7 @@ import { Outlet, createBrowserRouter, redirect as routerRedirect, useRouteError,
 import { LayoutDepthContext, paramsFor, signalOf, type RoutePattern } from "./navigation";
 import { appRouter, setDataRouter, useLiveLocation, useOverrideJanitor } from "./router";
 import { redirectFor } from "./redirects";
+import { onCommand } from "@/lib/native-shell/bridge";
 
 type PageModule = { default: ComponentType<Record<string, unknown>>; metadata?: { title?: string } };
 type LayoutModule = { default: ComponentType<{ children: ReactNode }> };
@@ -140,6 +141,13 @@ function NavigationBoundary({ children }: { children: ReactNode }) {
 }
 
 export function NotFound() {
+  useEffect(
+    () =>
+      onCommand((cmd) => {
+        if (cmd.type === "navigate") appRouter.push(cmd.path);
+      }),
+    [],
+  );
   return (
     <main className="grid min-h-dvh place-items-center px-4 text-center">
       <div>

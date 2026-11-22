@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
 import VesperCore
@@ -71,7 +72,7 @@ struct ChatComposerTextView: NSViewRepresentable {
         textView.insertionPointColor = NSColor(textColor)
         textView.placeholderText = placeholder
         textView.placeholderColor = NSColor(placeholderColor)
-        textView.registerForDraggedTypes([.fileURL, .png, .tiff])
+        textView.registerForDraggedTypes([.fileURL] + Coordinator.imagePasteboardTypes)
         textView.string = text
 
         scrollView.documentView = textView
@@ -194,6 +195,18 @@ struct ChatComposerTextView: NSViewRepresentable {
             }
         }
 
+        static let imagePasteboardTypes: [NSPasteboard.PasteboardType] =
+            ChatAttachmentRules.pastedImageTypeIdentifiers.map { NSPasteboard.PasteboardType($0) }
+
+        /// Fast check used by menu validation (`validateUserInterfaceItem`) and drag entry
+        /// so `⌘V` is enabled when the clipboard holds only an image or file URL.
+        func canHandlePasteboard(_ pb: NSPasteboard) -> Bool {
+            if pb.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) {
+                return true
+            }
+            return pb.availableType(from: Self.imagePasteboardTypes) != nil
+        }
+
         func handlePasteboard(_ pb: NSPasteboard) -> Bool {
             let files = extractFiles(from: pb)
             guard !files.isEmpty else { return false }
@@ -207,7 +220,9 @@ struct ChatComposerTextView: NSViewRepresentable {
             if let urls = pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
                !urls.isEmpty {
                 for url in urls {
-                    guard url.isFileURL, let data = try? Data(contentsOf: url) else { continue }
+                    guard url.isFileURL else { continue }
+                    if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true { continue }
+                    guard let data = try? Data(contentsOf: url) else { continue }
                     let filename = url.lastPathComponent
                     let mime = ChatAttachmentRules.mimeType(for: filename)
                     result.append(ChatComposerIncomingFile(
@@ -217,26 +232,41 @@ struct ChatComposerTextView: NSViewRepresentable {
                         localURL: url
                     ))
                 }
+                // Finder places the file/folder icon in .tiff alongside .fileURL; do not fall through to raw image types.
                 return result
             }
 
-            if let pngData = pb.data(forType: .png) {
-                pastedImageCounter += 1
-                let name = ChatAttachmentRules.pastedImageName(contentType: "image/png", index: pastedImageCounter)
-                result.append(ChatComposerIncomingFile(filename: name, contentType: "image/png", data: pngData, localURL: nil))
-                return result
-            }
-
-            if let tiffData = pb.data(forType: .tiff),
-               let rep = NSBitmapImageRep(data: tiffData),
-               let pngData = rep.representation(using: .png, properties: [:]) {
-                pastedImageCounter += 1
-                let name = ChatAttachmentRules.pastedImageName(contentType: "image/png", index: pastedImageCounter)
-                result.append(ChatComposerIncomingFile(filename: name, contentType: "image/png", data: pngData, localURL: nil))
-                return result
+            for typeId in ChatAttachmentRules.pastedImageTypeIdentifiers {
+                let pbType = NSPasteboard.PasteboardType(typeId)
+                guard let rawData = pb.data(forType: pbType), !rawData.isEmpty else { continue }
+                if let mime = ChatAttachmentRules.directMimeType(forImageTypeIdentifier: typeId) {
+                    pastedImageCounter += 1
+                    let name = ChatAttachmentRules.pastedImageName(contentType: mime, index: pastedImageCounter)
+                    result.append(ChatComposerIncomingFile(filename: name, contentType: mime, data: rawData, localURL: nil))
+                    return result
+                }
+                if let pngData = Self.transcodeToPNG(rawData) {
+                    pastedImageCounter += 1
+                    let name = ChatAttachmentRules.pastedImageName(contentType: "image/png", index: pastedImageCounter)
+                    result.append(ChatComposerIncomingFile(filename: name, contentType: "image/png", data: pngData, localURL: nil))
+                    return result
+                }
             }
 
             return result
+        }
+
+        private static func transcodeToPNG(_ data: Data) -> Data? {
+            if let rep = NSBitmapImageRep(data: data),
+               let png = rep.representation(using: .png, properties: [:]) {
+                return png
+            }
+            if let source = CGImageSourceCreateWithData(data as CFData, nil),
+               let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) {
+                let rep = NSBitmapImageRep(cgImage: cgImage)
+                return rep.representation(using: .png, properties: [:])
+            }
+            return nil
         }
     }
 }
@@ -248,6 +278,17 @@ final class ComposerNSTextView: NSTextView {
     var placeholderText: String = ""
     var placeholderColor: NSColor = .placeholderTextColor
 
+    override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
+        // Plain-text NSTextView disables Edit -> Paste (⌘V) when the pasteboard only contains
+        // an image or file URL; enable it whenever our coordinator can attach the payload.
+        if item.action == #selector(NSText.paste(_:)),
+           isEditable,
+           coordinator?.canHandlePasteboard(.general) == true {
+            return true
+        }
+        return super.validateUserInterfaceItem(item)
+    }
+
     override func paste(_ sender: Any?) {
         if coordinator?.handlePasteboard(.general) == true {
             return
@@ -256,10 +297,7 @@ final class ComposerNSTextView: NSTextView {
     }
 
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
-        let pb = sender.draggingPasteboard
-        if pb.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])
-            || pb.data(forType: .png) != nil
-            || pb.data(forType: .tiff) != nil {
+        if coordinator?.canHandlePasteboard(sender.draggingPasteboard) == true {
             return .copy
         }
         return super.draggingEntered(sender)
