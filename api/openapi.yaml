@@ -3735,6 +3735,35 @@ paths:
         "416": { $ref: "#/components/responses/Error" }
         default: { $ref: "#/components/responses/Error" }
 
+  /chats/{id}/messages/{messageId}/speech:
+    parameters:
+      - { $ref: "#/components/parameters/ChatId" }
+      - { name: messageId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getChatMessageSpeech
+      summary: A reply spoken in its persona's voice
+      description: |
+        The reply's prose (no code, tables or URLs), up to about 120 words and
+        ending on a whole sentence, spoken with its persona's voice and style as
+        WAV. Generated once and cached, so replaying is free.
+        X-Speech-Words is how many words were spoken, for pacing the text
+        reveal to the audio. 409 when the persona's voice is off or no speech
+        provider is configured; 422 when the reply has nothing to speak.
+      tags: [chats]
+      responses:
+        "200":
+          description: The speech
+          headers:
+            X-Speech-Words: { schema: { type: integer } }
+            Cache-Control: { schema: { type: string } }
+          content:
+            audio/wav:
+              schema: { type: string, format: binary }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
   /chats/{id}/audio:
     parameters:
       - { $ref: "#/components/parameters/ChatId" }
@@ -6378,6 +6407,48 @@ paths:
             image/png:
               schema: { type: string, format: binary }
         "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /personas/voices:
+    get:
+      operationId: listPersonaVoices
+      summary: The voices personas can speak with
+      description: The workspace speech provider's voices, or available false with the reason when none is configured.
+      tags: [personas]
+      responses:
+        "200":
+          description: The voices
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PersonaVoiceList" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /personas/{id}/voice-preview:
+    parameters:
+      - { $ref: "#/components/parameters/PersonaId" }
+    post:
+      operationId: previewPersonaVoice
+      summary: Hear a voice and style before saving them
+      description: Speaks a short greeting from the persona as WAV. Omitted fields use the persona's saved voice.
+      tags: [personas]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                voice_name: { type: string, maxLength: 60 }
+                voice_style: { type: string, maxLength: 200 }
+      responses:
+        "200":
+          description: The preview
+          content:
+            audio/wav:
+              schema: { type: string, format: binary }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
         default: { $ref: "#/components/responses/Error" }
 
   /github/review-requests:
@@ -11026,7 +11097,7 @@ components:
         Its tone and custom instructions shape the assistant's voice in chats
         only; they never change scopes, tools or memory rules. Only the
         structured capabilities (and repos) widen what its chats may do.
-      required: [id, name, tone, color, custom_instructions, capabilities, repos, is_default, chat_count, in_chat_list, work, reveal_pace, revision, created_at, updated_at]
+      required: [id, name, tone, color, custom_instructions, capabilities, repos, is_default, chat_count, in_chat_list, work, reveal_pace, voice, revision, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
@@ -11044,6 +11115,7 @@ components:
         character_svg: { type: string, description: "Sanitized 64x64 animated SVG character source; absent when using a picture or initials" }
         state_media: { $ref: "#/components/schemas/PersonaStateMediaSummary", description: "Photorealistic state loops; absent when none has been generated" }
         reveal_pace: { $ref: "#/components/schemas/PersonaRevealPace" }
+        voice: { $ref: "#/components/schemas/PersonaVoice" }
         custom_instructions: { type: string }
         capabilities: { $ref: "#/components/schemas/PersonaCapabilities" }
         repos: { type: array, maxItems: 10, items: { type: string }, deprecated: true, description: "Legacy repository favorites and first-chat default; never an access allowlist. Use shared repository sources for discovery." }
@@ -11058,6 +11130,33 @@ components:
       enum: [idle, thinking, reading, coding, creating, needs_you, talking, complete]
       x-enum-varnames: [PersonaStateIdle, PersonaStateThinking, PersonaStateReading, PersonaStateCoding, PersonaStateCreating, PersonaStateNeedsYou, PersonaStateTalking, PersonaStateComplete]
       description: A character state a persona can have a photorealistic loop for.
+    PersonaVoiceMode:
+      type: string
+      enum: ["off", popout, always]
+      x-enum-varnames: [VoiceModeOff, VoiceModePopout, VoiceModeAlways]
+      description: "off: silent. popout: speaks only in the companion pop-out. always: speaks new replies in the chat too (the companion's mute still wins)."
+    PersonaVoice:
+      type: object
+      required: [mode, name, style]
+      properties:
+        mode: { $ref: "#/components/schemas/PersonaVoiceMode" }
+        name: { type: string, description: "The provider's voice; empty for its default" }
+        style: { type: string, description: "A short delivery direction, e.g. warm, unhurried" }
+    PersonaVoiceList:
+      type: object
+      required: [available, voices]
+      properties:
+        available: { type: boolean }
+        reason: { type: string, description: "Why no voices are available" }
+        default_voice: { type: string }
+        voices:
+          type: array
+          items:
+            type: object
+            required: [name, tone]
+            properties:
+              name: { type: string }
+              tone: { type: string }
     PersonaRevealPace:
       type: string
       enum: [auto, "off", relaxed, natural, deliberate]
@@ -11149,6 +11248,9 @@ components:
       required: [revision]
       properties:
         revision: { type: integer }
+        voice_mode: { $ref: "#/components/schemas/PersonaVoiceMode" }
+        voice_name: { type: string, maxLength: 60, description: "Empty for the provider's default voice" }
+        voice_style: { type: string, maxLength: 200 }
         reveal_pace: { $ref: "#/components/schemas/PersonaRevealPace" }
         in_chat_list: { type: boolean }
         work: { $ref: "#/components/schemas/PersonaWork" }

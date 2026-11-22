@@ -1300,6 +1300,9 @@ type Persona struct {
 	DefaultEffort       string
 	CharacterSvg        *string
 	RevealPace          string
+	VoiceMode           string
+	VoiceName           string
+	VoiceStyle          string
 }
 
 type PersonaCharacterProposal struct {

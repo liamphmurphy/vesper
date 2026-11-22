@@ -30,6 +30,8 @@ type Controller struct {
 	VideoErr func(media.VideoRequest) error
 	// VideoBlockCh, when set, holds GenerateVideo until it is closed.
 	VideoBlockCh chan struct{}
+	// SpeechCalls records every GenerateSpeech request.
+	SpeechCalls []media.SpeechRequest
 }
 
 // SetVideo sets VideoErr and VideoBlockCh under the controller's lock, so a
@@ -133,6 +135,65 @@ func (p *VideoProvider) Check(ctx context.Context) error {
 	err := p.ctrl.CheckErr
 	p.ctrl.mu.Unlock()
 	return err
+}
+
+// SpeechProviderID is the fake speech provider RegisterSpeech adds.
+const SpeechProviderID = "fake-speech"
+
+// RegisterSpeech registers a fake speech provider on reg, sharing ctrl.
+func RegisterSpeech(reg *media.Registry, ctrl *Controller) {
+	if ctrl == nil {
+		ctrl = &Controller{}
+	}
+	reg.Register(media.Entry{
+		Descriptor: media.Descriptor{
+			ID:           SpeechProviderID,
+			Label:        "Fake Speech",
+			Description:  "Deterministic test speech provider.",
+			Capabilities: []media.Capability{media.CapTTS},
+			Fields:       []media.FieldSpec{{Key: "api_key", Label: "API Key", Kind: "secret", Required: true}},
+		},
+		CheckAvailability: func(cfg media.ResolvedConfig) (bool, string) {
+			if cfg.Secrets["api_key"] == "" {
+				return false, "Fake Speech API key is not configured."
+			}
+			return true, ""
+		},
+		New: func(media.ResolvedConfig) (media.Provider, error) {
+			return &SpeechProvider{ctrl: ctrl}, nil
+		},
+	})
+}
+
+// SpeechProvider is an in-memory SpeechGenerator that returns a short WAV.
+type SpeechProvider struct {
+	ctrl *Controller
+}
+
+func (p *SpeechProvider) ID() string                      { return SpeechProviderID }
+func (p *SpeechProvider) Label() string                   { return "Fake Speech" }
+func (p *SpeechProvider) Check(ctx context.Context) error { return nil }
+func (p *SpeechProvider) DefaultVoice() string            { return "Kore" }
+func (p *SpeechProvider) Voices() []media.Voice {
+	return []media.Voice{{Name: "Kore", Tone: "Firm"}, {Name: "Sulafat", Tone: "Warm"}}
+}
+
+// GenerateSpeech records the request and returns a one-second WAV.
+func (p *SpeechProvider) GenerateSpeech(ctx context.Context, req media.SpeechRequest) (media.SpeechClip, error) {
+	p.ctrl.mu.Lock()
+	p.ctrl.SpeechCalls = append(p.ctrl.SpeechCalls, req)
+	p.ctrl.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return media.SpeechClip{}, err
+	}
+	return media.SpeechClip{Data: SineWAV(8000, 1), ContentType: "audio/wav", DurationMS: 1000, Model: "fake-tts"}, nil
+}
+
+// SpeechRequests returns a copy of the speech requests made so far.
+func (c *Controller) SpeechRequests() []media.SpeechRequest {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]media.SpeechRequest(nil), c.SpeechCalls...)
 }
 
 // Provider is an in-memory MusicGenerator.

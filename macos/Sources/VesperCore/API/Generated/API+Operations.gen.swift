@@ -1084,6 +1084,24 @@ extension API {
         )
     }
 
+    /// A reply spoken in its persona's voice
+    ///
+    /// The reply's prose (no code, tables or URLs), up to about 120 words and
+    /// ending on a whole sentence, spoken with its persona's voice and style as
+    /// WAV. Generated once and cached, so replaying is free.
+    /// X-Speech-Words is how many words were spoken, for pacing the text
+    /// reveal to the audio. 409 when the persona's voice is off or no speech
+    /// provider is configured; 422 when the reply has nothing to speak.
+    ///
+    /// `GET /chats/{id}/messages/{messageId}/speech`
+    public static func getChatMessageSpeech(id: Swift.String, messageId: Swift.String) -> APIRequest<Foundation.Data> {
+        return APIRequest(
+            method: "GET", template: "/chats/{id}/messages/{messageId}/speech",
+            path: "/api/v1/chats/\(APIPath.escape(id))/messages/\(APIPath.escape(messageId))/speech",
+            query: [], headers: [:], body: nil, decode: .raw
+        )
+    }
+
     /// Generate music in a chat using the active music provider
     ///
     /// `POST /chats/{id}/music`
@@ -2951,6 +2969,19 @@ extension API {
         )
     }
 
+    /// The voices personas can speak with
+    ///
+    /// The workspace speech provider's voices, or available false with the reason when none is configured.
+    ///
+    /// `GET /personas/voices`
+    public static func listPersonaVoices() -> APIRequest<PersonaVoiceList> {
+        return APIRequest(
+            method: "GET", template: "/personas/voices",
+            path: "/api/v1/personas/voices",
+            query: [], headers: [:], body: nil, decode: .json
+        )
+    }
+
     /// One persona; another person's is a 404
     ///
     /// `GET /personas/{id}`
@@ -3155,6 +3186,19 @@ extension API {
             method: "GET", template: "/personas/{id}/state-media/{state}/loop",
             path: "/api/v1/personas/\(APIPath.escape(id))/state-media/\(APIPath.escape(state))/loop",
             query: [], headers: [:], body: nil, decode: .raw
+        )
+    }
+
+    /// Hear a voice and style before saving them
+    ///
+    /// Speaks a short greeting from the persona as WAV. Omitted fields use the persona's saved voice.
+    ///
+    /// `POST /personas/{id}/voice-preview`
+    public static func previewPersonaVoice(id: Swift.String, body: PreviewPersonaVoiceBody) -> APIRequest<Foundation.Data> {
+        return APIRequest(
+            method: "POST", template: "/personas/{id}/voice-preview",
+            path: "/api/v1/personas/\(APIPath.escape(id))/voice-preview",
+            query: [], headers: [:], body: APIRequestBody.json(body), decode: .raw
         )
     }
 

@@ -16225,6 +16225,7 @@ extension API {
         /// How the assistant writes; each maps to one fixed prompt sentence on the server
         public var tone: PersonaTone
         public var updatedAt: Swift.String
+        public var voice: PersonaVoice
         /// What the persona does besides chatting. tickets: it can be assigned tickets and runs
         /// them. Its harness, model, work brief, permissions and limits are its work definition
         /// (/agents/{handle}, by its handle). Turning work off is refused (409) while it holds open
@@ -16269,6 +16270,7 @@ extension API {
             stateMedia: PersonaStateMediaSummary? = nil,
             tone: PersonaTone,
             updatedAt: Swift.String,
+            voice: PersonaVoice,
             work: PersonaWork,
             workModel: Swift.String? = nil,
             workStatus: WorkStatus? = nil
@@ -16295,6 +16297,7 @@ extension API {
             self.stateMedia = stateMedia
             self.tone = tone
             self.updatedAt = updatedAt
+            self.voice = voice
             self.work = work
             self.workModel = workModel
             self.workStatus = workStatus
@@ -16323,6 +16326,7 @@ extension API {
             case stateMedia = "state_media"
             case tone
             case updatedAt = "updated_at"
+            case voice
             case work
             case workModel = "work_model"
             case workStatus = "work_status"
@@ -16352,6 +16356,7 @@ extension API {
             self.stateMedia = try c.decodeIfPresent(PersonaStateMediaSummary.self, forKey: .stateMedia)
             self.tone = try c.decode(PersonaTone.self, forKey: .tone)
             self.updatedAt = try c.decode(Swift.String.self, forKey: .updatedAt)
+            self.voice = try c.decode(PersonaVoice.self, forKey: .voice)
             self.work = try c.decode(PersonaWork.self, forKey: .work)
             self.workModel = try c.decodeIfPresent(Swift.String.self, forKey: .workModel)
             self.workStatus = try c.decodeIfPresent(WorkStatus.self, forKey: .workStatus)
@@ -16381,6 +16386,7 @@ extension API {
             try c.encodeIfPresent(stateMedia, forKey: .stateMedia)
             try c.encode(tone, forKey: .tone)
             try c.encode(updatedAt, forKey: .updatedAt)
+            try c.encode(voice, forKey: .voice)
             try c.encode(work, forKey: .work)
             try c.encodeIfPresent(workModel, forKey: .workModel)
             try c.encodeIfPresent(workStatus, forKey: .workStatus)
@@ -16784,6 +16790,11 @@ extension API {
         public var revision: Swift.Int
         /// How the assistant writes; each maps to one fixed prompt sentence on the server
         public var tone: PersonaTone?
+        /// off: silent. popout: speaks only in the companion pop-out. always: speaks new replies in the chat too (the companion's mute still wins).
+        public var voiceMode: PersonaVoiceMode?
+        /// Empty for the provider's default voice
+        public var voiceName: Swift.String?
+        public var voiceStyle: Swift.String?
         /// What the persona does besides chatting. tickets: it can be assigned tickets and runs
         /// them. Its harness, model, work brief, permissions and limits are its work definition
         /// (/agents/{handle}, by its handle). Turning work off is refused (409) while it holds open
@@ -16828,6 +16839,9 @@ extension API {
             revealPace: PersonaRevealPace? = nil,
             revision: Swift.Int,
             tone: PersonaTone? = nil,
+            voiceMode: PersonaVoiceMode? = nil,
+            voiceName: Swift.String? = nil,
+            voiceStyle: Swift.String? = nil,
             work: PersonaWork? = nil
         ) {
             self.capabilities = capabilities
@@ -16842,6 +16856,9 @@ extension API {
             self.revealPace = revealPace
             self.revision = revision
             self.tone = tone
+            self.voiceMode = voiceMode
+            self.voiceName = voiceName
+            self.voiceStyle = voiceStyle
             self.work = work
         }
 
@@ -16858,6 +16875,9 @@ extension API {
             case revealPace = "reveal_pace"
             case revision
             case tone
+            case voiceMode = "voice_mode"
+            case voiceName = "voice_name"
+            case voiceStyle = "voice_style"
             case work
         }
 
@@ -16875,6 +16895,9 @@ extension API {
             self.revealPace = try c.decodeIfPresent(PersonaRevealPace.self, forKey: .revealPace)
             self.revision = try c.decode(Swift.Int.self, forKey: .revision)
             self.tone = try c.decodeIfPresent(PersonaTone.self, forKey: .tone)
+            self.voiceMode = try c.decodeIfPresent(PersonaVoiceMode.self, forKey: .voiceMode)
+            self.voiceName = try c.decodeIfPresent(Swift.String.self, forKey: .voiceName)
+            self.voiceStyle = try c.decodeIfPresent(Swift.String.self, forKey: .voiceStyle)
             self.work = try c.decodeIfPresent(PersonaWork.self, forKey: .work)
         }
 
@@ -16892,6 +16915,9 @@ extension API {
             try c.encodeIfPresent(revealPace, forKey: .revealPace)
             try c.encode(revision, forKey: .revision)
             try c.encodeIfPresent(tone, forKey: .tone)
+            try c.encodeIfPresent(voiceMode, forKey: .voiceMode)
+            try c.encodeIfPresent(voiceName, forKey: .voiceName)
+            try c.encodeIfPresent(voiceStyle, forKey: .voiceStyle)
             try c.encodeIfPresent(work, forKey: .work)
         }
     }
@@ -17354,6 +17380,128 @@ extension API {
         public static let formal = PersonaTone(rawValue: "formal")
         public static let playful = PersonaTone(rawValue: "playful")
         public static let allKnown: [PersonaTone] = [neutral, friendly, concise, formal, playful]
+    }
+
+    public struct PersonaVoice: Codable, Sendable, Equatable {
+        /// off: silent. popout: speaks only in the companion pop-out. always: speaks new replies in the chat too (the companion's mute still wins).
+        public var mode: PersonaVoiceMode
+        /// The provider's voice; empty for its default
+        public var name: Swift.String
+        /// A short delivery direction, e.g. warm, unhurried
+        public var style: Swift.String
+
+        public init(
+            mode: PersonaVoiceMode,
+            name: Swift.String,
+            style: Swift.String
+        ) {
+            self.mode = mode
+            self.name = name
+            self.style = style
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case mode
+            case name
+            case style
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.mode = try c.decode(PersonaVoiceMode.self, forKey: .mode)
+            self.name = try c.decode(Swift.String.self, forKey: .name)
+            self.style = try c.decode(Swift.String.self, forKey: .style)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(mode, forKey: .mode)
+            try c.encode(name, forKey: .name)
+            try c.encode(style, forKey: .style)
+        }
+    }
+
+    public struct PersonaVoiceList: Codable, Sendable, Equatable {
+        public var available: Swift.Bool
+        public var defaultVoice: Swift.String?
+        /// Why no voices are available
+        public var reason: Swift.String?
+        public var voices: [VoicesItem]
+
+        public struct VoicesItem: Codable, Sendable, Equatable {
+            public var name: Swift.String
+            public var tone: Swift.String
+
+            public init(
+                name: Swift.String,
+                tone: Swift.String
+            ) {
+                self.name = name
+                self.tone = tone
+            }
+
+            enum CodingKeys: Swift.String, CodingKey {
+                case name
+                case tone
+            }
+
+            public init(from decoder: any Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                self.name = try c.decode(Swift.String.self, forKey: .name)
+                self.tone = try c.decode(Swift.String.self, forKey: .tone)
+            }
+
+            public func encode(to encoder: any Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                try c.encode(name, forKey: .name)
+                try c.encode(tone, forKey: .tone)
+            }
+        }
+
+        public init(
+            available: Swift.Bool,
+            defaultVoice: Swift.String? = nil,
+            reason: Swift.String? = nil,
+            voices: [VoicesItem]
+        ) {
+            self.available = available
+            self.defaultVoice = defaultVoice
+            self.reason = reason
+            self.voices = voices
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case available
+            case defaultVoice = "default_voice"
+            case reason
+            case voices
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.available = try c.decode(Swift.Bool.self, forKey: .available)
+            self.defaultVoice = try c.decodeIfPresent(Swift.String.self, forKey: .defaultVoice)
+            self.reason = try c.decodeIfPresent(Swift.String.self, forKey: .reason)
+            self.voices = try c.decodeIfPresent([VoicesItem].self, forKey: .voices) ?? []
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(available, forKey: .available)
+            try c.encodeIfPresent(defaultVoice, forKey: .defaultVoice)
+            try c.encodeIfPresent(reason, forKey: .reason)
+            try c.encode(voices, forKey: .voices)
+        }
+    }
+
+    /// off: silent. popout: speaks only in the companion pop-out. always: speaks new replies in the chat too (the companion's mute still wins).
+    public struct PersonaVoiceMode: APIStringEnum {
+        public let rawValue: Swift.String
+        public init(rawValue: Swift.String) { self.rawValue = rawValue }
+        public static let off = PersonaVoiceMode(rawValue: "off")
+        public static let popout = PersonaVoiceMode(rawValue: "popout")
+        public static let always = PersonaVoiceMode(rawValue: "always")
+        public static let allKnown: [PersonaVoiceMode] = [off, popout, always]
     }
 
     /// What the persona does besides chatting. tickets: it can be assigned tickets and runs
@@ -26981,6 +27129,36 @@ extension API {
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encode(characterSvg, forKey: .characterSvg)
             try c.encodeIfPresent(fallbackPngBase64, forKey: .fallbackPngBase64)
+        }
+    }
+
+    public struct PreviewPersonaVoiceBody: Codable, Sendable, Equatable {
+        public var voiceName: Swift.String?
+        public var voiceStyle: Swift.String?
+
+        public init(
+            voiceName: Swift.String? = nil,
+            voiceStyle: Swift.String? = nil
+        ) {
+            self.voiceName = voiceName
+            self.voiceStyle = voiceStyle
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case voiceName = "voice_name"
+            case voiceStyle = "voice_style"
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.voiceName = try c.decodeIfPresent(Swift.String.self, forKey: .voiceName)
+            self.voiceStyle = try c.decodeIfPresent(Swift.String.self, forKey: .voiceStyle)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeIfPresent(voiceName, forKey: .voiceName)
+            try c.encodeIfPresent(voiceStyle, forKey: .voiceStyle)
         }
     }
 

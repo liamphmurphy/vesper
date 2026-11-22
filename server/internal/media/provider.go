@@ -112,3 +112,38 @@ type VideoGenerator interface {
 	Provider
 	GenerateVideo(ctx context.Context, req VideoRequest, onProgress func(VideoProgress)) (VideoClip, error)
 }
+
+// SpeechRequest describes a text-to-speech request across all adapters.
+type SpeechRequest struct {
+	// Text is what is spoken: plain prose, already stripped of markdown.
+	Text string
+	// Voice is the adapter's voice name; empty takes the adapter's default.
+	Voice string
+	// Style is a short natural-language delivery direction ("warm, unhurried").
+	Style string
+	Model string
+}
+
+// SpeechClip is the normalized speech payload returned by an adapter: a WAV
+// file the clients can play as is.
+type SpeechClip struct {
+	Data        []byte
+	ContentType string
+	DurationMS  int
+	Model       string
+}
+
+// Voice is one voice an adapter offers, with a short description of its tone.
+type Voice struct {
+	Name string
+	Tone string
+}
+
+// SpeechGenerator is implemented by providers that synthesize speech.
+type SpeechGenerator interface {
+	Provider
+	Voices() []Voice
+	// DefaultVoice is spoken when a request names none.
+	DefaultVoice() string
+	GenerateSpeech(ctx context.Context, req SpeechRequest) (SpeechClip, error)
+}
