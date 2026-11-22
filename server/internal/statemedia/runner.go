@@ -146,7 +146,6 @@ type attempt struct {
 	state  State
 	job    uuid.UUID
 	prompt string
-	prevID string
 }
 
 // Start validates the request, queues a new attempt for each state (keeping
@@ -232,7 +231,7 @@ func (r *Runner) Start(ctx context.Context, in StartInput) ([]store.PersonaState
 				if !ok || row.InteractionID == nil || *row.InteractionID == "" {
 					return apperr.Invalid("tweak", "the %s loop has no earlier clip to edit; generate it first", label(s))
 				}
-				a.prevID, a.prompt = *row.InteractionID, TweakPrompt(tweak)
+				a.prompt = TweakPrompt(s, tweak)
 			}
 			row, err := q.QueuePersonaStateMedia(ctx, store.QueuePersonaStateMediaParams{
 				PersonaID: in.PersonaID, State: string(s), JobID: a.job,
@@ -332,12 +331,11 @@ func (r *Runner) one(parent context.Context, persona uuid.UUID, gen media.VideoG
 	// frame and loops; a follow-up edit restates them to stay pinned to it.
 	frame := &media.VideoFrame{Data: portrait, ContentType: "image/jpeg"}
 	req := media.VideoRequest{
-		Prompt:                a.prompt,
-		FirstFrame:            frame,
-		LastFrame:             frame,
-		AspectRatio:           AspectRatio,
-		DurationSec:           ClipSeconds,
-		PreviousInteractionID: a.prevID,
+		Prompt:      a.prompt,
+		FirstFrame:  frame,
+		LastFrame:   frame,
+		AspectRatio: AspectRatio,
+		DurationSec: ClipSeconds,
 	}
 	clipOut, err := gen.GenerateVideo(ctx, req, func(p media.VideoProgress) {
 		// The provider's 0-100 is the first 70% of the job; matting is the rest.

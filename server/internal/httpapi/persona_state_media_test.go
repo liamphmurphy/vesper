@@ -205,7 +205,10 @@ func TestPersonaStateMediaTweakReplacesOneState(t *testing.T) {
 	}
 	calls := e.ctrl.VideoRequests()
 	last := calls[len(calls)-1]
-	if !strings.HasPrefix(last.PreviousInteractionID, "fake-interaction-") || !strings.HasPrefix(last.Prompt, "Tap the chin more slowly.") || last.FirstFrame == nil {
+	// A tweak is a fresh, bookended generation with the tweak as extra direction,
+	// never a continuation: continuing the conversation made Omni return the old
+	// take followed by the new one, which looped as both.
+	if last.PreviousInteractionID != "" || !strings.Contains(last.Prompt, "is thinking") || !strings.HasSuffix(last.Prompt, "Additional direction: Tap the chin more slowly.") || last.FirstFrame == nil || last.LastFrame == nil {
 		t.Fatalf("tweak request = %+v", last)
 	}
 	// The replaced loop and head blobs are gone; the count is unchanged.
