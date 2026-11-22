@@ -19,6 +19,8 @@ final class NativeScreenContext {
     @ObservationIgnored var onChromeChange: ((NativeChrome) -> Void)?
     /// The window around the tab, for toasts, shortcuts, Quick Look and its undo manager.
     @ObservationIgnored var window: () -> MainWindowController? = { nil }
+    /// The server root this screen connects to (local stack or a remote Tailscale host).
+    @ObservationIgnored var baseURL: () -> URL? = { nil }
     @ObservationIgnored private let open: (String, Bool) -> Void
 
     init(match: NativeRouteMatch, store: QueryStore, open: @escaping (_ path: String, _ newTab: Bool) -> Void) {
@@ -47,6 +49,22 @@ final class NativeScreenContext {
     /// Opens an http(s) link in the default browser (pull requests, results on GitHub).
     func openExternal(_ href: String) {
         if let url = URL(string: href), url.scheme == "https" || url.scheme == "http" { NSWorkspace.shared.open(url) }
+    }
+
+    /// Resolves an API or media path relative to the active server `baseURL`, or returns an http(s) URL as-is.
+    func resolvedURL(_ path: String) -> URL? {
+        if let url = URL(string: path), let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
+            return url
+        }
+        guard let base = baseURL() else { return nil }
+        return URL(string: path, relativeTo: base)?.absoluteURL
+    }
+
+    /// Copies plain text to the system pasteboard without coupling SwiftUI views to AppKit.
+    func copyToClipboard(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
     }
 
     /// The same screen with new parameters (e.g. another ticket): the screen keeps its state.

@@ -213,6 +213,7 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
             }
             context.onChromeChange = { [weak self] chrome in self?.state.native = chrome }
             context.window = { [weak self] in self?.host }
+            context.baseURL = { [weak self] in self?.app.connection?.baseURL }
             state.native = context.chrome
             let host = NativeScreenHostController(context: context, state: state)
             nativeHost = host
