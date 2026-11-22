@@ -14,6 +14,8 @@ public enum NativeScreen: String, Sendable, CaseIterable {
     case scenesDebug
     case dev
     case http
+    case learn
+    case learnCourse
 }
 
 /// A path resolved to a native screen, with its path parameters and query items (decoded).
@@ -63,6 +65,9 @@ public struct NativeRouteRegistry: Sendable {
         NativeRoute("/dev", .dev),
         // Native HTTP client workbench.
         NativeRoute("/http", .http),
+        // Guided Learning modules and course study/build screens.
+        NativeRoute("/learn", .learn),
+        NativeRoute("/learn/:id", .learnCourse),
     ]
 
     /// The app's registry. Debug-only screens are enabled only when `debug` is set.

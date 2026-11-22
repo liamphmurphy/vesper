@@ -283,4 +283,11 @@ final class LiveUpdatesTests: XCTestCase {
         XCTAssertTrue(LiveUpdates.invalidation(for: ServerEvent(type: "space.updated")).matches(key("/chat-spaces", "/chat-spaces")))
         XCTAssertTrue(LiveUpdates.invalidation(for: ServerEvent(type: "persona.updated")).matches(key("/personas", "/personas")))
     }
+
+    func testLearnHintsInvalidateCourses() {
+        XCTAssertTrue(LiveUpdates.invalidation(for: ServerEvent(type: "course.updated")).matches(key("/learn/courses", "/learn/courses")))
+        XCTAssertTrue(LiveUpdates.invalidation(for: ServerEvent(type: "course.updated")).matches(key("/learn/courses/c1", "/learn/courses/{id}")))
+        XCTAssertTrue(LiveUpdates.invalidation(for: ServerEvent(type: "learning.updated")).matches(key("/learn/courses/c1", "/learn/courses/{id}")))
+        XCTAssertTrue(LiveUpdates.invalidation(for: ServerEvent(type: "run.updated")).matches(key("/learn/courses/c1", "/learn/courses/{id}")))
+    }
 }
