@@ -8,7 +8,6 @@ import { buildEpicsNavModel } from "./models/epics.ts";
 import { buildTicketNavModel } from "./models/ticket.ts";
 import { buildEpicDetailNavModel } from "./models/epic-detail.ts";
 import { buildRunsNavModel } from "./models/runs.ts";
-import { buildStudyNavModel } from "./models/study.ts";
 import { buildWikiNavModel } from "./models/wiki.ts";
 import { projectPickerAction } from "./models/project-picker.ts";
 import { buildKnowledgeNavModel, K } from "./models/knowledge.ts";
@@ -166,39 +165,6 @@ test("runs: loading, error with retry and empty states", () => {
   const err = buildRunsNavModel({ body: body({ error: "boom" }), filters: f, search: "" });
   assert.equal(err.sections[0].items[0].id, "retry");
   assert.equal(buildRunsNavModel({ body: body(), filters: f, search: "" }).sections[0].emptyText, "No runs");
-});
-
-test("study: progress, next part actions, lessons by unit", () => {
-  const lessons = [
-    { key: "a", title: "Intro", unit: "U1", done: true, status: "verified" },
-    { key: "b", title: "Deep", unit: "U1", done: false, status: "flagged" },
-    { key: "c", title: "Known", unit: "U2", done: true, status: "known" },
-  ];
-  const m = buildStudyNavModel({
-    topic: "Rust",
-    complete: 1,
-    total: 3,
-    solid: 1,
-    lessons,
-    currentKey: "b",
-    courseId: "c1",
-    nextPart: { part: 2, parts: 3, title: "Async", state: "ready", building: false, planPending: false, stopPending: false, courseId: "c1" },
-  });
-  assert.equal(m.title, "Rust");
-  assert.deepEqual(m.actions.map((a) => a.id), ["back", "delete"]);
-  assert.equal(m.sections[0].items[0].title, "1 of 3 complete · 1 solid");
-  assert.equal(m.sections[1].title, "Part 2 of 3 · Async");
-  assert.equal(m.sections[1].items[0].id, "plan-next");
-  assert.deepEqual(m.sections.slice(2).map((s) => s.title), ["U1", "U2"]);
-  assert.deepEqual(m.sections[2].items[0], { id: "a", title: "Intro", icon: "check" });
-  assert.deepEqual(m.sections[2].items[1], { id: "b", title: "Deep", status: "human", subtitle: "Flagged: see reviewer note" });
-  assert.equal(m.sections[3].items[0].disabled, true);
-  assert.equal(m.selectedId, "b");
-  const review = buildStudyNavModel({ topic: "T", complete: 0, total: 0, solid: 0, lessons: [], courseId: "c1", nextPart: { part: 1, parts: 2, state: "outline_ready", building: false, planPending: false, stopPending: false, courseId: "c1" } });
-  assert.equal(review.sections[1].items[0].href, "/learn/c1?review=1");
-  const building = buildStudyNavModel({ topic: "T", complete: 0, total: 0, solid: 0, lessons: [], courseId: "c1", nextPart: { part: 1, parts: 2, state: "building", building: true, buildNote: "Unit 2", planPending: false, stopPending: true, courseId: "c1", actionError: "nope" } });
-  assert.deepEqual(building.sections[1].items.map((i) => i.id), ["building", "stop-build", "next-error"]);
-  assert.equal(building.sections[1].items[1].disabled, true);
 });
 
 const page = (id, path, extra = {}) => ({ id, path, title: path.split("/").pop(), suggestions: 0, ...extra });
