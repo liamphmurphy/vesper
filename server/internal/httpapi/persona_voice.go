@@ -24,7 +24,10 @@ import (
 // kept in the blob store, so replaying it costs nothing.
 
 const (
-	speechTimeout = 90 * time.Second
+	// speechCacheVersion: 2 drops clips made before the 3.8 WAV trailer and
+	// spoken-style fixes, which had static at the end or read the style aloud.
+	speechCacheVersion = "2"
+	speechTimeout      = 90 * time.Second
 	// maxSpeechBytes bounds a cached clip read back (~120 words of 24 kHz WAV is ~2-3 MB).
 	maxSpeechBytes = 16 << 20
 )
@@ -142,8 +145,9 @@ func (s *Server) GetChatMessageSpeech(ctx context.Context, req api.GetChatMessag
 		return nil, err
 	}
 	// The key covers everything that changes the audio, so a new voice or
-	// style speaks afresh while a replay is served from storage.
-	sum := sha256.Sum256([]byte(desc.ID + "\x00" + p.VoiceName + "\x00" + p.VoiceStyle + "\x00" + text))
+	// style speaks afresh while a replay is served from storage. Bump
+	// speechCacheVersion when the audio itself changes for the same inputs.
+	sum := sha256.Sum256([]byte(speechCacheVersion + "\x00" + desc.ID + "\x00" + p.VoiceName + "\x00" + p.VoiceStyle + "\x00" + text))
 	key := "speech/" + c.ID.String() + "/" + msg.ID.String() + "/" + hex.EncodeToString(sum[:12]) + ".wav"
 	cache := "private, max-age=604800"
 	if obj, err := s.Blobs.Get(ctx, s.ArtifactBucket, key); err == nil {
