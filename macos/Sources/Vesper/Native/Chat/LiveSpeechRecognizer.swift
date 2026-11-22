@@ -1,23 +1,21 @@
 import AVFoundation
 import Speech
 
-/// The person's speech as text, for Live Voice: the microphone through `AVAudioEngine` into
-/// `SFSpeechRecognizer`, on-device when the Mac supports the language, so speech stays local.
-/// One recognition request per utterance; `stop()` closes the microphone between them.
+/// The person's speech as text, for Live Voice: the microphone through `AVAudioEngine` into a
+/// `SpeechAnalyzer` running Apple's on-device `SpeechTranscriber` model, so speech never leaves
+/// the Mac. One analyzer per utterance; between utterances the microphone is closed.
 @Observable
 @MainActor
 final class LiveSpeechRecognizer {
     enum Problem: Equatable {
         case microphoneDenied
-        case speechDenied
         case unavailable
         case failed(String)
 
         var message: String {
             switch self {
             case .microphoneDenied: "Vesper can't use the microphone. Allow it in System Settings → Privacy & Security → Microphone."
-            case .speechDenied: "Vesper can't use speech recognition. Allow it in System Settings → Privacy & Security → Speech Recognition."
-            case .unavailable: "Speech recognition isn't available for your language right now."
+            case .unavailable: "On-device speech recognition isn't available for your language on this Mac."
             case let .failed(reason): reason
             }
         }
@@ -26,37 +24,44 @@ final class LiveSpeechRecognizer {
         var settingsURL: URL? {
             switch self {
             case .microphoneDenied: URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
-            case .speechDenied: URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition")
             case .unavailable, .failed: nil
             }
         }
     }
 
-    /// What the person has said in the current utterance so far.
+    /// What the person has said in the current utterance so far: the transcriber's final text
+    /// followed by its volatile guess at the latest words.
     private(set) var transcript = ""
     /// Input loudness, 0…1, for the meter.
     private(set) var level: Float = 0
     private(set) var listening = false
+    /// The language's speech model is downloading (first use only).
+    private(set) var downloadingModel = false
     private(set) var problem: Problem?
     /// When the transcript last changed, for end-of-utterance.
     @ObservationIgnored private(set) var lastChange = Date()
 
-    /// The recognizer ended an utterance by itself (its own time limit or a final result) with
-    /// what was said; the microphone is already closed.
-    @ObservationIgnored var onEnded: ((String) -> Void)?
-
     @ObservationIgnored private let engine = AVAudioEngine()
-    @ObservationIgnored private let recognizer = SFSpeechRecognizer(locale: .current) ?? SFSpeechRecognizer()
-    @ObservationIgnored private var request: SFSpeechAudioBufferRecognitionRequest?
-    @ObservationIgnored private var task: SFSpeechRecognitionTask?
-    /// Bumped on every start and stop so late callbacks from an earlier request are dropped.
+    /// The transcriber's language for the person's locale, set by `prepare()`.
+    @ObservationIgnored private var locale: Locale?
+    /// The audio format the analyzer wants; the microphone is converted to it.
+    @ObservationIgnored private var analyzerFormat: AVAudioFormat?
+    @ObservationIgnored private var utterance: Utterance?
+    /// Bumped whenever an utterance ends so late results from it are dropped.
     @ObservationIgnored private var generation = 0
-    /// Errors in a row with nothing heard; past a few it's a real failure, not a restart.
-    @ObservationIgnored private var failures = 0
 
-    /// Asks for microphone and speech recognition access the first time; false (with `problem`
-    /// set) when either is refused.
-    func authorize() async -> Bool {
+    /// The pieces of one utterance's analysis.
+    private struct Utterance {
+        let analyzer: SpeechAnalyzer
+        let input: AsyncStream<AnalyzerInput>.Continuation
+        /// Collects results; its value is the utterance's text once the analyzer finishes.
+        let results: Task<String, Never>
+    }
+
+    /// Asks for the microphone the first time, checks the language is supported on device, and
+    /// downloads its model if the Mac doesn't have it yet. False (with `problem` set) when any of
+    /// that fails.
+    func prepare() async -> Bool {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized: break
         case .notDetermined:
@@ -68,37 +73,64 @@ final class LiveSpeechRecognizer {
             problem = .microphoneDenied
             return false
         }
-        guard await Self.speechAuthorization() == .authorized else {
-            problem = .speechDenied
+        guard SpeechTranscriber.isAvailable, let locale = await SpeechTranscriber.supportedLocale(equivalentTo: .current) else {
+            problem = .unavailable
             return false
         }
+        let transcriber = Self.transcriber(locale)
+        do {
+            if let install = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
+                downloadingModel = true
+                defer { downloadingModel = false }
+                try await install.downloadAndInstall()
+            }
+        } catch {
+            problem = .failed("The speech model didn't download: \(error.localizedDescription)")
+            return false
+        }
+        let natural = engine.inputNode.outputFormat(forBus: 0)
+        guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber], considering: natural) else {
+            problem = .unavailable
+            return false
+        }
+        self.locale = locale
+        analyzerFormat = format
         return true
     }
 
-    /// Opens the microphone for a new utterance.
-    func start() {
-        guard !listening else { return }
-        guard let recognizer, recognizer.isAvailable else {
-            problem = .unavailable
-            return
-        }
-        generation += 1
-        let gen = generation
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        request.shouldReportPartialResults = true
-        request.addsPunctuation = true
-        request.taskHint = .dictation
-        // Local recognition keeps speech on the Mac and has no one-minute limit.
-        if recognizer.supportsOnDeviceRecognition { request.requiresOnDeviceRecognition = true }
+    /// Clears a failure so the microphone can be opened again.
+    func clearProblem() {
+        problem = nil
+    }
 
+    /// Opens the microphone for a new utterance. Audio is queued from the first buffer, so
+    /// nothing said while the analyzer starts is lost.
+    func start() {
+        guard !listening, let locale, let analyzerFormat else { return }
         let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0 else {
+        let micFormat = input.outputFormat(forBus: 0)
+        guard micFormat.sampleRate > 0, micFormat.channelCount > 0 else {
             problem = .failed("No microphone is connected.")
             return
         }
+        let converter: AVAudioConverter?
+        if micFormat == analyzerFormat {
+            converter = nil
+        } else if let made = AVAudioConverter(from: micFormat, to: analyzerFormat) {
+            converter = made
+        } else {
+            problem = .failed("The microphone's audio format isn't supported.")
+            return
+        }
+
+        generation += 1
+        let gen = generation
+        let transcriber = Self.transcriber(locale)
+        let analyzer = SpeechAnalyzer(modules: [transcriber])
+        let (stream, feed) = AsyncStream<AnalyzerInput>.makeStream()
+
         input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: 1024, format: format, block: Self.tap(feeding: request) { [weak self] level in
+        input.installTap(onBus: 0, bufferSize: 4096, format: micFormat, block: Self.tap(converter: converter, to: analyzerFormat, feed: feed) { [weak self] level in
             Task { @MainActor in self?.heard(level: level, gen: gen) }
         })
         engine.prepare()
@@ -106,43 +138,87 @@ final class LiveSpeechRecognizer {
             try engine.start()
         } catch {
             input.removeTap(onBus: 0)
+            feed.finish()
             problem = .failed("The microphone didn't start: \(error.localizedDescription)")
             return
         }
-        self.request = request
-        task = recognizer.recognitionTask(with: request, resultHandler: Self.results { [weak self] update in
-            Task { @MainActor in self?.received(update, gen: gen) }
-        })
+
+        let results = Task { [weak self] () -> String in
+            var finalized = ""
+            var volatile = ""
+            do {
+                try await analyzer.start(inputSequence: stream)
+                for try await result in transcriber.results {
+                    let text = String(result.text.characters)
+                    if result.isFinal {
+                        finalized += text
+                        volatile = ""
+                    } else {
+                        volatile = text
+                    }
+                    self?.heard(transcript: finalized + volatile, gen: gen)
+                }
+            } catch is CancellationError {
+            } catch {
+                self?.failed(error, gen: gen)
+            }
+            return (finalized + volatile).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        utterance = Utterance(analyzer: analyzer, input: feed, results: results)
         transcript = ""
         lastChange = Date()
         problem = nil
         listening = true
     }
 
-    /// Clears a failure so the microphone can be opened again.
-    func clearProblem() {
-        problem = nil
-        failures = 0
+    /// Closes the microphone and settles the utterance: the analyzer finalizes its volatile tail,
+    /// which is more accurate than the live guess. Falls back to what was shown if that takes
+    /// longer than `settleLimit`.
+    func finish() -> Task<String, Never> {
+        let shown = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let current = closeMicrophone() else { return Task { shown } }
+        current.input.finish()
+        return Task {
+            try? await current.analyzer.finalizeAndFinishThroughEndOfInput()
+            let settled = await withTaskGroup(of: String?.self) { group in
+                group.addTask { await current.results.value }
+                group.addTask {
+                    try? await Task.sleep(for: Self.settleLimit)
+                    return nil
+                }
+                let first = await group.next() ?? nil
+                if first == nil {
+                    current.results.cancel()
+                    await current.analyzer.cancelAndFinishNow()
+                }
+                group.cancelAll()
+                return first
+            }
+            return settled.flatMap { $0.isEmpty ? nil : $0 } ?? shown
+        }
     }
 
-    /// Closes the microphone and returns what was said in this utterance.
-    @discardableResult
-    func stop() -> String {
+    /// Closes the microphone and drops the utterance.
+    func stop() {
+        guard let current = closeMicrophone() else { return }
+        current.input.finish()
+        current.results.cancel()
+        Task { await current.analyzer.cancelAndFinishNow() }
+    }
+
+    /// How long `finish()` waits for the final text.
+    static let settleLimit: Duration = .seconds(2)
+
+    private func closeMicrophone() -> Utterance? {
+        guard listening, let current = utterance else { return nil }
         generation += 1
-        // Touching inputNode creates the input unit, so leave it alone if it was never opened.
-        if listening {
-            engine.stop()
-            engine.inputNode.removeTap(onBus: 0)
-        }
-        request?.endAudio()
-        task?.cancel()
-        request = nil
-        task = nil
+        engine.stop()
+        engine.inputNode.removeTap(onBus: 0)
+        utterance = nil
         listening = false
         level = 0
-        let said = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         transcript = ""
-        return said
+        return current
     }
 
     private func heard(level: Float, gen: Int) {
@@ -151,70 +227,62 @@ final class LiveSpeechRecognizer {
         self.level = max(level, self.level * 0.8)
     }
 
-    private func received(_ update: RecognitionUpdate, gen: Int) {
-        guard gen == generation, listening else { return }
-        if let text = update.text, text != transcript {
-            transcript = text
-            lastChange = Date()
-            failures = 0
-        }
-        guard update.isFinal || update.error != nil else { return }
-        // The recognizer ended the request on its own: a final result, its time limit, nothing
-        // heard for a long while, or an error.
-        let said = stop()
-        if !said.isEmpty {
-            onEnded?(said)
-            return
-        }
-        if let error = update.error, !update.noSpeech {
-            failures += 1
-            if failures >= 3 {
-                failures = 0
-                problem = .failed("Speech recognition stopped: \(error)")
-                return
-            }
-        }
-        start()
+    private func heard(transcript text: String, gen: Int) {
+        guard gen == generation else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed != transcript else { return }
+        transcript = trimmed
+        lastChange = Date()
+    }
+
+    private func failed(_ error: Error, gen: Int) {
+        guard gen == generation else { return }
+        stop()
+        problem = .failed("Speech recognition stopped: \(error.localizedDescription)")
+    }
+
+    private static func transcriber(_ locale: Locale) -> SpeechTranscriber {
+        // Progressive: quick volatile results while speaking, replaced by final text.
+        SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
     }
 
     // MARK: - Off the main actor
 
-    /// What a recognition callback carries, copied out of the non-Sendable result.
-    struct RecognitionUpdate: Sendable {
-        var text: String?
-        var isFinal: Bool
-        var error: String?
-        /// "No speech detected": a long silence, not a failure.
-        var noSpeech: Bool
-    }
-
-    /// The audio tap: feeds each buffer to the request and reports its loudness. Built off the
-    /// main actor because the engine calls it on its realtime audio thread.
-    private nonisolated static func tap(feeding request: SFSpeechAudioBufferRecognitionRequest, level: @escaping @Sendable (Float) -> Void) -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void {
-        let request = UncheckedSendableBox(value: request)
+    /// The audio tap: converts each buffer to the analyzer's format, queues it and reports its
+    /// loudness. Built off the main actor because the engine calls it on its realtime thread.
+    private nonisolated static func tap(
+        converter: AVAudioConverter?,
+        to format: AVAudioFormat,
+        feed: AsyncStream<AnalyzerInput>.Continuation,
+        level: @escaping @Sendable (Float) -> Void
+    ) -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void {
+        // Only the audio thread touches the converter after this.
+        let conversion = UncheckedSendableBox(value: (converter: converter, format: format))
         return { buffer, _ in
-            request.value.append(buffer)
             level(loudness(buffer))
+            guard let converted = convert(buffer, with: conversion.value.converter, to: conversion.value.format) else { return }
+            feed.yield(AnalyzerInput(buffer: converted))
         }
     }
 
-    /// The recognition handler, built off the main actor because Speech calls it on its own queue.
-    private nonisolated static func results(_ deliver: @escaping @Sendable (RecognitionUpdate) -> Void) -> @Sendable (SFSpeechRecognitionResult?, Error?) -> Void {
-        { result, error in
-            let nsError = error as NSError?
-            deliver(RecognitionUpdate(
-                text: result?.bestTranscription.formattedString,
-                isFinal: result?.isFinal ?? false,
-                error: nsError?.localizedDescription,
-                noSpeech: nsError?.domain == "kAFAssistantErrorDomain" && nsError?.code == 1110
-            ))
+    private nonisolated static func convert(_ buffer: AVAudioPCMBuffer, with converter: AVAudioConverter?, to format: AVAudioFormat) -> AVAudioPCMBuffer? {
+        guard let converter else { return buffer }
+        let ratio = format.sampleRate / buffer.format.sampleRate
+        let capacity = AVAudioFrameCount((Double(buffer.frameLength) * ratio).rounded(.up)) + 1
+        guard let out = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else { return nil }
+        let supplied = SuppliedOnce()
+        var error: NSError?
+        converter.convert(to: out, error: &error) { _, status in
+            if supplied.done {
+                status.pointee = .noDataNow
+                return nil
+            }
+            supplied.done = true
+            status.pointee = .haveData
+            return buffer
         }
-    }
-
-    private nonisolated static func speechAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
-        await withCheckedContinuation { done in
-            SFSpeechRecognizer.requestAuthorization { done.resume(returning: $0) }
-        }
+        guard error == nil, out.frameLength > 0 else { return nil }
+        return out
     }
 
     /// RMS of the first channel mapped from about -50…0 dBFS to 0…1.
@@ -229,8 +297,12 @@ final class LiveSpeechRecognizer {
     }
 }
 
-/// Hands a value the API doesn't mark Sendable to a callback on another thread. Only for values
-/// that are safe there: the speech request is documented to accept buffers from the audio thread.
+/// Hands a value the API doesn't mark Sendable to the audio thread, which is then its only user.
 private struct UncheckedSendableBox<Value>: @unchecked Sendable {
     let value: Value
+}
+
+/// The converter asks for input until told there's none; each call has exactly one buffer.
+private final class SuppliedOnce: @unchecked Sendable {
+    var done = false
 }

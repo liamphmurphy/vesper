@@ -34,8 +34,7 @@ final class LiveVoiceSession {
 
     func begin(send: @escaping (String) async -> String?) async {
         self.send = send
-        speech.onEnded = { [weak self] said in self?.submit(said) }
-        guard await speech.authorize(), !ended else { return }
+        guard await speech.prepare(), !ended else { return }
         ready = true
         // If the persona is still answering when Live Voice opens, wait for it like any answer.
         if chat.turnRunning || chat.revealing || chat.speaking {
@@ -55,7 +54,6 @@ final class LiveVoiceSession {
         ended = true
         timer?.invalidate()
         timer = nil
-        speech.onEnded = nil
         speech.stop()
         ready = false
     }
@@ -73,8 +71,8 @@ final class LiveVoiceSession {
 
     /// Sends what's been said without waiting for the pause.
     func sendNow() {
-        guard turn.phase == .listening, speech.listening, !speech.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        submit(speech.stop())
+        guard !speech.transcript.isEmpty else { return }
+        endUtterance()
     }
 
     /// Cuts the persona's answer short and listens again.
@@ -90,26 +88,32 @@ final class LiveVoiceSession {
     func retry() {
         speech.clearProblem()
         Task {
-            guard await speech.authorize(), !ended else { return }
+            guard await speech.prepare(), !ended else { return }
             ready = true
             syncMicrophone()
         }
     }
 
     private func checkForPause() {
-        guard turn.phase == .listening, speech.listening,
-              LiveVoiceTurn.utteranceEnded(transcript: speech.transcript, lastChange: speech.lastChange, now: Date())
-        else { return }
-        submit(speech.stop())
+        guard LiveVoiceTurn.utteranceEnded(transcript: speech.transcript, lastChange: speech.lastChange, now: Date()) else { return }
+        endUtterance()
     }
 
-    private func submit(_ said: String) {
-        guard !said.isEmpty, turn.phase == .listening, send != nil else { return }
-        lastSaid = said
+    /// Closes the microphone, waits for the transcriber's final text and sends it.
+    private func endUtterance() {
+        guard turn.phase == .listening, speech.listening, send != nil else { return }
+        lastSaid = speech.transcript
         sendError = nil
         turn.send(lastReplyId: chat.lastReplyId)
-        syncMicrophone()
+        let settling = speech.finish()
         Task {
+            let said = await settling.value
+            guard !said.isEmpty, !ended else {
+                turn.sendFailed()
+                syncMicrophone()
+                return
+            }
+            lastSaid = said
             let problem: String? = await self.send?(said) ?? nil
             if let problem {
                 sendError = problem
@@ -247,6 +251,7 @@ struct LiveVoiceView: View {
 
     private var statusText: String {
         if session.speech.problem != nil { return "Microphone unavailable" }
+        if session.speech.downloadingModel { return "Downloading the speech model…" }
         if !session.ready { return "Starting…" }
         let name = persona?.name ?? "Assistant"
         switch session.turn.phase {

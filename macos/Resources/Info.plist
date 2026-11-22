@@ -40,11 +40,12 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
-	<!-- Live Voice: the person talks with a persona out loud, transcribed on the Mac. -->
+	<!-- Live Voice: the person talks with a persona out loud, transcribed on the Mac by SpeechAnalyzer.
+	     It asks only for the microphone; the speech string covers the framework asking on its own. -->
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Vesper listens while Live Voice is on so you can talk with your persona.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Vesper turns what you say in Live Voice into chat messages, on your Mac when it can.</string>
+	<string>Vesper turns what you say in Live Voice into chat messages, on your Mac.</string>
 	<!-- "Open in editor" opens a terminal command through Terminal. -->
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Vesper opens a run's workspace folder in Terminal when you ask it to.</string>
