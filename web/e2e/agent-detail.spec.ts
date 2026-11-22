@@ -5,44 +5,6 @@ const tab = (page: Page, name: string) => page.getByRole("navigation", { name: "
 
 const SCOPES = { "repo:read": "allowed", "tests:run": "denied", "db:migrate": "requires_approval" };
 
-test("one Personas list: who chats and who works, and a persona's work from its profile", async ({ page }) => {
-  const mock = await installAgentApi(page, { spec: { scopes: SCOPES } });
-  // The old Agents URL lands on the Personas list, showing those that take tickets.
-  await page.goto("/agents");
-  await expect(page).toHaveURL(/\/settings\?section=personas&filter=tickets$/);
-  await expect(page.getByTestId("all-personas")).toHaveAttribute("aria-pressed", "true");
-  const rows = page.getByTestId("persona-list-row");
-  await expect(rows).toHaveCount(1);
-  await expect(rows.first()).toContainText("Atlas");
-  await expect(rows.first()).toContainText("Takes tickets");
-  await expect(rows.first()).toContainText("opus-5.5");
-  // Atlas is working on a ticket right now.
-  await expect(rows.first().getByRole("link", { name: /WEB-7/ })).toBeVisible();
-
-  await page.getByRole("radiogroup", { name: "Show personas" }).getByRole("radio", { name: /^All/ }).click();
-  await expect(rows).toHaveCount(3);
-  const scout = rows.filter({ hasText: "Scout" });
-  await expect(scout).toContainText("Chat");
-  await expect(scout).toContainText("not in chat list");
-  await expect(rows.filter({ hasText: "Hackerman" })).toContainText("Chat · Codes");
-
-  // A persona's Work section switches what it does; its work settings are a link away.
-  await rows.filter({ hasText: "Atlas" }).getByRole("button").first().click();
-  const work = page.getByTestId("persona-work");
-  await expect(work.getByRole("radio", { name: "Takes tickets" })).toHaveAttribute("aria-checked", "true");
-  await expect(work.getByRole("link", { name: "Work settings" })).toHaveAttribute("href", "/agents/atlas?tab=settings");
-
-  await page.getByTestId("all-personas").click();
-  await page.getByRole("radiogroup", { name: "Show personas" }).getByRole("radio", { name: /^All/ }).click();
-  await rows.filter({ hasText: "Hackerman" }).getByRole("button").first().click();
-  await work.getByRole("radio", { name: "Takes tickets" }).click();
-  await expect.poll(() => mock.saved.personas.map((p) => p.body.work)).toEqual(["tickets"]);
-  await expect(work.getByText("@hackerman")).toBeVisible();
-  await work.getByRole("switch", { name: "Show in chat list" }).click();
-  await expect.poll(() => mock.saved.personas.at(-1)?.body.in_chat_list).toBe(false);
-  expect(mock.unhandled).toEqual([]);
-});
-
 test("scopes matrix: every catalog scope, project overrides marked, edits need review", async ({ page }) => {
   const mock = await installAgentApi(page, { spec: { scopes: SCOPES }, override: { scopes: { "db:migrate": "denied", "prod:*": "denied" } } });
   await page.goto("/agents/atlas?tab=scopes");

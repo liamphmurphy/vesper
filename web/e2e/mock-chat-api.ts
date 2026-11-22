@@ -1387,22 +1387,6 @@ export function installChatApi(page: Page, opts: MockOptions = {}) {
   })();
 }
 
-/**
- * Opens an empty conversation, as the command menu's New chat or a persona's profile do. The
- * menu's New chat opens the welcome instead, which only makes the chat with its first message.
- */
-export async function openEmptyChat(page: Page, body: Record<string, unknown> = {}) {
-  if (page.url().startsWith("about:")) await page.goto("/chat?new");
-  const id = await page.evaluate(async (b) => {
-    const r = await fetch("/api/v1/chats", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b) });
-    if (!r.ok) throw new Error(`POST /chats: ${r.status}`);
-    return ((await r.json()) as { id: string }).id;
-  }, body);
-  await page.goto(`/chat/${id}`);
-  await page.getByRole("combobox", { name: "Message" }).waitFor();
-  return id;
-}
-
 const STAGE_ORDER = ["write", "stills", "render", "encode", "save"];
 
 /**
@@ -1465,25 +1449,6 @@ export function mockWav(seconds = 1): Buffer {
 }
 
 /**
- * Answers a request for the mock WAV the way the real server does, including one byte range
- * (206): without ranges Chromium can't seek until the whole file has arrived, which makes any
- * test that scrubs depend on timing.
- */
-export async function fulfillWav(route: Route, seconds = 1): Promise<void> {
-  const body = mockWav(seconds);
-  const range = /^bytes=(\d*)-(\d*)$/.exec(route.request().headers()["range"] ?? "");
-  if (!range) return route.fulfill({ status: 200, contentType: "audio/wav", headers: { "accept-ranges": "bytes" }, body });
-  const start = range[1] === "" ? Math.max(0, body.length - Number(range[2])) : Number(range[1]);
-  const end = range[1] === "" || range[2] === "" ? body.length - 1 : Math.min(Number(range[2]), body.length - 1);
-  if (start >= body.length) return route.fulfill({ status: 416, headers: { "content-range": `bytes */${body.length}` } });
-  return route.fulfill({
-    status: 206, contentType: "audio/wav",
-    headers: { "accept-ranges": "bytes", "content-range": `bytes ${start}-${end}/${body.length}` },
-    body: body.subarray(start, end + 1),
-  });
-}
-
-/**
  * Chat audio at one state: compose, render, check, save, done, failed or stopped, with the
  * progress, checks and waveform the card shows at that point.
  */
@@ -1520,14 +1485,4 @@ export function frameSvg(kind: string, idx: number): string {
     return `<rect x="${x}" y="${280 - h}" width="64" height="${h}" fill="#16122b"/><rect x="${x + 10}" y="${290 - h}" width="6" height="${h * 0.3}" fill="${["#ff2896", "#1ee1ff", "#9646ff", "#ffa528"][i % 4]}"/>`;
   }).join("");
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" width="640" height="360"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#06061a"/><stop offset="1" stop-color="#46104f"/></linearGradient></defs><rect width="640" height="360" fill="url(#g)"/><circle cx="480" cy="68" r="28" fill="#cdd0f0" opacity=".85"/>${towers}<rect y="280" width="640" height="80" fill="#0f0f1c"/><ellipse cx="${220 + idx / 4}" cy="250" rx="46" ry="14" fill="#0a0910"/><circle cx="${266 + idx / 4}" cy="236" r="13" fill="#0a0910"/><text x="12" y="350" fill="#8b8b94" font-family="monospace" font-size="12">${kind} ${idx}</text></svg>`;
-}
-
-/**
- * One option's row in the composer's + menu (the desktop popover), opening the menu if it's closed.
- * The row holds the option's own control, e.g. Research's toggle or the repository picker.
- */
-export async function composerOption(page: Page, option: string) {
-  const menu = page.getByTestId("composer-menu");
-  if (!(await menu.isVisible())) await page.getByTestId("composer-controls").getByRole("button", { name: "Composer options" }).click();
-  return menu.locator(`[data-option="${option}"]`);
 }

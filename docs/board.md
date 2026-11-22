@@ -99,9 +99,8 @@ person reviews it on the board and closes the epic once the gate opens.
 
 ## Verification
 
-`web/e2e-stack/board-flow.spec.ts` runs this whole flow against the real
-stack (Go API, Postgres, SSE, Next; no mocked REST). An agent estimates via
-`/mcp` and the open board shows it live. A person then edits the ticket to
-done in the modal, and the epic gate refuses, then opens after the last
-criterion is checked. Run it with `cd web && npm run e2e:stack`. See
-`web/e2e-stack/README.md`.
+The board is native in the Mac app now, so the web real-stack board spec is
+gone. The agent side is covered by `TestMCPEstimateTicket`,
+`TestMCPEpicCriteria` and `TestPlanningProposalPoints` in
+`server/internal/httpapi/mcp_estimates_test.go`, and the board's columns and
+card reordering by `macos/Tests/VesperCoreTests/TicketsLogicTests.swift`.

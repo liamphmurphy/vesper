@@ -124,16 +124,6 @@ curl -fsS "${SIGNED_IN[@]}" -X POST "$API_URL/api/v1/projects" -H 'content-type:
 # ...and a main agent to chat with (SEED=false creates no agents).
 curl -fsS "${SIGNED_IN[@]}" -X POST "$API_URL/api/v1/agents" -H 'content-type: application/json' \
   -d '{"handle":"e2e-main","name":"E2E main","kind":"main"}' >/dev/null
-# Board flow (board-flow.spec.ts): one epic in E2E. There is no REST endpoint
-# that creates an epic (they come from accepted planning sessions or chat
-# create_epic), so this row is the only fixture written straight to Postgres;
-# its criteria, tickets, estimates and status all go through the real API/MCP.
-psql_run() {
-  if [ -n "$PG_STARTED" ]; then "$REPO/scripts/dev-postgres.sh" psql -v ON_ERROR_STOP=1 -qtA "$@"
-  else psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -qtA "$@"; fi
-}
-psql_run -c "INSERT INTO epics (workspace_id, project_id, name, objective, health)
-  SELECT workspace_id, id, 'Board e2e epic', 'Verify the Kanban flow end to end', 'on_track' FROM projects WHERE key = 'E2E'" >/dev/null
 CATALOG="$(curl -fsS "${SIGNED_IN[@]}" "$API_URL/api/v1/chat-models")"
 for want in 'Claude Sonnet (fake)' 'GPT-5 Codex (fake)' 'gemini-3.8-flash'; do
   grep -q "$want" <<<"$CATALOG" || { echo "chat-models catalog lacks '$want': $CATALOG" >&2; exit 1; }
