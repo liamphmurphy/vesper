@@ -335,11 +335,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         let cmd = NativeCommand.panelEvent(tabId: tabId, event: event, payloadJson: payloadJson)
         if event == "composerDrop" {
             for tab in tabs.list.items where tab.kind == .vesper {
-                tab.bridge?.send(cmd)
+                tab.dispatch(cmd)
             }
             return
         }
-        content.bridge?.send(cmd)
+        content.dispatch(cmd)
     }
 
     private func openInMain(path: String, newTab: Bool) {

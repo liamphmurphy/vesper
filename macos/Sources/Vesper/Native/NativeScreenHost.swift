@@ -21,6 +21,11 @@ final class NativeScreenContext {
     @ObservationIgnored var sidebarView: AnyView? {
         didSet { onSidebarViewChange?(sidebarView) }
     }
+    @ObservationIgnored var onInspectorViewChange: ((((String) -> AnyView?)?) -> Void)?
+    /// Optional custom SwiftUI body per `.native` inspector tab id; returning nil falls back to declarative sections.
+    @ObservationIgnored var inspectorView: ((String) -> AnyView?)? {
+        didSet { onInspectorViewChange?(inspectorView) }
+    }
     /// The window around the tab, for toasts, shortcuts, Quick Look and its undo manager.
     @ObservationIgnored var window: () -> MainWindowController? = { nil }
     /// The server root this screen connects to (local stack or a remote Tailscale host).

@@ -132,10 +132,17 @@ struct InspectorBodyHost: View {
     let openURL: (URL) -> Void
 
     var body: some View {
-        let model = tabs.list.active?.state.inspector
+        let state = tabs.list.active?.state
+        let model = state?.inspector
         if let active = InspectorLogic.activeTab(in: model), active.kind == .native {
-            InspectorBodyView(tab: active, send: send, navigate: navigate, openURL: openURL)
-                .id("\(model?.id ?? ""):\(active.id)")
+            if let custom = state?.nativeInspectorView?(active.id) {
+                custom
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .id("\(model?.id ?? ""):\(active.id)")
+            } else {
+                InspectorBodyView(tab: active, send: send, navigate: navigate, openURL: openURL)
+                    .id("\(model?.id ?? ""):\(active.id)")
+            }
         } else if InspectorLogic.activeTab(in: model) == nil {
             Text("No inspector for this tab.")
                 .font(.callout)
