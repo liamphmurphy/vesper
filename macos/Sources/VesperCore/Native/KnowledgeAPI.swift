@@ -256,6 +256,11 @@ public struct KnowledgePageChange: Codable, Sendable, Equatable {
     public var why: String? { raw["why"]?.stringValue }
     public var state: String? { raw["state"]?.stringValue }
     public var key: String? { raw["key"]?.stringValue }
+    public var index: Int? {
+        if case .int(let value) = raw["index"] { return value }
+        if case .double(let value) = raw["index"] { return Int(value) }
+        return nil
+    }
 
     public init(raw: [String: JSONValue] = [:]) {
         self.raw = raw
@@ -937,6 +942,10 @@ public enum KnowledgeAPI {
             body: .json(body),
             decode: .json
         )
+    }
+
+    public static func updatePage(id: String, body: KnowledgePageInput) -> APIRequest<KnowledgePage> {
+        savePage(id: id, body: body)
     }
 
     public static func movePage(id: String, title: String? = nil, path: String) -> APIRequest<KnowledgePage> {
