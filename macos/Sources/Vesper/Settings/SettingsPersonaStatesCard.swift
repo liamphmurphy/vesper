@@ -52,6 +52,19 @@ struct SettingsPersonaStatesCard: View {
                 }
             }
 
+            Picker("Loop length", selection: Binding(
+                get: { persona.loopSeconds },
+                set: { setLoopSeconds($0) }
+            )) {
+                ForEach(4...10, id: \.self) { s in
+                    Text(s == 8 ? "\(s) seconds (default)" : "\(s) seconds").tag(s)
+                }
+            }
+            .disabled(busy)
+            Text("Each state is one Omni generation either way; longer loops get more movement out of it. Applies to loops generated from now on.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
             Picker("Reply pace", selection: Binding(
                 get: { persona.revealPace.rawValue },
                 set: { setPace($0) }
@@ -179,6 +192,24 @@ struct SettingsPersonaStatesCard: View {
             do {
                 _ = try await store.mutate(API.generatePersonaStateMedia(id: persona.id, body: API.GeneratePersonaStateMedia(states: states, tweak: tweak)))
                 await refresh()
+            } catch {
+                errorMessage = settingsErrorText(error)
+            }
+        }
+    }
+
+    private func setLoopSeconds(_ seconds: Int) {
+        guard let store, seconds != persona.loopSeconds else { return }
+        busy = true
+        errorMessage = nil
+        Task {
+            defer { busy = false }
+            do {
+                _ = try await store.mutate(API.updatePersona(id: persona.id, body: API.PersonaPatch(
+                    loopSeconds: seconds,
+                    revision: persona.revision
+                )))
+                await store.refetch(API.listPersonas())
             } catch {
                 errorMessage = settingsErrorText(error)
             }
