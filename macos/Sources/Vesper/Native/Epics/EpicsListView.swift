@@ -14,6 +14,8 @@ struct EpicsListView: View {
     @State private var projectFilter: String? = nil
     @State private var search = ""
     @State private var selectedEpicId: String? = nil
+    @State private var inspectorOpen = false
+    @State private var inspectorTabId = "context"
     @State private var showCreateSheet = false
     @State private var planProjectKey = ""
     @State private var planGoal = ""
@@ -368,8 +370,8 @@ struct EpicsListView: View {
             )
             return InspectorModel(
                 id: "epics-list",
-                open: false,
-                activeTabId: "context",
+                open: inspectorOpen,
+                activeTabId: inspectorTabId,
                 tabs: [
                     InspectorTab(id: "context", label: "Context", icon: "sidebar", kind: .native, sections: [section]),
                     InspectorTab(id: "chat", label: "Chat", icon: "msg", kind: .companion),
@@ -390,6 +392,14 @@ struct EpicsListView: View {
             switch command {
             case .toolbarAction("epics.new", _):
                 openCreateSheet(projects: projects, effectiveProject: projectFilter)
+            case .inspectorVisibility(let open):
+                inspectorOpen = open
+                context.chrome.inspector?.open = open
+            case .inspectorSelectTab(let tabId):
+                inspectorTabId = tabId
+                inspectorOpen = true
+                context.chrome.inspector?.activeTabId = tabId
+                context.chrome.inspector?.open = true
             case .inspectorAction(_, EpicsLogic.openEpicActionId, _, _):
                 if let id = selectedEpicId { context.navigate(EpicsLogic.epicDetailHref(id)) }
             case .navFilter(EpicsLogic.epicsNavId, EpicsLogic.statusFilterId, let value, _):

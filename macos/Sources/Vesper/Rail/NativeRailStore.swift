@@ -1,0 +1,177 @@
+import Foundation
+import Observation
+import VesperCore
+
+/// App-wide observable source for the native macOS right rail: polls and observes `QueryStore`
+/// (`persona-dock`, `github/review-requests`, `secrets`) alongside `RailInbox`, and owns local
+/// GitHub review filter and dismissal state.
+@MainActor
+@Observable
+final class NativeRailStore {
+    private static let prefsKey = "VesperNativePRReviewFilters"
+    private static let dismissedKey = "VesperNativePRReviewDismissed"
+    private static let personaDockPollInterval: Duration = .seconds(60)
+    private static let reviewsPollInterval: Duration = .seconds(120)
+
+    private static let personaDockRequest = API.getPersonaDock()
+    private static let reviewRequestsRequest = API.listGitHubReviewRequests()
+    private static let secretsRequest = API.listSecrets()
+
+    @ObservationIgnored private let store: QueryStore
+    @ObservationIgnored private let railInbox: RailInbox
+    @ObservationIgnored private var dockPollTask: Task<Void, Never>?
+    @ObservationIgnored private var reviewPollTask: Task<Void, Never>?
+    @ObservationIgnored private var observingQueries = false
+
+    private(set) var isConnected = false
+    private(set) var reviewPrefs: RailLogic.ReviewFilterPrefs
+    private(set) var dismissedReviews: [String: String]
+    private(set) var now = Date()
+
+    init(store: QueryStore, railInbox: RailInbox) {
+        self.store = store
+        self.railInbox = railInbox
+        self.reviewPrefs = RailLogic.parseReviewFilterPrefs(UserDefaults.standard.string(forKey: Self.prefsKey))
+        self.dismissedReviews = RailLogic.parseDismissedReviews(UserDefaults.standard.string(forKey: Self.dismissedKey))
+    }
+
+    func start() {
+        stop()
+        isConnected = true
+        now = Date()
+        store.observe(Self.personaDockRequest)
+        store.observe(Self.reviewRequestsRequest)
+        store.observe(Self.secretsRequest)
+        observingQueries = true
+        store.load(Self.personaDockRequest)
+        store.load(Self.reviewRequestsRequest)
+        store.load(Self.secretsRequest)
+
+        dockPollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.personaDockPollInterval)
+                guard !Task.isCancelled, let self else { return }
+                self.now = Date()
+                _ = await self.store.refetch(Self.personaDockRequest)
+            }
+        }
+        reviewPollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.reviewsPollInterval)
+                guard !Task.isCancelled, let self else { return }
+                _ = await self.store.refetch(Self.reviewRequestsRequest)
+            }
+        }
+    }
+
+    func stop() {
+        dockPollTask?.cancel()
+        dockPollTask = nil
+        reviewPollTask?.cancel()
+        reviewPollTask = nil
+        if observingQueries {
+            store.stopObserving(Self.personaDockRequest.key)
+            store.stopObserving(Self.reviewRequestsRequest.key)
+            store.stopObserving(Self.secretsRequest.key)
+            observingQueries = false
+        }
+        isConnected = false
+    }
+
+    /// Builds the `RailModel` for `tab`, or `nil` while disconnected or showing a playground tab.
+    func model(for tab: WebContentController?, showHarnessActivity: Bool, poppedOut: Bool) -> RailModel? {
+        guard isConnected, let tab, tab.kind == .vesper else { return nil }
+        let inspector = tab.state.inspector
+        let top = RailLogic.effectiveRailTop(
+            nativeActive: tab.state.native != nil,
+            inspector: inspector,
+            poppedOut: poppedOut,
+            pageRailTop: tab.state.rail?.top
+        )
+        let pathname = tab.state.route ?? tab.pendingPath
+        let dockData = store.entry(Self.personaDockRequest).data
+        let reviewsData = store.entry(Self.reviewRequestsRequest).data
+        let secretsData = store.entry(Self.secretsRequest).data
+
+        let needsYou = railInbox.tray.needs.count
+        let approved = railInbox.items.reduce(0) { partial, item in
+            partial + (item.kind == "pr_approved" && InboxTray.isOpen(item) ? 1 : 0)
+        }
+        let review = RailLogic.buildReviewInput(
+            response: reviewsData,
+            dismissed: dismissedReviews,
+            prefs: reviewPrefs,
+            approved: approved
+        )
+        let harnesses: [RailLogic.HarnessInput]? = showHarnessActivity
+            ? RailLogic.harnessRailInputs(RailLogic.connectedHarnesses(dockData?.harnesses ?? []), now: now)
+            : nil
+        let settingsNeedYou = RailLogic.settingsNeedAttention(secretsData)
+
+        return RailLogic.buildModel(
+            dock: top,
+            pathname: pathname,
+            review: review,
+            needsYou: needsYou,
+            harnesses: harnesses,
+            settingsNeedYou: settingsNeedYou
+        )
+    }
+
+    // MARK: - Review actions
+
+    func reviewURL(for id: String) -> String? {
+        store.entry(Self.reviewRequestsRequest).data?.items.first { $0.id == id }?.url
+    }
+
+    func refreshReviews() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if let client = self.store.client,
+               let fresh = try? await client.send(API.listGitHubReviewRequests(refresh: true)) {
+                self.store.setData(fresh, for: Self.reviewRequestsRequest)
+            } else {
+                _ = await self.store.refetch(Self.reviewRequestsRequest)
+            }
+        }
+    }
+
+    func toggleReviewPref(_ key: RailLogic.ReviewPrefKey) {
+        var next = reviewPrefs
+        switch key {
+        case .direct: next.direct.toggle()
+        case .team: next.team.toggle()
+        }
+        reviewPrefs = next
+        if let encoded = RailLogic.encodeReviewFilterPrefs(next) {
+            UserDefaults.standard.set(encoded, forKey: Self.prefsKey)
+        }
+    }
+
+    func dismissReview(id: String) {
+        guard let item = store.entry(Self.reviewRequestsRequest).data?.items.first(where: { $0.id == id }) else { return }
+        saveDismissed(RailLogic.dismiss([item], in: dismissedReviews))
+    }
+
+    func clearVisibleReviews() {
+        let all = store.entry(Self.reviewRequestsRequest).data?.items ?? []
+        let visible = RailLogic.filterReviews(RailLogic.excludeDismissed(all, dismissed: dismissedReviews), prefs: reviewPrefs)
+        guard !visible.isEmpty else { return }
+        saveDismissed(RailLogic.dismiss(visible, in: dismissedReviews))
+    }
+
+    func restoreDismissedReviews() {
+        let all = store.entry(Self.reviewRequestsRequest).data?.items ?? []
+        let hidden = RailLogic.filterReviews(all, prefs: reviewPrefs).filter { RailLogic.isDismissed($0, in: dismissedReviews) }
+        guard !hidden.isEmpty else { return }
+        saveDismissed(RailLogic.restore(hidden, from: dismissedReviews))
+    }
+
+    private func saveDismissed(_ next: [String: String]) {
+        guard next != dismissedReviews else { return }
+        dismissedReviews = next
+        if let encoded = RailLogic.encodeDismissedReviews(next) {
+            UserDefaults.standard.set(encoded, forKey: Self.dismissedKey)
+        }
+    }
+}

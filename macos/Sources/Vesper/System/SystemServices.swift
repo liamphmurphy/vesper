@@ -23,6 +23,8 @@ final class SystemServices {
     private(set) var items: [InboxItem] = []
     /// The inbox as the right rail's Needs-you popover reads it (observable; `items` isn't).
     let railInbox = RailInbox()
+    /// Native data source for the window right rail (PR reviews, Needs you, harnesses, Settings).
+    lazy var nativeRail = NativeRailStore(store: store, railInbox: railInbox)
     private(set) var liveRuns: [RunSummary] = []
     private(set) var badgeCount = 0
     private(set) var pausedByVesper = Set<String>()
@@ -127,6 +129,7 @@ final class SystemServices {
         eventStream.stop()
         inboxMonitor.stop()
         runMonitor.stop()
+        nativeRail.stop()
         dock.stopPersonaRefresh()
         power.reset()
         items = []
@@ -147,6 +150,7 @@ final class SystemServices {
         eventStream.start(client: client)
         inboxMonitor.start(client: client)
         runMonitor.start(client: client)
+        nativeRail.start()
         dock.startPersonaRefresh(client: client)
         SafariExtensionLink.refresh(client: client)
         power.applyThermal()

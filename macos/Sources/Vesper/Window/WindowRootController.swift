@@ -56,6 +56,7 @@ final class WindowRootController: NSViewController, NSUserInterfaceValidations {
     func installRail(
         tabs: TabsModel,
         showHarnessActivity: @escaping () -> Bool = { true },
+        isInspectorPoppedOut: @escaping () -> Bool = { false },
         send: @escaping (NativeCommand) -> Void,
         services: @escaping () -> SystemServices?
     ) {
@@ -67,7 +68,14 @@ final class WindowRootController: NSViewController, NSUserInterfaceValidations {
         if isViewLoaded {
             attachRail(bar, to: view)
         }
-        track({ [weak tabs] in (tabs?.list.active?.state.rail, showHarnessActivity()) }) { [weak self] model, showHarness in
+        track({ [weak tabs] () -> (RailModel?, Bool) in
+            let showHarness = showHarnessActivity()
+            let poppedOut = isInspectorPoppedOut()
+            let active = tabs?.list.active
+            let model = services()?.nativeRail.model(for: active, showHarnessActivity: showHarness, poppedOut: poppedOut)
+                ?? active?.state.rail
+            return (model, showHarness)
+        }) { [weak self] model, showHarness in
             self?.railWidth?.constant = model == nil ? 0 : RailBarView.width
             self?.rail?.apply(model, showHarnessActivity: showHarness)
         }

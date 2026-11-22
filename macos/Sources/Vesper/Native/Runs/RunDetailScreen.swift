@@ -821,6 +821,7 @@ struct RunDetailScreen: View {
             return
         case .inspectorSelectTab(let tabId):
             model.inspectorTabId = tabId
+            model.inspectorOpen = true
             return
         case .inspectorAction(_, let actionId, _, _):
             if actionId == "view:details" { model.mode = model.mode == .trace ? .thread : .trace }

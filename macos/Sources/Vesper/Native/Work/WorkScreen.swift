@@ -225,6 +225,9 @@ struct WorkScreen: View {
         case .inspectorVisibility(let open):
             model.companionOpen = open
             return
+        case .inspectorSelectTab:
+            model.companionOpen = true
+            return
         default:
             break
         }

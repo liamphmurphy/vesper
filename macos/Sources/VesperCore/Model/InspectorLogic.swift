@@ -3,6 +3,35 @@ import Foundation
 /// Pure visibility and tab-routing helpers for the native macOS inspector split item.
 public enum InspectorLogic {
     private static let railDockTabPrefix = "dock.tab:"
+    public static let defaultCompanionModelId = "companion"
+    public static let defaultCompanionTabId = "chat"
+
+    /// Default companion inspector (`WorkChat` tab) shown on native screens that don't publish
+    /// a custom `InspectorModel` of their own.
+    public static func defaultCompanion(open: Bool, path: String?) -> InspectorModel {
+        InspectorModel(
+            id: defaultCompanionModelId,
+            open: open,
+            activeTabId: defaultCompanionTabId,
+            tabs: [InspectorTab(id: defaultCompanionTabId, label: "Chat", icon: "msg", kind: .companion)],
+            companion: CompanionContext(path: path)
+        )
+    }
+
+    /// Resolves the inspector shown for a tab: a native screen uses its own `InspectorModel` when
+    /// it publishes one, else the native default companion; web screens keep `pageInspector`.
+    public static func effectiveInspector(
+        nativeActive: Bool,
+        nativeInspector: InspectorModel?,
+        pageInspector: InspectorModel?,
+        defaultCompanionOpen: Bool,
+        path: String?
+    ) -> InspectorModel? {
+        if nativeActive {
+            return nativeInspector ?? defaultCompanion(open: defaultCompanionOpen, path: path)
+        }
+        return pageInspector
+    }
 
     /// The active tab in `model`, falling back to its first tab when `activeTabId` isn't present.
     public static func activeTab(in model: InspectorModel?) -> InspectorTab? {

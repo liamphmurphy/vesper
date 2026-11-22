@@ -194,6 +194,24 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
     func dispatch(_ command: NativeCommand) {
         if case .navigate(let path) = command {
             navigate(path: path)
+        } else if nativeHost != nil, state.usesDefaultCompanion {
+            switch command {
+            case .inspectorVisibility(let open):
+                state.setDefaultCompanionOpen(open)
+                return
+            case .inspectorSelectTab(let tabId):
+                if tabId == InspectorLogic.defaultCompanionTabId {
+                    state.setDefaultCompanionOpen(true)
+                }
+                return
+            default:
+                break
+            }
+            if let nativeHost, NativeCommandRouting.isScreenCommand(command, navigatorId: nativeHost.context.chrome.navigator?.id) {
+                nativeHost.context.onCommand?(command)
+            } else {
+                bridge?.send(command)
+            }
         } else if let nativeHost, NativeCommandRouting.isScreenCommand(command, navigatorId: nativeHost.context.chrome.navigator?.id) {
             nativeHost.context.onCommand?(command)
         } else {
@@ -207,6 +225,9 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
     private func syncNativeScreen(path: String) {
         guard kind == .vesper else { return }
         let match = app.nativeRoutes.resolve(path)
+        if let match {
+            state.route = match.path
+        }
         if let match, let nativeHost, nativeHost.context.match.screen.hostGroup == match.screen.hostGroup {
             nativeHost.context.update(match: match)
             return

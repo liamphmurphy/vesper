@@ -1,6 +1,13 @@
 import AppKit
+import Observation
 import SwiftUI
 import VesperCore
+
+@MainActor
+@Observable
+private final class InspectorPopoutState {
+    var isPoppedOut = false
+}
 
 /// Hosts the native inspector split pane: full-height vibrancy backdrop, compact header strip,
 /// declarative SwiftUI `InspectorBodyView`, the window's persistent `CompanionWebController`, and
@@ -21,7 +28,8 @@ final class InspectorViewController: NSViewController {
     private var headerHost: NSHostingView<InspectorHeaderView>?
     private var nativeHost: NSHostingController<InspectorBodyHost>?
     private var popout: InspectorPopoutController?
-    private(set) var isPoppedOut = false
+    private let popoutState = InspectorPopoutState()
+    var isPoppedOut: Bool { popoutState.isPoppedOut }
     weak var shellHost: (any ShellHostActions)? {
         didSet {
             companion.shellHost = shellHost
@@ -115,8 +123,9 @@ final class InspectorViewController: NSViewController {
 
         attachBodyContainer(to: backdrop)
 
-        track({ [weak tabs] () -> (InspectorModel?, String?, [String]) in
-            guard let tabs else { return (nil, nil, []) }
+        track({ [weak tabs, weak popoutState] () -> (InspectorModel?, String?, [String], Bool) in
+            let poppedOut = popoutState?.isPoppedOut ?? false
+            guard let tabs else { return (nil, nil, [], poppedOut) }
             let model = tabs.list.active?.state.inspector
             let route = tabs.list.active?.state.route
             var seen = Set<String>()
@@ -128,8 +137,8 @@ final class InspectorViewController: NSViewController {
                     }
                 }
             }
-            return (model, route, keepKeys)
-        }) { [weak self] model, route, keepKeys in
+            return (model, route, keepKeys, poppedOut)
+        }) { [weak self] model, route, keepKeys, _ in
             self?.apply(model, route: route, keepKeys: keepKeys)
         }
     }
@@ -160,9 +169,8 @@ final class InspectorViewController: NSViewController {
     private func apply(_ model: InspectorModel?, route: String?, keepKeys: [String]) {
         let active = InspectorLogic.activeTab(in: model)
         let isCompanion = active?.kind == .companion
-        let isNative = active?.kind == .native
         let isPanel = active?.kind == .panel
-        nativeHost?.view.isHidden = !isNative
+        nativeHost?.view.isHidden = isCompanion || isPanel
         companion.webView.isHidden = !isCompanion
         panelWeb.webView.isHidden = !isPanel
         if isCompanion && (model?.open == true || isPoppedOut) {
@@ -209,7 +217,7 @@ final class InspectorViewController: NSViewController {
 
     private func popOut() {
         guard !isPoppedOut else { return }
-        isPoppedOut = true
+        popoutState.isPoppedOut = true
         headerHost?.rootView = makeHeaderView()
         let active = InspectorLogic.activeTab(in: tabs.list.active?.state.inspector)
         let activeTitle = active?.label ?? "Inspector"
@@ -232,7 +240,7 @@ final class InspectorViewController: NSViewController {
 
     private func dockBack(notify: Bool) {
         guard isPoppedOut else { return }
-        isPoppedOut = false
+        popoutState.isPoppedOut = false
         let existing = popout
         popout = nil
         existing?.closeSilently()

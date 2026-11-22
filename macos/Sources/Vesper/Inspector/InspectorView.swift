@@ -136,6 +136,12 @@ struct InspectorBodyHost: View {
         if let active = InspectorLogic.activeTab(in: model), active.kind == .native {
             InspectorBodyView(tab: active, send: send, navigate: navigate, openURL: openURL)
                 .id("\(model?.id ?? ""):\(active.id)")
+        } else if InspectorLogic.activeTab(in: model) == nil {
+            Text("No inspector for this tab.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(20)
         } else {
             Color.clear
         }
