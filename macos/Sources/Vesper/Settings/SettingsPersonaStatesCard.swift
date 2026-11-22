@@ -5,6 +5,7 @@ import VesperCore
 /// Generation runs on the server; this polls the list while any state is queued or running.
 struct SettingsPersonaStatesCard: View {
     let aux: AuxWindows
+    @Bindable var navigation: SettingsNavigation
     let persona: API.Persona
 
     @State private var selected: API.PersonaState = .idle
@@ -87,6 +88,11 @@ struct SettingsPersonaStatesCard: View {
                 Text("Uses the persona's reference image, else its photo, and the workspace's video provider.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Button("Media providers…") {
+                    navigation.navigate("/settings?section=workspace#media")
+                }
+                .buttonStyle(.link)
+                .font(.caption)
             }
         }
         .task(id: persona.id) { await refresh() }

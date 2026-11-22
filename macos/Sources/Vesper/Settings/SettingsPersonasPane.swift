@@ -392,9 +392,9 @@ private struct PersonaDetailView: View {
                 .disabled(busy || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
-        SettingsPersonaStatesCard(aux: aux, persona: persona)
+        SettingsPersonaStatesCard(aux: aux, navigation: navigation, persona: persona)
             .id(persona.id)
-        SettingsPersonaVoiceCard(aux: aux, persona: persona)
+        SettingsPersonaVoiceCard(aux: aux, navigation: navigation, persona: persona)
             .id(persona.id)
     }
 
