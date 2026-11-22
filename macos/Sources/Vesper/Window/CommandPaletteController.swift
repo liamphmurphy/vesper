@@ -269,6 +269,11 @@ final class CommandPaletteController: NSObject, NSWindowDelegate, WKScriptMessag
                 ShellBridge.send(.paletteOpen(request: pendingRequest), to: webView)
             }
         case .openInMain(let path, let newTab):
+            if SettingsRouteResolver.resolve(path) != nil {
+                close(restoreFocus: false)
+                _ = aux?.app?.handleSettingsPath(path, from: targetController?.window)
+                return
+            }
             close(restoreFocus: true)
             if newTab {
                 aux?.app?.openVesperTab(path: path, nextTo: targetController?.window)
