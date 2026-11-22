@@ -69,6 +69,46 @@ func (r *Registry) HasCapability(id string, cap Capability) bool {
 	return ok && e.Descriptor.Supports(cap)
 }
 
+// EntriesForCapability returns all registered entries that advertise cap, in
+// registration order.
+func (r *Registry) EntriesForCapability(cap Capability) []Entry {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var out []Entry
+	for _, id := range r.order {
+		if e := r.entries[id]; e.Descriptor.Supports(cap) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// BuildMusic constructs a MusicGenerator instance for id from cfg.
+func (r *Registry) BuildMusic(id string, cfg ResolvedConfig) (MusicGenerator, error) {
+	p, err := r.Build(id, cfg)
+	if err != nil {
+		return nil, err
+	}
+	gen, ok := p.(MusicGenerator)
+	if !ok {
+		return nil, fmt.Errorf("media: provider %q does not implement MusicGenerator", id)
+	}
+	return gen, nil
+}
+
+// BuildVideo constructs a VideoGenerator instance for id from cfg.
+func (r *Registry) BuildVideo(id string, cfg ResolvedConfig) (VideoGenerator, error) {
+	p, err := r.Build(id, cfg)
+	if err != nil {
+		return nil, err
+	}
+	gen, ok := p.(VideoGenerator)
+	if !ok {
+		return nil, fmt.Errorf("media: provider %q does not implement VideoGenerator", id)
+	}
+	return gen, nil
+}
+
 // RegisterLocalMLXPlaceholder registers the extensible Local MLX slot shown in
 // Settings so future Apple Silicon adapters slot in cleanly.
 func RegisterLocalMLXPlaceholder(reg *Registry) {
