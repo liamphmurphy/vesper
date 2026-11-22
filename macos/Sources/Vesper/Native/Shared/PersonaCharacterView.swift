@@ -2,7 +2,7 @@ import SwiftUI
 import VesperCore
 
 /// Renders a custom 64x64 animated SVG persona character:
-/// - `active == true`: uses the single pooled live `WKWebView` with CSS animations (frozen when Reduce Motion is enabled).
+/// - `active == true`: uses a pooled live `WKWebView` with CSS animations (frozen when Reduce Motion is enabled).
 /// - `active == false`: uses a cached offscreen snapshot with zero live web views.
 struct PersonaCharacterView: View {
     let svg: String
@@ -42,7 +42,7 @@ struct PersonaCharacterView: View {
         let pad = framed ? max(1, (size * 0.06).rounded()) : 0
         let tintAlpha = theme.mode == .dark ? 0.15 : 0.20
         let accentColor = Color(cssHex: PersonaCharacterSanitizer.safeHexColor(color)) ?? .gray
-        let showsLive = active && PersonaCharacterPool.shared.displayedLiveOwnerID == ownerID
+        let showsLive = active && PersonaCharacterPool.shared.isShowingLive(ownerID)
         let cached = snapshotImage ?? PersonaCharacterPool.shared.cachedSnapshot(
             svg: svg,
             color: color,

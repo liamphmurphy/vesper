@@ -192,4 +192,22 @@ final class PersonaCharacterTests: XCTestCase {
         XCTAssertNotEqual(k1, k3)
         XCTAssertNotEqual(k1, k4)
     }
+
+    func testActivityStateMatchesTheWebTable() {
+        XCTAssertEqual(CharacterState.forActivity(.thinking), .thinking)
+        XCTAssertEqual(CharacterState.forActivity(.searchingCode), .reading)
+        XCTAssertEqual(CharacterState.forActivity(.web), .reading)
+        XCTAssertEqual(CharacterState.forActivity(.install), .coding)
+        XCTAssertEqual(CharacterState.forActivity(.workflow), .coding)
+        XCTAssertEqual(CharacterState.forActivity(.writingReply), .creating)
+        XCTAssertEqual(CharacterState.forActivity(.tickets), .creating)
+        XCTAssertEqual(CharacterState.forActivity(.connector), .needsYou)
+        XCTAssertEqual(CharacterState.forActivity(.secret), .needsYou)
+    }
+
+    func testActivityStateAsksForThePersonWhileAwaitingAndFreezesWhileStopping() {
+        XCTAssertEqual(CharacterState.forActivity(.writingCode, awaiting: true), .needsYou)
+        XCTAssertEqual(CharacterState.forActivity(.writingCode, awaiting: true, stopping: true), .staticState)
+        XCTAssertEqual(CharacterState.forActivity(.thinking, stopping: true), .staticState)
+    }
 }

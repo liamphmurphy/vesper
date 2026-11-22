@@ -241,7 +241,10 @@ struct ChatScreen: View {
                     id: session.persona?.id,
                     handle: nil,
                     name: session.persona?.name ?? session.agent.name,
-                    size: 22
+                    size: 22,
+                    state: session.state == .running ? .working : .idle,
+                    active: session.state == .running,
+                    preferCharacter: true
                 )
                 Text(ChatNav.chatTitle(session.title))
                     .font(.system(size: theme.pointSize(.body), weight: .semibold))
@@ -344,7 +347,7 @@ struct ChatScreen: View {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 10) {
                         if let persona = activePersona {
-                            WorkPersonaAvatarView(id: persona.id, handle: nil, name: persona.name, size: 36)
+                            WorkPersonaAvatarView(id: persona.id, handle: nil, name: persona.name, size: 36, state: .idle, active: true, preferCharacter: true)
                         }
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Start a conversation")

@@ -174,4 +174,22 @@ public enum WorkPersona {
         let lower = name.trimmingCharacters(in: .whitespaces).lowercased()
         return lower.isEmpty ? nil : personas.first { $0.name.trimmingCharacters(in: .whitespaces).lowercased() == lower }
     }
+
+    /// How a persona is drawn.
+    public enum Face: Equatable, Sendable {
+        case photo(url: String)
+        case character(svg: String)
+        case initial
+    }
+
+    /// A persona's photo wins over its animated character everywhere except in a chat, where
+    /// the character acts out what the persona is doing (`preferCharacter`).
+    public static func face(avatarUrl: String?, characterSvg: String?, preferCharacter: Bool) -> Face {
+        let photo = avatarUrl.flatMap { $0.isEmpty ? nil : $0 }
+        let character = characterSvg.flatMap { $0.isEmpty ? nil : $0 }
+        if preferCharacter, let character { return .character(svg: character) }
+        if let photo { return .photo(url: photo) }
+        if let character { return .character(svg: character) }
+        return .initial
+    }
 }
