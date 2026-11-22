@@ -177,7 +177,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         let root = WindowRootController(split: split)
         root.installRail(
             tabs: tabs,
-            showHarnessActivity: { [weak app] in app?.settings.settings.effectiveAppearance.showHarnessActivity ?? true },
             isInspectorPoppedOut: { [weak self] in self?.inspectorController?.isPoppedOut ?? false },
             send: { [weak self] in self?.handleRailCommand($0) },
             services: { [weak app] in app?.system }

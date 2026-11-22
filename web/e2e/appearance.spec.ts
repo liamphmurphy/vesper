@@ -140,8 +140,6 @@ test("blocked storage still lets the current visit change mode and palette", asy
   await expect.poll(() => rootColor(page, "bg")).toBe("#2e3440");
   await expect(page.getByText("Browser storage is unavailable.", { exact: false })).toBeVisible();
   await expect(page.getByRole("radio", { name: "Nord", exact: true })).toBeChecked();
-  await page.getByRole("switch", { name: "Show harness activity", exact: true }).click();
-  await expect(page.getByRole("region", { name: "Harness activity" })).toHaveCount(0);
 });
 
 test("open SVGs and charts update across tabs and downloads preserve custom colors", async ({ page, context }) => {

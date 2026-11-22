@@ -98,20 +98,18 @@ final class PaletteTokensTests: XCTestCase {
             mode: .light,
             palette: "custom",
             textSize: .large,
-            showHarnessActivity: false,
             custom: CustomPaletteOverrides(base: "gruvbox", dark: ["accent": "#fabd2f"], light: [:])
         )
         let exported = try pref.exportPaletteJSON()
         let imported = try AppearancePreference.importPaletteJSON(
             exported,
-            preserving: AppearancePreference(mode: .dark, palette: "neutral", textSize: .larger, showHarnessActivity: false)
+            preserving: AppearancePreference(mode: .dark, palette: "neutral", textSize: .larger)
         )
         XCTAssertEqual(imported.palette, "custom")
         XCTAssertEqual(imported.custom.base, "gruvbox")
         XCTAssertEqual(imported.custom.dark, ["accent": "#fabd2f"])
         XCTAssertEqual(imported.mode, .dark)
         XCTAssertEqual(imported.textSize, .larger)
-        XCTAssertFalse(imported.showHarnessActivity)
 
         let tooBig = Data(repeating: UInt8(ascii: "a"), count: 40_001)
         XCTAssertThrowsError(try AppearancePreference.importPaletteJSON(tooBig, preserving: pref)) { err in

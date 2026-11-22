@@ -182,7 +182,6 @@ final class NativeSettingsTests: XCTestCase {
         XCTAssertEqual(configured.appearance?.mode, .dark)
         XCTAssertEqual(configured.appearance?.palette, "custom")
         XCTAssertEqual(configured.appearance?.textSize, .large)
-        XCTAssertEqual(configured.appearance?.showHarnessActivity, false)
         XCTAssertEqual(configured.appearance?.custom.base, "nord")
         XCTAssertEqual(configured.appearance?.custom.dark, ["accent": "#aabbcc"])
 

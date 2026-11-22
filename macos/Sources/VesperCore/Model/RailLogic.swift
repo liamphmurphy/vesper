@@ -1,9 +1,8 @@
 import Foundation
 
 /// Pure model builder, filtering, and action routing for the native macOS right rail.
-/// Swift counterpart of `web/lib/native-shell/models/rail.ts`, `web/lib/harness-activity.ts`,
-/// and `web/lib/github-reviews.ts` so the native shell owns the rail without needing `AppShell`
-/// mounted in a hidden `WKWebView`.
+/// Swift counterpart of `web/lib/native-shell/models/rail.ts` and `web/lib/github-reviews.ts`
+/// so the native shell owns the rail without needing `AppShell` mounted in a hidden `WKWebView`.
 public enum RailLogic {
     // MARK: - Item ids
 
@@ -18,16 +17,9 @@ public enum RailLogic {
     public static let prDirectId = "pr.direct"
     public static let prTeamId = "pr.team"
     public static let needsYouItemId = "needsYou"
-    public static let harnessPrefix = "harness:"
-    public static let harnessUsageId = "usage"
     public static let customizationItemId = "customization"
     public static let settingsItemId = "settings"
 
-    public static let claudeHarness = "claude-code"
-    public static let codexHarness = "codex"
-    public static let antigravityHarness = "antigravity"
-    public static let harnessOrder = [claudeHarness, codexHarness, antigravityHarness]
-    public static let warnAtPercent = 80
     public static let maxListedPRs = 15
 
     // MARK: - Types
@@ -85,40 +77,6 @@ public enum RailLogic {
             self.prefs = prefs
             self.counts = counts
             self.dismissed = dismissed
-        }
-    }
-
-    public enum HarnessState: String, Sendable, Equatable {
-        case idle
-        case working
-        case limited
-    }
-
-    public struct HarnessInput: Sendable, Equatable {
-        public var harness: String
-        public var label: String
-        public var initials: String
-        public var color: String
-        public var name: String
-        public var state: HarnessState
-        public var usage: RailUsage
-
-        public init(
-            harness: String,
-            label: String,
-            initials: String,
-            color: String,
-            name: String,
-            state: HarnessState,
-            usage: RailUsage
-        ) {
-            self.harness = harness
-            self.label = label
-            self.initials = initials
-            self.color = color
-            self.name = name
-            self.state = state
-            self.usage = usage
         }
     }
 
@@ -283,173 +241,6 @@ public enum RailLogic {
         )
     }
 
-    // MARK: - Harnesses
-
-    public static func connectedHarnesses(_ readings: [API.HarnessActivity]) -> [API.HarnessActivity] {
-        func rank(_ h: API.HarnessActivity) -> Int {
-            harnessOrder.firstIndex(of: h.harness) ?? harnessOrder.count
-        }
-        return readings
-            .filter { $0.connected || $0.running > 0 }
-            .sorted { rank($0) < rank($1) }
-    }
-
-    public static func harnessWorking(_ h: API.HarnessActivity) -> Bool {
-        h.running > 0 && h.limitedUntil == nil
-    }
-
-    public static func sessionPercent(_ h: API.HarnessActivity) -> Int? {
-        if h.limitedUntil != nil { return 100 }
-        guard h.usageAvailable else { return nil }
-        guard let window = h.windows.first(where: { $0.kind == .session }) ?? h.windows.first else {
-            return nil
-        }
-        return Int(window.usedPercent.rounded())
-    }
-
-    public static func usageTone(_ h: API.HarnessActivity) -> UsageTone {
-        if h.limitedUntil != nil { return .limited }
-        if let pct = sessionPercent(h), pct >= warnAtPercent { return .warn }
-        return .normal
-    }
-
-    public static func resetLabel(
-        _ iso: String,
-        now: Date = Date(),
-        timeZone: TimeZone = .current,
-        locale: Locale = .current
-    ) -> String {
-        guard let date = APIDate.parse(iso) else { return iso }
-        var cal = Calendar.current
-        cal.timeZone = timeZone
-        let timeFormatter = DateFormatter()
-        timeFormatter.locale = locale
-        timeFormatter.timeZone = timeZone
-        timeFormatter.dateStyle = .none
-        timeFormatter.timeStyle = .short
-        let timeText = timeFormatter.string(from: date)
-        if cal.isDate(date, inSameDayAs: now) {
-            return timeText
-        }
-        let weekdayFormatter = DateFormatter()
-        weekdayFormatter.locale = locale
-        weekdayFormatter.timeZone = timeZone
-        weekdayFormatter.setLocalizedDateFormatFromTemplate("EEE")
-        return "\(weekdayFormatter.string(from: date)) \(timeText)"
-    }
-
-    public static func usageSub(
-        _ h: API.HarnessActivity,
-        all: [API.HarnessActivity],
-        now: Date = Date(),
-        timeZone: TimeZone = .current,
-        locale: Locale = .current
-    ) -> String {
-        if let limitedUntil = h.limitedUntil {
-            let other = all.first { $0.harness != h.harness && $0.limitedUntil == nil }
-            let fallback = other.map { " · falls back to \($0.label)" } ?? ""
-            return "Limited until \(resetLabel(limitedUntil, now: now, timeZone: timeZone, locale: locale))\(fallback)"
-        }
-        if h.harness == antigravityHarness && !h.usageAvailable {
-            if h.usageChecking { return "Checking usage…" }
-            return "Usage unknown · Antigravity doesn’t report an allowance"
-        }
-        if !h.usageAvailable {
-            if h.usageChecking { return "Checking usage…" }
-            return h.usageCheckedAt != nil
-                ? "Usage unavailable · check Usage settings"
-                : "Usage not checked yet"
-        }
-        let session = h.windows.first { $0.kind == .session }
-        let weekly = h.windows.first { $0.kind == .weekly }
-        var parts: [String] = []
-        if let session {
-            if let resetsAt = session.resetsAt {
-                parts.append("5h · resets \(resetLabel(resetsAt, now: now, timeZone: timeZone, locale: locale))")
-            } else {
-                parts.append("5h")
-            }
-        }
-        if let weekly {
-            parts.append("weekly \(Int(weekly.usedPercent.rounded()))%")
-        }
-        if !parts.isEmpty {
-            return parts.joined(separator: " · ")
-        }
-        guard let primary = h.windows.first else { return "" }
-        let head = primary.resetsAt.map {
-            "\(primary.label) · resets \(resetLabel($0, now: now, timeZone: timeZone, locale: locale))"
-        } ?? primary.label
-        let extra = h.windows.dropFirst().map { "\($0.label) \(Int($0.usedPercent.rounded()))%" }
-        return ([head] + extra).joined(separator: " · ")
-    }
-
-    public static func checkedAgo(_ harnesses: [API.HarnessActivity], now: Date = Date()) -> String {
-        if harnesses.contains(where: \.usageChecking) { return "checking…" }
-        let latest = harnesses.compactMap { APIDate.parse($0.usageCheckedAt) }.max()
-        guard let latest else { return "not checked yet" }
-        let seconds = max(0, Int(now.timeIntervalSince(latest).rounded()))
-        if seconds < 60 { return "checked \(seconds)s ago" }
-        let minutes = Int((Double(seconds) / 60.0).rounded())
-        if minutes < 60 { return "checked \(minutes)m ago" }
-        let hours = Int((Double(minutes) / 60.0).rounded())
-        return "checked \(hours)h ago"
-    }
-
-    public static func harnessRailInputs(
-        _ harnesses: [API.HarnessActivity],
-        now: Date = Date(),
-        timeZone: TimeZone = .current,
-        locale: Locale = .current
-    ) -> [HarnessInput] {
-        harnesses.map { h in
-            let pct = sessionPercent(h)
-            let primary: API.UsageWindow? = h.usageAvailable
-                ? (h.windows.first(where: { $0.kind == .session }) ?? h.windows.first)
-                : nil
-            let look = harnessLook(for: h)
-            let state: HarnessState = h.limitedUntil != nil ? .limited : (harnessWorking(h) ? .working : .idle)
-            let allowanceText: String = {
-                if let primary { return "\(primary.label) allowance used" }
-                if h.usageChecking { return "Checking usage…" }
-                if h.harness == antigravityHarness { return "Allowance not reported" }
-                return "Usage unavailable"
-            }()
-            let stateMeta = h.limitedUntil != nil ? "Limited" : (harnessWorking(h) ? "\(h.running) working" : "Idle")
-            let usage = RailUsage(
-                id: harnessUsageId,
-                title: h.label,
-                value: pct.map { "\($0)%" } ?? (h.usageChecking ? "…" : "—"),
-                fraction: pct.map { Double(max(0, min(100, $0))) / 100.0 },
-                tone: usageTone(h),
-                unavailable: pct == nil ? true : nil,
-                meta: [allowanceText, stateMeta],
-                sub: usageSub(h, all: harnesses, now: now, timeZone: timeZone, locale: locale),
-                footnote: checkedAgo([h], now: now)
-            )
-            return HarnessInput(
-                harness: h.harness,
-                label: h.label,
-                initials: look.initials,
-                color: look.color,
-                name: h.harness == antigravityHarness ? "AG" : h.label,
-                state: state,
-                usage: usage
-            )
-        }
-    }
-
-    private static func harnessLook(for h: API.HarnessActivity) -> (initials: String, color: String) {
-        switch h.harness {
-        case claudeHarness: return ("CC", "#F2A97E")
-        case codexHarness: return ("CX", "#B09AEF")
-        case antigravityHarness: return ("AG", "#78BFDE")
-        default:
-            let initials = String(h.label.prefix(2)).uppercased()
-            return (initials.isEmpty ? "AI" : initials, "#8A8F98")
-        }
-    }
-
     // MARK: - Settings attention
 
     /// Sidebar/rail attention dot: secrets can't be stored, or a required harness key is missing.
@@ -465,7 +256,6 @@ public enum RailLogic {
         pathname: String,
         review: ReviewInput,
         needsYou: Int,
-        harnesses: [HarnessInput]?,
         settingsNeedYou: Bool
     ) -> RailModel {
         let settings = RailItem(
@@ -482,10 +272,7 @@ public enum RailLogic {
             badge: needsYou > 0 ? AreaBadge(text: badgeCount(needsYou), tone: .human) : nil,
             kind: .needsYou
         )
-        var middle: [RailItem] = [reviewItem(review), needsItem]
-        if let harnesses {
-            middle.append(contentsOf: harnesses.map(harnessItem))
-        }
+        let middle: [RailItem] = [reviewItem(review), needsItem]
         return RailModel(top: dock, middle: middle, foot: [settings])
     }
 
@@ -550,23 +337,6 @@ public enum RailLogic {
         )
     }
 
-    private static func harnessItem(_ h: HarnessInput) -> RailItem {
-        let status: Tone? = switch h.state {
-        case .working: .done
-        case .limited: .warning
-        case .idle: nil
-        }
-        return RailItem(
-            id: harnessPrefix + h.harness,
-            label: "\(h.label), \(h.state.rawValue)",
-            avatar: Avatar(initials: h.initials, color: h.color),
-            status: status,
-            menu: [MenuItem(id: harnessUsageId, label: "Usage settings…", icon: "gear")],
-            character: RailCharacter(harness: h.harness, working: h.state == .working, name: h.name),
-            usage: [h.usage]
-        )
-    }
-
     // MARK: - Actions
 
     public static func resolveAction(
@@ -608,9 +378,6 @@ public enum RailLogic {
             }
             return nil
         default:
-            if itemId.hasPrefix(harnessPrefix) && menuItemId == harnessUsageId {
-                return .openSettings(.pane(pane: .runners))
-            }
             return nil
         }
     }

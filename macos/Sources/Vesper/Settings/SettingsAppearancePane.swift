@@ -34,7 +34,7 @@ struct SettingsAppearancePane: View {
         SettingsScrollContainer {
             SettingsPaneHeader(
                 "Appearance",
-                subtitle: "Theme mode, right-rail activity characters, text scaling, and color palettes across native and web screens."
+                subtitle: "Theme mode, text scaling, and color palettes across native and web screens."
             )
 
             SettingsCard {
@@ -53,16 +53,6 @@ struct SettingsAppearancePane: View {
                 Text("System follows macOS. Palette is independent of mode.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-
-                Divider()
-
-                Toggle(isOn: Binding(
-                    get: { current.showHarnessActivity },
-                    set: { show in updatePref { $0.showHarnessActivity = show } }
-                )) {
-                    Text("Show harness activity")
-                    Text("Show animated harness characters and usage in the right rail.")
-                }
 
                 Divider()
 
@@ -128,11 +118,9 @@ struct SettingsAppearancePane: View {
                     Button("Import palette…") { importPalette(current) }
                     Button("Reset palette") {
                         updatePref { p in
-                            let keepRail = p.showHarnessActivity
                             let keepSize = p.textSize
                             let keepMode = p.mode
                             p = .macOSDefault
-                            p.showHarnessActivity = keepRail
                             p.textSize = keepSize
                             p.mode = keepMode
                         }

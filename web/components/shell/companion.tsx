@@ -5,19 +5,17 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExtern
 import { createPortal } from "react-dom";
 import { useNavCounts } from "@/lib/use-nav-counts";
 import { useDismissedReviewRequests, useGitHubReviewRequests, useRefreshGitHubReviewRequests, useReviewFilterPrefs } from "@/lib/api/github-reviews-hooks";
-import { useInbox, usePersonaDock } from "@/lib/api/hooks";
+import { useInbox } from "@/lib/api/hooks";
 import { claimCompanion, companionClaimed, companionSlot, setCompanionSlot, subscribeCompanion } from "@/lib/companion";
 import { cx } from "@/lib/cx";
 import { actOnDock, dockReducer, dockShortcut, loadDock, saveDock, type DockAction, type DockState } from "@/lib/editor-layout";
-import { connectedHarnesses } from "@/lib/harness-activity";
 import { countReviewRequests, excludeDismissedReviewRequests, filterReviewRequests, isReviewRequestDismissed } from "@/lib/github-reviews";
 import { isOpen } from "@/lib/inbox";
 import { postDeduped } from "@/lib/native-shell/bridge";
 import { useNativeCommand } from "@/lib/native-shell/hooks";
-import { buildRailModel, dockRail, dockRailAction, dockRailItems, harnessRailInputs, railEffect, type DockRailTab } from "@/lib/native-shell/models/rail";
+import { buildRailModel, dockRail, dockRailAction, dockRailItems, railEffect, type DockRailTab } from "@/lib/native-shell/models/rail";
 import { Dock, useReadingFocus, type DockTab } from "./editor-layout";
 import { isTyping } from "./shortcuts";
-import { useAppearance } from "./theme";
 
 /**
  * Puts a page's own dock in the shell's right-hand column, in place of the default companion, so
@@ -138,10 +136,9 @@ export function RightRailPortal({
 const railTabs = (tabs: readonly (Omit<DockRailTab, "action"> & { run?: () => void })[]): DockRailTab[] =>
   tabs.map(({ run, ...t }) => (run ? { ...t, action: true } : t));
 
-/** What the page tells the Mac shell about the rail: the page's dock, then reviews, Needs you, harnesses and links. */
+/** What the page tells the Mac shell about the rail: the page's dock, then reviews, Needs you and Settings. */
 function NativeRail() {
   const counts = useNavCounts();
-  const [appearance] = useAppearance();
   const pathname = usePathname();
   const router = useRouter();
   const dock = useSyncExternalStore(dockRail.subscribe, dockRail.items, () => []);
@@ -158,9 +155,6 @@ function NativeRail() {
   );
   const inbox = useInbox();
   const approved = useMemo(() => (inbox.data ?? []).filter((i) => i.kind === "pr_approved" && isOpen(i)).length, [inbox.data]);
-  const readings = usePersonaDock().data?.harnesses;
-  const harnesses = useMemo(() => connectedHarnesses(readings ?? []), [readings]);
-  const showHarness = appearance.showHarnessActivity !== false;
 
   const model = useMemo(
     () =>
@@ -176,10 +170,9 @@ function NativeRail() {
           dismissed: hiddenReviews.length,
         },
         needsYou: counts.inbox,
-        harnesses: showHarness ? harnessRailInputs(harnesses) : null,
         settingsNeedYou: counts.settings > 0,
       }),
-    [dock, pathname, reviews.data?.configured, requests, approved, prefs, activeReviews, hiddenReviews.length, counts.inbox, counts.settings, showHarness, harnesses],
+    [dock, pathname, reviews.data?.configured, requests, approved, prefs, activeReviews, hiddenReviews.length, counts.inbox, counts.settings],
   );
   useEffect(() => {
     postDeduped({ v: 1, type: "rail", model });

@@ -186,8 +186,8 @@ export const COLOR_KEYS = Object.keys(DUSK.dark).filter((key) => /^#[\da-f]{6}(?
 /** Settings → Text size; each sets --type-scale in styles/tokens.css. */
 export const TEXT_SIZES = ["small", "default", "large", "larger"] as const;
 export type TextSize = (typeof TEXT_SIZES)[number];
-export type Appearance = { version: 1; palette: string; /** Palette the Mac app uses while nothing is saved (read by resolvePalette, so the pre-paint script needs no change). */ nativeDefault?: string; custom: { base: string; dark: Tokens; light: Tokens }; showHarnessActivity?: boolean; textSize?: TextSize };
-export const DEFAULT_APPEARANCE: Appearance = { version: 1, palette: "neutral", nativeDefault: "macos", custom: { base: "neutral", dark: {}, light: {} }, showHarnessActivity: true, textSize: "default" };
+export type Appearance = { version: 1; palette: string; /** Palette the Mac app uses while nothing is saved (read by resolvePalette, so the pre-paint script needs no change). */ nativeDefault?: string; custom: { base: string; dark: Tokens; light: Tokens }; textSize?: TextSize };
+export const DEFAULT_APPEARANCE: Appearance = { version: 1, palette: "neutral", nativeDefault: "macos", custom: { base: "neutral", dark: {}, light: {} }, textSize: "default" };
 export const textSizeOf = (value: unknown): TextSize => TEXT_SIZES.includes(value as TextSize) ? value as TextSize : "default";
 
 /** Only known color tokens and opaque hex enter inline CSS, including imported JSON. */
@@ -201,7 +201,7 @@ export function parseAppearance(raw: string | null): Appearance {
       const value = input && typeof input === "object" ? (input as Tokens)[key] : undefined;
       return typeof value === "string" && /^#[\da-f]{6}$/i.test(value) ? [[key, value.toLowerCase()]] : [];
     }));
-    return { version: 1, palette: data.palette === "custom" || known(data.palette) ? data.palette : DEFAULT_APPEARANCE.palette, custom: { base: known(data.custom?.base) ? data.custom.base : DEFAULT_APPEARANCE.palette, dark: clean(data.custom?.dark), light: clean(data.custom?.light) }, showHarnessActivity: data.showHarnessActivity !== false, textSize: textSizeOf(data.textSize) };
+    return { version: 1, palette: data.palette === "custom" || known(data.palette) ? data.palette : DEFAULT_APPEARANCE.palette, custom: { base: known(data.custom?.base) ? data.custom.base : DEFAULT_APPEARANCE.palette, dark: clean(data.custom?.dark), light: clean(data.custom?.light) }, textSize: textSizeOf(data.textSize) };
   } catch { return DEFAULT_APPEARANCE; }
 }
 

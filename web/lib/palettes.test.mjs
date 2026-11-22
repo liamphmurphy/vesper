@@ -38,15 +38,10 @@ test("corrupt, oversized, unknown and CSS injection preferences fall back safely
   assert.equal(parseAppearance('{"version":1,"palette":"unknown"}').palette, DEFAULT_APPEARANCE.palette);
 });
 
-test("harness activity is on for existing preferences and off only for an explicit false", () => {
-  assert.equal(DEFAULT_APPEARANCE.showHarnessActivity, true);
-  for (const value of [undefined, null, 0, "false", true, {}, []]) {
-    assert.equal(parseAppearance(JSON.stringify({ version: 1, palette: "nord", showHarnessActivity: value })).showHarnessActivity, true);
-  }
-  const disabled = parseAppearance(JSON.stringify({ version: 1, palette: "nord", showHarnessActivity: false }));
-  assert.equal(disabled.showHarnessActivity, false);
-  assert.equal(parseAppearance(JSON.stringify(disabled)).showHarnessActivity, false);
-  assert.equal(paletteTokens(disabled, "dark").bg, PALETTES.find((p) => p.id === "nord").dark.bg);
+test("legacy appearance preferences with retired showHarnessActivity still parse cleanly", () => {
+  const parsed = parseAppearance(JSON.stringify({ version: 1, palette: "nord", showHarnessActivity: false }));
+  assert.equal(parsed.palette, "nord");
+  assert.equal(paletteTokens(parsed, "dark").bg, PALETTES.find((p) => p.id === "nord").dark.bg);
 });
 
 test("custom colors are independent by mode and explicit advanced colors win", () => {

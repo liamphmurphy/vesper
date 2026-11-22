@@ -50,6 +50,7 @@ struct ChatScreen: View {
     private static let modelsRequest = API.listChatModels()
     private static let suggestionsRequest = API.listChatSuggestions()
     private static let dockRequest = API.getPersonaDock()
+    private static let dockPollInterval: Duration = .seconds(60)
     private static let workflowsRequest = API.listWorkflows()
     private static let repositoriesRequest = API.searchRepositories()
 
@@ -176,6 +177,15 @@ struct ChatScreen: View {
             context.chrome = next
         }
         .task(id: watchKey) { watch() }
+        .task {
+            // Usage readings land in the background with no SSE event, so keep the composer's
+            // harness usage popover fresh while Chat is visible.
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.dockPollInterval)
+                guard !Task.isCancelled else { return }
+                _ = await context.store.refetch(Self.dockRequest)
+            }
+        }
         .task(id: "\(chatId ?? "")|\(session?.unread ?? 0)|\(session?.messageCount ?? 0)") {
             await markReadIfNeeded(session: session)
         }

@@ -29,30 +29,6 @@ final class RailLogicTests: XCTestCase {
         )
     }
 
-    private func sampleHarness(
-        harness: String,
-        label: String,
-        connected: Bool = true,
-        running: Int = 0,
-        limitedUntil: String? = nil,
-        usageAvailable: Bool = true,
-        usageCheckedAt: String? = "2026-11-22T06:59:20Z",
-        usageChecking: Bool = false,
-        windows: [API.UsageWindow] = []
-    ) -> API.HarnessActivity {
-        API.HarnessActivity(
-            connected: connected,
-            harness: harness,
-            label: label,
-            limitedUntil: limitedUntil,
-            running: running,
-            usageAvailable: usageAvailable,
-            usageCheckedAt: usageCheckedAt,
-            usageChecking: usageChecking,
-            windows: windows
-        )
-    }
-
     func testDockItemsFromInspectorModel() {
         let model = InspectorModel(
             id: "run",
@@ -150,7 +126,7 @@ final class RailLogicTests: XCTestCase {
         XCTAssertEqual(RailLogic.parseDismissedReviews("[]"), [:])
     }
 
-    func testBuildModelReviewMenuNeedsYouHarnessesAndSettings() {
+    func testBuildModelReviewMenuNeedsYouAndSettings() {
         let pr = samplePR()
         let review = RailLogic.ReviewInput(
             configured: true,
@@ -166,9 +142,11 @@ final class RailLogicTests: XCTestCase {
             pathname: "/settings/runners",
             review: review,
             needsYou: 120,
-            harnesses: [],
             settingsNeedYou: true
         )
+
+        // Middle holds only PR reviews and Needs you (no harness characters in the right rail).
+        XCTAssertEqual(model.middle.map(\.id), ["pr", "needsYou"])
 
         // PR item
         let prItem = model.middle[0]
@@ -197,7 +175,6 @@ final class RailLogicTests: XCTestCase {
             pathname: "/work",
             review: RailLogic.ReviewInput(configured: false),
             needsYou: 0,
-            harnesses: nil,
             settingsNeedYou: false
         )
         XCTAssertNil(unconfigured.middle[0].badge)
@@ -213,88 +190,10 @@ final class RailLogicTests: XCTestCase {
             pathname: "/work",
             review: RailLogic.ReviewInput(configured: true, approved: 2, dismissed: 3),
             needsYou: 0,
-            harnesses: nil,
             settingsNeedYou: false
         )
         XCTAssertEqual(approvedOnly.middle[0].badge, AreaBadge(text: "2", tone: .done))
         XCTAssertEqual(approvedOnly.middle[0].menu?.first(where: { $0.id == "pr.restore" })?.label, "Restore dismissed (3)")
-    }
-
-    func testHarnessRailInputsAndOrdering() {
-        let now = APIDate.parse("2026-11-22T07:00:00Z")!
-        let readings = [
-            sampleHarness(harness: "antigravity", label: "Antigravity", connected: true, usageAvailable: false, usageCheckedAt: nil),
-            sampleHarness(harness: "disconnected", label: "Off", connected: false, running: 0),
-            sampleHarness(
-                harness: "codex",
-                label: "Codex",
-                connected: true,
-                running: 0,
-                limitedUntil: "2026-11-22T09:00:00Z",
-                usageAvailable: true,
-                windows: [API.UsageWindow(id: "s", kind: .session, label: "5h", usedPercent: 100)]
-            ),
-            sampleHarness(
-                harness: "claude-code",
-                label: "Claude",
-                connected: true,
-                running: 2,
-                usageAvailable: true,
-                usageCheckedAt: "2026-11-22T06:59:20Z",
-                windows: [
-                    API.UsageWindow(id: "s", kind: .session, label: "5h", usedPercent: 45),
-                    API.UsageWindow(id: "w", kind: .weekly, label: "Weekly", usedPercent: 18),
-                ]
-            ),
-            sampleHarness(harness: "custom-cli", label: "Custom", connected: false, running: 1, usageAvailable: false, usageCheckedAt: nil, usageChecking: true),
-        ]
-
-        let connected = RailLogic.connectedHarnesses(readings)
-        XCTAssertEqual(connected.map(\.harness), ["claude-code", "codex", "antigravity", "custom-cli"])
-
-        let inputs = RailLogic.harnessRailInputs(connected, now: now, timeZone: TimeZone(secondsFromGMT: 0)!, locale: Locale(identifier: "en_US_POSIX"))
-        XCTAssertEqual(inputs[0].initials, "CC")
-        XCTAssertEqual(inputs[0].state, .working)
-        XCTAssertEqual(inputs[0].usage.value, "45%")
-        XCTAssertEqual(inputs[0].usage.fraction, 0.45)
-        XCTAssertEqual(inputs[0].usage.meta, ["5h allowance used", "2 working"])
-        XCTAssertEqual(inputs[0].usage.sub, "5h · weekly 18%")
-        XCTAssertEqual(inputs[0].usage.footnote, "checked 40s ago")
-
-        XCTAssertEqual(inputs[1].initials, "CX")
-        XCTAssertEqual(inputs[1].state, .limited)
-        XCTAssertEqual(inputs[1].usage.tone, .limited)
-        XCTAssertEqual(inputs[1].usage.meta, ["5h allowance used", "Limited"])
-        XCTAssertTrue(inputs[1].usage.sub?.contains("falls back to Claude") == true)
-
-        XCTAssertEqual(inputs[2].name, "AG")
-        XCTAssertEqual(inputs[2].usage.value, "—")
-        XCTAssertEqual(inputs[2].usage.unavailable, true)
-        XCTAssertEqual(inputs[2].usage.meta, ["Allowance not reported", "Idle"])
-
-        XCTAssertEqual(inputs[3].initials, "CU")
-        XCTAssertEqual(inputs[3].color, "#8A8F98")
-        XCTAssertEqual(inputs[3].usage.value, "…")
-        XCTAssertEqual(inputs[3].usage.meta, ["Checking usage…", "1 working"])
-        XCTAssertEqual(inputs[3].usage.footnote, "checking…")
-
-        let model = RailLogic.buildModel(
-            dock: [],
-            pathname: "/chat",
-            review: RailLogic.ReviewInput(),
-            needsYou: 0,
-            harnesses: inputs,
-            settingsNeedYou: false
-        )
-        let claudeItem = model.middle[2]
-        XCTAssertEqual(claudeItem.id, "harness:claude-code")
-        XCTAssertEqual(claudeItem.status, .done)
-        XCTAssertEqual(claudeItem.character, RailCharacter(harness: "claude-code", working: true, name: "Claude"))
-        XCTAssertEqual(claudeItem.menu?.last?.id, "usage")
-
-        let codexItem = model.middle[3]
-        XCTAssertEqual(codexItem.status, .warning)
-        XCTAssertEqual(codexItem.character?.working, false)
     }
 
     func testSettingsNeedAttention() {
@@ -347,7 +246,7 @@ final class RailLogicTests: XCTestCase {
         XCTAssertEqual(RailLogic.resolveAction(itemId: "pr", menuItemId: "pr:a", reviewURL: lookup), .openExternalURL(URL(string: "https://github.com/o/r/pull/7")!))
         XCTAssertNil(RailLogic.resolveAction(itemId: "pr", menuItemId: "pr:bad", reviewURL: lookup))
         XCTAssertNil(RailLogic.resolveAction(itemId: "pr", menuItemId: "pr:missing", reviewURL: lookup))
-        XCTAssertEqual(RailLogic.resolveAction(itemId: "harness:codex", menuItemId: "usage", reviewURL: lookup), .openSettings(.pane(pane: .runners)))
+        XCTAssertNil(RailLogic.resolveAction(itemId: "harness:codex", menuItemId: "usage", reviewURL: lookup))
         XCTAssertNil(RailLogic.resolveAction(itemId: "unknown", menuItemId: nil, reviewURL: lookup))
     }
 }
