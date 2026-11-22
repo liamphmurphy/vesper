@@ -1,7 +1,7 @@
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
-import { connectorCall, activityOf, bareTool, chatStatus, chatCalls, chatStatusOf, chatSteps, stepDetail, chatTitle, foldSteps, formatSpan, NEXT_STEP_AFTER_MS, NEXT_STEP_KEY, QUIET_AFTER_MS, QUIET_RUNNING_MS, quietFor, subagentBranches, turnActivity, turnClock, turnPulse, interimLine, intentOf, linkLabel, needsSwitchConfirm, replyCost, runningSince, toolCalls, turnNotes, turnTrace, turnWindows, finishedTurn, endedTurns, groupByDay, catalogModelLabel, readableModelId, rowMark } from "./chat-ui.ts";
+import { connectorCall, activityOf, bareTool, chatStatus, chatCalls, chatStatusOf, chatSteps, liveSubagentStatus, stepDetail, chatTitle, foldSteps, formatSpan, NEXT_STEP_AFTER_MS, NEXT_STEP_KEY, QUIET_AFTER_MS, QUIET_RUNNING_MS, quietFor, subagentBranches, turnActivity, turnClock, turnPulse, interimLine, intentOf, linkLabel, needsSwitchConfirm, replyCost, runningSince, toolCalls, turnNotes, turnTrace, turnWindows, finishedTurn, endedTurns, groupByDay, catalogModelLabel, readableModelId, rowMark } from "./chat-ui.ts";
 
 test("rowMark shows an unread dot until the chat is read or opened, and running wins", () => {
   assert.equal(rowMark({ state: "idle", unread: 0 }), null);
@@ -1070,4 +1070,57 @@ test("turnTrace attaches subagents to their spawning run_subagent step and falls
   assert.equal(orphanOnly.length, 1);
   assert.equal(orphanOnly[0].key, "prelude");
   assert.equal(orphanOnly[0].subagents?.[0].id, "j0");
+});
+
+test("liveSubagentStatus, chatStatus, and chatSteps reflect live subagent progress safely", () => {
+  const ts = (s) => `2026-11-09T10:00:${String(s).padStart(2, "0")}Z`;
+  const events = [
+    call(1, "mcp__lazyagents__run_subagents", { tasks: [{ type: "explorer", role: "Trace callers", prompt: "x" }, { type: "helper", role: "Run tests", prompt: "y" }] }),
+    { seq: 2, type: "lifecycle", at: ts(1), payload: { state: "subagent_queued", subagent: true, subagent_id: "j1", subagent_batch_id: "b1", subagent_batch_size: 2, subagent_type: "explorer", subagent_role: "Trace callers", subagent_tier: "fast", created_at: ts(1) } },
+    { seq: 3, type: "lifecycle", at: ts(1), payload: { state: "subagent_queued", subagent: true, subagent_id: "j2", subagent_batch_id: "b1", subagent_batch_size: 2, subagent_type: "helper", subagent_role: "Run tests", subagent_tier: "standard", created_at: ts(1) } },
+  ];
+
+  // While all queued:
+  let calls = chatCalls(events);
+  let branches = subagentBranches(events);
+  assert.deepEqual(chatStatus(calls, false, undefined, branches), { kind: "subagent", phrase: "queuing 2 subagents" });
+  assert.equal(chatSteps(calls, [], { branches }).steps[0].detail, "2 queued");
+
+  // One starts reading a file (full path must not leak into chat status/detail):
+  events.push(
+    { seq: 4, type: "lifecycle", at: ts(2), payload: { state: "subagent_started", subagent: true, subagent_id: "j1", subagent_type: "explorer", subagent_role: "Trace callers", started_at: ts(2) } },
+    { seq: 5, type: "tool_call", at: ts(3), payload: { id: "s1", tool: "Read", input: { file_path: "/secret/workspace/server/internal/runner/subagent.go" }, subagent: true, subagent_id: "j1", subagent_type: "explorer", subagent_role: "Trace callers" } },
+  );
+  calls = chatCalls(events);
+  branches = subagentBranches(events);
+  const stRunning = chatStatus(calls, false, undefined, branches);
+  assert.equal(stRunning.kind, "subagent");
+  assert.equal(stRunning.phrase, "running 1 of 2 subagents · reading the code");
+  assert.equal(chatSteps(calls, [], { branches }).steps[0].detail, "1/2 running · 1 call · Trace callers: Reading subagent.go");
+  assert.ok(!stRunning.phrase.includes("/secret/workspace"));
+
+  // First finishes, second runs a test command (raw command must not leak):
+  events.push(
+    { seq: 6, type: "tool_result", at: ts(4), payload: { id: "s1", output: "ok", subagent: true, subagent_id: "j1" } },
+    { seq: 7, type: "lifecycle", at: ts(5), payload: { state: "subagent_finished", subagent: true, subagent_id: "j1", status: "completed", tool_calls: 1, finished_at: ts(5) } },
+    { seq: 8, type: "lifecycle", at: ts(5), payload: { state: "subagent_started", subagent: true, subagent_id: "j2", subagent_type: "helper", subagent_role: "Run tests", started_at: ts(5) } },
+    { seq: 9, type: "tool_call", at: ts(6), payload: { id: "s2", tool: "Bash", input: { command: "SECRET=xyz go test ./internal/runner" }, subagent: true, subagent_id: "j2", subagent_type: "helper", subagent_role: "Run tests" } },
+  );
+  calls = chatCalls(events);
+  branches = subagentBranches(events);
+  const stSecond = chatStatus(calls, false, undefined, branches);
+  assert.equal(stSecond.phrase, "running 1 of 2 subagents (1 done) · running tests");
+  const detailSecond = chatSteps(calls, [], { branches }).steps[0].detail ?? "";
+  assert.ok(detailSecond.includes("1/2 done"));
+  assert.ok(detailSecond.includes("2 calls"));
+  assert.ok(!detailSecond.includes("SECRET=xyz"));
+
+  // Once the parent delegation call finishes, liveSubagentStatus no longer overrides:
+  events.push(result(10, "c1"));
+  calls = chatCalls(events);
+  assert.equal(chatStatus(calls, false, undefined, branches).phrase, "delegating to a helper");
+
+  // Single subagent shows role and latest safe activity:
+  const single = liveSubagentStatus([branches[1]]);
+  assert.equal(single?.phrase, "running Run tests · running tests");
 });

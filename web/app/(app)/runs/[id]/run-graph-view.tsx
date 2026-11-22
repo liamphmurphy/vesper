@@ -101,11 +101,12 @@ const ariaName = (item: Item) => {
   return `${l.title.replace(/[↳⚠✓?▸↗]/g, "").trim()}, ${l.sub.replace(/ · (open ↗|expand ▸)$/, "")}`;
 };
 
-export function RunGraphView({ d, childDetails, onOpenTurn, onOpenEvent }: {
+export function RunGraphView({ d, childDetails, onOpenTurn, onOpenEvent, embedded = false }: {
   d: RunDetail;
   childDetails: (RunDetail | undefined)[];
   onOpenTurn: (n: number) => void;
   onOpenEvent: (seq: number) => void;
+  embedded?: boolean;
 }) {
   const router = useRouter();
   const [selected, setSelected] = useState<string>();
@@ -252,8 +253,8 @@ export function RunGraphView({ d, childDetails, onOpenTurn, onOpenEvent }: {
   const batches = batchBoxes(layout.columns);
 
   return (
-    <section ref={nodes} aria-label="Run graph" className="min-h-0 flex-1 overflow-y-auto py-4">
-      <div className={`${WORK_COLUMN} flex flex-col gap-3 lg:flex-row`}>
+    <section ref={nodes} aria-label="Run graph" className={embedded ? "flex min-h-0 flex-1 flex-col" : "min-h-0 flex-1 overflow-y-auto py-4"}>
+      <div className={embedded ? "flex flex-col gap-3" : `${WORK_COLUMN} flex flex-col gap-3 lg:flex-row`}>
       <div className="flex min-w-0 flex-1 flex-col gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <p className="mr-auto text-12 text-fg-secondary">
@@ -285,8 +286,8 @@ export function RunGraphView({ d, childDetails, onOpenTurn, onOpenEvent }: {
           <SubagentWaterfall d={d} jobs={jobNodes} selected={selected} onSelect={(id) => setSelected(id)} />
         ) : (
           <>
-            {/* The canvas: hidden on narrow screens and when the list is chosen. */}
-            <div ref={viewport} aria-label="Run graph canvas" className={cx("min-h-[240px] overflow-auto rounded-lg border border-border bg-surface", mode === "list" ? "hidden" : "max-md:hidden")}>
+            {/* The canvas: hidden on narrow screens (unless embedded in Chat Activity) and when the list is chosen. */}
+            <div ref={viewport} aria-label="Run graph canvas" className={cx("min-h-[240px] overflow-auto rounded-lg border border-border bg-surface", mode === "list" ? "hidden" : embedded ? "" : "max-md:hidden")}>
               <div style={{ width: width * zoom, height: height * zoom }}>
                 <div className="relative origin-top-left" style={{ width, height, transform: `scale(${zoom})` }}>
                   <svg width={width} height={height} className="absolute inset-0" aria-hidden="true">
@@ -319,7 +320,7 @@ export function RunGraphView({ d, childDetails, onOpenTurn, onOpenEvent }: {
             </div>
             {mode === "graph" && <Legend />}
             {/* List fallback: the same nodes, nested. Shown on narrow screens and on request; always read by screen readers. */}
-            <div className={cx(mode === "list" ? "" : "md:sr-only md:focus-within:not-sr-only")}>
+            <div className={cx(mode === "list" ? "" : embedded ? "sr-only focus-within:not-sr-only" : "md:sr-only md:focus-within:not-sr-only")}>
               <ul aria-label="Run graph as a list" className="flex flex-col gap-1.5 text-13">
                 {layout.columns.map((c) => (
                   <li key={`li-${c.main.id}`}>
@@ -334,7 +335,7 @@ export function RunGraphView({ d, childDetails, onOpenTurn, onOpenEvent }: {
         )}
       </div>
       {selNode && (
-        <Summary node={selNode} d={d} turnOfEvent={turnOfEvent} onOpen={() => activate({ kind: "node", id: selNode.id, node: selNode })} onClose={() => setSelected(undefined)} />
+        <Summary node={selNode} d={d} turnOfEvent={turnOfEvent} embedded={embedded} onOpen={() => activate({ kind: "node", id: selNode.id, node: selNode })} onClose={() => setSelected(undefined)} />
       )}
       </div>
     </section>
@@ -698,12 +699,13 @@ function SubagentJobInspector({ node, d, turnOfEvent, onOpen }: {
   );
 }
 
-function Summary({ node, d, turnOfEvent, onOpen, onClose }: {
-  node: GraphNode; d: RunDetail; turnOfEvent: Map<number, number>; onOpen: () => void; onClose: () => void;
+function Summary({ node, d, turnOfEvent, embedded, onOpen, onClose }: {
+  node: GraphNode; d: RunDetail; turnOfEvent: Map<number, number>; embedded?: boolean; onOpen: () => void; onClose: () => void;
 }) {
+  const asideClass = cx("flex w-full flex-none flex-col gap-2 self-start rounded-lg border border-border bg-surface p-4", !embedded && "lg:w-80");
   if (node.kind === "subagent_job") {
     return (
-      <aside aria-label="Selected node" className="flex w-full flex-none flex-col gap-2 self-start rounded-lg border border-border bg-surface p-4 lg:w-80">
+      <aside aria-label="Selected node" className={asideClass}>
         <div className="flex items-start justify-between gap-2">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
             <h2 className="text-14 font-semibold">↳ {node.role || node.agent_type}</h2>
@@ -754,7 +756,7 @@ function Summary({ node, d, turnOfEvent, onOpen, onClose }: {
       break;
   }
   return (
-    <aside aria-label="Selected node" className="flex w-full flex-none flex-col gap-2 self-start rounded-lg border border-border bg-surface p-4 lg:w-80">
+    <aside aria-label="Selected node" className={asideClass}>
       <div className="flex items-start justify-between gap-2">
         <h2 className="text-14 font-semibold">{title}</h2>
         <button type="button" aria-label="Close summary" className="text-fg-tertiary hover:text-fg" onClick={onClose}>×</button>
