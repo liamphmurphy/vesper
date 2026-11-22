@@ -41,7 +41,7 @@ UPDATE subagent_jobs j
 SET status = 'running', started_at = now()
 FROM next_job
 WHERE j.id = next_job.id
-RETURNING j.id, j.run_id, j.agent_type, j.role, j.prompt, j.status, j.result_text, j.error, j.input_tokens, j.output_tokens, j.cached_tokens, j.cost_usd, j.tool_calls, j.created_at, j.started_at, j.completed_at
+RETURNING j.id, j.run_id, j.agent_type, j.role, j.prompt, j.status, j.result_text, j.error, j.input_tokens, j.output_tokens, j.cached_tokens, j.cost_usd, j.tool_calls, j.created_at, j.started_at, j.completed_at, j.tier, j.model, j.effort
 `
 
 func (q *Queries) ClaimNextSubagentJob(ctx context.Context, runID uuid.UUID) (SubagentJob, error) {
@@ -64,6 +64,9 @@ func (q *Queries) ClaimNextSubagentJob(ctx context.Context, runID uuid.UUID) (Su
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.Tier,
+		&i.Model,
+		&i.Effort,
 	)
 	return i, err
 }
@@ -105,9 +108,9 @@ func (q *Queries) CompleteSubagentJob(ctx context.Context, arg CompleteSubagentJ
 }
 
 const createSubagentJob = `-- name: CreateSubagentJob :one
-INSERT INTO subagent_jobs (run_id, agent_type, role, prompt)
-VALUES ($1, $2, $3, $4)
-RETURNING id, run_id, agent_type, role, prompt, status, result_text, error, input_tokens, output_tokens, cached_tokens, cost_usd, tool_calls, created_at, started_at, completed_at
+INSERT INTO subagent_jobs (run_id, agent_type, role, prompt, tier, model, effort)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, run_id, agent_type, role, prompt, status, result_text, error, input_tokens, output_tokens, cached_tokens, cost_usd, tool_calls, created_at, started_at, completed_at, tier, model, effort
 `
 
 type CreateSubagentJobParams struct {
@@ -115,6 +118,9 @@ type CreateSubagentJobParams struct {
 	AgentType string
 	Role      string
 	Prompt    string
+	Tier      string
+	Model     string
+	Effort    string
 }
 
 func (q *Queries) CreateSubagentJob(ctx context.Context, arg CreateSubagentJobParams) (SubagentJob, error) {
@@ -123,6 +129,9 @@ func (q *Queries) CreateSubagentJob(ctx context.Context, arg CreateSubagentJobPa
 		arg.AgentType,
 		arg.Role,
 		arg.Prompt,
+		arg.Tier,
+		arg.Model,
+		arg.Effort,
 	)
 	var i SubagentJob
 	err := row.Scan(
@@ -142,6 +151,9 @@ func (q *Queries) CreateSubagentJob(ctx context.Context, arg CreateSubagentJobPa
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.Tier,
+		&i.Model,
+		&i.Effort,
 	)
 	return i, err
 }
@@ -183,7 +195,7 @@ func (q *Queries) FailSubagentJob(ctx context.Context, arg FailSubagentJobParams
 }
 
 const getSubagentJob = `-- name: GetSubagentJob :one
-SELECT id, run_id, agent_type, role, prompt, status, result_text, error, input_tokens, output_tokens, cached_tokens, cost_usd, tool_calls, created_at, started_at, completed_at FROM subagent_jobs WHERE id = $1
+SELECT id, run_id, agent_type, role, prompt, status, result_text, error, input_tokens, output_tokens, cached_tokens, cost_usd, tool_calls, created_at, started_at, completed_at, tier, model, effort FROM subagent_jobs WHERE id = $1
 `
 
 func (q *Queries) GetSubagentJob(ctx context.Context, id uuid.UUID) (SubagentJob, error) {
@@ -206,12 +218,15 @@ func (q *Queries) GetSubagentJob(ctx context.Context, id uuid.UUID) (SubagentJob
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.Tier,
+		&i.Model,
+		&i.Effort,
 	)
 	return i, err
 }
 
 const listSubagentJobsForRun = `-- name: ListSubagentJobsForRun :many
-SELECT id, run_id, agent_type, role, prompt, status, result_text, error, input_tokens, output_tokens, cached_tokens, cost_usd, tool_calls, created_at, started_at, completed_at FROM subagent_jobs WHERE run_id = $1 ORDER BY created_at, id
+SELECT id, run_id, agent_type, role, prompt, status, result_text, error, input_tokens, output_tokens, cached_tokens, cost_usd, tool_calls, created_at, started_at, completed_at, tier, model, effort FROM subagent_jobs WHERE run_id = $1 ORDER BY created_at, id
 `
 
 func (q *Queries) ListSubagentJobsForRun(ctx context.Context, runID uuid.UUID) ([]SubagentJob, error) {
@@ -240,6 +255,9 @@ func (q *Queries) ListSubagentJobsForRun(ctx context.Context, runID uuid.UUID) (
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.CompletedAt,
+			&i.Tier,
+			&i.Model,
+			&i.Effort,
 		); err != nil {
 			return nil, err
 		}

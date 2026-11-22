@@ -264,8 +264,10 @@ func SubagentGuide(spec Resolved) string {
 		return ""
 	}
 	roster := "`" + HelperAgent + "` for a self-contained task"
+	fastNote := ""
 	if ExplorerOn(spec) {
 		roster = "`" + ExplorerAgent + "` for broad read-only code searches, " + roster
+		fastNote = " (default for `" + ExplorerAgent + "`)"
 	}
 	singleRef, batchRef := "`run_subagent`", "`run_subagents`"
 	if spec.Harness == HarnessAntigravity {
@@ -275,6 +277,7 @@ func SubagentGuide(spec Resolved) string {
 	guide := "Start in-turn subagents with Vesper's MCP tools: " + roster + ". " +
 		"Use them when work splits into independent parts you can run in parallel, or when answering means reading across many files and you only need the conclusion; their output stays out of your context. " +
 		"Use " + singleRef + " for a single subagent, and always use " + batchRef + " with a `tasks` array when launching 2 or more subagents in parallel—Vesper enqueues the whole batch at once, runs them concurrently up to the workspace's limit, and returns every report before your turn continues. Never end your turn waiting for background work. " +
+		"Pick each task's `tier` to fit the work (within your harness, capped at your own tier): `fast` for search, reading, summaries, mechanical edits, or running tests" + fastNote + "; `standard` for well-scoped implementation, tests, or routine review (default for `" + HelperAgent + "`); `deep` only for hard debugging, subtle concurrency/security/architecture review, or ambiguous multi-file design. " +
 		"Do the work yourself when it's a handful of tool calls or you already know where to look. A subagent knows only its prompt, so make each brief self-contained."
 	if spec.Harness == HarnessAntigravity {
 		guide += " Separate MCP tool calls serialize on Antigravity, so always batch parallel subagents in one `mcp_lazyagents_run_subagents` call. Do not use Antigravity's built-in `invoke_subagent`, `define_subagent`, `manage_subagents`, `swarm`, `run_workflow`, or `schedule` tools—always use `mcp_lazyagents_run_subagent` / `mcp_lazyagents_run_subagents` instead."

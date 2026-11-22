@@ -111,7 +111,7 @@ func (r *Runner) runSubagentJob(ctx context.Context, c runCtx, job store.Subagen
 		r.recordSubagentUsage(finCtx, c.run.ID, usage, calls)
 	}
 
-	subSpec, err := runs.SubagentSpec(c.spec, job.AgentType)
+	subSpec, err := runs.SubagentSpecForJob(c.spec, job.AgentType, job.Model, job.Effort)
 	if err != nil {
 		failJob(err.Error(), harness.Usage{}, 0)
 		return
@@ -223,6 +223,15 @@ func (r *Runner) runSubagentJob(ctx context.Context, c runCtx, job store.Subagen
 				pl["subagent_type"] = job.AgentType
 				if job.Role != "" {
 					pl["subagent_role"] = job.Role
+				}
+				if job.Tier != "" {
+					pl["subagent_tier"] = job.Tier
+				}
+				if subSpec.Model != "" {
+					pl["subagent_model"] = subSpec.Model
+				}
+				if eff := subSpec.HarnessOptions["effort"]; eff != "" {
+					pl["subagent_effort"] = eff
 				}
 				redacted, _ := redactPayload(pl, sensitive)
 				r.event(ctx, c.run.ID, e.Type, redacted)

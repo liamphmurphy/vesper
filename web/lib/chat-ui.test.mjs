@@ -472,8 +472,8 @@ test("stepDetail names canvases, workflows, tickets, images, personas, runs and 
     [{ tool: "mcp__github__get_issue", input: { owner: "o", repo: "r", issue_number: 12 } }, "Using Github: get_issue"],
     [{ tool: "mcp__lazyagents__save_memory", input: { body: "private" } }, "Making a note"],
     [{ tool: "mcp__lazyagents__canvas_read", input: { canvas_id: "unknown" } }, "Looking at a canvas"],
-    [{ tool: "mcp__lazyagents__run_subagent", input: { type: "explorer", role: "Code Searcher", prompt: "secret" } }, "Delegating “Code Searcher”"],
-    [{ tool: "mcp__lazyagents__run_subagents", input: { tasks: [{ type: "helper", role: "Worker A", prompt: "secret" }, { type: "helper", role: "Worker B", prompt: "secret" }] } }, "Running 2 subagents"],
+    [{ tool: "mcp__lazyagents__run_subagent", input: { type: "explorer", tier: "fast", role: "Code Searcher", prompt: "secret" } }, "Delegating “Code Searcher”"],
+    [{ tool: "mcp__lazyagents__run_subagents", input: { tasks: [{ type: "helper", tier: "fast", role: "Worker A", prompt: "secret" }, { type: "helper", tier: "deep", role: "Worker B", prompt: "secret" }] } }, "Running 2 subagents"],
     [{ tool: "mcp__lazyagents__run_subagents", input: { tasks: [{ type: "explorer", role: "Solo Reader", prompt: "secret" }] } }, "Delegating “Solo Reader”"],
   ];
   for (const [call, want] of cases) assert.equal(stepDetail(call), want, call.tool);

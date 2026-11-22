@@ -14,6 +14,7 @@ import (
 
 	"github.com/liamphmurphy/vesper/server/internal/agentdef"
 	"github.com/liamphmurphy/vesper/server/internal/agents"
+	"github.com/liamphmurphy/vesper/server/internal/chatmodels"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/seed"
 	"github.com/liamphmurphy/vesper/server/internal/store"
@@ -111,12 +112,15 @@ func TestRunSubagentToolLifecycleAndValidation(t *testing.T) {
 	if _, err := call(ctx, deps, agents.Caller{Agent: atlas, Kind: "unmanaged"}, json.RawMessage(`{"type":"explorer","prompt":"find"}`)); err == nil {
 		t.Fatal("expected error without run id")
 	}
-	// Empty prompt & unknown type rejected.
+	// Empty prompt, unknown type, & unknown tier rejected.
 	if _, err := call(ctx, deps, c, json.RawMessage(`{"type":"explorer","prompt":"   "}`)); err == nil || !strings.Contains(err.Error(), "prompt") {
 		t.Fatalf("empty prompt err = %v", err)
 	}
 	if _, err := call(ctx, deps, c, json.RawMessage(`{"type":"bogus","prompt":"hi"}`)); err == nil || !strings.Contains(err.Error(), "unknown subagent type") {
 		t.Fatalf("bad type err = %v", err)
+	}
+	if _, err := call(ctx, deps, c, json.RawMessage(`{"type":"helper","tier":"ultra","prompt":"hi"}`)); err == nil || !strings.Contains(err.Error(), "unknown subagent tier") {
+		t.Fatalf("bad tier err = %v", err)
 	}
 
 	// OptionExplorer="false" blocks explorer; OptionSubagents="false" blocks all.
@@ -260,9 +264,12 @@ func TestRunSubagentsToolBatchLifecycle(t *testing.T) {
 	if _, err := call(ctx, deps, c, tooManyRaw); err == nil || !strings.Contains(err.Error(), "at most") {
 		t.Fatalf("too many tasks err = %v", err)
 	}
-	// Second task invalid (bad type or empty prompt) -> zero rows inserted for the first valid task.
+	// Invalid task in batch (bad type, bad tier, or empty prompt) -> zero rows inserted.
 	if _, err := call(ctx, deps, c, json.RawMessage(`{"tasks":[{"type":"explorer","prompt":"ok"},{"type":"bogus","prompt":"bad"}]}`)); err == nil || !strings.Contains(err.Error(), "unknown subagent type") {
 		t.Fatalf("invalid type err = %v", err)
+	}
+	if _, err := call(ctx, deps, c, json.RawMessage(`{"tasks":[{"type":"helper","prompt":"ok"},{"type":"helper","tier":"max","prompt":"bad"}]}`)); err == nil || !strings.Contains(err.Error(), "unknown subagent tier") {
+		t.Fatalf("invalid tier err = %v", err)
 	}
 	if _, err := call(ctx, deps, c, json.RawMessage(`{"tasks":[{"type":"helper","prompt":"ok"},{"type":"explorer","prompt":"   "}]}`)); err == nil || !strings.Contains(err.Error(), "prompt") {
 		t.Fatalf("empty prompt err = %v", err)
@@ -388,6 +395,126 @@ func TestRunSubagentsToolBatchLifecycle(t *testing.T) {
 	}()
 	if _, err := call(cancelCtx, deps, c, json.RawMessage(`{"tasks":[{"type":"explorer","prompt":"hang"}]}`)); err != context.Canceled {
 		t.Fatalf("canceled batch err = %v, want context.Canceled", err)
+	}
+}
+
+func TestRunSubagentTierPersistenceAndCeiling(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	if _, err := seed.Run(ctx, pool, seed.Options{Demo: true}); err != nil {
+		t.Fatal(err)
+	}
+	q := store.New(pool)
+	me, _ := q.GetLocalUser(ctx)
+	ws := me.WorkspaceID
+	svc := &runs.Service{
+		Pool:    pool,
+		Tracker: &tracker.Service{Pool: pool},
+		Poll:    20 * time.Millisecond,
+		ModelDiscovery: func(_ context.Context, h, _ string) ([]chatmodels.Model, error) {
+			if h == agentdef.HarnessClaudeCode {
+				return []chatmodels.Model{
+					{ID: "fable", Label: "Fable 5.2", Efforts: agentdef.Efforts},
+					{ID: "sonnet", Label: "Sonnet 5.5", Default: true, Efforts: agentdef.Efforts},
+					{ID: "haiku", Label: "Haiku 5.5"},
+				}, nil
+			}
+			return nil, nil
+		},
+	}
+	out, err := svc.Dispatch(ctx, ws, me.ID, []string{"PAY-214"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := out[0]
+	if _, err := q.SetRunState(ctx, store.SetRunStateParams{ID: run.ID, State: "running"}); err != nil {
+		t.Fatal(err)
+	}
+	// Configure parent run as a standard Claude Sonnet parent with high effort.
+	spec, err := runs.Spec(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.Harness = agentdef.HarnessClaudeCode
+	spec.Model = "sonnet"
+	if spec.HarnessOptions == nil {
+		spec.HarnessOptions = map[string]string{}
+	}
+	spec.HarnessOptions["effort"] = "high"
+	rawSpec, _ := json.Marshal(spec)
+	if _, err := pool.Exec(ctx, "UPDATE runs SET resolved_spec=$1 WHERE id=$2", rawSpec, run.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	atlas, _ := q.GetAgentByHandle(ctx, store.GetAgentByHandleParams{WorkspaceID: ws, Handle: "atlas"})
+	exp := time.Now().Add(time.Hour)
+	tok, _, err := agents.IssueToken(ctx, q, atlas.ID, "run", "", &run.ID, nil, &exp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := agents.ResolveToken(ctx, q, tok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps := Deps{Q: q, Runs: svc}
+
+	// Single call requesting deep on a standard parent is capped at standard (sonnet, medium).
+	doneSingle := make(chan store.SubagentJob, 1)
+	go func() {
+		for {
+			if j, err := q.ClaimNextSubagentJob(ctx, run.ID); err == nil {
+				_ = q.CompleteSubagentJob(ctx, store.CompleteSubagentJobParams{ID: j.ID, ResultText: "ok"})
+				doneSingle <- j
+				return
+			}
+			time.Sleep(15 * time.Millisecond)
+		}
+	}()
+	singleRes, err := ByName["run_subagent"].call(ctx, deps, c, json.RawMessage(`{"type":"helper","tier":"deep","role":"Hard Task","prompt":"debug"}`))
+	if err != nil {
+		t.Fatalf("run_subagent: %v", err)
+	}
+	singleJob := <-doneSingle
+	if singleJob.Tier != "standard" || singleJob.Model != "sonnet" || singleJob.Effort != "medium" {
+		t.Fatalf("persisted single job = (%q, %q, %q), want (standard, sonnet, medium)", singleJob.Tier, singleJob.Model, singleJob.Effort)
+	}
+	sg := singleRes.(map[string]any)
+	if sg["tier"] != "standard" || sg["model"] != "sonnet" || sg["effort"] != "medium" {
+		t.Fatalf("single tool output = %#v", sg)
+	}
+
+	// Batch call with fast + deep (capped to standard): persists per-task tiers/models and returns them in output.
+	doneBatch := make(chan []store.SubagentJob, 1)
+	go func() {
+		var claimed []store.SubagentJob
+		for len(claimed) < 2 {
+			if j, err := q.ClaimNextSubagentJob(ctx, run.ID); err == nil {
+				_ = q.CompleteSubagentJob(ctx, store.CompleteSubagentJobParams{ID: j.ID, ResultText: "done:" + j.Prompt})
+				claimed = append(claimed, j)
+				continue
+			}
+			time.Sleep(15 * time.Millisecond)
+		}
+		doneBatch <- claimed
+	}()
+	batchRes, err := ByName["run_subagents"].call(ctx, deps, c, json.RawMessage(`{"tasks":[
+		{"type":"helper","tier":"fast","role":"Quick Check","prompt":"t0"},
+		{"type":"helper","tier":"deep","role":"Capped Deep","prompt":"t1"}
+	]}`))
+	if err != nil {
+		t.Fatalf("run_subagents: %v", err)
+	}
+	batchJobs := <-doneBatch
+	if batchJobs[0].Tier != "fast" || batchJobs[0].Model != "haiku" || batchJobs[0].Effort != "" {
+		t.Fatalf("batch job[0] = (%q, %q, %q), want (fast, haiku, '')", batchJobs[0].Tier, batchJobs[0].Model, batchJobs[0].Effort)
+	}
+	if batchJobs[1].Tier != "standard" || batchJobs[1].Model != "sonnet" || batchJobs[1].Effort != "medium" {
+		t.Fatalf("batch job[1] = (%q, %q, %q), want (standard, sonnet, medium)", batchJobs[1].Tier, batchJobs[1].Model, batchJobs[1].Effort)
+	}
+	br := batchRes.(map[string]any)["results"].([]map[string]any)
+	if br[0]["tier"] != "fast" || br[0]["model"] != "haiku" || br[0]["effort"] != nil ||
+		br[1]["tier"] != "standard" || br[1]["model"] != "sonnet" || br[1]["effort"] != "medium" {
+		t.Fatalf("batch results = %#v", br)
 	}
 }
 

@@ -1732,6 +1732,9 @@ type SubagentJob struct {
 	CreatedAt    time.Time
 	StartedAt    *time.Time
 	CompletedAt  *time.Time
+	Tier         string
+	Model        string
+	Effort       string
 }
 
 type TestEnvironment struct {

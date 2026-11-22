@@ -40,8 +40,10 @@ func TestSubagentTypes(t *testing.T) {
 			t.Errorf("%s: SubagentGuide = %q", c.name, guide)
 		}
 		if c.want != nil {
-			if !strings.Contains(guide, "`run_subagents`") || !strings.Contains(guide, "`tasks`") {
-				t.Errorf("%s: SubagentGuide missing batch run_subagents guidance: %q", c.name, guide)
+			for _, token := range []string{"`run_subagents`", "`tasks`", "`tier`", "`fast`", "`standard`", "`deep`"} {
+				if !strings.Contains(guide, token) {
+					t.Errorf("%s: SubagentGuide missing %q: %q", c.name, token, guide)
+				}
 			}
 			wantAgy := c.harness == HarnessAntigravity
 			for _, token := range []string{"mcp_lazyagents_run_subagent", "mcp_lazyagents_run_subagents", "invoke_subagent", "run_workflow", "schedule"} {
