@@ -5,13 +5,15 @@ import { useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type
 import type { Schemas } from "@/lib/api/client";
 import { cx } from "@/lib/cx";
 import { duration } from "@/lib/format";
-import { buildRunGraph, type GraphDetail, type GraphNode, type NodeStatus } from "@/lib/run-graph";
+import { buildRunGraph, finalMessage, turnByEvent, type GraphDetail, type GraphNode, type NodeStatus } from "@/lib/run-graph";
 import { layoutRunGraph, moveFrom, type BranchItem, type Column, type GroupItem, type MainItem } from "@/lib/run-graph-layout";
-import { finalMessage, turnByEvent } from "@/lib/run-view";
+import { isNativeShell, post } from "@/lib/native-shell/bridge";
+import { PROTOCOL_VERSION } from "@/lib/native-shell/protocol";
 import { Button } from "@/components/ui/button";
 import { usePulseList } from "@/components/ui/motion";
 import { WORK_COLUMN } from "@/components/domain/work-detail-header";
-import { ACTION_BOX_ID } from "./run-panels";
+
+const ACTION_BOX_ID = "run-action-box";
 
 type RunDetail = Schemas["RunDetail"];
 
@@ -93,8 +95,12 @@ export function RunGraphView({ d, childDetails, onOpenTurn, onOpenEvent }: {
   });
   const focusActionBox = () => {
     const box = document.getElementById(ACTION_BOX_ID);
-    box?.scrollIntoView({ block: "nearest" });
-    box?.focus();
+    if (box) {
+      box.scrollIntoView({ block: "nearest" });
+      box.focus();
+    } else if (isNativeShell()) {
+      post({ v: PROTOCOL_VERSION, type: "openInMain", path: `/runs/${encodeURIComponent(d.run.id)}?view=simple` });
+    }
   };
   /** Opens what a node stands for. */
   const activate = (item: Item) => {

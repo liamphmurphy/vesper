@@ -41,12 +41,16 @@ final class NativeRoutesTests: XCTestCase {
         XCTAssertNil(NativeRouteRegistry.standard(debug: false).resolve("/native-debug/embeds"))
     }
 
-    func testWorkAndBareRunsAreNativeButARunStaysOnTheWeb() {
+    func testWorkBareRunsAndRunDetailAreNative() {
         let standard = NativeRouteRegistry.standard(debug: false)
         XCTAssertEqual(standard.resolve("/work?project=VES")?.screen, .work)
         XCTAssertEqual(standard.resolve("/work?project=VES")?.query, ["project": "VES"])
         XCTAssertEqual(standard.resolve("/runs")?.screen, .work)
-        XCTAssertNil(standard.resolve("/runs/r1"))
+        let run = standard.resolve("/runs/r1?view=details")
+        XCTAssertEqual(run?.screen, .runDetail)
+        XCTAssertEqual(run?.params["id"], "r1")
+        XCTAssertEqual(run?.query["view"], "details")
+        XCTAssertNil(standard.resolve("/runs/r1/extra"))
         XCTAssertNil(standard.resolve("/workflows"))
     }
 

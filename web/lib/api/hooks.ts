@@ -19,9 +19,28 @@ import {
 } from "./client";
 import { runEach } from "../ticket-list";
 import { runEnded } from "../chat-dispatch";
-import { eventsAfter } from "../run-events";
 import { personaKeys } from "./persona-hooks";
 import { confirmApprovalLocally } from "../desktop-bridge";
+
+const RUN_EVENTS_PAGE = 1000;
+const RUN_EVENTS_OVERLAP = 32;
+
+async function eventsAfter<E extends { seq: number }>(known: E[], page: (after: number) => Promise<E[]>): Promise<E[]> {
+  let all = known;
+  let after = known.length > RUN_EVENTS_OVERLAP ? known[known.length - RUN_EVENTS_OVERLAP - 1].seq : 0;
+  for (;;) {
+    const next = await page(after);
+    const have = new Set(all.filter((e) => e.seq > after).map((e) => e.seq));
+    const fresh = next.filter((e) => e.seq > after && !have.has(e.seq));
+    if (fresh.length) {
+      const inOrder = fresh[0].seq > (all.at(-1)?.seq ?? 0) && fresh.every((e, i) => i === 0 || e.seq > fresh[i - 1].seq);
+      all = inOrder ? [...all, ...fresh] : [...all, ...fresh].sort((a, b) => a.seq - b.seq);
+    }
+    const newest = next.at(-1)?.seq;
+    if (next.length < RUN_EVENTS_PAGE || newest === undefined || newest <= after) return all;
+    after = newest;
+  }
+}
 
 type NewTicket = Schemas["NewTicket"];
 

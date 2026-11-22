@@ -11,9 +11,69 @@
 // node: pass that run's detail in `loaded` and its children appear. Nothing
 // here fans out per grandchild on refresh.
 
-import { delegateChild, str, turnAt, turnByEvent, turnStarts, type Ev } from "./run-view.ts";
+export type Ev = { seq: number; type: string; at: string; payload: unknown };
 
 type P = Record<string, unknown>;
+
+const str = (v: unknown) => (v == null ? "" : typeof v === "string" ? v : JSON.stringify(v));
+
+function toolName(t: string) {
+  const m = /^mcp__([^_]+(?:_[^_]+)*?)__(.+)$/.exec(t);
+  return m ? `${m[1]}.${m[2]}` : t;
+}
+
+type ChildRef = { id: string; started_at: string; agent: { handle: string } };
+
+function delegateChild<C extends ChildRef>(call: Ev, children: C[], calls: Ev[] = [call]): C | undefined {
+  if (toolName(str((call.payload as P).tool)) !== "lazyagents.delegate") return undefined;
+  const handle = str(((call.payload as P).input as P | undefined)?.agent).replace(/^@/, "");
+  if (!handle) return undefined;
+  const used = new Set<string>();
+  for (const prior of [...calls].sort((a, b) => a.seq - b.seq)) {
+    if (prior.seq >= call.seq) break;
+    const child = delegateChild(prior, children.filter((c) => !used.has(c.id)));
+    if (child) used.add(child.id);
+  }
+  const at = Date.parse(call.at);
+  const after = children
+    .filter((c) => !used.has(c.id) && c.agent.handle === handle && Date.parse(c.started_at) >= at - 1000)
+    .sort((a, b) => Date.parse(a.started_at) - Date.parse(b.started_at));
+  return after[0];
+}
+
+function turnStarts(events: Ev[]): { turn: number; at: string }[] {
+  return events
+    .filter((e) => e.type === "lifecycle" && (e.payload as P).state === "turn_started")
+    .map((e) => ({ turn: Number((e.payload as P).turn), at: e.at }))
+    .filter((m) => Number.isFinite(m.turn));
+}
+
+export function turnByEvent(events: Ev[]): Map<number, number> {
+  const out = new Map<number, number>();
+  let turn = 0;
+  for (const e of [...events].sort((a, b) => a.seq - b.seq)) {
+    if (e.type === "lifecycle" && (e.payload as P).state === "turn_started" && Number.isFinite(Number((e.payload as P).turn))) {
+      turn = Number((e.payload as P).turn);
+    }
+    out.set(e.seq, turn);
+  }
+  return out;
+}
+
+function turnAt(starts: { turn: number; at: string }[], at: string): number {
+  const t = Date.parse(at);
+  let turn = 0;
+  for (const s of starts) if (Date.parse(s.at) <= t && s.turn >= turn) turn = s.turn;
+  return turn;
+}
+
+export function finalMessage(events: Ev[]): string | null {
+  for (const e of [...events].sort((a, b) => b.seq - a.seq)) {
+    const p = e.payload as P;
+    if (e.type === "message" && !p.kind && str(p.text).trim()) return str(p.text).trim();
+  }
+  return null;
+}
 
 export type GraphRun = {
   id: string;

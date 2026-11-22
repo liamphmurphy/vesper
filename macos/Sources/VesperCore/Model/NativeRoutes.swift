@@ -6,6 +6,7 @@ public enum NativeScreen: String, Sendable, CaseIterable {
     case debugPlaceholder
     case inbox
     case work
+    case runDetail
     case library
     case pdf
     /// /native-debug/markdown: every markdown feature through `MarkdownView` (debug only).
@@ -62,9 +63,10 @@ public struct NativeRouteRegistry: Sendable {
         NativeRoute("/native-debug/embeds", .embedsDebug),
         NativeRoute("/native-debug/:id", .debugPlaceholder),
         NativeRoute("/inbox", .inbox),
-        // Work's Runs view; bare /runs was an alias of it (a run's own page stays on the web).
+        // Work's Runs view (/work and bare /runs) and Run detail (/runs/:id).
         NativeRoute("/work", .work),
         NativeRoute("/runs", .work),
+        NativeRoute("/runs/:id", .runDetail),
         NativeRoute("/library", .library),
         NativeRoute("/pdf", .pdf),
         // The Dev workspace terminal (SwiftTerm on the workspace's PTY socket).

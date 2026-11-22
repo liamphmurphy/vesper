@@ -24,8 +24,11 @@ import { type IconName } from "@/components/ui/icon";
 import { CanvasFullscreen } from "@/components/domain/canvas-view";
 import { PlaygroundFullscreen } from "@/components/domain/playground";
 import { STATUS_NAME, PRIORITY_NAME } from "@/components/domain/meta";
-import { runTitle } from "@/lib/run-list";
 import { useCodeReview } from "@/lib/api/code-review-hooks";
+
+const RUN_PURPOSE_LABEL: Record<string, string> = { ticket: "Ticket run", planning: "Planning run", chat: "Chat run" };
+const runTitle = (run: { work_title?: string; ticket_key: string; purpose: string }) =>
+  run.work_title || run.ticket_key || RUN_PURPOSE_LABEL[run.purpose] || "Run";
 import { CodePanel } from "./code-panel";
 import { useOpenNewDesigns } from "./design-panel";
 import { effortLabel, modelLabel } from "./model-picker";
