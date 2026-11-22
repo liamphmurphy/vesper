@@ -315,7 +315,8 @@ struct TicketDetailScreen: View {
             guard let itemId, let sep = itemId.firstIndex(of: ":") else { return }
             let rawKind = String(itemId[..<sep])
             let sourceId = String(itemId[itemId.index(after: sep)...])
-            guard let sourceKind = API.LinkMentionBody.SourceKind(rawValue: rawKind) else { return }
+            let sourceKind = API.LinkMentionBody.SourceKind(rawValue: rawKind)
+            guard API.LinkMentionBody.SourceKind.allKnown.contains(sourceKind) else { return }
             Task { await linkMention(ticket: ticket, sourceId: sourceId, sourceKind: sourceKind, context: context) }
         default:
             break
@@ -643,9 +644,11 @@ struct TicketDetailScreen: View {
                                 if activeIds.contains(label.id) { next.removeAll { $0 == label.id } } else { next.append(label.id) }
                                 patchField(ticket, description: "Labels") { $0.labelIds = next }
                             } label: {
-                                activeIds.contains(label.id)
-                                    ? Label(label.name, systemImage: "checkmark")
-                                    : Text(label.name)
+                                if activeIds.contains(label.id) {
+                                    Label(label.name, systemImage: "checkmark")
+                                } else {
+                                    Text(label.name)
+                                }
                             }
                         }
                     } label: {

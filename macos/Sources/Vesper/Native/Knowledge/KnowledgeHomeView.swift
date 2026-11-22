@@ -38,7 +38,7 @@ struct KnowledgeHomeView: View {
         )
         let loadedNeeds = !allPages.isEmpty || (context.store.entry(controller.treeListRequest).data != nil && inboxEntry.data != nil && proposalsEntry.data != nil)
 
-        VStack(spacing: 0) {
+        return VStack(spacing: 0) {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 26) {

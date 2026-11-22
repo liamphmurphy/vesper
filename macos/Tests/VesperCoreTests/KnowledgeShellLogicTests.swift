@@ -629,7 +629,7 @@ final class KnowledgeShellLogicTests: XCTestCase {
 
         let longLine = String(repeating: "x", count: 140)
         let longSingle = KnowledgeShellLogic.captureInput(from: longLine)
-        XCTAssertEqual(longSingle?.title.count, 120)
+        XCTAssertEqual(longSingle?.title?.count, 120)
         XCTAssertEqual(longSingle?.bodyMd, longLine)
     }
 

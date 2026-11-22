@@ -217,8 +217,8 @@ public struct KnowledgeSearchFilter: Sendable, Equatable, Hashable {
 
     public var hasActiveFilters: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || !tag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || !folder.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !tag.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "#")).isEmpty
+            || !KnowledgeShellLogic.normalizeFolderPath(folder).isEmpty
             || !propertyKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !propertyValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || audience != nil
@@ -1050,7 +1050,7 @@ public enum KnowledgeShellLogic: Sendable {
         let prefix = t.hasPrefix("untitled document ") ? "untitled document " : (t.hasPrefix("untitled ") ? "untitled " : nil)
         guard let prefix else { return false }
         let suffix = String(t.dropFirst(prefix.count))
-        return !suffix.isEmpty && suffix.allSatisfy { ($0.isASCII && ($0.isNumber || ("a"..."z").contains($0))) }
+        return suffix.first?.isNumber == true && suffix.allSatisfy { ($0.isASCII && ($0.isNumber || ("a"..."z").contains($0))) }
     }
 
     public static func displayTitle(for row: KnowledgePageRow) -> String {
@@ -1140,7 +1140,7 @@ public enum KnowledgeShellLogic: Sendable {
     private static let ticketKeyRegex = try? NSRegularExpression(pattern: "\\b[A-Z][A-Z0-9]{1,15}-\\d{1,7}\\b")
     private static let deckLeadRegex = try? NSRegularExpression(pattern: "^(make|create|draft|build|write|turn|a deck|slides)\\b", options: .caseInsensitive)
     private static let designLeadRegex = try? NSRegularExpression(pattern: "^(make|create|draft|design|build|turn|sketch|map|diagram)\\b", options: .caseInsensitive)
-    private static let bulletPrefixRegex = try? NSRegularExpression(pattern: "^([-*\\u{2022}]|\\d+[.)])\\s+")
+    private static let bulletPrefixRegex = try? NSRegularExpression(pattern: "^([-*\u{2022}]|\\d+[.)])\\s+")
 
     public static func isDeckBrief(_ s: String) -> Bool {
         let t = s.trimmingCharacters(in: .whitespacesAndNewlines)

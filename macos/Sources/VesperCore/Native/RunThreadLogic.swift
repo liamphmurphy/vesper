@@ -1162,7 +1162,6 @@ public enum RunThreadLogic {
         }
 
         let entries: [TraceEntry] = visible.map { item in
-            let anchor = item.row.anchorEvent
             let isError: Bool
             let isWarning: Bool
             let summary: String

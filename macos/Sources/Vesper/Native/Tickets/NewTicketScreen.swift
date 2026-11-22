@@ -86,7 +86,7 @@ struct NewTicketScreen: View {
             initializeFromRouteIfNeeded()
         }
         .onDisappear {
-            context.store.stopObserving(Self.bootstrapRequest.queryKey)
+            context.store.stopObserving(Self.bootstrapRequest.key)
         }
         .onChange(of: context.match) { _, _ in
             loadedInitial = false

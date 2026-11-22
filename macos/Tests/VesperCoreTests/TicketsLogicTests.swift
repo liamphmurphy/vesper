@@ -11,7 +11,7 @@ final class TicketsLogicTests: XCTestCase {
     }
 
     func testParseAndStripFilterTokens() {
-        let parsed = TicketsLogic.parseFilterText("status:todo priority:high login bug")
+        let parsed = TicketsLogic.parseFilterText("status:todo persona:alice login bug")
         XCTAssertEqual(parsed.tokens.count, 2)
         XCTAssertEqual(parsed.text, "login bug")
         let stripped = TicketsLogic.withoutProjectToken("project:PAY status:todo crash")
