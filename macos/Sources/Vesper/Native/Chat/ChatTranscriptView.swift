@@ -124,6 +124,7 @@ struct ChatTranscriptView: View {
 
                             if isRunning {
                                 ChatLiveActivityCardView(
+                                    chatId: chatId,
                                     runId: session?.currentRunId,
                                     speaker: session?.speaker ?? session?.persona,
                                     fallbackSpeakerName: session?.agent.name ?? "Assistant"
@@ -379,6 +380,7 @@ private struct ChatLiveActivityCardView: View {
     @Environment(NativeScreenContext.self) private var context
     @Environment(\.vesperTheme) private var theme
 
+    let chatId: String
     let runId: String?
     let speaker: API.PersonaSummary?
     let fallbackSpeakerName: String
@@ -399,6 +401,8 @@ private struct ChatLiveActivityCardView: View {
         let speakerName = speaker?.name ?? fallbackSpeakerName
         let folded = ChatTurnActivity.foldSteps(activity.steps)
         let displaySteps = showAllSteps ? activity.steps : folded.shown
+        // Observed by `ChatTranscriptProposalsSlot`; the API lists only pending approvals.
+        let awaiting = !(context.store.entry(API.listChatToolApprovals(id: chatId)).data?.approvals.isEmpty ?? true)
 
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 12) {
@@ -407,7 +411,7 @@ private struct ChatLiveActivityCardView: View {
                     handle: nil,
                     name: speakerName,
                     size: 32,
-                    state: characterState(for: activity.status.kind),
+                    state: .forActivity(activity.status.kind, awaiting: awaiting),
                     active: true
                 )
                 ActivitySceneView(kind: activity.status.kind, width: 112, height: 54)
@@ -501,19 +505,6 @@ private struct ChatLiveActivityCardView: View {
             if let req = runEventsRequest {
                 _ = await context.store.refetch(req)
             }
-        }
-    }
-
-    private func characterState(for kind: ActivitySceneKind) -> CharacterState {
-        switch kind {
-        case .readingCode, .wiki, .webPage, .ticketLookup, .chatHistory, .designView, .imageView:
-            .reading
-        case .writingCode, .tests, .build, .terminal, .commit, .push, .pullRequest:
-            .coding
-        case .image, .canvas, .design, .videoRender, .audioRender, .pdf, .app, .chart, .diagram:
-            .creating
-        default:
-            .thinking
         }
     }
 
