@@ -3,7 +3,7 @@ import ObjectiveC
 import VesperCore
 import WebKit
 
-enum WebViewKind { case vesper, companion, inspectorPanel, commandPalette, playground }
+enum WebViewKind { case vesper, companion, inspectorPanel, playground }
 
 /// Builds the web views. Vesper, companion, and inspector-panel pages share the default
 /// (persistent) data store and get the native bridge; playground pages get a separate
@@ -35,23 +35,17 @@ enum WebViewFactory {
     document.documentElement.classList.add("native-mac", "native-inspector-panel", "native-inspector-glass");
     """
 
-    private static let commandPaletteModeScript = """
-    window.__VESPER_NATIVE__ = {v:1, platform:"macos"};
-    document.documentElement.classList.add("native-mac", "native-command-palette", "native-inspector-glass");
-    """
-
     static func makeWebView(kind: WebViewKind, bridge: WKScriptMessageHandler?, services: WebPageServices? = nil) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.applicationNameForUserAgent = userAgentSuffix
         // element.requestFullscreen (slides/designs present, video, dev terminal).
         config.preferences.isElementFullscreenEnabled = true
         switch kind {
-        case .vesper, .companion, .inspectorPanel, .commandPalette:
+        case .vesper, .companion, .inspectorPanel:
             config.websiteDataStore = WKWebsiteDataStore.default()
             let source: String = switch kind {
             case .companion: companionModeScript
             case .inspectorPanel: inspectorPanelModeScript
-            case .commandPalette: commandPaletteModeScript
             case .vesper, .playground: nativeModeScript
             }
             let script = WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true)
@@ -66,8 +60,8 @@ enum WebViewFactory {
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.isInspectable = true
         webView.allowsBackForwardNavigationGestures = kind == .vesper || kind == .playground
-        webView.allowsMagnification = kind != .commandPalette
-        if kind == .companion || kind == .inspectorPanel || kind == .commandPalette {
+        webView.allowsMagnification = true
+        if kind == .companion || kind == .inspectorPanel {
             disableBackground(webView)
         } else if kind != .playground, let background = lastPageBackground {
             webView.underPageBackgroundColor = background
