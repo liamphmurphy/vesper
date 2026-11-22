@@ -267,7 +267,10 @@ export function useCompanionState(chatId: string): CompanionState {
 /** What the chat's companion acts out right now (useCompanionState without React). */
 export function companionState(chatId: string): CompanionState {
   const c = chats.get(chatId);
-  if (c?.reveal && !c.reveal.done) return "talking";
+  // Talking starts with the first word on screen, not when the reply arrives:
+  // a spoken reply holds its text while the voice loads, and even an instant
+  // pace shows nothing for the first beat.
+  if (c?.reveal && !c.reveal.done && c.reveal.shown !== "") return "talking";
   if (c?.work && c.work !== "static") return c.work;
   if (c?.completeUntil && performance.now() < c.completeUntil) return "complete";
   return "idle";

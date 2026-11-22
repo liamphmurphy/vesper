@@ -3,6 +3,12 @@ import test from "node:test";
 import { COMPLETE_MS, companionState, finishReveal, markRevealed, setCompanionWork, startReveal } from "./companion-store.ts";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Polls until the chat's companion shows want, so timing under load can't flake a test.
+async function until(chatId, want, ms = 2000) {
+  const end = Date.now() + ms;
+  while (companionState(chatId) !== want && Date.now() < end) await sleep(10);
+  return companionState(chatId);
+}
 
 test("idle until a turn works, then the turn's state", () => {
   assert.equal(companionState("a"), "idle");
@@ -15,8 +21,9 @@ test("idle until a turn works, then the turn's state", () => {
 test("a reply after real work talks, then plays complete, then idles", async () => {
   setCompanionWork("b", "thinking");
   setCompanionWork("b", undefined);
-  startReveal("b", "m1", "one two three four", 100);
-  assert.equal(companionState("b"), "talking");
+  startReveal("b", "m1", "one two three four five six seven eight", 10);
+  assert.notEqual(companionState("b"), "talking", "no text on screen yet");
+  assert.equal(await until("b", "talking"), "talking", "talking once the first word shows");
   finishReveal("b");
   assert.equal(companionState("b"), "complete");
   setCompanionWork("b", "reading");
@@ -52,10 +59,9 @@ test("a spoken reply waits for its voice, then reveals in time with it", async (
   let stopped = 0;
   setSpeechPlayer(async () => ({ words: 4, seconds: 0.2, stop: () => stopped++ }));
   startReveal("v1", "m", "one two three four", 1, { url: "/s", mode: "always" });
-  assert.equal(companionState("v1"), "talking", "talking while the voice loads");
-  await sleep(10);
-  await sleep(320);
-  assert.equal(companionState("v1"), "idle", "4 words over 0.2s of audio finish fast, not at 1 word/s");
+  assert.equal(companionState("v1"), "idle", "not talking while the voice loads and no text shows");
+  assert.equal(await until("v1", "talking"), "talking", "talking once the first words appear");
+  assert.equal(await until("v1", "idle", 1500), "idle", "4 words over 0.2s of audio finish fast, not at 1 word/s");
   assert.equal(stopped, 0, "a voice that finishes isn't cut off");
 });
 
@@ -87,8 +93,7 @@ test("skipping a spoken reply stops its voice, and a failed voice reveals silent
   assert.equal(stopped, 1);
   setSpeechPlayer(async () => null);
   startReveal("v3", "n", "fallback text here", 40, { url: "/s", mode: "always" });
-  await sleep(5);
-  assert.equal(companionState("v3"), "talking", "revealing at the persona's pace instead");
+  assert.equal(await until("v3", "talking"), "talking", "the voice failed, so it reveals at the persona's pace instead");
   assert.ok(SPEECH_WAIT_MS >= 5000);
   finishReveal("v3");
 });
