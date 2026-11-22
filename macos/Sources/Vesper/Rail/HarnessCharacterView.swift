@@ -1,11 +1,7 @@
-import AppKit
-import VesperCore
 import SwiftUI
 
-/// The web rail's harness characters (web/components/shell/harness-character.tsx), drawn from the
-/// same coordinates on a 64x64 grid and animated like web/app/globals.css's `.harness-character`
-/// (same durations, easing and delays; every transform pivots on 32,34). Reduce Motion freezes the
-/// pose at t = 0.
+/// Animated harness characters drawn on a 64x64 grid for the chat composer's status strip and
+/// usage button. Reduce Motion freezes the pose at t = 0.
 struct HarnessCharacterView: View {
     enum Kind { case robot, comet, jet }
 
@@ -275,43 +271,6 @@ private enum CharacterDrawing {
                 rect(&b, 22, 44, 7, 7, 3, color)
                 rect(&b, 35, 44, 7, 7, 3, color)
                 ellipse(&b, 32, 42, 1.3, 1.3, Color(hex: 0xD0EFFF))
-            }
-        }
-    }
-}
-
-// MARK: - In the rail button
-
-/// A hosting view that leaves clicks to the button under it.
-final class ClickThroughHostingView<Content: View>: NSHostingView<Content> {
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-}
-
-/// The web rail's harness button: the 24pt character, its small name, and the working dot.
-struct RailCharacterContent: View {
-    let kind: HarnessCharacterView.Kind
-    let working: Bool
-    let name: String?
-
-    /// 8pt like the web; a name wider than the 40pt column shrinks to fit instead of clipping.
-    static func nameSize(_ name: String) -> CGFloat {
-        let width = (name as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 8)]).width
-        return min(8, (8 * 40 / max(width, 1)).rounded(.down))
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HarnessCharacterView(kind: kind, working: working, size: 24)
-            if let name {
-                Text(name).font(.system(size: Self.nameSize(name))).foregroundStyle(.secondary).lineLimit(1).fixedSize()
-                    .frame(height: 10)
-            }
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .overlay(alignment: .topTrailing) {
-            if working {
-                Circle().fill(Tone.done.color).frame(width: 3, height: 3).padding(.top, 3).padding(.trailing, 7) // 2pt in from the 34pt button (the host is 44pt wide)
             }
         }
     }

@@ -2,8 +2,8 @@ import AppKit
 import SwiftUI
 import VesperCore
 
-/// A rail item's menu (PR review requests, the agent harness…) as a popover that flies out to the
-/// left of the rail with the system animation, like the Needs-you popover, instead of a plain menu.
+/// A rail item's menu (PR review requests, etc.) as a popover that flies out to the left of the
+/// rail with the system animation, like the Needs-you popover, instead of a plain menu.
 @MainActor
 final class RailMenuPopover: NSObject, NSPopoverDelegate {
     private let popover = NSPopover()
@@ -23,7 +23,7 @@ final class RailMenuPopover: NSObject, NSPopoverDelegate {
     /// Shows `item`'s menu beside `button`; `choose` gets the picked entry's id.
     func show(_ item: RailItem, relativeTo button: NSView, choose: @escaping (String) -> Void) {
         itemId = item.id
-        let view = RailMenuView(title: item.label, character: item.character, usage: item.usage ?? [], items: item.menu ?? []) { [weak self] id in
+        let view = RailMenuView(title: item.label, items: item.menu ?? []) { [weak self] id in
             self?.popover.performClose(nil)
             choose(id)
         }
@@ -38,31 +38,12 @@ final class RailMenuPopover: NSObject, NSPopoverDelegate {
 
 private struct RailMenuView: View {
     let title: String
-    var character: RailCharacter?
-    var usage: [RailUsage] = []
     let items: [MenuItem]
     let choose: (String) -> Void
 
-    private var kind: HarnessCharacterView.Kind? { character.flatMap { HarnessCharacterView.kind(for: $0.harness) } }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if let kind, let character {
-                HStack(spacing: 10) {
-                    HarnessCharacterView(kind: kind, working: character.working, size: 40)
-                    Text(title).font(.headline).lineLimit(2)
-                }
-                .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 6)
-            } else {
-                Text(title).font(.headline).padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 6)
-            }
-            if !usage.isEmpty {
-                VStack(alignment: .leading, spacing: 12) {
-                    ForEach(usage) { UsageRowView(row: $0) }
-                }
-                .padding(.horizontal, 14).padding(.bottom, 8)
-                if !items.isEmpty { Divider().padding(.horizontal, 8).padding(.bottom, 4) }
-            }
+            Text(title).font(.headline).padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 6)
             ScrollView {
                 VStack(alignment: .leading, spacing: 1) {
                     ForEach(items) { item in entry(item, indent: 0) }
@@ -72,7 +53,7 @@ private struct RailMenuView: View {
             }
             .frame(maxHeight: 420)
         }
-        .frame(width: usage.isEmpty ? 280 : 256)
+        .frame(width: 280)
     }
 
     @ViewBuilder private func entry(_ item: MenuItem, indent: CGFloat) -> some View {

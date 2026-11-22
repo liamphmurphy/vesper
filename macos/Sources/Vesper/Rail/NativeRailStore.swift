@@ -3,30 +3,26 @@ import Observation
 import VesperCore
 
 /// App-wide observable source for the native macOS right rail: polls and observes `QueryStore`
-/// (`persona-dock`, `github/review-requests`, `secrets`) alongside `RailInbox`, and owns local
-/// GitHub review filter and dismissal state.
+/// (`github/review-requests`, `secrets`) alongside `RailInbox`, and owns local GitHub review
+/// filter and dismissal state.
 @MainActor
 @Observable
 final class NativeRailStore {
     private static let prefsKey = "VesperNativePRReviewFilters"
     private static let dismissedKey = "VesperNativePRReviewDismissed"
-    private static let personaDockPollInterval: Duration = .seconds(60)
     private static let reviewsPollInterval: Duration = .seconds(120)
 
-    private static let personaDockRequest = API.getPersonaDock()
     private static let reviewRequestsRequest = API.listGitHubReviewRequests()
     private static let secretsRequest = API.listSecrets()
 
     @ObservationIgnored private let store: QueryStore
     @ObservationIgnored private let railInbox: RailInbox
-    @ObservationIgnored private var dockPollTask: Task<Void, Never>?
     @ObservationIgnored private var reviewPollTask: Task<Void, Never>?
     @ObservationIgnored private var observingQueries = false
 
     private(set) var isConnected = false
     private(set) var reviewPrefs: RailLogic.ReviewFilterPrefs
     private(set) var dismissedReviews: [String: String]
-    private(set) var now = Date()
 
     init(store: QueryStore, railInbox: RailInbox) {
         self.store = store
@@ -38,23 +34,12 @@ final class NativeRailStore {
     func start() {
         stop()
         isConnected = true
-        now = Date()
-        store.observe(Self.personaDockRequest)
         store.observe(Self.reviewRequestsRequest)
         store.observe(Self.secretsRequest)
         observingQueries = true
-        store.load(Self.personaDockRequest)
         store.load(Self.reviewRequestsRequest)
         store.load(Self.secretsRequest)
 
-        dockPollTask = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: Self.personaDockPollInterval)
-                guard !Task.isCancelled, let self else { return }
-                self.now = Date()
-                _ = await self.store.refetch(Self.personaDockRequest)
-            }
-        }
         reviewPollTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: Self.reviewsPollInterval)
@@ -65,12 +50,9 @@ final class NativeRailStore {
     }
 
     func stop() {
-        dockPollTask?.cancel()
-        dockPollTask = nil
         reviewPollTask?.cancel()
         reviewPollTask = nil
         if observingQueries {
-            store.stopObserving(Self.personaDockRequest.key)
             store.stopObserving(Self.reviewRequestsRequest.key)
             store.stopObserving(Self.secretsRequest.key)
             observingQueries = false
@@ -79,7 +61,7 @@ final class NativeRailStore {
     }
 
     /// Builds the `RailModel` for `tab`, or `nil` while disconnected or showing a playground tab.
-    func model(for tab: WebContentController?, showHarnessActivity: Bool, poppedOut: Bool) -> RailModel? {
+    func model(for tab: WebContentController?, poppedOut: Bool) -> RailModel? {
         guard isConnected, let tab, tab.kind == .vesper else { return nil }
         let inspector = tab.state.inspector
         let top = RailLogic.effectiveRailTop(
@@ -89,7 +71,6 @@ final class NativeRailStore {
             pageRailTop: tab.state.rail?.top
         )
         let pathname = tab.state.route ?? tab.pendingPath
-        let dockData = store.entry(Self.personaDockRequest).data
         let reviewsData = store.entry(Self.reviewRequestsRequest).data
         let secretsData = store.entry(Self.secretsRequest).data
 
@@ -103,9 +84,6 @@ final class NativeRailStore {
             prefs: reviewPrefs,
             approved: approved
         )
-        let harnesses: [RailLogic.HarnessInput]? = showHarnessActivity
-            ? RailLogic.harnessRailInputs(RailLogic.connectedHarnesses(dockData?.harnesses ?? []), now: now)
-            : nil
         let settingsNeedYou = RailLogic.settingsNeedAttention(secretsData)
 
         return RailLogic.buildModel(
@@ -113,7 +91,6 @@ final class NativeRailStore {
             pathname: pathname,
             review: review,
             needsYou: needsYou,
-            harnesses: harnesses,
             settingsNeedYou: settingsNeedYou
         )
     }

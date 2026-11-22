@@ -25,20 +25,17 @@ public struct AppearancePreference: Codable, Sendable, Equatable {
     public var mode: AppearanceMode
     public var palette: String
     public var textSize: AppearanceTextSize
-    public var showHarnessActivity: Bool
     public var custom: CustomPaletteOverrides
 
     public init(
         mode: AppearanceMode = .system,
         palette: String = "macos",
         textSize: AppearanceTextSize = .default,
-        showHarnessActivity: Bool = true,
         custom: CustomPaletteOverrides = CustomPaletteOverrides()
     ) {
         self.mode = mode
         self.palette = palette
         self.textSize = textSize
-        self.showHarnessActivity = showHarnessActivity
         self.custom = custom
     }
 
@@ -59,13 +56,11 @@ public struct AppearancePreference: Codable, Sendable, Equatable {
             let version: Int = 1
             let palette: String
             let custom: CustomPaletteOverrides
-            let showHarnessActivity: Bool
             let textSize: String
         }
         let payload = WebAppearancePayload(
             palette: palette,
             custom: custom,
-            showHarnessActivity: showHarnessActivity,
             textSize: textSize.rawValue
         )
         let encoder = JSONEncoder()
@@ -100,8 +95,8 @@ public struct AppearancePreference: Codable, Sendable, Equatable {
         }
     }
 
-    /// Parses an imported `vesper-palette.json` file with the 40 KB cap, preserving `mode`,
-    /// `showHarnessActivity`, and `textSize` from `preserving`.
+    /// Parses an imported `vesper-palette.json` file with the 40 KB cap, preserving `mode`
+    /// and `textSize` from `preserving`.
     public static func importPaletteJSON(_ data: Data, preserving current: AppearancePreference) throws -> AppearancePreference {
         if data.count > 40_000 { throw ImportError.tooLarge }
         guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -122,9 +117,6 @@ public struct AppearancePreference: Codable, Sendable, Equatable {
         if let m = src["mode"] as? String, let parsed = AppearanceMode(rawValue: m) { out.mode = parsed }
         if let p = src["palette"] as? String, p == "custom" || PaletteTokens.palette(id: p) != nil { out.palette = p }
         if let ts = src["textSize"] as? String, let parsed = AppearanceTextSize(rawValue: ts) { out.textSize = parsed }
-        if let b = src["showHarnessActivity"] as? NSNumber, CFGetTypeID(b) == CFBooleanGetTypeID(), let v = b as? Bool {
-            out.showHarnessActivity = v
-        }
         if src["custom"] != nil {
             out.custom = normalizeCustom(src["custom"], fallback: base.custom)
         }

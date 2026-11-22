@@ -23,7 +23,7 @@ final class SystemServices {
     private(set) var items: [InboxItem] = []
     /// The inbox as the right rail's Needs-you popover reads it (observable; `items` isn't).
     let railInbox = RailInbox()
-    /// Native data source for the window right rail (PR reviews, Needs you, harnesses, Settings).
+    /// Native data source for the window right rail (PR reviews, Needs you, Settings).
     lazy var nativeRail = NativeRailStore(store: store, railInbox: railInbox)
     private(set) var liveRuns: [RunSummary] = []
     private(set) var badgeCount = 0
