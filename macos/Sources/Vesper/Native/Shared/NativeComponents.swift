@@ -3,9 +3,9 @@ import SwiftUI
 import VesperCore
 
 /// A ticket or run agent drawn as the person's matching persona (web WorkPersonaAvatar): its
-/// photo when it has one, else its cached custom animated character snapshot (`characterSvg`,
-/// `active: false`), else a circle with its initial in the persona's colour (or the agent's
-/// identity hue).
+/// photo when it has one, else its custom animated character (`characterSvg`), else a circle with
+/// its initial in the persona's colour (or the agent's identity hue). In a chat
+/// (`preferCharacter`) the character wins over the photo.
 struct WorkPersonaAvatarView: View {
     @Environment(NativeScreenContext.self) private var context
     @Environment(\.vesperTheme) private var theme
@@ -16,6 +16,7 @@ struct WorkPersonaAvatarView: View {
     var size: CGFloat = 24
     var state: CharacterState = .staticState
     var active: Bool = false
+    var preferCharacter: Bool = false
 
     @State private var picture: NSImage?
 
@@ -27,13 +28,11 @@ struct WorkPersonaAvatarView: View {
         let fill = Color(cssHex: persona?.color) ?? theme.swiftUIColor("agent-\(hue)", fallback: .gray)
         let fallbackHex = theme.colors["agent-\(hue)"] ?? "#64748b"
         let characterColor = persona.flatMap { $0.color.isEmpty ? nil : $0.color } ?? fallbackHex
-        let hasPhoto = !(persona?.avatarUrl ?? "").isEmpty
-        let characterSvg = hasPhoto ? nil : persona?.characterSvg.flatMap { $0.isEmpty ? nil : $0 }
+        let face = WorkPersona.face(avatarUrl: persona?.avatarUrl, characterSvg: persona?.characterSvg, preferCharacter: preferCharacter)
+        let photoUrl: String? = if case .photo(let url) = face { url } else { nil }
 
         ZStack {
-            if let picture {
-                Image(nsImage: picture).resizable().scaledToFill()
-            } else if let characterSvg {
+            if case .character(let characterSvg) = face {
                 PersonaCharacterView(
                     svg: characterSvg,
                     color: characterColor,
@@ -42,6 +41,8 @@ struct WorkPersonaAvatarView: View {
                     active: active,
                     framed: true
                 )
+            } else if let picture {
+                Image(nsImage: picture).resizable().scaledToFill()
             } else {
                 Circle().fill(fill)
                 Text(String((persona?.name ?? name).prefix(1)).uppercased())
@@ -53,9 +54,9 @@ struct WorkPersonaAvatarView: View {
         .clipShape(Circle())
         .accessibilityLabel("\(persona?.name ?? name) (agent)")
         .task { context.store.load(Self.personas) }
-        .task(id: persona?.avatarUrl) {
+        .task(id: photoUrl) {
             picture = nil
-            if let url = persona?.avatarUrl, !url.isEmpty { picture = await AvatarImages.shared.image(for: url) }
+            if let photoUrl { picture = await AvatarImages.shared.image(for: photoUrl) }
         }
     }
 }

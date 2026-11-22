@@ -290,7 +290,8 @@ private struct ChatMessageRowView: View {
                         id: personaId,
                         handle: nil,
                         name: speakerName,
-                        size: 24
+                        size: 24,
+                        preferCharacter: true
                     )
                     Text(speakerName)
                         .font(.system(size: theme.pointSize(.body), weight: .semibold))
@@ -412,7 +413,8 @@ private struct ChatLiveActivityCardView: View {
                     name: speakerName,
                     size: 32,
                     state: .forActivity(activity.status.kind, awaiting: awaiting),
-                    active: true
+                    active: true,
+                    preferCharacter: true
                 )
                 ActivitySceneView(kind: activity.status.kind, width: 112, height: 54)
                 VStack(alignment: .leading, spacing: 3) {
