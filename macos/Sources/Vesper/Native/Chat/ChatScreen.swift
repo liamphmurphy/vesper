@@ -303,6 +303,9 @@ struct ChatScreen: View {
                         .imageScale(.small)
                     Text(currentLabel)
                         .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(theme.palette.tertiaryText)
                 }
                 .font(.system(size: theme.pointSize(.small)))
                 .foregroundStyle(theme.palette.secondaryText)
@@ -311,7 +314,9 @@ struct ChatScreen: View {
                 .background(theme.palette.surface, in: RoundedRectangle(cornerRadius: 6))
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(theme.palette.border))
             }
-            .menuStyle(.borderlessButton)
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
             .fixedSize()
         }
     }
