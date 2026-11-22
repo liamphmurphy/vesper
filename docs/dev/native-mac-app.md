@@ -286,6 +286,7 @@ macos/Sources/VesperCore/           logic with no AppKit UI (unit-tested)
   API/          APIClient (session cookie), InboxMonitor, RunMonitor, EventStream (SSE), APIRuntime,
                 QueryStore + LiveUpdates (native screens' cache), Generated/ (from api/openapi.yaml)
   Settings/     NativeSettings (config.json "native"), SessionStore (session.json)
+  ChatEmbeds/   chat embeds: classification, cache keys, render cache, app pool ledger, CSP (Native chat embeds)
   Model/        DeepLinks, Routing, InspectorLogic, FindLogic, ShortcutsCatalog, ToastQueueLogic, QuickLookLogic, NotificationPolicy, TrayModel, DockModel, Capture, Drop, Power, Thermal, Backups, Updates, WorkspaceOpen
 macos/Sources/Vesper/               the app (AppKit + SwiftUI)
   App/          main.swift, AppDelegate, AppModel
@@ -521,9 +522,11 @@ the header, Shiki and the fold of `code-fence.tsx`).
 - **Find**: give the view its row (`findRow`) in `context.find.texts`; it tints the matches and scrolls
   the current row's first match into view.
 
-Not matching the web yet: math shows its TeX source (no KaTeX); the chat's special fences (app,
-canvas, pdf, mermaid, charts, choices, recommend, dispatch, workflow runs) show as plain code blocks
-until their screens move over; wiki links have no kind mark (status glyph, page icon); hover underlines
+Math is drawn by the chat embeds' render-once path (KaTeX, see "Native chat embeds"); its TeX shows
+until it has drawn and stays when it can't be. Not matching the web yet: the chat's special fences
+(app, canvas, pdf, mermaid, charts, choices, recommend, dispatch, workflow runs) show as plain code
+blocks inside `MarkdownView` until the transcript hands them to their views (`EmbeddedBlockView` for
+app, mermaid, svg-image and svg-steps); wiki links have no kind mark (status glyph, page icon); hover underlines
 on links; wide tables wrap instead of scrolling sideways, and long code lines wrap; inline code has no
 border.
 
@@ -767,6 +770,85 @@ Manual click-through checklist:
    question, verify `Thinking…` polls every 2 s, and confirm replies render Markdown and ```` ```chart ```` blocks cleanly.
 7. Trigger **Plan part 2 now** on a multi-part course, follow **Review its outline** (`?review=1`), verify `LearnNav`
    clears during outline review, and confirm **Stop** / **Delete** alerts work cleanly.
+
+## Native chat embeds
+
+Everything in a native chat message that isn't markdown text or a card: display and inline math,
+```` ```mermaid ````, ```` ```svg-image ````, ```` ```svg-steps ```` and ```` ```app ```` fences. Views in
+`macos/Sources/Vesper/Native/ChatEmbeds/`; classification, cache keys, the cache, pool bookkeeping, the
+app sandbox's CSP and the ports of `web/lib/chat-svg.ts` and `web/lib/chat-app.ts` in VesperCore
+`ChatEmbeds/` (Foundation only, for the iOS client).
+
+- **Entry point.** The transcript calls `EmbeddedBlockView(fence: info, code: code, messageID: id,
+  index: n)` for a fence (nil when the fence stays a code block; `EmbeddedBlockKind.classify(info:)`
+  says the same), or `EmbeddedBlockView(kind:source:messageID:info:index:)`. `messageID` is the
+  assistant reply's id (render cache key; diagrams offer Save to Library only with it), `index` the
+  block's position in the message. `$$` math inside markdown needs nothing: `MarkdownView` draws it.
+- **Render once** (`EmbedRenderer`). One hidden `WKWebView` in an off-screen window loads
+  `EmbedRendererPage` (bundled KaTeX and its fonts inline; mermaid evaluated on first use) and draws
+  one job at a time: mermaid renders its SVG there (it needs a DOM to measure text), every SVG is
+  drawn through an `<img>` from a `data:` URL at its intrinsic size, and `WKWebView.pdf(configuration:)`
+  exports the stage as a one-page PDF. `NSImage` with `NSPDFImageRep` shows it as vectors at any
+  scale. Results go into `EmbedRenderCache` (LRU, 400 entries or 96 MB) keyed by `EmbedCacheKey`:
+  kind, message, theme (`VizPalette.fingerprint`, or "plain" for an SVG that doesn't use
+  `var(--viz-*)`, or math's colour and size), SHA-256 of the source, and variant (step frame,
+  display/inline). A job that takes over 8 s restarts the renderer.
+- **Math.** `MathRendering.shared` is `FallbackMathRenderer(primary:fallback:)`: a native engine first,
+  the render-once KaTeX path (`WebMathRenderer`) for what it can't lay out. SwiftMath couldn't be
+  vendored (no copy offline on either machine, and the VM has no network), so `primary` is nil and all
+  math takes the KaTeX path today; vendoring SwiftMath under `macos/Vendor/SwiftMath/` and adding a
+  `MathRenderer` for it is the drop-in. Inline math sits on the text's baseline (KaTeX's measured
+  ascent); a TeX error keeps the source.
+- **Diagrams.** svg-image and svg-steps theme `var(--viz-*)` with the page's `--viz-*` tokens as the web
+  does, render each step-through frame on demand (and the next one ahead), and offer Image/Code,
+  Save to Library (`POST /library/diagrams`, the web's request, with `exportSvg` of the last frame) and
+  Download. Mermaid uses the web's `initialize` options and shows its code when it can't draw (or over
+  20,000 characters); its Save to Library sends mermaid's own SVG.
+- **Apps** (`AppEmbedView`, `AppWebViewPool`). Web views are created only when a block scrolls on
+  screen (`onScrollVisibilityChange`), at most 4 (`EmbedPoolLedger`); scrolling off takes a snapshot,
+  blanks the view and returns it to the pool, and the snapshot stands in until the block is back. When
+  more apps are on screen than views, the least recently used one is snapshotted and parked behind a
+  Run app button. An app restarts when it gets a view again, as a remounted iframe does.
+- **Security.** The app sandbox matches the web iframe's: `ChatApp.csp` (= `APP_CSP`, tested) is the
+  document's first element; a fresh non-persistent data store per view (no Vesper cookies or
+  storage); no bridge, message handler or native-mode script in the page world (the height script and
+  its handler live in an isolated content world); a compiled content rule list blocks every load but
+  the three CDNs and `data:`/`blob:`/`about:`, failing closed if it doesn't compile;
+  `ChatApp.allowsNavigation` allows only the shell's own `about:blank`; no new windows, dialogs, file
+  pickers or media capture. The renderer page loads nothing remote (CSP `default-src 'none'`, fonts
+  and images only from `data:`), takes agent text only as `callAsyncJavaScript` arguments, runs
+  mermaid with `securityLevel: "strict"` and KaTeX with `trust: false`, and draws every SVG through
+  `<img>`, where it can't script or load anything. SVG diagrams don't go through
+  `PersonaCharacterSanitizer`: its character whitelist drops what the svg-images skill tells agents
+  to use (`data-step`, `data:` images) and anything an `<img>` would show (filters, `<style>`), so the
+  isolation is the web's own (image rendering, plus the page's CSP and navigation lock).
+- **Bundle.** `macos/scripts/build-embeds-bundle.mjs` writes `Sources/VesperCore/Resources/embeds/`
+  (mermaid's IIFE build, KaTeX with woff2 fonts inlined) from `web/node_modules`; checked in, re-run
+  after upgrading mermaid or katex.
+
+Not matching the web yet: no zoom dialog; an app's state resets when it scrolls back (the snapshot
+shows its last look meanwhile); the transcript doesn't route fences here until Native 16 plugs it in.
+
+Manual click-through (with `VESPER_NATIVE_DEBUG=1`), on `/native-debug/embeds`:
+
+1. The header line shows the app pool (live, views/capacity, idle, snapshots, parked) and the render
+   cache's size.
+2. Display math draws in KaTeX's fonts, centred, in the text colour; "Bad TeX" shows its source.
+   On `/native-debug/markdown`, `$$e^{i\pi}+1=0$$` sits inline on the baseline and the display
+   integral is centred.
+3. The mermaid flowchart and sequence diagrams draw in the palette; "Broken mermaid" shows its code.
+   Code shows the source; Image goes back.
+4. Themed svg-image follows Settings → Appearance (Light/Dark, palette) after a moment; the plain one
+   keeps its white background and isn't redrawn. Both are sharp on a Retina display (vectors, not bitmaps).
+5. svg-steps: ← and → step through three frames with their captions; → is instant (prefetched).
+6. Paste a real assistant message id into the field: Save to Library on a diagram says Saved, and the
+   SVG appears in Library (delete it afterwards). Download writes image.svg.
+7. App counter: click it a few times. "Network is blocked" lists fetch, xhr, image, navigation and
+   window.open as blocked and the webkit bridge as none. The tall app stops at 720 pt.
+8. Scroll down slowly: the counter's block swaps to its snapshot as it leaves (the header's snapshot
+   count rises), "views" never exceeds 4/4 and "idle" rises as blocks scroll off; scrolling back
+   restarts the app over the snapshot.
+9. Clear render cache, toggle Light/Dark: diagrams redraw once each, then come from the cache.
 
 ## Build and test
 
