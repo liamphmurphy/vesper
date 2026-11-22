@@ -75,8 +75,8 @@ final class RailBarView: NSVisualEffectView {
         return stack
     }
 
-    /// Shows the page's rail, or nothing when it has none.
-    func apply(_ model: RailModel?) {
+    /// Shows the page's rail, or nothing when it has none. Filters out harness activity items when disabled.
+    func apply(_ model: RailModel?, showHarnessActivity: Bool = true) {
         guard let model else {
             needsYou?.close()
             isHidden = true
@@ -84,8 +84,12 @@ final class RailBarView: NSVisualEffectView {
         }
         isHidden = false
         var used = Set<String>()
+        func visible(_ items: [RailItem]) -> [RailItem] {
+            guard !showHarnessActivity else { return items }
+            return items.filter { !$0.id.hasPrefix("harness:") && $0.id != "usage" }
+        }
         func sync(_ items: [RailItem], into stack: NSStackView) {
-            let views = items.map { item -> RailButton in
+            let views = visible(items).map { item -> RailButton in
                 let button = buttons[item.id] ?? RailButton { [weak self] button in self?.clicked(button) }
                 buttons[item.id] = button
                 used.insert(item.id)

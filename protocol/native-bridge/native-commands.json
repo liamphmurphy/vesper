@@ -228,5 +228,13 @@
       "scope": "page",
       "query": "tests"
     }
+  },
+  {
+    "v": 1,
+    "type": "appearance",
+    "accent": "#0A84FF",
+    "mode": "dark",
+    "themePref": "dark",
+    "settingsJson": "{\"version\":1,\"palette\":\"nord\"}"
   }
 ]

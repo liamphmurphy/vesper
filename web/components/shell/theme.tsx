@@ -70,6 +70,28 @@ export function setSystemAccent(accent: string) {
   notify();
 }
 
+/** Syncs appearance pushed from native Settings across all live WKWebViews without reload. */
+export function applyNativeAppearance(cmd: { accent: string; themePref?: ThemePref; settingsJson?: string }) {
+  initialize();
+  if (/^#[\da-f]{6}$/i.test(cmd.accent)) {
+    systemAccent = cmd.accent.toLowerCase();
+    try { localStorage.setItem(ACCENT_KEY, systemAccent); } catch { /* re-sent on every launch */ }
+  }
+  if (cmd.themePref !== undefined) {
+    pref = cmd.themePref;
+    try {
+      if (cmd.themePref === "system") localStorage.removeItem(MODE_KEY);
+      else localStorage.setItem(MODE_KEY, cmd.themePref);
+    } catch { storageAvailable = false; }
+  }
+  if (cmd.settingsJson !== undefined) {
+    settings = parseAppearance(cmd.settingsJson);
+    try { localStorage.setItem(PALETTE_KEY, JSON.stringify(settings)); } catch { storageAvailable = false; }
+  }
+  applyMode();
+  notify();
+}
+
 function notify() { listeners.forEach((l) => l()); }
 
 function initialize() {

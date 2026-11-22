@@ -37,7 +37,18 @@ test("navigate only accepts in-app paths", () => {
 
 test("appearance commands need a #RRGGBB accent and a known mode", () => {
   assert.equal(isNativeCommand({ v: 1, type: "appearance", accent: "#0A84FF", mode: "dark" }), true);
-  for (const bad of [{ accent: "blue", mode: "dark" }, { accent: "#0A84FF", mode: "auto" }, { accent: "#0A84FF" }, { accent: "#0A84FF80", mode: "light" }]) {
+  assert.equal(
+    isNativeCommand({ v: 1, type: "appearance", accent: "#0A84FF", mode: "dark", themePref: "system", settingsJson: '{"version":1}' }),
+    true,
+  );
+  for (const bad of [
+    { accent: "blue", mode: "dark" },
+    { accent: "#0A84FF", mode: "auto" },
+    { accent: "#0A84FF" },
+    { accent: "#0A84FF80", mode: "light" },
+    { accent: "#0A84FF", mode: "dark", themePref: "midnight" },
+    { accent: "#0A84FF", mode: "dark", settingsJson: 42 },
+  ]) {
     assert.equal(isNativeCommand({ v: 1, type: "appearance", ...bad }), false, JSON.stringify(bad));
   }
 });

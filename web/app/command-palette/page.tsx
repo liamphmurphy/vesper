@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { CommandMenu } from "@/components/shell/command-menu";
 import { LiveUpdates } from "@/components/shell/live-updates";
-import { setSystemAccent } from "@/components/shell/theme";
+import { applyNativeAppearance } from "@/components/shell/theme";
 import { onCommand, post } from "@/lib/native-shell/bridge";
 
 /**
@@ -15,7 +15,7 @@ export default function NativeCommandPalettePage() {
     post({ v: 1, type: "ready", path: "/command-palette" });
     return onCommand((cmd) => {
       if (cmd.type === "appearance") {
-        setSystemAccent(cmd.accent);
+        applyNativeAppearance(cmd);
       }
     });
   }, []);

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { WorkChat } from "@/components/domain/work-chat";
 import { LiveUpdates } from "@/components/shell/live-updates";
-import { setSystemAccent } from "@/components/shell/theme";
+import { applyNativeAppearance } from "@/components/shell/theme";
 import { onCommand, post } from "@/lib/native-shell/bridge";
 import { fromCompanionSubject } from "@/lib/native-shell/inspector-publisher";
 import type { WorkSubject } from "@/lib/work-context";
@@ -20,7 +20,7 @@ export default function NativeCompanionPage() {
     post({ v: 1, type: "ready", path: "/companion" });
     const offCommand = onCommand((cmd) => {
       if (cmd.type === "appearance") {
-        setSystemAccent(cmd.accent);
+        applyNativeAppearance(cmd);
       } else if (cmd.type === "companion.context") {
         setSubject(fromCompanionSubject(cmd.context.subject));
       }

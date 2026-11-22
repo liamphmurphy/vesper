@@ -78,6 +78,12 @@ public final class APIClient: Sendable {
         request.setValue("\(StackSession.cookieName)=\(sessionToken)", forHTTPHeaderField: "Cookie")
     }
 
+    /// Executes a prebuilt URLRequest through this client's transport (used by `OwnerAuthAPI` where
+    /// 401/400 bodies carry user-facing validation errors rather than an expired shell session).
+    func rawRequest(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        try await transport(request)
+    }
+
     /// Sends one request and returns the body of a 2xx answer.
     @discardableResult
     public func request(

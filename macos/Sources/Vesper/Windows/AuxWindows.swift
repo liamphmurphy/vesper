@@ -86,6 +86,8 @@ final class AuxWindows {
 
     private var dataDirectory: URL { app?.dataDirectory ?? StackController.defaultDataDirectory() }
     private var settings: NativeSettings { app?.settings.settings ?? NativeSettings() }
+    var store: QueryStore? { app?.system.store }
+    var connection: Connection? { app?.connection }
 
     /// An API client for the signed-in connection, or nil while the stack is starting.
     func client() -> APIClient? {
@@ -103,12 +105,28 @@ final class AuxWindows {
         app?.openVesperTab(path: path, nextTo: NSApp.keyWindow)
     }
 
+    /// Navigates the active main window to an in-app path (or opens Settings if it targets Settings).
+    func openInMainWindow(_ path: String) {
+        NSApp.activate()
+        if app?.handleSettingsPath(path, from: app?.keyController?.window) == true { return }
+        if let key = app?.keyController, key.kind == .vesper {
+            key.content.navigate(path: path)
+            key.window?.makeKeyAndOrderFront(nil)
+        } else {
+            app?.openVesperTab(path: path, nextTo: NSApp.keyWindow)
+        }
+    }
+
+    func openExternal(_ url: URL) {
+        NSWorkspace.shared.open(url)
+    }
+
     // MARK: Entry points the menus, Dock and deep links call
 
     func quickCapture() { capture.show() }
     func screenshotToChat() { screenshot.start() }
     func importBackup() { importer.start() }
-    func openSettings() { settingsWindow.show() }
+    func openSettings(destination: SettingsDestination? = nil) { settingsWindow.show(destination: destination) }
     func showShortcuts() { shortcutsWindow.show() }
     func openCommandPalette(request: CommandPaletteRequest? = nil, from window: MainWindowController? = nil) {
         commandPalette.open(request: request, from: window)
@@ -211,6 +229,7 @@ final class AuxWindows {
         if before.backups.export != after.backups.export { scheduleExport(after: 5) }
         if !before.updates.checkEnabled && after.updates.checkEnabled { scheduleUpdateCheck(after: 1) }
         if before.stack != after.stack { app?.stack?.apply(after.stack) }
+        if before.appearance != after.appearance { app?.broadcastAppearance() }
         app?.system.applySettingsChanged()
     }
 

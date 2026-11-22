@@ -610,6 +610,61 @@ their link to `/dev` opens the native screen.
     Start it and Reconnect: a fresh session attaches.
 13. From a chat's ticket card with an open PR, Open in Dev workspace: `/dev` opens natively on that branch.
 
+## Native window: Settings
+
+All web settings routes (`web/app/(app)/settings/*` and the settings sections under `web/app/(app)/customization/*`)
+and Mac app preferences live together in the single native Settings window (`⌘,`, `SettingsWindowController`,
+`SettingsView`). The web routes for `/settings*` are removed (`setup/page.tsx` and chat approval sheets keep only
+their inline helper components), and `SettingsRouteResolver` (`VesperCore/Settings/SettingsRouteResolver.swift`) +
+`isNativeSettingsPath` (`web/lib/next-compat/router.ts`) intercept `/settings*`, `/customization*`, `/memory`,
+`/personas`, and exact `/agents` links (leaving `/agents/:handle` alone) from any web view, rail item, or tab navigation
+to focus the matching pane or redirect `/settings/projects` to `/spaces/<id>`.
+
+Sidebar groups (`SettingsPane` in `SettingsView.swift`):
+
+- **Personal**: `you` (bootstrap profile + personal memory), `appearance` (mode, harness activity toggle, text size,
+  18 preset palettes + custom dark/light hex editor with WCAG `< 4.5:1` contrast warnings, 40 KB JSON import/export,
+  macOS system accent inheritance), `memory` (all/scoped filters, deep-link highlight, create/edit/delete, import,
+  JSON/Markdown export).
+- **Personas**: `personas` (`All` / `Chat` / `Tickets` filter, profile/model/work/connectors/memory tabs, create/edit/delete).
+- **Integrations**: `secrets` (Provider Credentials + API Secrets with `SECRETS_KEY` guard, scopes, activity, deep-link
+  focus), `connectors` (CRUD, status, per-persona permissions), `repositories` (saved GitHub repositories & owners).
+- **Workspace**: `workspace` (name/slug, `SECRETS_KEY`, setup checklist, image engine), `runners` (status, host-folder
+  workspaces toggle, runner environment snapshots & test environments card with `run_id` deep links), `devWorkspace`
+  (enable, start/stop/rebuild/reset, sync repos, tmux prefix, dotfiles repo, "Open Dev Terminal" → `/dev`), `spaces`
+  (per-space memory + space agent overrides).
+- **Account**: `signIn` (owner password set/change via `OwnerAuthAPI`, sessions, sign-in link).
+- **Mac App**: `general`, `notifications`, `shortcuts`, `files`, `workspaces`, `power`, `backups` (folded in web archive
+  "Export Everything…" via streaming `BackupExporter.exportToFile` + import info alongside local SQLite snapshots),
+  `security`, `updates`.
+
+Pure logic lives in `VesperCore/Settings/` (`SettingsRouteResolver.swift`, `PaletteTokens.swift`, `NativeSettings.swift`,
+`OwnerAuthAPI.swift`, `SettingsHelpers.swift`) and `LiveUpdates.swift` includes prefixes for `profile`, `memory`,
+`secret`, `api_secret`, `connector`, `repository`, `runner`, `dev_workspace`, `space`/`spaces`, and `image_engine`.
+Changing Appearance saves to `config.json` and calls `AppModel.broadcastAppearance()`, pushing `NativeCommand.appearance`
+(`themePref` and `settingsJson`) to all open main tabs, companion, inspector, and command-palette web views via
+`applyNativeAppearance` while updating `ShellState.theme` and `RailBarView` (filtering harness/usage items when
+`showHarnessActivity` is off) without a reload.
+
+Manual click-through checklist:
+
+1. Open Settings (`⌘,`) or click Settings / Memory / Personas / Workspace / Runners / Dev Workspace / Sign-in links inside
+   chat, sidebar, or Dev workspace empty state: the unified native window opens directly on the targeted group, pane,
+   tab, or deep-linked item (`secret_id`, `memory`, `run_id`, `/personas/<id>`).
+2. In **Appearance**, toggle Dark/Light/System, change palette and text size, toggle "Show harness activity", and tweak a
+   custom color: open main tabs, Companion, Inspector, Command Palette, and the left rail reflect the change live without
+   reloading, including WCAG contrast warnings below 4.5:1 and JSON export/import.
+3. Verify **You** and **Memory** edit profile fields and memories, export JSON/Markdown via `NSSavePanel`, and import
+   memories.
+4. Verify **Personas** filters (`All`, `Chat`, `Tickets`), detail tabs, creating/editing/deleting a persona, and `/agents/:handle`
+   still opening normally outside Settings.
+5. Verify **Integrations** (`Credentials & API Secrets`, `Connectors`, `Repositories`) create/update/revoke/delete entries
+   and show `SECRETS_KEY` status accurately.
+6. Verify **Workspace**, **Runners**, **Dev Workspace**, and **Spaces** update workspace settings, show runner snapshots
+   and test environments, drive Dev workspace lifecycle actions and "Open Dev Terminal", and edit space overrides/memory.
+7. Verify **Sign-in** updates the owner password/session list, and **Mac App → Backups** runs both "Export Everything…"
+   (`.tar.gz`) and local DB backup actions cleanly.
+
 ## Build and test
 
 - `make -C macos test` → `swift test` (VesperCore).

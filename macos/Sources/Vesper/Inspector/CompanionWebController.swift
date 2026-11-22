@@ -13,6 +13,7 @@ final class CompanionWebController: NSObject, WKScriptMessageHandler, WKNavigati
     var onOpenPlayground: ((URL) -> Void)?
     var ownerWindow: (() -> NSWindow?)?
     var playgroundPorts: () -> [Int] = { defaultPlaygroundPorts }
+    var appearanceCommand: (() -> NativeCommand)?
     weak var shellHost: (any ShellHostActions)?
 
     private var baseURL: URL?
@@ -75,8 +76,16 @@ final class CompanionWebController: NSObject, WKScriptMessageHandler, WKNavigati
         webView.load(URLRequest(url: url))
     }
 
-    private func sendAppearance() {
+    func sendAppearance(_ command: NativeCommand? = nil) {
         guard ready else { return }
+        if let command {
+            ShellBridge.send(command, to: webView)
+            return
+        }
+        if let custom = appearanceCommand?() {
+            ShellBridge.send(custom, to: webView)
+            return
+        }
         let (accent, mode) = AppearanceMonitor.current()
         ShellBridge.send(.appearance(accent: accent, mode: mode), to: webView)
     }

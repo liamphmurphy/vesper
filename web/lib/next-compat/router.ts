@@ -2,6 +2,7 @@
 // (the shims beside this file) call through it, so ~200 files keep Next's API.
 import { useEffect, useSyncExternalStore } from "react";
 import { useLocation, type createBrowserRouter } from "react-router";
+import { isNativeShell, post } from "../native-shell/bridge.ts";
 
 type DataRouter = ReturnType<typeof createBrowserRouter>;
 
@@ -22,11 +23,29 @@ export function isServerPath(pathname: string): boolean {
   return /^\/(api|mcp|events|internal)(\/|$)/.test(pathname);
 }
 
+/** Settings/Customization/Memory/Personas routes moved into the native Settings window on macOS. */
+export function isNativeSettingsPath(pathname: string): boolean {
+  const path = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+  return (
+    path === "/settings" ||
+    path.startsWith("/settings/") ||
+    path === "/customization" ||
+    path.startsWith("/customization/") ||
+    path === "/memory" ||
+    path === "/personas" ||
+    path === "/agents"
+  );
+}
+
 export type NavigateOptions = { scroll?: boolean };
 
 function go(href: string, replace: boolean, opts?: NavigateOptions) {
   setOverride(null);
   const url = new URL(href, window.location.href);
+  if (isNativeShell() && url.origin === window.location.origin && isNativeSettingsPath(url.pathname)) {
+    post({ v: 1, type: "openInMain", path: url.pathname + url.search + url.hash });
+    return;
+  }
   if (url.origin !== window.location.origin || isServerPath(url.pathname)) {
     if (replace) window.location.replace(url.href);
     else window.location.assign(url.href);
