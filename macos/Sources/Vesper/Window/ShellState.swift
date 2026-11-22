@@ -43,13 +43,34 @@ final class ShellState {
     /// Custom native sidebar content (e.g., Knowledge's compact NSOutlineView explorer), replacing NavModel list when set.
     var nativeSidebar: AnyView?
 
+    static let defaultCompanionKey = "VesperNativeCompanionOpen"
+    /// Open state of the native default companion inspector for native screens with no custom inspector.
+    private(set) var defaultCompanionOpen = UserDefaults.standard.bool(forKey: ShellState.defaultCompanionKey)
+
+    func setDefaultCompanionOpen(_ open: Bool) {
+        guard defaultCompanionOpen != open else { return }
+        defaultCompanionOpen = open
+        UserDefaults.standard.set(open, forKey: Self.defaultCompanionKey)
+    }
+
+    var usesDefaultCompanion: Bool { native != nil && native?.inspector == nil }
+
     var title: String? { native.map(\.title) ?? pageTitle }
     var subtitle: String? { native.map(\.subtitle) ?? pageSubtitle }
     /// The title's own menu (rename, archive…).
     var titleMenu: [MenuItem]? { native.map(\.titleMenu) ?? pageTitleMenu }
     var toolbarItems: [ShellToolbarItem] { native?.toolbarItems ?? pageToolbarItems }
-    /// The native inspector the screen describes; nil when it has none.
-    var inspector: InspectorModel? { native.map(\.inspector) ?? pageInspector }
+    /// The native inspector the screen describes; native screens without a custom inspector fall back
+    /// to the default companion (`WorkChat`), while web screens keep `pageInspector`.
+    var inspector: InspectorModel? {
+        InspectorLogic.effectiveInspector(
+            nativeActive: native != nil,
+            nativeInspector: native?.inspector,
+            pageInspector: pageInspector,
+            defaultCompanionOpen: defaultCompanionOpen,
+            path: route
+        )
+    }
     var route: String?
     var area: AreaId?
     /// The page has sent `ready`: commands will be heard.

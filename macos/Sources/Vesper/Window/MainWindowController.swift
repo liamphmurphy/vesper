@@ -178,6 +178,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         root.installRail(
             tabs: tabs,
             showHarnessActivity: { [weak app] in app?.settings.settings.effectiveAppearance.showHarnessActivity ?? true },
+            isInspectorPoppedOut: { [weak self] in self?.inspectorController?.isPoppedOut ?? false },
             send: { [weak self] in self?.handleRailCommand($0) },
             services: { [weak app] in app?.system }
         )
@@ -265,23 +266,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
 
     private func handleRailCommand(_ command: NativeCommand) {
-        if case .railAction(let itemId, let menuItemId) = command {
-            if itemId == "settings" && menuItemId == nil {
-                app.aux.openSettings()
-                return
-            }
-            if itemId == "customization" && menuItemId == nil {
-                app.aux.openSettings(destination: .pane(pane: .memory))
-                return
-            }
-            if itemId == "pr" && menuItemId == "pr.setup" {
-                app.aux.openSettings(destination: .pane(pane: .secrets))
-                return
-            }
+        guard case .railAction(let itemId, let menuItemId) = command else {
+            send(command)
+            return
         }
-        if case .railAction(let itemId, let menuItemId) = command, menuItemId == nil {
-            if let tabId = InspectorLogic.railDockTabId(from: itemId),
-               let model = state.inspector,
+        guard let action = RailLogic.resolveAction(
+            itemId: itemId,
+            menuItemId: menuItemId,
+            reviewURL: { [weak app] id in app?.system.nativeRail.reviewURL(for: id) }
+        ) else {
+            send(command)
+            return
+        }
+        switch action {
+        case .dockTab(let tabId):
+            if let model = state.inspector,
                let targetTab = model.tabs.first(where: { $0.id == tabId }),
                targetTab.kind != .web {
                 if inspectorController?.isPoppedOut == true {
@@ -298,6 +297,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
                     }
                     animateInspector(collapsed: false, widthClass: widthClass, applyDesiredWidth: applyDesired)
                     send(.inspectorSelectTab(tabId: tabId))
+                    send(.inspectorVisibility(open: true))
                     return
                 }
                 if tabId == InspectorLogic.activeTab(in: model)?.id {
@@ -308,8 +308,28 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
                 send(.inspectorSelectTab(tabId: tabId))
                 return
             }
+            send(command)
+        case .openSettings(let destination):
+            if let destination {
+                app.aux.openSettings(destination: destination)
+            } else {
+                app.aux.openSettings()
+            }
+        case .openExternalURL(let url):
+            NSWorkspace.shared.open(url)
+        case .refreshReviews:
+            app.system.nativeRail.refreshReviews()
+        case .clearReviews:
+            app.system.nativeRail.clearVisibleReviews()
+        case .dismissReview(let id):
+            app.system.nativeRail.dismissReview(id: id)
+        case .restoreReviews:
+            app.system.nativeRail.restoreDismissedReviews()
+        case .toggleReviewPref(let key):
+            app.system.nativeRail.toggleReviewPref(key)
+        case .navigate(let path):
+            send(.navigate(path: path))
         }
-        send(command)
     }
 
     private func handlePanelEvent(tabId: String, event: String, payloadJson: String?) {
