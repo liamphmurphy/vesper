@@ -1,15 +1,21 @@
-"""Run-scoped policy bridge for Antigravity (agy) PreToolUse hooks. Fail closed.
+"""Run-scoped policy and Stop hook bridge for Antigravity (agy).
 
-agy writes {"toolCall": {"name", "args"}, ...} to stdin and expects a JSON
-{"decision", "reason"} on stdout. The call is renamed to the tool names Vesper's
-policy (runs.CheckTool) already knows from Claude Code, so one rule set holds
-every harness. Vesper allows -> "auto_approve" (agy's own prompt is then
-skipped); anything else, or any failure, is "deny".
+For PreToolUse (fail closed): agy writes {"toolCall": {"name", "args"}, ...} to
+stdin and expects JSON {"decision", "reason"} on stdout. The call is renamed to
+the tool names Vesper's policy (runs.CheckTool) already knows from Claude Code,
+so one rule set holds every harness.
+
+For Stop (registered in ACP mode): when the model yields with NO_TOOL_CALL while
+non-daemon background tasks are still running (fullyIdle is false), block until
+an undelivered completion message appears in the conversation's brain directory
+(or the wait slice expires) and return {"decision": "continue"} so agy acp does
+not resolve session/prompt early and kill the background command.
 """
 import json
 import os
 import re
 import sys
+import time
 import urllib.request
 
 # Keep in sync with antigravityTool in antigravity.go (a test runs both).
@@ -59,9 +65,65 @@ def canonical(name, args):
     return name, args
 
 
+def list_undelivered(undelivered_dir):
+    try:
+        return set(os.listdir(undelivered_dir))
+    except OSError:
+        return set()
+
+
+def handle_stop(event):
+    try:
+        if event.get("fullyIdle", True) or event.get("terminationReason") != "NO_TOOL_CALL":
+            print(json.dumps({"decision": "allow"}))
+            return
+        max_wait = float(os.environ.get("LAZYAGENTS_AGY_STOP_WAIT_SECONDS", "240"))
+        if max_wait < 0:
+            max_wait = 0.0
+        artifact_dir = event.get("artifactDirectoryPath") or ""
+        undelivered_dir = os.path.join(artifact_dir, ".system_generated", "messages", "undelivered") if artifact_dir else ""
+        exec_num = event.get("executionNum") or 0
+        initial = list_undelivered(undelivered_dir) if undelivered_dir else set()
+
+        # If a completion notification already landed before this Stop hook
+        # started on the initial yield, continue immediately so agy delivers it.
+        if initial and exec_num == 0:
+            print(json.dumps({
+                "decision": "continue",
+                "reason": "A background task finished. Review its output and continue your turn.",
+            }))
+            return
+
+        # Wait for a new completion notification in undelivered/ (bounded below
+        # the hook's timeout) so long commands don't burn LLM turns polling.
+        wait_budget = min(max_wait, 2.0) if (not undelivered_dir or initial) else max_wait
+        deadline = time.monotonic() + wait_budget
+        completed = False
+        while time.monotonic() < deadline:
+            current = list_undelivered(undelivered_dir) if undelivered_dir else set()
+            if current - initial:
+                completed = True
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(0.2, remaining))
+
+        if completed:
+            reason = "A background task finished. Review its output and continue your turn."
+        else:
+            reason = "Background tasks are still running. Check their status or wait for them to finish before ending your turn."
+        print(json.dumps({"decision": "continue", "reason": reason}))
+    except Exception:
+        print(json.dumps({"decision": "allow"}))
+
+
 def main():
     try:
         event = json.load(sys.stdin)
+        if isinstance(event, dict) and event.get("hookEventName") == "Stop":
+            handle_stop(event)
+            return
         call = event["toolCall"]
         args = call.get("args")
         tool, tool_input = canonical(call["name"], args)

@@ -78,7 +78,16 @@ def install(cfg, home, base_home):
     hooks_path = os.path.join(home, ".gemini", "config", "hooks.json")
     base_hooks_path = os.path.join(base_home, ".gemini", "config", "hooks.json")
     hooks = load(base_hooks_path)
-    hooks["vesper-policy"] = {"enabled": True, "PreToolUse": [{"matcher": "*", "hooks": [{"command": cfg["hook_command"], "timeout": 20}]}]}
+    policy_hook = {
+        "enabled": True,
+        "PreToolUse": [{"matcher": "*", "hooks": [{"command": cfg["hook_command"], "timeout": 20}]}],
+    }
+    # In ACP mode, agy resolves session/prompt with end_turn as soon as the model
+    # yields even when a background run_command is still running; the Stop hook
+    # holds the turn open until background tasks finish and wake the model up.
+    if os.environ.get("LAZYAGENTS_AGY_ACP") == "1":
+        policy_hook["Stop"] = [{"command": cfg["hook_command"], "timeout": 300}]
+    hooks["vesper-policy"] = policy_hook
     write(hooks_path, hooks)
 
 

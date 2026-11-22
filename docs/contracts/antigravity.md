@@ -56,6 +56,22 @@ for `model` and `thought_level` -> `session/prompt`, answering
 `session/request_permission` via `CheckTool` and canceling on pause/abort via
 `session/cancel`.
 
+**ACP `Stop` hook for background commands:** `run_command` caps
+`WaitMsBeforeAsync` at `10000` ms, so commands longer than 10s background
+themselves and `agy`'s messaging prompt tells the model to stop calling tools
+and wait for a wakeup. Under `agy acp --stdio`, `session/prompt` would otherwise
+resolve immediately with `stopReason: "end_turn"` and Vesper would tear down the
+process, killing the background command and closing the chat turn early. In ACP
+mode (`LAZYAGENTS_AGY_ACP=1`), `agy_launch.py` registers `agy_policy.py` as a
+`Stop` hook (`timeout: 300`): when `terminationReason == "NO_TOOL_CALL"` and
+`fullyIdle == false`, the hook waits (up to 240s per slice) for a completion
+notification under `<artifactDirectoryPath>/.system_generated/messages/undelivered/`
+and returns `{"decision": "continue"}` so `agy` delivers the command's output
+back to the model inside the same `session/prompt` turn. `IsDaemon: true`
+commands report `fullyIdle: true` and do not block, and `session/cancel` aborts
+the waiting hook promptly (`TestAgyProbe/session_background_command`,
+`TestAgyProbe/session_background_daemon`).
+
 When `Turn.ConfigTag != ""` (e.g. an in-turn Vesper MCP subagent),
 `agyConfig.isolated_home` is set so `agy_launch.py` creates a temporary `$HOME`
 symlinking top-level entries and `.gemini/` state except `settings.json`,

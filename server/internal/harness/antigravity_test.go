@@ -553,3 +553,169 @@ func TestAntigravityImageSessionUsesStreamJSON(t *testing.T) {
 		t.Fatalf("result-only images = %v, err = %v", res2.Images, err)
 	}
 }
+
+func TestAgyStopHookWaitsForBackgroundTasks(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is not installed")
+	}
+	script := filepath.Join(t.TempDir(), "agy-policy.py")
+	if err := os.WriteFile(script, agyPolicyHook, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runStop := func(payload map[string]any, extraEnv ...string) (map[string]any, time.Duration) {
+		t.Helper()
+		raw, _ := json.Marshal(payload)
+		cmd := exec.Command("python3", "-I", script)
+		cmd.Stdin = strings.NewReader(string(raw))
+		cmd.Env = append([]string{"LAZYAGENTS_AGY_ACP=1"}, extraEnv...)
+		start := time.Now()
+		out, err := cmd.Output()
+		elapsed := time.Since(start)
+		if err != nil {
+			t.Fatalf("stop hook failed: %v (out=%q)", err, out)
+		}
+		var d map[string]any
+		if err := json.Unmarshal(out, &d); err != nil {
+			t.Fatalf("stop hook printed %q: %v", out, err)
+		}
+		return d, elapsed
+	}
+
+	// Idle turn allows stop immediately.
+	if d, _ := runStop(map[string]any{"hookEventName": "Stop", "fullyIdle": true, "terminationReason": "NO_TOOL_CALL"}); d["decision"] != "allow" {
+		t.Fatalf("fullyIdle=true got %v, want allow", d)
+	}
+	// Non-NO_TOOL_CALL terminations allow stop even when background tasks exist.
+	for _, reason := range []string{"ERROR", "USER_CANCELED", "MAX_INVOCATIONS", "MAX_FORCED_INVOCATIONS"} {
+		if d, _ := runStop(map[string]any{"hookEventName": "Stop", "fullyIdle": false, "terminationReason": reason}); d["decision"] != "allow" {
+			t.Fatalf("terminationReason=%s got %v, want allow", reason, d)
+		}
+	}
+
+	// Non-idle NO_TOOL_CALL blocks until an undelivered notification lands.
+	artDir := t.TempDir()
+	undelivered := filepath.Join(artDir, ".system_generated", "messages", "undelivered")
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		_ = os.MkdirAll(undelivered, 0o755)
+		_ = os.WriteFile(filepath.Join(undelivered, "msg-1"), nil, 0o644)
+	}()
+	d, elapsed := runStop(map[string]any{
+		"hookEventName":         "Stop",
+		"fullyIdle":             false,
+		"terminationReason":     "NO_TOOL_CALL",
+		"artifactDirectoryPath": artDir,
+		"executionNum":          0,
+	}, "LAZYAGENTS_AGY_STOP_WAIT_SECONDS=5")
+	if d["decision"] != "continue" || !strings.Contains(d["reason"].(string), "finished") {
+		t.Fatalf("undelivered notification got %v", d)
+	}
+	if elapsed < 100*time.Millisecond || elapsed > 2*time.Second {
+		t.Fatalf("expected hook to unblock right after notification, elapsed=%v", elapsed)
+	}
+
+	// Timeout slice expires cleanly with continue so long tasks wake periodically without spinning.
+	d, elapsed = runStop(map[string]any{
+		"hookEventName":         "Stop",
+		"fullyIdle":             false,
+		"terminationReason":     "NO_TOOL_CALL",
+		"artifactDirectoryPath": t.TempDir(),
+		"executionNum":          0,
+	}, "LAZYAGENTS_AGY_STOP_WAIT_SECONDS=0.25")
+	if d["decision"] != "continue" || !strings.Contains(d["reason"].(string), "still running") {
+		t.Fatalf("timeout slice got %v", d)
+	}
+	if elapsed < 200*time.Millisecond || elapsed > 2*time.Second {
+		t.Fatalf("unexpected timeout elapsed=%v", elapsed)
+	}
+}
+
+func TestAgyLauncherInstallsStopHookInACPOnly(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is not installed")
+	}
+	python, _ := exec.LookPath("python3")
+	trueBin, err := exec.LookPath("true")
+	if err != nil {
+		t.Skip("true binary not installed")
+	}
+	runLaunch := func(acp bool) map[string]any {
+		t.Helper()
+		dir := t.TempDir()
+		home := t.TempDir()
+		binDir := t.TempDir()
+		if err := os.Symlink(trueBin, filepath.Join(binDir, "agy")); err != nil {
+			t.Fatal(err)
+		}
+		script := filepath.Join(dir, "agy-launch.py")
+		if err := os.WriteFile(script, agyLauncher, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cfg := agyConfig{
+			Install:     true,
+			TokenEnv:    "LAZYAGENTS_TOKEN",
+			HookCommand: "python3 /workspace/.lazyagents/agy-policy.py",
+			Settings:    map[string]any{"toolPermission": "request-review"},
+			MCPServers:  map[string]any{},
+		}
+		body, _ := json.Marshal(cfg)
+		if err := os.WriteFile(filepath.Join(dir, "agy-config.json"), body, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command(python, "-I", script, "agy")
+		cmd.Env = []string{"HOME=" + home, "PATH=" + binDir}
+		if acp {
+			cmd.Env = append(cmd.Env, "LAZYAGENTS_AGY_ACP=1")
+		}
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("launch acp=%v failed: %v\n%s", acp, err, out)
+		}
+		raw, err := os.ReadFile(filepath.Join(home, ".gemini", "config", "hooks.json"))
+		if err != nil {
+			t.Fatalf("read hooks.json: %v", err)
+		}
+		var hooks map[string]any
+		if err := json.Unmarshal(raw, &hooks); err != nil {
+			t.Fatalf("parse hooks.json: %v", err)
+		}
+		return hooks["vesper-policy"].(map[string]any)
+	}
+
+	acpHook := runLaunch(true)
+	if _, ok := acpHook["Stop"]; !ok {
+		t.Fatalf("ACP hooks.json missing Stop hook: %v", acpHook)
+	}
+	printHook := runLaunch(false)
+	if _, ok := printHook["Stop"]; ok {
+		t.Fatalf("non-ACP hooks.json must not register Stop hook: %v", printHook)
+	}
+}
+
+func TestAgySessionToolCallUpdateWithContentArray(t *testing.T) {
+	var evs []Event
+	st := &agySessionState{
+		model:     "gemini-4-neon",
+		sessionID: "s1",
+		called:    map[string]bool{},
+		finished:  map[string]bool{},
+		toolNames: map[string]string{},
+		emit:      func(ev Event) { evs = append(evs, ev) },
+	}
+	st.handleUpdate(json.RawMessage(`{"update":{"sessionUpdate":"tool_call","toolCallId":"tc1","name":"run_command","args":{"CommandLine":"echo ok","WaitMsBeforeAsync":500}}}`))
+	st.handleUpdate(json.RawMessage(`{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Waiting."}}}`))
+	// Completed ACP tool_call_update carries content as an array, not an object.
+	st.handleUpdate(json.RawMessage(`{"update":{"sessionUpdate":"tool_call_update","toolCallId":"tc1","name":"run_command","status":"completed","rawOutput":{"output":"ok\n","exit_code":0},"content":[{"type":"content","content":{"type":"text","text":"ok\n"}}]}}`))
+	st.handleUpdate(json.RawMessage(`{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"All done."}}}`))
+	st.finishPrompt(json.RawMessage(`{"stopReason":"end_turn"}`), nil)
+
+	if st.res.Final != "All done." {
+		t.Fatalf("Final = %q, want %q", st.res.Final, "All done.")
+	}
+	want := "tool_call:Bash message tool_result:Bash message"
+	if got := types(evs); got != want {
+		t.Fatalf("events:\n got %s\nwant %s", got, want)
+	}
+	if got := evs[2].Payload["output"]; got != "ok\n" {
+		t.Fatalf("tool_result output = %q, want %q", got, "ok\n")
+	}
+}
