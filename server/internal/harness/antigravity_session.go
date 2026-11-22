@@ -16,9 +16,25 @@ import (
 
 var _ SessionHarness = Antigravity{}
 
+// agyUsesStreamJSON reports whether an Antigravity turn must run over
+// `agy -p --output-format stream-json` instead of `agy acp --stdio`.
+// Antigravity generates images through its asynchronous `image-generator`
+// subagent (`invoke_subagent`), whose completion wakes the parent up in a
+// follow-up turn carrying the saved image path. `agy acp --stdio` resolves
+// `session/prompt` with `stopReason: "end_turn"` as soon as the initial turn
+// ends and does not deliver background subagent wakeups, whereas `agy -p`
+// waits for subagents to finish before exiting.
+func agyUsesStreamJSON(spec agentdef.Resolved) bool {
+	return spec.HarnessOptions[agentdef.OptionImageGeneration] == "true"
+}
+
 // SessionInvocation returns the command, env, and config files for driving
-// Antigravity over `agy acp --stdio`.
+// Antigravity over `agy acp --stdio` (or `agy -p --output-format stream-json`
+// for image-generation turns; see agyUsesStreamJSON).
 func (Antigravity) SessionInvocation(ws Workspace, t Turn) (Invocation, error) {
+	if agyUsesStreamJSON(t.Spec) {
+		return (Antigravity{}).Invocation(ws, t)
+	}
 	b, err := buildAgyConfig(ws, t)
 	if err != nil {
 		return Invocation{}, err
@@ -37,8 +53,12 @@ func (Antigravity) SessionInvocation(ws Workspace, t Turn) (Invocation, error) {
 // `-32000` + `GEMINI_API_KEY` is present), applies `model`/`thought_level`, sends
 // `session/prompt`, answers `session/request_permission` fail-closed via
 // CheckTool, streams `session/update`, detects executor errors / 429s, and
-// cancels via `session/cancel`.
+// cancels via `session/cancel`. Image-generation turns use `agy -p` stream-json
+// instead (see agyUsesStreamJSON).
 func (Antigravity) RunSession(ctx context.Context, stdin io.WriteCloser, stdout io.Reader, ws Workspace, t Turn, cb SessionCallbacks) (Result, error) {
+	if agyUsesStreamJSON(t.Spec) {
+		return runAgyStreamSession(stdin, stdout, t.Spec.Model, cb)
+	}
 	noTools := t.Spec.HarnessOptions[agentdef.OptionNoTools] == "true"
 	w := newLineWriter(stdin)
 	ctrl := &agyControl{w: w}
@@ -687,4 +707,48 @@ func (s *agySessionState) finishPrompt(resultRaw json.RawMessage, rpcErr *agyRPC
 	if s.res.IsError {
 		s.emit(Event{"error", map[string]any{"message": s.res.Error}})
 	}
+}
+
+func runAgyStreamSession(stdin io.WriteCloser, stdout io.Reader, model string, cb SessionCallbacks) (Result, error) {
+	if stdin != nil {
+		_ = stdin.Close()
+	}
+	p := (Antigravity{}).NewParser(model)
+	sc := bufio.NewScanner(stdout)
+	sc.Buffer(make([]byte, 256<<10), sessionMaxScanBytes)
+
+	var seenSession string
+	var lastContext int64
+	dispatch := func(evs []Event) {
+		res := p.Result()
+		if res.SessionID != "" && res.SessionID != seenSession {
+			seenSession = res.SessionID
+			if cb.OnSession != nil {
+				cb.OnSession(seenSession)
+			}
+		}
+		for _, ev := range evs {
+			if cb.OnEvent != nil {
+				cb.OnEvent(ev)
+			}
+		}
+		if res.Usage.ContextTokens > 0 && res.Usage.ContextTokens != lastContext {
+			lastContext = res.Usage.ContextTokens
+			if cb.OnContextTokens != nil {
+				cb.OnContextTokens(lastContext)
+			}
+		}
+	}
+
+	for sc.Scan() {
+		line := append([]byte(nil), sc.Bytes()...)
+		if cb.OnRaw != nil {
+			cb.OnRaw(line)
+		}
+		dispatch(p.Line(line))
+	}
+	if err := sc.Err(); err != nil {
+		return p.Result(), err
+	}
+	return p.Result(), nil
 }

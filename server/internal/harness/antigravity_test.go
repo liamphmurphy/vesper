@@ -466,3 +466,90 @@ func TestAgyLauncherNamesAMissingBinary(t *testing.T) {
 		t.Fatalf("result = %+v", line.Result)
 	}
 }
+
+// Image-generation sessions must use `agy -p --output-format stream-json`
+// rather than `agy acp --stdio` so Antigravity's asynchronous `image-generator`
+// subagent completes and wakes the parent up with the saved image path.
+func TestAntigravityImageSessionUsesStreamJSON(t *testing.T) {
+	ws := Workspace{Dir: "/work", MCPURL: "http://api/mcp", Token: "t", TokenEnv: "T"}
+
+	normal := spec("repo:read", "allowed")
+	normal.Harness = agentdef.HarnessAntigravity
+	acpInv, err := (Antigravity{}).SessionInvocation(ws, Turn{Spec: normal, Prompt: "hi"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(acpInv.Argv, "acp") || acpInv.Env["LAZYAGENTS_AGY_ACP"] != "1" {
+		t.Fatalf("normal session must use ACP: argv=%v env=%v", acpInv.Argv, acpInv.Env)
+	}
+
+	img := spec()
+	img.Harness = agentdef.HarnessAntigravity
+	img.Model = "gemini-4-carbon"
+	img.HarnessOptions = map[string]string{
+		"sandbox":                      "read-only",
+		"readonly":                     "true",
+		agentdef.OptionImageGeneration: "true",
+	}
+	streamInv, err := (Antigravity{}).SessionInvocation(ws, Turn{Spec: img, Prompt: "Generate one image"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(streamInv.Argv, "acp") {
+		t.Fatalf("image session must not use ACP: argv=%v", streamInv.Argv)
+	}
+	if flag(streamInv.Argv, "--output-format") != "stream-json" || flag(streamInv.Argv, "-p") != "Generate one image" || flag(streamInv.Argv, "--model") != "gemini-4-carbon" {
+		t.Fatalf("image session argv = %v", streamInv.Argv)
+	}
+	if streamInv.Env["LAZYAGENTS_AGY_ACP"] != "" {
+		t.Fatalf("image session must not set LAZYAGENTS_AGY_ACP: %q", streamInv.Env["LAZYAGENTS_AGY_ACP"])
+	}
+
+	savedPath := "/home/node/.gemini/antigravity-cli/brain/sub-1/portrait.png"
+	stream := strings.Join([]string{
+		`{"event":"init","conversation_id":"conv-img-1","init":{"model":"gemini-4-carbon"}}`,
+		`{"event":"step_update","step_update":{"conversation_id":"conv-img-1","step_index":1,"state":"DONE","step_type":"subagent","tool_name":"invoke_subagent","subagent_info":{"subagents":[{"type_name":"image-generator","role":"Image Generator"}]}}}`,
+		`{"event":"step_update","step_update":{"conversation_id":"conv-img-1","step_index":2,"state":"DONE","step_type":"agent_response","text_delta":"Generating the image now."}}`,
+		`{"event":"step_update","step_update":{"conversation_id":"conv-img-1","step_index":3,"state":"DONE","step_type":"agent_response","text_delta":"Saved ` + savedPath + `","usage":{"input_tokens":500,"output_tokens":40,"cache_read_tokens":200}}}`,
+		`{"event":"result","result":{"status":"SUCCESS","conversation_id":"conv-img-1","response":"Saved ` + savedPath + `"}}`,
+	}, "\n") + "\n"
+
+	stdin := &spyWriteCloser{}
+	var gotSession string
+	var gotEvents []Event
+	var gotContext int64
+	res, err := (Antigravity{}).RunSession(t.Context(), stdin, strings.NewReader(stream), ws, Turn{Spec: img}, SessionCallbacks{
+		OnSession:       func(s string) { gotSession = s },
+		OnEvent:         func(ev Event) { gotEvents = append(gotEvents, ev) },
+		OnContextTokens: func(n int64) { gotContext = n },
+	})
+	if err != nil {
+		t.Fatalf("RunSession: %v", err)
+	}
+	if stdin.closed != 1 {
+		t.Fatalf("stdin closed = %d, want 1", stdin.closed)
+	}
+	if gotSession != "conv-img-1" || res.SessionID != "conv-img-1" {
+		t.Fatalf("session = %q / %q", gotSession, res.SessionID)
+	}
+	if res.IsError || res.Final != "Saved "+savedPath {
+		t.Fatalf("res = %+v", res)
+	}
+	if !slices.Equal(res.Images, []string{savedPath}) {
+		t.Fatalf("images = %v, want [%s]", res.Images, savedPath)
+	}
+	if gotContext != 700 || res.Usage.InputTokens != 700 || res.Usage.OutputTokens != 40 {
+		t.Fatalf("usage/context = %+v / %d", res.Usage, gotContext)
+	}
+	if len(gotEvents) == 0 {
+		t.Fatal("expected streamed events from RunSession")
+	}
+
+	// Result-only response (no preceding agent_response step) must also capture image paths.
+	resultOnly := `{"event":"init","conversation_id":"conv-img-2"}` + "\n" +
+		`{"event":"result","result":{"status":"SUCCESS","conversation_id":"conv-img-2","response":"Ready at ` + savedPath + `"}}` + "\n"
+	res2, err := (Antigravity{}).RunSession(t.Context(), &spyWriteCloser{}, strings.NewReader(resultOnly), ws, Turn{Spec: img}, SessionCallbacks{})
+	if err != nil || !slices.Equal(res2.Images, []string{savedPath}) {
+		t.Fatalf("result-only images = %v, err = %v", res2.Images, err)
+	}
+}

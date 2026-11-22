@@ -174,6 +174,13 @@ func (Antigravity) Invocation(ws Workspace, t Turn) (Invocation, error) {
 	// its prompt itself (agy 1.5.9 docs/rules.md, TestAgyProbe/instructions),
 	// so the prompt no longer asks for a read_file of AGENTS.md first.
 	prompt := t.Prompt
+	if t.SystemAppend != "" {
+		if prompt != "" {
+			prompt = t.SystemAppend + "\n\n" + prompt
+		} else {
+			prompt = t.SystemAppend
+		}
+	}
 	if !b.noTools {
 		if note := agyImageNote(t.Images); note != "" {
 			prompt += "\n\n" + note
@@ -599,6 +606,7 @@ func (p *agyParser) finish(env agyEnvelope) []Event {
 	}
 	if !p.sawText && strings.TrimSpace(env.Response) != "" {
 		p.sawText, p.res.Final = true, env.Response
+		p.noteImages(env.Response)
 		out = append(out, Event{"message", map[string]any{"role": "assistant", "text": env.Response}})
 	}
 	// Only the steps count: result.usage also holds a resumed conversation's
