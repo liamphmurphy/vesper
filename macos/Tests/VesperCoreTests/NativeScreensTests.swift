@@ -65,6 +65,20 @@ final class NativeRoutesTests: XCTestCase {
         XCTAssertNil(standard.resolve("/workflows/runs/wr-1/extra"))
     }
 
+    func testChatRoutesAreNative() {
+        let standard = NativeRouteRegistry.standard(debug: false)
+        XCTAssertEqual(standard.resolve("/chat")?.screen, .chat)
+        let detail = standard.resolve("/chat/c1?message=m42&view=archived")
+        XCTAssertEqual(detail?.screen, .chatDetail)
+        XCTAssertEqual(detail?.params["id"], "c1")
+        XCTAssertEqual(detail?.query["message"], "m42")
+        XCTAssertEqual(detail?.query["view"], "archived")
+        XCTAssertNil(standard.resolve("/chat/c1/extra"))
+        XCTAssertEqual(NativeScreen.chat.hostGroup, .chat)
+        XCTAssertEqual(NativeScreen.chatDetail.hostGroup, .chat)
+        XCTAssertNotEqual(NativeScreen.chat.hostGroup, .knowledge)
+    }
+
     func testLibraryAndPDFViewerAreNative() {
         let standard = NativeRouteRegistry.standard(debug: false)
         let library = standard.resolve("/library?tab=videos&item=v1")

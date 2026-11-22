@@ -152,6 +152,7 @@ struct NativeScreenRoot: View {
         case .workflows: WorkflowsScreen()
         case .workflowEditor: WorkflowEditorScreen()
         case .workflowRun: WorkflowRunScreen()
+        case .chat, .chatDetail: ChatScreen()
         }
     }
 }
