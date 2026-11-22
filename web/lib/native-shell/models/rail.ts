@@ -2,16 +2,7 @@
 // the React side (components/shell/companion.tsx) feeds it what the web rail's buttons read and
 // runs the actions it names. `node --test` covers it (lib/native-shell/rail.test.mjs).
 
-import type { Avatar, MenuItem, RailItem, RailModel, RailUsage } from "../protocol.ts";
-import {
-  ANTIGRAVITY,
-  checkedAgo,
-  harnessWorking,
-  sessionPercent,
-  usageSub,
-  usageTone,
-  type HarnessActivity,
-} from "../../harness-activity.ts";
+import type { MenuItem, RailItem, RailModel } from "../protocol.ts";
 
 // MARK: Item ids
 
@@ -25,8 +16,6 @@ export const RAIL_PR_REFRESH = "pr.refresh";
 export const RAIL_PR_DIRECT = "pr.direct";
 export const RAIL_PR_TEAM = "pr.team";
 export const RAIL_NEEDS_YOU = "needsYou";
-export const RAIL_HARNESS = "harness:";
-export const RAIL_HARNESS_USAGE = "usage";
 export const RAIL_CUSTOMIZATION = "customization";
 export const RAIL_SETTINGS = "settings";
 
@@ -144,65 +133,11 @@ export interface ReviewRailInput {
   dismissed?: number;
 }
 
-export interface HarnessRailInput {
-  harness: string;
-  label: string;
-  /** Two letters on the avatar. */
-  initials: string;
-  color: string;
-  /** The label under the character on the web rail. */
-  name: string;
-  state: "idle" | "working" | "limited";
-  /** The usage bubble's reading (the same row the web bubble shows; `footnote` is when it was checked). */
-  usage: RailUsage;
-}
-
-const harnessStatus = (h: HarnessActivity) => (h.limited_until ? "limited" : harnessWorking(h) ? "working" : "idle");
-
-const NATIVE_LOOK: Record<string, { initials: string; color: string }> = {
-  "claude-code": { initials: "CC", color: "#F2A97E" },
-  codex: { initials: "CX", color: "#B09AEF" },
-  antigravity: { initials: "AG", color: "#78BFDE" },
-};
-
-const TONE = { ok: "normal", warn: "warn", limited: "limited" } as const;
-
-const usageAllowance = (h: HarnessActivity, primary: { label: string } | undefined) =>
-  primary ? `${primary.label} allowance used` : h.usage_checking ? "Checking usage…" : h.harness === ANTIGRAVITY ? "Allowance not reported" : "Usage unavailable";
-
-/** The harnesses as the Mac app's native rail shows them: an avatar, a state and the usage bubble's lines. */
-export function harnessRailInputs(harnesses: HarnessActivity[]): HarnessRailInput[] {
-  return harnesses.map((h) => {
-    const pct = sessionPercent(h);
-    const primary = h.usage_available ? h.windows.find((w) => w.kind === "session") ?? h.windows[0] : undefined;
-    const look = NATIVE_LOOK[h.harness] ?? { initials: h.label.slice(0, 2).toUpperCase(), color: "#8A8F98" };
-    return {
-      harness: h.harness,
-      label: h.label,
-      ...look,
-      name: h.harness === ANTIGRAVITY ? "AG" : h.label,
-      state: harnessStatus(h),
-      usage: {
-        id: "usage",
-        title: h.label,
-        value: pct === null ? (h.usage_checking ? "…" : "—") : `${pct}%`,
-        ...(pct === null ? { unavailable: true } : { fraction: Math.max(0, Math.min(100, pct)) / 100 }),
-        tone: TONE[usageTone(h)],
-        meta: [usageAllowance(h, primary), h.limited_until ? "Limited" : harnessWorking(h) ? `${h.running} working` : "Idle"],
-        sub: usageSub(h, harnesses),
-        footnote: checkedAgo([h]),
-      },
-    };
-  });
-}
-
 export interface RailInput {
   dock: readonly RailItem[];
   pathname: string;
   review: ReviewRailInput;
   needsYou: number;
-  /** Null: the person turned harness activity off. */
-  harnesses: readonly HarnessRailInput[] | null;
   settingsNeedYou: boolean;
 }
 
@@ -255,22 +190,7 @@ function reviewItem(r: ReviewRailInput): RailItem {
   return item;
 }
 
-function harnessItem(h: HarnessRailInput): RailItem {
-  const avatar: Avatar = { initials: h.initials, color: h.color };
-  const item: RailItem = {
-    id: RAIL_HARNESS + h.harness,
-    label: `${h.label}, ${h.state}`,
-    avatar,
-    character: { harness: h.harness, working: h.state === "working", name: h.name },
-    usage: [h.usage],
-    menu: [{ id: RAIL_HARNESS_USAGE, label: "Usage settings…", icon: "gear" }],
-  };
-  if (h.state === "working") item.status = "done";
-  else if (h.state === "limited") item.status = "warning";
-  return item;
-}
-
-/** The whole rail: the page's dock on top, then reviews, Needs you and the harnesses, then Settings. */
+/** The whole rail: the page's dock on top, then reviews and Needs you, then Settings. */
 export function buildRailModel(input: RailInput): RailModel {
   const { pathname } = input;
   const settings: RailItem = {
@@ -290,7 +210,7 @@ export function buildRailModel(input: RailInput): RailModel {
   };
   if (input.needsYou > 0) needsYou.badge = { text: count(input.needsYou), tone: "human" };
 
-  const middle: RailItem[] = [reviewItem(input.review), needsYou, ...(input.harnesses ?? []).map(harnessItem)];
+  const middle: RailItem[] = [reviewItem(input.review), needsYou];
   return { top: [...input.dock], middle, foot };
 }
 
@@ -338,7 +258,6 @@ export function railEffect(
     case RAIL_NEEDS_YOU:
       return { type: "navigate", path: "/inbox" };
     default:
-      if (itemId.startsWith(RAIL_HARNESS) && menuItemId === RAIL_HARNESS_USAGE) return { type: "navigate", path: "/settings/runner" };
       return null;
   }
 }

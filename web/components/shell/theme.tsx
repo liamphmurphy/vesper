@@ -49,7 +49,6 @@ function apply() {
     if (root.style.getPropertyValue(`--${key}`) !== value) root.style.setProperty(`--${key}`, value);
   }
   root.dataset.palette = printing ? DEFAULT_APPEARANCE.palette : settings.palette;
-  root.dataset.harnessActivity = settings.showHarnessActivity === false ? "hidden" : "visible";
   // Print views keep the default size so paper looks the same whoever prints it.
   root.dataset.textSize = printing ? "default" : settings.textSize ?? "default";
   // The Mac app matches its window to the page's effective mode (Dark forced in Vesper on a Light Mac).

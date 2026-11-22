@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildRailModel, createDockRailStore, dockRailAction, dockRailItems, harnessRailInputs, railEffect } from "./models/rail.ts";
+import { buildRailModel, createDockRailStore, dockRailAction, dockRailItems, railEffect } from "./models/rail.ts";
 import { isPageMessage } from "./protocol.ts";
 
 const tabs = [
@@ -8,7 +8,7 @@ const tabs = [
   { id: "chat", label: "Chat", icon: "msg", busy: true, unread: true },
 ];
 const review = { configured: true, requests: [], approved: 0, prefs: { direct: true, team: true }, counts: { direct: 0, team: 0 } };
-const base = { dock: [], pathname: "/work", review, needsYou: 0, harnesses: [], settingsNeedYou: false };
+const base = { dock: [], pathname: "/work", review, needsYou: 0, settingsNeedYou: false };
 
 test("a dock's rail items: a tab each, the open one active, no fold control (the toolbar's)", () => {
   const items = dockRailItems(tabs, "chat", true);
@@ -83,29 +83,19 @@ test("PR review requests: count badge, PR menu, Clear all and per-PR Dismiss", (
   assert.deepEqual(unconfigured.menu.map((x) => x.id), ["pr.setup"]);
 });
 
-test("harnesses: avatar, status tone and a usage menu", () => {
-  const h = (state) => ({ harness: "codex", label: "Codex", initials: "CX", color: "#B09AEF", name: "Codex", state, usage: { id: "usage", title: "Codex", value: "42%", fraction: 0.42, tone: "normal", meta: ["Session allowance used", "Idle"], sub: "5h" } });
-  const [working] = buildRailModel({ ...base, harnesses: [h("working")] }).middle.slice(2);
-  assert.equal(working.id, "harness:codex");
-  assert.equal(working.status, "done");
-  assert.deepEqual(working.avatar, { initials: "CX", color: "#B09AEF" });
-  assert.ok(working.menu.at(-1).id === "usage");
-  assert.deepEqual(working.character, { harness: "codex", working: true, name: "Codex" });
-  assert.equal(working.usage[0].fraction, 0.42);
-  assert.equal(buildRailModel({ ...base, harnesses: [h("idle")] }).middle[2].character.working, false);
-  assert.equal(buildRailModel({ ...base, harnesses: [h("limited")] }).middle[2].character.working, false);
-  assert.equal(buildRailModel({ ...base, harnesses: [h("limited")] }).middle[2].status, "warning");
-  assert.equal(buildRailModel({ ...base, harnesses: [h("idle")] }).middle[2].status, undefined);
-  assert.equal(buildRailModel({ ...base, harnesses: null }).middle.length, 2);
+test("middle holds only PR review requests and Needs you (no harness characters)", () => {
+  const m = buildRailModel(base);
+  assert.deepEqual(m.middle.map((i) => i.id), ["pr", "needsYou"]);
 });
 
 test("rail.action resolves to the web's own actions", () => {
   const ctx = { reviewUrl: (id) => (id === "a" ? "https://github.com/o/r/pull/7" : undefined) };
   assert.deepEqual(railEffect("dock.tab:chat", undefined, ctx), { type: "dock", itemId: "dock.tab:chat" });
-  // The retired Customization, HTTP Client and Dev workspace buttons resolve to nothing.
+  // The retired Customization, HTTP Client, Dev workspace and harness buttons resolve to nothing.
   assert.equal(railEffect("customization", undefined, ctx), null);
   assert.equal(railEffect("http", undefined, ctx), null);
   assert.equal(railEffect("dev", undefined, ctx), null);
+  assert.equal(railEffect("harness:codex", "usage", ctx), null);
   assert.deepEqual(railEffect("settings", undefined, ctx), { type: "navigate", path: "/settings" });
   assert.deepEqual(railEffect("pr", "pr:a", ctx), { type: "open", url: "https://github.com/o/r/pull/7" });
   assert.equal(railEffect("pr", "pr:zzz", ctx), null);
@@ -114,7 +104,6 @@ test("rail.action resolves to the web's own actions", () => {
   assert.deepEqual(railEffect("pr", "pr.clear", ctx), { type: "clearReviews" });
   assert.deepEqual(railEffect("pr", "pr.restore", ctx), { type: "restoreReviews" });
   assert.deepEqual(railEffect("pr", "pr.team", ctx), { type: "reviewPrefs", key: "team" });
-  assert.deepEqual(railEffect("harness:codex", "usage", ctx), { type: "navigate", path: "/settings/runner" });
   assert.equal(railEffect("nope", undefined, ctx), null);
 });
 
@@ -142,65 +131,4 @@ test("the dock store: the latest registration wins, clearing falls back", () => 
   assert.deepEqual(store.items(), []);
   assert.equal(store.act("x"), false);
   assert.ok(changes >= 3);
-});
-
-test("harnessRailInputs maps idle, working, limited, antigravity, and fallback harnesses", () => {
-  const inputs = harnessRailInputs([
-    {
-      harness: "claude-code",
-      label: "Claude",
-      connected: true,
-      running: 2,
-      usage_available: true,
-      usage_checked_at: new Date().toISOString(),
-      windows: [{ id: "s", kind: "session", label: "5h", used_percent: 45 }],
-    },
-    {
-      harness: "codex",
-      label: "Codex",
-      connected: true,
-      running: 0,
-      limited_until: "2026-11-19T23:00:00Z",
-      usage_available: true,
-      windows: [{ id: "s", kind: "session", label: "5h", used_percent: 100 }],
-    },
-    {
-      harness: "antigravity",
-      label: "Antigravity",
-      connected: true,
-      running: 0,
-      usage_available: false,
-      windows: [],
-    },
-    {
-      harness: "custom-cli",
-      label: "Custom",
-      connected: true,
-      running: 0,
-      usage_available: false,
-      usage_checking: true,
-      windows: [],
-    },
-  ]);
-
-  assert.equal(inputs[0].initials, "CC");
-  assert.equal(inputs[0].state, "working");
-  assert.equal(inputs[0].usage.value, "45%");
-  assert.equal(inputs[0].usage.fraction, 0.45);
-  assert.deepEqual(inputs[0].usage.meta, ["5h allowance used", "2 working"]);
-
-  assert.equal(inputs[1].initials, "CX");
-  assert.equal(inputs[1].state, "limited");
-  assert.equal(inputs[1].usage.tone, "limited");
-  assert.deepEqual(inputs[1].usage.meta, ["5h allowance used", "Limited"]);
-
-  assert.equal(inputs[2].name, "AG");
-  assert.equal(inputs[2].usage.value, "—");
-  assert.equal(inputs[2].usage.unavailable, true);
-  assert.deepEqual(inputs[2].usage.meta, ["Allowance not reported", "Idle"]);
-
-  assert.equal(inputs[3].initials, "CU");
-  assert.equal(inputs[3].color, "#8A8F98");
-  assert.equal(inputs[3].usage.value, "…");
-  assert.deepEqual(inputs[3].usage.meta, ["Checking usage…", "Idle"]);
 });
