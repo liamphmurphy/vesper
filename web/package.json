@@ -26,7 +26,6 @@
     "@tiptap/pm": "3.33.0",
     "@tiptap/react": "3.33.0",
     "@tiptap/starter-kit": "3.33.0",
-    "@xyflow/react": "^12.12.1",
     "docx": "^9.15.3",
     "elkjs": "^0.12.1",
     "jspdf": "^4.2.1",

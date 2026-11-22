@@ -1,6 +1,5 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildWorkflowsNavModel, buildWorkflowPaletteNavModel } from "./models/workflows.ts";
 import { handleWorkHeaderCommand, workHeader, workTabHref } from "./models/work.ts";
 import { buildBoardNavModel } from "./models/board.ts";
 import { projectPickerAction } from "./models/project-picker.ts";
@@ -8,15 +7,6 @@ import { knowledgePageActions, KP } from "./models/knowledge-page.ts";
 import { splitActions } from "./actions.ts";
 
 const json = (m) => assert.equal(JSON.stringify(m), JSON.stringify(JSON.parse(JSON.stringify(m))));
-
-test("workflows list and the node palette", () => {
-  const m = buildWorkflowsNavModel({ workflows: [{ id: "w1", name: "Triage", published_version: 2 }, { id: "w2", name: "New", published_version: 0 }], runs: [{ id: "r1", name: "Triage" }] });
-  assert.deepEqual(m.sections[0].items.map((i) => [i.href, i.trailing]), [["/workflows/w1", "v2"], ["/workflows/w2", "Draft"]]);
-  assert.equal(m.sections[1].items[0].href, "/workflows/runs/r1");
-  assert.equal(buildWorkflowsNavModel({ workflows: [], runs: [] }).sections.length, 1);
-  const p = buildWorkflowPaletteNavModel({ palette: [{ group: "Steps", items: [{ type: "agent", label: "Agent step" }] }], disabled: true });
-  assert.deepEqual(p.sections[0].items[0], { id: "agent", title: "Agent step", icon: "plus", disabled: true });
-});
 
 const projects = [{ key: "VES", name: "Vesper" }, { key: "OLD", name: "Old", archived: true }];
 const agents = [{ handle: "ada", name: "Ada" }];

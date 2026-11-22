@@ -149,6 +149,9 @@ struct NativeScreenRoot: View {
         case .scheduled: ScheduledScreen()
         case .reports: ReportsScreen()
         case .knowledge, .knowledgeGraph, .knowledgePage: KnowledgeScreen()
+        case .workflows: WorkflowsScreen()
+        case .workflowEditor: WorkflowEditorScreen()
+        case .workflowRun: WorkflowRunScreen()
         }
     }
 }

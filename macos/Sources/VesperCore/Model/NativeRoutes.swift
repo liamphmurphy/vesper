@@ -29,6 +29,9 @@ public enum NativeScreen: String, Sendable, CaseIterable {
     case knowledge
     case knowledgeGraph
     case knowledgePage
+    case workflows
+    case workflowEditor
+    case workflowRun
 
     /// Screens sharing one SwiftUI root host so navigating between them preserves sidebar & chrome state.
     public var hostGroup: NativeScreen {
@@ -110,6 +113,10 @@ public struct NativeRouteRegistry: Sendable {
         NativeRoute("/knowledge/:id/*", .knowledgePage),
         NativeRoute("/wiki", .knowledge),
         NativeRoute("/wiki/*", .knowledgePage),
+        // Workflows list, live workflow runs (specific route before :id), and workflow editor.
+        NativeRoute("/workflows", .workflows),
+        NativeRoute("/workflows/runs/:id", .workflowRun),
+        NativeRoute("/workflows/:id", .workflowEditor),
     ]
 
     /// The app's registry. Debug-only screens are enabled only when `debug` is set.

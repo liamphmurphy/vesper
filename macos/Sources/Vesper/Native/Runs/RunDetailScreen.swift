@@ -511,7 +511,9 @@ struct RunDetailScreen: View {
 
         case .graph:
             RunGraphTabSlot(
-                runId: detail.run.id,
+                detail: detail,
+                childDetails: childDetails,
+                allEvents: allEvents,
                 onOpenTurn: { turn in
                     model.anchor = RunsLogic.Anchor(kind: .turn, number: turn)
                     model.mode = .trace

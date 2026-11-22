@@ -51,7 +51,18 @@ final class NativeRoutesTests: XCTestCase {
         XCTAssertEqual(run?.params["id"], "r1")
         XCTAssertEqual(run?.query["view"], "details")
         XCTAssertNil(standard.resolve("/runs/r1/extra"))
-        XCTAssertNil(standard.resolve("/workflows"))
+    }
+
+    func testWorkflowRoutesAreNative() {
+        let standard = NativeRouteRegistry.standard(debug: false)
+        XCTAssertEqual(standard.resolve("/workflows")?.screen, .workflows)
+        let wfRun = standard.resolve("/workflows/runs/wr-1")
+        XCTAssertEqual(wfRun?.screen, .workflowRun)
+        XCTAssertEqual(wfRun?.params["id"], "wr-1")
+        let wfEditor = standard.resolve("/workflows/wf-1")
+        XCTAssertEqual(wfEditor?.screen, .workflowEditor)
+        XCTAssertEqual(wfEditor?.params["id"], "wf-1")
+        XCTAssertNil(standard.resolve("/workflows/runs/wr-1/extra"))
     }
 
     func testLibraryAndPDFViewerAreNative() {
