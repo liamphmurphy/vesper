@@ -121,6 +121,7 @@ struct NativeScreenRoot: View {
         case .pdf: PDFScreen()
         case .markdownDebug: MarkdownDebugScreen()
         case .dev: DevScreen()
+        case .http: HttpScreen()
         }
     }
 }

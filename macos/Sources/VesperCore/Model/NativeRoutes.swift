@@ -11,6 +11,7 @@ public enum NativeScreen: String, Sendable, CaseIterable {
     /// /native-debug/markdown: every markdown feature through `MarkdownView` (debug only).
     case markdownDebug
     case dev
+    case http
 }
 
 /// A path resolved to a native screen, with its path parameters and query items (decoded).
@@ -57,6 +58,8 @@ public struct NativeRouteRegistry: Sendable {
         NativeRoute("/pdf", .pdf),
         // The Dev workspace terminal (SwiftTerm on the workspace's PTY socket).
         NativeRoute("/dev", .dev),
+        // Native HTTP client workbench.
+        NativeRoute("/http", .http),
     ]
 
     /// The app's registry. Debug-only screens are enabled only when `debug` is set.
