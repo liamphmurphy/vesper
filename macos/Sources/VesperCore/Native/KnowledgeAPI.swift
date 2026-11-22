@@ -583,6 +583,36 @@ public struct KnowledgeVaultEntry: Codable, Sendable, Equatable {
         case existingId = "existing_id"
         case tags, daily, error, unsupported
     }
+
+    public init(
+        source: String,
+        path: String,
+        kind: String,
+        title: String? = nil,
+        renamed: Bool? = nil,
+        conflict: Bool? = nil,
+        duplicate: Bool? = nil,
+        originalTitle: String? = nil,
+        existingId: String? = nil,
+        tags: [String]? = nil,
+        daily: Bool? = nil,
+        error: String? = nil,
+        unsupported: Bool? = nil
+    ) {
+        self.source = source
+        self.path = path
+        self.kind = kind
+        self.title = title
+        self.renamed = renamed
+        self.conflict = conflict
+        self.duplicate = duplicate
+        self.originalTitle = originalTitle
+        self.existingId = existingId
+        self.tags = tags
+        self.daily = daily
+        self.error = error
+        self.unsupported = unsupported
+    }
 }
 
 public struct KnowledgeImportResult: Codable, Sendable, Equatable {
@@ -669,6 +699,30 @@ public struct KnowledgeImportJob: Codable, Sendable, Equatable, Identifiable {
         case error
         case createdAt = "created_at"
         case updatedAt = "updated_at"
+    }
+
+    public init(
+        id: String,
+        state: String = "",
+        folder: String = "",
+        policy: String? = nil,
+        plan: KnowledgeVaultPlan? = nil,
+        report: [KnowledgeImportResult]? = nil,
+        filesDone: Int = 0,
+        error: String? = nil,
+        createdAt: String = "",
+        updatedAt: String = ""
+    ) {
+        self.id = id
+        self.state = state
+        self.folder = folder
+        self.policy = policy
+        self.plan = plan
+        self.report = report
+        self.filesDone = filesDone
+        self.error = error
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
     }
 
     public init(from decoder: any Decoder) throws {

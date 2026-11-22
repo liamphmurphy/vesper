@@ -109,6 +109,39 @@ final class NativeRoutesTests: XCTestCase {
         XCTAssertNil(standard.resolve("/tickets/PAY-1/extra"))
     }
 
+    func testKnowledgeAndWikiRoutesAreNative() {
+        let standard = NativeRouteRegistry.standard(debug: false)
+        XCTAssertEqual(standard.resolve("/knowledge")?.screen, .knowledge)
+        XCTAssertEqual(standard.resolve("/knowledge?kind=deck")?.screen, .knowledge)
+        XCTAssertEqual(standard.resolve("/knowledge?kind=deck")?.query["kind"], "deck")
+        XCTAssertEqual(standard.resolve("/knowledge?q=architecture")?.query["q"], "architecture")
+
+        // Specific routes must match before /knowledge/:id.
+        XCTAssertEqual(standard.resolve("/knowledge/connect")?.screen, .knowledge)
+        XCTAssertEqual(standard.resolve("/knowledge/graph")?.screen, .knowledgeGraph)
+
+        let page = standard.resolve("/knowledge/11111111-1111-1111-1111-111111111111")
+        XCTAssertEqual(page?.screen, .knowledgePage)
+        XCTAssertEqual(page?.params["id"], "11111111-1111-1111-1111-111111111111")
+
+        let slugPage = standard.resolve("/knowledge/11111111-1111-1111-1111-111111111111/my-slug")
+        XCTAssertEqual(slugPage?.screen, .knowledgePage)
+        XCTAssertEqual(slugPage?.params["id"], "11111111-1111-1111-1111-111111111111")
+        XCTAssertEqual(slugPage?.params["*"], "my-slug")
+
+        XCTAssertEqual(standard.resolve("/wiki")?.screen, .knowledge)
+        let wiki = standard.resolve("/wiki/Architecture/ADR%201")
+        XCTAssertEqual(wiki?.screen, .knowledgePage)
+        XCTAssertEqual(wiki?.params["*"], "Architecture/ADR 1")
+
+        XCTAssertEqual(NativeScreen.knowledge.hostGroup, .knowledge)
+        XCTAssertEqual(NativeScreen.knowledgeGraph.hostGroup, .knowledge)
+        XCTAssertEqual(NativeScreen.knowledgePage.hostGroup, .knowledge)
+        XCTAssertNotEqual(NativeScreen.inbox.hostGroup, .knowledge)
+        XCTAssertNotEqual(NativeScreen.learn.hostGroup, .knowledge)
+        XCTAssertNotEqual(NativeScreen.learnCourse.hostGroup, .knowledge)
+    }
+
     func testOnlyInAppPathsResolve() {
         XCTAssertNil(registry.resolve("https://example.com/native-debug"))
         XCTAssertNil(registry.resolve("//evil.example/native-debug"))

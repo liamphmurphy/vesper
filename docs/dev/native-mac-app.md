@@ -892,6 +892,68 @@ Manual click-through checklist:
 6. Toggle `Context` in the header: verify Plan progress, Usage + Cache share, Ticket criteria, Code PR,
    and Run facts appear and collapse cleanly, and `⌘\` opens the Chat companion inspector.
 
+## Native screen: Knowledge shell
+
+`/knowledge`, `/knowledge?kind=…`, `/knowledge?search=1|q=|tag=`, `/knowledge/connect`, `/knowledge/graph`,
+`/knowledge/:id`, `/knowledge/:id/*`, `/wiki`, and `/wiki/*` are native
+(`macos/Sources/Vesper/Native/Knowledge/`, logic in VesperCore `Native/KnowledgeShellLogic.swift` and
+`Native/KnowledgeAPI.swift`). All Knowledge and Wiki routes share `NativeScreen.knowledge.hostGroup` so
+explorer expansion, pins, and selection survive navigation across Home, Search, Connect, Graph, and
+pages.
+
+- **Pure SwiftUI & Foundation core.** All views under `macos/Sources/Vesper/Native/Knowledge/` import
+  only `SwiftUI` + `VesperCore` (plus `UniformTypeIdentifiers` in `KnowledgeScreen.swift` for vault `.zip`
+  import), with zero `AppKit` imports; clipboard, modifier flags, toasts, and navigation go through
+  `NativeScreenContext`, and the explorer sidebar publishes via `NativeScreenContext.sidebarView`.
+- **Explorer (`KnowledgeExplorerView`).** Compact Obsidian-style tree with `Yours` / `Agent` view picker,
+  live tree filter, Pinned pages (`VesperNativeKnowledgePinnedIds`), expanded folders
+  (`VesperNativeKnowledgeExpandedFolders`), `Inbox` prioritized at root, ISO daily notes sorted
+  newest-first, 8-page folder cap (`+ N more` and active-page escape), drag-to-move pages/folders
+  (`KnowledgeDragItem` / `KnowledgeShellLogic.planDrop`), click/⌘/⇧ multi-select (`KnowledgeSelection`)
+  with bulk Move, Make Private/Shared, and Delete, inline rename, Quick Capture, Today's daily note, and
+  the Obsidian vault `.zip` import wizard (`skip` / `replace` / `keep_both`, filterable dry-run review,
+  and Undo).
+- **Home, Kind Start, Search, Connect & Legacy Wiki.** `KnowledgeHomeView` groups To review, Inbox
+  captures, Agent proposals, Recent, Vault overview, and Kind Start views (`Documents`, `Decks`, `Designs`).
+  `KnowledgeSearchView` supports full-text, tag, folder, property, audience, kind, orphan, and unresolved
+  filters (`GET /api/v1/knowledge/pages`, switching to `POST /api/v1/knowledge/query` when a property
+  key=value filter is active). `KnowledgeConnectView` (`/knowledge/connect`) lists unresolved `[[links]]`
+  and orphan pages. Legacy `/wiki/*` paths resolve through `GET /api/v1/knowledge/legacy` and redirect to
+  the backing page.
+- **Follow-up seams.**
+  - `KnowledgePageEditorSlot` (seam for LAZYAGENTS-288): switches via `KnowledgeShellLogic.editorTarget`
+    to host `/knowledge/:id?embed=1`, `/apps/slides/:id`, `/apps/designs/:id`, `/apps/docs/:id`, or native
+    `PDFViewerView` for standalone PDF pages.
+  - `KnowledgePageSidePanelSlot` (Info / Properties / History) and `KnowledgeGraphScreenSlot` (hosts
+    `/knowledge/graph`): seams for LAZYAGENTS-287.
+- **Web cleanup.** Removed the replaced `/knowledge` index, `/knowledge/connect`, `/wiki/*` routes,
+  `KnowledgeShell`, `web/lib/wiki.ts`, `web/lib/native-shell/models/knowledge.ts`, and `models/wiki.ts`;
+  `web/app/(app)/knowledge/layout.tsx` keeps only `KnowledgeChatProvider` inside `<Suspense fallback={null}>`
+  and a full-height flex container for hosted page and graph routes.
+
+Manual click-through checklist:
+
+1. Open Knowledge from the sidebar: native explorer renders in the left sidebar (`Yours` / `Agent`, Pinned,
+   tree with `Inbox` first and `+ N more` past 8 pages) and `KnowledgeHomeView` opens cleanly without a
+   duplicate web sidebar.
+2. Drag a page or folder onto another folder (and to top level): `movePage`/`moveFolder` updates the tree
+   and keeps expanded ancestor folders intact.
+3. Click, ⌘-click, and ⇧-click rows in the explorer: multi-select bar appears for bulk Move, Audience, and
+   Delete; inline rename updates the title/path cleanly.
+4. Click Home → Documents / Decks / Designs kind start cards: create a page or starter and verify it opens in
+   place; ⌘-click opens in a new tab.
+5. Open Search from the explorer or toolbar: verify text, `#tag`, folder, property `key=value`, orphan, and
+   unresolved filters return matching pages.
+6. Open Keep Notes Connected (`/knowledge/connect`): verify Unresolved links and Orphans tabs create or
+   open pages cleanly.
+7. Trigger Quick Capture and Today from the explorer footer: verify a note lands in `Inbox` and today's
+   daily note opens under `Daily/`.
+8. Open Vault Import, drop or select a `.zip` archive, review the filtered dry-run entries, confirm import,
+   and test Undo.
+9. Open a Markdown page, a Deck/Design page, a standalone PDF page, and `/knowledge/graph`: verify each
+   renders via `KnowledgePageEditorSlot` / `KnowledgeGraphScreenSlot` without double sidebars, and opening
+   a `/wiki/<path>` URL resolves cleanly to its Knowledge page.
+
 ## Build and test
 
 - `make -C macos test` → `swift test` (VesperCore).

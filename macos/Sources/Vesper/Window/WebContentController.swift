@@ -200,7 +200,7 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
     private func syncNativeScreen(path: String) {
         guard kind == .vesper else { return }
         let match = app.nativeRoutes.resolve(path)
-        if let match, let nativeHost, nativeHost.context.match.screen == match.screen {
+        if let match, let nativeHost, nativeHost.context.match.screen.hostGroup == match.screen.hostGroup {
             nativeHost.context.update(match: match)
             return
         }
