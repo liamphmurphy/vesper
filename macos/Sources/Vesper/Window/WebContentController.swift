@@ -32,7 +32,15 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
         self.state = state
         self.pendingPath = path
         if kind == .vesper {
-            let bridge = ShellBridge(state: state)
+            let bridge = ShellBridge(
+                state: state,
+                appearanceCommand: { [weak app] in
+                    if let cmd = app?.currentAppearanceCommand() { return cmd }
+                    let (accent, mode) = AppearanceMonitor.current()
+                    return .appearance(accent: accent, mode: mode)
+                },
+                ownsAppearance: { [weak app] in app?.ownsAppearance ?? false }
+            )
             self.bridge = bridge
             let services = WebPageServices()
             self.services = services
@@ -134,6 +142,7 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
 
     func navigate(path: String) {
         guard kind == .vesper else { return }
+        if app.handleSettingsPath(path, from: ownerWindow) { return }
         // Show the native screen now rather than after the page's router changes the URL.
         syncNativeScreen(path: path)
         if state.ready {
@@ -262,10 +271,11 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
         }
         switch classifyNavigation(target, serverURL: base.absoluteString, playgroundPorts: app.playgroundPorts) {
         case .vesper:
-            if kind == .vesper && !openingTab { return true }
             var path = url.path.isEmpty ? "/" : url.path
             if let q = url.query { path += "?" + q }
             if let f = url.fragment { path += "#" + f }
+            if app.handleSettingsPath(path, from: ownerWindow) { return false }
+            if kind == .vesper && !openingTab { return true }
             app.openVesperTab(path: path, nextTo: ownerWindow)
         case .playground:
             app.openPlayground(url: url, nextTo: ownerWindow)

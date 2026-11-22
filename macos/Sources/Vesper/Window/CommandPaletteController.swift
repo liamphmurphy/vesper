@@ -217,8 +217,16 @@ final class CommandPaletteController: NSObject, NSWindowDelegate, WKScriptMessag
         return req
     }
 
-    private func sendAppearance() {
+    func sendAppearance(_ command: NativeCommand? = nil) {
         guard ready else { return }
+        if let command {
+            ShellBridge.send(command, to: webView)
+            return
+        }
+        if let custom = aux?.app?.currentAppearanceCommand() {
+            ShellBridge.send(custom, to: webView)
+            return
+        }
         let (accent, mode) = AppearanceMonitor.current()
         ShellBridge.send(.appearance(accent: accent, mode: mode), to: webView)
     }

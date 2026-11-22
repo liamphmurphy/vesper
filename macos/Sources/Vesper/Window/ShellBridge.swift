@@ -22,16 +22,28 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
     weak var shellHost: (any ShellHostActions)?
 
     private var appearanceMonitor: AppearanceMonitor?
+    var appearanceCommand: (() -> NativeCommand)?
+    var ownsAppearance: () -> Bool = { false }
 
-    init(state: ShellState) {
+    init(state: ShellState, appearanceCommand: (() -> NativeCommand)? = nil, ownsAppearance: @escaping () -> Bool = { false }) {
         self.state = state
+        self.appearanceCommand = appearanceCommand
+        self.ownsAppearance = ownsAppearance
         super.init()
         appearanceMonitor = AppearanceMonitor { [weak self] in self?.sendAppearance() }
     }
 
-    /// macOS's accent colour and appearance, for the page's macOS palette. Only once the page can hear it.
-    func sendAppearance() {
+    /// macOS's accent colour, effective appearance, and native Appearance settings; sent once ready.
+    func sendAppearance(_ command: NativeCommand? = nil) {
         guard state.ready else { return }
+        if let command {
+            send(command)
+            return
+        }
+        if let custom = appearanceCommand?() {
+            send(custom)
+            return
+        }
         let (accent, mode) = AppearanceMonitor.current()
         send(.appearance(accent: accent, mode: mode))
     }
@@ -81,8 +93,10 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
         case .sidebarHidden(let hidden): state.sidebarHidden = hidden
         case .toolbar(let items): state.pageToolbarItems = items
         case .appearance(let mode, let background, let theme):
-            state.pageMode = mode
-            if let theme { state.theme = theme }
+            if !ownsAppearance() {
+                state.pageMode = mode
+                if let theme { state.theme = theme }
+            }
             if let color = NSColor.fromCSS(background) {
                 webView?.underPageBackgroundColor = color
                 WebViewFactory.lastPageBackground = color

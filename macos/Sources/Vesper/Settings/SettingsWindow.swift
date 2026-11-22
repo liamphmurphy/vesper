@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import VesperCore
 
 /// The Settings window (⌘,): a sidebar of sections and a grouped form for the selected one.
 @MainActor
@@ -9,6 +10,14 @@ final class SettingsWindowController {
     private let navigation = SettingsNavigation()
 
     init(aux: AuxWindows) { self.aux = aux }
+
+    func show(destination: SettingsDestination? = nil) {
+        if case .pane(let pane, _, _, _, _, _, _, _, _) = destination {
+            show(section: pane.rawValue)
+            return
+        }
+        show(section: nil)
+    }
 
     func show(section: String? = nil) {
         guard let aux else { return }

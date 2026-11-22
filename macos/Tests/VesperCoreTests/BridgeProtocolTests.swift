@@ -113,6 +113,17 @@ final class BridgeProtocolTests: XCTestCase {
         let appearance = try NativeCommand.appearance(accent: "#0A84FF", mode: .dark).jsonString()
         XCTAssertTrue(appearance.contains("\"accent\":\"#0A84FF\""))
         XCTAssertTrue(appearance.contains("\"mode\":\"dark\""))
+        XCTAssertFalse(appearance.contains("themePref"))
+        XCTAssertFalse(appearance.contains("settingsJson"))
+
+        let synced = try NativeCommand.appearance(
+            accent: "#0A84FF",
+            mode: .dark,
+            themePref: .dark,
+            settingsJson: #"{"version":1,"palette":"nord"}"#
+        ).jsonString()
+        XCTAssertTrue(synced.contains("\"themePref\":\"dark\""))
+        XCTAssertTrue(synced.contains("\"settingsJson\":"))
     }
 
     func testReplyEncodesNullSelection() throws {

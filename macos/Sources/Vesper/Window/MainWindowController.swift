@@ -131,8 +131,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             )
             inspector.companion.ownerWindow = { [weak self] in self?.window }
             inspector.companion.playgroundPorts = { [weak app] in app?.playgroundPorts ?? defaultPlaygroundPorts }
+            inspector.companion.appearanceCommand = { [weak app] in
+                if let cmd = app?.currentAppearanceCommand() { return cmd }
+                let (accent, mode) = AppearanceMonitor.current()
+                return .appearance(accent: accent, mode: mode)
+            }
             inspector.panelWeb.ownerWindow = { [weak self] in self?.window }
             inspector.panelWeb.playgroundPorts = { [weak app] in app?.playgroundPorts ?? defaultPlaygroundPorts }
+            inspector.panelWeb.appearanceCommand = { [weak app] in
+                if let cmd = app?.currentAppearanceCommand() { return cmd }
+                let (accent, mode) = AppearanceMonitor.current()
+                return .appearance(accent: accent, mode: mode)
+            }
             if let conn = app.connection { inspector.connect(conn) }
             let inspItem = NSSplitViewItem(inspectorWithViewController: inspector)
             inspItem.allowsFullHeightLayout = true
@@ -167,6 +177,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         let root = WindowRootController(split: split)
         root.installRail(
             tabs: tabs,
+            showHarnessActivity: { [weak app] in app?.settings.settings.effectiveAppearance.showHarnessActivity ?? true },
             send: { [weak self] in self?.handleRailCommand($0) },
             services: { [weak app] in app?.system }
         )
@@ -254,6 +265,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
 
     private func handleRailCommand(_ command: NativeCommand) {
+        if case .railAction(let itemId, let menuItemId) = command {
+            if itemId == "settings" && menuItemId == nil {
+                app.aux.openSettings()
+                return
+            }
+            if itemId == "customization" && menuItemId == nil {
+                app.aux.openSettings(destination: .pane(pane: .memory))
+                return
+            }
+            if itemId == "pr" && menuItemId == "pr.setup" {
+                app.aux.openSettings(destination: .pane(pane: .secrets))
+                return
+            }
+        }
         if case .railAction(let itemId, let menuItemId) = command, menuItemId == nil {
             if let tabId = InspectorLogic.railDockTabId(from: itemId),
                let model = state.inspector,
@@ -300,6 +325,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     private func openInMain(path: String, newTab: Bool) {
         guard path.hasPrefix("/"), !path.hasPrefix("//") else { return }
+        if app.handleSettingsPath(path, from: window) { return }
         if newTab || kind != .vesper {
             app.openVesperTab(path: path, nextTo: window)
         } else {
@@ -504,6 +530,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         guard let window else { return }
         guard let mode, mode != AppearanceMonitor.current().mode else { window.appearance = nil; return }
         window.appearance = NSAppearance(named: mode == .dark ? .darkAqua : .aqua)
+    }
+
+    func applyAppearanceCommand(_ command: NativeCommand) {
+        inspectorController?.companion.sendAppearance(command)
+        inspectorController?.panelWeb.sendAppearance(command)
     }
 
     func connect(_ conn: Connection) {

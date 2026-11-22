@@ -821,8 +821,8 @@ public enum NativeCommand: Sendable, Equatable, Codable {
     case companionContext(CompanionContext)
     case panelContext(InspectorPanelContext)
     case panelEvent(tabId: String, event: String, payloadJson: String? = nil)
-    /// macOS's accent colour ("#RRGGBB") and effective appearance.
-    case appearance(accent: String, mode: ColorMode)
+    /// macOS's accent colour ("#RRGGBB") and effective appearance, plus optional user appearance preferences.
+    case appearance(accent: String, mode: ColorMode, themePref: AppearanceMode? = nil, settingsJson: String? = nil)
     /// `query` only means something for openCommandMenu: the text to open the palette with.
     case command(ShellCommandName, query: String? = nil)
     /// `selectedId`/`value`: `nil` omits the field, `.some(nil)` sends JSON null, `.some("x")` a value.
@@ -833,7 +833,7 @@ public enum NativeCommand: Sendable, Equatable, Codable {
     private enum Keys: String, CodingKey {
         case v, type, path, navigatorId, itemId, actionId, menuItemId, pickerId, searchId, filterId, value, expanded, checked, name, query, newTab
         case open, tabId, fieldId, context, event, payloadJson
-        case accent, mode
+        case accent, mode, themePref, settingsJson
         case requestId, ok, selectedId, error
         case id, request
     }
@@ -858,7 +858,12 @@ public enum NativeCommand: Sendable, Equatable, Codable {
             self = .navFilter(navigatorId: try c.decode(String.self, forKey: .navigatorId), filterId: try c.decode(String.self, forKey: .filterId),
                               value: try c.decode(String.self, forKey: .value), checked: try c.decode(Bool.self, forKey: .checked))
         case "appearance":
-            self = .appearance(accent: try c.decode(String.self, forKey: .accent), mode: try c.decode(ColorMode.self, forKey: .mode))
+            self = .appearance(
+                accent: try c.decode(String.self, forKey: .accent),
+                mode: try c.decode(ColorMode.self, forKey: .mode),
+                themePref: try c.decodeIfPresent(AppearanceMode.self, forKey: .themePref),
+                settingsJson: try c.decodeIfPresent(String.self, forKey: .settingsJson)
+            )
         case "nav.search":
             self = .navSearch(navigatorId: try c.decode(String.self, forKey: .navigatorId), searchId: try c.decode(String.self, forKey: .searchId), value: try c.decode(String.self, forKey: .value))
         case "nav.toggle":
@@ -930,8 +935,12 @@ public enum NativeCommand: Sendable, Equatable, Codable {
         case .navFilter(let nav, let filter, let value, let checked):
             try c.encode("nav.filter", forKey: .type); try c.encode(nav, forKey: .navigatorId); try c.encode(filter, forKey: .filterId)
             try c.encode(value, forKey: .value); try c.encode(checked, forKey: .checked)
-        case .appearance(let accent, let mode):
-            try c.encode("appearance", forKey: .type); try c.encode(accent, forKey: .accent); try c.encode(mode, forKey: .mode)
+        case .appearance(let accent, let mode, let themePref, let settingsJson):
+            try c.encode("appearance", forKey: .type)
+            try c.encode(accent, forKey: .accent)
+            try c.encode(mode, forKey: .mode)
+            try c.encodeIfPresent(themePref, forKey: .themePref)
+            try c.encodeIfPresent(settingsJson, forKey: .settingsJson)
         case .navSearch(let nav, let search, let value):
             try c.encode("nav.search", forKey: .type); try c.encode(nav, forKey: .navigatorId); try c.encode(search, forKey: .searchId); try c.encode(value, forKey: .value)
         case .navToggle(let nav, let item, let expanded):

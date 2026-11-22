@@ -19,7 +19,8 @@ final class AvatarImages {
     private static let maxBytes = 5 * 1024 * 1024
 
     func image(for raw: String) async -> NSImage? {
-        guard let url = URL(string: raw), let conn = connection,
+        guard let conn = connection,
+              let url = URL(string: raw, relativeTo: conn.baseURL)?.absoluteURL,
               BridgeOrigin.matches(url: url, base: conn.baseURL) else { return nil }
         if let hit = cache[url] { return hit }
         if failed.contains(url) { return nil }

@@ -53,7 +53,12 @@ final class WindowRootController: NSViewController, NSUserInterfaceValidations {
     }
 
     /// Installs the stationary trailing rail and binds its width and items to the active tab.
-    func installRail(tabs: TabsModel, send: @escaping (NativeCommand) -> Void, services: @escaping () -> SystemServices?) {
+    func installRail(
+        tabs: TabsModel,
+        showHarnessActivity: @escaping () -> Bool = { true },
+        send: @escaping (NativeCommand) -> Void,
+        services: @escaping () -> SystemServices?
+    ) {
         precondition(rail == nil)
         let bar = RailBarView(send: send, services: services)
         bar.translatesAutoresizingMaskIntoConstraints = false
@@ -62,9 +67,9 @@ final class WindowRootController: NSViewController, NSUserInterfaceValidations {
         if isViewLoaded {
             attachRail(bar, to: view)
         }
-        track({ [weak tabs] in tabs?.list.active?.state.rail }) { [weak self] model in
+        track({ [weak tabs] in (tabs?.list.active?.state.rail, showHarnessActivity()) }) { [weak self] model, showHarness in
             self?.railWidth?.constant = model == nil ? 0 : RailBarView.width
-            self?.rail?.apply(model)
+            self?.rail?.apply(model, showHarnessActivity: showHarness)
         }
     }
 

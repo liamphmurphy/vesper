@@ -15,7 +15,7 @@ import { CanvasDock } from "@/components/domain/canvas-view";
 import { floatPanel } from "@/components/domain/pickers";
 import { PlaygroundPanel } from "@/components/domain/playground";
 import { LiveUpdates } from "@/components/shell/live-updates";
-import { setSystemAccent } from "@/components/shell/theme";
+import { applyNativeAppearance } from "@/components/shell/theme";
 import { Skeleton } from "@/components/ui/primitives";
 import { useCanvasActions, useChatCanvas } from "@/lib/api/canvas-hooks";
 import { useDesign, useDesignSettings } from "@/lib/api/designs-hooks";
@@ -421,7 +421,7 @@ export default function NativeInspectorPanelPage() {
     post({ v: 1, type: "ready", path: "/inspector-panel" });
     const offCommand = onCommand((cmd) => {
       if (cmd.type === "appearance") {
-        setSystemAccent(cmd.accent);
+        applyNativeAppearance(cmd);
       } else if (cmd.type === "panel.context") {
         setActiveKey(cmd.context.active?.key ?? null);
         setMounted((prev) => applyPanelContext(prev, cmd.context));
