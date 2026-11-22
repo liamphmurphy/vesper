@@ -30,7 +30,6 @@ import { StatusBar, Tag } from "./kit";
 import { personaLook } from "@/app/(app)/chat/_components/persona";
 import { ReviewBar, ReviewList, undecided } from "./page-review";
 import { QueryTable } from "./query-table";
-import { useKnowledgeTab } from "./shell";
 import { useKnowledgeChat } from "./chat-context";
 import { useNativeTitle } from "../../tickets/_components/native-title";
 import { useNativeActions } from "@/lib/native-shell/use-native-actions";
@@ -46,8 +45,6 @@ const item = "flex cursor-default select-none items-start gap-2.5 rounded-md px-
 export function PageScreen({ id }: { id: string }) {
   const q = usePage(id);
   const p = q.data;
-  // A deck or design page registers as one, so the shell gives its editor the column and the companion.
-  useKnowledgeTab(p ? { id: p.id, title: p.title, kind: p.kind === "deck" || p.kind === "design" ? p.kind : "page" } : undefined);
   useRecordVisit(p ? { id: `page-${p.id}`, title: p.title || "Untitled", meta: p.path ?? undefined, href: pageHref(p.id, p.title), kind: "Pages" } : undefined);
   if (q.error)
     return (

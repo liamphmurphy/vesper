@@ -18,6 +18,17 @@ public enum NativeScreen: String, Sendable, CaseIterable {
     case http
     case learn
     case learnCourse
+    case knowledge
+    case knowledgeGraph
+    case knowledgePage
+
+    /// Screens sharing one SwiftUI root host so navigating between them preserves sidebar & chrome state.
+    public var hostGroup: NativeScreen {
+        switch self {
+        case .knowledge, .knowledgeGraph, .knowledgePage: .knowledge
+        default: self
+        }
+    }
 }
 
 /// A path resolved to a native screen, with its path parameters and query items (decoded).
@@ -71,6 +82,14 @@ public struct NativeRouteRegistry: Sendable {
         // Guided Learning modules and course study/build screens.
         NativeRoute("/learn", .learn),
         NativeRoute("/learn/:id", .learnCourse),
+        // Knowledge explorer, home, search, connect, graph and pages (specific routes before :id).
+        NativeRoute("/knowledge", .knowledge),
+        NativeRoute("/knowledge/graph", .knowledgeGraph),
+        NativeRoute("/knowledge/connect", .knowledge),
+        NativeRoute("/knowledge/:id", .knowledgePage),
+        NativeRoute("/knowledge/:id/*", .knowledgePage),
+        NativeRoute("/wiki", .knowledge),
+        NativeRoute("/wiki/*", .knowledgePage),
     ]
 
     /// The app's registry. Debug-only screens are enabled only when `debug` is set.

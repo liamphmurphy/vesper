@@ -71,6 +71,16 @@ final class NativeScreenContext {
         pasteboard.setString(text, forType: .string)
     }
 
+    /// Active keyboard modifiers (Command, Shift, Option) without coupling SwiftUI views to AppKit.
+    var currentEventModifiers: EventModifiers {
+        let flags = NSEvent.modifierFlags
+        var modifiers: EventModifiers = []
+        if flags.contains(.command) { modifiers.insert(.command) }
+        if flags.contains(.shift) { modifiers.insert(.shift) }
+        if flags.contains(.option) { modifiers.insert(.option) }
+        return modifiers
+    }
+
     /// The same screen with new parameters (e.g. another ticket): the screen keeps its state.
     func update(match: NativeRouteMatch) {
         if match != self.match { self.match = match }
@@ -130,6 +140,7 @@ struct NativeScreenRoot: View {
         case .http: HttpScreen()
         case .learn: LearnScreen()
         case .learnCourse: CourseScreen()
+        case .knowledge, .knowledgeGraph, .knowledgePage: KnowledgeScreen()
         }
     }
 }

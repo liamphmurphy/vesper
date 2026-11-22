@@ -9,17 +9,13 @@ import { useNetwork } from "@/lib/api/knowledge-hooks";
 import { Icon } from "@/components/ui/icon";
 import { EmptyState, Skeleton } from "@/components/ui/primitives";
 import { StatusBar } from "./kit";
-import { useKnowledge, useKnowledgeTab } from "./shell";
 
-const TAB = { id: "graph", title: "Graph view", kind: "graph" as const };
 const PALETTE = ["#9B8CFF", "#3FC1B0", "#F0BF4C", "#4EA7FC", "#F48A98", "#F59E5B", "#6FCF97", "#C89BFF"];
 
 /** Every page and link you can see, laid out by force, coloured by top folder; click a page to open it. */
 export function GraphScreen() {
-  useKnowledgeTab(TAB);
-  const k = useKnowledge();
   const router = useRouter();
-  const [agent, setAgent] = useState(k.view === "agent");
+  const [agent, setAgent] = useState(false);
   const [orphans, setOrphans] = useState(true);
   const [search, setSearch] = useState("");
   const [hover, setHover] = useState<string>();

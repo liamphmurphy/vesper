@@ -8,12 +8,9 @@ import { buildEpicsNavModel } from "./models/epics.ts";
 import { buildTicketNavModel } from "./models/ticket.ts";
 import { buildEpicDetailNavModel } from "./models/epic-detail.ts";
 import { buildRunsNavModel } from "./models/runs.ts";
-import { buildWikiNavModel } from "./models/wiki.ts";
 import { projectPickerAction } from "./models/project-picker.ts";
-import { buildKnowledgeNavModel, K } from "./models/knowledge.ts";
 import { knowledgePageActions, KP } from "./models/knowledge-page.ts";
 import { splitActions } from "./actions.ts";
-import { findNavItem } from "./nav-model.ts";
 
 const json = (m) => assert.equal(JSON.stringify(m), JSON.stringify(JSON.parse(JSON.stringify(m))));
 
@@ -167,101 +164,12 @@ test("runs: loading, error with retry and empty states", () => {
   assert.equal(buildRunsNavModel({ body: body(), filters: f, search: "" }).sections[0].emptyText, "No runs");
 });
 
-const page = (id, path, extra = {}) => ({ id, path, title: path.split("/").pop(), suggestions: 0, ...extra });
-const folder = (name, path, folders = [], pages = [], pg) => ({ name, path, folders: new Map(folders.map((f) => [f.name.toLowerCase(), f])), pages, page: pg, count: pages.length + folders.reduce((n, f) => n + f.count, 0) });
-
-test("wiki: namespaces with index rows, open state, suggestions, reports, selection", () => {
-  const adr = page("1", "Architecture/ADR-1", { suggestions: 2 });
-  const arch = folder("Architecture", "Architecture", [], [adr]);
-  const other = folder("", "", [folder("Payments", "Payments", [], [page("2", "Payments/Ledger")])], [page("3", "Home")]);
-  const m = buildWikiNavModel({
-    loaded: true,
-    current: "architecture/adr-1",
-    architecture: arch,
-    memory: folder("", "", [], []),
-    other,
-    reports: { state: "ready", list: [{ id: "r1", title: "Report", updated_at: "2026-01-02T00:00:00Z", project: { key: "VES" } }], total: 7 },
-    open: new Set(["payments"]),
-    forced: new Set(["architecture"]),
-  });
-  const ns = m.sections[0].items;
-  assert.deepEqual(ns.map((i) => i.id), ["f:architecture", "f:patterns", "f:agents", "f:ns:reports"]);
-  assert.equal(ns[0].expanded, true);
-  assert.deepEqual(ns[0].children.map((c) => c.id), ["index:adrs", "p:Architecture/ADR-1"]);
-  assert.deepEqual(ns[0].children[1].badge, { text: "2", tone: "human" });
-  assert.equal(m.selectedId, "p:Architecture/ADR-1");
-  assert.equal(ns[2].children[0].disabled, true);
-  assert.equal(ns[3].children.at(-1).title, "All 7 reports →");
-  assert.equal(ns[3].children[0].href, "/artifacts/r1");
-  const payments = m.sections[1].items.find((i) => i.id === "f:payments");
-  assert.equal(payments.expanded, true);
-  assert.equal(payments.trailing, "1");
-  assert.equal(m.sections[1].items.at(-1).href, "/wiki/Home");
-  assert.equal(buildWikiNavModel({ loaded: false, current: "", memory: other, other, reports: { state: "loading", list: [], total: 0 }, open: new Set(), forced: new Set() }).sections[0].emptyText, "Loading");
-  json(m);
-});
-
 test("project picker: All spaces, each active space, then Open or New space", () => {
   const action = projectPickerAction({ projects: projects.filter((x) => !x.archived), current: projects[0] });
   assert.equal(action.label, "Space: Vesper");
   assert.deepEqual(action.menu.map((i) => i.id), ["space:", "sep-all", "space:VES", "sep-open", "space-open"]);
   assert.equal(action.menu.at(-1).label, "Open Vesper");
   assert.equal(projectPickerAction({ projects, current: null }).menu.at(-1).label, "New space");
-});
-
-const kpage = (id, path, extra = {}) => ({ id, path, title: path.split("/").pop(), ...extra });
-const kfolder = (name, path, folders = [], pages = []) => ({ name, path, folders, pages, count: pages.length + folders.reduce((n, f) => n + f.count, 0) });
-
-test("knowledge: header actions, + menu, view picker, tree with menus, quick entries", () => {
-  const many = Array.from({ length: 10 }, (_, i) => kpage(`p${i}`, `Notes/Note ${i}`));
-  const tree = kfolder("", "", [kfolder("Notes", "Notes", [], many), kfolder("Inbox", "Inbox", [], [kpage("i1", "Inbox/Idea", { pending: 1 })])], [kpage("t1", "Top")]);
-  const base = {
-    view: "yours",
-    loading: false,
-    tree,
-    pinned: [many[0]],
-    pinnedIds: ["p0"],
-    activeId: "p9",
-    open: new Set(["Notes"]),
-    showAll: new Set(),
-    pageHref: (p) => `/knowledge/${p.id}`,
-    pageIcon: () => "artifacts",
-    deckStarters: [{ key: "pitch", name: "Pitch", slide_count: 8 }],
-    designStarters: [{ key: "blank", label: "Blank" }],
-  };
-  const m = buildKnowledgeNavModel(base);
-  assert.deepEqual(m.actions.map((a) => a.id), ["search", "graph", "connect", "collapse-all", "new"]);
-  const menu = m.actions[4].menu;
-  assert.deepEqual(menu.filter((i) => !i.separator).map((i) => i.id), ["new:doc", "deck", "design", "new:folder"]);
-  assert.deepEqual(menu[1].children.map((c) => c.id), ["new:deck:blank", "new:deck:pitch"]);
-  assert.equal(m.picker.value, "yours");
-  assert.deepEqual(m.sections.map((s) => s.id), ["home", "pinned", "tree", "quick"]);
-  const section = (model, id) => model.sections.find((s) => s.id === id);
-  assert.deepEqual(section(m, "home").items, [{ id: "home", title: "Home", icon: "home", href: "/knowledge" }], "Home leads the list: the Mac app has no tab strip");
-  assert.equal(section(m, "pinned").items[0].id, "pin:p0");
-  assert.equal(section(m, "pinned").items[0].contextMenu.find((i) => i.id === "pin").label, "Unpin");
-  assert.equal(section(m, "pinned").items[0].contextMenu[0].id, K.openNewTab, "a page row opens in a new tab first, as Finder's and Safari's do");
-  const items = section(m, "tree").items;
-  assert.equal(items[0].id, "f:Inbox", "Inbox heads the tree");
-  assert.deepEqual(items[0].badge, { text: "1", tone: "accent" });
-  assert.equal(items[0].children[0].status, "human");
-  const notes = items[1];
-  assert.equal(notes.expanded, true);
-  assert.equal(notes.children.length, 10, "8 pages, the open one past the cut, and + more");
-  assert.equal(notes.children.at(-1).title, "+ 1 more");
-  assert.ok(notes.children.some((c) => c.id === "p:p9"));
-  assert.deepEqual(notes.contextMenu.map((i) => i.id).filter((i) => !i.startsWith("s")), ["ask", "new-page", "new-folder", "rename", "move", "delete"]);
-  assert.equal(items[2].href, "/knowledge/t1");
-  assert.equal(m.selectedId, "p:p9");
-  assert.deepEqual(section(m, "quick").items.map((i) => i.id), ["today", "capture", "import"]);
-  const all = buildKnowledgeNavModel({ ...base, showAll: new Set(["Notes"]) });
-  assert.equal(section(all, "tree").items[1].children.length, 10);
-  assert.equal(section(buildKnowledgeNavModel({ ...base, loading: true }), "loading").emptyText, "Loading");
-  assert.match(section(buildKnowledgeNavModel({ ...base, tree: kfolder("", ""), pinned: [], view: "agent" }), "empty").emptyText, /No agent knowledge/);
-  assert.equal(buildKnowledgeNavModel({ ...base, activeId: undefined, home: true }).selectedId, "home", "Home is selected while it shows");
-  assert.equal(buildKnowledgeNavModel({ ...base, activeId: undefined }).selectedId, null);
-  assert.equal(K.folder("a/b"), "f:a/b");
-  json(m);
 });
 
 test("knowledge page: audience, persona mode, copy link and More as toolbar items that run their handlers", () => {
@@ -327,9 +235,4 @@ test("knowledge page: audience, persona mode, copy link and More as toolbar item
   const agentPage = splitActions(knowledgePageActions({ ...input, audience: "agent", mode: { ...input.mode, avatar: undefined } })).items;
   assert.equal(agentPage[0].label, "Agent");
   assert.equal(agentPage[1].icon, "agents", "no face yet: the agents icon stands in");
-});
-
-test("findNavItem still finds nested wiki rows", () => {
-  const m = buildWikiNavModel({ loaded: true, current: "", architecture: folder("Architecture", "Architecture", [], [page("1", "Architecture/A")]), memory: folder("", "", [], []), other: folder("", "", [], []), reports: { state: "ready", list: [], total: 0 }, open: new Set(), forced: new Set() });
-  assert.equal(findNavItem(m, "p:Architecture/A").href, "/wiki/Architecture/A");
 });
