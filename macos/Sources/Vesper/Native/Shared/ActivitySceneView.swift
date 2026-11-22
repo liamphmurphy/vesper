@@ -18,11 +18,11 @@ struct ActivitySceneView: View {
     @State private var staticTick = 0
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: nil, paused: reduceMotion)) { timeline in
+        let palette = ActivityScenePalette(theme: theme)
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion)) { timeline in
             let _ = staticTick
             let now = timeline.date.timeIntervalSinceReferenceDate
             let frame = evaluatedFrame(at: now)
-            let palette = ActivityScenePalette(theme: theme)
 
             Canvas { ctx, canvasSize in
                 ctx.withCGContext { cg in

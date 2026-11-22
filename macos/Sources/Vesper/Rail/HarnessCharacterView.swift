@@ -30,7 +30,9 @@ struct HarnessCharacterView: View {
     }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: nil, paused: reduceMotion)) { timeline in
+        // Cap at 30fps while working (20fps idle): `minimumInterval: nil` runs at 120Hz on
+        // ProMotion displays across every rail button and the composer usage chip.
+        TimelineView(.animation(minimumInterval: working ? 1.0 / 30.0 : 1.0 / 20.0, paused: reduceMotion)) { timeline in
             let t = reduceMotion ? 0 : timeline.date.timeIntervalSinceReferenceDate
             Canvas { ctx, canvas in
                 let scale = min(canvas.width, canvas.height) / 64
@@ -90,22 +92,38 @@ enum Easing {
 /// A CSS @keyframes animation: `frames` are (offset 0...1, pose); an implicit 0% and 100% frame
 /// is `base`. The timing function applies to each interval, as in CSS.
 struct CSSAnimation {
-    var duration: Double
-    var delay = 0.0
-    var easing: Easing = .ease
-    var alternate = false
-    var base = Pose()
-    var frames: [(Double, Pose)]
+    let duration: Double
+    let delay: Double
+    let easing: Easing
+    let alternate: Bool
+    let base: Pose
+    let resolvedFrames: [(Double, Pose)]
+
+    init(
+        duration: Double,
+        delay: Double = 0.0,
+        easing: Easing = .ease,
+        alternate: Bool = false,
+        base: Pose = Pose(),
+        frames: [(Double, Pose)]
+    ) {
+        self.duration = duration
+        self.delay = delay
+        self.easing = easing
+        self.alternate = alternate
+        self.base = base
+        var all = frames
+        if all.first?.0 != 0 { all.insert((0, base), at: 0) }
+        if all.last?.0 != 1 { all.append((1, base)) }
+        self.resolvedFrames = all
+    }
 
     func pose(at t: Double) -> Pose {
         var p = ((t - delay) / duration).truncatingRemainder(dividingBy: alternate ? 2 : 1)
         if p < 0 { p += alternate ? 2 : 1 }
         if alternate, p >= 1 { p = 2 - p }
-        var all = frames
-        if all.first?.0 != 0 { all.insert((0, base), at: 0) }
-        if all.last?.0 != 1 { all.append((1, base)) }
-        for i in 1..<all.count where p <= all[i].0 || i == all.count - 1 {
-            let (a, b) = (all[i - 1], all[i])
+        for i in 1..<resolvedFrames.count where p <= resolvedFrames[i].0 || i == resolvedFrames.count - 1 {
+            let (a, b) = (resolvedFrames[i - 1], resolvedFrames[i])
             let f = b.0 > a.0 ? (p - a.0) / (b.0 - a.0) : 1
             return a.1.mixed(with: b.1, easing.apply(min(max(f, 0), 1)))
         }
