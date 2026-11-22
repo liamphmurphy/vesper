@@ -3,7 +3,7 @@
 SELECT m.* FROM persona_state_media m
 JOIN personas p ON p.id = m.persona_id
 WHERE m.persona_id = sqlc.arg(persona_id) AND p.workspace_id = sqlc.arg(workspace_id) AND p.user_id = sqlc.arg(user_id)
-ORDER BY array_position(ARRAY['idle', 'thinking', 'reading', 'coding', 'creating', 'needs_you'], m.state);
+ORDER BY array_position(ARRAY['idle', 'thinking', 'reading', 'coding', 'creating', 'needs_you', 'talking'], m.state);
 
 -- name: ListPersonasStateMedia :many
 -- The state loops of several personas, for rendering a persona list.

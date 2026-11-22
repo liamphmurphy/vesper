@@ -125,7 +125,7 @@ func (e *stateMediaEnv) get(path string) (*http.Response, []byte) {
 	return res, b
 }
 
-var allStates = []string{"idle", "thinking", "reading", "coding", "creating", "needs_you"}
+var allStates = []string{"idle", "thinking", "reading", "coding", "creating", "needs_you", "talking"}
 
 func TestPersonaStateMediaFullSet(t *testing.T) {
 	e := newStateMediaEnv(t, true)
@@ -325,4 +325,29 @@ func TestPersonaStateMediaRefusals(t *testing.T) {
 	if len(e.ctrl.VideoRequests()) != 0 {
 		t.Fatal("a refused request reached the provider")
 	}
+}
+
+func TestPersonaRevealPace(t *testing.T) {
+	e := newStateMediaEnv(t, true)
+	id := e.personaWithPortrait()
+	p := e.want("GET", "/personas", nil, http.StatusOK)
+	var rev float64
+	for _, raw := range p["personas"].([]any) {
+		if pp := raw.(map[string]any); pp["id"] == id {
+			if pp["reveal_pace"] != "auto" {
+				t.Fatalf("default reveal_pace = %v, want auto", pp["reveal_pace"])
+			}
+			rev = pp["revision"].(float64)
+		}
+	}
+	got := e.want("PATCH", "/personas/"+id, map[string]any{"revision": rev, "reveal_pace": "deliberate"}, http.StatusOK)
+	if got["reveal_pace"] != "deliberate" {
+		t.Fatalf("reveal_pace after patch = %v", got["reveal_pace"])
+	}
+	// Leaving it out of a later patch keeps it.
+	got = e.want("PATCH", "/personas/"+id, map[string]any{"revision": got["revision"], "name": "Renamed"}, http.StatusOK)
+	if got["reveal_pace"] != "deliberate" {
+		t.Fatalf("reveal_pace after unrelated patch = %v", got["reveal_pace"])
+	}
+	e.want("PATCH", "/personas/"+id, map[string]any{"revision": got["revision"], "reveal_pace": "warp"}, http.StatusUnprocessableEntity)
 }

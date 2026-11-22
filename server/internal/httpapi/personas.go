@@ -110,7 +110,8 @@ func (s *Server) toPersonas(ctx context.Context, rows []store.Persona) ([]api.Pe
 			Id: p.ID, Name: p.Name, Tone: api.PersonaTone(p.Tone), Color: p.Color, AvatarUrl: personaAvatarURL(p), CharacterSvg: p.CharacterSvg,
 			CustomInstructions: p.CustomInstructions, Capabilities: *toPersonaCapabilities(p), Repos: reposOrEmpty(p.Repos), IsDefault: p.IsDefault, ChatCount: n[p.ID], LastUsedAt: p.LastUsedAt,
 			InChatList: p.InChatList, Work: api.PersonaWork(personas.WorkNone), StateMedia: stateMediaSummary(loops[p.ID]),
-			Revision: int(p.Revision), CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
+			RevealPace: api.PersonaRevealPace(p.RevealPace),
+			Revision:   int(p.Revision), CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
 		}
 		if p.DefaultHarness != "" && p.DefaultModel != "" {
 			h, m := api.Harness(p.DefaultHarness), p.DefaultModel
@@ -209,6 +210,7 @@ func (s *Server) UpdatePersona(ctx context.Context, req api.UpdatePersonaRequest
 		Code: code, Images: images, Personas: makers, SVG: svg, Workflows: workflows, Connectors: connectors, Repos: b.Repos,
 		ImageEngine: imageEngineArg(b.Capabilities), TicketEdits: ticketEditsArg(b.Capabilities), InChatList: b.InChatList,
 		DefaultHarness: strEnumArg(b.DefaultHarness), DefaultModel: b.DefaultModel, DefaultEffort: strEnumArg(b.DefaultEffort),
+		RevealPace: strEnumArg(b.RevealPace),
 	})
 	if err != nil {
 		return nil, err
