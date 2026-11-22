@@ -35,6 +35,7 @@ const STATUS_PILL = {
 
 const CAPABILITY_LABEL: Record<string, string> = {
   music: "Music",
+  video: "Video",
   tts: "TTS",
   script: "Podcast script",
 };
