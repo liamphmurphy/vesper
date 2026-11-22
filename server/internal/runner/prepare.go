@@ -859,7 +859,13 @@ func agentsSection(ctx context.Context, q *store.Queries, c runCtx, paths []stri
 	if err != nil {
 		return nil, nil, "Could not load the persona doing this work.", fmt.Errorf("run voice: %w", err)
 	}
-	return harness.PersonaAgentsMD("", c.spec, paths, c.ticket.Key, c.run.ParentRunID != nil, voice), nil, "", nil
+	maxParallelDelegations := runs.MaxParallelDelegations
+	if q != nil {
+		if cfg, err := q.WorkspaceRunnerSettings(ctx, c.run.WorkspaceID); err == nil {
+			maxParallelDelegations = runs.ClampParallelDelegations(int(cfg.MaxParallelDelegations))
+		}
+	}
+	return harness.PersonaAgentsMD("", c.spec, paths, c.ticket.Key, c.run.ParentRunID != nil, voice, maxParallelDelegations), nil, "", nil
 }
 
 // runVoice is the voice of the persona whose work record runs this ticket: its name, tone

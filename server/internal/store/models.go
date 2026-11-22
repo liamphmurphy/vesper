@@ -1988,13 +1988,15 @@ type WorkflowStepImage struct {
 }
 
 type Workspace struct {
-	ID                   uuid.UUID
-	Name                 string
-	Slug                 string
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
-	HostFolderWorkspaces bool
-	ImageEngine          string
+	ID                     uuid.UUID
+	Name                   string
+	Slug                   string
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+	HostFolderWorkspaces   bool
+	ImageEngine            string
+	MaxConcurrentSubagents int32
+	MaxParallelDelegations int32
 }
 
 type WorkspaceMediaDefault struct {

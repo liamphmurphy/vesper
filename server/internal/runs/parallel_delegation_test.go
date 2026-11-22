@@ -533,3 +533,69 @@ func TestParallelCopiesDontWaitForTheAgentSlot(t *testing.T) {
 		t.Fatalf("started %v; want both copies %s and %s", started, d1.Run.ID, d2.Run.ID)
 	}
 }
+
+func TestParallelDelegationLimitFromSettings(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	if _, err := seed.Run(ctx, pool, seed.Options{Demo: true}); err != nil {
+		t.Fatal(err)
+	}
+	q := store.New(pool)
+	me, _ := q.GetLocalUser(ctx)
+	ws := me.WorkspaceID
+	svc := &runs.Service{Pool: pool, Tracker: &tracker.Service{Pool: pool}, Artifacts: &artifacts.Service{Pool: pool}, Poll: 20 * time.Millisecond}
+
+	atlas, _ := q.GetAgentByHandle(ctx, store.GetAgentByHandleParams{WorkspaceID: ws, Handle: "atlas"})
+	out, err := svc.Dispatch(ctx, ws, me.ID, []string{"PAY-214"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := out[0]
+	vol := parent.ID.String()
+	if err := q.SetRunWorkspace(ctx, store.SetRunWorkspaceParams{ID: parent.ID, WorkspaceVolume: &vol}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.SetRunState(ctx, store.SetRunStateParams{ID: parent.ID, State: "running"}); err != nil {
+		t.Fatal(err)
+	}
+	exp := time.Now().Add(time.Hour)
+	tok, _, err := agents.IssueToken(ctx, q, atlas.ID, "run", "", &parent.ID, nil, &exp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	main, err := agents.ResolveToken(ctx, q, tok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delegate := func(task string, p string) error {
+		_, err := svc.DelegateWithContract(ctx, main, "", task, runs.Contract{AllowedPaths: []string{p}})
+		return err
+	}
+
+	limit1 := int32(1)
+	if err := q.SetWorkspaceRunnerSettings(ctx, store.SetWorkspaceRunnerSettingsParams{ID: ws, MaxParallelDelegations: &limit1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := delegate("first", "docs/"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE run_turns SET status = 'running' WHERE run_id = $1", parent.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := delegate("second-blocked", "src/"); !isConflict(err) || !strings.Contains(err.Error(), "limit") {
+		t.Fatalf("2nd delegation under limit=1: got %v, want conflict limit", err)
+	}
+
+	limit4 := int32(4)
+	if err := q.SetWorkspaceRunnerSettings(ctx, store.SetWorkspaceRunnerSettingsParams{ID: ws, MaxParallelDelegations: &limit4}); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{"src/", "web/", "api/"} {
+		if err := delegate("child-"+dir, dir); err != nil {
+			t.Fatalf("delegating %s under limit=4: %v", dir, err)
+		}
+	}
+	if err := delegate("fifth-blocked", "cmd/"); !isConflict(err) || !strings.Contains(err.Error(), "limit") {
+		t.Fatalf("5th delegation under limit=4: got %v, want conflict limit", err)
+	}
+}

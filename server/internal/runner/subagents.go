@@ -18,20 +18,23 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/store"
 )
 
-const (
-	maxConcurrentSubagents = 3
-	subagentWorkerPoll     = 40 * time.Millisecond
-)
+const subagentWorkerPoll = 40 * time.Millisecond
 
 // startSubagentWorker claims queued subagent_jobs for the running parent turn
-// and executes up to maxConcurrentSubagents in parallel inside the same
-// workspace using isolated per-job configs and bidirectional stdio sessions.
-// The returned stop function cancels any running subagents, waits for all
-// workers to finish, and cancels any unstarted queued jobs.
+// and executes up to the workspace's configured max_concurrent_subagents limit
+// in parallel inside the same workspace using isolated per-job configs and
+// bidirectional stdio sessions. The returned stop function cancels any running
+// subagents, waits for all workers to finish, and cancels any unstarted queued jobs.
 func (r *Runner) startSubagentWorker(ctx context.Context, c runCtx, ws harness.Workspace, baseEnv, sensitive map[string]string, networks []string, dir string) func() {
 	wCtx, cancelAll := context.WithCancel(ctx)
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, maxConcurrentSubagents)
+	limit := runs.DefaultMaxConcurrentSubagents
+	if cfg, err := r.q().WorkspaceRunnerSettings(ctx, c.run.WorkspaceID); err == nil {
+		limit = runs.ClampConcurrentSubagents(int(cfg.MaxConcurrentSubagents))
+	} else if ctx.Err() == nil {
+		r.Log.Warn("load workspace runner settings for subagents", "workspace", c.run.WorkspaceID, "err", err)
+	}
+	sem := make(chan struct{}, limit)
 
 	wg.Add(1)
 	go func() {
