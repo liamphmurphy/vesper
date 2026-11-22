@@ -44,6 +44,9 @@ struct ChatTranscriptView: View {
     private var pushRequestsRequest: APIRequest<API.PushRequestList> {
         API.listPushRequests(id: chatId)
     }
+    private var asidesRequest: APIRequest<API.ChatAsideList> {
+        API.listChatAsides(id: chatId)
+    }
 
     private var isRunning: Bool {
         session?.state == .running
@@ -74,6 +77,14 @@ struct ChatTranscriptView: View {
             endedTurns: endedTurns
         )
         let waitingForMessages = messages.isEmpty && (session?.messageCount ?? 0) > 0
+        let asides = store.entry(asidesRequest).data?.asides ?? []
+        let asidesByReply = ChatAsideLogic.asidesByReply(
+            asides,
+            turnWindows: turnWindows,
+            running: isRunning,
+            runningSince: liveSince
+        )
+        let liveAsides = isRunning ? ChatAsideLogic.asidesInWindow(asides, since: liveSince, until: nil) : []
 
         // Pre-index media by messageId once in O(M) instead of filtering per message row.
         var audiosByMessage: [String: [API.ChatAudio]] = [:]
@@ -178,6 +189,9 @@ struct ChatTranscriptView: View {
                                 )
                                 .id(message.id)
 
+                                if let asked = asidesByReply[message.id] {
+                                    ChatReplyAsidesView(parentChatId: chatId, asides: asked, speakerName: speakerName)
+                                }
                                 if let placed = pushes.byMessage[message.id] {
                                     ChatPushRequestStackView(requests: placed)
                                 }
@@ -208,6 +222,7 @@ struct ChatTranscriptView: View {
                                     fallbackSpeakerName: session?.agent.name ?? "Assistant"
                                 )
                                 .id("live-activity")
+                                ChatLiveAsidesView(parentChatId: chatId, asides: liveAsides)
                             }
                             if !pushes.live.isEmpty {
                                 ChatPushRequestStackView(requests: pushes.live)
@@ -345,7 +360,12 @@ struct ChatTranscriptView: View {
     // MARK: - Observation & Polling
 
     private var pollId: String {
-        "\(chatId)|\(isRunning)"
+        "\(chatId)|\(isRunning)|\(hasAnsweringAside)"
+    }
+
+    /// An aside can still be answering after the reply it asked about has finished.
+    private var hasAnsweringAside: Bool {
+        context.store.entry(asidesRequest).data?.asides.contains { $0.state == .running } ?? false
     }
 
     private func watch() {
@@ -366,16 +386,20 @@ struct ChatTranscriptView: View {
         track(audioRequest)
         track(videosRequest)
         track(pushRequestsRequest)
+        track(asidesRequest)
         watched = keys
     }
 
     private func pollWhileActive() async {
-        guard isRunning else { return }
-        while !Task.isCancelled && isRunning {
+        guard isRunning || hasAnsweringAside else { return }
+        while !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(1500))
             guard !Task.isCancelled else { return }
-            _ = await context.store.refetch(API.getChat(id: chatId))
-            _ = await context.store.refetch(messagesRequest)
+            if isRunning {
+                _ = await context.store.refetch(API.getChat(id: chatId))
+                _ = await context.store.refetch(messagesRequest)
+            }
+            _ = await context.store.refetch(asidesRequest)
         }
     }
 }
