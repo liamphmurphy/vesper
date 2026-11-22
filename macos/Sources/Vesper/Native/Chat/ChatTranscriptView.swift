@@ -6,7 +6,7 @@ struct ChatScrollMessageRequest: Equatable {
     let messageId: String
 }
 
-/// Lazy-scrolling native chat transcript (`ScrollView` + `LazyVStack`, zero per-message web views).
+/// Tail-windowed native chat transcript (`ScrollView` + `VStack`, zero per-message web views).
 /// Renders parsed `ChatMessageSegment`s, persona avatars, cards, media, proposals, and the live Work/Thinking card.
 struct ChatTranscriptView: View {
     @Environment(NativeScreenContext.self) private var context
@@ -20,6 +20,8 @@ struct ChatTranscriptView: View {
 
     @State private var watched: [QueryKey] = []
     @State private var parseCache = ChatParsedMessageCache()
+    @State private var windowState = (chatId: "", limit: ChatTranscriptWindow.initialLimit)
+    @State private var pendingPrependAnchor: String?
 
     private var messagesRequest: APIRequest<API.ListChatMessagesResponse> {
         API.listChatMessages(id: chatId, limit: 200)
@@ -93,12 +95,30 @@ struct ChatTranscriptView: View {
             }
         }
 
+        let loadState = ChatTranscriptWindow.loadState(
+            hasData: messagesEntry.hasData,
+            hasError: messagesEntry.error != nil,
+            isEmpty: messages.isEmpty
+        )
+        let baseLimit = windowState.chatId == chatId ? windowState.limit : ChatTranscriptWindow.initialLimit
+        let queryMessageId = context.match.query["message"]
+        let requestedTargetId = scrollToMessageRequest?.messageId ?? queryMessageId
+        let effectiveLimit = ChatTranscriptWindow.effectiveLimit(
+            messageIds: messages.map(\.id),
+            visibleLimit: baseLimit,
+            targetMessageId: requestedTargetId
+        )
+        let visibleRange = ChatTranscriptWindow.visibleRange(totalCount: messages.count, visibleLimit: effectiveLimit)
+        let hiddenCount = visibleRange.lowerBound
+        let visibleMessages = visibleRange.map { idx in (index: idx, message: messages[idx]) }
+
         return Group {
-            if let error = messagesEntry.error, messages.isEmpty {
-                QueryErrorView(message: error.userMessage) {
+            switch loadState {
+            case .error:
+                QueryErrorView(message: messagesEntry.error?.userMessage ?? "Couldn\u{2019}t load messages.") {
                     Task { await store.refetch(messagesRequest) }
                 }
-            } else if messagesEntry.isFetching && messages.isEmpty {
+            case .loading:
                 VStack(alignment: .leading, spacing: 14) {
                     SkeletonBar(height: 22)
                     SkeletonBar(height: 64)
@@ -106,15 +126,29 @@ struct ChatTranscriptView: View {
                 }
                 .padding(24)
                 .frame(maxWidth: 820, maxHeight: .infinity, alignment: .topLeading)
-            } else {
+            case .ready:
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 18) {
-                            if !pushes.leading.isEmpty {
+                        VStack(alignment: .leading, spacing: 18) {
+                            if hiddenCount > 0 {
+                                earlierMessagesButton(hiddenCount: hiddenCount) {
+                                    let anchorId = visibleMessages.first?.message.id
+                                    let nextLimit = ChatTranscriptWindow.expandedLimit(
+                                        currentLimit: effectiveLimit,
+                                        totalCount: messages.count
+                                    )
+                                    windowState = (chatId: chatId, limit: nextLimit)
+                                    pendingPrependAnchor = anchorId
+                                }
+                            }
+
+                            if hiddenCount == 0 && !pushes.leading.isEmpty {
                                 ChatPushRequestStackView(requests: pushes.leading)
                             }
 
-                            ForEach(Array(messages.enumerated()), id: \.element.id) { idx, message in
+                            ForEach(visibleMessages, id: \.message.id) { item in
+                                let idx = item.index
+                                let message = item.message
                                 let nextBody = idx + 1 < messages.count ? messages[idx + 1].bodyMd : nil
                                 let isUser = message.role == .user
                                 let parsed = parseCache.parsed(
@@ -195,9 +229,27 @@ struct ChatTranscriptView: View {
                         .frame(maxWidth: .infinity)
                     }
                     .defaultScrollAnchor(.bottom)
+                    .onChange(of: effectiveLimit) { _, _ in
+                        guard let anchorId = pendingPrependAnchor else { return }
+                        pendingPrependAnchor = nil
+                        var transaction = Transaction()
+                        transaction.disablesAnimations = true
+                        withTransaction(transaction) {
+                            proxy.scrollTo(anchorId, anchor: .top)
+                        }
+                    }
+                    .onChange(of: messages.count) { oldCount, newCount in
+                        guard windowState.chatId == chatId else { return }
+                        let adjusted = ChatTranscriptWindow.adjustedLimitForAppend(
+                            currentLimit: windowState.limit,
+                            previousCount: oldCount,
+                            newCount: newCount
+                        )
+                        if adjusted != windowState.limit {
+                            windowState = (chatId: chatId, limit: adjusted)
+                        }
+                    }
                     .onChange(of: messages.last?.id) { oldId, lastId in
-                        // Initial load stays anchored via defaultScrollAnchor(.bottom); calling
-                        // scrollTo on nil -> id forces LazyVStack to materialize every row upfront.
                         guard oldId != nil, lastId != nil else { return }
                         withAnimation(.easeOut(duration: 0.2)) {
                             proxy.scrollTo("transcript-bottom", anchor: .bottom)
@@ -220,13 +272,18 @@ struct ChatTranscriptView: View {
                             context.store.load(API.listRunEvents(id: runId))
                         }
                     }
-                    .task(id: context.match.query["message"]) {
-                        if let targetMsg = context.match.query["message"], !targetMsg.isEmpty {
-                            proxy.scrollTo(targetMsg, anchor: .center)
+                    .task(id: queryMessageId) {
+                        guard let targetMsg = queryMessageId, !targetMsg.isEmpty else { return }
+                        if effectiveLimit > baseLimit {
+                            windowState = (chatId: chatId, limit: effectiveLimit)
                         }
+                        proxy.scrollTo(targetMsg, anchor: .center)
                     }
                     .onChange(of: scrollToMessageRequest) { _, request in
                         guard let request, !request.messageId.isEmpty else { return }
+                        if effectiveLimit > baseLimit {
+                            windowState = (chatId: chatId, limit: effectiveLimit)
+                        }
                         withAnimation(.easeOut(duration: 0.2)) {
                             proxy.scrollTo(request.messageId, anchor: .center)
                         }
@@ -237,12 +294,35 @@ struct ChatTranscriptView: View {
         }
         .onChange(of: chatId) { _, _ in
             parseCache.removeAll()
+            pendingPrependAnchor = nil
         }
         .task(id: chatId) { watch() }
         .task(id: pollId) { await pollWhileActive() }
         .onDisappear {
             for key in watched { context.store.stopObserving(key) }
             watched = []
+        }
+    }
+
+    private func earlierMessagesButton(hiddenCount: Int, action: @escaping () -> Void) -> some View {
+        let p = theme.palette
+        return HStack {
+            Spacer(minLength: 0)
+            Button(action: action) {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.up")
+                        .imageScale(.small)
+                    Text(ChatTranscriptWindow.earlierButtonLabel(hiddenCount: hiddenCount))
+                        .font(.system(size: theme.pointSize(.small), weight: .medium))
+                }
+                .foregroundStyle(p.secondaryText)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(p.surface, in: Capsule())
+                .overlay(Capsule().stroke(p.border))
+            }
+            .buttonStyle(.plain)
+            Spacer(minLength: 0)
         }
     }
 
