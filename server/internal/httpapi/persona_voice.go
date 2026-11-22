@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -134,6 +135,21 @@ func (s *Server) GetChatMessageSpeech(ctx context.Context, req api.GetChatMessag
 		return nil, apperr.Conflict("%s's voice is off. Turn it on in Settings → Personas.", p.Name)
 	}
 	text, words := speech.Speakable(msg.BodyMd, speech.MaxWords)
+	// A part lets the client play the lead while the rest is still being voiced.
+	if part := req.Params.Part; part != nil {
+		if !part.Valid() {
+			return nil, apperr.Invalid("part", "part is lead or rest")
+		}
+		lead, rest := speech.SplitLead(text)
+		text = lead
+		if *part == api.Rest {
+			text = rest
+		}
+		words = len(strings.Fields(text))
+		if words == 0 {
+			return nil, apperr.Invalid("part", "this part of the reply has nothing to speak")
+		}
+	}
 	if words == 0 {
 		return nil, apperr.Invalid("messageId", "this reply has no prose to speak")
 	}

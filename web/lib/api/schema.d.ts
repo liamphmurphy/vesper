@@ -3008,7 +3008,8 @@ export interface paths {
          *     WAV. Generated once and cached, so replaying is free.
          *     X-Speech-Words is how many words were spoken, for pacing the text
          *     reveal to the audio. 409 when the persona's voice is off or no speech
-         *     provider is configured; 422 when the reply has nothing to speak.
+         *     provider is configured; 422 when the reply (or the part asked for) has
+         *     nothing to speak.
          */
         get: operations["getChatMessageSpeech"];
         put?: never;
@@ -8557,6 +8558,8 @@ export interface components {
         NewChatMessage: {
             /** @description Ask for a research plan to approve instead of an answer */
             research?: boolean;
+            /** @description Said out loud in Live Voice: the reply is short and conversational, at the quickest automatic effort (a chat's chosen effort still applies) */
+            voice?: boolean;
             body: string;
             harness?: components["schemas"]["Harness"];
             /** @description From this message on; auto routes it per turn (see ChatSession.auto_model), and any other model turns that off. Omit to keep the chat's. */
@@ -15765,7 +15768,15 @@ export interface operations {
     };
     getChatMessageSpeech: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description Speak only part of it, so playback can start sooner: lead is the
+                 *     opening sentence or two (about 8 words or more), rest is everything
+                 *     after it. Ask for both at once and play them back to back. Omit
+                 *     for the whole reply.
+                 */
+                part?: "lead" | "rest";
+            };
             header?: never;
             path: {
                 id: components["parameters"]["ChatId"];

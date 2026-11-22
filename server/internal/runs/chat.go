@@ -447,6 +447,9 @@ type ChatMessageInput struct {
 	AttachmentIDs []uuid.UUID
 	// Research asks for a plan to approve instead of an answer.
 	Research bool
+	// Voice marks a message said out loud in Live Voice, answered short and
+	// quickly because it will be heard.
+	Voice bool
 	// preamble goes ahead of Body in the turn's prompt only; the stored
 	// message is what the person wrote. Set by Vesper, never by a request.
 	preamble string
@@ -782,7 +785,7 @@ func postChatMessageWithRollover(ctx context.Context, q *store.Queries, cat chat
 	if in.Research {
 		chat, run, turn, err = startChatTurnWithRollover(ctx, q, chat, p.Key, prompt, "xhigh", false, handoffChars, autoRolloverDefault)
 	} else {
-		chat, run, turn, err = startClassifiedChatTurnWithRollover(ctx, q, chat, p.Key, prompt, body, interrupt, false, handoffChars, autoRolloverDefault)
+		chat, run, turn, err = startClassifiedChatTurnWithRollover(ctx, q, chat, p.Key, prompt, body, interrupt, false, in.Voice, handoffChars, autoRolloverDefault)
 	}
 	if err != nil {
 		return chat, msg, err

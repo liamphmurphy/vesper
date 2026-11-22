@@ -77,6 +77,27 @@ func TestTurnDecisionPrompt(t *testing.T) {
 	}
 }
 
+func TestSpokenTurnAnswersQuicklyAndBriefly(t *testing.T) {
+	// A go-ahead after an audit would inherit xhigh; said out loud it stays quick.
+	d := classifyTurn(turnSignals{Body: "yes do it", PrevUser: "do a thorough audit", PrevAssistant: "plan"})
+	d.spoken()
+	if d.Level != voiceLevel {
+		t.Errorf("level = %s, want %s", d.Level, voiceLevel)
+	}
+	if reasons := d.effortReasons(); len(reasons) != 0 {
+		t.Errorf("effort reasons = %v; the voice level replaced them", reasons)
+	}
+	if !slices.Contains(d.Fired, "live_voice") || !strings.HasSuffix(d.prompt("yes do it"), "(Vesper: "+spokenReplyNote+")") {
+		t.Errorf("fired %v, prompt %q", d.Fired, d.prompt("yes do it"))
+	}
+	// Notes from other rules survive.
+	d = classifyTurn(turnSignals{Body: "remember that I prefer tabs"})
+	d.spoken()
+	if !slices.Contains(d.Fired, "memory_worthy") || len(d.Notes) != 2 {
+		t.Errorf("fired %v notes %d", d.Fired, len(d.Notes))
+	}
+}
+
 // A firing is stored on the run, which the run_events type constraint allows.
 func TestChatClassifierLogsFiring(t *testing.T) {
 	pool := testdb.New(t)

@@ -27,6 +27,10 @@ final class ChatCompanion {
     @ObservationIgnored private var fullText = ""
     @ObservationIgnored private var wordsPerSecond = 0.0
     @ObservationIgnored private var started = Date()
+    /// Words already revealed when the current pace began (the lead's, once the rest plays).
+    @ObservationIgnored private var revealBase = 0
+    /// While the lead plays and the rest may follow, the text stops at the lead's last word.
+    @ObservationIgnored private var revealCap: Int?
     @ObservationIgnored private var revealed: Set<String> = []
     @ObservationIgnored private var seenFirstList = false
     @ObservationIgnored private var timer: Timer?
@@ -38,6 +42,15 @@ final class ChatCompanion {
     @ObservationIgnored private var player: AVAudioPlayer?
     @ObservationIgnored private var playerEnd: VoicePlaybackEnd?
     @ObservationIgnored private var voiceTask: Task<Void, Never>?
+    /// The rest of the reply's speech, voiced while the lead plays.
+    @ObservationIgnored private var rest: RestClip = .none
+    @ObservationIgnored private var leadDone = false
+
+    private enum RestClip {
+        case none
+        case pending
+        case ready(data: Data, words: Int)
+    }
     /// The pop-out is open, for voices set to speak only there.
     @ObservationIgnored var popoutOpen = false
     /// Live Voice is open; it speaks "pop-out only" voices too.
@@ -83,6 +96,7 @@ final class ChatCompanion {
         fullText = companionRevealText(last.bodyMd)
         wordsPerSecond = wps > 0 ? wps : 15
         started = Date()
+        revealBase = 0
         shown = ""
         revealingId = last.id
         stopVoice()
@@ -124,37 +138,97 @@ final class ChatCompanion {
         }
     }
 
+    /// Speaks the reply in two parts voiced at once: the short lead plays as soon as it's ready
+    /// while the rest is still being voiced, then the rest follows it.
     private func playVoice(chatId: String, messageId: String) async {
         let path = "/api/v1/chats/\(chatId)/messages/\(messageId)/speech"
-        let speech: (data: Data, words: Int)? = await withTaskGroup(of: (data: Data, words: Int)?.self) { group in
+        rest = .pending
+        let restFetch = Task { await AvatarImages.shared.speech(for: path + "?part=rest") }
+        let lead = await Self.speech(path + "?part=lead", within: Self.voiceWait)
+        guard revealingId == messageId, !Task.isCancelled else {
+            restFetch.cancel()
+            return
+        }
+        waitingForVoice = false
+        started = Date()
+        // A voice that failed, timed out or was muted meanwhile leaves the persona's normal pace.
+        guard let lead, !PersonaVoiceMute.isMuted, play(lead, onEnd: { [weak self] in self?.leadEnded() }) else {
+            restFetch.cancel()
+            rest = .none
+            return
+        }
+        revealCap = lead.words
+        let restClip = await withTaskCancellationHandler {
+            await restFetch.value
+        } onCancel: {
+            restFetch.cancel()
+        }
+        guard !Task.isCancelled, case .pending = rest else { return }
+        if let restClip {
+            if leadDone { playRest(restClip) } else { rest = .ready(data: restClip.data, words: restClip.words) }
+        } else {
+            // Nothing after the lead (or its voice failed): the text carries on at the lead's pace.
+            rest = .none
+            releaseCap()
+            if leadDone { speaking = false }
+        }
+    }
+
+    /// Plays a clip and paces the text to it; false when it can't play.
+    private func play(_ clip: (data: Data, words: Int), onEnd: @escaping @MainActor @Sendable () -> Void) -> Bool {
+        guard let audio = try? AVAudioPlayer(data: clip.data), audio.duration > 0 else { return false }
+        let id = ObjectIdentifier(audio)
+        let end = VoicePlaybackEnd { [weak self] in
+            guard let self, let player = self.player, ObjectIdentifier(player) == id else { return }
+            self.player = nil
+            self.playerEnd = nil
+            onEnd()
+        }
+        audio.delegate = end
+        guard audio.play() else { return false }
+        player = audio
+        playerEnd = end
+        speaking = true
+        if clip.words > 0 { wordsPerSecond = Double(clip.words) / audio.duration }
+        return true
+    }
+
+    private func leadEnded() {
+        leadDone = true
+        switch rest {
+        case let .ready(data, words): playRest((data, words))
+        case .pending: break // the text holds at the lead's last word until the rest arrives
+        case .none: speaking = false
+        }
+    }
+
+    private func playRest(_ clip: (data: Data, words: Int)) {
+        rest = .none
+        releaseCap()
+        if !play(clip, onEnd: { [weak self] in self?.speaking = false }) { speaking = false }
+    }
+
+    /// Lets the text run past the lead, carrying on from its last word if it was held there.
+    private func releaseCap() {
+        guard let cap = revealCap else { return }
+        revealCap = nil
+        if leadDone {
+            revealBase = cap
+            started = Date()
+        }
+    }
+
+    private static func speech(_ path: String, within limit: Duration) async -> (data: Data, words: Int)? {
+        await withTaskGroup(of: (data: Data, words: Int)?.self) { group in
             group.addTask { await AvatarImages.shared.speech(for: path) }
             group.addTask {
-                try? await Task.sleep(for: Self.voiceWait)
+                try? await Task.sleep(for: limit)
                 return nil
             }
             let first = await group.next() ?? nil
             group.cancelAll()
             return first
         }
-        guard revealingId == messageId, !Task.isCancelled else { return }
-        defer {
-            waitingForVoice = false
-            started = Date()
-        }
-        // A voice that failed, timed out or was muted meanwhile leaves the persona's normal pace.
-        guard let speech, !PersonaVoiceMute.isMuted, let audio = try? AVAudioPlayer(data: speech.data), audio.duration > 0, audio.play() else { return }
-        let id = ObjectIdentifier(audio)
-        let end = VoicePlaybackEnd { [weak self] in
-            guard let self, let player = self.player, ObjectIdentifier(player) == id else { return }
-            self.player = nil
-            self.playerEnd = nil
-            self.speaking = false
-        }
-        audio.delegate = end
-        player = audio
-        playerEnd = end
-        speaking = true
-        if speech.words > 0 { wordsPerSecond = Double(speech.words) / audio.duration }
     }
 
     /// Stops the reply being spoken (skipped, replaced or muted).
@@ -164,13 +238,18 @@ final class ChatCompanion {
         player?.stop()
         player = nil
         playerEnd = nil
+        rest = .none
+        leadDone = false
+        revealCap = nil
         speaking = false
         waitingForVoice = false
     }
 
     private func tick() {
         if waitingForVoice { return }
-        let next = PersonaStateLoops.revealSlice(fullText, elapsed: Date().timeIntervalSince(started), wordsPerSecond: wordsPerSecond)
+        var words = revealBase + Int(Date().timeIntervalSince(started) * wordsPerSecond)
+        if let cap = revealCap { words = min(words, cap) }
+        let next = PersonaStateLoops.revealSlice(fullText, words: words)
         if next.done {
             shown = fullText // a natural end, so finishReveal lets the voice play out
             finishReveal()

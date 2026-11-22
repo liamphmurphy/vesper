@@ -40,6 +40,8 @@ final class LiveSpeechRecognizer {
     private(set) var problem: Problem?
     /// When the transcript last changed, for end-of-utterance.
     @ObservationIgnored private(set) var lastChange = Date()
+    /// Everything heard so far is final: no volatile guess is still pending.
+    @ObservationIgnored private(set) var settled = true
 
     @ObservationIgnored private let engine = AVAudioEngine()
     /// The transcriber's language for the person's locale, set by `prepare()`.
@@ -156,7 +158,7 @@ final class LiveSpeechRecognizer {
                     } else {
                         volatile = text
                     }
-                    self?.heard(transcript: finalized + volatile, gen: gen)
+                    self?.heard(transcript: finalized + volatile, settled: volatile.isEmpty, gen: gen)
                 }
             } catch is CancellationError {
             } catch {
@@ -166,16 +168,21 @@ final class LiveSpeechRecognizer {
         }
         utterance = Utterance(analyzer: analyzer, input: feed, results: results)
         transcript = ""
+        settled = true
         lastChange = Date()
         problem = nil
         listening = true
     }
 
-    /// Closes the microphone and settles the utterance: the analyzer finalizes its volatile tail,
-    /// which is more accurate than the live guess. Falls back to what was shown if that takes
-    /// longer than `settleLimit`.
+    /// Closes the microphone and settles the utterance. A settled transcript is already final, so
+    /// it returns at once; otherwise the analyzer finalizes its volatile tail, which is more
+    /// accurate than the live guess, falling back to what was shown after `settleLimit`.
     func finish() -> Task<String, Never> {
         let shown = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        if settled && !shown.isEmpty {
+            stop()
+            return Task { shown }
+        }
         guard let current = closeMicrophone() else { return Task { shown } }
         current.input.finish()
         return Task {
@@ -207,7 +214,7 @@ final class LiveSpeechRecognizer {
     }
 
     /// How long `finish()` waits for the final text.
-    static let settleLimit: Duration = .seconds(2)
+    static let settleLimit: Duration = .seconds(1)
 
     private func closeMicrophone() -> Utterance? {
         guard listening, let current = utterance else { return nil }
@@ -227,8 +234,9 @@ final class LiveSpeechRecognizer {
         self.level = max(level, self.level * 0.8)
     }
 
-    private func heard(transcript text: String, gen: Int) {
+    private func heard(transcript text: String, settled: Bool, gen: Int) {
         guard gen == generation else { return }
+        self.settled = settled
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed != transcript else { return }
         transcript = trimmed

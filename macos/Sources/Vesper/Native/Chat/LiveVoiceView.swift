@@ -95,7 +95,7 @@ final class LiveVoiceSession {
     }
 
     private func checkForPause() {
-        guard LiveVoiceTurn.utteranceEnded(transcript: speech.transcript, lastChange: speech.lastChange, now: Date()) else { return }
+        guard LiveVoiceTurn.utteranceEnded(transcript: speech.transcript, lastChange: speech.lastChange, now: Date(), settled: speech.settled) else { return }
         endUtterance()
     }
 

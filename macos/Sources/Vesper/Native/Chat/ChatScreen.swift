@@ -246,7 +246,7 @@ struct ChatScreen: View {
                     persona: activePersona,
                     lastReply: messages.last { $0.role == .assistant },
                     turnRunning: session?.state == .running,
-                    onSend: { body in await sendMessage(body, activePersona: activePersona) },
+                    onSend: { body in await sendMessage(body, activePersona: activePersona, voice: true) },
                     onClose: { liveVoiceOpen = false }
                 )
                 .transition(.opacity)
@@ -842,7 +842,8 @@ struct ChatScreen: View {
         activePersona: API.Persona?,
         attachmentIds: [String] = [],
         contextRefs: [API.ChatContextRef]? = nil,
-        research: Bool = false
+        research: Bool = false,
+        voice: Bool = false
     ) async -> String? {
         // Sending shows the rest of a reply that's still revealing.
         companion.finishReveal()
@@ -853,7 +854,8 @@ struct ChatScreen: View {
             effort: model.selectedEffort.map { API.NewChatMessage.Effort(rawValue: $0.rawValue) },
             harness: model.selectedHarness,
             model: model.selectedModel,
-            research: research ? true : nil
+            research: research ? true : nil,
+            voice: voice ? true : nil
         )
         do {
             if let chatId {

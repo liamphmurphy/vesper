@@ -42,9 +42,13 @@ func newVoiceEnv(t *testing.T, configure bool) (*chatEnv, *fake.Controller) {
 	return e, ctrl
 }
 
-func (e *chatEnv) speech(chatID, msgID string) (*http.Response, []byte) {
+func (e *chatEnv) speech(chatID, msgID string, query ...string) (*http.Response, []byte) {
 	e.t.Helper()
-	res, err := http.Get(e.srv.URL + "/api/v1/chats/" + chatID + "/messages/" + msgID + "/speech")
+	url := e.srv.URL + "/api/v1/chats/" + chatID + "/messages/" + msgID + "/speech"
+	if len(query) > 0 {
+		url += "?" + strings.Join(query, "&")
+	}
+	res, err := http.Get(url)
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -105,6 +109,53 @@ func TestReplySpeechUsesThePersonasVoiceAndCaches(t *testing.T) {
 	}
 	if res, _ := e.speech(uuid.NewString(), msgID); res.StatusCode != http.StatusNotFound {
 		t.Fatalf("unknown chat = %d", res.StatusCode)
+	}
+}
+
+func TestReplySpeechSpeaksTheLeadAndRestSeparately(t *testing.T) {
+	e, ctrl := newVoiceEnv(t, true)
+	p := e.want("POST", "/personas", map[string]any{"name": "Iris"}, http.StatusCreated)
+	pid := p["id"].(string)
+	e.want("PATCH", "/personas/"+pid, map[string]any{"revision": p["revision"], "voice_mode": "always"}, http.StatusOK)
+	chatID := e.newChat(map[string]any{"persona_id": pid})["id"].(string)
+	reply := func(body string) string {
+		m, err := e.q.AppendChatMessage(context.Background(), store.AppendChatMessageParams{
+			SessionID: uuid.MustParse(chatID), Role: "assistant", BodyMd: body, ContextRefs: json.RawMessage("[]"), Citations: json.RawMessage("[]"),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m.ID.String()
+	}
+	msgID := reply("Sure. I checked the **runner** and it looks fine.\n\nWant the logs?")
+
+	res, _ := e.speech(chatID, msgID, "part=lead")
+	if res.StatusCode != 200 || res.Header.Get("X-Speech-Words") != "9" {
+		t.Fatalf("lead = %d %v", res.StatusCode, res.Header)
+	}
+	res, _ = e.speech(chatID, msgID, "part=rest")
+	if res.StatusCode != 200 || res.Header.Get("X-Speech-Words") != "3" {
+		t.Fatalf("rest = %d %v", res.StatusCode, res.Header)
+	}
+	calls := ctrl.SpeechRequests()
+	if len(calls) != 2 || calls[0].Text != "Sure. I checked the runner and it looks fine." || calls[1].Text != "Want the logs?" {
+		t.Fatalf("speech requests = %+v", calls)
+	}
+	// Each part caches apart from the whole reply, which still speaks in one piece.
+	if res, _ := e.speech(chatID, msgID, "part=lead"); res.StatusCode != 200 || len(ctrl.SpeechRequests()) != 2 {
+		t.Fatalf("lead replay = %d, %d calls", res.StatusCode, len(ctrl.SpeechRequests()))
+	}
+	if res, _ := e.speech(chatID, msgID); res.StatusCode != 200 || res.Header.Get("X-Speech-Words") != "12" {
+		t.Fatalf("whole = %d %v", res.StatusCode, res.Header)
+	}
+
+	// A reply that's all lead has no rest to speak.
+	short := reply("Done, it's merged.")
+	if res, _ := e.speech(chatID, short, "part=rest"); res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("empty rest = %d", res.StatusCode)
+	}
+	if res, _ := e.speech(chatID, short, "part=middle"); res.StatusCode < 400 || res.StatusCode >= 500 {
+		t.Fatalf("unknown part = %d", res.StatusCode)
 	}
 }
 
