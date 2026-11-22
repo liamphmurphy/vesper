@@ -55,3 +55,8 @@ test("a reveal cuts after whole words and finishes", () => {
   assert.deepEqual(revealSlice(text, 400, 10), { text, done: true });
   assert.deepEqual(revealSlice(text, 0, 0), { text, done: true }, "pace 0 is instant");
 });
+
+test("complete plays its own loop, else idle, never thinking", () => {
+  assert.deepEqual(loopFor(summary({ idle: "/i", thinking: "/t", complete: "/c" }), "complete"), { state: "complete", url: "/c" });
+  assert.deepEqual(loopFor(summary({ idle: "/i", thinking: "/t" }), "complete"), { state: "idle", url: "/i" });
+});

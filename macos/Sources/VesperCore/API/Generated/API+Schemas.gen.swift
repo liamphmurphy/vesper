@@ -17064,7 +17064,8 @@ extension API {
         public static let creating = PersonaState(rawValue: "creating")
         public static let needsYou = PersonaState(rawValue: "needs_you")
         public static let talking = PersonaState(rawValue: "talking")
-        public static let allKnown: [PersonaState] = [idle, thinking, reading, coding, creating, needsYou, talking]
+        public static let complete = PersonaState(rawValue: "complete")
+        public static let allKnown: [PersonaState] = [idle, thinking, reading, coding, creating, needsYou, talking, complete]
     }
 
     public struct PersonaStateMedia: Codable, Sendable, Equatable {

@@ -22,7 +22,7 @@ struct SettingsPersonaStatesCard: View {
         let loops = Dictionary(rows.compactMap { r in r.loopUrl.map { (r.state.rawValue, $0) } }, uniquingKeysWith: { a, _ in a })
         let current = byState[selected]
 
-        SettingsCard("Animated States", subtitle: "Photorealistic loops for each state (idle, thinking, reading, coding, creating, needs-you and talking), made from \(persona.name)'s portrait and cut out on a transparent background.") {
+        SettingsCard("Animated States", subtitle: "Photorealistic loops for each state (idle, thinking, reading, coding, creating, needs-you, talking and complete), made from \(persona.name)'s portrait and cut out on a transparent background.") {
             if let errorMessage {
                 SettingsBanner(tone: .blocked, title: "Couldn't update animated states", message: errorMessage)
             }

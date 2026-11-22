@@ -7,7 +7,7 @@ import ImageIO
 /// the SVG characters use.
 public enum PersonaStateLoops {
     /// Loop states in display order, as the API names them.
-    public static let states = ["idle", "thinking", "reading", "coding", "creating", "needs_you", "talking"]
+    public static let states = ["idle", "thinking", "reading", "coding", "creating", "needs_you", "talking", "complete"]
 
     /// The loop a character state wants: static is the idle pose, and generic work is coding.
     public static func loopState(for state: CharacterState) -> String {
@@ -24,11 +24,12 @@ public enum PersonaStateLoops {
     /// The loop to play for a state: its own, else thinking for a work state without one, else
     /// idle, else whichever exists. Nil when there are no loops, so callers fall back to the
     /// persona's picture or character. needs_you never borrows thinking.
-    public static func loop(for state: CharacterState, talking: Bool = false, in loops: [String: String]) -> (state: String, url: String)? {
-        // Talking (a reply revealing) wins over the turn's state; SVG characters have no such pose.
-        let want = talking ? "talking" : loopState(for: state)
+    public static func loop(for state: CharacterState, talking: Bool = false, complete: Bool = false, in loops: [String: String]) -> (state: String, url: String)? {
+        // Talking (a reply revealing) wins over the turn's state, and complete (the beat after a
+        // turn that did work) over idle; SVG characters have neither pose.
+        let want = talking ? "talking" : complete ? "complete" : loopState(for: state)
         var order = [want]
-        if !["idle", "needs_you", "thinking", "talking"].contains(want) { order.append("thinking") }
+        if !["idle", "needs_you", "thinking", "talking", "complete"].contains(want) { order.append("thinking") }
         order.append("idle")
         order.append(contentsOf: states)
         for s in order {

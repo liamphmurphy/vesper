@@ -11055,8 +11055,8 @@ components:
         updated_at: { type: string, format: date-time }
     PersonaState:
       type: string
-      enum: [idle, thinking, reading, coding, creating, needs_you, talking]
-      x-enum-varnames: [PersonaStateIdle, PersonaStateThinking, PersonaStateReading, PersonaStateCoding, PersonaStateCreating, PersonaStateNeedsYou, PersonaStateTalking]
+      enum: [idle, thinking, reading, coding, creating, needs_you, talking, complete]
+      x-enum-varnames: [PersonaStateIdle, PersonaStateThinking, PersonaStateReading, PersonaStateCoding, PersonaStateCreating, PersonaStateNeedsYou, PersonaStateTalking, PersonaStateComplete]
       description: A character state a persona can have a photorealistic loop for.
     PersonaRevealPace:
       type: string
@@ -11102,7 +11102,7 @@ components:
     GeneratePersonaStateMedia:
       type: object
       properties:
-        states: { type: array, maxItems: 7, items: { $ref: "#/components/schemas/PersonaState" }, description: "Absent or empty: every state" }
+        states: { type: array, maxItems: 8, items: { $ref: "#/components/schemas/PersonaState" }, description: "Absent or empty: every state" }
         tweak: { type: string, maxLength: 1000, description: "Edit each state's previous clip with this instruction instead of starting afresh" }
         source_library_item_id: { type: string, format: uuid, description: "A Library image to use as the portrait" }
     PersonaStateMediaSummary:

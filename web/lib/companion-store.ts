@@ -4,11 +4,16 @@
 // state its working card publishes, and the reply it's revealing. The bubble, the companion
 // and its pop-out all read one reveal per chat, so they stay in step.
 import { useSyncExternalStore } from "react";
-import type { CharacterState } from "./persona-character";
-import { revealSlice, type CompanionState } from "./persona-state-media";
+import type { CharacterState } from "./persona-character.ts";
+import { revealSlice, type CompanionState } from "./persona-state-media.ts";
 
 type Reveal = { messageId: string; text: string; wps: number; started: number; shown: string; done: boolean };
-type Chat = { work?: CharacterState; reveal?: Reveal; revealed: Set<string> };
+// hadWork: the turn showed a working state since the last reply, so its reply earns the
+// complete beat; celebrate: that beat waits for the reveal; completeUntil: it's playing.
+type Chat = { work?: CharacterState; reveal?: Reveal; revealed: Set<string>; hadWork?: boolean; celebrate?: boolean; completeUntil?: number };
+
+/** How long the complete beat plays before the companion settles to idle: about one loop. */
+export const COMPLETE_MS = 3500;
 
 const chats = new Map<string, Chat>();
 const listeners = new Set<() => void>();
@@ -43,6 +48,7 @@ function tick() {
       c.reveal = { ...r, shown: next.text, done: next.done };
       if (next.done) c.revealed.add(r.messageId);
     }
+    if (next.done) celebrate(c);
     running ||= !next.done;
   }
   if (!running && timer) {
@@ -57,6 +63,9 @@ export function setCompanionWork(chatId: string, state: CharacterState | undefin
   const c = chat(chatId);
   if (c.work === state) return;
   c.work = state;
+  // A stopped turn (static) or one waiting on the person isn't work done.
+  if (state && state !== "static" && state !== "needs_you") c.hadWork = true;
+  if (state === "static") c.hadWork = false;
   emit();
 }
 
@@ -67,8 +76,12 @@ export function setCompanionWork(chatId: string, state: CharacterState | undefin
 export function startReveal(chatId: string, messageId: string, text: string, wordsPerSecond: number) {
   const c = chat(chatId);
   if (c.revealed.has(messageId) || c.reveal?.messageId === messageId) return;
+  c.celebrate = !!c.hadWork;
+  c.hadWork = false;
   if (wordsPerSecond <= 0) {
     c.revealed.add(messageId);
+    celebrate(c);
+    emit();
     return;
   }
   c.reveal = { messageId, text, wps: wordsPerSecond, started: performance.now(), shown: "", done: false };
@@ -80,9 +93,20 @@ export function startReveal(chatId: string, messageId: string, text: string, wor
 export function finishReveal(chatId: string) {
   const r = chats.get(chatId)?.reveal;
   if (!r || r.done) return;
-  chat(chatId).reveal = { ...r, shown: r.text, done: true };
-  chat(chatId).revealed.add(r.messageId);
+  const c = chat(chatId);
+  c.reveal = { ...r, shown: r.text, done: true };
+  c.revealed.add(r.messageId);
+  celebrate(c);
   emit();
+}
+
+// Plays the complete beat once a reply that ended real work is fully shown, then lets the
+// companion settle; a new turn's working state takes over at once.
+function celebrate(c: Chat) {
+  if (!c.celebrate) return;
+  c.celebrate = false;
+  c.completeUntil = performance.now() + COMPLETE_MS;
+  setTimeout(emit, COMPLETE_MS + 20);
 }
 
 /** Marks replies as already seen, so opening a chat never replays its history. */
@@ -117,11 +141,13 @@ export function useCompanionState(chatId: string): CompanionState {
   return useSyncExternalStore(subscribe, () => companionState(chatId), () => "idle");
 }
 
-function companionState(chatId: string): CompanionState {
+/** What the chat's companion acts out right now (useCompanionState without React). */
+export function companionState(chatId: string): CompanionState {
   const c = chats.get(chatId);
   if (c?.reveal && !c.reveal.done) return "talking";
-  if (!c?.work || c.work === "static") return "idle";
-  return c.work;
+  if (c?.work && c.work !== "static") return c.work;
+  if (c?.completeUntil && performance.now() < c.completeUntil) return "complete";
+  return "idle";
 }
 
 /** The reply being revealed in a chat, if any, for the pop-out to follow. */

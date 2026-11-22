@@ -7,14 +7,15 @@ import type { CharacterState } from "./persona-character.ts";
 export type StateMediaSummary = { loops: Record<string, string>; head_url?: string; generating: boolean };
 
 /** Loop states in display order, as the API names them. */
-export const LOOP_STATES = ["idle", "thinking", "reading", "coding", "creating", "needs_you", "talking"] as const;
+export const LOOP_STATES = ["idle", "thinking", "reading", "coding", "creating", "needs_you", "talking", "complete"] as const;
 export type LoopState = (typeof LOOP_STATES)[number];
 
 /**
- * What a persona's companion acts out: a character state, or talking while a new reply is
- * revealed. SVG characters have no talking pose, so only loops use it.
+ * What a persona's companion acts out: a character state, talking while a new reply is
+ * revealed, or complete for a moment after a turn that did work delivers it. SVG characters
+ * have neither pose, so only loops use them.
  */
-export type CompanionState = CharacterState | "talking";
+export type CompanionState = CharacterState | "talking" | "complete";
 
 /** The loop a character state wants: static is the idle pose, and generic work is coding. */
 export function loopStateFor(state: CompanionState): LoopState {
@@ -38,7 +39,7 @@ export function loopFor(summary: StateMediaSummary | undefined, state: Companion
   if (!loops) return undefined;
   const want = loopStateFor(state);
   const order: LoopState[] = [want];
-  if (want !== "idle" && want !== "needs_you" && want !== "thinking" && want !== "talking") order.push("thinking");
+  if (want !== "idle" && want !== "needs_you" && want !== "thinking" && want !== "talking" && want !== "complete") order.push("thinking");
   order.push("idle", ...LOOP_STATES);
   for (const s of order) {
     const url = loops[s];

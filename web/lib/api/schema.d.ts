@@ -10328,7 +10328,7 @@ export interface components {
          * @description A character state a persona can have a photorealistic loop for.
          * @enum {string}
          */
-        PersonaState: "idle" | "thinking" | "reading" | "coding" | "creating" | "needs_you" | "talking";
+        PersonaState: "idle" | "thinking" | "reading" | "coding" | "creating" | "needs_you" | "talking" | "complete";
         /**
          * @description How fast a new reply is revealed while the persona's talking loop plays
          *     (relaxed ~25, natural ~15, deliberate ~8 words a second). auto: natural

@@ -93,3 +93,12 @@ final class PersonaRevealTests: XCTestCase {
         XCTAssertTrue(PersonaStateLoops.revealSlice(text, elapsed: 0, wordsPerSecond: 0).done)
     }
 }
+
+final class PersonaCompleteLoopTests: XCTestCase {
+    func testCompletePlaysItsLoopElseIdleAndTalkingWins() {
+        let loops = ["idle": "/i", "thinking": "/t", "complete": "/c", "talking": "/k"]
+        XCTAssertEqual(PersonaStateLoops.loop(for: .idle, complete: true, in: loops)?.state, "complete")
+        XCTAssertEqual(PersonaStateLoops.loop(for: .idle, complete: true, in: ["idle": "/i", "thinking": "/t"])?.state, "idle")
+        XCTAssertEqual(PersonaStateLoops.loop(for: .idle, talking: true, complete: true, in: loops)?.state, "talking")
+    }
+}

@@ -125,7 +125,7 @@ func (e *stateMediaEnv) get(path string) (*http.Response, []byte) {
 	return res, b
 }
 
-var allStates = []string{"idle", "thinking", "reading", "coding", "creating", "needs_you", "talking"}
+var allStates = []string{"idle", "thinking", "reading", "coding", "creating", "needs_you", "talking", "complete"}
 
 func TestPersonaStateMediaFullSet(t *testing.T) {
 	e := newStateMediaEnv(t, true)

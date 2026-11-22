@@ -9,7 +9,15 @@ import VesperCore
 @Observable
 @MainActor
 final class ChatCompanion {
-    var work: CharacterState?
+    var work: CharacterState? {
+        didSet {
+            // A stopped turn (static) or one waiting on the person isn't work done.
+            if let work, work != .staticState, work != .needsYou { hadWork = true }
+            if work == .staticState { hadWork = false }
+        }
+    }
+    /// Playing the brief complete beat after a turn that did work delivered its reply.
+    private(set) var complete = false
     private(set) var revealingId: String?
     private(set) var shown = ""
 
@@ -19,6 +27,12 @@ final class ChatCompanion {
     @ObservationIgnored private var revealed: Set<String> = []
     @ObservationIgnored private var seenFirstList = false
     @ObservationIgnored private var timer: Timer?
+    @ObservationIgnored private var hadWork = false
+    @ObservationIgnored private var celebrate = false
+    @ObservationIgnored private var completeTask: Task<Void, Never>?
+
+    /// How long the complete beat plays: about one loop.
+    static let completeDuration: Duration = .milliseconds(3500)
 
     var talking: Bool { revealingId != nil }
 
@@ -36,12 +50,15 @@ final class ChatCompanion {
         guard let last = replies.last else { return }
         revealed.formUnion(replies.dropLast().map(\.id))
         guard !revealed.contains(last.id), revealingId != last.id else { return }
+        celebrate = hadWork
+        hadWork = false
         let author = personas.first { $0.id == (last.persona?.id ?? hostPersonaId) }
         let wps = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
             ? 0
             : PersonaStateLoops.revealWordsPerSecond(pace: author?.revealPace.rawValue, loops: author?.stateMedia?.loops)
         guard wps > 0 else {
             revealed.insert(last.id)
+            startComplete()
             return
         }
         fullText = companionRevealText(last.bodyMd)
@@ -65,6 +82,19 @@ final class ChatCompanion {
         shown = ""
         timer?.invalidate()
         timer = nil
+        startComplete()
+    }
+
+    private func startComplete() {
+        guard celebrate else { return }
+        celebrate = false
+        complete = true
+        completeTask?.cancel()
+        completeTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.completeDuration)
+            guard !Task.isCancelled else { return }
+            self?.complete = false
+        }
     }
 
     private func tick() {
@@ -135,7 +165,7 @@ struct PersonaCompanionDock: View {
             } else {
                 ZStack(alignment: .topTrailing) {
                     Button(action: onOpen) {
-                        PersonaStateStageView(loops: loops, state: state, talking: companion.talking, width: Self.width, label: "\(persona.name), \(companion.talking ? "talking" : state.rawValue.replacingOccurrences(of: "_", with: " "))")
+                        PersonaStateStageView(loops: loops, state: state, talking: companion.talking, complete: companion.complete && companion.work == nil, width: Self.width, label: "\(persona.name), \(companion.talking ? "talking" : companion.complete && companion.work == nil ? "complete" : state.rawValue.replacingOccurrences(of: "_", with: " "))")
                     }
                     .buttonStyle(.plain)
                     .help("Talk with \(persona.name)")
@@ -179,7 +209,7 @@ struct PersonaCompanionPopOut: View {
             Rectangle().fill(.ultraThinMaterial).ignoresSafeArea()
                 .onTapGesture(perform: onClose)
             HStack(alignment: .bottom, spacing: 24) {
-                PersonaStateStageView(loops: loops, state: companion.work ?? .idle, talking: companion.talking, width: 240, label: persona.name)
+                PersonaStateStageView(loops: loops, state: companion.work ?? .idle, talking: companion.talking, complete: companion.complete && companion.work == nil, width: 240, label: persona.name)
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         Text(persona.name).font(.headline).foregroundStyle(Color(cssHex: persona.color) ?? p.text)
