@@ -11,6 +11,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/apperr"
 	"github.com/liamphmurphy/vesper/server/internal/media"
 	"github.com/liamphmurphy/vesper/server/internal/media/providers/fake"
+	"github.com/liamphmurphy/vesper/server/internal/media/providers/gemini"
 	"github.com/liamphmurphy/vesper/server/internal/secrets"
 	"github.com/liamphmurphy/vesper/server/internal/seed"
 	"github.com/liamphmurphy/vesper/server/internal/store"
@@ -170,5 +171,83 @@ func TestServiceRequiresSecretsKeyForSecrets(t *testing.T) {
 	_, err := svc.SaveProvider(ctx, me.WorkspaceID, "fake", nil, nil, map[string]string{"api_key": "secret-val"})
 	if !errors.Is(err, secrets.ErrNoKey) {
 		t.Fatalf("got %v, want secrets.ErrNoKey", err)
+	}
+}
+
+func TestCapVideoRegistryAndServiceResolution(t *testing.T) {
+	if !media.ValidCapability(media.CapVideo) {
+		t.Fatal("expected CapVideo to be a valid capability")
+	}
+
+	ctx := context.Background()
+	svc, _, me := newTestService(t, true)
+	gemini.Register(svc.Registry)
+
+	videoEntries := svc.Registry.EntriesForCapability(media.CapVideo)
+	if len(videoEntries) != 1 || videoEntries[0].Descriptor.ID != gemini.ProviderID {
+		t.Fatalf("EntriesForCapability(CapVideo) = %+v, want [gemini]", videoEntries)
+	}
+	if _, err := svc.Registry.BuildVideo(gemini.ProviderID, media.ResolvedConfig{
+		Secrets: map[string]string{"api_key": "AIzaTest"},
+	}); err != nil {
+		t.Fatalf("BuildVideo(gemini) failed: %v", err)
+	}
+	if _, err := svc.Registry.BuildVideo("fake", media.ResolvedConfig{}); err == nil {
+		t.Fatal("expected BuildVideo(fake) to fail since fake does not implement VideoGenerator")
+	}
+
+	// Before configuring Gemini, ResolveVideo returns ErrKindUnavailable.
+	_, _, err := svc.ResolveVideo(ctx, me.WorkspaceID, "")
+	var pe *media.ProviderError
+	if !errors.As(err, &pe) || pe.Kind != media.ErrKindUnavailable {
+		t.Fatalf("ResolveVideo unconfigured = %v, want ErrKindUnavailable", err)
+	}
+
+	// Explicit override to a music-only provider returns ValidationError.
+	_, _, err = svc.ResolveVideo(ctx, me.WorkspaceID, "fake")
+	var ve *apperr.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("ResolveVideo(fake) = %T (%v), want *apperr.ValidationError", err, err)
+	}
+
+	// Save Gemini with legacy Lyria-only settings (no video_model specified);
+	// video_model must default cleanly and CapVideo auto-default must be set.
+	view, err := svc.SaveProvider(ctx, me.WorkspaceID, gemini.ProviderID, nil,
+		map[string]string{"backend": "gemini_api", "model": "auto"},
+		map[string]string{"api_key": "AIzaVideoServiceTest"},
+	)
+	if err != nil {
+		t.Fatalf("SaveProvider(gemini) failed: %v", err)
+	}
+	if view.Settings["model"] != "auto" {
+		t.Fatalf("model setting = %q, want auto", view.Settings["model"])
+	}
+	if view.Settings["video_model"] == "" {
+		t.Fatal("expected video_model default to be populated")
+	}
+
+	// ResolveVideo resolves the configured Gemini provider even before a
+	// workspace_media_defaults row exists for CapVideo.
+	gen, desc, err := svc.ResolveVideo(ctx, me.WorkspaceID, "")
+	if err != nil {
+		t.Fatalf("ResolveVideo failed: %v", err)
+	}
+	if gen.ID() != gemini.ProviderID || !desc.Supports(media.CapVideo) || !desc.Supports(media.CapMusic) {
+		t.Fatalf("unexpected resolved video provider: id=%q caps=%v", gen.ID(), desc.Capabilities)
+	}
+
+	// Explicit override to gemini also resolves.
+	gen, _, err = svc.ResolveVideo(ctx, me.WorkspaceID, gemini.ProviderID)
+	if err != nil || gen.ID() != gemini.ProviderID {
+		t.Fatalf("ResolveVideo(gemini) = %v, %v", gen, err)
+	}
+
+	// Clearing API key makes ResolveVideo unavailable again.
+	if err := svc.ClearProviderSecret(ctx, me.WorkspaceID, gemini.ProviderID, "api_key"); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = svc.ResolveVideo(ctx, me.WorkspaceID, "")
+	if !errors.As(err, &pe) || pe.Kind != media.ErrKindUnavailable {
+		t.Fatalf("ResolveVideo after clear = %v, want ErrKindUnavailable", err)
 	}
 }

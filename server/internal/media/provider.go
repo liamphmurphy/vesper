@@ -7,17 +7,18 @@ type Capability string
 
 const (
 	CapMusic  Capability = "music"
+	CapVideo  Capability = "video"
 	CapTTS    Capability = "tts"
 	CapScript Capability = "script"
 )
 
 // AllCapabilities lists every supported capability in display order.
-var AllCapabilities = []Capability{CapMusic, CapTTS, CapScript}
+var AllCapabilities = []Capability{CapMusic, CapVideo, CapTTS, CapScript}
 
 // ValidCapability reports whether c is a recognized capability.
 func ValidCapability(c Capability) bool {
 	switch c {
-	case CapMusic, CapTTS, CapScript:
+	case CapMusic, CapVideo, CapTTS, CapScript:
 		return true
 	}
 	return false
@@ -70,4 +71,44 @@ type AudioClip struct {
 type MusicGenerator interface {
 	Provider
 	GenerateMusic(ctx context.Context, req MusicRequest, onProgress func(MusicProgress)) (AudioClip, error)
+}
+
+// VideoFrame is an image frame passed as a first/last keyframe or reference image.
+type VideoFrame struct {
+	Data        []byte
+	ContentType string
+}
+
+// VideoRequest describes a video generation request across all adapters.
+type VideoRequest struct {
+	Prompt                string
+	FirstFrame            *VideoFrame
+	LastFrame             *VideoFrame
+	ReferenceImages       []VideoFrame
+	AspectRatio           string
+	DurationSec           int
+	Model                 string
+	PreviousInteractionID string
+}
+
+// VideoProgress reports generation progress while a blocking call runs.
+type VideoProgress struct {
+	Percent int
+	Note    string
+}
+
+// VideoClip is the normalized video payload returned by an adapter.
+type VideoClip struct {
+	Data          []byte
+	ContentType   string
+	FilenameExt   string
+	DurationMS    int
+	Model         string
+	InteractionID string
+}
+
+// VideoGenerator is implemented by providers that generate video clips.
+type VideoGenerator interface {
+	Provider
+	GenerateVideo(ctx context.Context, req VideoRequest, onProgress func(VideoProgress)) (VideoClip, error)
 }

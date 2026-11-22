@@ -106,7 +106,7 @@ struct ChatScreen: View {
     private var chatsRequest: APIRequest<API.ListChatsResponse> {
         API.listChats(
             archived: model.viewMode == .archived ? true : nil,
-            personaId: model.selectedPersonaId.isEmpty ? nil : model.selectedPersonaId,
+            personaId: ChatNav.listPersonaQuery(model.selectedPersonaId),
             space: model.selectedSpaceId.isEmpty ? nil : model.selectedSpaceId
         )
     }
@@ -145,9 +145,11 @@ struct ChatScreen: View {
         let costs = costsRequest.flatMap { store.entry($0).data }
         let liveActivity: ChatTurnActivity? = {
             guard session?.state == .running, let runId = session?.currentRunId, !runId.isEmpty else { return nil }
+            if messages.isEmpty && (session?.messageCount ?? 0) > 0 { return nil }
             let events = store.entry(API.listRunEvents(id: runId)).data?.events ?? []
             guard !events.isEmpty else { return nil }
-            return ChatTurnActivity.fold(events: events.map(ChatRunEvent.init))
+            let since = ChatTurnActivity.runningSince(for: messages)
+            return ChatTurnActivity.fold(events: events.map(ChatRunEvent.init), since: since)
         }()
 
         VStack(spacing: 0) {
@@ -710,13 +712,7 @@ struct ChatScreen: View {
             case .search(let query):
                 model.searchQuery = query
             case .renameChat(let id):
-                let chats = context.store.entry(
-                    API.listChats(
-                        archived: model.viewMode == .archived ? true : nil,
-                        personaId: model.selectedPersonaId.isEmpty ? nil : model.selectedPersonaId,
-                        space: model.selectedSpaceId.isEmpty ? nil : model.selectedSpaceId
-                    )
-                ).data?.chats ?? []
+                let chats = context.store.entry(chatsRequest).data?.chats ?? []
                 model.renameDraft = chats.first(where: { $0.id == id })?.title ?? ""
                 model.renameTargetId = id
             case .pinChat(let id, let pinned):
@@ -804,10 +800,19 @@ struct ChatScreen: View {
         )
         do {
             if let chatId {
-                _ = try await context.store.mutate(
-                    API.postChatMessage(id: chatId, body: msg),
-                    invalidating: QueryInvalidation(resources: ["chats"])
+                let posted = try await context.store.mutate(
+                    API.postChatMessage(id: chatId, body: msg)
                 )
+                // Seed both session and message list together so the live working card starts
+                // scoped to the new user message's timestamp before the background refetch lands.
+                context.store.setData(posted.chat, for: API.getChat(id: chatId))
+                let listReq = API.listChatMessages(id: chatId, limit: 200)
+                if var existing = context.store.entry(listReq).data,
+                   !existing.messages.contains(where: { $0.id == posted.message.id }) {
+                    existing.messages.append(posted.message)
+                    context.store.setData(existing, for: listReq)
+                }
+                context.store.invalidate(QueryInvalidation(resources: ["chats"]))
             } else {
                 let created = try await context.store.mutate(
                     API.createChat(body: API.NewChat(
