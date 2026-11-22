@@ -575,6 +575,13 @@ final class ChatTranscriptLogicTests: XCTestCase {
         XCTAssertEqual(spaceItem?.contextMenu?.map(\.id), [ChatNav.MenuAction.openInNewTab])
     }
 
+    func testChatListPersonaQuerySendsAllForTheAllPick() {
+        // An omitted persona_id means "default persona" to the server, so "All" must say so.
+        XCTAssertEqual(ChatNav.listPersonaQuery(""), "all")
+        XCTAssertEqual(ChatNav.listPersonaQuery("p2"), "p2")
+        XCTAssertEqual(API.listChats(personaId: ChatNav.listPersonaQuery("")).pathAndQuery, "/api/v1/chats?persona_id=all")
+    }
+
     // MARK: - 500-Message Transcript Benchmark / Smoke Test
 
     func test500MessageTranscriptParsesLinearlyWithZeroWebViewDependencies() {
