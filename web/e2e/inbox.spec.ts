@@ -93,7 +93,7 @@ async function installInboxApi(page: Page) {
       inbox = inbox.map((i) => (i.kind === "mockup" ? { ...i, resolved: true } : i));
       return json({ id: MOCKUP });
     }
-    if (path === "/runner") return json({ online: true, runners: [], slots: 3, busy: 1, live: 1, queued: 0, host_folder_workspaces: false } satisfies S["RunnerStatus"]);
+    if (path === "/runner") return json({ online: true, runners: [], slots: 3, busy: 1, live: 1, queued: 0, host_folder_workspaces: false, max_concurrent_subagents: 3, max_parallel_delegations: 3 } satisfies S["RunnerStatus"]);
     if (path === "/agent-overviews") return json({
       agents: [{
         agent: { ...atlas, kind: "main", role: "Tech lead", specialty: "", model: "opus", status: "running" },

@@ -121,3 +121,37 @@ func TestRunnerStatusReportsStartingUntilRunnerRegisters(t *testing.T) {
 		t.Fatalf("online status = %+v, want online=true starting omitted", out)
 	}
 }
+
+func TestRunnerSettingsSubagentAndDelegationLimits(t *testing.T) {
+	e := newChatEnv(t)
+
+	out := e.want("GET", "/runner", nil, http.StatusOK)
+	if out["host_folder_workspaces"] != false || out["max_concurrent_subagents"] != float64(3) || out["max_parallel_delegations"] != float64(3) {
+		t.Fatalf("defaults = %+v", out)
+	}
+
+	out = e.want("PUT", "/runner/settings", map[string]any{"max_concurrent_subagents": 6}, http.StatusOK)
+	if out["max_concurrent_subagents"] != float64(6) || out["max_parallel_delegations"] != float64(3) || out["host_folder_workspaces"] != false {
+		t.Fatalf("after updating subagents = %+v", out)
+	}
+
+	out = e.want("PUT", "/runner/settings", map[string]any{"max_parallel_delegations": 5}, http.StatusOK)
+	if out["max_concurrent_subagents"] != float64(6) || out["max_parallel_delegations"] != float64(5) || out["host_folder_workspaces"] != false {
+		t.Fatalf("after updating delegations = %+v", out)
+	}
+
+	out = e.want("PUT", "/runner/settings", map[string]any{"host_folder_workspaces": true}, http.StatusOK)
+	if out["host_folder_workspaces"] != true || out["max_concurrent_subagents"] != float64(6) || out["max_parallel_delegations"] != float64(5) {
+		t.Fatalf("after updating host folders = %+v", out)
+	}
+
+	out = e.want("GET", "/runner", nil, http.StatusOK)
+	if out["host_folder_workspaces"] != true || out["max_concurrent_subagents"] != float64(6) || out["max_parallel_delegations"] != float64(5) {
+		t.Fatalf("persisted GET /runner = %+v", out)
+	}
+
+	e.invalid("PUT", "/runner/settings", map[string]any{"max_concurrent_subagents": 0}, "max_concurrent_subagents", "")
+	e.invalid("PUT", "/runner/settings", map[string]any{"max_concurrent_subagents": 17}, "max_concurrent_subagents", "")
+	e.invalid("PUT", "/runner/settings", map[string]any{"max_parallel_delegations": 0}, "max_parallel_delegations", "")
+	e.invalid("PUT", "/runner/settings", map[string]any{"max_parallel_delegations": 9}, "max_parallel_delegations", "")
+}

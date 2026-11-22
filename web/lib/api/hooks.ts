@@ -751,7 +751,7 @@ export function useRunnerStatus() {
   });
 }
 
-/** Turn host-folder workspaces on or off; runs started afterwards follow it. */
+/** Update workspace runner settings (host-folder workspaces, subagent and delegation concurrency limits). */
 export function useUpdateRunnerSettings() {
   const qc = useQueryClient();
   return useMutation({

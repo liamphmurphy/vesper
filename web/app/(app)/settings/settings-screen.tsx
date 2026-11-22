@@ -38,7 +38,7 @@ import { Button, ButtonLink } from "@/components/ui/button";
 import { Segmented, Toggle } from "@/components/ui/controls";
 import { Icon } from "@/components/ui/icon";
 import { PageHeader } from "@/components/ui/page-header";
-import { Banner, Card, EmptyState, Skeleton } from "@/components/ui/primitives";
+import { Banner, Card, EmptyState, Skeleton, TextInput } from "@/components/ui/primitives";
 import { PersonaEditor } from "../chat/_components/persona-editor";
 import { ApiSecretsSection } from "../customization/api-secrets-section";
 import { ConnectorsSection, PersonaConnectors } from "../customization/connectors-section";
@@ -440,7 +440,7 @@ export function SettingsScreen() {
                 <div>
                   <h1 id="runners-title" className="type-display text-fg">Runner backends</h1>
                   <p className="mt-1 text-14 text-fg-secondary">
-                    Reported by each runner’s heartbeat. Set by environment variables on the runner process; restart the runner to change them.
+                    Reported by each runner’s heartbeat, alongside workspace concurrency and folder settings. Environment variables on the runner process need a runner restart to change.
                   </p>
                 </div>
                 <RunnerSection />
@@ -750,6 +750,107 @@ function HostFoldersSetting({ status }: { status: Schemas["RunnerStatus"] }) {
   );
 }
 
+function ConcurrencyLimitSetting({
+  label,
+  value,
+  min,
+  max,
+  hint,
+  field,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  hint: ReactNode;
+  field: "max_concurrent_subagents" | "max_parallel_delegations";
+}) {
+  const update = useUpdateRunnerSettings();
+  const [draft, setDraft] = useState<string | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
+
+  const commit = (next: number) => {
+    setDraft(null);
+    setValidationError(null);
+    if (next !== value) update.mutate({ [field]: next });
+  };
+
+  const commitDraft = () => {
+    if (draft === null) return;
+    const trimmed = draft.trim();
+    if (trimmed === "") {
+      setDraft(null);
+      setValidationError(null);
+      return;
+    }
+    if (!/^-?\d+$/.test(trimmed)) {
+      setValidationError(`Enter a whole number between ${min} and ${max}.`);
+      return;
+    }
+    const parsed = Number(trimmed);
+    if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
+      setValidationError(`Enter a whole number between ${min} and ${max}.`);
+      return;
+    }
+    commit(parsed);
+  };
+
+  return (
+    <>
+      <div className="flex items-center gap-1.5">
+        <Button
+          variant="outline"
+          className="w-[30px] justify-center px-0"
+          aria-label={`Decrease ${label.toLowerCase()}`}
+          disabled={update.isPending || value <= min}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => commit(value - 1)}
+        >
+          −
+        </Button>
+        <TextInput
+          type="number"
+          inputMode="numeric"
+          aria-label={label}
+          min={min}
+          max={max}
+          value={draft ?? String(value)}
+          disabled={update.isPending}
+          className="w-16 text-center font-mono tabular-nums"
+          onChange={(e) => {
+            setDraft(e.target.value);
+            setValidationError(null);
+          }}
+          onBlur={commitDraft}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commitDraft();
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              setDraft(null);
+              setValidationError(null);
+            }
+          }}
+        />
+        <Button
+          variant="outline"
+          className="w-[30px] justify-center px-0"
+          aria-label={`Increase ${label.toLowerCase()}`}
+          disabled={update.isPending || value >= max}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => commit(value + 1)}
+        >
+          +
+        </Button>
+      </div>
+      <span className="mt-1 block text-12 text-fg-tertiary">{hint}</span>
+      {validationError && <span role="alert" className="mt-1 block text-12 text-pill-blocked-fg">{validationError}</span>}
+      {!validationError && update.isError && <span role="alert" className="mt-1 block text-12 text-pill-blocked-fg">Couldn’t save: {update.error.message}</span>}
+    </>
+  );
+}
+
 function RunnerSection() {
   const q = useRunnerStatus();
   if (q.isError) {
@@ -831,6 +932,26 @@ function RunnerSection() {
           </Row>
           <Row label="Host folders">
             <HostFoldersSetting status={r} />
+          </Row>
+          <Row label="Subagents">
+            <ConcurrencyLimitSetting
+              field="max_concurrent_subagents"
+              label="Max concurrent subagents"
+              value={r.max_concurrent_subagents}
+              min={1}
+              max={16}
+              hint="How many in-turn explorer or helper subagents one active turn runs at once (1–16, default 3). Extra calls wait in the queue. Applies to all personas starting on their next turn."
+            />
+          </Row>
+          <Row label="Delegations">
+            <ConcurrencyLimitSetting
+              field="max_parallel_delegations"
+              label="Max parallel delegations"
+              value={r.max_parallel_delegations}
+              min={1}
+              max={8}
+              hint="How many delegated child ticket runs a parent run can execute in parallel on disjoint paths (1–8, default 3; capped at 8 total delegations per run). Applies immediately."
+            />
           </Row>
           <Row label="Per agent">
             <span className="text-13 text-fg-secondary">

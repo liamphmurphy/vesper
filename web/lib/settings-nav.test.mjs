@@ -116,5 +116,7 @@ test("matchesSettingsFilter matches labels and section keywords across multiple 
   assert.equal(matchesSettingsFilter("theme palette", "Appearance", SETTINGS_FILTER_KEYWORDS.appearance), true);
   assert.equal(matchesSettingsFilter("image engine", "Workspace", SETTINGS_FILTER_KEYWORDS.workspace), true);
   assert.equal(matchesSettingsFilter("oauth key", "Secrets & Credentials", SETTINGS_FILTER_KEYWORDS.secrets), true);
+  assert.equal(matchesSettingsFilter("subagent", "Runners", SETTINGS_FILTER_KEYWORDS.runners), true);
+  assert.equal(matchesSettingsFilter("delegation", "Runners", SETTINGS_FILTER_KEYWORDS.runners), true);
   assert.equal(matchesSettingsFilter("oauth", "Appearance", SETTINGS_FILTER_KEYWORDS.appearance), false);
 });

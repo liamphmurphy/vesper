@@ -60,7 +60,7 @@ async function installInboxApi(page: Page) {
       approval.state = path.endsWith("approve") ? "approved" : "denied";
       return json(approval);
     }
-    if (path === "/runner") return json({ online: true, runners: [], slots: 3, busy: 0, live: 0, queued: 0, host_folder_workspaces: false } satisfies S["RunnerStatus"]);
+    if (path === "/runner") return json({ online: true, runners: [], slots: 3, busy: 0, live: 0, queued: 0, host_folder_workspaces: false, max_concurrent_subagents: 3, max_parallel_delegations: 3 } satisfies S["RunnerStatus"]);
     return json({ code: "not_found", message: `mock: no handler for ${method} ${path}` }, 404);
   });
   return { comments, decisions };

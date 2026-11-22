@@ -1366,6 +1366,32 @@ func (q *Queries) SetWorkspaceImageEngine(ctx context.Context, arg SetWorkspaceI
 	return err
 }
 
+const setWorkspaceRunnerSettings = `-- name: SetWorkspaceRunnerSettings :exec
+UPDATE workspaces
+SET host_folder_workspaces = coalesce($2::boolean, host_folder_workspaces),
+    max_concurrent_subagents = coalesce($3::int, max_concurrent_subagents),
+    max_parallel_delegations = coalesce($4::int, max_parallel_delegations),
+    updated_at = now()
+WHERE id = $1
+`
+
+type SetWorkspaceRunnerSettingsParams struct {
+	ID                     uuid.UUID
+	HostFolderWorkspaces   *bool
+	MaxConcurrentSubagents *int32
+	MaxParallelDelegations *int32
+}
+
+func (q *Queries) SetWorkspaceRunnerSettings(ctx context.Context, arg SetWorkspaceRunnerSettingsParams) error {
+	_, err := q.db.Exec(ctx, setWorkspaceRunnerSettings,
+		arg.ID,
+		arg.HostFolderWorkspaces,
+		arg.MaxConcurrentSubagents,
+		arg.MaxParallelDelegations,
+	)
+	return err
+}
+
 const strandedRuns = `-- name: StrandedRuns :many
 SELECT r.id FROM runs r
 WHERE r.mode = 'managed' AND r.state = 'running' AND r.purpose <> 'chat'
@@ -1519,4 +1545,23 @@ func (q *Queries) WorkspaceImageEngine(ctx context.Context, id uuid.UUID) (strin
 	var image_engine string
 	err := row.Scan(&image_engine)
 	return image_engine, err
+}
+
+const workspaceRunnerSettings = `-- name: WorkspaceRunnerSettings :one
+SELECT host_folder_workspaces, max_concurrent_subagents, max_parallel_delegations
+FROM workspaces
+WHERE id = $1
+`
+
+type WorkspaceRunnerSettingsRow struct {
+	HostFolderWorkspaces   bool
+	MaxConcurrentSubagents int32
+	MaxParallelDelegations int32
+}
+
+func (q *Queries) WorkspaceRunnerSettings(ctx context.Context, id uuid.UUID) (WorkspaceRunnerSettingsRow, error) {
+	row := q.db.QueryRow(ctx, workspaceRunnerSettings, id)
+	var i WorkspaceRunnerSettingsRow
+	err := row.Scan(&i.HostFolderWorkspaces, &i.MaxConcurrentSubagents, &i.MaxParallelDelegations)
+	return i, err
 }

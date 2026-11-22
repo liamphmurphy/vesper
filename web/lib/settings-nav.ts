@@ -186,7 +186,7 @@ export const SETTINGS_FILTER_KEYWORDS: Record<string, string> = {
   connectors: "mcp servers tools oauth integration",
   repositories: "repos github owners organizations presets discovery",
   workspace: "setup checklist encryption secrets_key image engine generation codex antigravity",
-  runners: "runner backends microvm docker fake concurrency slots host folders environment",
+  runners: "runner backends microvm docker fake concurrency slots host folders environment subagents delegations parallel",
   "dev-workspace": "nix lazyvim neovim tmux gitconfig container ssh dev",
   spaces: "space memory overrides skills project instructions",
   "sign-in": "password authentication login browser session",

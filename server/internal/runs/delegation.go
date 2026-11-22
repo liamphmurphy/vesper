@@ -32,13 +32,28 @@ const (
 
 	// MaxDelegations bounds the delegated runs under one parent run.
 	MaxDelegations = 8
-	// MaxParallelDelegations bounds the delegated runs of one parent that are live at once.
+	// MaxParallelDelegations bounds the delegated runs of one parent that are live at once by default.
 	MaxParallelDelegations = 3
+	// MinParallelDelegations and MaxParallelDelegationsCap bound the workspace setting for parallel delegations.
+	MinParallelDelegations    = 1
+	MaxParallelDelegationsCap = MaxDelegations
 	// MaxCheckBounces bounds the times one delegated run's mechanical check
 	// failure is sent back to it before the main agent is woken with it.
 	MaxCheckBounces = 2
 	maxTaskRunes    = 20000
 )
+
+// ClampParallelDelegations normalizes a stored limit into [MinParallelDelegations, MaxParallelDelegationsCap],
+// defaulting non-positive values to MaxParallelDelegations.
+func ClampParallelDelegations(n int) int {
+	if n < MinParallelDelegations {
+		return MaxParallelDelegations
+	}
+	if n > MaxParallelDelegationsCap {
+		return MaxParallelDelegationsCap
+	}
+	return n
+}
 
 // Contract is what a main agent asks of a sub agent beyond the task text. The
 // runner checks the result against it before waking the main agent.
@@ -338,7 +353,11 @@ func (s *Service) DelegateWithContract(ctx context.Context, c Caller, ticketKey,
 			contract.Branch, contract.Worktree = pc.Branch, pc.Worktree
 			contract.ReadOnly = contract.ReadOnly || pc.ReadOnly
 		}
-		if err := checkParallel(kids, contract); err != nil {
+		cfg, err := q.WorkspaceRunnerSettings(ctx, ws)
+		if err != nil {
+			return err
+		}
+		if err := checkParallel(kids, contract, ClampParallelDelegations(int(cfg.MaxParallelDelegations))); err != nil {
 			return err
 		}
 		// The copy runs on the caller's frozen spec, so it has the same
@@ -496,9 +515,10 @@ func continuedRun(contract Contract, kids []store.Run) (*store.Run, error) {
 }
 
 // checkParallel enforces the limits on children that are live at once: at most
-// MaxParallelDelegations, and once two run together both need non-empty,
-// disjoint allowed_paths so their worktrees can be merged without conflicts.
-func checkParallel(kids []store.Run, contract Contract) error {
+// limit (the workspace's max_parallel_delegations setting), and once two run
+// together both need non-empty, disjoint allowed_paths so their worktrees can
+// be merged without conflicts.
+func checkParallel(kids []store.Run, contract Contract, limit int) error {
 	var live []store.Run
 	for _, k := range kids {
 		if !slices.Contains(Terminal, k.State) {
@@ -508,7 +528,7 @@ func checkParallel(kids []store.Run, contract Contract) error {
 	if len(live) == 0 {
 		return nil
 	}
-	if len(live) >= MaxParallelDelegations {
+	if len(live) >= limit {
 		return apperr.Conflict("%d delegated runs are already in progress (the limit); wait for them to finish before delegating more", len(live))
 	}
 	if len(contract.AllowedPaths) == 0 {

@@ -1061,3 +1061,15 @@ func TestChatAgentsMDTemporary(t *testing.T) {
 		t.Errorf("normal chat:\n%s", normal)
 	}
 }
+
+func TestPersonaAgentsMDParallelDelegationLimit(t *testing.T) {
+	s := agentdef.Resolved{Harness: agentdef.HarnessClaudeCode, Instructions: "Ship it."}
+	md5 := string(PersonaAgentsMD("", s, nil, "PAY-1", false, nil, 5))
+	if !strings.Contains(md5, "Up to 5 children may run in parallel on disjoint paths.") {
+		t.Fatalf("expected 5-parallel prompt, got:\n%s", md5)
+	}
+	md1 := string(PersonaAgentsMD("", s, nil, "PAY-1", false, nil, 1))
+	if !strings.Contains(md1, "Only 1 child may run at a time.") {
+		t.Fatalf("expected 1-parallel prompt, got:\n%s", md1)
+	}
+}

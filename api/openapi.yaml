@@ -1376,14 +1376,19 @@ paths:
   /runner/settings:
     put:
       operationId: updateRunnerSettings
-      summary: Turn host-folder workspaces on or off
+      summary: Update workspace runner settings
       description: |
+        Updates workspace-level runner settings; omitted fields stay unchanged.
         With host_folder_workspaces on, a run started afterwards keeps its
         checkout in a folder on the person's machine (under the runner's
         RUNNER_HOST_WORKSPACES_DIR) instead of the run's disk image inside the microVM, so they can
         open it in their own editor. Runs that already have a workspace keep
         it where it is. The folder itself is runner configuration and can't
         be set here. Has no effect on a runner without that folder configured.
+        max_concurrent_subagents (1–16, default 3) bounds concurrent in-turn
+        MCP subagents (explorer/helper) per active turn.
+        max_parallel_delegations (1–8, default 3) bounds live parallel delegated
+        child ticket runs per parent run.
       tags: [runs]
       requestBody:
         required: true
@@ -8686,14 +8691,17 @@ components:
         provider_id: { type: string }
     RunnerSettings:
       type: object
-      required: [host_folder_workspaces]
       properties:
         host_folder_workspaces: { type: boolean }
+        max_concurrent_subagents: { type: integer, minimum: 1, maximum: 16 }
+        max_parallel_delegations: { type: integer, minimum: 1, maximum: 8 }
     RunnerStatus:
       type: object
-      required: [online, runners, slots, busy, live, queued, host_folder_workspaces]
+      required: [online, runners, slots, busy, live, queued, host_folder_workspaces, max_concurrent_subagents, max_parallel_delegations]
       properties:
         host_folder_workspaces: { type: boolean, description: "New runs keep their checkout in a host folder when their runner has host_workspaces_dir" }
+        max_concurrent_subagents: { type: integer, description: "In-turn MCP subagents (explorer/helper) allowed to run concurrently per active turn (1–16)" }
+        max_parallel_delegations: { type: integer, description: "Delegated child ticket runs allowed to run in parallel per parent run (1–8)" }
         online: { type: boolean }
         starting: { type: boolean, description: "True while an embedded runner is still starting up before its first heartbeat" }
         runners: { type: array, items: { $ref: "#/components/schemas/RunnerInfo" } }

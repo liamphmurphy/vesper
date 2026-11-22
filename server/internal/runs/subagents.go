@@ -6,6 +6,24 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/agentdef"
 )
 
+const (
+	DefaultMaxConcurrentSubagents = 3
+	MinConcurrentSubagents        = 1
+	MaxConcurrentSubagentsCap     = 16
+)
+
+// ClampConcurrentSubagents normalizes a stored limit into [MinConcurrentSubagents, MaxConcurrentSubagentsCap],
+// defaulting non-positive values to DefaultMaxConcurrentSubagents.
+func ClampConcurrentSubagents(n int) int {
+	if n < MinConcurrentSubagents {
+		return DefaultMaxConcurrentSubagents
+	}
+	if n > MaxConcurrentSubagentsCap {
+		return MaxConcurrentSubagentsCap
+	}
+	return n
+}
+
 // SubagentSpec builds the isolated harness spec for an in-turn Vesper MCP
 // subagent (`explorer` or `helper`). Every subagent runs with OptionNoMCP and
 // OptionSubagents="false" so state and orchestration stay with the parent turn.

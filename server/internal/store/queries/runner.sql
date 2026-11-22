@@ -82,6 +82,19 @@ SELECT host_folder_workspaces FROM workspaces WHERE id = $1;
 -- name: SetHostFolderWorkspaces :exec
 UPDATE workspaces SET host_folder_workspaces = $2, updated_at = now() WHERE id = $1;
 
+-- name: WorkspaceRunnerSettings :one
+SELECT host_folder_workspaces, max_concurrent_subagents, max_parallel_delegations
+FROM workspaces
+WHERE id = $1;
+
+-- name: SetWorkspaceRunnerSettings :exec
+UPDATE workspaces
+SET host_folder_workspaces = coalesce(sqlc.narg(host_folder_workspaces)::boolean, host_folder_workspaces),
+    max_concurrent_subagents = coalesce(sqlc.narg(max_concurrent_subagents)::int, max_concurrent_subagents),
+    max_parallel_delegations = coalesce(sqlc.narg(max_parallel_delegations)::int, max_parallel_delegations),
+    updated_at = now()
+WHERE id = $1;
+
 -- name: RunWorkspaceHostPaths :many
 -- Host folders of runs that still have their workspace.
 SELECT id, workspace_host_path::text AS path FROM runs
