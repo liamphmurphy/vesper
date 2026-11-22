@@ -20,6 +20,8 @@ public final class QueryEntry<Value: Sendable> {
     @ObservationIgnored var lastAttempt: Date?
     @ObservationIgnored var refetchWhenDone = false
     @ObservationIgnored var observers = 0
+    /// True when a caller asked to fetch this entry while `QueryStore.client` was nil.
+    @ObservationIgnored var pendingLoad = false
     @ObservationIgnored var lastUsed: Date
     @ObservationIgnored var task: Task<Void, Never>?
 
@@ -38,17 +40,25 @@ public final class QueryEntry<Value: Sendable> {
 protocol StoredQuery: AnyObject {
     var key: QueryKey { get }
     var observers: Int { get set }
+    var pendingLoad: Bool { get set }
     var lastUsed: Date { get }
     var isFetching: Bool { get }
     func markInvalidated()
     func cancel()
     func refetch(in store: QueryStore)
+    func makeReplacement(now: Date) -> any StoredQuery
 }
 
 extension QueryEntry: StoredQuery {
     func markInvalidated() { isInvalidated = true }
     func cancel() { task?.cancel() }
     func refetch(in store: QueryStore) { store.refetchNow(self) }
+    func makeReplacement(now: Date) -> any StoredQuery {
+        let fresh = QueryEntry<Value>(key: key, now: now, fetch: fetch)
+        fresh.observers = observers
+        fresh.pendingLoad = pendingLoad
+        return fresh
+    }
 }
 
 /// A local change applied to a cached query before a mutation lands, undone if it fails.
@@ -83,6 +93,9 @@ public struct OptimisticUpdate {
 @Observable
 public final class QueryStore {
     public private(set) var client: APIClient?
+    /// Incremented whenever `setClient(_:)` replaces entries; read by `entry(_:)` so mounted views
+    /// re-evaluate and subscribe to the replacement `QueryEntry` instances.
+    private var sessionGeneration = 0
 
     @ObservationIgnored private var entries: [QueryKey: any StoredQuery] = [:]
     @ObservationIgnored private let staleAfter: TimeInterval
@@ -98,16 +111,29 @@ public final class QueryStore {
     }
 
     /// Switches the session. Every cached answer belongs to the old one, so all are dropped.
+    /// Entries actively observed by mounted views (or asked to load while disconnected) get fresh
+    /// entries on the new session and fetch immediately once a client is present.
     public func setClient(_ client: APIClient?) {
-        for entry in entries.values { entry.cancel() }
+        let previous = Array(entries.values)
+        for entry in previous { entry.cancel() }
         entries.removeAll()
         self.client = client
+        let timestamp = now()
+        for old in previous where old.observers > 0 || old.pendingLoad {
+            let fresh = old.makeReplacement(now: timestamp)
+            entries[fresh.key] = fresh
+            if client != nil {
+                fresh.refetch(in: self)
+            }
+        }
+        sessionGeneration += 1
     }
 
     // MARK: Reading
 
     /// The shared entry for `request`, without fetching. Safe to call while SwiftUI computes a body.
     public func entry<V: Sendable>(_ request: APIRequest<V>) -> QueryEntry<V> {
+        _ = sessionGeneration
         if let entry = existingEntry(request) { return entry }
         let entry = QueryEntry<V>(key: request.key, now: now()) { client in try await client.send(request) }
         entries[request.key] = entry
@@ -146,7 +172,11 @@ public final class QueryStore {
 
     public func stopObserving(_ key: QueryKey) {
         guard let entry = entries[key] else { return }
+        let wasObserved = entry.observers > 0
         entry.observers = max(0, entry.observers - 1)
+        if wasObserved && entry.observers == 0 {
+            entry.pendingLoad = false
+        }
     }
 
     func existingEntry<V: Sendable>(_ request: APIRequest<V>) -> QueryEntry<V>? {
@@ -161,7 +191,11 @@ public final class QueryStore {
     }
 
     private func startFetch<V: Sendable>(_ entry: QueryEntry<V>) {
-        guard let client else { return }
+        guard let client else {
+            entry.pendingLoad = true
+            return
+        }
+        entry.pendingLoad = false
         entry.isFetching = true
         entry.lastAttempt = now()
         let generation = entry.generation

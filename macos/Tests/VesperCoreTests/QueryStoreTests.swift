@@ -4,6 +4,20 @@ import XCTest
 
 private struct Counter: Codable, Sendable, Equatable { var n: Int }
 
+private final class LockedFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var flag = false
+
+    func set() {
+        lock.lock(); flag = true; lock.unlock()
+    }
+
+    var value: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return flag
+    }
+}
+
 private actor Gate {
     private var isOpen = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
@@ -205,6 +219,95 @@ final class QueryStoreTests: XCTestCase {
         let fresh = store.entry(ticket1)
         XCTAssertFalse(old === fresh)
         XCTAssertNil(fresh.data)
+    }
+
+    func testObservedQueryLoadedBeforeClientConnectsFetchesAndNotifiesOnSetClient() async {
+        server.answer("/api/v1/tickets/PAY-1", ["n": 1])
+        let cold = QueryStore(client: nil, staleAfter: 30, now: { [unowned self] in self.clock })
+
+        let invalidated = LockedFlag()
+        let before = withObservationTracking {
+            cold.entry(ticket1)
+        } onChange: {
+            invalidated.set()
+        }
+        cold.observe(ticket1)
+        cold.load(ticket1)
+        XCTAssertEqual(server.hits("/api/v1/tickets/PAY-1"), 0)
+
+        cold.setClient(server.client)
+        XCTAssertTrue(invalidated.value, "views reading entry(_:) must be notified when setClient replaces entries")
+
+        let live = cold.entry(ticket1)
+        XCTAssertFalse(before === live)
+        await settle(live)
+        XCTAssertEqual(server.hits("/api/v1/tickets/PAY-1"), 1)
+        XCTAssertEqual(live.data, Counter(n: 1))
+
+        // Observer count must carry over to the replacement entry so live invalidations still refetch
+        // and a matching stopObserving balances cleanly back to zero.
+        server.answer("/api/v1/tickets/PAY-1", ["n": 2])
+        cold.handle(ServerEvent(type: "ticket.updated", ids: ["PAY-1"]))
+        await settle(live)
+        XCTAssertEqual(live.data, Counter(n: 2))
+        XCTAssertEqual(server.hits("/api/v1/tickets/PAY-1"), 2)
+
+        cold.stopObserving(ticket1.key)
+        server.answer("/api/v1/tickets/PAY-1", ["n": 3])
+        cold.handle(ServerEvent(type: "ticket.updated", ids: ["PAY-1"]))
+        await settle(live)
+        XCTAssertEqual(server.hits("/api/v1/tickets/PAY-1"), 2)
+    }
+
+    func testUnobservedLoadBeforeClientConnectsFetchesWhenClientArrives() async {
+        server.answer("/api/v1/tickets/PAY-1", ["n": 1])
+        let cold = QueryStore(client: nil, staleAfter: 30, now: { [unowned self] in self.clock })
+        cold.load(ticket1)
+        XCTAssertEqual(server.hits("/api/v1/tickets/PAY-1"), 0)
+
+        cold.setClient(server.client)
+        let live = cold.entry(ticket1)
+        await settle(live)
+        XCTAssertEqual(live.data, Counter(n: 1))
+        XCTAssertEqual(server.hits("/api/v1/tickets/PAY-1"), 1)
+
+        // Once fetched, an unobserved entry is dropped on a later session switch without refetching.
+        cold.setClient(server.client)
+        let afterSwitch = cold.entry(ticket1)
+        await settle(afterSwitch)
+        XCTAssertNil(afterSwitch.data)
+        XCTAssertEqual(server.hits("/api/v1/tickets/PAY-1"), 1)
+    }
+
+    func testObservedQueryRefetchesAcrossDisconnectAndReconnect() async {
+        server.answer("/api/v1/tickets/PAY-1", ["n": 1])
+        store.observe(ticket1)
+        await settle(store.load(ticket1))
+        XCTAssertEqual(store.entry(ticket1).data, Counter(n: 1))
+
+        store.setClient(nil)
+        XCTAssertNil(store.entry(ticket1).data)
+
+        server.answer("/api/v1/tickets/PAY-1", ["n": 2])
+        store.setClient(server.client)
+        let fresh = store.entry(ticket1)
+        await settle(fresh)
+        XCTAssertEqual(fresh.data, Counter(n: 2))
+        XCTAssertEqual(server.hits("/api/v1/tickets/PAY-1"), 2)
+    }
+
+    func testStoppedObserverBeforeClientConnectsDoesNotFetchOnSetClient() async {
+        server.answer("/api/v1/tickets/PAY-1", ["n": 1])
+        let cold = QueryStore(client: nil, staleAfter: 30, now: { [unowned self] in self.clock })
+        cold.observe(ticket1)
+        cold.load(ticket1)
+        cold.stopObserving(ticket1.key)
+
+        cold.setClient(server.client)
+        let afterConnect = cold.entry(ticket1)
+        await settle(afterConnect)
+        XCTAssertNil(afterConnect.data)
+        XCTAssertEqual(server.hits("/api/v1/tickets/PAY-1"), 0)
     }
 
     func testGarbageCollectionKeepsObservedAndRecentEntries() async {
