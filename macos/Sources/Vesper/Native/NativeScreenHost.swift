@@ -122,6 +122,7 @@ struct NativeScreenRoot: View {
         case .markdownDebug: MarkdownDebugScreen()
         case .scenesDebug: ScenesDebugScreen()
         case .dev: DevScreen()
+        case .http: HttpScreen()
         }
     }
 }

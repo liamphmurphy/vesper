@@ -682,6 +682,49 @@ Manual click-through (with `VESPER_NATIVE_DEBUG=1`), on `/native-debug/scenes`:
 5. Enable System Settings → Accessibility → Display → Reduce Motion: every activity scene freezes on its resting frame and the live persona character freezes on `static`.
 6. Toggle Light/Dark and accent in Settings → Appearance: scenes re-colour live; ⌘F searches the scene grid by kind name.
 
+## Native screen: HTTP client
+
+`/http` is native (`macos/Sources/Vesper/Native/Http/`, logic in VesperCore `Native/HttpClientAPI.swift`,
+`HttpClientLogic.swift`, and `HttpClientNav.swift`). The web route (`web/app/(app)/http/`) and `web/lib/api/http-client-hooks.ts`
+are removed; in a browser `/http` renders a 404, while shell links (`⌘⇧H`, command palette, sidebar) route to
+`NativeScreen.http` through `NativeRouteRegistry`.
+
+- **Cross-platform pure SwiftUI**: All views under `macos/Sources/Vesper/Native/Http/` (`HttpScreen`, `HttpRequestPane`,
+  `HttpResponsePane`, `HttpAuthEnvView`, `HttpImportSheet`, `KVEditorView`, `AuthEditorView`) import only `SwiftUI` +
+  `VesperCore` (plus `Foundation` / `UniformTypeIdentifiers` for import), with zero `AppKit` imports. Clipboard copy and
+  toasts go through `NativeScreenContext`, file/folder imports use SwiftUI `.fileImporter`, and layouts adapt cleanly
+  across wide split panes and narrow viewports. All API traffic resolves against `APIClient.baseURL` (no `localhost`
+  assumptions).
+- **Workspaces & persistence**: Remembers the active workspace in `UserDefaults` (`VesperNativeHttpWorkspace`), seeds
+  `nonprod`/`prod` environments on workspace creation, and subscribes to `http.updated` live updates via `QueryStore`
+  and `LiveUpdates`.
+- **Variables, secrets & inheritance**: Inline URL interpolation preview (`{{var}}` and `{{secret:handle}}` with
+  unresolved-variable warnings), Workspace → Folder → Request auth and header inheritance resolution, Vesper secret
+  pickers in `EnvVarEditorView` and `AuthEditorView`.
+- **Syntax-highlighted responses**: `HttpResponsePane` formats JSON/HTML/XML/YAML previews and runs `CodeHighlighter`
+  (Shiki in JavaScriptCore, cached off the main thread, up to 200 KB) onto theme-mapped `AttributedString`s with
+  Pretty/Raw toggle, Copy body, response headers, redacted sent request details, and per-request execution history.
+
+Manual click-through checklist:
+
+1. Open HTTP Client (`⌘⇧H` or sidebar): workspaces load (or empty state offers Create your first workspace); switching
+   workspaces updates the tree and persists across relaunch.
+2. Switch active environment between `nonprod` and `prod`: URL variable preview updates live with resolved values and
+   secret indicators; unresolved `{{vars}}` flag clearly.
+3. Open **Auth & Env** (`Auth & Env` toggle): configure workspace default auth, headers, and shared vars; override a
+   folder's auth/headers; create/rename/recolor/delete an environment and bind a variable to a Vesper secret (`Lock`/`Key`
+   toggle); return to Requests and verify inherited auth & header counts match.
+4. Collection tree: create nested folders and requests, duplicate, rename, delete, expand/collapse folders, and filter
+   with the search box (`Filter calls…`) and window find (`⌘F`).
+5. Request editor: edit Params, Headers, Auth (Inherit/None/Bearer/Basic/API Key/OAuth2), Body
+   (None/JSON with Format JSON/Raw/Form URL-encoded/Multipart), and Settings (redirects + timeout ms); verify dirty
+   badge and Save (`⌘S`).
+6. Send (`⌘↵`): request runs using the active environment and unsaved overrides; response status pill, latency, byte
+   size, Pretty/Raw body with Shiki syntax colours, Copy body, Headers tab, Request tab (redacted secrets), and History
+   list all update cleanly.
+7. Import (`Import` toolbar button or folder context menu): import a Bruno `.bru` file / folder / `.zip`, a cURL command,
+   and an OpenAPI 3 JSON/YAML spec into either the workspace root or a target folder.
+
 ## Build and test
 
 - `make -C macos test` → `swift test` (VesperCore).
