@@ -125,6 +125,7 @@ struct NativeScreenRoot: View {
         case .pdf: PDFScreen()
         case .markdownDebug: MarkdownDebugScreen()
         case .scenesDebug: ScenesDebugScreen()
+        case .embedsDebug: ChatEmbedsDebugScreen()
         case .dev: DevScreen()
         case .http: HttpScreen()
         case .learn: LearnScreen()
