@@ -33,6 +33,9 @@ struct MarkdownView: View {
     @State private var expanded: Set<Int> = []
     @State private var copied: Int?
     @State private var images: [String: NSImage] = [:]
+    /// Drawn math, and the colour and size it was drawn in (a theme change redraws it).
+    @State private var math: [MarkdownMath: MarkdownMathImage] = [:]
+    @State private var mathStyle = ""
 
     var body: some View {
         let document = cache.document(markdown, chat: chat, citations: citations)
@@ -48,7 +51,8 @@ struct MarkdownView: View {
                 expandedCodeBlocks: expanded, copiedCodeBlock: copied,
                 highlights: Dictionary(uniqueKeysWithValues: codeBlocks.enumerated().compactMap { i, block in highlights[block].map { (i, $0) } }),
                 links: refs.isEmpty ? [:] : Self.linkStates(context.store.entry(resolve).data),
-                images: images
+                images: images,
+                math: mathStyle == mathStyleKey ? math : [:]
             ),
             find: MarkdownText.Find(
                 query: findRow == nil ? "" : context.find.query,
@@ -73,11 +77,42 @@ struct MarkdownView: View {
                 }
             }
         }
+        .task(id: MathTask(expressions: document.mathExpressions, style: mathStyleKey)) {
+            await drawMath(document.mathExpressions)
+        }
         .task(id: document.imageURLs) {
             for url in document.imageURLs where images[url] == nil {
                 guard let data = await imageData(url), let image = NSImage(data: data) else { continue }
                 images[url] = image
             }
+        }
+    }
+
+    private struct MathTask: Equatable {
+        var expressions: [MarkdownMath]
+        var style: String
+    }
+
+    /// What math in this view is drawn with; part of each render's cache key too.
+    private var mathStyleKey: String {
+        let request = MathBlockView.request(tex: "", display: false, theme: theme, textStyle: textStyle, textColor: textColor)
+        return "\(request.color)@\(request.fontSize)"
+    }
+
+    /// `$$` math through the chat embeds' `MathRendering` (render once, cached), in the text's colour and
+    /// size. What can't be drawn keeps showing its TeX.
+    private func drawMath(_ expressions: [MarkdownMath]) async {
+        let style = mathStyleKey
+        if mathStyle != style {
+            math = [:]
+            mathStyle = style
+        }
+        for expression in expressions where math[expression] == nil {
+            let request = MathBlockView.request(tex: expression.tex, display: expression.display, theme: theme, textStyle: textStyle, textColor: textColor)
+            guard let drawn = await MathRendering.shared.render(request, messageID: ""),
+                  let image = EmbedImages.image(drawn, key: request.cacheKey()) else { continue }
+            if Task.isCancelled { return }
+            math[expression] = MarkdownMathImage(image: image, ascent: drawn.ascent ?? drawn.height)
         }
     }
 
@@ -213,6 +248,7 @@ private struct MarkdownText: NSViewRepresentable {
             var highlights: [Int: [[CodeToken]]]
             var links: [String: MarkdownLinkState]
             var images: Set<String>
+            var math: Set<MarkdownMath>
         }
 
         func render(_ view: MarkdownTextView, width: CGFloat) {
@@ -223,7 +259,8 @@ private struct MarkdownText: NSViewRepresentable {
             let key = Key(
                 document: latest.document, theme: latest.theme, textStyle: options.textStyle, textColor: options.textColor,
                 anchors: options.anchors, codeBlocks: options.codeBlocks, width: width.rounded(), expanded: options.expandedCodeBlocks,
-                copied: options.copiedCodeBlock, highlights: options.highlights, links: options.links, images: Set(options.images.keys)
+                copied: options.copiedCodeBlock, highlights: options.highlights, links: options.links, images: Set(options.images.keys),
+                math: Set(options.math.keys)
             )
             guard key != rendered else { return }
             rendered = key

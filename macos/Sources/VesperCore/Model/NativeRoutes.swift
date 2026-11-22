@@ -12,6 +12,8 @@ public enum NativeScreen: String, Sendable, CaseIterable {
     case markdownDebug
     /// /native-debug/scenes: all 59 activity scenes and the pooled persona character view (debug only).
     case scenesDebug
+    /// /native-debug/embeds: chat embeds (math, mermaid, SVG, apps) in a lazy list (debug only).
+    case embedsDebug
     case dev
     case http
     case learn
@@ -54,6 +56,7 @@ public struct NativeRouteRegistry: Sendable {
         NativeRoute("/native-debug", .debugPlaceholder),
         NativeRoute("/native-debug/markdown", .markdownDebug),
         NativeRoute("/native-debug/scenes", .scenesDebug),
+        NativeRoute("/native-debug/embeds", .embedsDebug),
         NativeRoute("/native-debug/:id", .debugPlaceholder),
         NativeRoute("/inbox", .inbox),
         // Work's Runs view; bare /runs was an alias of it (a run's own page stays on the web).
@@ -73,7 +76,7 @@ public struct NativeRouteRegistry: Sendable {
     /// The app's registry. Debug-only screens are enabled only when `debug` is set.
     public static func standard(debug: Bool) -> NativeRouteRegistry {
         var enabled = Set(NativeScreen.allCases)
-        if !debug { enabled.subtract([.debugPlaceholder, .markdownDebug, .scenesDebug]) }
+        if !debug { enabled.subtract([.debugPlaceholder, .markdownDebug, .scenesDebug, .embedsDebug]) }
         return NativeRouteRegistry(routes: allRoutes, enabled: enabled)
     }
 
