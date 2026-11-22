@@ -1716,22 +1716,28 @@ type SignIn struct {
 }
 
 type SubagentJob struct {
-	ID           uuid.UUID
-	RunID        uuid.UUID
-	AgentType    string
-	Role         string
-	Prompt       string
-	Status       string
-	ResultText   string
-	Error        string
-	InputTokens  int64
-	OutputTokens int64
-	CachedTokens int64
-	CostUsd      *float64
-	ToolCalls    int32
-	CreatedAt    time.Time
-	StartedAt    *time.Time
-	CompletedAt  *time.Time
+	ID            uuid.UUID
+	RunID         uuid.UUID
+	AgentType     string
+	Role          string
+	Prompt        string
+	Status        string
+	ResultText    string
+	Error         string
+	InputTokens   int64
+	OutputTokens  int64
+	CachedTokens  int64
+	CostUsd       *float64
+	ToolCalls     int32
+	CreatedAt     time.Time
+	StartedAt     *time.Time
+	CompletedAt   *time.Time
+	Tier          string
+	Model         string
+	Effort        string
+	RequestedTier string
+	Reason        string
+	BatchID       *uuid.UUID
 }
 
 type TestEnvironment struct {
@@ -1997,6 +2003,8 @@ type Workspace struct {
 	ImageEngine            string
 	MaxConcurrentSubagents int32
 	MaxParallelDelegations int32
+	SubagentTierRouting    bool
+	SubagentTierModels     json.RawMessage
 }
 
 type WorkspaceMediaDefault struct {

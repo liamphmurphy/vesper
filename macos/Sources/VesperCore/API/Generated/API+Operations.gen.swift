@@ -3314,6 +3314,12 @@ extension API {
     /// MCP subagents (explorer/helper) per active turn.
     /// max_parallel_delegations (1–8, default 3) bounds live parallel delegated
     /// child ticket runs per parent run.
+    /// subagent_tier_routing toggles automatic in-turn subagent tier routing
+    /// (default true); when false, personas behave as before (helpers inherit
+    /// the parent model and effort; explorers use explorer_model or default).
+    /// subagent_tier_models maps harness names (claude-code, codex,
+    /// antigravity) to optional fast/standard/deep model ladders; empty or
+    /// unlisted tiers scale reasoning effort on the parent model instead.
     ///
     /// `PUT /runner/settings`
     public static func updateRunnerSettings(body: RunnerSettings) -> APIRequest<RunnerStatus> {

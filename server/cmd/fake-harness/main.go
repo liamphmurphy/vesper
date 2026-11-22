@@ -338,6 +338,9 @@ func main() {
 			case "--model":
 				model = args[i+1]
 				i++
+			case "--effort":
+				sessionEffort = args[i+1]
+				i++
 			case "--mcp-config":
 				cfgPath = args[i+1]
 				i++
@@ -634,6 +637,8 @@ func main() {
 				_ = os.WriteFile("helper.txt", []byte("written by helper\n"), 0o644)
 			}
 			reply = fmt.Sprintf("wrote=%v", wOK)
+		case strings.Contains(prompt, "REPORT_MODEL"):
+			reply = fmt.Sprintf("model=%s effort=%s", model, sessionEffort)
 		}
 		text(reply)
 		result(false, reply)
@@ -931,7 +936,9 @@ func main() {
 		}
 		type subCall struct {
 			Type   string `json:"type"`
+			Tier   string `json:"tier,omitempty"`
 			Role   string `json:"role"`
+			Reason string `json:"reason,omitempty"`
 			Prompt string `json:"prompt"`
 		}
 		calls := []subCall{{Type: "explorer", Role: "Searcher", Prompt: "inspect"}}
@@ -942,8 +949,18 @@ func main() {
 			}
 		}
 		results := make([]string, len(calls))
+		taskMap := func(c subCall) map[string]any {
+			m := map[string]any{"type": c.Type, "role": c.Role, "prompt": c.Prompt}
+			if c.Tier != "" {
+				m["tier"] = c.Tier
+			}
+			if c.Reason != "" {
+				m["reason"] = c.Reason
+			}
+			return m
+		}
 		runOne := func(idx int, c subCall) {
-			out := call("run_subagent", map[string]any{"type": c.Type, "role": c.Role, "prompt": c.Prompt})
+			out := call("run_subagent", taskMap(c))
 			if errMsg, ok := out["error"].(string); ok && errMsg != "" {
 				results[idx] = fmt.Sprintf("%s:ERR:%s", c.Type, errMsg)
 				return
@@ -954,7 +971,7 @@ func main() {
 		if os.Getenv("FAKE_SUBAGENT_BATCH") != "" {
 			tasks := make([]map[string]any, len(calls))
 			for i, c := range calls {
-				tasks[i] = map[string]any{"type": c.Type, "role": c.Role, "prompt": c.Prompt}
+				tasks[i] = taskMap(c)
 			}
 			out := call("run_subagents", map[string]any{"tasks": tasks})
 			if errMsg, ok := out["error"].(string); ok && errMsg != "" {

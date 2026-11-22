@@ -19533,6 +19533,8 @@ extension API {
         public var childRuns: [Run]
         public var events: [RunEvent]
         public var run: Run
+        /// In-turn explorer/helper subagent jobs spawned during this run.
+        public var subagentJobs: [SubagentJob]?
         public var turns: [RunTurn]
 
         public init(
@@ -19540,12 +19542,14 @@ extension API {
             childRuns: [Run],
             events: [RunEvent],
             run: Run,
+            subagentJobs: [SubagentJob]? = nil,
             turns: [RunTurn]
         ) {
             self.approvals = approvals
             self.childRuns = childRuns
             self.events = events
             self.run = run
+            self.subagentJobs = subagentJobs
             self.turns = turns
         }
 
@@ -19554,6 +19558,7 @@ extension API {
             case childRuns = "child_runs"
             case events
             case run
+            case subagentJobs = "subagent_jobs"
             case turns
         }
 
@@ -19563,6 +19568,7 @@ extension API {
             self.childRuns = try c.decodeIfPresent([Run].self, forKey: .childRuns) ?? []
             self.events = try c.decodeIfPresent([RunEvent].self, forKey: .events) ?? []
             self.run = try c.decode(Run.self, forKey: .run)
+            self.subagentJobs = try c.decodeIfPresent([SubagentJob].self, forKey: .subagentJobs)
             self.turns = try c.decodeIfPresent([RunTurn].self, forKey: .turns) ?? []
         }
 
@@ -19572,6 +19578,7 @@ extension API {
             try c.encode(childRuns, forKey: .childRuns)
             try c.encode(events, forKey: .events)
             try c.encode(run, forKey: .run)
+            try c.encodeIfPresent(subagentJobs, forKey: .subagentJobs)
             try c.encode(turns, forKey: .turns)
         }
     }
@@ -19868,21 +19875,29 @@ extension API {
         public var hostFolderWorkspaces: Swift.Bool?
         public var maxConcurrentSubagents: Swift.Int?
         public var maxParallelDelegations: Swift.Int?
+        public var subagentTierModels: [Swift.String: SubagentTierModels]?
+        public var subagentTierRouting: Swift.Bool?
 
         public init(
             hostFolderWorkspaces: Swift.Bool? = nil,
             maxConcurrentSubagents: Swift.Int? = nil,
-            maxParallelDelegations: Swift.Int? = nil
+            maxParallelDelegations: Swift.Int? = nil,
+            subagentTierModels: [Swift.String: SubagentTierModels]? = nil,
+            subagentTierRouting: Swift.Bool? = nil
         ) {
             self.hostFolderWorkspaces = hostFolderWorkspaces
             self.maxConcurrentSubagents = maxConcurrentSubagents
             self.maxParallelDelegations = maxParallelDelegations
+            self.subagentTierModels = subagentTierModels
+            self.subagentTierRouting = subagentTierRouting
         }
 
         enum CodingKeys: Swift.String, CodingKey {
             case hostFolderWorkspaces = "host_folder_workspaces"
             case maxConcurrentSubagents = "max_concurrent_subagents"
             case maxParallelDelegations = "max_parallel_delegations"
+            case subagentTierModels = "subagent_tier_models"
+            case subagentTierRouting = "subagent_tier_routing"
         }
 
         public init(from decoder: any Decoder) throws {
@@ -19890,6 +19905,8 @@ extension API {
             self.hostFolderWorkspaces = try c.decodeIfPresent(Swift.Bool.self, forKey: .hostFolderWorkspaces)
             self.maxConcurrentSubagents = try c.decodeIfPresent(Swift.Int.self, forKey: .maxConcurrentSubagents)
             self.maxParallelDelegations = try c.decodeIfPresent(Swift.Int.self, forKey: .maxParallelDelegations)
+            self.subagentTierModels = try c.decodeIfPresent([Swift.String: SubagentTierModels].self, forKey: .subagentTierModels)
+            self.subagentTierRouting = try c.decodeIfPresent(Swift.Bool.self, forKey: .subagentTierRouting)
         }
 
         public func encode(to encoder: any Encoder) throws {
@@ -19897,6 +19914,8 @@ extension API {
             try c.encodeIfPresent(hostFolderWorkspaces, forKey: .hostFolderWorkspaces)
             try c.encodeIfPresent(maxConcurrentSubagents, forKey: .maxConcurrentSubagents)
             try c.encodeIfPresent(maxParallelDelegations, forKey: .maxParallelDelegations)
+            try c.encodeIfPresent(subagentTierModels, forKey: .subagentTierModels)
+            try c.encodeIfPresent(subagentTierRouting, forKey: .subagentTierRouting)
         }
     }
 
@@ -19918,6 +19937,10 @@ extension API {
         public var slots: Swift.Int
         /// True while an embedded runner is still starting up before its first heartbeat
         public var starting: Swift.Bool?
+        /// Optional per-harness model overrides for fast, standard, and deep subagent tiers
+        public var subagentTierModels: [Swift.String: SubagentTierModels]?
+        /// Whether in-turn MCP subagents apply tier routing (effort scaling by default or configured model ladders)
+        public var subagentTierRouting: Swift.Bool?
 
         public init(
             busy: Swift.Int,
@@ -19929,7 +19952,9 @@ extension API {
             queued: Swift.Int,
             runners: [RunnerInfo],
             slots: Swift.Int,
-            starting: Swift.Bool? = nil
+            starting: Swift.Bool? = nil,
+            subagentTierModels: [Swift.String: SubagentTierModels]? = nil,
+            subagentTierRouting: Swift.Bool? = nil
         ) {
             self.busy = busy
             self.hostFolderWorkspaces = hostFolderWorkspaces
@@ -19941,6 +19966,8 @@ extension API {
             self.runners = runners
             self.slots = slots
             self.starting = starting
+            self.subagentTierModels = subagentTierModels
+            self.subagentTierRouting = subagentTierRouting
         }
 
         enum CodingKeys: Swift.String, CodingKey {
@@ -19954,6 +19981,8 @@ extension API {
             case runners
             case slots
             case starting
+            case subagentTierModels = "subagent_tier_models"
+            case subagentTierRouting = "subagent_tier_routing"
         }
 
         public init(from decoder: any Decoder) throws {
@@ -19968,6 +19997,8 @@ extension API {
             self.runners = try c.decodeIfPresent([RunnerInfo].self, forKey: .runners) ?? []
             self.slots = try c.decode(Swift.Int.self, forKey: .slots)
             self.starting = try c.decodeIfPresent(Swift.Bool.self, forKey: .starting)
+            self.subagentTierModels = try c.decodeIfPresent([Swift.String: SubagentTierModels].self, forKey: .subagentTierModels)
+            self.subagentTierRouting = try c.decodeIfPresent(Swift.Bool.self, forKey: .subagentTierRouting)
         }
 
         public func encode(to encoder: any Encoder) throws {
@@ -19982,6 +20013,8 @@ extension API {
             try c.encode(runners, forKey: .runners)
             try c.encode(slots, forKey: .slots)
             try c.encodeIfPresent(starting, forKey: .starting)
+            try c.encodeIfPresent(subagentTierModels, forKey: .subagentTierModels)
+            try c.encodeIfPresent(subagentTierRouting, forKey: .subagentTierRouting)
         }
     }
 
@@ -21432,6 +21465,206 @@ extension API {
             try c.encode(prompt, forKey: .prompt)
             try c.encodeIfPresent(providerId, forKey: .providerId)
             try c.encodeIfPresent(title, forKey: .title)
+        }
+    }
+
+    public struct SubagentJob: Codable, Sendable, Equatable {
+        public var agentType: AgentType
+        public var batchId: APINullable<Swift.String>?
+        public var cachedTokens: Swift.Int
+        public var completedAt: APINullable<Swift.String>?
+        public var costUsd: APINullable<Swift.Double>?
+        public var createdAt: Swift.String
+        public var effort: Swift.String
+        public var error: Swift.String
+        public var id: Swift.String
+        public var inputTokens: Swift.Int
+        public var model: Swift.String
+        public var outputTokens: Swift.Int
+        public var prompt: Swift.String
+        public var reason: Swift.String
+        public var requestedTier: Swift.String
+        public var resultText: Swift.String
+        public var role: Swift.String
+        public var startedAt: APINullable<Swift.String>?
+        public var status: Status
+        public var tier: Swift.String
+        public var toolCalls: Swift.Int
+
+        public struct AgentType: APIStringEnum {
+            public let rawValue: Swift.String
+            public init(rawValue: Swift.String) { self.rawValue = rawValue }
+            public static let explorer = AgentType(rawValue: "explorer")
+            public static let helper = AgentType(rawValue: "helper")
+            public static let allKnown: [AgentType] = [explorer, helper]
+        }
+
+        public struct Status: APIStringEnum {
+            public let rawValue: Swift.String
+            public init(rawValue: Swift.String) { self.rawValue = rawValue }
+            public static let queued = Status(rawValue: "queued")
+            public static let running = Status(rawValue: "running")
+            public static let completed = Status(rawValue: "completed")
+            public static let failed = Status(rawValue: "failed")
+            public static let canceled = Status(rawValue: "canceled")
+            public static let allKnown: [Status] = [queued, running, completed, failed, canceled]
+        }
+
+        public init(
+            agentType: AgentType,
+            batchId: APINullable<Swift.String>? = nil,
+            cachedTokens: Swift.Int,
+            completedAt: APINullable<Swift.String>? = nil,
+            costUsd: APINullable<Swift.Double>? = nil,
+            createdAt: Swift.String,
+            effort: Swift.String,
+            error: Swift.String,
+            id: Swift.String,
+            inputTokens: Swift.Int,
+            model: Swift.String,
+            outputTokens: Swift.Int,
+            prompt: Swift.String,
+            reason: Swift.String,
+            requestedTier: Swift.String,
+            resultText: Swift.String,
+            role: Swift.String,
+            startedAt: APINullable<Swift.String>? = nil,
+            status: Status,
+            tier: Swift.String,
+            toolCalls: Swift.Int
+        ) {
+            self.agentType = agentType
+            self.batchId = batchId
+            self.cachedTokens = cachedTokens
+            self.completedAt = completedAt
+            self.costUsd = costUsd
+            self.createdAt = createdAt
+            self.effort = effort
+            self.error = error
+            self.id = id
+            self.inputTokens = inputTokens
+            self.model = model
+            self.outputTokens = outputTokens
+            self.prompt = prompt
+            self.reason = reason
+            self.requestedTier = requestedTier
+            self.resultText = resultText
+            self.role = role
+            self.startedAt = startedAt
+            self.status = status
+            self.tier = tier
+            self.toolCalls = toolCalls
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case agentType = "agent_type"
+            case batchId = "batch_id"
+            case cachedTokens = "cached_tokens"
+            case completedAt = "completed_at"
+            case costUsd = "cost_usd"
+            case createdAt = "created_at"
+            case effort
+            case error
+            case id
+            case inputTokens = "input_tokens"
+            case model
+            case outputTokens = "output_tokens"
+            case prompt
+            case reason
+            case requestedTier = "requested_tier"
+            case resultText = "result_text"
+            case role
+            case startedAt = "started_at"
+            case status
+            case tier
+            case toolCalls = "tool_calls"
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.agentType = try c.decode(AgentType.self, forKey: .agentType)
+            self.batchId = try c.decodeNullable(Swift.String.self, forKey: .batchId)
+            self.cachedTokens = try c.decode(Swift.Int.self, forKey: .cachedTokens)
+            self.completedAt = try c.decodeNullable(Swift.String.self, forKey: .completedAt)
+            self.costUsd = try c.decodeNullable(Swift.Double.self, forKey: .costUsd)
+            self.createdAt = try c.decode(Swift.String.self, forKey: .createdAt)
+            self.effort = try c.decode(Swift.String.self, forKey: .effort)
+            self.error = try c.decode(Swift.String.self, forKey: .error)
+            self.id = try c.decode(Swift.String.self, forKey: .id)
+            self.inputTokens = try c.decode(Swift.Int.self, forKey: .inputTokens)
+            self.model = try c.decode(Swift.String.self, forKey: .model)
+            self.outputTokens = try c.decode(Swift.Int.self, forKey: .outputTokens)
+            self.prompt = try c.decode(Swift.String.self, forKey: .prompt)
+            self.reason = try c.decode(Swift.String.self, forKey: .reason)
+            self.requestedTier = try c.decode(Swift.String.self, forKey: .requestedTier)
+            self.resultText = try c.decode(Swift.String.self, forKey: .resultText)
+            self.role = try c.decode(Swift.String.self, forKey: .role)
+            self.startedAt = try c.decodeNullable(Swift.String.self, forKey: .startedAt)
+            self.status = try c.decode(Status.self, forKey: .status)
+            self.tier = try c.decode(Swift.String.self, forKey: .tier)
+            self.toolCalls = try c.decode(Swift.Int.self, forKey: .toolCalls)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(agentType, forKey: .agentType)
+            try c.encodeIfPresent(batchId, forKey: .batchId)
+            try c.encode(cachedTokens, forKey: .cachedTokens)
+            try c.encodeIfPresent(completedAt, forKey: .completedAt)
+            try c.encodeIfPresent(costUsd, forKey: .costUsd)
+            try c.encode(createdAt, forKey: .createdAt)
+            try c.encode(effort, forKey: .effort)
+            try c.encode(error, forKey: .error)
+            try c.encode(id, forKey: .id)
+            try c.encode(inputTokens, forKey: .inputTokens)
+            try c.encode(model, forKey: .model)
+            try c.encode(outputTokens, forKey: .outputTokens)
+            try c.encode(prompt, forKey: .prompt)
+            try c.encode(reason, forKey: .reason)
+            try c.encode(requestedTier, forKey: .requestedTier)
+            try c.encode(resultText, forKey: .resultText)
+            try c.encode(role, forKey: .role)
+            try c.encodeIfPresent(startedAt, forKey: .startedAt)
+            try c.encode(status, forKey: .status)
+            try c.encode(tier, forKey: .tier)
+            try c.encode(toolCalls, forKey: .toolCalls)
+        }
+    }
+
+    /// Optional model IDs for in-turn subagent tiers on one harness. Empty or omitted tiers stay on the parent model with effort scaling.
+    public struct SubagentTierModels: Codable, Sendable, Equatable {
+        public var deep: Swift.String?
+        public var fast: Swift.String?
+        public var standard: Swift.String?
+
+        public init(
+            deep: Swift.String? = nil,
+            fast: Swift.String? = nil,
+            standard: Swift.String? = nil
+        ) {
+            self.deep = deep
+            self.fast = fast
+            self.standard = standard
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case deep
+            case fast
+            case standard
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.deep = try c.decodeIfPresent(Swift.String.self, forKey: .deep)
+            self.fast = try c.decodeIfPresent(Swift.String.self, forKey: .fast)
+            self.standard = try c.decodeIfPresent(Swift.String.self, forKey: .standard)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeIfPresent(deep, forKey: .deep)
+            try c.encodeIfPresent(fast, forKey: .fast)
+            try c.encodeIfPresent(standard, forKey: .standard)
         }
     }
 

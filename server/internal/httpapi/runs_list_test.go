@@ -292,6 +292,34 @@ func TestListRunEventsAndBatchHydration(t *testing.T) {
 		t.Fatalf("expected ErrNotFound for another user's private chat run, got %v", err)
 	}
 
+	// GetRun hydrates subagent_jobs with spawn decision metadata (reason, tiers, model, effort, batch_id, tokens).
+	batchID := uuid.New()
+	sj, err := q.CreateSubagentJob(ctx, store.CreateSubagentJobParams{
+		RunID:         parentRun.ID,
+		AgentType:     "explorer",
+		Role:          "Code Seeker",
+		Prompt:        "find handlers",
+		Tier:          "fast",
+		Model:         "gemini-3.8-flash",
+		Effort:        "low",
+		RequestedTier: "deep",
+		Reason:        "Locate auth call sites before modifying middleware.",
+		BatchID:       &batchID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := q.CompleteSubagentJob(ctx, store.CompleteSubagentJobParams{
+		ID:           sj.ID,
+		ResultText:   "Found 3 call sites",
+		InputTokens:  1200,
+		OutputTokens: 150,
+		CachedTokens: 400,
+		ToolCalls:    4,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	// GetRun still hydrates child runs via toRuns (including child plan steps and project key).
 	getRec := httptest.NewRecorder()
 	handler.ServeHTTP(getRec, httptest.NewRequest("GET", "/api/v1/runs/"+parentRun.ID.String(), nil))
@@ -307,5 +335,15 @@ func TestListRunEventsAndBatchHydration(t *testing.T) {
 	}
 	if len(detail.ChildRuns) != 1 || detail.ChildRuns[0].Id != childRun.ID || len(detail.ChildRuns[0].Plan) != 1 || detail.ChildRuns[0].ProjectKey == nil || *detail.ChildRuns[0].ProjectKey != "PAY" {
 		t.Fatalf("child hydration wrong: %+v", detail.ChildRuns)
+	}
+	if detail.SubagentJobs == nil || len(*detail.SubagentJobs) != 1 {
+		t.Fatalf("subagent_jobs = %+v, want 1", detail.SubagentJobs)
+	}
+	gotSJ := (*detail.SubagentJobs)[0]
+	if gotSJ.Id != sj.ID || gotSJ.Role != "Code Seeker" || gotSJ.Reason != "Locate auth call sites before modifying middleware." ||
+		gotSJ.RequestedTier != "deep" || gotSJ.Tier != "fast" || gotSJ.Model != "gemini-3.8-flash" || gotSJ.Effort != "low" ||
+		!gotSJ.BatchId.IsSpecified() || gotSJ.BatchId.MustGet() != batchID || gotSJ.Status != "completed" ||
+		gotSJ.ToolCalls != 4 || gotSJ.InputTokens != 1200 || gotSJ.OutputTokens != 150 || gotSJ.CachedTokens != 400 {
+		t.Fatalf("subagent job hydration wrong: %+v", gotSJ)
 	}
 }

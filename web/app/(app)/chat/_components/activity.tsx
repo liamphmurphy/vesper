@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { LinkTarget } from "@/lib/api/client";
 import { useChatRunEvents, useChatToolApprovals, useResolvedLinks } from "@/lib/api/hooks";
-import { activityOf, chatCalls, chatStatus, chatStatusOf, chatSteps, finishedTurn, foldSteps, formatSpan, interimLine, NEXT_STEP_KEY, quietFor, turnActivity, turnClock, turnNotes, turnPulse, turnTrace, type Activity, type ChatStep, type IntentTag, type ToolCall, type TraceStep, type TurnOutcome, type TurnPulse } from "@/lib/chat-ui";
+import { activityOf, bareTool, chatCalls, chatStatus, chatStatusOf, chatSteps, finishedTurn, foldSteps, formatSpan, interimLine, NEXT_STEP_KEY, quietFor, readableModelId, stepDetail, subagentBranches, turnActivity, turnClock, turnNotes, turnPulse, turnTrace, type Activity, type ChatStatusKind, type ChatStep, type IntentTag, type SubagentBranch, type SubagentBranchFlag, type ToolCall, type TraceStep, type TurnOutcome, type TurnPulse } from "@/lib/chat-ui";
 import { useConnectorApprovals } from "@/lib/api/connector-hooks";
 import { useApiSecretApprovals } from "@/lib/api/secret-hooks";
 import { LinkTargets, WikiLink } from "@/components/domain/wikilink";
@@ -81,6 +81,210 @@ function TagPill({ tag }: { tag: IntentTag }) {
   );
 }
 
+const SUBAGENT_DOT: Record<SubagentBranch["status"], string> = {
+  queued: "bg-border-strong",
+  running: "bg-accent motion-safe:animate-pulse",
+  completed: "bg-state-done",
+  failed: "bg-state-blocked",
+  canceled: "bg-border-strong",
+};
+
+const SUBAGENT_TIER_TONE: Record<string, string> = {
+  fast: "bg-pill-neutral-bg text-pill-neutral-fg",
+  standard: "bg-accent-soft text-accent",
+  deep: "bg-pill-review-bg text-pill-review-fg",
+};
+
+const SUBAGENT_FLAG_LABEL: Record<SubagentBranchFlag, string> = {
+  capped: "capped ↓",
+  spinning: "spinning",
+  queue_bound: "queue",
+  serial: "serial!",
+  failed: "failed",
+};
+
+const formatSubMs = (ms?: number) => (ms == null ? "" : ms < 1000 ? `${ms}ms` : formatSpan(ms));
+
+function branchFlagNote(flag: SubagentBranchFlag, b: SubagentBranch): string {
+  switch (flag) {
+    case "capped":
+      return `Requested ${b.requestedTier} → capped at ${b.tier}`;
+    case "spinning":
+      return `${b.toolCalls} tool calls — inspect for looping`;
+    case "queue_bound":
+      return `Queued ${formatSubMs(b.queuedMs)} before running`;
+    case "serial":
+      return "Spawned sequentially without run_subagents batching";
+    case "failed":
+      return b.error ? b.error.split("\n")[0] : "Subagent failed";
+  }
+}
+
+function SubagentWaterfallBar({ branch, span }: { branch: SubagentBranch; span?: { min: number; max: number } }) {
+  const showQueue = branch.queuedMs !== undefined && branch.queuedMs >= 1000;
+  if (!span && !showQueue) return null;
+
+  let qLeft = 0;
+  let qWidth = 0;
+  let aLeft = 0;
+  let aWidth = 0;
+
+  if (span) {
+    const total = Math.max(1, span.max - span.min);
+    const qEnd = branch.startedAt ?? branch.finishedAt ?? span.max;
+    qLeft = Math.max(0, Math.min(100, ((branch.createdAt - span.min) / total) * 100));
+    qWidth = Math.max(0, Math.min(100 - qLeft, ((qEnd - branch.createdAt) / total) * 100));
+    if (branch.startedAt !== undefined) {
+      const aEnd = branch.finishedAt ?? span.max;
+      aLeft = Math.max(0, Math.min(100, ((branch.startedAt - span.min) / total) * 100));
+      aWidth = Math.max(2, Math.min(100 - aLeft, ((aEnd - branch.startedAt) / total) * 100));
+    }
+  } else {
+    const q = branch.queuedMs ?? 0;
+    const a = branch.durationMs ?? 0;
+    const total = Math.max(1, q + a);
+    qWidth = (q / total) * 100;
+    aLeft = qWidth;
+    aWidth = a > 0 ? Math.max(4, (a / total) * 100) : 0;
+  }
+
+  const barColor = branch.status === "failed" ? "bg-state-blocked" : branch.status === "running" ? "bg-accent" : branch.status === "completed" ? "bg-state-done" : "bg-border-strong";
+
+  return (
+    <div aria-hidden="true" className="relative h-1.5 w-full overflow-hidden rounded-full bg-surface-sunken">
+      {qWidth > 0 && (
+        <span
+          style={{ left: `${qLeft}%`, width: `${Math.max(2, qWidth)}%` }}
+          className="absolute inset-y-0 rounded-full border border-border-strong bg-[repeating-linear-gradient(-45deg,transparent,transparent_2px,var(--border-strong)_2px,var(--border-strong)_4px)] opacity-80"
+        />
+      )}
+      {aWidth > 0 && <span style={{ left: `${aLeft}%`, width: `${aWidth}%` }} className={`absolute inset-y-0 rounded-full ${barColor}`} />}
+    </div>
+  );
+}
+
+function SubagentBranchCard({ branch, live, span }: { branch: SubagentBranch; live?: boolean; span?: { min: number; max: number } }) {
+  const [open, setOpen] = useState(
+    () => branch.status === "failed" || branch.flags.length > 0 || Boolean(live && (branch.status === "running" || branch.status === "queued")),
+  );
+  const title = branch.role || branch.agentType;
+  const modelText = [branch.model ? readableModelId(branch.model) : "", branch.effort].filter(Boolean).join(" · ");
+  const spanText = branch.durationMs !== undefined ? formatSubMs(branch.durationMs) : branch.status;
+  const hasBody = Boolean(branch.reason || branch.error || branch.flags.length > 0 || branch.calls.length > 0);
+
+  return (
+    <div data-testid="subagent-branch" className="rounded-md border border-border-subtle bg-surface px-2.5 py-1.5">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full min-w-0 flex-col gap-1 text-left transition-colors duration-(--motion-fast)"
+      >
+        <div className="flex w-full min-w-0 items-center gap-1.5 text-12">
+          <span aria-hidden="true" className={`size-2 flex-none rounded-full ${SUBAGENT_DOT[branch.status]}`} />
+          <span className="min-w-0 truncate font-medium text-fg">{title}</span>
+          {branch.tier && (
+            <span className={`flex-none rounded-full px-1.5 py-[1px] font-mono text-10 font-medium ${SUBAGENT_TIER_TONE[branch.tier] ?? "bg-pill-neutral-bg text-pill-neutral-fg"}`}>
+              {branch.tier}
+            </span>
+          )}
+          {modelText && <span className="min-w-0 truncate text-11 text-fg-tertiary">{modelText}</span>}
+          {branch.flags.map((f) => (
+            <span
+              key={f}
+              className={`flex-none rounded px-1 py-[1px] font-mono text-10 font-medium ${f === "failed" ? "bg-pill-blocked-bg text-pill-blocked-fg" : "bg-pill-human-bg text-pill-human-fg"}`}
+            >
+              {SUBAGENT_FLAG_LABEL[f]}
+            </span>
+          ))}
+          <span className="ml-auto flex flex-none items-center gap-1.5 font-mono text-11 tabular-nums text-fg-tertiary">
+            <span>{spanText}</span>
+            <span>·</span>
+            <span>{branch.toolCalls}c</span>
+            {hasBody && <span aria-hidden="true">{open ? "▾" : "▸"}</span>}
+          </span>
+        </div>
+        <SubagentWaterfallBar branch={branch} span={span} />
+      </button>
+      {open && hasBody && (
+        <div className="mt-1.5 flex flex-col gap-1.5 border-t border-border-subtle pt-1.5 text-12">
+          {branch.reason && (
+            <p data-testid="subagent-reason" className="border-l-2 border-border-strong pl-2 italic text-fg-secondary">
+              {branch.reason}
+            </p>
+          )}
+          {branch.flags.length > 0 && (
+            <ul className="flex flex-col gap-0.5 text-11">
+              {branch.flags.map((f) => (
+                <li key={f} className={f === "failed" ? "text-pill-blocked-fg" : "text-pill-human-fg"}>
+                  {branchFlagNote(f, branch)}
+                </li>
+              ))}
+            </ul>
+          )}
+          {branch.error && <p className="whitespace-pre-wrap rounded bg-pill-blocked-bg px-2 py-1 font-mono text-11 text-pill-blocked-fg">{branch.error}</p>}
+          {branch.calls.length > 0 && (
+            <ul className="flex flex-col gap-0.5 font-mono text-11">
+              {branch.calls.map((c) => (
+                <li key={c.key} className="flex items-center gap-2">
+                  <span className={c.failed ? "text-pill-blocked-fg" : "text-fg"}>{bareTool(c.tool)}</span>
+                  <span className="min-w-0 flex-1 truncate text-fg-tertiary">{str(c.input)}</span>
+                  <span className={c.failed ? "text-pill-blocked-fg" : "text-fg-tertiary"}>{c.failed ? "error" : c.done ? "done" : "running"}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SubagentBranches({ branches, live }: { branches: SubagentBranch[]; live?: boolean }) {
+  type Group = { kind: "single"; branch: SubagentBranch } | { kind: "batch"; batchId: string; branches: SubagentBranch[]; span: { min: number; max: number } };
+  const groups: Group[] = [];
+  let i = 0;
+  while (i < branches.length) {
+    const cur = branches[i];
+    if (!cur.batchId) {
+      groups.push({ kind: "single", branch: cur });
+      i++;
+      continue;
+    }
+    let j = i + 1;
+    while (j < branches.length && branches[j].batchId === cur.batchId) j++;
+    const slice = branches.slice(i, j);
+    if (slice.length >= 2) {
+      const min = Math.min(...slice.map((b) => b.createdAt));
+      const max = Math.max(min + 1, ...slice.flatMap((b) => [b.createdAt, b.startedAt ?? b.createdAt, b.finishedAt ?? b.startedAt ?? b.createdAt]));
+      groups.push({ kind: "batch", batchId: cur.batchId, branches: slice, span: { min, max } });
+    } else {
+      groups.push({ kind: "single", branch: cur });
+    }
+    i = j;
+  }
+
+  return (
+    <div data-testid="subagent-branches" className="flex flex-col gap-1.5">
+      {groups.map((g, idx) =>
+        g.kind === "batch" ? (
+          <div key={`${g.batchId}:${idx}`} className="flex flex-col gap-1.5 rounded-md border border-dashed border-border-strong bg-surface-sunken/40 p-2">
+            <div className="flex items-center justify-between gap-2 font-mono text-10 text-fg-tertiary">
+              <span>Parallel batch · {g.branches.length} subagents</span>
+              <span>{formatSubMs(g.span.max - g.span.min)}</span>
+            </div>
+            {g.branches.map((b) => (
+              <SubagentBranchCard key={b.id} branch={b} live={live} span={g.span} />
+            ))}
+          </div>
+        ) : (
+          <SubagentBranchCard key={g.branch.id} branch={g.branch} live={live} />
+        ),
+      )}
+    </div>
+  );
+}
+
 /** Where "View reasoning" on a chat step lands in the Activity tab. */
 export const traceStepId = (key: string) => `trace-step-${key.replace(/[^\w-]/g, "_")}`;
 /** A finished turn's step, named by the reply it led to: step keys repeat across a run's turns. */
@@ -128,6 +332,7 @@ function TurnTrace({ steps, live, scope, focus }: { steps: TraceStep[]; live?: b
                 </div>
               </details>
             )}
+            {s.subagents && s.subagents.length > 0 && <SubagentBranches branches={s.subagents} live={live} />}
             {s.calls.length > 0 && <CallList calls={s.calls} />}
           </li>
         );
@@ -222,6 +427,117 @@ function StepRail({ steps, now, stopping, awaiting, onOpenStep, fold = foldSteps
   );
 }
 
+/** A compact per-subagent working card rendered inside ChatStatus while subagents run. */
+function SubagentWorkCard({ branch, now, stopping, onOpen }: { branch: SubagentBranch; now: number; stopping?: boolean; onOpen?: () => void }) {
+  const latestCall = branch.calls.at(-1);
+  const liveKind: ChatStatusKind = branch.status === "queued"
+    ? "thinking"
+    : latestCall
+      ? chatStatusOf(latestCall).kind
+      : "thinking";
+  const scene = useHeldScene(liveKind);
+  const active = branch.status === "running" || branch.status === "queued";
+  const title = branch.role || branch.agentType;
+  const modelText = [branch.model ? readableModelId(branch.model) : "", branch.effort].filter(Boolean).join(" · ");
+
+  let statusLine: string;
+  if (branch.status === "queued") {
+    statusLine = "Queued…";
+  } else if (branch.status === "running") {
+    statusLine = latestCall ? stepDetail(latestCall) : "Working…";
+  } else if (branch.status === "completed") {
+    statusLine = "Done";
+  } else if (branch.status === "failed") {
+    statusLine = "Failed";
+  } else {
+    statusLine = "Canceled";
+  }
+
+  const elapsedMs = branch.status === "running" && branch.startedAt !== undefined
+    ? Math.max(0, now - branch.startedAt)
+    : branch.durationMs;
+  const metaParts = [
+    elapsedMs !== undefined ? formatSubMs(elapsedMs) : branch.status === "queued" ? "queued" : undefined,
+    branch.toolCalls > 0 ? `${branch.toolCalls} ${branch.toolCalls === 1 ? "call" : "calls"}` : undefined,
+  ].filter(Boolean);
+
+  const inner = (
+    <div className={`flex min-w-0 items-center gap-2.5 rounded-[9px] border px-2 py-1.5 transition-colors duration-(--motion-fast) ${
+      branch.status === "running"
+        ? "border-accent/35 bg-surface-sunken/50"
+        : branch.status === "failed"
+          ? "border-state-blocked/35 bg-pill-blocked-bg/30"
+          : "border-border-subtle bg-surface-sunken/30"
+    } ${onOpen ? "hover:border-border-strong hover:bg-hover/60" : ""}`}>
+      {active ? (
+        <ActivityScene current={scene.current} previous={scene.previous} stopping={stopping || branch.status === "queued"} compact />
+      ) : (
+        <span aria-hidden className="grid h-[36px] w-[72px] flex-none place-items-center rounded-[7px] border border-border-subtle bg-surface-sunken/60 @max-[320px]:hidden">
+          <StepGlyph step={{ state: branch.status === "failed" ? "failed" : "done", kind: liveKind }} />
+        </span>
+      )}
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <div className="flex min-w-0 items-center gap-1.5 text-12">
+          <span aria-hidden className={`size-1.5 flex-none rounded-full ${SUBAGENT_DOT[branch.status]}`} />
+          <span className="min-w-0 truncate font-medium text-fg">{title}</span>
+          {branch.tier && (
+            <span className={`flex-none rounded-full px-1.5 py-[1px] font-mono text-10 font-medium ${SUBAGENT_TIER_TONE[branch.tier] ?? "bg-pill-neutral-bg text-pill-neutral-fg"}`}>
+              {branch.tier}
+            </span>
+          )}
+          {metaParts.length > 0 && (
+            <span className="ml-auto flex-none font-mono text-11 tabular-nums text-fg-tertiary">
+              {metaParts.join(" · ")}
+            </span>
+          )}
+        </div>
+        <div className="flex min-w-0 items-center gap-1.5 text-11 text-fg-secondary">
+          <span className="min-w-0 truncate">{statusLine}</span>
+          {modelText && <span className="ml-auto hidden min-w-0 flex-none truncate font-mono text-10 text-fg-tertiary @min-[380px]:inline">{modelText}</span>}
+        </div>
+      </div>
+    </div>
+  );
+
+  if (!onOpen) return <li data-testid="subagent-work-card">{inner}</li>;
+  return (
+    <li data-testid="subagent-work-card">
+      <button type="button" onClick={onOpen} className="block w-full text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent rounded-[9px]">
+        {inner}
+      </button>
+    </li>
+  );
+}
+
+function SubagentWorkCards({ branches, now, stopping, onOpenStep }: { branches: SubagentBranch[]; now: number; stopping?: boolean; onOpenStep?: (key: string) => void }) {
+  const activeCount = branches.filter((b) => b.status === "running" || b.status === "queued").length;
+  const doneCount = branches.length - activeCount;
+  return (
+    <div data-testid="subagent-work-cards" className="border-t border-border-subtle px-3 py-2">
+      <div className="mb-1.5 flex items-center justify-between text-11 text-fg-tertiary">
+        <span className="font-medium text-fg-secondary">
+          {branches.length === 1 ? "Subagent" : `Subagents (${branches.length})`}
+        </span>
+        <span className="tabular-nums">
+          {activeCount > 0 ? `${activeCount} active` : `${doneCount} finished`}
+          {activeCount > 0 && doneCount > 0 ? ` · ${doneCount} done` : ""}
+        </span>
+      </div>
+      <ul aria-label="Active subagents" className="flex flex-col gap-1.5">
+        {branches.map((b) => (
+          <SubagentWorkCard
+            key={b.id}
+            branch={b}
+            now={now}
+            stopping={stopping}
+            onOpen={onOpenStep ? () => onOpenStep(String(b.firstSeq)) : undefined}
+          />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 /**
  * The chat tab's card while a turn runs: "<Persona> is reading the code…" beside a small
  * scene for that kind of work, from the newest tool call at a high level only. The exact
@@ -239,18 +555,20 @@ export function ChatStatus({ chatId, disabled, runId, since, persona, stopping, 
   const q = useChatRunEvents(runId);
   const now = useNow();
   const calls = useMemo(() => chatCalls(q.data, since), [q.data, since]);
+  const branches = useMemo(() => subagentBranches(q.data, since), [q.data, since]);
   const clock = useMemo(() => turnClock(q.data, since), [q.data, since]);
   const activity = useMemo(() => turnActivity(q.data, since), [q.data, since]);
   const pulse = turnPulse(calls, clock, now);
-  const status = useMemo(() => chatStatus(calls, pulse.between, activity), [calls, pulse.between, activity]);
+  const status = useMemo(() => chatStatus(calls, pulse.between, activity, branches), [calls, pulse.between, activity, branches]);
   const notes = useMemo(() => turnNotes(q.data, since), [q.data, since]);
-  const { steps, planned } = useMemo(() => chatSteps(calls, notes, { between: pulse.between, clock, activity }), [calls, notes, pulse.between, clock, activity]);
+  const { steps, planned } = useMemo(() => chatSteps(calls, notes, { between: pulse.between, clock, activity, branches }), [calls, notes, pulse.between, clock, activity, branches]);
   // A dock is narrow: its card starts as a strip (scene, status, progress and the step under way) so the conversation stays in view.
   const [collapsed, setCollapsed] = useState(folded);
   // Asking once per quiet stretch: the button comes back only after something happens.
   const [askedAt, setAskedAt] = useState<number>();
   const scene = useHeldScene(status.kind);
   const hasRail = steps.length > 1 || !!steps[0]?.detail || !!steps[0]?.intent;
+  const hasDetails = hasRail || branches.length > 0;
   const done = steps.filter((s) => s.state === "done").length;
   const work = steps.filter((s) => s.key !== NEXT_STEP_KEY).length;
   // A tool call or API request waiting on the person is part of this turn, so it opens in this card.
@@ -307,7 +625,7 @@ export function ChatStatus({ chatId, disabled, runId, since, persona, stopping, 
             )}
           </p>
         </div>
-        {hasRail && (
+        {hasDetails && (
           <button
             type="button"
             aria-expanded={!collapsed}
@@ -344,6 +662,9 @@ export function ChatStatus({ chatId, disabled, runId, since, persona, stopping, 
           )}
         </div>
       )}
+      {!collapsed && branches.length > 0 && (
+        <SubagentWorkCards branches={branches} now={now} stopping={stopping} onOpenStep={onOpenStep} />
+      )}
       {hasRail && (
         collapsed ? (
           <>
@@ -376,8 +697,9 @@ export function ChatStatus({ chatId, disabled, runId, since, persona, stopping, 
 export function ChatPresence({ runId, since, persona, dotOnly = false, onOpen }: { runId?: string; since?: string; persona: PersonaLook; dotOnly?: boolean; onOpen?: () => void }) {
   const q = useChatRunEvents(runId);
   const calls = useMemo(() => chatCalls(q.data, since), [q.data, since]);
+  const branches = useMemo(() => subagentBranches(q.data, since), [q.data, since]);
   const activity = useMemo(() => turnActivity(q.data, since), [q.data, since]);
-  const status = useMemo(() => chatStatus(calls, false, activity), [calls, activity]);
+  const status = useMemo(() => chatStatus(calls, false, activity, branches), [calls, activity, branches]);
   return (
     <button type="button" onClick={onOpen} disabled={!onOpen} data-testid="chat-presence" data-dot-only={dotOnly || undefined} title={dotOnly ? `${persona.name} · ${status.phrase}… (open Activity)` : "Open Activity"}
       className="flex min-w-0 max-w-full items-center gap-1.5 truncate px-1.5 text-left text-12 text-state-progress hover:underline disabled:hover:no-underline">

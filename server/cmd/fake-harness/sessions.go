@@ -23,17 +23,18 @@ const (
 )
 
 var (
-	sessionProto string
-	outMu        sync.Mutex
-	inMu         sync.Mutex
-	pendingRPC   = map[string]chan json.RawMessage{}
-	interrupted  = make(chan struct{})
-	interruptOne sync.Once
-	stdinClosed  = make(chan struct{})
-	acpPromptID  json.RawMessage
-	codexTurnID  = "turn_1"
-	policySeq    atomic.Int64
-	steers       = make(chan string, 16)
+	sessionProto  string
+	sessionEffort string
+	outMu         sync.Mutex
+	inMu          sync.Mutex
+	pendingRPC    = map[string]chan json.RawMessage{}
+	interrupted   = make(chan struct{})
+	interruptOne  sync.Once
+	stdinClosed   = make(chan struct{})
+	acpPromptID   json.RawMessage
+	codexTurnID   = "turn_1"
+	policySeq     atomic.Int64
+	steers        = make(chan string, 16)
 )
 
 func pushSteer(msg string) {
@@ -336,8 +337,9 @@ func runCodexAppServer(args []string) (turnPrompt, turnResume, turnModel, mcpURL
 			writeOutJSON(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{"thread": map[string]any{"id": session}}})
 		case "turn/start":
 			var p struct {
-				Model string `json:"model"`
-				Input []struct {
+				Model  string `json:"model"`
+				Effort string `json:"effort"`
+				Input  []struct {
 					Type string `json:"type"`
 					Text string `json:"text"`
 					Path string `json:"path"`
@@ -346,6 +348,9 @@ func runCodexAppServer(args []string) (turnPrompt, turnResume, turnModel, mcpURL
 			_ = json.Unmarshal(msg.Params, &p)
 			if p.Model != "" {
 				turnModel = p.Model
+			}
+			if p.Effort != "" {
+				sessionEffort = p.Effort
 			}
 			for _, in := range p.Input {
 				switch in.Type {
@@ -433,6 +438,9 @@ func runAgyACPSession() (turnPrompt, turnResume, turnModel string, inline []stri
 			_ = json.Unmarshal(msg.Params, &p)
 			if p.ConfigID == "model" && p.Value != "" {
 				turnModel = p.Value
+			}
+			if p.ConfigID == "thought_level" && p.Value != "" {
+				sessionEffort = p.Value
 			}
 			writeOutJSON(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{}})
 		case "session/prompt":

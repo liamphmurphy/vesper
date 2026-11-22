@@ -1,7 +1,7 @@
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
-import { connectorCall, activityOf, bareTool, chatStatus, chatCalls, chatStatusOf, chatSteps, stepDetail, chatTitle, foldSteps, formatSpan, NEXT_STEP_AFTER_MS, NEXT_STEP_KEY, QUIET_AFTER_MS, QUIET_RUNNING_MS, quietFor, turnActivity, turnClock, turnPulse, interimLine, intentOf, linkLabel, needsSwitchConfirm, replyCost, runningSince, toolCalls, turnNotes, turnTrace, turnWindows, finishedTurn, endedTurns, groupByDay, catalogModelLabel, readableModelId, rowMark } from "./chat-ui.ts";
+import { connectorCall, activityOf, bareTool, chatStatus, chatCalls, chatStatusOf, chatSteps, liveSubagentStatus, stepDetail, chatTitle, foldSteps, formatSpan, NEXT_STEP_AFTER_MS, NEXT_STEP_KEY, QUIET_AFTER_MS, QUIET_RUNNING_MS, quietFor, subagentBranches, turnActivity, turnClock, turnPulse, interimLine, intentOf, linkLabel, needsSwitchConfirm, replyCost, runningSince, toolCalls, turnNotes, turnTrace, turnWindows, finishedTurn, endedTurns, groupByDay, catalogModelLabel, readableModelId, rowMark } from "./chat-ui.ts";
 
 test("rowMark shows an unread dot until the chat is read or opened, and running wins", () => {
   assert.equal(rowMark({ state: "idle", unread: 0 }), null);
@@ -472,8 +472,8 @@ test("stepDetail names canvases, workflows, tickets, images, personas, runs and 
     [{ tool: "mcp__github__get_issue", input: { owner: "o", repo: "r", issue_number: 12 } }, "Using Github: get_issue"],
     [{ tool: "mcp__lazyagents__save_memory", input: { body: "private" } }, "Making a note"],
     [{ tool: "mcp__lazyagents__canvas_read", input: { canvas_id: "unknown" } }, "Looking at a canvas"],
-    [{ tool: "mcp__lazyagents__run_subagent", input: { type: "explorer", role: "Code Searcher", prompt: "secret" } }, "Delegating “Code Searcher”"],
-    [{ tool: "mcp__lazyagents__run_subagents", input: { tasks: [{ type: "helper", role: "Worker A", prompt: "secret" }, { type: "helper", role: "Worker B", prompt: "secret" }] } }, "Running 2 subagents"],
+    [{ tool: "mcp__lazyagents__run_subagent", input: { type: "explorer", tier: "fast", role: "Code Searcher", prompt: "secret" } }, "Delegating “Code Searcher”"],
+    [{ tool: "mcp__lazyagents__run_subagents", input: { tasks: [{ type: "helper", tier: "fast", role: "Worker A", prompt: "secret" }, { type: "helper", tier: "deep", role: "Worker B", prompt: "secret" }] } }, "Running 2 subagents"],
     [{ tool: "mcp__lazyagents__run_subagents", input: { tasks: [{ type: "explorer", role: "Solo Reader", prompt: "secret" }] } }, "Delegating “Solo Reader”"],
   ];
   for (const [call, want] of cases) assert.equal(stepDetail(call), want, call.tool);
@@ -933,4 +933,194 @@ test("turns that ended without a reply keep a strip under their failure or unans
   assert.equal(endedTurns(list, true).has("u4"), false);
   // A system note without a turn (a switch, a persona joining) isn't a failure.
   assert.equal(endedTurns([list[0], list[4]], false).get("u1")?.outcome, "stopped");
+});
+
+test("subagent child events stay out of parent toolCalls, turnNotes, and clock.calls while keeping clock.last alive", () => {
+  const events = [
+    say(1, "Let me check."),
+    think(2, "Wait for search."),
+    { seq: 3, type: "tool_call", at: "2026-11-09T10:00:03Z", payload: { id: "p1", tool: "mcp__lazyagents__run_subagents", input: { tasks: [{ type: "explorer", prompt: "a" }] } } },
+    { seq: 4, type: "lifecycle", at: "2026-11-09T10:00:04Z", payload: { state: "subagent_started", subagent: true, subagent_id: "j1", subagent_type: "explorer" } },
+    { seq: 5, type: "tool_call", at: "2026-11-09T10:00:25Z", payload: { id: "sub_read_1", tool: "Read", input: { file_path: "x.go" }, subagent: true, subagent_id: "j1" } },
+    { seq: 6, type: "tool_result", at: "2026-11-09T10:00:30Z", payload: { id: "sub_read_1", output: "ok", subagent: true, subagent_id: "j1" } },
+    { seq: 7, type: "tool_result", at: "2026-11-09T10:00:35Z", payload: { id: "p1", output: "{}" } },
+    say(8, "Done."),
+  ];
+  const calls = toolCalls(events);
+  assert.deepEqual(calls.map((c) => [c.key, c.tool, c.done]), [[3, "mcp__lazyagents__run_subagents", true]]);
+  // Parent thinking note at seq 2 must still anchor to parent call 3, not child call 5.
+  assert.deepEqual(turnNotes(events), [{ kind: "thinking", text: "Wait for search.", before: 3 }]);
+  const clock = turnClock(events);
+  assert.equal(clock.calls.size, 1);
+  assert.equal(clock.calls.has(5), false);
+  assert.equal(clock.last, Date.parse("2026-11-09T10:00:35Z"));
+  // Even before the parent call returns, child events keep clock.last fresh.
+  assert.equal(turnClock(events.slice(0, 6)).last, Date.parse("2026-11-09T10:00:30Z"));
+});
+
+test("subagentBranches merges lifecycle + parallel child calls without id collisions and flags anomalies", () => {
+  const ts = (sec) => `2026-11-09T10:00:${String(sec).padStart(2, "0")}Z`;
+  const events = [
+    {
+      seq: 2,
+      type: "lifecycle",
+      at: ts(2),
+      payload: {
+        state: "subagent_queued",
+        subagent: true,
+        subagent_id: "j1",
+        batch_id: "batch-1",
+        batch_size: 2,
+        subagent_type: "explorer",
+        subagent_role: "Trace callers",
+        reason: "Find every caller",
+        requested_tier: "deep",
+        subagent_tier: "standard",
+        subagent_model: "claude-sonnet-4-6",
+        subagent_effort: "medium",
+        created_at: ts(2),
+      },
+    },
+    {
+      seq: 3,
+      type: "lifecycle",
+      at: ts(2),
+      payload: {
+        state: "subagent_queued",
+        subagent: true,
+        subagent_id: "j2",
+        batch_id: "batch-1",
+        batch_size: 2,
+        subagent_type: "helper",
+        subagent_role: "Run tests",
+        subagent_tier: "fast",
+        subagent_model: "claude-haiku-4-5",
+        subagent_effort: "low",
+        created_at: ts(2),
+      },
+    },
+    { seq: 4, type: "lifecycle", at: ts(3), payload: { state: "subagent_started", subagent: true, subagent_id: "j1", queued_ms: 1000, started_at: ts(3) } },
+    { seq: 5, type: "lifecycle", at: ts(10), payload: { state: "subagent_started", subagent: true, subagent_id: "j2", queued_ms: 8000, started_at: ts(10) } },
+    // Duplicate local call ids ("sub_read_1") emitted concurrently by j1 and j2:
+    { seq: 6, type: "tool_call", at: ts(4), payload: { id: "sub_read_1", tool: "Read", input: { file_path: "a.go" }, subagent: true, subagent_id: "j1" } },
+    { seq: 7, type: "tool_call", at: ts(11), payload: { id: "sub_read_1", tool: "Bash", input: { command: "go test" }, subagent: true, subagent_id: "j2" } },
+    { seq: 8, type: "tool_result", at: ts(5), payload: { id: "sub_read_1", output: "a ok", subagent: true, subagent_id: "j1" } },
+    { seq: 9, type: "tool_result", at: ts(12), payload: { id: "sub_read_1", output: "exit 1", is_error: true, subagent: true, subagent_id: "j2" } },
+    {
+      seq: 10,
+      type: "lifecycle",
+      at: ts(7),
+      payload: { state: "subagent_finished", subagent: true, subagent_id: "j1", status: "completed", tool_calls: 21, queued_ms: 1000, duration_ms: 4000 },
+    },
+    {
+      seq: 11,
+      type: "lifecycle",
+      at: ts(13),
+      payload: { state: "subagent_finished", subagent: true, subagent_id: "j2", status: "failed", error: "test failed", tool_calls: 1, queued_ms: 8000, duration_ms: 3000 },
+    },
+    // Three unbatched branches trigger "serial"; legacy tool_call without lifecycle events is also reconstructed:
+    { seq: 12, type: "lifecycle", at: ts(20), payload: { state: "subagent_queued", subagent: true, subagent_id: "s1", subagent_type: "explorer", subagent_tier: "fast", created_at: ts(20) } },
+    { seq: 13, type: "lifecycle", at: ts(21), payload: { state: "subagent_queued", subagent: true, subagent_id: "s2", subagent_type: "explorer", subagent_tier: "fast", created_at: ts(21) } },
+    { seq: 14, type: "tool_call", at: ts(22), payload: { id: "legacy_1", tool: "Grep", input: { pattern: "foo" }, subagent: true, subagent_id: "s3", subagent_type: "explorer", subagent_role: "Legacy search" } },
+  ];
+
+  const branches = subagentBranches(events);
+  assert.equal(branches.length, 5);
+  const [j1, j2, , , s3] = branches;
+
+  assert.equal(j1.batchId, "batch-1");
+  assert.equal(j1.batchSize, 2);
+  assert.equal(j1.reason, "Find every caller");
+  assert.equal(j1.calls.length, 1);
+  assert.equal(j1.calls[0].tool, "Read");
+  assert.equal(j1.calls[0].output, "a ok");
+  assert.deepEqual(j1.flags, ["capped", "spinning"]);
+
+  assert.equal(j2.calls.length, 1);
+  assert.equal(j2.calls[0].tool, "Bash");
+  assert.equal(j2.calls[0].failed, true);
+  assert.equal(j2.error, "test failed");
+  // Omitted requested_tier must not mark "capped":
+  assert.deepEqual(j2.flags, ["failed", "queue_bound"]);
+
+  assert.equal(s3.role, "Legacy search");
+  assert.equal(s3.status, "running");
+  assert.deepEqual(s3.flags, ["serial"]);
+});
+
+test("turnTrace attaches subagents to their spawning run_subagent step and falls back to prelude", () => {
+  const plan = (seq, a, b) => call(seq, "TodoWrite", { todos: [{ content: "Inspect", status: a }, { content: "Patch", status: b }] });
+  const events = [
+    plan(1, "in_progress", "pending"),
+    call(2, "mcp__lazyagents__run_subagents", { tasks: [{ type: "explorer", role: "Search", prompt: "x" }] }),
+    { seq: 3, type: "lifecycle", at: "2026-11-09T10:00:03Z", payload: { state: "subagent_queued", subagent: true, subagent_id: "j1", subagent_type: "explorer", subagent_role: "Search", subagent_tier: "fast", created_at: "2026-11-09T10:00:03Z" } },
+    result(4, "c2"),
+    plan(5, "completed", "in_progress"),
+    call(6, "Edit", { file_path: "a.ts" }),
+    result(7, "c6"),
+  ];
+  const trace = turnTrace(events);
+  assert.equal(trace[0].subagents?.length, 1);
+  assert.equal(trace[0].subagents?.[0].id, "j1");
+  assert.equal(trace[1].subagents, undefined);
+
+  const orphanOnly = turnTrace([
+    { seq: 1, type: "lifecycle", at: "2026-11-09T10:00:01Z", payload: { state: "subagent_queued", subagent: true, subagent_id: "j0", subagent_type: "explorer", created_at: "2026-11-09T10:00:01Z" } },
+  ]);
+  assert.equal(orphanOnly.length, 1);
+  assert.equal(orphanOnly[0].key, "prelude");
+  assert.equal(orphanOnly[0].subagents?.[0].id, "j0");
+});
+
+test("liveSubagentStatus, chatStatus, and chatSteps reflect live subagent progress safely", () => {
+  const ts = (s) => `2026-11-09T10:00:${String(s).padStart(2, "0")}Z`;
+  const events = [
+    call(1, "mcp__lazyagents__run_subagents", { tasks: [{ type: "explorer", role: "Trace callers", prompt: "x" }, { type: "helper", role: "Run tests", prompt: "y" }] }),
+    { seq: 2, type: "lifecycle", at: ts(1), payload: { state: "subagent_queued", subagent: true, subagent_id: "j1", subagent_batch_id: "b1", subagent_batch_size: 2, subagent_type: "explorer", subagent_role: "Trace callers", subagent_tier: "fast", created_at: ts(1) } },
+    { seq: 3, type: "lifecycle", at: ts(1), payload: { state: "subagent_queued", subagent: true, subagent_id: "j2", subagent_batch_id: "b1", subagent_batch_size: 2, subagent_type: "helper", subagent_role: "Run tests", subagent_tier: "standard", created_at: ts(1) } },
+  ];
+
+  // While all queued:
+  let calls = chatCalls(events);
+  let branches = subagentBranches(events);
+  assert.deepEqual(chatStatus(calls, false, undefined, branches), { kind: "subagent", phrase: "queuing 2 subagents" });
+  assert.equal(chatSteps(calls, [], { branches }).steps[0].detail, "2 queued");
+
+  // One starts reading a file (full path must not leak into chat status/detail):
+  events.push(
+    { seq: 4, type: "lifecycle", at: ts(2), payload: { state: "subagent_started", subagent: true, subagent_id: "j1", subagent_type: "explorer", subagent_role: "Trace callers", started_at: ts(2) } },
+    { seq: 5, type: "tool_call", at: ts(3), payload: { id: "s1", tool: "Read", input: { file_path: "/secret/workspace/server/internal/runner/subagent.go" }, subagent: true, subagent_id: "j1", subagent_type: "explorer", subagent_role: "Trace callers" } },
+  );
+  calls = chatCalls(events);
+  branches = subagentBranches(events);
+  const stRunning = chatStatus(calls, false, undefined, branches);
+  assert.equal(stRunning.kind, "subagent");
+  assert.equal(stRunning.phrase, "running 1 of 2 subagents · reading the code");
+  assert.equal(chatSteps(calls, [], { branches }).steps[0].detail, "1/2 running · 1 call · Trace callers: Reading subagent.go");
+  assert.ok(!stRunning.phrase.includes("/secret/workspace"));
+
+  // First finishes, second runs a test command (raw command must not leak):
+  events.push(
+    { seq: 6, type: "tool_result", at: ts(4), payload: { id: "s1", output: "ok", subagent: true, subagent_id: "j1" } },
+    { seq: 7, type: "lifecycle", at: ts(5), payload: { state: "subagent_finished", subagent: true, subagent_id: "j1", status: "completed", tool_calls: 1, finished_at: ts(5) } },
+    { seq: 8, type: "lifecycle", at: ts(5), payload: { state: "subagent_started", subagent: true, subagent_id: "j2", subagent_type: "helper", subagent_role: "Run tests", started_at: ts(5) } },
+    { seq: 9, type: "tool_call", at: ts(6), payload: { id: "s2", tool: "Bash", input: { command: "SECRET=xyz go test ./internal/runner" }, subagent: true, subagent_id: "j2", subagent_type: "helper", subagent_role: "Run tests" } },
+  );
+  calls = chatCalls(events);
+  branches = subagentBranches(events);
+  const stSecond = chatStatus(calls, false, undefined, branches);
+  assert.equal(stSecond.phrase, "running 1 of 2 subagents (1 done) · running tests");
+  const detailSecond = chatSteps(calls, [], { branches }).steps[0].detail ?? "";
+  assert.ok(detailSecond.includes("1/2 done"));
+  assert.ok(detailSecond.includes("2 calls"));
+  assert.ok(!detailSecond.includes("SECRET=xyz"));
+
+  // Once the parent delegation call finishes, liveSubagentStatus no longer overrides:
+  events.push(result(10, "c1"));
+  calls = chatCalls(events);
+  assert.equal(chatStatus(calls, false, undefined, branches).phrase, "delegating to a helper");
+
+  // Single subagent shows role and latest safe activity:
+  const single = liveSubagentStatus([branches[1]]);
+  assert.equal(single?.phrase, "running Run tests · running tests");
 });

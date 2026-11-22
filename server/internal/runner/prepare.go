@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -793,6 +794,20 @@ func chatMemoryIndex(ctx context.Context, q *store.Queries, run store.Run) (stri
 // planning runs never load a persona. Errors only come from chat turns, with
 // the outcome to show in the conversation.
 func agentsSection(ctx context.Context, q *store.Queries, c runCtx, paths []string) ([]byte, []agentdef.Skill, string, error) {
+	maxParallelDelegations := runs.MaxParallelDelegations
+	baseSpec := c.spec
+	if q != nil {
+		if cfg, err := q.WorkspaceRunnerSettings(ctx, c.run.WorkspaceID); err == nil {
+			maxParallelDelegations = runs.ClampParallelDelegations(int(cfg.MaxParallelDelegations))
+			if !cfg.SubagentTierRouting {
+				baseSpec.HarnessOptions = maps.Clone(baseSpec.HarnessOptions)
+				if baseSpec.HarnessOptions == nil {
+					baseSpec.HarnessOptions = map[string]string{}
+				}
+				baseSpec.HarnessOptions[agentdef.OptionSubagentTierRouting] = "false"
+			}
+		}
+	}
 	switch c.run.Purpose {
 	case "chat":
 		// Both are refreshed every turn, so memory saves and persona edits show
@@ -821,7 +836,7 @@ func agentsSection(ctx context.Context, q *store.Queries, c runCtx, paths []stri
 		if err != nil {
 			return nil, nil, "Could not load the conversation's persona.", fmt.Errorf("chat svg capability: %w", err)
 		}
-		spec := c.spec
+		spec := baseSpec
 		// Canvases, Custom Apps, PDFs, workflow editing and SVG are skills.
 		spec.Instructions += agents.AssistantRecommendSection + agents.AssistantRichRepliesSection + agents.AssistantKnowledgeSection + agents.AssistantWorkflowSection
 		buildWorkflows, err := runs.SpeakerCanCreateWorkflows(ctx, q, chat)
@@ -851,21 +866,15 @@ func agentsSection(ctx context.Context, q *store.Queries, c runCtx, paths []stri
 		skills := agents.AssistantSkills(spec.Mode("repo:write") == agentdef.Allowed, buildWorkflows, svg)
 		return harness.ChatAgentsMDInSpace(spec, paths, c.project.Key, idx, persona, group, runs.SpaceSection(space, spaceFiles), chat.Temporary), skills, "", nil
 	case runs.PurposeResearch, runs.PurposeWorkflow, runs.PurposeLearning:
-		return []byte(c.spec.Instructions), nil, "", nil
+		return []byte(baseSpec.Instructions), nil, "", nil
 	case "planning":
-		return []byte(c.spec.Instructions + "\nRead these context files first:\n" + strings.Join(paths, "\n")), nil, "", nil
+		return []byte(baseSpec.Instructions + "\nRead these context files first:\n" + strings.Join(paths, "\n")), nil, "", nil
 	}
 	voice, err := runVoice(ctx, q, c.run)
 	if err != nil {
 		return nil, nil, "Could not load the persona doing this work.", fmt.Errorf("run voice: %w", err)
 	}
-	maxParallelDelegations := runs.MaxParallelDelegations
-	if q != nil {
-		if cfg, err := q.WorkspaceRunnerSettings(ctx, c.run.WorkspaceID); err == nil {
-			maxParallelDelegations = runs.ClampParallelDelegations(int(cfg.MaxParallelDelegations))
-		}
-	}
-	return harness.PersonaAgentsMD("", c.spec, paths, c.ticket.Key, c.run.ParentRunID != nil, voice, maxParallelDelegations), nil, "", nil
+	return harness.PersonaAgentsMD("", baseSpec, paths, c.ticket.Key, c.run.ParentRunID != nil, voice, maxParallelDelegations), nil, "", nil
 }
 
 // runVoice is the voice of the persona whose work record runs this ticket: its name, tone
