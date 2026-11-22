@@ -94,7 +94,16 @@ type Patch struct {
 	// off, popout (only in the companion pop-out) or always; a provider voice
 	// ("" for the default); a short delivery direction.
 	VoiceMode, VoiceName, VoiceStyle *string
+	// LoopSeconds is how long each of its state loops is (MinLoopSeconds-MaxLoopSeconds).
+	LoopSeconds *int32
 }
+
+// The range a persona's loop length may take: Omni pins first and last
+// frames, which makes a clip loop, only for clips up to 10s.
+const (
+	MinLoopSeconds = 4
+	MaxLoopSeconds = 10
+)
 
 // VoiceModes are the accepted voice modes.
 var VoiceModes = []string{"off", "popout", "always"}
@@ -422,12 +431,17 @@ func (s *Service) Update(ctx context.Context, o Owner, id uuid.UUID, p Patch) (s
 	if p.RevealPace != nil && !slices.Contains(RevealPaces, *p.RevealPace) {
 		return out, apperr.Invalid("reveal_pace", "use one of %s", strings.Join(RevealPaces, ", "))
 	}
+	if p.LoopSeconds != nil && (*p.LoopSeconds < MinLoopSeconds || *p.LoopSeconds > MaxLoopSeconds) {
+		return out, apperr.Invalid("loop_seconds", "use %d to %d seconds", MinLoopSeconds, MaxLoopSeconds)
+	}
 	if p.VoiceMode != nil && !slices.Contains(VoiceModes, *p.VoiceMode) {
 		return out, apperr.Invalid("voice_mode", "use one of %s", strings.Join(VoiceModes, ", "))
 	}
 	if p.VoiceName != nil {
 		v := strings.TrimSpace(*p.VoiceName)
-		if len(v) > 60 || strings.ContainsFunc(v, func(r rune) bool { return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_') }) {
+		if len(v) > 60 || strings.ContainsFunc(v, func(r rune) bool {
+			return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_')
+		}) {
 			return out, apperr.Invalid("voice_name", "pick a voice from the list")
 		}
 		p.VoiceName = &v
@@ -516,7 +530,7 @@ func (s *Service) Update(ctx context.Context, o Owner, id uuid.UUID, p Patch) (s
 			CanCode: p.Code, CanGenerateImages: p.Images, CanCreatePersonas: p.Personas, CanCreateSvgs: p.SVG, CanCreateWorkflows: p.Workflows, CanCreateConnectors: p.Connectors, Repos: repos,
 			InChatList:     p.InChatList,
 			DefaultHarness: nextHarness, DefaultModel: nextModel, DefaultEffort: nextEffort,
-			RevealPace: p.RevealPace, VoiceMode: p.VoiceMode, VoiceName: p.VoiceName, VoiceStyle: p.VoiceStyle,
+			RevealPace: p.RevealPace, VoiceMode: p.VoiceMode, VoiceName: p.VoiceName, VoiceStyle: p.VoiceStyle, LoopSeconds: p.LoopSeconds,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return apperr.Conflict("the persona changed since you loaded it")

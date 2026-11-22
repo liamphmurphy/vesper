@@ -1303,6 +1303,7 @@ type Persona struct {
 	VoiceMode           string
 	VoiceName           string
 	VoiceStyle          string
+	LoopSeconds         int32
 }
 
 type PersonaCharacterProposal struct {

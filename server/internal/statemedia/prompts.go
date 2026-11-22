@@ -53,20 +53,20 @@ var motions = map[State]string{
 // Prompt is the full generation prompt for a state. The fixed framing keeps
 // every state's clip interchangeable: same subject, camera, light and
 // backdrop, starting and ending on the portrait so the loop closes.
-func Prompt(s State) string {
+func Prompt(s State, seconds int) string {
 	return fmt.Sprintf(
-		"Photorealistic 4 second seamless loop of the exact person in the reference portrait. %s "+
+		"Photorealistic %d second seamless loop of the exact person in the reference portrait. %s "+
 			"The first and last frames match the reference portrait exactly, so the clip loops without a visible seam. "+
 			"Locked-off static camera: no zoom, pan, tilt or cut. Keep their face, hair, outfit, framing, lighting and camera distance identical to the portrait. "+
 			"Plain, perfectly uniform flat matte %s studio backdrop with soft, even, spill-free lighting and no shadows on the backdrop, so they can be cut out cleanly. "+
 			"Natural skin texture, sharp focus, no text, captions, logos or watermarks.",
-		motions[s], ChromaHex)
+		seconds, motions[s], ChromaHex)
 }
 
 // TweakPrompt is a state's full prompt with the person's tweak as extra
 // direction. A tweak generates a fresh clip from the portrait rather than
 // continuing the earlier Omni conversation: a continuation came back as the
 // old take followed by the new one, which looped as both.
-func TweakPrompt(s State, tweak string) string {
-	return Prompt(s) + " Additional direction: " + strings.TrimSpace(tweak)
+func TweakPrompt(s State, seconds int, tweak string) string {
+	return Prompt(s, seconds) + " Additional direction: " + strings.TrimSpace(tweak)
 }

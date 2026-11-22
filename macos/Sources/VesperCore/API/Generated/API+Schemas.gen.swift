@@ -16220,6 +16220,8 @@ extension API {
         public var isDefault: Swift.Bool
         /// When a chat with this persona last got a message
         public var lastUsedAt: Swift.String?
+        /// Length of each state loop; Omni loops (pins first and last frames) only up to 10s
+        public var loopSeconds: Swift.Int
         public var name: Swift.String
         /// Legacy repository favorites and first-chat default; never an access allowlist. Use shared repository sources for discovery.
         public var repos: [Swift.String]
@@ -16271,6 +16273,7 @@ extension API {
             inChatList: Swift.Bool,
             isDefault: Swift.Bool,
             lastUsedAt: Swift.String? = nil,
+            loopSeconds: Swift.Int,
             name: Swift.String,
             repos: [Swift.String],
             revealPace: PersonaRevealPace,
@@ -16298,6 +16301,7 @@ extension API {
             self.inChatList = inChatList
             self.isDefault = isDefault
             self.lastUsedAt = lastUsedAt
+            self.loopSeconds = loopSeconds
             self.name = name
             self.repos = repos
             self.revealPace = revealPace
@@ -16327,6 +16331,7 @@ extension API {
             case inChatList = "in_chat_list"
             case isDefault = "is_default"
             case lastUsedAt = "last_used_at"
+            case loopSeconds = "loop_seconds"
             case name
             case repos
             case revealPace = "reveal_pace"
@@ -16357,6 +16362,7 @@ extension API {
             self.inChatList = try c.decode(Swift.Bool.self, forKey: .inChatList)
             self.isDefault = try c.decode(Swift.Bool.self, forKey: .isDefault)
             self.lastUsedAt = try c.decodeIfPresent(Swift.String.self, forKey: .lastUsedAt)
+            self.loopSeconds = try c.decode(Swift.Int.self, forKey: .loopSeconds)
             self.name = try c.decode(Swift.String.self, forKey: .name)
             self.repos = try c.decodeIfPresent([Swift.String].self, forKey: .repos) ?? []
             self.revealPace = try c.decode(PersonaRevealPace.self, forKey: .revealPace)
@@ -16387,6 +16393,7 @@ extension API {
             try c.encode(inChatList, forKey: .inChatList)
             try c.encode(isDefault, forKey: .isDefault)
             try c.encodeIfPresent(lastUsedAt, forKey: .lastUsedAt)
+            try c.encode(loopSeconds, forKey: .loopSeconds)
             try c.encode(name, forKey: .name)
             try c.encode(repos, forKey: .repos)
             try c.encode(revealPace, forKey: .revealPace)
@@ -16788,6 +16795,8 @@ extension API {
         /// Empty string or 'auto' clears the default model back to Auto
         public var defaultModel: Swift.String?
         public var inChatList: Swift.Bool?
+        /// Applies to loops generated from now on
+        public var loopSeconds: Swift.Int?
         public var name: Swift.String?
         /// Replaces the whole list; existing chats keep their repo
         public var repos: [Swift.String]?
@@ -16842,6 +16851,7 @@ extension API {
             defaultHarness: DefaultHarness? = nil,
             defaultModel: Swift.String? = nil,
             inChatList: Swift.Bool? = nil,
+            loopSeconds: Swift.Int? = nil,
             name: Swift.String? = nil,
             repos: [Swift.String]? = nil,
             revealPace: PersonaRevealPace? = nil,
@@ -16859,6 +16869,7 @@ extension API {
             self.defaultHarness = defaultHarness
             self.defaultModel = defaultModel
             self.inChatList = inChatList
+            self.loopSeconds = loopSeconds
             self.name = name
             self.repos = repos
             self.revealPace = revealPace
@@ -16878,6 +16889,7 @@ extension API {
             case defaultHarness = "default_harness"
             case defaultModel = "default_model"
             case inChatList = "in_chat_list"
+            case loopSeconds = "loop_seconds"
             case name
             case repos
             case revealPace = "reveal_pace"
@@ -16898,6 +16910,7 @@ extension API {
             self.defaultHarness = try c.decodeIfPresent(DefaultHarness.self, forKey: .defaultHarness)
             self.defaultModel = try c.decodeIfPresent(Swift.String.self, forKey: .defaultModel)
             self.inChatList = try c.decodeIfPresent(Swift.Bool.self, forKey: .inChatList)
+            self.loopSeconds = try c.decodeIfPresent(Swift.Int.self, forKey: .loopSeconds)
             self.name = try c.decodeIfPresent(Swift.String.self, forKey: .name)
             self.repos = try c.decodeIfPresent([Swift.String].self, forKey: .repos)
             self.revealPace = try c.decodeIfPresent(PersonaRevealPace.self, forKey: .revealPace)
@@ -16918,6 +16931,7 @@ extension API {
             try c.encodeIfPresent(defaultHarness, forKey: .defaultHarness)
             try c.encodeIfPresent(defaultModel, forKey: .defaultModel)
             try c.encodeIfPresent(inChatList, forKey: .inChatList)
+            try c.encodeIfPresent(loopSeconds, forKey: .loopSeconds)
             try c.encodeIfPresent(name, forKey: .name)
             try c.encodeIfPresent(repos, forKey: .repos)
             try c.encodeIfPresent(revealPace, forKey: .revealPace)

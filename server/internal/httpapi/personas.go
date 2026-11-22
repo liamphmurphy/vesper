@@ -110,7 +110,7 @@ func (s *Server) toPersonas(ctx context.Context, rows []store.Persona) ([]api.Pe
 			Id: p.ID, Name: p.Name, Tone: api.PersonaTone(p.Tone), Color: p.Color, AvatarUrl: personaAvatarURL(p), CharacterSvg: p.CharacterSvg,
 			CustomInstructions: p.CustomInstructions, Capabilities: *toPersonaCapabilities(p), Repos: reposOrEmpty(p.Repos), IsDefault: p.IsDefault, ChatCount: n[p.ID], LastUsedAt: p.LastUsedAt,
 			InChatList: p.InChatList, Work: api.PersonaWork(personas.WorkNone), StateMedia: stateMediaSummary(loops[p.ID]),
-			RevealPace: api.PersonaRevealPace(p.RevealPace), Voice: toPersonaVoice(p),
+			RevealPace: api.PersonaRevealPace(p.RevealPace), Voice: toPersonaVoice(p), LoopSeconds: int(p.LoopSeconds),
 			Revision: int(p.Revision), CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
 		}
 		if p.DefaultHarness != "" && p.DefaultModel != "" {
@@ -210,7 +210,7 @@ func (s *Server) UpdatePersona(ctx context.Context, req api.UpdatePersonaRequest
 		Code: code, Images: images, Personas: makers, SVG: svg, Workflows: workflows, Connectors: connectors, Repos: b.Repos,
 		ImageEngine: imageEngineArg(b.Capabilities), TicketEdits: ticketEditsArg(b.Capabilities), InChatList: b.InChatList,
 		DefaultHarness: strEnumArg(b.DefaultHarness), DefaultModel: b.DefaultModel, DefaultEffort: strEnumArg(b.DefaultEffort),
-		RevealPace: strEnumArg(b.RevealPace), VoiceMode: strEnumArg(b.VoiceMode), VoiceName: b.VoiceName, VoiceStyle: b.VoiceStyle,
+		RevealPace: strEnumArg(b.RevealPace), VoiceMode: strEnumArg(b.VoiceMode), VoiceName: b.VoiceName, VoiceStyle: b.VoiceStyle, LoopSeconds: loopSecondsArg(b.LoopSeconds),
 	})
 	if err != nil {
 		return nil, err
@@ -252,4 +252,14 @@ func (s *Server) SetDefaultPersona(ctx context.Context, req api.SetDefaultPerson
 	}
 	out, err := s.toPersona(ctx, p)
 	return api.SetDefaultPersona200JSONResponse(out), err
+}
+
+// loopSecondsArg narrows the contract's loop length; out-of-range values are
+// passed through so the service names the field in its 422.
+func loopSecondsArg(v *int) *int32 {
+	if v == nil {
+		return nil
+	}
+	n := int32(min(max(*v, -1), 1000))
+	return &n
 }

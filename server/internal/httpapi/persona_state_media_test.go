@@ -354,3 +354,37 @@ func TestPersonaRevealPace(t *testing.T) {
 	}
 	e.want("PATCH", "/personas/"+id, map[string]any{"revision": got["revision"], "reveal_pace": "warp"}, http.StatusUnprocessableEntity)
 }
+
+func TestPersonaStateMediaLoopLength(t *testing.T) {
+	e := newStateMediaEnv(t, true)
+	id := e.personaWithPortrait()
+	var rev float64
+	for _, raw := range e.want("GET", "/personas", nil, http.StatusOK)["personas"].([]any) {
+		if p := raw.(map[string]any); p["id"] == id {
+			if p["loop_seconds"] != float64(8) {
+				t.Fatalf("default loop_seconds = %v, want 8", p["loop_seconds"])
+			}
+			rev = p["revision"].(float64)
+		}
+	}
+	e.want("POST", "/personas/"+id+"/state-media", map[string]any{"states": []string{"idle"}}, http.StatusAccepted)
+	e.settle(id)
+	if c := e.ctrl.VideoRequests(); len(c) != 1 || c[0].DurationSec != 8 || !strings.Contains(c[0].Prompt, "8 second seamless loop") {
+		t.Fatalf("default request = %+v", c)
+	}
+
+	// Longer loops get more from each generation when the daily quota is the limit.
+	got := e.want("PATCH", "/personas/"+id, map[string]any{"revision": rev, "loop_seconds": 10}, http.StatusOK)
+	if got["loop_seconds"] != float64(10) {
+		t.Fatalf("loop_seconds after patch = %v", got["loop_seconds"])
+	}
+	e.want("POST", "/personas/"+id+"/state-media", map[string]any{"states": []string{"thinking"}, "tweak": ""}, http.StatusAccepted)
+	e.settle(id)
+	if c := e.ctrl.VideoRequests(); len(c) != 2 || c[1].DurationSec != 10 || !strings.Contains(c[1].Prompt, "10 second seamless loop") {
+		t.Fatalf("10s request = %+v", c[len(c)-1])
+	}
+
+	// Omni only pins first and last frames (which makes a loop) up to 10s.
+	e.invalid("PATCH", "/personas/"+id, map[string]any{"revision": got["revision"], "loop_seconds": 11}, "loop_seconds", "4 to 10")
+	e.invalid("PATCH", "/personas/"+id, map[string]any{"revision": got["revision"], "loop_seconds": 3}, "loop_seconds", "4 to 10")
+}
