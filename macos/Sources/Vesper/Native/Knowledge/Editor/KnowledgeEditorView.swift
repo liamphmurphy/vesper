@@ -42,6 +42,7 @@ struct KnowledgeEditorView: View {
     @State private var document: KnowledgeEditorDocument
     @State private var lastSavedMarkdown: String
     @State private var currentVersionId: String
+    @State private var resolvedEmbeds: [KnowledgeEmbed]
     @State private var saveStatus: SaveStatus = .saved
     @State private var autosaveTask: Task<Void, Never>?
 
@@ -66,6 +67,7 @@ struct KnowledgeEditorView: View {
         _document = State(initialValue: KnowledgeEditorDocument(markdown: initial))
         _lastSavedMarkdown = State(initialValue: initial)
         _currentVersionId = State(initialValue: page.versionId)
+        _resolvedEmbeds = State(initialValue: page.embeds)
     }
 
     private var hasUnsavedChanges: Bool {
@@ -132,6 +134,9 @@ struct KnowledgeEditorView: View {
         .background(p.background)
         .task(id: page.id) {
             await loadCompletionCandidates()
+        }
+        .onChange(of: page.embeds) { _, nextEmbeds in
+            resolvedEmbeds = nextEmbeds
         }
         .onChange(of: page.versionId) { _, nextVersion in
             guard nextVersion != currentVersionId else { return }
@@ -350,17 +355,7 @@ struct KnowledgeEditorView: View {
     }
 
     private func inlineEmbeds(in proseText: String) -> [KnowledgeEmbed] {
-        guard !page.embeds.isEmpty else { return [] }
-        var seen = Set<String>()
-        var result: [KnowledgeEmbed] = []
-        for token in KnowledgeMarkdownSyntax.scan(proseText) {
-            guard case .embed(let target) = token.kind else { continue }
-            if let match = page.embeds.first(where: { $0.available && ($0.ref == target.ref || $0.ref == target.target) }),
-               seen.insert(match.ref).inserted {
-                result.append(match)
-            }
-        }
-        return result
+        KnowledgeMarkdownSyntax.resolveInlineEmbeds(in: proseText, embeds: resolvedEmbeds)
     }
 
     // MARK: - Editing, Completion, Undo/Redo, Find, Save & Links
@@ -612,6 +607,7 @@ struct KnowledgeEditorView: View {
             )
             lastSavedMarkdown = serialized
             currentVersionId = updated.versionId
+            resolvedEmbeds = updated.embeds
             saveStatus = .saved
         } catch {
             saveStatus = .error((error as? APIError)?.userMessage ?? error.localizedDescription)
