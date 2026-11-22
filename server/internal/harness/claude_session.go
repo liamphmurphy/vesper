@@ -101,6 +101,9 @@ func (c ClaudeCode) RunSession(ctx context.Context, stdin io.WriteCloser, stdout
 	}
 
 	p := c.NewParser("")
+	if cp, ok := p.(*claudeParser); ok {
+		cp.onTextDelta = cb.OnTextDelta
+	}
 	var lastSessionID string
 	var lastCtx int64
 	sentPrompt := false

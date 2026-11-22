@@ -197,6 +197,7 @@ func (Antigravity) RunSession(ctx context.Context, stdin io.WriteCloser, stdout 
 			}
 		},
 		onContextTokens: cb.OnContextTokens,
+		onTextDelta:     cb.OnTextDelta,
 	}
 	st.res.SessionID = sid
 	st.emit(Event{"lifecycle", map[string]any{
@@ -457,6 +458,7 @@ type agySessionState struct {
 	activity        activityTracker
 	emit            func(Event)
 	onContextTokens func(int64)
+	onTextDelta     func(string)
 }
 
 func (s *agySessionState) flushThinking() {
@@ -556,6 +558,9 @@ func (s *agySessionState) handleUpdate(paramsRaw json.RawMessage) {
 			return
 		}
 		s.textBuf.WriteString(txt)
+		if s.onTextDelta != nil {
+			s.onTextDelta(txt)
+		}
 		if blocks := s.reply.feed(txt); len(blocks) > 0 {
 			s.activity.touch()
 			for _, ev := range blocks {

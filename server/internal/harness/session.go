@@ -30,6 +30,7 @@ type SessionControl interface {
 // a bidirectional harness session.
 type SessionCallbacks struct {
 	OnEvent         func(Event)
+	OnTextDelta     func(string)
 	OnSession       func(string)
 	OnContextTokens func(int64)
 	OnRaw           func([]byte)

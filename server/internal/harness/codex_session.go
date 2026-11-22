@@ -129,6 +129,7 @@ func (c Codex) RunSession(ctx context.Context, stdin io.WriteCloser, stdout io.R
 			}
 		},
 		onContextTokens: cb.OnContextTokens,
+		onTextDelta:     cb.OnTextDelta,
 	}
 
 	sc := bufio.NewScanner(stdout)
@@ -505,6 +506,7 @@ type codexSessionState struct {
 	activity        activityTracker
 	emit            func(Event)
 	onContextTokens func(int64)
+	onTextDelta     func(string)
 }
 
 func (s *codexSessionState) markStarted(threadID string) {
@@ -543,6 +545,9 @@ func (s *codexSessionState) handleNotification(method string, paramsRaw json.Raw
 			Delta  string `json:"delta"`
 		}
 		if json.Unmarshal(paramsRaw, &p) == nil && p.Delta != "" {
+			if s.onTextDelta != nil {
+				s.onTextDelta(p.Delta)
+			}
 			if p.ItemID != "" && p.ItemID != s.replyItemID {
 				s.reply = replyScanner{}
 				s.replyItemID = p.ItemID

@@ -273,7 +273,7 @@ func (r *Runner) runChatImageJob(ctx context.Context, c runCtx, turn store.RunTu
 		if err := q.SetChatImageJobSession(context.Background(), store.SetChatImageJobSessionParams{ID: job.ID, CodexSessionID: &s}); err != nil {
 			r.Log.Warn("record image step session", "job", job.ID, "err", err)
 		}
-	}, false)
+	}, nil, false)
 	if res.Usage != (harness.Usage{}) {
 		var source *string
 		if res.Usage.CostSource != "" {

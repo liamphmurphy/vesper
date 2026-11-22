@@ -102,6 +102,7 @@ final class ChatCompanion {
         stopVoice()
         if speaks, let chatId {
             // The voice sets the pace: hold the text until it plays, then reveal in time with it.
+            if liveVoiceOpen { LiveVoiceLatencyLog.shared.markReplyObserved(messageId: last.id) }
             waitingForVoice = true
             let messageId = last.id
             voiceTask = Task { [weak self] in await self?.playVoice(chatId: chatId, messageId: messageId) }
@@ -152,11 +153,13 @@ final class ChatCompanion {
         waitingForVoice = false
         started = Date()
         // A voice that failed, timed out or was muted meanwhile leaves the persona's normal pace.
+        if lead != nil, liveVoiceOpen { LiveVoiceLatencyLog.shared.markSpeechFirstAudio(part: "lead", streaming: false) }
         guard let lead, !PersonaVoiceMute.isMuted, play(lead, onEnd: { [weak self] in self?.leadEnded() }) else {
             restFetch.cancel()
             rest = .none
             return
         }
+        if liveVoiceOpen { LiveVoiceLatencyLog.shared.markPlaybackStarted(part: "lead", streaming: false) }
         revealCap = lead.words
         let restClip = await withTaskCancellationHandler {
             await restFetch.value

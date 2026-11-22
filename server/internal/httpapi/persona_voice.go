@@ -166,11 +166,19 @@ func (s *Server) GetChatMessageSpeech(ctx context.Context, req api.GetChatMessag
 	sum := sha256.Sum256([]byte(speechCacheVersion + "\x00" + desc.ID + "\x00" + p.VoiceName + "\x00" + p.VoiceStyle + "\x00" + text))
 	key := "speech/" + c.ID.String() + "/" + msg.ID.String() + "/" + hex.EncodeToString(sum[:12]) + ".wav"
 	cache := "private, max-age=604800"
+	start := time.Now()
+	partLabel := "full"
+	if req.Params.Part != nil {
+		partLabel = string(*req.Params.Part)
+	}
 	if obj, err := s.Blobs.Get(ctx, s.ArtifactBucket, key); err == nil {
 		defer obj.Body.Close()
 		b, err := io.ReadAll(io.LimitReader(obj.Body, maxSpeechBytes))
 		if err != nil {
 			return nil, err
+		}
+		if s.Log != nil {
+			s.Log.Info("speech_timing", "chat_id", c.ID, "message_id", msg.ID, "part", partLabel, "streaming", false, "cached", true, "tts_ms", time.Since(start).Milliseconds(), "words", words)
 		}
 		return speechResponse(b, words, cache), nil
 	} else if !errors.Is(err, blob.ErrNotFound) {
@@ -181,6 +189,9 @@ func (s *Server) GetChatMessageSpeech(ctx context.Context, req api.GetChatMessag
 	clip, err := gen.GenerateSpeech(genCtx, media.SpeechRequest{Text: text, Voice: p.VoiceName, Style: p.VoiceStyle})
 	if err != nil {
 		return nil, speechError(err)
+	}
+	if s.Log != nil {
+		s.Log.Info("speech_timing", "chat_id", c.ID, "message_id", msg.ID, "part", partLabel, "streaming", false, "cached", false, "tts_ms", time.Since(start).Milliseconds(), "words", words, "model", clip.Model)
 	}
 	// A failed cache write only means the next replay speaks again.
 	if err := s.Blobs.Put(context.WithoutCancel(ctx), s.ArtifactBucket, key, bytes.NewReader(clip.Data), int64(len(clip.Data)), clip.ContentType); err != nil {

@@ -1414,6 +1414,8 @@ func sessionBaseline(turns []store.RunTurn, seq int32, harnessName, session stri
 }
 
 func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
+	turnClaimedAt := time.Now()
+	queueWaitMS := max(int64(0), turnClaimedAt.Sub(turn.StartedAt).Milliseconds())
 	c, err := r.load(ctx, turn.RunID)
 	if err != nil {
 		r.Log.Error("load run", "run", turn.RunID, "err", err)
@@ -1907,6 +1909,9 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 	}
 
 	harnessStart := time.Now()
+	setupMS := harnessStart.Sub(turnClaimedAt).Milliseconds()
+	var firstTextMS atomic.Int64
+	firstTextMS.Store(-1)
 	var videos *videoSync
 	stopVideos := func() {}
 	if c.run.Purpose == "chat" {
@@ -1919,14 +1924,51 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 	if agentdef.SubagentsOn(turnSpec) {
 		stopSubagents = r.startSubagentWorker(ctx, c, ws, turnEnv, sensitive, networks, dir)
 	}
+	onText := func(delta string) {
+		if delta != "" {
+			firstTextMS.CompareAndSwap(-1, time.Since(harnessStart).Milliseconds())
+		}
+	}
 	res, raw, code, waitErr := r.runSession(ctx, c, sh, proc, ws, hTurn, sensitive, maxRuntime-used, r.policyCheck(c), func(s string) {
 		qctx, cancel := context.WithTimeout(ctx, controlTimeout)
 		defer cancel()
 		_ = r.q().SetRunSession(qctx, store.SetRunSessionParams{ID: c.run.ID, HarnessSessionID: &s})
-	}, true)
+	}, onText, true)
 	stopSubagents()
 	stopReview()
-	r.addTiming(c.run.ID, 0, time.Since(harnessStart), 0)
+	harnessDur := time.Since(harnessStart)
+	r.addTiming(c.run.ID, 0, harnessDur, 0)
+	if c.run.Purpose == "chat" {
+		totalMS := max(int64(0), time.Since(turn.StartedAt).Milliseconds())
+		effort := c.spec.HarnessOptions["effort"]
+		ftMS := firstTextMS.Load()
+		r.Log.Info("chat_turn_timing",
+			"run", c.run.ID,
+			"turn", turn.Seq,
+			"harness", c.spec.Harness,
+			"model", c.spec.Model,
+			"effort", effort,
+			"resume", session != "",
+			"queue_wait_ms", queueWaitMS,
+			"setup_ms", setupMS,
+			"first_text_ms", ftMS,
+			"harness_ms", harnessDur.Milliseconds(),
+			"total_ms", totalMS,
+		)
+		r.event(ctx, c.run.ID, "lifecycle", map[string]any{
+			"state":         "turn_timing",
+			"turn":          turn.Seq,
+			"harness":       c.spec.Harness,
+			"model":         c.spec.Model,
+			"effort":        effort,
+			"resume":        session != "",
+			"queue_wait_ms": queueWaitMS,
+			"setup_ms":      setupMS,
+			"first_text_ms": ftMS,
+			"harness_ms":    harnessDur.Milliseconds(),
+			"total_ms":      totalMS,
+		})
+	}
 	r.learnTestEnv(ctx, c, proc)
 	if videos != nil {
 		if ctx.Err() != nil {
@@ -2045,7 +2087,7 @@ func (w *contextWriter) observe(n int64) {
 // protocol, enforcing CheckTool in-process, streaming redacted events and
 // mid-turn ContextTokens updates, supervising pause/cancel/runtime limits, and
 // draining stderr/stdout cleanly on exit.
-func (r *Runner) runSession(ctx context.Context, c runCtx, sh harness.SessionHarness, proc Process, ws harness.Workspace, turn harness.Turn, env map[string]string, remaining time.Duration, check harness.PolicyFunc, onSession func(string), recordContext bool) (harness.Result, []byte, int, error) {
+func (r *Runner) runSession(ctx context.Context, c runCtx, sh harness.SessionHarness, proc Process, ws harness.Workspace, turn harness.Turn, env map[string]string, remaining time.Duration, check harness.PolicyFunc, onSession func(string), onTextDelta func(string), recordContext bool) (harness.Result, []byte, int, error) {
 	writeContext := func(wctx context.Context, n int64) {
 		qctx, cancel := context.WithTimeout(wctx, controlTimeout)
 		defer cancel()
@@ -2112,6 +2154,11 @@ func (r *Runner) runSession(ctx context.Context, c runCtx, sh harness.SessionHar
 				select {
 				case ch <- pendingRunEvent{typ: e.Type, payload: b}:
 				case <-readCtx.Done():
+				}
+			},
+			OnTextDelta: func(delta string) {
+				if onTextDelta != nil {
+					onTextDelta(delta)
 				}
 			},
 			OnSession: func(s string) {
