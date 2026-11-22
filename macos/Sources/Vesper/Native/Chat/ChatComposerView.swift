@@ -105,12 +105,13 @@ struct ChatComposerView: View {
                 ChatComposerTextView(
                     controller: editor,
                     measuredHeight: $editorHeight,
-                    placeholder: isRunning ? "Queue, steer, or ask an aside…" : "Message \(personaName)… (/ for commands, @ for personas)",
+                    placeholder: (isRunning ? sendModeWhileRunning : .send).placeholder(personaName: personaName),
                     fontSize: theme.pointSize(.chat),
                     textColor: p.text,
                     placeholderColor: p.tertiaryText,
                     isDisabled: isSending,
                     isCompletionOpen: activeCompletion != nil && !(activeCompletion?.items.isEmpty ?? true),
+                    canCycleSendMode: isRunning,
                     minHeight: 34,
                     maxHeight: 200,
                     onTextChange: { text, cursorUTF16 in
@@ -120,6 +121,9 @@ struct ChatComposerView: View {
                         handleSelectionChange(text: text, cursorUTF16: cursorUTF16)
                     },
                     onSubmit: { submit() },
+                    onCycleSendMode: { backward in
+                        sendModeWhileRunning = sendModeWhileRunning.cycled(backward: backward)
+                    },
                     onCompletionNavigate: { delta in
                         guard let count = activeCompletion?.items.count, count > 0 else { return }
                         completionIndex = (completionIndex + delta + count) % count
@@ -169,6 +173,7 @@ struct ChatComposerView: View {
             attachments = []
             errorMessage = nil
             completionDismissedText = nil
+            sendModeWhileRunning = .queue
         }
         .onChange(of: contextChips) { _, _ in
             saveDraftImmediately(for: chatId)
@@ -314,16 +319,7 @@ struct ChatComposerView: View {
             )
 
             if isRunning {
-                Picker("Send mode", selection: $sendModeWhileRunning) {
-                    ForEach(ChatSendMode.runningModes) { mode in
-                        Text(mode.label).tag(mode)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .controlSize(.small)
-                .frame(maxWidth: 82)
-                .help(sendModeWhileRunning.hint)
+                sendModeSwitcher
             }
 
             if isRunning && !hasDraftText && attachments.isEmpty {
@@ -339,12 +335,68 @@ struct ChatComposerView: View {
                     parsedCommand: parsedSlashCommand
                 )
                 Button(action: submit) {
-                    Label(isSending ? "Sending…" : resolvedMode.label, systemImage: "arrow.up")
+                    Label(isSending ? "Sending…" : resolvedMode.actionLabel, systemImage: resolvedMode.sendButtonSystemImage)
                 }
-                .buttonStyle(.vesper(.primary))
+                .buttonStyle(ChatSendButtonStyle(mode: resolvedMode))
                 .disabled(!canSubmit)
+                .help(resolvedMode.hint)
                 .keyboardShortcut(.return, modifiers: [.command])
             }
+        }
+    }
+
+    private var sendModeSwitcher: some View {
+        let p = theme.palette
+        return HStack(spacing: 2) {
+            ForEach(ChatSendMode.runningModes) { mode in
+                let isSelected = sendModeWhileRunning == mode
+                let colors = sendModeColors(for: mode)
+                Button {
+                    sendModeWhileRunning = mode
+                } label: {
+                    Image(systemName: mode.systemImage)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(isSelected ? colors.fg : p.secondaryText)
+                        .frame(width: 24, height: 22)
+                        .background(isSelected ? colors.bg : .clear, in: Capsule())
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(isSending)
+                .help("\(mode.label): \(mode.hint)")
+                .accessibilityLabel(mode.label)
+                .accessibilityValue(isSelected ? "Selected" : "")
+                .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+            }
+        }
+        .padding(2)
+        .frame(height: 28)
+        .background(p.surface.opacity(0.8), in: Capsule())
+        .overlay(Capsule().stroke(p.border))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Send as")
+    }
+
+    private func sendModeColors(for mode: ChatSendMode) -> (fg: Color, bg: Color) {
+        let p = theme.palette
+        switch mode {
+        case .send, .queue:
+            return (p.accent, theme.swiftUIColor("accent-soft", fallback: p.selected))
+        case .steer:
+            return (
+                theme.swiftUIColor("pill-done-fg", fallback: .green),
+                theme.swiftUIColor("pill-done-bg", fallback: Color.green.opacity(0.15))
+            )
+        case .aside:
+            return (
+                theme.swiftUIColor("pill-review-fg", fallback: .blue),
+                theme.swiftUIColor("pill-review-bg", fallback: Color.blue.opacity(0.15))
+            )
+        case .interrupt:
+            return (
+                theme.swiftUIColor("pill-human-fg", fallback: .orange),
+                theme.swiftUIColor("pill-human-bg", fallback: Color.orange.opacity(0.15))
+            )
         }
     }
 
@@ -870,6 +922,16 @@ struct ChatComposerView: View {
     }
 
     private func sendPayload(body: String, mode: ChatSendMode) {
+        if let problem = ChatComposerSendLogic.textOnlyValidationError(
+            mode: mode,
+            hasAttachments: !attachments.isEmpty,
+            hasContextChips: !contextChips.isEmpty,
+            researchMode: researchMode
+        ) {
+            errorMessage = problem
+            return
+        }
+
         let uploadedIds = attachments.compactMap(\.uploadedId)
         let refs = ChatComposerContextLogic.toAPIContextRefs(contextChips)
         let prevDraft = editor.text
@@ -1067,5 +1129,34 @@ struct ChatComposerView: View {
         let parts = trimmed.split(separator: "/")
         if parts.count >= 2 { return "\(parts[parts.count - 2])/\(parts[parts.count - 1])" }
         return trimmed
+    }
+}
+
+/// Primary composer submit button tinted to match the active send mode (matches web `SendButton` tones).
+private struct ChatSendButtonStyle: ButtonStyle {
+    @Environment(\.vesperTheme) private var theme
+    @Environment(\.isEnabled) private var isEnabled
+    let mode: ChatSendMode
+
+    func makeBody(configuration: Configuration) -> some View {
+        let p = theme.palette
+        let (fg, bg): (Color, Color) = switch mode {
+        case .send, .queue:
+            (theme.swiftUIColor("text-on-accent", fallback: .white), p.accent)
+        case .steer:
+            (theme.swiftUIColor("text-on-accent", fallback: .white), theme.swiftUIColor("state-done", fallback: .green))
+        case .aside:
+            (theme.swiftUIColor("text-on-accent", fallback: .white), theme.swiftUIColor("state-review", fallback: .blue))
+        case .interrupt:
+            (theme.swiftUIColor("approve-fg", fallback: .white), theme.swiftUIColor("state-human", fallback: .orange))
+        }
+        return configuration.label
+            .font(.system(size: theme.pointSize(.body), weight: .medium))
+            .foregroundStyle(fg)
+            .padding(.horizontal, 10)
+            .frame(minHeight: 28)
+            .background(bg.opacity(configuration.isPressed ? 0.85 : 1), in: RoundedRectangle(cornerRadius: 7))
+            .opacity(isEnabled ? 1 : 0.5)
+            .contentShape(Rectangle())
     }
 }

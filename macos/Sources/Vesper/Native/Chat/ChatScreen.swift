@@ -770,7 +770,7 @@ struct ChatScreen: View {
                         invalidating: QueryInvalidation(resources: ["chats"])
                     )
                     return nil
-                case .send:
+                case .send, .interrupt:
                     break
                 }
             } catch {
