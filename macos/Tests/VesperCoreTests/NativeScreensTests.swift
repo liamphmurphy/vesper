@@ -65,6 +65,19 @@ final class NativeRoutesTests: XCTestCase {
         XCTAssertNil(standard.resolve("/dev/anything"))
     }
 
+    func testLearnRoutesAreNative() {
+        let standard = NativeRouteRegistry.standard(debug: false)
+        XCTAssertEqual(standard.resolve("/learn")?.screen, .learn)
+        let lesson = standard.resolve("/learn/c1?lesson=snapshots")
+        XCTAssertEqual(lesson?.screen, .learnCourse)
+        XCTAssertEqual(lesson?.params["id"], "c1")
+        XCTAssertEqual(lesson?.query["lesson"], "snapshots")
+        let review = standard.resolve("/learn/c1?review=1")
+        XCTAssertEqual(review?.screen, .learnCourse)
+        XCTAssertEqual(review?.query["review"], "1")
+        XCTAssertNil(standard.resolve("/learn/c1/extra"))
+    }
+
     func testOnlyInAppPathsResolve() {
         XCTAssertNil(registry.resolve("https://example.com/native-debug"))
         XCTAssertNil(registry.resolve("//evil.example/native-debug"))
