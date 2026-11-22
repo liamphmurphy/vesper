@@ -147,3 +147,17 @@ type SpeechGenerator interface {
 	DefaultVoice() string
 	GenerateSpeech(ctx context.Context, req SpeechRequest) (SpeechClip, error)
 }
+
+// SpeechChunk is one incremental slice of 16-bit signed little-endian mono PCM.
+type SpeechChunk struct {
+	PCM        []byte
+	SampleRate int
+}
+
+// StreamingSpeechGenerator is optionally implemented by speech providers that
+// emit PCM chunks as synthesis progresses, while still returning the complete
+// WAV SpeechClip at the end for caching.
+type StreamingSpeechGenerator interface {
+	SpeechGenerator
+	StreamSpeech(ctx context.Context, req SpeechRequest, onChunk func(SpeechChunk) error) (SpeechClip, error)
+}

@@ -126,3 +126,54 @@ func TestGenerateSpeechKeepsOnlyTheAudioOfAWAVResponse(t *testing.T) {
 		t.Fatalf("clip = %d bytes, %dms; want %d bytes of audio only", len(clip.Data), clip.DurationMS, 44+len(pcm))
 	}
 }
+
+func TestStreamSpeechEmitsChunksAndWrapsWAV(t *testing.T) {
+	chunk1 := bytes.Repeat([]byte{0x10, 0x00}, 6000)
+	chunk2 := bytes.Repeat([]byte{0x20, 0x00}, 6000)
+	var gotPath string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		for _, ch := range [][]byte{chunk1, chunk2} {
+			payload, _ := json.Marshal(map[string]any{"candidates": []any{map[string]any{"content": map[string]any{"parts": []any{
+				map[string]any{"inlineData": map[string]any{"mimeType": "audio/L16;codec=pcm;rate=24000", "data": base64.StdEncoding.EncodeToString(ch)}},
+			}}}}})
+			_, _ = w.Write([]byte("data: "))
+			_, _ = w.Write(payload)
+			_, _ = w.Write([]byte("\n\n"))
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+	}))
+	defer ts.Close()
+
+	prov, err := New(media.ResolvedConfig{Settings: map[string]string{"backend": "gemini_api"}, Secrets: map[string]string{"api_key": "k"}}, WithBaseURL(ts.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var chunks [][]byte
+	var rates []int
+	clip, err := prov.StreamSpeech(context.Background(), media.SpeechRequest{Text: "Hello streaming.", Voice: "Kore"}, func(c media.SpeechChunk) error {
+		chunks = append(chunks, append([]byte(nil), c.PCM...))
+		rates = append(rates, c.SampleRate)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(gotPath, "/models/"+defaultSpeechModel+":streamGenerateContent") {
+		t.Errorf("path = %q", gotPath)
+	}
+	if len(chunks) != 2 || !bytes.Equal(chunks[0], chunk1) || !bytes.Equal(chunks[1], chunk2) {
+		t.Fatalf("got %d chunks, want 2 matching PCM slices", len(chunks))
+	}
+	if rates[0] != 24000 || rates[1] != 24000 {
+		t.Fatalf("rates = %v, want [24000 24000]", rates)
+	}
+	wantPCM := append(append([]byte(nil), chunk1...), chunk2...)
+	if len(clip.Data) != 44+len(wantPCM) || !bytes.Equal(clip.Data[44:], wantPCM) || clip.DurationMS != 500 {
+		t.Fatalf("clip = %d bytes, %dms; want %d bytes, 500ms", len(clip.Data), clip.DurationMS, 44+len(wantPCM))
+	}
+}

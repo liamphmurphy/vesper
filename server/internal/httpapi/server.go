@@ -125,6 +125,7 @@ func (s *Server) mountAPIRoutes(mux *http.ServeMux) {
 	s.dockChatRoutes(mux)
 	s.httpClientRoutes(mux)
 	s.browserExtensionRoutes(mux)
+	s.speechRoutes(mux)
 	strict := api.NewStrictHandlerWithOptions(s, nil, api.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
 			writeError(w, http.StatusBadRequest, api.Invalid, err.Error(), "")

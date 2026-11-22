@@ -159,6 +159,50 @@ func TestReplySpeechSpeaksTheLeadAndRestSeparately(t *testing.T) {
 	}
 }
 
+func TestReplySpeechStreamReturnsPCMAndCachesWAV(t *testing.T) {
+	e, ctrl := newVoiceEnv(t, true)
+	p := e.want("POST", "/personas", map[string]any{"name": "Iris"}, http.StatusCreated)
+	pid := p["id"].(string)
+	e.want("PATCH", "/personas/"+pid, map[string]any{"revision": p["revision"], "voice_mode": "always"}, http.StatusOK)
+	chatID := e.newChat(map[string]any{"persona_id": pid})["id"].(string)
+	m, err := e.q.AppendChatMessage(context.Background(), store.AppendChatMessageParams{
+		SessionID: uuid.MustParse(chatID), Role: "assistant", BodyMd: "Sure. I checked the runner and it looks fine.\n\nWant the logs?",
+		ContextRefs: json.RawMessage("[]"), Citations: json.RawMessage("[]"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgID := m.ID.String()
+
+	streamURL := e.srv.URL + "/api/v1/chats/" + chatID + "/messages/" + msgID + "/speech/stream?part=lead"
+	res, err := http.Get(streamURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || !strings.HasPrefix(strings.ToLower(res.Header.Get("Content-Type")), "audio/l16") || res.Header.Get("X-Speech-Words") != "9" || res.Header.Get("X-Speech-Sample-Rate") == "" || len(body) == 0 {
+		t.Fatalf("stream = %d %v (%d bytes)", res.StatusCode, res.Header, len(body))
+	}
+	if len(ctrl.SpeechRequests()) != 1 {
+		t.Fatalf("speech calls = %d, want 1", len(ctrl.SpeechRequests()))
+	}
+	// Cached WAV serves both replay streams and the WAV endpoint without re-synthesizing.
+	res2, err := http.Get(streamURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body2, _ := io.ReadAll(res2.Body)
+	res2.Body.Close()
+	if res2.StatusCode != http.StatusOK || len(body2) != len(body) || len(ctrl.SpeechRequests()) != 1 {
+		t.Fatalf("stream replay = %d (%d vs %d bytes), %d calls", res2.StatusCode, len(body2), len(body), len(ctrl.SpeechRequests()))
+	}
+	wavRes, wavBody := e.speech(chatID, msgID, "part=lead")
+	if wavRes.StatusCode != http.StatusOK || string(wavBody[:4]) != "RIFF" || len(ctrl.SpeechRequests()) != 1 {
+		t.Fatalf("wav replay after stream = %d, %d calls", wavRes.StatusCode, len(ctrl.SpeechRequests()))
+	}
+}
+
 func TestPersonaVoicesPreviewAndValidation(t *testing.T) {
 	e, ctrl := newVoiceEnv(t, false)
 	p := e.want("POST", "/personas", map[string]any{"name": "Iris"}, http.StatusCreated)

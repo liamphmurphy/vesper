@@ -1,5 +1,4 @@
 import AppKit
-import AVFoundation
 import SwiftUI
 import VesperCore
 
@@ -39,17 +38,50 @@ final class ChatCompanion {
     @ObservationIgnored private var completeTask: Task<Void, Never>?
     /// Held at the start while the reply's speech loads, so text and voice begin together.
     @ObservationIgnored private var waitingForVoice = false
-    @ObservationIgnored private var player: AVAudioPlayer?
-    @ObservationIgnored private var playerEnd: VoicePlaybackEnd?
+    @ObservationIgnored private var streamingPlayer: StreamingPCMPlayer?
     @ObservationIgnored private var voiceTask: Task<Void, Never>?
-    /// The rest of the reply's speech, voiced while the lead plays.
-    @ObservationIgnored private var rest: RestClip = .none
+    @ObservationIgnored private var restTask: Task<Void, Never>?
+    /// The rest of the reply's speech, streamed while the lead plays.
+    @ObservationIgnored private var restBuffer: RestPCMBuffer?
     @ObservationIgnored private var leadDone = false
 
-    private enum RestClip {
-        case none
-        case pending
-        case ready(data: Data, words: Int)
+    /// Collects streamed PCM chunks for `?part=rest` while `?part=lead` is playing, then feeds
+    /// them (plus any chunks that still arrive) straight into the rest player without a gap.
+    @MainActor
+    private final class RestPCMBuffer {
+        var sampleRate: Int = 24_000
+        var words: Int = 0
+        var chunks: [Data] = []
+        var finished = false
+        var failed = false
+        var onChunk: ((Data) -> Void)?
+        var onFinish: (() -> Void)?
+        var onFail: (() -> Void)?
+
+        func append(_ data: Data) {
+            if let onChunk {
+                onChunk(data)
+            } else {
+                chunks.append(data)
+            }
+        }
+
+        func complete() {
+            finished = true
+            onFinish?()
+            onChunk = nil
+            onFinish = nil
+            onFail = nil
+        }
+
+        func fail() {
+            failed = true
+            finished = true
+            onFail?()
+            onChunk = nil
+            onFinish = nil
+            onFail = nil
+        }
     }
     /// The pop-out is open, for voices set to speak only there.
     @ObservationIgnored var popoutOpen = false
@@ -139,76 +171,185 @@ final class ChatCompanion {
         }
     }
 
-    /// Speaks the reply in two parts voiced at once: the short lead plays as soon as it's ready
-    /// while the rest is still being voiced, then the rest follows it.
-    private func playVoice(chatId: String, messageId: String) async {
-        let path = "/api/v1/chats/\(chatId)/messages/\(messageId)/speech"
-        rest = .pending
-        let restFetch = Task { await AvatarImages.shared.speech(for: path + "?part=rest") }
-        let lead = await Self.speech(path + "?part=lead", within: Self.voiceWait)
-        guard revealingId == messageId, !Task.isCancelled else {
-            restFetch.cancel()
-            return
-        }
-        waitingForVoice = false
-        started = Date()
-        // A voice that failed, timed out or was muted meanwhile leaves the persona's normal pace.
-        if lead != nil, liveVoiceOpen { LiveVoiceLatencyLog.shared.markSpeechFirstAudio(part: "lead", streaming: false) }
-        guard let lead, !PersonaVoiceMute.isMuted, play(lead, onEnd: { [weak self] in self?.leadEnded() }) else {
-            restFetch.cancel()
-            rest = .none
-            return
-        }
-        if liveVoiceOpen { LiveVoiceLatencyLog.shared.markPlaybackStarted(part: "lead", streaming: false) }
-        revealCap = lead.words
-        let restClip = await withTaskCancellationHandler {
-            await restFetch.value
-        } onCancel: {
-            restFetch.cancel()
-        }
-        guard !Task.isCancelled, case .pending = rest else { return }
-        if let restClip {
-            if leadDone { playRest(restClip) } else { rest = .ready(data: restClip.data, words: restClip.words) }
-        } else {
-            // Nothing after the lead (or its voice failed): the text carries on at the lead's pace.
-            rest = .none
-            releaseCap()
-            if leadDone { speaking = false }
-        }
-    }
+    /// Default spoken pace while streaming audio before total clip duration is known (~160 wpm).
+    private static let streamingWordsPerSecond = 2.7
 
-    /// Plays a clip and paces the text to it; false when it can't play.
-    private func play(_ clip: (data: Data, words: Int), onEnd: @escaping @MainActor @Sendable () -> Void) -> Bool {
-        guard let audio = try? AVAudioPlayer(data: clip.data), audio.duration > 0 else { return false }
-        let id = ObjectIdentifier(audio)
-        let end = VoicePlaybackEnd { [weak self] in
-            guard let self, let player = self.player, ObjectIdentifier(player) == id else { return }
-            self.player = nil
-            self.playerEnd = nil
-            onEnd()
+    /// Streams the reply in two parts requested at once: the short lead starts playing as soon as
+    /// its first PCM chunks arrive while the rest streams into a buffer, then the rest follows.
+    private func playVoice(chatId: String, messageId: String) async {
+        let basePath = "/api/v1/chats/\(chatId)/messages/\(messageId)/speech/stream"
+        let restBuf = RestPCMBuffer()
+        restBuffer = restBuf
+        restTask = Task { [weak self] in
+            guard let stream = await AvatarImages.shared.speechStream(for: basePath + "?part=rest") else {
+                restBuf.fail()
+                return
+            }
+            if Task.isCancelled {
+                stream.cancel()
+                return
+            }
+            restBuf.sampleRate = stream.sampleRate
+            restBuf.words = stream.words
+            var sawAny = false
+            for await chunk in stream.chunks {
+                if Task.isCancelled {
+                    stream.cancel()
+                    return
+                }
+                sawAny = true
+                restBuf.append(chunk)
+            }
+            if sawAny {
+                restBuf.complete()
+            } else {
+                restBuf.fail()
+            }
+            _ = self
         }
-        audio.delegate = end
-        guard audio.play() else { return false }
-        player = audio
-        playerEnd = end
-        speaking = true
-        if clip.words > 0 { wordsPerSecond = Double(clip.words) / audio.duration }
-        return true
+
+        let leadStream = await Self.speechStream(basePath + "?part=lead", within: Self.voiceWait)
+        guard revealingId == messageId, !Task.isCancelled else {
+            leadStream?.cancel()
+            restTask?.cancel()
+            restTask = nil
+            restBuffer = nil
+            return
+        }
+        guard let leadStream, !PersonaVoiceMute.isMuted else {
+            leadStream?.cancel()
+            waitingForVoice = false
+            started = Date()
+            restTask?.cancel()
+            restTask = nil
+            restBuffer = nil
+            return
+        }
+
+        let leadWords = leadStream.words
+        let logVoice = liveVoiceOpen
+        guard let player = StreamingPCMPlayer(
+            sampleRate: leadStream.sampleRate,
+            onStarted: { [weak self] in
+                guard let self, self.revealingId == messageId else { return }
+                self.waitingForVoice = false
+                self.started = Date()
+                self.speaking = true
+                self.wordsPerSecond = Self.streamingWordsPerSecond
+                if leadWords > 0 { self.revealCap = leadWords }
+                if logVoice { LiveVoiceLatencyLog.shared.markPlaybackStarted(part: "lead", streaming: true) }
+            },
+            onEnd: { [weak self] in
+                self?.leadEnded()
+            }
+        ) else {
+            leadStream.cancel()
+            waitingForVoice = false
+            started = Date()
+            restTask?.cancel()
+            restTask = nil
+            restBuffer = nil
+            return
+        }
+        streamingPlayer = player
+
+        var sawFirst = false
+        for await chunk in leadStream.chunks {
+            if Task.isCancelled || PersonaVoiceMute.isMuted {
+                leadStream.cancel()
+                player.stop()
+                if streamingPlayer === player { streamingPlayer = nil }
+                return
+            }
+            if !sawFirst {
+                sawFirst = true
+                if logVoice { LiveVoiceLatencyLog.shared.markSpeechFirstAudio(part: "lead", streaming: true) }
+            }
+            if !player.append(chunk) {
+                leadStream.cancel()
+                waitingForVoice = false
+                started = Date()
+                if streamingPlayer === player { streamingPlayer = nil }
+                restTask?.cancel()
+                restTask = nil
+                restBuffer = nil
+                return
+            }
+        }
+        player.finishInput()
+        if !sawFirst || !player.hasStarted {
+            waitingForVoice = false
+            started = Date()
+        }
     }
 
     private func leadEnded() {
         leadDone = true
-        switch rest {
-        case let .ready(data, words): playRest((data, words))
-        case .pending: break // the text holds at the lead's last word until the rest arrives
-        case .none: speaking = false
+        streamingPlayer = nil
+        guard let restBuf = restBuffer else {
+            releaseCap()
+            speaking = false
+            return
         }
+        if restBuf.failed || (restBuf.finished && restBuf.chunks.isEmpty) {
+            restBuffer = nil
+            releaseCap()
+            speaking = false
+            return
+        }
+        playRestStream(restBuf)
     }
 
-    private func playRest(_ clip: (data: Data, words: Int)) {
-        rest = .none
+    private func playRestStream(_ restBuf: RestPCMBuffer) {
         releaseCap()
-        if !play(clip, onEnd: { [weak self] in self?.speaking = false }) { speaking = false }
+        guard !PersonaVoiceMute.isMuted, let player = StreamingPCMPlayer(
+            sampleRate: restBuf.sampleRate,
+            onStarted: { [weak self] in
+                guard let self else { return }
+                self.speaking = true
+                self.wordsPerSecond = Self.streamingWordsPerSecond
+            },
+            onEnd: { [weak self] in
+                self?.streamingPlayer = nil
+                self?.restBuffer = nil
+                self?.speaking = false
+            }
+        ) else {
+            restBuffer = nil
+            speaking = false
+            return
+        }
+        streamingPlayer = player
+        let queued = restBuf.chunks
+        restBuf.chunks.removeAll()
+        for chunk in queued {
+            if !player.append(chunk) {
+                streamingPlayer = nil
+                restBuffer = nil
+                speaking = false
+                return
+            }
+        }
+        if restBuf.finished {
+            player.finishInput()
+        } else {
+            restBuf.onChunk = { [weak self, weak player] data in
+                guard let self, let player, self.streamingPlayer === player else { return }
+                if !player.append(data) {
+                    self.streamingPlayer = nil
+                    self.restBuffer = nil
+                    self.speaking = false
+                }
+            }
+            restBuf.onFinish = { [weak self, weak player] in
+                guard let self, let player, self.streamingPlayer === player else { return }
+                player.finishInput()
+            }
+            restBuf.onFail = { [weak self, weak player] in
+                guard let self, let player, self.streamingPlayer === player else { return }
+                player.finishInput()
+            }
+        }
     }
 
     /// Lets the text run past the lead, carrying on from its last word if it was held there.
@@ -221,9 +362,9 @@ final class ChatCompanion {
         }
     }
 
-    private static func speech(_ path: String, within limit: Duration) async -> (data: Data, words: Int)? {
-        await withTaskGroup(of: (data: Data, words: Int)?.self) { group in
-            group.addTask { await AvatarImages.shared.speech(for: path) }
+    private static func speechStream(_ path: String, within limit: Duration) async -> AvatarImages.SpeechStream? {
+        await withTaskGroup(of: AvatarImages.SpeechStream?.self) { group in
+            group.addTask { await AvatarImages.shared.speechStream(for: path) }
             group.addTask {
                 try? await Task.sleep(for: limit)
                 return nil
@@ -238,10 +379,11 @@ final class ChatCompanion {
     func stopVoice() {
         voiceTask?.cancel()
         voiceTask = nil
-        player?.stop()
-        player = nil
-        playerEnd = nil
-        rest = .none
+        restTask?.cancel()
+        restTask = nil
+        streamingPlayer?.stop()
+        streamingPlayer = nil
+        restBuffer = nil
         leadDone = false
         revealCap = nil
         speaking = false
@@ -259,25 +401,6 @@ final class ChatCompanion {
         } else if next.text != shown {
             shown = next.text
         }
-    }
-}
-
-/// Tells the companion when a reply's voice finishes on its own.
-private final class VoicePlaybackEnd: NSObject, AVAudioPlayerDelegate, Sendable {
-    private let onEnd: @MainActor @Sendable () -> Void
-
-    init(_ onEnd: @escaping @MainActor @Sendable () -> Void) {
-        self.onEnd = onEnd
-    }
-
-    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        let onEnd = onEnd
-        Task { @MainActor in onEnd() }
-    }
-
-    func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
-        let onEnd = onEnd
-        Task { @MainActor in onEnd() }
     }
 }
 
