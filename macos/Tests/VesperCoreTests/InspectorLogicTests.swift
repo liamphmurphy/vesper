@@ -88,4 +88,54 @@ final class InspectorLogicTests: XCTestCase {
         XCTAssertNil(InspectorLogic.railDockTabId(from: "dock.toggle"))
         XCTAssertNil(InspectorLogic.railDockTabId(from: "settings"))
     }
+
+    func testEffectiveInspectorFallsBackToDefaultCompanionOnNativeScreens() {
+        let custom = sampleModel(open: true, activeTabId: "properties")
+        let page = sampleModel(open: false, activeTabId: "design")
+
+        // Native screen with no custom inspector gets the native default companion (never nil).
+        let fallback = InspectorLogic.effectiveInspector(
+            nativeActive: true,
+            nativeInspector: nil,
+            pageInspector: nil,
+            defaultCompanionOpen: true,
+            path: "/chat/abc"
+        )
+        XCTAssertEqual(fallback?.id, InspectorLogic.defaultCompanionModelId)
+        XCTAssertEqual(fallback?.open, true)
+        XCTAssertEqual(fallback?.activeTabId, InspectorLogic.defaultCompanionTabId)
+        XCTAssertEqual(fallback?.tabs.map(\.kind), [.companion])
+        XCTAssertEqual(fallback?.companion?.path, "/chat/abc")
+
+        // Native screen with its own inspector wins over the default companion and page inspector.
+        let own = InspectorLogic.effectiveInspector(
+            nativeActive: true,
+            nativeInspector: custom,
+            pageInspector: page,
+            defaultCompanionOpen: false,
+            path: "/tickets/PAY-1"
+        )
+        XCTAssertEqual(own, custom)
+
+        // Web screen keeps pageInspector (including nil when the page exposes none).
+        XCTAssertEqual(
+            InspectorLogic.effectiveInspector(
+                nativeActive: false,
+                nativeInspector: nil,
+                pageInspector: page,
+                defaultCompanionOpen: true,
+                path: "/apps/designs"
+            ),
+            page
+        )
+        XCTAssertNil(
+            InspectorLogic.effectiveInspector(
+                nativeActive: false,
+                nativeInspector: nil,
+                pageInspector: nil,
+                defaultCompanionOpen: true,
+                path: "/apps/designs"
+            )
+        )
+    }
 }
