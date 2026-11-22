@@ -63,7 +63,9 @@ symlinking top-level entries and `.gemini/` state except `settings.json`,
 host/container subscription login with zero credential duplication while keeping
 per-job hook/MCP configs isolated.
 
-**One-shot `-p` invocation (legacy `Antigravity.Invocation`):**
+**One-shot `-p` invocation (`Antigravity.Invocation`, also used by `SessionInvocation` for image-generation turns):**
+
+When `OptionImageGeneration` is `"true"` (chat `generate_image`, persona `avatar_prompt`, and workflow image steps), `Antigravity.SessionInvocation` and `RunSession` use `agy -p --output-format stream-json` rather than `agy acp --stdio`: Antigravity generates images via its asynchronous `image-generator` subagent (`invoke_subagent`), and `agy acp` (1.5.9) resolves `session/prompt` with `stopReason: "end_turn"` before delivering background subagent wakeups, whereas `agy -p` waits for subagents and emits the wakeup reply carrying the saved image path.
 
 ```
 python3 .lazyagents/agy-launch.py agy -p "<prompt>" --output-format stream-json \

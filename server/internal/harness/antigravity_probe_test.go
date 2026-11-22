@@ -538,6 +538,57 @@ func TestAgyProbe(t *testing.T) {
 			t.Errorf("expected read-only ls output containing notes.txt to reach the model")
 		}
 	})
+
+	t.Run("session_image_subagent", func(t *testing.T) {
+		p := newAgyProbe(t, bin)
+		savedPath := filepath.Join(p.home, ".gemini", "antigravity-cli", "brain", "sub-img-1", "portrait.png")
+		var mu sync.Mutex
+		subCalls := 0
+		p.gemini.route = func(body string) (agyReply, bool) {
+			if strings.Contains(body, "conversation title generator") {
+				return agyReply{text: "Image Probe Title"}, true
+			}
+			// Match the image-generator subagent's prompt without matching the parent turn.
+			if strings.Contains(body, "Draw a photorealistic portrait") && !strings.Contains(body, "Generate exactly one image") {
+				mu.Lock()
+				subCalls++
+				mu.Unlock()
+				return agyReply{text: "Saved " + savedPath}, true
+			}
+			return agyReply{}, false
+		}
+		p.gemini.script(
+			agyReply{call: agyCall("invoke_subagent", map[string]any{"TypeName": "image-generator", "Role": "Image Generator", "Prompt": "Draw a photorealistic portrait"})},
+			agyReply{text: "Generating the image now."},
+			agyReply{text: "Done! Saved " + savedPath},
+		)
+		s := spec()
+		s.Harness = agentdef.HarnessAntigravity
+		s.Model = ""
+		s.HarnessOptions = map[string]string{
+			"sandbox":                      "read-only",
+			"readonly":                     "true",
+			agentdef.OptionImageGeneration: "true",
+		}
+		res, _ := runACPTurn(t, p, s, Turn{Spec: s, Prompt: "Generate exactly one image: a portrait."}, func(context.Context, string, map[string]any) (bool, string) {
+			return true, ""
+		})
+		mu.Lock()
+		gotSubCalls := subCalls
+		mu.Unlock()
+		if res.IsError || res.SessionID == "" {
+			t.Fatalf("unexpected res=%+v", res)
+		}
+		if gotSubCalls != 1 {
+			t.Fatalf("expected image-generator subagent to run once, got %d (final=%q)", gotSubCalls, res.Final)
+		}
+		if !slices.Contains(res.Images, savedPath) {
+			t.Fatalf("expected saved image path %q in res.Images, got %v (final=%q)", savedPath, res.Images, res.Final)
+		}
+		if got := p.policy.tools(); !slices.Contains(got, "Agent") {
+			t.Errorf("expected policy hook to evaluate invoke_subagent as Agent, got %v", got)
+		}
+	})
 }
 
 func readOnlyChat() (s agentdef.Resolved) {
