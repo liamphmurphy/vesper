@@ -12,10 +12,10 @@ import { viewedChatId } from "@/lib/persona-dock";
 import { toolItems } from "@/lib/project-scope";
 import { useNavCounts } from "@/lib/use-nav-counts";
 import { onCommand, post, postDeduped } from "@/lib/native-shell/bridge";
-import { buildChatsNavModel, CHAT_SEARCH, CHATS_NAVIGATOR_ID, CHATS_VIEW_ACTION, NEW_CHAT_ACTION, NEW_SPACE_ACTION, PERSONA_PICKER, START_WITH_PREFIX, VIEW_ACTIVE, VIEW_ARCHIVED, type ChatSearchState } from "@/lib/native-shell/chats-model";
+import { buildChatsNavModel, CHAT_MENU, CHAT_SEARCH, CHATS_NAVIGATOR_ID, CHATS_VIEW_ACTION, NEW_CHAT_ACTION, NEW_SPACE_ACTION, PERSONA_PICKER, START_WITH_PREFIX, VIEW_ACTIVE, VIEW_ARCHIVED, type ChatSearchState } from "@/lib/native-shell/chats-model";
 import { useAnyNativeCommand } from "@/lib/native-shell/hooks";
 import { inspectorPublisher } from "@/lib/native-shell/inspector-publisher";
-import { routeNavCommand } from "@/lib/native-shell/nav-model";
+import { findNavItem, routeNavCommand } from "@/lib/native-shell/nav-model";
 import { publisher } from "@/lib/native-shell/publisher";
 import { buildShellModel, protocolArea } from "@/lib/native-shell/shell-model";
 import type { NativeCommand, NavModel, ShellCommandName } from "@/lib/native-shell/protocol";
@@ -23,6 +23,7 @@ import { useHarnessHealth } from "@/components/domain/setup";
 import { useChatListView, useNewConversation, usePersonaNav } from "@/app/(app)/chat/_components/chat-history";
 import { NewSpaceDialog } from "@/app/(app)/spaces/_components/new-space-dialog";
 import { openCommandPalette } from "./command-menu";
+import { openInNewTab } from "./navigator-slot";
 import { applyNativeAppearance } from "./theme";
 import { openShortcuts } from "./shortcuts";
 import { useNativeChatActions } from "./native-chat-actions";
@@ -161,7 +162,7 @@ export function NativeShellHost() {
     () =>
       onCommand((cmd) => {
         const m = chatsModel.current;
-        if (m.id !== CHATS_NAVIGATOR_ID || !routeNavCommand(m, cmd, (href) => router.push(href))) return;
+        if (m.id !== CHATS_NAVIGATOR_ID || !routeNavCommand(m, cmd, (href) => router.push(href), undefined, openInNewTab)) return;
         if (cmd.type === "nav.action" && cmd.actionId === NEW_CHAT_ACTION) start.current();
         if (cmd.type === "nav.action" && cmd.actionId === NEW_SPACE_ACTION) setCreatingSpace(true);
         if (cmd.type === "nav.activate" && cmd.itemId.startsWith(START_WITH_PREFIX)) startWithPersona.current(cmd.itemId.slice(START_WITH_PREFIX.length));
@@ -172,7 +173,14 @@ export function NativeShellHost() {
           if (cmd.menuItemId === NEW_SPACE_ACTION) setCreatingSpace(true);
         }
         // A row's menu: the menu item id is the actionId, the chat the itemId.
-        if (cmd.type === "nav.action" && cmd.itemId && !cmd.menuItemId) void chatAction.current(cmd.actionId, cmd.itemId);
+        if (cmd.type === "nav.action" && cmd.itemId && !cmd.menuItemId) {
+          if (cmd.actionId === CHAT_MENU.openInNewTab) {
+            const href = findNavItem(m, cmd.itemId)?.href;
+            if (href) openInNewTab(href);
+            return;
+          }
+          void chatAction.current(cmd.actionId, cmd.itemId);
+        }
       }),
     [router],
   );
