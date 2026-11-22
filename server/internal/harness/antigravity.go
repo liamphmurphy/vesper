@@ -231,7 +231,11 @@ func agyDenyRules(spec agentdef.Resolved) []string {
 		return []string{"command(*)", "read_file(*)", "write_file(*)", "read_url(*)", "execute_url(*)", "mcp(*)"}
 	}
 	var deny []string
-	if o["readonly"] == "true" || (!allowed(spec, "tests:run") && !allowed(spec, "repo:write")) {
+	// agy declares no Grep/Glob/LS tools, so an explorer subagent with repo:read
+	// searches via read-only run_command (rg, ls, grep, git log/grep) gated by
+	// agy_policy.py and runs.CheckToolWithSpec instead of a static command(*) deny.
+	explorerReadOnly := o[agentdef.OptionNoMCP] == "true" && o[agentdef.OptionSubagents] == "false" && o["readonly"] == "true" && allowed(spec, "repo:read")
+	if !explorerReadOnly && (o["readonly"] == "true" || (!allowed(spec, "tests:run") && !allowed(spec, "repo:write"))) {
 		deny = append(deny, "command(*)")
 	}
 	// An image step's generator saves outside the workspace; the hook holds it

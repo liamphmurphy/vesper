@@ -211,6 +211,20 @@ func TestAntigravityDenyRulesFollowTheSpec(t *testing.T) {
 			s.HarnessOptions["readonly"] = "true"
 			return s
 		}(), []string{"command(*)", "write_file(*)", "read_url(*)"}, nil},
+		{"explorer subagent with repo:read allows policy-gated read-only commands", func() agentdef.Resolved {
+			s := spec("repo:read", "allowed")
+			s.HarnessOptions["readonly"] = "true"
+			s.HarnessOptions[agentdef.OptionNoMCP] = "true"
+			s.HarnessOptions[agentdef.OptionSubagents] = "false"
+			return s
+		}(), []string{"write_file(*)", "read_url(*)", "mcp(*)"}, []string{"command(*)"}},
+		{"explorer subagent without repo:read denies commands", func() agentdef.Resolved {
+			s := spec()
+			s.HarnessOptions["readonly"] = "true"
+			s.HarnessOptions[agentdef.OptionNoMCP] = "true"
+			s.HarnessOptions[agentdef.OptionSubagents] = "false"
+			return s
+		}(), []string{"command(*)", "write_file(*)", "mcp(*)"}, nil},
 		{"coding run", spec("repo:read", "allowed", "repo:write", "allowed", "tests:run", "allowed", "web:read", "allowed"), nil, []string{"command(*)", "write_file(*)", "read_url(*)"}},
 		{"approval-gated writes stay denied until approved", spec("repo:read", "allowed", "repo:write", "requires_approval", "tests:run", "allowed"), []string{"write_file(*)"}, []string{"command(*)"}},
 		{"image step writes elsewhere", func() agentdef.Resolved {
