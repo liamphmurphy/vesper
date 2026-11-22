@@ -180,6 +180,37 @@ final class ChatComposerLogicTests: XCTestCase {
 
     // MARK: - Send Modes & Harness Usage
 
+    func testSendModeOrderIconsCyclingAndValidation() {
+        XCTAssertEqual(ChatSendMode.runningModes, [.queue, .steer, .aside, .interrupt])
+        XCTAssertEqual(ChatSendMode.runningModes.map(\.systemImage), ["clock", "safari", "arrow.triangle.branch", "bolt"])
+        XCTAssertEqual(ChatSendMode.runningModes.map(\.actionLabel), ["Queue", "Steer", "Ask aside", "Interrupt"])
+        XCTAssertEqual(ChatSendMode.runningModes.map(\.sendButtonSystemImage), ["arrow.up", "safari", "arrow.triangle.branch", "bolt"])
+
+        // Forward and reverse Tab cycling across all 4 running modes
+        XCTAssertEqual(ChatSendMode.queue.cycled(), .steer)
+        XCTAssertEqual(ChatSendMode.steer.cycled(), .aside)
+        XCTAssertEqual(ChatSendMode.aside.cycled(), .interrupt)
+        XCTAssertEqual(ChatSendMode.interrupt.cycled(), .queue)
+        XCTAssertEqual(ChatSendMode.queue.cycled(backward: true), .interrupt)
+        XCTAssertEqual(ChatSendMode.steer.cycled(backward: true), .queue)
+        XCTAssertEqual(ChatSendMode.send.cycled(), .queue)
+        XCTAssertEqual(ChatSendMode.send.cycled(backward: true), .interrupt)
+
+        // Placeholders reflect active mode and persona name
+        XCTAssertTrue(ChatSendMode.queue.placeholder(personaName: "Meow").contains("Meow"))
+        XCTAssertTrue(ChatSendMode.steer.placeholder(personaName: "Meow").contains("Steer Meow mid-turn"))
+        XCTAssertTrue(ChatSendMode.aside.placeholder(personaName: "Meow").contains("Meow keeps working"))
+        XCTAssertTrue(ChatSendMode.interrupt.placeholder(personaName: "Meow").contains("Stop Meow"))
+
+        // Text-only validation allows send & interrupt with attachments/context/research, rejects queue/steer/aside
+        XCTAssertNil(ChatComposerSendLogic.textOnlyValidationError(mode: .send, hasAttachments: true, hasContextChips: true, researchMode: true))
+        XCTAssertNil(ChatComposerSendLogic.textOnlyValidationError(mode: .interrupt, hasAttachments: true, hasContextChips: true, researchMode: true))
+        XCTAssertNil(ChatComposerSendLogic.textOnlyValidationError(mode: .queue, hasAttachments: false, hasContextChips: false, researchMode: false))
+        XCTAssertNotNil(ChatComposerSendLogic.textOnlyValidationError(mode: .queue, hasAttachments: true, hasContextChips: false, researchMode: false))
+        XCTAssertNotNil(ChatComposerSendLogic.textOnlyValidationError(mode: .steer, hasAttachments: false, hasContextChips: true, researchMode: false))
+        XCTAssertNotNil(ChatComposerSendLogic.textOnlyValidationError(mode: .aside, hasAttachments: false, hasContextChips: false, researchMode: true))
+    }
+
     func testSendModeResolutionAndHarnessUsageFormatting() {
         XCTAssertEqual(
             ChatComposerSendLogic.resolveSendMode(isRunning: false, preferredWhileRunning: .steer, parsedCommand: nil),
@@ -188,6 +219,10 @@ final class ChatComposerLogicTests: XCTestCase {
         XCTAssertEqual(
             ChatComposerSendLogic.resolveSendMode(isRunning: true, preferredWhileRunning: .steer, parsedCommand: nil),
             .steer
+        )
+        XCTAssertEqual(
+            ChatComposerSendLogic.resolveSendMode(isRunning: true, preferredWhileRunning: .interrupt, parsedCommand: nil),
+            .interrupt
         )
         XCTAssertEqual(
             ChatComposerSendLogic.resolveSendMode(isRunning: true, preferredWhileRunning: .send, parsedCommand: nil),

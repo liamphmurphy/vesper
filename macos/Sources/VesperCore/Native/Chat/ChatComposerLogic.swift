@@ -689,28 +689,91 @@ public enum ChatSendMode: String, Codable, Sendable, CaseIterable, Identifiable 
     case queue
     case steer
     case aside
+    case interrupt
 
     public var id: String { rawValue }
 
+    /// Short mode name used for labels and accessibility (matches web `SEND_MODE_LABEL`).
     public var label: String {
         switch self {
         case .send: "Send"
         case .queue: "Queue"
         case .steer: "Steer"
         case .aside: "Aside"
+        case .interrupt: "Interrupt"
         }
     }
 
+    /// Action verb shown on the submit button (matches web `sendModeAction`).
+    public var actionLabel: String {
+        switch self {
+        case .send: "Send"
+        case .queue: "Queue"
+        case .steer: "Steer"
+        case .aside: "Ask aside"
+        case .interrupt: "Interrupt"
+        }
+    }
+
+    /// Tooltip explaining what sending in this mode does (matches web `SEND_MODE_HINT`).
     public var hint: String {
         switch self {
         case .send: "Send message"
-        case .queue: "Send after current reply finishes"
-        case .steer: "Guide the active reply mid-turn"
-        case .aside: "Ask a side question without stopping the reply"
+        case .queue: "Send this once the current reply ends"
+        case .steer: "Steer the active reply mid-turn without losing progress"
+        case .aside: "Ask about the current reply without stopping it"
+        case .interrupt: "Stop the reply and answer this together with your last message"
         }
     }
 
-    public static let runningModes: [ChatSendMode] = [.queue, .steer, .aside]
+    /// SF Symbol for the mode switcher pill (matches web `send-modes.tsx` + `SidebarIcons`).
+    public var systemImage: String {
+        switch self {
+        case .send: "arrow.up"
+        case .queue: "clock"
+        case .steer: "safari"
+        case .aside: "arrow.triangle.branch"
+        case .interrupt: "bolt"
+        }
+    }
+
+    /// SF Symbol for the primary submit button (matches web `SendButton` in `reply-tools.tsx`).
+    public var sendButtonSystemImage: String {
+        switch self {
+        case .send, .queue: "arrow.up"
+        case .steer: "safari"
+        case .aside: "arrow.triangle.branch"
+        case .interrupt: "bolt"
+        }
+    }
+
+    /// Composer placeholder reflecting the active send mode (matches web `sendModePlaceholder`).
+    public func placeholder(personaName: String) -> String {
+        switch self {
+        case .send:
+            "Message \(personaName)… (/ for commands, @ for personas)"
+        case .queue:
+            "Queue a follow-up for when \(personaName) finishes…"
+        case .steer:
+            "Steer \(personaName) mid-turn without discarding work…"
+        case .aside:
+            "Ask on the side. \(personaName) keeps working…"
+        case .interrupt:
+            "Stop \(personaName) and steer it…"
+        }
+    }
+
+    /// Cycles through `runningModes` (Tab / Shift+Tab while a reply is running).
+    public func cycled(backward: Bool = false) -> ChatSendMode {
+        let modes = Self.runningModes
+        guard let idx = modes.firstIndex(of: self) else {
+            return backward ? modes[modes.count - 1] : modes[0]
+        }
+        let step = backward ? modes.count - 1 : 1
+        return modes[(idx + step) % modes.count]
+    }
+
+    public static let runningModes: [ChatSendMode] = [.queue, .steer, .aside, .interrupt]
 }
 
 public enum ChatComposerSendLogic {
@@ -729,6 +792,23 @@ public enum ChatComposerSendLogic {
         }
         guard isRunning else { return .send }
         return preferredWhileRunning == .send ? .queue : preferredWhileRunning
+    }
+
+    /// Queue, steer, and aside endpoints carry text only; interrupt and ordinary send accept attachments, context chips, and research mode.
+    public static func textOnlyValidationError(
+        mode: ChatSendMode,
+        hasAttachments: Bool,
+        hasContextChips: Bool,
+        researchMode: Bool
+    ) -> String? {
+        guard mode == .queue || mode == .steer || mode == .aside else { return nil }
+        guard hasAttachments || hasContextChips || researchMode else { return nil }
+        let subject: String = switch mode {
+        case .aside: "An aside"
+        case .steer: "A steer"
+        default: "A follow-up"
+        }
+        return "\(subject) is text only: remove the context and files, or pick Interrupt to send them now."
     }
 }
 

@@ -48,12 +48,14 @@ struct ChatComposerTextView: NSViewRepresentable {
     let placeholderColor: Color
     let isDisabled: Bool
     let isCompletionOpen: Bool
+    let canCycleSendMode: Bool
     let minHeight: CGFloat
     let maxHeight: CGFloat
 
     let onTextChange: @MainActor (_ text: String, _ cursorUTF16: Int) -> Void
     let onSelectionChange: @MainActor (_ text: String, _ cursorUTF16: Int) -> Void
     let onSubmit: @MainActor () -> Void
+    let onCycleSendMode: @MainActor (_ backward: Bool) -> Void
     let onCompletionNavigate: @MainActor (Int) -> Void
     let onCompletionAccept: @MainActor () -> Void
     let onCompletionDismiss: @MainActor () -> Void
@@ -236,6 +238,17 @@ struct ChatComposerTextView: NSViewRepresentable {
                     return true
                 default:
                     break
+                }
+            }
+
+            if parent.canCycleSendMode {
+                if commandSelector == #selector(NSResponder.insertTab(_:)) {
+                    parent.onCycleSendMode(false)
+                    return true
+                }
+                if commandSelector == #selector(NSResponder.insertBacktab(_:)) {
+                    parent.onCycleSendMode(true)
+                    return true
                 }
             }
 
