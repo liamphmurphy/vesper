@@ -224,7 +224,6 @@ struct ScheduledScreen: View {
 
             HStack(spacing: 12) {
                 Picker("Frequency", selection: $draft.frequency) {
-                    Text("Hourly").tag(API.ScheduledTaskInput.Frequency.hourly)
                     Text("Daily").tag(API.ScheduledTaskInput.Frequency.daily)
                     Text("Weekly").tag(API.ScheduledTaskInput.Frequency.weekly)
                     Text("Monthly").tag(API.ScheduledTaskInput.Frequency.monthly)
@@ -232,7 +231,7 @@ struct ScheduledScreen: View {
                 }
                 .frame(maxWidth: 220)
 
-                if draft.frequency != .hourly && draft.frequency != .cron {
+                if draft.frequency != .cron {
                     TextField("HH:MM", text: $draft.atTime).textFieldStyle(.roundedBorder).frame(width: 90)
                 }
                 TextField("Time zone", text: $draft.timezone).textFieldStyle(.roundedBorder).frame(maxWidth: 200)
@@ -292,7 +291,7 @@ struct ScheduledScreen: View {
                 Text("Upcoming").font(.headline)
                 HStack(spacing: 12) {
                     ForEach(task.upcoming, id: \.self) { iso in
-                        Text(APIDate.short(iso))
+                        Text(APIDate.parse(iso)?.formatted(date: .abbreviated, time: .shortened) ?? iso)
                             .font(.caption)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
@@ -309,7 +308,7 @@ struct ScheduledScreen: View {
                     ForEach(task.runs, id: \.id) { run in
                         HStack(spacing: 10) {
                             TonePill(label: ScheduledLogic.runStateLabel(run.state), tone: ScheduledLogic.runStateTone(run.state))
-                            Text(run.summary.isEmpty ? APIDate.short(run.startedAt) : run.summary)
+                            Text(run.summary.isEmpty ? APIDate.timeline(run.startedAt) : run.summary)
                                 .lineLimit(1)
                             Spacer()
                             if run.costMicros > 0 {
@@ -418,7 +417,7 @@ struct ScheduledScreen: View {
                 API.runScheduledTask(id: task.id),
                 invalidating: QueryInvalidation(resources: ["scheduled-tasks", "runs"])
             )
-            context.showToast(ToastItemModel(id: "scheduled.run", title: "Triggered \(task.name)", tone: .info))
+            context.showToast(ToastItemModel(id: "scheduled.run", title: "Triggered \(task.name)", tone: .neutral))
         } catch {
             saveError = (error as? APIError)?.userMessage ?? error.localizedDescription
         }
@@ -433,7 +432,7 @@ struct ScheduledScreen: View {
                 invalidating: QueryInvalidation(resources: ["scheduled-tasks"])
             )
             selectedId = nil
-            context.showToast(ToastItemModel(id: "scheduled.deleted", title: "Deleted \(task.name)", tone: .info))
+            context.showToast(ToastItemModel(id: "scheduled.deleted", title: "Deleted \(task.name)", tone: .neutral))
         } catch {
             saveError = (error as? APIError)?.userMessage ?? error.localizedDescription
         }

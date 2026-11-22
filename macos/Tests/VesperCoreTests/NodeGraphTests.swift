@@ -165,7 +165,7 @@ final class NodeGraphTests: XCTestCase {
 
     func testWorkflowsLogicConnectionsAncestorsRemoveDiffAndGates() {
         let start = API.WorkflowNode(config: .init(), id: "start", title: "Start", type: .trigger, x: 0, y: 0)
-        let work = API.WorkflowNode(config: .init(images: true, imageEngine: "codex"), id: "work", title: "Work", type: .agent, x: 200, y: 0)
+        let work = API.WorkflowNode(config: .init(imageEngine: "codex", images: true), id: "work", title: "Work", type: .agent, x: 200, y: 0)
         let check = API.WorkflowNode(config: .init(check: true), id: "check", title: "Check", type: .agent, x: 400, y: 0)
         let gate = API.WorkflowNode(config: .init(maxAttempts: 2, requiresCheck: "check", retryFrom: "work"), id: "ok", title: "Review", type: .gate, x: 600, y: 0)
         let wiki = API.WorkflowNode(config: .init(path: "Docs/Out"), id: "page", title: "Wiki", type: .wiki, x: 800, y: 0)
@@ -205,8 +205,8 @@ final class NodeGraphTests: XCTestCase {
         XCTAssertFalse(removed.edges.contains { $0.from == "work" || $0.to == "work" })
 
         let diff = WorkflowsLogic.diffGraphs(base: graph, next: removed)
-        XCTAssertEqual(diff.nodeDiffs["work"], .removed)
-        XCTAssertEqual(diff.nodeDiffs["ok"], .changed)
+        XCTAssertEqual(diff.nodeDiffs["work"], NodeGraphDiffKind.removed)
+        XCTAssertEqual(diff.nodeDiffs["ok"], NodeGraphDiffKind.changed)
         XCTAssertEqual(diff.removedEdges.count, 2)
 
         XCTAssertEqual(WorkflowsLogic.newNodeId(in: API.WorkflowGraph(edges: [], nodes: [

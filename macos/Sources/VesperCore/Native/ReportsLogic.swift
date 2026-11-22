@@ -141,7 +141,9 @@ public enum ReportsLogic {
     public static func usd(micros: Int) -> String {
         let value = Double(micros) / 1_000_000.0
         if value > 0 && value < 0.01 {
-            return value < 0.001 ? "< $0.001" : String(format: "$%.3f", value)
+            if value < 0.001 { return "< $0.001" }
+            let millis = (micros + 500) / 1000
+            return String(format: "$%.3f", Double(millis) / 1000.0)
         }
         let formatter = NumberFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")

@@ -583,8 +583,8 @@ public enum EpicsLogic {
             return NavItem(
                 id: item.epic.id,
                 title: item.epic.name,
-                href: epicDetailHref(item.epic.id),
-                trailing: "\(done)/\(item.epic.ticketsTotal)"
+                trailing: "\(done)/\(item.epic.ticketsTotal)",
+                href: epicDetailHref(item.epic.id)
             )
         }
         return NavModel(

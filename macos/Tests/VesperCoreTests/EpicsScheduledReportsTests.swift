@@ -25,9 +25,9 @@ final class EpicsScheduledReportsTests: XCTestCase {
         let days = [
             API.CostDay(
                 agents: [
-                    API.CostDaySlice(costMicros: 500_000, key: "a1"),
-                    API.CostDaySlice(costMicros: 300_000, key: "a2"),
-                    API.CostDaySlice(costMicros: 100_000, key: "a3"),
+                    API.CostPart(costMicros: 500_000, key: "a1"),
+                    API.CostPart(costMicros: 300_000, key: "a2"),
+                    API.CostPart(costMicros: 100_000, key: "a3"),
                 ],
                 costMicros: 900_000,
                 date: "2026-11-01",
