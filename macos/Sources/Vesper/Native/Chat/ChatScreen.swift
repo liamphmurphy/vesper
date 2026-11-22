@@ -423,7 +423,9 @@ struct ChatScreen: View {
             VStack(alignment: .leading, spacing: 20) {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 10) {
-                        if let persona = activePersona {
+                        if let persona = activePersona, let loops = persona.playableLoops {
+                            PersonaStateStageView(loops: loops, state: .idle, width: 120, label: persona.name)
+                        } else if let persona = activePersona {
                             WorkPersonaAvatarView(id: persona.id, handle: nil, name: persona.name, size: 36, state: .idle, active: true, preferCharacter: true)
                         }
                         VStack(alignment: .leading, spacing: 2) {

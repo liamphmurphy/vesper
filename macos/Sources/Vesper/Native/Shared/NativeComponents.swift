@@ -29,7 +29,13 @@ struct WorkPersonaAvatarView: View {
         let fallbackHex = theme.colors["agent-\(hue)"] ?? "#64748b"
         let characterColor = persona.flatMap { $0.color.isEmpty ? nil : $0.color } ?? fallbackHex
         let face = WorkPersona.face(avatarUrl: persona?.avatarUrl, characterSvg: persona?.characterSvg, preferCharacter: preferCharacter)
-        let photoUrl: String? = if case .photo(let url) = face { url } else { nil }
+        // A persona with no picture or character shows its state loop's head crop, so compact
+        // rows match the loop it plays in chats.
+        let photoUrl: String? = switch face {
+        case .photo(let url): url
+        case .initial: persona?.stateMedia?.headUrl
+        case .character: nil
+        }
 
         ZStack {
             if case .character(let characterSvg) = face {

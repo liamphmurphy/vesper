@@ -748,18 +748,26 @@ private struct ChatLiveActivityCardView: View {
         let displaySteps = showAllSteps ? activity.steps : folded.shown
         // Observed by `ChatTranscriptProposalsSlot`; the API lists only pending approvals.
         let awaiting = !(context.store.entry(API.listChatToolApprovals(id: chatId)).data?.approvals.isEmpty ?? true)
+        let characterState = CharacterState.forActivity(activity.status.kind, awaiting: awaiting)
+        // The photorealistic loop, when the persona has one, stands beside the activity scene.
+        let loops = speaker.flatMap { s in context.store.entry(API.listPersonas()).data?.personas.first { $0.id == s.id }?.playableLoops }
 
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 12) {
-                WorkPersonaAvatarView(
-                    id: speaker?.id,
-                    handle: nil,
-                    name: speakerName,
-                    size: 32,
-                    state: .forActivity(activity.status.kind, awaiting: awaiting),
-                    active: true,
-                    preferCharacter: true
-                )
+                if let loops {
+                    PersonaStateStageView(loops: loops, state: characterState, width: 34, label: "\(speakerName), \(characterState.rawValue.replacingOccurrences(of: "_", with: " "))")
+                        .padding(.vertical, -6)
+                } else {
+                    WorkPersonaAvatarView(
+                        id: speaker?.id,
+                        handle: nil,
+                        name: speakerName,
+                        size: 32,
+                        state: characterState,
+                        active: true,
+                        preferCharacter: true
+                    )
+                }
                 ActivitySceneView(kind: activity.status.kind, width: 112, height: 54)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {

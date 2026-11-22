@@ -392,6 +392,8 @@ private struct PersonaDetailView: View {
                 .disabled(busy || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
+        SettingsPersonaStatesCard(aux: aux, persona: persona)
+            .id(persona.id)
     }
 
     @ViewBuilder private var modelTab: some View {
