@@ -168,10 +168,12 @@ Cost is `unknown`: agy reports tokens, and Vesper keeps no Gemini price list.
 
 A 429 with Google's quota body ends as `status: ERROR` with the full message, for example
 `Error 429, Message: You exceeded your current quota, …, Status: RESOURCE_EXHAUSTED,
-Details: [map[@type:…RetryInfo retryDelay:41s]]`. `harness.UsageLimit` matches
+Details: [map[@type:…RetryInfo retryDelay:300s]]`. `harness.UsageLimit` matches
 "exceeded your current quota" and "resource_exhausted", which triggers the fallbacks.
-`harness.LimitReset` reads `retryDelay` as the reset time. With no `RetryInfo`, agy
-retried once after about 4s before giving up.
+`harness.LimitReset` reads `retryDelay` as the reset time. Starting in `agy 1.5.10`,
+`agy` waits and retries `RetryInfo` delays up to 4 minutes (up from 30s in 1.5.9)
+before failing the turn; with no `RetryInfo`, agy retried once after about 4s
+before giving up. (Re-verified across all 14 `TestAgyProbe` subtests against `agy 1.5.14`.)
 
 **With no network at all, agy never ends the turn.** It retries the model call,
 printing an `error_message` step each time, until it is killed. The probe stopped

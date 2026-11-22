@@ -108,7 +108,9 @@ func TestAgyProbe(t *testing.T) {
 
 	t.Run("quota", func(t *testing.T) {
 		p := newAgyProbe(t, bin)
-		p.gemini.script(agyReply{status: 429, body: `{"error":{"code":429,"message":"You exceeded your current quota, please check your plan and billing details.","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"41s"}]}}`})
+		// agy 1.5.10+ sleeps and retries RetryInfo delays up to 4 minutes; use 300s
+		// so both 1.5.9 (>30s) and 1.5.10+ (>4m) fail fast as a quota limit.
+		p.gemini.script(agyReply{status: 429, body: `{"error":{"code":429,"message":"You exceeded your current quota, please check your plan and billing details.","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"300s"}]}}`})
 		out := p.run(t, readOnlyChat(), "antigravity-error.jsonl")
 		if !out.res.IsError || !out.res.UsageLimited {
 			t.Errorf("a 429 must end the turn as a usage limit: %+v", out.res)
@@ -403,7 +405,7 @@ func TestAgyProbe(t *testing.T) {
 			if strings.Contains(body, "conversation title generator") {
 				return agyReply{text: "Probe Title"}, true
 			}
-			return agyReply{status: 429, body: `{"error":{"code":429,"message":"You exceeded your current quota, please check your plan and billing details.","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"41s"}]}}`}, true
+			return agyReply{status: 429, body: `{"error":{"code":429,"message":"You exceeded your current quota, please check your plan and billing details.","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"300s"}]}}`}, true
 		}
 		s := spec("repo:read", "allowed")
 		s.Harness = agentdef.HarnessAntigravity
