@@ -57,6 +57,7 @@ import { MediaProvidersSection } from "./media-providers-section";
 import { RepositorySourcesSection } from "./repositories-section";
 import { SecretsSection } from "./secrets-section";
 import { SignInSection, useAuthStatus } from "./sign-in-section";
+import { SubagentTierRulesSetting } from "./subagent-tier-rules";
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong. Please try again.");
 const noSubscribe = () => () => {};
@@ -942,6 +943,9 @@ function RunnerSection() {
               max={16}
               hint="How many in-turn explorer or helper subagents one active turn runs at once (1–16, default 3). Extra calls wait in the queue. Applies to all personas starting on their next turn."
             />
+          </Row>
+          <Row label="Subagent routing">
+            <SubagentTierRulesSetting enabled={r.subagent_tier_routing ?? true} rules={r.subagent_tier_models} />
           </Row>
           <Row label="Delegations">
             <ConcurrencyLimitSetting

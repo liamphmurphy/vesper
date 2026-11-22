@@ -37,11 +37,36 @@ export type GraphTurn = {
   usage?: Record<string, unknown>;
 };
 
+export type GraphSubagentJob = {
+  id: string;
+  batch_id?: string | null;
+  agent_type: "explorer" | "helper";
+  role: string;
+  reason: string;
+  requested_tier: string;
+  tier: string;
+  model: string;
+  effort: string;
+  status: "queued" | "running" | "completed" | "failed" | "canceled";
+  prompt: string;
+  result_text: string;
+  error: string;
+  input_tokens: number;
+  output_tokens: number;
+  cached_tokens: number;
+  cost_usd?: number | null;
+  tool_calls: number;
+  created_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+};
+
 /** The parts of a RunDetail (`GET /runs/{id}`) the graph reads. */
-export type GraphDetail = { run: GraphRun; turns: GraphTurn[]; events: Ev[]; child_runs: GraphRun[] };
+export type GraphDetail = { run: GraphRun; turns: GraphTurn[]; events: Ev[]; child_runs: GraphRun[]; subagent_jobs?: GraphSubagentJob[] };
 
 export type NodeStatus = "pending" | "running" | "waiting" | "done" | "failed" | "cancelled";
 export type GateKind = "approval" | "human_reply" | "mockup_review";
+export type SubagentFlag = "capped" | "spinning" | "queue_bound" | "serial" | "failed";
 
 export type TurnNode = {
   id: string; kind: "turn"; turn: number; trigger: string; status: NodeStatus;
@@ -53,10 +78,40 @@ export type SubagentNode = {
   /** The run's own detail is loaded, so its children are in the graph. */
   expanded: boolean;
 };
+export type SubagentJobNode = {
+  id: string;
+  kind: "subagent_job";
+  job_id: string;
+  turn: number;
+  batch_id?: string;
+  batch_size: number;
+  agent_type: "explorer" | "helper";
+  role: string;
+  reason: string;
+  requested_tier: string;
+  tier: string;
+  model: string;
+  effort: string;
+  status: NodeStatus;
+  tool_calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  cached_tokens: number;
+  cost_usd?: number;
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+  queued_ms?: number;
+  duration_ms?: number;
+  prompt: string;
+  result_text: string;
+  error: string;
+  flags: SubagentFlag[];
+};
 export type GateNode = { id: string; kind: "gate"; gate: GateKind; state: "pending" | "resolved"; after_turn: number; detail?: string };
 export type ErrorNode = { id: string; kind: "error"; turn: number; seq: number; message: string };
 export type OutcomeNode = { id: string; kind: "outcome"; status: NodeStatus; text: string };
-export type GraphNode = TurnNode | SubagentNode | GateNode | ErrorNode | OutcomeNode;
+export type GraphNode = TurnNode | SubagentNode | SubagentJobNode | GateNode | ErrorNode | OutcomeNode;
 
 export type EdgeKind = "sequence" | "delegation" | "resume";
 export type GraphEdge = { id: string; kind: EdgeKind; from: string; to: string };
@@ -67,12 +122,43 @@ export const nodeId = {
   turn: (n: number) => `turn:${n}`,
   gate: (afterTurn: number) => `gate:${afterTurn}`,
   run: (id: string) => `run:${id}`,
+  job: (id: string) => `job:${id}`,
   error: (seq: number) => `error:${seq}`,
   outcome: "outcome",
 };
 
 const ENDED = ["completed", "failed", "cancelled"];
 const GATES: GateKind[] = ["approval", "human_reply", "mockup_review"];
+
+export function subagentJobStatus(status: string): NodeStatus {
+  switch (status) {
+    case "queued":
+      return "pending";
+    case "running":
+      return "running";
+    case "completed":
+      return "done";
+    case "failed":
+      return "failed";
+    case "canceled":
+      return "cancelled";
+    default:
+      return "pending";
+  }
+}
+
+export function subagentFlags(
+  job: { requested_tier?: string; tier?: string; status: string; tool_calls: number; queued_ms?: number; duration_ms?: number },
+  opts?: { serialInTurn?: boolean },
+): SubagentFlag[] {
+  const flags: SubagentFlag[] = [];
+  if (job.requested_tier && job.tier && job.requested_tier !== job.tier) flags.push("capped");
+  if (job.status === "failed") flags.push("failed");
+  if (job.tool_calls >= 20) flags.push("spinning");
+  if (job.queued_ms != null && job.queued_ms >= 5_000 && (job.duration_ms == null || job.queued_ms > job.duration_ms)) flags.push("queue_bound");
+  if (opts?.serialInTurn) flags.push("serial");
+  return flags;
+}
 
 export function runStatus(state: string): NodeStatus {
   switch (state) {
@@ -120,7 +206,7 @@ export function buildRunGraph(detail: GraphDetail, loaded: Iterable<GraphDetail 
 
   // Turns; an unmanaged run without turn records shows as one session turn.
   const turns: GraphTurn[] = [...detail.turns].sort((a, b) => a.seq - b.seq);
-  if (turns.length === 0 && events.length > 0) {
+  if (turns.length === 0 && (events.length > 0 || (detail.subagent_jobs?.length ?? 0) > 0)) {
     turns.push({ seq: 0, trigger: "start", started_at: run.started_at, ended_at: run.ended_at, status: ENDED.includes(run.state) ? "done" : "running" });
   }
   const turnIds = new Set(turns.map((t) => t.seq));
@@ -211,6 +297,75 @@ export function buildRunGraph(detail: GraphDetail, loaded: Iterable<GraphDetail 
     const turn = turnOf(parentOf.get(c.id) ?? turnAt(starts, c.started_at));
     if (turn == null) continue; // no turn to hang it on yet; it appears on the next refresh
     addRun(c, nodeId.turn(turn), 1);
+  }
+
+  // In-turn explorer/helper subagent jobs: attach via their first lifecycle event
+  // (or timestamp fallback), preserve creation order, and compute batching/anomaly flags.
+  const jobTurn = new Map<string, number>();
+  for (const e of events) {
+    if (e.type !== "lifecycle") continue;
+    const p = (e.payload ?? {}) as P;
+    if (p.state !== "subagent_queued" && p.state !== "subagent_started") continue;
+    const sid = typeof p.subagent_id === "string" ? p.subagent_id : "";
+    if (sid && !jobTurn.has(sid)) jobTurn.set(sid, byEvent.get(e.seq) ?? 0);
+  }
+  const jobs = [...(detail.subagent_jobs ?? [])].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at) || a.id.localeCompare(b.id));
+  const batchCount = new Map<string, number>();
+  for (const j of jobs) {
+    if (j.batch_id) batchCount.set(j.batch_id, (batchCount.get(j.batch_id) ?? 0) + 1);
+  }
+  const resolvedJobs = jobs
+    .map((j) => ({ j, turn: turnOf(jobTurn.get(j.id) ?? turnAt(starts, j.created_at)) }))
+    .filter((x): x is { j: GraphSubagentJob; turn: number } => x.turn != null);
+  const unbatchedPerTurn = new Map<number, number>();
+  for (const { j, turn } of resolvedJobs) {
+    if (!j.batch_id) unbatchedPerTurn.set(turn, (unbatchedPerTurn.get(turn) ?? 0) + 1);
+  }
+  for (const { j, turn } of resolvedJobs) {
+    const id = nodeId.job(j.id);
+    const createdMs = Date.parse(j.created_at);
+    const startedMs = j.started_at ? Date.parse(j.started_at) : Number.NaN;
+    const completedMs = j.completed_at ? Date.parse(j.completed_at) : Number.NaN;
+    const queued_ms = Number.isFinite(createdMs) && Number.isFinite(startedMs) ? Math.max(0, startedMs - createdMs) : undefined;
+    const duration_ms = Number.isFinite(startedMs) && Number.isFinite(completedMs) ? Math.max(0, completedMs - startedMs) : undefined;
+    const batchId = j.batch_id || undefined;
+    const batch_size = batchId ? (batchCount.get(batchId) ?? 1) : 1;
+    const status = subagentJobStatus(j.status);
+    const flags = subagentFlags(
+      { requested_tier: j.requested_tier, tier: j.tier, status: j.status, tool_calls: j.tool_calls, queued_ms, duration_ms },
+      { serialInTurn: !batchId && (unbatchedPerTurn.get(turn) ?? 0) >= 3 },
+    );
+    nodes.push({
+      id,
+      kind: "subagent_job",
+      job_id: j.id,
+      turn,
+      ...(batchId ? { batch_id: batchId } : {}),
+      batch_size,
+      agent_type: j.agent_type,
+      role: j.role,
+      reason: j.reason,
+      requested_tier: j.requested_tier,
+      tier: j.tier,
+      model: j.model,
+      effort: j.effort,
+      status,
+      tool_calls: j.tool_calls,
+      input_tokens: j.input_tokens,
+      output_tokens: j.output_tokens,
+      cached_tokens: j.cached_tokens,
+      ...(j.cost_usd != null ? { cost_usd: j.cost_usd } : {}),
+      created_at: j.created_at,
+      ...(j.started_at ? { started_at: j.started_at } : {}),
+      ...(j.completed_at ? { completed_at: j.completed_at } : {}),
+      ...(queued_ms != null ? { queued_ms } : {}),
+      ...(duration_ms != null ? { duration_ms } : {}),
+      prompt: j.prompt,
+      result_text: j.result_text,
+      error: j.error,
+      flags,
+    });
+    edge("delegation", nodeId.turn(turn), id);
   }
 
   if (ENDED.includes(run.state)) {

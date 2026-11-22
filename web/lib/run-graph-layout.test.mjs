@@ -4,6 +4,30 @@ import { layoutRunGraph, moveFrom } from "./run-graph-layout.ts";
 
 const turn = (n, status = "done") => ({ id: `turn:${n}`, kind: "turn", turn: n, trigger: n === 1 ? "start" : "resume", status, started_at: "" });
 const sub = (id, depth = 1) => ({ id: `run:${id}`, kind: "subagent_run", run_id: id, agent: "implementer", status: "done", cost_usd: 0, depth, child_count: 0, expanded: false });
+const jobNode = (id, turnNum = 1) => ({
+  id: `job:${id}`,
+  kind: "subagent_job",
+  job_id: id,
+  turn: turnNum,
+  batch_size: 1,
+  agent_type: "explorer",
+  role: "Search",
+  reason: "",
+  requested_tier: "",
+  tier: "fast",
+  model: "claude-haiku-4-5",
+  effort: "low",
+  status: "done",
+  tool_calls: 1,
+  input_tokens: 10,
+  output_tokens: 5,
+  cached_tokens: 0,
+  created_at: "",
+  prompt: "p",
+  result_text: "r",
+  error: "",
+  flags: [],
+});
 const seq = (from, to) => ({ id: `${from}-${to}`, kind: "sequence", from, to });
 const del = (from, to) => ({ id: `${from}-${to}`, kind: "delegation", from, to });
 const chain = (n) => Array.from({ length: n }, (_, i) => turn(i + 1, i === n - 1 ? "running" : "done"));
@@ -47,4 +71,22 @@ test("arrow keys move along the lane and within a column", () => {
   assert.equal(moveFrom(l, "run:a", "ArrowRight"), "turn:2");
   assert.equal(moveFrom(l, "turn:2", "ArrowRight"), undefined);
   assert.equal(moveFrom(l, "turn:2", "Home"), "turn:1");
+});
+
+test("subagent_job nodes sit at depth 1 ahead of delegated runs and errors, and prevent quiet grouping", () => {
+  const err = { id: "error:9", kind: "error", turn: 1, seq: 9, message: "boom" };
+  const g1 = graph([turn(1, "running"), sub("a"), jobNode("j1"), err], [del("turn:1", "run:a"), del("turn:1", "job:j1"), seq("turn:1", "error:9")]);
+  const l1 = layoutRunGraph(g1);
+  assert.deepEqual(
+    l1.columns[0].branch.map((b) => [b.id, b.depth]),
+    [["job:j1", 1], ["run:a", 1], ["error:9", 1]],
+  );
+  assert.equal(moveFrom(l1, "turn:1", "ArrowDown"), "job:j1");
+  assert.equal(moveFrom(l1, "job:j1", "ArrowDown"), "run:a");
+  assert.equal(moveFrom(l1, "job:j1", "ArrowUp"), "turn:1");
+
+  const large = graph([...chain(20), jobNode("j8", 8)], [del("turn:8", "job:j8")]);
+  const l2 = layoutRunGraph(large);
+  assert.ok(mains(l2).includes("turn:8"), "turn with subagent_job must stay ungrouped");
+  assert.deepEqual(mains(l2), ["group:1", "turn:8", "group:9", "turn:20"]);
 });

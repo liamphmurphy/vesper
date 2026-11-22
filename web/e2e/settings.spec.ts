@@ -73,14 +73,16 @@ async function installSettingsApi(page: Page, opts: { runners?: boolean; secrets
   let hostFolders = false;
   let maxSubagents = 3;
   let maxDelegations = 3;
+  let tierRouting = true;
+  let tierModels: Record<string, { fast?: string; standard?: string; deep?: string }> = {};
   const runnerPuts: Record<string, unknown>[] = [];
   const runnerStatus = () =>
     opts.runners === false
-      ? { online: false, runners: [], slots: 0, busy: 0, live: 0, queued: 3, host_folder_workspaces: hostFolders, max_concurrent_subagents: maxSubagents, max_parallel_delegations: maxDelegations }
+      ? { online: false, runners: [], slots: 0, busy: 0, live: 0, queued: 3, host_folder_workspaces: hostFolders, max_concurrent_subagents: maxSubagents, max_parallel_delegations: maxDelegations, subagent_tier_routing: tierRouting, subagent_tier_models: tierModels }
       : {
           online: true,
           runners: [{ id: "mbp-4242", backend: "microvm", max_concurrent: 4, running: 2, version: "0.9.1", heartbeat_at: new Date().toISOString(), ...(opts.hostDir ? { host_workspaces_dir: opts.hostDir } : {}) }],
-          slots: 4, busy: 2, live: 2, queued: 3, host_folder_workspaces: hostFolders, max_concurrent_subagents: maxSubagents, max_parallel_delegations: maxDelegations,
+          slots: 4, busy: 2, live: 2, queued: 3, host_folder_workspaces: hostFolders, max_concurrent_subagents: maxSubagents, max_parallel_delegations: maxDelegations, subagent_tier_routing: tierRouting, subagent_tier_models: tierModels,
         };
   await page.route("**/api/v1/runner", (route) => route.fulfill({ json: runnerStatus() }));
   await page.route("**/api/v1/runner/settings", (route) => {
@@ -88,11 +90,15 @@ async function installSettingsApi(page: Page, opts: { runners?: boolean; secrets
       host_folder_workspaces?: boolean;
       max_concurrent_subagents?: number;
       max_parallel_delegations?: number;
+      subagent_tier_routing?: boolean;
+      subagent_tier_models?: Record<string, { fast?: string; standard?: string; deep?: string }>;
     };
     runnerPuts.push(body);
     if (body.host_folder_workspaces !== undefined) hostFolders = body.host_folder_workspaces;
     if (body.max_concurrent_subagents !== undefined) maxSubagents = body.max_concurrent_subagents;
     if (body.max_parallel_delegations !== undefined) maxDelegations = body.max_parallel_delegations;
+    if (body.subagent_tier_routing !== undefined) tierRouting = body.subagent_tier_routing;
+    if (body.subagent_tier_models !== undefined) tierModels = body.subagent_tier_models;
     return route.fulfill({ json: runnerStatus() });
   });
   // Like the server: Codex is available once harness:openai exists.

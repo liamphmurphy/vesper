@@ -7,6 +7,7 @@ export type RunEventLike = { seq: number; type: string; at: string; payload: Rec
 export type ToolCall = { key: number; tool: string; input: unknown; done: boolean; output?: string; failed?: true };
 
 const str = (v: unknown) => (v == null ? "" : typeof v === "string" ? v : JSON.stringify(v));
+const isSubagentEvent = (p: Record<string, unknown>) => p.subagent === true;
 
 /**
  * Tool calls since `since` (the turn's user message) and up to `until` (the next one),
@@ -21,6 +22,7 @@ export function toolCalls(events: RunEventLike[] | undefined, since?: string, un
     const at = Date.parse(e.at);
     if (at < t || at > hi) continue;
     const p = e.payload;
+    if (isSubagentEvent(p)) continue;
     if (e.type === "tool_call") {
       if (p.id) open.set(str(p.id), out.length);
       out.push({ key: e.seq, tool: str(p.tool), input: p.input, done: false });
@@ -778,6 +780,7 @@ export function turnActivity(events: RunEventLike[] | undefined, since?: string,
     const at = Date.parse(e.at);
     if (at < t || at > hi) continue;
     const p = e.payload;
+    if (isSubagentEvent(p)) continue;
     if (e.type === "tool_call" || e.type === "tool_result") {
       activity = undefined;
     } else if (e.type === "lifecycle" && p.state === REPLY_BLOCK) {
@@ -840,6 +843,7 @@ export function turnClock(events: RunEventLike[] | undefined, since?: string, un
     first ??= at;
     last = Math.max(last ?? at, at);
     const p = e.payload;
+    if (isSubagentEvent(p)) continue;
     if (e.type === "tool_call") {
       calls.set(e.seq, { at });
       if (p.id) open.set(str(p.id), e.seq);
@@ -1610,6 +1614,7 @@ export function turnNotes(events: RunEventLike[] | undefined, since?: string, un
     const at = Date.parse(e.at);
     if (at < t || at > hi) continue;
     const p = e.payload;
+    if (isSubagentEvent(p)) continue;
     if (e.type === "message" && p.kind === "thinking") {
       const text = str(p.text).trim();
       if (text) pending.push({ kind: "thinking", text });
@@ -1637,8 +1642,237 @@ function noteOwner(n: TurnNote, calls: ToolCall[], owner: (string | undefined)[]
   return undefined;
 }
 
+/** Flag highlighting a subagent routing or execution anomaly in Chat Activity. */
+export type SubagentBranchFlag = "capped" | "spinning" | "queue_bound" | "serial" | "failed";
+
+/** Reconstructed in-turn subagent branch for Chat Activity, built purely from streamed run events. */
+export type SubagentBranch = {
+  id: string;
+  batchId?: string;
+  batchSize: number;
+  agentType: string;
+  role: string;
+  reason?: string;
+  requestedTier?: string;
+  tier?: string;
+  model?: string;
+  effort?: string;
+  status: "queued" | "running" | "completed" | "failed" | "canceled";
+  error?: string;
+  createdAt: number;
+  startedAt?: number;
+  finishedAt?: number;
+  queuedMs?: number;
+  durationMs?: number;
+  toolCalls: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
+  calls: ToolCall[];
+  flags: SubagentBranchFlag[];
+  firstSeq: number;
+};
+
+type PartialBranch = {
+  id: string;
+  batchId?: string;
+  reportedBatchSize?: number;
+  agentType: string;
+  role: string;
+  reason?: string;
+  requestedTier?: string;
+  tier?: string;
+  model?: string;
+  effort?: string;
+  status: SubagentBranch["status"];
+  error?: string;
+  createdAt: number;
+  hasLifecycleCreated?: boolean;
+  startedAt?: number;
+  finishedAt?: number;
+  queuedMs?: number;
+  durationMs?: number;
+  reportedToolCalls?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
+  calls: ToolCall[];
+  firstSeq: number;
+};
+
+const optStr = (v: unknown) => (typeof v === "string" && v ? v : undefined);
+const optNum = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+const optTime = (v: unknown) => {
+  if (typeof v !== "string" || !v) return undefined;
+  const ms = Date.parse(v);
+  return Number.isFinite(ms) ? ms : undefined;
+};
+const finishedStatus = (v: unknown): SubagentBranch["status"] =>
+  v === "failed" || v === "canceled" || v === "completed" ? v : "completed";
+
+/**
+ * Reconstructs in-turn subagent branches from streamed run events (`subagent_queued`,
+ * `subagent_started`, `subagent_finished` plus `subagent: true` child tool events).
+ */
+export function subagentBranches(events: RunEventLike[] | undefined, since?: string, until?: string): SubagentBranch[] {
+  const t = since ? Date.parse(since) : 0;
+  const hi = until ? Date.parse(until) : Infinity;
+  const branches = new Map<string, PartialBranch>();
+  const perBranchOpen = new Map<string, Map<string, number>>();
+  const ordered = [...(events ?? [])].sort((a, b) => a.seq - b.seq);
+
+  const ensure = (sid: string, p: Record<string, unknown>, seq: number, at: number): PartialBranch => {
+    let b = branches.get(sid);
+    if (!b) {
+      b = {
+        id: sid,
+        agentType: optStr(p.subagent_type) ?? "subagent",
+        role: optStr(p.subagent_role) ?? "",
+        status: "queued",
+        createdAt: optTime(p.created_at) ?? at,
+        hasLifecycleCreated: optTime(p.created_at) !== undefined,
+        calls: [],
+        firstSeq: seq,
+      };
+      branches.set(sid, b);
+      perBranchOpen.set(sid, new Map());
+    }
+    b.firstSeq = Math.min(b.firstSeq, seq);
+    if (optStr(p.batch_id) && !b.batchId) b.batchId = optStr(p.batch_id);
+    if (optStr(p.subagent_type) && b.agentType === "subagent") b.agentType = optStr(p.subagent_type)!;
+    if (optStr(p.subagent_role) && !b.role) b.role = optStr(p.subagent_role)!;
+    if (optStr(p.reason) && !b.reason) b.reason = optStr(p.reason);
+    if (optStr(p.requested_tier) && !b.requestedTier) b.requestedTier = optStr(p.requested_tier);
+    if (optStr(p.subagent_tier) && !b.tier) b.tier = optStr(p.subagent_tier);
+    if (optStr(p.subagent_model) && !b.model) b.model = optStr(p.subagent_model);
+    if (optStr(p.subagent_effort) && !b.effort) b.effort = optStr(p.subagent_effort);
+    const bs = optNum(p.batch_size);
+    if (bs !== undefined && bs > 0) b.reportedBatchSize = Math.max(b.reportedBatchSize ?? 0, bs);
+    return b;
+  };
+
+  for (const e of ordered) {
+    const at = Date.parse(e.at);
+    if (at < t || at > hi) continue;
+    const p = e.payload;
+    const sid = optStr(p.subagent_id);
+    if (!sid) continue;
+
+    if (e.type === "lifecycle" && (p.state === "subagent_queued" || p.state === "subagent_started" || p.state === "subagent_finished")) {
+      const b = ensure(sid, p, e.seq, at);
+      const created = optTime(p.created_at);
+      if (created !== undefined && !b.hasLifecycleCreated) {
+        b.createdAt = created;
+        b.hasLifecycleCreated = true;
+      }
+      if (p.state === "subagent_started") {
+        b.startedAt = optTime(p.started_at) ?? b.startedAt ?? at;
+        const q = optNum(p.queued_ms);
+        if (q !== undefined) b.queuedMs = q;
+        if (b.status === "queued") b.status = "running";
+      } else if (p.state === "subagent_finished") {
+        b.finishedAt = at;
+        b.status = finishedStatus(p.status);
+        if (optStr(p.error)) b.error = optStr(p.error);
+        const q = optNum(p.queued_ms);
+        if (q !== undefined) b.queuedMs = q;
+        const dur = optNum(p.duration_ms);
+        if (dur !== undefined) b.durationMs = dur;
+        const tc = optNum(p.tool_calls);
+        if (tc !== undefined) b.reportedToolCalls = tc;
+        const inp = optNum(p.input_tokens);
+        if (inp !== undefined) b.inputTokens = inp;
+        const outp = optNum(p.output_tokens);
+        if (outp !== undefined) b.outputTokens = outp;
+        const cost = optNum(p.cost_usd);
+        if (cost !== undefined) b.costUsd = cost;
+      }
+    } else if (isSubagentEvent(p) && (e.type === "tool_call" || e.type === "tool_result")) {
+      const b = ensure(sid, p, e.seq, at);
+      const open = perBranchOpen.get(sid)!;
+      if (e.type === "tool_call") {
+        if (b.status === "queued") {
+          b.status = "running";
+          b.startedAt ??= at;
+        }
+        if (p.id) open.set(str(p.id), b.calls.length);
+        b.calls.push({ key: e.seq, tool: str(p.tool), input: p.input, done: false });
+      } else if (e.type === "tool_result" && p.id && open.has(str(p.id))) {
+        const call = b.calls[open.get(str(p.id))!];
+        call.done = true;
+        if (p.output) call.output = str(p.output);
+        if (p.is_error) call.failed = true;
+      }
+    }
+  }
+
+  const list = [...branches.values()];
+  const batchCounts = new Map<string, number>();
+  let unbatchedCount = 0;
+  for (const b of list) {
+    if (b.batchId) batchCounts.set(b.batchId, (batchCounts.get(b.batchId) ?? 0) + 1);
+    else unbatchedCount++;
+  }
+
+  return list
+    .sort((a, b) => a.firstSeq - b.firstSeq || a.id.localeCompare(b.id))
+    .map((b): SubagentBranch => {
+      const batchSize = Math.max(b.reportedBatchSize ?? 0, b.batchId ? (batchCounts.get(b.batchId) ?? 1) : 1);
+      const queuedMs = b.queuedMs ?? (b.startedAt !== undefined ? Math.max(0, b.startedAt - b.createdAt) : undefined);
+      const durationMs = b.durationMs ?? (b.startedAt !== undefined && b.finishedAt !== undefined ? Math.max(0, b.finishedAt - b.startedAt) : undefined);
+      const toolCallsCount = Math.max(b.reportedToolCalls ?? 0, b.calls.length);
+      const flags: SubagentBranchFlag[] = [];
+      if (b.requestedTier && b.tier && b.requestedTier !== b.tier) flags.push("capped");
+      if (b.status === "failed") flags.push("failed");
+      if (toolCallsCount >= 20) flags.push("spinning");
+      if (queuedMs !== undefined && queuedMs >= 5_000 && (durationMs === undefined || queuedMs > durationMs)) flags.push("queue_bound");
+      if (!b.batchId && unbatchedCount >= 3) flags.push("serial");
+      return {
+        id: b.id,
+        ...(b.batchId ? { batchId: b.batchId } : {}),
+        batchSize,
+        agentType: b.agentType,
+        role: b.role,
+        ...(b.reason ? { reason: b.reason } : {}),
+        ...(b.requestedTier ? { requestedTier: b.requestedTier } : {}),
+        ...(b.tier ? { tier: b.tier } : {}),
+        ...(b.model ? { model: b.model } : {}),
+        ...(b.effort ? { effort: b.effort } : {}),
+        status: b.status,
+        ...(b.error ? { error: b.error } : {}),
+        createdAt: b.createdAt,
+        ...(b.startedAt !== undefined ? { startedAt: b.startedAt } : {}),
+        ...(b.finishedAt !== undefined ? { finishedAt: b.finishedAt } : {}),
+        ...(queuedMs !== undefined ? { queuedMs } : {}),
+        ...(durationMs !== undefined ? { durationMs } : {}),
+        toolCalls: toolCallsCount,
+        ...(b.inputTokens !== undefined ? { inputTokens: b.inputTokens } : {}),
+        ...(b.outputTokens !== undefined ? { outputTokens: b.outputTokens } : {}),
+        ...(b.costUsd !== undefined ? { costUsd: b.costUsd } : {}),
+        calls: b.calls,
+        flags,
+        firstSeq: b.firstSeq,
+      };
+    });
+}
+
 /** One step of a turn in the Activity tab: what it said, what it thought, and every call it made. */
-export type TraceStep = { key: string; title: string; state: ChatStepState; kind?: ChatStatusKind; tag?: IntentTag; intents: string[]; thinking: string[]; calls: ToolCall[] };
+export type TraceStep = {
+  key: string;
+  title: string;
+  state: ChatStepState;
+  kind?: ChatStatusKind;
+  tag?: IntentTag;
+  intents: string[];
+  thinking: string[];
+  calls: ToolCall[];
+  subagents?: SubagentBranch[];
+};
+
+const isSubagentTool = (tool: string) => {
+  const bare = bareTool(tool);
+  return bare === "run_subagent" || bare === "run_subagents";
+};
 
 /**
  * A turn as steps for the Activity tab, the same steps as the chat tab's rail. Calls outside
@@ -1648,6 +1882,7 @@ export type TraceStep = { key: string; title: string; state: ChatStepState; kind
 export function turnTrace(events: RunEventLike[] | undefined, since?: string, until?: string): TraceStep[] {
   const calls = toolCalls(events, since, until);
   const notes = turnNotes(events, since, until);
+  const branches = subagentBranches(events, since, until);
   const { steps, owner } = buildSteps(calls);
   const trace = steps.map((st): TraceStep => ({ key: st.key, title: st.title, state: st.state, ...(st.kind ? { kind: st.kind } : {}), intents: [], thinking: [], calls: [] }));
   const byKey = new Map(trace.map((st) => [st.key, st]));
@@ -1668,7 +1903,25 @@ export function turnTrace(events: RunEventLike[] | undefined, since?: string, un
       if (n.tag) st.tag = n.tag;
     }
   }
-  return [...(prelude.calls.length || prelude.thinking.length ? [prelude] : []), ...trace, ...(reply.thinking.length ? [reply] : [])];
+  if (branches.length > 0) {
+    const workSteps = [prelude, ...trace];
+    const anySubagentStep = [...workSteps].reverse().find((st) => st.calls.some((c) => isSubagentTool(c.tool)));
+    const fallbackStep = anySubagentStep ?? trace.at(-1) ?? prelude;
+    for (const branch of branches) {
+      let matched: { step: TraceStep; key: number } | undefined;
+      for (const st of workSteps) {
+        for (const c of st.calls) {
+          if (isSubagentTool(c.tool) && c.key <= branch.firstSeq && (!matched || c.key > matched.key)) {
+            matched = { step: st, key: c.key };
+          }
+        }
+      }
+      const target = matched?.step ?? fallbackStep;
+      (target.subagents ??= []).push(branch);
+    }
+  }
+  const showPrelude = prelude.calls.length > 0 || prelude.thinking.length > 0 || (prelude.subagents?.length ?? 0) > 0;
+  return [...(showPrelude ? [prelude] : []), ...trace, ...(reply.thinking.length ? [reply] : [])];
 }
 
 // ---- model names: a chat's model may be its agent definition's alias ("opus-5.5"), which the live catalog doesn't list ----

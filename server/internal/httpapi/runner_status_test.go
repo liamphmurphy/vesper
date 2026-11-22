@@ -155,3 +155,60 @@ func TestRunnerSettingsSubagentAndDelegationLimits(t *testing.T) {
 	e.invalid("PUT", "/runner/settings", map[string]any{"max_parallel_delegations": 0}, "max_parallel_delegations", "")
 	e.invalid("PUT", "/runner/settings", map[string]any{"max_parallel_delegations": 9}, "max_parallel_delegations", "")
 }
+
+func TestRunnerSettingsSubagentTierRoutingAndRules(t *testing.T) {
+	e := newChatEnv(t)
+
+	out := e.want("GET", "/runner", nil, http.StatusOK)
+	if out["subagent_tier_routing"] != true {
+		t.Fatalf("default subagent_tier_routing = %v, want true", out["subagent_tier_routing"])
+	}
+	rules, ok := out["subagent_tier_models"].(map[string]any)
+	if !ok || len(rules) != 0 {
+		t.Fatalf("default subagent_tier_models = %#v, want empty map", out["subagent_tier_models"])
+	}
+
+	// Configure explicit Antigravity Carbon -> Neon -> Hydrogen ladder.
+	out = e.want("PUT", "/runner/settings", map[string]any{
+		"subagent_tier_models": map[string]any{
+			"antigravity": map[string]any{
+				"deep":     " gemini-4-carbon ",
+				"standard": "gemini-4-neon",
+				"fast":     "gemini-4-hydrogen",
+			},
+			"codex": map[string]any{},
+		},
+	}, http.StatusOK)
+	savedRules := out["subagent_tier_models"].(map[string]any)
+	if len(savedRules) != 1 {
+		t.Fatalf("expected empty codex entry stripped, got %#v", savedRules)
+	}
+	agy := savedRules["antigravity"].(map[string]any)
+	if agy["deep"] != "gemini-4-carbon" || agy["standard"] != "gemini-4-neon" || agy["fast"] != "gemini-4-hydrogen" {
+		t.Fatalf("antigravity ladder = %#v", agy)
+	}
+
+	// Toggle routing off: saved ladder must remain intact when toggled back later.
+	out = e.want("PUT", "/runner/settings", map[string]any{"subagent_tier_routing": false}, http.StatusOK)
+	if out["subagent_tier_routing"] != false {
+		t.Fatalf("subagent_tier_routing = %v, want false", out["subagent_tier_routing"])
+	}
+	if out["subagent_tier_models"].(map[string]any)["antigravity"].(map[string]any)["deep"] != "gemini-4-carbon" {
+		t.Fatalf("toggling off wiped ladder: %#v", out["subagent_tier_models"])
+	}
+
+	// Updating another setting preserves both subagent_tier_routing and subagent_tier_models.
+	out = e.want("PUT", "/runner/settings", map[string]any{"max_concurrent_subagents": 5}, http.StatusOK)
+	if out["subagent_tier_routing"] != false || out["subagent_tier_models"].(map[string]any)["antigravity"] == nil {
+		t.Fatalf("partial PUT clobbered tier settings: %#v", out)
+	}
+
+	// Clearing ladders with {} leaves empty map; unknown harness key is rejected cleanly.
+	out = e.want("PUT", "/runner/settings", map[string]any{"subagent_tier_models": map[string]any{}}, http.StatusOK)
+	if len(out["subagent_tier_models"].(map[string]any)) != 0 {
+		t.Fatalf("expected cleared subagent_tier_models, got %#v", out["subagent_tier_models"])
+	}
+	e.invalid("PUT", "/runner/settings", map[string]any{
+		"subagent_tier_models": map[string]any{"unknown-cli": map[string]any{"fast": "m"}},
+	}, "subagent_tier_models", "")
+}

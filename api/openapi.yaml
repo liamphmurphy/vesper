@@ -1389,6 +1389,12 @@ paths:
         MCP subagents (explorer/helper) per active turn.
         max_parallel_delegations (1–8, default 3) bounds live parallel delegated
         child ticket runs per parent run.
+        subagent_tier_routing toggles automatic in-turn subagent tier routing
+        (default true); when false, personas behave as before (helpers inherit
+        the parent model and effort; explorers use explorer_model or default).
+        subagent_tier_models maps harness names (claude-code, codex,
+        antigravity) to optional fast/standard/deep model ladders; empty or
+        unlisted tiers scale reasoning effort on the parent model instead.
       tags: [runs]
       requestBody:
         required: true
@@ -8305,6 +8311,31 @@ components:
         events:
           type: array
           items: { $ref: "#/components/schemas/RunEvent" }
+    SubagentJob:
+      type: object
+      required: [id, agent_type, role, reason, requested_tier, tier, model, effort, status, prompt, result_text, error, input_tokens, output_tokens, cached_tokens, tool_calls, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        batch_id: { type: string, format: uuid, nullable: true }
+        agent_type: { type: string, enum: [explorer, helper] }
+        role: { type: string }
+        reason: { type: string }
+        requested_tier: { type: string }
+        tier: { type: string }
+        model: { type: string }
+        effort: { type: string }
+        status: { type: string, enum: [queued, running, completed, failed, canceled] }
+        prompt: { type: string }
+        result_text: { type: string }
+        error: { type: string }
+        input_tokens: { type: integer, format: int64 }
+        output_tokens: { type: integer, format: int64 }
+        cached_tokens: { type: integer, format: int64 }
+        cost_usd: { type: number, format: double, nullable: true }
+        tool_calls: { type: integer }
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time, nullable: true }
+        completed_at: { type: string, format: date-time, nullable: true }
     RunDetail:
       type: object
       required: [run, turns, approvals, events, child_runs]
@@ -8314,6 +8345,10 @@ components:
           type: array
           description: Direct delegated runs, including active and finished runs. Fetch each run for its own events and cursor.
           items: { $ref: "#/components/schemas/Run" }
+        subagent_jobs:
+          type: array
+          description: In-turn explorer/helper subagent jobs spawned during this run.
+          items: { $ref: "#/components/schemas/SubagentJob" }
         turns: { type: array, items: { $ref: "#/components/schemas/RunTurn" } }
         approvals: { type: array, items: { $ref: "#/components/schemas/Approval" } }
         events: { type: array, items: { $ref: "#/components/schemas/RunEvent" } }
@@ -8689,12 +8724,23 @@ components:
       required: [provider_id]
       properties:
         provider_id: { type: string }
+    SubagentTierModels:
+      type: object
+      description: Optional model IDs for in-turn subagent tiers on one harness. Empty or omitted tiers stay on the parent model with effort scaling.
+      properties:
+        fast: { type: string }
+        standard: { type: string }
+        deep: { type: string }
     RunnerSettings:
       type: object
       properties:
         host_folder_workspaces: { type: boolean }
         max_concurrent_subagents: { type: integer, minimum: 1, maximum: 16 }
         max_parallel_delegations: { type: integer, minimum: 1, maximum: 8 }
+        subagent_tier_routing: { type: boolean }
+        subagent_tier_models:
+          type: object
+          additionalProperties: { $ref: "#/components/schemas/SubagentTierModels" }
     RunnerStatus:
       type: object
       required: [online, runners, slots, busy, live, queued, host_folder_workspaces, max_concurrent_subagents, max_parallel_delegations]
@@ -8702,6 +8748,11 @@ components:
         host_folder_workspaces: { type: boolean, description: "New runs keep their checkout in a host folder when their runner has host_workspaces_dir" }
         max_concurrent_subagents: { type: integer, description: "In-turn MCP subagents (explorer/helper) allowed to run concurrently per active turn (1–16)" }
         max_parallel_delegations: { type: integer, description: "Delegated child ticket runs allowed to run in parallel per parent run (1–8)" }
+        subagent_tier_routing: { type: boolean, description: "Whether in-turn MCP subagents apply tier routing (effort scaling by default or configured model ladders)" }
+        subagent_tier_models:
+          type: object
+          description: Optional per-harness model overrides for fast, standard, and deep subagent tiers
+          additionalProperties: { $ref: "#/components/schemas/SubagentTierModels" }
         online: { type: boolean }
         starting: { type: boolean, description: "True while an embedded runner is still starting up before its first heartbeat" }
         runners: { type: array, items: { $ref: "#/components/schemas/RunnerInfo" } }

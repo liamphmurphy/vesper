@@ -40,8 +40,10 @@ func TestSubagentTypes(t *testing.T) {
 			t.Errorf("%s: SubagentGuide = %q", c.name, guide)
 		}
 		if c.want != nil {
-			if !strings.Contains(guide, "`run_subagents`") || !strings.Contains(guide, "`tasks`") {
-				t.Errorf("%s: SubagentGuide missing batch run_subagents guidance: %q", c.name, guide)
+			for _, token := range []string{"`run_subagents`", "`tasks`", "`tier`", "`fast`", "`standard`", "`deep`", "`reason`"} {
+				if !strings.Contains(guide, token) {
+					t.Errorf("%s: SubagentGuide missing %q: %q", c.name, token, guide)
+				}
 			}
 			wantAgy := c.harness == HarnessAntigravity
 			for _, token := range []string{"mcp_lazyagents_run_subagent", "mcp_lazyagents_run_subagents", "invoke_subagent", "run_workflow", "schedule"} {
@@ -49,6 +51,23 @@ func TestSubagentTypes(t *testing.T) {
 					t.Errorf("%s: SubagentGuide contains %q = %v, want %v", c.name, token, !wantAgy, wantAgy)
 				}
 			}
+		}
+	}
+
+	// Disabling subagent_tier_routing omits tier-picking guidance while keeping batch subagents and reasons.
+	noTierSpec := Resolved{Harness: HarnessClaudeCode, HarnessOptions: map[string]string{OptionSubagentTierRouting: "false"}}
+	if SubagentTierRoutingOn(noTierSpec) {
+		t.Fatal("SubagentTierRoutingOn = true when OptionSubagentTierRouting=false")
+	}
+	noTierGuide := SubagentGuide(noTierSpec)
+	for _, present := range []string{"`run_subagents`", "`tasks`", "`reason`"} {
+		if !strings.Contains(noTierGuide, present) {
+			t.Errorf("tier-off SubagentGuide missing %q: %q", present, noTierGuide)
+		}
+	}
+	for _, absent := range []string{"`tier`", "`fast`", "`standard`", "`deep`", "why that tier fits"} {
+		if strings.Contains(noTierGuide, absent) {
+			t.Errorf("tier-off SubagentGuide unexpectedly contains %q: %q", absent, noTierGuide)
 		}
 	}
 }

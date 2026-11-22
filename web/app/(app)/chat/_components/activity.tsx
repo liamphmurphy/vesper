@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { LinkTarget } from "@/lib/api/client";
 import { useChatRunEvents, useChatToolApprovals, useResolvedLinks } from "@/lib/api/hooks";
-import { activityOf, chatCalls, chatStatus, chatStatusOf, chatSteps, finishedTurn, foldSteps, formatSpan, interimLine, NEXT_STEP_KEY, quietFor, turnActivity, turnClock, turnNotes, turnPulse, turnTrace, type Activity, type ChatStep, type IntentTag, type ToolCall, type TraceStep, type TurnOutcome, type TurnPulse } from "@/lib/chat-ui";
+import { activityOf, bareTool, chatCalls, chatStatus, chatStatusOf, chatSteps, finishedTurn, foldSteps, formatSpan, interimLine, NEXT_STEP_KEY, quietFor, readableModelId, turnActivity, turnClock, turnNotes, turnPulse, turnTrace, type Activity, type ChatStep, type IntentTag, type SubagentBranch, type SubagentBranchFlag, type ToolCall, type TraceStep, type TurnOutcome, type TurnPulse } from "@/lib/chat-ui";
 import { useConnectorApprovals } from "@/lib/api/connector-hooks";
 import { useApiSecretApprovals } from "@/lib/api/secret-hooks";
 import { LinkTargets, WikiLink } from "@/components/domain/wikilink";
@@ -81,6 +81,210 @@ function TagPill({ tag }: { tag: IntentTag }) {
   );
 }
 
+const SUBAGENT_DOT: Record<SubagentBranch["status"], string> = {
+  queued: "bg-border-strong",
+  running: "bg-accent motion-safe:animate-pulse",
+  completed: "bg-state-done",
+  failed: "bg-state-blocked",
+  canceled: "bg-border-strong",
+};
+
+const SUBAGENT_TIER_TONE: Record<string, string> = {
+  fast: "bg-pill-neutral-bg text-pill-neutral-fg",
+  standard: "bg-accent-soft text-accent",
+  deep: "bg-pill-review-bg text-pill-review-fg",
+};
+
+const SUBAGENT_FLAG_LABEL: Record<SubagentBranchFlag, string> = {
+  capped: "capped ↓",
+  spinning: "spinning",
+  queue_bound: "queue",
+  serial: "serial!",
+  failed: "failed",
+};
+
+const formatSubMs = (ms?: number) => (ms == null ? "" : ms < 1000 ? `${ms}ms` : formatSpan(ms));
+
+function branchFlagNote(flag: SubagentBranchFlag, b: SubagentBranch): string {
+  switch (flag) {
+    case "capped":
+      return `Requested ${b.requestedTier} → capped at ${b.tier}`;
+    case "spinning":
+      return `${b.toolCalls} tool calls — inspect for looping`;
+    case "queue_bound":
+      return `Queued ${formatSubMs(b.queuedMs)} before running`;
+    case "serial":
+      return "Spawned sequentially without run_subagents batching";
+    case "failed":
+      return b.error ? b.error.split("\n")[0] : "Subagent failed";
+  }
+}
+
+function SubagentWaterfallBar({ branch, span }: { branch: SubagentBranch; span?: { min: number; max: number } }) {
+  const showQueue = branch.queuedMs !== undefined && branch.queuedMs >= 1000;
+  if (!span && !showQueue) return null;
+
+  let qLeft = 0;
+  let qWidth = 0;
+  let aLeft = 0;
+  let aWidth = 0;
+
+  if (span) {
+    const total = Math.max(1, span.max - span.min);
+    const qEnd = branch.startedAt ?? branch.finishedAt ?? span.max;
+    qLeft = Math.max(0, Math.min(100, ((branch.createdAt - span.min) / total) * 100));
+    qWidth = Math.max(0, Math.min(100 - qLeft, ((qEnd - branch.createdAt) / total) * 100));
+    if (branch.startedAt !== undefined) {
+      const aEnd = branch.finishedAt ?? span.max;
+      aLeft = Math.max(0, Math.min(100, ((branch.startedAt - span.min) / total) * 100));
+      aWidth = Math.max(2, Math.min(100 - aLeft, ((aEnd - branch.startedAt) / total) * 100));
+    }
+  } else {
+    const q = branch.queuedMs ?? 0;
+    const a = branch.durationMs ?? 0;
+    const total = Math.max(1, q + a);
+    qWidth = (q / total) * 100;
+    aLeft = qWidth;
+    aWidth = a > 0 ? Math.max(4, (a / total) * 100) : 0;
+  }
+
+  const barColor = branch.status === "failed" ? "bg-state-blocked" : branch.status === "running" ? "bg-accent" : branch.status === "completed" ? "bg-state-done" : "bg-border-strong";
+
+  return (
+    <div aria-hidden="true" className="relative h-1.5 w-full overflow-hidden rounded-full bg-surface-sunken">
+      {qWidth > 0 && (
+        <span
+          style={{ left: `${qLeft}%`, width: `${Math.max(2, qWidth)}%` }}
+          className="absolute inset-y-0 rounded-full border border-border-strong bg-[repeating-linear-gradient(-45deg,transparent,transparent_2px,var(--border-strong)_2px,var(--border-strong)_4px)] opacity-80"
+        />
+      )}
+      {aWidth > 0 && <span style={{ left: `${aLeft}%`, width: `${aWidth}%` }} className={`absolute inset-y-0 rounded-full ${barColor}`} />}
+    </div>
+  );
+}
+
+function SubagentBranchCard({ branch, live, span }: { branch: SubagentBranch; live?: boolean; span?: { min: number; max: number } }) {
+  const [open, setOpen] = useState(
+    () => branch.status === "failed" || branch.flags.length > 0 || Boolean(live && (branch.status === "running" || branch.status === "queued")),
+  );
+  const title = branch.role || branch.agentType;
+  const modelText = [branch.model ? readableModelId(branch.model) : "", branch.effort].filter(Boolean).join(" · ");
+  const spanText = branch.durationMs !== undefined ? formatSubMs(branch.durationMs) : branch.status;
+  const hasBody = Boolean(branch.reason || branch.error || branch.flags.length > 0 || branch.calls.length > 0);
+
+  return (
+    <div data-testid="subagent-branch" className="rounded-md border border-border-subtle bg-surface px-2.5 py-1.5">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full min-w-0 flex-col gap-1 text-left transition-colors duration-(--motion-fast)"
+      >
+        <div className="flex w-full min-w-0 items-center gap-1.5 text-12">
+          <span aria-hidden="true" className={`size-2 flex-none rounded-full ${SUBAGENT_DOT[branch.status]}`} />
+          <span className="min-w-0 truncate font-medium text-fg">{title}</span>
+          {branch.tier && (
+            <span className={`flex-none rounded-full px-1.5 py-[1px] font-mono text-10 font-medium ${SUBAGENT_TIER_TONE[branch.tier] ?? "bg-pill-neutral-bg text-pill-neutral-fg"}`}>
+              {branch.tier}
+            </span>
+          )}
+          {modelText && <span className="min-w-0 truncate text-11 text-fg-tertiary">{modelText}</span>}
+          {branch.flags.map((f) => (
+            <span
+              key={f}
+              className={`flex-none rounded px-1 py-[1px] font-mono text-10 font-medium ${f === "failed" ? "bg-pill-blocked-bg text-pill-blocked-fg" : "bg-pill-human-bg text-pill-human-fg"}`}
+            >
+              {SUBAGENT_FLAG_LABEL[f]}
+            </span>
+          ))}
+          <span className="ml-auto flex flex-none items-center gap-1.5 font-mono text-11 tabular-nums text-fg-tertiary">
+            <span>{spanText}</span>
+            <span>·</span>
+            <span>{branch.toolCalls}c</span>
+            {hasBody && <span aria-hidden="true">{open ? "▾" : "▸"}</span>}
+          </span>
+        </div>
+        <SubagentWaterfallBar branch={branch} span={span} />
+      </button>
+      {open && hasBody && (
+        <div className="mt-1.5 flex flex-col gap-1.5 border-t border-border-subtle pt-1.5 text-12">
+          {branch.reason && (
+            <p data-testid="subagent-reason" className="border-l-2 border-border-strong pl-2 italic text-fg-secondary">
+              {branch.reason}
+            </p>
+          )}
+          {branch.flags.length > 0 && (
+            <ul className="flex flex-col gap-0.5 text-11">
+              {branch.flags.map((f) => (
+                <li key={f} className={f === "failed" ? "text-pill-blocked-fg" : "text-pill-human-fg"}>
+                  {branchFlagNote(f, branch)}
+                </li>
+              ))}
+            </ul>
+          )}
+          {branch.error && <p className="whitespace-pre-wrap rounded bg-pill-blocked-bg px-2 py-1 font-mono text-11 text-pill-blocked-fg">{branch.error}</p>}
+          {branch.calls.length > 0 && (
+            <ul className="flex flex-col gap-0.5 font-mono text-11">
+              {branch.calls.map((c) => (
+                <li key={c.key} className="flex items-center gap-2">
+                  <span className={c.failed ? "text-pill-blocked-fg" : "text-fg"}>{bareTool(c.tool)}</span>
+                  <span className="min-w-0 flex-1 truncate text-fg-tertiary">{str(c.input)}</span>
+                  <span className={c.failed ? "text-pill-blocked-fg" : "text-fg-tertiary"}>{c.failed ? "error" : c.done ? "done" : "running"}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SubagentBranches({ branches, live }: { branches: SubagentBranch[]; live?: boolean }) {
+  type Group = { kind: "single"; branch: SubagentBranch } | { kind: "batch"; batchId: string; branches: SubagentBranch[]; span: { min: number; max: number } };
+  const groups: Group[] = [];
+  let i = 0;
+  while (i < branches.length) {
+    const cur = branches[i];
+    if (!cur.batchId) {
+      groups.push({ kind: "single", branch: cur });
+      i++;
+      continue;
+    }
+    let j = i + 1;
+    while (j < branches.length && branches[j].batchId === cur.batchId) j++;
+    const slice = branches.slice(i, j);
+    if (slice.length >= 2) {
+      const min = Math.min(...slice.map((b) => b.createdAt));
+      const max = Math.max(min + 1, ...slice.flatMap((b) => [b.createdAt, b.startedAt ?? b.createdAt, b.finishedAt ?? b.startedAt ?? b.createdAt]));
+      groups.push({ kind: "batch", batchId: cur.batchId, branches: slice, span: { min, max } });
+    } else {
+      groups.push({ kind: "single", branch: cur });
+    }
+    i = j;
+  }
+
+  return (
+    <div data-testid="subagent-branches" className="flex flex-col gap-1.5">
+      {groups.map((g, idx) =>
+        g.kind === "batch" ? (
+          <div key={`${g.batchId}:${idx}`} className="flex flex-col gap-1.5 rounded-md border border-dashed border-border-strong bg-surface-sunken/40 p-2">
+            <div className="flex items-center justify-between gap-2 font-mono text-10 text-fg-tertiary">
+              <span>Parallel batch · {g.branches.length} subagents</span>
+              <span>{formatSubMs(g.span.max - g.span.min)}</span>
+            </div>
+            {g.branches.map((b) => (
+              <SubagentBranchCard key={b.id} branch={b} live={live} span={g.span} />
+            ))}
+          </div>
+        ) : (
+          <SubagentBranchCard key={g.branch.id} branch={g.branch} live={live} />
+        ),
+      )}
+    </div>
+  );
+}
+
 /** Where "View reasoning" on a chat step lands in the Activity tab. */
 export const traceStepId = (key: string) => `trace-step-${key.replace(/[^\w-]/g, "_")}`;
 /** A finished turn's step, named by the reply it led to: step keys repeat across a run's turns. */
@@ -128,6 +332,7 @@ function TurnTrace({ steps, live, scope, focus }: { steps: TraceStep[]; live?: b
                 </div>
               </details>
             )}
+            {s.subagents && s.subagents.length > 0 && <SubagentBranches branches={s.subagents} live={live} />}
             {s.calls.length > 0 && <CallList calls={s.calls} />}
           </li>
         );

@@ -296,6 +296,33 @@ func TestToolPolicySubagents(t *testing.T) {
 		t.Fatalf("helper Write on readonly chat = %+v %v", d, err)
 	}
 
+	// SubagentSpecForJob overrides model & effort and clears inherited effort when stepped down onto an effort-less model.
+	parentWithEffort := spec
+	parentWithEffort.HarnessOptions = map[string]string{"effort": "xhigh"}
+	fastHelper, err := runs.SubagentSpecForJob(parentWithEffort, agentdef.HelperAgent, "haiku-5.5", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fastHelper.Model != "haiku-5.5" || fastHelper.HarnessOptions["effort"] != "" ||
+		fastHelper.HarnessOptions[agentdef.OptionNoMCP] != "true" || fastHelper.HarnessOptions[agentdef.OptionSubagents] != "false" {
+		t.Fatalf("SubagentSpecForJob fast helper = %+v", fastHelper)
+	}
+	deepHelper, err := runs.SubagentSpecForJob(parentWithEffort, agentdef.HelperAgent, "fable-5.2", "high")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deepHelper.Model != "fable-5.2" || deepHelper.HarnessOptions["effort"] != "high" {
+		t.Fatalf("SubagentSpecForJob deep helper = %+v", deepHelper)
+	}
+	fastExplorer, err := runs.SubagentSpecForJob(parentWithEffort, agentdef.ExplorerAgent, "gemini-3.8-flash", "low")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fastExplorer.Model != "gemini-3.8-flash" || fastExplorer.HarnessOptions["effort"] != "low" ||
+		fastExplorer.HarnessOptions["readonly"] != "true" || fastExplorer.HarnessOptions["sandbox"] != "read-only" {
+		t.Fatalf("SubagentSpecForJob fast explorer = %+v", fastExplorer)
+	}
+
 	// Built-in schedule timers/crons are always denied because headless turns exit on idle.
 	if d, err := svc.CheckTool(ctx, c, runs.ToolCheck{Tool: "schedule", Input: map[string]any{"DurationSeconds": 60, "Prompt": "check"}}); err != nil || d.Decision != "deny" || !strings.Contains(d.Reason, "Headless turns end") {
 		t.Fatalf("ticket schedule = %+v %v", d, err)

@@ -109,7 +109,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 }
 
 const createWorkspace = `-- name: CreateWorkspace :one
-INSERT INTO workspaces (name, slug) VALUES ($1, $2) RETURNING id, name, slug, created_at, updated_at, host_folder_workspaces, image_engine, max_concurrent_subagents, max_parallel_delegations
+INSERT INTO workspaces (name, slug) VALUES ($1, $2) RETURNING id, name, slug, created_at, updated_at, host_folder_workspaces, image_engine, max_concurrent_subagents, max_parallel_delegations, subagent_tier_routing, subagent_tier_models
 `
 
 type CreateWorkspaceParams struct {
@@ -130,6 +130,8 @@ func (q *Queries) CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams
 		&i.ImageEngine,
 		&i.MaxConcurrentSubagents,
 		&i.MaxParallelDelegations,
+		&i.SubagentTierRouting,
+		&i.SubagentTierModels,
 	)
 	return i, err
 }
@@ -228,7 +230,7 @@ func (q *Queries) GetUserForUpdate(ctx context.Context, arg GetUserForUpdatePara
 }
 
 const getWorkspace = `-- name: GetWorkspace :one
-SELECT id, name, slug, created_at, updated_at, host_folder_workspaces, image_engine, max_concurrent_subagents, max_parallel_delegations FROM workspaces WHERE id = $1
+SELECT id, name, slug, created_at, updated_at, host_folder_workspaces, image_engine, max_concurrent_subagents, max_parallel_delegations, subagent_tier_routing, subagent_tier_models FROM workspaces WHERE id = $1
 `
 
 func (q *Queries) GetWorkspace(ctx context.Context, id uuid.UUID) (Workspace, error) {
@@ -244,6 +246,8 @@ func (q *Queries) GetWorkspace(ctx context.Context, id uuid.UUID) (Workspace, er
 		&i.ImageEngine,
 		&i.MaxConcurrentSubagents,
 		&i.MaxParallelDelegations,
+		&i.SubagentTierRouting,
+		&i.SubagentTierModels,
 	)
 	return i, err
 }

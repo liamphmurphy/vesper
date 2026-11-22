@@ -541,6 +541,37 @@ func (s *Server) GetRun(ctx context.Context, req api.GetRunRequestObject) (api.G
 	if err != nil {
 		return nil, err
 	}
+	jobs, err := s.Q.ListSubagentJobsForRun(ctx, r.ID)
+	if err != nil {
+		return nil, err
+	}
+	subJobs := make([]api.SubagentJob, 0, len(jobs))
+	for _, j := range jobs {
+		subJobs = append(subJobs, api.SubagentJob{
+			Id:            j.ID,
+			BatchId:       nullableOf(j.BatchID),
+			AgentType:     api.SubagentJobAgentType(j.AgentType),
+			Role:          j.Role,
+			Reason:        j.Reason,
+			RequestedTier: j.RequestedTier,
+			Tier:          j.Tier,
+			Model:         j.Model,
+			Effort:        j.Effort,
+			Status:        api.SubagentJobStatus(j.Status),
+			Prompt:        j.Prompt,
+			ResultText:    j.ResultText,
+			Error:         j.Error,
+			InputTokens:   j.InputTokens,
+			OutputTokens:  j.OutputTokens,
+			CachedTokens:  j.CachedTokens,
+			CostUsd:       nullableOf(j.CostUsd),
+			ToolCalls:     int(j.ToolCalls),
+			CreatedAt:     j.CreatedAt,
+			StartedAt:     nullableOf(j.StartedAt),
+			CompletedAt:   nullableOf(j.CompletedAt),
+		})
+	}
+	out.SubagentJobs = &subJobs
 	return out, nil
 }
 
