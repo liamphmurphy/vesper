@@ -146,8 +146,11 @@ struct ChatTranscriptView: View {
                         .frame(maxWidth: 860, alignment: .leading)
                         .frame(maxWidth: .infinity)
                     }
-                    .onChange(of: messages.last?.id) { _, lastId in
-                        guard lastId != nil else { return }
+                    .defaultScrollAnchor(.bottom)
+                    .onChange(of: messages.last?.id) { oldId, lastId in
+                        // Initial load stays anchored via defaultScrollAnchor(.bottom); calling
+                        // scrollTo on nil -> id forces LazyVStack to materialize every row upfront.
+                        guard oldId != nil, lastId != nil else { return }
                         withAnimation(.easeOut(duration: 0.2)) {
                             proxy.scrollTo("transcript-bottom", anchor: .bottom)
                         }
@@ -165,6 +168,7 @@ struct ChatTranscriptView: View {
                         }
                     }
                 }
+                .id(chatId)
             }
         }
         .onChange(of: chatId) { _, _ in
