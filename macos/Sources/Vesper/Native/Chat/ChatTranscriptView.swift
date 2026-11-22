@@ -569,16 +569,20 @@ private struct ChatTranscriptProposalsSlot: View {
 
     var body: some View {
         let store = context.store
-        ChatProposalsSectionView(
-            chatId: chatId,
-            approvals: store.entry(approvalsRequest).data?.approvals ?? [],
-            pushRequests: store.entry(pushRequestsRequest).data?.requests ?? [],
-            secretProposals: store.entry(secretProposalsRequest).data?.proposals ?? [],
-            personaProposals: store.entry(personaProposalsRequest).data?.proposals ?? [],
-            characterProposals: store.entry(characterProposalsRequest).data?.proposals ?? [],
-            ticketChanges: store.entry(ticketChangesRequest).data?.requests ?? [],
-            canvases: canvases
-        )
+        // The section renders nothing until a query answers, and a view with no content never
+        // appears, so `.task` would never start the queries that fill it. The stack always appears.
+        VStack(alignment: .leading, spacing: 0) {
+            ChatProposalsSectionView(
+                chatId: chatId,
+                approvals: store.entry(approvalsRequest).data?.approvals ?? [],
+                pushRequests: store.entry(pushRequestsRequest).data?.requests ?? [],
+                secretProposals: store.entry(secretProposalsRequest).data?.proposals ?? [],
+                personaProposals: store.entry(personaProposalsRequest).data?.proposals ?? [],
+                characterProposals: store.entry(characterProposalsRequest).data?.proposals ?? [],
+                ticketChanges: store.entry(ticketChangesRequest).data?.requests ?? [],
+                canvases: canvases
+            )
+        }
         .task(id: chatId) { watch() }
         .onDisappear {
             for key in watched { context.store.stopObserving(key) }
