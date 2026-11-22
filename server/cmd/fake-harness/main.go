@@ -938,6 +938,7 @@ func main() {
 			Type   string `json:"type"`
 			Tier   string `json:"tier,omitempty"`
 			Role   string `json:"role"`
+			Reason string `json:"reason,omitempty"`
 			Prompt string `json:"prompt"`
 		}
 		calls := []subCall{{Type: "explorer", Role: "Searcher", Prompt: "inspect"}}
@@ -952,6 +953,9 @@ func main() {
 			m := map[string]any{"type": c.Type, "role": c.Role, "prompt": c.Prompt}
 			if c.Tier != "" {
 				m["tier"] = c.Tier
+			}
+			if c.Reason != "" {
+				m["reason"] = c.Reason
 			}
 			return m
 		}

@@ -7274,10 +7274,46 @@ export interface components {
         RunEventList: {
             events: components["schemas"]["RunEvent"][];
         };
+        SubagentJob: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            batch_id?: string | null;
+            /** @enum {string} */
+            agent_type: "explorer" | "helper";
+            role: string;
+            reason: string;
+            requested_tier: string;
+            tier: string;
+            model: string;
+            effort: string;
+            /** @enum {string} */
+            status: "queued" | "running" | "completed" | "failed" | "canceled";
+            prompt: string;
+            result_text: string;
+            error: string;
+            /** Format: int64 */
+            input_tokens: number;
+            /** Format: int64 */
+            output_tokens: number;
+            /** Format: int64 */
+            cached_tokens: number;
+            /** Format: double */
+            cost_usd?: number | null;
+            tool_calls: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            started_at?: string | null;
+            /** Format: date-time */
+            completed_at?: string | null;
+        };
         RunDetail: {
             run: components["schemas"]["Run"];
             /** @description Direct delegated runs, including active and finished runs. Fetch each run for its own events and cursor. */
             child_runs: components["schemas"]["Run"][];
+            /** @description In-turn explorer/helper subagent jobs spawned during this run. */
+            subagent_jobs?: components["schemas"]["SubagentJob"][];
             turns: components["schemas"]["RunTurn"][];
             approvals: components["schemas"]["Approval"][];
             events: components["schemas"]["RunEvent"][];

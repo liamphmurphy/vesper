@@ -89,8 +89,50 @@ func (r *Runner) startSubagentWorker(ctx context.Context, c runCtx, ws harness.W
 	}
 }
 
+func (r *Runner) emitSubagentLifecycle(ctx context.Context, c runCtx, sensitive map[string]string, state string, job store.SubagentJob, subSpec agentdef.Resolved, extra map[string]any) {
+	pl := map[string]any{
+		"state":         state,
+		"subagent":      true,
+		"subagent_id":   job.ID.String(),
+		"subagent_type": job.AgentType,
+		"created_at":    job.CreatedAt.UTC().Format(time.RFC3339Nano),
+	}
+	if job.Role != "" {
+		pl["subagent_role"] = job.Role
+	}
+	if job.Reason != "" {
+		pl["reason"] = job.Reason
+	}
+	if job.RequestedTier != "" {
+		pl["requested_tier"] = job.RequestedTier
+	}
+	if job.Tier != "" {
+		pl["subagent_tier"] = job.Tier
+	}
+	if subSpec.Model != "" {
+		pl["subagent_model"] = subSpec.Model
+	}
+	if eff := subSpec.HarnessOptions["effort"]; eff != "" {
+		pl["subagent_effort"] = eff
+	}
+	if job.BatchID != nil {
+		pl["batch_id"] = job.BatchID.String()
+	}
+	for k, v := range extra {
+		pl[k] = v
+	}
+	redacted, _ := redactPayload(pl, sensitive)
+	r.event(ctx, c.run.ID, "lifecycle", redacted)
+}
+
 func (r *Runner) runSubagentJob(ctx context.Context, c runCtx, job store.SubagentJob, ws harness.Workspace, baseEnv, sensitive map[string]string, networks []string, dir string) {
 	finCtx := context.Background()
+	startedAt := time.Now()
+	if job.StartedAt != nil {
+		startedAt = *job.StartedAt
+	}
+	queuedMs := max(int64(0), startedAt.Sub(job.CreatedAt).Milliseconds())
+	var subSpec agentdef.Resolved
 	failJob := func(msg string, usage harness.Usage, calls int32) {
 		var cost *float64
 		if usage.CostSource == "harness" || usage.CostSource == "computed" {
@@ -108,10 +150,25 @@ func (r *Runner) runSubagentJob(ctx context.Context, c runCtx, job store.Subagen
 		}); err != nil {
 			r.Log.Warn("fail subagent job", "job", job.ID, "err", err)
 		}
+		extra := map[string]any{
+			"status":        "failed",
+			"error":         msg,
+			"tool_calls":    calls,
+			"input_tokens":  usage.InputTokens,
+			"output_tokens": usage.OutputTokens,
+			"cached_tokens": usage.CachedTokens,
+			"queued_ms":     queuedMs,
+			"duration_ms":   max(int64(0), time.Since(startedAt).Milliseconds()),
+		}
+		if cost != nil {
+			extra["cost_usd"] = *cost
+		}
+		r.emitSubagentLifecycle(finCtx, c, sensitive, "subagent_finished", job, subSpec, extra)
 		r.recordSubagentUsage(finCtx, c.run.ID, usage, calls)
 	}
 
-	subSpec, err := runs.SubagentSpecForJob(c.spec, job.AgentType, job.Model, job.Effort)
+	var err error
+	subSpec, err = runs.SubagentSpecForJob(c.spec, job.AgentType, job.Model, job.Effort)
 	if err != nil {
 		failJob(err.Error(), harness.Usage{}, 0)
 		return
@@ -175,6 +232,10 @@ func (r *Runner) runSubagentJob(ctx context.Context, c runCtx, job store.Subagen
 		failJob("couldn't start subagent: "+err.Error(), harness.Usage{}, 0)
 		return
 	}
+	r.emitSubagentLifecycle(ctx, c, sensitive, "subagent_started", job, subSpec, map[string]any{
+		"queued_ms":  queuedMs,
+		"started_at": startedAt.UTC().Format(time.RFC3339Nano),
+	})
 
 	var ctrlMu sync.Mutex
 	var ctrl harness.SessionControl
@@ -233,6 +294,9 @@ func (r *Runner) runSubagentJob(ctx context.Context, c runCtx, job store.Subagen
 				if eff := subSpec.HarnessOptions["effort"]; eff != "" {
 					pl["subagent_effort"] = eff
 				}
+				if job.BatchID != nil {
+					pl["batch_id"] = job.BatchID.String()
+				}
 				redacted, _ := redactPayload(pl, sensitive)
 				r.event(ctx, c.run.ID, e.Type, redacted)
 			},
@@ -286,6 +350,19 @@ func (r *Runner) runSubagentJob(ctx context.Context, c runCtx, job store.Subagen
 	}); err != nil {
 		r.Log.Warn("complete subagent job", "job", job.ID, "err", err)
 	}
+	extra := map[string]any{
+		"status":        "completed",
+		"tool_calls":    calls,
+		"input_tokens":  res.Usage.InputTokens,
+		"output_tokens": res.Usage.OutputTokens,
+		"cached_tokens": res.Usage.CachedTokens,
+		"queued_ms":     queuedMs,
+		"duration_ms":   max(int64(0), time.Since(startedAt).Milliseconds()),
+	}
+	if cost != nil {
+		extra["cost_usd"] = *cost
+	}
+	r.emitSubagentLifecycle(finCtx, c, sensitive, "subagent_finished", job, subSpec, extra)
 	r.recordSubagentUsage(finCtx, c.run.ID, res.Usage, calls)
 }
 

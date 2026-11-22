@@ -470,20 +470,22 @@ func TestRunSubagentTierPersistenceAndCeiling(t *testing.T) {
 			time.Sleep(15 * time.Millisecond)
 		}
 	}()
-	singleRes, err := ByName["run_subagent"].call(ctx, deps, c, json.RawMessage(`{"type":"helper","tier":"deep","role":"Hard Task","prompt":"debug"}`))
+	singleRes, err := ByName["run_subagent"].call(ctx, deps, c, json.RawMessage(`{"type":"helper","tier":"deep","role":"Hard Task","reason":"Check lock ordering across stores.","prompt":"debug"}`))
 	if err != nil {
 		t.Fatalf("run_subagent: %v", err)
 	}
 	singleJob := <-doneSingle
-	if singleJob.Tier != "standard" || singleJob.Model != "sonnet" || singleJob.Effort != "medium" {
-		t.Fatalf("persisted single job = (%q, %q, %q), want (standard, sonnet, medium)", singleJob.Tier, singleJob.Model, singleJob.Effort)
+	if singleJob.Tier != "standard" || singleJob.RequestedTier != "deep" || singleJob.Model != "sonnet" || singleJob.Effort != "medium" ||
+		singleJob.Reason != "Check lock ordering across stores." || singleJob.BatchID != nil {
+		t.Fatalf("persisted single job = %+v", singleJob)
 	}
 	sg := singleRes.(map[string]any)
-	if sg["tier"] != "standard" || sg["model"] != "sonnet" || sg["effort"] != "medium" {
+	if sg["tier"] != "standard" || sg["requested_tier"] != "deep" || sg["model"] != "sonnet" || sg["effort"] != "medium" ||
+		sg["reason"] != "Check lock ordering across stores." {
 		t.Fatalf("single tool output = %#v", sg)
 	}
 
-	// Batch call with fast + deep (capped to standard): persists per-task tiers/models and returns them in output.
+	// Batch call with fast + deep (capped to standard): persists per-task tiers/models, shared batch_id, and reason, plus subagent_queued lifecycle events.
 	doneBatch := make(chan []store.SubagentJob, 1)
 	go func() {
 		var claimed []store.SubagentJob
@@ -498,23 +500,54 @@ func TestRunSubagentTierPersistenceAndCeiling(t *testing.T) {
 		doneBatch <- claimed
 	}()
 	batchRes, err := ByName["run_subagents"].call(ctx, deps, c, json.RawMessage(`{"tasks":[
-		{"type":"helper","tier":"fast","role":"Quick Check","prompt":"t0"},
-		{"type":"helper","tier":"deep","role":"Capped Deep","prompt":"t1"}
+		{"type":"helper","role":"Quick Check","reason":"Fast check with omitted tier.","prompt":"t0"},
+		{"type":"helper","tier":"deep","role":"Capped Deep","reason":"Complex reasoning attempt.","prompt":"t1"}
 	]}`))
 	if err != nil {
 		t.Fatalf("run_subagents: %v", err)
 	}
 	batchJobs := <-doneBatch
-	if batchJobs[0].Tier != "fast" || batchJobs[0].Model != "haiku" || batchJobs[0].Effort != "" {
-		t.Fatalf("batch job[0] = (%q, %q, %q), want (fast, haiku, '')", batchJobs[0].Tier, batchJobs[0].Model, batchJobs[0].Effort)
+	if batchJobs[0].Tier != "standard" || batchJobs[0].RequestedTier != "" || batchJobs[0].Model != "sonnet" ||
+		batchJobs[0].Reason != "Fast check with omitted tier." || batchJobs[0].BatchID == nil {
+		t.Fatalf("batch job[0] = %+v", batchJobs[0])
 	}
-	if batchJobs[1].Tier != "standard" || batchJobs[1].Model != "sonnet" || batchJobs[1].Effort != "medium" {
-		t.Fatalf("batch job[1] = (%q, %q, %q), want (standard, sonnet, medium)", batchJobs[1].Tier, batchJobs[1].Model, batchJobs[1].Effort)
+	if batchJobs[1].Tier != "standard" || batchJobs[1].RequestedTier != "deep" || batchJobs[1].Model != "sonnet" || batchJobs[1].Effort != "medium" ||
+		batchJobs[1].Reason != "Complex reasoning attempt." || batchJobs[1].BatchID == nil || *batchJobs[1].BatchID != *batchJobs[0].BatchID {
+		t.Fatalf("batch job[1] = %+v", batchJobs[1])
 	}
 	br := batchRes.(map[string]any)["results"].([]map[string]any)
-	if br[0]["tier"] != "fast" || br[0]["model"] != "haiku" || br[0]["effort"] != nil ||
-		br[1]["tier"] != "standard" || br[1]["model"] != "sonnet" || br[1]["effort"] != "medium" {
+	if br[0]["tier"] != "standard" || br[0]["requested_tier"] != nil || br[0]["reason"] != "Fast check with omitted tier." ||
+		br[1]["tier"] != "standard" || br[1]["requested_tier"] != "deep" || br[1]["model"] != "sonnet" || br[1]["effort"] != "medium" ||
+		br[1]["reason"] != "Complex reasoning attempt." {
 		t.Fatalf("batch results = %#v", br)
+	}
+
+	evs, err := q.ListRunEvents(ctx, store.ListRunEventsParams{RunID: run.ID, Seq: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	queuedByID := map[string]map[string]any{}
+	for _, ev := range evs {
+		if ev.Type != "lifecycle" {
+			continue
+		}
+		var pl map[string]any
+		if json.Unmarshal(ev.Payload, &pl) == nil && pl["state"] == "subagent_queued" {
+			id, _ := pl["subagent_id"].(string)
+			queuedByID[id] = pl
+		}
+	}
+	if len(queuedByID) != 3 {
+		t.Fatalf("subagent_queued events = %d, want 3", len(queuedByID))
+	}
+	qSingle := queuedByID[singleJob.ID.String()]
+	if qSingle["reason"] != "Check lock ordering across stores." || qSingle["requested_tier"] != "deep" ||
+		qSingle["subagent_tier"] != "standard" || qSingle["subagent_model"] != "sonnet" || qSingle["batch_id"] != nil {
+		t.Fatalf("single subagent_queued payload = %#v", qSingle)
+	}
+	qBatch := queuedByID[batchJobs[1].ID.String()]
+	if qBatch["batch_id"] != batchJobs[0].BatchID.String() || qBatch["batch_size"] != float64(2) {
+		t.Fatalf("batch subagent_queued payload = %#v", qBatch)
 	}
 }
 

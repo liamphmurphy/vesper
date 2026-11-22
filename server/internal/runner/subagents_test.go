@@ -780,6 +780,7 @@ func TestSubagentTierSelectionAcrossHarnesses(t *testing.T) {
 			t.Fatal(err)
 		}
 		seenEventModels := map[string]bool{}
+		lifecycleStates := map[string]map[string]bool{}
 		for _, ev := range evs {
 			var pl map[string]any
 			if json.Unmarshal(ev.Payload, &pl) != nil {
@@ -788,9 +789,36 @@ func TestSubagentTierSelectionAcrossHarnesses(t *testing.T) {
 			if pl["subagent"] != true {
 				continue
 			}
+			if ev.Type == "lifecycle" {
+				st, _ := pl["state"].(string)
+				id, _ := pl["subagent_id"].(string)
+				if st != "" && id != "" {
+					if lifecycleStates[id] == nil {
+						lifecycleStates[id] = map[string]bool{}
+					}
+					lifecycleStates[id][st] = true
+					if pl["reason"] != "check model routing" || pl["batch_id"] == "" {
+						t.Fatalf("%s lifecycle %s missing reason/batch_id: %#v", harness, st, pl)
+					}
+					if st == "subagent_finished" {
+						if _, ok := pl["queued_ms"]; !ok {
+							t.Fatalf("%s subagent_finished missing queued_ms: %#v", harness, pl)
+						}
+						if _, ok := pl["duration_ms"]; !ok {
+							t.Fatalf("%s subagent_finished missing duration_ms: %#v", harness, pl)
+						}
+					}
+				}
+			}
 			if m, _ := pl["subagent_model"].(string); m != "" {
 				tier, _ := pl["subagent_tier"].(string)
 				seenEventModels[tier+":"+m] = true
+			}
+		}
+		for _, j := range jobs {
+			gotStates := lifecycleStates[j.ID.String()]
+			if !gotStates["subagent_queued"] || !gotStates["subagent_started"] || !gotStates["subagent_finished"] {
+				t.Fatalf("%s job %s missing lifecycle states: %v", harness, j.ID, gotStates)
 			}
 		}
 		for _, w := range wants {
@@ -801,14 +829,14 @@ func TestSubagentTierSelectionAcrossHarnesses(t *testing.T) {
 	}
 
 	mixedCalls := []map[string]string{
-		{"type": agentdef.ExplorerAgent, "role": "Search", "prompt": "REPORT_MODEL"},
-		{"type": agentdef.HelperAgent, "tier": "fast", "role": "Fast Helper", "prompt": "REPORT_MODEL"},
-		{"type": agentdef.HelperAgent, "tier": "standard", "role": "Std Helper", "prompt": "REPORT_MODEL"},
-		{"type": agentdef.HelperAgent, "tier": "deep", "role": "Deep Helper", "prompt": "REPORT_MODEL"},
+		{"type": agentdef.ExplorerAgent, "role": "Search", "reason": "check model routing", "prompt": "REPORT_MODEL"},
+		{"type": agentdef.HelperAgent, "tier": "fast", "role": "Fast Helper", "reason": "check model routing", "prompt": "REPORT_MODEL"},
+		{"type": agentdef.HelperAgent, "tier": "standard", "role": "Std Helper", "reason": "check model routing", "prompt": "REPORT_MODEL"},
+		{"type": agentdef.HelperAgent, "tier": "deep", "role": "Deep Helper", "reason": "check model routing", "prompt": "REPORT_MODEL"},
 	}
 	cappedCalls := []map[string]string{
-		{"type": agentdef.HelperAgent, "tier": "fast", "role": "Fast Helper", "prompt": "REPORT_MODEL"},
-		{"type": agentdef.HelperAgent, "tier": "deep", "role": "Capped Deep", "prompt": "REPORT_MODEL"},
+		{"type": agentdef.HelperAgent, "tier": "fast", "role": "Fast Helper", "reason": "check model routing", "prompt": "REPORT_MODEL"},
+		{"type": agentdef.HelperAgent, "tier": "deep", "role": "Capped Deep", "reason": "check model routing", "prompt": "REPORT_MODEL"},
 	}
 
 	t.Run("claude_deep_parent", func(t *testing.T) {

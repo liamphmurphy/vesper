@@ -8305,6 +8305,31 @@ components:
         events:
           type: array
           items: { $ref: "#/components/schemas/RunEvent" }
+    SubagentJob:
+      type: object
+      required: [id, agent_type, role, reason, requested_tier, tier, model, effort, status, prompt, result_text, error, input_tokens, output_tokens, cached_tokens, tool_calls, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        batch_id: { type: string, format: uuid, nullable: true }
+        agent_type: { type: string, enum: [explorer, helper] }
+        role: { type: string }
+        reason: { type: string }
+        requested_tier: { type: string }
+        tier: { type: string }
+        model: { type: string }
+        effort: { type: string }
+        status: { type: string, enum: [queued, running, completed, failed, canceled] }
+        prompt: { type: string }
+        result_text: { type: string }
+        error: { type: string }
+        input_tokens: { type: integer, format: int64 }
+        output_tokens: { type: integer, format: int64 }
+        cached_tokens: { type: integer, format: int64 }
+        cost_usd: { type: number, format: double, nullable: true }
+        tool_calls: { type: integer }
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time, nullable: true }
+        completed_at: { type: string, format: date-time, nullable: true }
     RunDetail:
       type: object
       required: [run, turns, approvals, events, child_runs]
@@ -8314,6 +8339,10 @@ components:
           type: array
           description: Direct delegated runs, including active and finished runs. Fetch each run for its own events and cursor.
           items: { $ref: "#/components/schemas/Run" }
+        subagent_jobs:
+          type: array
+          description: In-turn explorer/helper subagent jobs spawned during this run.
+          items: { $ref: "#/components/schemas/SubagentJob" }
         turns: { type: array, items: { $ref: "#/components/schemas/RunTurn" } }
         approvals: { type: array, items: { $ref: "#/components/schemas/Approval" } }
         events: { type: array, items: { $ref: "#/components/schemas/RunEvent" } }

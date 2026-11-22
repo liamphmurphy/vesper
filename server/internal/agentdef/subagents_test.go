@@ -40,7 +40,7 @@ func TestSubagentTypes(t *testing.T) {
 			t.Errorf("%s: SubagentGuide = %q", c.name, guide)
 		}
 		if c.want != nil {
-			for _, token := range []string{"`run_subagents`", "`tasks`", "`tier`", "`fast`", "`standard`", "`deep`"} {
+			for _, token := range []string{"`run_subagents`", "`tasks`", "`tier`", "`fast`", "`standard`", "`deep`", "`reason`"} {
 				if !strings.Contains(guide, token) {
 					t.Errorf("%s: SubagentGuide missing %q: %q", c.name, token, guide)
 				}

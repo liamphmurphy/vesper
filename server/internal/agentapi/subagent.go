@@ -2,6 +2,7 @@ package agentapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -22,6 +23,7 @@ type RunSubagentIn struct {
 	Type   string `json:"type" jsonschema:"Subagent type: explorer (read-only code search, defaults to fast tier) or helper (self-contained task using the parent run's workspace permissions, defaults to standard tier)."`
 	Tier   string `json:"tier,omitempty" jsonschema:"Optional model tier within the parent's harness, capped at the parent's own tier: fast (search, reading, summaries, mechanical edits, running tests), standard (well-scoped implementation, bug fixes, tests, routine review), or deep (tricky debugging, subtle concurrency/security/architecture review, ambiguous multi-file design). Omit for the default (fast for explorer, standard for helper)."`
 	Role   string `json:"role,omitempty" jsonschema:"Short role label (2-5 words), e.g. Codebase Researcher."`
+	Reason string `json:"reason,omitempty" jsonschema:"One short sentence explaining why you are spawning this subagent and why this tier fits (shown in the decision tree)."`
 	Prompt string `json:"prompt" jsonschema:"Clear, self-contained instructions. Subagents cannot ask follow-up questions."`
 }
 
@@ -32,7 +34,22 @@ type RunSubagentsIn struct {
 const (
 	subagentPollInterval = 100 * time.Millisecond
 	maxSubagentBatch     = 20
+	maxSubagentReason    = 500
 )
+
+func clipRunes(s string, n int) string {
+	if n <= 0 || len(s) <= n {
+		return s
+	}
+	count := 0
+	for i := range s {
+		if count == n {
+			return s[:i]
+		}
+		count++
+	}
+	return s
+}
 
 func loadSubagentRun(ctx context.Context, d Deps, c agents.Caller, toolName string) (store.Run, agentdef.Resolved, error) {
 	if c.RunID == nil {
@@ -55,27 +72,67 @@ func loadSubagentRun(ctx context.Context, d Deps, c agents.Caller, toolName stri
 	return run, spec, nil
 }
 
-func validateSubagentTask(spec agentdef.Resolved, in RunSubagentIn, fieldPrefix string) (typ, tier, role, prompt string, err error) {
+func validateSubagentTask(spec agentdef.Resolved, in RunSubagentIn, fieldPrefix string) (typ, tier, role, reason, prompt string, err error) {
 	typ = strings.TrimSpace(in.Type)
 	tier = strings.TrimSpace(strings.ToLower(in.Tier))
 	role = strings.TrimSpace(in.Role)
+	reason = clipRunes(strings.TrimSpace(in.Reason), maxSubagentReason)
 	prompt = strings.TrimSpace(in.Prompt)
 	if prompt == "" {
-		return "", "", "", "", apperr.Invalid(fieldPrefix+"prompt", "prompt is required")
+		return "", "", "", "", "", apperr.Invalid(fieldPrefix+"prompt", "prompt is required")
 	}
 	switch typ {
 	case agentdef.ExplorerAgent:
 		if !agentdef.ExplorerOn(spec) {
-			return "", "", "", "", apperr.Invalid(fieldPrefix+"type", "explorer subagent is disabled for this run")
+			return "", "", "", "", "", apperr.Invalid(fieldPrefix+"type", "explorer subagent is disabled for this run")
 		}
 	case agentdef.HelperAgent:
 	default:
-		return "", "", "", "", apperr.Invalid(fieldPrefix+"type", "unknown subagent type %q; want explorer or helper", typ)
+		return "", "", "", "", "", apperr.Invalid(fieldPrefix+"type", "unknown subagent type %q; want explorer or helper", typ)
 	}
 	if tier != "" && !agentdef.ValidSubagentTier(tier) {
-		return "", "", "", "", apperr.Invalid(fieldPrefix+"tier", "unknown subagent tier %q; want fast, standard, or deep", tier)
+		return "", "", "", "", "", apperr.Invalid(fieldPrefix+"tier", "unknown subagent tier %q; want fast, standard, or deep", tier)
 	}
-	return typ, tier, role, prompt, nil
+	return typ, tier, role, reason, prompt, nil
+}
+
+func emitSubagentQueuedEvent(ctx context.Context, q *store.Queries, j store.SubagentJob, batchSize int) {
+	pl := map[string]any{
+		"state":         "subagent_queued",
+		"subagent":      true,
+		"subagent_id":   j.ID.String(),
+		"subagent_type": j.AgentType,
+		"created_at":    j.CreatedAt.UTC().Format(time.RFC3339Nano),
+	}
+	if j.Role != "" {
+		pl["subagent_role"] = j.Role
+	}
+	if j.Reason != "" {
+		pl["reason"] = j.Reason
+	}
+	if j.RequestedTier != "" {
+		pl["requested_tier"] = j.RequestedTier
+	}
+	if j.Tier != "" {
+		pl["subagent_tier"] = j.Tier
+	}
+	if j.Model != "" {
+		pl["subagent_model"] = j.Model
+	}
+	if j.Effort != "" {
+		pl["subagent_effort"] = j.Effort
+	}
+	if j.BatchID != nil {
+		pl["batch_id"] = j.BatchID.String()
+	}
+	if batchSize > 1 {
+		pl["batch_size"] = batchSize
+	}
+	raw, err := json.Marshal(pl)
+	if err != nil {
+		return
+	}
+	_ = q.AddRunEvent(ctx, store.AddRunEventParams{RunID: j.RunID, Type: "lifecycle", Payload: raw})
 }
 
 func resolveSubagentModel(ctx context.Context, d Deps, ws uuid.UUID, spec agentdef.Resolved, typ, tier string) chatmodels.SubagentModelResult {
@@ -95,6 +152,12 @@ func subagentResultMap(j store.SubagentJob) map[string]any {
 		"input_tokens":  j.InputTokens,
 		"output_tokens": j.OutputTokens,
 	}
+	if j.Reason != "" {
+		out["reason"] = j.Reason
+	}
+	if j.RequestedTier != "" {
+		out["requested_tier"] = j.RequestedTier
+	}
 	if j.Tier != "" {
 		out["tier"] = j.Tier
 	}
@@ -112,24 +175,27 @@ func runSubagentTool(ctx context.Context, d Deps, c agents.Caller, in RunSubagen
 	if err != nil {
 		return nil, err
 	}
-	typ, tier, role, prompt, err := validateSubagentTask(spec, in, "")
+	typ, tier, role, reason, prompt, err := validateSubagentTask(spec, in, "")
 	if err != nil {
 		return nil, err
 	}
 	sel := resolveSubagentModel(ctx, d, c.Agent.WorkspaceID, spec, typ, tier)
 
 	job, err := d.Q.CreateSubagentJob(ctx, store.CreateSubagentJobParams{
-		RunID:     run.ID,
-		AgentType: typ,
-		Role:      role,
-		Prompt:    prompt,
-		Tier:      sel.Tier,
-		Model:     sel.Model,
-		Effort:    sel.Effort,
+		RunID:         run.ID,
+		AgentType:     typ,
+		Role:          role,
+		Prompt:        prompt,
+		Tier:          sel.Tier,
+		Model:         sel.Model,
+		Effort:        sel.Effort,
+		RequestedTier: tier,
+		Reason:        reason,
 	})
 	if err != nil {
 		return nil, err
 	}
+	emitSubagentQueuedEvent(ctx, d.Q, job, 1)
 
 	t := time.NewTicker(subagentPollInterval)
 	defer t.Stop()
@@ -173,27 +239,31 @@ func runSubagentsTool(ctx context.Context, d Deps, c agents.Caller, in RunSubage
 	// Validate every task before resolving models or inserting any jobs so a
 	// malformed batch creates zero rows.
 	type validTask struct {
-		typ, tier, role, prompt string
+		typ, tier, role, reason, prompt string
 	}
 	valid := make([]validTask, len(in.Tasks))
 	for i, task := range in.Tasks {
-		typ, tier, role, prompt, err := validateSubagentTask(spec, task, fmt.Sprintf("tasks[%d].", i))
+		typ, tier, role, reason, prompt, err := validateSubagentTask(spec, task, fmt.Sprintf("tasks[%d].", i))
 		if err != nil {
 			return nil, err
 		}
-		valid[i] = validTask{typ: typ, tier: tier, role: role, prompt: prompt}
+		valid[i] = validTask{typ: typ, tier: tier, role: role, reason: reason, prompt: prompt}
 	}
+	batchID := uuid.New()
 	validated := make([]store.CreateSubagentJobParams, len(valid))
 	for i, task := range valid {
 		sel := resolveSubagentModel(ctx, d, c.Agent.WorkspaceID, spec, task.typ, task.tier)
 		validated[i] = store.CreateSubagentJobParams{
-			RunID:     run.ID,
-			AgentType: task.typ,
-			Role:      task.role,
-			Prompt:    task.prompt,
-			Tier:      sel.Tier,
-			Model:     sel.Model,
-			Effort:    sel.Effort,
+			RunID:         run.ID,
+			AgentType:     task.typ,
+			Role:          task.role,
+			Prompt:        task.prompt,
+			Tier:          sel.Tier,
+			Model:         sel.Model,
+			Effort:        sel.Effort,
+			RequestedTier: task.tier,
+			Reason:        task.reason,
+			BatchID:       &batchID,
 		}
 	}
 
@@ -205,6 +275,7 @@ func runSubagentsTool(ctx context.Context, d Deps, c agents.Caller, in RunSubage
 			return nil, err
 		}
 		jobs[i] = job
+		emitSubagentQueuedEvent(ctx, d.Q, job, len(validated))
 	}
 
 	results := make([]map[string]any, len(jobs))
