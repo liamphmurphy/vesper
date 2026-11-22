@@ -1392,14 +1392,19 @@ paths:
   /runner/settings:
     put:
       operationId: updateRunnerSettings
-      summary: Turn host-folder workspaces on or off
+      summary: Update workspace runner settings
       description: |
+        Updates workspace-level runner settings; omitted fields stay unchanged.
         With host_folder_workspaces on, a run started afterwards keeps its
         checkout in a folder on the person's machine (under the runner's
         RUNNER_HOST_WORKSPACES_DIR) instead of the run's disk image inside the microVM, so they can
         open it in their own editor. Runs that already have a workspace keep
         it where it is. The folder itself is runner configuration and can't
         be set here. Has no effect on a runner without that folder configured.
+        max_concurrent_subagents (1–16, default 3) bounds concurrent in-turn
+        MCP subagents (explorer/helper) per active turn.
+        max_parallel_delegations (1–8, default 3) bounds live parallel delegated
+        child ticket runs per parent run.
       tags: [runs]
       requestBody:
         required: true
@@ -1479,6 +1484,103 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ImageEngineSettings" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /media/providers:
+    get:
+      operationId: listMediaProviders
+      summary: Registered media providers, masked config, and workspace defaults
+      tags: [workspace]
+      responses:
+        "200":
+          description: Providers and defaults
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MediaProvidersResponse" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /media/providers/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      operationId: updateMediaProvider
+      summary: Update a media provider's settings and write-only secrets
+      tags: [workspace]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateMediaProviderRequest" }
+      responses:
+        "200":
+          description: Updated provider state (without secret values)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MediaProvider" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /media/providers/{id}/secret:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      operationId: clearMediaProviderSecret
+      summary: Clear one or all stored secrets for a media provider
+      tags: [workspace]
+      parameters:
+        - name: field
+          in: query
+          schema: { type: string }
+          description: Specific secret field key to clear; clears all secrets for this provider when omitted
+      responses:
+        "204":
+          description: Cleared
+        default: { $ref: "#/components/responses/Error" }
+
+  /media/providers/{id}/check:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: checkMediaProvider
+      summary: Verify a media provider's credentials and reachability
+      tags: [workspace]
+      responses:
+        "200":
+          description: Verification outcome
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MediaProviderCheckResponse" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /media/defaults/{capability}:
+    parameters:
+      - name: capability
+        in: path
+        required: true
+        schema: { $ref: "#/components/schemas/MediaCapability" }
+    put:
+      operationId: setMediaDefault
+      summary: Set or clear the workspace's active provider for a media capability
+      tags: [workspace]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SetMediaDefaultRequest" }
+      responses:
+        "200":
+          description: Updated providers and defaults
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MediaProvidersResponse" }
         default: { $ref: "#/components/responses/Error" }
 
   /runner/environment:
@@ -3635,9 +3737,9 @@ paths:
       summary: The chat's audio, oldest first
       description: |
         Audio a coding chat renders with code during its turn (MIDI through a
-        soundfont, a synth script, ffmpeg). Each follows its stages (compose,
-        render, check, save) as the agent and its renderer report them; a
-        finished one is also kept in the Library.
+        soundfont, a synth script, ffmpeg), or music generated via a configured
+        media provider. Each follows its stages and a finished file is saved to
+        the Library.
       tags: [chats]
       responses:
         "200":
@@ -3646,6 +3748,47 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ChatAudios" }
         "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /chats/{id}/music:
+    parameters:
+      - { $ref: "#/components/parameters/ChatId" }
+    post:
+      operationId: startChatMusic
+      summary: Generate music in a chat using the active music provider
+      tags: [chats]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StartChatMusicRequest" }
+      responses:
+        "201":
+          description: Music job started
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatAudio" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /chats/{id}/audio/{audioId}/stop:
+    parameters:
+      - { $ref: "#/components/parameters/ChatId" }
+      - { name: audioId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: stopChatAudio
+      summary: Stop an in-flight music generation job
+      tags: [chats]
+      responses:
+        "200":
+          description: Updated audio job
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatAudio" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
         default: { $ref: "#/components/responses/Error" }
 
   /chats/{id}/audio/{audioId}/content:
@@ -8481,16 +8624,100 @@ components:
               label: { type: string }
               available: { type: boolean, description: "Connected, with a model to run the image step on" }
               reason: { type: string, description: "Why it isn't available" }
+    MediaCapability:
+      type: string
+      enum: [music, tts, script]
+    MediaFieldOption:
+      type: object
+      required: [value, label]
+      properties:
+        value: { type: string }
+        label: { type: string }
+    MediaFieldSpec:
+      type: object
+      required: [key, label, kind]
+      properties:
+        key: { type: string }
+        label: { type: string }
+        kind: { type: string, enum: [text, secret, select, segmented] }
+        required: { type: boolean }
+        default: { type: string }
+        placeholder: { type: string }
+        help: { type: string }
+        options:
+          type: array
+          items: { $ref: "#/components/schemas/MediaFieldOption" }
+        show_when:
+          type: object
+          additionalProperties: { type: string }
+    MediaProvider:
+      type: object
+      required: [id, label, capabilities, coming_soon, enabled, available, fields, settings, secrets_set]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        description: { type: string }
+        capabilities:
+          type: array
+          items: { $ref: "#/components/schemas/MediaCapability" }
+        coming_soon: { type: boolean }
+        enabled: { type: boolean }
+        available: { type: boolean }
+        unavailable_reason: { type: string }
+        fields:
+          type: array
+          items: { $ref: "#/components/schemas/MediaFieldSpec" }
+        settings:
+          type: object
+          additionalProperties: { type: string }
+        secrets_set:
+          type: object
+          additionalProperties: { type: boolean }
+    MediaProvidersResponse:
+      type: object
+      required: [providers, defaults]
+      properties:
+        providers:
+          type: array
+          items: { $ref: "#/components/schemas/MediaProvider" }
+        defaults:
+          type: object
+          additionalProperties: { type: string }
+    UpdateMediaProviderRequest:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        settings:
+          type: object
+          additionalProperties: { type: string }
+        secrets:
+          type: object
+          additionalProperties: { type: string }
+    MediaProviderCheckResponse:
+      type: object
+      required: [ok, message]
+      properties:
+        ok: { type: boolean }
+        message: { type: string }
+        error_kind: { $ref: "#/components/schemas/ChatAudioErrorKind" }
+    SetMediaDefaultRequest:
+      type: object
+      required: [provider_id]
+      properties:
+        provider_id: { type: string }
     RunnerSettings:
       type: object
-      required: [host_folder_workspaces]
       properties:
         host_folder_workspaces: { type: boolean }
+        max_concurrent_subagents: { type: integer, minimum: 1, maximum: 16 }
+        max_parallel_delegations: { type: integer, minimum: 1, maximum: 8 }
     RunnerStatus:
       type: object
-      required: [online, runners, slots, busy, live, queued, host_folder_workspaces]
+      required: [online, runners, slots, busy, live, queued, host_folder_workspaces, max_concurrent_subagents, max_parallel_delegations]
       properties:
         host_folder_workspaces: { type: boolean, description: "New runs keep their checkout in a host folder when their runner has host_workspaces_dir" }
+        max_concurrent_subagents: { type: integer, description: "In-turn MCP subagents (explorer/helper) allowed to run concurrently per active turn (1–16)" }
+        max_parallel_delegations: { type: integer, description: "Delegated child ticket runs allowed to run in parallel per parent run (1–8)" }
         online: { type: boolean }
         starting: { type: boolean, description: "True while an embedded runner is still starting up before its first heartbeat" }
         runners: { type: array, items: { $ref: "#/components/schemas/RunnerInfo" } }
@@ -9734,6 +9961,12 @@ components:
       type: string
       enum: [compose, render, check, save]
       description: "compose: the music or sound is being written; render: the renderer is running; check: measuring the file (a persona can't listen, so the checks are numbers); save: storing it"
+    ChatAudioSourceKind:
+      type: string
+      enum: [code, music]
+    ChatAudioErrorKind:
+      type: string
+      enum: [auth, quota, rate_limit, filtered, unavailable, error]
     ChatAudioOutput:
       type: object
       required: [filename, content_type, size_bytes]
@@ -9750,9 +9983,15 @@ components:
         title: { type: string }
         duration_ms: { type: integer, description: The planned length }
         method: { type: string, description: "How it was made, e.g. MIDI → FluidSynth; empty until named" }
+        source_kind: { $ref: "#/components/schemas/ChatAudioSourceKind" }
+        provider_id: { type: string }
+        prompt: { type: string }
+        lyrics: { type: string }
+        instrumental: { type: boolean }
         stage: { $ref: "#/components/schemas/ChatAudioStage" }
         state: { type: string, enum: [running, done, failed] }
         failure_kind: { type: string, enum: [error, stopped], description: "Why a failed job failed: stopped when the person stopped the reply" }
+        error_kind: { $ref: "#/components/schemas/ChatAudioErrorKind" }
         error: { type: string }
         error_log: { type: string, description: The failing command's output, when the agent attached it }
         script_path: { type: string, description: "The renderer, relative to the chat's workspace; empty until named" }
@@ -9772,6 +10011,16 @@ components:
       required: [audio]
       properties:
         audio: { type: array, items: { $ref: "#/components/schemas/ChatAudio" } }
+    StartChatMusicRequest:
+      type: object
+      required: [prompt]
+      properties:
+        title: { type: string, maxLength: 200 }
+        prompt: { type: string, minLength: 1, maxLength: 4000 }
+        lyrics: { type: string, maxLength: 8000 }
+        instrumental: { type: boolean }
+        length: { type: string, enum: [clip, full] }
+        provider_id: { type: string }
     LibraryItemKind:
       type: string
       enum: [image, diagram, link, document, video, audio, file, export]

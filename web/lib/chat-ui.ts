@@ -530,6 +530,8 @@ export function chatStatusOf(call: { tool: string; input: unknown }): ChatStatus
       return status("video-render", "reporting a failed render");
     case "start_audio":
       return status("audio-render", "setting up audio");
+    case "generate_music":
+      return status("audio-render", "generating music");
     case "update_audio":
       return status("audio-render", "rendering audio");
     case "finish_audio":
@@ -616,6 +618,8 @@ export function chatStatusOf(call: { tool: string; input: unknown }): ChatStatus
     case "Agent":
     case "Task":
     case "delegate":
+    case "run_subagent":
+    case "run_subagents":
       return status("subagent", "delegating to a helper");
     case "claim_ticket":
     case "next_ticket":
@@ -1230,6 +1234,16 @@ export function stepDetail(call: { tool: string; input: unknown }, names: Map<st
     case "Task":
     case "delegate":
       return named("Delegating", o.description || o.agent);
+    case "run_subagent":
+      return named("Delegating", o.role || o.type);
+    case "run_subagents": {
+      const tasks = Array.isArray(o.tasks) ? o.tasks : [];
+      if (tasks.length === 1) {
+        const first = (tasks[0] && typeof tasks[0] === "object" ? tasks[0] : {}) as Record<string, unknown>;
+        return named("Delegating", first.role || first.type);
+      }
+      return tasks.length > 1 ? `Running ${tasks.length} subagents` : general;
+    }
     case "create_scheduled_task":
       return named("Scheduling", o.name);
     case "update_scheduled_task":

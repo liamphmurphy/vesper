@@ -211,6 +211,20 @@ func TestAntigravityDenyRulesFollowTheSpec(t *testing.T) {
 			s.HarnessOptions["readonly"] = "true"
 			return s
 		}(), []string{"command(*)", "write_file(*)", "read_url(*)"}, nil},
+		{"explorer subagent with repo:read allows policy-gated read-only commands", func() agentdef.Resolved {
+			s := spec("repo:read", "allowed")
+			s.HarnessOptions["readonly"] = "true"
+			s.HarnessOptions[agentdef.OptionNoMCP] = "true"
+			s.HarnessOptions[agentdef.OptionSubagents] = "false"
+			return s
+		}(), []string{"write_file(*)", "read_url(*)", "mcp(*)"}, []string{"command(*)"}},
+		{"explorer subagent without repo:read denies commands", func() agentdef.Resolved {
+			s := spec()
+			s.HarnessOptions["readonly"] = "true"
+			s.HarnessOptions[agentdef.OptionNoMCP] = "true"
+			s.HarnessOptions[agentdef.OptionSubagents] = "false"
+			return s
+		}(), []string{"command(*)", "write_file(*)", "mcp(*)"}, nil},
 		{"coding run", spec("repo:read", "allowed", "repo:write", "allowed", "tests:run", "allowed", "web:read", "allowed"), nil, []string{"command(*)", "write_file(*)", "read_url(*)"}},
 		{"approval-gated writes stay denied until approved", spec("repo:read", "allowed", "repo:write", "requires_approval", "tests:run", "allowed"), []string{"write_file(*)"}, []string{"command(*)"}},
 		{"image step writes elsewhere", func() agentdef.Resolved {
@@ -340,6 +354,7 @@ func TestAgyPolicyHookAgreesWithTheParser(t *testing.T) {
 		{"call_mcp_tool", map[string]any{"ServerName": "lazyagents"}},
 		{"invoke_subagent", map[string]any{"TypeName": "general", "Role": "helper", "Prompt": "run ls"}},
 		{"swarm", map[string]any{"action": "add"}},
+		{"run_workflow", map[string]any{"Description": "Fan out tickets"}},
 		{"search_web", map[string]any{"query": "go slog"}},
 		// agy's internal names (init's tool list), should a step report one.
 		{"view_file", map[string]any{"AbsolutePath": "/workspace/a.go"}},
@@ -385,7 +400,7 @@ func TestAgyPolicyHookAgreesWithTheParser(t *testing.T) {
 
 func TestAntigravityToolNamesInEvents(t *testing.T) {
 	for in, want := range map[string]string{
-		"run_command": "Bash", "read_file": "Read", "write_file": "Write", "edit_file": "Edit", "invoke_subagent": "Agent",
+		"run_command": "Bash", "read_file": "Read", "write_file": "Write", "edit_file": "Edit", "invoke_subagent": "Agent", "run_workflow": "Agent",
 		"view_file": "Read", "write_to_file": "Write", "replace_file_content": "Edit", "call_mcp_tool": "call_mcp_tool",
 		"mcp_lazyagents_search_knowledge": "mcp__lazyagents_search_knowledge", "browser_subagent": "browser_subagent",
 	} {

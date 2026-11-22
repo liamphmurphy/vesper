@@ -275,6 +275,7 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 	}
 	srv.Runs.CustomApps = srv.CustomApps()
 	defer srv.CloseCustomApps()
+	defer srv.CloseMedia()
 	go srv.Wiki.RunVaultWorker(ctx, log)
 	if appCfg.PRSyncInterval > 0 {
 		prSyncer := &prsync.Syncer{Pool: pool, Secrets: secretsSvc, Tracker: trackerSvc, Log: log, MinAge: time.Duration(appCfg.PRSyncInterval) * time.Second}

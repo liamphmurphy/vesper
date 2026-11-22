@@ -253,9 +253,18 @@ func SubagentGuide(spec Resolved) string {
 	if ExplorerOn(spec) {
 		roster = "`" + ExplorerAgent + "` for broad read-only code searches, " + roster
 	}
-	guide := "You can start sub agents with `run_subagent`: " + roster + ". " +
-		"Use them when the work splits into independent parts you can run in parallel, or when answering means reading across many files and you only need the conclusion; their output stays out of your context. " +
-		"Do the work yourself when it's a handful of tool calls or you already know where to look. A sub agent knows only its prompt, so make the brief complete."
+	singleRef, batchRef := "`run_subagent`", "`run_subagents`"
+	if spec.Harness == HarnessAntigravity {
+		singleRef = "`run_subagent` (declared as `mcp_lazyagents_run_subagent`)"
+		batchRef = "`run_subagents` (declared as `mcp_lazyagents_run_subagents`)"
+	}
+	guide := "Start in-turn subagents with Vesper's MCP tools: " + roster + ". " +
+		"Use them when work splits into independent parts you can run in parallel, or when answering means reading across many files and you only need the conclusion; their output stays out of your context. " +
+		"Use " + singleRef + " for a single subagent, and always use " + batchRef + " with a `tasks` array when launching 2 or more subagents in parallel—Vesper enqueues the whole batch at once, runs them concurrently up to the workspace's limit, and returns every report before your turn continues. Never end your turn waiting for background work. " +
+		"Do the work yourself when it's a handful of tool calls or you already know where to look. A subagent knows only its prompt, so make each brief self-contained."
+	if spec.Harness == HarnessAntigravity {
+		guide += " Separate MCP tool calls serialize on Antigravity, so always batch parallel subagents in one `mcp_lazyagents_run_subagents` call. Do not use Antigravity's built-in `invoke_subagent`, `define_subagent`, `manage_subagents`, `swarm`, `run_workflow`, or `schedule` tools—always use `mcp_lazyagents_run_subagent` / `mcp_lazyagents_run_subagents` instead."
+	}
 	if spec.HarnessOptions["readonly"] != "true" && spec.Mode("repo:write") != Denied {
 		guide += " Helpers share your checkout: never give two of them edits to the same files, and check what they changed before you rely on it."
 	}
@@ -298,7 +307,7 @@ var EagerVesperTools = []string{
 	// Ticket runs.
 	"claim_ticket", "post_plan", "update_step", "check_criterion", "complete_run",
 	// Shared in-turn subagents.
-	"run_subagent",
+	"run_subagent", "run_subagents",
 }
 
 // BatchExplorationGuide is the one line every coding prompt (chat and ticket

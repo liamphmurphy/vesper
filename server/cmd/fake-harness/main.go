@@ -951,7 +951,30 @@ func main() {
 			resStr, _ := out["result"].(string)
 			results[idx] = fmt.Sprintf("%s:%s", c.Type, resStr)
 		}
-		if os.Getenv("FAKE_SUBAGENT_PARALLEL") != "" {
+		if os.Getenv("FAKE_SUBAGENT_BATCH") != "" {
+			tasks := make([]map[string]any, len(calls))
+			for i, c := range calls {
+				tasks[i] = map[string]any{"type": c.Type, "role": c.Role, "prompt": c.Prompt}
+			}
+			out := call("run_subagents", map[string]any{"tasks": tasks})
+			if errMsg, ok := out["error"].(string); ok && errMsg != "" {
+				results = []string{"batch:ERR:" + errMsg}
+			} else if rawRes, ok := out["results"].([]any); ok {
+				results = make([]string, len(rawRes))
+				for i, item := range rawRes {
+					m, _ := item.(map[string]any)
+					typ, _ := m["type"].(string)
+					status, _ := m["status"].(string)
+					if status != "completed" {
+						errStr, _ := m["error"].(string)
+						results[i] = fmt.Sprintf("%d:%s:%s:%s", i, typ, status, errStr)
+					} else {
+						resStr, _ := m["result"].(string)
+						results[i] = fmt.Sprintf("%d:%s:%s", i, typ, resStr)
+					}
+				}
+			}
+		} else if os.Getenv("FAKE_SUBAGENT_PARALLEL") != "" {
 			var pwg sync.WaitGroup
 			for i, c := range calls {
 				pwg.Add(1)

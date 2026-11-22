@@ -39,7 +39,7 @@ async function installPlansApi(page: Page) {
         users: [], agents: AGENTS, epics: [EPIC], labels: [], projects: [PROJECT],
         counts: { inbox: 0, wiki_suggestions: 0, live_agents: 0 },
       });
-    if (path === "/runner") return json({ online: true, runners: [], slots: 1, busy: 0, live: 0, queued: 0 });
+    if (path === "/runner") return json({ online: true, runners: [], slots: 1, busy: 0, live: 0, queued: 0, host_folder_workspaces: false, max_concurrent_subagents: 3, max_parallel_delegations: 3 });
     if (path === "/knowledge/suggest") {
       const q = (url.searchParams.get("q") ?? "").toLowerCase();
       return json({ targets: TARGETS.filter((t) => `${t.title} ${t.path ?? ""} ${t.display_id ?? ""}`.toLowerCase().includes(q)) });

@@ -18,15 +18,17 @@ export const CHAT_COMMANDS: ChatCommand[] = [
   { name: "aside", args: "question", free: true, hint: "Ask about the current reply without stopping it" },
   { name: "queue", args: "message", free: true, hint: "Send this once the current reply ends" },
   { name: "design", args: "what to design", free: true, hint: "Create a design (flow, diagram or wireframe) beside the chat" },
+  { name: "music", args: "what to compose", free: true, optionalArg: true, hint: "Generate a music track in this chat" },
   { name: "compare", args: "model", hint: "Get a second opinion from another model without switching this chat" },
 ];
 
 /** What the composer's + menu offers under "Create with {persona}" (docs/design/designs-from-chat.svg). */
-export type CreateKind = "doc" | "slides" | "design";
+export type CreateKind = "doc" | "slides" | "design" | "music";
 export const CREATE_KINDS: { kind: CreateKind; label: string; hint?: string; command?: string }[] = [
   { kind: "doc", label: "Doc" },
   { kind: "slides", label: "Slides" },
   { kind: "design", label: "Design", hint: "Flow, diagram or wireframe", command: "/design" },
+  { kind: "music", label: "Music", hint: "Generate a track", command: "/music" },
 ];
 
 /**

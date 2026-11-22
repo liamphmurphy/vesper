@@ -156,20 +156,20 @@ func TestSubagentGuideInPrompts(t *testing.T) {
 	if guide == "" {
 		t.Fatal("no guide")
 	}
-	if !strings.Contains(string(AgentsMD("", explorerSpec(), nil, "T-1")), guide) {
+	if !strings.Contains(string(AgentsMD("", explorerSpec(), nil, "T-1")), "## Subagents\n\n"+guide) {
 		t.Error("lead run: no sub agent guide")
 	}
-	if !strings.Contains(string(SubagentAgentsMD("", explorerSpec(), nil, "T-1")), guide) {
+	if !strings.Contains(string(SubagentAgentsMD("", explorerSpec(), nil, "T-1")), "## Subagents\n\n"+guide) {
 		t.Error("delegated run: no sub agent guide")
 	}
 	if strings.Contains(string(AgentsMD("", explorerSpec(agentdef.OptionSubagents, "false"), nil, "T-1")), "run_subagent") {
 		t.Error("subagents: false still mentions them")
 	}
-	// Codex now gets the same Vesper MCP run_subagent guide as Claude and Antigravity.
+	// Codex now gets the same Vesper MCP run_subagent/run_subagents guide as Claude and Antigravity.
 	codex := explorerSpec()
 	codex.Harness = agentdef.HarnessCodex
-	if !strings.Contains(string(AgentsMD("", codex, nil, "T-1")), "run_subagent") {
-		t.Error("codex run missing run_subagent guide")
+	if md := string(AgentsMD("", codex, nil, "T-1")); !strings.Contains(md, "run_subagent") || !strings.Contains(md, "run_subagents") {
+		t.Error("codex run missing run_subagent/run_subagents guide")
 	}
 	// A chat encourages its own sub agents instead of forbidding delegation;
 	// a chat without them still says not to delegate.
@@ -177,7 +177,7 @@ func TestSubagentGuideInPrompts(t *testing.T) {
 		chat := explorerSpec("readonly", "true")
 		chat.Harness = h
 		md := string(ChatAgentsMD(chat, nil, "", "", nil))
-		if !strings.Contains(md, agentdef.SubagentGuide(chat)) || strings.Contains(md, "Do not delegate work") || strings.Contains(md, "share your checkout") {
+		if !strings.Contains(md, "## Subagents\n\n"+agentdef.SubagentGuide(chat)) || strings.Contains(md, "Do not delegate work") || strings.Contains(md, "share your checkout") {
 			t.Errorf("%s read-only chat:\n%s", h, md)
 		}
 	}

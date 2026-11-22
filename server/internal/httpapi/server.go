@@ -27,6 +27,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/customapps"
 	"github.com/liamphmurphy/vesper/server/internal/designs"
 	"github.com/liamphmurphy/vesper/server/internal/githubpr"
+	"github.com/liamphmurphy/vesper/server/internal/media"
 	"github.com/liamphmurphy/vesper/server/internal/realtime"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/secrets"
@@ -97,6 +98,13 @@ type Server struct {
 	// RunnerStarting reports whether an in-process runner (vesper app) is
 	// still initializing before its first heartbeat.
 	RunnerStarting func() bool
+
+	// MediaRegistry overrides the registered media providers (tests inject fake).
+	MediaRegistry   *media.Registry
+	defaultMediaReg *media.Registry
+	mediaRegOnce    sync.Once
+	musicRun        *media.MusicRunner
+	musicRunOnce    sync.Once
 
 	logins       loginLimiter
 	apiOnce      sync.Once

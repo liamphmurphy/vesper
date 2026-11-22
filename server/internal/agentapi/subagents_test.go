@@ -204,6 +204,193 @@ func TestRunSubagentToolLifecycleAndValidation(t *testing.T) {
 	}
 }
 
+func TestRunSubagentsToolBatchLifecycle(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	if _, err := seed.Run(ctx, pool, seed.Options{Demo: true}); err != nil {
+		t.Fatal(err)
+	}
+	q := store.New(pool)
+	me, _ := q.GetLocalUser(ctx)
+	ws := me.WorkspaceID
+	svc := &runs.Service{Pool: pool, Tracker: &tracker.Service{Pool: pool}, Poll: 20 * time.Millisecond}
+	out, err := svc.Dispatch(ctx, ws, me.ID, []string{"PAY-214"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := out[0]
+	if _, err := q.SetRunState(ctx, store.SetRunStateParams{ID: run.ID, State: "running"}); err != nil {
+		t.Fatal(err)
+	}
+	atlas, _ := q.GetAgentByHandle(ctx, store.GetAgentByHandleParams{WorkspaceID: ws, Handle: "atlas"})
+	exp := time.Now().Add(time.Hour)
+	tok, _, err := agents.IssueToken(ctx, q, atlas.ID, "run", "", &run.ID, nil, &exp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := agents.ResolveToken(ctx, q, tok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps := Deps{Q: q, Runs: svc}
+	call := ByName["run_subagents"].call
+
+	assertJobCount := func(want int) {
+		t.Helper()
+		jobs, err := q.ListSubagentJobsForRun(ctx, run.ID)
+		if err != nil || len(jobs) != want {
+			t.Fatalf("jobs = %d (%v), want %d", len(jobs), err, want)
+		}
+	}
+
+	// Requires a running turn.
+	if _, err := call(ctx, deps, agents.Caller{Agent: atlas, Kind: "unmanaged"}, json.RawMessage(`{"tasks":[{"type":"explorer","prompt":"find"}]}`)); err == nil {
+		t.Fatal("expected error without run id")
+	}
+	// Empty tasks rejected without creating jobs.
+	if _, err := call(ctx, deps, c, json.RawMessage(`{"tasks":[]}`)); err == nil || !strings.Contains(err.Error(), "at least one task") {
+		t.Fatalf("empty tasks err = %v", err)
+	}
+	// Batch exceeding maxSubagentBatch rejected without creating jobs.
+	tooMany := make([]RunSubagentIn, maxSubagentBatch+1)
+	for i := range tooMany {
+		tooMany[i] = RunSubagentIn{Type: agentdef.ExplorerAgent, Prompt: "find"}
+	}
+	tooManyRaw, _ := json.Marshal(RunSubagentsIn{Tasks: tooMany})
+	if _, err := call(ctx, deps, c, tooManyRaw); err == nil || !strings.Contains(err.Error(), "at most") {
+		t.Fatalf("too many tasks err = %v", err)
+	}
+	// Second task invalid (bad type or empty prompt) -> zero rows inserted for the first valid task.
+	if _, err := call(ctx, deps, c, json.RawMessage(`{"tasks":[{"type":"explorer","prompt":"ok"},{"type":"bogus","prompt":"bad"}]}`)); err == nil || !strings.Contains(err.Error(), "unknown subagent type") {
+		t.Fatalf("invalid type err = %v", err)
+	}
+	if _, err := call(ctx, deps, c, json.RawMessage(`{"tasks":[{"type":"helper","prompt":"ok"},{"type":"explorer","prompt":"   "}]}`)); err == nil || !strings.Contains(err.Error(), "prompt") {
+		t.Fatalf("empty prompt err = %v", err)
+	}
+	assertJobCount(0)
+
+	// Out-of-order completion: all 3 jobs must be enqueued before any completes,
+	// and results must be returned in input order (0, 1, 2).
+	batch1Done := make(chan error, 1)
+	go func() {
+		deadline := time.Now().Add(5 * time.Second)
+		var claimed []store.SubagentJob
+		for len(claimed) < 3 {
+			if time.Now().After(deadline) {
+				batch1Done <- context.DeadlineExceeded
+				return
+			}
+			j, err := q.ClaimNextSubagentJob(ctx, run.ID)
+			if err != nil {
+				time.Sleep(15 * time.Millisecond)
+				continue
+			}
+			claimed = append(claimed, j)
+		}
+		// Complete in reverse order: index 2 -> 0 -> 1.
+		for _, idx := range []int{2, 0, 1} {
+			j := claimed[idx]
+			if err := q.CompleteSubagentJob(ctx, store.CompleteSubagentJobParams{
+				ID:           j.ID,
+				ResultText:   "done:" + j.Prompt,
+				InputTokens:  int64(100 + idx),
+				OutputTokens: int64(20 + idx),
+				ToolCalls:    int32(idx + 1),
+			}); err != nil {
+				batch1Done <- err
+				return
+			}
+		}
+		batch1Done <- nil
+	}()
+	res, err := call(ctx, deps, c, json.RawMessage(`{"tasks":[
+		{"type":"explorer","role":"First","prompt":"p0"},
+		{"type":"helper","role":"Second","prompt":"p1"},
+		{"type":"explorer","role":"Third","prompt":"p2"}
+	]}`))
+	if err != nil {
+		t.Fatalf("run_subagents out-of-order: %v", err)
+	}
+	if wErr := <-batch1Done; wErr != nil {
+		t.Fatalf("batch1 worker: %v", wErr)
+	}
+	gotResults := res.(map[string]any)["results"].([]map[string]any)
+	if len(gotResults) != 3 {
+		t.Fatalf("results len = %d, want 3", len(gotResults))
+	}
+	for i, wantPrompt := range []string{"p0", "p1", "p2"} {
+		r := gotResults[i]
+		if r["index"] != i || r["status"] != "completed" || r["result"] != "done:"+wantPrompt || r["job_id"] == "" {
+			t.Fatalf("result[%d] = %#v, want index=%d status=completed result=done:%s", i, r, i, wantPrompt)
+		}
+	}
+
+	// Partial failure: one job completes while another fails -> both returned in input order without failing the tool call.
+	partialDone := make(chan error, 1)
+	go func() {
+		deadline := time.Now().Add(5 * time.Second)
+		var claimed []store.SubagentJob
+		for len(claimed) < 2 {
+			if time.Now().After(deadline) {
+				partialDone <- context.DeadlineExceeded
+				return
+			}
+			j, err := q.ClaimNextSubagentJob(ctx, run.ID)
+			if err != nil {
+				time.Sleep(15 * time.Millisecond)
+				continue
+			}
+			claimed = append(claimed, j)
+		}
+		if err := q.FailSubagentJob(ctx, store.FailSubagentJobParams{
+			ID:           claimed[1].ID,
+			Error:        "compile failed",
+			InputTokens:  500,
+			OutputTokens: 100,
+			ToolCalls:    3,
+		}); err != nil {
+			partialDone <- err
+			return
+		}
+		if err := q.CompleteSubagentJob(ctx, store.CompleteSubagentJobParams{
+			ID:           claimed[0].ID,
+			ResultText:   "all good",
+			InputTokens:  1000,
+			OutputTokens: 400,
+			ToolCalls:    12,
+		}); err != nil {
+			partialDone <- err
+			return
+		}
+		partialDone <- nil
+	}()
+	partialRes, err := call(ctx, deps, c, json.RawMessage(`{"tasks":[
+		{"type":"helper","role":"Passer","prompt":"succeed"},
+		{"type":"helper","role":"Failer","prompt":"explode"}
+	]}`))
+	if err != nil {
+		t.Fatalf("partial failure should return results, got err: %v", err)
+	}
+	if wErr := <-partialDone; wErr != nil {
+		t.Fatalf("partial worker: %v", wErr)
+	}
+	pr := partialRes.(map[string]any)["results"].([]map[string]any)
+	if len(pr) != 2 || pr[0]["status"] != "completed" || pr[0]["result"] != "all good" || pr[0]["tool_calls"] != int32(12) ||
+		pr[1]["status"] != "failed" || pr[1]["error"] != "compile failed" || pr[1]["tool_calls"] != int32(3) {
+		t.Fatalf("partial results = %#v", pr)
+	}
+
+	// Context cancellation while waiting returns ctx.Err().
+	cancelCtx, cancel := context.WithCancel(ctx)
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		cancel()
+	}()
+	if _, err := call(cancelCtx, deps, c, json.RawMessage(`{"tasks":[{"type":"explorer","prompt":"hang"}]}`)); err != context.Canceled {
+		t.Fatalf("canceled batch err = %v, want context.Canceled", err)
+	}
+}
+
 func TestToolPolicySubagentJobHeader(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()

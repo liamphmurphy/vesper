@@ -110,7 +110,8 @@ const assistantFilesSection = `
 const assistantAudioSection = `
 
 ## Audio
-- When the person asks for music or a sound, render it with code in the workspace and track it with the audio tools; the chat shows a card that follows each stage. Don't embed or link the file in your reply: the card plays it and it's saved to the person's Library. Neither you nor Vesper's models generate audio: you write MIDI, a synth script or an ffmpeg graph and render it, so say plainly it will sound synthetic, and that you can't hear it.
+- When the person asks for generated music (and doesn't ask you to synthesize it in code), prefer generate_music first: it works in any chat (coding or non-coding) via the workspace's configured music provider, shows a live Music card in the chat, and saves the track to the person's Library. If no music provider is configured (or the person specifically asks for MIDI/FluidSynth/code synthesis), fall back to the start_audio workflow below when coding is available.
+- When rendering audio or a sound with code in the workspace, track it with the audio tools; the chat shows a card that follows each stage. Don't embed or link the file in your reply: the card plays it and it's saved to the person's Library. Say plainly how you rendered it and that you can't hear it.
 - Call start_audio first, with the title, length, a one-line method (e.g. MIDI → FluidSynth) and the renderer's path once you know it. It returns the audio_id and the files to write, all under one directory in .lazyagents/audio/.
 - Write the renderer, call update_audio with stage render, then run it. Have it write progress at least once a second as {"percent": 0-100, "note": "..."} to the progress file.
 - When the file is written, measure it (length, peak level, long silences) and call update_audio with stage check and what you measured as checks, with passed set. You can't listen, so don't claim it sounds good.

@@ -3157,14 +3157,17 @@ extension API {
         /// The planned length
         public var durationMs: Swift.Int
         public var error: Swift.String?
+        public var errorKind: ChatAudioErrorKind?
         /// The failing command's output
         public var errorLog: Swift.String?
         /// Why a failed job failed: stopped when the person stopped the reply
         public var failureKind: FailureKind?
         public var finishedAt: Swift.String?
         public var id: Swift.String
+        public var instrumental: Swift.Bool?
         /// Its copy in the Library, while that exists
         public var libraryItemId: Swift.String?
+        public var lyrics: Swift.String?
         /// The reply it belongs to, once that reply is stored; absent while the turn runs
         public var messageId: Swift.String?
         /// How it was made, e.g. MIDI → FluidSynth; empty until named
@@ -3173,9 +3176,12 @@ extension API {
         /// The waveform of a finished file the server could decode
         public var peaks: [Swift.Int]?
         public var percent: Swift.Int
+        public var prompt: Swift.String?
+        public var providerId: Swift.String?
         public var runId: Swift.String?
         /// The renderer, relative to the chat's workspace; empty until named
         public var scriptPath: Swift.String
+        public var sourceKind: ChatAudioSourceKind?
         /// compose: the music or sound is being written; render: the renderer is running; check: measuring the file (a persona can't listen, so the checks are numbers); save: storing it
         public var stage: ChatAudioStage
         public var stageNote: Swift.String
@@ -3206,18 +3212,24 @@ extension API {
             createdAt: Swift.String,
             durationMs: Swift.Int,
             error: Swift.String? = nil,
+            errorKind: ChatAudioErrorKind? = nil,
             errorLog: Swift.String? = nil,
             failureKind: FailureKind? = nil,
             finishedAt: Swift.String? = nil,
             id: Swift.String,
+            instrumental: Swift.Bool? = nil,
             libraryItemId: Swift.String? = nil,
+            lyrics: Swift.String? = nil,
             messageId: Swift.String? = nil,
             method: Swift.String,
             output: ChatAudioOutput? = nil,
             peaks: [Swift.Int]? = nil,
             percent: Swift.Int,
+            prompt: Swift.String? = nil,
+            providerId: Swift.String? = nil,
             runId: Swift.String? = nil,
             scriptPath: Swift.String,
+            sourceKind: ChatAudioSourceKind? = nil,
             stage: ChatAudioStage,
             stageNote: Swift.String,
             state: State,
@@ -3228,18 +3240,24 @@ extension API {
             self.createdAt = createdAt
             self.durationMs = durationMs
             self.error = error
+            self.errorKind = errorKind
             self.errorLog = errorLog
             self.failureKind = failureKind
             self.finishedAt = finishedAt
             self.id = id
+            self.instrumental = instrumental
             self.libraryItemId = libraryItemId
+            self.lyrics = lyrics
             self.messageId = messageId
             self.method = method
             self.output = output
             self.peaks = peaks
             self.percent = percent
+            self.prompt = prompt
+            self.providerId = providerId
             self.runId = runId
             self.scriptPath = scriptPath
+            self.sourceKind = sourceKind
             self.stage = stage
             self.stageNote = stageNote
             self.state = state
@@ -3252,18 +3270,24 @@ extension API {
             case createdAt = "created_at"
             case durationMs = "duration_ms"
             case error
+            case errorKind = "error_kind"
             case errorLog = "error_log"
             case failureKind = "failure_kind"
             case finishedAt = "finished_at"
             case id
+            case instrumental
             case libraryItemId = "library_item_id"
+            case lyrics
             case messageId = "message_id"
             case method
             case output
             case peaks
             case percent
+            case prompt
+            case providerId = "provider_id"
             case runId = "run_id"
             case scriptPath = "script_path"
+            case sourceKind = "source_kind"
             case stage
             case stageNote = "stage_note"
             case state
@@ -3277,18 +3301,24 @@ extension API {
             self.createdAt = try c.decode(Swift.String.self, forKey: .createdAt)
             self.durationMs = try c.decode(Swift.Int.self, forKey: .durationMs)
             self.error = try c.decodeIfPresent(Swift.String.self, forKey: .error)
+            self.errorKind = try c.decodeIfPresent(ChatAudioErrorKind.self, forKey: .errorKind)
             self.errorLog = try c.decodeIfPresent(Swift.String.self, forKey: .errorLog)
             self.failureKind = try c.decodeIfPresent(FailureKind.self, forKey: .failureKind)
             self.finishedAt = try c.decodeIfPresent(Swift.String.self, forKey: .finishedAt)
             self.id = try c.decode(Swift.String.self, forKey: .id)
+            self.instrumental = try c.decodeIfPresent(Swift.Bool.self, forKey: .instrumental)
             self.libraryItemId = try c.decodeIfPresent(Swift.String.self, forKey: .libraryItemId)
+            self.lyrics = try c.decodeIfPresent(Swift.String.self, forKey: .lyrics)
             self.messageId = try c.decodeIfPresent(Swift.String.self, forKey: .messageId)
             self.method = try c.decode(Swift.String.self, forKey: .method)
             self.output = try c.decodeIfPresent(ChatAudioOutput.self, forKey: .output)
             self.peaks = try c.decodeIfPresent([Swift.Int].self, forKey: .peaks)
             self.percent = try c.decode(Swift.Int.self, forKey: .percent)
+            self.prompt = try c.decodeIfPresent(Swift.String.self, forKey: .prompt)
+            self.providerId = try c.decodeIfPresent(Swift.String.self, forKey: .providerId)
             self.runId = try c.decodeIfPresent(Swift.String.self, forKey: .runId)
             self.scriptPath = try c.decode(Swift.String.self, forKey: .scriptPath)
+            self.sourceKind = try c.decodeIfPresent(ChatAudioSourceKind.self, forKey: .sourceKind)
             self.stage = try c.decode(ChatAudioStage.self, forKey: .stage)
             self.stageNote = try c.decode(Swift.String.self, forKey: .stageNote)
             self.state = try c.decode(State.self, forKey: .state)
@@ -3302,24 +3332,42 @@ extension API {
             try c.encode(createdAt, forKey: .createdAt)
             try c.encode(durationMs, forKey: .durationMs)
             try c.encodeIfPresent(error, forKey: .error)
+            try c.encodeIfPresent(errorKind, forKey: .errorKind)
             try c.encodeIfPresent(errorLog, forKey: .errorLog)
             try c.encodeIfPresent(failureKind, forKey: .failureKind)
             try c.encodeIfPresent(finishedAt, forKey: .finishedAt)
             try c.encode(id, forKey: .id)
+            try c.encodeIfPresent(instrumental, forKey: .instrumental)
             try c.encodeIfPresent(libraryItemId, forKey: .libraryItemId)
+            try c.encodeIfPresent(lyrics, forKey: .lyrics)
             try c.encodeIfPresent(messageId, forKey: .messageId)
             try c.encode(method, forKey: .method)
             try c.encodeIfPresent(output, forKey: .output)
             try c.encodeIfPresent(peaks, forKey: .peaks)
             try c.encode(percent, forKey: .percent)
+            try c.encodeIfPresent(prompt, forKey: .prompt)
+            try c.encodeIfPresent(providerId, forKey: .providerId)
             try c.encodeIfPresent(runId, forKey: .runId)
             try c.encode(scriptPath, forKey: .scriptPath)
+            try c.encodeIfPresent(sourceKind, forKey: .sourceKind)
             try c.encode(stage, forKey: .stage)
             try c.encode(stageNote, forKey: .stageNote)
             try c.encode(state, forKey: .state)
             try c.encode(title, forKey: .title)
             try c.encode(updatedAt, forKey: .updatedAt)
         }
+    }
+
+    public struct ChatAudioErrorKind: APIStringEnum {
+        public let rawValue: Swift.String
+        public init(rawValue: Swift.String) { self.rawValue = rawValue }
+        public static let auth = ChatAudioErrorKind(rawValue: "auth")
+        public static let quota = ChatAudioErrorKind(rawValue: "quota")
+        public static let rateLimit = ChatAudioErrorKind(rawValue: "rate_limit")
+        public static let filtered = ChatAudioErrorKind(rawValue: "filtered")
+        public static let unavailable = ChatAudioErrorKind(rawValue: "unavailable")
+        public static let error = ChatAudioErrorKind(rawValue: "error")
+        public static let allKnown: [ChatAudioErrorKind] = [auth, quota, rateLimit, filtered, unavailable, error]
     }
 
     public struct ChatAudioOutput: Codable, Sendable, Equatable {
@@ -3362,6 +3410,14 @@ extension API {
             try c.encode(filename, forKey: .filename)
             try c.encode(sizeBytes, forKey: .sizeBytes)
         }
+    }
+
+    public struct ChatAudioSourceKind: APIStringEnum {
+        public let rawValue: Swift.String
+        public init(rawValue: Swift.String) { self.rawValue = rawValue }
+        public static let code = ChatAudioSourceKind(rawValue: "code")
+        public static let music = ChatAudioSourceKind(rawValue: "music")
+        public static let allKnown: [ChatAudioSourceKind] = [code, music]
     }
 
     /// compose: the music or sound is being written; render: the renderer is running; check: measuring the file (a persona can't listen, so the checks are numbers); save: storing it
@@ -13375,6 +13431,277 @@ extension API {
         }
     }
 
+    public struct MediaCapability: APIStringEnum {
+        public let rawValue: Swift.String
+        public init(rawValue: Swift.String) { self.rawValue = rawValue }
+        public static let music = MediaCapability(rawValue: "music")
+        public static let tts = MediaCapability(rawValue: "tts")
+        public static let script = MediaCapability(rawValue: "script")
+        public static let allKnown: [MediaCapability] = [music, tts, script]
+    }
+
+    public struct MediaFieldOption: Codable, Sendable, Equatable {
+        public var label: Swift.String
+        public var value: Swift.String
+
+        public init(
+            label: Swift.String,
+            value: Swift.String
+        ) {
+            self.label = label
+            self.value = value
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case label
+            case value
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.label = try c.decode(Swift.String.self, forKey: .label)
+            self.value = try c.decode(Swift.String.self, forKey: .value)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(label, forKey: .label)
+            try c.encode(value, forKey: .value)
+        }
+    }
+
+    public struct MediaFieldSpec: Codable, Sendable, Equatable {
+        public var `default`: Swift.String?
+        public var help: Swift.String?
+        public var key: Swift.String
+        public var kind: Kind
+        public var label: Swift.String
+        public var options: [MediaFieldOption]?
+        public var placeholder: Swift.String?
+        public var required: Swift.Bool?
+        public var showWhen: [Swift.String: Swift.String]?
+
+        public struct Kind: APIStringEnum {
+            public let rawValue: Swift.String
+            public init(rawValue: Swift.String) { self.rawValue = rawValue }
+            public static let text = Kind(rawValue: "text")
+            public static let secret = Kind(rawValue: "secret")
+            public static let select = Kind(rawValue: "select")
+            public static let segmented = Kind(rawValue: "segmented")
+            public static let allKnown: [Kind] = [text, secret, select, segmented]
+        }
+
+        public init(
+            `default`: Swift.String? = nil,
+            help: Swift.String? = nil,
+            key: Swift.String,
+            kind: Kind,
+            label: Swift.String,
+            options: [MediaFieldOption]? = nil,
+            placeholder: Swift.String? = nil,
+            required: Swift.Bool? = nil,
+            showWhen: [Swift.String: Swift.String]? = nil
+        ) {
+            self.`default` = `default`
+            self.help = help
+            self.key = key
+            self.kind = kind
+            self.label = label
+            self.options = options
+            self.placeholder = placeholder
+            self.required = required
+            self.showWhen = showWhen
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case `default`
+            case help
+            case key
+            case kind
+            case label
+            case options
+            case placeholder
+            case required
+            case showWhen = "show_when"
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.`default` = try c.decodeIfPresent(Swift.String.self, forKey: .`default`)
+            self.help = try c.decodeIfPresent(Swift.String.self, forKey: .help)
+            self.key = try c.decode(Swift.String.self, forKey: .key)
+            self.kind = try c.decode(Kind.self, forKey: .kind)
+            self.label = try c.decode(Swift.String.self, forKey: .label)
+            self.options = try c.decodeIfPresent([MediaFieldOption].self, forKey: .options)
+            self.placeholder = try c.decodeIfPresent(Swift.String.self, forKey: .placeholder)
+            self.required = try c.decodeIfPresent(Swift.Bool.self, forKey: .required)
+            self.showWhen = try c.decodeIfPresent([Swift.String: Swift.String].self, forKey: .showWhen)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeIfPresent(`default`, forKey: .`default`)
+            try c.encodeIfPresent(help, forKey: .help)
+            try c.encode(key, forKey: .key)
+            try c.encode(kind, forKey: .kind)
+            try c.encode(label, forKey: .label)
+            try c.encodeIfPresent(options, forKey: .options)
+            try c.encodeIfPresent(placeholder, forKey: .placeholder)
+            try c.encodeIfPresent(required, forKey: .required)
+            try c.encodeIfPresent(showWhen, forKey: .showWhen)
+        }
+    }
+
+    public struct MediaProvider: Codable, Sendable, Equatable {
+        public var available: Swift.Bool
+        public var capabilities: [MediaCapability]
+        public var comingSoon: Swift.Bool
+        public var description: Swift.String?
+        public var enabled: Swift.Bool
+        public var fields: [MediaFieldSpec]
+        public var id: Swift.String
+        public var label: Swift.String
+        public var secretsSet: [Swift.String: Swift.Bool]
+        public var settings: [Swift.String: Swift.String]
+        public var unavailableReason: Swift.String?
+
+        public init(
+            available: Swift.Bool,
+            capabilities: [MediaCapability],
+            comingSoon: Swift.Bool,
+            description: Swift.String? = nil,
+            enabled: Swift.Bool,
+            fields: [MediaFieldSpec],
+            id: Swift.String,
+            label: Swift.String,
+            secretsSet: [Swift.String: Swift.Bool],
+            settings: [Swift.String: Swift.String],
+            unavailableReason: Swift.String? = nil
+        ) {
+            self.available = available
+            self.capabilities = capabilities
+            self.comingSoon = comingSoon
+            self.description = description
+            self.enabled = enabled
+            self.fields = fields
+            self.id = id
+            self.label = label
+            self.secretsSet = secretsSet
+            self.settings = settings
+            self.unavailableReason = unavailableReason
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case available
+            case capabilities
+            case comingSoon = "coming_soon"
+            case description
+            case enabled
+            case fields
+            case id
+            case label
+            case secretsSet = "secrets_set"
+            case settings
+            case unavailableReason = "unavailable_reason"
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.available = try c.decode(Swift.Bool.self, forKey: .available)
+            self.capabilities = try c.decodeIfPresent([MediaCapability].self, forKey: .capabilities) ?? []
+            self.comingSoon = try c.decode(Swift.Bool.self, forKey: .comingSoon)
+            self.description = try c.decodeIfPresent(Swift.String.self, forKey: .description)
+            self.enabled = try c.decode(Swift.Bool.self, forKey: .enabled)
+            self.fields = try c.decodeIfPresent([MediaFieldSpec].self, forKey: .fields) ?? []
+            self.id = try c.decode(Swift.String.self, forKey: .id)
+            self.label = try c.decode(Swift.String.self, forKey: .label)
+            self.secretsSet = try c.decodeIfPresent([Swift.String: Swift.Bool].self, forKey: .secretsSet) ?? [:]
+            self.settings = try c.decodeIfPresent([Swift.String: Swift.String].self, forKey: .settings) ?? [:]
+            self.unavailableReason = try c.decodeIfPresent(Swift.String.self, forKey: .unavailableReason)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(available, forKey: .available)
+            try c.encode(capabilities, forKey: .capabilities)
+            try c.encode(comingSoon, forKey: .comingSoon)
+            try c.encodeIfPresent(description, forKey: .description)
+            try c.encode(enabled, forKey: .enabled)
+            try c.encode(fields, forKey: .fields)
+            try c.encode(id, forKey: .id)
+            try c.encode(label, forKey: .label)
+            try c.encode(secretsSet, forKey: .secretsSet)
+            try c.encode(settings, forKey: .settings)
+            try c.encodeIfPresent(unavailableReason, forKey: .unavailableReason)
+        }
+    }
+
+    public struct MediaProviderCheckResponse: Codable, Sendable, Equatable {
+        public var errorKind: ChatAudioErrorKind?
+        public var message: Swift.String
+        public var ok: Swift.Bool
+
+        public init(
+            errorKind: ChatAudioErrorKind? = nil,
+            message: Swift.String,
+            ok: Swift.Bool
+        ) {
+            self.errorKind = errorKind
+            self.message = message
+            self.ok = ok
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case errorKind = "error_kind"
+            case message
+            case ok
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.errorKind = try c.decodeIfPresent(ChatAudioErrorKind.self, forKey: .errorKind)
+            self.message = try c.decode(Swift.String.self, forKey: .message)
+            self.ok = try c.decode(Swift.Bool.self, forKey: .ok)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeIfPresent(errorKind, forKey: .errorKind)
+            try c.encode(message, forKey: .message)
+            try c.encode(ok, forKey: .ok)
+        }
+    }
+
+    public struct MediaProvidersResponse: Codable, Sendable, Equatable {
+        public var defaults: [Swift.String: Swift.String]
+        public var providers: [MediaProvider]
+
+        public init(
+            defaults: [Swift.String: Swift.String],
+            providers: [MediaProvider]
+        ) {
+            self.defaults = defaults
+            self.providers = providers
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case defaults
+            case providers
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.defaults = try c.decodeIfPresent([Swift.String: Swift.String].self, forKey: .defaults) ?? [:]
+            self.providers = try c.decodeIfPresent([MediaProvider].self, forKey: .providers) ?? []
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(defaults, forKey: .defaults)
+            try c.encode(providers, forKey: .providers)
+        }
+    }
+
     /// One thing the personal assistant remembers about its person, kept apart
     /// from the shared wiki. superseded_by marks a retired entry and names the
     /// entry that replaced it; retired_reason and retired_at say why and when
@@ -19538,26 +19865,38 @@ extension API {
     }
 
     public struct RunnerSettings: Codable, Sendable, Equatable {
-        public var hostFolderWorkspaces: Swift.Bool
+        public var hostFolderWorkspaces: Swift.Bool?
+        public var maxConcurrentSubagents: Swift.Int?
+        public var maxParallelDelegations: Swift.Int?
 
         public init(
-            hostFolderWorkspaces: Swift.Bool
+            hostFolderWorkspaces: Swift.Bool? = nil,
+            maxConcurrentSubagents: Swift.Int? = nil,
+            maxParallelDelegations: Swift.Int? = nil
         ) {
             self.hostFolderWorkspaces = hostFolderWorkspaces
+            self.maxConcurrentSubagents = maxConcurrentSubagents
+            self.maxParallelDelegations = maxParallelDelegations
         }
 
         enum CodingKeys: Swift.String, CodingKey {
             case hostFolderWorkspaces = "host_folder_workspaces"
+            case maxConcurrentSubagents = "max_concurrent_subagents"
+            case maxParallelDelegations = "max_parallel_delegations"
         }
 
         public init(from decoder: any Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
-            self.hostFolderWorkspaces = try c.decode(Swift.Bool.self, forKey: .hostFolderWorkspaces)
+            self.hostFolderWorkspaces = try c.decodeIfPresent(Swift.Bool.self, forKey: .hostFolderWorkspaces)
+            self.maxConcurrentSubagents = try c.decodeIfPresent(Swift.Int.self, forKey: .maxConcurrentSubagents)
+            self.maxParallelDelegations = try c.decodeIfPresent(Swift.Int.self, forKey: .maxParallelDelegations)
         }
 
         public func encode(to encoder: any Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
-            try c.encode(hostFolderWorkspaces, forKey: .hostFolderWorkspaces)
+            try c.encodeIfPresent(hostFolderWorkspaces, forKey: .hostFolderWorkspaces)
+            try c.encodeIfPresent(maxConcurrentSubagents, forKey: .maxConcurrentSubagents)
+            try c.encodeIfPresent(maxParallelDelegations, forKey: .maxParallelDelegations)
         }
     }
 
@@ -19568,6 +19907,10 @@ extension API {
         public var hostFolderWorkspaces: Swift.Bool
         /// Ticket and planning runs starting or running: the Runs nav count (chat runs live in Chat)
         public var live: Swift.Int
+        /// In-turn MCP subagents (explorer/helper) allowed to run concurrently per active turn (1–16)
+        public var maxConcurrentSubagents: Swift.Int
+        /// Delegated child ticket runs allowed to run in parallel per parent run (1–8)
+        public var maxParallelDelegations: Swift.Int
         public var online: Swift.Bool
         public var queued: Swift.Int
         public var runners: [RunnerInfo]
@@ -19580,6 +19923,8 @@ extension API {
             busy: Swift.Int,
             hostFolderWorkspaces: Swift.Bool,
             live: Swift.Int,
+            maxConcurrentSubagents: Swift.Int,
+            maxParallelDelegations: Swift.Int,
             online: Swift.Bool,
             queued: Swift.Int,
             runners: [RunnerInfo],
@@ -19589,6 +19934,8 @@ extension API {
             self.busy = busy
             self.hostFolderWorkspaces = hostFolderWorkspaces
             self.live = live
+            self.maxConcurrentSubagents = maxConcurrentSubagents
+            self.maxParallelDelegations = maxParallelDelegations
             self.online = online
             self.queued = queued
             self.runners = runners
@@ -19600,6 +19947,8 @@ extension API {
             case busy
             case hostFolderWorkspaces = "host_folder_workspaces"
             case live
+            case maxConcurrentSubagents = "max_concurrent_subagents"
+            case maxParallelDelegations = "max_parallel_delegations"
             case online
             case queued
             case runners
@@ -19612,6 +19961,8 @@ extension API {
             self.busy = try c.decode(Swift.Int.self, forKey: .busy)
             self.hostFolderWorkspaces = try c.decode(Swift.Bool.self, forKey: .hostFolderWorkspaces)
             self.live = try c.decode(Swift.Int.self, forKey: .live)
+            self.maxConcurrentSubagents = try c.decode(Swift.Int.self, forKey: .maxConcurrentSubagents)
+            self.maxParallelDelegations = try c.decode(Swift.Int.self, forKey: .maxParallelDelegations)
             self.online = try c.decode(Swift.Bool.self, forKey: .online)
             self.queued = try c.decode(Swift.Int.self, forKey: .queued)
             self.runners = try c.decodeIfPresent([RunnerInfo].self, forKey: .runners) ?? []
@@ -19624,6 +19975,8 @@ extension API {
             try c.encode(busy, forKey: .busy)
             try c.encode(hostFolderWorkspaces, forKey: .hostFolderWorkspaces)
             try c.encode(live, forKey: .live)
+            try c.encode(maxConcurrentSubagents, forKey: .maxConcurrentSubagents)
+            try c.encode(maxParallelDelegations, forKey: .maxParallelDelegations)
             try c.encode(online, forKey: .online)
             try c.encode(queued, forKey: .queued)
             try c.encode(runners, forKey: .runners)
@@ -20510,6 +20863,30 @@ extension API {
         }
     }
 
+    public struct SetMediaDefaultRequest: Codable, Sendable, Equatable {
+        public var providerId: Swift.String
+
+        public init(
+            providerId: Swift.String
+        ) {
+            self.providerId = providerId
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case providerId = "provider_id"
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.providerId = try c.decode(Swift.String.self, forKey: .providerId)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(providerId, forKey: .providerId)
+        }
+    }
+
     public struct SignIn: Codable, Sendable, Equatable {
         public var error: Swift.String
         public var expiresAt: Swift.String
@@ -20993,6 +21370,68 @@ extension API {
             try c.encodeIfPresent(defaultBranch, forKey: .defaultBranch)
             try c.encode(key, forKey: .key)
             try c.encodeIfPresent(repoUrl, forKey: .repoUrl)
+        }
+    }
+
+    public struct StartChatMusicRequest: Codable, Sendable, Equatable {
+        public var instrumental: Swift.Bool?
+        public var length: Length?
+        public var lyrics: Swift.String?
+        public var prompt: Swift.String
+        public var providerId: Swift.String?
+        public var title: Swift.String?
+
+        public struct Length: APIStringEnum {
+            public let rawValue: Swift.String
+            public init(rawValue: Swift.String) { self.rawValue = rawValue }
+            public static let clip = Length(rawValue: "clip")
+            public static let full = Length(rawValue: "full")
+            public static let allKnown: [Length] = [clip, full]
+        }
+
+        public init(
+            instrumental: Swift.Bool? = nil,
+            length: Length? = nil,
+            lyrics: Swift.String? = nil,
+            prompt: Swift.String,
+            providerId: Swift.String? = nil,
+            title: Swift.String? = nil
+        ) {
+            self.instrumental = instrumental
+            self.length = length
+            self.lyrics = lyrics
+            self.prompt = prompt
+            self.providerId = providerId
+            self.title = title
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case instrumental
+            case length
+            case lyrics
+            case prompt
+            case providerId = "provider_id"
+            case title
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.instrumental = try c.decodeIfPresent(Swift.Bool.self, forKey: .instrumental)
+            self.length = try c.decodeIfPresent(Length.self, forKey: .length)
+            self.lyrics = try c.decodeIfPresent(Swift.String.self, forKey: .lyrics)
+            self.prompt = try c.decode(Swift.String.self, forKey: .prompt)
+            self.providerId = try c.decodeIfPresent(Swift.String.self, forKey: .providerId)
+            self.title = try c.decodeIfPresent(Swift.String.self, forKey: .title)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeIfPresent(instrumental, forKey: .instrumental)
+            try c.encodeIfPresent(length, forKey: .length)
+            try c.encodeIfPresent(lyrics, forKey: .lyrics)
+            try c.encode(prompt, forKey: .prompt)
+            try c.encodeIfPresent(providerId, forKey: .providerId)
+            try c.encodeIfPresent(title, forKey: .title)
         }
     }
 
@@ -22297,6 +22736,42 @@ extension API {
             try c.encodeIfPresent(nixMode, forKey: .nixMode)
             try c.encodeIfPresent(repos, forKey: .repos)
             try c.encodeIfPresent(tmuxPrefix, forKey: .tmuxPrefix)
+        }
+    }
+
+    public struct UpdateMediaProviderRequest: Codable, Sendable, Equatable {
+        public var enabled: Swift.Bool?
+        public var secrets: [Swift.String: Swift.String]?
+        public var settings: [Swift.String: Swift.String]?
+
+        public init(
+            enabled: Swift.Bool? = nil,
+            secrets: [Swift.String: Swift.String]? = nil,
+            settings: [Swift.String: Swift.String]? = nil
+        ) {
+            self.enabled = enabled
+            self.secrets = secrets
+            self.settings = settings
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case enabled
+            case secrets
+            case settings
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.enabled = try c.decodeIfPresent(Swift.Bool.self, forKey: .enabled)
+            self.secrets = try c.decodeIfPresent([Swift.String: Swift.String].self, forKey: .secrets)
+            self.settings = try c.decodeIfPresent([Swift.String: Swift.String].self, forKey: .settings)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeIfPresent(enabled, forKey: .enabled)
+            try c.encodeIfPresent(secrets, forKey: .secrets)
+            try c.encodeIfPresent(settings, forKey: .settings)
         }
     }
 

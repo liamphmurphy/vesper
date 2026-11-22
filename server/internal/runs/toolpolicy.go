@@ -217,9 +217,15 @@ func (s *Service) checkToolWithRun(ctx context.Context, c Caller, run store.Run,
 	}
 	if in.Tool == "Agent" || in.Tool == "Task" { // Task: its name before Claude Code 2.1
 		if agentdef.SubagentsOn(spec) {
-			return deny("Use the Vesper MCP tool `run_subagent` instead of native Agent subagents.")
+			return deny("Use the Vesper MCP tool `run_subagent` (or `run_subagents` for parallel batches) instead of native Agent subagents.")
 		}
 		return deny("This run has no sub agents; do the work yourself")
+	}
+	if in.Tool == "schedule" {
+		if run.Purpose == "chat" {
+			return deny("Headless turns end when you stop calling tools, so built-in timers and cron jobs don't survive. For a standing job, use the Vesper MCP tool `create_scheduled_task` instead.")
+		}
+		return deny("Headless turns end when you stop calling tools, so built-in timers and cron jobs are disabled.")
 	}
 	scopes := ToolScopes(in.Tool, in.Input)
 	if (spec.HarnessOptions["readonly"] == "true" || stepRunning) && len(scopes) > 0 {

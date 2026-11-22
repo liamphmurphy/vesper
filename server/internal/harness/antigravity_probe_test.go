@@ -412,6 +412,132 @@ func TestAgyProbe(t *testing.T) {
 			t.Fatalf("expected IsError && UsageLimited for 429, got %+v", res)
 		}
 	})
+
+	t.Run("session_subagent_orchestration", func(t *testing.T) {
+		p := newAgyProbe(t, bin)
+		p.policy.deny("Agent", "schedule")
+		p.gemini.route = func(body string) (agyReply, bool) {
+			if strings.Contains(body, "conversation title generator") {
+				return agyReply{text: "Probe Title"}, true
+			}
+			return agyReply{}, false
+		}
+		p.gemini.script(
+			agyReply{call: agyCall("run_workflow", map[string]any{"Description": "Fan out", "Script": "print('hi')"})},
+			agyReply{call: agyCall("schedule", map[string]any{"DurationSeconds": 60, "Prompt": "check later"})},
+			agyReply{call: agyCall("mcp_lazyagents_run_subagent", map[string]any{"type": "explorer", "role": "Scope Reader", "prompt": "find notes", "toolSummary": "Explore notes"})},
+			agyReply{call: agyCall("mcp_lazyagents_run_subagents", map[string]any{"tasks": []any{map[string]any{"type": "explorer", "role": "Reader A", "prompt": "a"}, map[string]any{"type": "explorer", "role": "Reader B", "prompt": "b"}}, "toolSummary": "Explore batch"})},
+			agyReply{text: "Delegated cleanly."},
+		)
+		s := spec("repo:read", "allowed", "repo:write", "allowed", "tests:run", "allowed")
+		s.Harness = agentdef.HarnessAntigravity
+		res, _ := runACPTurn(t, p, s, Turn{Spec: s, Prompt: "Delegate in parallel."}, func(_ context.Context, tool string, _ map[string]any) (bool, string) {
+			if tool == "Agent" || tool == "schedule" {
+				return false, "denied by probe policy"
+			}
+			return true, ""
+		})
+		if res.IsError || res.Final != "Delegated cleanly." {
+			t.Fatalf("unexpected res=%+v", res)
+		}
+		var modelReq string
+		for _, body := range p.gemini.all {
+			if !strings.Contains(string(body), "conversation title generator") {
+				modelReq = string(body)
+				break
+			}
+		}
+		for _, wantTool := range []string{"mcp_lazyagents_run_subagent", "mcp_lazyagents_run_subagents"} {
+			if !strings.Contains(modelReq, `"name":"`+wantTool+`"`) {
+				t.Errorf("%s must be declared eagerly in ACP mode", wantTool)
+			}
+		}
+		gotTools := p.policy.tools()
+		for _, want := range []string{"Agent", "schedule", "mcp__lazyagents_run_subagent", "mcp__lazyagents_run_subagents"} {
+			if !slices.Contains(gotTools, want) {
+				t.Errorf("policy hook did not receive %q: got %v", want, gotTools)
+			}
+		}
+		if p.mcp.calls("tools/call") != 2 {
+			t.Errorf("expected 2 MCP tools/call for run_subagent + run_subagents, got %d (methods=%v, policy=%v)", p.mcp.calls("tools/call"), p.mcp.methods, gotTools)
+		}
+	})
+
+	t.Run("session_explorer_readonly_shell", func(t *testing.T) {
+		p := newAgyProbe(t, bin)
+		explorerCheck := func(tool string, input map[string]any) (bool, string) {
+			switch tool {
+			case "Read":
+				return true, ""
+			case "Bash":
+				if cmd, _ := input["command"].(string); cmd == "ls" {
+					return true, ""
+				}
+				return false, "only read-only shell commands are allowed"
+			default:
+				return false, "explorer is read-only"
+			}
+		}
+		p.policy.check = explorerCheck
+		p.gemini.route = func(body string) (agyReply, bool) {
+			if strings.Contains(body, "conversation title generator") {
+				return agyReply{text: "Probe Title"}, true
+			}
+			return agyReply{}, false
+		}
+		p.gemini.script(
+			agyReply{call: agyCall("run_command", map[string]any{"CommandLine": "ls", "toolSummary": "List workspace", "WaitMsBeforeAsync": 5000})},
+			agyReply{call: agyCall("run_command", map[string]any{"CommandLine": "echo bad > blocked-shell.txt", "toolSummary": "Mutate", "WaitMsBeforeAsync": 5000})},
+			agyReply{call: agyCall("write_file", map[string]any{"Path": filepath.Join(p.ws, "blocked-write.txt"), "Content": "x"})},
+			agyReply{text: "Explored."},
+		)
+		s := spec("repo:read", "allowed")
+		s.Harness = agentdef.HarnessAntigravity
+		s.HarnessOptions["readonly"] = "true"
+		s.HarnessOptions["sandbox"] = "read-only"
+		s.HarnessOptions[agentdef.OptionNoMCP] = "true"
+		s.HarnessOptions[agentdef.OptionSubagents] = "false"
+		var mu sync.Mutex
+		var allowedCmds []string
+		res, evs := runACPTurn(t, p, s, Turn{
+			Spec:         s,
+			Prompt:       "Inspect workspace.",
+			SystemAppend: "EXPLORER_ISOLATED_PROMPT",
+			ConfigTag:    "subagent-explorer-probe",
+		}, func(_ context.Context, tool string, input map[string]any) (bool, string) {
+			allow, reason := explorerCheck(tool, input)
+			if allow && tool == "Bash" {
+				mu.Lock()
+				allowedCmds = append(allowedCmds, fmt.Sprint(input["command"]))
+				mu.Unlock()
+			}
+			return allow, reason
+		})
+		if res.IsError || res.Final != "Explored." {
+			t.Fatalf("unexpected res=%+v events=%v", res, evs)
+		}
+		if !slices.Equal(allowedCmds, []string{"ls"}) {
+			t.Errorf("expected read-only ls to reach CheckTool and run, got allowed=%v", allowedCmds)
+		}
+		if got := p.policy.tools(); !slices.Contains(got, "Bash") {
+			t.Errorf("expected policy hook to evaluate Bash calls, got %v", got)
+		}
+		for _, blocked := range []string{"blocked-shell.txt", "blocked-write.txt"} {
+			if _, err := os.Stat(filepath.Join(p.ws, blocked)); !os.IsNotExist(err) {
+				t.Errorf("%s should not exist; err=%v", blocked, err)
+			}
+		}
+		sawNotes := false
+		for _, req := range p.gemini.all {
+			if strings.Contains(string(req), "notes.txt") {
+				sawNotes = true
+				break
+			}
+		}
+		if !sawNotes {
+			t.Errorf("expected read-only ls output containing notes.txt to reach the model")
+		}
+	})
 }
 
 func readOnlyChat() (s agentdef.Resolved) {
@@ -641,6 +767,7 @@ func (g *agyGemini) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 type agyPolicyStub struct {
 	mu     sync.Mutex
 	denied []string
+	check  func(tool string, input map[string]any) (bool, string)
 	seen   []string
 	inputs []map[string]any
 }
@@ -671,11 +798,21 @@ func (s *agyPolicyStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.seen = append(s.seen, in.Tool)
 	s.inputs = append(s.inputs, in.Input)
+	check := s.check
 	s.mu.Unlock()
 	decision := map[string]string{"decision": "allow"}
-	for _, d := range s.denied {
-		if d == in.Tool {
-			decision = map[string]string{"decision": "deny", "reason": "probe policy"}
+	if check != nil {
+		if allow, reason := check(in.Tool, in.Input); !allow {
+			if reason == "" {
+				reason = "probe policy"
+			}
+			decision = map[string]string{"decision": "deny", "reason": reason}
+		}
+	} else {
+		for _, d := range s.denied {
+			if d == in.Tool {
+				decision = map[string]string{"decision": "deny", "reason": "probe policy"}
+			}
 		}
 	}
 	_ = json.NewEncoder(w).Encode(decision)
@@ -739,6 +876,8 @@ func (s *agyMCPStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		result = map[string]any{"tools": []any{
 			map[string]any{"name": "list_tickets", "description": "List tickets", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"q": map[string]any{"type": "string"}}}},
 			map[string]any{"name": "read_page", "description": "Read a page", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"zebra_ref": map[string]any{"type": "string"}}}},
+			map[string]any{"name": "run_subagent", "description": "Run a subagent", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"type": map[string]any{"type": "string"}, "role": map[string]any{"type": "string"}, "prompt": map[string]any{"type": "string"}}}},
+			map[string]any{"name": "run_subagents", "description": "Run subagents in parallel", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"tasks": map[string]any{"type": "array", "items": map[string]any{"type": "object"}}}}},
 		}}
 	case "tools/call":
 		result = map[string]any{"content": []any{map[string]any{"type": "text", "text": "LAZYAGENTS-1 probe ticket"}}}

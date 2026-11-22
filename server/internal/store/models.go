@@ -284,6 +284,12 @@ type ChatAudioJob struct {
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 	FinishedAt        *time.Time
+	SourceKind        string
+	ProviderID        string
+	Prompt            string
+	Lyrics            string
+	Instrumental      bool
+	ErrorKind         string
 }
 
 type ChatCanvas struct {
@@ -1198,6 +1204,16 @@ type LinkPreview struct {
 	FetchedAt   time.Time
 }
 
+type MediaProviderConfig struct {
+	WorkspaceID      uuid.UUID
+	ProviderID       string
+	Enabled          bool
+	SettingsJson     json.RawMessage
+	SecretNonce      []byte
+	SecretCiphertext []byte
+	UpdatedAt        time.Time
+}
+
 type Memory struct {
 	ID                  uuid.UUID
 	WorkspaceID         uuid.UUID
@@ -1972,11 +1988,20 @@ type WorkflowStepImage struct {
 }
 
 type Workspace struct {
-	ID                   uuid.UUID
-	Name                 string
-	Slug                 string
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
-	HostFolderWorkspaces bool
-	ImageEngine          string
+	ID                     uuid.UUID
+	Name                   string
+	Slug                   string
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+	HostFolderWorkspaces   bool
+	ImageEngine            string
+	MaxConcurrentSubagents int32
+	MaxParallelDelegations int32
+}
+
+type WorkspaceMediaDefault struct {
+	WorkspaceID uuid.UUID
+	Capability  string
+	ProviderID  string
+	UpdatedAt   time.Time
 }

@@ -46,7 +46,7 @@ export async function installBoardApi(page: Page) {
   // Mutable so specs can archive projects or bump the shell's live counts.
   const projects: S["Project"][] = [project, ops];
   const counts: S["Bootstrap"]["counts"] = { inbox: 0, needs_you: 0, wiki_suggestions: 0, live_agents: 0 };
-  const runner: S["RunnerStatus"] = { online: true, runners: [], slots: 3, busy: 0, live: 0, queued: 0, host_folder_workspaces: false };
+  const runner: S["RunnerStatus"] = { online: true, runners: [], slots: 3, busy: 0, live: 0, queued: 0, host_folder_workspaces: false, max_concurrent_subagents: 3, max_parallel_delegations: 3 };
   let newCriterionId = 0;
   const patches: Array<{ key: string; body: S["TicketPatch"] }> = [];
   const boardRequests: string[] = [];

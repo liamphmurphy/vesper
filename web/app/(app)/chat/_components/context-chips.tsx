@@ -82,7 +82,12 @@ export function SentChips({ chips }: { chips: Chip[] }) {
 /** The + menu's "Create with {persona}" section: a Doc, Slides or a Design made with the chat's persona. */
 export type CreateWith = { persona: string; onCreate: (kind: CreateKind) => void };
 
-const CREATE_ICON: Record<CreateKind, "edit" | "slides" | "designs"> = { doc: "edit", slides: "slides", design: "designs" };
+const CREATE_ICON: Record<CreateKind, "edit" | "slides" | "designs" | "audio"> = {
+  doc: "edit",
+  slides: "slides",
+  design: "designs",
+  music: "audio",
+};
 
 export function AddContext({ onPick, onClosed, disabled, compact, create }: { onPick: (t: LinkTarget) => void; onClosed?: () => void; disabled?: boolean; compact?: boolean; create?: CreateWith }) {
   const [open, setOpen] = useState(false);

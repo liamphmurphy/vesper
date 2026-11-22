@@ -194,21 +194,21 @@ func AnthropicModel(m string) string {
 // AgentsMD renders the instructions file for every harness (docs/dev/plan.md §6.2).
 // existing is the repo's own AGENTS.md, kept outside our marked section.
 func AgentsMD(existing string, spec agentdef.Resolved, contextFiles []string, ticket string) []byte {
-	return agentsMD(existing, spec, contextFiles, ticket, false, nil)
+	return agentsMD(existing, spec, contextFiles, ticket, false, nil, runs.MaxParallelDelegations)
 }
 
 // PersonaAgentsMD is AgentsMD (SubagentAgentsMD when delegated) for a persona's run: its
 // voice follows the work brief, and it learns which of the person's memory it may read.
 // Memory isn't loaded: the run searches it.
-func PersonaAgentsMD(existing string, spec agentdef.Resolved, contextFiles []string, ticket string, delegated bool, voice *Persona) []byte {
-	return agentsMD(existing, spec, contextFiles, ticket, delegated, voice)
+func PersonaAgentsMD(existing string, spec agentdef.Resolved, contextFiles []string, ticket string, delegated bool, voice *Persona, maxParallelDelegations int) []byte {
+	return agentsMD(existing, spec, contextFiles, ticket, delegated, voice, maxParallelDelegations)
 }
 
 // SubagentAgentsMD is AgentsMD for a run delegated by a main agent: it works
 // in its own git worktree on its own branch, doesn't claim the ticket, and
 // reports through complete_run.
 func SubagentAgentsMD(existing string, spec agentdef.Resolved, contextFiles []string, ticket string) []byte {
-	return agentsMD(existing, spec, contextFiles, ticket, true, nil)
+	return agentsMD(existing, spec, contextFiles, ticket, true, nil, runs.MaxParallelDelegations)
 }
 
 // chatMemoryGuide tells a chat assistant how to use the person's private memory.
@@ -367,7 +367,7 @@ func ChatAgentsMDInSpace(spec agentdef.Resolved, contextFiles []string, project,
 	// Other personas take work through tickets the person starts; a chat's own
 	// sub agents (agentdef.SubagentsOn) are the only help it starts itself.
 	if guide := agentdef.SubagentGuide(spec); guide != "" {
-		b.WriteString(" Don't hand work to other personas. " + guide + "\n\n")
+		b.WriteString(" Don't hand work to other personas.\n\n## Subagents\n\n" + guide + "\n\n")
 	} else {
 		b.WriteString(" Do not delegate work.\n\n")
 	}
@@ -410,7 +410,7 @@ func ChatAgentsMDInSpace(spec agentdef.Resolved, contextFiles []string, project,
 	return []byte(b.String())
 }
 
-func agentsMD(existing string, spec agentdef.Resolved, contextFiles []string, ticket string, delegated bool, voice *Persona) []byte {
+func agentsMD(existing string, spec agentdef.Resolved, contextFiles []string, ticket string, delegated bool, voice *Persona, maxParallelDelegations int) []byte {
 	var b strings.Builder
 	b.WriteString(sectionStart + "\n")
 	b.WriteString("# Vesper run: " + ticket + "\n\n")
@@ -427,7 +427,7 @@ func agentsMD(existing string, spec agentdef.Resolved, contextFiles []string, ti
 		b.WriteString("When you need a person (an approval, an answer), call request_approval or await_human and then end your turn: ")
 		b.WriteString("you'll be resumed with their reply. ")
 		b.WriteString("Pass a note with update_step(done) saying what the next step needs. If update_step tells you to end your turn for a fresh session, commit and end it.\n\n")
-		b.WriteString(delegationSection(spec))
+		b.WriteString(delegationSection(spec, maxParallelDelegations))
 	}
 	b.WriteString("## Instructions\n\n" + strings.TrimSpace(spec.Instructions) + "\n\n")
 	if voice != nil {
@@ -437,7 +437,7 @@ func agentsMD(existing string, spec agentdef.Resolved, contextFiles []string, ti
 		b.WriteString(agentdef.BatchExplorationGuide + "\n\n")
 	}
 	if guide := agentdef.SubagentGuide(spec); guide != "" {
-		b.WriteString(guide + "\n\n")
+		b.WriteString("## Subagents\n\n" + guide + "\n\n")
 	}
 	if !delegated {
 		b.WriteString("## Execution policy\n\nWork directly by default, within your scopes. Standing role routines to call a scoper, hand implementation to an implementer, hand shipping to a shipper, or curate memory after every ticket are optional; do not perform them mechanically. Delegate only substantial independent work, a capability you lack, an explicit task request, or a necessary independent review. Do not start fresh agents for small fixes, routine shipping, or checks already completed. AGENTS.md already contains your instructions and scopes; claim_ticket returns your handle, so skip whoami. Search conventions only when needed and not already available. Write memory only for a durable new lesson.\n\n")
@@ -625,13 +625,20 @@ func epicReviewSection(r *agentdef.Repository) string {
 const testServices = "If `TEST_DATABASE_URL` is set, database tests use it: don't start your own database. If `DOCKER_HOST` is set, start what your tests need that isn't installed (a database, a queue, a cloud emulator) with `docker` or Testcontainers: containers run sandboxed (no host mounts, privileges or host network), their published ports are reachable at `$TESTCONTAINERS_HOST_OVERRIDE`, and everything is removed when the turn ends. If `VESPER_MACOS` is set, `mac COMMAND` runs a command in a macOS VM for what Linux can't build or test (Swift with AppKit or SwiftUI, `xcodebuild`, e.g. `mac make -C macos mac-test`): it mirrors your git checkout there first, runs in the matching directory and exits with the command's code. The first `mac` in a run boots macOS, which can take a minute or two, so give it a long timeout; the VM has no network, and `mac --help` lists its options."
 
 // delegationSection tells a lead it can hand work to fresh copies of itself.
-func delegationSection(spec agentdef.Resolved) string {
+func delegationSection(spec agentdef.Resolved, maxParallelDelegations int) string {
+	if maxParallelDelegations <= 0 {
+		maxParallelDelegations = runs.MaxParallelDelegations
+	}
 	checks := "allowed_paths and test_command"
 	if r := spec.Repository; r != nil && r.EpicBranch != "" && !r.EpicReview {
 		checks = "allowed_paths and a test_command running only the tests over that slice (the full suite runs in the epic review)"
 	}
+	parallel := fmt.Sprintf("Up to %d children may run in parallel on disjoint paths.", maxParallelDelegations)
+	if maxParallelDelegations == 1 {
+		parallel = "Only 1 child may run at a time."
+	}
 	return fmt.Sprintf("Before finishing, verify every acceptance criterion against evidence and call check_criterion only when satisfied. If anything is missing, implement it yourself or delegate a substantial independent slice. Commit and push changes, record the PR with set_pr, and complete_run(status=done). Use await_human or request_approval for a person; status=todo hands back unfinished work.\n\n"+
-		"Only when delegation is justified, delegate a slice to a fresh copy of yourself with acceptance_criteria, %s (read_only for a review). Commit first. Each child gets a worktree; the server checks and merges successful results. Up to %d children may run in parallel on disjoint paths. End your turn after delegating. Review the returned diff, reuse passing checks, and use continue_run_id for follow-up fixes.\n\n", checks, runs.MaxParallelDelegations)
+		"Only when delegation is justified, delegate a slice to a fresh copy of yourself with acceptance_criteria, %s (read_only for a review). Commit first. Each child gets a worktree; the server checks and merges successful results. %s End your turn after delegating. Review the returned diff, reuse passing checks, and use continue_run_id for follow-up fixes.\n\n", checks, parallel)
 }
 
 // UsageLimit reports provider exhaustion from an error, never ordinary tool output.

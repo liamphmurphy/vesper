@@ -54,8 +54,10 @@ test("/design takes what to design as free text and asks the persona for a desig
   assert.deepEqual(parseCommand("/design  sketch onboarding "), { name: "design", arg: "sketch onboarding" });
   assert.ok(CHAT_COMMANDS.find((c) => c.name === "design")?.free);
   assert.equal(designRequest(" sketch onboarding "), "Create a design: sketch onboarding");
-  assert.deepEqual(CREATE_KINDS.map((k) => k.label), ["Doc", "Slides", "Design"]);
+  assert.deepEqual(CREATE_KINDS.map((k) => k.label), ["Doc", "Slides", "Design", "Music"]);
   assert.equal(CREATE_KINDS.find((k) => k.kind === "design")?.command, "/design");
+  assert.equal(CREATE_KINDS.find((k) => k.kind === "music")?.command, "/music");
+  assert.deepEqual(parseCommand("/music lo-fi rainy beats"), { name: "music", arg: "lo-fi rainy beats" });
 });
 
 test("/compare offers model completion until a space separates an optional question", () => {

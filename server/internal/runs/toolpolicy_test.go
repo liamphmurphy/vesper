@@ -208,7 +208,7 @@ func TestToolPolicySubagents(t *testing.T) {
 		{"Task", "general-purpose"},
 	} {
 		check(tc.tool, tc.typ, "deny")
-		if d, _ := svc.CheckTool(ctx, c, runs.ToolCheck{Tool: tc.tool, Input: map[string]any{"subagent_type": tc.typ}}); d.Reason != "Use the Vesper MCP tool `run_subagent` instead of native Agent subagents." {
+		if d, _ := svc.CheckTool(ctx, c, runs.ToolCheck{Tool: tc.tool, Input: map[string]any{"subagent_type": tc.typ}}); d.Reason != "Use the Vesper MCP tool `run_subagent` (or `run_subagents` for parallel batches) instead of native Agent subagents." {
 			t.Fatalf("%s/%s reason %q", tc.tool, tc.typ, d.Reason)
 		}
 	}
@@ -294,6 +294,29 @@ func TestToolPolicySubagents(t *testing.T) {
 	}
 	if d, err := svc.CheckToolWithSpec(ctx, c, chatHelper, runs.ToolCheck{Tool: "Write", Input: map[string]any{"file_path": "x.go"}}); err != nil || d.Decision != "deny" {
 		t.Fatalf("helper Write on readonly chat = %+v %v", d, err)
+	}
+
+	// Built-in schedule timers/crons are always denied because headless turns exit on idle.
+	if d, err := svc.CheckTool(ctx, c, runs.ToolCheck{Tool: "schedule", Input: map[string]any{"DurationSeconds": 60, "Prompt": "check"}}); err != nil || d.Decision != "deny" || !strings.Contains(d.Reason, "Headless turns end") {
+		t.Fatalf("ticket schedule = %+v %v", d, err)
+	}
+	chatRun, err := q.CreateRun(ctx, store.CreateRunParams{
+		WorkspaceID:  me.WorkspaceID,
+		AgentID:      a.ID,
+		Mode:         "managed",
+		Purpose:      "chat",
+		State:        "running",
+		Harness:      spec.Harness,
+		Model:        spec.Model,
+		ResolvedSpec: run.ResolvedSpec,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chatCaller := c
+	chatCaller.RunID = &chatRun.ID
+	if d, err := svc.CheckTool(ctx, chatCaller, runs.ToolCheck{Tool: "schedule", Input: map[string]any{"CronExpression": "*/5 * * * *", "Prompt": "check"}}); err != nil || d.Decision != "deny" || !strings.Contains(d.Reason, "create_scheduled_task") {
+		t.Fatalf("chat schedule = %+v %v", d, err)
 	}
 }
 

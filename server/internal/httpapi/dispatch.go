@@ -27,11 +27,13 @@ import (
 func (s *Server) runnerStatus(ctx context.Context) (api.RunnerStatus, error) {
 	out := api.RunnerStatus{Runners: []api.RunnerInfo{}}
 	_, _, ws := me(ctx)
-	on, err := s.Q.HostFolderWorkspaces(ctx, ws)
+	cfg, err := s.Q.WorkspaceRunnerSettings(ctx, ws)
 	if err != nil {
 		return out, err
 	}
-	out.HostFolderWorkspaces = on
+	out.HostFolderWorkspaces = cfg.HostFolderWorkspaces
+	out.MaxConcurrentSubagents = runs.ClampConcurrentSubagents(int(cfg.MaxConcurrentSubagents))
+	out.MaxParallelDelegations = runs.ClampParallelDelegations(int(cfg.MaxParallelDelegations))
 	rs, err := s.Q.LiveRunners(ctx)
 	if err != nil {
 		return out, err
@@ -74,8 +76,30 @@ func (s *Server) GetRunnerStatus(ctx context.Context, _ api.GetRunnerStatusReque
 
 func (s *Server) UpdateRunnerSettings(ctx context.Context, req api.UpdateRunnerSettingsRequestObject) (api.UpdateRunnerSettingsResponseObject, error) {
 	_, _, ws := me(ctx)
-	if err := s.Q.SetHostFolderWorkspaces(ctx, store.SetHostFolderWorkspacesParams{ID: ws, HostFolderWorkspaces: req.Body.HostFolderWorkspaces}); err != nil {
-		return nil, err
+	params := store.SetWorkspaceRunnerSettingsParams{
+		ID:                   ws,
+		HostFolderWorkspaces: req.Body.HostFolderWorkspaces,
+	}
+	if req.Body.MaxConcurrentSubagents != nil {
+		n := *req.Body.MaxConcurrentSubagents
+		if n < runs.MinConcurrentSubagents || n > runs.MaxConcurrentSubagentsCap {
+			return nil, apperr.Invalid("max_concurrent_subagents", "must be between %d and %d", runs.MinConcurrentSubagents, runs.MaxConcurrentSubagentsCap)
+		}
+		v := int32(n)
+		params.MaxConcurrentSubagents = &v
+	}
+	if req.Body.MaxParallelDelegations != nil {
+		n := *req.Body.MaxParallelDelegations
+		if n < runs.MinParallelDelegations || n > runs.MaxParallelDelegationsCap {
+			return nil, apperr.Invalid("max_parallel_delegations", "must be between %d and %d", runs.MinParallelDelegations, runs.MaxParallelDelegationsCap)
+		}
+		v := int32(n)
+		params.MaxParallelDelegations = &v
+	}
+	if params.HostFolderWorkspaces != nil || params.MaxConcurrentSubagents != nil || params.MaxParallelDelegations != nil {
+		if err := s.Q.SetWorkspaceRunnerSettings(ctx, params); err != nil {
+			return nil, err
+		}
 	}
 	st, err := s.runnerStatus(ctx)
 	return api.UpdateRunnerSettings200JSONResponse(st), err

@@ -725,9 +725,9 @@ extension API {
     /// The chat's audio, oldest first
     ///
     /// Audio a coding chat renders with code during its turn (MIDI through a
-    /// soundfont, a synth script, ffmpeg). Each follows its stages (compose,
-    /// render, check, save) as the agent and its renderer report them; a
-    /// finished one is also kept in the Library.
+    /// soundfont, a synth script, ffmpeg), or music generated via a configured
+    /// media provider. Each follows its stages and a finished file is saved to
+    /// the Library.
     ///
     /// `GET /chats/{id}/audio`
     public static func listChatAudio(id: Swift.String) -> APIRequest<ChatAudios> {
@@ -752,6 +752,17 @@ extension API {
             method: "GET", template: "/chats/{id}/audio/{audioId}/content",
             path: "/api/v1/chats/\(APIPath.escape(id))/audio/\(APIPath.escape(audioId))/content",
             query: _query, headers: _headers, body: nil, decode: .raw
+        )
+    }
+
+    /// Stop an in-flight music generation job
+    ///
+    /// `POST /chats/{id}/audio/{audioId}/stop`
+    public static func stopChatAudio(id: Swift.String, audioId: Swift.String) -> APIRequest<ChatAudio> {
+        return APIRequest(
+            method: "POST", template: "/chats/{id}/audio/{audioId}/stop",
+            path: "/api/v1/chats/\(APIPath.escape(id))/audio/\(APIPath.escape(audioId))/stop",
+            query: [], headers: [:], body: nil, decode: .json
         )
     }
 
@@ -1069,6 +1080,17 @@ extension API {
         return APIRequest(
             method: "POST", template: "/chats/{id}/messages",
             path: "/api/v1/chats/\(APIPath.escape(id))/messages",
+            query: [], headers: [:], body: APIRequestBody.json(body), decode: .json
+        )
+    }
+
+    /// Generate music in a chat using the active music provider
+    ///
+    /// `POST /chats/{id}/music`
+    public static func startChatMusic(id: Swift.String, body: StartChatMusicRequest) -> APIRequest<ChatAudio> {
+        return APIRequest(
+            method: "POST", template: "/chats/{id}/music",
+            path: "/api/v1/chats/\(APIPath.escape(id))/music",
             query: [], headers: [:], body: APIRequestBody.json(body), decode: .json
         )
     }
@@ -2711,6 +2733,63 @@ extension API {
         )
     }
 
+    /// Set or clear the workspace's active provider for a media capability
+    ///
+    /// `PUT /media/defaults/{capability}`
+    public static func setMediaDefault(capability: MediaCapability, body: SetMediaDefaultRequest) -> APIRequest<MediaProvidersResponse> {
+        return APIRequest(
+            method: "PUT", template: "/media/defaults/{capability}",
+            path: "/api/v1/media/defaults/\(APIPath.escape(capability))",
+            query: [], headers: [:], body: APIRequestBody.json(body), decode: .json
+        )
+    }
+
+    /// Registered media providers, masked config, and workspace defaults
+    ///
+    /// `GET /media/providers`
+    public static func listMediaProviders() -> APIRequest<MediaProvidersResponse> {
+        return APIRequest(
+            method: "GET", template: "/media/providers",
+            path: "/api/v1/media/providers",
+            query: [], headers: [:], body: nil, decode: .json
+        )
+    }
+
+    /// Update a media provider's settings and write-only secrets
+    ///
+    /// `PUT /media/providers/{id}`
+    public static func updateMediaProvider(id: Swift.String, body: UpdateMediaProviderRequest) -> APIRequest<MediaProvider> {
+        return APIRequest(
+            method: "PUT", template: "/media/providers/{id}",
+            path: "/api/v1/media/providers/\(APIPath.escape(id))",
+            query: [], headers: [:], body: APIRequestBody.json(body), decode: .json
+        )
+    }
+
+    /// Verify a media provider's credentials and reachability
+    ///
+    /// `POST /media/providers/{id}/check`
+    public static func checkMediaProvider(id: Swift.String) -> APIRequest<MediaProviderCheckResponse> {
+        return APIRequest(
+            method: "POST", template: "/media/providers/{id}/check",
+            path: "/api/v1/media/providers/\(APIPath.escape(id))/check",
+            query: [], headers: [:], body: nil, decode: .json
+        )
+    }
+
+    /// Clear one or all stored secrets for a media provider
+    ///
+    /// `DELETE /media/providers/{id}/secret`
+    public static func clearMediaProviderSecret(id: Swift.String, field: Swift.String? = nil) -> APIRequest<APIEmpty> {
+        var _query: [URLQueryItem] = []
+        APIQuery.append(&_query, "field", field)
+        return APIRequest(
+            method: "DELETE", template: "/media/providers/{id}/secret",
+            path: "/api/v1/media/providers/\(APIPath.escape(id))/secret",
+            query: _query, headers: [:], body: nil, decode: .empty
+        )
+    }
+
     /// The signed-in person's assistant memories, newest change first (or ranked by q)
     ///
     /// Memory is strictly per person: only the signed-in person's entries are
@@ -3222,14 +3301,19 @@ extension API {
         )
     }
 
-    /// Turn host-folder workspaces on or off
+    /// Update workspace runner settings
     ///
+    /// Updates workspace-level runner settings; omitted fields stay unchanged.
     /// With host_folder_workspaces on, a run started afterwards keeps its
     /// checkout in a folder on the person's machine (under the runner's
     /// RUNNER_HOST_WORKSPACES_DIR) instead of the run's disk image inside the microVM, so they can
     /// open it in their own editor. Runs that already have a workspace keep
     /// it where it is. The folder itself is runner configuration and can't
     /// be set here. Has no effect on a runner without that folder configured.
+    /// max_concurrent_subagents (1–16, default 3) bounds concurrent in-turn
+    /// MCP subagents (explorer/helper) per active turn.
+    /// max_parallel_delegations (1–8, default 3) bounds live parallel delegated
+    /// child ticket runs per parent run.
     ///
     /// `PUT /runner/settings`
     public static func updateRunnerSettings(body: RunnerSettings) -> APIRequest<RunnerStatus> {
