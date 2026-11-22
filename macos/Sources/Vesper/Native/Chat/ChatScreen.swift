@@ -13,6 +13,8 @@ final class ChatScreenModel {
     var newChatPersonaId: String?
     var selectedHarness: API.Harness?
     var selectedModel: String?
+    var selectedEffort: API.ChatEffort?
+    var selectedRepoUrl: String?
     var pinnedIds: Set<String> {
         didSet {
             UserDefaults.standard.set(Array(pinnedIds).sorted(), forKey: Self.pinnedDefaultsKey)
@@ -35,7 +37,7 @@ final class ChatScreenModel {
 
 /// Native `/chat` and `/chat/:id` screen.
 /// Publishes `ChatNav` to the shell sidebar, hosts the conversation header, `ChatTranscriptView`,
-/// and `ChatComposerSlot` (seam replaced in LAZYAGENTS-286).
+/// and `ChatComposerSlot` (full native glass composer).
 struct ChatScreen: View {
     @Environment(NativeScreenContext.self) private var context
     @Environment(\.vesperTheme) private var theme
@@ -47,9 +49,16 @@ struct ChatScreen: View {
     private static let spacesRequest = API.listChatSpaces()
     private static let modelsRequest = API.listChatModels()
     private static let suggestionsRequest = API.listChatSuggestions()
+    private static let dockRequest = API.getPersonaDock()
+    private static let workflowsRequest = API.listWorkflows()
+    private static let repositoriesRequest = API.searchRepositories()
 
     private var chatId: String? {
         context.match.params["id"]
+    }
+
+    private var ticketRunsRequest: APIRequest<API.ChatTicketRuns>? {
+        chatId.map { API.listChatTicketRuns(id: $0) }
     }
 
     private var chatsRequest: APIRequest<API.ListChatsResponse> {
@@ -76,6 +85,12 @@ struct ChatScreen: View {
         let spaces = store.entry(Self.spacesRequest).data?.spaces ?? []
         let harnessModels = store.entry(Self.modelsRequest).data ?? []
         let suggestions = store.entry(Self.suggestionsRequest).data?.suggestions ?? []
+        let harnesses = store.entry(Self.dockRequest).data?.harnesses ?? []
+        let workflows = store.entry(Self.workflowsRequest).data?.workflows ?? []
+        let repositories = store.entry(Self.repositoriesRequest).data ?? []
+        let ticketRuns = (ticketRunsRequest.flatMap { store.entry($0).data?.runs } ?? []).filter {
+            ["queued", "starting", "running", "waiting"].contains($0.state)
+        }
         let chatsEntry = store.entry(chatsRequest)
         let chats = chatsEntry.data?.chats ?? []
         let session = sessionRequest.flatMap { store.entry($0).data }
@@ -110,15 +125,39 @@ struct ChatScreen: View {
 
             ChatComposerSlot(
                 chatId: chatId,
-                isRunning: session?.state == .running,
-                personaId: activePersona?.id,
-                personaName: activePersona?.name ?? session?.agent.name ?? "Vesper",
-                modelLabel: model.selectedModel ?? session?.model,
-                onSend: { body in
-                    await sendMessage(body, activePersona: activePersona)
+                session: session,
+                personas: personas,
+                activePersona: activePersona,
+                harnessModels: harnessModels,
+                harnesses: harnesses,
+                workflows: workflows,
+                repositories: repositories,
+                activeTicketRuns: ticketRuns,
+                selectedHarness: $model.selectedHarness,
+                selectedModel: $model.selectedModel,
+                selectedEffort: $model.selectedEffort,
+                selectedRepoUrl: $model.selectedRepoUrl,
+                onSelectNewChatPersona: { id in model.newChatPersonaId = id },
+                onSend: { submission in
+                    await submitFromComposer(submission, activePersona: activePersona)
                 },
                 onCancel: {
                     await cancelActiveTurn()
+                },
+                onSetRepository: { repoUrl in
+                    await setChatRepository(repoUrl)
+                },
+                onCompact: { focus in
+                    await compactChat(focus: focus)
+                },
+                onStartWorkflow: { workflowId, input in
+                    await startChatWorkflow(workflowId: workflowId, input: input)
+                },
+                onStartMusic: { prompt in
+                    await startChatMusic(prompt: prompt)
+                },
+                onCompare: { option, question in
+                    await startCompareAside(option: option, question: question)
                 }
             )
         }
@@ -477,11 +516,64 @@ struct ChatScreen: View {
         return personas.first(where: { $0.isDefault }) ?? personas.first
     }
 
-    private func sendMessage(_ body: String, activePersona: API.Persona?) async -> String? {
+    private func submitFromComposer(_ submission: ChatComposerSubmission, activePersona: API.Persona?) async -> String? {
+        if let chatId {
+            do {
+                switch submission.mode {
+                case .steer:
+                    _ = try await context.store.mutate(
+                        API.steerChat(id: chatId, body: API.ChatMessageEdit(body: submission.body)),
+                        invalidating: QueryInvalidation(resources: ["chats"])
+                    )
+                    return nil
+                case .queue:
+                    _ = try await context.store.mutate(
+                        API.queueChatFollowup(id: chatId, body: API.ChatMessageEdit(body: submission.body)),
+                        invalidating: QueryInvalidation(resources: ["chats"])
+                    )
+                    return nil
+                case .aside:
+                    _ = try await context.store.mutate(
+                        API.startChatAside(id: chatId, body: API.ChatAsideStart(
+                            body: submission.body,
+                            effort: model.selectedEffort,
+                            harness: model.selectedHarness,
+                            model: model.selectedModel
+                        )),
+                        invalidating: QueryInvalidation(resources: ["chats"])
+                    )
+                    return nil
+                case .send:
+                    break
+                }
+            } catch {
+                return (error as? APIError)?.userMessage ?? error.localizedDescription
+            }
+        }
+        return await sendMessage(
+            submission.body,
+            activePersona: activePersona,
+            attachmentIds: submission.attachmentIds,
+            contextRefs: submission.contextRefs,
+            research: submission.research
+        )
+    }
+
+    private func sendMessage(
+        _ body: String,
+        activePersona: API.Persona?,
+        attachmentIds: [String] = [],
+        contextRefs: [API.ChatContextRef]? = nil,
+        research: Bool = false
+    ) async -> String? {
         let msg = API.NewChatMessage(
+            attachmentIds: attachmentIds.isEmpty ? nil : attachmentIds,
             body: body,
+            contextRefs: contextRefs,
+            effort: model.selectedEffort.map { API.NewChatMessage.Effort(rawValue: $0.rawValue) },
             harness: model.selectedHarness,
-            model: model.selectedModel
+            model: model.selectedModel,
+            research: research ? true : nil
         )
         do {
             if let chatId {
@@ -492,16 +584,91 @@ struct ChatScreen: View {
             } else {
                 let created = try await context.store.mutate(
                     API.createChat(body: API.NewChat(
+                        effort: model.selectedEffort,
                         harness: model.selectedHarness,
                         message: msg,
                         model: model.selectedModel,
                         personaId: activePersona?.id,
+                        repoUrl: model.selectedRepoUrl,
                         spaceId: model.selectedSpaceId.isEmpty ? nil : model.selectedSpaceId
                     )),
                     invalidating: QueryInvalidation(resources: ["chats"])
                 )
                 context.navigate("/chat/\(created.id)")
             }
+            return nil
+        } catch {
+            return (error as? APIError)?.userMessage ?? error.localizedDescription
+        }
+    }
+
+    private func setChatRepository(_ repoUrl: String) async -> String? {
+        guard let chatId else {
+            model.selectedRepoUrl = repoUrl
+            return nil
+        }
+        do {
+            _ = try await context.store.mutate(
+                API.setChatRepository(id: chatId, body: API.SetChatRepositoryBody(repository: repoUrl)),
+                invalidating: QueryInvalidation(resources: ["chats"])
+            )
+            return nil
+        } catch {
+            return (error as? APIError)?.userMessage ?? error.localizedDescription
+        }
+    }
+
+    private func compactChat(focus: String?) async -> String? {
+        guard let chatId else { return "Start a conversation before compacting." }
+        do {
+            _ = try await context.store.mutate(
+                API.compactChat(id: chatId, body: API.CompactChatRequest(focus: focus)),
+                invalidating: QueryInvalidation(resources: ["chats"])
+            )
+            return nil
+        } catch {
+            return (error as? APIError)?.userMessage ?? error.localizedDescription
+        }
+    }
+
+    private func startChatWorkflow(workflowId: String, input: String) async -> String? {
+        guard let chatId else { return "Open a conversation to run a workflow." }
+        do {
+            _ = try await context.store.mutate(
+                API.startChatWorkflow(id: chatId, body: API.WorkflowRunStart(input: input, workflowId: workflowId)),
+                invalidating: QueryInvalidation(resources: ["chats", "workflows"])
+            )
+            return nil
+        } catch {
+            return (error as? APIError)?.userMessage ?? error.localizedDescription
+        }
+    }
+
+    private func startChatMusic(prompt: String) async -> String? {
+        guard let chatId else { return "Open a conversation to generate music." }
+        do {
+            _ = try await context.store.mutate(
+                API.startChatMusic(id: chatId, body: API.StartChatMusicRequest(prompt: prompt)),
+                invalidating: QueryInvalidation(resources: ["chats"])
+            )
+            return nil
+        } catch {
+            return (error as? APIError)?.userMessage ?? error.localizedDescription
+        }
+    }
+
+    private func startCompareAside(option: ChatCompareOption, question: String) async -> String? {
+        guard let chatId else { return "Open a conversation to compare with another model." }
+        do {
+            _ = try await context.store.mutate(
+                API.startChatAside(id: chatId, body: API.ChatAsideStart(
+                    body: question,
+                    harness: API.Harness(rawValue: option.harness),
+                    model: option.model,
+                    secondOpinion: true
+                )),
+                invalidating: QueryInvalidation(resources: ["chats"])
+            )
             return nil
         } catch {
             return (error as? APIError)?.userMessage ?? error.localizedDescription
@@ -597,8 +764,12 @@ struct ChatScreen: View {
         track(Self.spacesRequest)
         track(Self.modelsRequest)
         track(Self.suggestionsRequest)
+        track(Self.dockRequest)
+        track(Self.workflowsRequest)
+        track(Self.repositoriesRequest)
         track(chatsRequest)
         if let sessionRequest { track(sessionRequest) }
+        if let ticketRunsRequest { track(ticketRunsRequest) }
         if let searchRequest { track(searchRequest) }
         watched = keys
     }
