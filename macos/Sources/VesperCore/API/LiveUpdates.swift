@@ -49,12 +49,13 @@ public enum LiveUpdates {
         "dev_workspace": ["dev-workspace"],
         "space": ["spaces", "chat-spaces"],
         "image_engine": ["image-engine"],
+        "http": ["http"],
     ]
 
     /// Hints that change one narrow thing, so they don't also refresh the dashboards.
     static let quiet: Set<String> = [
         "video.updated", "audio.updated", "code_review.updated", "push_request.updated", "pr_feedback.updated",
-        "custom_app.updated", "browser_share.updated",
+        "custom_app.updated", "browser_share.updated", "http.updated",
     ]
 
     /// Web key roots that aren't a literal segment of the API paths they cache, mapped to the
