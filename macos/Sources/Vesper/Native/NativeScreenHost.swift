@@ -17,6 +17,10 @@ final class NativeScreenContext {
     /// The screen's handler for its toolbar, title-menu and inspector commands.
     @ObservationIgnored var onCommand: ((NativeCommand) -> Void)?
     @ObservationIgnored var onChromeChange: ((NativeChrome) -> Void)?
+    @ObservationIgnored var onSidebarViewChange: ((AnyView?) -> Void)?
+    @ObservationIgnored var sidebarView: AnyView? {
+        didSet { onSidebarViewChange?(sidebarView) }
+    }
     /// The window around the tab, for toasts, shortcuts, Quick Look and its undo manager.
     @ObservationIgnored var window: () -> MainWindowController? = { nil }
     /// The server root this screen connects to (local stack or a remote Tailscale host).

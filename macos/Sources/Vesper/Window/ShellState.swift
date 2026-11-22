@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SwiftUI
 import VesperCore
 
 /// What the page has told one window about itself; the sidebar, toolbar and title read it.
@@ -33,18 +34,20 @@ final class ShellState {
     var pageTitle: String?
     var pageSubtitle: String?
     var pageTitleMenu: [MenuItem]?
-    var pageToolbarItems: [ToolbarItem] = []
+    var pageToolbarItems: [ShellToolbarItem] = []
     var pageInspector: InspectorModel?
     /// The native screen showing in this tab and the chrome it describes; nil while the web view shows.
     var native: NativeChrome? {
         didSet { syncNavigator() }
     }
+    /// Custom native sidebar content (e.g., Knowledge's compact NSOutlineView explorer), replacing NavModel list when set.
+    var nativeSidebar: AnyView?
 
     var title: String? { native.map(\.title) ?? pageTitle }
     var subtitle: String? { native.map(\.subtitle) ?? pageSubtitle }
     /// The title's own menu (rename, archive…).
     var titleMenu: [MenuItem]? { native.map(\.titleMenu) ?? pageTitleMenu }
-    var toolbarItems: [ToolbarItem] { native?.toolbarItems ?? pageToolbarItems }
+    var toolbarItems: [ShellToolbarItem] { native?.toolbarItems ?? pageToolbarItems }
     /// The native inspector the screen describes; nil when it has none.
     var inspector: InspectorModel? { native.map(\.inspector) ?? pageInspector }
     var route: String?

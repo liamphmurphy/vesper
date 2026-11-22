@@ -41,25 +41,30 @@ struct SidebarView: View {
         let shell = state.shell ?? ShellState.fallbackShell
         VStack(spacing: 0) {
             AreaBar(shell: shell, send: send)
-            if let nav = state.navigator {
-                NavHeader(nav: nav, send: send).id(nav.id)
-            }
-            ScrollViewReader { proxy in
-                List(selection: navSelection) {
-                    if let nav = state.navigator {
-                        NavContent(nav: nav, state: state, send: send)
-                    }
+            if let customSidebar = state.nativeSidebar {
+                customSidebar
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                if let nav = state.navigator {
+                    NavHeader(nav: nav, send: send).id(nav.id)
                 }
-                .listStyle(.sidebar)
-                // Denser rows than the sidebar default, so a long chat list or file tree shows more of itself.
-                .environment(\.defaultMinListRowHeight, 22)
-                .task(id: scrollTarget) {
-                    guard let target = scrollTarget, !state.recentlyActivated(target.itemId) else { return }
-                    // Let newly expanded DisclosureGroups materialize child rows in NSOutlineView before scrolling.
-                    try? await Task.sleep(for: .milliseconds(60))
-                    guard !Task.isCancelled else { return }
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        proxy.scrollTo(target.itemId, anchor: .center)
+                ScrollViewReader { proxy in
+                    List(selection: navSelection) {
+                        if let nav = state.navigator {
+                            NavContent(nav: nav, state: state, send: send)
+                        }
+                    }
+                    .listStyle(.sidebar)
+                    // Denser rows than the sidebar default, so a long chat list or file tree shows more of itself.
+                    .environment(\.defaultMinListRowHeight, 22)
+                    .task(id: scrollTarget) {
+                        guard let target = scrollTarget, !state.recentlyActivated(target.itemId) else { return }
+                        // Let newly expanded DisclosureGroups materialize child rows in NSOutlineView before scrolling.
+                        try? await Task.sleep(for: .milliseconds(60))
+                        guard !Task.isCancelled else { return }
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            proxy.scrollTo(target.itemId, anchor: .center)
+                        }
                     }
                 }
             }

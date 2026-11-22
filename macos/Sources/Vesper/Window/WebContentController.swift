@@ -212,9 +212,11 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
                 if newTab { self.app.openVesperTab(path: path, nextTo: self.ownerWindow) } else { self.navigate(path: path) }
             }
             context.onChromeChange = { [weak self] chrome in self?.state.native = chrome }
+            context.onSidebarViewChange = { [weak self] view in self?.state.nativeSidebar = view }
             context.window = { [weak self] in self?.host }
             context.baseURL = { [weak self] in self?.app.connection?.baseURL }
             state.native = context.chrome
+            state.nativeSidebar = context.sidebarView
             let host = NativeScreenHostController(context: context, state: state)
             nativeHost = host
             addChild(host)
@@ -246,6 +248,7 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
         host.view.removeFromSuperview()
         host.removeFromParent()
         state.native = nil
+        state.nativeSidebar = nil
         webView.isHidden = false
         if hadFocus { view.window?.makeFirstResponder(webView) }
     }
