@@ -33,6 +33,21 @@ CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 \
   -o "${res_dir}/bin/vesper" ./cmd/vesper
 chmod 0755 "${res_dir}/bin/vesper"
 
+# Stage the native Apple Silicon Vision matting CLI if Swift is available on macOS
+# (or if a prebuilt release binary is already present in macos/.build).
+if [[ "$(uname -s)" == "Darwin" ]] && command -v swift >/dev/null 2>&1; then
+  echo "Building vesper-matte (darwin/arm64) Vision matting helper..."
+  swift build --package-path "${repo_root}/macos" -c release --product vesper-matte
+  matte_bin="$(swift build --package-path "${repo_root}/macos" -c release --show-bin-path)/vesper-matte"
+  if [[ -x "${matte_bin}" ]]; then
+    cp -f "${matte_bin}" "${res_dir}/bin/vesper-matte"
+    chmod 0755 "${res_dir}/bin/vesper-matte"
+  fi
+elif [[ -x "${repo_root}/macos/.build/release/vesper-matte" ]]; then
+  cp -f "${repo_root}/macos/.build/release/vesper-matte" "${res_dir}/bin/vesper-matte"
+  chmod 0755 "${res_dir}/bin/vesper-matte"
+fi
+
 if [[ ! -s "${img_cache}/vmlinux" ]]; then
   echo "Missing ${img_cache}/vmlinux (run deploy/microvm/build-images.sh --kernel)" >&2
   exit 1

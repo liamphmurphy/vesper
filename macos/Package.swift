@@ -7,6 +7,7 @@ let package = Package(
     platforms: [.macOS(.v15)],
     products: [
         .executable(name: "Vesper", targets: ["Vesper"]),
+        .executable(name: "vesper-matte", targets: ["VesperMatte"]),
     ],
     targets: [
         // Logic with no AppKit UI, unit-tested.
@@ -61,6 +62,16 @@ let package = Package(
             dependencies: ["VesperSafariBridge"],
             path: "SafariExtension/BridgeTests",
             swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        // Apple Silicon Vision + CoreImage video matting helper invoked by the Go server.
+        .executableTarget(
+            name: "VesperMatte",
+            path: "Sources/VesperMatte"
+        ),
+        .testTarget(
+            name: "VesperMatteTests",
+            dependencies: ["VesperMatte"],
+            path: "Tests/VesperMatteTests"
         ),
     ]
 )
