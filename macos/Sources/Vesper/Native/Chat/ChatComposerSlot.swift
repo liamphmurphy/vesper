@@ -27,6 +27,8 @@ struct ChatComposerSlot: View {
     let onStartWorkflow: @MainActor (String, String) async -> String?
     let onStartMusic: @MainActor (String) async -> String?
     let onCompare: @MainActor (ChatCompareOption, String) async -> String?
+    /// Opens Live Voice, talking with the persona out loud.
+    let onStartLiveVoice: @MainActor () -> Void
 
     var body: some View {
         ChatComposerView(
@@ -50,7 +52,8 @@ struct ChatComposerSlot: View {
             onCompact: onCompact,
             onStartWorkflow: onStartWorkflow,
             onStartMusic: onStartMusic,
-            onCompare: onCompare
+            onCompare: onCompare,
+            onStartLiveVoice: onStartLiveVoice
         )
     }
 }

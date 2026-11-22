@@ -67,6 +67,8 @@ struct ChatScreen: View {
     @State private var watched: [QueryKey] = []
     /// The persona companion's pop-out: the loop large in the middle with a small composer.
     @State private var companionOpen = false
+    /// Live Voice: the persona takes over the chat while the person talks with it out loud.
+    @State private var liveVoiceOpen = false
 
     private static let personasRequest = API.listPersonas()
     private static let spacesRequest = API.listChatSpaces()
@@ -229,12 +231,26 @@ struct ChatScreen: View {
                 },
                 onCompare: { option, question in
                     await startCompareAside(option: option, question: question)
+                },
+                onStartLiveVoice: {
+                    companionOpen = false
+                    liveVoiceOpen = true
                 }
             )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .overlay {
-            if companionOpen, let persona = activePersona, let loops = persona.playableLoops {
+            if liveVoiceOpen {
+                LiveVoiceView(
+                    companion: companion,
+                    persona: activePersona,
+                    lastReply: messages.last { $0.role == .assistant },
+                    turnRunning: session?.state == .running,
+                    onSend: { body in await sendMessage(body, activePersona: activePersona) },
+                    onClose: { liveVoiceOpen = false }
+                )
+                .transition(.opacity)
+            } else if companionOpen, let persona = activePersona, let loops = persona.playableLoops {
                 PersonaCompanionPopOut(
                     companion: companion,
                     persona: persona,
@@ -247,11 +263,16 @@ struct ChatScreen: View {
             }
         }
         .animation(.easeOut(duration: 0.2), value: companionOpen)
+        .animation(.easeOut(duration: 0.25), value: liveVoiceOpen)
         // Replies that arrive while the chat is open reveal at the persona's pace.
         .onChange(of: "\(chatId ?? "")|\(messages.last?.id ?? "")|\(personas.count)", initial: true) { _, _ in
             companion.observe(chatId: chatId, messages: messages, personas: personas, hostPersonaId: activePersona?.id)
         }
-        .onChange(of: chatId) { _, _ in companionOpen = false }
+        .onChange(of: chatId) { oldId, _ in
+            companionOpen = false
+            // Live Voice in a new chat carries on into the chat its first message created.
+            if oldId != nil { liveVoiceOpen = false }
+        }
         .onChange(
             of: buildChrome(
                 chats: chats,

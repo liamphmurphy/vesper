@@ -38,6 +38,8 @@ struct ChatComposerView: View {
     let onStartWorkflow: @MainActor (String, String) async -> String?
     let onStartMusic: @MainActor (String) async -> String?
     let onCompare: @MainActor (ChatCompareOption, String) async -> String?
+    /// Opens Live Voice, talking with the persona out loud.
+    let onStartLiveVoice: @MainActor () -> Void
 
     private let draftStore = ChatDraftStore()
 
@@ -321,6 +323,16 @@ struct ChatComposerView: View {
             if isRunning {
                 sendModeSwitcher
             }
+
+            Button(action: onStartLiveVoice) {
+                Image(systemName: "waveform")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(p.secondaryText)
+                    .frame(width: 26, height: 22)
+            }
+            .buttonStyle(.plain)
+            .help("Live Voice: talk with \(personaName) out loud")
+            .accessibilityLabel("Start Live Voice")
 
             if isRunning && !hasDraftText && attachments.isEmpty {
                 Button(action: cancelTurn) {
