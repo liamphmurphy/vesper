@@ -1,6 +1,80 @@
 import AppKit
+import os
 import SwiftUI
 import VesperCore
+
+/// Logs per-stage latency for Live Voice turns (utterance end -> settle -> send -> reply ->
+/// first audio -> playback) to the unified macOS log (`com.vesper.app`, category `LiveVoice`).
+@MainActor
+final class LiveVoiceLatencyLog {
+    static let shared = LiveVoiceLatencyLog()
+    private let logger = Logger(subsystem: "com.vesper.app", category: "LiveVoice")
+
+    private var utteranceEndedAt: Date?
+    private var sentAt: Date?
+    private var replyObservedAt: Date?
+    private var sawTurnRunning = false
+
+    func markUtteranceEnd(settled: Bool) {
+        utteranceEndedAt = Date()
+        sentAt = nil
+        replyObservedAt = nil
+        sawTurnRunning = false
+        emit("utterance_end settled=\(settled)")
+    }
+
+    func markSettled() {
+        emit("settled settle_ms=\(msSince(utteranceEndedAt))")
+    }
+
+    func markSent() {
+        let now = Date()
+        sentAt = now
+        emit("sent since_end_ms=\(msSince(utteranceEndedAt))")
+    }
+
+    func markTurnRunning() {
+        guard !sawTurnRunning, utteranceEndedAt != nil else { return }
+        sawTurnRunning = true
+        emit("turn_running since_send_ms=\(msSince(sentAt)) since_end_ms=\(msSince(utteranceEndedAt))")
+    }
+
+    func markReplyObserved(messageId: String) {
+        guard utteranceEndedAt != nil else { return }
+        replyObservedAt = Date()
+        emit("reply_observed msg=\(messageId) since_send_ms=\(msSince(sentAt)) since_end_ms=\(msSince(utteranceEndedAt))")
+    }
+
+    func markSpeechFirstAudio(part: String, streaming: Bool) {
+        guard utteranceEndedAt != nil else { return }
+        emit("speech_first_audio part=\(part) streaming=\(streaming) tts_ms=\(msSince(replyObservedAt)) total_ms=\(msSince(utteranceEndedAt))")
+    }
+
+    func markPlaybackStarted(part: String, streaming: Bool) {
+        guard utteranceEndedAt != nil else { return }
+        emit("playback_started part=\(part) streaming=\(streaming) tts_ms=\(msSince(replyObservedAt)) total_ms=\(msSince(utteranceEndedAt))")
+        if part == "lead" || part == "full" {
+            utteranceEndedAt = nil
+        }
+    }
+
+    func reset() {
+        utteranceEndedAt = nil
+        sentAt = nil
+        replyObservedAt = nil
+        sawTurnRunning = false
+    }
+
+    private func msSince(_ start: Date?) -> Int {
+        guard let start else { return -1 }
+        return max(0, Int(Date().timeIntervalSince(start) * 1000))
+    }
+
+    private func emit(_ message: String) {
+        logger.notice("\(message, privacy: .public)")
+        vlog("live_voice \(message)")
+    }
+}
 
 /// Drives a Live Voice conversation: listens, sends what the person said once they pause, closes
 /// the microphone while the persona works and answers, and listens again when it's done
@@ -43,7 +117,7 @@ final class LiveVoiceSession {
             turn.update(turnRunning: chat.turnRunning, lastReplyId: chat.lastReplyId, revealing: chat.revealing, speaking: chat.speaking)
         }
         syncMicrophone()
-        let t = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
+        let t = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.checkForPause() }
         }
         RunLoop.main.add(t, forMode: .common)
@@ -56,10 +130,12 @@ final class LiveVoiceSession {
         timer = nil
         speech.stop()
         ready = false
+        LiveVoiceLatencyLog.shared.reset()
     }
 
     func follow(_ progress: ChatProgress) {
         chat = progress
+        if progress.turnRunning { LiveVoiceLatencyLog.shared.markTurnRunning() }
         turn.update(turnRunning: progress.turnRunning, lastReplyId: progress.lastReplyId, revealing: progress.revealing, speaking: progress.speaking)
         syncMicrophone()
     }
@@ -102,6 +178,7 @@ final class LiveVoiceSession {
     /// Closes the microphone, waits for the transcriber's final text and sends it.
     private func endUtterance() {
         guard turn.phase == .listening, speech.listening, send != nil else { return }
+        LiveVoiceLatencyLog.shared.markUtteranceEnd(settled: speech.settled)
         lastSaid = speech.transcript
         sendError = nil
         turn.send(lastReplyId: chat.lastReplyId)
@@ -109,16 +186,20 @@ final class LiveVoiceSession {
         Task {
             let said = await settling.value
             guard !said.isEmpty, !ended else {
+                LiveVoiceLatencyLog.shared.reset()
                 turn.sendFailed()
                 syncMicrophone()
                 return
             }
+            LiveVoiceLatencyLog.shared.markSettled()
             lastSaid = said
             let problem: String? = await self.send?(said) ?? nil
             if let problem {
+                LiveVoiceLatencyLog.shared.reset()
                 sendError = problem
                 turn.sendFailed()
             } else {
+                LiveVoiceLatencyLog.shared.markSent()
                 turn.sent()
                 // The chat may already have moved on while the send was in flight.
                 turn.update(turnRunning: chat.turnRunning, lastReplyId: chat.lastReplyId, revealing: chat.revealing, speaking: chat.speaking)

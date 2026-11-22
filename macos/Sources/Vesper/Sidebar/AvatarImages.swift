@@ -54,8 +54,71 @@ final class AvatarImages {
         return (data, Int(http.value(forHTTPHeaderField: "X-Speech-Words") ?? "") ?? 0)
     }
 
+    /// Streams raw 16-bit mono PCM chunks from `/speech/stream` as Gemini emits them.
+    struct SpeechStream: Sendable {
+        let chunks: AsyncStream<Data>
+        let words: Int
+        let sampleRate: Int
+        let cancel: @Sendable () -> Void
+    }
+
+    func speechStream(for raw: String) async -> SpeechStream? {
+        guard let conn = connection,
+              let url = URL(string: raw, relativeTo: conn.baseURL)?.absoluteURL,
+              BridgeOrigin.matches(url: url, base: conn.baseURL) else { return nil }
+        return await Self.openPCMStream(url, conn: conn, timeout: 60)
+    }
+
     /// A 10s loop is budgeted at 14 MB on the server; this leaves headroom.
     private static let maxLoopBytes = 20 * 1024 * 1024
+
+    private nonisolated static func openPCMStream(_ url: URL, conn: Connection, timeout: TimeInterval) async -> SpeechStream? {
+        var request = URLRequest(url: url, timeoutInterval: timeout)
+        request.httpShouldHandleCookies = false
+        request.setValue("\(StackSession.cookieName)=\(conn.sessionToken)", forHTTPHeaderField: "Cookie")
+
+        let (chunks, continuation) = AsyncStream<Data>.makeStream()
+        let delegate = PCMStreamDelegate(continuation: continuation)
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = timeout
+        config.timeoutIntervalForResource = timeout
+        let session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
+        let task = session.dataTask(with: request)
+        delegate.bind(session: session, task: task)
+
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { (headerCont: CheckedContinuation<SpeechStream?, Never>) in
+                delegate.onResponse = { http in
+                    guard let http, http.statusCode == 200,
+                          (http.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased().hasPrefix("audio/l16")
+                    else {
+                        task.cancel()
+                        session.invalidateAndCancel()
+                        continuation.finish()
+                        headerCont.resume(returning: nil)
+                        return
+                    }
+                    let words = Int(http.value(forHTTPHeaderField: "X-Speech-Words") ?? "") ?? 0
+                    let rate = Int(http.value(forHTTPHeaderField: "X-Speech-Sample-Rate") ?? "") ?? 24_000
+                    headerCont.resume(returning: SpeechStream(
+                        chunks: chunks,
+                        words: words,
+                        sampleRate: rate,
+                        cancel: {
+                            task.cancel()
+                            session.invalidateAndCancel()
+                            continuation.finish()
+                        }
+                    ))
+                }
+                task.resume()
+            }
+        } onCancel: {
+            task.cancel()
+            session.invalidateAndCancel()
+            continuation.finish()
+        }
+    }
 
     private nonisolated static func fetch(_ url: URL, conn: Connection, maxBytes: Int, timeout: TimeInterval) async -> Data? {
         await fetchResponse(url, conn: conn, maxBytes: maxBytes, timeout: timeout, type: "image/")?.data
@@ -71,5 +134,63 @@ final class AvatarImages {
               data.count <= maxBytes
         else { return nil }
         return (data, http)
+    }
+}
+
+private final class PCMStreamDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+    private let continuation: AsyncStream<Data>.Continuation
+    private weak var session: URLSession?
+    private weak var task: URLSessionDataTask?
+    private var responded = false
+    var onResponse: ((HTTPURLResponse?) -> Void)?
+
+    init(continuation: AsyncStream<Data>.Continuation) {
+        self.continuation = continuation
+    }
+
+    func bind(session: URLSession, task: URLSessionDataTask) {
+        lock.lock()
+        self.session = session
+        self.task = task
+        lock.unlock()
+    }
+
+    private func deliverResponse(_ http: HTTPURLResponse?) {
+        lock.lock()
+        guard !responded else {
+            lock.unlock()
+            return
+        }
+        responded = true
+        let cb = onResponse
+        onResponse = nil
+        lock.unlock()
+        cb?(http)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
+        let http = response as? HTTPURLResponse
+        let ok = http?.statusCode == 200
+            && (http?.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased().hasPrefix("audio/l16")
+        deliverResponse(http)
+        completionHandler(ok ? .allow : .cancel)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        if !data.isEmpty {
+            continuation.yield(data)
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        deliverResponse(nil)
+        continuation.finish()
+        session.finishTasksAndInvalidate()
     }
 }

@@ -251,11 +251,12 @@ func (c ClaudeCode) NewParser(string) Parser {
 }
 
 type claudeParser struct {
-	res      Result
-	tools    map[string]string // tool_use id → name
-	baseline Usage
-	reply    replyScanner
-	activity activityTracker
+	res         Result
+	tools       map[string]string // tool_use id → name
+	baseline    Usage
+	reply       replyScanner
+	activity    activityTracker
+	onTextDelta func(string)
 }
 
 type claudeLine struct {
@@ -332,6 +333,9 @@ func (p *claudeParser) streamEvent(l claudeLine) []Event {
 		case "thinking_delta":
 			return p.activity.thinkingDelta(ev.Delta.Thinking)
 		case "text_delta":
+			if p.onTextDelta != nil && ev.Delta.Text != "" {
+				p.onTextDelta(ev.Delta.Text)
+			}
 			var out []Event
 			if blocks := p.reply.feed(ev.Delta.Text); len(blocks) > 0 {
 				p.activity.touch()

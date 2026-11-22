@@ -136,3 +136,47 @@ func TestSessionControlSteer(t *testing.T) {
 		}
 	})
 }
+
+func TestSessionTextDeltas(t *testing.T) {
+	t.Run("claude", func(t *testing.T) {
+		var got []string
+		p := ClaudeCode{}.NewParser("").(*claudeParser)
+		p.onTextDelta = func(s string) { got = append(got, s) }
+		p.Line([]byte(`{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"hmm"}}}`))
+		p.Line([]byte(`{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"Hello "}}}`))
+		p.Line([]byte(`{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"world."}}}`))
+		if strings.Join(got, "") != "Hello world." {
+			t.Fatalf("claude text deltas = %q, want %q", strings.Join(got, ""), "Hello world.")
+		}
+	})
+
+	t.Run("antigravity", func(t *testing.T) {
+		var got []string
+		st := &agySessionState{
+			called:      map[string]bool{},
+			finished:    map[string]bool{},
+			toolNames:   map[string]string{},
+			emit:        func(Event) {},
+			onTextDelta: func(s string) { got = append(got, s) },
+		}
+		st.handleUpdate([]byte(`{"update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"thinking"}}}`))
+		st.handleUpdate([]byte(`{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Hi there."}}}`))
+		if strings.Join(got, "") != "Hi there." {
+			t.Fatalf("agy text deltas = %q, want %q", strings.Join(got, ""), "Hi there.")
+		}
+	})
+
+	t.Run("codex", func(t *testing.T) {
+		var got []string
+		st := &codexSessionState{
+			emit:        func(Event) {},
+			onTextDelta: func(s string) { got = append(got, s) },
+		}
+		st.handleNotification("item/reasoning/textDelta", []byte(`{"delta":"thinking"}`))
+		st.handleNotification("item/agentMessage/delta", []byte(`{"itemId":"i1","delta":"Hey "}`))
+		st.handleNotification("item/agentMessage/delta", []byte(`{"itemId":"i1","delta":"you."}`))
+		if strings.Join(got, "") != "Hey you." {
+			t.Fatalf("codex text deltas = %q, want %q", strings.Join(got, ""), "Hey you.")
+		}
+	})
+}

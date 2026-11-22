@@ -31,6 +31,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/realtime"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/secrets"
+	"github.com/liamphmurphy/vesper/server/internal/speech"
 	"github.com/liamphmurphy/vesper/server/internal/statemedia"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 	"github.com/liamphmurphy/vesper/server/internal/tracker"
@@ -101,7 +102,10 @@ type Server struct {
 	RunnerStarting func() bool
 
 	// MediaRegistry overrides the registered media providers (tests inject fake).
-	MediaRegistry   *media.Registry
+	MediaRegistry *media.Registry
+	// SpeechBroker shares live pre-synthesized lead clips between an in-process
+	// runner and HTTP speech endpoints.
+	SpeechBroker    *speech.Broker
 	defaultMediaReg *media.Registry
 	mediaRegOnce    sync.Once
 	musicRun        *media.MusicRunner
@@ -125,6 +129,7 @@ func (s *Server) mountAPIRoutes(mux *http.ServeMux) {
 	s.dockChatRoutes(mux)
 	s.httpClientRoutes(mux)
 	s.browserExtensionRoutes(mux)
+	s.speechRoutes(mux)
 	strict := api.NewStrictHandlerWithOptions(s, nil, api.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
 			writeError(w, http.StatusBadRequest, api.Invalid, err.Error(), "")

@@ -13,7 +13,10 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/agentdef"
 )
 
-var _ SessionHarness = ClaudeCode{}
+var (
+	_ SessionHarness           = ClaudeCode{}
+	_ PersistentSessionHarness = ClaudeCode{}
+)
 
 // SessionInvocation returns the command, env, and config files for driving
 // Claude Code over its bidirectional stream-json stdio protocol.
@@ -101,6 +104,9 @@ func (c ClaudeCode) RunSession(ctx context.Context, stdin io.WriteCloser, stdout
 	}
 
 	p := c.NewParser("")
+	if cp, ok := p.(*claudeParser); ok {
+		cp.onTextDelta = cb.OnTextDelta
+	}
 	var lastSessionID string
 	var lastCtx int64
 	sentPrompt := false
@@ -174,6 +180,166 @@ func (c ClaudeCode) RunSession(ctx context.Context, stdin io.WriteCloser, stdout
 		return p.Result(), err
 	}
 	return p.Result(), nil
+}
+
+// OpenSession initializes a persistent Claude Code stream-json process so
+// subsequent chat turns can reuse the warm CLI and MCP connection.
+func (c ClaudeCode) OpenSession(ctx context.Context, stdin io.WriteCloser, stdout io.Reader, _ Workspace, t Turn, cb SessionCallbacks) (PersistentSession, error) {
+	noTools := t.Spec.HarnessOptions[agentdef.OptionNoTools] == "true"
+	w := newLineWriter(stdin)
+	ctrl := &claudeControl{w: w}
+	if cb.OnControl != nil {
+		cb.OnControl(ctrl)
+	}
+	initReq := map[string]any{
+		"type":       "control_request",
+		"request_id": "init-1",
+		"request": map[string]any{
+			"subtype": "initialize",
+			"hooks": map[string]any{
+				"PreToolUse": []any{
+					map[string]any{
+						"matcher":         "*",
+						"hookCallbackIds": []string{"vesper_policy"},
+					},
+				},
+			},
+		},
+	}
+	if err := w.writeJSON(initReq); err != nil {
+		_ = w.Close()
+		return nil, fmt.Errorf("claude write initialize: %w", err)
+	}
+
+	sc := bufio.NewScanner(stdout)
+	sc.Buffer(make([]byte, 256<<10), sessionMaxScanBytes)
+	for sc.Scan() {
+		line := append([]byte(nil), sc.Bytes()...)
+		if cb.OnRaw != nil {
+			cb.OnRaw(line)
+		}
+		var env struct {
+			Type     string `json:"type"`
+			Response struct {
+				Subtype   string `json:"subtype"`
+				RequestID string `json:"request_id"`
+				Error     string `json:"error"`
+			} `json:"response"`
+		}
+		if json.Unmarshal(line, &env) == nil && env.Type == "control_response" && env.Response.RequestID == "init-1" {
+			if env.Response.Subtype == "error" {
+				_ = w.Close()
+				return nil, fmt.Errorf("claude initialize: %s", env.Response.Error)
+			}
+			return &claudePersistentSession{
+				c:       c,
+				w:       w,
+				sc:      sc,
+				ctrl:    ctrl,
+				noTools: noTools,
+				alive:   true,
+			}, nil
+		}
+	}
+	_ = w.Close()
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	return nil, io.EOF
+}
+
+type claudePersistentSession struct {
+	c       ClaudeCode
+	w       *lineWriter
+	sc      *bufio.Scanner
+	ctrl    *claudeControl
+	noTools bool
+	mu      sync.Mutex
+	alive   bool
+}
+
+func (s *claudePersistentSession) Alive() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.alive
+}
+
+func (s *claudePersistentSession) Close() error {
+	s.mu.Lock()
+	s.alive = false
+	s.mu.Unlock()
+	return s.w.Close()
+}
+
+func (s *claudePersistentSession) RunTurn(ctx context.Context, t Turn, cb SessionCallbacks) (Result, error) {
+	if !s.Alive() {
+		return Result{}, io.ErrClosedPipe
+	}
+	if cb.OnControl != nil {
+		cb.OnControl(s.ctrl)
+	}
+	if err := s.w.writeJSON(claudeUserMessage(t.Prompt, t.InlineImages)); err != nil {
+		_ = s.Close()
+		return Result{}, fmt.Errorf("claude write user message: %w", err)
+	}
+
+	p := s.c.NewParser("")
+	if cp, ok := p.(*claudeParser); ok {
+		cp.onTextDelta = cb.OnTextDelta
+	}
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	var lastSessionID string
+	var lastCtx int64
+
+	for s.sc.Scan() {
+		line := append([]byte(nil), s.sc.Bytes()...)
+		if cb.OnRaw != nil {
+			cb.OnRaw(line)
+		}
+		var env struct {
+			Type      string          `json:"type"`
+			RequestID string          `json:"request_id"`
+			Request   json.RawMessage `json:"request"`
+		}
+		if json.Unmarshal(line, &env) == nil && env.Type == "control_request" {
+			reqID := env.RequestID
+			rawReq := env.Request
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				handleClaudeControlRequest(ctx, s.w, cb.CheckTool, s.noTools, reqID, rawReq)
+			}()
+			continue
+		}
+		for _, ev := range p.Line(line) {
+			if cb.OnEvent != nil {
+				cb.OnEvent(ev)
+			}
+		}
+		if sid := p.Result().SessionID; sid != "" && sid != lastSessionID {
+			lastSessionID = sid
+			if cb.OnSession != nil {
+				cb.OnSession(sid)
+			}
+		}
+		if ct := p.Result().Usage.ContextTokens; ct > 0 && ct != lastCtx {
+			lastCtx = ct
+			if cb.OnContextTokens != nil {
+				cb.OnContextTokens(ct)
+			}
+		}
+		if env.Type == "result" {
+			return p.Result(), nil
+		}
+	}
+	s.mu.Lock()
+	s.alive = false
+	s.mu.Unlock()
+	if err := s.sc.Err(); err != nil {
+		return p.Result(), err
+	}
+	return p.Result(), io.EOF
 }
 
 type claudeControl struct {

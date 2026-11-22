@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -98,6 +99,91 @@ func TestMicroVMBalloonAndWarmTTL(t *testing.T) {
 	runTurn()
 	if len(drv.Started) != 2 || b.ActiveVMCount() != 1 {
 		t.Fatalf("expected cold reboot after WarmTTL (starts=%d active=%d)", len(drv.Started), b.ActiveVMCount())
+	}
+}
+
+func TestMicroVMDeferredCacheDrop(t *testing.T) {
+	var drops atomic.Int32
+	drv := &microvm.MemDriver{
+		Handler: func(_ context.Context, conn net.Conn) {
+			f, err := guestproto.ReadFrame(conn)
+			if err != nil {
+				return
+			}
+			var req guestproto.Request
+			_ = json.Unmarshal(f.Data, &req)
+			switch req.Op {
+			case guestproto.OpSyncAndDropCaches:
+				drops.Add(1)
+				resp, _ := json.Marshal(guestproto.Response{ID: f.ID})
+				_ = guestproto.WriteFrame(conn, guestproto.Frame{Type: guestproto.FrameResp, ID: f.ID, Data: resp})
+			case guestproto.OpExecStart:
+				resp, _ := json.Marshal(guestproto.Response{ID: f.ID})
+				_ = guestproto.WriteFrame(conn, guestproto.Frame{Type: guestproto.FrameResp, ID: f.ID, Data: resp})
+				ex, _ := json.Marshal(guestproto.ExecExit{Code: 0})
+				_ = guestproto.WriteFrame(conn, guestproto.Frame{Type: guestproto.FrameExecExit, ID: f.ID, Data: ex})
+			default:
+				resp, _ := json.Marshal(guestproto.Response{ID: f.ID})
+				_ = guestproto.WriteFrame(conn, guestproto.Frame{Type: guestproto.FrameResp, ID: f.ID, Data: resp})
+			}
+		},
+	}
+
+	b := &MicroVM{
+		Driver:             drv,
+		StateDir:           t.TempDir(),
+		KernelPath:         "/k",
+		RootfsPath:         "/r",
+		MemoryMB:           1024,
+		IdleMemoryMB:       160,
+		WarmTTL:            2 * time.Second,
+		CacheDropDelay:     120 * time.Millisecond,
+		TestWorkspaceBytes: 2 << 20,
+		TestHomeBytes:      2 << 20,
+		TestDockerBytes:    2 << 20,
+	}
+	defer func() { _ = b.Close() }()
+	ctx := context.Background()
+
+	runTurn := func() {
+		t.Helper()
+		p, err := b.Start(ctx, "r1", ExecSpec{Argv: []string{"true"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		go func() { _, _ = io.Copy(io.Discard, p.Stdout()) }()
+		go func() { _, _ = io.Copy(io.Discard, p.Stderr()) }()
+		if code, werr := p.Wait(); werr != nil || code != 0 {
+			t.Fatalf("turn code=%d err=%v", code, werr)
+		}
+	}
+
+	runTurn()
+	b.runsMu.Lock()
+	mvm := b.vms["r1"].vm.(*microvm.MemVM)
+	b.runsMu.Unlock()
+	// Immediately after the turn, cache and full memory stay warm.
+	if drops.Load() != 0 {
+		t.Fatalf("cache dropped immediately (%d), want deferred", drops.Load())
+	}
+	if got := mvm.MemoryTarget(); got == 160<<20 {
+		t.Fatalf("memory deflated immediately (%d MiB), want deferred", got>>20)
+	}
+
+	// A rapid follow-up turn cancels the pending drop timer.
+	time.Sleep(40 * time.Millisecond)
+	runTurn()
+	if drops.Load() != 0 {
+		t.Fatalf("cache dropped during rapid follow-up (%d), want 0", drops.Load())
+	}
+
+	// After staying idle past CacheDropDelay, cache drops and balloon deflates.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && (drops.Load() == 0 || mvm.MemoryTarget() != 160<<20) {
+		time.Sleep(15 * time.Millisecond)
+	}
+	if drops.Load() != 1 || mvm.MemoryTarget() != 160<<20 {
+		t.Fatalf("expected deferred drop+deflate (drops=%d target=%d MiB)", drops.Load(), mvm.MemoryTarget()>>20)
 	}
 }
 

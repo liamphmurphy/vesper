@@ -1,9 +1,7 @@
 package gemini
 
 import (
-	"bytes"
 	"context"
-	"encoding/binary"
 	"fmt"
 	"mime"
 	"strconv"
@@ -12,6 +10,7 @@ import (
 	"google.golang.org/genai"
 
 	"github.com/liamphmurphy/vesper/server/internal/media"
+	"github.com/liamphmurphy/vesper/server/internal/speech"
 )
 
 const (
@@ -39,7 +38,10 @@ var voices = []media.Voice{
 	{Name: "Sadachbia", Tone: "Lively"}, {Name: "Sadaltager", Tone: "Knowledgeable"}, {Name: "Sulafat", Tone: "Warm"},
 }
 
-var _ media.SpeechGenerator = (*Provider)(nil)
+var (
+	_ media.SpeechGenerator          = (*Provider)(nil)
+	_ media.StreamingSpeechGenerator = (*Provider)(nil)
+)
 
 // DefaultVoice is the voice for a persona that hasn't picked one.
 func (p *Provider) DefaultVoice() string { return DefaultVoice }
@@ -47,19 +49,16 @@ func (p *Provider) DefaultVoice() string { return DefaultVoice }
 // Voices lists Gemini's prebuilt voices.
 func (p *Provider) Voices() []media.Voice { return append([]media.Voice(nil), voices...) }
 
-// GenerateSpeech speaks req.Text with a prebuilt voice. The style rides in the
-// prompt as a delivery direction, which Gemini TTS follows, and the PCM it
-// returns is wrapped as WAV so every client can play it without a decoder.
-func (p *Provider) GenerateSpeech(ctx context.Context, req media.SpeechRequest) (media.SpeechClip, error) {
+func (p *Provider) prepareSpeech(req media.SpeechRequest) (model string, contents []*genai.Content, cfg *genai.GenerateContentConfig, err error) {
 	text := strings.TrimSpace(req.Text)
 	if text == "" || len(text) > maxSpeechChars {
-		return media.SpeechClip{}, &media.ProviderError{Provider: ProviderID, Kind: media.ErrKindUnknown, Message: fmt.Sprintf("Speech text must be 1–%d characters.", maxSpeechChars)}
+		return "", nil, nil, &media.ProviderError{Provider: ProviderID, Kind: media.ErrKindUnknown, Message: fmt.Sprintf("Speech text must be 1–%d characters.", maxSpeechChars)}
 	}
 	voice := strings.TrimSpace(req.Voice)
 	if voice == "" {
 		voice = DefaultVoice
 	}
-	model := strings.TrimSpace(req.Model)
+	model = strings.TrimSpace(req.Model)
 	if model == "" {
 		model = p.cfg.Setting(p.desc, "tts_model")
 	}
@@ -72,17 +71,29 @@ func (p *Provider) GenerateSpeech(ctx context.Context, req media.SpeechRequest) 
 	if style := strings.TrimSpace(req.Style); style != "" {
 		part.SpeechMetadata = &genai.SpeechMetadata{Style: style}
 	}
-
-	client, err := p.newClient(ctx)
-	if err != nil {
-		return media.SpeechClip{}, err
-	}
-	resp, err := client.Models.GenerateContent(ctx, model, []*genai.Content{genai.NewContentFromParts([]*genai.Part{part}, genai.RoleUser)}, &genai.GenerateContentConfig{
+	contents = []*genai.Content{genai.NewContentFromParts([]*genai.Part{part}, genai.RoleUser)}
+	cfg = &genai.GenerateContentConfig{
 		ResponseModalities: []string{"AUDIO"},
 		SpeechConfig: &genai.SpeechConfig{
 			VoiceConfig: &genai.VoiceConfig{PrebuiltVoiceConfig: &genai.PrebuiltVoiceConfig{VoiceName: voice}},
 		},
-	})
+	}
+	return model, contents, cfg, nil
+}
+
+// GenerateSpeech speaks req.Text with a prebuilt voice. The style rides in the
+// part's speech metadata, which Gemini TTS follows, and the PCM it returns is
+// wrapped as WAV so every client can play it without a decoder.
+func (p *Provider) GenerateSpeech(ctx context.Context, req media.SpeechRequest) (media.SpeechClip, error) {
+	model, contents, cfg, err := p.prepareSpeech(req)
+	if err != nil {
+		return media.SpeechClip{}, err
+	}
+	client, err := p.newClient(ctx)
+	if err != nil {
+		return media.SpeechClip{}, err
+	}
+	resp, err := client.Models.GenerateContent(ctx, model, contents, cfg)
 	if err != nil {
 		return media.SpeechClip{}, p.mapError(err)
 	}
@@ -90,73 +101,98 @@ func (p *Provider) GenerateSpeech(ctx context.Context, req media.SpeechRequest) 
 	if err != nil {
 		return media.SpeechClip{}, err
 	}
-	wav := wavFromPCM(pcm, rate)
 	return media.SpeechClip{
-		Data:        wav,
+		Data:        speech.WAVFromPCM(pcm, rate),
 		ContentType: "audio/wav",
 		DurationMS:  len(pcm) * 1000 / (rate * 2),
 		Model:       model,
 	}, nil
 }
 
-// speechPCM pulls the audio part out of a response, with its sample rate.
-func speechPCM(resp *genai.GenerateContentResponse) ([]byte, int, error) {
-	if resp != nil {
-		for _, c := range resp.Candidates {
-			if c == nil || c.Content == nil {
-				continue
-			}
-			for _, part := range c.Content.Parts {
-				if part == nil || part.InlineData == nil || len(part.InlineData.Data) == 0 {
-					continue
-				}
-				if !strings.HasPrefix(strings.ToLower(part.InlineData.MIMEType), "audio/") {
-					continue
-				}
-				data := part.InlineData.Data
-				// 3.8 TTS returns a whole WAV file with a provenance (C2PA) chunk after
-				// the audio; only its data chunk is sound. Older models send bare PCM.
-				if pcm, rate, ok := wavData(data); ok {
-					return pcm, rate, nil
-				}
-				return data, pcmRate(part.InlineData.MIMEType), nil
+// StreamSpeech synthesizes req.Text via Gemini's streaming endpoint, invoking
+// onChunk with each 16-bit mono PCM chunk as it arrives and returning the
+// complete WAV clip for caching once the stream completes.
+func (p *Provider) StreamSpeech(ctx context.Context, req media.SpeechRequest, onChunk func(media.SpeechChunk) error) (media.SpeechClip, error) {
+	model, contents, cfg, err := p.prepareSpeech(req)
+	if err != nil {
+		return media.SpeechClip{}, err
+	}
+	client, err := p.newClient(ctx)
+	if err != nil {
+		return media.SpeechClip{}, err
+	}
+	var fullPCM []byte
+	sampleRate := defaultPCMRate
+	for resp, err := range client.Models.GenerateContentStream(ctx, model, contents, cfg) {
+		if err != nil {
+			return media.SpeechClip{}, p.mapError(err)
+		}
+		pcm, rate, ok := extractSpeechPCM(resp)
+		if !ok || len(pcm) == 0 {
+			continue
+		}
+		if rate > 0 {
+			sampleRate = rate
+		}
+		fullPCM = append(fullPCM, pcm...)
+		if onChunk != nil {
+			if err := onChunk(media.SpeechChunk{PCM: pcm, SampleRate: sampleRate}); err != nil {
+				return media.SpeechClip{}, err
 			}
 		}
+	}
+	if len(fullPCM) == 0 {
+		return media.SpeechClip{}, &media.ProviderError{Provider: ProviderID, Kind: media.ErrKindFiltered, Message: "Gemini returned no speech for this text."}
+	}
+	return media.SpeechClip{
+		Data:        speech.WAVFromPCM(fullPCM, sampleRate),
+		ContentType: "audio/wav",
+		DurationMS:  len(fullPCM) * 1000 / (sampleRate * 2),
+		Model:       model,
+	}, nil
+}
+
+// speechPCM pulls the audio part out of a response, with its sample rate.
+func speechPCM(resp *genai.GenerateContentResponse) ([]byte, int, error) {
+	if pcm, rate, ok := extractSpeechPCM(resp); ok {
+		return pcm, rate, nil
 	}
 	return nil, 0, &media.ProviderError{Provider: ProviderID, Kind: media.ErrKindFiltered, Message: "Gemini returned no speech for this text."}
 }
 
-// wavData returns the data chunk and sample rate of a 16-bit mono WAV, skipping
-// every other chunk. ok is false when b isn't such a WAV.
-func wavData(b []byte) (pcm []byte, rate int, ok bool) {
-	if len(b) < 12 || string(b[:4]) != "RIFF" || string(b[8:12]) != "WAVE" {
+// extractSpeechPCM extracts all audio parts from a single GenerateContentResponse.
+func extractSpeechPCM(resp *genai.GenerateContentResponse) ([]byte, int, bool) {
+	if resp == nil {
 		return nil, 0, false
 	}
-	rate = defaultPCMRate
-	for off := 12; off+8 <= len(b); {
-		id := string(b[off : off+4])
-		size := int(binary.LittleEndian.Uint32(b[off+4 : off+8]))
-		body := off + 8
-		end := body + size
-		if size < 0 || end > len(b) {
-			end = len(b) // a truncated or streaming-size chunk runs to the end
+	var out []byte
+	rate := defaultPCMRate
+	found := false
+	for _, c := range resp.Candidates {
+		if c == nil || c.Content == nil {
+			continue
 		}
-		switch id {
-		case "fmt ":
-			if end-body >= 16 {
-				channels := binary.LittleEndian.Uint16(b[body+2 : body+4])
-				bits := binary.LittleEndian.Uint16(b[body+14 : body+16])
-				if channels != 1 || bits != 16 {
-					return nil, 0, false
-				}
-				rate = int(binary.LittleEndian.Uint32(b[body+4 : body+8]))
+		for _, part := range c.Content.Parts {
+			if part == nil || part.InlineData == nil || len(part.InlineData.Data) == 0 {
+				continue
 			}
-		case "data":
-			return b[body:end], rate, true
+			if !strings.HasPrefix(strings.ToLower(part.InlineData.MIMEType), "audio/") {
+				continue
+			}
+			data := part.InlineData.Data
+			// 3.8 TTS returns a whole WAV file with a provenance (C2PA) chunk after
+			// the audio; only its data chunk is sound. Older models send bare PCM.
+			if pcm, r, ok := speech.WAVData(data); ok {
+				out = append(out, pcm...)
+				rate = r
+			} else {
+				out = append(out, data...)
+				rate = pcmRate(part.InlineData.MIMEType)
+			}
+			found = true
 		}
-		off = end + size%2 // chunks are word-aligned
 	}
-	return nil, 0, false
+	return out, rate, found
 }
 
 // pcmRate reads rate=N from a MIME type like audio/L16;codec=pcm;rate=24000.
@@ -169,23 +205,5 @@ func pcmRate(mt string) int {
 	return defaultPCMRate
 }
 
-// wavFromPCM wraps 16-bit little-endian mono PCM in a RIFF/WAVE header.
-func wavFromPCM(pcm []byte, rate int) []byte {
-	var b bytes.Buffer
-	b.Grow(44 + len(pcm))
-	w := func(v any) { _ = binary.Write(&b, binary.LittleEndian, v) }
-	b.WriteString("RIFF")
-	w(uint32(36 + len(pcm)))
-	b.WriteString("WAVEfmt ")
-	w(uint32(16))       // fmt chunk size
-	w(uint16(1))        // PCM
-	w(uint16(1))        // mono
-	w(uint32(rate))     // sample rate
-	w(uint32(rate * 2)) // byte rate
-	w(uint16(2))        // block align
-	w(uint16(16))       // bits per sample
-	b.WriteString("data")
-	w(uint32(len(pcm)))
-	b.Write(pcm)
-	return b.Bytes()
-}
+// wavFromPCM is kept as a package alias for tests.
+func wavFromPCM(pcm []byte, rate int) []byte { return speech.WAVFromPCM(pcm, rate) }
