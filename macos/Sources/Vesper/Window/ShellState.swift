@@ -72,7 +72,14 @@ final class ShellState {
         )
     }
     var route: String?
+    /// The area the page last reported with its route.
     var area: AreaId?
+    /// The native screen's area, set with it by the shell.
+    var nativeArea: AreaId?
+    /// The area the area bar and tab icon mark. Under a native screen the web view is hidden and
+    /// its reported route can lag or stick (it kept Knowledge lit after going back to Chat), so the
+    /// shown screen's own area wins.
+    var currentArea: AreaId? { native != nil ? nativeArea : area }
     /// The page has sent `ready`: commands will be heard.
     var ready = false
 

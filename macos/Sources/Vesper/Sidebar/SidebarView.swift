@@ -40,7 +40,7 @@ struct SidebarView: View {
     var body: some View {
         let shell = state.shell ?? ShellState.fallbackShell
         VStack(spacing: 0) {
-            AreaBar(shell: shell, send: send)
+            AreaBar(shell: shell, current: state.currentArea, send: send)
             if let customSidebar = state.nativeSidebar {
                 customSidebar
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -104,16 +104,17 @@ struct SidebarView: View {
 /// Apps pops up a menu of Custom Apps and Tools instead of expanding in place.
 private struct AreaBar: View {
     let shell: ShellModel
+    let current: AreaId?
     let send: (NativeCommand) -> Void
 
     var body: some View {
         HStack(spacing: 2) {
             ForEach(shell.areas) { area in
-                AreaButton(label: area.label, symbol: SidebarIcons.symbolName(area.icon), badge: area.badge, selected: shell.currentArea == area.id) {
+                AreaButton(label: area.label, symbol: SidebarIcons.symbolName(area.icon), badge: area.badge, selected: current == area.id) {
                     send(.navigate(path: area.href))
                 }
             }
-            AreaButton(label: "Apps", symbol: SidebarIcons.symbolName("dashboard"), badge: nil, selected: shell.currentArea == .apps) {
+            AreaButton(label: "Apps", symbol: SidebarIcons.symbolName("dashboard"), badge: nil, selected: current == .apps) {
                 if shell.apps.isEmpty { send(.navigate(path: "/apps")) } else { popUpAppsMenu() }
             }
         }

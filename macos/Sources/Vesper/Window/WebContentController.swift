@@ -228,6 +228,7 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
         if let match {
             state.route = match.path
         }
+        state.nativeArea = match?.screen.area
         if let match, let nativeHost, nativeHost.context.match.screen.hostGroup == match.screen.hostGroup {
             nativeHost.context.update(match: match)
             return

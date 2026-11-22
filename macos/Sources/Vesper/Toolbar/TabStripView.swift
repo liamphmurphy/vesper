@@ -100,7 +100,7 @@ private struct TabCell: View {
 
     private var iconName: String {
         guard tab.kind == .vesper else { return "globe" }
-        guard let area = tab.state.area else { return "bubble.left" }
+        guard let area = tab.state.currentArea else { return "bubble.left" }
         let areas = (tab.state.shell ?? ShellState.fallbackShell).areas
         if let icon = areas.first(where: { $0.id == area })?.icon { return SidebarIcons.symbolName(icon) }
         return area == .apps ? "square.grid.2x2" : "bubble.left"
