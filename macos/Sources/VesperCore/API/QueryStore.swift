@@ -11,7 +11,7 @@ public final class QueryEntry<Value: Sendable> {
     public internal(set) var error: APIError?
     public internal(set) var isFetching = false
     public internal(set) var updatedAt: Date?
-    public internal(set) var isInvalidated = false
+    @ObservationIgnored public internal(set) var isInvalidated = false
 
     @ObservationIgnored let fetch: @Sendable (APIClient) async throws -> Value
     /// Bumped by every local write (optimistic update, rollback, `setData`); a fetch that started
@@ -175,29 +175,45 @@ public final class QueryStore {
     }
 
     private func finish<V: Sendable>(_ entry: QueryEntry<V>, result: Result<V, any Error>, generation: Int, client: APIClient) {
-        entry.isFetching = false
+        if entry.isFetching { entry.isFetching = false }
         entry.task = nil
         // A newer session, or a local write since this fetch began, makes the answer outdated.
         guard self.client === client, (entries[entry.key] as AnyObject?) === entry else { return }
         if generation == entry.generation {
             switch result {
             case .success(let value):
-                entry.data = value
-                entry.error = nil
+                // Skip writing identical Equatable payloads so SSE refetches while a persona is
+                // working don't re-evaluate unrelated views that observe `.data`.
+                if let existing = entry.data, Self.valuesEqual(existing, value) {
+                    // Unchanged
+                } else {
+                    entry.data = value
+                }
+                if entry.error != nil { entry.error = nil }
                 entry.updatedAt = now()
                 entry.isInvalidated = false
             case .failure(is CancellationError):
                 break
             case .failure(let error as APIError):
-                entry.error = error
+                if entry.error != error { entry.error = error }
             case .failure:
-                entry.error = .unreachable
+                if entry.error != .unreachable { entry.error = .unreachable }
             }
         }
         if entry.refetchWhenDone {
             entry.refetchWhenDone = false
             startFetch(entry)
         }
+    }
+
+    private static func valuesEqual<T>(_ lhs: T, _ rhs: T) -> Bool {
+        guard let a = lhs as? any Equatable else { return false }
+        return isEqualExistential(a, rhs)
+    }
+
+    private static func isEqualExistential<E: Equatable>(_ lhs: E, _ rhs: Any) -> Bool {
+        guard let r = rhs as? E else { return false }
+        return lhs == r
     }
 
     // MARK: Invalidation

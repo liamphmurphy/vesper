@@ -1,3 +1,4 @@
+import Observation
 import XCTest
 @testable import VesperCore
 
@@ -216,6 +217,36 @@ final class QueryStoreTests: XCTestCase {
         store.collectGarbage()
         XCTAssertEqual(store.entryCount, 1)
         XCTAssertTrue(store.entry(ticket1).hasData)
+    }
+
+    func testUnchangedEquatableRefetchDoesNotNotifyDataObservers() async {
+        server.answer("/api/v1/tickets/PAY-1", ["n": 1])
+        let entry = store.load(ticket1)
+        await settle(entry)
+        store.observe(ticket1)
+
+        final class CounterBox: @unchecked Sendable {
+            var count = 0
+        }
+        let notifications = CounterBox()
+        withObservationTracking {
+            _ = entry.data
+        } onChange: {
+            notifications.count += 1
+        }
+
+        // Refetching the exact same payload should not fire a data observation change.
+        store.handle(ServerEvent(type: "ticket.updated", ids: ["PAY-1"]))
+        await settle(entry)
+        XCTAssertEqual(server.hits("/api/v1/tickets/PAY-1"), 2)
+        XCTAssertEqual(notifications.count, 0)
+
+        // Changing the payload fires the observer.
+        server.answer("/api/v1/tickets/PAY-1", ["n": 2])
+        store.handle(ServerEvent(type: "ticket.updated", ids: ["PAY-1"]))
+        await settle(entry)
+        XCTAssertEqual(entry.data, Counter(n: 2))
+        XCTAssertEqual(notifications.count, 1)
     }
 }
 
