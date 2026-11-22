@@ -1,11 +1,10 @@
 import { Suspense, use } from "react";
-import { LegacyRedirect } from "../../../knowledge/_components/legacy-redirect";
 import { DocScreen } from "../_components/doc-screen";
 
+// Hosted inside Knowledge's native macOS shell (KnowledgePageEditorSlot) as well as direct links.
 function Loader({ params }: { params: PageProps<"/apps/docs/[id]">["params"] }) {
   const { id } = use(params);
-  // A Doc moved into Knowledge opens there; a canvas that never was a Doc still opens here.
-  return <LegacyRedirect from={`/apps/docs/${id}`} fallback={<DocScreen id={id} />} />;
+  return <DocScreen key={id} id={id} />;
 }
 
 export default function Page({ params }: PageProps<"/apps/docs/[id]">) {

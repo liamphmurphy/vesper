@@ -440,9 +440,9 @@ test("Present starts from a chosen frame, follows hotspots, and goes back, resta
   await expect(frame).toHaveAttribute("data-at", "n_pay");
   await page.keyboard.press("r");
   await expect(frame).toHaveAttribute("data-at", "n_ship");
-  // Back to the design, which is its page in Knowledge.
+  // Back to the design editor.
   await page.keyboard.press("Escape");
-  await expect(page).toHaveURL(new RegExp(`/knowledge/${"a" + D1.slice(1)}`));
+  await expect(page).toHaveURL(new RegExp(`/apps/designs/${D1}$`));
   expect(errors).toEqual([]);
 });
 
