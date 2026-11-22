@@ -1,6 +1,11 @@
 import SwiftUI
 import VesperCore
 
+struct ChatScrollMessageRequest: Equatable {
+    let token: Int
+    let messageId: String
+}
+
 /// Lazy-scrolling native chat transcript (`ScrollView` + `LazyVStack`, zero per-message web views).
 /// Renders parsed `ChatMessageSegment`s, persona avatars, cards, media, proposals, and the live Work/Thinking card.
 struct ChatTranscriptView: View {
@@ -10,6 +15,7 @@ struct ChatTranscriptView: View {
     let chatId: String
     let session: API.ChatSession?
     let knownPersonaNames: [String]
+    var scrollToMessageRequest: ChatScrollMessageRequest?
     let onSendReply: @MainActor (String) -> Void
 
     @State private var watched: [QueryKey] = []
@@ -194,6 +200,12 @@ struct ChatTranscriptView: View {
                     .task(id: context.match.query["message"]) {
                         if let targetMsg = context.match.query["message"], !targetMsg.isEmpty {
                             proxy.scrollTo(targetMsg, anchor: .center)
+                        }
+                    }
+                    .onChange(of: scrollToMessageRequest) { _, request in
+                        guard let request, !request.messageId.isEmpty else { return }
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            proxy.scrollTo(request.messageId, anchor: .center)
                         }
                     }
                 }

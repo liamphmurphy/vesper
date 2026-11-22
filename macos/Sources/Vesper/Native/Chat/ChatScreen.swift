@@ -25,6 +25,27 @@ final class ChatScreenModel {
     var renameDraft = ""
     var deleteTargetId: String?
 
+    var inspectorOpen = false
+    var inspectorTabId = ChatInspectorLogic.activityTabId
+    var activeDesignId: String?
+    var activeCanvasId: String?
+    var designReviewing = false
+    var threadMessageId: String?
+    var forceShowCode = false
+    var startingPlayground = false
+    var scrollToMessageRequest: ChatScrollMessageRequest?
+    @ObservationIgnored var scrollToken = 0
+
+    func resetInspectorForChatSwitch() {
+        activeDesignId = nil
+        activeCanvasId = nil
+        designReviewing = false
+        threadMessageId = nil
+        forceShowCode = false
+        startingPlayground = false
+        scrollToMessageRequest = nil
+    }
+
     init() {
         let saved = UserDefaults.standard.stringArray(forKey: Self.pinnedDefaultsKey) ?? []
         self.pinnedIds = Set(saved)
@@ -62,6 +83,26 @@ struct ChatScreen: View {
         chatId.map { API.listChatTicketRuns(id: $0) }
     }
 
+    private var codeReviewRequest: APIRequest<API.CodeReviewList>? {
+        chatId.map { API.getChatCodeReview(id: $0) }
+    }
+
+    private var playgroundRequest: APIRequest<API.ChatPlaygroundState>? {
+        chatId.map { API.getChatPlayground(id: $0) }
+    }
+
+    private var canvasesRequest: APIRequest<API.ChatCanvases>? {
+        chatId.map { API.listChatCanvases(id: $0) }
+    }
+
+    private var messagesRequest: APIRequest<API.ListChatMessagesResponse>? {
+        chatId.map { API.listChatMessages(id: $0, limit: 200) }
+    }
+
+    private var costsRequest: APIRequest<API.CostReport>? {
+        chatId.map { API.getCosts(chat: $0) }
+    }
+
     private var chatsRequest: APIRequest<API.ListChatsResponse> {
         API.listChats(
             archived: model.viewMode == .archived ? true : nil,
@@ -97,6 +138,17 @@ struct ChatScreen: View {
         let session = sessionRequest.flatMap { store.entry($0).data }
         let searchEntry = searchRequest.map { store.entry($0) }
         let activePersona = resolvedPersona(session: session, personas: personas)
+        let codeReviews = codeReviewRequest.flatMap { store.entry($0).data?.repositories } ?? []
+        let playgroundState = playgroundRequest.flatMap { store.entry($0).data }
+        let canvases = canvasesRequest.flatMap { store.entry($0).data?.canvases } ?? []
+        let messages = messagesRequest.flatMap { store.entry($0).data?.messages } ?? []
+        let costs = costsRequest.flatMap { store.entry($0).data }
+        let liveActivity: ChatTurnActivity? = {
+            guard session?.state == .running, let runId = session?.currentRunId, !runId.isEmpty else { return nil }
+            let events = store.entry(API.listRunEvents(id: runId)).data?.events ?? []
+            guard !events.isEmpty else { return nil }
+            return ChatTurnActivity.fold(events: events.map(ChatRunEvent.init))
+        }()
 
         VStack(spacing: 0) {
             headerBar(
@@ -112,6 +164,7 @@ struct ChatScreen: View {
                     chatId: chatId,
                     session: session,
                     knownPersonaNames: personas.map(\.name),
+                    scrollToMessageRequest: model.scrollToMessageRequest,
                     onSendReply: { body in
                         Task { _ = await sendMessage(body, activePersona: activePersona) }
                     }
@@ -170,11 +223,32 @@ struct ChatScreen: View {
                 session: session,
                 spaces: spaces,
                 personas: personas,
-                searchEntry: searchEntry
+                searchEntry: searchEntry,
+                messages: messages,
+                harnessModels: harnessModels,
+                costs: costs,
+                codeReviews: codeReviews,
+                playgroundState: playgroundState,
+                canvases: canvases,
+                liveActivity: liveActivity
             ),
             initial: true
         ) { _, next in
             context.chrome = next
+        }
+        .onChange(of: chatId) { oldId, newId in
+            if oldId != newId {
+                model.resetInspectorForChatSwitch()
+                applyInspectorQuery(context.match.query, canvases: canvases)
+            }
+        }
+        .onChange(of: context.match.query) { _, query in
+            applyInspectorQuery(query, canvases: canvases)
+        }
+        .onChange(of: canvases) { _, updatedCanvases in
+            if let canvasQuery = context.match.query["canvas"], !canvasQuery.isEmpty, canvasQuery != "none" {
+                applyInspectorQuery(context.match.query, canvases: updatedCanvases)
+            }
         }
         .task(id: watchKey) { watch() }
         .task {
@@ -193,6 +267,7 @@ struct ChatScreen: View {
             if context.match.query["view"] == "archived" {
                 model.viewMode = .archived
             }
+            applyInspectorQuery(context.match.query, canvases: canvases)
             installCommandHandler()
         }
         .onDisappear {
@@ -427,7 +502,14 @@ struct ChatScreen: View {
         session: API.ChatSession?,
         spaces: [API.ChatSpace],
         personas: [API.Persona],
-        searchEntry: QueryEntry<API.ChatSearchResults>?
+        searchEntry: QueryEntry<API.ChatSearchResults>?,
+        messages: [API.ChatMessage],
+        harnessModels: [API.ChatHarnessModels],
+        costs: API.CostReport?,
+        codeReviews: [API.CodeReview],
+        playgroundState: API.ChatPlaygroundState?,
+        canvases: [API.ChatCanvasSummary],
+        liveActivity: ChatTurnActivity?
     ) -> NativeChrome {
         var input = ChatNav.Input()
         input.chats = chats.map { ChatNav.ChatRow($0, pinned: model.pinnedIds.contains($0.id)) }
@@ -461,16 +543,143 @@ struct ChatScreen: View {
             }
         }
 
+        let inspector = ChatInspectorLogic.buildInspectorModel(ChatInspectorLogic.Input(
+            chatId: chatId,
+            session: session,
+            messages: messages,
+            harnessModels: harnessModels,
+            costs: costs,
+            codeReviews: codeReviews,
+            playgroundState: playgroundState,
+            canvases: canvases,
+            liveActivity: liveActivity,
+            open: model.inspectorOpen,
+            activeTabId: model.inspectorTabId,
+            activeDesignId: model.activeDesignId,
+            activeCanvasId: model.activeCanvasId,
+            designReviewing: model.designReviewing,
+            threadMessageId: model.threadMessageId,
+            forceShowCode: model.forceShowCode,
+            startingPlayground: model.startingPlayground
+        ))
+
         return NativeChrome(
             title: session.map { ChatNav.chatTitle($0.title) } ?? "Chat",
+            inspector: inspector,
             navigator: ChatNav.model(input)
         )
+    }
+
+    private func applyInspectorQuery(_ query: [String: String], canvases: [API.ChatCanvasSummary]) {
+        guard chatId != nil else { return }
+        if let canvasId = query["canvas"], !canvasId.isEmpty, canvasId != "none" {
+            let isDesign = canvases.first(where: { $0.id == canvasId })?.kind == .design
+            if isDesign {
+                model.activeDesignId = canvasId
+                model.inspectorTabId = ChatInspectorLogic.designTabId
+            } else {
+                model.activeCanvasId = canvasId
+                model.inspectorTabId = ChatInspectorLogic.canvasTabId
+            }
+            model.inspectorOpen = true
+        }
+        if let code = query["code"], code == "open" || code == "full" {
+            model.forceShowCode = true
+            model.inspectorTabId = ChatInspectorLogic.codeTabId
+            model.inspectorOpen = true
+        }
+        if let pg = query["playground"], pg == "open" || pg == "full" {
+            model.inspectorTabId = ChatInspectorLogic.playgroundTabId
+            model.inspectorOpen = true
+        }
+        if let thread = query["thread"], !thread.isEmpty {
+            model.threadMessageId = thread
+            model.inspectorTabId = ChatInspectorLogic.threadTabId
+            model.inspectorOpen = true
+        }
+        if let panel = query["panel"],
+           [
+               ChatInspectorLogic.designTabId,
+               ChatInspectorLogic.canvasTabId,
+               ChatInspectorLogic.playgroundTabId,
+               ChatInspectorLogic.codeTabId,
+               ChatInspectorLogic.threadTabId,
+               ChatInspectorLogic.activityTabId,
+           ].contains(panel) {
+            model.inspectorTabId = panel
+            model.inspectorOpen = true
+        }
+    }
+
+    private func startSavedPlayground(chatId: String) {
+        guard !model.startingPlayground else { return }
+        model.startingPlayground = true
+        Task {
+            defer { model.startingPlayground = false }
+            do {
+                _ = try await context.store.mutate(
+                    API.chatPlaygroundAction(id: chatId, action: .start),
+                    invalidating: QueryInvalidation(resources: ["chats"])
+                )
+            } catch {
+                let msg = (error as? APIError)?.userMessage ?? error.localizedDescription
+                context.showToast(ToastItemModel(id: "chat.playground.start", title: msg, tone: .error))
+            }
+        }
     }
 
     private func installCommandHandler() {
         let model = model
         let context = context
         context.onCommand = { command in
+            switch command {
+            case .inspectorVisibility(let open):
+                model.inspectorOpen = open
+                return
+            case .inspectorSelectTab(let tabId):
+                model.inspectorTabId = tabId
+                model.inspectorOpen = true
+                if tabId == ChatInspectorLogic.playgroundTabId,
+                   let currentChatId = context.match.params["id"] {
+                    let pgState = context.store.entry(API.getChatPlayground(id: currentChatId)).data
+                    if pgState?.playground == nil && pgState?.savedSpec == true {
+                        startSavedPlayground(chatId: currentChatId)
+                    }
+                }
+                return
+            case .inspectorAction(let tabId, let actionId, let itemId, _):
+                if tabId == ChatInspectorLogic.activityTabId,
+                   actionId == ChatInspectorLogic.jumpTurnActionId,
+                   let itemId {
+                    model.scrollToken += 1
+                    model.scrollToMessageRequest = ChatScrollMessageRequest(token: model.scrollToken, messageId: itemId)
+                } else if tabId == ChatInspectorLogic.threadTabId,
+                          actionId == ChatInspectorLogic.closeActionId {
+                    model.threadMessageId = nil
+                    if model.inspectorTabId == ChatInspectorLogic.threadTabId {
+                        model.inspectorTabId = ChatInspectorLogic.activityTabId
+                        model.inspectorOpen = false
+                    }
+                } else if tabId == ChatInspectorLogic.designTabId,
+                          actionId == ChatInspectorLogic.reviewActionId {
+                    model.designReviewing.toggle()
+                }
+                return
+            case .panelEvent(let tabId, let event, let payloadJson):
+                if event == "close" {
+                    if tabId == ChatInspectorLogic.threadTabId {
+                        model.threadMessageId = nil
+                        model.inspectorTabId = ChatInspectorLogic.activityTabId
+                    }
+                    model.inspectorOpen = false
+                } else if tabId == ChatInspectorLogic.designTabId, event == "review",
+                          let on = ChatInspectorLogic.parseDesignReviewToggle(from: payloadJson) {
+                    model.designReviewing = on
+                }
+                return
+            default:
+                break
+            }
             guard let action = ChatNav.action(for: command) else { return }
             switch action {
             case .newChat(let personaId):
@@ -788,6 +997,11 @@ struct ChatScreen: View {
         track(chatsRequest)
         if let sessionRequest { track(sessionRequest) }
         if let ticketRunsRequest { track(ticketRunsRequest) }
+        if let codeReviewRequest { track(codeReviewRequest) }
+        if let playgroundRequest { track(playgroundRequest) }
+        if let canvasesRequest { track(canvasesRequest) }
+        if let messagesRequest { track(messagesRequest) }
+        if let costsRequest { track(costsRequest) }
         if let searchRequest { track(searchRequest) }
         watched = keys
     }
