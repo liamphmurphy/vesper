@@ -22,11 +22,14 @@ public struct MarkdownRenderOptions {
     public var links: [String: MarkdownLinkState]
     /// Loaded images by URL; the alt text shows until then.
     public var images: [String: NSImage]
+    /// Drawn math (the chat embeds' render-once path); the TeX source shows until then.
+    public var math: [MarkdownMath: MarkdownMathImage]
 
     public init(
         textStyle: ThemeTokens.TextStyle = .body, textColor: String = "text", anchors: Bool = false, codeBlocks: Bool = false,
         width: CGFloat = 600, expandedCodeBlocks: Set<Int> = [], copiedCodeBlock: Int? = nil,
-        highlights: [Int: [[CodeToken]]] = [:], links: [String: MarkdownLinkState] = [:], images: [String: NSImage] = [:]
+        highlights: [Int: [[CodeToken]]] = [:], links: [String: MarkdownLinkState] = [:], images: [String: NSImage] = [:],
+        math: [MarkdownMath: MarkdownMathImage] = [:]
     ) {
         self.textStyle = textStyle
         self.textColor = textColor
@@ -38,6 +41,18 @@ public struct MarkdownRenderOptions {
         self.highlights = highlights
         self.links = links
         self.images = images
+        self.math = math
+    }
+}
+
+/// Math drawn as an image, with how far its baseline sits below the top (to set it inline).
+public struct MarkdownMathImage {
+    public var image: NSImage
+    public var ascent: CGFloat
+
+    public init(image: NSImage, ascent: CGFloat) {
+        self.image = image
+        self.ascent = ascent
     }
 }
 
@@ -199,7 +214,19 @@ private struct Builder {
             if options.codeBlocks { codeFence(info: info, code: code, context: context, spaceBefore: spaceBefore) }
             else { preformatted(code, context: context, spaceBefore: spaceBefore) }
         case .math(let tex):
-            let text = NSMutableAttributedString(string: tex.replacingOccurrences(of: "\n", with: "\u{2028}"), attributes: [.font: mono, .foregroundColor: context.color])
+            let text: NSMutableAttributedString
+            if let drawn = options.math[MarkdownMath(tex: tex, display: true)] {
+                // KaTeX's display math, shrunk to the column when it's wider.
+                let attachment = NSTextAttachment()
+                attachment.image = drawn.image
+                let size = drawn.image.size
+                let scale = min(1, max(40, options.width - 4) / max(size.width, 1))
+                attachment.bounds = CGRect(x: 0, y: 0, width: size.width * scale, height: size.height * scale)
+                text = NSMutableAttributedString(attachment: attachment)
+                text.addAttributes([.font: mono, .toolTip: tex], range: NSRange(location: 0, length: text.length))
+            } else {
+                text = NSMutableAttributedString(string: tex.replacingOccurrences(of: "\n", with: "\u{2028}"), attributes: [.font: mono, .foregroundColor: context.color])
+            }
             let style = paragraphStyle(context, spaceBefore: spaceBefore, textStyle: .mono)
             style.alignment = .center
             paragraphs.append(Paragraph(text: text, style: style, quotes: context.quotes))
@@ -478,6 +505,17 @@ private struct Builder {
             attributes[.foregroundColor] = self.color("text-2", .labelColor)
             return NSAttributedString(string: code, attributes: attributes)
         case .math(let tex):
+            if let drawn = options.math[MarkdownMath(tex: tex, display: false)] {
+                // On the text's baseline: the image hangs below it by its depth.
+                let attachment = NSTextAttachment()
+                attachment.image = drawn.image
+                let size = drawn.image.size
+                attachment.bounds = CGRect(x: 0, y: -(size.height - drawn.ascent), width: size.width, height: size.height)
+                let s = NSMutableAttributedString(attachment: attachment)
+                attributes[.toolTip] = tex
+                s.addAttributes(attributes, range: NSRange(location: 0, length: s.length))
+                return s
+            }
             attributes[.font] = NSFont.monospacedSystemFont(ofSize: font.pointSize * 0.92, weight: .regular)
             return NSAttributedString(string: tex, attributes: attributes)
         case .html(let html):

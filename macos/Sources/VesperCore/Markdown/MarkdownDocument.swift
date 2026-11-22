@@ -96,6 +96,17 @@ public indirect enum MarkdownInline: Sendable, Equatable {
 }
 
 /// A code block, for highlighting and Copy.
+/// A piece of math in a document: display (a `$$` block) or inline (a `$$x$$` span).
+public struct MarkdownMath: Sendable, Hashable {
+    public var tex: String
+    public var display: Bool
+
+    public init(tex: String, display: Bool) {
+        self.tex = tex
+        self.display = display
+    }
+}
+
 public struct MarkdownCodeBlock: Sendable, Hashable {
     public var code: String
     /// Shiki's language from the fence, nil for plain text.
@@ -164,6 +175,18 @@ extension MarkdownDocument {
     public var imageURLs: [String] {
         var out: [String] = []
         for case .image(let url, _, _) in allInlines where !out.contains(url) { out.append(url) }
+        return out
+    }
+
+    /// The math to draw, each once, in order: `$$` blocks (display) then `$$x$$` spans (inline).
+    public var mathExpressions: [MarkdownMath] {
+        var out: [MarkdownMath] = []
+        for case .math(let tex) in allBlocks where !out.contains(MarkdownMath(tex: tex, display: true)) {
+            out.append(MarkdownMath(tex: tex, display: true))
+        }
+        for case .math(let tex) in allInlines where !out.contains(MarkdownMath(tex: tex, display: false)) {
+            out.append(MarkdownMath(tex: tex, display: false))
+        }
         return out
     }
 }
