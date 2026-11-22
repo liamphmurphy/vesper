@@ -44,7 +44,9 @@ final class ChatCompanion {
     /// How long the complete beat plays: about one loop.
     static let completeDuration: Duration = .milliseconds(3500)
 
-    var talking: Bool { revealingId != nil }
+    /// Talking starts with the first word on screen, not when the reply arrives: a spoken reply
+    /// holds its text while the voice loads, and even an instant pace shows nothing for a beat.
+    var talking: Bool { revealingId != nil && !shown.isEmpty }
 
     /// Takes in the chat's messages: the first list a chat shows is history and never replays;
     /// a reply that arrives later is revealed at its author's pace.
