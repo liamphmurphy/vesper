@@ -1,5 +1,7 @@
-// Package gemini implements Vesper's media.MusicGenerator adapter backed by
-// Google's official google.golang.org/genai SDK (Lyria 3 via Interactions API).
+// Package gemini implements Vesper's media.MusicGenerator and
+// media.VideoGenerator adapters backed by Google's official
+// google.golang.org/genai SDK (Lyria 3 music & Gemini Omni video via the
+// Interactions API).
 package gemini
 
 import (
@@ -67,9 +69,9 @@ func WithPollInterval(d time.Duration) Option {
 func Descriptor() media.Descriptor {
 	return media.Descriptor{
 		ID:           ProviderID,
-		Label:        "Gemini (Lyria)",
-		Description:  "Lyria 3 music generation via Google AI Studio API key or GCP Vertex AI.",
-		Capabilities: []media.Capability{media.CapMusic},
+		Label:        "Gemini (Lyria & Omni)",
+		Description:  "Lyria 3 music and Gemini Omni video generation via Google AI Studio API key or GCP Vertex AI.",
+		Capabilities: []media.Capability{media.CapMusic, media.CapVideo},
 		Fields: []media.FieldSpec{
 			{
 				Key:     "backend",
@@ -119,6 +121,17 @@ func Descriptor() media.Descriptor {
 					{Value: string(interactions.ModelLyria35), Label: "Lyria 3.5 (Flagship full track)"},
 				},
 			},
+			{
+				Key:     "video_model",
+				Label:   "Video Model",
+				Kind:    "select",
+				Default: string(interactions.ModelGeminiOmni12Flash),
+				Options: []media.FieldOption{
+					{Value: string(interactions.ModelGeminiOmni12Flash), Label: "Gemini Omni 1.2 Flash"},
+					{Value: string(interactions.ModelGeminiOmni11Flash), Label: "Gemini Omni 1.1 Flash"},
+					{Value: string(interactions.ModelGeminiOmniFlashPreview), Label: "Gemini Omni Flash (Preview)"},
+				},
+			},
 		},
 	}
 }
@@ -154,13 +167,19 @@ func Register(reg *media.Registry, opts ...Option) {
 	})
 }
 
-// Provider implements media.Provider and media.MusicGenerator via google.golang.org/genai.
+// Provider implements media.Provider, media.MusicGenerator, and
+// media.VideoGenerator via google.golang.org/genai.
 type Provider struct {
 	desc   media.Descriptor
 	cfg    media.ResolvedConfig
 	opts   options
 	apiKey string
 }
+
+var (
+	_ media.MusicGenerator = (*Provider)(nil)
+	_ media.VideoGenerator = (*Provider)(nil)
+)
 
 // New validates cfg and constructs a Gemini music provider without storing keys in logs.
 func New(cfg media.ResolvedConfig, opts ...Option) (*Provider, error) {
@@ -451,6 +470,10 @@ func normalizeAudioFormat(mt *interactions.AudioContentMimeType, data []byte) (c
 }
 
 func (p *Provider) interactionError(inter *interactions.Interaction) error {
+	return p.interactionErrorFor(inter, "music")
+}
+
+func (p *Provider) interactionErrorFor(inter *interactions.Interaction, mediaKind string) error {
 	var parts []string
 	for _, e := range inter.Errors {
 		if e.Message != nil && strings.TrimSpace(*e.Message) != "" {
@@ -470,7 +493,7 @@ func (p *Provider) interactionError(inter *interactions.Interaction) error {
 	case strings.Contains(lower, "permission") || strings.Contains(lower, "unauthenticated") || strings.Contains(lower, "unauthorized"):
 		kind = media.ErrKindAuth
 	}
-	msg := fmt.Sprintf("Gemini music generation ended with status %s.", inter.Status)
+	msg := fmt.Sprintf("Gemini %s generation ended with status %s.", mediaKind, inter.Status)
 	if detail != "" {
 		msg = detail
 	}

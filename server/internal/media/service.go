@@ -383,10 +383,52 @@ func (s *Service) SetDefault(ctx context.Context, ws uuid.UUID, capability Capab
 // ResolveMusic picks and constructs the active MusicGenerator for ws (explicit
 // override first, then workspace default, then first enabled available provider).
 func (s *Service) ResolveMusic(ctx context.Context, ws uuid.UUID, providerIDOverride string) (MusicGenerator, Descriptor, error) {
+	prov, desc, err := s.resolveCapability(
+		ctx,
+		ws,
+		CapMusic,
+		providerIDOverride,
+		"%s does not support music generation",
+		"No Music provider is configured. Add a Gemini API key in Settings → Workspace → Media providers.",
+		func(p Provider) bool { _, ok := p.(MusicGenerator); return ok },
+	)
+	if err != nil {
+		return nil, Descriptor{}, err
+	}
+	return prov.(MusicGenerator), desc, nil
+}
+
+// ResolveVideo picks and constructs the active VideoGenerator for ws (explicit
+// override first, then workspace default, then first enabled available provider).
+func (s *Service) ResolveVideo(ctx context.Context, ws uuid.UUID, providerIDOverride string) (VideoGenerator, Descriptor, error) {
+	prov, desc, err := s.resolveCapability(
+		ctx,
+		ws,
+		CapVideo,
+		providerIDOverride,
+		"%s does not support video generation",
+		"No Video provider is configured. Add a Gemini API key in Settings → Workspace → Media providers.",
+		func(p Provider) bool { _, ok := p.(VideoGenerator); return ok },
+	)
+	if err != nil {
+		return nil, Descriptor{}, err
+	}
+	return prov.(VideoGenerator), desc, nil
+}
+
+func (s *Service) resolveCapability(
+	ctx context.Context,
+	ws uuid.UUID,
+	cap Capability,
+	providerIDOverride string,
+	unsupportedFmt string,
+	defaultUnavailableMsg string,
+	matches func(Provider) bool,
+) (Provider, Descriptor, error) {
 	if s.Registry == nil {
 		return nil, Descriptor{}, &ProviderError{
 			Kind:    ErrKindUnavailable,
-			Message: "No Music provider is configured. Add a Gemini API key in Settings → Workspace → Media providers.",
+			Message: defaultUnavailableMsg,
 		}
 	}
 	q := store.New(s.Pool)
@@ -405,19 +447,19 @@ func (s *Service) ResolveMusic(ctx context.Context, ws uuid.UUID, providerIDOver
 		if !ok {
 			return nil, Descriptor{}, apperr.Invalid("provider_id", "unknown media provider %q", override)
 		}
-		if entry.Descriptor.ComingSoon || !entry.Descriptor.Supports(CapMusic) {
-			return nil, Descriptor{}, apperr.Invalid("provider_id", "%s does not support music generation", entry.Descriptor.Label)
+		if entry.Descriptor.ComingSoon || !entry.Descriptor.Supports(cap) {
+			return nil, Descriptor{}, apperr.Invalid("provider_id", unsupportedFmt, entry.Descriptor.Label)
 		}
 		candidates = []string{override}
 	} else {
-		def, err := q.GetWorkspaceMediaDefault(ctx, store.GetWorkspaceMediaDefaultParams{WorkspaceID: ws, Capability: string(CapMusic)})
+		def, err := q.GetWorkspaceMediaDefault(ctx, store.GetWorkspaceMediaDefaultParams{WorkspaceID: ws, Capability: string(cap)})
 		if err == nil && def.ProviderID != "" {
 			candidates = append(candidates, def.ProviderID)
 		} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return nil, Descriptor{}, err
 		}
 		for _, e := range s.Registry.Entries() {
-			if e.Descriptor.ComingSoon || !e.Descriptor.Supports(CapMusic) {
+			if e.Descriptor.ComingSoon || !e.Descriptor.Supports(cap) {
 				continue
 			}
 			if !slices.Contains(candidates, e.Descriptor.ID) {
@@ -429,7 +471,7 @@ func (s *Service) ResolveMusic(ctx context.Context, ws uuid.UUID, providerIDOver
 	var lastUnavailableReason string
 	for _, id := range candidates {
 		entry, ok := s.Registry.Lookup(id)
-		if !ok || entry.Descriptor.ComingSoon || !entry.Descriptor.Supports(CapMusic) || entry.New == nil {
+		if !ok || entry.Descriptor.ComingSoon || !entry.Descriptor.Supports(cap) || entry.New == nil {
 			continue
 		}
 		row, hasRow := byID[id]
@@ -449,14 +491,13 @@ func (s *Service) ResolveMusic(ctx context.Context, ws uuid.UUID, providerIDOver
 		if err != nil {
 			return nil, Descriptor{}, err
 		}
-		gen, ok := prov.(MusicGenerator)
-		if !ok {
+		if !matches(prov) {
 			continue
 		}
-		return gen, entry.Descriptor, nil
+		return prov, entry.Descriptor, nil
 	}
 
-	msg := "No Music provider is configured. Add a Gemini API key in Settings → Workspace → Media providers."
+	msg := defaultUnavailableMsg
 	if providerIDOverride != "" && lastUnavailableReason != "" {
 		msg = lastUnavailableReason
 	}
