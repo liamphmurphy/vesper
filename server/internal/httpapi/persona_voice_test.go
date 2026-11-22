@@ -15,6 +15,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/media"
 	"github.com/liamphmurphy/vesper/server/internal/media/providers/fake"
 	"github.com/liamphmurphy/vesper/server/internal/secrets"
+	"github.com/liamphmurphy/vesper/server/internal/speech"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 )
 
@@ -200,6 +201,64 @@ func TestReplySpeechStreamReturnsPCMAndCachesWAV(t *testing.T) {
 	wavRes, wavBody := e.speech(chatID, msgID, "part=lead")
 	if wavRes.StatusCode != http.StatusOK || string(wavBody[:4]) != "RIFF" || len(ctrl.SpeechRequests()) != 1 {
 		t.Fatalf("wav replay after stream = %d, %d calls", wavRes.StatusCode, len(ctrl.SpeechRequests()))
+	}
+}
+
+func TestReplySpeechStreamUsesPreSynthesizedBrokerClip(t *testing.T) {
+	broker := speech.NewBroker(0)
+	defer broker.Close()
+
+	reg := media.NewRegistry()
+	ctrl := &fake.Controller{}
+	fake.RegisterSpeech(reg, ctrl)
+	k := make([]byte, 32)
+	_, _ = rand.Read(k)
+	box, err := secrets.NewBox(base64.StdEncoding.EncodeToString(k))
+	if err != nil {
+		t.Fatal(err)
+	}
+	blobs := newFakeBlobs(t)
+	e := newChatEnvServer(t, nil, func(s *Server) {
+		s.Secrets = &secrets.Service{Q: s.Q, Box: box}
+		s.MediaRegistry = reg
+		s.Blobs = blobs.Store
+		s.ArtifactBucket = avatarBucket
+		s.SpeechBroker = broker
+	})
+	e.want("PUT", "/media/providers/fake-speech", map[string]any{"secrets": map[string]any{"api_key": "k"}}, http.StatusOK)
+
+	p := e.want("POST", "/personas", map[string]any{"name": "Iris"}, http.StatusCreated)
+	pid := p["id"].(string)
+	e.want("PATCH", "/personas/"+pid, map[string]any{"revision": p["revision"], "voice_mode": "always", "voice_name": "Kore"}, http.StatusOK)
+	chatID := e.newChat(map[string]any{"persona_id": pid})["id"].(string)
+	m, err := e.q.AppendChatMessage(context.Background(), store.AppendChatMessageParams{
+		SessionID: uuid.MustParse(chatID), Role: "assistant",
+		BodyMd:      "Sure. I checked the runner and it looks fine.\n\nWant the logs?",
+		ContextRefs: json.RawMessage("[]"), Citations: json.RawMessage("[]"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	prePCM := []byte{0x11, 0x22, 0x33, 0x44, 0x55, 0x66}
+	hash := speech.CacheHash("fake-speech", "Kore", "", "Sure. I checked the runner and it looks fine.")
+	broker.Start(hash, func(ctx context.Context, onChunk func([]byte, int) error) ([]byte, string, error) {
+		_ = onChunk(prePCM, 24000)
+		return speech.WAVFromPCM(prePCM, 24000), "fake-tts", nil
+	})
+
+	streamURL := e.srv.URL + "/api/v1/chats/" + chatID + "/messages/" + m.ID.String() + "/speech/stream?part=lead"
+	res, err := http.Get(streamURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || string(body) != string(prePCM) {
+		t.Fatalf("presynth stream = %d %x, want 200 %x", res.StatusCode, body, prePCM)
+	}
+	if len(ctrl.SpeechRequests()) != 0 {
+		t.Fatalf("expected 0 provider calls on presynth hit, got %d", len(ctrl.SpeechRequests()))
 	}
 }
 

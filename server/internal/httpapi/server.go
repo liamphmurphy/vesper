@@ -31,6 +31,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/realtime"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/secrets"
+	"github.com/liamphmurphy/vesper/server/internal/speech"
 	"github.com/liamphmurphy/vesper/server/internal/statemedia"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 	"github.com/liamphmurphy/vesper/server/internal/tracker"
@@ -102,6 +103,9 @@ type Server struct {
 
 	// MediaRegistry overrides the registered media providers (tests inject fake).
 	MediaRegistry   *media.Registry
+	// SpeechBroker shares live pre-synthesized lead clips between an in-process
+	// runner and HTTP speech endpoints.
+	SpeechBroker    *speech.Broker
 	defaultMediaReg *media.Registry
 	mediaRegOnce    sync.Once
 	musicRun        *media.MusicRunner

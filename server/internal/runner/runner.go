@@ -28,9 +28,11 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/artifacts"
 	"github.com/liamphmurphy/vesper/server/internal/blob"
 	"github.com/liamphmurphy/vesper/server/internal/harness"
+	"github.com/liamphmurphy/vesper/server/internal/media"
 	"github.com/liamphmurphy/vesper/server/internal/pageview"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/slides"
+	"github.com/liamphmurphy/vesper/server/internal/speech"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 	"github.com/liamphmurphy/vesper/server/internal/tracker"
 )
@@ -137,6 +139,10 @@ type Runner struct {
 	// StoreSecret saves logins from sign-ins started in Settings; nil leaves
 	// them to another runner.
 	StoreSecret SecretStorer
+	// SpeechBroker and Media, when set (in-process vesper app), pre-synthesize
+	// a voiced chat reply's first sentence while the harness is still writing.
+	SpeechBroker *speech.Broker
+	Media        *media.Service
 	// OnHeartbeat runs after a heartbeat succeeds; vesper app uses it to
 	// clear its startup flag once the runner is visible in LiveRunners.
 	OnHeartbeat func()
@@ -1924,16 +1930,18 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 	if agentdef.SubagentsOn(turnSpec) {
 		stopSubagents = r.startSubagentWorker(ctx, c, ws, turnEnv, sensitive, networks, dir)
 	}
+	preSynth := r.newChatLeadPreSynthesizer(ctx, q, c)
 	onText := func(delta string) {
 		if delta != "" {
 			firstTextMS.CompareAndSwap(-1, time.Since(harnessStart).Milliseconds())
+			preSynth.onTextDelta(delta)
 		}
 	}
 	res, raw, code, waitErr := r.runSession(ctx, c, sh, proc, ws, hTurn, sensitive, maxRuntime-used, r.policyCheck(c), func(s string) {
 		qctx, cancel := context.WithTimeout(ctx, controlTimeout)
 		defer cancel()
 		_ = r.q().SetRunSession(qctx, store.SetRunSessionParams{ID: c.run.ID, HarnessSessionID: &s})
-	}, onText, true)
+	}, onText, preSynth.onEvent, true)
 	stopSubagents()
 	stopReview()
 	harnessDur := time.Since(harnessStart)
@@ -2087,7 +2095,7 @@ func (w *contextWriter) observe(n int64) {
 // protocol, enforcing CheckTool in-process, streaming redacted events and
 // mid-turn ContextTokens updates, supervising pause/cancel/runtime limits, and
 // draining stderr/stdout cleanly on exit.
-func (r *Runner) runSession(ctx context.Context, c runCtx, sh harness.SessionHarness, proc Process, ws harness.Workspace, turn harness.Turn, env map[string]string, remaining time.Duration, check harness.PolicyFunc, onSession func(string), onTextDelta func(string), recordContext bool) (harness.Result, []byte, int, error) {
+func (r *Runner) runSession(ctx context.Context, c runCtx, sh harness.SessionHarness, proc Process, ws harness.Workspace, turn harness.Turn, env map[string]string, remaining time.Duration, check harness.PolicyFunc, onSession func(string), onTextDelta func(string), onEvent func(harness.Event), recordContext bool) (harness.Result, []byte, int, error) {
 	writeContext := func(wctx context.Context, n int64) {
 		qctx, cancel := context.WithTimeout(wctx, controlTimeout)
 		defer cancel()
@@ -2149,6 +2157,9 @@ func (r *Runner) runSession(ctx context.Context, c runCtx, sh harness.SessionHar
 				appendRaw("", line)
 			},
 			OnEvent: func(e harness.Event) {
+				if onEvent != nil {
+					onEvent(e)
+				}
 				payload, b := redactPayload(e.Payload, env)
 				opening.see(e.Type, payload)
 				select {

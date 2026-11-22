@@ -26,6 +26,10 @@ func (s *Server) mediaRegistry() *media.Registry {
 	return s.defaultMediaReg
 }
 
+// MediaService returns a media.Service backed by this server's pool, secrets
+// box and provider registry.
+func (s *Server) MediaService() *media.Service { return s.mediaService() }
+
 func (s *Server) mediaService() *media.Service {
 	var box *secrets.Box
 	if s.Secrets != nil {

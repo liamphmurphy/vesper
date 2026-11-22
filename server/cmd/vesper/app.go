@@ -35,6 +35,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/designs"
 	"github.com/liamphmurphy/vesper/server/internal/githubpr"
 	"github.com/liamphmurphy/vesper/server/internal/httpapi"
+	"github.com/liamphmurphy/vesper/server/internal/media"
 	"github.com/liamphmurphy/vesper/server/internal/memory"
 	"github.com/liamphmurphy/vesper/server/internal/metrics"
 	"github.com/liamphmurphy/vesper/server/internal/pgembed"
@@ -45,6 +46,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/secrets"
 	"github.com/liamphmurphy/vesper/server/internal/seed"
+	"github.com/liamphmurphy/vesper/server/internal/speech"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 	"github.com/liamphmurphy/vesper/server/internal/tracker"
 	"github.com/liamphmurphy/vesper/server/internal/transcript"
@@ -240,10 +242,14 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 		runnerStarting.Store(true)
 	}
 
+	speechBroker := speech.NewBroker(2 * time.Minute)
+	defer speechBroker.Close()
+
 	version := appCfg.Version
 	srv := &httpapi.Server{
 		AnonymousAPI: false,
 		Events:       events,
+		SpeechBroker: speechBroker,
 		Version:      version,
 		Checks:       map[string]httpapi.Pinger{"postgres": pool, "s3": blobs},
 		Pool:         pool,
@@ -303,9 +309,10 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 	var runnerDone chan error
 	if !disableRunner {
 		runnerDone = make(chan error, 1)
+		mediaSvc := srv.MediaService()
 		go func() {
 			defer runnerStarting.Store(false)
-			runnerDone <- runAppMicroVMRunner(ctx, log, dataDir, exeDir, baseURL, designWorkerURL, designToken, pool, blobs, box, blobCfg.ArtifactBucket, appCfg, apiHandler, imgMgr, func() {
+			runnerDone <- runAppMicroVMRunner(ctx, log, dataDir, exeDir, baseURL, designWorkerURL, designToken, pool, blobs, box, blobCfg.ArtifactBucket, appCfg, apiHandler, imgMgr, speechBroker, mediaSvc, func() {
 				runnerStarting.Store(false)
 			})
 		}()
@@ -400,6 +407,8 @@ func runAppMicroVMRunner(
 	cfg config.Config,
 	apiHandler http.Handler,
 	imgMgr *ImageManager,
+	speechBroker *speech.Broker,
+	mediaSvc *media.Service,
 	onHeartbeat func(),
 ) error {
 	kernel := ResolveKernelPath(cfg.Runner.KernelPath, dataDir, exeDir)
@@ -483,10 +492,12 @@ func runAppMicroVMRunner(
 		Backend:     m,
 		Secrets:     secretStore,
 		Tracker:     &tracker.Service{Pool: pool},
-		Blobs:       blobs,
-		Attachments: blobs,
-		Log:         log,
-		Workflows:   workflows,
+		Blobs:        blobs,
+		Attachments:  blobs,
+		Log:          log,
+		SpeechBroker: speechBroker,
+		Media:        mediaSvc,
+		Workflows:    workflows,
 		Designs:     &designs.Service{Pool: pool, Worker: &designs.Worker{URL: designWorkerURL, Token: designToken}, Blobs: blobs, Bucket: artifactBucket},
 		Scheduled: &runs.Service{
 			Pool:                  pool,

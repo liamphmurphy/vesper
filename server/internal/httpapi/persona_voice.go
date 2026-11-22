@@ -3,8 +3,6 @@ package httpapi
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -29,10 +27,7 @@ import (
 // kept in the blob store, so replaying it costs nothing.
 
 const (
-	// speechCacheVersion: 2 drops clips made before the 3.8 WAV trailer and
-	// spoken-style fixes, which had static at the end or read the style aloud.
-	speechCacheVersion = "2"
-	speechTimeout      = 90 * time.Second
+	speechTimeout = 90 * time.Second
 	// maxSpeechBytes bounds a cached clip read back (~120 words of 24 kHz WAV is ~2-3 MB).
 	maxSpeechBytes = 16 << 20
 )
@@ -115,6 +110,7 @@ type resolvedChatSpeech struct {
 	words     int
 	voice     string
 	style     string
+	hash      string
 	key       string
 	gen       media.SpeechGenerator
 }
@@ -180,9 +176,9 @@ func (s *Server) resolveChatSpeech(ctx context.Context, chatID, messageID uuid.U
 	}
 	// The key covers everything that changes the audio, so a new voice or
 	// style speaks afresh while a replay is served from storage. Bump
-	// speechCacheVersion when the audio itself changes for the same inputs.
-	sum := sha256.Sum256([]byte(speechCacheVersion + "\x00" + desc.ID + "\x00" + p.VoiceName + "\x00" + p.VoiceStyle + "\x00" + text))
-	key := "speech/" + c.ID.String() + "/" + msg.ID.String() + "/" + hex.EncodeToString(sum[:12]) + ".wav"
+	// speech.CacheVersion when the audio itself changes for the same inputs.
+	hash := speech.CacheHash(desc.ID, p.VoiceName, p.VoiceStyle, text)
+	key := "speech/" + c.ID.String() + "/" + msg.ID.String() + "/" + hash + ".wav"
 	return resolvedChatSpeech{
 		chatID:    c.ID,
 		messageID: msg.ID,
@@ -191,6 +187,7 @@ func (s *Server) resolveChatSpeech(ctx context.Context, chatID, messageID uuid.U
 		words:     words,
 		voice:     p.VoiceName,
 		style:     p.VoiceStyle,
+		hash:      hash,
 		key:       key,
 		gen:       gen,
 	}, nil
@@ -266,46 +263,63 @@ func (s *Server) streamChatMessageSpeech(w http.ResponseWriter, r *http.Request)
 	var clip media.SpeechClip
 	headersSent := false
 	firstByteMS := int64(-1)
-	if sg, ok := res.gen.(media.StreamingSpeechGenerator); ok {
-		clip, err = sg.StreamSpeech(genCtx, speechReq, func(chunk media.SpeechChunk) error {
-			if len(chunk.PCM) == 0 {
-				return nil
-			}
-			if !headersSent {
-				headersSent = true
-				firstByteMS = time.Since(start).Milliseconds()
-				writeStreamHeaders(chunk.SampleRate)
-			}
-			if _, werr := w.Write(chunk.PCM); werr != nil {
-				return werr
-			}
-			_ = rc.Flush()
+	presynthHit := false
+	writeChunk := func(pcm []byte, rate int) error {
+		if len(pcm) == 0 {
 			return nil
-		})
-	} else {
-		clip, err = res.gen.GenerateSpeech(genCtx, speechReq)
-		if err == nil {
-			pcm, rate, ok := speech.WAVData(clip.Data)
-			if !ok {
-				pcm, rate = clip.Data, speech.DefaultPCMRate
-			}
+		}
+		if !headersSent {
 			headersSent = true
 			firstByteMS = time.Since(start).Milliseconds()
 			writeStreamHeaders(rate)
-			_, _ = w.Write(pcm)
-			_ = rc.Flush()
+		}
+		if _, werr := w.Write(pcm); werr != nil {
+			return werr
+		}
+		_ = rc.Flush()
+		return nil
+	}
+
+	if s.SpeechBroker != nil {
+		if hit, wav, model, berr := s.SpeechBroker.Subscribe(genCtx, res.hash, writeChunk); hit {
+			if berr == nil {
+				presynthHit = true
+				clip = media.SpeechClip{Data: wav, ContentType: "audio/wav", Model: model}
+			} else if headersSent {
+				if s.Log != nil {
+					s.Log.Warn("stream pre-synthesized speech interrupted", "chat_id", res.chatID, "message_id", res.messageID, "err", berr)
+				}
+				return
+			}
 		}
 	}
-	if err != nil {
-		if !headersSent {
-			s.responseError(w, r, speechError(err))
-		} else if s.Log != nil {
-			s.Log.Warn("stream reply speech interrupted", "chat_id", res.chatID, "message_id", res.messageID, "err", err)
+
+	if !presynthHit {
+		if sg, ok := res.gen.(media.StreamingSpeechGenerator); ok {
+			clip, err = sg.StreamSpeech(genCtx, speechReq, func(chunk media.SpeechChunk) error {
+				return writeChunk(chunk.PCM, chunk.SampleRate)
+			})
+		} else {
+			clip, err = res.gen.GenerateSpeech(genCtx, speechReq)
+			if err == nil {
+				pcm, rate, ok := speech.WAVData(clip.Data)
+				if !ok {
+					pcm, rate = clip.Data, speech.DefaultPCMRate
+				}
+				err = writeChunk(pcm, rate)
+			}
 		}
-		return
+		if err != nil {
+			if !headersSent {
+				s.responseError(w, r, speechError(err))
+			} else if s.Log != nil {
+				s.Log.Warn("stream reply speech interrupted", "chat_id", res.chatID, "message_id", res.messageID, "err", err)
+			}
+			return
+		}
 	}
 	if s.Log != nil {
-		s.Log.Info("speech_timing", "chat_id", res.chatID, "message_id", res.messageID, "part", res.partLabel, "streaming", true, "cached", false, "first_byte_ms", firstByteMS, "tts_ms", time.Since(start).Milliseconds(), "words", res.words, "model", clip.Model)
+		s.Log.Info("speech_timing", "chat_id", res.chatID, "message_id", res.messageID, "part", res.partLabel, "streaming", true, "cached", false, "presynth_hit", presynthHit, "first_byte_ms", firstByteMS, "tts_ms", time.Since(start).Milliseconds(), "words", res.words, "model", clip.Model)
 	}
 	if len(clip.Data) > 0 {
 		if err := s.Blobs.Put(context.WithoutCancel(r.Context()), s.ArtifactBucket, res.key, bytes.NewReader(clip.Data), int64(len(clip.Data)), clip.ContentType); err != nil && s.Log != nil {
@@ -336,12 +350,22 @@ func (s *Server) GetChatMessageSpeech(ctx context.Context, req api.GetChatMessag
 	}
 	genCtx, cancel := context.WithTimeout(ctx, speechTimeout)
 	defer cancel()
-	clip, err := res.gen.GenerateSpeech(genCtx, media.SpeechRequest{Text: res.text, Voice: res.voice, Style: res.style})
-	if err != nil {
-		return nil, speechError(err)
+	var clip media.SpeechClip
+	presynthHit := false
+	if s.SpeechBroker != nil {
+		if hit, wav, model, berr := s.SpeechBroker.Subscribe(genCtx, res.hash, nil); hit && berr == nil && len(wav) > 0 {
+			presynthHit = true
+			clip = media.SpeechClip{Data: wav, ContentType: "audio/wav", Model: model}
+		}
+	}
+	if !presynthHit {
+		clip, err = res.gen.GenerateSpeech(genCtx, media.SpeechRequest{Text: res.text, Voice: res.voice, Style: res.style})
+		if err != nil {
+			return nil, speechError(err)
+		}
 	}
 	if s.Log != nil {
-		s.Log.Info("speech_timing", "chat_id", res.chatID, "message_id", res.messageID, "part", res.partLabel, "streaming", false, "cached", false, "tts_ms", time.Since(start).Milliseconds(), "words", res.words, "model", clip.Model)
+		s.Log.Info("speech_timing", "chat_id", res.chatID, "message_id", res.messageID, "part", res.partLabel, "streaming", false, "cached", false, "presynth_hit", presynthHit, "tts_ms", time.Since(start).Milliseconds(), "words", res.words, "model", clip.Model)
 	}
 	// A failed cache write only means the next replay speaks again.
 	if err := s.Blobs.Put(context.WithoutCancel(ctx), s.ArtifactBucket, res.key, bytes.NewReader(clip.Data), int64(len(clip.Data)), clip.ContentType); err != nil {
