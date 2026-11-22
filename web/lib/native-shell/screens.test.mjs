@@ -5,7 +5,6 @@ import { buildWorkflowsNavModel, buildWorkflowPaletteNavModel } from "./models/w
 import { handleWorkHeaderCommand, workHeader, workTabHref } from "./models/work.ts";
 import { buildBoardNavModel } from "./models/board.ts";
 import { buildEpicsNavModel } from "./models/epics.ts";
-import { buildTicketNavModel } from "./models/ticket.ts";
 import { buildEpicDetailNavModel } from "./models/epic-detail.ts";
 import { buildRunsNavModel } from "./models/runs.ts";
 import { buildWikiNavModel } from "./models/wiki.ts";
@@ -106,11 +105,7 @@ test("epics: status and health menus, grouped rows with progress", () => {
   assert.equal(empty.sections[0].emptyText, "No epics match.");
 });
 
-test("ticket and epic detail pages list siblings with the Work header", () => {
-  const t = buildTicketNavModel({ project: "VES", siblings: [{ key: "VES-1", title: "A", status: "in_progress" }], statusNames: { in_progress: "In progress" }, ticketKey: "VES-1" });
-  assert.deepEqual(t.sections[0].items[0], { id: "VES-1", title: "A", subtitle: "VES-1 · In progress", href: "/tickets/VES-1", status: "accent" });
-  assert.equal(t.selectedId, "VES-1");
-  assert.deepEqual(t.actions.map((a) => a.id), ["new-ticket"]);
+test("epic detail page lists siblings with the Work header", () => {
   const e = buildEpicDetailNavModel({ project: "VES", projectName: "Vesper", epics: [{ id: "e1", name: "Launch", done: 1, total: 2 }], epicId: "e1" });
   assert.equal(e.sections[0].title, "Vesper");
   assert.deepEqual(e.sections[0].badge, { text: "1" });

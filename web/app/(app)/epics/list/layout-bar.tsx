@@ -9,7 +9,7 @@ import { useNativeToolbar } from "@/lib/native-shell/use-native-toolbar";
 import { buildTicketsToolbar, parseTicketsToolbarAction } from "@/lib/native-shell/models/tickets-toolbar";
 import { PROJECT_PICKER_ACTION } from "@/lib/native-shell/models/project-picker";
 import type { ToolbarItem } from "@/lib/native-shell/protocol";
-import { useNativeTitle } from "./native-title";
+import { useNativeTitle } from "@/lib/native-shell/use-native-title";
 
 /** A layout's primary action: New ticket, or Open the space for an archived one. */
 export type TicketsAction = { label: string; href: string; primary: boolean };

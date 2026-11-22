@@ -91,6 +91,20 @@ final class NativeRoutesTests: XCTestCase {
         XCTAssertNil(standard.resolve("/learn/c1/extra"))
     }
 
+    func testTicketRoutesAreNative() {
+        let standard = NativeRouteRegistry.standard(debug: false)
+        XCTAssertEqual(standard.resolve("/tickets")?.screen, .tickets)
+        let boardLayout = standard.resolve("/tickets?layout=board")
+        XCTAssertEqual(boardLayout?.screen, .tickets)
+        XCTAssertEqual(boardLayout?.query["layout"], "board")
+        XCTAssertEqual(standard.resolve("/board")?.screen, .tickets)
+        XCTAssertEqual(standard.resolve("/tickets/new")?.screen, .ticketNew)
+        let detail = standard.resolve("/tickets/PAY-1")
+        XCTAssertEqual(detail?.screen, .ticketDetail)
+        XCTAssertEqual(detail?.params["key"], "PAY-1")
+        XCTAssertNil(standard.resolve("/tickets/PAY-1/extra"))
+    }
+
     func testOnlyInAppPathsResolve() {
         XCTAssertNil(registry.resolve("https://example.com/native-debug"))
         XCTAssertNil(registry.resolve("//evil.example/native-debug"))
