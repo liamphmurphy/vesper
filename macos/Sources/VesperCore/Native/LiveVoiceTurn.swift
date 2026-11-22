@@ -15,8 +15,13 @@ public struct LiveVoiceTurn: Equatable, Sendable {
         case replying
     }
 
-    /// How long the transcript must stay unchanged after speech before it's sent.
-    public static let endOfUtterance: TimeInterval = 1.6
+    /// How long a settled transcript (the transcriber has finalized everything heard) must stay
+    /// unchanged before it's sent. The transcriber only finalizes at a natural break, so this can
+    /// be short.
+    public static let endOfSettledUtterance: TimeInterval = 0.7
+    /// How long a transcript still ending in a volatile guess must stay unchanged: the person may
+    /// only be pausing mid-thought.
+    public static let endOfUtterance: TimeInterval = 1.2
 
     public private(set) var phase: Phase = .listening
     /// The latest reply when the utterance was sent; a different one is the answer.
@@ -26,9 +31,11 @@ public struct LiveVoiceTurn: Equatable, Sendable {
 
     public init() {}
 
-    /// Whether the transcript has settled long enough after speech to send it.
-    public static func utteranceEnded(transcript: String, lastChange: Date, now: Date, silence: TimeInterval = endOfUtterance) -> Bool {
-        !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && now.timeIntervalSince(lastChange) >= silence
+    /// Whether the person has finished speaking: something was said and the transcript has stayed
+    /// unchanged for long enough, less when it's `settled` (no volatile tail).
+    public static func utteranceEnded(transcript: String, lastChange: Date, now: Date, settled: Bool) -> Bool {
+        let silence = settled ? endOfSettledUtterance : endOfUtterance
+        return !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && now.timeIntervalSince(lastChange) >= silence
     }
 
     /// The person finished an utterance and it's being sent. `lastReplyId` is the chat's latest

@@ -2,11 +2,19 @@ import XCTest
 @testable import VesperCore
 
 final class LiveVoiceTurnTests: XCTestCase {
-    func testAnUtteranceEndsOnlyAfterSpeechAndASettledPause() {
+    func testAnUtteranceEndsOnlyAfterSpeechAndAPause() {
         let t0 = Date(timeIntervalSince1970: 1000)
-        XCTAssertFalse(LiveVoiceTurn.utteranceEnded(transcript: "  ", lastChange: t0, now: t0.addingTimeInterval(10)), "silence alone sends nothing")
-        XCTAssertFalse(LiveVoiceTurn.utteranceEnded(transcript: "hello", lastChange: t0, now: t0.addingTimeInterval(1.0)))
-        XCTAssertTrue(LiveVoiceTurn.utteranceEnded(transcript: "hello", lastChange: t0, now: t0.addingTimeInterval(LiveVoiceTurn.endOfUtterance)))
+        XCTAssertFalse(LiveVoiceTurn.utteranceEnded(transcript: "  ", lastChange: t0, now: t0.addingTimeInterval(10), settled: true), "silence alone sends nothing")
+        XCTAssertFalse(LiveVoiceTurn.utteranceEnded(transcript: "hello", lastChange: t0, now: t0.addingTimeInterval(0.5), settled: true))
+        XCTAssertTrue(LiveVoiceTurn.utteranceEnded(transcript: "hello", lastChange: t0, now: t0.addingTimeInterval(LiveVoiceTurn.endOfSettledUtterance), settled: true))
+    }
+
+    func testAVolatileTailWaitsLongerThanASettledOne() {
+        let t0 = Date(timeIntervalSince1970: 1000)
+        let between = t0.addingTimeInterval((LiveVoiceTurn.endOfSettledUtterance + LiveVoiceTurn.endOfUtterance) / 2)
+        XCTAssertTrue(LiveVoiceTurn.utteranceEnded(transcript: "I think", lastChange: t0, now: between, settled: true))
+        XCTAssertFalse(LiveVoiceTurn.utteranceEnded(transcript: "I think", lastChange: t0, now: between, settled: false), "mid-thought pauses keep listening")
+        XCTAssertTrue(LiveVoiceTurn.utteranceEnded(transcript: "I think", lastChange: t0, now: t0.addingTimeInterval(LiveVoiceTurn.endOfUtterance), settled: false))
     }
 
     func testListensAgainOnlyAfterTheAnswerHasRevealedAndSpoken() {
