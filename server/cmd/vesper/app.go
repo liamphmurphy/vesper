@@ -476,6 +476,7 @@ func runAppMicroVMRunner(
 			Version:               cfg.Version,
 			RequireHarnessKey:     true,
 			ChatIdleTTL:           cfg.Runner.ChatIdleTTL,
+			WarmSessionTTL:        runner.DefaultWarmSessionTTL,
 			MaxHold:               cfg.Runner.MaxHold,
 			MaxHoldAttempts:       cfg.Runner.MaxHoldAttempts,
 			RolloverContextTokens: int64(cfg.RolloverContextTokens),

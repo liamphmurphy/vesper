@@ -15,7 +15,10 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/agentdef"
 )
 
-var _ SessionHarness = Codex{}
+var (
+	_ SessionHarness           = Codex{}
+	_ PersistentSessionHarness = Codex{}
+)
 
 // SessionInvocation returns the command, env, and config files for driving
 // Codex over `codex app-server --listen stdio://`.
@@ -270,6 +273,268 @@ func (c Codex) RunSession(ctx context.Context, stdin io.WriteCloser, stdout io.R
 		return st.res, err
 	}
 	return st.res, nil
+}
+
+// OpenSession initializes a persistent `codex app-server` thread so follow-up
+// chat turns can issue `turn/start` without restarting the app-server process.
+func (c Codex) OpenSession(ctx context.Context, stdin io.WriteCloser, stdout io.Reader, ws Workspace, t Turn, cb SessionCallbacks) (PersistentSession, error) {
+	noTools := t.Spec.HarnessOptions[agentdef.OptionNoTools] == "true"
+	hookEnv, err := codexHookEnv(ws, codexHookRelPath(t.ConfigTag), noTools)
+	if err != nil {
+		return nil, err
+	}
+	expectedCmd := hookEnv["LAZYAGENTS_POLICY_HOOK_COMMAND"]
+
+	w := newLineWriter(stdin)
+	ctrl := &codexControl{w: w, pending: map[int64]chan *codexRPCError{}}
+	ctrl.nextID.Store(100)
+	if cb.OnControl != nil {
+		cb.OnControl(ctrl)
+	}
+
+	const (
+		reqInit   int64 = 1
+		reqHooks  int64 = 2
+		reqThread int64 = 3
+	)
+	if err := w.writeJSON(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      reqInit,
+		"method":  "initialize",
+		"params": map[string]any{
+			"clientInfo": map[string]any{"name": "vesper", "version": "1.0.0"},
+		},
+	}); err != nil {
+		_ = w.Close()
+		return nil, fmt.Errorf("codex write initialize: %w", err)
+	}
+
+	sc := bufio.NewScanner(stdout)
+	sc.Buffer(make([]byte, 256<<10), sessionMaxScanBytes)
+	for sc.Scan() {
+		line := append([]byte(nil), sc.Bytes()...)
+		if cb.OnRaw != nil {
+			cb.OnRaw(line)
+		}
+		var msg codexRPCMessage
+		if json.Unmarshal(line, &msg) != nil {
+			continue
+		}
+		if msg.Method == "" && len(msg.ID) > 0 && string(msg.ID) != "null" {
+			var idNum int64
+			if json.Unmarshal(msg.ID, &idNum) != nil {
+				continue
+			}
+			switch idNum {
+			case reqInit:
+				if msg.Error != nil {
+					_ = w.Close()
+					return nil, fmt.Errorf("codex initialize: %s", msg.Error.Message)
+				}
+				if err := w.writeJSON(map[string]any{"jsonrpc": "2.0", "method": "initialized"}); err != nil {
+					_ = w.Close()
+					return nil, fmt.Errorf("codex write initialized: %w", err)
+				}
+				if err := w.writeJSON(map[string]any{
+					"jsonrpc": "2.0",
+					"id":      reqHooks,
+					"method":  "hooks/list",
+					"params":  map[string]any{"cwd": ws.Dir},
+				}); err != nil {
+					_ = w.Close()
+					return nil, fmt.Errorf("codex write hooks/list: %w", err)
+				}
+			case reqHooks:
+				if msg.Error != nil {
+					_ = w.Close()
+					return nil, fmt.Errorf("codex hooks/list: %s", msg.Error.Message)
+				}
+				if err := validateCodexHooks(msg.Result, expectedCmd); err != nil {
+					_ = w.Close()
+					return nil, err
+				}
+				method := "thread/start"
+				params := map[string]any{
+					"cwd":            ws.Dir,
+					"approvalPolicy": "never",
+					"config":         map[string]any{"bypass_hook_trust": true},
+				}
+				if t.Spec.Model != "" {
+					params["model"] = t.Spec.Model
+				}
+				if t.SystemAppend != "" {
+					params["developerInstructions"] = t.SystemAppend
+				}
+				if t.SessionID != "" {
+					method = "thread/resume"
+					params["threadId"] = t.SessionID
+				}
+				if err := w.writeJSON(map[string]any{
+					"jsonrpc": "2.0",
+					"id":      reqThread,
+					"method":  method,
+					"params":  params,
+				}); err != nil {
+					_ = w.Close()
+					return nil, fmt.Errorf("codex write %s: %w", method, err)
+				}
+			case reqThread:
+				if msg.Error != nil {
+					_ = w.Close()
+					return nil, fmt.Errorf("codex thread open: %s", msg.Error.Message)
+				}
+				var tr struct {
+					Thread struct {
+						ID string `json:"id"`
+					} `json:"thread"`
+				}
+				if err := json.Unmarshal(msg.Result, &tr); err != nil || tr.Thread.ID == "" {
+					_ = w.Close()
+					return nil, fmt.Errorf("codex thread response missing thread id")
+				}
+				ctrl.setThread(tr.Thread.ID)
+				if cb.OnSession != nil {
+					cb.OnSession(tr.Thread.ID)
+				}
+				return &codexPersistentSession{
+					c:        c,
+					w:        w,
+					sc:       sc,
+					ws:       ws,
+					ctrl:     ctrl,
+					threadID: tr.Thread.ID,
+					noTools:  noTools,
+					nextID:   10,
+					alive:    true,
+				}, nil
+			}
+		}
+	}
+	_ = w.Close()
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	return nil, io.EOF
+}
+
+type codexPersistentSession struct {
+	c        Codex
+	w        *lineWriter
+	sc       *bufio.Scanner
+	ws       Workspace
+	ctrl     *codexControl
+	threadID string
+	noTools  bool
+	nextID   int64
+	mu       sync.Mutex
+	alive    bool
+}
+
+func (s *codexPersistentSession) Alive() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.alive
+}
+
+func (s *codexPersistentSession) Close() error {
+	s.mu.Lock()
+	s.alive = false
+	s.mu.Unlock()
+	s.ctrl.closeAll()
+	return s.w.Close()
+}
+
+func (s *codexPersistentSession) RunTurn(ctx context.Context, t Turn, cb SessionCallbacks) (Result, error) {
+	if !s.Alive() {
+		return Result{}, io.ErrClosedPipe
+	}
+	if cb.OnControl != nil {
+		cb.OnControl(s.ctrl)
+	}
+	st := &codexSessionState{
+		model:    t.Spec.Model,
+		prices:   s.c.Prices,
+		baseline: s.c.Baseline,
+		emit: func(ev Event) {
+			if cb.OnEvent != nil {
+				cb.OnEvent(ev)
+			}
+		},
+		onContextTokens: cb.OnContextTokens,
+		onTextDelta:     cb.OnTextDelta,
+	}
+	st.markStarted(s.threadID)
+
+	reqTurn := s.nextID
+	s.nextID++
+	if err := s.w.writeJSON(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      reqTurn,
+		"method":  "turn/start",
+		"params":  codexTurnStartParams(s.ws, t, s.threadID),
+	}); err != nil {
+		_ = s.Close()
+		return st.res, fmt.Errorf("codex write turn/start: %w", err)
+	}
+
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	for s.sc.Scan() {
+		line := append([]byte(nil), s.sc.Bytes()...)
+		if cb.OnRaw != nil {
+			cb.OnRaw(line)
+		}
+		var msg codexRPCMessage
+		if json.Unmarshal(line, &msg) != nil {
+			continue
+		}
+		if msg.Method != "" && len(msg.ID) > 0 && string(msg.ID) != "null" {
+			idRaw := append(json.RawMessage(nil), msg.ID...)
+			method := msg.Method
+			paramsRaw := append(json.RawMessage(nil), msg.Params...)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				handleCodexServerRequest(ctx, s.w, cb.CheckTool, s.noTools, idRaw, method, paramsRaw)
+			}()
+			continue
+		}
+		if msg.Method == "" && len(msg.ID) > 0 && string(msg.ID) != "null" {
+			var idNum int64
+			if json.Unmarshal(msg.ID, &idNum) != nil {
+				continue
+			}
+			if idNum == reqTurn {
+				if msg.Error != nil {
+					st.fail(msg.Error.Message)
+					return st.res, nil
+				}
+				var tr struct {
+					Turn struct {
+						ID string `json:"id"`
+					} `json:"turn"`
+				}
+				if json.Unmarshal(msg.Result, &tr) == nil && tr.Turn.ID != "" {
+					s.ctrl.setTurn(tr.Turn.ID)
+				}
+			} else {
+				s.ctrl.resolve(idNum, msg.Error)
+			}
+			continue
+		}
+		if msg.Method != "" {
+			if done := st.handleNotification(msg.Method, msg.Params); done {
+				return st.res, nil
+			}
+		}
+	}
+	s.mu.Lock()
+	s.alive = false
+	s.mu.Unlock()
+	if err := s.sc.Err(); err != nil {
+		return st.res, err
+	}
+	return st.res, io.EOF
 }
 
 func codexTurnStartParams(ws Workspace, t Turn, threadID string) map[string]any {

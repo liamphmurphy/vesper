@@ -14,7 +14,10 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/agentdef"
 )
 
-var _ SessionHarness = Antigravity{}
+var (
+	_ SessionHarness           = Antigravity{}
+	_ PersistentSessionHarness = Antigravity{}
+)
 
 // agyUsesStreamJSON reports whether an Antigravity turn must run over
 // `agy -p --output-format stream-json` instead of `agy acp --stdio`.
@@ -323,6 +326,321 @@ func (Antigravity) RunSession(ctx context.Context, stdin io.WriteCloser, stdout 
 		return st.res, err
 	}
 	return st.res, nil
+}
+
+// OpenSession initializes a persistent `agy acp --stdio` session so follow-up
+// chat turns can send new `session/prompt` calls without restarting the CLI.
+func (Antigravity) OpenSession(ctx context.Context, stdin io.WriteCloser, stdout io.Reader, ws Workspace, t Turn, cb SessionCallbacks) (PersistentSession, error) {
+	if agyUsesStreamJSON(t.Spec) {
+		return nil, fmt.Errorf("agy stream-json mode does not support persistent sessions")
+	}
+	noTools := t.Spec.HarnessOptions[agentdef.OptionNoTools] == "true"
+	w := newLineWriter(stdin)
+	ctrl := &agyControl{w: w}
+	if cb.OnControl != nil {
+		cb.OnControl(ctrl)
+	}
+	sc := bufio.NewScanner(stdout)
+	sc.Buffer(make([]byte, 256<<10), sessionMaxScanBytes)
+
+	s := &agyPersistentSession{
+		w:       w,
+		sc:      sc,
+		ctrl:    ctrl,
+		noTools: noTools,
+		nextID:  1,
+		alive:   true,
+	}
+
+	initResp, err := s.call(cb.OnRaw, "initialize", map[string]any{
+		"protocolVersion":    1,
+		"clientCapabilities": map[string]any{},
+	})
+	if err != nil {
+		_ = s.Close()
+		return nil, err
+	}
+	if initResp.Error != nil {
+		_ = s.Close()
+		return nil, fmt.Errorf("agy initialize: %s", initResp.Error.Message)
+	}
+
+	openSess := func() (agyRPCResponse, error) {
+		if t.SessionID != "" {
+			return s.call(cb.OnRaw, "session/load", map[string]any{
+				"sessionId":  t.SessionID,
+				"cwd":        ws.Dir,
+				"mcpServers": []any{},
+			})
+		}
+		return s.call(cb.OnRaw, "session/new", map[string]any{
+			"cwd":        ws.Dir,
+			"mcpServers": []any{},
+		})
+	}
+	sessResp, err := openSess()
+	if err != nil {
+		_ = s.Close()
+		return nil, err
+	}
+	if sessResp.Error != nil && sessResp.Error.Code == -32000 && os.Getenv("GEMINI_API_KEY") != "" {
+		authResp, authErr := s.call(cb.OnRaw, "authenticate", map[string]any{"methodId": "gemini-api-key"})
+		if authErr != nil {
+			_ = s.Close()
+			return nil, authErr
+		}
+		if authResp.Error != nil {
+			_ = s.Close()
+			return nil, fmt.Errorf("agy authenticate: %s", authResp.Error.Message)
+		}
+		sessResp, err = openSess()
+		if err != nil {
+			_ = s.Close()
+			return nil, err
+		}
+	}
+	if sessResp.Error != nil {
+		_ = s.Close()
+		return nil, fmt.Errorf("agy open session: %s", sessResp.Error.Message)
+	}
+	var opened struct {
+		SessionID string `json:"sessionId"`
+	}
+	_ = json.Unmarshal(sessResp.Result, &opened)
+	sid := opened.SessionID
+	if sid == "" {
+		sid = t.SessionID
+	}
+	s.sid = sid
+	ctrl.setSession(sid)
+	if cb.OnSession != nil && sid != "" {
+		cb.OnSession(sid)
+	}
+	return s, nil
+}
+
+type agyPersistentSession struct {
+	w          *lineWriter
+	sc         *bufio.Scanner
+	ctrl       *agyControl
+	sid        string
+	noTools    bool
+	nextID     int64
+	lastModel  string
+	lastEffort string
+	mu         sync.Mutex
+	alive      bool
+}
+
+func (s *agyPersistentSession) Alive() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.alive
+}
+
+func (s *agyPersistentSession) Close() error {
+	s.mu.Lock()
+	s.alive = false
+	s.mu.Unlock()
+	return s.w.Close()
+}
+
+func (s *agyPersistentSession) allocID() int64 {
+	id := s.nextID
+	s.nextID++
+	return id
+}
+
+func (s *agyPersistentSession) call(onRaw func([]byte), method string, params any) (agyRPCResponse, error) {
+	id := s.allocID()
+	if err := s.w.writeJSON(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"method":  method,
+		"params":  params,
+	}); err != nil {
+		return agyRPCResponse{}, fmt.Errorf("agy write %s: %w", method, err)
+	}
+	for s.sc.Scan() {
+		line := append([]byte(nil), s.sc.Bytes()...)
+		if onRaw != nil {
+			onRaw(line)
+		}
+		var launchErr struct {
+			Event  string `json:"event"`
+			Result struct {
+				Status string `json:"status"`
+				Error  string `json:"error"`
+			} `json:"result"`
+		}
+		if json.Unmarshal(line, &launchErr) == nil && launchErr.Event == "result" && launchErr.Result.Status == "ERROR" {
+			return agyRPCResponse{}, fmt.Errorf("%s", launchErr.Result.Error)
+		}
+		var msg agyRPCMessage
+		if json.Unmarshal(line, &msg) != nil {
+			continue
+		}
+		if msg.Method != "" || len(msg.ID) == 0 || string(msg.ID) == "null" {
+			continue
+		}
+		var respID int64
+		if json.Unmarshal(msg.ID, &respID) == nil && respID == id {
+			return agyRPCResponse{Result: msg.Result, Error: msg.Error}, nil
+		}
+	}
+	s.mu.Lock()
+	s.alive = false
+	s.mu.Unlock()
+	if err := s.sc.Err(); err != nil {
+		return agyRPCResponse{}, err
+	}
+	return agyRPCResponse{}, fmt.Errorf("agy exited before responding to %s", method)
+}
+
+func (s *agyPersistentSession) RunTurn(ctx context.Context, t Turn, cb SessionCallbacks) (Result, error) {
+	if !s.Alive() {
+		return Result{}, io.ErrClosedPipe
+	}
+	if cb.OnControl != nil {
+		cb.OnControl(s.ctrl)
+	}
+	st := &agySessionState{
+		model:     t.Spec.Model,
+		sessionID: s.sid,
+		called:    map[string]bool{},
+		finished:  map[string]bool{},
+		toolNames: map[string]string{},
+		emit: func(ev Event) {
+			if cb.OnEvent != nil {
+				cb.OnEvent(ev)
+			}
+		},
+		onContextTokens: cb.OnContextTokens,
+		onTextDelta:     cb.OnTextDelta,
+	}
+	st.res.SessionID = s.sid
+	st.emit(Event{"lifecycle", map[string]any{
+		"state":      "harness_started",
+		"harness":    agentdef.HarnessAntigravity,
+		"model":      t.Spec.Model,
+		"session_id": s.sid,
+	}})
+
+	model := t.Spec.Model
+	effort := t.Spec.HarnessOptions["effort"]
+	if effort != "" {
+		if base, _, ok := agentdef.CutEffortSuffix(model); ok {
+			model = base
+		}
+	}
+	if model != "" && model != s.lastModel {
+		resp, err := s.call(cb.OnRaw, "session/set_config_option", map[string]any{
+			"sessionId": s.sid,
+			"configId":  "model",
+			"value":     model,
+		})
+		if err != nil {
+			return st.res, err
+		}
+		if resp.Error != nil && resp.Error.Code != -32602 {
+			st.fail(resp.Error.Message)
+			return st.res, nil
+		}
+		s.lastModel = model
+	}
+	if effort != "" && effort != s.lastEffort {
+		resp, err := s.call(cb.OnRaw, "session/set_config_option", map[string]any{
+			"sessionId": s.sid,
+			"configId":  "thought_level",
+			"value":     effort,
+		})
+		if err != nil {
+			return st.res, err
+		}
+		if resp.Error != nil && resp.Error.Code != -32602 {
+			st.fail(resp.Error.Message)
+			return st.res, nil
+		}
+		s.lastEffort = effort
+	}
+
+	promptText := t.Prompt
+	if t.SystemAppend != "" {
+		if promptText != "" {
+			promptText = t.SystemAppend + "\n\n" + promptText
+		} else {
+			promptText = t.SystemAppend
+		}
+	}
+	if !s.noTools {
+		if note := agyImageNote(t.Images); note != "" {
+			promptText += "\n\n" + note
+		}
+	}
+	blocks := []map[string]any{{"type": "text", "text": promptText}}
+	for _, im := range t.InlineImages {
+		blocks = append(blocks, map[string]any{
+			"type":     "image",
+			"mimeType": im.MediaType,
+			"data":     base64.StdEncoding.EncodeToString(im.Data),
+		})
+	}
+
+	promptID := s.allocID()
+	if err := s.w.writeJSON(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      promptID,
+		"method":  "session/prompt",
+		"params": map[string]any{
+			"sessionId": s.sid,
+			"prompt":    blocks,
+		},
+	}); err != nil {
+		_ = s.Close()
+		return st.res, fmt.Errorf("agy write session/prompt: %w", err)
+	}
+
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	for s.sc.Scan() {
+		line := append([]byte(nil), s.sc.Bytes()...)
+		if cb.OnRaw != nil {
+			cb.OnRaw(line)
+		}
+		var msg agyRPCMessage
+		if json.Unmarshal(line, &msg) != nil {
+			continue
+		}
+		if msg.Method != "" && len(msg.ID) > 0 && string(msg.ID) != "null" {
+			idRaw := append(json.RawMessage(nil), msg.ID...)
+			method := msg.Method
+			paramsRaw := append(json.RawMessage(nil), msg.Params...)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				handleAgyServerRequest(ctx, s.w, cb.CheckTool, s.noTools, idRaw, method, paramsRaw)
+			}()
+			continue
+		}
+		if msg.Method == "" && len(msg.ID) > 0 && string(msg.ID) != "null" {
+			var respID int64
+			if json.Unmarshal(msg.ID, &respID) == nil && respID == promptID {
+				st.finishPrompt(msg.Result, msg.Error)
+				return st.res, nil
+			}
+			continue
+		}
+		if msg.Method == "session/update" {
+			st.handleUpdate(msg.Params)
+		}
+	}
+	s.mu.Lock()
+	s.alive = false
+	s.mu.Unlock()
+	if err := s.sc.Err(); err != nil {
+		return st.res, err
+	}
+	return st.res, io.EOF
 }
 
 type agyControl struct {

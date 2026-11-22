@@ -421,7 +421,7 @@ func runRunner(ctx context.Context, log *slog.Logger) error {
 			ModelPrices: rc.ModelPrices,
 			ID:          fmt.Sprintf("%s-%d", host, os.Getpid()), MaxConcurrent: rc.MaxConcurrent, MCPURL: rc.MCPURL,
 			Grace: 30 * time.Second, LogBucket: "run-logs", AttachmentBucket: cfg.Blob.ArtifactBucket, Version: cfg.Version, RequireHarnessKey: config.IsolatesBackend(rc.Backend),
-			ChatIdleTTL: rc.ChatIdleTTL, MaxHold: rc.MaxHold, MaxHoldAttempts: rc.MaxHoldAttempts, RolloverContextTokens: int64(cfg.RolloverContextTokens),
+			ChatIdleTTL: rc.ChatIdleTTL, WarmSessionTTL: runner.DefaultWarmSessionTTL, MaxHold: rc.MaxHold, MaxHoldAttempts: rc.MaxHoldAttempts, RolloverContextTokens: int64(cfg.RolloverContextTokens),
 			RepoMap:     rc.RepoMap,
 			Playgrounds: runner.PlaygroundConfig{Ports: rc.PlaygroundPorts, IdleTTL: rc.PlaygroundIdleTTL, Origins: origins(cfg.WebURL, cfg.PublicURL)},
 		},

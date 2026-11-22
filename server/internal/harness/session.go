@@ -45,6 +45,26 @@ type SessionHarness interface {
 	RunSession(ctx context.Context, stdin io.WriteCloser, stdout io.Reader, ws Workspace, t Turn, cb SessionCallbacks) (Result, error)
 }
 
+// PersistentSession is an already-initialized bidirectional harness process
+// kept alive across consecutive chat turns to skip CLI boot, MCP connection,
+// and session resume/load on follow-up messages.
+type PersistentSession interface {
+	// RunTurn sends one turn over the open session and returns once it finishes.
+	// Callers must not invoke RunTurn concurrently on the same session.
+	RunTurn(ctx context.Context, t Turn, cb SessionCallbacks) (Result, error)
+	// Alive reports whether the underlying stdio stream is still usable.
+	Alive() bool
+	// Close closes stdin so the harness process exits cleanly.
+	Close() error
+}
+
+// PersistentSessionHarness is optionally implemented by harnesses that can
+// keep a bidirectional stdio process warm across consecutive turns.
+type PersistentSessionHarness interface {
+	SessionHarness
+	OpenSession(ctx context.Context, stdin io.WriteCloser, stdout io.Reader, ws Workspace, t Turn, cb SessionCallbacks) (PersistentSession, error)
+}
+
 // lineWriter serializes NDJSON writes and Close across goroutines so concurrent
 // Interrupt() control calls and normal RPC replies never interleave bytes.
 type lineWriter struct {

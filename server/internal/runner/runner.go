@@ -57,6 +57,9 @@ type Config struct {
 	// freed; the chat's next message starts a new segment. 0 means
 	// DefaultChatIdleTTL.
 	ChatIdleTTL time.Duration
+	// WarmSessionTTL keeps a chat's initialized stdio harness process alive
+	// between turns to avoid CLI/MCP cold-start latency. 0 disables warm reuse.
+	WarmSessionTTL time.Duration
 	// ChatImageTimeout bounds one Codex image step for a chat on another
 	// harness. 0 means DefaultChatImageTimeout.
 	ChatImageTimeout time.Duration
@@ -143,6 +146,7 @@ type Runner struct {
 	// a voiced chat reply's first sentence while the harness is still writing.
 	SpeechBroker *speech.Broker
 	Media        *media.Service
+	warmSessions warmSessionPool
 	// OnHeartbeat runs after a heartbeat succeeds; vesper app uses it to
 	// clear its startup flag once the runner is visible in LiveRunners.
 	OnHeartbeat func()
@@ -212,6 +216,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			r.warmSessions.closeAll()
 			r.wg.Wait()
 			qctx, cancel := context.WithTimeout(context.Background(), controlTimeout)
 			_ = r.q().DeleteRunner(qctx, r.Cfg.ID)
@@ -879,6 +884,7 @@ func (r *Runner) Sweep(ctx context.Context) {
 			r.otherBackend = append(r.otherBackend, id)
 			continue
 		}
+		r.warmSessions.evict(id)
 		r.cleanup(ctx, id)
 	}
 }
@@ -1571,7 +1577,11 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 		log.Error("token", "err", err)
 		return
 	}
+	keepToken := false
 	defer func() {
+		if keepToken {
+			return
+		}
 		qctx, cancel := context.WithTimeout(context.Background(), controlTimeout)
 		defer cancel()
 		_ = agents.RevokeToken(qctx, q, c.agent.ID, tok.ID)
@@ -1799,6 +1809,13 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 	if len(skills) > 0 {
 		turnSpec.Skills = append(slices.Clone(c.spec.Skills), skills...)
 	}
+	warmEligible := warmSessionEligible(r, c, h, turnSpec, handoff, turn)
+	warmFP := ""
+	if warmEligible {
+		// Fingerprint before SessionInvocation adds per-turn token files so
+		// identical consecutive turns reuse the parked harness process.
+		warmFP = warmSessionFingerprint(turnSpec, dir, section, files, env)
+	}
 	sh, ok := h.(harness.SessionHarness)
 	if !ok {
 		r.end(ctx, c, "failed", "harness does not support bidirectional sessions", runs.VerbRunFailed)
@@ -1879,45 +1896,38 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 		}
 	}
 	networks = append(networks, r.turnPlayground(ctx, c, env, sensitive)...)
-	// instruction_bytes and skills feed get_run's efficiency summary: what each
-	// harness had to read before its first tool call (LAZYAGENTS-257).
-	r.event(ctx, c.run.ID, "lifecycle", map[string]any{"state": "turn_started", "turn": turn.Seq, "trigger": turn.Trigger,
-		"harness": c.spec.Harness, "resume": session != "", "instruction_bytes": len(section), "skills": len(turnSpec.Skills)})
 	turnEnv := env
 	if c.run.Purpose == "chat" && allowedScope(c.spec, "repo:write") {
 		// Pushing waits for the person: the persona asks with request_push.
 		turnEnv = withoutPushCredentials(env)
 	}
-	proc, err := r.Backend.Start(ctx, wsID(c.run), ExecSpec{
-		Name: fmt.Sprintf("lazyagents-turn-%s-%d", c.run.ID, turn.Seq), Argv: argv, Env: turnEnv, Dir: dir, Files: files, Networks: networks,
-	})
-	if err != nil {
-		_ = q.FinishTurn(ctx, store.FinishTurnParams{ID: turn.ID, Usage: []byte("{}")})
-		r.end(ctx, c, "failed", "Couldn't start the harness: "+err.Error(), runs.VerbRunFailed)
-		return
+	onSession := func(s string) {
+		qctx, cancel := context.WithTimeout(ctx, controlTimeout)
+		defer cancel()
+		_ = r.q().SetRunSession(qctx, store.SetRunSessionParams{ID: c.run.ID, HarnessSessionID: &s})
 	}
-	// The first turn delivers context files: each counts as one read (§6.5).
-	if turn.Trigger == "start" || (c.run.Purpose == "chat" && turn.Seq == 1) {
-		now := time.Now()
-		if c.run.Purpose == "chat" {
-			// Delivered context still counts as a read, but sits just before the turn so
-			// it isn't cited as something the assistant looked up (see runs.ChatCitations).
-			now = turn.StartedAt.Add(-time.Millisecond)
-		}
-		for _, f := range ctxFiles {
-			if a, err := q.GetArtifact(ctx, store.GetArtifactParams{ID: f.ArtifactID, WorkspaceID: c.run.WorkspaceID, Viewer: pageview.From(ctx).UserID}); err == nil {
-				if f.VersionID != nil {
-					a.CurrentVersionID = f.VersionID
-				}
-				_ = artifacts.RecordRead(ctx, q, a, c.agent.ID, &c.run.ID, "", &now)
-			}
+	preSynth := r.newChatLeadPreSynthesizer(ctx, q, c)
+
+	var (
+		proc            Process
+		res             harness.Result
+		raw             []byte
+		code            int
+		waitErr         error
+		harnessStart    time.Time
+		setupMS         int64
+		usedWarmSession bool
+		ranTurn         bool
+		firstTextMS     atomic.Int64
+	)
+	firstTextMS.Store(-1)
+	onText := func(delta string) {
+		if delta != "" {
+			firstTextMS.CompareAndSwap(-1, time.Since(harnessStart).Milliseconds())
+			preSynth.onTextDelta(delta)
 		}
 	}
 
-	harnessStart := time.Now()
-	setupMS := harnessStart.Sub(turnClaimedAt).Milliseconds()
-	var firstTextMS atomic.Int64
-	firstTextMS.Store(-1)
 	var videos *videoSync
 	stopVideos := func() {}
 	if c.run.Purpose == "chat" {
@@ -1930,18 +1940,117 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 	if agentdef.SubagentsOn(turnSpec) {
 		stopSubagents = r.startSubagentWorker(ctx, c, ws, turnEnv, sensitive, networks, dir)
 	}
-	preSynth := r.newChatLeadPreSynthesizer(ctx, q, c)
-	onText := func(delta string) {
-		if delta != "" {
-			firstTextMS.CompareAndSwap(-1, time.Since(harnessStart).Milliseconds())
-			preSynth.onTextDelta(delta)
+
+	if warmEligible {
+		if reused := r.warmSessions.take(c.run.ID, warmFP); reused != nil {
+			r.event(ctx, c.run.ID, "lifecycle", map[string]any{"state": "turn_started", "turn": turn.Seq, "trigger": turn.Trigger,
+				"harness": c.spec.Harness, "resume": session != "", "warm_session": true, "instruction_bytes": len(section), "skills": len(turnSpec.Skills)})
+			harnessStart = time.Now()
+			setupMS = harnessStart.Sub(turnClaimedAt).Milliseconds()
+			wRes, wRaw, wCode, sawActivity, wErr := r.runWarmTurn(ctx, c, reused, hTurn, maxRuntime-used, r.policyCheck(c), onSession, onText, preSynth.onEvent, true)
+			if wErr != nil && !sawActivity {
+				// Parked process exited between turns before handling this prompt; retry cold.
+				reused.close()
+			} else {
+				proc = reused.proc
+				res, raw, code, waitErr = wRes, wRaw, wCode, wErr
+				usedWarmSession = true
+				ranTurn = true
+				if waitErr == nil && !res.IsError && !res.UsageLimited && reused.sess.Alive() {
+					r.warmSessions.put(reused, r.Cfg.WarmSessionTTL)
+				} else {
+					reused.close()
+				}
+			}
 		}
 	}
-	res, raw, code, waitErr := r.runSession(ctx, c, sh, proc, ws, hTurn, sensitive, maxRuntime-used, r.policyCheck(c), func(s string) {
-		qctx, cancel := context.WithTimeout(ctx, controlTimeout)
-		defer cancel()
-		_ = r.q().SetRunSession(qctx, store.SetRunSessionParams{ID: c.run.ID, HarnessSessionID: &s})
-	}, onText, preSynth.onEvent, true)
+
+	if !ranTurn {
+		// instruction_bytes and skills feed get_run's efficiency summary: what each
+		// harness had to read before its first tool call (LAZYAGENTS-257).
+		r.event(ctx, c.run.ID, "lifecycle", map[string]any{"state": "turn_started", "turn": turn.Seq, "trigger": turn.Trigger,
+			"harness": c.spec.Harness, "resume": session != "", "warm_session": false, "instruction_bytes": len(section), "skills": len(turnSpec.Skills)})
+		startCtx := ctx
+		var procCancel context.CancelFunc
+		if warmEligible {
+			// A parked warm process must outlive this turn's execute() context;
+			// warmSession.close() owns cancelling procCancel on eviction or shutdown.
+			startCtx, procCancel = context.WithCancel(context.WithoutCancel(ctx))
+			defer func() {
+				if procCancel != nil {
+					procCancel()
+				}
+			}()
+		}
+		proc, err = r.Backend.Start(startCtx, wsID(c.run), ExecSpec{
+			Name: fmt.Sprintf("lazyagents-turn-%s-%d", c.run.ID, turn.Seq), Argv: argv, Env: turnEnv, Dir: dir, Files: files, Networks: networks,
+		})
+		if err != nil {
+			if procCancel != nil {
+				procCancel()
+			}
+			stopSubagents()
+			stopReview()
+			stopVideos()
+			_ = q.FinishTurn(ctx, store.FinishTurnParams{ID: turn.ID, Usage: []byte("{}")})
+			r.end(ctx, c, "failed", "Couldn't start the harness: "+err.Error(), runs.VerbRunFailed)
+			return
+		}
+		// The first turn delivers context files: each counts as one read (§6.5).
+		if turn.Trigger == "start" || (c.run.Purpose == "chat" && turn.Seq == 1) {
+			now := time.Now()
+			if c.run.Purpose == "chat" {
+				// Delivered context still counts as a read, but sits just before the turn so
+				// it isn't cited as something the assistant looked up (see runs.ChatCitations).
+				now = turn.StartedAt.Add(-time.Millisecond)
+			}
+			for _, f := range ctxFiles {
+				if a, err := q.GetArtifact(ctx, store.GetArtifactParams{ID: f.ArtifactID, WorkspaceID: c.run.WorkspaceID, Viewer: pageview.From(ctx).UserID}); err == nil {
+					if f.VersionID != nil {
+						a.CurrentVersionID = f.VersionID
+					}
+					_ = artifacts.RecordRead(ctx, q, a, c.agent.ID, &c.run.ID, "", &now)
+				}
+			}
+		}
+
+		harnessStart = time.Now()
+		setupMS = harnessStart.Sub(turnClaimedAt).Milliseconds()
+		if psh, ok := h.(harness.PersistentSessionHarness); warmEligible && ok {
+			openCtx, cancelOpen := context.WithTimeout(ctx, maxRuntime-used)
+			stopKill := context.AfterFunc(openCtx, func() { _ = proc.Kill() })
+			sess, openErr := psh.OpenSession(openCtx, proc.Stdin(), proc.Stdout(), ws, hTurn, harness.SessionCallbacks{
+				OnSession: onSession,
+			})
+			stopKill()
+			cancelOpen()
+			if openErr != nil {
+				_ = proc.Kill()
+				if procCancel != nil {
+					procCancel()
+				}
+				_, _ = io.Copy(io.Discard, proc.Stdout())
+				_, _ = io.Copy(io.Discard, proc.Stderr())
+				code, _ = proc.Wait()
+				if code == 0 {
+					code = 1
+				}
+				waitErr = openErr
+			} else {
+				warmWS := newWarmSession(c.run.ID, warmFP, proc, procCancel, sess, c.agent.ID, tok.ID, sensitive, r.revokeToken)
+				procCancel = nil
+				keepToken = true
+				res, raw, code, _, waitErr = r.runWarmTurn(ctx, c, warmWS, hTurn, maxRuntime-used, r.policyCheck(c), onSession, onText, preSynth.onEvent, true)
+				if waitErr == nil && !res.IsError && !res.UsageLimited && warmWS.sess.Alive() {
+					r.warmSessions.put(warmWS, r.Cfg.WarmSessionTTL)
+				} else {
+					warmWS.close()
+				}
+			}
+		} else {
+			res, raw, code, waitErr = r.runSession(ctx, c, sh, proc, ws, hTurn, sensitive, maxRuntime-used, r.policyCheck(c), onSession, onText, preSynth.onEvent, true)
+		}
+	}
 	stopSubagents()
 	stopReview()
 	harnessDur := time.Since(harnessStart)
@@ -1957,6 +2066,7 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 			"model", c.spec.Model,
 			"effort", effort,
 			"resume", session != "",
+			"warm_session", usedWarmSession,
 			"queue_wait_ms", queueWaitMS,
 			"setup_ms", setupMS,
 			"first_text_ms", ftMS,
@@ -1970,6 +2080,7 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 			"model":         c.spec.Model,
 			"effort":        effort,
 			"resume":        session != "",
+			"warm_session":  usedWarmSession,
 			"queue_wait_ms": queueWaitMS,
 			"setup_ms":      setupMS,
 			"first_text_ms": ftMS,
