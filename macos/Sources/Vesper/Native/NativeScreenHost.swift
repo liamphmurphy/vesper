@@ -102,6 +102,7 @@ struct NativeScreenRoot: View {
         case .library: LibraryScreen()
         case .pdf: PDFScreen()
         case .markdownDebug: MarkdownDebugScreen()
+        case .scenesDebug: ScenesDebugScreen()
         case .dev: DevScreen()
         }
     }
