@@ -253,16 +253,17 @@ func SubagentGuide(spec Resolved) string {
 	if ExplorerOn(spec) {
 		roster = "`" + ExplorerAgent + "` for broad read-only code searches, " + roster
 	}
-	toolRef := "`run_subagent`"
+	singleRef, batchRef := "`run_subagent`", "`run_subagents`"
 	if spec.Harness == HarnessAntigravity {
-		toolRef = "`run_subagent` (declared as `mcp_lazyagents_run_subagent`)"
+		singleRef = "`run_subagent` (declared as `mcp_lazyagents_run_subagent`)"
+		batchRef = "`run_subagents` (declared as `mcp_lazyagents_run_subagents`)"
 	}
-	guide := "Start in-turn subagents with Vesper's MCP tool " + toolRef + ": " + roster + ". " +
+	guide := "Start in-turn subagents with Vesper's MCP tools: " + roster + ". " +
 		"Use them when work splits into independent parts you can run in parallel, or when answering means reading across many files and you only need the conclusion; their output stays out of your context. " +
-		"To parallelize, emit multiple `run_subagent` calls in the same turn—Vesper runs them concurrently and returns every report before your turn continues. Never end your turn waiting for background work. " +
+		"Use " + singleRef + " for a single subagent, and always use " + batchRef + " with a `tasks` array when launching 2 or more subagents in parallel—Vesper enqueues the whole batch at once, runs them concurrently up to the workspace's limit, and returns every report before your turn continues. Never end your turn waiting for background work. " +
 		"Do the work yourself when it's a handful of tool calls or you already know where to look. A subagent knows only its prompt, so make each brief self-contained."
 	if spec.Harness == HarnessAntigravity {
-		guide += " Do not use Antigravity's built-in `invoke_subagent`, `define_subagent`, `manage_subagents`, `swarm`, `run_workflow`, or `schedule` tools—always use `mcp_lazyagents_run_subagent` instead."
+		guide += " Separate MCP tool calls serialize on Antigravity, so always batch parallel subagents in one `mcp_lazyagents_run_subagents` call. Do not use Antigravity's built-in `invoke_subagent`, `define_subagent`, `manage_subagents`, `swarm`, `run_workflow`, or `schedule` tools—always use `mcp_lazyagents_run_subagent` / `mcp_lazyagents_run_subagents` instead."
 	}
 	if spec.HarnessOptions["readonly"] != "true" && spec.Mode("repo:write") != Denied {
 		guide += " Helpers share your checkout: never give two of them edits to the same files, and check what they changed before you rely on it."
