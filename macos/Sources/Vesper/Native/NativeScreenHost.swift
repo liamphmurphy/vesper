@@ -144,6 +144,10 @@ struct NativeScreenRoot: View {
         case .tickets: TicketsScreen()
         case .ticketNew: NewTicketScreen()
         case .ticketDetail: TicketDetailScreen()
+        case .epics: EpicsListView()
+        case .epicDetail: EpicDetailScreen()
+        case .scheduled: ScheduledScreen()
+        case .reports: ReportsScreen()
         case .knowledge, .knowledgeGraph, .knowledgePage: KnowledgeScreen()
         }
     }

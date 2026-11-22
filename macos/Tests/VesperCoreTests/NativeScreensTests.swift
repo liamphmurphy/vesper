@@ -109,6 +109,16 @@ final class NativeRoutesTests: XCTestCase {
         XCTAssertNil(standard.resolve("/tickets/PAY-1/extra"))
     }
 
+    func testEpicsScheduledAndReportsRoutesAreNative() {
+        let standard = NativeRouteRegistry.standard(debug: false)
+        XCTAssertEqual(standard.resolve("/epics")?.screen, .epics)
+        XCTAssertEqual(standard.resolve("/epics/e1")?.screen, .epicDetail)
+        XCTAssertEqual(standard.resolve("/epics/e1")?.params["id"], "e1")
+        XCTAssertEqual(standard.resolve("/scheduled")?.screen, .scheduled)
+        XCTAssertEqual(standard.resolve("/reports")?.screen, .reports)
+        XCTAssertEqual(standard.resolve("/costs")?.screen, .reports)
+    }
+
     func testKnowledgeAndWikiRoutesAreNative() {
         let standard = NativeRouteRegistry.standard(debug: false)
         XCTAssertEqual(standard.resolve("/knowledge")?.screen, .knowledge)

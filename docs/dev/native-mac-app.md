@@ -964,3 +964,9 @@ Manual click-through checklist:
 - Releases: `.github/workflows/mac-release.yml` on a `vX.Y.Z` tag (see [mac-updates.md](mac-updates.md)).
 - Web: `npm --prefix web test`, `npm --prefix web run lint`, `npx --prefix web tsc --noEmit -p web`.
 - Server: see AGENTS.md "Running the server tests".
+
+## Native screen: Epics, Scheduled & Reports
+
+- **Epics (`/epics`, `/epics/:id`, `/tickets?layout=epics`)**: `EpicsLogic` + `EpicsListView` + `EpicDetailScreen` reusing `TicketSharedViews`, replacing `EpicsLayoutSlot`.
+- **Scheduled (`/scheduled`)**: `ScheduledLogic` + `ScheduledScreen` (filter, create/edit/toggle, cron validation, trigger run now, delete, recent runs).
+- **Reports (`/reports`, `/costs`)**: `ReportsLogic` + `ReportsScreen` using native **Swift Charts** (`BarMark` daily spend stacked by agent/model, effort distribution) and breakdown tables.

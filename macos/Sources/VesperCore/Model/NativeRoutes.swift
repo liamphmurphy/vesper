@@ -22,6 +22,10 @@ public enum NativeScreen: String, Sendable, CaseIterable {
     case tickets
     case ticketNew
     case ticketDetail
+    case epics
+    case epicDetail
+    case scheduled
+    case reports
     case knowledge
     case knowledgeGraph
     case knowledgePage
@@ -92,6 +96,12 @@ public struct NativeRouteRegistry: Sendable {
         NativeRoute("/board", .tickets),
         NativeRoute("/tickets/new", .ticketNew),
         NativeRoute("/tickets/:key", .ticketDetail),
+        // Epics, Scheduled tasks, and Reports (Costs & Highlights).
+        NativeRoute("/epics", .epics),
+        NativeRoute("/epics/:id", .epicDetail),
+        NativeRoute("/scheduled", .scheduled),
+        NativeRoute("/reports", .reports),
+        NativeRoute("/costs", .reports),
         // Knowledge explorer, home, search, connect, graph and pages (specific routes before :id).
         NativeRoute("/knowledge", .knowledge),
         NativeRoute("/knowledge/graph", .knowledgeGraph),
