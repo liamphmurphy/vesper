@@ -121,12 +121,11 @@ final class ChatInspectorLogicTests: XCTestCase {
         XCTAssertEqual(model.activeTabId, "code")
 
         let codeTab = model.tabs.first { $0.id == "code" }
-        XCTAssertEqual(codeTab?.kind, .panel)
+        XCTAssertEqual(codeTab?.kind, .native)
         XCTAssertEqual(codeTab?.width, .wide)
         XCTAssertEqual(codeTab?.busy, true)
         XCTAssertEqual(codeTab?.badge?.text, "1")
-        XCTAssertEqual(codeTab?.panel?.kind, "chat.code")
-        XCTAssertEqual(codeTab?.panel?.key, "chat.code:chat-1")
+        XCTAssertNil(codeTab?.panel)
 
         let pgTab = model.tabs.first { $0.id == "playground" }
         XCTAssertEqual(pgTab?.label, "Playground (starting)")

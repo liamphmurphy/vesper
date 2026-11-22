@@ -701,6 +701,16 @@ struct ChatScreen: View {
         let model = model
         let context = context
         context.inspectorView = { tabId in
+            if tabId == ChatInspectorLogic.codeTabId,
+               let currentChatId = context.match.params["id"] {
+                return AnyView(
+                    ChatCodeInspectorView(chatId: currentChatId)
+                        .id("code:\(currentChatId)")
+                        .environment(context)
+                        .environment(\.vesperTheme, model.theme)
+                        .environment(\.colorScheme, model.colorScheme)
+                )
+            }
             if tabId == ChatInspectorLogic.threadTabId,
                let currentChatId = context.match.params["id"],
                let msgId = model.threadMessageId, !msgId.isEmpty {

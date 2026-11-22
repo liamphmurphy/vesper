@@ -384,23 +384,14 @@ public enum ChatInspectorLogic {
         }
 
         if hasCode {
-            let props: [String: JSONValue] = [
-                "tabId": .string(codeTabId),
-                "chatId": .string(chatId),
-            ]
             tabs.append(InspectorTab(
                 id: codeTabId,
                 label: "Code",
                 icon: "code",
-                kind: .panel,
+                kind: .native,
                 width: .wide,
                 busy: codeBusy ? true : nil,
-                badge: changedFileCount > 0 ? NavBadge(text: "\(changedFileCount)", tone: .accent) : nil,
-                panel: InspectorLogic.makePanelSpec(
-                    kind: "chat.code",
-                    key: "chat.code:\(chatId)",
-                    props: props
-                )
+                badge: changedFileCount > 0 ? NavBadge(text: "\(changedFileCount)", tone: .accent) : nil
             ))
         }
 
