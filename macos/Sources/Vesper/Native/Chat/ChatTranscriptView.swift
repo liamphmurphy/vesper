@@ -33,6 +33,9 @@ struct ChatTranscriptView: View {
     private var videosRequest: APIRequest<API.ChatVideos> {
         API.listChatVideos(id: chatId)
     }
+    private var pushRequestsRequest: APIRequest<API.PushRequestList> {
+        API.listPushRequests(id: chatId)
+    }
 
     private var isRunning: Bool {
         session?.state == .running
@@ -47,6 +50,13 @@ struct ChatTranscriptView: View {
         let canvases = store.entry(canvasesRequest).data?.canvases ?? []
         let audios = store.entry(audioRequest).data?.audio ?? []
         let videos = store.entry(videosRequest).data?.videos ?? []
+        let pushes = ChatPushPlacement.place(
+            store.entry(pushRequestsRequest).data?.requests ?? [],
+            messages: messages,
+            running: isRunning,
+            currentRunId: session?.currentRunId,
+            hasMore: messagesEntry.data?.hasMore ?? false
+        )
 
         // Pre-index media by messageId once in O(M) instead of filtering per message row.
         var audiosByMessage: [String: [API.ChatAudio]] = [:]
@@ -85,6 +95,10 @@ struct ChatTranscriptView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 18) {
+                            if !pushes.leading.isEmpty {
+                                ChatPushRequestStackView(requests: pushes.leading)
+                            }
+
                             ForEach(Array(messages.enumerated()), id: \.element.id) { idx, message in
                                 let nextBody = idx + 1 < messages.count ? messages[idx + 1].bodyMd : nil
                                 let isUser = message.role == .user
@@ -112,6 +126,13 @@ struct ChatTranscriptView: View {
                                     onSendReply: onSendReply
                                 )
                                 .id(message.id)
+
+                                if let placed = pushes.byMessage[message.id] {
+                                    ChatPushRequestStackView(requests: placed)
+                                }
+                                if let placed = pushes.afterMessage[message.id] {
+                                    ChatPushRequestStackView(requests: placed)
+                                }
                             }
 
                             // Unattached generated media (not linked to a specific message)
@@ -122,6 +143,10 @@ struct ChatTranscriptView: View {
                                 ChatVideoCardView(chatId: chatId, video: video)
                             }
 
+                            if !pushes.trailing.isEmpty {
+                                ChatPushRequestStackView(requests: pushes.trailing)
+                            }
+
                             if isRunning {
                                 ChatLiveActivityCardView(
                                     chatId: chatId,
@@ -130,6 +155,9 @@ struct ChatTranscriptView: View {
                                     fallbackSpeakerName: session?.agent.name ?? "Assistant"
                                 )
                                 .id("live-activity")
+                            }
+                            if !pushes.live.isEmpty {
+                                ChatPushRequestStackView(requests: pushes.live)
                             }
 
                             if let sessionError = session?.error, !sessionError.isEmpty, session?.state == .failed {
@@ -222,6 +250,7 @@ struct ChatTranscriptView: View {
         track(canvasesRequest)
         track(audioRequest)
         track(videosRequest)
+        track(pushRequestsRequest)
         watched = keys
     }
 
@@ -544,9 +573,6 @@ private struct ChatTranscriptProposalsSlot: View {
     private var approvalsRequest: APIRequest<API.ChatToolApprovalList> {
         API.listChatToolApprovals(id: chatId)
     }
-    private var pushRequestsRequest: APIRequest<API.PushRequestList> {
-        API.listPushRequests(id: chatId)
-    }
     private var secretProposalsRequest: APIRequest<API.ApiSecretProposalList> {
         API.listApiSecretProposals(id: chatId)
     }
@@ -568,8 +594,7 @@ private struct ChatTranscriptProposalsSlot: View {
             ChatProposalsSectionView(
                 chatId: chatId,
                 approvals: store.entry(approvalsRequest).data?.approvals ?? [],
-                pushRequests: store.entry(pushRequestsRequest).data?.requests ?? [],
-                secretProposals: store.entry(secretProposalsRequest).data?.proposals ?? [],
+                    secretProposals: store.entry(secretProposalsRequest).data?.proposals ?? [],
                 personaProposals: store.entry(personaProposalsRequest).data?.proposals ?? [],
                 characterProposals: store.entry(characterProposalsRequest).data?.proposals ?? [],
                 ticketChanges: store.entry(ticketChangesRequest).data?.requests ?? [],
@@ -595,7 +620,6 @@ private struct ChatTranscriptProposalsSlot: View {
         }
 
         track(approvalsRequest)
-        track(pushRequestsRequest)
         track(secretProposalsRequest)
         track(personaProposalsRequest)
         track(characterProposalsRequest)
