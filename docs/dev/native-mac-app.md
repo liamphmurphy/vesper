@@ -1011,3 +1011,37 @@ Manual click-through checklist:
 - **Epics (`/epics`, `/epics/:id`, `/tickets?layout=epics`)**: `EpicsLogic` + `EpicsListView` + `EpicDetailScreen` reusing `TicketSharedViews`, replacing `EpicsLayoutSlot`.
 - **Scheduled (`/scheduled`)**: `ScheduledLogic` + `ScheduledScreen` (filter, create/edit/toggle, cron validation, trigger run now, delete, recent runs).
 - **Reports (`/reports`, `/costs`)**: `ReportsLogic` + `ReportsScreen` using native **Swift Charts** (`BarMark` daily spend stacked by agent/model, effort distribution) and breakdown tables.
+
+## Native screen: Chat transcript & cards
+
+`/chat` and `/chat/:id` render natively (`macos/Sources/Vesper/Native/Chat/`, backed by VesperCore
+`Native/Chat/`). Both routes share `hostGroup == .chat` so navigating between conversations preserves
+the sidebar (`ChatNav`), filters, and search state.
+
+- **Transcript & embeds (`ChatTranscriptView`).** Lazy `ScrollView` + `LazyVStack` (zero per-message
+  web views) rendering `ChatMessageSegment`s via `MarkdownView`, `EmbeddedBlockView` (math, Mermaid,
+  SVG, interactive apps), `ChatChartCardView` (native **Swift Charts** `BarMark`/`LineMark`/`PointMark`
+  with Chart/Data table toggle & CSV copy), and `WorkPersonaAvatarView`. Streams live updates via
+  `QueryStore.observe` + 1.5s polling while active and renders the live Work/Thinking card using
+  `ActivitySceneView` + pooled `PersonaCharacterView` (`ChatTurnActivity`).
+- **Cards & proposals (`ChatCardsView`, `ChatProposalCardsView`, `ChatMediaCardsView`).** Native
+  SwiftUI cards for `choices`, `dispatch` (multi-select ticket runs), `recommend` (links/YouTube with
+  external open & summarize), `workflow-run`, `research-plan`, `sources` / context chips, tool
+  approvals, push requests, API secret proposals, persona & persona-character proposals, ticket/epic
+  change requests, canvases strip, and generated image/audio/video/file/PDF cards with Quick Look.
+- **Composer seam (`ChatComposerSlot`).** Functional placeholder composer calling `API.createChat` /
+  `API.postChatMessage` and `API.cancelChatTurn`; replaced by the full native composer in
+  `LAZYAGENTS-286` (after which `web/app/(app)/chat/` is removed).
+
+Manual click-through checklist:
+
+1. Open `/chat` and `/chat/:id`: verify `ChatNav` populates the left sidebar with local-day groups,
+   search, persona/space filters, and pin/rename/archive/delete context menu actions without resetting
+   sidebar state when switching chats.
+2. Send a message from `ChatComposerSlot` and verify live Work/Thinking (`ActivitySceneView` +
+   `PersonaCharacterView` + folded steps) streams and updates into the rendered reply; test Stop.
+3. Open a conversation containing charts, choices, dispatch, recommend, workflow-run, and sources:
+   verify Swift Charts toggles between Chart and Data table, choices send replies, dispatch starts
+   selected tickets, and links/citations open cleanly.
+4. Exercise pending approval/proposal cards (tool approval, push request, secret, persona, character,
+   ticket change) and generated media/PDF cards (Quick Look preview).
