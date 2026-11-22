@@ -172,8 +172,9 @@ declarations in the captured file):
 | `run_command` | `CommandLine`, `toolSummary`, `WaitMsBeforeAsync` | `Bash` |
 | `search_web` | `query`, `domain` | `WebSearch` |
 | `call_mcp_tool` | `ServerName`, `ToolName`, `Arguments` | `mcp__<server>__<tool>` |
-| `invoke_subagent`, `define_subagent`, `manage_subagents`, `swarm`, `send_message` | | `Agent` (denied by policy) |
-| `manage_task`, `schedule`, `ask_question`, `list_resources`, `read_resource` | | unchanged: unknown, so `tests:run` |
+| `invoke_subagent`, `define_subagent`, `manage_subagents`, `swarm`, `send_message`, `run_workflow` | | `Agent` (denied by policy, redirecting to `run_subagent`) |
+| `schedule` | | `schedule` (denied by policy; headless turns exit when idle) |
+| `manage_task`, `ask_question`, `list_resources`, `read_resource` | | unchanged: unknown, so `tests:run` |
 
 **Every MCP tool goes through `call_mcp_tool`.** There are no per-tool
 `mcp_<server>_<tool>` names. `antigravityTool` (Go) and `canonical`
@@ -189,11 +190,14 @@ declarations in the captured file):
 headless:
 
 1. **Deny rules from the spec** (`agyDenyRules`): `command(*)` unless the run may
-   test or write, `write_file(*)` unless it may write, `read_url(*)`/`execute_url(*)`
-   without web access, and everything for a no-tools turn. **Verified:** they hold
-   **even when the hook answers `auto_approve`**. A read-only chat's `run_command`
-   and `write_file` were refused with "Matches user-configured deny rule" although
-   the policy allowed them.
+   test or write (except read-only `explorer` subagents with `repo:read`, which
+   need policy-gated read-only shell commands like `rg`/`ls`/`git grep` because
+   `agy` declares no `Grep`/`Glob`/`list_dir` tools), `write_file(*)` unless it
+   may write, `read_url(*)`/`execute_url(*)` without web access, and everything
+   for a no-tools turn. **Verified:** in `-p` mode they hold **even when the hook
+   answers `auto_approve`**. A read-only chat's `run_command` and `write_file`
+   were refused with "Matches user-configured deny rule" although the policy
+   allowed them.
 2. **The PreToolUse hook & ACP permissions** (`agy_policy.py` & `antigravity_session.go` → `runs.CheckTool`):
    In legacy `-p` mode, `agy_policy.py` calls Vesper's `/api/v1/agent/tool-policy`
    (forwarding `X-Vesper-Subagent-Job` when `LAZYAGENTS_SUBAGENT_JOB_ID` is set)
