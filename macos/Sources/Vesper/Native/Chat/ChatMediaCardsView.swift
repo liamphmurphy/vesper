@@ -387,7 +387,7 @@ struct ChatCanvasRefCardView: View {
             }
             Spacer(minLength: 8)
             Button("Open canvas") {
-                context.openInNewTab("/chat/\(chatId)?canvas=\(canvasId)")
+                context.navigate("/chat/\(chatId)?canvas=\(canvasId)")
             }
             .buttonStyle(.vesper())
         }

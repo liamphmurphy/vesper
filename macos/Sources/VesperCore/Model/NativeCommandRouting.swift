@@ -8,7 +8,7 @@ public enum NativeCommandRouting {
     public static func isScreenCommand(_ command: NativeCommand, navigatorId: String? = nil) -> Bool {
         switch command {
         case .toolbarAction, .titleAction, .inspectorVisibility, .inspectorSelectTab, .inspectorAction,
-             .inspectorChange, .inspectorToggle:
+             .inspectorChange, .inspectorToggle, .panelEvent:
             return true
         case .navActivate(let nav, _, _), .navAction(let nav, _, _, _), .navPicker(let nav, _, _),
              .navFilter(let nav, _, _, _), .navSearch(let nav, _, _), .navToggle(let nav, _, _):

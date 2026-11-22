@@ -42,6 +42,8 @@ final class ShellState {
     }
     /// Custom native sidebar content (e.g., Knowledge's compact NSOutlineView explorer), replacing NavModel list when set.
     var nativeSidebar: AnyView?
+    /// Custom native inspector body builder keyed by tab id, used by `.native` inspector tabs when non-nil.
+    var nativeInspectorView: ((String) -> AnyView?)?
 
     static let defaultCompanionKey = "VesperNativeCompanionOpen"
     /// Open state of the native default companion inspector for native screens with no custom inspector.

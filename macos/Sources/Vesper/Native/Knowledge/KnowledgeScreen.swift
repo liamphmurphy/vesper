@@ -70,6 +70,8 @@ enum KnowledgeSheetKind: Identifiable, Equatable {
 final class KnowledgeShellController {
     private static let pinnedDefaultsKey = "VesperNativeKnowledgePinnedIds"
     private static let expandedDefaultsKey = "VesperNativeKnowledgeExpandedFolders"
+    private static let inspectorOpenDefaultsKey = "VesperNativeKnowledgeInspectorOpen"
+    private static let generalChatDefaultsKey = "VesperNativeKnowledgeGeneralChatId"
 
     var viewMode: KnowledgeViewMode = .yours {
         didSet {
@@ -96,7 +98,20 @@ final class KnowledgeShellController {
     var inlineRenameRowId: String?
     var inlineRenameText = ""
     var searchFilter = KnowledgeSearchFilter()
-    var showSidePanel = true
+    var inspectorOpen: Bool {
+        didSet {
+            UserDefaults.standard.set(inspectorOpen, forKey: Self.inspectorOpenDefaultsKey)
+        }
+    }
+    var inspectorTabId: String = KnowledgeInspectorLogic.outlineTabId
+    var generalChatId: String? {
+        didSet {
+            UserDefaults.standard.set(generalChatId, forKey: Self.generalChatDefaultsKey)
+        }
+    }
+    var liveHeadingsPageId: String?
+    var liveHeadings: [KnowledgeOutlineHeading] = []
+    var headingJumpRequest: KnowledgeHeadingJumpRequest?
     var theme = ThemeTokens(mode: .light)
     var colorScheme: ColorScheme = .light
     var isWorking = false
@@ -106,6 +121,7 @@ final class KnowledgeShellController {
     var allPagesCache: [KnowledgePageRow] = []
 
     @ObservationIgnored private var syncedAudiencePageId: String?
+    @ObservationIgnored private var headingJumpToken = 0
 
     static let templatesRequest = KnowledgeAPI.getTemplates()
     static let slideStartersRequest = API.listSlideStarters()
@@ -116,6 +132,8 @@ final class KnowledgeShellController {
         self.pinnedPageIds = savedPins
         let savedExpanded = UserDefaults.standard.stringArray(forKey: Self.expandedDefaultsKey)
         self.expandedFolders = Set(savedExpanded ?? ["Daily"])
+        self.inspectorOpen = UserDefaults.standard.bool(forKey: Self.inspectorOpenDefaultsKey)
+        self.generalChatId = UserDefaults.standard.string(forKey: Self.generalChatDefaultsKey)
     }
 
     var treeListRequest: APIRequest<KnowledgePageTable> {
@@ -743,7 +761,45 @@ final class KnowledgeShellController {
 
     // MARK: Chrome & Commands
 
+    func currentHeadings(for pageId: String, loadedPage: KnowledgePage?) -> [KnowledgeOutlineHeading] {
+        if liveHeadingsPageId == pageId {
+            return liveHeadings
+        }
+        return KnowledgeInspectorLogic.extractHeadings(from: loadedPage?.bodyMd ?? "")
+    }
+
+    func updateLiveHeadings(pageId: String, headings: [KnowledgeOutlineHeading], in context: NativeScreenContext) {
+        guard liveHeadingsPageId != pageId || liveHeadings != headings else { return }
+        liveHeadingsPageId = pageId
+        liveHeadings = headings
+        if case .page(let activeId) = activeDestination, activeId == pageId {
+            publishChrome(for: context, loadedPage: context.store.entry(KnowledgeAPI.getPage(id: pageId)).data)
+        }
+    }
+
+    private func buildInspector(for context: NativeScreenContext, loadedPage: KnowledgePage?) -> InspectorModel {
+        let effectivePage: KnowledgePage?
+        let headings: [KnowledgeOutlineHeading]
+        if case .page(let pageId) = activeDestination {
+            effectivePage = loadedPage ?? context.store.entry(KnowledgeAPI.getPage(id: pageId)).data
+            headings = currentHeadings(for: pageId, loadedPage: effectivePage)
+        } else {
+            effectivePage = nil
+            headings = []
+        }
+        return KnowledgeInspectorLogic.buildInspectorModel(
+            destination: activeDestination,
+            loadedPage: effectivePage,
+            headings: headings,
+            query: context.match.query,
+            generalChatId: generalChatId,
+            open: inspectorOpen,
+            activeTabId: inspectorTabId
+        )
+    }
+
     func publishChrome(for context: NativeScreenContext, loadedPage: KnowledgePage? = nil) {
+        let inspector = buildInspector(for: context, loadedPage: loadedPage)
         switch activeDestination {
         case .home:
             context.chrome = NativeChrome(
@@ -755,7 +811,8 @@ final class KnowledgeShellController {
                     ShellToolbarItem(id: "kn.connect", label: "Connect", icon: "link", kind: .button),
                     ShellToolbarItem(id: "kn.capture", label: "Capture", icon: "inbox", kind: .button),
                     ShellToolbarItem(id: "kn.new", label: "New Page", icon: "plus", kind: .button, accent: true, showsLabel: true),
-                ]
+                ],
+                inspector: inspector
             )
         case .start(let kind):
             let title = switch kind {
@@ -769,7 +826,8 @@ final class KnowledgeShellController {
                 toolbarItems: [
                     ShellToolbarItem(id: "kn.home", label: "Home", icon: "home", kind: .button),
                     ShellToolbarItem(id: "kn.search", label: "Search", icon: "search", kind: .button),
-                ]
+                ],
+                inspector: inspector
             )
         case .search:
             context.chrome = NativeChrome(
@@ -778,7 +836,8 @@ final class KnowledgeShellController {
                     ShellToolbarItem(id: "kn.home", label: "Home", icon: "home", kind: .button),
                     ShellToolbarItem(id: "kn.graph", label: "Graph", icon: "graph", kind: .button),
                     ShellToolbarItem(id: "kn.capture", label: "Capture", icon: "inbox", kind: .button),
-                ]
+                ],
+                inspector: inspector
             )
         case .connect:
             context.chrome = NativeChrome(
@@ -788,7 +847,8 @@ final class KnowledgeShellController {
                     ShellToolbarItem(id: "kn.home", label: "Home", icon: "home", kind: .button),
                     ShellToolbarItem(id: "kn.graph", label: "Graph", icon: "graph", kind: .button),
                     ShellToolbarItem(id: "kn.search", label: "Search", icon: "search", kind: .button),
-                ]
+                ],
+                inspector: inspector
             )
         case .graph:
             context.chrome = NativeChrome(
@@ -798,12 +858,14 @@ final class KnowledgeShellController {
                     ShellToolbarItem(id: "kn.home", label: "Home", icon: "home", kind: .button),
                     ShellToolbarItem(id: "kn.connect", label: "Connect", icon: "link", kind: .button),
                     ShellToolbarItem(id: "kn.search", label: "Search", icon: "search", kind: .button),
-                ]
+                ],
+                inspector: inspector
             )
         case .legacyWiki(let path):
             context.chrome = NativeChrome(
                 title: KnowledgeShellLogic.nameOf(path),
-                subtitle: "Wiki"
+                subtitle: "Wiki",
+                inspector: inspector
             )
         case .page(let id):
             let row = rows(in: context).first(where: { $0.id == id })
@@ -848,20 +910,56 @@ final class KnowledgeShellController {
                         showsLabel: true
                     ),
                     ShellToolbarItem(id: "kn.page.copy-link", label: "Copy [[link]]", icon: "link", kind: .button),
-                    ShellToolbarItem(
-                        id: "kn.page.side-panel",
-                        label: "Details",
-                        icon: "panel-right",
-                        kind: .toggle,
-                        on: showSidePanel
-                    ),
                     ShellToolbarItem(id: "kn.page.more", label: "More", icon: "dots", kind: .menu, menu: moreMenu),
-                ]
+                ],
+                inspector: inspector
             )
         }
     }
 
     func handleChromeCommand(_ command: NativeCommand, in context: NativeScreenContext) {
+        switch command {
+        case .inspectorVisibility(let open):
+            inspectorOpen = open
+            publishChrome(for: context)
+            return
+        case .inspectorSelectTab(let tabId):
+            inspectorTabId = tabId
+            inspectorOpen = true
+            publishChrome(for: context)
+            return
+        case .inspectorAction(let tabId, let actionId, let itemId, _):
+            if tabId == KnowledgeInspectorLogic.outlineTabId,
+               actionId == KnowledgeInspectorLogic.jumpHeadingActionId,
+               case .page(let pageId) = activeDestination,
+               let itemId,
+               let idx = KnowledgeInspectorLogic.parseHeadingIndex(from: itemId) {
+                let headings = currentHeadings(
+                    for: pageId,
+                    loadedPage: context.store.entry(KnowledgeAPI.getPage(id: pageId)).data
+                )
+                if idx >= 0 && idx < headings.count {
+                    headingJumpToken += 1
+                    headingJumpRequest = KnowledgeHeadingJumpRequest(
+                        token: headingJumpToken,
+                        pageId: pageId,
+                        heading: headings[idx]
+                    )
+                }
+            }
+            return
+        case .panelEvent(let tabId, let event, let payloadJson):
+            if tabId == KnowledgeInspectorLogic.chatTabId,
+               event == "generalChat",
+               let chatId = KnowledgeInspectorLogic.parseGeneralChatId(from: payloadJson),
+               chatId != generalChatId {
+                generalChatId = chatId
+                publishChrome(for: context)
+            }
+            return
+        default:
+            break
+        }
         guard case .toolbarAction(let itemId, let menuItemId) = command else { return }
         switch itemId {
         case "kn.home": openHome(in: context)
@@ -870,11 +968,6 @@ final class KnowledgeShellController {
         case "kn.connect": context.navigate("/knowledge/connect")
         case "kn.capture": sheet = .capture
         case "kn.new": createDocument(in: context)
-        case "kn.page.side-panel":
-            showSidePanel.toggle()
-            if case .page(let id) = activeDestination {
-                publishChrome(for: context, loadedPage: context.store.entry(KnowledgeAPI.getPage(id: id)).data)
-            }
         case "kn.page.copy-link":
             guard case .page(let id) = activeDestination else { return }
             if let page = context.store.entry(KnowledgeAPI.getPage(id: id)).data {
@@ -988,6 +1081,10 @@ struct KnowledgeScreen: View {
             controller.colorScheme = colorScheme
             context.store.observe(controller.treeListRequest)
             context.sidebarView = AnyView(KnowledgeSidebarHost(context: context, controller: controller))
+            context.inspectorView = { tabId in
+                guard let tab = KnowledgeSidePanelsView.Tab(inspectorTabId: tabId) else { return nil }
+                return AnyView(KnowledgeInspectorHost(context: context, controller: controller, tab: tab))
+            }
             context.onCommand = { command in
                 controller.handleChromeCommand(command, in: context)
             }
@@ -996,6 +1093,7 @@ struct KnowledgeScreen: View {
         .onDisappear {
             context.store.stopObserving(controller.treeListRequest.key)
             context.sidebarView = nil
+            context.inspectorView = nil
             context.onCommand = nil
         }
         .sheet(item: $controller.sheet) { sheetKind in
@@ -1105,16 +1203,15 @@ private struct KnowledgePageView: View {
 
         Group {
             if let page = entry.data {
-                HStack(spacing: 0) {
-                    KnowledgePageEditorSlot(page: page, query: context.match.query)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    if controller.showSidePanel {
-                        Divider().overlay(theme.palette.border)
-                        KnowledgePageSidePanelSlot(page: page) { tag in
-                            controller.openSearch(tag: tag, in: context)
-                        }
+                KnowledgePageEditorSlot(
+                    page: page,
+                    query: context.match.query,
+                    headingJumpRequest: controller.headingJumpRequest,
+                    onHeadingsChange: { headings in
+                        controller.updateLiveHeadings(pageId: page.id, headings: headings, in: context)
                     }
-                }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error = entry.error {
                 QueryErrorView(message: "This page isn\u{2019}t available: \(error.userMessage)") {
                     Task { _ = await context.store.refetch(request) }

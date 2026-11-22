@@ -234,6 +234,7 @@ final class NativeFindAndCommandTests: XCTestCase {
         XCTAssertTrue(NativeCommandRouting.isScreenCommand(.titleAction(menuItemId: "rename")))
         XCTAssertTrue(NativeCommandRouting.isScreenCommand(.inspectorAction(tabId: "t", actionId: "a")))
         XCTAssertTrue(NativeCommandRouting.isScreenCommand(.inspectorVisibility(open: false)))
+        XCTAssertTrue(NativeCommandRouting.isScreenCommand(.panelEvent(tabId: "code", event: "openFull")))
         XCTAssertFalse(NativeCommandRouting.isScreenCommand(.navigate(path: "/inbox")))
         XCTAssertFalse(NativeCommandRouting.isScreenCommand(.navActivate(navigatorId: "n", itemId: "i")))
         XCTAssertFalse(NativeCommandRouting.isScreenCommand(.railAction(itemId: "r")))
