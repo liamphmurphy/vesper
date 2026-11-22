@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import SwiftUI
 import VesperCore
 
@@ -30,6 +31,15 @@ final class ChatCompanion {
     @ObservationIgnored private var hadWork = false
     @ObservationIgnored private var celebrate = false
     @ObservationIgnored private var completeTask: Task<Void, Never>?
+    /// Held at the start while the reply's speech loads, so text and voice begin together.
+    @ObservationIgnored private var waitingForVoice = false
+    @ObservationIgnored private var player: AVAudioPlayer?
+    @ObservationIgnored private var voiceTask: Task<Void, Never>?
+    /// The pop-out is open, for voices set to speak only there.
+    @ObservationIgnored var popoutOpen = false
+
+    /// How long a reveal waits for its speech before going ahead silently.
+    static let voiceWait: Duration = .seconds(8)
 
     /// How long the complete beat plays: about one loop.
     static let completeDuration: Duration = .milliseconds(3500)
@@ -38,7 +48,7 @@ final class ChatCompanion {
 
     /// Takes in the chat's messages: the first list a chat shows is history and never replays;
     /// a reply that arrives later is revealed at its author's pace.
-    func observe(messages: [API.ChatMessage], personas: [API.Persona], hostPersonaId: String?) {
+    func observe(chatId: String?, messages: [API.ChatMessage], personas: [API.Persona], hostPersonaId: String?) {
         let replies = messages.filter { $0.role == .assistant }
         guard seenFirstList else {
             if !messages.isEmpty || !personas.isEmpty {
@@ -56,16 +66,25 @@ final class ChatCompanion {
         let wps = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
             ? 0
             : PersonaStateLoops.revealWordsPerSecond(pace: author?.revealPace.rawValue, loops: author?.stateMedia?.loops)
-        guard wps > 0 else {
+        let mode = author?.voice.mode.rawValue ?? "off"
+        let speaks = !PersonaVoiceMute.isMuted && (mode == "always" || (mode == "popout" && popoutOpen))
+        guard wps > 0 || (speaks && chatId != nil) else {
             revealed.insert(last.id)
             startComplete()
             return
         }
         fullText = companionRevealText(last.bodyMd)
-        wordsPerSecond = wps
+        wordsPerSecond = wps > 0 ? wps : 15
         started = Date()
         shown = ""
         revealingId = last.id
+        stopVoice()
+        if speaks, let chatId {
+            // The voice sets the pace: hold the text until it plays, then reveal in time with it.
+            waitingForVoice = true
+            let messageId = last.id
+            voiceTask = Task { [weak self] in await self?.playVoice(chatId: chatId, messageId: messageId) }
+        }
         timer?.invalidate()
         let t = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
@@ -77,6 +96,7 @@ final class ChatCompanion {
     /// Shows the rest of the reply at once (a click on it, or the person sending).
     func finishReveal() {
         guard let id = revealingId else { return }
+        if shown != fullText { stopVoice() } // skipped: a voice that finished on its own just ends
         revealed.insert(id)
         revealingId = nil
         shown = ""
@@ -97,15 +117,68 @@ final class ChatCompanion {
         }
     }
 
+    private func playVoice(chatId: String, messageId: String) async {
+        let path = "/api/v1/chats/\(chatId)/messages/\(messageId)/speech"
+        let speech: (data: Data, words: Int)? = await withTaskGroup(of: (data: Data, words: Int)?.self) { group in
+            group.addTask { await AvatarImages.shared.speech(for: path) }
+            group.addTask {
+                try? await Task.sleep(for: Self.voiceWait)
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+        guard revealingId == messageId, !Task.isCancelled else { return }
+        defer {
+            waitingForVoice = false
+            started = Date()
+        }
+        // A voice that failed, timed out or was muted meanwhile leaves the persona's normal pace.
+        guard let speech, !PersonaVoiceMute.isMuted, let audio = try? AVAudioPlayer(data: speech.data), audio.duration > 0, audio.play() else { return }
+        player = audio
+        if speech.words > 0 { wordsPerSecond = Double(speech.words) / audio.duration }
+    }
+
+    /// Stops the reply being spoken (skipped, replaced or muted).
+    func stopVoice() {
+        voiceTask?.cancel()
+        voiceTask = nil
+        player?.stop()
+        player = nil
+        waitingForVoice = false
+    }
+
     private func tick() {
+        if waitingForVoice { return }
         let next = PersonaStateLoops.revealSlice(fullText, elapsed: Date().timeIntervalSince(started), wordsPerSecond: wordsPerSecond)
-        if next.done { finishReveal() } else if next.text != shown { shown = next.text }
+        if next.done {
+            shown = fullText // a natural end, so finishReveal lets the voice play out
+            finishReveal()
+        } else if next.text != shown {
+            shown = next.text
+        }
+    }
+}
+
+/// One switch that silences every persona voice, remembered across launches.
+@MainActor
+enum PersonaVoiceMute {
+    static let key = "vesper.companionMuted"
+    static var isMuted: Bool { UserDefaults.standard.bool(forKey: key) }
+    static func set(_ muted: Bool) {
+        UserDefaults.standard.set(muted, forKey: key)
+        if muted { ChatCompanions.stopAllVoices() }
     }
 }
 
 /// One `ChatCompanion` per chat for the life of the app.
 @MainActor
 enum ChatCompanions {
+    static func stopAllVoices() {
+        for c in byChat.values { c.stopVoice() }
+    }
+
     private static var byChat: [String: ChatCompanion] = [:]
     static func companion(for chatId: String) -> ChatCompanion {
         if let hit = byChat[chatId] { return hit }
@@ -132,6 +205,7 @@ enum CompanionVisibility {
 struct PersonaCompanionDock: View {
     @Environment(\.vesperTheme) private var theme
     @AppStorage(CompanionVisibility.key) private var hiddenRaw = ""
+    @AppStorage(PersonaVoiceMute.key) private var voiceMuted = false
     let companion: ChatCompanion
     let persona: API.Persona
     let loops: [String: String]
@@ -169,6 +243,10 @@ struct PersonaCompanionDock: View {
                     }
                     .buttonStyle(.plain)
                     .help("Talk with \(persona.name)")
+                    if hovering || voiceMuted {
+                        PersonaVoiceMuteButton(muted: $voiceMuted)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
                     if hovering {
                         Button {
                             hiddenRaw = CompanionVisibility.toggled(hiddenRaw, persona.id, hidden: true)
@@ -198,6 +276,7 @@ struct PersonaCompanionPopOut: View {
     let onSend: (String) async -> String?
     let onClose: () -> Void
 
+    @AppStorage(PersonaVoiceMute.key) private var voiceMuted = false
     @State private var text = ""
     @State private var error: String?
     @State private var sending = false
@@ -214,6 +293,7 @@ struct PersonaCompanionPopOut: View {
                     HStack {
                         Text(persona.name).font(.headline).foregroundStyle(Color(cssHex: persona.color) ?? p.text)
                         Spacer()
+                        PersonaVoiceMuteButton(muted: $voiceMuted)
                         Button(action: onClose) { Image(systemName: "xmark") }
                             .buttonStyle(.plain)
                             .keyboardShortcut(.cancelAction)
@@ -264,7 +344,11 @@ struct PersonaCompanionPopOut: View {
             }
             .padding(24)
         }
-        .onAppear { focused = true }
+        .onAppear {
+            focused = true
+            companion.popoutOpen = true // "pop-out only" voices speak while this is open
+        }
+        .onDisappear { companion.popoutOpen = false }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Talking with \(persona.name)")
     }
@@ -291,4 +375,23 @@ struct PersonaCompanionPopOut: View {
 @MainActor
 func companionRevealText(_ bodyMd: String) -> String {
     ChatTranscriptLogic.splitSourceList(ChatTranscriptLogic.stripContext(bodyMd).typedBody).body
+}
+
+/// Mutes every persona voice; stops one speaking now.
+struct PersonaVoiceMuteButton: View {
+    @Binding var muted: Bool
+
+    var body: some View {
+        Button {
+            muted.toggle()
+            PersonaVoiceMute.set(muted)
+        } label: {
+            Image(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                .imageScale(.medium)
+                .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.plain)
+        .help(muted ? "Unmute persona voices" : "Mute persona voices")
+        .accessibilityLabel(muted ? "Unmute persona voices" : "Mute persona voices")
+    }
 }

@@ -249,7 +249,7 @@ struct ChatScreen: View {
         .animation(.easeOut(duration: 0.2), value: companionOpen)
         // Replies that arrive while the chat is open reveal at the persona's pace.
         .onChange(of: "\(chatId ?? "")|\(messages.last?.id ?? "")|\(personas.count)", initial: true) { _, _ in
-            companion.observe(messages: messages, personas: personas, hostPersonaId: activePersona?.id)
+            companion.observe(chatId: chatId, messages: messages, personas: personas, hostPersonaId: activePersona?.id)
         }
         .onChange(of: chatId) { _, _ in companionOpen = false }
         .onChange(

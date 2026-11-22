@@ -2991,6 +2991,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/chats/{id}/messages/{messageId}/speech": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+                messageId: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * A reply spoken in its persona's voice
+         * @description The reply's prose (no code, tables or URLs), up to about 120 words and
+         *     ending on a whole sentence, spoken with its persona's voice and style as
+         *     WAV. Generated once and cached, so replaying is free.
+         *     X-Speech-Words is how many words were spoken, for pacing the text
+         *     reveal to the audio. 409 when the persona's voice is off or no speech
+         *     provider is configured; 422 when the reply has nothing to speak.
+         */
+        get: operations["getChatMessageSpeech"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/chats/{id}/audio": {
         parameters: {
             query?: never;
@@ -5279,6 +5307,48 @@ export interface paths {
         get: operations["getPersonaStateHead"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/personas/voices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The voices personas can speak with
+         * @description The workspace speech provider's voices, or available false with the reason when none is configured.
+         */
+        get: operations["listPersonaVoices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/personas/{id}/voice-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PersonaId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Hear a voice and style before saving them
+         * @description Speaks a short greeting from the persona as WAV. Omitted fields use the persona's saved voice.
+         */
+        post: operations["previewPersonaVoice"];
         delete?: never;
         options?: never;
         head?: never;
@@ -10303,6 +10373,7 @@ export interface components {
             /** @description Photorealistic state loops; absent when none has been generated */
             state_media?: components["schemas"]["PersonaStateMediaSummary"];
             reveal_pace: components["schemas"]["PersonaRevealPace"];
+            voice: components["schemas"]["PersonaVoice"];
             custom_instructions: string;
             capabilities: components["schemas"]["PersonaCapabilities"];
             /**
@@ -10329,6 +10400,28 @@ export interface components {
          * @enum {string}
          */
         PersonaState: "idle" | "thinking" | "reading" | "coding" | "creating" | "needs_you" | "talking" | "complete";
+        /**
+         * @description off: silent. popout: speaks only in the companion pop-out. always: speaks new replies in the chat too (the companion's mute still wins).
+         * @enum {string}
+         */
+        PersonaVoiceMode: "off" | "popout" | "always";
+        PersonaVoice: {
+            mode: components["schemas"]["PersonaVoiceMode"];
+            /** @description The provider's voice; empty for its default */
+            name: string;
+            /** @description A short delivery direction, e.g. warm, unhurried */
+            style: string;
+        };
+        PersonaVoiceList: {
+            available: boolean;
+            /** @description Why no voices are available */
+            reason?: string;
+            default_voice?: string;
+            voices: {
+                name: string;
+                tone: string;
+            }[];
+        };
         /**
          * @description How fast a new reply is revealed while the persona's talking loop plays
          *     (relaxed ~25, natural ~15, deliberate ~8 words a second). auto: natural
@@ -10436,6 +10529,10 @@ export interface components {
         };
         PersonaPatch: {
             revision: number;
+            voice_mode?: components["schemas"]["PersonaVoiceMode"];
+            /** @description Empty for the provider's default voice */
+            voice_name?: string;
+            voice_style?: string;
             reveal_pace?: components["schemas"]["PersonaRevealPace"];
             in_chat_list?: boolean;
             work?: components["schemas"]["PersonaWork"];
@@ -15666,6 +15763,35 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    getChatMessageSpeech: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+                messageId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The speech */
+            200: {
+                headers: {
+                    "X-Speech-Words"?: number;
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/wav": string;
+                };
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
     listChatAudio: {
         parameters: {
             query?: never;
@@ -19215,6 +19341,60 @@ export interface operations {
                 };
             };
             404: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    listPersonaVoices: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The voices */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonaVoiceList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    previewPersonaVoice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PersonaId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    voice_name?: string;
+                    voice_style?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/wav": string;
+                };
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
             default: components["responses"]["Error"];
         };
     };

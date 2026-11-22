@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { cx } from "@/lib/cx";
 import { DOCK_HEIGHT_VAR } from "@/lib/dock-height";
-import { useCompanionState, useRevealedText } from "@/lib/companion-store";
+import { setPopoutOpen, setVoiceMuted, useCompanionState, useRevealedText, useVoiceMuted } from "@/lib/companion-store";
 import type { StateMediaSummary } from "@/lib/persona-state-media";
 import { PersonaStateStage } from "@/components/domain/persona-state-stage";
 import { Button, IconButton } from "@/components/ui/button";
@@ -59,6 +59,12 @@ export function PersonaCompanion({
   const state = useCompanionState(chatId);
   const [hidden, setHidden] = useCompanionHidden(persona.id);
   const [open, setOpen] = useState(false);
+  const muted = useVoiceMuted();
+  // A voice set to "pop-out only" speaks while this is open.
+  useEffect(() => {
+    setPopoutOpen(chatId, open);
+    return () => setPopoutOpen(chatId, false);
+  }, [chatId, open]);
   const label = `${persona.name}, ${state.replace("_", " ")}`;
 
   if (hidden) {
@@ -83,6 +89,15 @@ export function PersonaCompanion({
         <button type="button" onClick={() => setOpen(true)} title={`Talk with ${persona.name}`} className="pointer-events-auto block cursor-pointer rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-accent">
           <PersonaStateStage media={media} state={state} width={COMPANION_WIDTH} label={label} />
         </button>
+        <IconButton
+          icon="audio"
+          label={muted ? "Unmute persona voices" : "Mute persona voices"}
+          aria-pressed={muted}
+          size={22}
+          onClick={() => setVoiceMuted(!muted)}
+          className={cx("pointer-events-auto absolute left-0 top-0 bg-surface/80 shadow-sm transition-opacity group-hover/companion:opacity-100 focus-visible:opacity-100", muted ? "opacity-50" : "opacity-0")}
+          data-testid="persona-companion-mute"
+        />
         <IconButton
           icon="x"
           label={`Hide ${persona.name}`}
@@ -152,7 +167,10 @@ function CompanionPopOut({
         <div className="flex w-[min(380px,90vw)] flex-col gap-3 rounded-2xl border border-border bg-surface p-4 shadow-lg">
           <div className="flex items-center justify-between">
             <span style={{ color: persona.color }} className="text-14 font-semibold">{persona.name}</span>
-            <IconButton icon="x" label="Close" size={24} onClick={onClose} />
+            <span className="flex items-center gap-1">
+              <MuteToggle />
+              <IconButton icon="x" label="Close" size={24} onClick={onClose} />
+            </span>
           </div>
           {reply && <PopOutReply chatId={chatId} reply={reply} />}
           <textarea
@@ -193,5 +211,20 @@ function PopOutReply({ chatId, reply }: { chatId: string; reply: { id: string; b
     <div ref={box} className={cx("type-chat max-h-[min(320px,45vh)] overflow-y-auto text-fg-2")} data-testid="persona-companion-reply">
       <ChatMarkdown replyId={reply.id}>{shown.text}</ChatMarkdown>
     </div>
+  );
+}
+
+/** Mutes every persona voice; dimmed while muted. */
+function MuteToggle() {
+  const muted = useVoiceMuted();
+  return (
+    <IconButton
+      icon="audio"
+      label={muted ? "Unmute persona voices" : "Mute persona voices"}
+      aria-pressed={muted}
+      size={24}
+      onClick={() => setVoiceMuted(!muted)}
+      className={muted ? "opacity-40" : undefined}
+    />
   );
 }

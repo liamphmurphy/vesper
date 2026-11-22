@@ -394,6 +394,8 @@ private struct PersonaDetailView: View {
         }
         SettingsPersonaStatesCard(aux: aux, persona: persona)
             .id(persona.id)
+        SettingsPersonaVoiceCard(aux: aux, persona: persona)
+            .id(persona.id)
     }
 
     @ViewBuilder private var modelTab: some View {

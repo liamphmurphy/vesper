@@ -90,7 +90,17 @@ type Patch struct {
 	// RevealPace is how fast a new reply is revealed while the persona's
 	// talking loop plays: auto, off, relaxed, natural or deliberate.
 	RevealPace *string
+	// VoiceMode, VoiceName and VoiceStyle set how its replies are spoken:
+	// off, popout (only in the companion pop-out) or always; a provider voice
+	// ("" for the default); a short delivery direction.
+	VoiceMode, VoiceName, VoiceStyle *string
 }
+
+// VoiceModes are the accepted voice modes.
+var VoiceModes = []string{"off", "popout", "always"}
+
+// MaxVoiceStyleRunes bounds a voice's delivery direction.
+const MaxVoiceStyleRunes = 200
 
 // RevealPaces are the accepted reveal paces; auto lets the clients decide.
 var RevealPaces = []string{"auto", "off", "relaxed", "natural", "deliberate"}
@@ -412,6 +422,23 @@ func (s *Service) Update(ctx context.Context, o Owner, id uuid.UUID, p Patch) (s
 	if p.RevealPace != nil && !slices.Contains(RevealPaces, *p.RevealPace) {
 		return out, apperr.Invalid("reveal_pace", "use one of %s", strings.Join(RevealPaces, ", "))
 	}
+	if p.VoiceMode != nil && !slices.Contains(VoiceModes, *p.VoiceMode) {
+		return out, apperr.Invalid("voice_mode", "use one of %s", strings.Join(VoiceModes, ", "))
+	}
+	if p.VoiceName != nil {
+		v := strings.TrimSpace(*p.VoiceName)
+		if len(v) > 60 || strings.ContainsFunc(v, func(r rune) bool { return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_') }) {
+			return out, apperr.Invalid("voice_name", "pick a voice from the list")
+		}
+		p.VoiceName = &v
+	}
+	if p.VoiceStyle != nil {
+		v := strings.TrimSpace(*p.VoiceStyle)
+		if utf8.RuneCountInString(v) > MaxVoiceStyleRunes {
+			return out, apperr.Invalid("voice_style", "at most %d characters", MaxVoiceStyleRunes)
+		}
+		p.VoiceStyle = &v
+	}
 	if p.Name != nil {
 		name, err := normName(*p.Name)
 		if err != nil {
@@ -489,7 +516,7 @@ func (s *Service) Update(ctx context.Context, o Owner, id uuid.UUID, p Patch) (s
 			CanCode: p.Code, CanGenerateImages: p.Images, CanCreatePersonas: p.Personas, CanCreateSvgs: p.SVG, CanCreateWorkflows: p.Workflows, CanCreateConnectors: p.Connectors, Repos: repos,
 			InChatList:     p.InChatList,
 			DefaultHarness: nextHarness, DefaultModel: nextModel, DefaultEffort: nextEffort,
-			RevealPace: p.RevealPace,
+			RevealPace: p.RevealPace, VoiceMode: p.VoiceMode, VoiceName: p.VoiceName, VoiceStyle: p.VoiceStyle,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return apperr.Conflict("the persona changed since you loaded it")

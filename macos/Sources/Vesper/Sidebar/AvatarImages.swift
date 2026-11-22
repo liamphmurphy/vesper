@@ -45,18 +45,31 @@ final class AvatarImages {
         return await Self.fetch(url, conn: conn, maxBytes: Self.maxLoopBytes, timeout: 30)
     }
 
+    /// A reply's speech (WAV) and how many words it speaks, from the X-Speech-Words header.
+    func speech(for raw: String) async -> (data: Data, words: Int)? {
+        guard let conn = connection,
+              let url = URL(string: raw, relativeTo: conn.baseURL)?.absoluteURL,
+              BridgeOrigin.matches(url: url, base: conn.baseURL) else { return nil }
+        guard let (data, http) = await Self.fetchResponse(url, conn: conn, maxBytes: Self.maxLoopBytes, timeout: 60, type: "audio/") else { return nil }
+        return (data, Int(http.value(forHTTPHeaderField: "X-Speech-Words") ?? "") ?? 0)
+    }
+
     /// Loops are capped at 6 MB on the server; leave headroom for a future bump.
     private static let maxLoopBytes = 12 * 1024 * 1024
 
     private nonisolated static func fetch(_ url: URL, conn: Connection, maxBytes: Int, timeout: TimeInterval) async -> Data? {
+        await fetchResponse(url, conn: conn, maxBytes: maxBytes, timeout: timeout, type: "image/")?.data
+    }
+
+    private nonisolated static func fetchResponse(_ url: URL, conn: Connection, maxBytes: Int, timeout: TimeInterval, type: String) async -> (data: Data, response: HTTPURLResponse)? {
         var request = URLRequest(url: url, timeoutInterval: timeout)
         request.httpShouldHandleCookies = false
         request.setValue("\(StackSession.cookieName)=\(conn.sessionToken)", forHTTPHeaderField: "Cookie")
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               let http = response as? HTTPURLResponse, http.statusCode == 200,
-              (http.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased().hasPrefix("image/"),
+              (http.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased().hasPrefix(type),
               data.count <= maxBytes
         else { return nil }
-        return data
+        return (data, http)
     }
 }

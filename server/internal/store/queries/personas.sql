@@ -65,6 +65,9 @@ UPDATE personas SET
   default_model = COALESCE(sqlc.narg(default_model)::text, default_model),
   default_effort = COALESCE(sqlc.narg(default_effort)::text, default_effort),
   reveal_pace = COALESCE(sqlc.narg(reveal_pace)::text, reveal_pace),
+  voice_mode = COALESCE(sqlc.narg(voice_mode)::text, voice_mode),
+  voice_name = COALESCE(sqlc.narg(voice_name)::text, voice_name),
+  voice_style = COALESCE(sqlc.narg(voice_style)::text, voice_style),
   revision = revision + 1, updated_at = now()
 WHERE id = sqlc.arg(id) AND workspace_id = sqlc.arg(workspace_id) AND user_id = sqlc.arg(user_id) AND revision = sqlc.arg(revision)
 RETURNING *;

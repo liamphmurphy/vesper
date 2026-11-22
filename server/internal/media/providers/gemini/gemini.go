@@ -69,9 +69,9 @@ func WithPollInterval(d time.Duration) Option {
 func Descriptor() media.Descriptor {
 	return media.Descriptor{
 		ID:           ProviderID,
-		Label:        "Gemini (Lyria & Omni)",
-		Description:  "Lyria 3 music and Gemini Omni video generation via Google AI Studio API key or GCP Vertex AI.",
-		Capabilities: []media.Capability{media.CapMusic, media.CapVideo},
+		Label:        "Gemini (Lyria, Omni & TTS)",
+		Description:  "Lyria 3 music, Gemini Omni video and Gemini TTS persona voices via Google AI Studio API key or GCP Vertex AI.",
+		Capabilities: []media.Capability{media.CapMusic, media.CapVideo, media.CapTTS},
 		Fields: []media.FieldSpec{
 			{
 				Key:     "backend",
@@ -130,6 +130,17 @@ func Descriptor() media.Descriptor {
 					{Value: string(interactions.ModelGeminiOmni12Flash), Label: "Gemini Omni 1.2 Flash"},
 					{Value: string(interactions.ModelGeminiOmni11Flash), Label: "Gemini Omni 1.1 Flash"},
 					{Value: string(interactions.ModelGeminiOmniFlashPreview), Label: "Gemini Omni Flash (Preview)"},
+				},
+			},
+			{
+				Key:     "tts_model",
+				Label:   "Voice Model",
+				Kind:    "select",
+				Default: defaultSpeechModel,
+				Help:    "Persona voices: Flash sounds best; Flash-Lite costs about a third less",
+				Options: []media.FieldOption{
+					{Value: defaultSpeechModel, Label: "Gemini 3.8 Flash TTS"},
+					{Value: liteSpeechModel, Label: "Gemini 3.8 Flash-Lite TTS"},
 				},
 			},
 		},

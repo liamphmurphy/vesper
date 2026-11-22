@@ -416,6 +416,24 @@ func (s *Service) ResolveVideo(ctx context.Context, ws uuid.UUID, providerIDOver
 	return prov.(VideoGenerator), desc, nil
 }
 
+// ResolveSpeech picks and constructs the active SpeechGenerator for ws
+// (workspace default, then the first enabled available provider).
+func (s *Service) ResolveSpeech(ctx context.Context, ws uuid.UUID) (SpeechGenerator, Descriptor, error) {
+	prov, desc, err := s.resolveCapability(
+		ctx,
+		ws,
+		CapTTS,
+		"",
+		"%s does not support speech",
+		"No Speech provider is configured. Add a Gemini API key in Settings → Workspace → Media providers.",
+		func(p Provider) bool { _, ok := p.(SpeechGenerator); return ok },
+	)
+	if err != nil {
+		return nil, Descriptor{}, err
+	}
+	return prov.(SpeechGenerator), desc, nil
+}
+
 func (s *Service) resolveCapability(
 	ctx context.Context,
 	ws uuid.UUID,

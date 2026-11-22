@@ -778,7 +778,9 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
     markRevealed(c.id, replies.slice(0, -1).map((m) => m.id));
     const author = personas.data.personas.find((p) => p.id === (last.persona?.id ?? c.persona?.id));
     const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    startReveal(c.id, last.id, splitSourceList(last.body_md).body, still ? 0 : revealWordsPerSecond(author?.reveal_pace, author?.state_media));
+    const mode = author?.voice.mode ?? "off";
+    const speech = mode !== "off" ? { url: `/api/v1/chats/${c.id}/messages/${last.id}/speech`, mode } : undefined;
+    startReveal(c.id, last.id, splitSourceList(last.body_md).body, still ? 0 : revealWordsPerSecond(author?.reveal_pace, author?.state_media), speech);
   }, [c, list, personas.data]);
   const pushRequests = usePushRequests(c?.id, running);
   const browserShare = useBrowserShare(c?.id);

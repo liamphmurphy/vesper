@@ -7,10 +7,26 @@ import { useSyncExternalStore } from "react";
 import type { CharacterState } from "./persona-character.ts";
 import { revealSlice, type CompanionState } from "./persona-state-media.ts";
 
-type Reveal = { messageId: string; text: string; wps: number; started: number; shown: string; done: boolean };
+// waiting: held at the start while its speech loads, so text and voice begin together.
+type Reveal = { messageId: string; text: string; wps: number; started: number; shown: string; done: boolean; waiting?: boolean; stop?: () => void };
 // hadWork: the turn showed a working state since the last reply, so its reply earns the
 // complete beat; celebrate: that beat waits for the reveal; completeUntil: it's playing.
-type Chat = { work?: CharacterState; reveal?: Reveal; revealed: Set<string>; hadWork?: boolean; celebrate?: boolean; completeUntil?: number };
+type Chat = { work?: CharacterState; reveal?: Reveal; revealed: Set<string>; hadWork?: boolean; celebrate?: boolean; completeUntil?: number; popoutOpen?: boolean };
+
+/** A persona's voice mode (Schemas["PersonaVoiceMode"]). */
+export type VoiceMode = "off" | "popout" | "always";
+
+/** Speech for a reply: where to fetch it and the author's voice mode. */
+export type ReplySpeech = { url: string; mode: VoiceMode };
+
+/**
+ * Plays a reply's speech. Resolves once it's playing, with the words it speaks and its length,
+ * or null when there's none to play (voice off, no provider, autoplay refused).
+ */
+export type SpeechPlayer = (url: string) => Promise<{ words: number; seconds: number; stop: () => void } | null>;
+
+/** How long a reveal waits for its speech before going ahead silently. */
+export const SPEECH_WAIT_MS = 8000;
 
 /** How long the complete beat plays before the companion settles to idle: about one loop. */
 export const COMPLETE_MS = 3500;
@@ -43,6 +59,10 @@ function tick() {
   for (const c of chats.values()) {
     const r = c.reveal;
     if (!r || r.done) continue;
+    if (r.waiting) {
+      running = true;
+      continue;
+    }
     const next = revealSlice(r.text, now - r.started, r.wps);
     if (next.text !== r.shown || next.done) {
       c.reveal = { ...r, shown: next.text, done: next.done };
@@ -73,11 +93,19 @@ export function setCompanionWork(chatId: string, state: CharacterState | undefin
  * Starts revealing a reply that just arrived. A reply is revealed once: one already shown in
  * full (or skipped) never replays when the transcript re-renders.
  */
-export function startReveal(chatId: string, messageId: string, text: string, wordsPerSecond: number) {
+export function startReveal(chatId: string, messageId: string, text: string, wordsPerSecond: number, speech?: ReplySpeech) {
   const c = chat(chatId);
   if (c.revealed.has(messageId) || c.reveal?.messageId === messageId) return;
   c.celebrate = !!c.hadWork;
   c.hadWork = false;
+  if (speech && speaks(c, speech.mode)) {
+    // The voice sets the pace: hold the text until it's playing, then reveal in time with it.
+    c.reveal = { messageId, text, wps: wordsPerSecond || FALLBACK_WPS, started: performance.now(), shown: "", done: false, waiting: true };
+    timer ??= setInterval(tick, 50);
+    emit();
+    void playSpeech(chatId, messageId, speech.url);
+    return;
+  }
   if (wordsPerSecond <= 0) {
     c.revealed.add(messageId);
     celebrate(c);
@@ -89,12 +117,107 @@ export function startReveal(chatId: string, messageId: string, text: string, wor
   emit();
 }
 
+// The pace for a spoken reply whose speech never came (pace off, voice failed).
+const FALLBACK_WPS = 15;
+
+function speaks(c: Chat, mode: VoiceMode): boolean {
+  return !muted() && (mode === "always" || (mode === "popout" && !!c.popoutOpen));
+}
+
+async function playSpeech(chatId: string, messageId: string, url: string) {
+  const timeout = new Promise<null>((r) => setTimeout(() => r(null), SPEECH_WAIT_MS));
+  let played: Awaited<ReturnType<SpeechPlayer>> = null;
+  try {
+    played = await Promise.race([player(url), timeout]);
+  } catch {
+    played = null;
+  }
+  const c = chat(chatId);
+  const r = c.reveal;
+  if (!r || r.messageId !== messageId || r.done) {
+    played?.stop(); // skipped or replaced while it loaded
+    return;
+  }
+  if (played && muted()) {
+    played.stop(); // muted while it loaded: keep the pace, drop the sound
+  }
+  const wps = played && played.seconds > 0 && played.words > 0 ? played.words / played.seconds : r.wps;
+  c.reveal = { ...r, waiting: false, started: performance.now(), wps, stop: played?.stop };
+  emit();
+}
+
+let player: SpeechPlayer = browserSpeechPlayer;
+
+/** Swaps the speech player (tests). */
+export function setSpeechPlayer(p: SpeechPlayer) {
+  player = p;
+}
+
+async function browserSpeechPlayer(url: string): ReturnType<SpeechPlayer> {
+  const res = await fetch(url, { credentials: "same-origin" });
+  if (!res.ok) return null;
+  const words = Number(res.headers.get("X-Speech-Words") ?? 0);
+  const src = URL.createObjectURL(await res.blob());
+  const audio = new Audio(src);
+  const release = () => URL.revokeObjectURL(src);
+  audio.addEventListener("ended", release, { once: true });
+  try {
+    await audio.play(); // refused without a recent gesture: the reveal goes on silently
+  } catch {
+    release();
+    return null;
+  }
+  const seconds = Number.isFinite(audio.duration) ? audio.duration : await new Promise<number>((r) => audio.addEventListener("loadedmetadata", () => r(audio.duration), { once: true }));
+  return {
+    words,
+    seconds,
+    stop: () => {
+      audio.pause();
+      release();
+    },
+  };
+}
+
+// ---- mute (one switch for every persona, remembered) ----
+
+const MUTE_KEY = "vesper:companion-muted";
+let mutedFallback = false;
+function muted(): boolean {
+  try {
+    return localStorage.getItem(MUTE_KEY) === "1";
+  } catch {
+    return mutedFallback;
+  }
+}
+
+/** Mutes or unmutes persona voices; muting stops any reply being spoken. */
+export function setVoiceMuted(next: boolean) {
+  try {
+    if (next) localStorage.setItem(MUTE_KEY, "1");
+    else localStorage.removeItem(MUTE_KEY);
+  } catch {
+    mutedFallback = next;
+  }
+  if (next) for (const c of chats.values()) c.reveal?.stop?.();
+  emit();
+}
+
+export function useVoiceMuted(): boolean {
+  return useSyncExternalStore(subscribe, muted, () => false);
+}
+
+/** Whether the chat's pop-out is open, for voices set to speak only there. */
+export function setPopoutOpen(chatId: string, open: boolean) {
+  chat(chatId).popoutOpen = open;
+}
+
 /** Shows the rest of the chat's reply at once (a click on it, or the person sending). */
 export function finishReveal(chatId: string) {
   const r = chats.get(chatId)?.reveal;
   if (!r || r.done) return;
   const c = chat(chatId);
-  c.reveal = { ...r, shown: r.text, done: true };
+  r.stop?.();
+  c.reveal = { ...r, shown: r.text, done: true, waiting: false };
   c.revealed.add(r.messageId);
   celebrate(c);
   emit();
