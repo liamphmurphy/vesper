@@ -6,7 +6,6 @@ import VesperCore
 struct ChatProposalsSectionView: View {
     let chatId: String
     let approvals: [API.Approval]
-    let pushRequests: [API.PushRequest]
     let secretProposals: [API.ApiSecretProposal]
     let personaProposals: [API.PersonaProposal]
     let characterProposals: [API.PersonaCharacterProposal]
@@ -14,7 +13,7 @@ struct ChatProposalsSectionView: View {
     let canvases: [API.ChatCanvasSummary]
 
     private var hasAny: Bool {
-        !approvals.isEmpty || !pushRequests.isEmpty || !secretProposals.isEmpty
+        !approvals.isEmpty || !secretProposals.isEmpty
             || !personaProposals.isEmpty || !characterProposals.isEmpty
             || !ticketChanges.isEmpty || !canvases.isEmpty
     }
@@ -24,9 +23,6 @@ struct ChatProposalsSectionView: View {
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(approvals, id: \.id) { approval in
                     ChatToolApprovalCardView(approval: approval)
-                }
-                ForEach(pushRequests, id: \.id) { request in
-                    ChatPushRequestCardView(request: request)
                 }
                 ForEach(secretProposals, id: \.id) { proposal in
                     ChatSecretProposalCardView(proposal: proposal)
@@ -130,6 +126,22 @@ struct ChatToolApprovalCardView: View {
 }
 
 // MARK: - Push Request Card
+
+/// Push request cards placed in the transcript (`ChatPushPlacement`), indented under the reply
+/// that asked for them.
+struct ChatPushRequestStackView: View {
+    let requests: [API.PushRequest]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(requests, id: \.id) { request in
+                ChatPushRequestCardView(request: request)
+            }
+        }
+        .frame(maxWidth: 720, alignment: .leading)
+        .padding(.leading, 32)
+    }
+}
 
 struct ChatPushRequestCardView: View {
     @Environment(NativeScreenContext.self) private var context
