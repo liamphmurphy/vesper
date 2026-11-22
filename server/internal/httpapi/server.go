@@ -102,7 +102,7 @@ type Server struct {
 	RunnerStarting func() bool
 
 	// MediaRegistry overrides the registered media providers (tests inject fake).
-	MediaRegistry   *media.Registry
+	MediaRegistry *media.Registry
 	// SpeechBroker shares live pre-synthesized lead clips between an in-process
 	// runner and HTTP speech endpoints.
 	SpeechBroker    *speech.Broker
