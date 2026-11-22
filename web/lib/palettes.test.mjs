@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { COLOR_KEYS, DEFAULT_APPEARANCE, PALETTES, contrast, paletteTokens, parseAppearance, resolvePalette, withSystemAccent } from "./palettes.ts";
+import { COLOR_KEYS, DEFAULT_APPEARANCE, PALETTES, colorTokens, contrast, paletteTokens, parseAppearance, resolvePalette, withSystemAccent } from "./palettes.ts";
 
 test("Neutral default, Dusk, macOS and fifteen named palettes cover the complete token contract in both modes", () => {
   assert.equal(PALETTES[0].id, "neutral");
@@ -104,4 +104,13 @@ test("an unsaved appearance is the macOS palette only inside the Mac app", () =>
   } finally {
     delete globalThis.window;
   }
+});
+
+test("colorTokens keeps the hex colours the Mac app's native screens read, and drops other CSS values", () => {
+  const tokens = paletteTokens(DEFAULT_APPEARANCE, "dark");
+  const colors = colorTokens(tokens);
+  assert.equal(colors.text, tokens.text);
+  assert.equal(colors["accent-soft"], tokens["accent-soft"]);
+  assert.equal(colors["shadow-float"], undefined);
+  for (const value of Object.values(colors)) assert.match(value, /^#[\da-f]{6}([\da-f]{2})?$/i);
 });

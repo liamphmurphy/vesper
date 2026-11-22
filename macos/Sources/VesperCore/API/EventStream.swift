@@ -7,13 +7,19 @@ public enum SSE {
     /// The event type of one stream line: Vesper sends `data: {"type":"run.updated",…}`. Nil for
     /// comments, other fields and malformed frames.
     public static func eventType(fromLine line: String) -> String? {
+        event(fromLine: line)?.type
+    }
+
+    /// The whole hint of one stream line: its type and the ids it names (strings only).
+    public static func event(fromLine line: String) -> ServerEvent? {
         guard line.hasPrefix("data:") else { return nil }
         let raw = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
         guard !raw.isEmpty, let data = raw.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let type = object["type"] as? String
         else { return nil }
-        return type
+        let ids = (object["ids"] as? [Any])?.compactMap { $0 as? String } ?? []
+        return ServerEvent(type: type, ids: ids)
     }
 
     static let urlSessionConnector: SSEConnector = { request in
@@ -41,10 +47,12 @@ public enum SSE {
 }
 
 /// Server-sent events from GET /events. One stream for the app: `onEvent` gets every event type
-/// (feed it to the InboxMonitor and RunMonitor). Reconnects 5 s after the stream ends or fails.
+/// (feed it to the InboxMonitor and RunMonitor) and `onServerEvent` the whole hint, ids included
+/// (feed it to the QueryStore). Reconnects 5 s after the stream ends or fails.
 @MainActor
 public final class EventStream {
     public var onEvent: ((String) -> Void)?
+    public var onServerEvent: ((ServerEvent) -> Void)?
 
     private let connector: SSEConnector
     private let reconnectDelay: Duration
@@ -71,8 +79,11 @@ public final class EventStream {
                     let lines = try await connector(request)
                     for try await line in lines {
                         if Task.isCancelled { return }
-                        if let type = SSE.eventType(fromLine: line) {
-                            await MainActor.run { self?.onEvent?(type) }
+                        if let event = SSE.event(fromLine: line) {
+                            await MainActor.run {
+                                self?.onEvent?(event.type)
+                                self?.onServerEvent?(event)
+                            }
                         }
                     }
                 } catch {

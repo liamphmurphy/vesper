@@ -1,4 +1,4 @@
-// The header actions of the ticket page, the epic page and the Work screen as native toolbar items.
+// The header actions of the ticket page and the epic page as native toolbar items.
 // Pure: the screens act on the decoded press. Ids are the protocol between builder and parser.
 import type { ToolbarItem } from "../protocol.ts";
 
@@ -36,20 +36,3 @@ export const parseTicketToolbarAction = (itemId: string): TicketToolbarAction | 
 
 export const EPIC_BOARD = "epic.board";
 export const buildEpicToolbar = (): ToolbarItem[] => [{ id: EPIC_BOARD, label: "View on board", kind: "button", icon: "board", showsLabel: true }];
-
-// The Work screen: what needs you.
-
-export interface WorkToolbarInput {
-  /** Runs waiting on the person. */
-  needs: number;
-}
-
-export function buildWorkToolbar(i: WorkToolbarInput): ToolbarItem[] {
-  const items: ToolbarItem[] = [];
-  if (i.needs > 0) items.push({ id: "work.needs", label: `Needs you · ${i.needs}`, kind: "button", icon: "inbox", showsLabel: true, accent: true });
-  return items;
-}
-
-export type WorkToolbarAction = "needs";
-export const parseWorkToolbarAction = (itemId: string): WorkToolbarAction | null =>
-  itemId === "work.needs" ? "needs" : null;

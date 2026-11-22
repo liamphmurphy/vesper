@@ -178,6 +178,9 @@ ORDER BY items.resolved, (rd.read_at IS NOT NULL AND rd.read_at>=items.created_a
 INSERT INTO inbox_reads (user_id,item_id) VALUES ($1,$2)
 ON CONFLICT (user_id,item_id) DO UPDATE SET read_at=clock_timestamp();
 
+-- name: UnreadInboxItem :exec
+DELETE FROM inbox_reads WHERE user_id=$1 AND item_id=$2;
+
 -- name: SearchAttentionTargets :many
 -- Best matches first, at most per_kind of each kind so many chats or agents
 -- can't crowd epics out; total is how many of that kind matched before the

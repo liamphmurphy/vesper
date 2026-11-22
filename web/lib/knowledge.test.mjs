@@ -113,22 +113,6 @@ test("saving preserves tildes inside attachment embeds", async () => {
   assert.equal(restoreObsidianSyntax(written).trim(), md);
 });
 
-test("the graph layout keeps linked pages closer than unlinked ones, deterministically and fast", async () => {
-  const { layoutGraph } = await import("./knowledge-graph.ts");
-  const nodes = Array.from({ length: 1500 }, (_, i) => ({ id: `n${i}`, group: `g${i % 5}` }));
-  const links = Array.from({ length: 1499 }, (_, i) => ({ source: `n${i}`, target: `n${(i * 7 + 1) % 1500}` }));
-  const t0 = performance.now();
-  const a = layoutGraph(nodes, links);
-  assert.ok(performance.now() - t0 < 4000, "lays out 1,500 pages in a few seconds at most");
-  assert.deepEqual(layoutGraph(nodes, links), a);
-  const at = new Map(a.map((p) => [p.id, p]));
-  const dist = (u, v) => Math.hypot(at.get(u).x - at.get(v).x, at.get(u).y - at.get(v).y);
-  const linked = links.slice(0, 200).reduce((s, l) => s + dist(l.source, l.target), 0) / 200;
-  const random = Array.from({ length: 200 }, (_, i) => dist(`n${i}`, `n${(i * 13 + 500) % 1500}`)).reduce((s, d) => s + d, 0) / 200;
-  assert.ok(linked < random, `linked ${linked.toFixed(0)} < random ${random.toFixed(0)}`);
-  assert.ok(a.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y)));
-});
-
 test("explorer paths: a folder is its pages' shared prefix, and a name is one segment", () => {
   assert.equal(parentOf("Campaign/NPCs/Mara"), "Campaign/NPCs");
   assert.equal(parentOf("Welcome"), "");

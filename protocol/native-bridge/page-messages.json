@@ -288,6 +288,14 @@
   },
   {
     "v": 1,
+    "type": "appearance",
+    "mode": "dark",
+    "background": "#1d2021",
+    "tokens": { "bg": "#1d2021", "text": "#ebdbb2", "accent": "#d79921", "accent-soft": "#d7992126" },
+    "textSize": "large"
+  },
+  {
+    "v": 1,
     "type": "confirmApproval",
     "requestId": "r1",
     "scope": "push_requests"

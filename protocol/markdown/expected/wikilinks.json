@@ -1,0 +1,216 @@
+{
+  "ast": {
+    "type": "root",
+    "children": [
+      {
+        "type": "paragraph",
+        "children": [
+          {
+            "type": "text",
+            "value": "See "
+          },
+          {
+            "type": "link",
+            "url": "wikilink:Roadmap",
+            "children": [
+              {
+                "type": "text",
+                "value": "Roadmap"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": " and "
+          },
+          {
+            "type": "link",
+            "url": "wikilink:projects%2FVesper%2FPlan%23Milestones%7Cthe%20plan",
+            "children": [
+              {
+                "type": "text",
+                "value": "the plan"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": " and "
+          },
+          {
+            "type": "link",
+            "url": "wikilink:Design%20notes%23Colors",
+            "children": [
+              {
+                "type": "text",
+                "value": "Design notes › Colors"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "."
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "children": [
+          {
+            "type": "text",
+            "value": "An embed "
+          },
+          {
+            "type": "link",
+            "url": "wikilink:diagram.png",
+            "children": [
+              {
+                "type": "text",
+                "value": "diagram.png"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": " and a link with a pipe "
+          },
+          {
+            "type": "link",
+            "url": "wikilink:Page%7CAlias",
+            "children": [
+              {
+                "type": "text",
+                "value": "Alias"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": " in prose."
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "children": [
+          {
+            "type": "text",
+            "value": "Not in code: "
+          },
+          {
+            "type": "inlineCode",
+            "value": "[[Inline code]]"
+          },
+          {
+            "type": "text",
+            "value": " stays as written."
+          }
+        ]
+      },
+      {
+        "type": "code",
+        "info": "",
+        "value": "[[Inside a fence]]"
+      },
+      {
+        "type": "table",
+        "align": [
+          null,
+          null
+        ],
+        "children": [
+          {
+            "type": "tableRow",
+            "children": [
+              {
+                "type": "tableCell",
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "Column"
+                  }
+                ]
+              },
+              {
+                "type": "tableCell",
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "Link"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "tableRow",
+            "children": [
+              {
+                "type": "tableCell",
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "row"
+                  }
+                ]
+              },
+              {
+                "type": "tableCell",
+                "children": [
+                  {
+                    "type": "link",
+                    "url": "wikilink:Table%20page%7Cshown",
+                    "children": [
+                      {
+                        "type": "text",
+                        "value": "shown"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "children": [
+          {
+            "type": "text",
+            "value": "Special "
+          },
+          {
+            "type": "emphasis",
+            "children": [
+              {
+                "type": "text",
+                "value": "characters"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": " in a label: "
+          },
+          {
+            "type": "link",
+            "url": "wikilink:notes%2Fa_b*c",
+            "children": [
+              {
+                "type": "text",
+                "value": "a_b*c"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "."
+          }
+        ]
+      }
+    ],
+    "footnotes": []
+  },
+  "code": []
+}

@@ -1,0 +1,2699 @@
+{
+  "viewBox": {
+    "width": 132,
+    "height": 56
+  },
+  "timing": {
+    "holdMs": 800,
+    "fadeMs": 240,
+    "windDownMs": 600
+  },
+  "kinds": [
+    "thinking",
+    "next-step",
+    "writing-reply",
+    "connector",
+    "secret",
+    "wiki",
+    "tickets",
+    "ticket-lookup",
+    "reading-code",
+    "searching-code",
+    "writing-code",
+    "tests",
+    "build",
+    "install",
+    "terminal",
+    "github",
+    "commit",
+    "push",
+    "pull-request",
+    "repo-history",
+    "web",
+    "web-page",
+    "video",
+    "image",
+    "image-view",
+    "canvas",
+    "canvas-comment",
+    "design",
+    "design-view",
+    "playground",
+    "runs",
+    "workflow",
+    "memory",
+    "memory-save",
+    "chat-history",
+    "repo-search",
+    "repo-attach",
+    "video-render",
+    "audio-render",
+    "finance",
+    "finance-sort",
+    "persona",
+    "schedule",
+    "learning",
+    "research",
+    "space",
+    "saved-links",
+    "projects",
+    "library",
+    "inbox",
+    "chart",
+    "diagram",
+    "app",
+    "custom-app",
+    "database",
+    "http",
+    "pdf",
+    "subagent",
+    "choices"
+  ],
+  "uniqueScenes": [
+    "thinking",
+    "next-step",
+    "wiki",
+    "tickets",
+    "ticket-lookup",
+    "reading-code",
+    "searching-code",
+    "writing-code",
+    "tests",
+    "build",
+    "install",
+    "terminal",
+    "github",
+    "commit",
+    "push",
+    "pull-request",
+    "repo-history",
+    "web",
+    "web-page",
+    "video",
+    "image",
+    "canvas",
+    "canvas-comment",
+    "design",
+    "runs",
+    "workflow",
+    "connector",
+    "secret",
+    "memory",
+    "memory-save",
+    "playground",
+    "chat-history",
+    "repo-search",
+    "repo-attach",
+    "video-render",
+    "audio-render",
+    "finance",
+    "finance-sort",
+    "persona",
+    "schedule",
+    "learning",
+    "research",
+    "space",
+    "saved-links",
+    "projects",
+    "library",
+    "inbox",
+    "chart",
+    "diagram",
+    "app",
+    "choices",
+    "custom-app",
+    "database",
+    "http",
+    "pdf",
+    "subagent"
+  ],
+  "splitAliases": {
+    "writing-reply": "writing-code",
+    "image-view": "image",
+    "design-view": "design"
+  },
+  "transitions": {
+    "scene-in": {
+      "duration": 0.24,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0
+      ]
+    },
+    "scene-out": {
+      "duration": 0.24,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        100
+      ]
+    }
+  },
+  "animations": {
+    "scene-ap-fill": {
+      "duration": 2.4,
+      "easing": "ease-in-out",
+      "direction": "alternate",
+      "fillMode": "none",
+      "stops": [
+        0,
+        100
+      ]
+    },
+    "scene-ap-grow": {
+      "duration": 2.4,
+      "easing": "ease-in-out",
+      "direction": "alternate",
+      "fillMode": "none",
+      "stops": [
+        0,
+        100
+      ]
+    },
+    "scene-ap-knob": {
+      "duration": 2.4,
+      "easing": "ease-in-out",
+      "direction": "alternate",
+      "fillMode": "none",
+      "stops": [
+        100
+      ]
+    },
+    "scene-arrive": {
+      "duration": 2.4,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "none",
+      "stops": [
+        0,
+        68,
+        80,
+        100
+      ]
+    },
+    "scene-au-b0": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        4,
+        10,
+        86,
+        94,
+        100
+      ]
+    },
+    "scene-au-b1": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        14,
+        20,
+        86,
+        94,
+        100
+      ]
+    },
+    "scene-au-b2": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        24,
+        30,
+        86,
+        94,
+        100
+      ]
+    },
+    "scene-au-b3": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        34,
+        40,
+        86,
+        94,
+        100
+      ]
+    },
+    "scene-au-b4": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        44,
+        50,
+        86,
+        94,
+        100
+      ]
+    },
+    "scene-au-badge": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        58,
+        63,
+        66,
+        90,
+        100
+      ]
+    },
+    "scene-au-bar": {
+      "duration": 4.8,
+      "easing": "linear",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        4,
+        54,
+        90,
+        100
+      ]
+    },
+    "scene-bar": {
+      "duration": 3,
+      "easing": "ease-in-out",
+      "direction": "alternate",
+      "fillMode": "none",
+      "stops": [
+        0,
+        100
+      ]
+    },
+    "scene-bld-ok": {
+      "duration": 4,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        60,
+        67,
+        72,
+        86,
+        100
+      ]
+    },
+    "scene-breathe": {
+      "duration": 3.2,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "none",
+      "stops": [
+        50
+      ]
+    },
+    "scene-bump": {
+      "duration": 0.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "none",
+      "stops": [
+        0,
+        60,
+        68,
+        80,
+        100
+      ]
+    },
+    "scene-ca-a": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        16,
+        28,
+        88,
+        100
+      ]
+    },
+    "scene-ca-b": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        26,
+        38,
+        88,
+        100
+      ]
+    },
+    "scene-ca-c": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        38,
+        50,
+        88,
+        100
+      ]
+    },
+    "scene-ca-live": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        54,
+        60,
+        64,
+        88,
+        100
+      ]
+    },
+    "scene-ca-nav": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        4,
+        16,
+        88,
+        100
+      ]
+    },
+    "scene-card": {
+      "duration": 3.6,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        6,
+        15,
+        35,
+        55,
+        75,
+        90,
+        100
+      ]
+    },
+    "scene-caret": {
+      "duration": 0.8,
+      "easing": "steps(1)",
+      "direction": "normal",
+      "fillMode": "none",
+      "stops": [
+        50
+      ]
+    },
+    "scene-caret-path": {
+      "duration": 4,
+      "easing": "linear",
+      "direction": "normal",
+      "fillMode": "none",
+      "stops": [
+        0,
+        20,
+        20.01,
+        40,
+        40.01,
+        60,
+        60.01,
+        75,
+        100
+      ]
+    },
+    "scene-ch-l": {
+      "duration": 4.8,
+      "easing": "linear",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        2,
+        60,
+        88,
+        100
+      ]
+    },
+    "scene-ch-p0": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        2,
+        7,
+        10,
+        88,
+        100
+      ]
+    },
+    "scene-ch-p1": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        16,
+        21,
+        24,
+        88,
+        100
+      ]
+    },
+    "scene-ch-p2": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        29,
+        34,
+        37,
+        88,
+        100
+      ]
+    },
+    "scene-ch-p3": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        45,
+        50,
+        53,
+        88,
+        100
+      ]
+    },
+    "scene-ch-p4": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        60,
+        65,
+        68,
+        88,
+        100
+      ]
+    },
+    "scene-chip": {
+      "duration": 3.2,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        12,
+        35,
+        65,
+        100
+      ]
+    },
+    "scene-cho-cur": {
+      "duration": 4.8,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        56,
+        70,
+        74,
+        78,
+        94,
+        100
+      ]
+    },
+    "scene-cho-dot": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        76,
+        81,
+        84,
+        94,
+        100
+      ]
+    },
+    "scene-cho-hl": {
+      "duration": 4.8,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        14,
+        24,
+        38,
+        48,
+        58,
+        68,
+        94,
+        100
+      ]
+    },
+    "scene-commit": {
+      "duration": 3.2,
+      "easing": "linear",
+      "direction": "normal",
+      "fillMode": "none",
+      "stops": [
+        0,
+        4,
+        8,
+        14,
+        20,
+        28,
+        64,
+        72,
+        78,
+        84,
+        92,
+        100
+      ]
+    },
+    "scene-cursor": {
+      "duration": 4,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "none",
+      "stops": [
+        0,
+        30,
+        60,
+        85,
+        100
+      ]
+    },
+    "scene-db-link": {
+      "duration": 4.8,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        24,
+        26,
+        40,
+        88,
+        100
+      ]
+    },
+    "scene-db-r0": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        40,
+        48,
+        88,
+        100
+      ]
+    },
+    "scene-db-r1": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        48,
+        56,
+        88,
+        100
+      ]
+    },
+    "scene-db-r2": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        56,
+        64,
+        88,
+        100
+      ]
+    },
+    "scene-db-scan": {
+      "duration": 4.8,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        10,
+        34,
+        44,
+        88,
+        100
+      ]
+    },
+    "scene-drift-a": {
+      "duration": 3.6,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "none",
+      "stops": [
+        50
+      ]
+    },
+    "scene-drift-b": {
+      "duration": 4.2,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "none",
+      "stops": [
+        50
+      ]
+    },
+    "scene-drift-c": {
+      "duration": 3,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "none",
+      "stops": [
+        50
+      ]
+    },
+    "scene-drop": {
+      "duration": 2.4,
+      "easing": "ease-in",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        15,
+        55,
+        65,
+        100
+      ]
+    },
+    "scene-dz-a0": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        12,
+        18,
+        88,
+        100
+      ]
+    },
+    "scene-dz-a1": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        16,
+        22,
+        88,
+        100
+      ]
+    },
+    "scene-dz-b0": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        52,
+        58,
+        88,
+        100
+      ]
+    },
+    "scene-dz-b1": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        56,
+        62,
+        88,
+        100
+      ]
+    },
+    "scene-dz-b2": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        62,
+        66,
+        69,
+        88,
+        100
+      ]
+    },
+    "scene-dz-btn": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        22,
+        26,
+        29,
+        88,
+        100
+      ]
+    },
+    "scene-dz-cur": {
+      "duration": 4.8,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        24,
+        28,
+        48,
+        88,
+        100
+      ]
+    },
+    "scene-dz-frame": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        44,
+        52,
+        88,
+        100
+      ]
+    },
+    "scene-dz-head": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        45,
+        48,
+        88,
+        100
+      ]
+    },
+    "scene-dz-sketch": {
+      "duration": 4.8,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        2,
+        20,
+        88,
+        100
+      ]
+    },
+    "scene-dz-spark": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        70,
+        75,
+        78,
+        88,
+        100
+      ]
+    },
+    "scene-dz-wire": {
+      "duration": 4.8,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        30,
+        31,
+        46,
+        88,
+        100
+      ]
+    },
+    "scene-fin-b0": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        4,
+        18,
+        88,
+        100
+      ]
+    },
+    "scene-fin-b1": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        12,
+        26,
+        88,
+        100
+      ]
+    },
+    "scene-fin-b2": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        20,
+        34,
+        88,
+        100
+      ]
+    },
+    "scene-fin-b3": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        28,
+        42,
+        88,
+        100
+      ]
+    },
+    "scene-fin-coin": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        64,
+        69,
+        72,
+        88,
+        100
+      ]
+    },
+    "scene-fin-line": {
+      "duration": 4.8,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        40,
+        62,
+        88,
+        100
+      ]
+    },
+    "scene-focus": {
+      "duration": 3.2,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "none",
+      "stops": [
+        0,
+        70,
+        100
+      ]
+    },
+    "scene-fs-chip": {
+      "duration": 4.8,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        8,
+        30,
+        52,
+        72,
+        82,
+        100
+      ]
+    },
+    "scene-history-hit": {
+      "duration": 3.96,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        6,
+        18,
+        30,
+        100
+      ]
+    },
+    "scene-history-lens": {
+      "duration": 3.96,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "none",
+      "stops": [
+        0,
+        18,
+        33,
+        51,
+        66,
+        84,
+        100
+      ]
+    },
+    "scene-http-ok": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        66,
+        72,
+        76,
+        90,
+        100
+      ]
+    },
+    "scene-http-req": {
+      "duration": 4.8,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        4,
+        10,
+        32,
+        38,
+        100
+      ]
+    },
+    "scene-http-res": {
+      "duration": 4.8,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        40,
+        46,
+        68,
+        74,
+        100
+      ]
+    },
+    "scene-http-srv": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        30,
+        38,
+        48,
+        100
+      ]
+    },
+    "scene-ib-c0": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        12,
+        88,
+        100
+      ]
+    },
+    "scene-ib-c1": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        14,
+        26,
+        88,
+        100
+      ]
+    },
+    "scene-ib-c2": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        28,
+        40,
+        88,
+        100
+      ]
+    },
+    "scene-ib-n": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        46,
+        51,
+        54,
+        88,
+        100
+      ]
+    },
+    "scene-lib-hit": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        46,
+        52,
+        88,
+        100
+      ]
+    },
+    "scene-lib-lens": {
+      "duration": 4.8,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        8,
+        20,
+        32,
+        46,
+        84,
+        100
+      ]
+    },
+    "scene-lib-pop": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        50,
+        56,
+        62,
+        88,
+        100
+      ]
+    },
+    "scene-light": {
+      "duration": 3.2,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        15,
+        60,
+        80,
+        100
+      ]
+    },
+    "scene-link": {
+      "duration": 4,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        25,
+        80,
+        100
+      ]
+    },
+    "scene-lm-n0": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        2,
+        7,
+        10,
+        90,
+        100
+      ]
+    },
+    "scene-lm-n1": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        25,
+        30,
+        33,
+        90,
+        100
+      ]
+    },
+    "scene-lm-n2": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        48,
+        53,
+        56,
+        90,
+        100
+      ]
+    },
+    "scene-lm-n3": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        70,
+        75,
+        78,
+        90,
+        100
+      ]
+    },
+    "scene-lm-path": {
+      "duration": 4.8,
+      "easing": "linear",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        2,
+        70,
+        90,
+        100
+      ]
+    },
+    "scene-log": {
+      "duration": 4,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        5,
+        18,
+        25,
+        43,
+        50,
+        68,
+        75,
+        93,
+        100
+      ]
+    },
+    "scene-ms-link0": {
+      "duration": 4.8,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        22,
+        24,
+        42,
+        88,
+        100
+      ]
+    },
+    "scene-ms-link1": {
+      "duration": 4.8,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        30,
+        32,
+        50,
+        88,
+        100
+      ]
+    },
+    "scene-ms-node": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        4,
+        18,
+        24,
+        88,
+        100
+      ]
+    },
+    "scene-ms-spark": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        52,
+        58,
+        62,
+        88,
+        100
+      ]
+    },
+    "scene-node": {
+      "duration": 2.4,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "none",
+      "stops": [
+        50
+      ]
+    },
+    "scene-ns-chosen": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "none",
+      "stops": [
+        0,
+        48,
+        55,
+        60,
+        84,
+        96,
+        100
+      ]
+    },
+    "scene-ns-commit": {
+      "duration": 4.8,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "none",
+      "stops": [
+        0,
+        32,
+        50,
+        84,
+        96,
+        100
+      ]
+    },
+    "scene-ns-from": {
+      "duration": 4.8,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "none",
+      "stops": [
+        0,
+        30,
+        40,
+        50,
+        100
+      ]
+    },
+    "scene-ns-probe-a": {
+      "duration": 4.8,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "none",
+      "stops": [
+        0,
+        9,
+        18,
+        100
+      ]
+    },
+    "scene-ns-probe-b": {
+      "duration": 4.8,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "none",
+      "stops": [
+        0,
+        16,
+        25,
+        34,
+        100
+      ]
+    },
+    "scene-pdf-done": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        56,
+        62,
+        66,
+        88,
+        100
+      ]
+    },
+    "scene-pdf-l0": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        4,
+        16,
+        88,
+        100
+      ]
+    },
+    "scene-pdf-l1": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        14,
+        28,
+        88,
+        100
+      ]
+    },
+    "scene-pdf-l2": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        26,
+        38,
+        88,
+        100
+      ]
+    },
+    "scene-pdf-tag": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        40,
+        48,
+        54,
+        88,
+        100
+      ]
+    },
+    "scene-pe-body": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        26,
+        56,
+        88,
+        100
+      ]
+    },
+    "scene-pe-head": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        2,
+        30,
+        88,
+        100
+      ]
+    },
+    "scene-pe-s0": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        58,
+        63,
+        66,
+        88,
+        100
+      ]
+    },
+    "scene-pe-s1": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        66,
+        71,
+        74,
+        88,
+        100
+      ]
+    },
+    "scene-pg-1": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        10,
+        88,
+        100
+      ]
+    },
+    "scene-pg-2": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        12,
+        22,
+        88,
+        100
+      ]
+    },
+    "scene-pg-3": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        24,
+        34,
+        88,
+        100
+      ]
+    },
+    "scene-pg-link": {
+      "duration": 4.8,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        36,
+        38,
+        50,
+        88,
+        100
+      ]
+    },
+    "scene-pg-live": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        62,
+        68,
+        74,
+        88,
+        100
+      ]
+    },
+    "scene-pg-page": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        50,
+        60,
+        88,
+        100
+      ]
+    },
+    "scene-pg-ring": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        64,
+        67,
+        86,
+        100
+      ]
+    },
+    "scene-pin": {
+      "duration": 4,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        40,
+        52,
+        58,
+        64,
+        90,
+        100
+      ]
+    },
+    "scene-pj-check": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        54,
+        59,
+        62,
+        88,
+        100
+      ]
+    },
+    "scene-pj-f0": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        10,
+        88,
+        100
+      ]
+    },
+    "scene-pj-f1": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        8,
+        18,
+        88,
+        100
+      ]
+    },
+    "scene-pj-f2": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        16,
+        26,
+        88,
+        100
+      ]
+    },
+    "scene-pj-lift": {
+      "duration": 4.8,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        36,
+        46,
+        88,
+        100
+      ]
+    },
+    "scene-pj-tab": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        40,
+        48,
+        88,
+        100
+      ]
+    },
+    "scene-plug": {
+      "duration": 2.4,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "none",
+      "stops": [
+        0,
+        50,
+        100
+      ]
+    },
+    "scene-pop": {
+      "duration": 4,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        25,
+        35,
+        42,
+        85,
+        100
+      ]
+    },
+    "scene-pull": {
+      "duration": 3.6,
+      "easing": "cubic-bezier(0.16, 1, 0.3, 1)",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        10,
+        32,
+        86,
+        100
+      ]
+    },
+    "scene-push": {
+      "duration": 2.4,
+      "easing": "ease-in",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        8,
+        70,
+        78,
+        100
+      ]
+    },
+    "scene-ra-badge": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        56,
+        61,
+        64,
+        90,
+        100
+      ]
+    },
+    "scene-ra-chip": {
+      "duration": 4.8,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        4,
+        26,
+        30,
+        100
+      ]
+    },
+    "scene-ra-f0": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        34,
+        40,
+        90,
+        100
+      ]
+    },
+    "scene-ra-f1": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        40,
+        46,
+        90,
+        100
+      ]
+    },
+    "scene-ra-f2": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        46,
+        52,
+        90,
+        100
+      ]
+    },
+    "scene-rl-0": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        18,
+        24,
+        88,
+        100
+      ]
+    },
+    "scene-rl-1": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        38,
+        44,
+        88,
+        100
+      ]
+    },
+    "scene-rl-2": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        58,
+        64,
+        88,
+        100
+      ]
+    },
+    "scene-row-1": {
+      "duration": 4,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        12,
+        85,
+        100
+      ]
+    },
+    "scene-row-2": {
+      "duration": 4,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        25,
+        37,
+        85,
+        100
+      ]
+    },
+    "scene-row-3": {
+      "duration": 4,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        50,
+        62,
+        85,
+        100
+      ]
+    },
+    "scene-rs-check": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        28,
+        33,
+        36,
+        90,
+        100
+      ]
+    },
+    "scene-rs-hit": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        24,
+        30,
+        90,
+        100
+      ]
+    },
+    "scene-rs-lens": {
+      "duration": 4.8,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        10,
+        22,
+        58,
+        70,
+        84,
+        100
+      ]
+    },
+    "scene-rsup-0": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        22,
+        27,
+        30,
+        88,
+        100
+      ]
+    },
+    "scene-rsup-1": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        42,
+        47,
+        50,
+        88,
+        100
+      ]
+    },
+    "scene-rsup-2": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        62,
+        67,
+        70,
+        88,
+        100
+      ]
+    },
+    "scene-rt-0": {
+      "duration": 4.8,
+      "easing": "linear",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        2,
+        18,
+        88,
+        100
+      ]
+    },
+    "scene-rt-1": {
+      "duration": 4.8,
+      "easing": "linear",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        22,
+        38,
+        88,
+        100
+      ]
+    },
+    "scene-rt-2": {
+      "duration": 4.8,
+      "easing": "linear",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        42,
+        58,
+        88,
+        100
+      ]
+    },
+    "scene-rt-3": {
+      "duration": 4.8,
+      "easing": "linear",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        62,
+        78,
+        88,
+        100
+      ]
+    },
+    "scene-sa-h0": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        20,
+        28,
+        34,
+        88,
+        100
+      ]
+    },
+    "scene-sa-h1": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        30,
+        38,
+        44,
+        88,
+        100
+      ]
+    },
+    "scene-sa-ok0": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        48,
+        54,
+        58,
+        88,
+        100
+      ]
+    },
+    "scene-sa-ok1": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        58,
+        64,
+        68,
+        88,
+        100
+      ]
+    },
+    "scene-sa-out0": {
+      "duration": 4.8,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        4,
+        6,
+        24,
+        88,
+        100
+      ]
+    },
+    "scene-sa-out1": {
+      "duration": 4.8,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        14,
+        16,
+        34,
+        88,
+        100
+      ]
+    },
+    "scene-sc-hit": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        40,
+        48,
+        88,
+        100
+      ]
+    },
+    "scene-sc-lens": {
+      "duration": 4.8,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        10,
+        26,
+        44,
+        84,
+        100
+      ]
+    },
+    "scene-sc-match": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        40,
+        48,
+        88,
+        100
+      ]
+    },
+    "scene-scan": {
+      "duration": 2.2,
+      "easing": "linear",
+      "direction": "normal",
+      "fillMode": "none",
+      "stops": [
+        0,
+        12,
+        88,
+        100
+      ]
+    },
+    "scene-sch-d0": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        10,
+        15,
+        18,
+        90,
+        100
+      ]
+    },
+    "scene-sch-d1": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        32,
+        37,
+        40,
+        90,
+        100
+      ]
+    },
+    "scene-sch-d2": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        54,
+        59,
+        62,
+        90,
+        100
+      ]
+    },
+    "scene-scroll-2": {
+      "duration": 3,
+      "easing": "steps(2)",
+      "direction": "normal",
+      "fillMode": "none",
+      "stops": [
+        100
+      ]
+    },
+    "scene-scroll-3": {
+      "duration": 3,
+      "easing": "steps(3)",
+      "direction": "normal",
+      "fillMode": "none",
+      "stops": [
+        100
+      ]
+    },
+    "scene-sec-shackle": {
+      "duration": 2.4,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "none",
+      "stops": [
+        0,
+        35,
+        55,
+        75,
+        100
+      ]
+    },
+    "scene-sl-r": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        6,
+        24,
+        86,
+        100
+      ]
+    },
+    "scene-sp-i0": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        38,
+        46,
+        88,
+        100
+      ]
+    },
+    "scene-sp-i1": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        46,
+        54,
+        88,
+        100
+      ]
+    },
+    "scene-sp-i2": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        54,
+        62,
+        88,
+        100
+      ]
+    },
+    "scene-sp-o": {
+      "duration": 4.8,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        2,
+        30,
+        88,
+        100
+      ]
+    },
+    "scene-sp-tab": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        30,
+        38,
+        88,
+        100
+      ]
+    },
+    "scene-spin": {
+      "duration": 4,
+      "easing": "linear",
+      "direction": "normal",
+      "directions": [
+        "normal",
+        "reverse"
+      ],
+      "fillMode": "none",
+      "stops": [
+        100
+      ]
+    },
+    "scene-sq-h0": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        17,
+        19,
+        88,
+        100
+      ]
+    },
+    "scene-sq-h1": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        41,
+        43,
+        88,
+        100
+      ]
+    },
+    "scene-sq-h2": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        65,
+        67,
+        88,
+        100
+      ]
+    },
+    "scene-sq-m0": {
+      "duration": 4.8,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        4,
+        18,
+        88,
+        100
+      ]
+    },
+    "scene-sq-m1": {
+      "duration": 4.8,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        28,
+        42,
+        88,
+        100
+      ]
+    },
+    "scene-sq-m2": {
+      "duration": 4.8,
+      "easing": "ease-in-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        52,
+        66,
+        88,
+        100
+      ]
+    },
+    "scene-stamp": {
+      "duration": 3.2,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        68,
+        78,
+        86,
+        100
+      ]
+    },
+    "scene-sweep": {
+      "duration": 2.4,
+      "easing": "ease-in-out",
+      "direction": "alternate",
+      "fillMode": "none",
+      "stops": [
+        0,
+        100
+      ]
+    },
+    "scene-tile": {
+      "duration": 3.2,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        60,
+        100
+      ]
+    },
+    "scene-ts-0": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        6,
+        12,
+        16,
+        88,
+        100
+      ]
+    },
+    "scene-ts-1": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        26,
+        32,
+        36,
+        88,
+        100
+      ]
+    },
+    "scene-ts-2": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        46,
+        52,
+        56,
+        88,
+        100
+      ]
+    },
+    "scene-ts-bar": {
+      "duration": 4.8,
+      "easing": "linear",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        6,
+        56,
+        88,
+        100
+      ]
+    },
+    "scene-type-1": {
+      "duration": 4,
+      "easing": "linear",
+      "direction": "normal",
+      "fillMode": "none",
+      "stops": [
+        0,
+        20,
+        100
+      ]
+    },
+    "scene-type-2": {
+      "duration": 4,
+      "easing": "linear",
+      "direction": "normal",
+      "fillMode": "none",
+      "stops": [
+        0,
+        20,
+        40,
+        100
+      ]
+    },
+    "scene-type-3": {
+      "duration": 4,
+      "easing": "linear",
+      "direction": "normal",
+      "fillMode": "none",
+      "stops": [
+        0,
+        40,
+        60,
+        100
+      ]
+    },
+    "scene-type-4": {
+      "duration": 4,
+      "easing": "linear",
+      "direction": "normal",
+      "fillMode": "none",
+      "stops": [
+        0,
+        60,
+        75,
+        100
+      ]
+    },
+    "scene-vr-badge": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        54,
+        59,
+        62,
+        90,
+        100
+      ]
+    },
+    "scene-vr-bar": {
+      "duration": 4.8,
+      "easing": "linear",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        4,
+        50,
+        90,
+        100
+      ]
+    },
+    "scene-vr-c0": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        4,
+        8,
+        86,
+        94,
+        100
+      ]
+    },
+    "scene-vr-c1": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        12,
+        16,
+        86,
+        94,
+        100
+      ]
+    },
+    "scene-vr-c2": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        20,
+        24,
+        86,
+        94,
+        100
+      ]
+    },
+    "scene-vr-c3": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        28,
+        32,
+        86,
+        94,
+        100
+      ]
+    },
+    "scene-vr-c4": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        36,
+        40,
+        86,
+        94,
+        100
+      ]
+    },
+    "scene-vr-c5": {
+      "duration": 4.8,
+      "easing": "ease-out",
+      "direction": "normal",
+      "fillMode": "both",
+      "stops": [
+        0,
+        44,
+        48,
+        86,
+        94,
+        100
+      ]
+    },
+    "scene-wp-scan": {
+      "duration": 2.4,
+      "easing": "ease-in-out",
+      "direction": "alternate",
+      "fillMode": "none",
+      "stops": [
+        0,
+        100
+      ]
+    },
+    "scene-wp-scroll": {
+      "duration": 4.2,
+      "easing": "linear",
+      "direction": "normal",
+      "fillMode": "none",
+      "stops": [
+        100
+      ]
+    }
+  }
+}

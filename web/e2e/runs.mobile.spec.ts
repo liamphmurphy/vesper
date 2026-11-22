@@ -65,36 +65,9 @@ async function installRuns(page: Page) {
   return { replies };
 }
 
-test("the run list is the whole screen: live runs first, then finished runs by day", async ({ page }) => {
-  await installRuns(page);
-  await page.goto("/runs");
-  // /runs stays the list on compact (no run opened beside it).
-  await expect(page).toHaveURL(/\/runs$/);
-  const list = page.getByRole("complementary", { name: "Runs" });
-  const running = list.getByRole("region", { name: "Running" });
-  await expect(running.getByRole("listitem")).toHaveCount(2);
-  const first = running.getByRole("listitem").first();
-  await expect(first).toContainText("Payout retries");
-  await expect(first).toContainText("Step 2 of 4 · Ask about the retry cap");
-  await expect(first).toContainText("Needs you");
-
-  const today = list.getByRole("region", { name: "Earlier today" });
-  await expect(today.getByRole("listitem")).toHaveCount(2);
-  await expect(today.getByRole("listitem").first()).toContainText("Webhook signatures");
-  await expect(today.getByRole("listitem").first()).toContainText("Failed");
-  await expect(list).toContainText("Long ago");
-  const [l, t] = [await running.boundingBox(), await today.boundingBox()];
-  expect(l!.y).toBeLessThan(t!.y);
-  await expect(page.getByRole("region", { name: "Run thread" })).toHaveCount(0);
-  await page.screenshot({ path: "test-results/runs-mobile.png" });
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
-});
-
-test("a waiting run opens full screen and takes a reply from the pinned composer", async ({ page }) => {
+test("a waiting run is full screen and takes a reply from the pinned composer", async ({ page }) => {
   const api = await installRuns(page);
-  await page.goto("/runs");
-  await page.getByRole("link", { name: /Payout retries/ }).click();
-  await expect(page).toHaveURL(new RegExp(`/runs/${WAITING}$`));
+  await page.goto(`/runs/${WAITING}`);
 
   await expect(page.getByRole("heading", { name: "Payout retries" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Back to runs" })).toHaveAttribute("href", "/runs");

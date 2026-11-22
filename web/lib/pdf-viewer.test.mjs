@@ -8,6 +8,7 @@ import {
   computeThumbnailMetrics,
   isEditableTarget,
   isPdfContentType,
+  nativePdfHref,
   pdfDownloadUrl,
   resolvePdfKeyAction,
   resolveViewerHeightClass,
@@ -25,6 +26,10 @@ test("pdfDownloadUrl appends download=true only to Library content URLs", () => 
   assert.equal(pdfDownloadUrl("/api/v1/library/123/content?foo=bar"), "/api/v1/library/123/content?foo=bar&download=true");
   assert.equal(pdfDownloadUrl("/api/v1/library/123/content?download=true"), "/api/v1/library/123/content?download=true");
   assert.equal(pdfDownloadUrl("/api/v1/knowledge/assets/abc"), "/api/v1/knowledge/assets/abc");
+});
+
+test("nativePdfHref names the API file and title for the Mac app's /pdf screen", () => {
+  assert.equal(nativePdfHref("/api/v1/knowledge/assets/a1", "Q3 plan & notes.pdf"), "/pdf?src=%2Fapi%2Fv1%2Fknowledge%2Fassets%2Fa1&title=Q3%20plan%20%26%20notes.pdf");
 });
 
 test("clampPage and clampZoom enforce safe bounds", () => {

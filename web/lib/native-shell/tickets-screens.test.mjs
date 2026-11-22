@@ -1,11 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildSavedViewsSection, parseSavedViewCommand, parseSavedViewTitleAction, savedViewMenu, workViewPatch, workViewQuery } from "./models/saved-views.ts";
-import { buildTicketsNavModel, parseTicketsRow } from "./models/tickets.ts";
 import { buildBoardExtras, buildTicketsListExtras, buildTicketsToolbar, parseBoardToggle, parseTicketsListAction, parseTicketsToolbarAction } from "./models/tickets-toolbar.ts";
-import { buildEpicToolbar, buildTicketToolbar, buildWorkToolbar, parseTicketToolbarAction, parseWorkToolbarAction } from "./models/work-toolbars.ts";
+import { buildEpicToolbar, buildTicketToolbar, parseTicketToolbarAction } from "./models/work-toolbars.ts";
 import { workHeader } from "./models/work.ts";
-import { findNavItem } from "./nav-model.ts";
 
 const json = (m) => assert.equal(JSON.stringify(m), JSON.stringify(JSON.parse(JSON.stringify(m))));
 const act = (actionId, itemId, menuItemId) => ({ v: 1, type: "nav.action", navigatorId: "tickets", actionId, itemId, menuItemId });
@@ -44,40 +42,6 @@ test("saved views: Work's params map to a query and back", () => {
   assert.deepEqual(patch, {
     saved: "v1", status: "todo", label: null, q: null, filter_epic: "e1", agent: "atlas", ticket_view: "active", ready: null, blocked: null, unestimated: null, layout: "board",
   });
-});
-
-const header = { project: "VES", projects: [{ key: "VES", name: "Vesper" }], agents: [], agent: "" };
-const counts = { needs_you: 2, in_progress: 0, ready: 3, blocked: 1, all: 9 };
-
-test("tickets list: queues with badges, epics, saved views; the selection follows the open view", () => {
-  const input = {
-    header: { ...header, hideNewTicket: true, search: { value: "q", placeholder: "Filter tasks…" } },
-    counts, queue: "all", epics: [{ id: "e1", name: "Auth", done: 1, total: 4 }],
-    views: [{ id: "a", name: "Mine", href: "/tickets?sv=a" }],
-  };
-  const m = buildTicketsNavModel(input);
-  assert.equal(m.id, "tickets");
-  assert.deepEqual(m.actions, []);
-  assert.equal(m.search.value, "q");
-  assert.deepEqual(m.sections.map((s) => s.id), ["queues", "by-epic", "saved-views"]);
-  const q = m.sections[0].items;
-  assert.deepEqual(q.map((i) => i.badge?.text), ["2", undefined, "3", "1", "9"]);
-  assert.equal(q[0].badge.tone, "human");
-  assert.deepEqual(m.sections[1].actions.map((a) => a.id), ["tickets.open-epics"]);
-  assert.deepEqual(m.sections[1].items[0].contextMenu.map((c) => c.id), ["epic.open-detail"]);
-  assert.equal(m.selectedId, "queue:all");
-  assert.equal(buildTicketsNavModel({ ...input, queue: null, epic: "e1" }).selectedId, "epic:e1");
-  const open = buildTicketsNavModel({ ...input, queue: null, viewId: "a" });
-  assert.equal(open.selectedId, "sv:a");
-  assert.equal(findNavItem(open, "sv:a").href, "/tickets?sv=a");
-  assert.equal(buildTicketsNavModel({ ...input, epics: [] }).sections.some((s) => s.id === "by-epic"), false);
-  json(m);
-});
-
-test("tickets list: rows decode", () => {
-  assert.deepEqual(parseTicketsRow("queue:blocked"), { type: "queue", queue: "blocked" });
-  assert.deepEqual(parseTicketsRow("epic:e1"), { type: "epic", id: "e1" });
-  assert.equal(parseTicketsRow("sv:a"), null);
 });
 
 test("the header keeps New ticket in the sidebar unless the toolbar has it", () => {
@@ -147,13 +111,6 @@ test("ticket toolbar: cost and position when known, prev/next disabled at the en
   json(items);
 });
 
-test("epic and work toolbars", () => {
+test("epic toolbar", () => {
   assert.deepEqual(buildEpicToolbar().map((i) => i.label), ["View on board"]);
-  assert.deepEqual(buildWorkToolbar({ needs: 0 }), []);
-  const w = buildWorkToolbar({ needs: 3 });
-  assert.deepEqual([w[0].label, w[0].accent], ["Needs you · 3", true]);
-  assert.equal(parseWorkToolbarAction("work.needs"), "needs");
-  assert.equal(parseWorkToolbarAction("work.details"), null);
-  assert.equal(parseWorkToolbarAction("work.nope"), null);
-  assert.equal(parseWorkToolbarAction("chat.runs"), null);
 });

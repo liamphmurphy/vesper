@@ -165,8 +165,8 @@ test("personas sit in the Chats list only: the collapsed strip and app screens n
   const menu = page.getByRole("complementary", { name: "Main menu" });
   // Expanded on a chat screen: the Chats list leads with the persona filter.
   await expect(strip(page)).toBeVisible();
-  // A screen with a list of its own (Runs) puts it in the column instead, with no personas.
-  await page.goto("/runs");
+  // A screen with a list of its own (Tasks) puts it in the column instead, with no personas.
+  await page.goto("/tickets?project=WEB");
   await expect(strip(page)).toHaveCount(0);
   await expect(menu.getByRole("button", { name: /^(Atlas|Nova)/ })).toHaveCount(0);
   // Collapsed, the strip holds the same fixed items on every screen, and no personas either.

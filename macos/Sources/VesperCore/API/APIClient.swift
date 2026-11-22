@@ -8,6 +8,7 @@ public enum APIError: Error, Equatable, Sendable {
     case unreachable
     case invalidPath(String)
     case decoding(String)
+    case encoding(String)
 
     /// A sentence for the person (desktop/src/api.ts `apiErrorMessage`).
     public var userMessage: String {
@@ -18,6 +19,7 @@ public enum APIError: Error, Equatable, Sendable {
         case .unreachable: return "Vesper isn't reachable."
         case .invalidPath(let p): return "refusing non-API path \(p)"
         case .decoding: return "Vesper sent something unexpected."
+        case .encoding: return "Vesper couldn't send that."
         }
     }
 }
@@ -76,14 +78,22 @@ public final class APIClient: Sendable {
         request.setValue("\(StackSession.cookieName)=\(sessionToken)", forHTTPHeaderField: "Cookie")
     }
 
+    /// Executes a prebuilt URLRequest through this client's transport (used by `OwnerAuthAPI` where
+    /// 401/400 bodies carry user-facing validation errors rather than an expired shell session).
+    func rawRequest(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        try await transport(request)
+    }
+
     /// Sends one request and returns the body of a 2xx answer.
     @discardableResult
     public func request(
-        _ method: String, _ path: String, body: Data? = nil, contentType: String? = nil, timeout: TimeInterval = 15
+        _ method: String, _ path: String, body: Data? = nil, contentType: String? = nil, headers: [String: String] = [:],
+        timeout: TimeInterval = 15
     ) async throws -> Data {
         var req = URLRequest(url: try makeURL(path), timeoutInterval: timeout)
         req.httpMethod = method
         req.setValue("application/json", forHTTPHeaderField: "Accept")
+        for (name, value) in headers { req.setValue(value, forHTTPHeaderField: name) }
         if let body {
             req.httpBody = body
             req.setValue(contentType ?? "application/json", forHTTPHeaderField: "Content-Type")

@@ -87,39 +87,11 @@ async function installWork(page: Page) {
   return { api, replies };
 }
 
-test("Work overview renders telemetry, Needs you, Running now, and Ready to start, and opens a run full-width", async ({
-  page,
-}) => {
-  await installWork(page);
-  await page.goto("/work?project=WEB");
-  const overview = page.getByRole("region", { name: "Activity overview" });
-  await expect(overview).toBeVisible();
-  await expect(
-    overview.getByRole("region", { name: "Activity telemetry" }),
-  ).toBeVisible();
-  await expect(
-    overview.getByRole("heading", { name: /^Needs you/ }),
-  ).toBeVisible();
-  await expect(
-    overview.getByRole("heading", { name: /^Running now/ }),
-  ).toBeVisible();
-  await expect(
-    overview.getByRole("heading", { name: /^Ready to start/ }),
-  ).toBeVisible();
-
-  await overview.getByRole("button", { name: /Build ticket modal/ }).click();
-  await expect(page).toHaveURL(/\/work\?.*run=work-run/);
-  await expect(page).not.toHaveURL(/view=activity/);
-  await expect(
-    page.getByRole("heading", { name: "Build ticket modal", exact: true }),
-  ).toBeVisible();
-});
-
-test("selected run in Work renders canonical RunLogScreen, hides Graph without child runs, sends follow-ups, and collapses live status when ended", async ({
+test("a run page renders RunLogScreen, hides Graph without child runs, sends follow-ups, and collapses live status when ended", async ({
   page,
 }) => {
   const { replies } = await installWork(page);
-  await page.goto("/work?run=work-run&project=WEB");
+  await page.goto("/runs/work-run?project=WEB");
   await expect(
     page
       .getByRole("navigation", { name: "Context path" })
@@ -144,34 +116,11 @@ test("selected run in Work renders canonical RunLogScreen, hides Graph without c
     .poll(() => replies)
     .toEqual(["@builder Keep checking the nav."]);
 
-  await page.goto("/work?run=previous-run&project=WEB");
+  await page.goto("/runs/previous-run?project=WEB");
   await expect(
     page.getByRole("progressbar", { name: "Plan progress" }),
   ).toBeVisible();
   await expect(page.locator("main [role='status']")).toHaveCount(0);
-});
-
-test("legacy /runs and /work?view=... URLs redirect to canonical routes", async ({
-  page,
-}) => {
-  await installWork(page);
-  await page.goto("/runs?project=WEB");
-  await expect(page).toHaveURL(/\/work\?project=WEB$/);
-
-  await page.goto("/work?view=tickets&project=WEB");
-  await expect(page).toHaveURL(/\/tickets\?project=WEB$/);
-
-  await page.goto("/work?view=tickets&layout=board&project=WEB");
-  await expect(page).toHaveURL(/\/tickets\?layout=board&project=WEB$/);
-
-  await page.goto("/work?view=tickets&ticket=WEB-1&project=WEB");
-  await expect(page).toHaveURL(/\/tickets\/WEB-1$/);
-
-  await page.goto("/work?view=epics&project=WEB");
-  await expect(page).toHaveURL(/\/tickets\?layout=epics&project=WEB$/);
-
-  await page.goto("/work?view=epics&epic=epic-1&project=WEB");
-  await expect(page).toHaveURL(/\/epics\/epic-1$/);
 });
 
 test("Work chat context chips stay inside the right-rail dock for long titles", async ({
@@ -307,7 +256,7 @@ test("Work chat context chips stay inside the right-rail dock for long titles", 
     return route.fallback();
   });
 
-  await page.goto("/work?run=work-run&project=WEB");
+  await page.goto("/runs/work-run?project=WEB");
   await page.getByRole("navigation", { name: "Panel rail" }).getByRole("button", { name: "Open Chat" }).click();
 
   const panel = page.getByRole("complementary", { name: "Panel", exact: true });

@@ -217,8 +217,16 @@ final class CommandPaletteController: NSObject, NSWindowDelegate, WKScriptMessag
         return req
     }
 
-    private func sendAppearance() {
+    func sendAppearance(_ command: NativeCommand? = nil) {
         guard ready else { return }
+        if let command {
+            ShellBridge.send(command, to: webView)
+            return
+        }
+        if let custom = aux?.app?.currentAppearanceCommand() {
+            ShellBridge.send(custom, to: webView)
+            return
+        }
         let (accent, mode) = AppearanceMonitor.current()
         ShellBridge.send(.appearance(accent: accent, mode: mode), to: webView)
     }
@@ -261,6 +269,11 @@ final class CommandPaletteController: NSObject, NSWindowDelegate, WKScriptMessag
                 ShellBridge.send(.paletteOpen(request: pendingRequest), to: webView)
             }
         case .openInMain(let path, let newTab):
+            if SettingsRouteResolver.resolve(path) != nil {
+                close(restoreFocus: false)
+                _ = aux?.app?.handleSettingsPath(path, from: targetController?.window)
+                return
+            }
             close(restoreFocus: true)
             if newTab {
                 aux?.app?.openVesperTab(path: path, nextTo: targetController?.window)

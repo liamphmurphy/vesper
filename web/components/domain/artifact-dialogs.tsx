@@ -4,7 +4,7 @@ import { Dialog, DropdownMenu } from "radix-ui";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRef, useState, type ReactNode } from "react";
-import type { Artifact, ArtifactType } from "@/lib/api/client";
+import type { Artifact } from "@/lib/api/client";
 import { keys, useBootstrap, useCreateArtifact, useNewVersion } from "@/lib/api/hooks";
 import { cx } from "@/lib/cx";
 import { formatBytes } from "@/lib/files";
@@ -13,27 +13,7 @@ import { Button, IconButton } from "@/components/ui/button";
 import { Segmented } from "@/components/ui/controls";
 import { Icon } from "@/components/ui/icon";
 import { Field, TextArea, TextInput } from "@/components/ui/primitives";
-import { DocTypeTag } from "./labels";
 import { floatPanel } from "./pickers";
-
-const TYPES: Array<{ value: ArtifactType; label: string }> = [
-  { value: "prd", label: "PRD" },
-  { value: "spec", label: "Spec" },
-  { value: "adr", label: "ADR" },
-  { value: "report", label: "Report" },
-  { value: "design", label: "Design" },
-  { value: "mockup", label: "Mockup (.svg)" },
-];
-
-/** Best guess from a filename; people can change it before uploading. */
-export function guessType(name: string, mime: string): ArtifactType {
-  const n = name.toLowerCase();
-  if (/\bprd\b|requirements/.test(n)) return "prd";
-  if (/\badr\b|decision/.test(n)) return "adr";
-  if (/report|summary|analysis/.test(n)) return "report";
-  if (mime.startsWith("image/") || /\.(fig|sketch|pdf)$/.test(n)) return "design";
-  return "spec";
-}
 
 export function DialogShell({
   open,
@@ -171,161 +151,6 @@ function FilePicker({ files, onFiles, multiple, accept, hint }: { files: File[];
         </ul>
       )}
     </div>
-  );
-}
-
-/** Upload files or write a markdown artifact. Several files make several artifacts. */
-export function UploadDialog({
-  open,
-  onOpenChange,
-  initialFiles = [],
-  defaultProject,
-  onCreated,
-}: {
-  open: boolean;
-  onOpenChange: (o: boolean) => void;
-  initialFiles?: File[];
-  defaultProject?: string;
-  onCreated?: (a: Artifact) => void;
-}) {
-  const boot = useBootstrap();
-  const create = useCreateArtifact();
-  const [mode, setMode] = useState<"file" | "write">("file");
-  const [files, setFiles] = useState<File[]>(initialFiles);
-  const [body, setBody] = useState("");
-  const projects = boot.data?.projects.filter(p => !p.archived) ?? [];
-  const [projectKey, setProjectKey] = useState(defaultProject ?? projects[0]?.key ?? "");
-  const project = projects.find((p) => p.key === projectKey) ?? projects[0];
-  const [type, setType] = useState<ArtifactType>(initialFiles[0] ? guessType(initialFiles[0].name, initialFiles[0].type) : "spec");
-  const [title, setTitle] = useState("");
-  const [epicId, setEpicId] = useState("");
-  const [progress, setProgress] = useState<string | null>(null);
-  const epics = boot.data?.epics.filter((e) => e.project_id === project?.id) ?? [];
-
-  const ready = project && (mode === "write" ? body.trim().length > 0 : files.length > 0);
-
-  async function submit() {
-    if (!ready) return;
-    const forms: FormData[] = [];
-    const base = () => {
-      const f = new FormData();
-      f.set("project_key", project.key);
-      f.set("type", type);
-      if (epicId) f.set("epic_id", epicId);
-      return f;
-    };
-    if (mode === "write") {
-      const f = base();
-      if (title.trim()) f.set("title", title.trim());
-      f.set("body_md", body);
-      forms.push(f);
-    } else {
-      for (const file of files) {
-        const f = base();
-        if (title.trim() && files.length === 1) f.set("title", title.trim());
-        f.set("file", file);
-        forms.push(f);
-      }
-    }
-    let last: Artifact | undefined;
-    for (const [i, f] of forms.entries()) {
-      if (forms.length > 1) setProgress(`Uploading ${i + 1} of ${forms.length}…`);
-      try {
-        last = await create.mutateAsync(f);
-      } catch {
-        setProgress(null);
-        return; // create.error shows the reason; finished uploads stay.
-      }
-    }
-    setProgress(null);
-    onOpenChange(false);
-    if (last) onCreated?.(last);
-  }
-
-  return (
-    <DialogShell
-      open={open}
-      onOpenChange={onOpenChange}
-      title="Add artifact"
-      footer={
-        <>
-          {create.isError && (
-            <span role="alert" className="mr-auto text-12 text-pill-blocked-fg">
-              {create.error.message}
-            </span>
-          )}
-          {progress && <span className="mr-auto text-12 text-fg-tertiary">{progress}</span>}
-          <Dialog.Close asChild>
-            <Button variant="ghost">Cancel</Button>
-          </Dialog.Close>
-          <Button variant="primary" icon="upload" disabled={!ready || create.isPending} onClick={submit}>
-            {mode === "write" ? "Create" : files.length > 1 ? `Upload ${files.length}` : "Upload"}
-          </Button>
-        </>
-      }
-    >
-      <Segmented
-        label="Source"
-        value={mode}
-        onChange={setMode}
-        options={[
-          { value: "file", label: "Upload" },
-          { value: "write", label: "Write markdown" },
-        ]}
-      />
-      {mode === "file" ? (
-        <FilePicker
-          multiple
-          files={files}
-          onFiles={(f) => {
-            setFiles(f);
-            if (f[0]) setType(guessType(f[0].name, f[0].type));
-          }}
-        />
-      ) : (
-        <Field label="Markdown" htmlFor="art-body" hint="Headings become the outline agents cite. The first # heading is the title unless you set one.">
-          <TextArea id="art-body" mono rows={12} value={body} onChange={(e) => setBody(e.target.value)} placeholder={"# Payout batching — Technical spec\n\n## Goals\n"} />
-        </Field>
-      )}
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3">
-        <Field label="Type" htmlFor="art-type">
-          <SelectMenu id="art-type" value={type} options={TYPES} onChange={setType} render={(v) => <><DocTypeTag type={v} />{TYPES.find((t) => t.value === v)?.label}</>} />
-        </Field>
-        <Field label="Space" htmlFor="art-project">
-          <SelectMenu
-            id="art-project"
-            value={project?.key ?? ""}
-            options={projects.map((p) => ({ value: p.key, label: p.name }))}
-            onChange={(k) => {
-              setProjectKey(k);
-              setEpicId("");
-            }}
-            render={(k) => {
-              const p = projects.find((x) => x.key === k);
-              return p ? (
-                <>
-                  <span aria-hidden className="size-2.5 rounded-[3px]" style={{ background: p.color }} />
-                  {p.name}
-                </>
-              ) : null;
-            }}
-          />
-        </Field>
-        <Field label="Epic" htmlFor="art-epic">
-          <SelectMenu
-            id="art-epic"
-            value={epicId}
-            options={[{ value: "", label: "No epic" }, ...epics.map((e) => ({ value: e.id, label: e.name }))]}
-            onChange={setEpicId}
-          />
-        </Field>
-      </div>
-      {(mode === "write" || files.length <= 1) && (
-        <Field label="Title" htmlFor="art-title" hint="Optional. Defaults to the first heading, then the filename.">
-          <TextInput id="art-title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Ledger v2 — Product requirements" />
-        </Field>
-      )}
-    </DialogShell>
   );
 }
 

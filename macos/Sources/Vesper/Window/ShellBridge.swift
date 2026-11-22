@@ -22,16 +22,28 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
     weak var shellHost: (any ShellHostActions)?
 
     private var appearanceMonitor: AppearanceMonitor?
+    var appearanceCommand: (() -> NativeCommand)?
+    var ownsAppearance: () -> Bool = { false }
 
-    init(state: ShellState) {
+    init(state: ShellState, appearanceCommand: (() -> NativeCommand)? = nil, ownsAppearance: @escaping () -> Bool = { false }) {
         self.state = state
+        self.appearanceCommand = appearanceCommand
+        self.ownsAppearance = ownsAppearance
         super.init()
         appearanceMonitor = AppearanceMonitor { [weak self] in self?.sendAppearance() }
     }
 
-    /// macOS's accent colour and appearance, for the page's macOS palette. Only once the page can hear it.
-    func sendAppearance() {
+    /// macOS's accent colour, effective appearance, and native Appearance settings; sent once ready.
+    func sendAppearance(_ command: NativeCommand? = nil) {
         guard state.ready else { return }
+        if let command {
+            send(command)
+            return
+        }
+        if let custom = appearanceCommand?() {
+            send(custom)
+            return
+        }
         let (accent, mode) = AppearanceMonitor.current()
         send(.appearance(accent: accent, mode: mode))
     }
@@ -68,20 +80,23 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
             state.area = area
             onRouteChange?()
         case .title(let title, let subtitle, let menu):
-            state.title = title
-            state.subtitle = subtitle
-            state.titleMenu = menu
+            state.pageTitle = title
+            state.pageSubtitle = subtitle
+            state.pageTitleMenu = menu
         case .rail(let model): state.rail = model
-        case .inspector(let model): state.inspector = model
+        case .inspector(let model): state.pageInspector = model
         case .panelEvent(let tabId, let event, let payloadJson): onPanelEvent?(tabId, event, payloadJson)
         case .openInMain(let path, let newTab): onOpenInMain?(path, newTab)
         case .shell(let model): state.shell = model
-        case .navigator(let model): state.navigator = model
+        case .navigator(let model): state.pageNavigator = model
         case .navigatorFallback(let active): state.navigatorFallback = active
         case .sidebarHidden(let hidden): state.sidebarHidden = hidden
-        case .toolbar(let items): state.toolbarItems = items
-        case .appearance(let mode, let background):
-            state.pageMode = mode
+        case .toolbar(let items): state.pageToolbarItems = items
+        case .appearance(let mode, let background, let theme):
+            if !ownsAppearance() {
+                state.pageMode = mode
+                if let theme { state.theme = theme }
+            }
             if let color = NSColor.fromCSS(background) {
                 webView?.underPageBackgroundColor = color
                 WebViewFactory.lastPageBackground = color
@@ -264,7 +279,7 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
         case .navigatorFallback(let a): "navigatorFallback \(a)"
         case .sidebarHidden(let h): "sidebarHidden \(h)"
         case .toolbar(let i): "toolbar \(i.count) items"
-        case .appearance(let m, _): "appearance \(m.rawValue)"
+        case .appearance(let m, _, _): "appearance \(m.rawValue)"
         case .confirmApproval(let r, let s): "confirmApproval \(r) \(s.rawValue)"
         case .openWorkspaceMenu(let r, _): "openWorkspaceMenu \(r)"
         case .contextMenu(let r, let i, _, _): "contextMenu \(r) \(i.count) items"

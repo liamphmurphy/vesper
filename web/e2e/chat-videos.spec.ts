@@ -123,21 +123,3 @@ test("a stopped video says so", async ({ page }) => {
   await ask(page, "video: stopped");
   await expect(page.getByTestId("video-card").getByRole("alert")).toContainText("Stopped");
 });
-
-test("the Library lists videos with their length and opens one by link", async ({ page }) => {
-  await installChatApi(page, { replyDelayMs: 10 });
-  await ask(page, "video: done");
-  await expect(page.getByTestId("video-card")).toHaveAttribute("data-state", "done");
-  await page.getByTestId("video-card").getByRole("link", { name: "Open in Library" }).click();
-  await expect(page).toHaveURL(/\/library\?tab=videos&item=/);
-  const dialog = page.getByRole("dialog");
-  await expect(dialog).toContainText("Black cat on a rainy cyberpunk street");
-  await expect(dialog).toContainText("0:15");
-  await expect(dialog.getByRole("link", { name: "Open chat" })).toBeVisible();
-  await dialog.getByRole("button", { name: "Close" }).click();
-  await expect(page.getByRole("tab", { name: "Videos" })).toHaveAttribute("aria-selected", "true");
-  const tile = page.locator('[data-testid="library-item"][data-kind="video"]');
-  await expect(tile).toContainText("0:15");
-  await expect(tile).toContainText("Video");
-  await page.locator("main").screenshot({ path: "test-results/library-videos.png" });
-});

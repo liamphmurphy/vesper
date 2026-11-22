@@ -32,7 +32,6 @@ const SCREENS: Screen[] = [
     await installChatApi(page, { personas: [persona(1, { name: "Atlas", is_default: true }), persona(2, { name: "Nova" })] });
     await openEmptyChat(page);
   } },
-  { name: "runs", open: board("/runs") },
   { name: "tickets-list", open: board("/tickets?project=WEB") },
   { name: "tickets-board", open: board("/tickets?layout=board&project=WEB") },
   { name: "tickets-epics", open: board("/tickets?layout=epics&project=WEB") },
@@ -50,7 +49,6 @@ const SCREENS: Screen[] = [
     await page.goto(`/runs/${run.id}`);
   } },
   { name: "settings", open: board("/settings") },
-  { name: "library", open: board("/library") },
   { name: "knowledge-home", open: chat("/knowledge") },
   { name: "slides-editor", open: async (page) => { await installDeck(page, [{ seq: 1, body: JSON.stringify(deckWith("Quarterly review")), author: "user" }]); } },
 ];

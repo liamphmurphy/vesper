@@ -92,6 +92,26 @@ public enum BackupExporter {
         for name in Backups.exportsToPrune(names, keep: keep) { try? fm.removeItem(at: folderURL.appendingPathComponent(name)) }
         return final
     }
+
+    /// Streams GET /api/v1/instance/export to `destination` with 0600 permissions.
+    public static func exportToFile(
+        client: APIClient, destination: URL, download: ExportDownload = defaultDownload
+    ) async throws -> (url: URL, encrypted: Bool) {
+        var request = URLRequest(url: try client.makeURL("/api/v1/instance/export"))
+        request.httpMethod = "GET"
+        client.authorize(&request)
+        let fm = FileManager.default
+        let (tmp, response) = try await download(request)
+        defer { try? fm.removeItem(at: tmp) }
+        guard (200..<300).contains(response.statusCode) else {
+            throw BackupImportError("The server answered \(response.statusCode).")
+        }
+        let encrypted = responseIsEncrypted(response)
+        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tmp.path)
+        try? fm.removeItem(at: destination)
+        try fm.moveItem(at: tmp, to: destination)
+        return (destination, encrypted)
+    }
 }
 
 public enum BackupEncryptionAPI {

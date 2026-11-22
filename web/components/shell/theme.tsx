@@ -2,7 +2,7 @@
 
 import { useEffect, useSyncExternalStore } from "react";
 import { Segmented } from "@/components/ui/controls";
-import { DEFAULT_APPEARANCE, paletteTokens, parseAppearance, withSystemAccent, type Appearance, type ThemePref } from "@/lib/palettes";
+import { DEFAULT_APPEARANCE, colorTokens, paletteTokens, parseAppearance, withSystemAccent, type Appearance, type ThemePref } from "@/lib/palettes";
 import { isNativeShell, postDeduped } from "@/lib/native-shell/bridge";
 export type { ThemePref } from "@/lib/palettes";
 
@@ -53,7 +53,11 @@ function apply() {
   // Print views keep the default size so paper looks the same whoever prints it.
   root.dataset.textSize = printing ? "default" : settings.textSize ?? "default";
   // The Mac app matches its window to the page's effective mode (Dark forced in Vesper on a Light Mac).
-  postDeduped({ v: 1, type: "appearance", mode, ...(/^#[\da-f]{6}$/i.test(colors.bg ?? "") ? { background: colors.bg } : {}) });
+  postDeduped({
+    v: 1, type: "appearance", mode,
+    ...(/^#[\da-f]{6}$/i.test(colors.bg ?? "") ? { background: colors.bg } : {}),
+    tokens: colorTokens(colors), textSize: root.dataset.textSize,
+  });
 }
 
 /** The Mac app's accent colour ("#RRGGBB"): re-tints the macOS palette. */
@@ -63,6 +67,28 @@ export function setSystemAccent(accent: string) {
   systemAccent = accent.toLowerCase();
   try { localStorage.setItem(ACCENT_KEY, systemAccent); } catch { /* the accent is re-sent on every launch */ }
   apply();
+  notify();
+}
+
+/** Syncs appearance pushed from native Settings across all live WKWebViews without reload. */
+export function applyNativeAppearance(cmd: { accent: string; themePref?: ThemePref; settingsJson?: string }) {
+  initialize();
+  if (/^#[\da-f]{6}$/i.test(cmd.accent)) {
+    systemAccent = cmd.accent.toLowerCase();
+    try { localStorage.setItem(ACCENT_KEY, systemAccent); } catch { /* re-sent on every launch */ }
+  }
+  if (cmd.themePref !== undefined) {
+    pref = cmd.themePref;
+    try {
+      if (cmd.themePref === "system") localStorage.removeItem(MODE_KEY);
+      else localStorage.setItem(MODE_KEY, cmd.themePref);
+    } catch { storageAvailable = false; }
+  }
+  if (cmd.settingsJson !== undefined) {
+    settings = parseAppearance(cmd.settingsJson);
+    try { localStorage.setItem(PALETTE_KEY, JSON.stringify(settings)); } catch { storageAvailable = false; }
+  }
+  applyMode();
   notify();
 }
 

@@ -33,8 +33,13 @@ final class AppModel {
     let settings: SettingsStore
     /// Menu bar, notifications, Dock, power, Touch ID, workspace menu, logs, quit policy.
     @ObservationIgnored lazy var system = SystemServices(app: self)
+    /// Which in-app paths tabs draw natively (docs/dev/native-mac-app.md, "Native screens").
+    @ObservationIgnored lazy var nativeRoutes = NativeRouteRegistry.standard(debug: NativeDebug.isEnabled)
     /// Settings, Quick Capture, Screenshot, files in, Import Backup, backups, updates, login item.
     @ObservationIgnored lazy var aux = AuxWindows(app: self)
+    @ObservationIgnored private var appearanceMonitor: AppearanceMonitor?
+
+    var ownsAppearance: Bool { settings.settings.appearance != nil }
 
     var sessionFileURL: URL { SessionStore.fileURL(dataDirectory: dataDirectory) }
 
@@ -45,6 +50,7 @@ final class AppModel {
         self.connection = devConnection
         AvatarImages.shared.connection = devConnection
         compactLayout = settings.settings.tabs.layout == .compact
+        appearanceMonitor = AppearanceMonitor { [weak self] in self?.broadcastAppearance() }
         track({ [weak self] in self?.settings.settings.tabs.layout }) { [weak self] layout in
             if let layout { self?.applyLayout(layout) }
         }
@@ -53,6 +59,65 @@ final class AppModel {
                 self?.setConnection(session.map { Connection(baseURL: $0.baseURL, sessionToken: $0.sessionToken) })
             })
         }
+    }
+
+    func effectiveTheme(system: (accent: String, mode: ColorMode) = AppearanceMonitor.current()) -> ThemeTokens {
+        PaletteTokens.themeTokens(for: settings.settings.effectiveAppearance, systemColorMode: system.mode, systemAccent: system.accent)
+    }
+
+    func currentAppearanceCommand() -> NativeCommand {
+        let (accent, mode) = AppearanceMonitor.current()
+        guard let pref = settings.settings.appearance else {
+            return .appearance(accent: accent, mode: mode)
+        }
+        let resolvedMode = pref.effectiveColorMode(system: mode)
+        return .appearance(accent: accent, mode: resolvedMode, themePref: pref.mode, settingsJson: pref.webAppearanceJSON())
+    }
+
+    func broadcastAppearance() {
+        let sys = AppearanceMonitor.current()
+        let cmd = currentAppearanceCommand()
+        let theme = effectiveTheme(system: sys)
+        let bgColor = theme.colors["bg"].flatMap { NSColor.fromCSS($0) }
+        for controller in windows where !controller.retired {
+            for tab in controller.tabs.list.items where tab.kind == .vesper {
+                if ownsAppearance || tab.state.theme == nil {
+                    tab.state.theme = theme
+                    tab.state.pageMode = theme.mode
+                    if let bgColor { tab.webView.underPageBackgroundColor = bgColor }
+                }
+                tab.bridge?.sendAppearance(cmd)
+            }
+            controller.applyAppearanceCommand(cmd)
+        }
+        aux.commandPalette.sendAppearance(cmd)
+    }
+
+    @discardableResult
+    func handleSettingsPath(_ rawPath: String, from window: NSWindow? = nil) -> Bool {
+        guard let dest = SettingsRouteResolver.resolve(rawPath) else { return false }
+        switch dest {
+        case .pane:
+            aux.openSettings(destination: dest)
+        case .spaceRedirect(let projectKey):
+            Task { @MainActor [weak self, weak window] in
+                guard let self else { return }
+                let entry = self.system.store.load(API.getBootstrap())
+                while entry.isFetching && entry.data == nil {
+                    try? await Task.sleep(for: .milliseconds(30))
+                }
+                let spaceId = entry.data?.projects.first(where: { $0.key == projectKey })?.spaceId
+                let target = spaceId.map { "/spaces/\($0)" } ?? "/spaces/new?work=1"
+                if let controller = (window?.windowController as? MainWindowController) ?? self.keyController,
+                   controller.kind == .vesper {
+                    controller.content.navigate(path: target)
+                    controller.window?.makeKeyAndOrderFront(nil)
+                } else {
+                    self.openVesperTab(path: target, nextTo: window)
+                }
+            }
+        }
+        return true
     }
 
     // MARK: Connection
@@ -123,13 +188,18 @@ final class AppModel {
         }
         var path = url.path.isEmpty ? "/" : url.path
         if let q = url.query { path += "?" + q }
+        if SettingsRouteResolver.resolve(path) != nil { return nil }
         return path
     }
 
     /// A tab with its own page, state and bridge, not yet in any window.
     func makeTab(kind: WindowKind, path: String) -> WebContentController {
         startHidden = false
-        let tab = WebContentController(app: self, kind: kind, state: ShellState(), path: path)
+        let state = ShellState()
+        let theme = effectiveTheme()
+        state.theme = theme
+        state.pageMode = theme.mode
+        let tab = WebContentController(app: self, kind: kind, state: state, path: path)
         tab.bridge?.onRouteChange = { [weak self] in self?.scheduleSessionSave() }
         if let conn = connection, !restoringSession { tab.connect(conn) }
         return tab
@@ -145,6 +215,7 @@ final class AppModel {
 
     /// Opens a Vesper page in a new tab next to `window`, or in a new window if there is none.
     func openVesperTab(path: String, nextTo window: NSWindow?) {
+        if handleSettingsPath(path, from: window) { return }
         place(makeTab(kind: .vesper, path: path), nextTo: window)
     }
 

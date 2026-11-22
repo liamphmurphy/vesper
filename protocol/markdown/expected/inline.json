@@ -1,0 +1,350 @@
+{
+  "ast": {
+    "type": "root",
+    "children": [
+      {
+        "type": "paragraph",
+        "children": [
+          {
+            "type": "text",
+            "value": "Plain "
+          },
+          {
+            "type": "emphasis",
+            "children": [
+              {
+                "type": "text",
+                "value": "emphasis"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": ", "
+          },
+          {
+            "type": "emphasis",
+            "children": [
+              {
+                "type": "text",
+                "value": "also emphasis"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": ", "
+          },
+          {
+            "type": "strong",
+            "children": [
+              {
+                "type": "text",
+                "value": "strong"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": ", "
+          },
+          {
+            "type": "strong",
+            "children": [
+              {
+                "type": "text",
+                "value": "strong too"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": ", "
+          },
+          {
+            "type": "emphasis",
+            "children": [
+              {
+                "type": "strong",
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "both"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": ", and "
+          },
+          {
+            "type": "delete",
+            "children": [
+              {
+                "type": "text",
+                "value": "struck"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": " text."
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "children": [
+          {
+            "type": "text",
+            "value": "Inline "
+          },
+          {
+            "type": "inlineCode",
+            "value": "code"
+          },
+          {
+            "type": "text",
+            "value": " and "
+          },
+          {
+            "type": "inlineCode",
+            "value": "code with ` tick"
+          },
+          {
+            "type": "text",
+            "value": " and a "
+          },
+          {
+            "type": "link",
+            "url": "https://example.com",
+            "title": "Example title",
+            "children": [
+              {
+                "type": "text",
+                "value": "link"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": " and "
+          },
+          {
+            "type": "link",
+            "url": "/tickets/PAY-1",
+            "children": [
+              {
+                "type": "text",
+                "value": "relative"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "."
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "children": [
+          {
+            "type": "text",
+            "value": "Autolinks: "
+          },
+          {
+            "type": "link",
+            "url": "https://vesper.dev/docs",
+            "children": [
+              {
+                "type": "text",
+                "value": "https://vesper.dev/docs"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": ", "
+          },
+          {
+            "type": "link",
+            "url": "https://example.org/path?q=1",
+            "children": [
+              {
+                "type": "text",
+                "value": "https://example.org/path?q=1"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": ", "
+          },
+          {
+            "type": "link",
+            "url": "http://www.example.com",
+            "children": [
+              {
+                "type": "text",
+                "value": "www.example.com"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": " and "
+          },
+          {
+            "type": "link",
+            "url": "mailto:someone@example.com",
+            "children": [
+              {
+                "type": "text",
+                "value": "someone@example.com"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "."
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "children": [
+          {
+            "type": "text",
+            "value": "An image: "
+          },
+          {
+            "type": "image",
+            "url": "https://example.com/cat.png",
+            "alt": "Alt text",
+            "title": "Cat"
+          },
+          {
+            "type": "text",
+            "value": " and a reference "
+          },
+          {
+            "type": "link",
+            "url": "https://example.com/docs",
+            "title": "Docs",
+            "children": [
+              {
+                "type": "text",
+                "value": "ref link"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": " and "
+          },
+          {
+            "type": "image",
+            "url": "/images/logo.png",
+            "alt": "ref image"
+          },
+          {
+            "type": "text",
+            "value": "."
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "children": [
+          {
+            "type": "text",
+            "value": "Escapes *not emphasis* and [not a link], entities & © #, and "
+          },
+          {
+            "type": "html",
+            "value": "<span>"
+          },
+          {
+            "type": "text",
+            "value": "inline html"
+          },
+          {
+            "type": "html",
+            "value": "</span>"
+          },
+          {
+            "type": "text",
+            "value": "."
+          }
+        ]
+      },
+      {
+        "type": "paragraph",
+        "children": [
+          {
+            "type": "text",
+            "value": "Mixed "
+          },
+          {
+            "type": "strong",
+            "children": [
+              {
+                "type": "text",
+                "value": "bold with "
+              },
+              {
+                "type": "inlineCode",
+                "value": "code"
+              },
+              {
+                "type": "text",
+                "value": " and "
+              },
+              {
+                "type": "link",
+                "url": "#section",
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "a link"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": " and "
+          },
+          {
+            "type": "emphasis",
+            "children": [
+              {
+                "type": "text",
+                "value": "emphasis with "
+              },
+              {
+                "type": "delete",
+                "children": [
+                  {
+                    "type": "text",
+                    "value": "strike"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "value": "."
+          }
+        ]
+      }
+    ],
+    "footnotes": []
+  },
+  "code": []
+}

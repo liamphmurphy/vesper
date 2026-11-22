@@ -436,8 +436,11 @@ export type PageMessage =
    * The page's effective color mode, whenever it changes; the shell matches each window's appearance to it.
    * background: the palette's page colour ("#RRGGBB"), which the shell shows past the page's edges
    * (overscroll) and behind a tab that hasn't painted yet.
+   * tokens: the palette's resolved colours by CSS variable name without "--" ("text", "accent"…,
+   * "#RRGGBB" or "#RRGGBBAA" only), and textSize the Settings text size, so native screens draw
+   * with exactly what the page does.
    */
-  | { v: 1; type: "appearance"; mode: ColorMode; background?: string }
+  | { v: 1; type: "appearance"; mode: ColorMode; background?: string; tokens?: Record<string, string>; textSize?: string }
   | { v: 1; type: "confirmApproval"; requestId: string; scope: ApprovalScope }
   | { v: 1; type: "openWorkspaceMenu"; requestId: string; folder: string }
   | { v: 1; type: "contextMenu"; requestId: string; items: MenuItem[]; x: number; y: number }
@@ -494,8 +497,8 @@ export type NativeCommand =
   | { v: 1; type: "companion.context"; context: CompanionContext }
   | { v: 1; type: "panel.context"; context: InspectorPanelContext }
   | { v: 1; type: "panel.event"; tabId: string; event: string; payloadJson?: string }
-  /** macOS's accent colour ("#RRGGBB") and effective appearance; sent when the page is ready and whenever either changes. */
-  | { v: 1; type: "appearance"; accent: string; mode: ColorMode }
+  /** macOS's accent colour ("#RRGGBB") and effective appearance (plus optional synced native Appearance); sent when the page is ready and whenever either changes. */
+  | { v: 1; type: "appearance"; accent: string; mode: ColorMode; themePref?: "system" | "dark" | "light"; settingsJson?: string }
   /** query only applies to openCommandMenu: the text to open the palette with (the toolbar search field). */
   | { v: 1; type: "command"; name: ShellCommandName; query?: string }
   | { v: 1; type: "reply"; requestId: string; ok: boolean; selectedId?: string | null; value?: string | null; error?: string }
@@ -638,7 +641,15 @@ export function isPageMessage(v: unknown): v is PageMessage {
 export function isNativeCommand(v: unknown): v is NativeCommand {
   if (!isObj(v) || v.v !== PROTOCOL_VERSION || typeof v.type !== "string" || !COMMAND_TYPES.has(v.type)) return false;
   if (v.type === "navigate") return isInAppPath(v.path);
-  if (v.type === "appearance") return typeof v.accent === "string" && /^#[\da-f]{6}$/i.test(v.accent) && (v.mode === "dark" || v.mode === "light");
+  if (v.type === "appearance") {
+    return (
+      typeof v.accent === "string" &&
+      /^#[\da-f]{6}$/i.test(v.accent) &&
+      (v.mode === "dark" || v.mode === "light") &&
+      (v.themePref === undefined || v.themePref === "system" || v.themePref === "dark" || v.themePref === "light") &&
+      (v.settingsJson === undefined || typeof v.settingsJson === "string")
+    );
+  }
   if (v.type === "command") return SHELL_COMMANDS.includes(v.name as ShellCommandName) && (v.query === undefined || typeof v.query === "string");
   if (v.type === "inspector.visibility") return typeof v.open === "boolean";
   if (v.type === "inspector.selectTab") return typeof v.tabId === "string";

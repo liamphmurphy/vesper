@@ -175,8 +175,15 @@ public struct NativeSettings: Sendable, Codable, Equatable {
     public var touchId = TouchId()
     public var updates = Updates()
     public var tabs = Tabs()
+    /// Nil preserves pre-existing defaults/web-storage appearance until configured in native Settings.
+    public var appearance: AppearancePreference?
 
     public init() {}
+
+    /// Effective appearance preference, defaulting to the macOS system preset until customized.
+    public var effectiveAppearance: AppearancePreference {
+        appearance ?? .macOSDefault
+    }
 
     public static func defaults() -> NativeSettings { NativeSettings() }
 }
@@ -354,6 +361,11 @@ extension NativeSettings {
         out.updates.feedUrl = normalizeFeedURL(updates["feedUrl"], fallback: base.updates.feedUrl)
 
         out.tabs.layout = oneOf(tabs["layout"], base.tabs.layout)
+        if src["appearance"] is [String: Any] {
+            out.appearance = AppearancePreference.normalize(src["appearance"], base: base.appearance ?? .macOSDefault)
+        } else {
+            out.appearance = base.appearance
+        }
         return out
     }
 
@@ -370,12 +382,18 @@ extension NativeSettings {
         NativeSettings.normalize(Self.deepMerge(jsonObject(), obj(patch)), base: self)
     }
 
-    private static func deepMerge(_ base: [String: Any], _ patch: [String: Any]) -> [String: Any] {
+    private static func deepMerge(_ base: [String: Any], _ patch: [String: Any], path: [String] = []) -> [String: Any] {
         var out = base
         for (k, v) in patch {
             if k == "__proto__" || k == "constructor" || k == "prototype" { continue }
             if let nested = v as? [String: Any] {
-                out[k] = deepMerge(out[k] as? [String: Any] ?? [:], nested)
+                let nextPath = path + [k]
+                // Override color dictionaries replace existing keys wholesale so clearing an override works via patch.
+                if nextPath == ["appearance", "custom", "dark"] || nextPath == ["appearance", "custom", "light"] {
+                    out[k] = nested
+                } else {
+                    out[k] = deepMerge(out[k] as? [String: Any] ?? [:], nested, path: nextPath)
+                }
             } else {
                 out[k] = v
             }

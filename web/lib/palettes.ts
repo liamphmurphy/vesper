@@ -6,6 +6,11 @@ export type Tokens = Record<string, string>;
 type Seed = readonly [bg: string, surface: string, text: string, accent: string, blue: string, orange: string, green: string, yellow: string, pink: string, cyan: string, purple: string, red: string];
 export type Palette = { id: string; name: string; description: string; source?: string; dark: Tokens; light: Tokens };
 
+/** A palette's plain colours, for the Mac app's native screens: shadows and other CSS values are left out. */
+export function colorTokens(tokens: Tokens): Tokens {
+  return Object.fromEntries(Object.entries(tokens).filter(([, value]) => /^#[\da-f]{6}([\da-f]{2})?$/i.test(value)));
+}
+
 export function mix(a: string, b: string, weight: number): string {
   return "#" + [1, 3, 5].map((i) => Math.round(parseInt(a.slice(i, i + 2), 16) * (1 - weight) + parseInt(b.slice(i, i + 2), 16) * weight).toString(16).padStart(2, "0")).join("");
 }

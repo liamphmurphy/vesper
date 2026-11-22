@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { isPageMessage } from "./protocol.ts";
 import { buildRunInspectorSections } from "./models/run-inspector.ts";
-import { buildTicketInspectorSections } from "./models/ticket-inspector.ts";
 import { buildEpicInspectorSections, buildEpicsOverviewInspectorSections } from "./models/epic-inspector.ts";
 import { buildSpaceInspectorSections } from "./models/space-inspector.ts";
 import { buildWorkflowInspectorSections } from "./models/workflow-inspector.ts";
@@ -104,70 +103,6 @@ test("run inspector builds plan, ticket, code, sub-agents, run, usage, and view 
     withoutChildren.find((s) => s.id === "open").items[0].actions.map((a) => a.id),
     ["view:details", "view:files"],
   );
-});
-
-test("ticket inspector builds pickers, chips, blockers, runs, code, and backlinks", () => {
-  const sections = buildTicketInspectorSections({
-    status: "in_progress",
-    statusOptions: [{ value: "in_progress", label: "In Progress" }],
-    priority: "high",
-    priorityOptions: [{ value: "high", label: "High" }],
-    assignee: "a1",
-    assigneeOptions: [{ value: "", label: "Unassigned" }, { value: "a1", label: "Implementer" }],
-    assigneeBadge: { text: "Not dispatched", tone: "human" },
-    reviewer: "",
-    reviewerOptions: [{ value: "", label: "No reviewer" }],
-    epic: "e1",
-    epicOptions: [{ value: "", label: "No epic" }, { value: "e1", label: "Mac UI" }],
-    spaceName: "Vesper",
-    requiresMockup: true,
-    estimate: "5",
-    estimateOptions: [{ value: "", label: "Unestimated" }, { value: "5", label: "5 pts" }],
-    estimateDisabled: false,
-    dueDate: "2026-11-30",
-    selectedLabels: [{ id: "l1", name: "macos", color: "#0A84FF" }],
-    allLabels: [{ id: "l1", name: "macos" }, { id: "l2", name: "ui" }],
-    blockedBy: [{ key: "VES-9", title: "Protocol", statusLabel: "Done", statusTone: "done" }],
-    blocks: [],
-    canEditBlockedBy: true,
-    runs: [{ id: "r1", handle: "impl", stateLabel: "Running", stateTone: "done", subtitle: "now", cost: "$0.10" }],
-    runsSummary: "1 · $0.10",
-    code: { branch: "feat/x", prNumber: 12, prState: "Open", diff: "+10 −2" },
-    linkedMentions: [{ id: "artifact:p1", sourceKind: "artifact", sourceId: "p1", title: "Spec", href: "/knowledge/p1" }],
-    unlinkedMentions: [{ id: "ticket:VES-8", sourceKind: "ticket", sourceId: "VES-8", title: "Earlier bug" }],
-  });
-  wrapModel("ticket:VES-10", "properties", sections);
-  assert.equal(sections[0].items.find((i) => i.id === "labels").chips.length, 1);
-  assert.equal(sections[0].items.find((i) => i.id === "labels").menu[0].checked, true);
-  assert.equal(sections.find((s) => s.id === "backlinks").items.length, 2);
-
-  // Empty edge case
-  const empty = buildTicketInspectorSections({
-    status: "todo",
-    statusOptions: [],
-    priority: "none",
-    priorityOptions: [],
-    assignee: "",
-    assigneeOptions: [],
-    reviewer: "",
-    reviewerOptions: [],
-    epic: "",
-    epicOptions: [],
-    spaceName: "Default",
-    mockupFromEpic: "Polish",
-    requiresMockup: false,
-    estimate: "",
-    estimateOptions: [],
-    estimateDisabled: true,
-    dueDate: "",
-    selectedLabels: [],
-    allLabels: [],
-    blockedBy: [],
-    blocks: [],
-    canEditBlockedBy: false,
-    runs: [],
-  });
-  wrapModel("ticket:empty", "properties", empty);
 });
 
 test("epic inspector and overview inspector produce chart and checklist items", () => {

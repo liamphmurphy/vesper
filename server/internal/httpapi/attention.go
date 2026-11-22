@@ -92,6 +92,19 @@ func (s *Server) ReadInboxItem(ctx context.Context, req api.ReadInboxItemRequest
 	}
 	return api.ReadInboxItem204Response{}, nil
 }
+
+// UnreadInboxItem undoes ReadInboxItem (the Mac app's Undo and Reopen): the
+// item is open again unless the server has resolved it meanwhile.
+func (s *Server) UnreadInboxItem(ctx context.Context, req api.UnreadInboxItemRequestObject) (api.UnreadInboxItemResponseObject, error) {
+	if req.Body == nil || len(req.Body.Id) == 0 || len(req.Body.Id) > 200 {
+		return nil, &tracker.ValidationError{Field: "id", Msg: "invalid item id"}
+	}
+	u, _, _ := me(ctx)
+	if err := s.Q.UnreadInboxItem(ctx, store.UnreadInboxItemParams{UserID: u.ID, ItemID: req.Body.Id}); err != nil {
+		return nil, err
+	}
+	return api.UnreadInboxItem204Response{}, nil
+}
 func (s *Server) Search(ctx context.Context, req api.SearchRequestObject) (api.SearchResponseObject, error) {
 	ctx = pageview.IncludeAgents(ctx, deref(req.Params.IncludeAgent))
 	u, _, ws := me(ctx)

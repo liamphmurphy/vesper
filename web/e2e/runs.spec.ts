@@ -111,51 +111,6 @@ async function installRuns(page: Page) {
 
 const list = (page: Page) => page.getByRole("complementary", { name: "Runs" });
 
-test("the list groups runs beside the selected run, and the URL keeps the selection", async ({ page }) => {
-  await installRuns(page);
-  await page.goto("/runs");
-  // /runs opens Work's Runs overview.
-  await expect(page).toHaveURL(/\/work$/);
-  const active = list(page).getByRole("region", { name: "Active" });
-  await expect(active.getByRole("listitem")).toHaveText([/Partition ledger entries/, /Payout retries/, /Search index/]);
-  await expect(list(page).getByRole("region", { name: "Other needs you" }).getByRole("link", { name: /Billing plan/ })).toHaveAttribute("href", "/plans/p1");
-  await expect(active.locator("a[aria-current=page]")).toContainText("Partition ledger entries");
-  await expect(list(page).getByRole("region", { name: "Earlier today" })).toContainText("Session refresh");
-  await expect(page.getByRole("region", { name: "Activity telemetry" })).toContainText("0 / 1");
-
-  // The tray's Needs you lists the same items.
-  await page.getByRole("button", { name: /^Needs you,/ }).click();
-  const tray = page.getByRole("dialog", { name: "Needs you" });
-  await expect(tray.locator("[data-tray-row]")).toHaveCount(3);
-  for (const t of ["Partition ledger entries", "Payout retries", "Billing plan"]) await expect(tray.locator("[data-tray-row]").filter({ hasText: t })).toHaveCount(1);
-  // Open all lands on Work with Needs you in view.
-  await tray.getByRole("link", { name: "Open all →" }).click();
-  await expect(page).toHaveURL(/\/work(\?[^#]*)?#needs-you$/);
-  await expect(active).toBeInViewport();
-
-  // Selecting a row updates the URL; a reload restores the selection.
-  await list(page).getByRole("link", { name: /Search index/ }).click();
-  await expect(page).toHaveURL(new RegExp(`/work\\?run=${RUNNING}$`));
-  await expect(page.getByRole("heading", { name: "Search index" })).toBeVisible();
-  await page.reload();
-  await expect(list(page).locator("a[aria-current=page]")).toContainText("Search index");
-  await expect(page.getByRole("heading", { name: "Search index" })).toBeVisible();
-
-  // Inline "/" search and VIEW filter narrow the list cleanly.
-  await page.locator("body").click({ position: { x: 900, y: 5 } });
-  await page.keyboard.press("/");
-  await expect(page.getByRole("textbox", { name: "Search work" })).toBeFocused();
-  await page.keyboard.type("session");
-  await expect(list(page).getByRole("link", { name: /Session refresh/ })).toBeVisible();
-  await expect(page.getByRole("textbox", { name: "Search work" })).toHaveValue("session");
-  await expect(list(page).getByRole("link", { name: /Search index/ })).toHaveCount(0);
-  await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "Filter: Running & queued" }).click();
-  await expect(page).toHaveURL(/filter=active/);
-  await expect(list(page).getByText("Session refresh")).toHaveCount(0);
-  await page.screenshot({ path: "test-results/runs-desktop.png" });
-});
-
 test("the thread decides inline with A and ⇧A, then Next opens the next item with J", async ({ page }) => {
   const { decided } = await installRuns(page);
   await page.goto(`/runs/${APPROVING}`);
