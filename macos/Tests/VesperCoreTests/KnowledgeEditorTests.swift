@@ -9,23 +9,23 @@ final class KnowledgeEditorTests: XCTestCase {
     func testLivePreviewHidesAndRevealsSyntaxAroundCursor() {
         let md = "See [[Architecture/ADR 1|ADR 1]] and ![[diagram.png]] #design/v2 ^blk-42\n"
         let tokens = KnowledgeMarkdownSyntax.scan(md)
-        XCTAssertTrue(tokens.contains { $0.kind == .wikiLink })
-        XCTAssertTrue(tokens.contains { $0.kind == .embed })
-        XCTAssertTrue(tokens.contains { $0.kind == .tag })
-        XCTAssertTrue(tokens.contains { $0.kind == .blockID })
+        XCTAssertTrue(tokens.contains { if case .wikiLink = $0.kind { return true }; return false })
+        XCTAssertTrue(tokens.contains { if case .embed = $0.kind { return true }; return false })
+        XCTAssertTrue(tokens.contains { if case .tag = $0.kind { return true }; return false })
+        XCTAssertTrue(tokens.contains { if case .blockID = $0.kind { return true }; return false })
 
         // Caret at offset 0: wikilink delimiters should be hidden.
         let away = KnowledgeMarkdownSyntax.livePreview(in: md, selection: NSRange(location: 0, length: 0))
         XCTAssertFalse(away.hiddenRanges.isEmpty)
 
         // Caret inside [[Architecture/ADR 1|ADR 1]]: that token's delimiters reveal.
-        let linkToken = try! XCTUnwrap(tokens.first { $0.kind == .wikiLink })
+        let linkToken = try! XCTUnwrap(tokens.first { if case .wikiLink = $0.kind { return true }; return false })
         let inside = KnowledgeMarkdownSyntax.livePreview(in: md, selection: NSRange(location: linkToken.range.location + 2, length: 0))
         XCTAssertLessThan(inside.hiddenRanges.count, away.hiddenRanges.count)
 
         // Cmd-click hit-test resolves link target.
-        let target = KnowledgeMarkdownSyntax.hitTestLink(in: md, atUTF16Offset: linkToken.range.location + 5)
-        XCTAssertEqual(target?.pageTarget, "Architecture/ADR 1")
+        let target = KnowledgeMarkdownSyntax.hitTestLink(at: linkToken.range.location + 5, in: md)
+        XCTAssertEqual(target?.target, "Architecture/ADR 1")
         XCTAssertEqual(target?.alias, "ADR 1")
     }
 
@@ -34,20 +34,22 @@ final class KnowledgeEditorTests: XCTestCase {
     func testWikiEmbedAndTagCompletion() {
         let wikiText = "Check [[Arch"
         let wikiTrigger = KnowledgeCompletionLogic.matchTrigger(in: wikiText, caretUTF16: (wikiText as NSString).length)
-        XCTAssertEqual(wikiTrigger?.kind, .wikiLink)
+        XCTAssertEqual(wikiTrigger?.kind, .page)
         XCTAssertEqual(wikiTrigger?.query, "Arch")
 
         let candidates = [
+            KnowledgeCompletionCandidate(kind: .page, title: "Old Archive", insertRef: "Old Archive", detail: "Old"),
             KnowledgeCompletionCandidate(kind: .page, title: "Architecture", insertRef: "Architecture", detail: "Docs"),
-            KnowledgeCompletionCandidate(kind: .page, title: "Archive", insertRef: "Archive", detail: "Old"),
         ]
-        let ranked = KnowledgeCompletionLogic.rankCandidates(candidates, query: "Arch")
-        XCTAssertEqual(ranked.first?.title, "Architecture")
+        if let trigger = wikiTrigger {
+            let ranked = KnowledgeCompletionLogic.rankCandidates(candidates, for: trigger)
+            XCTAssertEqual(ranked.first?.title, "Architecture")
 
-        if let trigger = wikiTrigger, let first = ranked.first {
-            let insertion = KnowledgeCompletionLogic.insertion(for: first, trigger: trigger)
-            let applied = KnowledgeCompletionLogic.apply(insertion, to: wikiText)
-            XCTAssertTrue(applied.contains("[[Architecture]]"))
+            if let first = ranked.first {
+                let insertion = KnowledgeCompletionLogic.insertion(for: first, trigger: trigger)
+                let applied = KnowledgeCompletionLogic.apply(insertion, to: wikiText)
+                XCTAssertTrue(applied.contains("[[Architecture]]"))
+            }
         }
 
         let embedText = "Image ![[hero"
@@ -69,7 +71,7 @@ final class KnowledgeEditorTests: XCTestCase {
         | --- | --- |
         | Alpha | Done |
         """
-        var tables = MarkdownTableModel.parseTables(in: md)
+        let tables = MarkdownTableModel.parseTables(in: md)
         XCTAssertEqual(tables.count, 1)
         var table = tables[0]
         XCTAssertFalse(table.isDirty)
