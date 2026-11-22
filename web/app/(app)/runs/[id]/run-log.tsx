@@ -321,7 +321,7 @@ function rowText(r: Row<RunEvent>) {
 const isTurnMarker = (r: Row<RunEvent>) => {
   if (r.kind !== "event" || r.e.type !== "lifecycle") return false;
   const state = (r.e.payload as P).state;
-  return state === "turn_started" || state === "turn_ended" || state === "activity";
+  return state === "turn_started" || state === "turn_ended" || state === "activity" || state === "subagent_queued" || state === "subagent_started" || state === "subagent_finished";
 };
 
 function TurnGroup({ turn, t, items, open, onToggle, runId }: { turn: number; t?: Turn; items: ReactNode; open: boolean; onToggle: () => void; runId: string }) {
@@ -639,7 +639,7 @@ export function RunLogScreen({ id, inWork = false }: { id: string; inWork?: bool
                   items={runViewTabs({
                     countsAll: counts.all,
                     fileCount,
-                    childRunCount: Math.max(d.child_runs.length, run.child_count ?? 0),
+                    childRunCount: Math.max(d.child_runs.length, run.child_count ?? 0, d.subagent_jobs?.length ?? 0),
                     mode,
                   })}
                   trailing={

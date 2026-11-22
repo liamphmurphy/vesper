@@ -3,7 +3,7 @@
 // belong to. Pure, so live updates (which only add nodes) keep every existing
 // item's key and column.
 
-import type { GraphNode, NodeStatus, RunGraph, SubagentNode, TurnNode, ErrorNode } from "./run-graph.ts";
+import type { GraphNode, NodeStatus, RunGraph, SubagentJobNode, SubagentNode, TurnNode, ErrorNode } from "./run-graph.ts";
 
 /** Past this many turns, runs of quiet finished turns collapse into groups. */
 export const GROUP_THRESHOLD = 12;
@@ -11,7 +11,7 @@ const MIN_GROUP = 3;
 
 export type GroupItem = { kind: "group"; id: string; turns: TurnNode[]; status: NodeStatus };
 export type MainItem = { kind: "node"; id: string; node: GraphNode } | GroupItem;
-export type BranchNode = SubagentNode | ErrorNode;
+export type BranchNode = SubagentNode | SubagentJobNode | ErrorNode;
 export type BranchItem =
   | { kind: "node"; id: string; node: BranchNode; depth: number }
   /** Collapsed nested runs under a subagent (depth ≥ 2). */
@@ -55,6 +55,10 @@ export function layoutRunGraph(graph: RunGraph, expanded: ReadonlySet<string> = 
     };
     const countRuns = (ids: string[]): number => ids.reduce((s, k) => s + 1 + countRuns((out.get(k) ?? []).filter((x) => byId.get(x)?.kind === "subagent_run")), 0);
     const targets = out.get(turnId) ?? [];
+    for (const k of targets) {
+      const n = byId.get(k);
+      if (n?.kind === "subagent_job") items.push({ kind: "node", id: n.id, node: n, depth: 1 });
+    }
     for (const k of targets) if (byId.get(k)?.kind === "subagent_run") walk(k, 1);
     for (const k of targets) {
       const n = byId.get(k);

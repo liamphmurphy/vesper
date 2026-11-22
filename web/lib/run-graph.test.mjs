@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildRunGraph } from "./run-graph.ts";
+import { buildRunGraph, subagentFlags, subagentJobStatus } from "./run-graph.ts";
 
 const at = (s) => `2026-11-03T12:${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}Z`;
 const ev = (seq, type, payload, s = seq) => ({ seq, type, payload, at: at(s) });
@@ -9,7 +9,31 @@ const turn = (seq, trigger, s, e, extra = {}) => ({ seq, trigger, started_at: at
 const run = (id, state, extra = {}) => ({ id, state, agent: { handle: "lead" }, started_at: at(0), cost_usd: 0, ...extra });
 const child = (id, handle, s, state = "completed", extra = {}) => ({ id, state, agent: { handle }, started_at: at(s), cost_usd: 0.5, ...extra });
 const delegate = (seq, agent) => ev(seq, "tool_call", { tool: "mcp__lazyagents__delegate", input: { agent } });
-const detail = (r, turns, events, child_runs = []) => ({ run: r, turns, events, child_runs });
+const job = (id, createdSec, extra = {}) => ({
+  id,
+  batch_id: null,
+  agent_type: "explorer",
+  role: "Codebase Search",
+  reason: "",
+  requested_tier: "",
+  tier: "fast",
+  model: "claude-haiku-4-5",
+  effort: "low",
+  status: "completed",
+  prompt: "check files",
+  result_text: "found it",
+  error: "",
+  input_tokens: 100,
+  output_tokens: 50,
+  cached_tokens: 0,
+  cost_usd: 0.01,
+  tool_calls: 2,
+  created_at: at(createdSec),
+  started_at: at(createdSec + 1),
+  completed_at: at(createdSec + 4),
+  ...extra,
+});
+const detail = (r, turns, events, child_runs = [], subagent_jobs) => ({ run: r, turns, events, child_runs, ...(subagent_jobs ? { subagent_jobs } : {}) });
 
 const ids = (g, kind) => g.nodes.filter((n) => !kind || n.kind === kind).map((n) => n.id);
 const edges = (g) => g.edges.map((e) => `${e.kind} ${e.from} ${e.to}`);
@@ -129,4 +153,72 @@ test("still-running and unmanaged runs", () => {
   const unmanaged = buildRunGraph(detail(run("u", "running"), [], [ev(1, "message", {})]));
   assert.deepEqual(ids(unmanaged), ["turn:0"]);
   assert.deepEqual(buildRunGraph(detail(run("q", "queued"), [], [])).nodes, []);
+
+  const unmanagedJobOnly = buildRunGraph(detail(run("uj", "completed"), [], [], [], [job("j0", 2)]));
+  assert.deepEqual(ids(unmanagedJobOnly), ["turn:0", "job:j0", "outcome"]);
+  assert.ok(edges(unmanagedJobOnly).includes("delegation turn:0 job:j0"));
+});
+
+test("subagent_jobs: lifecycle turn attachment, timestamp fallback, batching, timing, and anomaly flags", () => {
+  const jBatch1 = job("j1", 5, { batch_id: "b-1", tier: "standard", requested_tier: "deep", model: "claude-sonnet-4-6", effort: "medium", reason: "Check callers", started_at: at(6), completed_at: at(10) });
+  const jBatch2 = job("j2", 5, { batch_id: "b-1", tier: "fast", tool_calls: 22, status: "failed", error: "boom", created_at: at(5), started_at: at(15), completed_at: at(18) });
+  const jFallback = job("j3", 25, { status: "canceled", requested_tier: "", tier: "standard", started_at: null, completed_at: null });
+  const jSerialA = job("j4", 41, { requested_tier: "fast", tier: "fast" });
+  const jSerialB = job("j5", 45, { requested_tier: "", tier: "fast" });
+  const jSerialC = job("j6", 49);
+
+  const g = buildRunGraph(
+    detail(
+      run("r", "completed"),
+      [turn(1, "start", 1, 20), turn(2, "resume", 22, 38), turn(3, "resume", 40, 60)],
+      [
+        marker(1, 1),
+        ev(4, "lifecycle", { state: "subagent_queued", subagent_id: "j1" }, 5),
+        ev(5, "lifecycle", { state: "subagent_started", subagent_id: "j2" }, 15),
+        marker(20, 2),
+        marker(35, 3),
+      ],
+      [],
+      [jSerialC, jBatch2, jFallback, jBatch1, jSerialA, jSerialB],
+    ),
+  );
+
+  assert.deepEqual(ids(g, "subagent_job"), ["job:j1", "job:j2", "job:j3", "job:j4", "job:j5", "job:j6"]);
+  assert.ok(edges(g).includes("delegation turn:1 job:j1"));
+  assert.ok(edges(g).includes("delegation turn:1 job:j2"));
+  assert.ok(edges(g).includes("delegation turn:2 job:j3"));
+  assert.ok(edges(g).includes("delegation turn:3 job:j4"));
+
+  const byId = new Map(g.nodes.map((n) => [n.id, n]));
+  const n1 = byId.get("job:j1");
+  assert.equal(n1.turn, 1);
+  assert.equal(n1.batch_id, "b-1");
+  assert.equal(n1.batch_size, 2);
+  assert.equal(n1.queued_ms, 1000);
+  assert.equal(n1.duration_ms, 4000);
+  assert.equal(n1.reason, "Check callers");
+  assert.deepEqual(n1.flags, ["capped"]);
+
+  const n2 = byId.get("job:j2");
+  assert.equal(n2.queued_ms, 10000);
+  assert.equal(n2.duration_ms, 3000);
+  assert.equal(n2.status, "failed");
+  assert.deepEqual(n2.flags, ["failed", "spinning", "queue_bound"]);
+
+  const n3 = byId.get("job:j3");
+  assert.equal(n3.status, "cancelled");
+  assert.equal(n3.turn, 2);
+  assert.equal(n3.batch_size, 1);
+  assert.deepEqual(n3.flags, [], "omitted requested_tier must not mark capped");
+
+  assert.deepEqual(byId.get("job:j4").flags, ["serial"]);
+  assert.deepEqual(byId.get("job:j5").flags, ["serial"]);
+  assert.deepEqual(byId.get("job:j6").flags, ["serial"]);
+
+  assert.equal(subagentJobStatus("queued"), "pending");
+  assert.equal(subagentJobStatus("running"), "running");
+  assert.equal(subagentJobStatus("completed"), "done");
+  assert.equal(subagentJobStatus("failed"), "failed");
+  assert.equal(subagentJobStatus("canceled"), "cancelled");
+  assert.deepEqual(subagentFlags({ requested_tier: "", tier: "standard", status: "completed", tool_calls: 0 }), []);
 });
