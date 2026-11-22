@@ -1055,13 +1055,18 @@ export interface paths {
         };
         get?: never;
         /**
-         * Turn host-folder workspaces on or off
-         * @description With host_folder_workspaces on, a run started afterwards keeps its
+         * Update workspace runner settings
+         * @description Updates workspace-level runner settings; omitted fields stay unchanged.
+         *     With host_folder_workspaces on, a run started afterwards keeps its
          *     checkout in a folder on the person's machine (under the runner's
          *     RUNNER_HOST_WORKSPACES_DIR) instead of the run's disk image inside the microVM, so they can
          *     open it in their own editor. Runs that already have a workspace keep
          *     it where it is. The folder itself is runner configuration and can't
          *     be set here. Has no effect on a runner without that folder configured.
+         *     max_concurrent_subagents (1–16, default 3) bounds concurrent in-turn
+         *     MCP subagents (explorer/helper) per active turn.
+         *     max_parallel_delegations (1–8, default 3) bounds live parallel delegated
+         *     child ticket runs per parent run.
          */
         put: operations["updateRunnerSettings"];
         post?: never;
@@ -7645,11 +7650,17 @@ export interface components {
             provider_id: string;
         };
         RunnerSettings: {
-            host_folder_workspaces: boolean;
+            host_folder_workspaces?: boolean;
+            max_concurrent_subagents?: number;
+            max_parallel_delegations?: number;
         };
         RunnerStatus: {
             /** @description New runs keep their checkout in a host folder when their runner has host_workspaces_dir */
             host_folder_workspaces: boolean;
+            /** @description In-turn MCP subagents (explorer/helper) allowed to run concurrently per active turn (1–16) */
+            max_concurrent_subagents: number;
+            /** @description Delegated child ticket runs allowed to run in parallel per parent run (1–8) */
+            max_parallel_delegations: number;
             online: boolean;
             /** @description True while an embedded runner is still starting up before its first heartbeat */
             starting?: boolean;

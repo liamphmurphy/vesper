@@ -11,7 +11,7 @@ const preview = (blockers: string[] = []) => ({
   ticket_key: "WEB-3", agent: { id: "a1", name: "Pike", handle: "pike", color_index: 6 },
   resolved: { harness: "claude-code", model: "opus-5.5" }, repo_url: "https://github.com/acme/web.git", base_branch: "main", branch: "pike/web-3",
   setup: [], context: [], scopes: [], secrets: [], harness_key: { secret: "harness:anthropic", present: true },
-  runner: { host_folder_workspaces: false, online: true, runners: [], slots: 3, busy: 1, live: 1, queued: 0 },
+  runner: { host_folder_workspaces: false, max_concurrent_subagents: 3, max_parallel_delegations: 3, online: true, runners: [], slots: 3, busy: 1, live: 1, queued: 0 },
   blockers, queued_behind: [],
 });
 

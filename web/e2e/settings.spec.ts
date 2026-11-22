@@ -71,20 +71,28 @@ async function installSettingsApi(page: Page, opts: { runners?: boolean; secrets
   });
   await page.route("**/api/v1/projects", (route) => route.fulfill({ json: [project] }));
   let hostFolders = false;
+  let maxSubagents = 3;
+  let maxDelegations = 3;
   const runnerPuts: Record<string, unknown>[] = [];
   const runnerStatus = () =>
     opts.runners === false
-      ? { online: false, runners: [], slots: 0, busy: 0, live: 0, queued: 3, host_folder_workspaces: hostFolders }
+      ? { online: false, runners: [], slots: 0, busy: 0, live: 0, queued: 3, host_folder_workspaces: hostFolders, max_concurrent_subagents: maxSubagents, max_parallel_delegations: maxDelegations }
       : {
           online: true,
           runners: [{ id: "mbp-4242", backend: "microvm", max_concurrent: 4, running: 2, version: "0.9.1", heartbeat_at: new Date().toISOString(), ...(opts.hostDir ? { host_workspaces_dir: opts.hostDir } : {}) }],
-          slots: 4, busy: 2, live: 2, queued: 3, host_folder_workspaces: hostFolders,
+          slots: 4, busy: 2, live: 2, queued: 3, host_folder_workspaces: hostFolders, max_concurrent_subagents: maxSubagents, max_parallel_delegations: maxDelegations,
         };
   await page.route("**/api/v1/runner", (route) => route.fulfill({ json: runnerStatus() }));
   await page.route("**/api/v1/runner/settings", (route) => {
-    const body = route.request().postDataJSON() as { host_folder_workspaces: boolean };
+    const body = route.request().postDataJSON() as {
+      host_folder_workspaces?: boolean;
+      max_concurrent_subagents?: number;
+      max_parallel_delegations?: number;
+    };
     runnerPuts.push(body);
-    hostFolders = body.host_folder_workspaces;
+    if (body.host_folder_workspaces !== undefined) hostFolders = body.host_folder_workspaces;
+    if (body.max_concurrent_subagents !== undefined) maxSubagents = body.max_concurrent_subagents;
+    if (body.max_parallel_delegations !== undefined) maxDelegations = body.max_parallel_delegations;
     return route.fulfill({ json: runnerStatus() });
   });
   // Like the server: Codex is available once harness:openai exists.
@@ -250,6 +258,43 @@ test("host folders turn on for new runs and show where checkouts go", async ({ p
   // A reload reads it back from the server.
   await page.reload();
   await expect(runners.getByRole("switch", { name: "Keep new checkouts in a folder on this machine" })).toHaveAttribute("aria-checked", "true");
+});
+
+test("subagent and delegation concurrency limits show defaults, validate input, and persist", async ({ page }) => {
+  const mock = await installSettingsApi(page);
+  await page.goto("/settings#runners");
+  const runners = page.locator("#runners");
+
+  const subInput = runners.getByLabel("Max concurrent subagents", { exact: true });
+  const delInput = runners.getByLabel("Max parallel delegations", { exact: true });
+  await expect(subInput).toHaveValue("3");
+  await expect(delInput).toHaveValue("3");
+
+  // Stepper adjusts subagent limit and saves partial payload.
+  await runners.getByRole("button", { name: "Increase max concurrent subagents" }).click();
+  await expect(subInput).toHaveValue("4");
+  expect(mock.runnerPuts.at(-1)).toEqual({ max_concurrent_subagents: 4 });
+
+  // Direct numeric input + Enter updates delegation limit.
+  await delInput.fill("5");
+  await delInput.press("Enter");
+  await expect(delInput).toHaveValue("5");
+  expect(mock.runnerPuts.at(-1)).toEqual({ max_parallel_delegations: 5 });
+
+  // Out-of-range input shows validation error without sending a PUT.
+  const putCountBefore = mock.runnerPuts.length;
+  await subInput.fill("17");
+  await subInput.press("Enter");
+  await expect(runners.getByRole("alert")).toContainText("Enter a whole number between 1 and 16.");
+  expect(mock.runnerPuts.length).toBe(putCountBefore);
+  await subInput.press("Escape");
+  await expect(subInput).toHaveValue("4");
+  await expect(runners.getByRole("alert")).toHaveCount(0);
+
+  // Reload preserves updated values from the server.
+  await page.reload();
+  await expect(runners.getByLabel("Max concurrent subagents", { exact: true })).toHaveValue("4");
+  await expect(runners.getByLabel("Max parallel delegations", { exact: true })).toHaveValue("5");
 });
 
 test("sections show empty and error states independently", async ({ page }) => {

@@ -73,8 +73,8 @@ async function installSetupApi(page: Page, init: Partial<State> = {}) {
       counts: { inbox: 6, needs_you: 6, wiki_suggestions: 0, live_agents: 1 },
     });
     if (path === "/runner") return json(state.runner
-      ? { online: true, runners: [{ id: "mbp", backend: "microvm", max_concurrent: 4, running: 0, heartbeat_at: minutesAgo(0) }], slots: 4, busy: 0, live: 0, queued: 0, host_folder_workspaces: false }
-      : { online: false, ...(state.runnerStarting ? { starting: true } : {}), runners: [], slots: 0, busy: 0, live: 0, queued: 0, host_folder_workspaces: false });
+      ? { online: true, runners: [{ id: "mbp", backend: "microvm", max_concurrent: 4, running: 0, heartbeat_at: minutesAgo(0) }], slots: 4, busy: 0, live: 0, queued: 0, host_folder_workspaces: false, max_concurrent_subagents: 3, max_parallel_delegations: 3 }
+      : { online: false, ...(state.runnerStarting ? { starting: true } : {}), runners: [], slots: 0, busy: 0, live: 0, queued: 0, host_folder_workspaces: false, max_concurrent_subagents: 3, max_parallel_delegations: 3 });
     if (path === "/chat-models") return json([
       { harness: "claude-code", label: "Claude Code", available: state.harness, ...(state.harness ? {} : { unavailable_reason: "no harness:anthropic secret" }), models: [{ id: "opus", label: "Opus", default: true }] },
       { harness: "codex", label: "Codex", available: false, unavailable_reason: "no harness:openai secret", models: [{ id: "gpt-5-codex", label: "gpt-5-codex", default: true }] },
