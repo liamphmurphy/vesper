@@ -269,4 +269,18 @@ final class LiveUpdatesTests: XCTestCase {
         XCTAssertEqual(SSE.event(fromLine: #"data: {"type":"inbox.updated"}"#), ServerEvent(type: "inbox.updated"))
         XCTAssertNil(SSE.event(fromLine: ": keepalive"))
     }
+
+    func testSettingsHintsInvalidateMatchingSettingsEndpoints() {
+        XCTAssertTrue(LiveUpdates.invalidation(for: ServerEvent(type: "profile.updated")).matches(key("/me", "/me")))
+        XCTAssertTrue(LiveUpdates.invalidation(for: ServerEvent(type: "memory.updated")).matches(key("/memories", "/memories")))
+        XCTAssertTrue(LiveUpdates.invalidation(for: ServerEvent(type: "secret.updated")).matches(key("/secrets", "/secrets")))
+        XCTAssertTrue(LiveUpdates.invalidation(for: ServerEvent(type: "secret.updated")).matches(key("/chat-models", "/chat-models")))
+        XCTAssertTrue(LiveUpdates.invalidation(for: ServerEvent(type: "api_secret.updated")).matches(key("/api-secrets", "/api-secrets")))
+        XCTAssertTrue(LiveUpdates.invalidation(for: ServerEvent(type: "connector.updated")).matches(key("/connectors", "/connectors")))
+        XCTAssertTrue(LiveUpdates.invalidation(for: ServerEvent(type: "repository.updated")).matches(key("/repositories", "/repositories")))
+        XCTAssertTrue(LiveUpdates.invalidation(for: ServerEvent(type: "runner.updated")).matches(key("/runner/environment", "/runner/environment")))
+        XCTAssertTrue(LiveUpdates.invalidation(for: ServerEvent(type: "dev_workspace.updated")).matches(key("/dev-workspace", "/dev-workspace")))
+        XCTAssertTrue(LiveUpdates.invalidation(for: ServerEvent(type: "space.updated")).matches(key("/chat-spaces", "/chat-spaces")))
+        XCTAssertTrue(LiveUpdates.invalidation(for: ServerEvent(type: "persona.updated")).matches(key("/personas", "/personas")))
+    }
 }

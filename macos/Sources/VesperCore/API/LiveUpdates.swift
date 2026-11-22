@@ -39,6 +39,16 @@ public enum LiveUpdates {
         "persona": ["personas", "chats", "dock"],
         "browser_share": ["browser-shares"],
         "custom_app": ["custom-apps"],
+        "profile": ["me", "bootstrap"],
+        "memory": ["memories"],
+        "secret": ["secrets", "chat-models", "image-engine"],
+        "api_secret": ["api-secrets"],
+        "connector": ["connectors"],
+        "repository": ["repositories"],
+        "runner": ["runner"],
+        "dev_workspace": ["dev-workspace"],
+        "space": ["spaces", "chat-spaces"],
+        "image_engine": ["image-engine"],
     ]
 
     /// Hints that change one narrow thing, so they don't also refresh the dashboards.
@@ -56,6 +66,7 @@ public enum LiveUpdates {
         "search": ["search", "chat-search"],
         "chats": ["chats", "chat-search", "highlights", "chat-spaces"],
         "playgrounds": ["playground", "playgrounds"],
+        "spaces": ["chat-spaces", "spaces"],
     ]
 
     /// The web query key roots a hint invalidates (web `invalidatedBy`).

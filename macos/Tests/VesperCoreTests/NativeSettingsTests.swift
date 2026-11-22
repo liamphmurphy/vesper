@@ -161,4 +161,41 @@ final class NativeSettingsTests: XCTestCase {
         XCTAssertFalse(other.settings.tray.showCount)
         XCTAssertEqual(other.settings.power.onSleep, .pause)
     }
+
+    func testAppearanceDefaultsNilNormalizesAndSupportsClearingOverridesViaPatch() throws {
+        XCTAssertNil(NativeSettings.defaults().appearance)
+        XCTAssertEqual(NativeSettings.defaults().effectiveAppearance, .macOSDefault)
+
+        let configured = NativeSettings.normalize([
+            "appearance": [
+                "mode": "dark",
+                "palette": "custom",
+                "textSize": "large",
+                "showHarnessActivity": false,
+                "custom": [
+                    "base": "nord",
+                    "dark": ["accent": "#AABBCC", "bg": "evil"],
+                    "light": ["bg": "#ffffff"],
+                ],
+            ],
+        ])
+        XCTAssertEqual(configured.appearance?.mode, .dark)
+        XCTAssertEqual(configured.appearance?.palette, "custom")
+        XCTAssertEqual(configured.appearance?.textSize, .large)
+        XCTAssertEqual(configured.appearance?.showHarnessActivity, false)
+        XCTAssertEqual(configured.appearance?.custom.base, "nord")
+        XCTAssertEqual(configured.appearance?.custom.dark, ["accent": "#aabbcc"])
+
+        let cleared = configured.applying(patch: ["appearance": ["custom": ["dark": [:] as [String: Any]]]])
+        XCTAssertEqual(cleared.appearance?.custom.dark, [:])
+        XCTAssertEqual(cleared.appearance?.custom.light, ["bg": "#ffffff"])
+
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("vesper-app-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let cfg = ConfigFile.url(dataDirectory: dir)
+        try ConfigFile.save(native: cleared, to: cfg)
+        let reloaded = ConfigFile.loadNative(from: cfg)
+        XCTAssertEqual(reloaded.appearance, cleared.appearance)
+    }
 }
