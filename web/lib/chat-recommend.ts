@@ -63,6 +63,27 @@ export function summaryRequestUrl(body: string | undefined): string | null {
   return m ? (m[1] ?? m[2]) : null;
 }
 
+/**
+ * Maps each assistant turn reply id to the URL from its preceding user Summarize prompt
+ * in a single O(N) pass instead of scanning backwards from every message on every render.
+ */
+export function summaryUrlsForTurns(
+  list: readonly { id: string; role: string; body_md: string }[] | undefined,
+  turns: ReadonlyMap<string, unknown>,
+): Map<string, string> {
+  const out = new Map<string, string>();
+  let lastUserBody: string | undefined;
+  for (const m of list ?? []) {
+    if (m.role === "user") {
+      lastUserBody = m.body_md;
+    } else if (m.role === "assistant" && turns.has(m.id)) {
+      const url = summaryRequestUrl(lastUserBody);
+      if (url) out.set(m.id, url);
+    }
+  }
+  return out;
+}
+
 type Node = { type: string; tagName?: string; value?: string; properties?: Record<string, unknown>; children?: Node[] };
 
 const isCard = (n: Node) => n.type === "element" && n.tagName === "pre" && n.children?.some((c) => c.tagName === "code" && (c.properties?.className as string[] | undefined)?.includes("language-recommend"));

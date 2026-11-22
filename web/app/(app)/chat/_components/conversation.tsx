@@ -83,7 +83,7 @@ import { placeStandaloneAudio, type ChatAudio } from "@/lib/chat-audio";
 import { useChatVideos } from "@/lib/api/video-hooks";
 import type { ChatVideo } from "@/lib/chat-video";
 import { CiteContext } from "@/components/domain/cite-marker";
-import { summaryRequestUrl } from "@/lib/chat-recommend";
+import { summaryUrlsForTurns } from "@/lib/chat-recommend";
 import { hostOf } from "@/lib/web-search";
 import { timelineTime } from "@/lib/format";
 import { ModelEffortPicker, effortLabel, modelEffortSummary, modelEfforts, modelLabel, sameSelection, type Effort, type Selection } from "./model-picker";
@@ -283,12 +283,10 @@ const Bubble = memo(function Bubble({ m, chat, persona, saveable, names, turn, e
 type ChatAsides = NonNullable<ReturnType<typeof useChatAsides>["data"]>;
 
 /**
- * The transcript's messages. Typing in the composer re-renders the whole chat screen, so
- * everything handed to a Bubble here is kept referentially stable (memoized, or read through
- * a ref when it is a callback) and a keystroke only re-checks props instead of re-rendering
- * every message's markdown.
+ * The transcript's messages. Memoized alongside each Bubble so unrelated Conversation state
+ * updates skip mapping the full message list and re-checking every message's props.
  */
-function BubbleList({ unreadFrom, list, chat, persona, speakerName, names, highlight, running, since, locked, archived, editPending, lastUser, videosByMessage, audioByMessage, afterMessageAudio, onStopAudio, onRetryMusic, pushRequestsByMessage, afterMessagePushRequests, asideList, pinnedRef, editLast, onQuoteSecondOpinion }: {
+const BubbleList = memo(function BubbleList({ unreadFrom, list, chat, persona, speakerName, names, highlight, running, since, locked, archived, editPending, lastUser, videosByMessage, audioByMessage, afterMessageAudio, onStopAudio, onRetryMusic, pushRequestsByMessage, afterMessagePushRequests, asideList, pinnedRef, editLast, onQuoteSecondOpinion }: {
   /** The first reply since the person last read the chat: "New" goes above it. */
   unreadFrom?: string;
   list: Message[];
@@ -316,6 +314,7 @@ function BubbleList({ unreadFrom, list, chat, persona, speakerName, names, highl
   onQuoteSecondOpinion?: (quote: { text: string; modelLabel: string }) => void;
 }) {
   const turns = useMemo(() => turnWindows(list), [list]);
+  const summaryUrls = useMemo(() => summaryUrlsForTurns(list, turns), [list, turns]);
   const latest = useRef({ editLast, retryBody: lastUser?.body_md });
   useEffect(() => {
     latest.current = { editLast, retryBody: lastUser?.body_md };
@@ -359,14 +358,14 @@ function BubbleList({ unreadFrom, list, chat, persona, speakerName, names, highl
   const canEdit = !running && !locked && !editPending && !archived;
   const canRetry = !running && !editPending && !archived && !!lastUser;
   const lastId = list.at(-1)?.id;
-  return list.map((m, i) => (
+  return list.map((m) => (
     <Fragment key={m.id}>
     {m.id === unreadFrom && <NewDivider />}
     <Bubble m={m} chat={chat} persona={persona} saveable={!running} names={names} turn={turns.get(m.id)} ended={ended.get(m.id)} highlighted={highlight === m.id}
       editable={canEdit && m.id === lastUser?.id}
       onEdit={onEdit}
       onRetry={canRetry && m.id === lastId ? onRetry : undefined}
-      summaryUrl={m.role === "assistant" && turns.has(m.id) ? summaryRequestUrl(list.slice(0, i).findLast((x) => x.role === "user")?.body_md) : null}
+      summaryUrl={summaryUrls.get(m.id) ?? null}
       archived={archived}
       videos={videosByMessage.get(m.id)}
       audio={audioByMessage.get(m.id)}
@@ -388,7 +387,7 @@ function BubbleList({ unreadFrom, list, chat, persona, speakerName, names, highl
     ) : null}
     </Fragment>
   ));
-}
+});
 
 /**
  * What a card in a reply can do. The value only changes with the chat's data, not with the
@@ -479,11 +478,12 @@ function ActivityLog({ list, turns, groups, running, runId, since, focus }: { li
 }
 
 /** Activity's cost, model line and log, for the compact tab and the desktop dock's tab. */
-function ActivityBody({ chat: c, list, groups, focus }: { chat: NonNullable<ReturnType<typeof useChat>["data"]>; list: Message[] | undefined; groups: Groups; focus?: { key: string; at: number } }) {
+const ActivityBody = memo(function ActivityBody({ chat: c, list, groups, focus }: { chat: NonNullable<ReturnType<typeof useChat>["data"]>; list: Message[] | undefined; groups: Groups; focus?: { key: string; at: number } }) {
   const current: Selection = { harness: c.harness, model: c.model, auto: !!c.auto_model };
   const running = c.state === "running";
   const lastUser = list?.findLast((m) => m.role === "user");
   const since = runningSince(list) ?? lastUser?.created_at;
+  const turns = useMemo(() => turnWindows(list), [list]);
   return (
     <>
       <div className="mx-auto mb-4 flex max-w-[860px] flex-wrap items-center gap-2">
@@ -494,10 +494,10 @@ function ActivityBody({ chat: c, list, groups, focus }: { chat: NonNullable<Retu
           {c.effort && ` · ${effortLabel(c.effort)} effort`}
         </span>
       </div>
-      <ActivityLog list={list} turns={turnWindows(list)} groups={groups} running={running} runId={c.current_run_id} since={since} focus={focus} />
+      <ActivityLog list={list} turns={turns} groups={groups} running={running} runId={c.current_run_id} since={since} focus={focus} />
     </>
   );
-}
+});
 
 const DRAFT_KEY = (id: string) => `lazyagents.chat-draft:${id}`;
 function putDraft(id: string, text: string) {
@@ -776,7 +776,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
     const n = c.unread ?? 0;
     setUnreadFrom({ chat: c.id, message: n > 0 && n <= replies.length ? replies[replies.length - n].id : null });
   }
-  useEntrances(log);
+  useEntrances(log, loaded && !messages.isError ? list : undefined);
   const lastUser = list?.findLast((m) => m.role === "user");
   // The running turn starts after the newest message, which may be a reply, not
   // the person's: a persona handing on, or the image follow-up.

@@ -46,10 +46,15 @@ export function usePulseList(root: RefObject<HTMLElement | null>) {
 /**
  * Children of `root` marked `data-enter-key` rise in the first time they appear. What's there on
  * first paint, or after the whole set was replaced (another chat opened), stays still.
+ * Scoped to `items` so unrelated parent re-renders don't scan the transcript DOM.
  */
-export function useEntrances(root: RefObject<HTMLElement | null>) {
+export function useEntrances(root: RefObject<HTMLElement | null>, items: readonly unknown[] | undefined) {
   const seen = useRef(new Set<string>());
   useLayoutEffect(() => {
+    if (!items) {
+      seen.current.clear();
+      return;
+    }
     const els = [...(root.current?.querySelectorAll<HTMLElement>("[data-enter-key]") ?? [])];
     const keys = els.map((el) => el.dataset.enterKey!);
     const continues = keys.some((k) => seen.current.has(k));
@@ -61,7 +66,7 @@ export function useEntrances(root: RefObject<HTMLElement | null>) {
     }
     if (continues) keys.forEach((k) => seen.current.add(k));
     else seen.current = new Set(keys);
-  });
+  }, [root, items]);
 }
 
 type Place = { left: number; top: number; width: number; el: HTMLElement };
