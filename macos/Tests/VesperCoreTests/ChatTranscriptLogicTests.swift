@@ -631,4 +631,114 @@ final class ChatTranscriptLogicTests: XCTestCase {
         cache.removeAll()
         XCTAssertEqual(cache.count, 0)
     }
+
+    // MARK: - Transcript Load State & Tail Window
+
+    func testLoadStateStaysLoadingUntilFirstPayloadLands() {
+        // Uncached chat on frame 1 (before .task flips isFetching) still has hasData == false
+        // and must show the skeleton rather than mounting an empty bottom-anchored ScrollView.
+        XCTAssertEqual(
+            ChatTranscriptWindow.loadState(hasData: false, hasError: false, isEmpty: true),
+            .loading
+        )
+        // Error with no cached data shows the error state.
+        XCTAssertEqual(
+            ChatTranscriptWindow.loadState(hasData: false, hasError: true, isEmpty: true),
+            .error
+        )
+        // Loaded chat with zero messages (brand-new empty chat) is ready.
+        XCTAssertEqual(
+            ChatTranscriptWindow.loadState(hasData: true, hasError: false, isEmpty: true),
+            .ready
+        )
+        // Cached chat whose background refetch failed keeps rendering its cached messages.
+        XCTAssertEqual(
+            ChatTranscriptWindow.loadState(hasData: true, hasError: true, isEmpty: false),
+            .ready
+        )
+    }
+
+    func testVisibleRangeAndExpansionForLongHistory() {
+        let initial = ChatTranscriptWindow.initialLimit
+        XCTAssertEqual(ChatTranscriptWindow.visibleRange(totalCount: 0, visibleLimit: initial), 0..<0)
+        XCTAssertEqual(ChatTranscriptWindow.visibleRange(totalCount: 12, visibleLimit: initial), 0..<12)
+        XCTAssertEqual(ChatTranscriptWindow.hiddenCount(totalCount: 12, visibleLimit: initial), 0)
+
+        // Long history renders only the trailing window initially.
+        XCTAssertEqual(ChatTranscriptWindow.visibleRange(totalCount: 100, visibleLimit: initial), 70..<100)
+        XCTAssertEqual(ChatTranscriptWindow.hiddenCount(totalCount: 100, visibleLimit: initial), 70)
+
+        // Expanding reveals one page at a time and clamps at totalCount.
+        let page1 = ChatTranscriptWindow.expandedLimit(currentLimit: initial, totalCount: 100, pageSize: 30)
+        XCTAssertEqual(page1, 60)
+        XCTAssertEqual(ChatTranscriptWindow.visibleRange(totalCount: 100, visibleLimit: page1), 40..<100)
+
+        let page2 = ChatTranscriptWindow.expandedLimit(currentLimit: page1, totalCount: 100, pageSize: 30)
+        XCTAssertEqual(page2, 90)
+
+        let page3 = ChatTranscriptWindow.expandedLimit(currentLimit: page2, totalCount: 100, pageSize: 30)
+        XCTAssertEqual(page3, 100)
+        XCTAssertEqual(ChatTranscriptWindow.hiddenCount(totalCount: 100, visibleLimit: page3), 0)
+    }
+
+    func testEffectiveLimitExpandsToIncludeOlderJumpTargetWithContext() {
+        let ids = (0..<100).map { "m-\($0)" }
+
+        // Target already inside the trailing window leaves the limit unchanged.
+        XCTAssertEqual(
+            ChatTranscriptWindow.effectiveLimit(messageIds: ids, visibleLimit: 30, targetMessageId: "m-85"),
+            30
+        )
+
+        // Older target expands to include the target plus 5 messages of preceding context.
+        XCTAssertEqual(
+            ChatTranscriptWindow.effectiveLimit(messageIds: ids, visibleLimit: 30, targetMessageId: "m-20"),
+            85
+        )
+        XCTAssertEqual(ChatTranscriptWindow.visibleRange(totalCount: 100, visibleLimit: 85), 15..<100)
+
+        // Target near the very start clamps cleanly at index 0.
+        XCTAssertEqual(
+            ChatTranscriptWindow.effectiveLimit(messageIds: ids, visibleLimit: 30, targetMessageId: "m-2"),
+            100
+        )
+
+        // Unknown target falls back to the current limit.
+        XCTAssertEqual(
+            ChatTranscriptWindow.effectiveLimit(messageIds: ids, visibleLimit: 30, targetMessageId: "missing"),
+            30
+        )
+    }
+
+    func testAdjustedLimitForAppendPreservesExpandedTopBoundary() {
+        // Unexpanded window stays bounded at initialLimit when new messages arrive.
+        XCTAssertEqual(
+            ChatTranscriptWindow.adjustedLimitForAppend(
+                currentLimit: ChatTranscriptWindow.initialLimit,
+                previousCount: 80,
+                newCount: 82
+            ),
+            ChatTranscriptWindow.initialLimit
+        )
+
+        // Expanded window grows by the appended delta so earlier messages don't slip back out.
+        XCTAssertEqual(
+            ChatTranscriptWindow.adjustedLimitForAppend(currentLimit: 60, previousCount: 80, newCount: 82),
+            62
+        )
+        XCTAssertEqual(
+            ChatTranscriptWindow.adjustedLimitForAppend(currentLimit: 60, previousCount: 80, newCount: 80),
+            60
+        )
+    }
+
+    func testEarlierButtonLabelFormatsCounts() {
+        XCTAssertEqual(ChatTranscriptWindow.earlierButtonLabel(hiddenCount: 0, pageSize: 30), "")
+        XCTAssertEqual(ChatTranscriptWindow.earlierButtonLabel(hiddenCount: 1, pageSize: 30), "Show 1 earlier message")
+        XCTAssertEqual(ChatTranscriptWindow.earlierButtonLabel(hiddenCount: 12, pageSize: 30), "Show 12 earlier messages")
+        XCTAssertEqual(
+            ChatTranscriptWindow.earlierButtonLabel(hiddenCount: 70, pageSize: 30),
+            "Show 30 earlier messages (70 hidden)"
+        )
+    }
 }

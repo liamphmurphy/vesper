@@ -731,3 +731,92 @@ public final class ChatParsedMessageCache: @unchecked Sendable {
         lock.withLock { entries.count }
     }
 }
+
+// MARK: - Transcript Load State & Tail Window
+
+/// Whether `ChatTranscriptView` should show an error, a loading skeleton, or the scroll view.
+public enum ChatTranscriptLoadState: Sendable, Equatable {
+    case error
+    case loading
+    case ready
+}
+
+/// Tail-windowing and load-state rules for the native chat transcript.
+///
+/// Rendering a bounded suffix of messages in a regular `VStack` keeps opening long histories fast
+/// while giving `.defaultScrollAnchor(.bottom)` exact row heights on pass 1 (avoiding macOS
+/// `LazyVStack` bottom-anchor blanking with dynamic `MarkdownTextView` heights).
+public enum ChatTranscriptWindow {
+    public static let initialLimit = 30
+    public static let pageSize = 30
+    public static let targetContextBefore = 5
+
+    /// Holds the skeleton until the first payload arrives (even before `.task` flips `isFetching`
+    /// to true), while allowing an already-loaded empty chat to render normally.
+    public static func loadState(hasData: Bool, hasError: Bool, isEmpty: Bool) -> ChatTranscriptLoadState {
+        if hasError && isEmpty { return .error }
+        if !hasData { return .loading }
+        return .ready
+    }
+
+    /// Returns the effective visible count needed to show at least `visibleLimit` trailing messages
+    /// plus `targetMessageId` (with `contextBefore` earlier messages) when jumping to an older turn.
+    public static func effectiveLimit(
+        messageIds: [String],
+        visibleLimit: Int,
+        targetMessageId: String? = nil,
+        contextBefore: Int = targetContextBefore
+    ) -> Int {
+        let base = max(initialLimit, visibleLimit)
+        guard let targetMessageId, !targetMessageId.isEmpty,
+              let index = messageIds.firstIndex(of: targetMessageId) else {
+            return base
+        }
+        let start = max(0, index - max(0, contextBefore))
+        return max(base, messageIds.count - start)
+    }
+
+    /// Index slice of `messages` currently rendered in the transcript `VStack`.
+    public static func visibleRange(totalCount: Int, visibleLimit: Int) -> Range<Int> {
+        guard totalCount > 0 else { return 0..<0 }
+        let clamped = max(1, visibleLimit)
+        let start = max(0, totalCount - clamped)
+        return start..<totalCount
+    }
+
+    /// Number of earlier messages omitted above `visibleRange`.
+    public static func hiddenCount(totalCount: Int, visibleLimit: Int) -> Int {
+        visibleRange(totalCount: totalCount, visibleLimit: visibleLimit).lowerBound
+    }
+
+    /// Expands `currentLimit` by `pageSize`, clamped to `totalCount`.
+    public static func expandedLimit(
+        currentLimit: Int,
+        totalCount: Int,
+        pageSize: Int = pageSize
+    ) -> Int {
+        let next = max(initialLimit, currentLimit) + max(1, pageSize)
+        return min(max(totalCount, initialLimit), next)
+    }
+
+    /// Preserves the revealed top boundary when new messages append to an already-expanded window.
+    public static func adjustedLimitForAppend(
+        currentLimit: Int,
+        previousCount: Int,
+        newCount: Int
+    ) -> Int {
+        guard currentLimit > initialLimit, newCount > previousCount else { return currentLimit }
+        return currentLimit + (newCount - previousCount)
+    }
+
+    /// Button title for revealing the next batch of hidden earlier messages.
+    public static func earlierButtonLabel(hiddenCount: Int, pageSize: Int = pageSize) -> String {
+        guard hiddenCount > 0 else { return "" }
+        let batch = min(hiddenCount, max(1, pageSize))
+        let unit = batch == 1 ? "message" : "messages"
+        if hiddenCount > batch {
+            return "Show \(batch) earlier \(unit) (\(hiddenCount) hidden)"
+        }
+        return "Show \(batch) earlier \(unit)"
+    }
+}
