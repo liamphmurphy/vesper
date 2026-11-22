@@ -665,6 +665,49 @@ Manual click-through checklist:
 7. Verify **Sign-in** updates the owner password/session list, and **Mac App → Backups** runs both "Export Everything…"
    (`.tar.gz`) and local DB backup actions cleanly.
 
+## Native screen: Learn
+
+`/learn` and `/learn/:id` are native (`macos/Sources/Vesper/Native/Learn/`, logic in VesperCore `Native/LearnLogic.swift`
+and `Native/LearnNav.swift`). The web route (`web/app/(app)/learn/`), `web/lib/learning.ts`, `web/lib/api/learning-hooks.ts`,
+and `web/lib/native-shell/models/study.ts` are removed; in a browser `/learn` and `/learn/:id` are 404s.
+
+- **Index (`/learn`)**: adaptive `LazyVGrid` (`In progress` build cards with 6-step progress strip and state pills,
+  `Your modules` studyable cards with progress bars and `Continue:` lesson pointers), loading skeleton, error retry,
+  right-click context menu (Open, Open in New Tab, Copy Link), and the 5-step **New Learning Module** wizard
+  (Topic, Purpose, Level, Time 30 min–20 h with multi-part callout above 8 h, Review with tutor & harness/model picker).
+- **Course build & outline review (`/learn/:id`)**: 6-step `BuildStepper`, failed/stopped banners, Stop / Discard / Delete
+  confirmations, and `OutlineReviewView` (↑/↓ lesson reordering via `LearnLogic.moveLesson`, `Known` toggles with
+  optimistic updates & rollback on prerequisite errors, `PartsPlanView`, unit research questions, and source/minute/spend limits).
+- **Study & Tutor (`/learn/:id`, when `studyable` and not `?review=1` on `outline_ready`)**:
+  publishes `LearnNav` (`study`) to `NativeChrome.navigator` (progress summary, next-part controls, lessons grouped by unit),
+  renders lesson prose and code blocks via `MarkdownView`, `MODEL KNOWLEDGE · NOT SOURCED` dashed callouts, `chart` blocks
+  and tutor ```` ```chart ```` fences via native **Swift Charts** (`LessonChartView` with Chart/Data toggle), interactive
+  `CheckCardView` checks (MCQ, Order with ↑/↓, Short answer + self-grading Yes/Not quite, confidence picker, reveal),
+  anchored `#source-N` citations, and the collapsible trailing `TutorPanelView` (340 pt on wide windows, sheet on compact).
+- **Live updates & polling**: `LiveUpdates` invalidates `courses`/`learn` on `course.*`, `learning.*`, and `run.*` events;
+  `LearnScreen` and `CourseScreen` poll every 4 s while `LearnLogic.courseBuilding` is true, and `TutorPanelView` polls
+  chat state/messages every 2 s while the tutor run is active.
+- **Caveat**: inline SVG `diagram` blocks (`LessonDiagramView`) are implemented in pure SwiftUI (no AppKit/WebKit SVG
+  rasterizer), showing the diagram title/`alt` overview, interactive step-through captions when present, Copy SVG, and an
+  `SVG source` view rendered through `MarkdownView` rather than rasterizing arbitrary SVG XML directly.
+
+Manual click-through checklist:
+
+1. Open `/learn` from Apps / Command Palette: existing modules split into `In progress` and `Your modules`; toolbar
+   shows Refresh and **New Learning Module**.
+2. Click **New Learning Module** and walk through Topic → Purpose → Level → Time (drag past 8 h to confirm the multi-part
+   badge) → Review (edit a prior step, pick Tutor & Model, click **Draft outline**).
+3. On `/learn/:id` in `outline_ready`: reorder lessons with ↑/↓, verify prerequisite errors roll back and show a banner,
+   toggle **Known**, adjust limits, and click **Approve and start research**; confirm 4 s polling advances the stepper.
+4. Once studyable, verify the sidebar shows `LearnNav` progress and units, clicking lessons switches `?lesson=`, `Next →`
+   advances, `#source-N` citations scroll to Sources, and external source links open in the browser.
+5. Complete MCQ, Order, and Short-answer checks (with confidence selection and Yes/Not quite self-grading) and confirm
+   the sidebar progress updates.
+6. In the tutor panel (wide trailing column and compact sheet toggle), click a quick prompt or press Return to send a
+   question, verify `Thinking…` polls every 2 s, and confirm replies render Markdown and ```` ```chart ```` blocks cleanly.
+7. Trigger **Plan part 2 now** on a multi-part course, follow **Review its outline** (`?review=1`), verify `LearnNav`
+   clears during outline review, and confirm **Stop** / **Delete** alerts work cleanly.
+
 ## Build and test
 
 - `make -C macos test` → `swift test` (VesperCore).
