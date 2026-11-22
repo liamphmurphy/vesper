@@ -170,10 +170,6 @@ private struct AreaButton: View {
         }
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
-        // A click navigates, and the sidebar and content swap under the cursor; AppKit can drop the
-        // hover exit then, leaving the button tinted after the pointer left (Knowledge stayed lit
-        // after going back to Chat). Selection changes exactly when that happens, so start over.
-        .onChange(of: selected) { hovered = false }
         .help(label)
         .accessibilityLabel(label)
         .accessibilityAddTraits(selected ? .isSelected : [])
