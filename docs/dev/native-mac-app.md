@@ -1075,3 +1075,21 @@ replacing `KnowledgeGraphScreenSlot` and `KnowledgePageSidePanelSlot`).
   `page-review.tsx` and `query-table.tsx` (still imported by `page-screen.tsx`, retained for
   LAZYAGENTS-288).
 
+## Native screen: Knowledge live-preview editor & tables
+
+Standard Knowledge markdown pages (`/knowledge/:id`, where `page.kind == .document`, `page.canvasId == nil`, and the page is not a standalone PDF asset) render natively in `KnowledgeEditorView` (`macos/Sources/Vesper/Native/Knowledge/Editor/{KnowledgeTextView,MarkdownTableGridView,KnowledgeEditorView}.swift`), backed by the Foundation-only engine in `VesperCore/Native/Knowledge/Editor/{KnowledgeMarkdownSyntax,KnowledgeCompletionLogic,MarkdownTableModel,KnowledgeEditorDocument}.swift`. Docs (`page.canvasId != nil` → `/apps/docs/:id`), Slides (`.deck` → `/apps/slides/:id`), Designs (`.design` → `/apps/designs/:id`), and standalone PDFs (`PDFViewerView`) remain preserved in `KnowledgePageEditorSlot`.
+
+- **Isolated TextKit 2 live-preview (`KnowledgeTextView.swift`).** Single macOS AppKit `NSViewRepresentable` wrapping a TextKit 2 `NSTextView` (`NSTextContentStorage` + `NSTextLayoutManager`) so iOS-over-Tailscale can swap in `UITextView` cleanly. Hides raw delimiters (`[[`, `]]`, `![[`, `#`, `^`, `**`, `_`, `` ` ``) unless the caret/selection intersects the token, styles headings, emphasis, code, accented `[[links]]`, pill-styled `#tags` and `^block` IDs, supports `⌘`-click link navigation via `API.resolveLinks`, Writing Tools (`.complete`), dictation, Look Up, spellcheck, native find bar, and native `UndoManager`.
+- **Native interactive GFM tables (`MarkdownTableGridView.swift`).** Pure SwiftUI embedded grid supporting inline header/body cell editing, `Tab`/`⇧Tab` navigation (`Tab` on the last cell appends a row), row/column add/remove, column alignment cycling, draggable column resize handles, an **Edit as Markdown** raw pipe round-trip mode, and `⌘F` match highlights. Untouched tables emit their `originalRawText` verbatim for byte-for-byte no-op round-trips.
+- **Orchestrator (`KnowledgeEditorView.swift`).** Interleaves prose segments (with inline image/PDF/page embed previews and Quick Look / `PDFViewer` actions) and table grids, provides a floating `[[` / `![[` / `#` completion popover with keyboard navigation (`↑`/`↓`/`Tab`/`Return`/`Esc`), unified `⌘F` find across prose and tables (wired into `NativeFindModel.searcher`), unified Undo/Redo, Copy Selection as Markdown, and dirty-gated Save (`⌘S`) + debounced autosave via `KnowledgeAPI.updatePage`.
+- **Web cleanup.** Deleted `web/app/(app)/knowledge/[id]/[[...slug]]/page.tsx`, `web/app/(app)/knowledge/_components/{page-screen,page-review,query-table}.tsx`, and `web/lib/{knowledge-editor,knowledge-completion}.ts` (all verified to have zero remaining importers). Kept `web/app/(app)/apps/docs/`, `knowledge-dock.tsx`, `page-side.tsx`, `chat-context.tsx`, `kit.tsx`, and `legacy-redirect.tsx`.
+
+Manual click-through checklist:
+
+1. Open a Knowledge markdown page containing headings, `**bold**`, `_italic_`, `` `code` ``, `[[links]]`, `#tags`, `^block-ids`, and a GFM pipe table: verify delimiters hide when unfocused and reveal when the caret enters a token, and that opening without edits never triggers a save.
+2. `⌘`-click a resolved `[[link]]` to navigate to the target page; type `[[`, `![[`, and `#` to open the completion popover, navigate with `↑`/`↓`, accept with `Tab`/`Return`, and dismiss with `Esc`.
+3. Click table cells to edit inline, press `Tab`/`⇧Tab` across cells (verify `Tab` on the last cell appends a new row), add/remove rows and columns, cycle alignment, drag a column resize handle, and toggle **Edit as Markdown** → Apply.
+4. Press `⌘F` and search for a term appearing in both prose and table cells: verify matches highlight in both, Next/Prev navigates across segments, and Undo/Redo (`⌘Z`/`⌘⇧Z`) steps cleanly across interleaved prose and table edits.
+5. Open a Doc (`canvas_id != nil`), a Deck (`.deck`), a Design (`.design`), and a standalone PDF page to confirm `KnowledgePageEditorSlot` still routes each to Tiptap Docs, Slides, Designs, and native `PDFViewerView` respectively.
+
+
