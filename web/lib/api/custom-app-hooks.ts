@@ -5,14 +5,7 @@ import { api, ApiError, unwrap, type Schemas } from "./client";
 
 export type CustomAppSummary = Schemas["CustomAppSummary"];
 export type CustomAppDetail = Schemas["CustomAppDetail"];
-export type CustomAppVersion = Schemas["CustomAppVersion"];
-export type CustomAppVersionSummary = Schemas["CustomAppVersionSummary"];
-export type CustomAppManifest = Schemas["CustomAppManifest"];
-export type CustomAppCapabilities = Schemas["CustomAppCapabilities"];
 export type CustomAppCapabilityMode = Schemas["CustomAppCapabilityMode"];
-export type CustomAppMounts = Schemas["CustomAppMounts"];
-export type CustomAppMountRequest = Schemas["CustomAppMountRequest"];
-export type CustomAppNavItem = Schemas["CustomAppNavItem"];
 export type NewCustomApp = Schemas["NewCustomApp"];
 export type UpdateCustomApp = Schemas["UpdateCustomApp"];
 export type CustomAppInvokeRequest = Schemas["CustomAppInvokeRequest"];
@@ -39,15 +32,6 @@ export function useCustomApp(slug?: string) {
     queryKey: customAppKeys.detail(slug ?? ""),
     queryFn: () => unwrap(api.GET("/custom-apps/{slug}", { params: { path: { slug: slug! } } })),
     retry: (n, e) => !(e instanceof ApiError && e.status === 404) && n < 2,
-  });
-}
-
-export function useCustomAppVersion(slug: string, seq?: number) {
-  return useQuery({
-    enabled: !!slug && !!seq && seq > 0,
-    queryKey: customAppKeys.version(slug, seq ?? 0),
-    queryFn: () => unwrap(api.GET("/custom-apps/{slug}/versions/{seq}", { params: { path: { slug, seq: seq! } } })),
-    staleTime: Infinity,
   });
 }
 

@@ -3,20 +3,13 @@
 // ---- Your profile: name, role title and picture (GET/PATCH /me, PUT/DELETE /me/avatar).
 // Every change refreshes the bootstrap query, which carries `me` and `users` for the whole shell.
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, postForm, unwrap, type Schemas } from "./client";
 
 export type Profile = Schemas["User"];
 export type ProfilePatch = Schemas["ProfilePatch"];
 
 export const profileKeys = { me: ["profile"] as const };
-
-export function useProfile() {
-  return useQuery({
-    queryKey: profileKeys.me,
-    queryFn: () => unwrap(api.GET("/me")),
-  });
-}
 
 /** The saved profile goes straight into the cache; bootstrap refetches for the sidebar and pickers. */
 function useProfileDone() {
@@ -59,16 +52,6 @@ export function useDeleteProfileAvatar() {
   const { saved, settled } = useProfileDone();
   return useMutation({
     mutationFn: () => unwrap(api.DELETE("/me/avatar")),
-    onSuccess: saved,
-    onSettled: settled,
-  });
-}
-
-/** Marks the Welcome Wizard finished (idempotent). */
-export function useCompleteOnboarding() {
-  const { saved, settled } = useProfileDone();
-  return useMutation({
-    mutationFn: () => unwrap(api.POST("/me/onboarding/complete")),
     onSuccess: saved,
     onSettled: settled,
   });

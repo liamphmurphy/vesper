@@ -10,7 +10,7 @@ function authStatus(page: Page, status: { claimed: boolean; password_set: boolea
 test("a browser the API refuses lands on the sign-in page", async ({ page }) => {
   await installChatApi(page);
   await page.route("**/api/v1/**", (route) => route.fulfill(refused));
-  await page.goto("/chat");
+  await page.goto("/plans");
   await expect(page).toHaveURL(/\/sign-in$/);
   await expect(page.getByRole("heading", { name: "Sign in to Vesper" })).toBeVisible();
   await expect(page.getByText("make signin")).toBeVisible();

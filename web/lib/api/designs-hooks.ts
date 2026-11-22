@@ -3,15 +3,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, postForm, unwrap, type Schemas } from "./client";
 import { libraryKeys } from "./library-hooks";
-import type { paths } from "./schema";
-
-// ---- The Designs app: the person's designs, each a design canvas in its own chat.
-
-export type DesignSummary = Schemas["DesignSummary"];
 export type DesignRef = Schemas["Design"];
 export type DesignVersion = Schemas["DesignVersion"];
-export type DesignStarter = NonNullable<CreateDesignBody["starter"]>;
-type CreateDesignBody = NonNullable<paths["/designs"]["post"]["requestBody"]>["content"]["application/json"];
 
 // Under ["canvases"], so a persona's turn on a design refreshes them (SSE chat.* invalidates it).
 export const designKeys = {
@@ -21,11 +14,6 @@ export const designKeys = {
   proposals: (id: string) => ["canvases", "designs", id, "proposals"] as const,
   version: (id: string, seq: number) => ["design-versions", id, seq] as const,
 };
-
-/** The person's designs with their current seq: the Designs start page draws its cards from them. */
-export function useDesigns() {
-  return useQuery({ queryKey: designKeys.list, queryFn: () => unwrap(api.GET("/designs")), select: (d) => d.designs });
-}
 
 /** One design: its chat, current seq, switches and pending suggestions. */
 export function useDesign(id: string) {
@@ -54,14 +42,6 @@ export async function fetchDesign(id: string): Promise<DesignRef> {
 export function useSaveDesign(id: string) {
   return useMutation({
     mutationFn: (body: { base_seq: number; body: string; note?: string }) => unwrap(api.POST("/designs/{canvasId}/versions", { params: { path: { canvasId: id } }, body })),
-  });
-}
-
-export function useCreateDesign() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: CreateDesignBody) => unwrap(api.POST("/designs", { body })),
-    onSettled: () => void qc.invalidateQueries({ queryKey: designKeys.list }),
   });
 }
 
@@ -105,7 +85,6 @@ export function useSaveDesignExport(canvasId: string) {
 }
 
 export type DesignProposal = Schemas["DesignProposal"];
-export type DesignSettings = Schemas["DesignSettings"];
 
 /** The persona suggestions waiting for a review, oldest first. */
 export function useDesignProposals(id: string, enabled = true) {

@@ -4,8 +4,6 @@
 
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, unwrap, type Schemas } from "./client";
-
-export type LibraryItem = Schemas["LibraryItem"];
 export type LibraryItemKind = Schemas["LibraryItemKind"];
 
 export const libraryKeys = {

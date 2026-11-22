@@ -9,8 +9,6 @@ import { confirmApprovalLocally } from "../desktop-bridge";
 export type Connector = Schemas["Connector"];
 export type NewConnector = Schemas["NewConnector"];
 export type ConnectorPatch = Schemas["ConnectorPatch"];
-export type ScheduledTask = Schemas["ScheduledTask"];
-export type ScheduledTaskInput = Schemas["ScheduledTaskInput"];
 
 const POLL_MS = 5000;
 const connectorKey = ["connectors"] as const;
@@ -97,28 +95,4 @@ export function useDeclineConnectorProposal() {
 
 export function useScheduledTasks(enabled = true) {
   return useQuery({ enabled, queryKey: taskKey, refetchInterval: POLL_MS, queryFn: () => unwrap(api.GET("/scheduled-tasks")) });
-}
-
-function useTaskInvalidate() {
-  const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: taskKey });
-}
-
-export function useSaveScheduledTask() {
-  const done = useTaskInvalidate();
-  return useMutation({
-    mutationFn: (v: { id?: string; body: ScheduledTaskInput }) =>
-      v.id ? unwrap(api.PUT("/scheduled-tasks/{id}", { params: { path: { id: v.id } }, body: v.body })) : unwrap(api.POST("/scheduled-tasks", { body: v.body })),
-    onSettled: done,
-  });
-}
-
-export function useDeleteScheduledTask() {
-  const done = useTaskInvalidate();
-  return useMutation({ mutationFn: (id: string) => unwrap(api.DELETE("/scheduled-tasks/{id}", { params: { path: { id } } })), onSettled: done });
-}
-
-export function useRunScheduledTask() {
-  const done = useTaskInvalidate();
-  return useMutation({ mutationFn: (id: string) => unwrap(api.POST("/scheduled-tasks/{id}/run", { params: { path: { id } } })), onSettled: done });
 }
