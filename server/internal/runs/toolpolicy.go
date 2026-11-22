@@ -221,6 +221,12 @@ func (s *Service) checkToolWithRun(ctx context.Context, c Caller, run store.Run,
 		}
 		return deny("This run has no sub agents; do the work yourself")
 	}
+	if in.Tool == "schedule" {
+		if run.Purpose == "chat" {
+			return deny("Headless turns end when you stop calling tools, so built-in timers and cron jobs don't survive. For a standing job, use the Vesper MCP tool `create_scheduled_task` instead.")
+		}
+		return deny("Headless turns end when you stop calling tools, so built-in timers and cron jobs are disabled.")
+	}
 	scopes := ToolScopes(in.Tool, in.Input)
 	if (spec.HarnessOptions["readonly"] == "true" || stepRunning) && len(scopes) > 0 {
 		if len(scopes) == 1 && scopes[0] == "repo:read" {

@@ -662,10 +662,10 @@ func antigravityTool(name string, args map[string]any) (string, map[string]any) 
 		}
 		input, _ := args["Arguments"].(map[string]any)
 		return "mcp__" + server + "__" + tool, input
-	case "invoke_subagent", "define_subagent", "manage_subagents", "swarm", "send_message":
-		// Other agents, which Vesper's policy refuses as it does Claude Code's:
-		// only a lead's explorer, and image-generator in image steps.
-		out := map[string]any{"description": str("Role", "Name", "TypeName", "action")}
+	case "invoke_subagent", "define_subagent", "manage_subagents", "swarm", "send_message", "run_workflow":
+		// Native orchestration tools, which Vesper's policy refuses in favor of
+		// Vesper MCP run_subagent (image-generator stays allowed in image steps).
+		out := map[string]any{"description": str("Role", "Name", "TypeName", "action", "Description")}
 		if name == "invoke_subagent" {
 			if st := str("TypeName"); st != "" {
 				out["subagent_type"] = st

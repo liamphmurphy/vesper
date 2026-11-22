@@ -295,6 +295,29 @@ func TestToolPolicySubagents(t *testing.T) {
 	if d, err := svc.CheckToolWithSpec(ctx, c, chatHelper, runs.ToolCheck{Tool: "Write", Input: map[string]any{"file_path": "x.go"}}); err != nil || d.Decision != "deny" {
 		t.Fatalf("helper Write on readonly chat = %+v %v", d, err)
 	}
+
+	// Built-in schedule timers/crons are always denied because headless turns exit on idle.
+	if d, err := svc.CheckTool(ctx, c, runs.ToolCheck{Tool: "schedule", Input: map[string]any{"DurationSeconds": 60, "Prompt": "check"}}); err != nil || d.Decision != "deny" || !strings.Contains(d.Reason, "Headless turns end") {
+		t.Fatalf("ticket schedule = %+v %v", d, err)
+	}
+	chatRun, err := q.CreateRun(ctx, store.CreateRunParams{
+		WorkspaceID:  me.WorkspaceID,
+		AgentID:      a.ID,
+		Mode:         "managed",
+		Purpose:      "chat",
+		State:        "running",
+		Harness:      spec.Harness,
+		Model:        spec.Model,
+		ResolvedSpec: run.ResolvedSpec,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chatCaller := c
+	chatCaller.RunID = &chatRun.ID
+	if d, err := svc.CheckTool(ctx, chatCaller, runs.ToolCheck{Tool: "schedule", Input: map[string]any{"CronExpression": "*/5 * * * *", "Prompt": "check"}}); err != nil || d.Decision != "deny" || !strings.Contains(d.Reason, "create_scheduled_task") {
+		t.Fatalf("chat schedule = %+v %v", d, err)
+	}
 }
 
 // The assistant's web tools: only on chat runs with the option, and a fetch
