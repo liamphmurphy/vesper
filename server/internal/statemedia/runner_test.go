@@ -71,7 +71,7 @@ func TestPromptsLockTheLoop(t *testing.T) {
 		}
 		seen[p] = true
 	}
-	if p := TweakPrompt("  slower  "); !strings.HasPrefix(p, "slower Keep") || !strings.Contains(p, ChromaHex) {
+	if p := TweakPrompt(StateIdle, "  slower  "); !strings.HasPrefix(p, Prompt(StateIdle)) || !strings.HasSuffix(p, " Additional direction: slower") {
 		t.Errorf("tweak prompt = %q", p)
 	}
 	if _, err := normStates([]State{"idle", "idle", "coding"}); err != nil {

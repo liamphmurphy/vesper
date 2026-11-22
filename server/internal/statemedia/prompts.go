@@ -63,10 +63,10 @@ func Prompt(s State) string {
 		motions[s], ChromaHex)
 }
 
-// TweakPrompt is the follow-up instruction for a conversational edit of an
-// earlier clip: the provider keeps the earlier context, so only the change and
-// the loop constraints are restated.
-func TweakPrompt(tweak string) string {
-	return strings.TrimSpace(tweak) + " Keep everything else the same: the same person, framing, static camera, " +
-		"the same uniform flat " + ChromaHex + " backdrop, and first and last frames matching the reference portrait so it still loops seamlessly."
+// TweakPrompt is a state's full prompt with the person's tweak as extra
+// direction. A tweak generates a fresh clip from the portrait rather than
+// continuing the earlier Omni conversation: a continuation came back as the
+// old take followed by the new one, which looped as both.
+func TweakPrompt(s State, tweak string) string {
+	return Prompt(s) + " Additional direction: " + strings.TrimSpace(tweak)
 }
