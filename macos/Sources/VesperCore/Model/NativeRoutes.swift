@@ -34,6 +34,10 @@ public enum NativeScreen: String, Sendable, CaseIterable {
     case workflowRun
     case chat
     case chatDetail
+    case rootLanding
+    case setup
+    case appsHome
+    case appsRedirect
 
     /// Screens sharing one SwiftUI root host so navigating between them preserves sidebar & chrome state.
     public var hostGroup: NativeScreen {
@@ -49,12 +53,12 @@ public enum NativeScreen: String, Sendable, CaseIterable {
     /// The shell marks it itself rather than waiting for the hidden page to report its route.
     public var area: AreaId? {
         switch self {
-        case .chat, .chatDetail: .chat
+        case .chat, .chatDetail, .rootLanding: .chat
         case .work, .runDetail, .tickets, .ticketNew, .ticketDetail, .epics, .epicDetail: .work
         case .knowledge, .knowledgeGraph, .knowledgePage: .knowledge
         case .library: .library
-        case .workflows, .workflowEditor, .workflowRun, .scheduled, .learn, .learnCourse, .reports, .http, .dev: .apps
-        case .inbox, .pdf, .debugPlaceholder, .markdownDebug, .scenesDebug, .embedsDebug: nil
+        case .workflows, .workflowEditor, .workflowRun, .scheduled, .learn, .learnCourse, .reports, .http, .dev, .appsHome, .appsRedirect: .apps
+        case .inbox, .pdf, .setup, .debugPlaceholder, .markdownDebug, .scenesDebug, .embedsDebug: nil
         }
     }
 }
@@ -144,6 +148,13 @@ public struct NativeRouteRegistry: Sendable {
         // Chat landing and conversation detail (shared hostGroup preserves sidebar state).
         NativeRoute("/chat", .chat),
         NativeRoute("/chat/:id", .chatDetail),
+        // Root landing, onboarding setup, Custom Apps home, and legacy /apps/docs|slides|designs redirects.
+        NativeRoute("/", .rootLanding),
+        NativeRoute("/setup", .setup),
+        NativeRoute("/apps", .appsHome),
+        NativeRoute("/apps/docs", .appsRedirect),
+        NativeRoute("/apps/slides", .appsRedirect),
+        NativeRoute("/apps/designs", .appsRedirect),
     ]
 
     /// The app's registry. Debug-only screens are enabled only when `debug` is set.
