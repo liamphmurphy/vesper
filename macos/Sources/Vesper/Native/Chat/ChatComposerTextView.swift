@@ -12,12 +12,34 @@ struct ChatComposerIncomingFile: Sendable {
     let localURL: URL?
 }
 
+/// Imperative bridge to the native AppKit TextKit 2 composer view.
+/// Deliberately NOT `@Observable`: ordinary keystrokes stay purely inside AppKit/CoreText
+/// without triggering SwiftUI state invalidations, `ChatComposerView.body` re-evaluations,
+/// or `NSHostingView` layout passes on every character.
+@MainActor
+final class ChatComposerController {
+    private(set) var text: String = ""
+    private(set) var cursorUTF16: Int = 0
+    fileprivate weak var coordinator: ChatComposerTextView.Coordinator?
+
+    func syncFromTextView(text: String, cursorUTF16: Int) {
+        self.text = text
+        self.cursorUTF16 = cursorUTF16
+    }
+
+    func setText(_ newText: String, cursorUTF16: Int? = nil) {
+        let clampedCursor = max(0, min(cursorUTF16 ?? (newText as NSString).length, (newText as NSString).length))
+        self.text = newText
+        self.cursorUTF16 = clampedCursor
+        coordinator?.applyProgrammaticText(newText, cursorUTF16: clampedCursor)
+    }
+}
+
 /// Isolated macOS AppKit TextKit 2 editor for the native chat composer.
 /// All `NSTextView` / pasteboard / drag-and-drop glue lives in this single file so iOS can swap
 /// in a `UITextView` adapter cleanly.
 struct ChatComposerTextView: NSViewRepresentable {
-    @Binding var text: String
-    @Binding var cursorUTF16: Int
+    let controller: ChatComposerController
     @Binding var measuredHeight: CGFloat
 
     let placeholder: String
@@ -29,6 +51,8 @@ struct ChatComposerTextView: NSViewRepresentable {
     let minHeight: CGFloat
     let maxHeight: CGFloat
 
+    let onTextChange: @MainActor (_ text: String, _ cursorUTF16: Int) -> Void
+    let onSelectionChange: @MainActor (_ text: String, _ cursorUTF16: Int) -> Void
     let onSubmit: @MainActor () -> Void
     let onCompletionNavigate: @MainActor (Int) -> Void
     let onCompletionAccept: @MainActor () -> Void
@@ -73,10 +97,13 @@ struct ChatComposerTextView: NSViewRepresentable {
         textView.placeholderText = placeholder
         textView.placeholderColor = NSColor(placeholderColor)
         textView.registerForDraggedTypes([.fileURL] + Coordinator.imagePasteboardTypes)
-        textView.string = text
+        textView.string = controller.text
+        let clamped = max(0, min(controller.cursorUTF16, (controller.text as NSString).length))
+        textView.setSelectedRange(NSRange(location: clamped, length: 0))
 
         scrollView.documentView = textView
         context.coordinator.textView = textView
+        controller.coordinator = context.coordinator
         context.coordinator.appliedStyle = Coordinator.AppliedStyle(
             fontSize: fontSize,
             textColor: textColor,
@@ -84,7 +111,7 @@ struct ChatComposerTextView: NSViewRepresentable {
             placeholderColor: placeholderColor,
             isDisabled: isDisabled
         )
-        context.coordinator.wasEmpty = text.isEmpty
+        context.coordinator.wasEmpty = controller.text.isEmpty
         context.coordinator.lastReportedHeight = measuredHeight
         context.coordinator.recalculateHeight()
         return scrollView
@@ -93,11 +120,12 @@ struct ChatComposerTextView: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         let coordinator = context.coordinator
         coordinator.parent = self
+        controller.coordinator = coordinator
         guard let textView = coordinator.textView else { return }
 
         // Only mutate NSTextView appearance when it actually changed: writing `font` or
         // `textColor` unconditionally re-attributes the whole text storage and forces a
-        // full TextKit 2 relayout on every keystroke.
+        // full TextKit 2 relayout.
         let prev = coordinator.appliedStyle
         if prev?.isDisabled != isDisabled {
             textView.isEditable = !isDisabled
@@ -124,27 +152,6 @@ struct ChatComposerTextView: NSViewRepresentable {
             placeholderColor: placeholderColor,
             isDisabled: isDisabled
         )
-
-        if textView.string != text {
-            coordinator.isProgrammaticUpdate = true
-            textView.string = text
-            let clamped = max(0, min(cursorUTF16, (text as NSString).length))
-            textView.setSelectedRange(NSRange(location: clamped, length: 0))
-            coordinator.isProgrammaticUpdate = false
-            coordinator.wasEmpty = text.isEmpty
-            textView.needsDisplay = true
-            coordinator.recalculateHeight()
-        } else {
-            let currentRange = textView.selectedRange()
-            if currentRange.length == 0 && currentRange.location != cursorUTF16 && !textView.hasMarkedText() {
-                let clamped = max(0, min(cursorUTF16, (text as NSString).length))
-                if currentRange.location != clamped {
-                    coordinator.isProgrammaticUpdate = true
-                    textView.setSelectedRange(NSRange(location: clamped, length: 0))
-                    coordinator.isProgrammaticUpdate = false
-                }
-            }
-        }
     }
 
     @MainActor
@@ -169,15 +176,16 @@ struct ChatComposerTextView: NSViewRepresentable {
             self.parent = parent
         }
 
-        func textDidChange(_ notification: Notification) {
-            guard !isProgrammaticUpdate, let textView else { return }
-            let nextText = textView.string
-            let loc = textView.selectedRange().location
-            parent.text = nextText
-            if parent.cursorUTF16 != loc {
-                parent.cursorUTF16 = loc
+        func applyProgrammaticText(_ newText: String, cursorUTF16: Int) {
+            guard let textView else { return }
+            isProgrammaticUpdate = true
+            if textView.string != newText {
+                textView.string = newText
             }
-            let nowEmpty = nextText.isEmpty
+            let clamped = max(0, min(cursorUTF16, (newText as NSString).length))
+            textView.setSelectedRange(NSRange(location: clamped, length: 0))
+            isProgrammaticUpdate = false
+            let nowEmpty = newText.isEmpty
             if nowEmpty != wasEmpty {
                 wasEmpty = nowEmpty
                 textView.needsDisplay = true
@@ -185,12 +193,27 @@ struct ChatComposerTextView: NSViewRepresentable {
             recalculateHeight()
         }
 
+        func textDidChange(_ notification: Notification) {
+            guard !isProgrammaticUpdate, let textView else { return }
+            let nextText = textView.string
+            let loc = textView.selectedRange().location
+            parent.controller.syncFromTextView(text: nextText, cursorUTF16: loc)
+            let nowEmpty = nextText.isEmpty
+            if nowEmpty != wasEmpty {
+                wasEmpty = nowEmpty
+                textView.needsDisplay = true
+            }
+            recalculateHeight()
+            parent.onTextChange(nextText, loc)
+        }
+
         func textViewDidChangeSelection(_ notification: Notification) {
             guard !isProgrammaticUpdate, let textView else { return }
             let loc = textView.selectedRange().location
-            if parent.cursorUTF16 != loc {
-                parent.cursorUTF16 = loc
-            }
+            guard parent.controller.cursorUTF16 != loc else { return }
+            let text = textView.string
+            parent.controller.syncFromTextView(text: text, cursorUTF16: loc)
+            parent.onSelectionChange(text, loc)
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {

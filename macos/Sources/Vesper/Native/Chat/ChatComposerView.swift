@@ -41,8 +41,10 @@ struct ChatComposerView: View {
 
     private let draftStore = ChatDraftStore()
 
-    @State private var draft = ""
-    @State private var cursorUTF16 = 0
+    @State private var editor = ChatComposerController()
+    @State private var hasDraftText = false
+    @State private var parsedSlashCommand: ChatParsedCommand?
+    @State private var activeCompletion: ResolvedCompletion?
     @State private var editorHeight: CGFloat = 34
     @State private var contextChips: [ChatContextChip] = []
     @State private var attachments: [ChatComposerAttachment] = []
@@ -62,17 +64,16 @@ struct ChatComposerView: View {
         selectedHarness?.rawValue ?? session?.harness.rawValue ?? activePersona?.defaultHarness?.rawValue ?? "claude-code"
     }
     private var canCode: Bool { activePersona?.capabilities.code == true }
-    private var trimmedDraft: String { draft.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var trimmedDraft: String { editor.text.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var isUploading: Bool {
         attachments.contains { if case .uploading = $0.uploadState { return true }; return false }
     }
     private var canSubmit: Bool {
-        (!trimmedDraft.isEmpty || !attachments.isEmpty) && !isSending && !isUploading
+        (hasDraftText || !attachments.isEmpty) && !isSending && !isUploading
     }
 
     var body: some View {
         let p = theme.palette
-        let activeCompletion = resolvedCompletion()
 
         VStack(alignment: .leading, spacing: 8) {
             ChatRunningStatusStrip(
@@ -95,7 +96,7 @@ struct ChatComposerView: View {
                     items: completion.items,
                     selectedIndex: min(completionIndex, max(0, completion.items.count - 1)),
                     onSelect: { applyCompletion($0, mode: completion.mode) },
-                    onDismiss: { completionDismissedText = draft }
+                    onDismiss: { dismissCompletion() }
                 )
             }
 
@@ -105,8 +106,7 @@ struct ChatComposerView: View {
                 }
 
                 ChatComposerTextView(
-                    text: $draft,
-                    cursorUTF16: $cursorUTF16,
+                    controller: editor,
                     measuredHeight: $editorHeight,
                     placeholder: isRunning ? "Queue, steer, or ask an aside…" : "Message \(personaName)… (/ for commands, @ for personas)",
                     fontSize: theme.pointSize(.chat),
@@ -116,6 +116,12 @@ struct ChatComposerView: View {
                     isCompletionOpen: activeCompletion != nil && !(activeCompletion?.items.isEmpty ?? true),
                     minHeight: 34,
                     maxHeight: 200,
+                    onTextChange: { text, cursorUTF16 in
+                        handleDraftChange(text: text, cursorUTF16: cursorUTF16, save: true)
+                    },
+                    onSelectionChange: { text, cursorUTF16 in
+                        handleSelectionChange(text: text, cursorUTF16: cursorUTF16)
+                    },
                     onSubmit: { submit() },
                     onCompletionNavigate: { delta in
                         guard let count = activeCompletion?.items.count, count > 0 else { return }
@@ -126,7 +132,7 @@ struct ChatComposerView: View {
                         let idx = min(completionIndex, completion.items.count - 1)
                         applyCompletion(completion.items[idx], mode: completion.mode)
                     },
-                    onCompletionDismiss: { completionDismissedText = draft },
+                    onCompletionDismiss: { dismissCompletion() },
                     onAttachFiles: { incoming in handleIncomingFiles(incoming) }
                 )
                 .frame(height: editorHeight)
@@ -135,10 +141,15 @@ struct ChatComposerView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
-            .background(p.surface.opacity(0.6), in: RoundedRectangle(cornerRadius: 14))
+            .background {
+                // Shadow belongs on the backdrop shape, not the VStack: shadowing the container
+                // forces Core Animation to re-rasterize the text view and animated harness canvas.
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(.ultraThinMaterial)
+                    .overlay(RoundedRectangle(cornerRadius: 14).fill(p.surface.opacity(0.6)))
+                    .shadow(color: Color.black.opacity(0.10), radius: 10, y: 3)
+            }
             .overlay(RoundedRectangle(cornerRadius: 14).stroke(p.border))
-            .shadow(color: Color.black.opacity(0.10), radius: 10, y: 3)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
@@ -161,13 +172,6 @@ struct ChatComposerView: View {
             attachments = []
             errorMessage = nil
             completionDismissedText = nil
-        }
-        .onChange(of: draft) { _, newValue in
-            if completionIndex != 0 { completionIndex = 0 }
-            if completionDismissedText != nil && completionDismissedText != newValue {
-                completionDismissedText = nil
-            }
-            scheduleDraftSave(for: chatId)
         }
         .onChange(of: contextChips) { _, _ in
             saveDraftImmediately(for: chatId)
@@ -325,7 +329,7 @@ struct ChatComposerView: View {
                 .help(sendModeWhileRunning.hint)
             }
 
-            if isRunning && trimmedDraft.isEmpty && attachments.isEmpty {
+            if isRunning && !hasDraftText && attachments.isEmpty {
                 Button(action: cancelTurn) {
                     Label(isCancelling ? "Stopping…" : "Stop", systemImage: "stop.fill")
                 }
@@ -335,7 +339,7 @@ struct ChatComposerView: View {
                 let resolvedMode = ChatComposerSendLogic.resolveSendMode(
                     isRunning: isRunning,
                     preferredWhileRunning: sendModeWhileRunning,
-                    parsedCommand: ChatSlashCommandLogic.parseCommand(draft)
+                    parsedCommand: parsedSlashCommand
                 )
                 Button(action: submit) {
                     Label(isSending ? "Sending…" : resolvedMode.label, systemImage: "arrow.up")
@@ -550,22 +554,73 @@ struct ChatComposerView: View {
 
     // MARK: - Completions (@mention & /slash)
 
-    private enum CompletionMode {
+    private enum CompletionMode: Equatable {
         case mention(ChatMentionTrigger)
         case slashCommand
         case slashArg(commandName: String)
     }
 
-    private struct ResolvedCompletion {
+    private struct ResolvedCompletion: Equatable {
         let heading: String
         let mode: CompletionMode
         let items: [ChatCompletionItem]
     }
 
-    private func resolvedCompletion() -> ResolvedCompletion? {
-        if completionDismissedText == draft { return nil }
+    private func handleDraftChange(text: String, cursorUTF16: Int, save: Bool) {
+        let nextHasText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if nextHasText != hasDraftText {
+            hasDraftText = nextHasText
+        }
 
-        if let menu = ChatSlashCommandLogic.commandMenu(for: draft) {
+        let nextSlash: ChatParsedCommand? = text.hasPrefix("/") ? ChatSlashCommandLogic.parseCommand(text) : nil
+        if nextSlash != parsedSlashCommand {
+            parsedSlashCommand = nextSlash
+        }
+
+        if completionDismissedText != nil && completionDismissedText != text {
+            completionDismissedText = nil
+        }
+
+        updateCompletion(text: text, cursorUTF16: cursorUTF16, resetIndex: true)
+
+        if save {
+            scheduleDraftSave(for: chatId)
+        }
+    }
+
+    private func handleSelectionChange(text: String, cursorUTF16: Int) {
+        // Only @mentions depend on cursor position; skip all work for normal prose without '@'.
+        guard activeCompletion != nil || text.contains("@") else { return }
+        updateCompletion(text: text, cursorUTF16: cursorUTF16, resetIndex: false)
+    }
+
+    private func updateCompletion(text: String, cursorUTF16: Int, resetIndex: Bool) {
+        let next = resolvedCompletion(for: text, cursorUTF16: cursorUTF16)
+        if next != activeCompletion {
+            activeCompletion = next
+            if completionIndex != 0 { completionIndex = 0 }
+        } else if resetIndex && activeCompletion != nil && completionIndex != 0 {
+            completionIndex = 0
+        }
+    }
+
+    private func dismissCompletion() {
+        completionDismissedText = editor.text
+        if activeCompletion != nil {
+            activeCompletion = nil
+        }
+    }
+
+    private func setDraftProgrammatically(_ text: String, cursorUTF16: Int? = nil, save: Bool = true) {
+        editor.setText(text, cursorUTF16: cursorUTF16)
+        handleDraftChange(text: editor.text, cursorUTF16: editor.cursorUTF16, save: save)
+    }
+
+    private func resolvedCompletion(for text: String, cursorUTF16: Int) -> ResolvedCompletion? {
+        if completionDismissedText == text { return nil }
+        guard text.hasPrefix("/") || text.contains("@") else { return nil }
+
+        if let menu = ChatSlashCommandLogic.commandMenu(for: text) {
             switch menu {
             case .command(let query):
                 let matches = ChatSlashCommandLogic.matchingCommands(query: query, isRunning: isRunning)
@@ -588,7 +643,7 @@ struct ChatComposerView: View {
             }
         }
 
-        if let trigger = ChatMentionLogic.detectTrigger(in: draft, cursorUTF16: cursorUTF16) {
+        if let trigger = ChatMentionLogic.detectTrigger(in: text, cursorUTF16: cursorUTF16) {
             let participantIds = Set((session?.participants ?? []).map(\.id))
             let candidates = personas.map(ChatMentionCandidate.init)
             let ranked = ChatMentionLogic.rankCandidates(candidates, query: trigger.query, participantIds: participantIds)
@@ -685,22 +740,19 @@ struct ChatComposerView: View {
         switch mode {
         case .mention(let trigger):
             let candidate = ChatMentionCandidate(id: item.personaId ?? item.id, name: item.applyValue)
-            let updated = ChatMentionLogic.insertMention(candidate, into: draft, trigger: trigger)
-            draft = updated.text
-            cursorUTF16 = updated.cursorUTF16
+            let updated = ChatMentionLogic.insertMention(candidate, into: editor.text, trigger: trigger)
+            setDraftProgrammatically(updated.text, cursorUTF16: updated.cursorUTF16)
         case .slashCommand:
-            draft = item.applyValue
-            cursorUTF16 = (draft as NSString).length
+            setDraftProgrammatically(item.applyValue)
         case .slashArg(let commandName):
-            draft = ChatSlashCommandLogic.applyArgumentCompletion(commandName: commandName, argument: item.applyValue)
-            cursorUTF16 = (draft as NSString).length
+            setDraftProgrammatically(ChatSlashCommandLogic.applyArgumentCompletion(commandName: commandName, argument: item.applyValue))
         }
     }
 
     private func insertAtMention(name: String) {
-        let prefix = draft.isEmpty || draft.hasSuffix(" ") || draft.hasSuffix("\n") ? "" : " "
-        draft += "\(prefix)@\(name) "
-        cursorUTF16 = (draft as NSString).length
+        let current = editor.text
+        let prefix = current.isEmpty || current.hasSuffix(" ") || current.hasSuffix("\n") ? "" : " "
+        setDraftProgrammatically(current + "\(prefix)@\(name) ")
     }
 
     // MARK: - Submission & Slash Commands
@@ -709,7 +761,7 @@ struct ChatComposerView: View {
         guard canSubmit else { return }
         errorMessage = nil
 
-        if let cmd = ChatSlashCommandLogic.parseCommand(draft) {
+        if let cmd = ChatSlashCommandLogic.parseCommand(editor.text) {
             handleSlashCommand(cmd)
             return
         }
@@ -823,7 +875,7 @@ struct ChatComposerView: View {
     private func sendPayload(body: String, mode: ChatSendMode) {
         let uploadedIds = attachments.compactMap(\.uploadedId)
         let refs = ChatComposerContextLogic.toAPIContextRefs(contextChips)
-        let prevDraft = draft
+        let prevDraft = editor.text
         let prevAttachments = attachments
         let prevChips = contextChips
         let research = researchMode
@@ -841,7 +893,7 @@ struct ChatComposerView: View {
             ))
             isSending = false
             if let err {
-                draft = prevDraft
+                setDraftProgrammatically(prevDraft)
                 attachments = prevAttachments
                 contextChips = prevChips
                 errorMessage = err
@@ -863,8 +915,7 @@ struct ChatComposerView: View {
     private func clearComposer() {
         draftSaveTask?.cancel()
         draftSaveTask = nil
-        draft = ""
-        cursorUTF16 = 0
+        setDraftProgrammatically("", cursorUTF16: 0, save: false)
         attachments = []
         contextChips = []
         draftStore.clear(chatId: chatId)
@@ -959,19 +1010,17 @@ struct ChatComposerView: View {
 
     private func loadDraft(for id: String?) {
         if let saved = draftStore.load(chatId: id) {
-            draft = saved.text
             contextChips = saved.chips
-            cursorUTF16 = (saved.text as NSString).length
+            setDraftProgrammatically(saved.text, save: false)
         } else {
-            draft = ""
             contextChips = []
-            cursorUTF16 = 0
+            setDraftProgrammatically("", cursorUTF16: 0, save: false)
         }
     }
 
     private func scheduleDraftSave(for id: String?) {
         draftSaveTask?.cancel()
-        let snapshot = ChatComposerDraft(text: draft, chips: contextChips)
+        let snapshot = ChatComposerDraft(text: editor.text, chips: contextChips)
         let store = draftStore
         draftSaveTask = Task {
             try? await Task.sleep(for: .milliseconds(300))
@@ -983,7 +1032,7 @@ struct ChatComposerView: View {
     private func saveDraftImmediately(for id: String?) {
         draftSaveTask?.cancel()
         draftSaveTask = nil
-        draftStore.save(ChatComposerDraft(text: draft, chips: contextChips), chatId: id)
+        draftStore.save(ChatComposerDraft(text: editor.text, chips: contextChips), chatId: id)
     }
 
     private func compareOptions() -> [ChatCompareOption] {
