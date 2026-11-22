@@ -45,3 +45,50 @@ test("an instant reply after work still celebrates, and history never replays", 
   await sleep(COMPLETE_MS + 60);
   assert.equal(companionState("d"), "idle");
 });
+
+import { SPEECH_WAIT_MS, setPopoutOpen, setSpeechPlayer, setVoiceMuted } from "./companion-store.ts";
+
+test("a spoken reply waits for its voice, then reveals in time with it", async () => {
+  let stopped = 0;
+  setSpeechPlayer(async () => ({ words: 4, seconds: 0.2, stop: () => stopped++ }));
+  startReveal("v1", "m", "one two three four", 1, { url: "/s", mode: "always" });
+  assert.equal(companionState("v1"), "talking", "talking while the voice loads");
+  await sleep(10);
+  await sleep(320);
+  assert.equal(companionState("v1"), "idle", "4 words over 0.2s of audio finish fast, not at 1 word/s");
+  assert.equal(stopped, 0, "a voice that finishes isn't cut off");
+});
+
+test("pop-out voices speak only while the pop-out is open, and mute wins", async () => {
+  let plays = 0;
+  setSpeechPlayer(async () => {
+    plays++;
+    return { words: 1, seconds: 0.05, stop() {} };
+  });
+  startReveal("v2", "a", "hi", 0, { url: "/s", mode: "popout" });
+  assert.equal(plays, 0, "pop-out closed: silent");
+  setPopoutOpen("v2", true);
+  startReveal("v2", "b", "hi", 0, { url: "/s", mode: "popout" });
+  await sleep(5);
+  assert.equal(plays, 1, "pop-out open: spoken");
+  setVoiceMuted(true);
+  startReveal("v2", "c", "hi", 0, { url: "/s", mode: "always" });
+  await sleep(5);
+  assert.equal(plays, 1, "muted: never fetched");
+  setVoiceMuted(false);
+});
+
+test("skipping a spoken reply stops its voice, and a failed voice reveals silently", async () => {
+  let stopped = 0;
+  setSpeechPlayer(async () => ({ words: 100, seconds: 30, stop: () => stopped++ }));
+  startReveal("v3", "m", "a long spoken reply", 15, { url: "/s", mode: "always" });
+  await sleep(5);
+  finishReveal("v3");
+  assert.equal(stopped, 1);
+  setSpeechPlayer(async () => null);
+  startReveal("v3", "n", "fallback text here", 40, { url: "/s", mode: "always" });
+  await sleep(5);
+  assert.equal(companionState("v3"), "talking", "revealing at the persona's pace instead");
+  assert.ok(SPEECH_WAIT_MS >= 5000);
+  finishReveal("v3");
+});
