@@ -954,6 +954,47 @@ Manual click-through checklist:
    renders via `KnowledgePageEditorSlot` / `KnowledgeGraphScreenSlot` without double sidebars, and opening
    a `/wiki/<path>` URL resolves cleanly to its Knowledge page.
 
+## Native screen: Node graph & Workflows
+
+`/workflows`, `/workflows/:id`, `/workflows/runs/:id`, and the `Graph` tab inside `/runs/:id` are
+native (`macos/Sources/Vesper/Native/NodeGraph/`, `macos/Sources/Vesper/Native/Workflows/`, and
+`macos/Sources/Vesper/Native/Runs/RunGraphTabSlot.swift`, backed by VesperCore `Native/NodeGraph/`).
+
+- **Shared canvas & ELK layout engine.** `NodeGraphModel.swift` provides the platform-neutral graph
+  document, viewport pan/zoom/fit math, hit-testing, and keyboard navigation (`VesperCore`, zero
+  `AppKit` imports). `ELKLayoutEngine.swift` runs the vendored `elk.bundled.js` (built via
+  `macos/scripts/build-elk-bundle.mjs` into `VesperCore/Resources/elk/elk.bundled.js`) inside
+  `JavaScriptCore` on a background actor so ELK layered layouts compute off the main thread.
+  `NodeGraphCanvasView.swift` renders nodes, ports, cubic/polyline edges, live connection drafts,
+  marquee/click selection, pan/zoom/fit controls, and mini-grid in SwiftUI `Canvas`.
+- **Run Graph (`RunGraphTabSlot` + `RunGraphLogic`).** Replaces the hosted `/runs/:id?tab=graph`
+  web slot inside `RunDetailScreen`: renders turns, human gates, delegated subagent runs, errors,
+  and outcome with collapsed group expansion, Lane/ELK layout toggle, List mode fallback, Summary
+  card, and direct jumps into native `Trace` at the selected turn or event.
+- **Workflows (`/workflows`, `/workflows/:id`, `/workflows/runs/:id`).** `WorkflowsScreen` lists
+  workflows and recent runs in the native sidebar (`WorkflowsLogic.buildWorkflowsNavModel`).
+  `WorkflowEditorScreen` edits workflow DAGs (palette sidebar, drag-to-connect with cycle/output
+  validation via `WorkflowsLogic`, auto-layout via ELK, inspector sheet/pane, draft/publish, and
+  agent proposal diff overlay). `WorkflowRunScreen` tracks live workflow runs with per-node status,
+  step outputs/images, gate approvals/change requests, and chat links.
+- **Web cleanup.** Deleted `web/app/(app)/runs/`, `web/app/(app)/workflows/`, `web/lib/run-graph*.ts`,
+  `web/lib/run-graph*.test.mjs`, and `web/lib/native-shell/models/workflows.ts`, and removed
+  `@xyflow/react` from `web/package.json` (keeping `elkjs` for `web/lib/designs/mermaid.ts` and
+  `web/lib/workflows.ts` for chat workflow cards/fences).
+
+Manual click-through checklist:
+
+1. Open a run with delegated sub-runs and switch to `Graph`: verify turns, gates, subagents,
+   errors, and outcome render natively in `RunGraphTabSlot`, toggle Lane/ELK and List views, and
+   click a turn or error node to jump into native `Trace`.
+2. Open Workflows from the sidebar (`/workflows`): verify workflows and recent runs populate the
+   left sidebar and creating/opening a workflow navigates to `/workflows/:id`.
+3. In `WorkflowEditorScreen`, add steps from the palette, drag to connect ports (verifying cycles
+   and outgoing edges from outputs are rejected), run ELK auto-layout, edit node settings, and
+   save/publish.
+4. Open a workflow run (`/workflows/runs/:id`): verify node status badges update, clicking a node
+   shows its attempt output/images, and gate approval or request-changes actions work cleanly.
+
 ## Build and test
 
 - `make -C macos test` → `swift test` (VesperCore).

@@ -145,6 +145,9 @@ struct NativeScreenRoot: View {
         case .ticketNew: NewTicketScreen()
         case .ticketDetail: TicketDetailScreen()
         case .knowledge, .knowledgeGraph, .knowledgePage: KnowledgeScreen()
+        case .workflows: WorkflowsScreen()
+        case .workflowEditor: WorkflowEditorScreen()
+        case .workflowRun: WorkflowRunScreen()
         }
     }
 }
