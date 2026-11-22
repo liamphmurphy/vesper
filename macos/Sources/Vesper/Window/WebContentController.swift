@@ -143,9 +143,16 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
     func navigate(path: String) {
         guard kind == .vesper else { return }
         if app.handleSettingsPath(path, from: ownerWindow) { return }
+        let wasNative = nativeHost != nil
+        pendingPath = path
         // Show the native screen now rather than after the page's router changes the URL.
         syncNativeScreen(path: path)
-        if state.ready {
+        if nativeHost == nil && (wasNative || !state.ready),
+           let base, let url = URL(string: path, relativeTo: base)?.absoluteURL {
+            // The hidden WKWebView may have unmounted NativeShellHost on a removed web route (404),
+            // so load the web route directly when returning from a native screen to a web route.
+            webView.load(URLRequest(url: url))
+        } else if state.ready {
             bridge?.send(.navigate(path: path))
         } else if let base, let url = URL(string: path, relativeTo: base)?.absoluteURL {
             webView.load(URLRequest(url: url))
