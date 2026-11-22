@@ -1,10 +1,10 @@
 import { Suspense, use } from "react";
-import { CanvasPageRedirect } from "@/components/domain/canvas-page-redirect";
+import { DeckScreen } from "../_components/deck-screen";
 
-// Every deck is a Knowledge page (LAZYAGENTS-212): the old address opens it there.
+// Hosted inside Knowledge's native macOS shell (KnowledgePageEditorSlot) as well as direct links.
 function Loader({ params }: { params: PageProps<"/apps/slides/[id]">["params"] }) {
   const { id } = use(params);
-  return <CanvasPageRedirect canvasId={id} what="deck" />;
+  return <DeckScreen key={id} id={id} />;
 }
 
 export default function Page({ params }: PageProps<"/apps/slides/[id]">) {

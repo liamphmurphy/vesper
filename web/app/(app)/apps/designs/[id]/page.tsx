@@ -1,10 +1,10 @@
 import { Suspense, use } from "react";
-import { CanvasPageRedirect } from "@/components/domain/canvas-page-redirect";
+import { DesignEditor } from "../_components/design-editor";
 
-// Every design is a Knowledge page (LAZYAGENTS-212): the old address opens it there.
+// Hosted inside Knowledge's native macOS shell (KnowledgePageEditorSlot) as well as direct links.
 function Loader({ params }: { params: PageProps<"/apps/designs/[id]">["params"] }) {
   const { id } = use(params);
-  return <CanvasPageRedirect canvasId={id} what="design" />;
+  return <DesignEditor key={id} id={id} />;
 }
 
 export default function Page({ params }: PageProps<"/apps/designs/[id]">) {
