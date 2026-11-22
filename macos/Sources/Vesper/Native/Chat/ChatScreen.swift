@@ -106,7 +106,7 @@ struct ChatScreen: View {
     private var chatsRequest: APIRequest<API.ListChatsResponse> {
         API.listChats(
             archived: model.viewMode == .archived ? true : nil,
-            personaId: model.selectedPersonaId.isEmpty ? nil : model.selectedPersonaId,
+            personaId: ChatNav.listPersonaQuery(model.selectedPersonaId),
             space: model.selectedSpaceId.isEmpty ? nil : model.selectedSpaceId
         )
     }
@@ -712,13 +712,7 @@ struct ChatScreen: View {
             case .search(let query):
                 model.searchQuery = query
             case .renameChat(let id):
-                let chats = context.store.entry(
-                    API.listChats(
-                        archived: model.viewMode == .archived ? true : nil,
-                        personaId: model.selectedPersonaId.isEmpty ? nil : model.selectedPersonaId,
-                        space: model.selectedSpaceId.isEmpty ? nil : model.selectedSpaceId
-                    )
-                ).data?.chats ?? []
+                let chats = context.store.entry(chatsRequest).data?.chats ?? []
                 model.renameDraft = chats.first(where: { $0.id == id })?.title ?? ""
                 model.renameTargetId = id
             case .pinChat(let id, let pinned):

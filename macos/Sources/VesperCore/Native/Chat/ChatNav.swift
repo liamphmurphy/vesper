@@ -18,6 +18,12 @@ public enum ChatNav {
     public static let hitPrefix = "hit:"
     public static let spacePrefix = "space:"
 
+    /// `persona_id` for GET /chats from the sidebar's persona pick. The "All" pick ("") must send
+    /// `all` explicitly: the server reads an omitted `persona_id` as the caller's default persona.
+    public static func listPersonaQuery(_ selectedPersonaId: String) -> String {
+        selectedPersonaId.isEmpty ? "all" : selectedPersonaId
+    }
+
     public enum MenuAction {
         public static let openInNewTab = "open-new-tab"
         public static let rename = "rename"
