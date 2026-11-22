@@ -21,6 +21,8 @@ final class ChatCompanion {
     private(set) var complete = false
     private(set) var revealingId: String?
     private(set) var shown = ""
+    /// The reply's voice is playing; it can outlast the text's reveal.
+    private(set) var speaking = false
 
     @ObservationIgnored private var fullText = ""
     @ObservationIgnored private var wordsPerSecond = 0.0
@@ -34,9 +36,12 @@ final class ChatCompanion {
     /// Held at the start while the reply's speech loads, so text and voice begin together.
     @ObservationIgnored private var waitingForVoice = false
     @ObservationIgnored private var player: AVAudioPlayer?
+    @ObservationIgnored private var playerEnd: VoicePlaybackEnd?
     @ObservationIgnored private var voiceTask: Task<Void, Never>?
     /// The pop-out is open, for voices set to speak only there.
     @ObservationIgnored var popoutOpen = false
+    /// Live Voice is open; it speaks "pop-out only" voices too.
+    @ObservationIgnored var liveVoiceOpen = false
 
     /// How long a reveal waits for its speech before going ahead silently.
     static let voiceWait: Duration = .seconds(8)
@@ -69,7 +74,7 @@ final class ChatCompanion {
             ? 0
             : PersonaStateLoops.revealWordsPerSecond(pace: author?.revealPace.rawValue, loops: author?.stateMedia?.loops)
         let mode = author?.voice.mode.rawValue ?? "off"
-        let speaks = !PersonaVoiceMute.isMuted && (mode == "always" || (mode == "popout" && popoutOpen))
+        let speaks = !PersonaVoiceMute.isMuted && (mode == "always" || (mode == "popout" && (popoutOpen || liveVoiceOpen)))
         guard wps > 0 || (speaks && chatId != nil) else {
             revealed.insert(last.id)
             startComplete()
@@ -138,7 +143,17 @@ final class ChatCompanion {
         }
         // A voice that failed, timed out or was muted meanwhile leaves the persona's normal pace.
         guard let speech, !PersonaVoiceMute.isMuted, let audio = try? AVAudioPlayer(data: speech.data), audio.duration > 0, audio.play() else { return }
+        let id = ObjectIdentifier(audio)
+        let end = VoicePlaybackEnd { [weak self] in
+            guard let self, let player = self.player, ObjectIdentifier(player) == id else { return }
+            self.player = nil
+            self.playerEnd = nil
+            self.speaking = false
+        }
+        audio.delegate = end
         player = audio
+        playerEnd = end
+        speaking = true
         if speech.words > 0 { wordsPerSecond = Double(speech.words) / audio.duration }
     }
 
@@ -148,6 +163,8 @@ final class ChatCompanion {
         voiceTask = nil
         player?.stop()
         player = nil
+        playerEnd = nil
+        speaking = false
         waitingForVoice = false
     }
 
@@ -160,6 +177,25 @@ final class ChatCompanion {
         } else if next.text != shown {
             shown = next.text
         }
+    }
+}
+
+/// Tells the companion when a reply's voice finishes on its own.
+private final class VoicePlaybackEnd: NSObject, AVAudioPlayerDelegate, Sendable {
+    private let onEnd: @MainActor @Sendable () -> Void
+
+    init(_ onEnd: @escaping @MainActor @Sendable () -> Void) {
+        self.onEnd = onEnd
+    }
+
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        let onEnd = onEnd
+        Task { @MainActor in onEnd() }
+    }
+
+    func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
+        let onEnd = onEnd
+        Task { @MainActor in onEnd() }
     }
 }
 

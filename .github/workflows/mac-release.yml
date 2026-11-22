@@ -116,8 +116,8 @@ jobs:
 
   dmg:
     needs: [version, images]
-    # macos-15 is Apple Silicon (arm64) with Xcode 16, which macos/Package.swift (tools 6.0) needs.
-    runs-on: macos-15
+    # macos-26 is Apple Silicon (arm64) with Xcode 26, which macos/Package.swift (tools 6.2, macOS 26) needs.
+    runs-on: macos-26
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4

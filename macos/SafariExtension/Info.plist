@@ -23,7 +23,7 @@
 	<key>CFBundleVersion</key>
 	<string>@BUILD@</string>
 	<key>LSMinimumSystemVersion</key>
-	<string>15.0</string>
+	<string>26.0</string>
 	<key>NSHumanReadableDescription</key>
 	<string>Share a Safari tab with a Vesper persona, ask about a page, and save pages to Vesper.</string>
 	<!-- The handler talks to the Vesper app's own server on http://127.0.0.1. -->

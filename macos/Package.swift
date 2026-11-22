@@ -1,10 +1,10 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.2
 // The native macOS shell for Vesper. See docs/dev/native-mac-app.md.
 import PackageDescription
 
 let package = Package(
     name: "Vesper",
-    platforms: [.macOS(.v15)],
+    platforms: [.macOS(.v26)],
     products: [
         .executable(name: "Vesper", targets: ["Vesper"]),
         .executable(name: "vesper-matte", targets: ["VesperMatte"]),

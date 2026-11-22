@@ -19,7 +19,7 @@
 </div>
 
 > [!NOTE]
-> **Platform support:** As of now, Vesper is **only supported as a native macOS application on Apple Silicon (macOS 15+)**. Intel Macs, Linux, Windows, and Docker / self-hosted server deployments are not supported.
+> **Platform support:** As of now, Vesper is **only supported as a native macOS application on Apple Silicon (macOS 26+)**. Intel Macs, Linux, Windows, and Docker / self-hosted server deployments are not supported.
 
 ![Vesper native macOS app showing a chat with Iris in Payments Platform: a Claude Code reply, a mid-conversation switch to Codex, a Codex reply with a Go regression test, and the Code diff inspector open on the right](docs/images/hero.png)
 
@@ -143,7 +143,7 @@ When a job is bigger than a single chat turn, ask your persona to plan tickets o
 
 ## Get started
 
-**Requirements:** An **Apple Silicon Mac** (M-series) running **macOS 15 or newer**. Vesper is currently only supported as a native macOS app (no Intel Mac, Linux, Windows, or Docker deployment).
+**Requirements:** An **Apple Silicon Mac** (M-series) running **macOS 26 or newer**. Vesper is currently only supported as a native macOS app (no Intel Mac, Linux, Windows, or Docker deployment).
 
 ### Install from a release DMG
 

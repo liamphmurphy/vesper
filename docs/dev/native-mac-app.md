@@ -279,7 +279,7 @@ What the app does, for regression testing by hand.
 ## Layout of `macos/`
 
 ```
-macos/Package.swift                 SwiftPM; macOS 15+
+macos/Package.swift                 SwiftPM; macOS 26+
 macos/Sources/VesperCore/           logic with no AppKit UI (unit-tested)
   Bridge/       Protocol.swift (Codable mirror), BridgeOrigin.swift
   Stack/        StackController, SecretsKey (+ safeStorage migration), StackHealth, BundledResources
