@@ -800,15 +800,103 @@ export function turnActivity(events: RunEventLike[] | undefined, since?: string,
   return activity;
 }
 
+/** Tools whose in-flight call delegates work to one or more subagents. */
+const SUBAGENT_DELEGATION_TOOLS = new Set(["Agent", "Task", "delegate", "run_subagent", "run_subagents"]);
+
+function isSubagentDelegationTool(tool: string): boolean {
+  return SUBAGENT_DELEGATION_TOOLS.has(bareTool(tool));
+}
+
+/**
+ * Live, chat-safe summary of in-flight subagents while a parent `run_subagent`/`run_subagents`
+ * call is blocking. Uses only safe high-level phrases (`chatStatusOf`) and basenames (`stepDetail`),
+ * never raw commands or full paths.
+ */
+export function liveSubagentStatus(branches: SubagentBranch[] | undefined): { phrase: string; detail: string } | undefined {
+  if (!branches?.length) return undefined;
+  const total = branches.length;
+  const done = branches.filter((b) => b.status === "completed" || b.status === "failed" || b.status === "canceled").length;
+  const running = branches.filter((b) => b.status === "running");
+  const queued = branches.filter((b) => b.status === "queued");
+  const totalCalls = branches.reduce((n, b) => n + b.toolCalls, 0);
+
+  let activeBranch: SubagentBranch | undefined;
+  if (running.length > 0) {
+    activeBranch = running.reduce((best, b) => {
+      const bestKey = best.calls.at(-1)?.key ?? 0;
+      const curKey = b.calls.at(-1)?.key ?? 0;
+      if (curKey !== bestKey) return curKey > bestKey ? b : best;
+      return (b.startedAt ?? b.createdAt) >= (best.startedAt ?? best.createdAt) ? b : best;
+    });
+  } else {
+    activeBranch = queued[0] ?? branches[branches.length - 1];
+  }
+
+  const latestCall = activeBranch?.calls.at(-1);
+  const latestPhrase = latestCall ? chatStatusOf(latestCall).phrase : undefined;
+  const latestDetail = latestCall ? stepDetail(latestCall) : undefined;
+
+  let phrase: string;
+  if (total === 1) {
+    const b = branches[0];
+    const who = clip(b.role || b.agentType || "a helper", 28);
+    if (b.status === "queued") {
+      phrase = `starting ${who}`;
+    } else if (b.status === "running") {
+      phrase = latestPhrase ? `running ${who} · ${latestPhrase}` : `running ${who}`;
+    } else {
+      phrase = `wrapping up ${who}`;
+    }
+  } else if (running.length === 0 && done === 0) {
+    phrase = `queuing ${total} subagents`;
+  } else if (running.length === 0 && done === total) {
+    phrase = `wrapping up ${total} subagents`;
+  } else {
+    const head = done > 0
+      ? `running ${running.length} of ${total} subagents (${done} done)`
+      : `running ${running.length} of ${total} subagents`;
+    phrase = latestPhrase ? `${head} · ${latestPhrase}` : head;
+  }
+
+  const detailParts: string[] = [];
+  if (total > 1) {
+    if (done > 0) detailParts.push(`${done}/${total} done`);
+    else if (running.length > 0) detailParts.push(`${running.length}/${total} running`);
+    else detailParts.push(`${queued.length} queued`);
+  } else if (branches[0].status === "queued") {
+    detailParts.push("Queued");
+  }
+  if (totalCalls > 0) detailParts.push(`${totalCalls} ${totalCalls === 1 ? "call" : "calls"}`);
+  if (activeBranch) {
+    const who = total > 1 ? clip(activeBranch.role || activeBranch.agentType, 24) : "";
+    if (latestDetail) detailParts.push(who ? `${who}: ${latestDetail}` : latestDetail);
+    else if (who && activeBranch.status === "running") detailParts.push(`${who}: working`);
+  }
+
+  return { phrase, detail: detailParts.join(" · ") };
+}
+
 /**
  * The chat tab's status for a running turn: the newest call's, or "thinking" before any tool runs.
  * `between` (from turnPulse) means that call finished a while ago, so its phrase would be stale;
- * `activity` carries live streaming phases (thinking with optional heading, or drafting a reply).
+ * `activity` carries live streaming phases (thinking with optional heading, or drafting a reply);
+ * `branches` provides live subagent progress while `run_subagent`/`run_subagents` is in flight.
  */
-export function chatStatus(calls: { tool: string; input: unknown; done?: boolean }[], between = false, activity?: TurnActivity): ChatStatusInfo {
+export function chatStatus(
+  calls: { tool: string; input: unknown; done?: boolean }[],
+  between = false,
+  activity?: TurnActivity,
+  branches?: SubagentBranch[],
+): ChatStatusInfo {
   const newest = calls.at(-1);
   if (newest?.tool === REPLY_BLOCK) return chatStatusOf(newest);
-  if (newest && newest.done === false) return chatStatusOf(newest);
+  if (newest && newest.done === false) {
+    if (isSubagentDelegationTool(newest.tool)) {
+      const live = liveSubagentStatus(branches);
+      if (live) return status("subagent", live.phrase);
+    }
+    return chatStatusOf(newest);
+  }
   if (activity?.phase === "writing_reply") return WRITING_REPLY;
   if (!calls.length) return status("thinking", "thinking");
   if (between || (activity?.phase === "thinking" && !!activity.detail)) {
@@ -1367,10 +1455,17 @@ function knownNames(calls: ToolCall[]): Map<string, string> {
 }
 
 /** Puts what's happening now on the step under way, unless it would only repeat the title. */
-function withDetail(steps: ChatStep[], calls: ToolCall[]): ChatStep[] {
+function withDetail(steps: ChatStep[], calls: ToolCall[], branches?: SubagentBranch[]): ChatStep[] {
   const newest = calls.filter((c) => !BOOKKEEPING.has(bareTool(c.tool))).pop();
   const active = steps.find((s) => s.state === "active");
   if (!newest || !active || newest.tool === REPLY_BLOCK) return steps;
+  if (!newest.done && isSubagentDelegationTool(newest.tool)) {
+    const live = liveSubagentStatus(branches);
+    if (live?.detail && live.detail !== active.title) {
+      active.detail = live.detail;
+      return steps;
+    }
+  }
   const detail = stepDetail(newest, knownNames(calls));
   if (detail !== active.title) active.detail = detail;
   return steps;
@@ -1381,8 +1476,8 @@ function withDetail(steps: ChatStep[], calls: ToolCall[]): ChatStep[] {
  * work began. Otherwise its consecutive tool calls with the same description as one step, newest active, in the same
  * high-level wording as the status line.
  */
-export function chatSteps(calls: ToolCall[], notes?: TurnNote[], opts: { between?: boolean; clock?: TurnClock; activity?: TurnActivity } = {}): { steps: ChatStep[]; planned: boolean } {
-  const { steps, planned, owner } = buildSteps(calls, opts.between, opts.activity);
+export function chatSteps(calls: ToolCall[], notes?: TurnNote[], opts: { between?: boolean; clock?: TurnClock; activity?: TurnActivity; branches?: SubagentBranch[] } = {}): { steps: ChatStep[]; planned: boolean } {
+  const { steps, planned, owner } = buildSteps(calls, opts.between, opts.activity, opts.branches);
   if (opts.clock) stampTimes(steps, calls, owner, opts.clock);
   if (notes?.length) {
     const byKey = new Map(steps.map((st) => [st.key, st]));
@@ -1420,7 +1515,7 @@ function stampTimes(steps: ChatStep[], calls: ToolCall[], owner: (string | undef
  * `between`: a planless turn's newest step is finished, and a contextual stand-in step is under way instead.
  * `activity`: live harness phase (thinking heading or drafting a reply) between tool calls.
  */
-function buildSteps(calls: ToolCall[], between = false, activity?: TurnActivity): { steps: ChatStep[]; planned: boolean; owner: (string | undefined)[] } {
+function buildSteps(calls: ToolCall[], between = false, activity?: TurnActivity, branches?: SubagentBranch[]): { steps: ChatStep[]; planned: boolean; owner: (string | undefined)[] } {
   const owner: (string | undefined)[] = new Array(calls.length).fill(undefined);
   const versions = planVersions(calls);
   const latest = versions[versions.length - 1]?.items;
@@ -1450,7 +1545,7 @@ function buildSteps(calls: ToolCall[], between = false, activity?: TurnActivity)
       steps.push({ key: String(call.key), title: phrase[0].toUpperCase() + phrase.slice(1), state: call === newest ? "active" : "done", kind });
       owner[i] = String(call.key);
     }
-    const detailed = withDetail(steps, calls);
+    const detailed = withDetail(steps, calls, branches);
     if (activity && (!newest || (newest.done && newest.tool !== REPLY_BLOCK))) {
       const active = detailed.find((s) => s.state === "active");
       if (active) {
@@ -1487,7 +1582,7 @@ function buildSteps(calls: ToolCall[], between = false, activity?: TurnActivity)
   const newest = steps[steps.length - 1];
   const finished = newest.state;
   newest.state = "active";
-  withDetail(steps, calls);
+  withDetail(steps, calls, branches);
   const lastCall = calls.at(-1);
   const callRunning = !!lastCall && !lastCall.done;
   const replyBlockActive = lastCall?.tool === REPLY_BLOCK;
