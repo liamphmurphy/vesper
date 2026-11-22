@@ -83,7 +83,7 @@ SELECT host_folder_workspaces FROM workspaces WHERE id = $1;
 UPDATE workspaces SET host_folder_workspaces = $2, updated_at = now() WHERE id = $1;
 
 -- name: WorkspaceRunnerSettings :one
-SELECT host_folder_workspaces, max_concurrent_subagents, max_parallel_delegations
+SELECT host_folder_workspaces, max_concurrent_subagents, max_parallel_delegations, subagent_tier_routing, subagent_tier_models
 FROM workspaces
 WHERE id = $1;
 
@@ -92,6 +92,8 @@ UPDATE workspaces
 SET host_folder_workspaces = coalesce(sqlc.narg(host_folder_workspaces)::boolean, host_folder_workspaces),
     max_concurrent_subagents = coalesce(sqlc.narg(max_concurrent_subagents)::int, max_concurrent_subagents),
     max_parallel_delegations = coalesce(sqlc.narg(max_parallel_delegations)::int, max_parallel_delegations),
+    subagent_tier_routing = coalesce(sqlc.narg(subagent_tier_routing)::boolean, subagent_tier_routing),
+    subagent_tier_models = coalesce(sqlc.narg(subagent_tier_models)::jsonb, subagent_tier_models),
     updated_at = now()
 WHERE id = $1;
 

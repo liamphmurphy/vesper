@@ -53,4 +53,21 @@ func TestSubagentTypes(t *testing.T) {
 			}
 		}
 	}
+
+	// Disabling subagent_tier_routing omits tier-picking guidance while keeping batch subagents and reasons.
+	noTierSpec := Resolved{Harness: HarnessClaudeCode, HarnessOptions: map[string]string{OptionSubagentTierRouting: "false"}}
+	if SubagentTierRoutingOn(noTierSpec) {
+		t.Fatal("SubagentTierRoutingOn = true when OptionSubagentTierRouting=false")
+	}
+	noTierGuide := SubagentGuide(noTierSpec)
+	for _, present := range []string{"`run_subagents`", "`tasks`", "`reason`"} {
+		if !strings.Contains(noTierGuide, present) {
+			t.Errorf("tier-off SubagentGuide missing %q: %q", present, noTierGuide)
+		}
+	}
+	for _, absent := range []string{"`tier`", "`fast`", "`standard`", "`deep`", "why that tier fits"} {
+		if strings.Contains(noTierGuide, absent) {
+			t.Errorf("tier-off SubagentGuide unexpectedly contains %q: %q", absent, noTierGuide)
+		}
+	}
 }

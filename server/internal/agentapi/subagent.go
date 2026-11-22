@@ -135,12 +135,27 @@ func emitSubagentQueuedEvent(ctx context.Context, q *store.Queries, j store.Suba
 	_ = q.AddRunEvent(ctx, store.AddRunEventParams{RunID: j.RunID, Type: "lifecycle", Payload: raw})
 }
 
-func resolveSubagentModel(ctx context.Context, d Deps, ws uuid.UUID, spec agentdef.Resolved, typ, tier string) chatmodels.SubagentModelResult {
+func resolveSubagentModel(ctx context.Context, d Deps, ws uuid.UUID, spec agentdef.Resolved, typ, tier string) (chatmodels.SubagentModelResult, string) {
+	var rules chatmodels.SubagentTierRules
+	if d.Q != nil {
+		if cfg, err := d.Q.WorkspaceRunnerSettings(ctx, ws); err == nil {
+			if !cfg.SubagentTierRouting {
+				if sub, specErr := runs.SubagentSpec(spec, typ); specErr == nil {
+					return chatmodels.SubagentModelResult{
+						Tier:   "",
+						Model:  sub.Model,
+						Effort: sub.HarnessOptions["effort"],
+					}, ""
+				}
+			}
+			rules = chatmodels.DecodeSubagentTierRules(cfg.SubagentTierModels)
+		}
+	}
 	var cat chatmodels.Catalog
 	if d.Runs != nil {
 		cat = d.Runs.ChatCatalog()
 	}
-	return cat.ResolveSubagent(ctx, d.Q, ws, spec, typ, tier)
+	return cat.ResolveSubagent(ctx, d.Q, ws, spec, typ, tier, rules), tier
 }
 
 func subagentResultMap(j store.SubagentJob) map[string]any {
@@ -179,7 +194,7 @@ func runSubagentTool(ctx context.Context, d Deps, c agents.Caller, in RunSubagen
 	if err != nil {
 		return nil, err
 	}
-	sel := resolveSubagentModel(ctx, d, c.Agent.WorkspaceID, spec, typ, tier)
+	sel, reqTier := resolveSubagentModel(ctx, d, c.Agent.WorkspaceID, spec, typ, tier)
 
 	job, err := d.Q.CreateSubagentJob(ctx, store.CreateSubagentJobParams{
 		RunID:         run.ID,
@@ -189,7 +204,7 @@ func runSubagentTool(ctx context.Context, d Deps, c agents.Caller, in RunSubagen
 		Tier:          sel.Tier,
 		Model:         sel.Model,
 		Effort:        sel.Effort,
-		RequestedTier: tier,
+		RequestedTier: reqTier,
 		Reason:        reason,
 	})
 	if err != nil {
@@ -252,7 +267,7 @@ func runSubagentsTool(ctx context.Context, d Deps, c agents.Caller, in RunSubage
 	batchID := uuid.New()
 	validated := make([]store.CreateSubagentJobParams, len(valid))
 	for i, task := range valid {
-		sel := resolveSubagentModel(ctx, d, c.Agent.WorkspaceID, spec, task.typ, task.tier)
+		sel, reqTier := resolveSubagentModel(ctx, d, c.Agent.WorkspaceID, spec, task.typ, task.tier)
 		validated[i] = store.CreateSubagentJobParams{
 			RunID:         run.ID,
 			AgentType:     task.typ,
@@ -261,7 +276,7 @@ func runSubagentsTool(ctx context.Context, d Deps, c agents.Caller, in RunSubage
 			Tier:          sel.Tier,
 			Model:         sel.Model,
 			Effort:        sel.Effort,
-			RequestedTier: task.tier,
+			RequestedTier: reqTier,
 			Reason:        task.reason,
 			BatchID:       &batchID,
 		}

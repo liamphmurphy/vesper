@@ -2,6 +2,8 @@ package chatmodels
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"regexp"
 	"slices"
 	"strings"
@@ -19,18 +21,125 @@ const (
 )
 
 var (
-	subagentFastRe         = regexp.MustCompile(`\b(haiku|mini|nano|flash|lite|spark)\b`)
-	subagentOrchestratorRe = regexp.MustCompile(`\borchestrator\b`)
-	subagentOrchStdRe      = regexp.MustCompile(`\b(carbon|argon)\b`)
-	subagentOrchNeonRe     = regexp.MustCompile(`\bneon\b`)
-	subagentDeepRe         = regexp.MustCompile(`\b(fable|max|pro|ultra|neon|hydrogen)\b`)
-	subagentOpusRe         = regexp.MustCompile(`\bopus\b`)
-	subagentFableRe        = regexp.MustCompile(`(?i)\bfable\b`)
-	subagentSonnetRe       = regexp.MustCompile(`\bsonnet\b`)
+	subagentOrchestratorRe     = regexp.MustCompile(`\borchestrator\b`)
+	orchestratorLabelVariantRe = regexp.MustCompile(`(?i)\borchestrator\s*\(([^)]+)\)`)
 )
 
+// SubagentTierModels maps each logical subagent tier (fast, standard, deep) to
+// an optional concrete model ID on a single harness. Empty fields scale
+// reasoning effort on the parent model instead of switching models.
+type SubagentTierModels struct {
+	Fast     string `json:"fast,omitempty"`
+	Standard string `json:"standard,omitempty"`
+	Deep     string `json:"deep,omitempty"`
+}
+
+// Normalized returns a copy with leading/trailing whitespace trimmed.
+func (m SubagentTierModels) Normalized() SubagentTierModels {
+	return SubagentTierModels{
+		Fast:     strings.TrimSpace(m.Fast),
+		Standard: strings.TrimSpace(m.Standard),
+		Deep:     strings.TrimSpace(m.Deep),
+	}
+}
+
+// IsZero reports whether all three tier slots are empty.
+func (m SubagentTierModels) IsZero() bool {
+	n := m.Normalized()
+	return n.Fast == "" && n.Standard == "" && n.Deep == ""
+}
+
+// ModelForTier returns the configured model ID for tierSubFast/Standard/Deep.
+func (m SubagentTierModels) ModelForTier(tier int) string {
+	switch tier {
+	case tierSubFast:
+		return m.Fast
+	case tierSubDeep:
+		return m.Deep
+	default:
+		return m.Standard
+	}
+}
+
+// SubagentTierRules configures optional per-harness subagent model ladders for
+// a workspace (keyed by agentdef.Harness* constants).
+type SubagentTierRules map[string]SubagentTierModels
+
+// ForHarness returns the configured ladder for harness, or the zero struct.
+func (r SubagentTierRules) ForHarness(harness string) SubagentTierModels {
+	if r == nil {
+		return SubagentTierModels{}
+	}
+	return r[harness].Normalized()
+}
+
+// DecodeSubagentTierRules parses stored JSONB rules, returning an empty map if
+// raw is empty, null, or malformed, and dropping all-empty harness entries.
+func DecodeSubagentTierRules(raw []byte) SubagentTierRules {
+	out := SubagentTierRules{}
+	if len(raw) == 0 {
+		return out
+	}
+	var parsed map[string]SubagentTierModels
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return out
+	}
+	for harness, entry := range parsed {
+		h := strings.TrimSpace(strings.ToLower(harness))
+		if !validSubagentHarness(h) {
+			continue
+		}
+		n := entry.Normalized()
+		if !n.IsZero() {
+			out[h] = n
+		}
+	}
+	return out
+}
+
+// NormalizeSubagentTierRules validates harness keys and model IDs, returning a
+// cleaned map with all-empty harness entries removed.
+func NormalizeSubagentTierRules(in SubagentTierRules) (SubagentTierRules, error) {
+	out := SubagentTierRules{}
+	for rawHarness, entry := range in {
+		h := strings.TrimSpace(strings.ToLower(rawHarness))
+		if !validSubagentHarness(h) {
+			return nil, fmt.Errorf("unknown harness %q", rawHarness)
+		}
+		n := entry.Normalized()
+		for _, pair := range []struct {
+			tier, val string
+		}{
+			{"fast", n.Fast},
+			{"standard", n.Standard},
+			{"deep", n.Deep},
+		} {
+			if pair.val == "" {
+				continue
+			}
+			if len(pair.val) > 128 {
+				return nil, fmt.Errorf("%s.%s model id is too long (max 128 characters)", h, pair.tier)
+			}
+			for _, r := range pair.val {
+				if r < 0x20 || r == 0x7f {
+					return nil, fmt.Errorf("%s.%s model id contains invalid control characters", h, pair.tier)
+				}
+			}
+		}
+		if !n.IsZero() {
+			out[h] = n
+		}
+	}
+	return out, nil
+}
+
+func validSubagentHarness(h string) bool {
+	return h == agentdef.HarnessClaudeCode || h == agentdef.HarnessCodex || h == agentdef.HarnessAntigravity
+}
+
 // SubagentModelResult is the concrete harness target resolved for an in-turn
-// subagent job after applying tier defaults and the parent's tier/effort caps.
+// subagent job after applying effort scaling or workspace tier rules, strictly
+// capped at the parent's tier and effort.
 type SubagentModelResult struct {
 	Tier   string
 	Model  string
@@ -40,7 +149,7 @@ type SubagentModelResult struct {
 // ModelsForHarness returns the live models offered for one harness in ws,
 // reading the in-process cache first and falling back to a single non-blocking
 // discovery lookup. Never errors: returns nil when the catalog is unavailable
-// so subagent calls still run with static defaults.
+// so subagent calls still run safely.
 func (c Catalog) ModelsForHarness(ctx context.Context, q *store.Queries, ws uuid.UUID, harness string) []Model {
 	if harness == "" {
 		return nil
@@ -73,9 +182,11 @@ func cloneModels(in []Model) []Model {
 }
 
 // ResolveSubagent resolves the effective tier, model ID, and effort for an
-// in-turn subagent on the parent run's harness using the workspace's live model
-// catalog when available.
-func (c Catalog) ResolveSubagent(ctx context.Context, q *store.Queries, ws uuid.UUID, parent agentdef.Resolved, agentType, requestedTier string) SubagentModelResult {
+// in-turn subagent on the parent run's harness. By default it scales reasoning
+// effort on the parent's own model (de-orchestrated on Antigravity) without
+// guessing model codenames; when rules configure a custom model ladder for
+// that harness, it maps tiers across those configured models instead.
+func (c Catalog) ResolveSubagent(ctx context.Context, q *store.Queries, ws uuid.UUID, parent agentdef.Resolved, agentType, requestedTier string, rules SubagentTierRules) SubagentModelResult {
 	models := c.ModelsForHarness(ctx, q, ws, parent.Harness)
 	return ResolveSubagentFromModels(
 		parent.Harness,
@@ -85,13 +196,14 @@ func (c Catalog) ResolveSubagent(ctx context.Context, q *store.Queries, ws uuid.
 		requestedTier,
 		parent.HarnessOptions[agentdef.OptionExplorerModel],
 		models,
+		rules.ForHarness(parent.Harness),
 	)
 }
 
-// ResolveSubagentFromModels maps a parent's harness/model/effort and requested
-// subagent tier against a harness model catalog, strictly clamping the child's
-// tier and effort at or below the parent's.
-func ResolveSubagentFromModels(harness, parentModel, parentEffort, agentType, requestedTier, explorerModelOverride string, models []Model) SubagentModelResult {
+// ResolveSubagentFromModels maps a parent's model/effort and requested subagent
+// tier using either effort-only scaling (when rule.IsZero()) or the explicit
+// per-tier model ladder in rule, validating model availability against models.
+func ResolveSubagentFromModels(_ string, parentModel, parentEffort, agentType, requestedTier, explorerModelOverride string, models []Model, rule SubagentTierModels) SubagentModelResult {
 	reqTier := strings.TrimSpace(strings.ToLower(requestedTier))
 	effectiveReq := reqTier
 	if effectiveReq == "" {
@@ -101,6 +213,7 @@ func ResolveSubagentFromModels(harness, parentModel, parentEffort, agentType, re
 			effectiveReq = agentdef.SubagentTierStandard
 		}
 	}
+	wantTier := parseSubagentTier(effectiveReq)
 
 	if agentType == agentdef.ExplorerAgent && explorerModelOverride != "" && (reqTier == "" || reqTier == agentdef.SubagentTierFast) {
 		return SubagentModelResult{
@@ -108,6 +221,8 @@ func ResolveSubagentFromModels(harness, parentModel, parentEffort, agentType, re
 			Model: explorerModelOverride,
 		}
 	}
+
+	rule = rule.Normalized()
 
 	trimmedParent := strings.TrimSpace(parentModel)
 	parentBase, suffixEffort, _ := agentdef.CutEffortSuffix(trimmedParent)
@@ -122,87 +237,55 @@ func ResolveSubagentFromModels(harness, parentModel, parentEffort, agentType, re
 		parentForClass = *parentEntry
 	}
 
-	hasFable := hasFableModel(models)
-	parentTier := classifySubagentModel(parentForClass, hasFable)
-	wantTier := parseSubagentTier(effectiveReq)
-	effTier := min(wantTier, parentTier)
+	effectiveParentModel := trimmedParent
+	if parentEntry != nil {
+		effectiveParentModel = parentEntry.ID
+	}
+	effectiveParentEntry := parentEntry
+	if isOrchestratorModel(parentForClass) {
+		if deorch := deorchestrateParent(models, parentForClass); deorch != nil {
+			effectiveParentEntry = deorch
+			effectiveParentModel = deorch.ID
+		}
+	}
+	effectiveParentBase, _, _ := agentdef.CutEffortSuffix(effectiveParentModel)
 
-	candidates := nonOrchestratorModels(models)
-	hasDeepModel := false
-	for _, m := range candidates {
-		if classifySubagentModel(m, hasFable) == tierSubDeep {
-			hasDeepModel = true
-			break
+	parentEffortCap := effortCapTier(parentEffort)
+	effTier := min(wantTier, parentEffortCap)
+	chosenModel := effectiveParentModel
+	chosenEntry := effectiveParentEntry
+
+	resolveConfigured := func(targetID string) (string, *Model) {
+		if targetID == "" {
+			return effectiveParentModel, effectiveParentEntry
+		}
+		targetBase, _, _ := agentdef.CutEffortSuffix(targetID)
+		if len(models) > 0 {
+			if entry := findCatalogModel(models, targetID, targetBase); entry != nil {
+				return entry.ID, entry
+			}
+			// Configured model is no longer in the live catalog: fall back safely to parent.
+			return effectiveParentModel, effectiveParentEntry
+		}
+		return targetID, nil
+	}
+
+	if !rule.IsZero() {
+		matchedTier, onLadder := matchRuleTier(rule, effectiveParentModel, effectiveParentBase, trimmedParent, parentBase)
+		switch {
+		case onLadder:
+			effTier = min(wantTier, matchedTier)
+			chosenModel, chosenEntry = resolveConfigured(rule.ModelForTier(effTier))
+		case rule.Fast != "" && rule.Standard == "" && rule.Deep == "":
+			if effTier == tierSubFast {
+				chosenModel, chosenEntry = resolveConfigured(rule.Fast)
+			}
+		default:
+			// Unlisted parent on a multi-tier ladder: stay safe with effort-only on parent.
 		}
 	}
 
-	parentIsOrch := isOrchestratorModel(parentForClass)
-	orchVariant := orchestratorVariant(parentForClass)
-	parentFamily := subagentModelFamily(harness, parentForClass)
-
-	var chosenModel string
-	var chosenEntry *Model
-
-	switch {
-	case effTier == parentTier && !parentIsOrch && len(models) > 0:
-		if parentEntry != nil {
-			chosenModel = parentEntry.ID
-			chosenEntry = parentEntry
-		} else {
-			chosenModel = trimmedParent
-		}
-	case len(candidates) > 0:
-		for t := effTier; t >= 0; t-- {
-			var tierCandidates []Model
-			for _, m := range candidates {
-				if classifySubagentModel(m, hasFable) == t {
-					tierCandidates = append(tierCandidates, m)
-				}
-			}
-			if len(tierCandidates) == 0 {
-				continue
-			}
-			tierCandidates = narrowSubagentCandidates(tierCandidates, func(m Model) bool {
-				return parentIsOrch && effTier == parentTier && orchVariant != "" && matchesVariant(m, orchVariant)
-			})
-			tierCandidates = narrowSubagentCandidates(tierCandidates, func(m Model) bool {
-				return parentFamily != "" && subagentModelFamily(harness, m) == parentFamily
-			})
-			tierCandidates = narrowSubagentCandidates(tierCandidates, func(m Model) bool {
-				return harness == agentdef.HarnessClaudeCode && effTier == tierSubStandard && parentTier == tierSubDeep &&
-					subagentSonnetRe.MatchString(subagentNormalizedName(m))
-			})
-			picked := tierCandidates[0]
-			for _, m := range tierCandidates {
-				if m.Default {
-					picked = m
-					break
-				}
-			}
-			chosenModel = picked.ID
-			chosenEntry = &picked
-			break
-		}
-		if chosenModel == "" {
-			if parentEntry != nil && !parentIsOrch {
-				chosenModel = parentEntry.ID
-				chosenEntry = parentEntry
-			} else {
-				chosenModel = trimmedParent
-			}
-		}
-	default:
-		if effTier == tierSubFast && parentTier != tierSubFast {
-			chosenModel = coldFastModel(harness)
-		} else {
-			chosenModel = trimmedParent
-			if chosenModel == "" {
-				chosenModel = coldFastModel(harness)
-			}
-		}
-	}
-
-	targetEffort := targetSubagentEffort(effTier, wantTier, parentTier, hasDeepModel)
+	targetEffort := targetSubagentEffort(effTier)
 	if parentEffort != "" {
 		if pr, ok := effortRank(parentEffort); ok {
 			if tr, tok := effortRank(targetEffort); !tok || tr > pr {
@@ -214,7 +297,7 @@ func ResolveSubagentFromModels(harness, parentModel, parentEffort, agentType, re
 	var chosenEffort string
 	if chosenEntry != nil {
 		chosenEffort = clampModelEffort(chosenEntry.Efforts, targetEffort)
-	} else if chosenModel != "" && chosenModel == trimmedParent && parentEffort != "" {
+	} else if chosenModel != "" && parentEffort != "" {
 		chosenEffort = targetEffort
 	}
 
@@ -225,17 +308,30 @@ func ResolveSubagentFromModels(harness, parentModel, parentEffort, agentType, re
 	}
 }
 
-func narrowSubagentCandidates(candidates []Model, keep func(Model) bool) []Model {
-	var out []Model
-	for _, m := range candidates {
-		if keep(m) {
-			out = append(out, m)
+func matchRuleTier(rule SubagentTierModels, refs ...string) (int, bool) {
+	checks := []struct {
+		tier  int
+		model string
+	}{
+		{tierSubDeep, rule.Deep},
+		{tierSubStandard, rule.Standard},
+		{tierSubFast, rule.Fast},
+	}
+	for _, ch := range checks {
+		if ch.model == "" {
+			continue
+		}
+		ruleBase, _, _ := agentdef.CutEffortSuffix(ch.model)
+		for _, ref := range refs {
+			if ref == "" {
+				continue
+			}
+			if strings.EqualFold(ref, ch.model) || (ruleBase != "" && strings.EqualFold(ref, ruleBase)) {
+				return ch.tier, true
+			}
 		}
 	}
-	if len(out) > 0 {
-		return out
-	}
-	return candidates
+	return 0, false
 }
 
 func findCatalogModel(models []Model, fullID, baseID string) *Model {
@@ -258,31 +354,6 @@ func findCatalogModel(models []Model, fullID, baseID string) *Model {
 	return nil
 }
 
-func hasFableModel(models []Model) bool {
-	for _, m := range models {
-		if subagentFableRe.MatchString(m.ID + " " + m.Label) {
-			return true
-		}
-	}
-	return false
-}
-
-func nonOrchestratorModels(models []Model) []Model {
-	if len(models) == 0 {
-		return nil
-	}
-	out := make([]Model, 0, len(models))
-	for _, m := range models {
-		if !isOrchestratorModel(m) {
-			out = append(out, m)
-		}
-	}
-	if len(out) == 0 {
-		return models
-	}
-	return out
-}
-
 func subagentNormalizedName(m Model) string {
 	base, _, _ := agentdef.CutEffortSuffix(strings.TrimSpace(m.ID))
 	return strings.ToLower(strings.TrimSpace(base + " " + m.Label))
@@ -293,61 +364,39 @@ func isOrchestratorModel(m Model) bool {
 }
 
 func orchestratorVariant(m Model) string {
-	name := subagentNormalizedName(m)
-	switch {
-	case subagentOrchNeonRe.MatchString(name):
-		return "neon"
-	case strings.Contains(name, "carbon"):
-		return "carbon"
-	case strings.Contains(name, "argon"):
-		return "argon"
-	default:
-		return ""
-	}
-}
-
-func matchesVariant(m Model, variant string) bool {
-	name := subagentNormalizedName(m)
-	return strings.Contains(name, variant)
-}
-
-func classifySubagentModel(m Model, hasFable bool) int {
-	name := subagentNormalizedName(m)
-	switch {
-	case subagentFastRe.MatchString(name):
-		return tierSubFast
-	case subagentOrchestratorRe.MatchString(name):
-		if subagentOrchStdRe.MatchString(name) {
-			return tierSubStandard
+	if match := orchestratorLabelVariantRe.FindStringSubmatch(m.Label); len(match) == 2 {
+		if v := strings.ToLower(strings.TrimSpace(match[1])); v != "" {
+			return v
 		}
-		return tierSubDeep
-	case subagentDeepRe.MatchString(name):
-		return tierSubDeep
-	case !hasFable && subagentOpusRe.MatchString(name):
-		return tierSubDeep
-	default:
-		return tierSubStandard
 	}
+	base, _, _ := agentdef.CutEffortSuffix(strings.TrimSpace(m.ID))
+	lower := strings.ToLower(base)
+	if _, after, ok := strings.Cut(lower, "-orchestrator-"); ok {
+		return strings.TrimSpace(after)
+	}
+	return ""
 }
 
-func subagentModelFamily(harness string, m Model) string {
-	switch harness {
-	case agentdef.HarnessClaudeCode:
-		return "claude"
-	case agentdef.HarnessCodex:
-		return "openai"
+func deorchestrateParent(models []Model, parent Model) *Model {
+	variant := orchestratorVariant(parent)
+	if variant == "" || len(models) == 0 {
+		return nil
 	}
-	name := subagentNormalizedName(m)
-	switch {
-	case strings.Contains(name, "claude") || strings.Contains(name, "opus") || strings.Contains(name, "sonnet") || strings.Contains(name, "haiku") || strings.Contains(name, "fable"):
-		return "claude"
-	case strings.Contains(name, "gemini"):
-		return "gemini"
-	case strings.Contains(name, "gpt") || strings.Contains(name, "codex"):
-		return "openai"
-	default:
-		return ""
+	re, err := regexp.Compile(`(?:^|[^a-z0-9])` + regexp.QuoteMeta(variant) + `(?:$|[^a-z0-9])`)
+	if err != nil {
+		return nil
 	}
+	for i := range models {
+		m := models[i]
+		if isOrchestratorModel(m) {
+			continue
+		}
+		if re.MatchString(subagentNormalizedName(m)) {
+			found := m
+			return &found
+		}
+	}
+	return nil
 }
 
 func parseSubagentTier(tier string) int {
@@ -372,27 +421,24 @@ func subagentTierName(tier int) string {
 	}
 }
 
-func coldFastModel(harness string) string {
-	switch harness {
-	case agentdef.HarnessCodex:
-		return "gpt-5-mini"
-	case agentdef.HarnessAntigravity:
-		return "gemini-3.8-flash"
+func effortCapTier(effort string) int {
+	switch effort {
+	case "low":
+		return tierSubFast
+	case "medium":
+		return tierSubStandard
 	default:
-		return agentdef.DefaultExplorerModel
+		return tierSubDeep
 	}
 }
 
-func targetSubagentEffort(effTier, wantTier, parentTier int, hasDeepModel bool) string {
+func targetSubagentEffort(effTier int) string {
 	switch effTier {
 	case tierSubFast:
 		return "low"
 	case tierSubDeep:
 		return "high"
 	default:
-		if wantTier == tierSubDeep && effTier == parentTier && !hasDeepModel {
-			return "high"
-		}
 		return "medium"
 	}
 }

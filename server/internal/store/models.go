@@ -2003,6 +2003,8 @@ type Workspace struct {
 	ImageEngine            string
 	MaxConcurrentSubagents int32
 	MaxParallelDelegations int32
+	SubagentTierRouting    bool
+	SubagentTierModels     json.RawMessage
 }
 
 type WorkspaceMediaDefault struct {

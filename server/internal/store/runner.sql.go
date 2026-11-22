@@ -1371,6 +1371,8 @@ UPDATE workspaces
 SET host_folder_workspaces = coalesce($2::boolean, host_folder_workspaces),
     max_concurrent_subagents = coalesce($3::int, max_concurrent_subagents),
     max_parallel_delegations = coalesce($4::int, max_parallel_delegations),
+    subagent_tier_routing = coalesce($5::boolean, subagent_tier_routing),
+    subagent_tier_models = coalesce($6::jsonb, subagent_tier_models),
     updated_at = now()
 WHERE id = $1
 `
@@ -1380,6 +1382,8 @@ type SetWorkspaceRunnerSettingsParams struct {
 	HostFolderWorkspaces   *bool
 	MaxConcurrentSubagents *int32
 	MaxParallelDelegations *int32
+	SubagentTierRouting    *bool
+	SubagentTierModels     []byte
 }
 
 func (q *Queries) SetWorkspaceRunnerSettings(ctx context.Context, arg SetWorkspaceRunnerSettingsParams) error {
@@ -1388,6 +1392,8 @@ func (q *Queries) SetWorkspaceRunnerSettings(ctx context.Context, arg SetWorkspa
 		arg.HostFolderWorkspaces,
 		arg.MaxConcurrentSubagents,
 		arg.MaxParallelDelegations,
+		arg.SubagentTierRouting,
+		arg.SubagentTierModels,
 	)
 	return err
 }
@@ -1548,7 +1554,7 @@ func (q *Queries) WorkspaceImageEngine(ctx context.Context, id uuid.UUID) (strin
 }
 
 const workspaceRunnerSettings = `-- name: WorkspaceRunnerSettings :one
-SELECT host_folder_workspaces, max_concurrent_subagents, max_parallel_delegations
+SELECT host_folder_workspaces, max_concurrent_subagents, max_parallel_delegations, subagent_tier_routing, subagent_tier_models
 FROM workspaces
 WHERE id = $1
 `
@@ -1557,11 +1563,19 @@ type WorkspaceRunnerSettingsRow struct {
 	HostFolderWorkspaces   bool
 	MaxConcurrentSubagents int32
 	MaxParallelDelegations int32
+	SubagentTierRouting    bool
+	SubagentTierModels     json.RawMessage
 }
 
 func (q *Queries) WorkspaceRunnerSettings(ctx context.Context, id uuid.UUID) (WorkspaceRunnerSettingsRow, error) {
 	row := q.db.QueryRow(ctx, workspaceRunnerSettings, id)
 	var i WorkspaceRunnerSettingsRow
-	err := row.Scan(&i.HostFolderWorkspaces, &i.MaxConcurrentSubagents, &i.MaxParallelDelegations)
+	err := row.Scan(
+		&i.HostFolderWorkspaces,
+		&i.MaxConcurrentSubagents,
+		&i.MaxParallelDelegations,
+		&i.SubagentTierRouting,
+		&i.SubagentTierModels,
+	)
 	return i, err
 }

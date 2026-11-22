@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/agents"
 	"github.com/liamphmurphy/vesper/server/internal/api"
 	"github.com/liamphmurphy/vesper/server/internal/apperr"
+	"github.com/liamphmurphy/vesper/server/internal/chatmodels"
 	"github.com/liamphmurphy/vesper/server/internal/pageview"
 	"github.com/liamphmurphy/vesper/server/internal/runner"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
@@ -34,6 +36,13 @@ func (s *Server) runnerStatus(ctx context.Context) (api.RunnerStatus, error) {
 	out.HostFolderWorkspaces = cfg.HostFolderWorkspaces
 	out.MaxConcurrentSubagents = runs.ClampConcurrentSubagents(int(cfg.MaxConcurrentSubagents))
 	out.MaxParallelDelegations = runs.ClampParallelDelegations(int(cfg.MaxParallelDelegations))
+	routing := cfg.SubagentTierRouting
+	out.SubagentTierRouting = &routing
+	tierModels := map[string]api.SubagentTierModels{}
+	for h, m := range chatmodels.DecodeSubagentTierRules(cfg.SubagentTierModels) {
+		tierModels[h] = toAPISubagentTierModels(m)
+	}
+	out.SubagentTierModels = &tierModels
 	rs, err := s.Q.LiveRunners(ctx)
 	if err != nil {
 		return out, err
@@ -74,11 +83,29 @@ func (s *Server) GetRunnerStatus(ctx context.Context, _ api.GetRunnerStatusReque
 	return api.GetRunnerStatus200JSONResponse(st), err
 }
 
+func toAPISubagentTierModels(m chatmodels.SubagentTierModels) api.SubagentTierModels {
+	out := api.SubagentTierModels{}
+	if m.Fast != "" {
+		v := m.Fast
+		out.Fast = &v
+	}
+	if m.Standard != "" {
+		v := m.Standard
+		out.Standard = &v
+	}
+	if m.Deep != "" {
+		v := m.Deep
+		out.Deep = &v
+	}
+	return out
+}
+
 func (s *Server) UpdateRunnerSettings(ctx context.Context, req api.UpdateRunnerSettingsRequestObject) (api.UpdateRunnerSettingsResponseObject, error) {
 	_, _, ws := me(ctx)
 	params := store.SetWorkspaceRunnerSettingsParams{
 		ID:                   ws,
 		HostFolderWorkspaces: req.Body.HostFolderWorkspaces,
+		SubagentTierRouting:  req.Body.SubagentTierRouting,
 	}
 	if req.Body.MaxConcurrentSubagents != nil {
 		n := *req.Body.MaxConcurrentSubagents
@@ -96,7 +123,32 @@ func (s *Server) UpdateRunnerSettings(ctx context.Context, req api.UpdateRunnerS
 		v := int32(n)
 		params.MaxParallelDelegations = &v
 	}
-	if params.HostFolderWorkspaces != nil || params.MaxConcurrentSubagents != nil || params.MaxParallelDelegations != nil {
+	if req.Body.SubagentTierModels != nil {
+		raw := chatmodels.SubagentTierRules{}
+		for h, entry := range *req.Body.SubagentTierModels {
+			var m chatmodels.SubagentTierModels
+			if entry.Fast != nil {
+				m.Fast = *entry.Fast
+			}
+			if entry.Standard != nil {
+				m.Standard = *entry.Standard
+			}
+			if entry.Deep != nil {
+				m.Deep = *entry.Deep
+			}
+			raw[h] = m
+		}
+		norm, err := chatmodels.NormalizeSubagentTierRules(raw)
+		if err != nil {
+			return nil, apperr.Invalid("subagent_tier_models", "%s", err.Error())
+		}
+		b, err := json.Marshal(norm)
+		if err != nil {
+			return nil, err
+		}
+		params.SubagentTierModels = b
+	}
+	if params.HostFolderWorkspaces != nil || params.MaxConcurrentSubagents != nil || params.MaxParallelDelegations != nil || params.SubagentTierRouting != nil || params.SubagentTierModels != nil {
 		if err := s.Q.SetWorkspaceRunnerSettings(ctx, params); err != nil {
 			return nil, err
 		}

@@ -1067,6 +1067,12 @@ export interface paths {
          *     MCP subagents (explorer/helper) per active turn.
          *     max_parallel_delegations (1–8, default 3) bounds live parallel delegated
          *     child ticket runs per parent run.
+         *     subagent_tier_routing toggles automatic in-turn subagent tier routing
+         *     (default true); when false, personas behave as before (helpers inherit
+         *     the parent model and effort; explorers use explorer_model or default).
+         *     subagent_tier_models maps harness names (claude-code, codex,
+         *     antigravity) to optional fast/standard/deep model ladders; empty or
+         *     unlisted tiers scale reasoning effort on the parent model instead.
          */
         put: operations["updateRunnerSettings"];
         post?: never;
@@ -7685,10 +7691,20 @@ export interface components {
         SetMediaDefaultRequest: {
             provider_id: string;
         };
+        /** @description Optional model IDs for in-turn subagent tiers on one harness. Empty or omitted tiers stay on the parent model with effort scaling. */
+        SubagentTierModels: {
+            fast?: string;
+            standard?: string;
+            deep?: string;
+        };
         RunnerSettings: {
             host_folder_workspaces?: boolean;
             max_concurrent_subagents?: number;
             max_parallel_delegations?: number;
+            subagent_tier_routing?: boolean;
+            subagent_tier_models?: {
+                [key: string]: components["schemas"]["SubagentTierModels"];
+            };
         };
         RunnerStatus: {
             /** @description New runs keep their checkout in a host folder when their runner has host_workspaces_dir */
@@ -7697,6 +7713,12 @@ export interface components {
             max_concurrent_subagents: number;
             /** @description Delegated child ticket runs allowed to run in parallel per parent run (1–8) */
             max_parallel_delegations: number;
+            /** @description Whether in-turn MCP subagents apply tier routing (effort scaling by default or configured model ladders) */
+            subagent_tier_routing?: boolean;
+            /** @description Optional per-harness model overrides for fast, standard, and deep subagent tiers */
+            subagent_tier_models?: {
+                [key: string]: components["schemas"]["SubagentTierModels"];
+            };
             online: boolean;
             /** @description True while an embedded runner is still starting up before its first heartbeat */
             starting?: boolean;

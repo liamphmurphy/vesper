@@ -707,12 +707,11 @@ func TestSubagentTierSelectionAcrossHarnesses(t *testing.T) {
 			}, nil
 		case agentdef.HarnessAntigravity:
 			return []chatmodels.Model{
-				{ID: "gemini-4-neon", Label: "Gemini 4 Neon", Efforts: []string{"low", "medium", "high", "xhigh"}},
 				{ID: "gemini-4-carbon", Label: "Gemini 4 Carbon", Efforts: []string{"low", "medium", "high"}},
+				{ID: "gemini-4-neon", Label: "Gemini 4 Neon", Efforts: []string{"low", "medium", "high", "xhigh"}},
+				{ID: "gemini-4-hydrogen", Label: "Gemini 4 Hydrogen", Efforts: []string{"low", "medium", "high"}},
+				{ID: "gemini-pro-orchestrator", Label: "Orchestrator (Carbon)"},
 				{ID: "gemini-pro-orchestrator-neon", Label: "Orchestrator (Neon)"},
-				{ID: "gemini-3.8-flash", Label: "Gemini 3.8 Flash", Efforts: []string{"low", "medium", "high"}},
-				{ID: "claude-opus-5-5", Label: "Claude Opus 5.5", Efforts: []string{"low", "medium", "high"}},
-				{ID: "claude-sonnet-5-5", Label: "Claude Sonnet 5.5", Efforts: []string{"low", "medium", "high"}},
 			}, nil
 		}
 		return nil, nil
@@ -721,10 +720,20 @@ func TestSubagentTierSelectionAcrossHarnesses(t *testing.T) {
 	type wantJob struct {
 		tier, model, effort string
 	}
-	runTierCase := func(t *testing.T, harness, parentModel string, calls []map[string]string, wants []wantJob) {
+	runTierCase := func(t *testing.T, harness, parentModel, parentEffort string, tierRouting *bool, tierRules json.RawMessage, calls []map[string]string, wants []wantJob) {
 		t.Helper()
 		e := setup(t)
 		e.runs.ModelDiscovery = discovery
+
+		if tierRouting != nil || len(tierRules) > 0 {
+			if err := e.q.SetWorkspaceRunnerSettings(e.ctx, store.SetWorkspaceRunnerSettingsParams{
+				ID:                  e.ws,
+				SubagentTierRouting: tierRouting,
+				SubagentTierModels:  tierRules,
+			}); err != nil {
+				t.Fatalf("SetWorkspaceRunnerSettings: %v", err)
+			}
+		}
 
 		svc := &agents.Service{Pool: e.pool}
 		p, err := e.q.GetProjectByKey(e.ctx, store.GetProjectByKeyParams{WorkspaceID: e.ws, Key: "PAY"})
@@ -752,6 +761,20 @@ func TestSubagentTierSelectionAcrossHarnesses(t *testing.T) {
 
 		e.dispatch("PAY-214")
 		run := e.run("PAY-214")
+		if parentEffort != "" {
+			var spec agentdef.Resolved
+			if err := json.Unmarshal(run.ResolvedSpec, &spec); err != nil {
+				t.Fatal(err)
+			}
+			if spec.HarnessOptions == nil {
+				spec.HarnessOptions = map[string]string{}
+			}
+			spec.HarnessOptions["effort"] = parentEffort
+			rawSpec, _ := json.Marshal(spec)
+			if _, err := e.pool.Exec(e.ctx, "UPDATE runs SET resolved_spec=$1 WHERE id=$2", rawSpec, run.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
 		e.until("completed", e.state("PAY-214=completed"))
 
 		run = e.run("PAY-214")
@@ -839,47 +862,68 @@ func TestSubagentTierSelectionAcrossHarnesses(t *testing.T) {
 		{"type": agentdef.HelperAgent, "tier": "deep", "role": "Capped Deep", "reason": "check model routing", "prompt": "REPORT_MODEL"},
 	}
 
-	t.Run("claude_deep_parent", func(t *testing.T) {
-		runTierCase(t, agentdef.HarnessClaudeCode, "fable", mixedCalls, []wantJob{
-			{"fast", "haiku", ""},
-			{"fast", "haiku", ""},
-			{"standard", "sonnet", "medium"},
+	// Default behavior (no custom ladder): effort-only scaling on parent model (de-orchestrated on agy).
+	t.Run("claude_default_effort_only", func(t *testing.T) {
+		runTierCase(t, agentdef.HarnessClaudeCode, "fable", "", nil, nil, mixedCalls, []wantJob{
+			{"fast", "fable", "low"},
+			{"fast", "fable", "low"},
+			{"standard", "fable", "medium"},
 			{"deep", "fable", "high"},
 		})
 	})
-	t.Run("codex_deep_parent", func(t *testing.T) {
-		runTierCase(t, agentdef.HarnessCodex, "gpt-6-pro", mixedCalls, []wantJob{
-			{"fast", "gpt-6-codex-mini", "medium"},
-			{"fast", "gpt-6-codex-mini", "medium"},
-			{"standard", "gpt-6-codex", "medium"},
+	t.Run("codex_default_effort_only", func(t *testing.T) {
+		runTierCase(t, agentdef.HarnessCodex, "gpt-6-pro", "", nil, nil, mixedCalls, []wantJob{
+			{"fast", "gpt-6-pro", "low"},
+			{"fast", "gpt-6-pro", "low"},
+			{"standard", "gpt-6-pro", "medium"},
 			{"deep", "gpt-6-pro", "high"},
 		})
 	})
-	t.Run("antigravity_orchestrator_neon_parent", func(t *testing.T) {
-		runTierCase(t, agentdef.HarnessAntigravity, "gemini-pro-orchestrator-neon", mixedCalls, []wantJob{
-			{"fast", "gemini-3.8-flash", "low"},
-			{"fast", "gemini-3.8-flash", "low"},
-			{"standard", "gemini-4-carbon", "medium"},
+	t.Run("antigravity_orchestrator_neon_default_effort_only", func(t *testing.T) {
+		runTierCase(t, agentdef.HarnessAntigravity, "gemini-pro-orchestrator-neon", "", nil, nil, mixedCalls, []wantJob{
+			{"fast", "gemini-4-neon", "low"},
+			{"fast", "gemini-4-neon", "low"},
+			{"standard", "gemini-4-neon", "medium"},
 			{"deep", "gemini-4-neon", "high"},
 		})
 	})
 
-	t.Run("claude_standard_parent_caps_deep", func(t *testing.T) {
-		runTierCase(t, agentdef.HarnessClaudeCode, "sonnet", cappedCalls, []wantJob{
+	// Custom Antigravity ladder: Carbon (deep) -> Neon (standard) -> Hydrogen (fast).
+	agyLadder := json.RawMessage(`{"antigravity":{"deep":"gemini-4-carbon","standard":"gemini-4-neon","fast":"gemini-4-hydrogen"}}`)
+	t.Run("antigravity_custom_ladder_carbon_parent", func(t *testing.T) {
+		runTierCase(t, agentdef.HarnessAntigravity, "gemini-pro-orchestrator", "", nil, agyLadder, mixedCalls, []wantJob{
+			{"fast", "gemini-4-hydrogen", "low"},
+			{"fast", "gemini-4-hydrogen", "low"},
+			{"standard", "gemini-4-neon", "medium"},
+			{"deep", "gemini-4-carbon", "high"},
+		})
+	})
+	t.Run("antigravity_custom_ladder_neon_parent_caps_deep", func(t *testing.T) {
+		runTierCase(t, agentdef.HarnessAntigravity, "gemini-4-neon", "", nil, agyLadder, cappedCalls, []wantJob{
+			{"fast", "gemini-4-hydrogen", "low"},
+			{"standard", "gemini-4-neon", "medium"},
+		})
+	})
+
+	// Custom Claude ladder: Fable -> Sonnet -> Haiku.
+	claudeLadder := json.RawMessage(`{"claude-code":{"deep":"fable","standard":"sonnet","fast":"haiku"}}`)
+	t.Run("claude_custom_ladder_sonnet_caps_deep", func(t *testing.T) {
+		runTierCase(t, agentdef.HarnessClaudeCode, "sonnet", "", nil, claudeLadder, cappedCalls, []wantJob{
 			{"fast", "haiku", ""},
 			{"standard", "sonnet", "medium"},
 		})
 	})
-	t.Run("codex_standard_parent_caps_deep", func(t *testing.T) {
-		runTierCase(t, agentdef.HarnessCodex, "gpt-6-codex", cappedCalls, []wantJob{
-			{"fast", "gpt-6-codex-mini", "medium"},
-			{"standard", "gpt-6-codex", "medium"},
-		})
-	})
-	t.Run("antigravity_standard_parent_caps_deep", func(t *testing.T) {
-		runTierCase(t, agentdef.HarnessAntigravity, "gemini-4-carbon", cappedCalls, []wantJob{
-			{"fast", "gemini-3.8-flash", "low"},
-			{"standard", "gemini-4-carbon", "medium"},
+
+	// Turning subagent_tier_routing off restores exact pre-tier behavior even when custom rules exist:
+	// helper keeps parent model and effort verbatim; explorer uses legacy default.
+	off := false
+	t.Run("tier_routing_off_restores_legacy_behavior", func(t *testing.T) {
+		runTierCase(t, agentdef.HarnessCodex, "gpt-6-pro", "xhigh", &off, json.RawMessage(`{"codex":{"deep":"gpt-6-pro","fast":"gpt-6-codex-mini"}}`), []map[string]string{
+			{"type": agentdef.ExplorerAgent, "tier": "deep", "role": "Search", "reason": "check model routing", "prompt": "REPORT_MODEL"},
+			{"type": agentdef.HelperAgent, "tier": "fast", "role": "Helper", "reason": "check model routing", "prompt": "REPORT_MODEL"},
+		}, []wantJob{
+			{"", "gpt-5-mini", ""},
+			{"", "gpt-6-pro", "xhigh"},
 		})
 	})
 }

@@ -458,6 +458,38 @@ func TestRunSubagentTierPersistenceAndCeiling(t *testing.T) {
 	}
 	deps := Deps{Q: q, Runs: svc}
 
+	// 1. Default workspace mode: effort-only scaling on the parent model (no cross-model switch).
+	doneEffortOnly := make(chan store.SubagentJob, 1)
+	go func() {
+		for {
+			if j, err := q.ClaimNextSubagentJob(ctx, run.ID); err == nil {
+				_ = q.CompleteSubagentJob(ctx, store.CompleteSubagentJobParams{ID: j.ID, ResultText: "ok"})
+				doneEffortOnly <- j
+				return
+			}
+			time.Sleep(15 * time.Millisecond)
+		}
+	}()
+	effortRes, err := ByName["run_subagent"].call(ctx, deps, c, json.RawMessage(`{"type":"helper","tier":"fast","role":"Quick Search","reason":"Read callers before editing.","prompt":"search"}`))
+	if err != nil {
+		t.Fatalf("default effort-only run_subagent: %v", err)
+	}
+	effortJob := <-doneEffortOnly
+	if effortJob.Tier != "fast" || effortJob.RequestedTier != "fast" || effortJob.Model != "sonnet" || effortJob.Effort != "low" {
+		t.Fatalf("default effort-only job = %+v, want tier=fast model=sonnet effort=low", effortJob)
+	}
+	if er := effortRes.(map[string]any); er["model"] != "sonnet" || er["effort"] != "low" || er["tier"] != "fast" {
+		t.Fatalf("default effort-only output = %#v", er)
+	}
+
+	// 2. Configure a per-harness Claude ladder: deep requests on a sonnet parent cap at standard (sonnet, medium).
+	if err := q.SetWorkspaceRunnerSettings(ctx, store.SetWorkspaceRunnerSettingsParams{
+		ID:                 ws,
+		SubagentTierModels: json.RawMessage(`{"claude-code":{"fast":"haiku","standard":"sonnet","deep":"fable"}}`),
+	}); err != nil {
+		t.Fatalf("SetWorkspaceRunnerSettings ladder: %v", err)
+	}
+
 	// Single call requesting deep on a standard parent is capped at standard (sonnet, medium).
 	doneSingle := make(chan store.SubagentJob, 1)
 	go func() {
@@ -522,6 +554,47 @@ func TestRunSubagentTierPersistenceAndCeiling(t *testing.T) {
 		t.Fatalf("batch results = %#v", br)
 	}
 
+	// 3. Turning subagent_tier_routing off restores exact pre-tier behavior: helper inherits parent model/effort verbatim,
+	// explorer uses DefaultExplorerModel, and tier/requested_tier remain empty.
+	off := false
+	if err := q.SetWorkspaceRunnerSettings(ctx, store.SetWorkspaceRunnerSettingsParams{
+		ID:                  ws,
+		SubagentTierRouting: &off,
+	}); err != nil {
+		t.Fatalf("SetWorkspaceRunnerSettings off: %v", err)
+	}
+	doneLegacy := make(chan []store.SubagentJob, 1)
+	go func() {
+		var claimed []store.SubagentJob
+		for len(claimed) < 2 {
+			if j, err := q.ClaimNextSubagentJob(ctx, run.ID); err == nil {
+				_ = q.CompleteSubagentJob(ctx, store.CompleteSubagentJobParams{ID: j.ID, ResultText: "legacy:" + j.AgentType})
+				claimed = append(claimed, j)
+				continue
+			}
+			time.Sleep(15 * time.Millisecond)
+		}
+		doneLegacy <- claimed
+	}()
+	legacyRes, err := ByName["run_subagents"].call(ctx, deps, c, json.RawMessage(`{"tasks":[
+		{"type":"explorer","tier":"deep","role":"Explorer","reason":"Check explorer legacy default.","prompt":"l0"},
+		{"type":"helper","tier":"fast","role":"Helper","reason":"Check helper legacy inheritance.","prompt":"l1"}
+	]}`))
+	if err != nil {
+		t.Fatalf("legacy off run_subagents: %v", err)
+	}
+	legacyJobs := <-doneLegacy
+	if legacyJobs[0].Tier != "" || legacyJobs[0].RequestedTier != "" || legacyJobs[0].Model != agentdef.DefaultExplorerModel || legacyJobs[0].Effort != "" {
+		t.Fatalf("legacy off explorer job = %+v", legacyJobs[0])
+	}
+	if legacyJobs[1].Tier != "" || legacyJobs[1].RequestedTier != "" || legacyJobs[1].Model != "sonnet" || legacyJobs[1].Effort != "high" {
+		t.Fatalf("legacy off helper job = %+v", legacyJobs[1])
+	}
+	lr := legacyRes.(map[string]any)["results"].([]map[string]any)
+	if lr[0]["tier"] != nil || lr[0]["requested_tier"] != nil || lr[1]["tier"] != nil || lr[1]["requested_tier"] != nil {
+		t.Fatalf("legacy off tool results should omit tier/requested_tier: %#v", lr)
+	}
+
 	evs, err := q.ListRunEvents(ctx, store.ListRunEventsParams{RunID: run.ID, Seq: 0})
 	if err != nil {
 		t.Fatal(err)
@@ -537,8 +610,8 @@ func TestRunSubagentTierPersistenceAndCeiling(t *testing.T) {
 			queuedByID[id] = pl
 		}
 	}
-	if len(queuedByID) != 3 {
-		t.Fatalf("subagent_queued events = %d, want 3", len(queuedByID))
+	if len(queuedByID) != 6 {
+		t.Fatalf("subagent_queued events = %d, want 6", len(queuedByID))
 	}
 	qSingle := queuedByID[singleJob.ID.String()]
 	if qSingle["reason"] != "Check lock ordering across stores." || qSingle["requested_tier"] != "deep" ||

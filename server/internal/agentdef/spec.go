@@ -243,9 +243,15 @@ const (
 	HelperPrompt      = "Do the task in your brief and nothing else. You can't ask follow-up questions, so make reasonable assumptions and say which. Finish with a short report: what you found or changed, with file:line references, and what you couldn't do. Never paste whole files."
 )
 
+// OptionSubagentTierRouting ("false" disables tier routing for subagents)
+// lets a workspace turn off automatic tier selection so helper/explorer
+// subagents fall back to exact pre-tier behavior.
+const OptionSubagentTierRouting = "subagent_tier_routing"
+
 // Subagent tiers let the parent pick speed vs depth per delegated task without
-// naming vendor-specific model slugs; the catalog resolver maps them to a
-// model and effort within the parent's harness, capped at the parent's tier.
+// naming vendor-specific model slugs; the catalog resolver scales effort by
+// default or maps tiers via workspace rules within the parent's harness,
+// capped at the parent's tier.
 const (
 	SubagentTierFast     = "fast"
 	SubagentTierStandard = "standard"
@@ -276,10 +282,14 @@ func SubagentGuide(spec Resolved) string {
 	}
 	guide := "Start in-turn subagents with Vesper's MCP tools: " + roster + ". " +
 		"Use them when work splits into independent parts you can run in parallel, or when answering means reading across many files and you only need the conclusion; their output stays out of your context. " +
-		"Use " + singleRef + " for a single subagent, and always use " + batchRef + " with a `tasks` array when launching 2 or more subagents in parallel—Vesper enqueues the whole batch at once, runs them concurrently up to the workspace's limit, and returns every report before your turn continues. Never end your turn waiting for background work. " +
-		"Pick each task's `tier` to fit the work (within your harness, capped at your own tier): `fast` for search, reading, summaries, mechanical edits, or running tests" + fastNote + "; `standard` for well-scoped implementation, tests, or routine review (default for `" + HelperAgent + "`); `deep` only for hard debugging, subtle concurrency/security/architecture review, or ambiguous multi-file design. " +
-		"Include a brief 1-sentence `reason` explaining why you are spawning each subagent and why that tier fits. " +
-		"Do the work yourself when it's a handful of tool calls or you already know where to look. A subagent knows only its prompt, so make each brief self-contained."
+		"Use " + singleRef + " for a single subagent, and always use " + batchRef + " with a `tasks` array when launching 2 or more subagents in parallel—Vesper enqueues the whole batch at once, runs them concurrently up to the workspace's limit, and returns every report before your turn continues. Never end your turn waiting for background work. "
+	if SubagentTierRoutingOn(spec) {
+		guide += "Pick each task's `tier` to fit the work (scales reasoning effort by default, or follows your workspace's model ladder when configured, capped at your own tier): `fast` for search, reading, summaries, mechanical edits, or running tests" + fastNote + "; `standard` for well-scoped implementation, tests, or routine review (default for `" + HelperAgent + "`); `deep` only for hard debugging, subtle concurrency/security/architecture review, or ambiguous multi-file design. " +
+			"Include a brief 1-sentence `reason` explaining why you are spawning each subagent and why that tier fits. "
+	} else {
+		guide += "Include a brief 1-sentence `reason` explaining why you are spawning each subagent. "
+	}
+	guide += "Do the work yourself when it's a handful of tool calls or you already know where to look. A subagent knows only its prompt, so make each brief self-contained."
 	if spec.Harness == HarnessAntigravity {
 		guide += " Separate MCP tool calls serialize on Antigravity, so always batch parallel subagents in one `mcp_lazyagents_run_subagents` call. Do not use Antigravity's built-in `invoke_subagent`, `define_subagent`, `manage_subagents`, `swarm`, `run_workflow`, or `schedule` tools—always use `mcp_lazyagents_run_subagent` / `mcp_lazyagents_run_subagents` instead."
 	}
@@ -287,6 +297,12 @@ func SubagentGuide(spec Resolved) string {
 		guide += " Helpers share your checkout: never give two of them edits to the same files, and check what they changed before you rely on it."
 	}
 	return guide
+}
+
+// SubagentTierRoutingOn reports whether tier routing instructions and tier
+// resolution are enabled for this run.
+func SubagentTierRoutingOn(spec Resolved) bool {
+	return SubagentsOn(spec) && spec.HarnessOptions[OptionSubagentTierRouting] != "false"
 }
 
 // SubagentsOn reports whether a run gets Vesper MCP sub agents: the option
