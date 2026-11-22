@@ -253,9 +253,17 @@ func SubagentGuide(spec Resolved) string {
 	if ExplorerOn(spec) {
 		roster = "`" + ExplorerAgent + "` for broad read-only code searches, " + roster
 	}
-	guide := "You can start sub agents with `run_subagent`: " + roster + ". " +
-		"Use them when the work splits into independent parts you can run in parallel, or when answering means reading across many files and you only need the conclusion; their output stays out of your context. " +
-		"Do the work yourself when it's a handful of tool calls or you already know where to look. A sub agent knows only its prompt, so make the brief complete."
+	toolRef := "`run_subagent`"
+	if spec.Harness == HarnessAntigravity {
+		toolRef = "`run_subagent` (declared as `mcp_lazyagents_run_subagent`)"
+	}
+	guide := "Start in-turn subagents with Vesper's MCP tool " + toolRef + ": " + roster + ". " +
+		"Use them when work splits into independent parts you can run in parallel, or when answering means reading across many files and you only need the conclusion; their output stays out of your context. " +
+		"To parallelize, emit multiple `run_subagent` calls in the same turn—Vesper runs them concurrently and returns every report before your turn continues. Never end your turn waiting for background work. " +
+		"Do the work yourself when it's a handful of tool calls or you already know where to look. A subagent knows only its prompt, so make each brief self-contained."
+	if spec.Harness == HarnessAntigravity {
+		guide += " Do not use Antigravity's built-in `invoke_subagent`, `define_subagent`, `manage_subagents`, `swarm`, `run_workflow`, or `schedule` tools—always use `mcp_lazyagents_run_subagent` instead."
+	}
 	if spec.HarnessOptions["readonly"] != "true" && spec.Mode("repo:write") != Denied {
 		guide += " Helpers share your checkout: never give two of them edits to the same files, and check what they changed before you rely on it."
 	}
