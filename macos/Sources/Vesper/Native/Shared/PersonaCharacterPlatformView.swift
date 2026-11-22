@@ -4,18 +4,22 @@ import SwiftUI
 import VesperCore
 import WebKit
 
-/// Single pooled `WKWebView` for the active turn's live animated persona character (`active: true`)
-/// plus a single offscreen snapshotter and `NSCache` for all inactive character views (`active: false`).
-/// Never creates per-row web views.
+/// A few pooled `WKWebView`s for live animated persona characters (`active: true`), plus a single
+/// offscreen snapshotter and `NSCache` for all inactive character views (`active: false`).
+/// Never creates per-row web views: only views that ask to be live get one, and at most
+/// `maxLiveCharacters` at a time.
 @MainActor
 @Observable
 final class PersonaCharacterPool {
     static let shared = PersonaCharacterPool()
 
-    /// Owner whose live `WKWebView` has loaded and owns the active slot.
-    /// Observed by `PersonaCharacterView` so the underlying static snapshot hides only once
-    /// the live web view is ready, avoiding both ghosting and blank frames.
-    private(set) var displayedLiveOwnerID: UUID?
+    /// A chat shows at most its header and its live turn card (or its greeting) at once.
+    static let maxLiveCharacters = 3
+
+    /// Owners whose live `WKWebView` has loaded. Observed by `PersonaCharacterView` so its
+    /// static snapshot hides only once the live web view is ready, avoiding both ghosting and
+    /// blank frames.
+    private(set) var displayedLiveOwnerIDs: Set<UUID> = []
 
     @ObservationIgnored private let snapshotCache = NSCache<NSString, NSImage>()
     @ObservationIgnored private var inFlightSnapshots: [String: Task<NSImage?, Never>] = [:]
@@ -24,16 +28,11 @@ final class PersonaCharacterPool {
     @ObservationIgnored private var snapshotContinuation: CheckedContinuation<Bool, Never>?
     @ObservationIgnored private var snapshotTimeoutTask: Task<Void, Never>?
 
-    @ObservationIgnored private var activeOwnerID: UUID?
-    @ObservationIgnored private var activeContentKey: String?
-    @ObservationIgnored private var liveContentLoaded = false
+    @ObservationIgnored private var liveSlots: [UUID: LiveSlot] = [:]
+    /// Web views of detached owners, kept for the next one instead of being rebuilt.
+    @ObservationIgnored private var spareSlots: [LiveSlot] = []
 
-    @ObservationIgnored private lazy var liveNavDelegate = CharacterNavigationDelegate()
     @ObservationIgnored private lazy var snapshotNavDelegate = CharacterNavigationDelegate()
-
-    @ObservationIgnored private lazy var liveWebView: ClickThroughCharacterWebView = {
-        makeHardenedWebView(delegate: liveNavDelegate)
-    }()
 
     @ObservationIgnored private var snapshotWindow: NSWindow?
     @ObservationIgnored private lazy var snapshotWebView: ClickThroughCharacterWebView = {
@@ -44,7 +43,24 @@ final class PersonaCharacterPool {
         snapshotCache.countLimit = 256
     }
 
-    // MARK: - Live Pooled WebView Ownership
+    func isShowingLive(_ ownerID: UUID) -> Bool {
+        displayedLiveOwnerIDs.contains(ownerID)
+    }
+
+    // MARK: - Live Pooled WebViews
+
+    @MainActor
+    private final class LiveSlot {
+        let webView: ClickThroughCharacterWebView
+        let delegate: CharacterNavigationDelegate
+        var contentKey: String?
+        var loaded = false
+
+        init(webView: ClickThroughCharacterWebView, delegate: CharacterNavigationDelegate) {
+            self.webView = webView
+            self.delegate = delegate
+        }
+    }
 
     func attachLiveWebView(
         to container: NSView,
@@ -55,30 +71,32 @@ final class PersonaCharacterPool {
         clipped: Bool,
         reduceMotion: Bool
     ) {
-        let previousOwnerID = activeOwnerID
+        let isNewOwner = liveSlots[ownerID] == nil
+        // A full pool leaves a new owner on its snapshot rather than taking another owner's
+        // web view, which that owner would take back on its next update.
+        guard let slot = liveSlots[ownerID] ?? claimSlot(for: ownerID) else { return }
+
         let effectiveState: CharacterState = reduceMotion ? .staticState : state
         let contentKey = "\(PersonaCharacterSanitizer.cacheKey(svg: svg, color: color, state: effectiveState, pixelSize: 0, clipped: clipped))|\(reduceMotion ? 1 : 0)"
 
-        activeOwnerID = ownerID
-        if liveWebView.superview !== container {
-            liveWebView.removeFromSuperview()
-            liveWebView.frame = container.bounds
-            liveWebView.autoresizingMask = [.width, .height]
-            container.addSubview(liveWebView)
+        if slot.webView.superview !== container {
+            slot.webView.removeFromSuperview()
+            slot.webView.frame = container.bounds
+            slot.webView.autoresizingMask = [.width, .height]
+            container.addSubview(slot.webView)
         }
 
-        let reuseAlreadyLoaded = activeContentKey == contentKey
+        let reuseAlreadyLoaded = slot.contentKey == contentKey
         if !reuseAlreadyLoaded {
-            activeContentKey = contentKey
-            liveContentLoaded = false
-            liveNavDelegate.onLoadComplete = { [weak self] ok in
-                guard let self, self.activeContentKey == contentKey else { return }
+            slot.contentKey = contentKey
+            slot.loaded = false
+            slot.delegate.onLoadComplete = { [weak self, weak slot] ok in
+                guard let self, let slot, slot.contentKey == contentKey, self.liveSlots[ownerID] === slot else { return }
+                slot.loaded = ok
                 if ok {
-                    self.liveContentLoaded = true
-                    self.displayedLiveOwnerID = self.activeOwnerID
+                    self.displayedLiveOwnerIDs.insert(ownerID)
                 } else {
-                    self.liveContentLoaded = false
-                    self.displayedLiveOwnerID = nil
+                    self.displayedLiveOwnerIDs.remove(ownerID)
                 }
             }
             let html = PersonaCharacterSanitizer.renderHTML(
@@ -88,33 +106,49 @@ final class PersonaCharacterPool {
                 clipped: clipped,
                 reduceMotion: reduceMotion
             ) ?? ""
-            liveWebView.loadHTMLString(html, baseURL: nil)
+            slot.webView.loadHTMLString(html, baseURL: nil)
         }
 
-        if previousOwnerID != ownerID {
-            let alreadyLoaded = reuseAlreadyLoaded && liveContentLoaded
+        if isNewOwner {
+            let alreadyLoaded = reuseAlreadyLoaded && slot.loaded
             // Defer observable state mutations outside SwiftUI's updateNSView pass.
             Task { @MainActor [weak self] in
-                guard let self, self.activeOwnerID == ownerID else { return }
+                guard let self, self.liveSlots[ownerID] === slot else { return }
                 if alreadyLoaded {
-                    self.displayedLiveOwnerID = ownerID
-                } else if self.displayedLiveOwnerID != ownerID {
-                    self.displayedLiveOwnerID = nil
+                    self.displayedLiveOwnerIDs.insert(ownerID)
+                } else {
+                    self.displayedLiveOwnerIDs.remove(ownerID)
                 }
             }
         }
     }
 
     func detachLiveWebView(ownerID: UUID, from container: NSView) {
-        guard activeOwnerID == ownerID else { return }
-        activeOwnerID = nil
-        if liveWebView.superview === container {
-            liveWebView.removeFromSuperview()
+        guard let slot = liveSlots.removeValue(forKey: ownerID) else { return }
+        if slot.webView.superview === container {
+            slot.webView.removeFromSuperview()
         }
+        slot.delegate.onLoadComplete = nil
+        spareSlots.append(slot)
         Task { @MainActor [weak self] in
-            guard let self, self.activeOwnerID == nil else { return }
-            self.displayedLiveOwnerID = nil
+            guard let self, self.liveSlots[ownerID] == nil else { return }
+            self.displayedLiveOwnerIDs.remove(ownerID)
         }
+    }
+
+    private func claimSlot(for ownerID: UUID) -> LiveSlot? {
+        guard liveSlots.count < Self.maxLiveCharacters else { return nil }
+        let slot: LiveSlot
+        if let spare = spareSlots.popLast() {
+            // A load still in flight reported to the previous owner, so start it again.
+            if !spare.loaded { spare.contentKey = nil }
+            slot = spare
+        } else {
+            let delegate = CharacterNavigationDelegate()
+            slot = LiveSlot(webView: makeHardenedWebView(delegate: delegate), delegate: delegate)
+        }
+        liveSlots[ownerID] = slot
+        return slot
     }
 
     // MARK: - Cached Offscreen Snapshot Pipeline
@@ -347,7 +381,7 @@ private final class CharacterNavigationDelegate: NSObject, WKNavigationDelegate 
     }
 }
 
-/// AppKit host attaching the single pooled `WKWebView` while `PersonaCharacterView` is `active`.
+/// AppKit host attaching a pooled live `WKWebView` while `PersonaCharacterView` is `active`.
 struct PersonaCharacterPlatformHost: NSViewRepresentable {
     let ownerID: UUID
     let svg: String
