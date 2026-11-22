@@ -246,6 +246,9 @@ struct ChatScreen: View {
                     persona: activePersona,
                     lastReply: messages.last { $0.role == .assistant },
                     turnRunning: session?.state == .running,
+                    syncCompanion: {
+                        companion.observe(chatId: chatId, messages: messages, personas: personas, hostPersonaId: activePersona?.id)
+                    },
                     onSend: { body in await sendMessage(body, activePersona: activePersona, voice: true) },
                     onClose: { liveVoiceOpen = false }
                 )
