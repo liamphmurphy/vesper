@@ -67,4 +67,23 @@ public enum SidebarTree {
         if !tools.isEmpty { sections.append(AppsMenuSection(title: "Tools", apps: tools)) }
         return sections
     }
+
+    public enum AreaClickOutcome: Equatable, Sendable {
+        case navigate(String)
+        case openInNewTab(String)
+        case showAppsMenu
+    }
+
+    /// What clicking a left-sidebar area button does: ⌘-click always opens in a new tab;
+    /// clicking Apps opens its menu when custom apps or tools exist, else navigates to `/apps`.
+    public static func areaClick(
+        href: String,
+        isAppsButton: Bool = false,
+        hasApps: Bool = false,
+        commandClick: Bool
+    ) -> AreaClickOutcome {
+        if commandClick { return .openInNewTab(href) }
+        if isAppsButton && hasApps { return .showAppsMenu }
+        return .navigate(href)
+    }
 }

@@ -6,10 +6,11 @@ import VesperCore
 struct SidebarHost: View {
     let tabs: TabsModel
     let send: (NativeCommand) -> Void
+    let openInNewTab: (String) -> Void
 
     var body: some View {
         if let tab = tabs.list.active {
-            SidebarView(state: tab.state, send: send).id(ObjectIdentifier(tab))
+            SidebarView(state: tab.state, send: send, openInNewTab: openInNewTab).id(ObjectIdentifier(tab))
         }
     }
 }
@@ -25,6 +26,11 @@ private struct SidebarScrollTarget: Equatable, Sendable {
 struct SidebarView: View {
     let state: ShellState
     let send: (NativeCommand) -> Void
+    let openInNewTab: (String) -> Void
+
+    static func isCommandClick() -> Bool {
+        NSEvent.modifierFlags.contains(.command) || NSApp.currentEvent?.modifierFlags.contains(.command) == true
+    }
 
     private var scrollTarget: SidebarScrollTarget? {
         guard let nav = state.navigator, let selected = nav.selectedId else { return nil }
@@ -40,7 +46,7 @@ struct SidebarView: View {
     var body: some View {
         let shell = state.shell ?? ShellState.fallbackShell
         VStack(spacing: 0) {
-            AreaBar(shell: shell, current: state.currentArea, send: send)
+            AreaBar(shell: shell, current: state.currentArea, send: send, openInNewTab: openInNewTab)
             if let customSidebar = state.nativeSidebar {
                 customSidebar
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -90,9 +96,10 @@ struct SidebarView: View {
             },
             set: { id in
                 guard let id, let nav = state.navigator, id != nav.selectedId else { return }
-                state.noteActivate(id)
                 // ⌘-click opens the row in a new tab (as in Safari); the page decides, since it knows the href.
-                let newTab = NSApp.currentEvent?.modifierFlags.contains(.command) == true
+                let newTab = Self.isCommandClick()
+                if newTab, state.recentlyActivated(id) { return }
+                state.noteActivate(id)
                 send(.navActivate(navigatorId: nav.id, itemId: id, newTab: newTab))
             })
     }
@@ -106,27 +113,66 @@ private struct AreaBar: View {
     let shell: ShellModel
     let current: AreaId?
     let send: (NativeCommand) -> Void
+    let openInNewTab: (String) -> Void
 
     var body: some View {
         HStack(spacing: 2) {
             ForEach(shell.areas) { area in
                 AreaButton(label: area.label, symbol: SidebarIcons.symbolName(area.icon), badge: area.badge, selected: current == area.id) {
-                    send(.navigate(path: area.href))
+                    activate(href: area.href)
+                }
+                .contextMenu {
+                    Button {
+                        openInNewTab(area.href)
+                    } label: {
+                        Label("Open in New Tab", systemImage: SidebarIcons.symbolName("external"))
+                    }
                 }
             }
             AreaButton(label: "Apps", symbol: SidebarIcons.symbolName("dashboard"), badge: nil, selected: current == .apps) {
-                if shell.apps.isEmpty { send(.navigate(path: "/apps")) } else { popUpAppsMenu() }
+                activate(href: "/apps", isAppsButton: true)
+            }
+            .contextMenu {
+                Button {
+                    openInNewTab("/apps")
+                } label: {
+                    Label("Open in New Tab", systemImage: SidebarIcons.symbolName("external"))
+                }
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
     }
 
+    private func activate(href: String, isAppsButton: Bool = false) {
+        switch SidebarTree.areaClick(
+            href: href,
+            isAppsButton: isAppsButton,
+            hasApps: !shell.apps.isEmpty,
+            commandClick: SidebarView.isCommandClick()
+        ) {
+        case .navigate(let path):
+            send(.navigate(path: path))
+        case .openInNewTab(let path):
+            openInNewTab(path)
+        case .showAppsMenu:
+            popUpAppsMenu()
+        }
+    }
+
+    private func openMenuPath(_ path: String) {
+        if SidebarView.isCommandClick() {
+            openInNewTab(path)
+        } else {
+            send(.navigate(path: path))
+        }
+    }
+
     /// Custom Apps (the /apps page), then your apps and the tools as grouped items.
     private func popUpAppsMenu() {
         let menu = NSMenu()
         menu.autoenablesItems = false
-        let hub = ClosureMenuItem(title: "Custom Apps", handler: { _ in send(.navigate(path: "/apps")) }, id: "apps")
+        let hub = ClosureMenuItem(title: "Custom Apps", handler: { _ in openMenuPath("/apps") }, id: "apps")
         hub.image = SidebarIcons.image("dashboard")
         menu.addItem(hub)
         for section in SidebarTree.appsMenuSections(shell.apps) {
@@ -135,7 +181,7 @@ private struct AreaBar: View {
             header.isEnabled = false
             menu.addItem(header)
             for app in section.apps {
-                let item = ClosureMenuItem(title: app.label, handler: { _ in send(.navigate(path: app.href)) }, id: app.id)
+                let item = ClosureMenuItem(title: app.label, handler: { _ in openMenuPath(app.href) }, id: app.id)
                 item.image = SidebarIcons.image(app.icon)
                 menu.addItem(item)
             }
@@ -568,8 +614,17 @@ private struct NavRow: View {
 
     private var label: some View {
         NavRowLabel(item: item)
+            .contentShape(Rectangle())
             .selectionDisabled(item.disabled == true)
             .disabled(item.disabled == true)
+            .simultaneousGesture(
+                TapGesture().modifiers(.command).onEnded {
+                    guard item.disabled != true else { return }
+                    guard !state.recentlyActivated(item.id) else { return }
+                    state.noteActivate(item.id)
+                    send(.navActivate(navigatorId: nav.id, itemId: item.id, newTab: true))
+                }
+            )
             .contextMenu {
                 if let menu = item.contextMenu, !menu.isEmpty {
                     MenuItems(items: menu) { id in
