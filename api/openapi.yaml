@@ -11108,7 +11108,7 @@ components:
         Its tone and custom instructions shape the assistant's voice in chats
         only; they never change scopes, tools or memory rules. Only the
         structured capabilities (and repos) widen what its chats may do.
-      required: [id, name, tone, color, custom_instructions, capabilities, repos, is_default, chat_count, in_chat_list, work, reveal_pace, voice, revision, created_at, updated_at]
+      required: [id, name, tone, color, custom_instructions, capabilities, repos, is_default, chat_count, in_chat_list, work, reveal_pace, voice, loop_seconds, revision, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
@@ -11127,6 +11127,7 @@ components:
         state_media: { $ref: "#/components/schemas/PersonaStateMediaSummary", description: "Photorealistic state loops; absent when none has been generated" }
         reveal_pace: { $ref: "#/components/schemas/PersonaRevealPace" }
         voice: { $ref: "#/components/schemas/PersonaVoice" }
+        loop_seconds: { type: integer, minimum: 4, maximum: 10, description: "Length of each state loop; Omni loops (pins first and last frames) only up to 10s" }
         custom_instructions: { type: string }
         capabilities: { $ref: "#/components/schemas/PersonaCapabilities" }
         repos: { type: array, maxItems: 10, items: { type: string }, deprecated: true, description: "Legacy repository favorites and first-chat default; never an access allowlist. Use shared repository sources for discovery." }
@@ -11259,6 +11260,7 @@ components:
       required: [revision]
       properties:
         revision: { type: integer }
+        loop_seconds: { type: integer, minimum: 4, maximum: 10, description: "Applies to loops generated from now on" }
         voice_mode: { $ref: "#/components/schemas/PersonaVoiceMode" }
         voice_name: { type: string, maxLength: 60, description: "Empty for the provider's default voice" }
         voice_style: { type: string, maxLength: 200 }

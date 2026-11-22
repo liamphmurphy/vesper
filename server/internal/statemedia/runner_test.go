@@ -62,7 +62,10 @@ func TestNormPortraitBoundsAndFlattens(t *testing.T) {
 func TestPromptsLockTheLoop(t *testing.T) {
 	seen := map[string]bool{}
 	for _, s := range States {
-		p := Prompt(s)
+		p := Prompt(s, 8)
+		if !strings.Contains(p, "8 second seamless loop") {
+			t.Errorf("%s prompt doesn't state the loop length: %q", s, p)
+		}
 		if !strings.Contains(p, ChromaHex) || !strings.Contains(p, "first and last frames") || !strings.Contains(p, "static camera") {
 			t.Errorf("%s prompt misses a loop constraint: %q", s, p)
 		}
@@ -71,7 +74,7 @@ func TestPromptsLockTheLoop(t *testing.T) {
 		}
 		seen[p] = true
 	}
-	if p := TweakPrompt(StateIdle, "  slower  "); !strings.HasPrefix(p, Prompt(StateIdle)) || !strings.HasSuffix(p, " Additional direction: slower") {
+	if p := TweakPrompt(StateIdle, 8, "  slower  "); !strings.HasPrefix(p, Prompt(StateIdle, 8)) || !strings.HasSuffix(p, " Additional direction: slower") {
 		t.Errorf("tweak prompt = %q", p)
 	}
 	if _, err := normStates([]State{"idle", "idle", "coding"}); err != nil {

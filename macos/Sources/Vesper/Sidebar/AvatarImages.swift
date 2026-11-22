@@ -54,8 +54,8 @@ final class AvatarImages {
         return (data, Int(http.value(forHTTPHeaderField: "X-Speech-Words") ?? "") ?? 0)
     }
 
-    /// Loops are capped at 6 MB on the server; leave headroom for a future bump.
-    private static let maxLoopBytes = 12 * 1024 * 1024
+    /// A 10s loop is budgeted at 14 MB on the server; this leaves headroom.
+    private static let maxLoopBytes = 20 * 1024 * 1024
 
     private nonisolated static func fetch(_ url: URL, conn: Connection, maxBytes: Int, timeout: TimeInterval) async -> Data? {
         await fetchResponse(url, conn: conn, maxBytes: maxBytes, timeout: timeout, type: "image/")?.data

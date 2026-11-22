@@ -33,18 +33,20 @@ import (
 const (
 	// MaxTweakRunes bounds a follow-up edit instruction.
 	MaxTweakRunes = 1000
-	// ClipSeconds is each loop's length. Long enough for a breath and a blink,
-	// short enough to stay a few megabytes as Animated WebP.
-	ClipSeconds = 4
+	// DefaultLoopSeconds is a loop's length when the persona row doesn't say
+	// (personas.loop_seconds, 4-10). Omni bookends only clips of 3-10s.
+	DefaultLoopSeconds = 8
 	// AspectRatio is the provider's portrait format; looppack keeps it.
 	AspectRatio = "9:16"
 	// LoopWidth and LoopHeight are the packed size: 9:16 at a size that stays
 	// sharp on a Retina companion stage of about 180x320 points.
 	LoopWidth  = 360
 	LoopHeight = 640
-	LoopFPS    = 24
-	// MaxLoopBytes keeps a full set of six loops under about 40 MB.
-	MaxLoopBytes = 6 << 20
+	// LoopFPS is smooth for micro-motion and keeps a 10s loop to 200 frames.
+	LoopFPS = 20
+	// loopBytesPerSecond budgets a loop by its length (looppack lowers quality
+	// to fit): 8s is 11 MB, 10s 14 MB, so a full set of eight stays near 100 MB.
+	loopBytesPerSecond = 1400 << 10
 	// headCropSize is the square head-crop PNG used for small avatars.
 	headCropSize = 256
 	// portraitSide bounds the portrait sent as the first and last frame.
@@ -143,9 +145,10 @@ func (r *Runner) Cancel(jobs ...uuid.UUID) {
 }
 
 type attempt struct {
-	state  State
-	job    uuid.UUID
-	prompt string
+	state   State
+	job     uuid.UUID
+	prompt  string
+	seconds int
 }
 
 // Start validates the request, queues a new attempt for each state (keeping
@@ -186,7 +189,7 @@ func (r *Runner) Start(ctx context.Context, in StartInput) ([]store.PersonaState
 	ctxs := make([]context.Context, len(states))
 	cancels := make([]context.CancelFunc, len(states))
 	for i, s := range states {
-		attempts[i] = attempt{state: s, job: uuid.Must(uuid.NewV7()), prompt: Prompt(s)}
+		attempts[i] = attempt{state: s, job: uuid.Must(uuid.NewV7())}
 		ctxs[i], cancels[i] = context.WithCancel(base)
 	}
 	cancelAll := func() {
@@ -202,11 +205,16 @@ func (r *Runner) Start(ctx context.Context, in StartInput) ([]store.PersonaState
 	var queued []store.PersonaStateMedia
 	err = pgx.BeginFunc(ctx, r.Pool, func(tx pgx.Tx) error {
 		q := store.New(tx)
-		if _, err := q.GetPersona(ctx, store.GetPersonaParams{ID: in.PersonaID, WorkspaceID: in.Owner.WorkspaceID, UserID: in.Owner.UserID}); err != nil {
+		p, err := q.GetPersona(ctx, store.GetPersonaParams{ID: in.PersonaID, WorkspaceID: in.Owner.WorkspaceID, UserID: in.Owner.UserID})
+		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return apperr.ErrNotFound
 			}
 			return err
+		}
+		seconds := int(p.LoopSeconds)
+		if seconds < 3 || seconds > 10 {
+			seconds = DefaultLoopSeconds
 		}
 		if err := q.LockPersonaStateMediaOwner(ctx, in.PersonaID); err != nil {
 			return err
@@ -226,12 +234,13 @@ func (r *Runner) Start(ctx context.Context, in StartInput) ([]store.PersonaState
 		}
 		for i, s := range states {
 			a := &attempts[i]
+			a.seconds, a.prompt = seconds, Prompt(s, seconds)
 			if tweak != "" {
 				row, ok := byState[s]
 				if !ok || row.InteractionID == nil || *row.InteractionID == "" {
 					return apperr.Invalid("tweak", "the %s loop has no earlier clip to edit; generate it first", label(s))
 				}
-				a.prompt = TweakPrompt(s, tweak)
+				a.prompt = TweakPrompt(s, seconds, tweak)
 			}
 			row, err := q.QueuePersonaStateMedia(ctx, store.QueuePersonaStateMediaParams{
 				PersonaID: in.PersonaID, State: string(s), JobID: a.job,
@@ -335,7 +344,7 @@ func (r *Runner) one(parent context.Context, persona uuid.UUID, gen media.VideoG
 		FirstFrame:  frame,
 		LastFrame:   frame,
 		AspectRatio: AspectRatio,
-		DurationSec: ClipSeconds,
+		DurationSec: a.seconds,
 	}
 	clipOut, err := gen.GenerateVideo(ctx, req, func(p media.VideoProgress) {
 		// The provider's 0-100 is the first 70% of the job; matting is the rest.
@@ -357,7 +366,7 @@ func (r *Runner) one(parent context.Context, persona uuid.UUID, gen media.VideoG
 		ChromaColor:    ChromaHex,
 		FeatherBottom:  0.08,
 		Quality:        88,
-		MaxOutputBytes: MaxLoopBytes,
+		MaxOutputBytes: a.seconds * loopBytesPerSecond,
 		HeadCropSize:   headCropSize,
 	})
 	if err != nil {

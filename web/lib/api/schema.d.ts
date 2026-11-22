@@ -10377,6 +10377,8 @@ export interface components {
             state_media?: components["schemas"]["PersonaStateMediaSummary"];
             reveal_pace: components["schemas"]["PersonaRevealPace"];
             voice: components["schemas"]["PersonaVoice"];
+            /** @description Length of each state loop; Omni loops (pins first and last frames) only up to 10s */
+            loop_seconds: number;
             custom_instructions: string;
             capabilities: components["schemas"]["PersonaCapabilities"];
             /**
@@ -10532,6 +10534,8 @@ export interface components {
         };
         PersonaPatch: {
             revision: number;
+            /** @description Applies to loops generated from now on */
+            loop_seconds?: number;
             voice_mode?: components["schemas"]["PersonaVoiceMode"];
             /** @description Empty for the provider's default voice */
             voice_name?: string;
