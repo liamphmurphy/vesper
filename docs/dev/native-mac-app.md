@@ -610,6 +610,23 @@ their link to `/dev` opens the native screen.
     Start it and Reconnect: a fresh session attaches.
 13. From a chat's ticket card with an open PR, Open in Dev workspace: `/dev` opens natively on that branch.
 
+## Native scenes and custom persona characters
+
+All 59 `ChatStatusKind` activity scenes (`56` unique definitions plus `3` split aliases: `writing-reply`, `image-view`, `design-view`) and the pooled custom SVG persona character view live natively in `VesperCore` and `Native/Shared/`:
+
+- **Activity scenes (`VesperCore/Native/` + `ActivitySceneView.swift`).** `MotionPrimitives` implements CSS easing (`linear`, `ease`, `ease-in`, `ease-out`, `ease-in-out`, `--motion-ease` `cubic-bezier(0.16, 1, 0.3, 1)`, `steps(N)`), per-property keyframe channel interpolation, and `ActivitySceneTransitioner` (`800 ms` minimum hold skipping transient kinds, `240 ms` crossfade, `600 ms` linear deceleration to `0` on stop). `SVGPathParser` parses `M/m`, `L/l`, `H/h`, `V/v`, `C/c`, `S/s`, `Q/q`, `T/t`, `A/a`, `Z/z` and trims `pathLength=1` paths for `stroke-dashoffset` animations. `ActivitySceneRenderer` draws into CoreGraphics (called by SwiftUI `Canvas` and bitmap snapshot tests), applying the theme's `ActivityScenePalette` and `blur(3px)` focus transitions, and freezing at the resting pose under Reduce Motion.
+- **Fixtures (`protocol/activity-scenes/`).** `web/scripts/activity-scene-fixtures.mjs` extracts all 59 kinds, split aliases, transition timings, and 193 scene animations from `web/lib/chat-ui.ts`, `activity-scene.tsx`, and `globals.css` into `fixtures.json`; `ActivitySceneTests` verifies 100% parity and bitmap motion/freeze snapshots for every kind. (`activity-scene.tsx` stays for the web until chat moves over.)
+- **Pooled persona characters (`PersonaCharacterSanitizer.swift`, `PersonaCharacterView.swift` + `PersonaCharacterPlatformView.swift`).** `PersonaCharacterSanitizer` ports `web/lib/svg-sanitize.ts` (`character: true`, `XMLParser` whitelist rejecting `<script>`, `<style>`, `<image>`, nested `<svg>`, external `url(...)`, and `javascript:`, prefixing IDs) and `web/lib/persona-character.ts` (`characterStateForStatus`, `characterStateForDock`, `resolveCharacterNodeStyle`), emitting self-contained HTML with CSP `default-src 'none'; style-src 'unsafe-inline'` and the `.persona-character` keyframes. `PersonaCharacterView` stays pure SwiftUI; `PersonaCharacterPlatformView` isolates the macOS `NSViewRepresentable` host and `PersonaCharacterPool`, which owns **one** live pooled `WKWebView` (JS disabled, non-persistent data store, navigation restricted to `about:blank`) for `active: true` cards, plus **one** offscreen snapshotter writing `NSImage` into `NSCache` for `active: false` list/avatar rows (`WorkPersonaAvatarView` uses `active: false` when `characterSvg` is set and `avatarUrl` is absent).
+
+Manual click-through (with `VESPER_NATIVE_DEBUG=1`), on `/native-debug/scenes`:
+
+1. Open `/native-debug/scenes`: all 59 scenes animate smoothly inside the recessed `surface-sunken` stage, matching the web's colours and split-alias notes.
+2. Click rapidly between `thinking`, `reading-code`, and `writing-code` inside 800 ms: the intermediate scene is skipped and the outgoing scene crossfades out over 240 ms once the hold ends.
+3. Toggle `Stopping (600ms wind-down)` on: the stage coasts to a stop over 600 ms and desaturates to 50% opacity; toggle off to resume.
+4. In the Pooled `PersonaCharacterView` card, switch states (`Idle` → `Thinking` → `Reading` → `Coding` → `Creating` → `Needs you`) and colours: the single live character swaps animations immediately (`data-show` sparkles/alerts toggle cleanly) while the four inactive snapshot avatars on the right render without creating additional web views.
+5. Enable System Settings → Accessibility → Display → Reduce Motion: every activity scene freezes on its resting frame and the live persona character freezes on `static`.
+6. Toggle Light/Dark and accent in Settings → Appearance: scenes re-colour live; ⌘F searches the scene grid by kind name.
+
 ## Build and test
 
 - `make -C macos test` → `swift test` (VesperCore).
