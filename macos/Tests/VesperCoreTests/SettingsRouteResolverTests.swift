@@ -20,6 +20,7 @@ final class SettingsRouteResolverTests: XCTestCase {
         XCTAssertEqual(SettingsRouteResolver.resolve("/settings?section=connectors"), .pane(pane: .connectors))
         XCTAssertEqual(SettingsRouteResolver.resolve("/settings?section=repositories"), .pane(pane: .repositories))
         XCTAssertEqual(SettingsRouteResolver.resolve("/settings?section=workspace#images"), .pane(pane: .workspace, anchor: "images"))
+        XCTAssertEqual(SettingsRouteResolver.resolve("/settings?section=workspace#media"), .pane(pane: .workspace, anchor: "media"))
         XCTAssertEqual(SettingsRouteResolver.resolve("/settings?section=runners"), .pane(pane: .runners))
         XCTAssertEqual(SettingsRouteResolver.resolve("/settings?section=dev-workspace"), .pane(pane: .devWorkspace))
         XCTAssertEqual(SettingsRouteResolver.resolve("/settings?section=spaces&space=sp1#overrides"), .pane(pane: .spaces, spaceId: "sp1", anchor: "overrides"))
@@ -36,6 +37,7 @@ final class SettingsRouteResolverTests: XCTestCase {
 
         XCTAssertEqual(SettingsRouteResolver.resolve("/settings#secrets"), .pane(pane: .secrets, secretsTab: .provider))
         XCTAssertEqual(SettingsRouteResolver.resolve("/settings#images"), .pane(pane: .workspace, anchor: "images"))
+        XCTAssertEqual(SettingsRouteResolver.resolve("/settings#media"), .pane(pane: .workspace, anchor: "media"))
         XCTAssertEqual(SettingsRouteResolver.resolve("/settings#overrides"), .pane(pane: .spaces, anchor: "overrides"))
         XCTAssertEqual(SettingsRouteResolver.resolve("/settings#%61ppearance"), .pane(pane: .appearance))
         XCTAssertEqual(SettingsRouteResolver.resolve("/settings#backup"), .pane(pane: .backups))
@@ -71,6 +73,9 @@ final class SettingsRouteResolverTests: XCTestCase {
     func testMatchesFilterUsesAllWordsCaseInsensitively() {
         XCTAssertTrue(SettingsRouteResolver.matchesPane(.appearance, title: "Appearance", query: "  dark   harness "))
         XCTAssertTrue(SettingsRouteResolver.matchesPane(.secrets, title: "Credentials & API Secrets", query: "oauth github"))
+        XCTAssertTrue(SettingsRouteResolver.matchesPane(.workspace, title: "Workspace", query: "omni video"))
+        XCTAssertTrue(SettingsRouteResolver.matchesPane(.workspace, title: "Workspace", query: "tts voice"))
+        XCTAssertTrue(SettingsRouteResolver.matchesPane(.workspace, title: "Workspace", query: "lyria music"))
         XCTAssertFalse(SettingsRouteResolver.matchesPane(.you, title: "You", query: "runner slots"))
     }
 }

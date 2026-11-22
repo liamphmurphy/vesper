@@ -98,7 +98,7 @@ public enum SettingsRouteResolver {
         .secrets: "provider credentials api secrets keys tokens oauth anthropic openai google github ssh pat",
         .connectors: "mcp servers tools oauth integration",
         .repositories: "repos github owners organizations presets discovery",
-        .workspace: "setup checklist encryption secrets_key image engine generation codex antigravity",
+        .workspace: "setup checklist encryption secrets_key image engine generation codex antigravity media providers music video omni tts voice speech lyria gemini",
         .runners: "runner backends microvm docker fake concurrency slots host folders environment test",
         .devWorkspace: "nix lazyvim neovim tmux gitconfig container ssh dev",
         .spaces: "space memory overrides skills project instructions",
@@ -236,7 +236,8 @@ public enum SettingsRouteResolver {
                 return .pane(pane: .secrets, secretsTab: secretsTab, secretId: secretId)
             }
             if section == "workspace" {
-                return .pane(pane: .workspace, anchor: normHash == "images" ? "images" : nil)
+                let anchor = (normHash == "images" || normHash == "media") ? normHash : nil
+                return .pane(pane: .workspace, anchor: anchor)
             }
             if section == "spaces" {
                 return .pane(pane: .spaces, spaceId: nonEmpty(queryValue("space", in: items)), anchor: normHash == "overrides" ? "overrides" : nil)
@@ -263,6 +264,7 @@ public enum SettingsRouteResolver {
         case "personas": return .pane(pane: .personas, personaFilter: .all)
         case "secrets": return .pane(pane: .secrets, secretsTab: .provider)
         case "images": return .pane(pane: .workspace, anchor: "images")
+        case "media": return .pane(pane: .workspace, anchor: "media")
         case "overrides": return .pane(pane: .spaces, anchor: "overrides")
         default:
             if let pane = simpleWebSections[normHash] ?? macSections[normHash] {
