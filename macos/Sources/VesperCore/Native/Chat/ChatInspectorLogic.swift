@@ -405,23 +405,13 @@ public enum ChatInspectorLogic {
         }
 
         if let threadId = input.threadMessageId, !threadId.isEmpty {
-            let props: [String: JSONValue] = [
-                "tabId": .string(threadTabId),
-                "chatId": .string(chatId),
-                "messageId": .string(threadId),
-            ]
             tabs.append(InspectorTab(
                 id: threadTabId,
                 label: "Thread",
                 icon: "branch",
-                kind: .panel,
+                kind: .native,
                 width: .regular,
-                headerActions: [InspectorAction(id: closeActionId, label: "Close thread", icon: "x")],
-                panel: InspectorLogic.makePanelSpec(
-                    kind: "chat.thread",
-                    key: "chat.thread:\(chatId):\(threadId)",
-                    props: props
-                )
+                headerActions: [InspectorAction(id: closeActionId, label: "Close thread", icon: "x")]
             ))
         }
 

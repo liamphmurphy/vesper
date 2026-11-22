@@ -133,6 +133,10 @@ final class ChatInspectorLogicTests: XCTestCase {
         XCTAssertEqual(pgTab?.busy, true)
         XCTAssertEqual(pgTab?.panel?.kind, "chat.playground")
 
+        let threadTab = model.tabs.first { $0.id == "thread" }
+        XCTAssertEqual(threadTab?.kind, .native)
+        XCTAssertNil(threadTab?.panel)
+
         let activityTab = model.tabs.first { $0.id == "activity" }
         XCTAssertEqual(activityTab?.kind, .native)
         XCTAssertEqual(activityTab?.busy, true)

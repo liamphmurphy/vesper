@@ -93,7 +93,8 @@ final class KnowledgeInspectorLogicTests: XCTestCase {
         XCTAssertEqual(model.tabs.first(where: { $0.id == "chat" })?.panel?.key, "knowledge.chat:page-1")
         XCTAssertEqual(model.tabs.first(where: { $0.id == "outline" })?.sections?.first?.aside, "2")
         XCTAssertEqual(model.tabs.first(where: { $0.id == "reviews" })?.unread, true)
-        XCTAssertEqual(model.tabs.first(where: { $0.id == "calendar" })?.panel?.kind, "knowledge.calendar")
+        XCTAssertEqual(model.tabs.first(where: { $0.id == "calendar" })?.kind, .native)
+        XCTAssertNil(model.tabs.first(where: { $0.id == "calendar" })?.panel)
     }
 
     func testBuildInspectorModelForNonMarkdownPageOmitsOutline() {

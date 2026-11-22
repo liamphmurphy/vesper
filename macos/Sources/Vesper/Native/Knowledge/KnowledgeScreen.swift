@@ -1082,6 +1082,14 @@ struct KnowledgeScreen: View {
             context.store.observe(controller.treeListRequest)
             context.sidebarView = AnyView(KnowledgeSidebarHost(context: context, controller: controller))
             context.inspectorView = { tabId in
+                if tabId == KnowledgeInspectorLogic.calendarTabId {
+                    return AnyView(
+                        KnowledgeCalendarInspectorView()
+                            .environment(context)
+                            .environment(\.vesperTheme, controller.theme)
+                            .environment(\.colorScheme, controller.colorScheme)
+                    )
+                }
                 guard let tab = KnowledgeSidePanelsView.Tab(inspectorTabId: tabId) else { return nil }
                 return AnyView(KnowledgeInspectorHost(context: context, controller: controller, tab: tab))
             }

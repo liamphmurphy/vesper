@@ -194,12 +194,6 @@ public enum KnowledgeInspectorLogic {
                     "screen": .string("Page"),
                 ]
             )
-            let calendarPanel = InspectorLogic.makePanelSpec(
-                kind: "knowledge.calendar",
-                key: "knowledge.calendar",
-                props: ["tabId": .string(calendarTabId)]
-            )
-
             var pageTabs: [InspectorTab] = [
                 InspectorTab(
                     id: chatTabId,
@@ -237,9 +231,8 @@ public enum KnowledgeInspectorLogic {
                     id: calendarTabId,
                     label: "Calendar",
                     icon: "calendar",
-                    kind: .panel,
-                    width: .regular,
-                    panel: calendarPanel
+                    kind: .native,
+                    width: .regular
                 ),
             ])
             tabs = pageTabs
@@ -256,11 +249,6 @@ public enum KnowledgeInspectorLogic {
                 key: "knowledge.chat:general",
                 props: chatProps
             )
-            let calendarPanel = InspectorLogic.makePanelSpec(
-                kind: "knowledge.calendar",
-                key: "knowledge.calendar",
-                props: ["tabId": .string(calendarTabId)]
-            )
             tabs = [
                 InspectorTab(
                     id: chatTabId,
@@ -274,9 +262,8 @@ public enum KnowledgeInspectorLogic {
                     id: calendarTabId,
                     label: "Calendar",
                     icon: "calendar",
-                    kind: .panel,
-                    width: .regular,
-                    panel: calendarPanel
+                    kind: .native,
+                    width: .regular
                 ),
             ]
         }
