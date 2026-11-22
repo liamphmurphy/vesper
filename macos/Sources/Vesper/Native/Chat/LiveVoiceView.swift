@@ -93,6 +93,8 @@ final class LiveVoiceSession {
     private(set) var ready = false
 
     @ObservationIgnored private var timer: Timer?
+    @ObservationIgnored private var reopenTask: Task<Void, Never>?
+    @ObservationIgnored private var coolingDown = false
     /// Live Voice closed, possibly while access was still being asked for.
     @ObservationIgnored private var ended = false
     @ObservationIgnored private var send: ((String) async -> String?)?
@@ -126,6 +128,9 @@ final class LiveVoiceSession {
 
     func end() {
         ended = true
+        reopenTask?.cancel()
+        reopenTask = nil
+        coolingDown = false
         timer?.invalidate()
         timer = nil
         speech.stop()
@@ -136,7 +141,9 @@ final class LiveVoiceSession {
     func follow(_ progress: ChatProgress) {
         chat = progress
         if progress.turnRunning { LiveVoiceLatencyLog.shared.markTurnRunning() }
+        let prevPhase = turn.phase
         turn.update(turnRunning: progress.turnRunning, lastReplyId: progress.lastReplyId, revealing: progress.revealing, speaking: progress.speaking)
+        scheduleReopenIfNeeded(from: prevPhase)
         syncMicrophone()
     }
 
@@ -154,6 +161,9 @@ final class LiveVoiceSession {
     /// Cuts the persona's answer short and listens again.
     func interrupt(_ companion: ChatCompanion) {
         guard turn.phase == .replying else { return }
+        reopenTask?.cancel()
+        reopenTask = nil
+        coolingDown = false
         companion.finishReveal()
         companion.stopVoice()
         turn.interrupt()
@@ -181,6 +191,9 @@ final class LiveVoiceSession {
         LiveVoiceLatencyLog.shared.markUtteranceEnd(settled: speech.settled)
         lastSaid = speech.transcript
         sendError = nil
+        reopenTask?.cancel()
+        reopenTask = nil
+        coolingDown = false
         turn.send(lastReplyId: chat.lastReplyId)
         let settling = speech.finish()
         Task {
@@ -202,15 +215,37 @@ final class LiveVoiceSession {
                 LiveVoiceLatencyLog.shared.markSent()
                 turn.sent()
                 // The chat may already have moved on while the send was in flight.
+                let prevPhase = turn.phase
                 turn.update(turnRunning: chat.turnRunning, lastReplyId: chat.lastReplyId, revealing: chat.revealing, speaking: chat.speaking)
+                scheduleReopenIfNeeded(from: prevPhase)
             }
             syncMicrophone()
         }
     }
 
-    /// The microphone is open exactly while it's the person's turn.
+    private func scheduleReopenIfNeeded(from prevPhase: LiveVoiceTurn.Phase) {
+        if turn.phase != .listening || chat.speaking || chat.revealing {
+            reopenTask?.cancel()
+            reopenTask = nil
+            coolingDown = false
+            return
+        }
+        guard prevPhase != .listening, turn.resumeCooldown > 0 else { return }
+        reopenTask?.cancel()
+        coolingDown = true
+        let delay = turn.resumeCooldown
+        reopenTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled, let self, !self.ended else { return }
+            self.coolingDown = false
+            self.reopenTask = nil
+            self.syncMicrophone()
+        }
+    }
+
+    /// The microphone is open exactly while it's the person's turn and the persona isn't speaking.
     private func syncMicrophone() {
-        let open = ready && !micPaused && turn.phase == .listening && speech.problem == nil
+        let open = ready && !micPaused && turn.phase == .listening && !coolingDown && !chat.speaking && !chat.revealing && speech.problem == nil
         if open && !speech.listening {
             speech.start()
         } else if !open && speech.listening {
@@ -229,6 +264,7 @@ struct LiveVoiceView: View {
     let persona: API.Persona?
     let lastReply: API.ChatMessage?
     let turnRunning: Bool
+    let syncCompanion: () -> Void
     let onSend: (String) async -> String?
     let onClose: () -> Void
 
@@ -265,6 +301,7 @@ struct LiveVoiceView: View {
         .task {
             // Keystrokes shouldn't land in the composer hidden underneath.
             NSApp.keyWindow?.makeFirstResponder(nil)
+            syncCompanion()
             session.follow(progress)
             await session.begin(send: onSend)
         }
@@ -279,7 +316,14 @@ struct LiveVoiceView: View {
             speakingCompanion?.liveVoiceOpen = false
             speakingCompanion = nil
         }
-        .onChange(of: progress) { _, next in session.follow(next) }
+        .onChange(of: lastReply?.id) { _, _ in
+            syncCompanion()
+            session.follow(progress)
+        }
+        .onChange(of: progress) { _, _ in
+            syncCompanion()
+            session.follow(progress)
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Live Voice with \(persona?.name ?? "your assistant")")
     }

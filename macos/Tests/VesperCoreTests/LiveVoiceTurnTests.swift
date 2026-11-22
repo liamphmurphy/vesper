@@ -75,4 +75,47 @@ final class LiveVoiceTurnTests: XCTestCase {
         turn.send(lastReplyId: "r9")
         XCTAssertEqual(turn.phase, .waiting)
     }
+
+    func testLateRevealOrVoiceStartPullsListeningBackToReplyingUnlessInterrupted() {
+        var turn = LiveVoiceTurn()
+        turn.send(lastReplyId: "r1")
+        turn.sent()
+        // Simulated view race: turnRunning=false and new reply ID observed one frame before
+        // companion.observe sets revealing/speaking.
+        turn.update(turnRunning: false, lastReplyId: "r2", revealing: false, speaking: false)
+        XCTAssertEqual(turn.phase, .listening)
+        XCTAssertEqual(turn.resumeCooldown, LiveVoiceTurn.silentReplyCooldown)
+
+        // When companion.observe starts revealing/speaking r2 on the next tick, phase must snap
+        // back to .replying so the mic closes.
+        turn.update(turnRunning: false, lastReplyId: "r2", revealing: true, speaking: true)
+        XCTAssertEqual(turn.phase, .replying)
+
+        // When playback finishes, speakerEchoCooldown keeps the mic closed for echo tail.
+        turn.update(turnRunning: false, lastReplyId: "r2", revealing: false, speaking: false)
+        XCTAssertEqual(turn.phase, .listening)
+        XCTAssertEqual(turn.resumeCooldown, LiveVoiceTurn.speakerEchoCooldown)
+
+        // An explicit interrupt stays listening even if r2 keeps updating, until a brand-new r3 speaks.
+        turn.send(lastReplyId: "r2")
+        turn.sent()
+        turn.update(turnRunning: false, lastReplyId: "r3", revealing: true, speaking: true)
+        turn.interrupt()
+        XCTAssertEqual(turn.phase, .listening)
+        XCTAssertEqual(turn.resumeCooldown, 0)
+        turn.update(turnRunning: false, lastReplyId: "r3", revealing: true, speaking: false)
+        XCTAssertEqual(turn.phase, .listening, "interrupted reply stays listening")
+        turn.update(turnRunning: false, lastReplyId: "r4", revealing: true, speaking: true)
+        XCTAssertEqual(turn.phase, .replying, "new reply closes microphone again")
+    }
+
+    func testIdleTurnResumeUsesGraceCooldown() {
+        var turn = LiveVoiceTurn()
+        turn.send(lastReplyId: "r1")
+        turn.sent()
+        turn.update(turnRunning: true, lastReplyId: "r1", revealing: false, speaking: false)
+        turn.update(turnRunning: false, lastReplyId: "r1", revealing: false, speaking: false)
+        XCTAssertEqual(turn.phase, .listening)
+        XCTAssertEqual(turn.resumeCooldown, LiveVoiceTurn.idleTurnCooldown)
+    }
 }

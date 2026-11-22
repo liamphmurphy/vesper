@@ -22,10 +22,25 @@ public struct LiveVoiceTurn: Equatable, Sendable {
     /// How long a transcript still ending in a volatile guess must stay unchanged: the person may
     /// only be pausing mid-thought.
     public static let endOfUtterance: TimeInterval = 1.2
+    /// Delay before reopening the microphone after spoken playback ends, so speaker output buffers
+    /// and room echo finish decaying before listening resumes.
+    public static let speakerEchoCooldown: TimeInterval = 0.35
+    /// Brief grace window when a turn ends with no new reply ID yet (e.g. session state refetched
+    /// ahead of the message list), giving `companion.observe` time to start playback.
+    public static let idleTurnCooldown: TimeInterval = 0.45
+    /// Brief grace window when a silent/unvoiced reply lands so `companion.observe` can claim the
+    /// reply before the microphone opens.
+    public static let silentReplyCooldown: TimeInterval = 0.15
 
     public private(set) var phase: Phase = .listening
+    /// Cooldown to wait before opening the microphone after the last transition into `.listening`.
+    public private(set) var resumeCooldown: TimeInterval = 0
     /// The latest reply when the utterance was sent; a different one is the answer.
     private var replyAtSend: String?
+    /// Most recent `lastReplyId` observed in `send` or `update`.
+    private var latestReplyId: String?
+    /// Reply ID that the person explicitly interrupted, so late updates from it stay `.listening`.
+    private var interruptedReplyId: String?
     /// The turn has been seen running, revealing or speaking since the send.
     private var sawBusy = false
 
@@ -43,7 +58,10 @@ public struct LiveVoiceTurn: Equatable, Sendable {
     public mutating func send(lastReplyId: String?) {
         guard phase == .listening else { return }
         phase = .sending
+        resumeCooldown = 0
         replyAtSend = lastReplyId
+        latestReplyId = lastReplyId
+        interruptedReplyId = nil
         sawBusy = false
     }
 
@@ -56,11 +74,14 @@ public struct LiveVoiceTurn: Equatable, Sendable {
     /// The chat refused the utterance, so listen again.
     public mutating func sendFailed() {
         guard phase == .sending else { return }
+        resumeCooldown = 0
         phase = .listening
     }
 
     /// The person cut the answer short: listen again now.
     public mutating func interrupt() {
+        resumeCooldown = 0
+        interruptedReplyId = latestReplyId
         phase = .listening
     }
 
@@ -68,12 +89,33 @@ public struct LiveVoiceTurn: Equatable, Sendable {
     /// speaking and either an answer arrived or the turn was seen busy (a stopped or failed turn
     /// has no answer). Before then the turn has not visibly started, so keep waiting.
     public mutating func update(turnRunning: Bool, lastReplyId: String?, revealing: Bool, speaking: Bool) {
+        latestReplyId = lastReplyId
+        if phase == .listening {
+            // If a non-interrupted reply begins revealing or speaking (e.g. a view update arrived
+            // before companion observation started playback), pull straight back to `.replying`
+            // so the microphone never stays open while the persona speaks.
+            if (revealing || speaking), lastReplyId != interruptedReplyId {
+                resumeCooldown = 0
+                sawBusy = true
+                phase = .replying
+            }
+            return
+        }
         guard phase == .waiting || phase == .replying else { return }
+        let prev = phase
         if turnRunning || revealing || speaking { sawBusy = true }
         let answered = lastReplyId != nil && lastReplyId != replyAtSend
         if !turnRunning && !revealing && !speaking && (answered || sawBusy) {
+            if prev == .replying {
+                resumeCooldown = Self.speakerEchoCooldown
+            } else if answered {
+                resumeCooldown = Self.silentReplyCooldown
+            } else {
+                resumeCooldown = Self.idleTurnCooldown
+            }
             phase = .listening
         } else {
+            resumeCooldown = 0
             phase = revealing || speaking ? .replying : .waiting
         }
     }
