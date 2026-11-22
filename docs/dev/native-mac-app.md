@@ -398,8 +398,7 @@ Lessons from the pilot, for the next screens:
 
 ## Native screen: Work
 
-`/work` and the old bare `/runs` are native (`macos/Sources/Vesper/Native/Work/`); a run's own page
-(`/runs/:id`), tickets and epics stay on the web and open with `context.navigate`. Logic is in VesperCore
+`/work` and the old bare `/runs` are native (`macos/Sources/Vesper/Native/Work/`); `/runs/:id` is also native (`Native/Runs/`). Tickets and epics stay on the web and open with `context.navigate`. Logic is in VesperCore
 `Native/WorkLogic.swift` (a port of the Activity parts of `web/lib/work-overview.ts`, with what it reads from
 `run-list.ts`, `format.ts` and `costs.ts`), `Native/WorkNav.swift` (the Work header and Runs NavModel of
 `native-shell/models/work.ts` and `runs.ts`) and `Native/DispatchLogic.swift` (the dispatch dialog's checks).
@@ -849,6 +848,49 @@ Manual click-through (with `VESPER_NATIVE_DEBUG=1`), on `/native-debug/embeds`:
    count rises), "views" never exceeds 4/4 and "idle" rises as blocks scroll off; scrolling back
    restarts the app over the snapshot.
 9. Clear render cache, toggle Light/Dark: diagrams redraw once each, then come from the cache.
+
+## Native screen: Runs detail
+
+`/runs/:id` is native (`macos/Sources/Vesper/Native/Runs/`), backed by pure `Foundation` logic in
+`VesperCore` (`Native/RunsLogic.swift`, `RunThreadLogic.swift`, `RunFilesLogic.swift`, `RunsNav.swift`)
+for iOS-over-Tailscale portability. The web route `web/app/(app)/runs/[id]/page.tsx` now serves ONLY
+`RunGraphView` (`run-graph-view.tsx`) inside `RunGraphTabSlot` as the seam for LAZYAGENTS-282; the web's
+runs layout, thread, panels, context dock, files, compact views and their helpers are removed.
+
+- **Sidebar & Header**: `RunsNav` publishes the standalone runs list (`Needs you`, `Running`, `Queued`,
+  finished runs grouped by day, `View` / `Space` / `Persona` filters, search, `Load older runs`, and the
+  runner/spend status line). The shared header shows breadcrumbs (space, ticket/chat/plan link, short run
+  ID), animated `WorkPersonaAvatarView`, `TonePill` status, duration/cost/step telemetry, segmented tabs
+  (`Thread`, `Trace`, conditional `Graph`, `Files`), and `Pause` / `Resume` / `Retry run` / `Stop`
+  controls plus a `Context` dock toggle.
+- **Tabs & Context dock**: `RunThreadView` renders the live `ActivitySceneView` + plan progress bar,
+  outcome card, collapsible turn tool calls and thinking blocks, `MarkdownView` replies, grouped
+  subagent cards, `RunActionBoxView` (approvals with `Approve` / `Approve all` / `Deny…`), and the
+  answer-question/follow-up composer. `RunTraceView` provides `All / Messages / Tools / Errors` filters,
+  search, expand/collapse all, `Follow` + `Jump to latest`, `#turn-N`/`#event-seq` anchors, raw turn logs,
+  and expandable JSON payloads. `RunFilesView` extracts touched files from tool calls, parses unified diffs
+  and `Edit` hunks, and highlights code/diffs via `CodeHighlighter` + `CodePalette`. `RunGraphTabSlot`
+  wraps `HostedWebPageView(path: "/runs/\(runId)?tab=graph")` and routes node clicks back into native Trace.
+  The collapsible Context dock (`RunContextDockView` + `InspectorModel`) shows Plan steps, Usage & cache
+  share, Ticket & Epic progress, Acceptance criteria, Code branch/diff/PR, Sub-agents, and Run facts.
+- **Live updates & polling**: `QueryStore.observe` refreshes on `EventStream` `run.events` hints, paired
+  with a 2 s active-run polling loop and incremental `GET /runs/{id}/events?after=` cursor paging with
+  32-event overlap for runs exceeding 1,000 events.
+
+Manual click-through checklist:
+
+1. Open a live or finished run from Work (`/work`) or the `RunsNav` sidebar: verify the sidebar highlights
+   the run, filters (`Hide done`, `Space`, `Persona`, search) narrow the list, and `Load older runs` appends pages.
+2. In `Thread`: confirm `ActivitySceneView` animates while live, turn pills expand inline tool calls,
+   sub-agent delegations group cleanly, and approvals/questions can be answered inline without leaving the screen.
+3. Switch to `Trace`: test `All / Messages / Tools / Errors`, type a search query, toggle `Expand all`,
+   inspect a payload JSON disclosure + Copy JSON, and open a turn's `raw ↗` log.
+4. For a run with delegated sub-runs, switch to `Graph`: verify `RunGraphTabSlot` loads the hosted graph
+   and clicking a turn or error node jumps into native `Trace` at that turn/event.
+5. Switch to `Files`: verify `Changed` and `Read` file groups, unified diff line numbers/highlighting,
+   syntax colors reacting to Light/Dark, and Copy path.
+6. Toggle `Context` in the header: verify Plan progress, Usage + Cache share, Ticket criteria, Code PR,
+   and Run facts appear and collapse cleanly, and `⌘\` opens the Chat companion inspector.
 
 ## Build and test
 

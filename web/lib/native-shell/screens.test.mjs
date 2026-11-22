@@ -7,7 +7,6 @@ import { buildBoardNavModel } from "./models/board.ts";
 import { buildEpicsNavModel } from "./models/epics.ts";
 import { buildTicketNavModel } from "./models/ticket.ts";
 import { buildEpicDetailNavModel } from "./models/epic-detail.ts";
-import { buildRunsNavModel } from "./models/runs.ts";
 import { buildWikiNavModel } from "./models/wiki.ts";
 import { projectPickerAction } from "./models/project-picker.ts";
 import { buildKnowledgeNavModel, K } from "./models/knowledge.ts";
@@ -116,55 +115,6 @@ test("ticket and epic detail pages list siblings with the Work header", () => {
   assert.deepEqual(e.sections[0].badge, { text: "1" });
   assert.deepEqual(e.sections[0].items[0], { id: "e1", title: "Launch", href: "/epics/e1", trailing: "1/2" });
   assert.equal(e.picker.value, "tickets");
-});
-
-const body = (o = {}) => ({
-  needs: [],
-  needsLabel: "Needs you",
-  groups: [],
-  loading: false,
-  error: null,
-  hasMore: false,
-  loadingMore: false,
-  emptyText: "No runs",
-  ...o,
-});
-const run = { id: "r1", href: "/runs/r1?agent=ada", title: "Fix bug", subtitle: "VES-1 · Ada", agentName: "Ada", agentColor: "#A3A6FF", trailing: "4m", dot: "running" };
-
-test("runs: status line, filter menu, needs you and groups, selection", () => {
-  const m = buildRunsNavModel({
-    body: body({
-      needs: [{ id: "n1", href: "/runs/r9", title: "Approve", subtitle: "Approval · VES", trailing: "1h", tone: "human" }],
-      groups: [{ key: "running", label: "Running", count: 1, runs: [run] }],
-      hasMore: true,
-    }),
-    filters: { project: "VES", hideDone: true, projects, agents },
-    search: "bug",
-    statusLine: { text: "1 busy · $2 this week", href: "/reports" },
-    selectedId: "run:r1",
-  });
-  assert.deepEqual(m.sections.map((s) => s.id), ["status", "needs-you", "runs-running", "more"]);
-  assert.equal(m.sections[1].title, "Needs you");
-  assert.deepEqual(m.sections[1].badge, { text: "1" });
-  assert.equal(m.sections[2].title, "Running");
-  assert.deepEqual(m.sections[2].badge, { text: "1" });
-  assert.deepEqual(m.sections[2].items[0], { id: "run:r1", title: "Fix bug", trailing: "4m", href: "/runs/r1?agent=ada", subtitle: "VES-1 · Ada", avatar: { initials: "A", color: "#A3A6FF" }, status: "done" });
-  assert.equal(m.sections[3].items[0].id, "load-more");
-  assert.equal(m.actions, undefined);
-  assert.deepEqual(m.filters.map((f) => f.id), ["run-options", "run-space", "run-agent"]);
-  assert.deepEqual(m.filters[0], { id: "run-options", label: "View", icon: "sliders", multiple: true, options: [{ value: "hide-done", label: "Hide done", checked: true }] });
-  assert.deepEqual(m.filters[1].options.map((o) => [o.value, o.checked]), [["", false], ["VES", true], ["OLD", false]]);
-  assert.equal(m.search.value, "bug");
-  assert.equal(m.selectedId, "run:r1");
-  json(m);
-});
-
-test("runs: loading, error with retry and empty states", () => {
-  const f = { hideDone: false, projects: [], agents: [] };
-  assert.equal(buildRunsNavModel({ body: body({ loading: true }), filters: f, search: "" }).sections[0].emptyText, "Loading");
-  const err = buildRunsNavModel({ body: body({ error: "boom" }), filters: f, search: "" });
-  assert.equal(err.sections[0].items[0].id, "retry");
-  assert.equal(buildRunsNavModel({ body: body(), filters: f, search: "" }).sections[0].emptyText, "No runs");
 });
 
 const page = (id, path, extra = {}) => ({ id, path, title: path.split("/").pop(), suggestions: 0, ...extra });

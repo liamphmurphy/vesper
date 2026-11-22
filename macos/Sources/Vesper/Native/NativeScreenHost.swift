@@ -121,6 +121,7 @@ struct NativeScreenRoot: View {
         case .debugPlaceholder: DebugPlaceholderScreen()
         case .inbox: InboxScreen()
         case .work: WorkScreen()
+        case .runDetail: RunDetailScreen()
         case .library: LibraryScreen()
         case .pdf: PDFScreen()
         case .markdownDebug: MarkdownDebugScreen()
