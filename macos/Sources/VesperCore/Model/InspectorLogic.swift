@@ -102,4 +102,18 @@ public enum InspectorLogic {
         let suffix = String(railItemId.dropFirst(railDockTabPrefix.count))
         return suffix.isEmpty ? nil : suffix
     }
+
+    /// Encodes a `/inspector-panel` spec with deterministic sorted-key JSON so `InspectorModel` equality stays stable.
+    public static func makePanelSpec(kind: String, key: String, props: [String: JSONValue]) -> InspectorPanelSpec {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let json: String
+        if let data = try? encoder.encode(JSONValue.object(props)),
+           let encoded = String(data: data, encoding: .utf8) {
+            json = encoded
+        } else {
+            json = "{}"
+        }
+        return InspectorPanelSpec(kind: kind, key: key, propsJson: json)
+    }
 }

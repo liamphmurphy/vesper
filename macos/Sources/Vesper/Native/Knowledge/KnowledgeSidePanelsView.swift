@@ -1,24 +1,64 @@
 import SwiftUI
 import VesperCore
 
-/// Tabbed native side inspector beside a Knowledge page:
+/// Hosts Knowledge's custom native inspector tabs (`Links`, `Properties`, `Query`, `History`, `Reviews`)
+/// inside the window's native right inspector split pane and its floating popout panel.
+struct KnowledgeInspectorHost: View {
+    let context: NativeScreenContext
+    let controller: KnowledgeShellController
+    let tab: KnowledgeSidePanelsView.Tab
+
+    var body: some View {
+        Group {
+            if case .page(let pageId) = controller.activeDestination {
+                let entry = context.store.entry(KnowledgeAPI.getPage(id: pageId))
+                if let page = entry.data {
+                    KnowledgeSidePanelsView(page: page, tab: tab) { tag in
+                        controller.openSearch(tag: tag, in: context)
+                    }
+                } else {
+                    VStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Loading page\u{2026}")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            } else {
+                Text("Open a page to inspect its \(tab.rawValue.lowercased()).")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(20)
+            }
+        }
+        .environment(context)
+        .environment(\.vesperTheme, controller.theme)
+        .environment(\.colorScheme, controller.colorScheme)
+    }
+}
+
+/// Native Knowledge inspector panel rendered inside the right-rail inspector (and floating popout):
 /// Backlinks & Unlinked Mentions, Properties Inspector, Query Table, Version History, and Reviews.
 struct KnowledgeSidePanelsView: View {
     enum Tab: String, CaseIterable, Identifiable {
         case links = "Links"
-        case properties = "Props"
+        case properties = "Properties"
         case query = "Query"
         case history = "History"
         case reviews = "Reviews"
 
         var id: String { rawValue }
-        var symbol: String {
-            switch self {
-            case .links: return "link"
-            case .properties: return "slider.horizontal.3"
-            case .query: return "tablecells"
-            case .history: return "clock.arrow.circlepath"
-            case .reviews: return "checkmark.bubble"
+
+        init?(inspectorTabId: String) {
+            switch inspectorTabId {
+            case KnowledgeInspectorLogic.linksTabId: self = .links
+            case KnowledgeInspectorLogic.propertiesTabId: self = .properties
+            case KnowledgeInspectorLogic.queryTabId: self = .query
+            case KnowledgeInspectorLogic.historyTabId: self = .history
+            case KnowledgeInspectorLogic.reviewsTabId: self = .reviews
+            default: return nil
             }
         }
     }
@@ -27,9 +67,9 @@ struct KnowledgeSidePanelsView: View {
     @Environment(\.vesperTheme) private var theme
 
     let page: KnowledgePage
+    let tab: Tab
     let onSelectTag: (String) -> Void
 
-    @State private var tab: Tab = .links
     @State private var newTag = ""
     @State private var newPropKey = ""
     @State private var newPropType: KnowledgePropertyType = .text
@@ -63,82 +103,37 @@ struct KnowledgeSidePanelsView: View {
     }
 
     var body: some View {
-        let p = theme.palette
-        let pendingCount = KnowledgePanelsLogic.pendingChanges(in: page).filter { !$0.isStale }.count
-
-        VStack(spacing: 0) {
-            tabBar(pendingCount: pendingCount)
-            Divider().overlay(p.border)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    if let panelError {
-                        Text(panelError)
-                            .vesperText(.small, theme)
-                            .foregroundStyle(theme.swiftUIColor("pill-blocked-fg", fallback: .red))
-                    }
-                    switch tab {
-                    case .links:
-                        linksPanel
-                    case .properties:
-                        propertiesPanel
-                    case .query:
-                        queryPanel
-                    case .history:
-                        historyPanel
-                    case .reviews:
-                        KnowledgeReviewView(page: page)
-                    }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                if let panelError {
+                    Text(panelError)
+                        .vesperText(.small, theme)
+                        .foregroundStyle(theme.swiftUIColor("pill-blocked-fg", fallback: .red))
                 }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                switch tab {
+                case .links:
+                    linksPanel
+                case .properties:
+                    propertiesPanel
+                case .query:
+                    queryPanel
+                case .history:
+                    historyPanel
+                case .reviews:
+                    KnowledgeReviewView(page: page)
+                }
             }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(width: 296)
-        .frame(maxHeight: .infinity)
-        .background(theme.swiftUIColor("surface-sunken", fallback: p.surface))
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .task(id: page.id) {
             context.store.load(networkRequest)
             context.store.load(candidatesRequest)
             if page.properties["query"] != nil {
                 context.store.load(savedQueryRequest)
             }
-            if KnowledgePanelsLogic.pendingChanges(in: page).contains(where: { !$0.isStale }) {
-                tab = .reviews
-            }
         }
-    }
-
-    private func tabBar(pendingCount: Int) -> some View {
-        let p = theme.palette
-        return HStack(spacing: 2) {
-            ForEach(Tab.allCases) { item in
-                let selected = tab == item
-                Button {
-                    tab = item
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: item.symbol)
-                            .font(.system(size: 11, weight: .medium))
-                        if item == .reviews && pendingCount > 0 {
-                            Text("\(pendingCount)")
-                                .font(.system(size: 10, weight: .bold))
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(theme.swiftUIColor("state-human", fallback: p.accent), in: Capsule())
-                                .foregroundStyle(.white)
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
-                    .foregroundStyle(selected ? p.text : p.tertiaryText)
-                    .background(selected ? p.selected : .clear, in: RoundedRectangle(cornerRadius: 6))
-                }
-                .buttonStyle(.plain)
-                .help(item.rawValue)
-            }
-        }
-        .padding(6)
     }
 
     // MARK: - Links & Unlinked Mentions

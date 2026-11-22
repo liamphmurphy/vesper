@@ -19,6 +19,14 @@ final class KnowledgeEditorFindBridge: FindTarget {
     }
 }
 
+// MARK: - Heading Jump Request
+
+struct KnowledgeHeadingJumpRequest: Equatable {
+    let token: Int
+    let pageId: String
+    let heading: KnowledgeOutlineHeading
+}
+
 // MARK: - Knowledge Editor View
 
 /// Pure SwiftUI live-preview Knowledge markdown editor orchestrating `KnowledgeEditorDocument`.
@@ -38,6 +46,8 @@ struct KnowledgeEditorView: View {
     @Environment(\.vesperTheme) private var theme
 
     let page: KnowledgePage
+    var headingJumpRequest: KnowledgeHeadingJumpRequest?
+    var onHeadingsChange: (([KnowledgeOutlineHeading]) -> Void)?
 
     @State private var document: KnowledgeEditorDocument
     @State private var lastSavedMarkdown: String
@@ -61,8 +71,14 @@ struct KnowledgeEditorView: View {
     @FocusState private var findFieldFocused: Bool
     @State private var findBridge = KnowledgeEditorFindBridge()
 
-    init(page: KnowledgePage) {
+    init(
+        page: KnowledgePage,
+        headingJumpRequest: KnowledgeHeadingJumpRequest? = nil,
+        onHeadingsChange: (([KnowledgeOutlineHeading]) -> Void)? = nil
+    ) {
         self.page = page
+        self.headingJumpRequest = headingJumpRequest
+        self.onHeadingsChange = onHeadingsChange
         let initial = page.bodyMd ?? ""
         _document = State(initialValue: KnowledgeEditorDocument(markdown: initial))
         _lastSavedMarkdown = State(initialValue: initial)
@@ -110,15 +126,30 @@ struct KnowledgeEditorView: View {
                 Divider().overlay(p.border)
             }
             ZStack(alignment: .bottomLeading) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        pageHeader
-                        segmentsColumn
+                ScrollViewReader { scrollProxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 14) {
+                            pageHeader
+                            segmentsColumn
+                        }
+                        .frame(maxWidth: 740, alignment: .leading)
+                        .padding(.horizontal, 28)
+                        .padding(.vertical, 24)
+                        .frame(maxWidth: .infinity, alignment: .center)
                     }
-                    .frame(maxWidth: 740, alignment: .leading)
-                    .padding(.horizontal, 28)
-                    .padding(.vertical, 24)
-                    .frame(maxWidth: .infinity, alignment: .center)
+                    .onChange(of: headingJumpRequest) { _, req in
+                        guard let req, req.pageId == page.id else { return }
+                        let heading = req.heading
+                        withAnimation(.easeOut(duration: 0.18)) {
+                            scrollProxy.scrollTo("editor-segment-\(heading.segmentIndex)", anchor: .top)
+                        }
+                        selectionToken += 1
+                        selectionRequest = KnowledgeTextSelectionRequest(
+                            token: selectionToken,
+                            segmentIndex: heading.segmentIndex,
+                            range: NSRange(location: heading.utf16Location, length: heading.utf16Length)
+                        )
+                    }
                 }
                 if completionSession.isOpen {
                     KnowledgeCompletionPopoverView(session: completionSession) { idx in
@@ -146,9 +177,11 @@ struct KnowledgeEditorView: View {
                 document = KnowledgeEditorDocument(markdown: fresh)
                 lastSavedMarkdown = fresh
                 saveStatus = .saved
+                emitHeadings()
             }
         }
         .onAppear {
+            emitHeadings()
             findBridge.onFind = { query, backwards, caseSensitive in
                 showFindBar = true
                 return runFind(query: query, backwards: backwards, caseSensitive: caseSensitive)
@@ -256,8 +289,10 @@ struct KnowledgeEditorView: View {
                 switch segment {
                 case .prose(let prose):
                     proseSegmentView(prose: prose, index: index)
+                        .id("editor-segment-\(index)")
                 case .table(let table):
                     tableSegmentView(table: table, index: index)
+                        .id("editor-segment-\(index)")
                 }
             }
         }
@@ -569,8 +604,13 @@ struct KnowledgeEditorView: View {
         return active.range
     }
 
+    private func emitHeadings() {
+        onHeadingsChange?(KnowledgeInspectorLogic.extractHeadings(from: document.segments))
+    }
+
     private func noteDocumentEdited() {
         refreshFindAfterEdit()
+        emitHeadings()
         guard hasUnsavedChanges else {
             saveStatus = .saved
             return
