@@ -59,6 +59,7 @@ public enum NotificationLogic {
 
     public static func shouldRefreshInbox(forEvent type: String) -> Bool {
         if type == "reset" { return true }
+        if type == RunLogic.streamedEventsHint { return false }
         let entity = type.split(separator: ".", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? ""
         return ["inbox", "run", "approval", "ticket", "workflow", "pr_feedback"].contains(entity)
     }

@@ -27,6 +27,7 @@ final class SystemServices {
     lazy var nativeRail = NativeRailStore(store: store, railInbox: railInbox)
     private(set) var liveRuns: [RunSummary] = []
     private(set) var badgeCount = 0
+    private var dockBadge = ""
     private(set) var pausedByVesper = Set<String>()
 
     private let notifications = NotificationPresenter()
@@ -78,21 +79,25 @@ final class SystemServices {
             self?.runMonitor.handleServerEvent(type)
         }
         eventStream.onServerEvent = { [weak self] event in self?.store.handle(event) }
+        // The monitors call back after every refetch; skip unchanged answers so they don't redraw
+        // the Dock tile, the menu-bar item and every window's rail.
         inboxMonitor.onBadgeChange = { [weak self] text, count in
-            guard let self else { return }
+            guard let self, text != dockBadge || count != badgeCount else { return }
             badgeCount = count
+            dockBadge = text
             dock.setBadge(text)
             refreshTray()
         }
         inboxMonitor.onItems = { [weak self] items in
-            self?.items = items
-            self?.railInbox.items = items
-            self?.refreshTray()
+            guard let self, items != self.items else { return }
+            self.items = items
+            railInbox.items = items
+            refreshTray()
         }
         inboxMonitor.onAlert = { [weak self] alert in self?.showAlert(alert) }
         runMonitor.onFinished = { [weak self] alert in self?.showAlert(alert) }
         runMonitor.onSnapshot = { [weak self] runs in
-            guard let self else { return }
+            guard let self, runs != liveRuns else { return }
             liveRuns = runs
             PowerLogic.prunePausedSet(&pausedByVesper, live: runs)
             power.update()
@@ -136,6 +141,7 @@ final class SystemServices {
         railInbox.items = []
         liveRuns = []
         badgeCount = 0
+        dockBadge = ""
         dock.setBadge("")
         guard let connection else {
             client = nil

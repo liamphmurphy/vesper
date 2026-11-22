@@ -74,6 +74,14 @@ final class NotificationPolicyTests: XCTestCase {
         XCTAssertFalse(RunLogic.shouldRefreshRuns(forEvent: "inbox.updated"))
     }
 
+    /// `run.events` fires on every 50 ms batch of streamed output while a persona works. Neither the
+    /// live-runs list nor the inbox depends on it (run state changes arrive as `run.updated`).
+    func testStreamedRunEventsRefreshNeitherInboxNorRuns() {
+        XCTAssertFalse(NotificationLogic.shouldRefreshInbox(forEvent: "run.events"))
+        XCTAssertFalse(RunLogic.shouldRefreshRuns(forEvent: "run.events"))
+        XCTAssertTrue(NotificationLogic.shouldRefreshInbox(forEvent: "run.updated"))
+    }
+
     func testQuietHoursHandleSameDayAndOvernightWindows() {
         let overnight = QuietHours(enabled: true, start: "22:00", end: "08:00")
         XCTAssertTrue(NotificationLogic.isWithinQuietHours(at(23, 30), overnight))

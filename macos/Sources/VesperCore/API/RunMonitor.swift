@@ -43,8 +43,14 @@ extension RunLogic {
         return alerts
     }
 
+    /// Sent for every batch of a run's streamed output (up to every 50 ms while a persona works).
+    /// Run state and the inbox change through `run.updated` and friends, never through this hint,
+    /// so the app-wide monitors ignore it; only the run's own event queries refetch (`LiveUpdates`).
+    public static let streamedEventsHint = "run.events"
+
     public static func shouldRefreshRuns(forEvent type: String) -> Bool {
-        type == "reset" || type.split(separator: ".", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) == "run"
+        guard type != streamedEventsHint else { return false }
+        return type == "reset" || type.split(separator: ".", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) == "run"
     }
 }
 

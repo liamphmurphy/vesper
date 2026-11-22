@@ -140,6 +140,27 @@ final class MonitorTests: XCTestCase {
         XCTAssertEqual(finished, ["Run finished: Work a"])
     }
 
+    func testMonitorsDoNotRefetchOnStreamedRunEvents() async throws {
+        let rec = Recorder()
+        let c = client(transport(rec) { url in url.hasSuffix("/inbox") ? (200, ["items": []]) : (200, ["runs": []]) })
+        let runs = RunMonitor(pollInterval: .seconds(60))
+        let inbox = InboxMonitor(pollInterval: .seconds(60))
+        runs.start(client: c)
+        inbox.start(client: c)
+        try await Task.sleep(for: .milliseconds(100))
+        for _ in 0..<20 {
+            runs.handleServerEvent("run.events")
+            inbox.handleServerEvent("run.events")
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        runs.stop()
+        inbox.stop()
+        XCTAssertEqual(rec.urls.sorted(), [
+            "http://localhost:8080/api/v1/inbox",
+            "http://localhost:8080/api/v1/runs?state=live",
+        ], "only the initial fetches; run.events is streamed output")
+    }
+
     func testRunMonitorAlertsOnALaterPollWhenEndShowsUpLate() async throws {
         final class State: @unchecked Sendable { var live: [[String: Any]] = [["id": "a", "state": "running", "purpose": "ticket", "work_title": "Work a"]]; var all: [[String: Any]] = [] }
         let state = State()
