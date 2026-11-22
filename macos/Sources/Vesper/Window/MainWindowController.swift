@@ -134,20 +134,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
         if hasNativeChrome {
             let inspector = InspectorViewController(
+                app: app,
                 tabs: tabs,
+                ownerWindow: { [weak self] in self },
                 send: { [weak self] in self?.send($0) },
                 navigate: { [weak self] path, newTab in self?.openInMain(path: path, newTab: newTab) },
                 openPlayground: { [weak self] url in self?.app.openPlayground(url: url, nextTo: self?.window) },
                 onPopOutChanged: { [weak self] poppedOut in self?.inspectorPopOutChanged(poppedOut) },
                 onPanelEvent: { [weak self] tabId, event, payloadJson in self?.handlePanelEvent(tabId: tabId, event: event, payloadJson: payloadJson) }
             )
-            inspector.companion.ownerWindow = { [weak self] in self?.window }
-            inspector.companion.playgroundPorts = { [weak app] in app?.playgroundPorts ?? defaultPlaygroundPorts }
-            inspector.companion.appearanceCommand = { [weak app] in
-                if let cmd = app?.currentAppearanceCommand() { return cmd }
-                let (accent, mode) = AppearanceMonitor.current()
-                return .appearance(accent: accent, mode: mode)
-            }
             inspector.panelWeb.ownerWindow = { [weak self] in self?.window }
             inspector.panelWeb.playgroundPorts = { [weak app] in app?.playgroundPorts ?? defaultPlaygroundPorts }
             inspector.panelWeb.appearanceCommand = { [weak app] in
@@ -564,7 +559,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
 
     func applyAppearanceCommand(_ command: NativeCommand) {
-        inspectorController?.companion.sendAppearance(command)
         inspectorController?.panelWeb.sendAppearance(command)
     }
 

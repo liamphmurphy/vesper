@@ -10,49 +10,54 @@ private final class InspectorPopoutState {
 }
 
 /// Hosts the native inspector split pane: full-height vibrancy backdrop, compact header strip,
-/// declarative SwiftUI `InspectorBodyView`, the window's persistent `CompanionWebController`, and
-/// the persistent `InspectorPanelWebController`.
+/// declarative SwiftUI `InspectorBodyView`, the window's persistent native `CompanionChatHost`, and
+/// the persistent `InspectorPanelWebController` (for remaining web-only panels like Playground/Design/Canvas).
 /// Also handles popping the inspector out into a floating `NSPanel` and re-docking it.
 @MainActor
 final class InspectorViewController: NSViewController {
+    private let app: AppModel
     private let tabs: TabsModel
     private let send: (NativeCommand) -> Void
     private let navigate: (String, Bool) -> Void
     private let openPlayground: (URL) -> Void
     private let onPopOutChanged: (Bool) -> Void
+    private let ownerWindow: () -> MainWindowController?
 
-    let companion = CompanionWebController()
+    let companionStore = CompanionChatStore()
     let panelWeb = InspectorPanelWebController()
     private let bodyContainer = NSView()
     private let separator = NSBox()
     private var headerHost: NSHostingView<InspectorHeaderView>?
     private var nativeHost: NSHostingController<InspectorBodyHost>?
+    private var companionHost: NSHostingController<CompanionChatHost>?
+    private var companionScreenContext: NativeScreenContext?
     private var popout: InspectorPopoutController?
     private let popoutState = InspectorPopoutState()
     var isPoppedOut: Bool { popoutState.isPoppedOut }
     weak var shellHost: (any ShellHostActions)? {
         didSet {
-            companion.shellHost = shellHost
             panelWeb.shellHost = shellHost
         }
     }
 
     init(
+        app: AppModel,
         tabs: TabsModel,
+        ownerWindow: @escaping () -> MainWindowController?,
         send: @escaping (NativeCommand) -> Void,
         navigate: @escaping (String, Bool) -> Void,
         openPlayground: @escaping (URL) -> Void,
         onPopOutChanged: @escaping (Bool) -> Void,
         onPanelEvent: @escaping (String, String, String?) -> Void
     ) {
+        self.app = app
         self.tabs = tabs
+        self.ownerWindow = ownerWindow
         self.send = send
         self.navigate = navigate
         self.openPlayground = openPlayground
         self.onPopOutChanged = onPopOutChanged
         super.init(nibName: nil, bundle: nil)
-        companion.onOpenInMain = navigate
-        companion.onOpenPlayground = openPlayground
         panelWeb.onOpenInMain = navigate
         panelWeb.onOpenPlayground = openPlayground
         panelWeb.onPanelEvent = onPanelEvent
@@ -85,14 +90,32 @@ final class InspectorViewController: NSViewController {
         native.view.translatesAutoresizingMaskIntoConstraints = false
         nativeHost = native
 
-        companion.webView.translatesAutoresizingMaskIntoConstraints = false
+        let ctx = NativeScreenContext(
+            match: NativeRouteMatch(screen: .chat, path: "/companion", params: [:], query: [:]),
+            store: app.system.store,
+            open: navigate
+        )
+        ctx.window = ownerWindow
+        ctx.baseURL = { [weak app] in app?.connection?.baseURL }
+        companionScreenContext = ctx
+
+        let companion = NSHostingController(rootView: CompanionChatHost(
+            tabs: tabs,
+            companionStore: companionStore,
+            screenContext: ctx
+        ))
+        companion.sizingOptions = []
+        addChild(companion)
+        companion.view.translatesAutoresizingMaskIntoConstraints = false
+        companionHost = companion
+
         panelWeb.webView.translatesAutoresizingMaskIntoConstraints = false
 
         bodyContainer.translatesAutoresizingMaskIntoConstraints = false
         bodyContainer.addSubview(header)
         bodyContainer.addSubview(separator)
         bodyContainer.addSubview(native.view)
-        bodyContainer.addSubview(companion.webView)
+        bodyContainer.addSubview(companion.view)
         bodyContainer.addSubview(panelWeb.webView)
 
         NSLayoutConstraint.activate([
@@ -110,10 +133,10 @@ final class InspectorViewController: NSViewController {
             native.view.trailingAnchor.constraint(equalTo: bodyContainer.trailingAnchor),
             native.view.bottomAnchor.constraint(equalTo: bodyContainer.bottomAnchor),
 
-            companion.webView.topAnchor.constraint(equalTo: separator.bottomAnchor),
-            companion.webView.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
-            companion.webView.trailingAnchor.constraint(equalTo: bodyContainer.trailingAnchor),
-            companion.webView.bottomAnchor.constraint(equalTo: bodyContainer.bottomAnchor),
+            companion.view.topAnchor.constraint(equalTo: separator.bottomAnchor),
+            companion.view.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
+            companion.view.trailingAnchor.constraint(equalTo: bodyContainer.trailingAnchor),
+            companion.view.bottomAnchor.constraint(equalTo: bodyContainer.bottomAnchor),
 
             panelWeb.webView.topAnchor.constraint(equalTo: separator.bottomAnchor),
             panelWeb.webView.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
@@ -144,13 +167,11 @@ final class InspectorViewController: NSViewController {
     }
 
     func connect(_ conn: Connection) {
-        companion.connect(conn)
         panelWeb.connect(conn)
     }
 
     func teardown() {
         dockBack(notify: false)
-        companion.teardown()
         panelWeb.teardown()
     }
 
@@ -171,15 +192,14 @@ final class InspectorViewController: NSViewController {
         let isCompanion = active?.kind == .companion
         let isPanel = active?.kind == .panel
         nativeHost?.view.isHidden = isCompanion || isPanel
-        companion.webView.isHidden = !isCompanion
+        companionHost?.view.isHidden = !isCompanion
         panelWeb.webView.isHidden = !isPanel
-        if isCompanion && (model?.open == true || isPoppedOut) {
-            companion.ensureLoaded()
-        }
         if isPanel && (model?.open == true || isPoppedOut) {
             panelWeb.ensureLoaded()
         }
-        companion.updateContext(model?.companion)
+        if companionStore.subject != model?.companion?.subject {
+            companionStore.subject = model?.companion?.subject
+        }
         panelWeb.updateContext(InspectorPanelContext(
             active: isPanel ? active?.panel : nil,
             keepKeys: keepKeys,

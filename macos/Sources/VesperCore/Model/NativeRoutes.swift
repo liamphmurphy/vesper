@@ -65,6 +65,13 @@ public struct NativeRouteMatch: Sendable, Equatable {
     public var path: String
     public var params: [String: String]
     public var query: [String: String]
+
+    public init(screen: NativeScreen, path: String, params: [String: String] = [:], query: [String: String] = [:]) {
+        self.screen = screen
+        self.path = path
+        self.params = params
+        self.query = query
+    }
 }
 
 /// One path pattern: literal segments, `:name` captures one segment, a trailing `*` captures the rest
