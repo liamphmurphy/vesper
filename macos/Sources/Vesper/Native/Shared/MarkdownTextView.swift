@@ -12,6 +12,9 @@ final class MarkdownTextView: NSTextView, NSTextViewDelegate, NSTextLayoutManage
     var onLink: ((MarkdownLinkTarget, _ newTab: Bool) -> Void)?
     private(set) var rendering: MarkdownRendering?
     private var findRanges: [NSRange] = []
+    private var cachedHeight: (width: CGFloat, height: CGFloat)?
+    private var renderVersion: UInt64 = 0
+    private var lastFind: (version: UInt64, query: String, caseSensitive: Bool, isCurrent: Bool)?
 
     init() {
         let layoutManager = NSTextLayoutManager()
@@ -43,18 +46,31 @@ final class MarkdownTextView: NSTextView, NSTextViewDelegate, NSTextLayoutManage
 
     func show(_ rendering: MarkdownRendering) {
         self.rendering = rendering
+        renderVersion &+= 1
+        cachedHeight = nil
+        lastFind = nil
         textStorage?.setAttributedString(rendering.text)
-        applyFindHighlights()
+        if !findRanges.isEmpty {
+            applyFindHighlights()
+        }
     }
 
-    /// The height the text needs at `width`.
+    /// The height the text needs at `width`. Cached per rounded width and invalidated by `show(_:)`
+    /// so repeated SwiftUI `sizeThatFits` probes across a long transcript don't force TextKit 2
+    /// full-document layout on every pass.
     func fittingHeight(width: CGFloat) -> CGFloat {
+        let rounded = width.rounded()
+        if let cached = cachedHeight, cached.width == rounded {
+            return cached.height
+        }
         guard let layoutManager = textLayoutManager, let container = textContainer else { return 0 }
         if abs(container.size.width - width) > 0.5 {
             container.size = CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)
         }
         layoutManager.ensureLayout(for: layoutManager.documentRange)
-        return ceil(layoutManager.usageBoundsForTextContainer.height)
+        let height = ceil(layoutManager.usageBoundsForTextContainer.height)
+        cachedHeight = (rounded, height)
+        return height
     }
 
     // MARK: Find
@@ -62,9 +78,22 @@ final class MarkdownTextView: NSTextView, NSTextViewDelegate, NSTextLayoutManage
     /// Tints every match of the find bar's query; on the current row, the first match more strongly,
     /// scrolled into view.
     func highlight(query: String, caseSensitive: Bool, isCurrent: Bool, match: NSColor, current: NSColor) {
-        let ranges = MarkdownFind.ranges(of: query, in: string, caseSensitive: caseSensitive)
+        if query.isEmpty && findRanges.isEmpty {
+            lastFind = (renderVersion, query, caseSensitive, isCurrent)
+            return
+        }
+        if let last = lastFind,
+           last.version == renderVersion,
+           last.query == query,
+           last.caseSensitive == caseSensitive,
+           last.isCurrent == isCurrent {
+            return
+        }
+        let wasCurrent = findStyle.isCurrent
+        let ranges = query.isEmpty ? [] : MarkdownFind.ranges(of: query, in: string, caseSensitive: caseSensitive)
         findStyle = (match, current, isCurrent)
-        guard ranges != findRanges || findStyle.isCurrent != isCurrent else { return }
+        lastFind = (renderVersion, query, caseSensitive, isCurrent)
+        guard ranges != findRanges || wasCurrent != isCurrent else { return }
         findRanges = ranges
         applyFindHighlights()
         if isCurrent, let first = ranges.first { scrollRangeToVisible(first) }
