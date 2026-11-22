@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import {
   api,
@@ -19,6 +20,7 @@ import {
 } from "./client";
 import { runEach } from "../ticket-list";
 import { runEnded } from "../chat-dispatch";
+import { createEventWindowSelector } from "../chat-events";
 import { personaKeys } from "./persona-hooks";
 import { confirmApprovalLocally } from "../desktop-bridge";
 
@@ -1578,6 +1580,28 @@ export function useChatRunEvents(runId?: string, enabled = true, poll = true) {
       ),
     refetchInterval: poll ? 2_000 : false,
     staleTime: poll ? 0 : Infinity,
+  });
+}
+
+/**
+ * One finished turn's slice of a chat segment run's events, without polling.
+ * Uses a windowed selector so completed turns keep a stable reference and skip
+ * re-rendering while later turns append new events to the same segment run.
+ */
+export function useChatTurnEvents(runId?: string, since?: string, until?: string, enabled = true) {
+  const qc = useQueryClient();
+  const queryKey = ["runs", "chat", runId ?? ""] as const;
+  const select = useMemo(() => createEventWindowSelector<Schemas["RunEvent"]>(since, until), [since, until]);
+  return useQuery({
+    enabled: !!runId && enabled,
+    queryKey,
+    queryFn: () =>
+      eventsAfter(qc.getQueryData<Schemas["RunEvent"][]>(queryKey) ?? [], (after) =>
+        unwrap(api.GET("/runs/{id}/events", { params: { path: { id: runId! }, query: { after } } })).then((d) => d.events),
+      ),
+    select,
+    refetchInterval: false,
+    staleTime: Infinity,
   });
 }
 

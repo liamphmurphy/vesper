@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Schemas } from "@/lib/api/client";
-import { useChatRunEvents, useResolvedLinks } from "@/lib/api/hooks";
+import { useChatTurnEvents, useResolvedLinks } from "@/lib/api/hooks";
 import { citationSources, type Source } from "@/lib/chat-context";
 import { sourceSplit, usedWebSources, type ListedSource } from "@/lib/chat-sources";
 import { webSearches, type WebSource } from "@/lib/web-search";
@@ -110,7 +110,7 @@ export function Sources({ citations, body, listed, runId, since, until, webEvent
     }
     return { vesper: read, byRef };
   }, [citations, refs, resolved.data]);
-  const q = useChatRunEvents(webEvents ? runId : undefined, true, false);
+  const q = useChatTurnEvents(webEvents ? runId : undefined, since, until, webEvents);
   const searches = useMemo(() => webSearches(webEvents ? q.data : undefined, since, until), [webEvents, q.data, since, until]);
   const { used, more } = useMemo(() => usedWebSources(body, listed, searches), [body, listed, searches]);
   const [open, setOpen] = useState(false);

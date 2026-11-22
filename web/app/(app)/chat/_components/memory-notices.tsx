@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api/client";
-import { memoryKeys, useChatRunEvents, useDeleteMemory, useMemory, useUpdateMemory } from "@/lib/api/hooks";
+import { memoryKeys, useChatTurnEvents, useDeleteMemory, useMemory, useUpdateMemory } from "@/lib/api/hooks";
 import { memoryNotices, type MemoryNotice } from "@/lib/memory-ui";
 import { cx } from "@/lib/cx";
 import { Icon } from "@/components/ui/icon";
@@ -92,7 +92,7 @@ function Notice({ n }: { n: MemoryNotice }) {
 
 /** What the assistant saved, updated or forgot during a turn, under its reply (mockup frame 3c). */
 export function MemoryNotices({ runId, since, until }: { runId?: string; since?: string; until?: string }) {
-  const q = useChatRunEvents(runId, true, false);
+  const q = useChatTurnEvents(runId, since, until);
   const notices = useMemo(() => memoryNotices(q.data, since, until), [q.data, since, until]);
   // The assistant changed memory: refresh the header count, the panel and earlier notices
   // (one it has since forgotten turns into "since forgotten").

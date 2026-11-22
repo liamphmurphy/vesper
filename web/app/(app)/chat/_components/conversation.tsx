@@ -832,12 +832,27 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
 
   // Refetch the transcript when the chat changes (also covers polling without SSE).
   const stamp = c && `${c.state}:${c.message_count}:${c.revision}`;
+  const activeRunId = c?.current_run_id;
+  const latestMessageRunIdRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    latestMessageRunIdRef.current = list?.findLast((m) => m.run_id)?.run_id;
+  }, [list]);
+  const lastRunId = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (!stamp) return;
     void qc.invalidateQueries({ queryKey: chatKeys.messages(id) });
     // A finished turn's last tool results (memory notices) may have landed after the final poll.
-    void qc.invalidateQueries({ queryKey: ["runs", "chat"] });
-  }, [stamp, id, qc]);
+    // Scope invalidation to the active/most-recent segment run so older segment runs don't refetch.
+    const runIds = new Set<string>();
+    if (activeRunId) runIds.add(activeRunId);
+    if (lastRunId.current) runIds.add(lastRunId.current);
+    if (latestMessageRunIdRef.current) runIds.add(latestMessageRunIdRef.current);
+    for (const runId of runIds) {
+      void qc.invalidateQueries({ queryKey: ["runs", "chat", runId] });
+    }
+    if (activeRunId) lastRunId.current = activeRunId;
+    else if (!lastRunId.current && latestMessageRunIdRef.current) lastRunId.current = latestMessageRunIdRef.current;
+  }, [stamp, id, activeRunId, qc]);
   // Focus returns to the composer on load and whenever a turn ends.
   useEffect(() => {
     if (loaded && !locked) area.current?.focus();

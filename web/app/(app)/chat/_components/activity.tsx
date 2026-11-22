@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { LinkTarget } from "@/lib/api/client";
-import { useChatRunEvents, useChatToolApprovals, useResolvedLinks } from "@/lib/api/hooks";
+import { useChatRunEvents, useChatToolApprovals, useChatTurnEvents, useResolvedLinks } from "@/lib/api/hooks";
 import { activityOf, bareTool, chatCalls, chatStatus, chatStatusOf, chatSteps, finishedTurn, foldSteps, formatSpan, interimLine, NEXT_STEP_KEY, quietFor, readableModelId, stepDetail, subagentBranches, turnActivity, turnClock, turnNotes, turnPulse, turnTrace, type Activity, type ChatStatusKind, type ChatStep, type IntentTag, type SubagentBranch, type SubagentBranchFlag, type ToolCall, type TraceStep, type TurnOutcome, type TurnPulse } from "@/lib/chat-ui";
 import { useConnectorApprovals } from "@/lib/api/connector-hooks";
 import { useApiSecretApprovals } from "@/lib/api/secret-hooks";
@@ -360,7 +360,7 @@ export function RunActivity({ runId, since, focus }: { runId?: string; since?: s
 
 /** A finished turn's steps, with their intent, thinking and tool calls, in the Activity tab. */
 export function TurnToolCalls({ runId, since, until, replyId, focus }: { runId?: string; since?: string; until?: string; replyId?: string; focus?: { key: string; at: number } }) {
-  const q = useChatRunEvents(runId, true, false);
+  const q = useChatTurnEvents(runId, since, until);
   const steps = useMemo(() => turnTrace(q.data, since, until), [q.data, since, until]);
   return <TurnTrace steps={steps} scope={replyId} focus={focus} />;
 }
@@ -733,7 +733,7 @@ const fromFailure = (steps: ChatStep[]) => {
  * the Activity tab, so "View reasoning" can open there; turns without a reply have no entry.
  */
 export function TurnSteps({ runId, outcome, since, until, end, replyId }: { runId?: string; outcome: TurnOutcome; since?: string; until?: string; end?: number; replyId?: string }) {
-  const q = useChatRunEvents(runId, true, false);
+  const q = useChatTurnEvents(runId, since, until);
   const turn = useMemo(() => finishedTurn(q.data, outcome, since, until, end), [q.data, outcome, since, until, end]);
   const openStep = useContext(OpenTurnStep);
   const [open, setOpen] = useState(outcome === "failed");

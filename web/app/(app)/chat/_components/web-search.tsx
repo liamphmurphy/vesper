@@ -1,13 +1,13 @@
 "use client";
 
 import { useMemo } from "react";
-import { useChatRunEvents } from "@/lib/api/hooks";
+import { useChatTurnEvents } from "@/lib/api/hooks";
 import { webSearches } from "@/lib/web-search";
 import { Icon } from "@/components/ui/icon";
 
 /** "Searched the web · N sources" under a reply; expands to the queries and sources (mockup frame 3b). */
 export function WebSearchPill({ runId, since, until }: { runId?: string; since?: string; until?: string }) {
-  const q = useChatRunEvents(runId, true, false);
+  const q = useChatTurnEvents(runId, since, until);
   const r = useMemo(() => webSearches(q.data, since, until), [q.data, since, until]);
   if (r.queries.length === 0 && r.sources.length === 0) return null;
   const n = r.sources.length;
