@@ -145,7 +145,7 @@ struct ChatRunningStatusStrip: View {
                                 } label: {
                                     HStack(spacing: 4) {
                                         Circle()
-                                            .fill(Tone.running.color)
+                                            .fill(p.accent)
                                             .frame(width: 6, height: 6)
                                         Text(run.ticket)
                                             .font(.system(size: theme.pointSize(.micro), weight: .semibold))

@@ -119,7 +119,7 @@ struct KnowledgeTextView: NSViewRepresentable {
             var text: String
             var selection: NSRange
             var isFocused: Bool
-            var mode: ThemeMode
+            var mode: ColorMode
             var findMatches: [NSRange]
             var activeFind: NSRange?
         }

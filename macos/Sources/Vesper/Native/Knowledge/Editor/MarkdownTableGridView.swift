@@ -163,7 +163,7 @@ struct MarkdownTableGridView: View {
                     .foregroundStyle(p.text)
                     .multilineTextAlignment(textAlignment(for: col))
                     .focused($focusedCell, equals: coord)
-                    .onKeyPress(.tab) { press in
+                    .onKeyPress(keys: [.tab]) { press in
                         handleTab(from: coord, backwards: press.modifiers.contains(.shift))
                     }
 
@@ -221,7 +221,7 @@ struct MarkdownTableGridView: View {
                 .foregroundStyle(p.text)
                 .multilineTextAlignment(textAlignment(for: col))
                 .focused($focusedCell, equals: coord)
-                .onKeyPress(.tab) { press in
+                .onKeyPress(keys: [.tab]) { press in
                     handleTab(from: coord, backwards: press.modifiers.contains(.shift))
                 }
                 .padding(.horizontal, 8)

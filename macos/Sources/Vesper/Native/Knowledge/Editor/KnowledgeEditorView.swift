@@ -302,19 +302,23 @@ struct KnowledgeEditorView: View {
                 return next
             },
             onAddRow: { bodyIndex in
-                if document.editTable(at: index, description: "Add row") { $0.addRow(at: bodyIndex) } { noteDocumentEdited() }
+                let changed = document.editTable(at: index, description: "Add row") { $0.addRow(at: bodyIndex) }
+                if changed { noteDocumentEdited() }
             },
             onRemoveRow: { bodyIndex in
-                if document.editTable(at: index, description: "Remove row") { _ = $0.removeRow(at: bodyIndex) } { noteDocumentEdited() }
+                let changed = document.editTable(at: index, description: "Remove row") { _ = $0.removeRow(at: bodyIndex) }
+                if changed { noteDocumentEdited() }
             },
             onAddColumn: { colIndex in
-                if document.editTable(at: index, description: "Add column") { $0.addColumn(at: colIndex) } { noteDocumentEdited() }
+                let changed = document.editTable(at: index, description: "Add column") { $0.addColumn(at: colIndex) }
+                if changed { noteDocumentEdited() }
             },
             onRemoveColumn: { colIndex in
-                if document.editTable(at: index, description: "Remove column") { _ = $0.removeColumn(at: colIndex) } { noteDocumentEdited() }
+                let changed = document.editTable(at: index, description: "Remove column") { _ = $0.removeColumn(at: colIndex) }
+                if changed { noteDocumentEdited() }
             },
             onCycleAlignment: { colIndex in
-                if document.editTable(at: index, description: "Align column") { model in
+                let changed = document.editTable(at: index, description: "Align column") { model in
                     let cur = colIndex < model.alignments.count ? model.alignments[colIndex] : .none
                     let next: MarkdownTableAlignment = switch cur {
                     case .none: .left
@@ -323,7 +327,8 @@ struct KnowledgeEditorView: View {
                     case .right: .none
                     }
                     model.setAlignment(next, forColumn: colIndex)
-                } { noteDocumentEdited() }
+                }
+                if changed { noteDocumentEdited() }
             },
             onResizeColumn: { colIndex, width in
                 _ = document.editTable(at: index, description: "Resize column") { $0.resizeColumn(at: colIndex, width: width) }
