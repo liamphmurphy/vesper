@@ -14,8 +14,9 @@ let package = Package(
             name: "VesperCore",
             dependencies: ["cmark-gfm", "cmark-gfm-extensions"],
             path: "Sources/VesperCore",
-            // Shiki for code blocks, built by scripts/build-shiki-bundle.mjs (Markdown/CodeHighlighter.swift).
-            resources: [.copy("Resources/shiki")]
+            // Shiki for code blocks, built by scripts/build-shiki-bundle.mjs (Markdown/CodeHighlighter.swift);
+            // mermaid and KaTeX for chat embeds, built by scripts/build-embeds-bundle.mjs (ChatEmbeds/).
+            resources: [.copy("Resources/shiki"), .copy("Resources/embeds")]
         ),
         // The markdown parser, vendored from swiftlang/swift-cmark (Vendor/cmark-gfm/README.md) so the
         // build fetches nothing.
