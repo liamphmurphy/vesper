@@ -513,3 +513,175 @@ func TestSubagentConcurrencyLimitFromSettings(t *testing.T) {
 		runSubagentLimitCase(t, 2, 3)
 	})
 }
+
+func TestSubagentBatchConcurrencyLimit(t *testing.T) {
+	runBatchCase := func(t *testing.T, configuredLimit, totalJobs int) {
+		t.Helper()
+		e := setup(t)
+		v := int32(configuredLimit)
+		if err := e.q.SetWorkspaceRunnerSettings(e.ctx, store.SetWorkspaceRunnerSettingsParams{
+			ID:                     e.ws,
+			MaxConcurrentSubagents: &v,
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		// Run under Antigravity to mirror the single-call batch path agy needs
+		// (since agy executes separate MCP tools/call requests sequentially).
+		svc := &agents.Service{Pool: e.pool}
+		p, err := e.q.GetProjectByKey(e.ctx, store.GetProjectByKeyParams{WorkspaceID: e.ws, Key: "PAY"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		row, err := e.q.GetOverride(e.ctx, store.GetOverrideParams{AgentID: e.atlas.ID, ProjectID: p.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ov, err := agents.DecodeOverride(row.Spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ov.Harness = agentdef.HarnessAntigravity
+		ov.Model = "gemini-3.8-flash"
+		if err := svc.SetOverride(e.ctx, e.ws, e.me.ID, "atlas", "PAY", ov); err != nil {
+			t.Fatal(err)
+		}
+
+		holdDir := t.TempDir()
+		t.Cleanup(func() {
+			for i := range totalJobs {
+				_ = os.WriteFile(filepath.Join(holdDir, fmt.Sprintf("batch-%d", i)), []byte("go"), 0o644)
+			}
+		})
+
+		var callDefs []map[string]string
+		for i := range totalJobs {
+			callDefs = append(callDefs, map[string]string{
+				"type":   agentdef.ExplorerAgent,
+				"role":   fmt.Sprintf("Batch Worker %d", i),
+				"prompt": "HOLD=" + filepath.Join(holdDir, fmt.Sprintf("batch-%d", i)),
+			})
+		}
+		rawCalls, _ := json.Marshal(callDefs)
+		t.Setenv("FAKE_HARNESS_MODE", "subagent")
+		t.Setenv("FAKE_SUBAGENT_CALLS", string(rawCalls))
+		t.Setenv("FAKE_SUBAGENT_BATCH", "1")
+
+		e.dispatch("PAY-214")
+		run := e.run("PAY-214")
+
+		stopTick := make(chan struct{})
+		tickDone := make(chan struct{})
+		var stopOnce sync.Once
+		stop := func() {
+			stopOnce.Do(func() { close(stopTick) })
+			<-tickDone
+		}
+		go func() {
+			defer close(tickDone)
+			for {
+				select {
+				case <-stopTick:
+					return
+				default:
+					e.runner.Tick(e.ctx)
+					time.Sleep(25 * time.Millisecond)
+				}
+			}
+		}()
+		defer func() {
+			stop()
+			e.runner.Wait()
+		}()
+
+		startedFiles := func() []string {
+			entries, _ := os.ReadDir(holdDir)
+			var out []string
+			for _, ent := range entries {
+				if strings.HasSuffix(ent.Name(), ".started") {
+					out = append(out, ent.Name())
+				}
+			}
+			return out
+		}
+
+		wantActive := min(configuredLimit, totalJobs)
+		deadline := time.Now().Add(15 * time.Second)
+		for len(startedFiles()) < wantActive {
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out waiting for %d active batch subagents, got %v", wantActive, startedFiles())
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+		// Cap must hold even though all jobs were enqueued at once.
+		time.Sleep(250 * time.Millisecond)
+		gotStarted := startedFiles()
+		if len(gotStarted) != wantActive {
+			t.Fatalf("active started files = %d (%v), want %d", len(gotStarted), gotStarted, wantActive)
+		}
+
+		jobs, err := e.q.ListSubagentJobsForRun(e.ctx, run.ID)
+		if err != nil || len(jobs) != totalJobs {
+			t.Fatalf("jobs=%d err=%v", len(jobs), err)
+		}
+		counts := map[string]int{}
+		for _, j := range jobs {
+			counts[j.Status]++
+		}
+		if counts["running"] != wantActive || counts["queued"] != totalJobs-wantActive {
+			t.Fatalf("job status counts = %v, want %d running & %d queued", counts, wantActive, totalJobs-wantActive)
+		}
+
+		// Freeing a slot starts a queued job; release the rest in reverse order to verify input ordering.
+		if totalJobs > wantActive {
+			firstRelease := strings.TrimSuffix(gotStarted[0], ".started")
+			if err := os.WriteFile(filepath.Join(holdDir, firstRelease), []byte("go"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			deadline = time.Now().Add(10 * time.Second)
+			for len(startedFiles()) < wantActive+1 {
+				if time.Now().After(deadline) {
+					t.Fatalf("next queued batch subagent never started, got %v", startedFiles())
+				}
+				time.Sleep(25 * time.Millisecond)
+			}
+		}
+		for i := totalJobs - 1; i >= 0; i-- {
+			if err := os.WriteFile(filepath.Join(holdDir, fmt.Sprintf("batch-%d", i)), []byte("go"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		e.until("completed", e.state("PAY-214=completed"))
+
+		run = e.run("PAY-214")
+		if run.Outcome == nil {
+			t.Fatal("missing run outcome")
+		}
+		prevIdx := -1
+		for i := range totalJobs {
+			prefix := fmt.Sprintf("%d:explorer:", i)
+			batchTag := fmt.Sprintf("batch-%d", i)
+			pos := strings.Index(*run.Outcome, prefix)
+			if pos <= prevIdx || !strings.Contains((*run.Outcome)[pos:], batchTag) {
+				t.Fatalf("outcome missing ordered result %q / %q: %s", prefix, batchTag, *run.Outcome)
+			}
+			prevIdx = pos
+		}
+		jobs, err = e.q.ListSubagentJobsForRun(e.ctx, run.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, j := range jobs {
+			if j.Status != "completed" {
+				t.Fatalf("job %s status = %s, want completed", j.ID, j.Status)
+			}
+		}
+	}
+
+	t.Run("capped_at_2_with_4_tasks", func(t *testing.T) {
+		runBatchCase(t, 2, 4)
+	})
+	t.Run("all_4_concurrent_when_limit_4", func(t *testing.T) {
+		runBatchCase(t, 4, 4)
+	})
+}

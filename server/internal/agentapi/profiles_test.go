@@ -60,7 +60,7 @@ var asideRefused = []string{"librarian_pass", "daily_note", "import_vault", "pat
 	"write_note", "save_memory", "update_memory", "forget_memory", "use_repository", "request_push", "set_chat_title", "generate_image", "start_video", "update_video", "finish_video", "fail_video", "start_audio", "update_audio", "finish_audio", "fail_audio", "generate_music", "save_file", "render_pdf",
 	"start_playground", "playground_status", "stop_playground", "set_playground_openapi", "propose_persona", "propose_persona_character", "save_link", "browser_snapshot",
 	"submit_research_report", "canvas_create", "canvas_patch", "canvas_comment", "canvas_reply", "design_list", "design_outline", "design_read", "design_render", "design_patch", "design_import", "design_comments", "design_comment", "design_reply", "design_create", "design_components", "design_tokens", "design_inspect", "design_link_ticket", "propose_workflow_edit", "propose_connector", "propose_secret",
-	"create_space", "create_scheduled_task", "update_scheduled_task", "delete_scheduled_task", "create_learning_module", "create_custom_app", "update_custom_app", "delete_custom_app", "custom_app_sql", "http_save_request", "http_run_request", "run_subagent"}
+	"create_space", "create_scheduled_task", "update_scheduled_task", "delete_scheduled_task", "create_learning_module", "create_custom_app", "update_custom_app", "delete_custom_app", "custom_app_sql", "http_save_request", "http_run_request", "run_subagent", "run_subagents"}
 
 func TestAsideToolsOnlyRead(t *testing.T) {
 	for _, n := range asideTools {

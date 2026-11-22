@@ -426,6 +426,7 @@ func TestAgyProbe(t *testing.T) {
 			agyReply{call: agyCall("run_workflow", map[string]any{"Description": "Fan out", "Script": "print('hi')"})},
 			agyReply{call: agyCall("schedule", map[string]any{"DurationSeconds": 60, "Prompt": "check later"})},
 			agyReply{call: agyCall("mcp_lazyagents_run_subagent", map[string]any{"type": "explorer", "role": "Scope Reader", "prompt": "find notes", "toolSummary": "Explore notes"})},
+			agyReply{call: agyCall("mcp_lazyagents_run_subagents", map[string]any{"tasks": []any{map[string]any{"type": "explorer", "role": "Reader A", "prompt": "a"}, map[string]any{"type": "explorer", "role": "Reader B", "prompt": "b"}}, "toolSummary": "Explore batch"})},
 			agyReply{text: "Delegated cleanly."},
 		)
 		s := spec("repo:read", "allowed", "repo:write", "allowed", "tests:run", "allowed")
@@ -446,17 +447,19 @@ func TestAgyProbe(t *testing.T) {
 				break
 			}
 		}
-		if !strings.Contains(modelReq, `"name":"mcp_lazyagents_run_subagent"`) {
-			t.Errorf("mcp_lazyagents_run_subagent must be declared eagerly in ACP mode")
+		for _, wantTool := range []string{"mcp_lazyagents_run_subagent", "mcp_lazyagents_run_subagents"} {
+			if !strings.Contains(modelReq, `"name":"`+wantTool+`"`) {
+				t.Errorf("%s must be declared eagerly in ACP mode", wantTool)
+			}
 		}
 		gotTools := p.policy.tools()
-		for _, want := range []string{"Agent", "schedule", "mcp__lazyagents_run_subagent"} {
+		for _, want := range []string{"Agent", "schedule", "mcp__lazyagents_run_subagent", "mcp__lazyagents_run_subagents"} {
 			if !slices.Contains(gotTools, want) {
 				t.Errorf("policy hook did not receive %q: got %v", want, gotTools)
 			}
 		}
-		if p.mcp.calls("tools/call") != 1 {
-			t.Errorf("expected 1 MCP tools/call for run_subagent, got %d (methods=%v, policy=%v)", p.mcp.calls("tools/call"), p.mcp.methods, gotTools)
+		if p.mcp.calls("tools/call") != 2 {
+			t.Errorf("expected 2 MCP tools/call for run_subagent + run_subagents, got %d (methods=%v, policy=%v)", p.mcp.calls("tools/call"), p.mcp.methods, gotTools)
 		}
 	})
 
@@ -874,6 +877,7 @@ func (s *agyMCPStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			map[string]any{"name": "list_tickets", "description": "List tickets", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"q": map[string]any{"type": "string"}}}},
 			map[string]any{"name": "read_page", "description": "Read a page", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"zebra_ref": map[string]any{"type": "string"}}}},
 			map[string]any{"name": "run_subagent", "description": "Run a subagent", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"type": map[string]any{"type": "string"}, "role": map[string]any{"type": "string"}, "prompt": map[string]any{"type": "string"}}}},
+			map[string]any{"name": "run_subagents", "description": "Run subagents in parallel", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"tasks": map[string]any{"type": "array", "items": map[string]any{"type": "object"}}}}},
 		}}
 	case "tools/call":
 		result = map[string]any{"content": []any{map[string]any{"type": "text", "text": "LAZYAGENTS-1 probe ticket"}}}

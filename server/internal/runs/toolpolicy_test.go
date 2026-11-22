@@ -208,7 +208,7 @@ func TestToolPolicySubagents(t *testing.T) {
 		{"Task", "general-purpose"},
 	} {
 		check(tc.tool, tc.typ, "deny")
-		if d, _ := svc.CheckTool(ctx, c, runs.ToolCheck{Tool: tc.tool, Input: map[string]any{"subagent_type": tc.typ}}); d.Reason != "Use the Vesper MCP tool `run_subagent` instead of native Agent subagents." {
+		if d, _ := svc.CheckTool(ctx, c, runs.ToolCheck{Tool: tc.tool, Input: map[string]any{"subagent_type": tc.typ}}); d.Reason != "Use the Vesper MCP tool `run_subagent` (or `run_subagents` for parallel batches) instead of native Agent subagents." {
 			t.Fatalf("%s/%s reason %q", tc.tool, tc.typ, d.Reason)
 		}
 	}

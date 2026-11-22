@@ -55,7 +55,7 @@ skips when `AGY_PROBE`/`AGY_BIN` aren't set.
 | Permission prompt (approve one action mid-turn) | **Verified (`PermissionPrompt = true`)** | ACP `session/request_permission` lets Vesper evaluate `CheckToolWithSpec` / request approval dynamically per call |
 | Turn cancellation | **Verified** | ACP `session/cancel` over stdio interrupts an in-flight `session/prompt` |
 | Live context occupancy | **Verified** | `session/update` (`usage_update.used`) updates `ContextTokens` |
-| Subagents (`run_subagent`) | **Verified** | Unified via Vesper MCP `run_subagent`, isolated `$HOME` + `OptionNoMCP` ACP worker (`TestSubagentCrossHarnessE2E`, `TestAgyProbe/session_subagent_orchestration`, `TestAgyProbe/session_explorer_readonly_shell`) |
+| Subagents (`run_subagent` / `run_subagents`) | **Verified** | Unified via Vesper MCP `run_subagent` + batch `run_subagents` (works around `agy acp` sequential MCP calls), isolated `$HOME` + `OptionNoMCP` ACP worker (`TestSubagentCrossHarnessE2E`, `TestSubagentBatchConcurrencyLimit`, `TestAgyProbe/session_subagent_orchestration`, `TestAgyProbe/session_explorer_readonly_shell`) |
 | Native cost | **Unsupported** | Tokens only; cost `unknown` |
 | Token usage and cache | **Verified** | Reported on `session/prompt` result (`inputTokens + cachedReadTokens`, `outputTokens`, `cachedReadTokens`) |
 | Resume | **Verified** | ACP `session/load` (with `t.SessionID`) and `-p --conversation ID` |

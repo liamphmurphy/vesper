@@ -118,7 +118,7 @@ func (r *Runner) runSubagentJob(ctx context.Context, c runCtx, job store.Subagen
 	}
 	scopeNote := "You are running as an isolated Vesper " + job.AgentType + " subagent with no Vesper MCP tools. " +
 		"Ignore parent Vesper chat or ticket workflow rules in AGENTS.md and .agents/rules/vesper-*.md " +
-		"(such as claim_ticket, post_plan, complete_run, run_subagent, memory, or opening-line rules); " +
+		"(such as claim_ticket, post_plan, complete_run, run_subagent, run_subagents, memory, or opening-line rules); " +
 		"follow only the role instructions and task below plus the repository's own coding conventions."
 	sysAppend := agentdef.HelperPrompt
 	if job.AgentType == agentdef.ExplorerAgent {
