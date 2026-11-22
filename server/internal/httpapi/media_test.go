@@ -138,3 +138,39 @@ func TestMediaProviderRequiresSecretsKey(t *testing.T) {
 		"secrets": map[string]any{"api_key": "sk-no-key"},
 	}, http.StatusConflict)
 }
+
+func TestMediaProviderVideoAndTTSDefaults(t *testing.T) {
+	reg := media.NewRegistry()
+	ctrl := &fake.Controller{}
+	fake.RegisterVideo(reg, ctrl)
+	fake.RegisterSpeech(reg, ctrl)
+
+	k := make([]byte, 32)
+	_, _ = rand.Read(k)
+	box, err := secrets.NewBox(base64.StdEncoding.EncodeToString(k))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := newChatEnvServer(t, nil, func(s *Server) {
+		s.Secrets = &secrets.Service{Q: s.Q, Box: box}
+		s.MediaRegistry = reg
+	})
+
+	e.want("PUT", "/media/providers/"+fake.VideoProviderID, map[string]any{
+		"secrets": map[string]any{"api_key": "sk-video"},
+	}, http.StatusOK)
+	e.want("PUT", "/media/providers/"+fake.SpeechProviderID, map[string]any{
+		"secrets": map[string]any{"api_key": "sk-speech"},
+	}, http.StatusOK)
+
+	vDef := e.want("PUT", "/media/defaults/video", map[string]any{"provider_id": fake.VideoProviderID}, http.StatusOK)
+	if vDef["defaults"].(map[string]any)["video"] != fake.VideoProviderID {
+		t.Fatalf("video default = %v", vDef["defaults"])
+	}
+	tDef := e.want("PUT", "/media/defaults/tts", map[string]any{"provider_id": fake.SpeechProviderID}, http.StatusOK)
+	if tDef["defaults"].(map[string]any)["tts"] != fake.SpeechProviderID {
+		t.Fatalf("tts default = %v", tDef["defaults"])
+	}
+	// Mismatched capability is rejected.
+	e.want("PUT", "/media/defaults/video", map[string]any{"provider_id": fake.SpeechProviderID}, http.StatusUnprocessableEntity)
+}

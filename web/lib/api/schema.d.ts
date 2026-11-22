@@ -7808,7 +7808,7 @@ export interface components {
             }[];
         };
         /** @enum {string} */
-        MediaCapability: "music" | "tts" | "script";
+        MediaCapability: "music" | "video" | "tts" | "script";
         MediaFieldOption: {
             value: string;
             label: string;

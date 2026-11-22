@@ -13474,9 +13474,10 @@ extension API {
         public let rawValue: Swift.String
         public init(rawValue: Swift.String) { self.rawValue = rawValue }
         public static let music = MediaCapability(rawValue: "music")
+        public static let video = MediaCapability(rawValue: "video")
         public static let tts = MediaCapability(rawValue: "tts")
         public static let script = MediaCapability(rawValue: "script")
-        public static let allKnown: [MediaCapability] = [music, tts, script]
+        public static let allKnown: [MediaCapability] = [music, video, tts, script]
     }
 
     public struct MediaFieldOption: Codable, Sendable, Equatable {

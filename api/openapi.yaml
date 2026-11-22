@@ -8854,7 +8854,7 @@ components:
               reason: { type: string, description: "Why it isn't available" }
     MediaCapability:
       type: string
-      enum: [music, tts, script]
+      enum: [music, video, tts, script]
     MediaFieldOption:
       type: object
       required: [value, label]

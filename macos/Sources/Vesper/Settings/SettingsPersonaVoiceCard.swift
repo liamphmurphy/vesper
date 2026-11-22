@@ -6,6 +6,7 @@ import VesperCore
 /// with a preview before saving. Replies are spoken up to about 120 words of prose.
 struct SettingsPersonaVoiceCard: View {
     let aux: AuxWindows
+    @Bindable var navigation: SettingsNavigation
     let persona: API.Persona
 
     @State private var mode = "off"
@@ -32,9 +33,17 @@ struct SettingsPersonaVoiceCard: View {
                 SettingsBanner(tone: .done, title: statusMessage)
             }
             if let list, !list.available {
-                Text(list.reason ?? "No speech provider is configured.")
+                HStack(spacing: 8) {
+                    Text(list.reason ?? "No speech provider is configured.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Media providers…") {
+                        navigation.navigate("/settings?section=workspace#media")
+                    }
+                    .buttonStyle(.link)
                     .font(.callout)
-                    .foregroundStyle(.secondary)
+                }
             }
             Picker("Speak", selection: $mode) {
                 Text("Off").tag("off")
@@ -57,6 +66,11 @@ struct SettingsPersonaVoiceCard: View {
                 Text("The mute switch on the chat companion silences every persona.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Button("Voice model…") {
+                    navigation.navigate("/settings?section=workspace#media")
+                }
+                .buttonStyle(.link)
+                .font(.caption)
                 Spacer()
                 Button(busy ? "Saving…" : "Save Voice") { save() }
                     .buttonStyle(.borderedProminent)

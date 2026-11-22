@@ -137,15 +137,18 @@ struct SettingsWorkspacePane: View {
                     }
                 }
                 .id("images")
+
+                SettingsMediaProvidersSection(aux: aux)
+                    .id("media")
             }
             .onAppear {
-                if navigation.anchor == "images" {
-                    proxy.scrollTo("images", anchor: .top)
+                if let anchor = navigation.anchor, anchor == "images" || anchor == "media" {
+                    proxy.scrollTo(anchor, anchor: .top)
                 }
             }
             .onChange(of: navigation.anchor) { _, next in
-                if next == "images" {
-                    withAnimation { proxy.scrollTo("images", anchor: .top) }
+                if let next, next == "images" || next == "media" {
+                    withAnimation { proxy.scrollTo(next, anchor: .top) }
                 }
             }
         }
@@ -157,6 +160,7 @@ struct SettingsWorkspacePane: View {
             store?.load(API.listPlanningSessions())
             store?.load(API.listChatSpaces())
             store?.load(API.getImageEngine())
+            store?.load(API.listMediaProviders())
         }
     }
 

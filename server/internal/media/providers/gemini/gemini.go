@@ -111,7 +111,7 @@ func Descriptor() media.Descriptor {
 			},
 			{
 				Key:     "model",
-				Label:   "Model",
+				Label:   "Music Model",
 				Kind:    "select",
 				Default: modelAuto,
 				Options: []media.FieldOption{
