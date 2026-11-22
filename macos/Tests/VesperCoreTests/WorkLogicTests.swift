@@ -57,7 +57,7 @@ private func mkTicket(_ key: String, _ over: [String: Any] = [:]) -> API.TicketS
 private func runner(online: Bool = true, starting: Bool = false) -> API.RunnerStatus {
     decode(API.RunnerStatus.self, [
         "online": online, "starting": starting, "busy": 2, "queued": 1, "slots": 6, "live": 3, "runners": [],
-        "host_folder_workspaces": false,
+        "host_folder_workspaces": false, "max_concurrent_subagents": 3, "max_parallel_delegations": 3,
     ])
 }
 
