@@ -31,6 +31,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/realtime"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/secrets"
+	"github.com/liamphmurphy/vesper/server/internal/statemedia"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 	"github.com/liamphmurphy/vesper/server/internal/tracker"
 	"github.com/liamphmurphy/vesper/server/internal/transfer"
@@ -105,6 +106,11 @@ type Server struct {
 	mediaRegOnce    sync.Once
 	musicRun        *media.MusicRunner
 	musicRunOnce    sync.Once
+	// StateMediaPack overrides looppack.Pack for persona state loops (tests
+	// stub it so they don't need ffmpeg).
+	StateMediaPack statemedia.PackFunc
+	stateMediaRun  *statemedia.Runner
+	stateMediaOnce sync.Once
 
 	logins       loginLimiter
 	apiOnce      sync.Once

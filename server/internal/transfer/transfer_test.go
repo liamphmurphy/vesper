@@ -154,6 +154,29 @@ func seed(t *testing.T, pool *pgxpool.Pool) {
 	}
 }
 
+// seedPersonaLoops adds a persona with a ready state loop and a failed one
+// that kept nothing. Separate from seed, which also runs on older schemas.
+func seedPersonaLoops(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	ctx := t.Context()
+	var ws, user, persona string
+	if err := pool.QueryRow(ctx, `SELECT workspace_id::text, id::text FROM users WHERE email = 'ann@example.com'`).Scan(&ws, &user); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `INSERT INTO personas(workspace_id,user_id,name) VALUES($1,$2,'Iris') RETURNING id`, ws, user).Scan(&persona); err != nil {
+		t.Fatal(err)
+	}
+	for _, sql := range []string{
+		`INSERT INTO persona_state_media(persona_id,state,status,job_id,blob_key,content_type,head_key,width,height,frames,duration_ms,size_bytes,interaction_id,backend)
+		VALUES($1,'idle','ready',gen_random_uuid(),'persona-loops/p/idle/loop-1','image/webp','persona-loops/p/idle/head-1',360,640,96,4000,1234,'int-1','vision')`,
+		`INSERT INTO persona_state_media(persona_id,state,status,job_id,error,error_kind) VALUES($1,'thinking','failed',gen_random_uuid(),'filtered','filtered')`,
+	} {
+		if _, err := pool.Exec(ctx, sql, persona); err != nil {
+			t.Fatalf("%s: %v", sql, err)
+		}
+	}
+}
+
 // dump returns every row of every exported table as sorted text, keyed by
 // table, so two databases can be compared.
 func dump(t *testing.T, pool *pgxpool.Pool) map[string][]string {
@@ -240,8 +263,10 @@ func exportToZip(t *testing.T, pool *pgxpool.Pool, blobs transfer.Blobs, key str
 func TestRoundTrip(t *testing.T) {
 	src := testdb.New(t)
 	seed(t, src)
+	seedPersonaLoops(t, src)
 	srcBlobs := newMemBlobs()
 	srcBlobs.put("artifacts", "a/one.png", "image/png", []byte{0x89, 'P', 'N', 'G', 0, 1, 2})
+	srcBlobs.put("artifacts", "persona-loops/p/idle/loop-1", "image/webp", []byte("RIFF....WEBPVP8X"))
 	srcBlobs.put("artifacts", "weird/../key with spaces?.txt", "text/plain", []byte("hello"))
 	srcBlobs.put("run-logs", "run/1.log", "text/plain", bytes.Repeat([]byte("log line\n"), 1000))
 	// A bucket the server doesn't know about by name: export finds it anyway.
@@ -268,7 +293,7 @@ func TestRoundTrip(t *testing.T) {
 			t.Errorf("table %s differs:\n source: %q\n target: %q", table, rows, got[table])
 		}
 	}
-	for _, table := range []string{"tickets", "agents", "agent_definition_versions", "runs", "run_events", "memories", "comments"} {
+	for _, table := range []string{"tickets", "agents", "agent_definition_versions", "runs", "run_events", "memories", "comments", "personas", "persona_state_media"} {
 		if len(want[table]) == 0 {
 			t.Errorf("seed left %s empty, so the round trip proves nothing about it", table)
 		}

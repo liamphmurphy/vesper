@@ -3078,6 +3078,86 @@ extension API {
         )
     }
 
+    /// The persona's photorealistic state loops
+    ///
+    /// One row per state that has been generated or is generating, in state
+    /// order. A row keeps its last good loop (loop_url) while a regeneration
+    /// runs and after one fails. Poll while any row is queued or running.
+    ///
+    /// `GET /personas/{id}/state-media`
+    public static func listPersonaStateMedia(id: Swift.String) -> APIRequest<PersonaStateMediaList> {
+        return APIRequest(
+            method: "GET", template: "/personas/{id}/state-media",
+            path: "/api/v1/personas/\(APIPath.escape(id))/state-media",
+            query: [], headers: [:], body: nil, decode: .json
+        )
+    }
+
+    /// Generate or regenerate state loops
+    ///
+    /// Starts generating loops in the background, from the persona's portrait,
+    /// with the workspace's video provider (Gemini Omni), then mattes each to a
+    /// transparent Animated WebP. Omit states for the full set. With tweak, each
+    /// state's previous clip is edited conversationally instead (it must have
+    /// one). The portrait is source_library_item_id when given, else the
+    /// persona's reference image in the Library, else its avatar. 409 when no
+    /// video provider is configured, the persona has no portrait, or a
+    /// requested state is already generating.
+    ///
+    /// `POST /personas/{id}/state-media`
+    public static func generatePersonaStateMedia(id: Swift.String, body: GeneratePersonaStateMedia) -> APIRequest<PersonaStateMediaList> {
+        return APIRequest(
+            method: "POST", template: "/personas/{id}/state-media",
+            path: "/api/v1/personas/\(APIPath.escape(id))/state-media",
+            query: [], headers: [:], body: APIRequestBody.json(body), decode: .json
+        )
+    }
+
+    /// Remove state loops (idempotent)
+    ///
+    /// Removes one state's loop, or all of them without state, cancelling any
+    /// generation in progress. The persona falls back to its picture or SVG
+    /// character.
+    ///
+    /// `DELETE /personas/{id}/state-media`
+    public static func clearPersonaStateMedia(id: Swift.String, state: PersonaState? = nil) -> APIRequest<PersonaStateMediaList> {
+        var _query: [URLQueryItem] = []
+        APIQuery.append(&_query, "state", state)
+        return APIRequest(
+            method: "DELETE", template: "/personas/{id}/state-media",
+            path: "/api/v1/personas/\(APIPath.escape(id))/state-media",
+            query: _query, headers: [:], body: nil, decode: .json
+        )
+    }
+
+    /// A state loop's square, transparent head-crop PNG
+    ///
+    /// For small avatars, where the full loop is too small to read. 404 when the state has none.
+    ///
+    /// `GET /personas/{id}/state-media/{state}/head`
+    public static func getPersonaStateHead(id: Swift.String, state: PersonaState) -> APIRequest<Foundation.Data> {
+        return APIRequest(
+            method: "GET", template: "/personas/{id}/state-media/{state}/head",
+            path: "/api/v1/personas/\(APIPath.escape(id))/state-media/\(APIPath.escape(state))/head",
+            query: [], headers: [:], body: nil, decode: .raw
+        )
+    }
+
+    /// A state's transparent Animated WebP loop
+    ///
+    /// Served as image/webp with `X-Content-Type-Options: nosniff` and a
+    /// locked-down CSP, like avatars. The URL carries a cache-busting ?v=.
+    /// 404 when the state has no loop.
+    ///
+    /// `GET /personas/{id}/state-media/{state}/loop`
+    public static func getPersonaStateLoop(id: Swift.String, state: PersonaState) -> APIRequest<Foundation.Data> {
+        return APIRequest(
+            method: "GET", template: "/personas/{id}/state-media/{state}/loop",
+            path: "/api/v1/personas/\(APIPath.escape(id))/state-media/\(APIPath.escape(state))/loop",
+            query: [], headers: [:], body: nil, decode: .raw
+        )
+    }
+
     /// `GET /planning-sessions`
     public static func listPlanningSessions() -> APIRequest<[PlanningSession]> {
         return APIRequest(

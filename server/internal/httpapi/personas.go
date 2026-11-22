@@ -101,11 +101,15 @@ func (s *Server) toPersonas(ctx context.Context, rows []store.Persona) ([]api.Pe
 	if err != nil {
 		return nil, err
 	}
+	loops, err := s.personasStateMedia(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
 	for _, p := range rows {
 		item := api.Persona{
 			Id: p.ID, Name: p.Name, Tone: api.PersonaTone(p.Tone), Color: p.Color, AvatarUrl: personaAvatarURL(p), CharacterSvg: p.CharacterSvg,
 			CustomInstructions: p.CustomInstructions, Capabilities: *toPersonaCapabilities(p), Repos: reposOrEmpty(p.Repos), IsDefault: p.IsDefault, ChatCount: n[p.ID], LastUsedAt: p.LastUsedAt,
-			InChatList: p.InChatList, Work: api.PersonaWork(personas.WorkNone),
+			InChatList: p.InChatList, Work: api.PersonaWork(personas.WorkNone), StateMedia: stateMediaSummary(loops[p.ID]),
 			Revision: int(p.Revision), CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
 		}
 		if p.DefaultHarness != "" && p.DefaultModel != "" {
@@ -228,11 +232,14 @@ func (s *Server) DeletePersona(ctx context.Context, req api.DeletePersonaRequest
 		v := int32(*r)
 		rev = &v
 	}
+	loops := s.stateMediaKeys(ctx, req.Id)
 	p, err := s.personas().Delete(ctx, personaOwner(ctx), req.Id, rev)
 	if err != nil {
 		return nil, err
 	}
 	s.deleteAvatarBlob(ctx, p.AvatarKey)
+	// The cascade dropped the loop rows; cancel their attempts and free the blobs.
+	s.stateMediaRunner().Forget(ctx, loops)
 	return api.DeletePersona204Response{}, nil
 }
 

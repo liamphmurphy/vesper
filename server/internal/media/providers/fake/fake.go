@@ -1,10 +1,12 @@
-// Package fake provides a deterministic, offline media.MusicGenerator for tests.
+// Package fake provides a deterministic, offline media.MusicGenerator and
+// media.VideoGenerator for tests.
 package fake
 
 import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"math"
 	"sync"
 
@@ -21,6 +23,28 @@ type Controller struct {
 	BlockCh     chan struct{}
 	Calls       []media.MusicRequest
 	ClipData    []byte
+
+	// VideoCalls records every GenerateVideo request.
+	VideoCalls []media.VideoRequest
+	// VideoErr, when set, decides per request whether GenerateVideo fails.
+	VideoErr func(media.VideoRequest) error
+	// VideoBlockCh, when set, holds GenerateVideo until it is closed.
+	VideoBlockCh chan struct{}
+}
+
+// SetVideo sets VideoErr and VideoBlockCh under the controller's lock, so a
+// test can change them while generation goroutines read them.
+func (c *Controller) SetVideo(errFor func(media.VideoRequest) error, block chan struct{}) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.VideoErr, c.VideoBlockCh = errFor, block
+}
+
+// VideoRequests returns a copy of the video requests made so far.
+func (c *Controller) VideoRequests() []media.VideoRequest {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]media.VideoRequest(nil), c.VideoCalls...)
 }
 
 // Register registers the fake music provider on reg.
@@ -64,6 +88,51 @@ func Register(reg *media.Registry, ctrl *Controller) {
 			return &Provider{ctrl: ctrl}, nil
 		},
 	})
+}
+
+// VideoProviderID is the fake video provider RegisterVideo adds.
+const VideoProviderID = "fake-video"
+
+// RegisterVideo registers a fake video provider on reg, sharing ctrl. It is
+// separate from the music fake so tests of music-only resolution see no video
+// provider.
+func RegisterVideo(reg *media.Registry, ctrl *Controller) {
+	if ctrl == nil {
+		ctrl = &Controller{}
+	}
+	reg.Register(media.Entry{
+		Descriptor: media.Descriptor{
+			ID:           VideoProviderID,
+			Label:        "Fake Video",
+			Description:  "Deterministic test video provider.",
+			Capabilities: []media.Capability{media.CapVideo},
+			Fields:       []media.FieldSpec{{Key: "api_key", Label: "API Key", Kind: "secret", Required: true}},
+		},
+		CheckAvailability: func(cfg media.ResolvedConfig) (bool, string) {
+			if cfg.Secrets["api_key"] == "" {
+				return false, "Fake Video API key is not configured."
+			}
+			return true, ""
+		},
+		New: func(media.ResolvedConfig) (media.Provider, error) {
+			return &VideoProvider{ctrl: ctrl}, nil
+		},
+	})
+}
+
+// VideoProvider is an in-memory VideoGenerator.
+type VideoProvider struct {
+	ctrl *Controller
+}
+
+func (p *VideoProvider) ID() string    { return VideoProviderID }
+func (p *VideoProvider) Label() string { return "Fake Video" }
+
+func (p *VideoProvider) Check(ctx context.Context) error {
+	p.ctrl.mu.Lock()
+	err := p.ctrl.CheckErr
+	p.ctrl.mu.Unlock()
+	return err
 }
 
 // Provider is an in-memory MusicGenerator.
@@ -118,6 +187,46 @@ func (p *Provider) GenerateMusic(ctx context.Context, req media.MusicRequest, on
 		FilenameExt: ".wav",
 		DurationMS:  2000,
 		Model:       "fake-lyria",
+	}, nil
+}
+
+// FakeVideoMP4 is the placeholder payload GenerateVideo returns; tests pack it
+// with a stub, never ffmpeg.
+var FakeVideoMP4 = []byte("fake-mp4")
+
+func (p *VideoProvider) GenerateVideo(ctx context.Context, req media.VideoRequest, onProgress func(media.VideoProgress)) (media.VideoClip, error) {
+	p.ctrl.mu.Lock()
+	p.ctrl.VideoCalls = append(p.ctrl.VideoCalls, req)
+	n := len(p.ctrl.VideoCalls)
+	block := p.ctrl.VideoBlockCh
+	errFor := p.ctrl.VideoErr
+	p.ctrl.mu.Unlock()
+
+	if onProgress != nil {
+		onProgress(media.VideoProgress{Percent: 30, Note: "Rendering clip…"})
+	}
+	if block != nil {
+		select {
+		case <-ctx.Done():
+			return media.VideoClip{}, ctx.Err()
+		case <-block:
+		}
+	}
+	if ctx.Err() != nil {
+		return media.VideoClip{}, ctx.Err()
+	}
+	if errFor != nil {
+		if err := errFor(req); err != nil {
+			return media.VideoClip{}, err
+		}
+	}
+	return media.VideoClip{
+		Data:          FakeVideoMP4,
+		ContentType:   "video/mp4",
+		FilenameExt:   ".mp4",
+		DurationMS:    req.DurationSec * 1000,
+		Model:         "fake-omni",
+		InteractionID: fmt.Sprintf("fake-interaction-%d", n),
 	}, nil
 }
 

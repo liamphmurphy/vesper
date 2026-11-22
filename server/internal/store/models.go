@@ -1332,6 +1332,33 @@ type PersonaProposal struct {
 	CharacterSvg       *string
 }
 
+type PersonaStateMedia struct {
+	PersonaID     uuid.UUID
+	State         string
+	Status        string
+	JobID         uuid.UUID
+	Percent       int32
+	StageNote     string
+	Prompt        string
+	Tweak         string
+	ProviderID    string
+	Model         string
+	InteractionID *string
+	Backend       string
+	BlobKey       *string
+	ContentType   *string
+	HeadKey       *string
+	Width         *int32
+	Height        *int32
+	Frames        *int32
+	DurationMs    *int32
+	SizeBytes     *int64
+	Error         *string
+	ErrorKind     *string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
 type PlanStep struct {
 	ID       uuid.UUID
 	RunID    uuid.UUID

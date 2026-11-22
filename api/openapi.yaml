@@ -6258,6 +6258,128 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
         default: { $ref: "#/components/responses/Error" }
 
+  /personas/{id}/state-media:
+    parameters:
+      - { $ref: "#/components/parameters/PersonaId" }
+    get:
+      operationId: listPersonaStateMedia
+      summary: The persona's photorealistic state loops
+      description: |
+        One row per state that has been generated or is generating, in state
+        order. A row keeps its last good loop (loop_url) while a regeneration
+        runs and after one fails. Poll while any row is queued or running.
+      tags: [personas]
+      responses:
+        "200":
+          description: The persona's state loops
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PersonaStateMediaList" }
+        "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: generatePersonaStateMedia
+      summary: Generate or regenerate state loops
+      description: |
+        Starts generating loops in the background, from the persona's portrait,
+        with the workspace's video provider (Gemini Omni), then mattes each to a
+        transparent Animated WebP. Omit states for the full set. With tweak, each
+        state's previous clip is edited conversationally instead (it must have
+        one). The portrait is source_library_item_id when given, else the
+        persona's reference image in the Library, else its avatar. 409 when no
+        video provider is configured, the persona has no portrait, or a
+        requested state is already generating.
+      tags: [personas]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GeneratePersonaStateMedia" }
+      responses:
+        "202":
+          description: Every state loop of the persona, the requested ones queued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PersonaStateMediaList" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: clearPersonaStateMedia
+      summary: Remove state loops (idempotent)
+      description: |
+        Removes one state's loop, or all of them without state, cancelling any
+        generation in progress. The persona falls back to its picture or SVG
+        character.
+      tags: [personas]
+      parameters:
+        - name: state
+          in: query
+          schema: { $ref: "#/components/schemas/PersonaState" }
+      responses:
+        "200":
+          description: The persona's remaining state loops
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PersonaStateMediaList" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /personas/{id}/state-media/{state}/loop:
+    parameters:
+      - { $ref: "#/components/parameters/PersonaId" }
+      - name: state
+        in: path
+        required: true
+        schema: { $ref: "#/components/schemas/PersonaState" }
+    get:
+      operationId: getPersonaStateLoop
+      summary: A state's transparent Animated WebP loop
+      description: |
+        Served as image/webp with `X-Content-Type-Options: nosniff` and a
+        locked-down CSP, like avatars. The URL carries a cache-busting ?v=.
+        404 when the state has no loop.
+      tags: [personas]
+      responses:
+        "200":
+          description: The loop
+          headers:
+            X-Content-Type-Options: { schema: { type: string, enum: [nosniff] } }
+            Content-Security-Policy: { schema: { type: string } }
+            Cache-Control: { schema: { type: string } }
+          content:
+            image/webp:
+              schema: { type: string, format: binary }
+        "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /personas/{id}/state-media/{state}/head:
+    parameters:
+      - { $ref: "#/components/parameters/PersonaId" }
+      - name: state
+        in: path
+        required: true
+        schema: { $ref: "#/components/schemas/PersonaState" }
+    get:
+      operationId: getPersonaStateHead
+      summary: A state loop's square, transparent head-crop PNG
+      description: For small avatars, where the full loop is too small to read. 404 when the state has none.
+      tags: [personas]
+      responses:
+        "200":
+          description: The head crop
+          headers:
+            X-Content-Type-Options: { schema: { type: string, enum: [nosniff] } }
+            Content-Security-Policy: { schema: { type: string } }
+            Cache-Control: { schema: { type: string } }
+          content:
+            image/png:
+              schema: { type: string, format: binary }
+        "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
   /github/review-requests:
     get:
       operationId: listGitHubReviewRequests
@@ -10920,6 +11042,7 @@ components:
         color: { type: string, pattern: "^#[0-9a-f]{6}$", description: Stored in lower case }
         avatar_url: { type: string, description: "GET /personas/{id}/avatar with a cache-busting ?v=<revision>; absent without an avatar" }
         character_svg: { type: string, description: "Sanitized 64x64 animated SVG character source; absent when using a picture or initials" }
+        state_media: { $ref: "#/components/schemas/PersonaStateMediaSummary", description: "Photorealistic state loops; absent when none has been generated" }
         custom_instructions: { type: string }
         capabilities: { $ref: "#/components/schemas/PersonaCapabilities" }
         repos: { type: array, maxItems: 10, items: { type: string }, deprecated: true, description: "Legacy repository favorites and first-chat default; never an access allowlist. Use shared repository sources for discovery." }
@@ -10929,6 +11052,61 @@ components:
         revision: { type: integer }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+    PersonaState:
+      type: string
+      enum: [idle, thinking, reading, coding, creating, needs_you]
+      x-enum-varnames: [PersonaStateIdle, PersonaStateThinking, PersonaStateReading, PersonaStateCoding, PersonaStateCreating, PersonaStateNeedsYou]
+      description: A character state a persona can have a photorealistic loop for.
+    PersonaStateMediaStatus:
+      type: string
+      enum: [queued, running, ready, failed]
+      x-enum-varnames: [PersonaStateMediaQueued, PersonaStateMediaRunning, PersonaStateMediaReady, PersonaStateMediaFailed]
+      description: The latest generation attempt. A failed attempt keeps any earlier loop.
+    PersonaStateMedia:
+      type: object
+      required: [state, status, percent, can_tweak, updated_at]
+      properties:
+        state: { $ref: "#/components/schemas/PersonaState" }
+        status: { $ref: "#/components/schemas/PersonaStateMediaStatus" }
+        percent: { type: integer, minimum: 0, maximum: 100 }
+        stage_note: { type: string, description: "What the running attempt is doing; absent when idle" }
+        loop_url: { type: string, description: "GET /personas/{id}/state-media/{state}/loop with a cache-busting ?v=; absent until a loop exists" }
+        head_url: { type: string, description: "GET /personas/{id}/state-media/{state}/head with a cache-busting ?v=; absent without a head crop" }
+        width: { type: integer }
+        height: { type: integer }
+        frames: { type: integer }
+        duration_ms: { type: integer }
+        size_bytes: { type: integer, format: int64 }
+        backend: { type: string, description: "The matting backend that cut the loop out: vision (Apple Silicon) or ffmpeg-chroma" }
+        provider_id: { type: string }
+        model: { type: string }
+        tweak: { type: string, description: "The edit instruction of the latest attempt, when it was a tweak" }
+        can_tweak: { type: boolean, description: "The state has an earlier clip a tweak can edit" }
+        error: { type: string, description: "Why the latest attempt failed" }
+        error_kind: { type: string, description: "auth, quota, rate_limit, filtered, unavailable, timeout, stopped or error" }
+        updated_at: { type: string, format: date-time }
+    PersonaStateMediaList:
+      type: object
+      required: [states]
+      properties:
+        states: { type: array, items: { $ref: "#/components/schemas/PersonaStateMedia" } }
+    GeneratePersonaStateMedia:
+      type: object
+      properties:
+        states: { type: array, maxItems: 6, items: { $ref: "#/components/schemas/PersonaState" }, description: "Absent or empty: every state" }
+        tweak: { type: string, maxLength: 1000, description: "Edit each state's previous clip with this instruction instead of starting afresh" }
+        source_library_item_id: { type: string, format: uuid, description: "A Library image to use as the portrait" }
+    PersonaStateMediaSummary:
+      type: object
+      description: What the clients need to play a persona's loops.
+      required: [loops, generating]
+      properties:
+        loops:
+          type: object
+          additionalProperties: { type: string }
+          description: "Loop URL by state (PersonaState values), for each state that has one"
+        head_url: { type: string, description: "Head crop for small avatars, from the idle loop when it has one" }
+        generating: { type: boolean, description: "Any state is queued or running" }
     PersonaWork:
       type: string
       enum: [none, tickets]
