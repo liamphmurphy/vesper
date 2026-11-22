@@ -192,6 +192,14 @@ func (r *Runner) Run(ctx context.Context) error {
 	defer poll.Stop()
 	schedule := time.NewTicker(15 * time.Second)
 	defer schedule.Stop()
+	wake := make(chan struct{}, 1)
+	if r.Pool != nil {
+		r.wg.Add(1)
+		go func() {
+			defer r.wg.Done()
+			r.listenForWork(ctx, wake)
+		}()
+	}
 	r.heartbeat(ctx)
 	// Before waiting on the ticker: anything missed while Vesper was off runs once now.
 	r.scheduleTickAsync(ctx)
@@ -218,10 +226,68 @@ func (r *Runner) Run(ctx context.Context) error {
 			}
 		case <-poll.C:
 			r.Tick(ctx)
+		case <-wake:
+			r.Tick(ctx)
 		case <-schedule.C:
 			r.scheduleTickAsync(ctx)
 		}
 	}
+}
+
+// listenForWork wakes Run as soon as Postgres notifies a run or chat change,
+// avoiding the up-to-1s poll delay on interactive turns such as Live Voice.
+// The poll ticker remains as a fallback if the listener reconnects.
+func (r *Runner) listenForWork(ctx context.Context, wake chan<- struct{}) {
+	for ctx.Err() == nil {
+		r.listenOnce(ctx, wake)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+func (r *Runner) listenOnce(ctx context.Context, wake chan<- struct{}) {
+	conn, err := r.Pool.Acquire(ctx)
+	if err != nil {
+		return
+	}
+	defer func() {
+		// Never return a LISTEN connection to the general pool.
+		_ = conn.Conn().Close(context.Background())
+		conn.Release()
+	}()
+	if _, err := conn.Exec(ctx, "LISTEN lazyagents_changes"); err != nil {
+		return
+	}
+	// Recover any turn queued before LISTEN took effect.
+	select {
+	case wake <- struct{}{}:
+	default:
+	}
+	for {
+		n, err := conn.Conn().WaitForNotification(ctx)
+		if err != nil {
+			return
+		}
+		if shouldWakeRunner(n.Payload) {
+			select {
+			case wake <- struct{}{}:
+			default:
+			}
+		}
+	}
+}
+
+func shouldWakeRunner(payload string) bool {
+	var p struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal([]byte(payload), &p) != nil {
+		return false
+	}
+	return p.Type == "run.updated" || p.Type == "chat.updated"
 }
 
 // Recover requeues work a dead runner left half-done.

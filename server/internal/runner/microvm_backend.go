@@ -44,6 +44,12 @@ const (
 
 // MicroVM runs each Vesper run in an isolated NIC-less Linux microVM driven via
 // microvm.Driver (Apple Virtualization.framework on darwin/arm64).
+const (
+	// DefaultCacheDropDelay keeps guest page cache and full RAM hot across
+	// back-to-back conversational turns before reclaiming memory via ballooning.
+	DefaultCacheDropDelay = 60 * time.Second
+)
+
 type MicroVM struct {
 	Driver         microvm.Driver
 	StateDir       string
@@ -55,6 +61,10 @@ type MicroVM struct {
 	IdleMemoryMB   int64 // target balloon memory between turns when activeTurns == 0 (default 192 MiB)
 	PidsLimit      int64
 	WarmTTL        time.Duration
+	// CacheDropDelay defers SyncAndDropCaches and balloon deflation after a turn
+	// ends so rapid follow-up turns (e.g. Live Voice) reuse warm guest page cache.
+	// Zero drops immediately on turn release.
+	CacheDropDelay time.Duration
 	// SpareVMs is how many VMs stay booted, idle at IdleMemoryMB, for new
 	// runs to claim instead of booting their own (0 = none).
 	SpareVMs int
@@ -107,13 +117,14 @@ type MicroVM struct {
 }
 
 type runVM struct {
-	mu          sync.Mutex
-	runID       string
-	vm          microvm.VM
-	egress      *microvm.Egress
-	vmGen       uint64
-	activeTurns int
-	idleTimer   *time.Timer
+	mu             sync.Mutex
+	runID          string
+	vm             microvm.VM
+	egress         *microvm.Egress
+	vmGen          uint64
+	activeTurns    int
+	idleTimer      *time.Timer
+	cacheDropTimer *time.Timer
 
 	// credMu orders credential writes and sweeps in this VM: a process's
 	// post-exit sweep must not delete a login another process just wrote.
@@ -421,6 +432,10 @@ func (b *MicroVM) acquireVM(ctx context.Context, runID string) (*runVM, error) {
 		rvm.idleTimer.Stop()
 		rvm.idleTimer = nil
 	}
+	if rvm.cacheDropTimer != nil {
+		rvm.cacheDropTimer.Stop()
+		rvm.cacheDropTimer = nil
+	}
 	memMB := b.MemoryMB
 	if memMB <= 0 {
 		memMB = 2048
@@ -514,16 +529,39 @@ func (b *MicroVM) releaseVM(rvm *runVM) {
 		rvm.activeTurns--
 	}
 	idleNow := rvm.activeTurns == 0 && rvm.vm != nil
-	vm := rvm.vm
 	gen := rvm.vmGen
+	if idleNow {
+		b.armIdleTimer(rvm, gen)
+		if b.CacheDropDelay > 0 {
+			if rvm.cacheDropTimer != nil {
+				rvm.cacheDropTimer.Stop()
+			}
+			rvm.cacheDropTimer = time.AfterFunc(b.CacheDropDelay, func() {
+				b.deflateVM(rvm, gen)
+			})
+			rvm.mu.Unlock()
+			return
+		}
+	}
 	rvm.mu.Unlock()
 
 	if !idleNow {
 		return
 	}
+	b.deflateVM(rvm, gen)
+}
 
-	// Free guest page cache first, then deflate guest memory toward IdleMemoryMB
-	// via virtio_balloon so freed pages return promptly to macOS.
+// deflateVM frees guest page cache and deflates guest memory toward
+// IdleMemoryMB via virtio_balloon once the VM has stayed idle.
+func (b *MicroVM) deflateVM(rvm *runVM, gen uint64) {
+	rvm.mu.Lock()
+	if rvm.activeTurns != 0 || rvm.vm == nil || rvm.vmGen != gen {
+		rvm.mu.Unlock()
+		return
+	}
+	vm := rvm.vm
+	rvm.mu.Unlock()
+
 	dctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	_ = vm.Client().SyncAndDropCaches(dctx)
 	cancel()
@@ -539,10 +577,10 @@ func (b *MicroVM) releaseVM(rvm *runVM) {
 	if rvm.activeTurns != 0 || rvm.vm == nil || rvm.vmGen != gen {
 		return
 	}
+	rvm.cacheDropTimer = nil
 	if idleMB < memMB {
 		_ = rvm.vm.SetMemoryTarget(uint64(idleMB) << 20)
 	}
-	b.armIdleTimer(rvm, gen)
 }
 
 // armIdleTimer stops rvm's VM (generation gen) once it has sat idle for
@@ -559,6 +597,10 @@ func (b *MicroVM) armIdleTimer(rvm *runVM, gen uint64) {
 		defer rvm.mu.Unlock()
 		if rvm.activeTurns != 0 || rvm.vm == nil || rvm.vmGen != gen {
 			return
+		}
+		if rvm.cacheDropTimer != nil {
+			rvm.cacheDropTimer.Stop()
+			rvm.cacheDropTimer = nil
 		}
 		sctx, scancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer scancel()
@@ -604,6 +646,10 @@ func (b *MicroVM) stopRunVM(ctx context.Context, runID string) {
 	if rvm.idleTimer != nil {
 		rvm.idleTimer.Stop()
 		rvm.idleTimer = nil
+	}
+	if rvm.cacheDropTimer != nil {
+		rvm.cacheDropTimer.Stop()
+		rvm.cacheDropTimer = nil
 	}
 	vm := rvm.vm
 	eg := rvm.egress

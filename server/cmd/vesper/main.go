@@ -389,6 +389,7 @@ func runRunner(ctx context.Context, log *slog.Logger) error {
 			MemoryMB:       rc.MemoryMB,
 			PidsLimit:      rc.PidsLimit,
 			WarmTTL:        rc.WarmTTL,
+			CacheDropDelay: runner.DefaultCacheDropDelay,
 			SpareVMs:       rc.SpareVMs,
 			MCPURL:         rc.MCPURL,
 			APIUpstream:    apiUpstream,
