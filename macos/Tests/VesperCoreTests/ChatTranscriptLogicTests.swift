@@ -328,6 +328,174 @@ final class ChatTranscriptLogicTests: XCTestCase {
         XCTAssertEqual(ChatTurnActivity.replyCost(1.5), "$1.50")
     }
 
+    func testRunningSinceAndTurnWindowsScopeSharedRunPerTurn() {
+        func msg(
+            id: String,
+            role: API.ChatMessage.Role,
+            at: String,
+            seq: Int,
+            runId: String? = nil,
+            turnSeq: Int? = nil
+        ) -> API.ChatMessage {
+            API.ChatMessage(bodyMd: id, createdAt: at, id: id, role: role, runId: runId, seq: seq, turnSeq: turnSeq)
+        }
+
+        let t0 = "2026-11-22T05:00:00Z"
+        let t1 = "2026-11-22T05:01:00Z"
+        let t2 = "2026-11-22T05:02:00Z"
+        let t3 = "2026-11-22T05:03:00Z"
+        let t4 = "2026-11-22T05:04:00Z"
+        let t5 = "2026-11-22T05:05:00Z"
+
+        let u1 = msg(id: "u1", role: .user, at: t0, seq: 1, runId: "r1", turnSeq: 1)
+        let s1 = msg(id: "s1", role: .user, at: t1, seq: 2) // mid-turn steer
+        let a1 = msg(id: "a1", role: .assistant, at: t2, seq: 3, runId: "r1", turnSeq: 1)
+        let u2 = msg(id: "u2", role: .user, at: t3, seq: 4, runId: "r1", turnSeq: 2)
+        let a2 = msg(id: "a2", role: .assistant, at: t4, seq: 5, runId: "r1", turnSeq: 2)
+        let f2 = msg(id: "f2", role: .assistant, at: t5, seq: 6, runId: "r1", turnSeq: 3) // automatic follow-up
+
+        // Mid-turn steer keeps the starting user message as runningSince.
+        XCTAssertEqual(ChatTurnActivity.runningSince(for: []), nil)
+        XCTAssertEqual(ChatTurnActivity.runningSince(for: [u1]), t0)
+        XCTAssertEqual(ChatTurnActivity.runningSince(for: [u1, s1]), t0)
+        // New user message resets runningSince to the new turn even when sharing runId "r1".
+        XCTAssertEqual(ChatTurnActivity.runningSince(for: [u1, s1, a1, u2]), t3)
+        // Automatic follow-up starts after the prior reply.
+        XCTAssertEqual(ChatTurnActivity.runningSince(for: [u1, s1, a1, u2, a2]), t4)
+
+        let windows = ChatTurnActivity.turnWindows(for: [u1, s1, a1, u2, a2, f2])
+        XCTAssertEqual(windows["a1"], ChatTurnWindow(since: t0, until: t3, followup: false))
+        XCTAssertEqual(windows["a2"], ChatTurnWindow(since: t3, until: t4, followup: false))
+        XCTAssertEqual(windows["f2"], ChatTurnWindow(since: t4, until: nil, followup: true))
+    }
+
+    func testLiveFoldResetsForNewTurnOnSharedRunAndSkipsSubagentChildCalls() {
+        let turn1Events: [ChatRunEvent] = [
+            ChatRunEvent(seq: 1, type: "message", at: "2026-11-22T05:00:01Z", payload: ["role": .string("assistant"), "text": .string("Checking SVGs from turn 1.")]),
+            ChatRunEvent(seq: 2, type: "tool_call", at: "2026-11-22T05:00:02Z", payload: ["id": .string("c1"), "tool": .string("generate_image"), "input": .object([:])]),
+            ChatRunEvent(seq: 3, type: "tool_result", at: "2026-11-22T05:00:05Z", payload: ["id": .string("c1"), "is_error": .bool(true)]),
+            ChatRunEvent(seq: 4, type: "tool_call", at: "2026-11-22T05:00:06Z", payload: ["id": .string("c2"), "tool": .string("request_push"), "input": .object([:])]),
+            ChatRunEvent(seq: 5, type: "tool_result", at: "2026-11-22T05:00:08Z", payload: ["id": .string("c2"), "output": .string("ok")]),
+        ]
+        let turn2Events: [ChatRunEvent] = [
+            ChatRunEvent(seq: 6, type: "tool_call", at: "2026-11-22T05:25:01Z", payload: ["id": .string("sub1"), "tool": .string("Read"), "subagent": .bool(true)]),
+            ChatRunEvent(seq: 7, type: "tool_result", at: "2026-11-22T05:25:02Z", payload: ["id": .string("sub1"), "subagent": .bool(true)]),
+            ChatRunEvent(seq: 8, type: "message", at: "2026-11-22T05:25:03Z", payload: ["role": .string("assistant"), "text": .string("Generating video examples now.")]),
+            ChatRunEvent(seq: 9, type: "tool_call", at: "2026-11-22T05:25:04Z", payload: ["id": .string("c3"), "tool": .string("start_video"), "input": .object([:])]),
+        ]
+        let allEvents = turn1Events + turn2Events
+        let turn2Start = "2026-11-22T05:25:00Z"
+
+        // Before turn 2 emits any events, live card scoped to turn2Start starts completely fresh.
+        let fresh = ChatTurnActivity.fold(
+            events: turn1Events,
+            since: turn2Start,
+            now: APIDate.parse("2026-11-22T05:25:03Z")!
+        )
+        XCTAssertNil(fresh.openingLine)
+        XCTAssertTrue(fresh.steps.isEmpty)
+        XCTAssertEqual(fresh.status.kind, .thinking)
+        XCTAssertEqual(fresh.elapsedMs, 3_000)
+
+        // Once turn 2 runs, it sees only turn 2's opening line, steps, and elapsed time — never turn 1 or subagent child tools.
+        let active = ChatTurnActivity.fold(
+            events: allEvents,
+            since: turn2Start,
+            now: APIDate.parse("2026-11-22T05:25:10Z")!
+        )
+        XCTAssertEqual(active.openingLine, "Generating video examples now.")
+        XCTAssertEqual(active.status.kind, .videoRender)
+        XCTAssertEqual(active.steps.map(\.kind), [.videoRender])
+        XCTAssertEqual(active.elapsedMs, 10_000)
+
+        // Turn 1's finished card keeps its own steps in history, bounded by turn 1's reply time.
+        let finishedTurn1 = ChatTurnActivity.finishedTurn(
+            events: allEvents,
+            outcome: .done,
+            since: "2026-11-22T05:00:00Z",
+            until: "2026-11-22T05:00:12Z",
+            end: APIDate.epoch("2026-11-22T05:00:12Z")
+        )
+        XCTAssertEqual(finishedTurn1.steps.map(\.kind), [.image, .push])
+        XCTAssertEqual(finishedTurn1.steps.map(\.state), [.failed, .done])
+        XCTAssertEqual(finishedTurn1.durationMs, 12_000)
+        XCTAssertEqual(
+            ChatTurnActivity.finishedSummary(outcome: .done, stepCount: finishedTurn1.steps.count, durationMs: finishedTurn1.durationMs),
+            "Worked for 12s · 2 steps"
+        )
+    }
+
+    func testEndedTurnsAndFinishedTurnOutcomesAndBookkeepingFilter() {
+        func msg(
+            id: String,
+            role: API.ChatMessage.Role,
+            at: String,
+            seq: Int,
+            runId: String? = nil,
+            turnSeq: Int? = nil
+        ) -> API.ChatMessage {
+            API.ChatMessage(bodyMd: id, createdAt: at, id: id, role: role, runId: runId, seq: seq, turnSeq: turnSeq)
+        }
+
+        let t0 = "2026-11-22T06:00:00Z"
+        let t1 = "2026-11-22T06:00:10Z"
+        let t2 = "2026-11-22T06:00:20Z"
+        let t3 = "2026-11-22T06:00:30Z"
+        let t4 = "2026-11-22T06:00:40Z"
+        let t5 = "2026-11-22T06:00:50Z"
+
+        let messages = [
+            msg(id: "u1", role: .user, at: t0, seq: 1, runId: "r1", turnSeq: 1),
+            msg(id: "a1", role: .assistant, at: t1, seq: 2, runId: "r1", turnSeq: 1),
+            msg(id: "u2", role: .user, at: t2, seq: 3, runId: "r1", turnSeq: 2),
+            msg(id: "f2", role: .system, at: t3, seq: 4, runId: "r1", turnSeq: 2),
+            msg(id: "note", role: .system, at: t3, seq: 5), // non-failure note
+            msg(id: "u3", role: .user, at: t4, seq: 6, runId: "r2", turnSeq: 1),
+            msg(id: "u4", role: .user, at: t5, seq: 7, runId: "r2", turnSeq: 2),
+        ]
+
+        let endedIdle = ChatTurnActivity.endedTurns(for: messages, running: false)
+        XCTAssertEqual(endedIdle["f2"], ChatEndedTurn(outcome: .failed, since: t2, until: t3, end: APIDate.epoch(t3)))
+        XCTAssertEqual(endedIdle["u3"], ChatEndedTurn(outcome: .stopped, since: t4, until: t5))
+        XCTAssertEqual(endedIdle["u4"], ChatEndedTurn(outcome: .stopped, since: t5))
+        XCTAssertNil(endedIdle["u1"])
+        XCTAssertNil(endedIdle["note"])
+
+        // While running, the newest unanswered user message belongs to the live card, not endedTurns.
+        let endedRunning = ChatTurnActivity.endedTurns(for: messages, running: true)
+        XCTAssertNil(endedRunning["u4"])
+        XCTAssertNotNil(endedRunning["u3"])
+
+        let windows = ChatTurnActivity.turnWindows(for: messages)
+        XCTAssertEqual(
+            ChatTurnActivity.historicalRunIds(for: messages, turnWindows: windows, endedTurns: endedIdle),
+            ["r1", "r2"]
+        )
+
+        // Bookkeeping-only turns produce no finished strip.
+        let bookkeepingOnly: [ChatRunEvent] = [
+            ChatRunEvent(seq: 1, type: "tool_call", at: t0, payload: ["id": .string("b1"), "tool": .string("set_chat_title")]),
+            ChatRunEvent(seq: 2, type: "tool_result", at: t1, payload: ["id": .string("b1")]),
+            ChatRunEvent(seq: 3, type: "lifecycle", at: t1, payload: ["state": .string("reply_block"), "kind": .string("choices")]),
+        ]
+        XCTAssertTrue(ChatTurnActivity.finishedTurn(events: bookkeepingOnly, outcome: .done).steps.isEmpty)
+
+        // Failed turn marks its active step failed and folds earlier steps before the first failure.
+        let failedEvents: [ChatRunEvent] = [
+            ChatRunEvent(seq: 1, type: "tool_call", at: "2026-11-22T06:00:21Z", payload: ["id": .string("c1"), "tool": .string("Read")]),
+            ChatRunEvent(seq: 2, type: "tool_result", at: "2026-11-22T06:00:23Z", payload: ["id": .string("c1")]),
+            ChatRunEvent(seq: 3, type: "tool_call", at: "2026-11-22T06:00:24Z", payload: ["id": .string("c2"), "tool": .string("Bash"), "input": .object(["command": .string("swift test")])]),
+        ]
+        let failed = ChatTurnActivity.finishedTurn(events: failedEvents, outcome: .failed, since: t2, until: t3, end: APIDate.epoch(t3))
+        XCTAssertEqual(failed.steps.map(\.state), [.done, .failed])
+        XCTAssertEqual(failed.durationMs, 10_000)
+        let foldedFailure = ChatTurnActivity.foldStepsFromFailure(failed.steps)
+        XCTAssertEqual(foldedFailure.earlier, 1)
+        XCTAssertEqual(foldedFailure.shown.map(\.state), [.failed])
+        XCTAssertEqual(ChatTurnActivity.finishedSummary(outcome: .failed, stepCount: 1, durationMs: 500), "Failed · 1 step")
+        XCTAssertEqual(ChatTurnActivity.finishedSummary(outcome: .stopped, stepCount: 2, durationMs: 5_000), "Stopped after 5s · 2 steps")
+    }
+
     // MARK: - ChatNav
 
     func testChatNavGroupingIndicatorsFiltersAndActions() {

@@ -63,6 +63,15 @@ struct ChatTranscriptView: View {
             currentRunId: session?.currentRunId,
             hasMore: messagesEntry.data?.hasMore ?? false
         )
+        let turnWindows = ChatTurnActivity.turnWindows(for: messages)
+        let endedTurns = ChatTurnActivity.endedTurns(for: messages, running: isRunning)
+        let liveSince = ChatTurnActivity.runningSince(for: messages)
+        let historicalRunIds = ChatTurnActivity.historicalRunIds(
+            for: messages,
+            turnWindows: turnWindows,
+            endedTurns: endedTurns
+        )
+        let waitingForMessages = messages.isEmpty && (session?.messageCount ?? 0) > 0
 
         // Pre-index media by messageId once in O(M) instead of filtering per message row.
         var audiosByMessage: [String: [API.ChatAudio]] = [:]
@@ -124,6 +133,8 @@ struct ChatTranscriptView: View {
                                     personaId: persona?.id,
                                     speakerName: speakerName,
                                     isRunning: isRunning,
+                                    turnWindow: turnWindows[message.id],
+                                    endedTurn: endedTurns[message.id],
                                     ticketRuns: parsed.hasDispatchSegment ? ticketRuns : [],
                                     workflowRuns: parsed.hasWorkflowRunSegment ? workflowRuns : [],
                                     canvases: parsed.hasCanvasSegment ? canvases : [],
@@ -157,6 +168,8 @@ struct ChatTranscriptView: View {
                                 ChatLiveActivityCardView(
                                     chatId: chatId,
                                     runId: session?.currentRunId,
+                                    since: liveSince,
+                                    waitingForMessages: waitingForMessages,
                                     speaker: session?.speaker ?? session?.persona,
                                     fallbackSpeakerName: session?.agent.name ?? "Assistant"
                                 )
@@ -190,11 +203,21 @@ struct ChatTranscriptView: View {
                             proxy.scrollTo("transcript-bottom", anchor: .bottom)
                         }
                     }
-                    .onChange(of: isRunning) { _, running in
+                    .onChange(of: isRunning) { wasRunning, running in
                         if running {
                             withAnimation(.easeOut(duration: 0.2)) {
                                 proxy.scrollTo("transcript-bottom", anchor: .bottom)
                             }
+                        } else if wasRunning {
+                            let finishedRunId = session?.currentRunId ?? messages.last(where: { $0.runId != nil })?.runId
+                            if let finishedRunId, !finishedRunId.isEmpty {
+                                Task { _ = await context.store.refetch(API.listRunEvents(id: finishedRunId)) }
+                            }
+                        }
+                    }
+                    .task(id: historicalRunIds) {
+                        for runId in historicalRunIds {
+                            context.store.load(API.listRunEvents(id: runId))
                         }
                     }
                     .task(id: context.match.query["message"]) {
@@ -290,6 +313,8 @@ private struct ChatMessageRowView: View {
     let personaId: String?
     let speakerName: String
     let isRunning: Bool
+    let turnWindow: ChatTurnWindow?
+    let endedTurn: ChatEndedTurn?
     let ticketRuns: [API.ChatTicketRun]
     let workflowRuns: [API.WorkflowRun]
     let canvases: [API.ChatCanvasSummary]
@@ -299,31 +324,68 @@ private struct ChatMessageRowView: View {
 
     var body: some View {
         let p = theme.palette
-        let isUser = message.role == .user
         let citationNumbers = parsed.sources.compactMap(\.number)
 
-        if isUser {
-            VStack(alignment: .trailing, spacing: 6) {
-                ChatContextChipsView(stripped: parsed.context, refs: message.contextRefs ?? [])
-                VStack(alignment: .leading, spacing: 8) {
-                    if !parsed.typedBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        MarkdownView(markdown: parsed.typedBody, textStyle: .chat, chat: true)
-                    }
-                    if let attachments = message.attachments, !attachments.isEmpty {
-                        VStack(alignment: .leading, spacing: 6) {
-                            ForEach(attachments, id: \.id) { att in
-                                ChatAttachmentCardView(attachment: att)
+        if message.role == .user {
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .trailing, spacing: 6) {
+                    ChatContextChipsView(stripped: parsed.context, refs: message.contextRefs ?? [])
+                    VStack(alignment: .leading, spacing: 8) {
+                        if !parsed.typedBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            MarkdownView(markdown: parsed.typedBody, textStyle: .chat, chat: true)
+                        }
+                        if let attachments = message.attachments, !attachments.isEmpty {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ForEach(attachments, id: \.id) { att in
+                                    ChatAttachmentCardView(attachment: att)
+                                }
                             }
                         }
                     }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(p.surface, in: RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(p.border))
+                    .frame(maxWidth: 640, alignment: .trailing)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(p.surface, in: RoundedRectangle(cornerRadius: 12))
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(p.border))
-                .frame(maxWidth: 640, alignment: .trailing)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+
+                if let endedTurn, let runId = message.runId, !runId.isEmpty {
+                    ChatEndedTurnSectionView(
+                        runId: runId,
+                        ended: endedTurn,
+                        personaId: personaId,
+                        speakerName: speakerName
+                    )
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .trailing)
+        } else if message.role == .system {
+            VStack(alignment: .leading, spacing: 10) {
+                if let endedTurn, let runId = message.runId, !runId.isEmpty {
+                    ChatEndedTurnSectionView(
+                        runId: runId,
+                        ended: endedTurn,
+                        personaId: personaId,
+                        speakerName: speakerName
+                    )
+                }
+                ForEach(audios, id: \.id) { audio in
+                    ChatAudioCardView(chatId: chatId, audio: audio)
+                }
+                ForEach(videos, id: \.id) { video in
+                    ChatVideoCardView(chatId: chatId, video: video)
+                }
+                HStack(spacing: 10) {
+                    Rectangle().fill(p.border).frame(height: 1)
+                    Text(message.bodyMd)
+                        .font(.system(size: theme.pointSize(.micro)))
+                        .foregroundStyle(p.tertiaryText)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Rectangle().fill(p.border).frame(height: 1)
+                }
+                .padding(.vertical, 4)
+            }
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
@@ -359,6 +421,16 @@ private struct ChatMessageRowView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
+                    if let turnWindow, let runId = message.runId, !runId.isEmpty {
+                        ChatTurnStepsCardView(
+                            runId: runId,
+                            outcome: .done,
+                            since: turnWindow.since,
+                            until: message.createdAt,
+                            end: APIDate.epoch(message.createdAt)
+                        )
+                    }
+
                     ForEach(Array(parsed.segments.enumerated()), id: \.offset) { _, segment in
                         segmentView(segment, citationNumbers: citationNumbers)
                     }
@@ -414,6 +486,235 @@ private struct ChatMessageRowView: View {
     }
 }
 
+// MARK: - Finished Working Card in History
+
+/// What the live working card leaves behind in chat history once a turn finishes (or stops/fails):
+/// a compact one-line strip ("Worked for 2m 14s · 7 steps") that expands in place to show the
+/// turn's steps. Plain replies with no tool work render nothing.
+private struct ChatTurnStepsCardView: View {
+    @Environment(NativeScreenContext.self) private var context
+
+    let runId: String
+    let outcome: ChatTurnOutcome
+    let since: String?
+    let until: String?
+    let end: TimeInterval?
+
+    var body: some View {
+        let events = context.store.entry(API.listRunEvents(id: runId)).data?.events ?? []
+        let turn = ChatTurnActivity.finishedTurn(
+            events: events.map(ChatRunEvent.init),
+            outcome: outcome,
+            since: since,
+            until: until,
+            end: end
+        )
+        if !turn.steps.isEmpty {
+            ChatFinishedTurnCardView(turn: turn, outcome: outcome)
+        }
+    }
+}
+
+/// Renders a finished working card with persona identity for turns that ended without a reply
+/// (failed or stopped/interrupted). Renders nothing if the turn did no tool work.
+private struct ChatEndedTurnSectionView: View {
+    @Environment(NativeScreenContext.self) private var context
+    @Environment(\.vesperTheme) private var theme
+
+    let runId: String
+    let ended: ChatEndedTurn
+    let personaId: String?
+    let speakerName: String
+
+    var body: some View {
+        let events = context.store.entry(API.listRunEvents(id: runId)).data?.events ?? []
+        let turn = ChatTurnActivity.finishedTurn(
+            events: events.map(ChatRunEvent.init),
+            outcome: ended.outcome,
+            since: ended.since,
+            until: ended.until,
+            end: ended.end
+        )
+
+        if !turn.steps.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    WorkPersonaAvatarView(
+                        id: personaId,
+                        handle: nil,
+                        name: speakerName,
+                        size: 24,
+                        preferCharacter: true
+                    )
+                    Text(speakerName)
+                        .font(.system(size: theme.pointSize(.body), weight: .semibold))
+                        .foregroundStyle(theme.palette.text)
+                }
+                ChatFinishedTurnCardView(turn: turn, outcome: ended.outcome)
+                    .padding(.leading, 32)
+            }
+        }
+    }
+}
+
+private struct ChatFinishedTurnCardView: View {
+    @Environment(\.vesperTheme) private var theme
+
+    let turn: ChatFinishedTurn
+    let outcome: ChatTurnOutcome
+
+    @State private var isExpanded: Bool
+    @State private var showAllEarlier = false
+
+    init(turn: ChatFinishedTurn, outcome: ChatTurnOutcome) {
+        self.turn = turn
+        self.outcome = outcome
+        self._isExpanded = State(initialValue: outcome == .failed)
+    }
+
+    var body: some View {
+        let p = theme.palette
+        let failureFold = outcome == .failed && !showAllEarlier
+            ? ChatTurnActivity.foldStepsFromFailure(turn.steps)
+            : (earlier: 0, shown: turn.steps)
+        let summary = ChatTurnActivity.finishedSummary(
+            outcome: outcome,
+            stepCount: turn.steps.count,
+            durationMs: turn.durationMs
+        )
+
+        VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 0) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        isExpanded.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: outcomeIcon)
+                            .imageScale(.small)
+                            .foregroundStyle(outcomeColor(palette: p))
+                        Text(summary)
+                            .font(.system(size: theme.pointSize(.small)))
+                            .foregroundStyle(p.secondaryText)
+                            .lineLimit(1)
+                        Spacer(minLength: 12)
+                        HStack(spacing: 4) {
+                            Text(isExpanded ? "Hide steps" : "Show steps")
+                            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 9, weight: .semibold))
+                        }
+                        .font(.system(size: theme.pointSize(.micro)))
+                        .foregroundStyle(p.tertiaryText)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                if isExpanded {
+                    Divider()
+                    VStack(alignment: .leading, spacing: 4) {
+                        if failureFold.earlier > 0 {
+                            Button("Show \(failureFold.earlier) earlier step\(failureFold.earlier == 1 ? "" : "s")") {
+                                showAllEarlier = true
+                            }
+                            .buttonStyle(.plain)
+                            .font(.system(size: theme.pointSize(.micro)))
+                            .foregroundStyle(p.accent)
+                        }
+                        ForEach(failureFold.shown, id: \.key) { step in
+                            ChatTurnStepRowView(step: step)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                }
+            }
+            .background(theme.swiftUIColor("surface-sunken", fallback: p.surface), in: RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(outcome == .failed ? theme.swiftUIColor("pill-blocked-fg", fallback: .red).opacity(0.4) : p.border)
+            )
+
+            if outcome == .stopped {
+                Text("Stopped before it replied.")
+                    .font(.system(size: theme.pointSize(.micro)))
+                    .italic()
+                    .foregroundStyle(p.tertiaryText)
+            }
+        }
+    }
+
+    private var outcomeIcon: String {
+        switch outcome {
+        case .done: "checkmark.circle.fill"
+        case .failed: "xmark.circle.fill"
+        case .stopped: "pause.circle.fill"
+        }
+    }
+
+    private func outcomeColor(palette p: NativePalette) -> Color {
+        switch outcome {
+        case .done: .green
+        case .failed: .red
+        case .stopped: p.tertiaryText
+        }
+    }
+}
+
+private struct ChatTurnStepRowView: View {
+    @Environment(\.vesperTheme) private var theme
+
+    let step: ChatTurnStep
+
+    var body: some View {
+        let p = theme.palette
+        HStack(spacing: 6) {
+            Image(systemName: stepIcon(step.state))
+                .imageScale(.small)
+                .foregroundStyle(stepColor(step.state, palette: p))
+            Text(step.title)
+                .font(.system(size: theme.pointSize(.small)))
+                .foregroundStyle(step.state == .planned ? p.tertiaryText : p.secondaryText)
+            if let detail = step.detail, !detail.isEmpty {
+                Text("· \(detail)")
+                    .font(.system(size: theme.pointSize(.micro)))
+                    .foregroundStyle(p.tertiaryText)
+                    .lineLimit(1)
+            }
+            if step.state != .active, let started = step.startedAt, let ended = step.endedAt {
+                let ms = Int((ended - started) * 1000)
+                if ms >= 1000 {
+                    Spacer(minLength: 6)
+                    Text(ChatTurnActivity.formatSpan(ms: ms))
+                        .font(.system(size: theme.pointSize(.micro), design: .monospaced))
+                        .foregroundStyle(p.tertiaryText)
+                }
+            }
+        }
+    }
+
+    private func stepIcon(_ state: ChatStepState) -> String {
+        switch state {
+        case .done: "checkmark.circle.fill"
+        case .active: "circle.dotted"
+        case .failed: "xmark.circle.fill"
+        case .planned: "circle"
+        }
+    }
+
+    private func stepColor(_ state: ChatStepState, palette p: NativePalette) -> Color {
+        switch state {
+        case .done: .green
+        case .active: p.accent
+        case .failed: .red
+        case .planned: p.tertiaryText
+        }
+    }
+}
+
 // MARK: - Isolated Live Work / Thinking Card
 
 /// Owns the live run-event observation and 1.5s timer so polling ticks only re-render this card
@@ -424,6 +725,8 @@ private struct ChatLiveActivityCardView: View {
 
     let chatId: String
     let runId: String?
+    let since: String?
+    let waitingForMessages: Bool
     let speaker: API.PersonaSummary?
     let fallbackSpeakerName: String
 
@@ -438,8 +741,8 @@ private struct ChatLiveActivityCardView: View {
 
     var body: some View {
         let p = theme.palette
-        let events = runEventsRequest.flatMap { context.store.entry($0).data?.events } ?? []
-        let activity = ChatTurnActivity.fold(events: events.map(ChatRunEvent.init), now: now)
+        let events = waitingForMessages ? [] : (runEventsRequest.flatMap { context.store.entry($0).data?.events } ?? [])
+        let activity = ChatTurnActivity.fold(events: events.map(ChatRunEvent.init), since: since, now: now)
         let speakerName = speaker?.name ?? fallbackSpeakerName
         let folded = ChatTurnActivity.foldSteps(activity.steps)
         let displaySteps = showAllSteps ? activity.steps : folded.shown
@@ -495,20 +798,7 @@ private struct ChatLiveActivityCardView: View {
                         .foregroundStyle(p.accent)
                     }
                     ForEach(displaySteps, id: \.key) { step in
-                        HStack(spacing: 6) {
-                            Image(systemName: stepIcon(step.state))
-                                .imageScale(.small)
-                                .foregroundStyle(stepColor(step.state, palette: p))
-                            Text(step.title)
-                                .font(.system(size: theme.pointSize(.small)))
-                                .foregroundStyle(step.state == .planned ? p.tertiaryText : p.secondaryText)
-                            if let detail = step.detail, !detail.isEmpty {
-                                Text("· \(detail)")
-                                    .font(.system(size: theme.pointSize(.micro)))
-                                    .foregroundStyle(p.tertiaryText)
-                                    .lineLimit(1)
-                            }
-                        }
+                        ChatTurnStepRowView(step: step)
                     }
                 }
                 .padding(.leading, 4)
@@ -517,6 +807,10 @@ private struct ChatLiveActivityCardView: View {
         .padding(12)
         .background(theme.swiftUIColor("surface-sunken", fallback: p.surface), in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(p.border))
+        .onChange(of: since) { _, _ in
+            showAllSteps = false
+            now = Date()
+        }
         .task(id: runId ?? "") {
             watchRunEvents()
             await pollRunEvents()
@@ -548,24 +842,6 @@ private struct ChatLiveActivityCardView: View {
             if let req = runEventsRequest {
                 _ = await context.store.refetch(req)
             }
-        }
-    }
-
-    private func stepIcon(_ state: ChatStepState) -> String {
-        switch state {
-        case .done: "checkmark.circle.fill"
-        case .active: "circle.dotted"
-        case .failed: "xmark.circle.fill"
-        case .planned: "circle"
-        }
-    }
-
-    private func stepColor(_ state: ChatStepState, palette p: NativePalette) -> Color {
-        switch state {
-        case .done: .green
-        case .active: p.accent
-        case .failed: .red
-        case .planned: p.tertiaryText
         }
     }
 }

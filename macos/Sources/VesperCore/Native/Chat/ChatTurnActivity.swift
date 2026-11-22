@@ -71,6 +71,50 @@ public struct ChatTurnStep: Sendable, Equatable {
     }
 }
 
+/// One answered turn's event window; `followup` marks a turn no person's message started (e.g. image reaction).
+public struct ChatTurnWindow: Sendable, Equatable {
+    public var since: String?
+    public var until: String?
+    public var followup: Bool
+
+    public init(since: String? = nil, until: String? = nil, followup: Bool = false) {
+        self.since = since
+        self.until = until
+        self.followup = followup
+    }
+}
+
+/// How a finished turn ended: with a reply, an error, or the person stopping/interrupting it.
+public enum ChatTurnOutcome: String, Sendable, Equatable, Hashable {
+    case done, failed, stopped
+}
+
+/// A finished turn's folded steps and duration for its collapsed card in chat history.
+public struct ChatFinishedTurn: Sendable, Equatable {
+    public var steps: [ChatTurnStep]
+    public var durationMs: Int?
+
+    public init(steps: [ChatTurnStep] = [], durationMs: Int? = nil) {
+        self.steps = steps
+        self.durationMs = durationMs
+    }
+}
+
+/// A turn that ended without a reply (failed system notice or stopped/interrupted user message).
+public struct ChatEndedTurn: Sendable, Equatable {
+    public var outcome: ChatTurnOutcome
+    public var since: String
+    public var until: String?
+    public var end: TimeInterval?
+
+    public init(outcome: ChatTurnOutcome, since: String, until: String? = nil, end: TimeInterval? = nil) {
+        self.outcome = outcome
+        self.since = since
+        self.until = until
+        self.end = end
+    }
+}
+
 public struct ChatTurnActivity: Sendable, Equatable {
     public enum Phase: Sendable, Equatable {
         case thinking(detail: String?)
@@ -197,7 +241,237 @@ public struct ChatTurnActivity: Sendable, Equatable {
         }
     }
 
+    // MARK: Turn Windows & History (`web/lib/chat-ui.ts`)
+
+    /// Each turn's last assistant reply gets the window of events between the turn's start
+    /// and the next one's. A turn starts at a user message, or right after an earlier turn's
+    /// reply when the assistant replies again on its own (a different run turn, e.g. reacting
+    /// to generated images). Mid-turn steer messages keep the active turn's window open.
+    public static func turnWindows(for messages: [API.ChatMessage]) -> [String: ChatTurnWindow] {
+        var out: [String: ChatTurnWindow] = [:]
+        var since: String?
+        var reply: API.ChatMessage?
+        var followup = false
+
+        func close(until: String?) {
+            if let r = reply {
+                out[r.id] = ChatTurnWindow(since: since, until: until, followup: followup)
+            }
+        }
+        func turnKey(_ m: API.ChatMessage) -> String? {
+            guard let seq = m.turnSeq else { return nil }
+            return "\(m.runId ?? ""):\(seq)"
+        }
+
+        for m in messages {
+            if m.role == .user {
+                if reply == nil && since != nil && m.runId == nil && m.turnSeq == nil { continue }
+                close(until: m.createdAt)
+                since = m.createdAt
+                reply = nil
+                followup = false
+            } else if m.role == .assistant {
+                if let prev = reply, let currKey = turnKey(m), let prevKey = turnKey(prev), currKey != prevKey {
+                    close(until: prev.createdAt)
+                    since = prev.createdAt
+                    followup = true
+                }
+                reply = m
+            }
+        }
+        close(until: nil)
+        return out
+    }
+
+    /// Where the running turn's events start: the newest message. That is the person's message
+    /// for a turn they started (walking back over mid-turn steers), or the previous reply/note
+    /// for a turn the assistant takes on its own, so earlier turns' opening line and steps
+    /// aren't shown again.
+    public static func runningSince(for messages: [API.ChatMessage]) -> String? {
+        guard !messages.isEmpty else { return nil }
+        var i = messages.count - 1
+        if messages[i].role == .user {
+            while i > 0 && messages[i - 1].role == .user && messages[i].runId == nil && messages[i].turnSeq == nil {
+                i -= 1
+            }
+        }
+        return messages[i].createdAt
+    }
+
+    /// Turns that ended without a reply, keyed by the message the strip attaches to. A failed
+    /// turn leaves a system message with `turnSeq` (keyed by that message); a stopped or
+    /// interrupted turn attaches to the unanswered user message until the next one. While
+    /// `running` is true, the newest unanswered message is the live turn.
+    public static func endedTurns(for messages: [API.ChatMessage], running: Bool) -> [String: ChatEndedTurn] {
+        var out: [String: ChatEndedTurn] = [:]
+        var open: API.ChatMessage?
+
+        for m in messages {
+            if m.role == .assistant {
+                open = nil
+            } else if m.role == .system && m.turnSeq != nil, let started = open {
+                out[m.id] = ChatEndedTurn(
+                    outcome: .failed,
+                    since: started.createdAt,
+                    until: m.createdAt,
+                    end: APIDate.epoch(m.createdAt)
+                )
+                open = nil
+            } else if m.role == .user {
+                // Mid-turn steer messages carry no run/turn; keep the active turn open.
+                if let started = open, started.runId != nil, m.runId == nil && m.turnSeq == nil {
+                    continue
+                }
+                if let started = open {
+                    out[started.id] = ChatEndedTurn(outcome: .stopped, since: started.createdAt, until: m.createdAt)
+                }
+                open = m
+            }
+        }
+        if let started = open, !running {
+            out[started.id] = ChatEndedTurn(outcome: .stopped, since: started.createdAt)
+        }
+        return out
+    }
+
+    /// Deduplicated, order-preserving run IDs referenced by finished or ended turns in `messages`.
+    public static func historicalRunIds(
+        for messages: [API.ChatMessage],
+        turnWindows: [String: ChatTurnWindow],
+        endedTurns: [String: ChatEndedTurn]
+    ) -> [String] {
+        var seen: Set<String> = []
+        var ids: [String] = []
+        for m in messages {
+            guard turnWindows[m.id] != nil || endedTurns[m.id] != nil,
+                  let runId = m.runId, !runId.isEmpty,
+                  seen.insert(runId).inserted else { continue }
+            ids.append(runId)
+        }
+        return ids
+    }
+
     public static func fold(events: [ChatRunEvent], since: String? = nil, until: String? = nil, now: Date = Date()) -> ChatTurnActivity {
+        let minEpoch = since.map(APIDate.epoch) ?? 0
+        let parsed = parseEventWindow(events: events, since: since, until: until)
+
+        let started = since != nil ? minEpoch : parsed.firstAt
+        let nowEpoch = now.timeIntervalSince1970
+        let elapsedMs = started.map { max(0, Int((nowEpoch - $0) * 1000)) }
+        let lastEvent = parsed.lastAt ?? started
+        let idleMs = lastEvent.map { max(0, Int((nowEpoch - $0) * 1000)) }
+        let newest = parsed.calls.last
+        let doneAt: TimeInterval? = {
+            guard let newest, newest.done, newest.tool != replyBlockTool else { return nil }
+            return parsed.callTimes[newest.key]?.doneAt
+        }()
+        let between = doneAt.map { Int((nowEpoch - $0) * 1000) >= nextStepAfterMs } ?? false
+        let quietThreshold = (newest != nil && newest?.done == false) ? quietRunningMs : quietAfterMs
+        let quiet = idleMs.map { $0 >= quietThreshold } ?? false
+
+        let status = computeStatus(calls: parsed.calls, between: between, phase: parsed.activePhase)
+        let (steps, planned) = buildSteps(calls: parsed.calls, callTimes: parsed.callTimes, between: between, phase: parsed.activePhase)
+
+        return ChatTurnActivity(
+            status: status,
+            openingLine: parsed.openingLine,
+            steps: steps,
+            planned: planned,
+            elapsedMs: elapsedMs,
+            idleMs: idleMs,
+            between: between,
+            quiet: quiet,
+            activePhase: parsed.activePhase
+        )
+    }
+
+    /// A finished turn's steps for the strip kept in chat history above its reply (or under a
+    /// stopped/failed turn). Plain replies with only bookkeeping/reply blocks return empty steps.
+    public static func finishedTurn(
+        events: [ChatRunEvent],
+        outcome: ChatTurnOutcome,
+        since: String? = nil,
+        until: String? = nil,
+        end: TimeInterval? = nil
+    ) -> ChatFinishedTurn {
+        let minEpoch = since.map(APIDate.epoch) ?? 0
+        let parsed = parseEventWindow(events: events, since: since, until: until)
+        guard parsed.calls.contains(where: { $0.tool != replyBlockTool && !bookkeeping.contains(bareTool($0.tool)) }) else {
+            return ChatFinishedTurn()
+        }
+        var (steps, _) = buildSteps(calls: parsed.calls, callTimes: parsed.callTimes, between: false, phase: nil)
+        for idx in steps.indices where steps[idx].state == .active {
+            steps[idx].state = outcome == .failed ? .failed : .done
+        }
+        let started = since != nil ? minEpoch : parsed.firstAt
+        let last = end ?? parsed.lastAt
+        let durationMs = (started != nil && last != nil) ? max(0, Int((last! - started!) * 1000)) : nil
+        return ChatFinishedTurn(steps: steps, durationMs: durationMs)
+    }
+
+    public static func foldSteps(_ steps: [ChatTurnStep]) -> (earlier: Int, shown: [ChatTurnStep], later: Int) {
+        let doneKeys = steps.filter { $0.state == .done }.map(\.key)
+        let hiddenDone = Set(doneKeys.count > 3 ? Array(doneKeys.dropLast(2)) : [])
+        let plannedKeys = steps.filter { $0.state == .planned }.map(\.key)
+        let hiddenPlanned = Set(plannedKeys.count > 4 ? Array(plannedKeys.dropFirst(4)) : [])
+        let hidden = hiddenDone.union(hiddenPlanned)
+        return (
+            earlier: doneKeys.count > 3 ? doneKeys.count - 2 : 0,
+            shown: steps.filter { !hidden.contains($0.key) },
+            later: max(0, plannedKeys.count - 4)
+        )
+    }
+
+    /// A failed turn opens on where it failed: steps before the first failure fold into a count.
+    public static func foldStepsFromFailure(_ steps: [ChatTurnStep]) -> (earlier: Int, shown: [ChatTurnStep]) {
+        let at = steps.firstIndex(where: { $0.state == .failed }) ?? 0
+        return (earlier: at, shown: Array(steps.dropFirst(at)))
+    }
+
+    /// Summary line for a finished working card ("Worked for 2m 14s · 7 steps").
+    public static func finishedSummary(outcome: ChatTurnOutcome, stepCount: Int, durationMs: Int?) -> String {
+        let verb: String
+        switch outcome {
+        case .done: verb = "Worked for"
+        case .failed: verb = "Failed after"
+        case .stopped: verb = "Stopped after"
+        }
+        let lead: String
+        if let durationMs, durationMs >= 1000 {
+            lead = "\(verb) \(formatSpan(ms: durationMs))"
+        } else {
+            lead = String(verb.split(separator: " ").first ?? Substring(verb))
+        }
+        let noun = stepCount == 1 ? "step" : "steps"
+        return "\(lead) · \(stepCount) \(noun)"
+    }
+
+    public static func formatSpan(ms: Int) -> String {
+        let s = max(0, ms) / 1000
+        if s < 60 { return "\(s)s" }
+        let m = s / 60
+        if m < 60 { return "\(m)m \(String(format: "%02d", s % 60))s" }
+        return "\(m / 60)h \(String(format: "%02d", m % 60))m"
+    }
+
+    public static func replyCost(_ cost: Double?) -> String? {
+        guard let cost, cost.isFinite, cost > 0 else { return nil }
+        if cost < 0.001 { return "< $0.001" }
+        return cost < 1 ? String(format: "$%.3f", cost) : String(format: "$%.2f", cost)
+    }
+
+    // MARK: Private Activity Helpers
+
+    private struct ParsedEventWindow {
+        var calls: [ChatToolCall]
+        var callTimes: [Int: (at: TimeInterval, doneAt: TimeInterval?)]
+        var firstAt: TimeInterval?
+        var lastAt: TimeInterval?
+        var openingLine: String?
+        var activePhase: Phase?
+    }
+
+    private static func parseEventWindow(events: [ChatRunEvent], since: String?, until: String?) -> ParsedEventWindow {
         let minEpoch = since.map(APIDate.epoch) ?? 0
         let maxEpoch = until.map(APIDate.epoch) ?? Double.infinity
 
@@ -215,6 +489,7 @@ public struct ChatTurnActivity: Sendable, Equatable {
             if at < minEpoch || at > maxEpoch { continue }
             if firstAt == nil { firstAt = at }
             lastAt = max(lastAt ?? at, at)
+            if case .bool(true) = e.payload["subagent"] { continue }
 
             switch e.type {
             case "tool_call":
@@ -276,64 +551,15 @@ public struct ChatTurnActivity: Sendable, Equatable {
             }
         }
 
-        let started = since != nil ? minEpoch : firstAt
-        let nowEpoch = now.timeIntervalSince1970
-        let elapsedMs = started.map { max(0, Int((nowEpoch - $0) * 1000)) }
-        let lastEvent = lastAt ?? started
-        let idleMs = lastEvent.map { max(0, Int((nowEpoch - $0) * 1000)) }
-        let newest = calls.last
-        let doneAt: TimeInterval? = {
-            guard let newest, newest.done, newest.tool != replyBlockTool else { return nil }
-            return callTimes[newest.key]?.doneAt
-        }()
-        let between = doneAt.map { Int((nowEpoch - $0) * 1000) >= nextStepAfterMs } ?? false
-        let quietThreshold = (newest != nil && newest?.done == false) ? quietRunningMs : quietAfterMs
-        let quiet = idleMs.map { $0 >= quietThreshold } ?? false
-
-        let status = computeStatus(calls: calls, between: between, phase: activePhase)
-        let (steps, planned) = buildSteps(calls: calls, callTimes: callTimes, between: between, phase: activePhase)
-
-        return ChatTurnActivity(
-            status: status,
+        return ParsedEventWindow(
+            calls: calls,
+            callTimes: callTimes,
+            firstAt: firstAt,
+            lastAt: lastAt,
             openingLine: openingLine,
-            steps: steps,
-            planned: planned,
-            elapsedMs: elapsedMs,
-            idleMs: idleMs,
-            between: between,
-            quiet: quiet,
             activePhase: activePhase
         )
     }
-
-    public static func foldSteps(_ steps: [ChatTurnStep]) -> (earlier: Int, shown: [ChatTurnStep], later: Int) {
-        let doneKeys = steps.filter { $0.state == .done }.map(\.key)
-        let hiddenDone = Set(doneKeys.count > 3 ? Array(doneKeys.dropLast(2)) : [])
-        let plannedKeys = steps.filter { $0.state == .planned }.map(\.key)
-        let hiddenPlanned = Set(plannedKeys.count > 4 ? Array(plannedKeys.dropFirst(4)) : [])
-        let hidden = hiddenDone.union(hiddenPlanned)
-        return (
-            earlier: doneKeys.count > 3 ? doneKeys.count - 2 : 0,
-            shown: steps.filter { !hidden.contains($0.key) },
-            later: max(0, plannedKeys.count - 4)
-        )
-    }
-
-    public static func formatSpan(ms: Int) -> String {
-        let s = max(0, ms) / 1000
-        if s < 60 { return "\(s)s" }
-        let m = s / 60
-        if m < 60 { return "\(m)m \(String(format: "%02d", s % 60))s" }
-        return "\(m / 60)h \(String(format: "%02d", m % 60))m"
-    }
-
-    public static func replyCost(_ cost: Double?) -> String? {
-        guard let cost, cost.isFinite, cost > 0 else { return nil }
-        if cost < 0.001 { return "< $0.001" }
-        return cost < 1 ? String(format: "$%.3f", cost) : String(format: "$%.2f", cost)
-    }
-
-    // MARK: Private Activity Helpers
 
     private static func computeStatus(calls: [ChatToolCall], between: Bool, phase: Phase?) -> ChatStatusInfo {
         if let newest = calls.last {
