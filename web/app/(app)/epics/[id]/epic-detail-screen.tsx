@@ -11,7 +11,7 @@ import { cx } from "@/lib/cx";
 import { approvalId, epicProgress, needsYouByTicket, startReady, ticketNeedsYou, type NeedsYou } from "@/lib/work-rows";
 import { Icon } from "@/components/ui/icon";
 import { StackedBar } from "@/components/domain/data";
-import { StateText } from "@/app/(app)/tickets/_components/ticket-row";
+import { StateText } from "@/components/domain/ticket-state-text";
 import { useBoard } from "@/lib/api/board-hooks";
 import { dueDate } from "@/lib/format";
 import { burnUp, isOverdue, ymd } from "@/lib/epics";
@@ -31,7 +31,7 @@ import { buildEpicDetailNavModel } from "@/lib/native-shell/models/epic-detail";
 import { handleWorkHeaderCommand } from "@/lib/native-shell/models/work";
 import { buildEpicToolbar } from "@/lib/native-shell/models/work-toolbars";
 import { useNativeToolbar } from "@/lib/native-shell/use-native-toolbar";
-import { useNativeTitle } from "../../tickets/_components/native-title";
+import { useNativeTitle } from "@/lib/native-shell/use-native-title";
 
 type TicketSummary = Schemas["TicketSummary"];
 

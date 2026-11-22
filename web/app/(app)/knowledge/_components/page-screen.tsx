@@ -32,7 +32,7 @@ import { ReviewBar, ReviewList, undecided } from "./page-review";
 import { QueryTable } from "./query-table";
 import { useKnowledgeTab } from "./shell";
 import { useKnowledgeChat } from "./chat-context";
-import { useNativeTitle } from "../../tickets/_components/native-title";
+import { useNativeTitle } from "@/lib/native-shell/use-native-title";
 import { useNativeActions } from "@/lib/native-shell/use-native-actions";
 import { isNativeShell, post } from "@/lib/native-shell/bridge";
 import { knowledgePageActions } from "@/lib/native-shell/models/knowledge-page";

@@ -17,7 +17,7 @@ import {
 } from "@/lib/run-view";
 import type { NativeAction } from "@/lib/native-shell/actions";
 import { useNativeActions } from "@/lib/native-shell/use-native-actions";
-import { useNativeTitle } from "../../tickets/_components/native-title";
+import { useNativeTitle } from "@/lib/native-shell/use-native-title";
 import { Button } from "@/components/ui/button";
 import { Tabs, Toggle } from "@/components/ui/controls";
 import { Icon } from "@/components/ui/icon";

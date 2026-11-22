@@ -130,6 +130,9 @@ struct NativeScreenRoot: View {
         case .http: HttpScreen()
         case .learn: LearnScreen()
         case .learnCourse: CourseScreen()
+        case .tickets: TicketsScreen()
+        case .ticketNew: NewTicketScreen()
+        case .ticketDetail: TicketDetailScreen()
         }
     }
 }
