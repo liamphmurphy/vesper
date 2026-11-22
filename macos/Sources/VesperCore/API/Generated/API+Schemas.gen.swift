@@ -16215,6 +16215,10 @@ extension API {
         public var name: Swift.String
         /// Legacy repository favorites and first-chat default; never an access allowlist. Use shared repository sources for discovery.
         public var repos: [Swift.String]
+        /// How fast a new reply is revealed while the persona's talking loop plays
+        /// (relaxed ~25, natural ~15, deliberate ~8 words a second). auto: natural
+        /// when the persona has a talking loop, instant otherwise.
+        public var revealPace: PersonaRevealPace
         public var revision: Swift.Int
         /// What the clients need to play a persona's loops.
         public var stateMedia: PersonaStateMediaSummary?
@@ -16260,6 +16264,7 @@ extension API {
             lastUsedAt: Swift.String? = nil,
             name: Swift.String,
             repos: [Swift.String],
+            revealPace: PersonaRevealPace,
             revision: Swift.Int,
             stateMedia: PersonaStateMediaSummary? = nil,
             tone: PersonaTone,
@@ -16285,6 +16290,7 @@ extension API {
             self.lastUsedAt = lastUsedAt
             self.name = name
             self.repos = repos
+            self.revealPace = revealPace
             self.revision = revision
             self.stateMedia = stateMedia
             self.tone = tone
@@ -16312,6 +16318,7 @@ extension API {
             case lastUsedAt = "last_used_at"
             case name
             case repos
+            case revealPace = "reveal_pace"
             case revision
             case stateMedia = "state_media"
             case tone
@@ -16340,6 +16347,7 @@ extension API {
             self.lastUsedAt = try c.decodeIfPresent(Swift.String.self, forKey: .lastUsedAt)
             self.name = try c.decode(Swift.String.self, forKey: .name)
             self.repos = try c.decodeIfPresent([Swift.String].self, forKey: .repos) ?? []
+            self.revealPace = try c.decode(PersonaRevealPace.self, forKey: .revealPace)
             self.revision = try c.decode(Swift.Int.self, forKey: .revision)
             self.stateMedia = try c.decodeIfPresent(PersonaStateMediaSummary.self, forKey: .stateMedia)
             self.tone = try c.decode(PersonaTone.self, forKey: .tone)
@@ -16368,6 +16376,7 @@ extension API {
             try c.encodeIfPresent(lastUsedAt, forKey: .lastUsedAt)
             try c.encode(name, forKey: .name)
             try c.encode(repos, forKey: .repos)
+            try c.encode(revealPace, forKey: .revealPace)
             try c.encode(revision, forKey: .revision)
             try c.encodeIfPresent(stateMedia, forKey: .stateMedia)
             try c.encode(tone, forKey: .tone)
@@ -16768,6 +16777,10 @@ extension API {
         public var name: Swift.String?
         /// Replaces the whole list; existing chats keep their repo
         public var repos: [Swift.String]?
+        /// How fast a new reply is revealed while the persona's talking loop plays
+        /// (relaxed ~25, natural ~15, deliberate ~8 words a second). auto: natural
+        /// when the persona has a talking loop, instant otherwise.
+        public var revealPace: PersonaRevealPace?
         public var revision: Swift.Int
         /// How the assistant writes; each maps to one fixed prompt sentence on the server
         public var tone: PersonaTone?
@@ -16812,6 +16825,7 @@ extension API {
             inChatList: Swift.Bool? = nil,
             name: Swift.String? = nil,
             repos: [Swift.String]? = nil,
+            revealPace: PersonaRevealPace? = nil,
             revision: Swift.Int,
             tone: PersonaTone? = nil,
             work: PersonaWork? = nil
@@ -16825,6 +16839,7 @@ extension API {
             self.inChatList = inChatList
             self.name = name
             self.repos = repos
+            self.revealPace = revealPace
             self.revision = revision
             self.tone = tone
             self.work = work
@@ -16840,6 +16855,7 @@ extension API {
             case inChatList = "in_chat_list"
             case name
             case repos
+            case revealPace = "reveal_pace"
             case revision
             case tone
             case work
@@ -16856,6 +16872,7 @@ extension API {
             self.inChatList = try c.decodeIfPresent(Swift.Bool.self, forKey: .inChatList)
             self.name = try c.decodeIfPresent(Swift.String.self, forKey: .name)
             self.repos = try c.decodeIfPresent([Swift.String].self, forKey: .repos)
+            self.revealPace = try c.decodeIfPresent(PersonaRevealPace.self, forKey: .revealPace)
             self.revision = try c.decode(Swift.Int.self, forKey: .revision)
             self.tone = try c.decodeIfPresent(PersonaTone.self, forKey: .tone)
             self.work = try c.decodeIfPresent(PersonaWork.self, forKey: .work)
@@ -16872,6 +16889,7 @@ extension API {
             try c.encodeIfPresent(inChatList, forKey: .inChatList)
             try c.encodeIfPresent(name, forKey: .name)
             try c.encodeIfPresent(repos, forKey: .repos)
+            try c.encodeIfPresent(revealPace, forKey: .revealPace)
             try c.encode(revision, forKey: .revision)
             try c.encodeIfPresent(tone, forKey: .tone)
             try c.encodeIfPresent(work, forKey: .work)
@@ -17021,6 +17039,20 @@ extension API {
         }
     }
 
+    /// How fast a new reply is revealed while the persona's talking loop plays
+    /// (relaxed ~25, natural ~15, deliberate ~8 words a second). auto: natural
+    /// when the persona has a talking loop, instant otherwise.
+    public struct PersonaRevealPace: APIStringEnum {
+        public let rawValue: Swift.String
+        public init(rawValue: Swift.String) { self.rawValue = rawValue }
+        public static let auto = PersonaRevealPace(rawValue: "auto")
+        public static let off = PersonaRevealPace(rawValue: "off")
+        public static let relaxed = PersonaRevealPace(rawValue: "relaxed")
+        public static let natural = PersonaRevealPace(rawValue: "natural")
+        public static let deliberate = PersonaRevealPace(rawValue: "deliberate")
+        public static let allKnown: [PersonaRevealPace] = [auto, off, relaxed, natural, deliberate]
+    }
+
     /// A character state a persona can have a photorealistic loop for.
     public struct PersonaState: APIStringEnum {
         public let rawValue: Swift.String
@@ -17031,7 +17063,9 @@ extension API {
         public static let coding = PersonaState(rawValue: "coding")
         public static let creating = PersonaState(rawValue: "creating")
         public static let needsYou = PersonaState(rawValue: "needs_you")
-        public static let allKnown: [PersonaState] = [idle, thinking, reading, coding, creating, needsYou]
+        public static let talking = PersonaState(rawValue: "talking")
+        public static let complete = PersonaState(rawValue: "complete")
+        public static let allKnown: [PersonaState] = [idle, thinking, reading, coding, creating, needsYou, talking, complete]
     }
 
     public struct PersonaStateMedia: Codable, Sendable, Equatable {

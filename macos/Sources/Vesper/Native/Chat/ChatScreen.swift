@@ -65,6 +65,8 @@ struct ChatScreen: View {
 
     @State private var model = ChatScreenModel()
     @State private var watched: [QueryKey] = []
+    /// The persona companion's pop-out: the loop large in the middle with a small composer.
+    @State private var companionOpen = false
 
     private static let personasRequest = API.listPersonas()
     private static let spacesRequest = API.listChatSpaces()
@@ -77,6 +79,11 @@ struct ChatScreen: View {
 
     private var chatId: String? {
         context.match.params["id"]
+    }
+
+    /// The chat's companion state; a chat not created yet shares one until it has an id.
+    private var companion: ChatCompanion {
+        ChatCompanions.companion(for: chatId ?? "new")
     }
 
     private var ticketRunsRequest: APIRequest<API.ChatTicketRuns>? {
@@ -161,22 +168,30 @@ struct ChatScreen: View {
             )
             Divider()
 
-            if let chatId {
-                ChatTranscriptView(
-                    chatId: chatId,
-                    session: session,
-                    knownPersonaNames: personas.map(\.name),
-                    scrollToMessageRequest: model.scrollToMessageRequest,
-                    onSendReply: { body in
-                        Task { _ = await sendMessage(body, activePersona: activePersona) }
-                    }
-                )
-            } else {
-                emptyChatView(
-                    personas: personas,
-                    activePersona: activePersona,
-                    suggestions: suggestions
-                )
+            Group {
+                if let chatId {
+                    ChatTranscriptView(
+                        chatId: chatId,
+                        session: session,
+                        knownPersonaNames: personas.map(\.name),
+                        scrollToMessageRequest: model.scrollToMessageRequest,
+                        onSendReply: { body in
+                            Task { _ = await sendMessage(body, activePersona: activePersona) }
+                        }
+                    )
+                } else {
+                    emptyChatView(
+                        personas: personas,
+                        activePersona: activePersona,
+                        suggestions: suggestions
+                    )
+                }
+            }
+            // The host persona's loop stands bottom-right just above the composer for the whole chat.
+            .overlay(alignment: .bottomTrailing) {
+                if let persona = activePersona, let loops = persona.playableLoops {
+                    PersonaCompanionDock(companion: companion, persona: persona, loops: loops) { companionOpen = true }
+                }
             }
 
             ChatComposerSlot(
@@ -218,6 +233,25 @@ struct ChatScreen: View {
             )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .overlay {
+            if companionOpen, let persona = activePersona, let loops = persona.playableLoops {
+                PersonaCompanionPopOut(
+                    companion: companion,
+                    persona: persona,
+                    loops: loops,
+                    lastReply: messages.last { $0.role == .assistant },
+                    onSend: { body in await sendMessage(body, activePersona: activePersona) },
+                    onClose: { companionOpen = false }
+                )
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: companionOpen)
+        // Replies that arrive while the chat is open reveal at the persona's pace.
+        .onChange(of: "\(chatId ?? "")|\(messages.last?.id ?? "")|\(personas.count)", initial: true) { _, _ in
+            companion.observe(messages: messages, personas: personas, hostPersonaId: activePersona?.id)
+        }
+        .onChange(of: chatId) { _, _ in companionOpen = false }
         .onChange(
             of: buildChrome(
                 chats: chats,
@@ -423,9 +457,7 @@ struct ChatScreen: View {
             VStack(alignment: .leading, spacing: 20) {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 10) {
-                        if let persona = activePersona, let loops = persona.playableLoops {
-                            PersonaStateStageView(loops: loops, state: .idle, width: 120, label: persona.name)
-                        } else if let persona = activePersona {
+                        if let persona = activePersona {
                             WorkPersonaAvatarView(id: persona.id, handle: nil, name: persona.name, size: 36, state: .idle, active: true, preferCharacter: true)
                         }
                         VStack(alignment: .leading, spacing: 2) {
@@ -791,6 +823,8 @@ struct ChatScreen: View {
         contextRefs: [API.ChatContextRef]? = nil,
         research: Bool = false
     ) async -> String? {
+        // Sending shows the rest of a reply that's still revealing.
+        companion.finishReveal()
         let msg = API.NewChatMessage(
             attachmentIds: attachmentIds.isEmpty ? nil : attachmentIds,
             body: body,

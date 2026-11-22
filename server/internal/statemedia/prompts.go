@@ -22,10 +22,12 @@ const (
 	StateCoding   State = "coding"
 	StateCreating State = "creating"
 	StateNeedsYou State = "needs_you"
+	StateTalking  State = "talking"
+	StateComplete State = "complete"
 )
 
 // States lists every state in display order.
-var States = []State{StateIdle, StateThinking, StateReading, StateCoding, StateCreating, StateNeedsYou}
+var States = []State{StateIdle, StateThinking, StateReading, StateCoding, StateCreating, StateNeedsYou, StateTalking, StateComplete}
 
 // Valid reports whether s is a known state.
 func Valid(s State) bool { return slices.Contains(States, s) }
@@ -43,6 +45,8 @@ var motions = map[State]string{
 	StateReading:  "The person is reading something just below the camera: their eyes scan left to right line by line, with a small, understanding nod.",
 	StateCoding:   "The person is typing on a laptop just out of frame below: small, real finger and forearm movement, eyes flicking across a screen, a slight focused lean in.",
 	StateCreating: "The person is sketching or shaping an idea: small, fluid hand gestures in front of their chest, an engaged and pleased expression.",
+	StateTalking:  "The person is speaking warmly and directly to the viewer: natural lip and jaw movement as if mid-sentence, eye contact, small expressive nods and one gentle hand gesture, then settles back.",
+	StateComplete: "The person has just finished a task and is genuinely pleased: a bright, warm smile, a small satisfied nod and a quick, contained celebratory gesture such as a light clap or small fist pump, then settles back.",
 	StateNeedsYou: "The person turns their attention directly to the viewer with an expectant, friendly look and a brief, small wave of one hand, then lowers it.",
 }
 

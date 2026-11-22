@@ -87,7 +87,13 @@ type Patch struct {
 	// DefaultHarness/DefaultModel/DefaultEffort update the persona's default
 	// harness, model, and reasoning effort (empty / "auto" clears back to Auto).
 	DefaultHarness, DefaultModel, DefaultEffort *string
+	// RevealPace is how fast a new reply is revealed while the persona's
+	// talking loop plays: auto, off, relaxed, natural or deliberate.
+	RevealPace *string
 }
+
+// RevealPaces are the accepted reveal paces; auto lets the clients decide.
+var RevealPaces = []string{"auto", "off", "relaxed", "natural", "deliberate"}
 
 // checkTicketEdits accepts "ask" or "allow".
 func checkTicketEdits(v *string) error {
@@ -403,6 +409,9 @@ func (s *Service) Update(ctx context.Context, o Owner, id uuid.UUID, p Patch) (s
 	if err := checkTicketEdits(p.TicketEdits); err != nil {
 		return out, err
 	}
+	if p.RevealPace != nil && !slices.Contains(RevealPaces, *p.RevealPace) {
+		return out, apperr.Invalid("reveal_pace", "use one of %s", strings.Join(RevealPaces, ", "))
+	}
 	if p.Name != nil {
 		name, err := normName(*p.Name)
 		if err != nil {
@@ -480,6 +489,7 @@ func (s *Service) Update(ctx context.Context, o Owner, id uuid.UUID, p Patch) (s
 			CanCode: p.Code, CanGenerateImages: p.Images, CanCreatePersonas: p.Personas, CanCreateSvgs: p.SVG, CanCreateWorkflows: p.Workflows, CanCreateConnectors: p.Connectors, Repos: repos,
 			InChatList:     p.InChatList,
 			DefaultHarness: nextHarness, DefaultModel: nextModel, DefaultEffort: nextEffort,
+			RevealPace: p.RevealPace,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return apperr.Conflict("the persona changed since you loaded it")

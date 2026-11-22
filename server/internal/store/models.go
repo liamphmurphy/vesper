@@ -1299,6 +1299,7 @@ type Persona struct {
 	DefaultModel        string
 	DefaultEffort       string
 	CharacterSvg        *string
+	RevealPace          string
 }
 
 type PersonaCharacterProposal struct {

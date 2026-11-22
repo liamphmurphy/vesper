@@ -11,6 +11,10 @@ struct PersonaStateStageView: View {
     @Environment(\.displayScale) private var displayScale
     let loops: [String: String]
     let state: CharacterState
+    /// A reply is revealing: play the talking loop over the turn's state.
+    var talking = false
+    /// The brief pleased beat after a turn that did work delivers its reply.
+    var complete = false
     let width: CGFloat
     /// Accessible name, e.g. "Iris, thinking"; decorative without one.
     var label: String?
@@ -21,7 +25,7 @@ struct PersonaStateStageView: View {
 
     var body: some View {
         let height = (width * 16 / 9).rounded()
-        let target = PersonaStateLoops.loop(for: reduceMotion ? .idle : state, in: loops)
+        let target = PersonaStateLoops.loop(for: reduceMotion ? .idle : state, talking: talking && !reduceMotion, complete: complete && !reduceMotion, in: loops)
         let pixels = Int((height * displayScale).rounded(.up))
         ZStack {
             if let shown {

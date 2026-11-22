@@ -11026,7 +11026,7 @@ components:
         Its tone and custom instructions shape the assistant's voice in chats
         only; they never change scopes, tools or memory rules. Only the
         structured capabilities (and repos) widen what its chats may do.
-      required: [id, name, tone, color, custom_instructions, capabilities, repos, is_default, chat_count, in_chat_list, work, revision, created_at, updated_at]
+      required: [id, name, tone, color, custom_instructions, capabilities, repos, is_default, chat_count, in_chat_list, work, reveal_pace, revision, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
@@ -11043,6 +11043,7 @@ components:
         avatar_url: { type: string, description: "GET /personas/{id}/avatar with a cache-busting ?v=<revision>; absent without an avatar" }
         character_svg: { type: string, description: "Sanitized 64x64 animated SVG character source; absent when using a picture or initials" }
         state_media: { $ref: "#/components/schemas/PersonaStateMediaSummary", description: "Photorealistic state loops; absent when none has been generated" }
+        reveal_pace: { $ref: "#/components/schemas/PersonaRevealPace" }
         custom_instructions: { type: string }
         capabilities: { $ref: "#/components/schemas/PersonaCapabilities" }
         repos: { type: array, maxItems: 10, items: { type: string }, deprecated: true, description: "Legacy repository favorites and first-chat default; never an access allowlist. Use shared repository sources for discovery." }
@@ -11054,9 +11055,17 @@ components:
         updated_at: { type: string, format: date-time }
     PersonaState:
       type: string
-      enum: [idle, thinking, reading, coding, creating, needs_you]
-      x-enum-varnames: [PersonaStateIdle, PersonaStateThinking, PersonaStateReading, PersonaStateCoding, PersonaStateCreating, PersonaStateNeedsYou]
+      enum: [idle, thinking, reading, coding, creating, needs_you, talking, complete]
+      x-enum-varnames: [PersonaStateIdle, PersonaStateThinking, PersonaStateReading, PersonaStateCoding, PersonaStateCreating, PersonaStateNeedsYou, PersonaStateTalking, PersonaStateComplete]
       description: A character state a persona can have a photorealistic loop for.
+    PersonaRevealPace:
+      type: string
+      enum: [auto, "off", relaxed, natural, deliberate]
+      x-enum-varnames: [RevealPaceAuto, RevealPaceOff, RevealPaceRelaxed, RevealPaceNatural, RevealPaceDeliberate]
+      description: |
+        How fast a new reply is revealed while the persona's talking loop plays
+        (relaxed ~25, natural ~15, deliberate ~8 words a second). auto: natural
+        when the persona has a talking loop, instant otherwise.
     PersonaStateMediaStatus:
       type: string
       enum: [queued, running, ready, failed]
@@ -11093,7 +11102,7 @@ components:
     GeneratePersonaStateMedia:
       type: object
       properties:
-        states: { type: array, maxItems: 6, items: { $ref: "#/components/schemas/PersonaState" }, description: "Absent or empty: every state" }
+        states: { type: array, maxItems: 8, items: { $ref: "#/components/schemas/PersonaState" }, description: "Absent or empty: every state" }
         tweak: { type: string, maxLength: 1000, description: "Edit each state's previous clip with this instruction instead of starting afresh" }
         source_library_item_id: { type: string, format: uuid, description: "A Library image to use as the portrait" }
     PersonaStateMediaSummary:
@@ -11140,6 +11149,7 @@ components:
       required: [revision]
       properties:
         revision: { type: integer }
+        reveal_pace: { $ref: "#/components/schemas/PersonaRevealPace" }
         in_chat_list: { type: boolean }
         work: { $ref: "#/components/schemas/PersonaWork" }
         name: { type: string, minLength: 1, maxLength: 60 }

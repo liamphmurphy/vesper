@@ -223,7 +223,7 @@ const listPersonaStateMedia = `-- name: ListPersonaStateMedia :many
 SELECT m.persona_id, m.state, m.status, m.job_id, m.percent, m.stage_note, m.prompt, m.tweak, m.provider_id, m.model, m.interaction_id, m.backend, m.blob_key, m.content_type, m.head_key, m.width, m.height, m.frames, m.duration_ms, m.size_bytes, m.error, m.error_kind, m.created_at, m.updated_at FROM persona_state_media m
 JOIN personas p ON p.id = m.persona_id
 WHERE m.persona_id = $1 AND p.workspace_id = $2 AND p.user_id = $3
-ORDER BY array_position(ARRAY['idle', 'thinking', 'reading', 'coding', 'creating', 'needs_you'], m.state)
+ORDER BY array_position(ARRAY['idle', 'thinking', 'reading', 'coding', 'creating', 'needs_you', 'talking', 'complete'], m.state)
 `
 
 type ListPersonaStateMediaParams struct {

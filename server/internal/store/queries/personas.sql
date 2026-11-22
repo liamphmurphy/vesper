@@ -64,6 +64,7 @@ UPDATE personas SET
   default_harness = COALESCE(sqlc.narg(default_harness)::text, default_harness),
   default_model = COALESCE(sqlc.narg(default_model)::text, default_model),
   default_effort = COALESCE(sqlc.narg(default_effort)::text, default_effort),
+  reveal_pace = COALESCE(sqlc.narg(reveal_pace)::text, reveal_pace),
   revision = revision + 1, updated_at = now()
 WHERE id = sqlc.arg(id) AND workspace_id = sqlc.arg(workspace_id) AND user_id = sqlc.arg(user_id) AND revision = sqlc.arg(revision)
 RETURNING *;

@@ -10302,6 +10302,7 @@ export interface components {
             character_svg?: string;
             /** @description Photorealistic state loops; absent when none has been generated */
             state_media?: components["schemas"]["PersonaStateMediaSummary"];
+            reveal_pace: components["schemas"]["PersonaRevealPace"];
             custom_instructions: string;
             capabilities: components["schemas"]["PersonaCapabilities"];
             /**
@@ -10327,7 +10328,14 @@ export interface components {
          * @description A character state a persona can have a photorealistic loop for.
          * @enum {string}
          */
-        PersonaState: "idle" | "thinking" | "reading" | "coding" | "creating" | "needs_you";
+        PersonaState: "idle" | "thinking" | "reading" | "coding" | "creating" | "needs_you" | "talking" | "complete";
+        /**
+         * @description How fast a new reply is revealed while the persona's talking loop plays
+         *     (relaxed ~25, natural ~15, deliberate ~8 words a second). auto: natural
+         *     when the persona has a talking loop, instant otherwise.
+         * @enum {string}
+         */
+        PersonaRevealPace: "auto" | "off" | "relaxed" | "natural" | "deliberate";
         /**
          * @description The latest generation attempt. A failed attempt keeps any earlier loop.
          * @enum {string}
@@ -10428,6 +10436,7 @@ export interface components {
         };
         PersonaPatch: {
             revision: number;
+            reveal_pace?: components["schemas"]["PersonaRevealPace"];
             in_chat_list?: boolean;
             work?: components["schemas"]["PersonaWork"];
             name?: string;
