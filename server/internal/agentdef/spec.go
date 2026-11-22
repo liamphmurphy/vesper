@@ -243,6 +243,20 @@ const (
 	HelperPrompt      = "Do the task in your brief and nothing else. You can't ask follow-up questions, so make reasonable assumptions and say which. Finish with a short report: what you found or changed, with file:line references, and what you couldn't do. Never paste whole files."
 )
 
+// Subagent tiers let the parent pick speed vs depth per delegated task without
+// naming vendor-specific model slugs; the catalog resolver maps them to a
+// model and effort within the parent's harness, capped at the parent's tier.
+const (
+	SubagentTierFast     = "fast"
+	SubagentTierStandard = "standard"
+	SubagentTierDeep     = "deep"
+)
+
+// ValidSubagentTier reports whether tier is one of the recognized subagent tiers.
+func ValidSubagentTier(tier string) bool {
+	return tier == SubagentTierFast || tier == SubagentTierStandard || tier == SubagentTierDeep
+}
+
 // SubagentGuide is what the prompt of a run with sub agents says about using
 // them: when they pay off and when they don't. Empty when the run has none.
 func SubagentGuide(spec Resolved) string {
