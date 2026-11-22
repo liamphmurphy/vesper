@@ -595,8 +595,9 @@ public enum LearnLogic {
     private static func makeFullNumberFormatter() -> NumberFormatter {
         let f = NumberFormatter()
         f.numberStyle = .decimal
+        f.usesGroupingSeparator = true
         f.maximumFractionDigits = 2
-        f.locale = Locale(identifier: "en_US_POSIX")
+        f.locale = Locale(identifier: "en_US")
         return f
     }
 
