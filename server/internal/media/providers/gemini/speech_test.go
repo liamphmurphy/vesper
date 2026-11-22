@@ -17,13 +17,16 @@ import (
 
 func TestGenerateSpeechWrapsPCMAsWAV(t *testing.T) {
 	pcm := bytes.Repeat([]byte{0x10, 0x00}, 24000) // one second of 16-bit mono at 24 kHz
-	var gotPath, gotVoice, gotText string
+	var gotPath, gotVoice, gotText, gotStyle string
 	var gotModalities []any
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		var body struct {
 			Contents []struct {
-				Parts []struct{ Text string } `json:"parts"`
+				Parts []struct {
+					Text           string            `json:"text"`
+					SpeechMetadata map[string]string `json:"speechMetadata"`
+				} `json:"parts"`
 			} `json:"contents"`
 			GenerationConfig map[string]any `json:"generationConfig"`
 		}
@@ -31,6 +34,7 @@ func TestGenerateSpeechWrapsPCMAsWAV(t *testing.T) {
 			t.Fatal(err)
 		}
 		gotText = body.Contents[0].Parts[0].Text
+		gotStyle = body.Contents[0].Parts[0].SpeechMetadata["style"]
 		gotModalities, _ = body.GenerationConfig["responseModalities"].([]any)
 		sc, _ := body.GenerationConfig["speechConfig"].(map[string]any)
 		vc, _ := sc["voiceConfig"].(map[string]any)
@@ -57,8 +61,9 @@ func TestGenerateSpeechWrapsPCMAsWAV(t *testing.T) {
 	if gotVoice != "Sulafat" || len(gotModalities) != 1 || gotModalities[0] != "AUDIO" {
 		t.Errorf("voice %q, modalities %v", gotVoice, gotModalities)
 	}
-	if !strings.Contains(gotText, "warm, unhurried") || !strings.HasSuffix(gotText, "Hello there.") {
-		t.Errorf("prompt = %q", gotText)
+	// 3.8 TTS reads its input word for word: the style must never be in the text.
+	if gotText != "Hello there." || gotStyle != "warm, unhurried" {
+		t.Errorf("text = %q, speechMetadata.style = %q", gotText, gotStyle)
 	}
 	if clip.ContentType != "audio/wav" || clip.DurationMS != 1000 || clip.Model != defaultSpeechModel {
 		t.Errorf("clip = %s %dms %s", clip.ContentType, clip.DurationMS, clip.Model)
@@ -87,5 +92,37 @@ func TestGenerateSpeechRefusals(t *testing.T) {
 	}
 	if len(prov.Voices()) != 30 {
 		t.Errorf("voices = %d", len(prov.Voices()))
+	}
+}
+
+// wavWithTrailer builds a WAV like gemini-3.8-flash-tts returns: header, the
+// audio, then a provenance (C2PA) chunk that is not sound.
+func wavWithTrailer(pcm []byte, rate int) []byte {
+	body := wavFromPCM(pcm, rate)
+	trailer := append([]byte("C2PA"), 0, 0x10, 0, 0)
+	trailer = append(trailer, bytes.Repeat([]byte{0x7f, 0x80}, 0x800)...)
+	out := append(body, trailer...)
+	binary.LittleEndian.PutUint32(out[4:8], uint32(len(out)-8))
+	return out
+}
+
+func TestGenerateSpeechKeepsOnlyTheAudioOfAWAVResponse(t *testing.T) {
+	pcm := bytes.Repeat([]byte{0x10, 0x00}, 24000)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"candidates": []any{map[string]any{"content": map[string]any{"parts": []any{
+			map[string]any{"inlineData": map[string]any{"mimeType": "audio/wav", "data": base64.StdEncoding.EncodeToString(wavWithTrailer(pcm, 24000))}},
+		}}}}})
+	}))
+	defer ts.Close()
+	prov, _ := New(media.ResolvedConfig{Settings: map[string]string{"backend": "gemini_api"}, Secrets: map[string]string{"api_key": "k"}}, WithBaseURL(ts.URL))
+	clip, err := prov.GenerateSpeech(context.Background(), media.SpeechRequest{Text: "Hello."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Exactly one header and the audio: no nested header (a click) and no
+	// provenance bytes played as sound (the static at the end).
+	if len(clip.Data) != 44+len(pcm) || !bytes.Equal(clip.Data[44:], pcm) || clip.DurationMS != 1000 {
+		t.Fatalf("clip = %d bytes, %dms; want %d bytes of audio only", len(clip.Data), clip.DurationMS, 44+len(pcm))
 	}
 }

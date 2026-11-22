@@ -66,16 +66,18 @@ func (p *Provider) GenerateSpeech(ctx context.Context, req media.SpeechRequest) 
 	if model == "" {
 		model = defaultSpeechModel
 	}
-	prompt := text
+	// Gemini 3.8 TTS speaks its text word for word, so a style written into
+	// the text is read aloud; it goes in the part's speech metadata instead.
+	part := &genai.Part{Text: text}
 	if style := strings.TrimSpace(req.Style); style != "" {
-		prompt = "Read the following aloud in a " + style + " way:\n\n" + text
+		part.SpeechMetadata = &genai.SpeechMetadata{Style: style}
 	}
 
 	client, err := p.newClient(ctx)
 	if err != nil {
 		return media.SpeechClip{}, err
 	}
-	resp, err := client.Models.GenerateContent(ctx, model, genai.Text(prompt), &genai.GenerateContentConfig{
+	resp, err := client.Models.GenerateContent(ctx, model, []*genai.Content{genai.NewContentFromParts([]*genai.Part{part}, genai.RoleUser)}, &genai.GenerateContentConfig{
 		ResponseModalities: []string{"AUDIO"},
 		SpeechConfig: &genai.SpeechConfig{
 			VoiceConfig: &genai.VoiceConfig{PrebuiltVoiceConfig: &genai.PrebuiltVoiceConfig{VoiceName: voice}},
@@ -111,11 +113,50 @@ func speechPCM(resp *genai.GenerateContentResponse) ([]byte, int, error) {
 				if !strings.HasPrefix(strings.ToLower(part.InlineData.MIMEType), "audio/") {
 					continue
 				}
-				return part.InlineData.Data, pcmRate(part.InlineData.MIMEType), nil
+				data := part.InlineData.Data
+				// 3.8 TTS returns a whole WAV file with a provenance (C2PA) chunk after
+				// the audio; only its data chunk is sound. Older models send bare PCM.
+				if pcm, rate, ok := wavData(data); ok {
+					return pcm, rate, nil
+				}
+				return data, pcmRate(part.InlineData.MIMEType), nil
 			}
 		}
 	}
 	return nil, 0, &media.ProviderError{Provider: ProviderID, Kind: media.ErrKindFiltered, Message: "Gemini returned no speech for this text."}
+}
+
+// wavData returns the data chunk and sample rate of a 16-bit mono WAV, skipping
+// every other chunk. ok is false when b isn't such a WAV.
+func wavData(b []byte) (pcm []byte, rate int, ok bool) {
+	if len(b) < 12 || string(b[:4]) != "RIFF" || string(b[8:12]) != "WAVE" {
+		return nil, 0, false
+	}
+	rate = defaultPCMRate
+	for off := 12; off+8 <= len(b); {
+		id := string(b[off : off+4])
+		size := int(binary.LittleEndian.Uint32(b[off+4 : off+8]))
+		body := off + 8
+		end := body + size
+		if size < 0 || end > len(b) {
+			end = len(b) // a truncated or streaming-size chunk runs to the end
+		}
+		switch id {
+		case "fmt ":
+			if end-body >= 16 {
+				channels := binary.LittleEndian.Uint16(b[body+2 : body+4])
+				bits := binary.LittleEndian.Uint16(b[body+14 : body+16])
+				if channels != 1 || bits != 16 {
+					return nil, 0, false
+				}
+				rate = int(binary.LittleEndian.Uint32(b[body+4 : body+8]))
+			}
+		case "data":
+			return b[body:end], rate, true
+		}
+		off = end + size%2 // chunks are word-aligned
+	}
+	return nil, 0, false
 }
 
 // pcmRate reads rate=N from a MIME type like audio/L16;codec=pcm;rate=24000.
