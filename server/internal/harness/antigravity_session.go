@@ -510,10 +510,9 @@ func (s *agySessionState) handleUpdate(paramsRaw json.RawMessage) {
 	var p struct {
 		Update struct {
 			SessionUpdate string `json:"sessionUpdate"`
-			Content       *struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
+			// Content is an object on message/thought chunks and an array on
+			// completed tool_call_update events, so decode it per event type.
+			Content    json.RawMessage `json:"content"`
 			ToolCallID string          `json:"toolCallId"`
 			Name       string          `json:"name"`
 			Title      string          `json:"title"`
@@ -529,12 +528,25 @@ func (s *agySessionState) handleUpdate(paramsRaw json.RawMessage) {
 		return
 	}
 	u := p.Update
+	textContent := func() string {
+		if len(u.Content) == 0 || string(u.Content) == "null" {
+			return ""
+		}
+		var c struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if json.Unmarshal(u.Content, &c) != nil {
+			return ""
+		}
+		return c.Text
+	}
 	switch u.SessionUpdate {
 	case "agent_thought_chunk":
 		s.flushText()
-		if u.Content != nil && u.Content.Text != "" {
-			s.thinkBuf.WriteString(u.Content.Text)
-			for _, ev := range s.activity.thinkingDelta(u.Content.Text) {
+		if txt := textContent(); txt != "" {
+			s.thinkBuf.WriteString(txt)
+			for _, ev := range s.activity.thinkingDelta(txt) {
 				s.emit(ev)
 			}
 		} else {
@@ -544,10 +556,10 @@ func (s *agySessionState) handleUpdate(paramsRaw json.RawMessage) {
 		}
 	case "agent_message_chunk":
 		s.flushThinking()
-		if u.Content == nil || u.Content.Text == "" {
+		txt := textContent()
+		if txt == "" {
 			return
 		}
-		txt := u.Content.Text
 		if strings.Contains(txt, "agent executor error:") {
 			trimmed := strings.TrimSpace(txt)
 			s.res.IsError = true

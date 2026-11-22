@@ -56,6 +56,22 @@ for `model` and `thought_level` -> `session/prompt`, answering
 `session/request_permission` via `CheckTool` and canceling on pause/abort via
 `session/cancel`.
 
+**ACP `Stop` hook for background commands:** `run_command` caps
+`WaitMsBeforeAsync` at `10000` ms, so commands longer than 10s background
+themselves and `agy`'s messaging prompt tells the model to stop calling tools
+and wait for a wakeup. Under `agy acp --stdio`, `session/prompt` would otherwise
+resolve immediately with `stopReason: "end_turn"` and Vesper would tear down the
+process, killing the background command and closing the chat turn early. In ACP
+mode (`LAZYAGENTS_AGY_ACP=1`), `agy_launch.py` registers `agy_policy.py` as a
+`Stop` hook (`timeout: 300`): when `terminationReason == "NO_TOOL_CALL"` and
+`fullyIdle == false`, the hook waits (up to 240s per slice) for a completion
+notification under `<artifactDirectoryPath>/.system_generated/messages/undelivered/`
+and returns `{"decision": "continue"}` so `agy` delivers the command's output
+back to the model inside the same `session/prompt` turn. `IsDaemon: true`
+commands report `fullyIdle: true` and do not block, and `session/cancel` aborts
+the waiting hook promptly (`TestAgyProbe/session_background_command`,
+`TestAgyProbe/session_background_daemon`).
+
 When `Turn.ConfigTag != ""` (e.g. an in-turn Vesper MCP subagent),
 `agyConfig.isolated_home` is set so `agy_launch.py` creates a temporary `$HOME`
 symlinking top-level entries and `.gemini/` state except `settings.json`,
@@ -152,10 +168,12 @@ Cost is `unknown`: agy reports tokens, and Vesper keeps no Gemini price list.
 
 A 429 with Google's quota body ends as `status: ERROR` with the full message, for example
 `Error 429, Message: You exceeded your current quota, …, Status: RESOURCE_EXHAUSTED,
-Details: [map[@type:…RetryInfo retryDelay:41s]]`. `harness.UsageLimit` matches
+Details: [map[@type:…RetryInfo retryDelay:300s]]`. `harness.UsageLimit` matches
 "exceeded your current quota" and "resource_exhausted", which triggers the fallbacks.
-`harness.LimitReset` reads `retryDelay` as the reset time. With no `RetryInfo`, agy
-retried once after about 4s before giving up.
+`harness.LimitReset` reads `retryDelay` as the reset time. Starting in `agy 1.5.10`,
+`agy` waits and retries `RetryInfo` delays up to 4 minutes (up from 30s in 1.5.9)
+before failing the turn; with no `RetryInfo`, agy retried once after about 4s
+before giving up. (Re-verified across all 14 `TestAgyProbe` subtests against `agy 1.5.14`.)
 
 **With no network at all, agy never ends the turn.** It retries the model call,
 printing an `error_message` step each time, until it is killed. The probe stopped

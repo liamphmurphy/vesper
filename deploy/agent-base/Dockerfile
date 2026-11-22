@@ -56,8 +56,8 @@ ENV NIX_REMOTE=daemon
 ENV PATH="/home/node/.nix-profile/bin:${PATH}:/nix/var/nix/profiles/default/bin"
 
 # Harness CLI versions (adapters in server/internal/harness).
-ARG CLAUDE_CODE_VERSION=2.1.325
-ARG CODEX_VERSION=0.169.0
+ARG CLAUDE_CODE_VERSION=2.1.330
+ARG CODEX_VERSION=0.171.0
 RUN npm install -g --no-fund --no-audit \
       @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} @openai/codex@${CODEX_VERSION} \
  && npm cache clean --force
@@ -68,9 +68,9 @@ RUN npm install -g --no-fund --no-audit \
 # A failed install fails the build: an image without agy breaks every Antigravity
 # turn. Pass --build-arg INSTALL_ANTIGRAVITY=false to omit it.
 ARG INSTALL_ANTIGRAVITY=true
-ARG AGY_RELEASE=1.5.9-4515810895593472
-ARG AGY_SHA512_AMD64=d01eb13ba7750eed18907f1ae8860864371e0ad9064415e8d033d22b4bd7b9b4e4c7f962058520b452d67db1c33163d9a889d55a7dffa159596ec6cd91a87b79
-ARG AGY_SHA512_ARM64=16c632a09b81f598f7652bc11180861f9d2ee4408ffa161dadc83b2010de7a9cd055e97b4b46cd01903e35c0e8bf21d8262462ba7c5f168cc6dada9ac3d522c0
+ARG AGY_RELEASE=1.5.14-5302690847260672
+ARG AGY_SHA512_AMD64=83311d3f354567612dc16c1ae2ea9b503d6f6833aa4e138d39aa229da3f3bb99b0e4d7cca0bce4796b0060d6a51d8113eb7449ed5dc0e7900bf217107ea5bff9
+ARG AGY_SHA512_ARM64=c9b29bba475f63a1a80161ae93ba72b221c7a586d9851e4d0061546704bab66d6b2760b25d716d191724fc7564f3246456ee151e28aa37af48dbcd72bdc6c463
 RUN if [ "$INSTALL_ANTIGRAVITY" = true ]; then \
       set -eu; \
       arch="$(dpkg --print-architecture)"; \

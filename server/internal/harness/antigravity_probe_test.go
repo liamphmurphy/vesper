@@ -108,7 +108,9 @@ func TestAgyProbe(t *testing.T) {
 
 	t.Run("quota", func(t *testing.T) {
 		p := newAgyProbe(t, bin)
-		p.gemini.script(agyReply{status: 429, body: `{"error":{"code":429,"message":"You exceeded your current quota, please check your plan and billing details.","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"41s"}]}}`})
+		// agy 1.5.10+ sleeps and retries RetryInfo delays up to 4 minutes; use 300s
+		// so both 1.5.9 (>30s) and 1.5.10+ (>4m) fail fast as a quota limit.
+		p.gemini.script(agyReply{status: 429, body: `{"error":{"code":429,"message":"You exceeded your current quota, please check your plan and billing details.","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"300s"}]}}`})
 		out := p.run(t, readOnlyChat(), "antigravity-error.jsonl")
 		if !out.res.IsError || !out.res.UsageLimited {
 			t.Errorf("a 429 must end the turn as a usage limit: %+v", out.res)
@@ -403,7 +405,7 @@ func TestAgyProbe(t *testing.T) {
 			if strings.Contains(body, "conversation title generator") {
 				return agyReply{text: "Probe Title"}, true
 			}
-			return agyReply{status: 429, body: `{"error":{"code":429,"message":"You exceeded your current quota, please check your plan and billing details.","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"41s"}]}}`}, true
+			return agyReply{status: 429, body: `{"error":{"code":429,"message":"You exceeded your current quota, please check your plan and billing details.","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"300s"}]}}`}, true
 		}
 		s := spec("repo:read", "allowed")
 		s.Harness = agentdef.HarnessAntigravity
@@ -587,6 +589,75 @@ func TestAgyProbe(t *testing.T) {
 		}
 		if got := p.policy.tools(); !slices.Contains(got, "Agent") {
 			t.Errorf("expected policy hook to evaluate invoke_subagent as Agent, got %v", got)
+		}
+	})
+
+	t.Run("session_background_command", func(t *testing.T) {
+		p := newAgyProbe(t, bin)
+		p.gemini.route = func(body string) (agyReply, bool) {
+			if strings.Contains(body, "conversation title generator") {
+				return agyReply{text: "BG Probe Title"}, true
+			}
+			return agyReply{}, false
+		}
+		p.gemini.script(
+			agyReply{call: agyCall("run_command", map[string]any{"CommandLine": "sleep 1.5 && echo COMPUTED_$((21*2))", "toolSummary": "Slow command", "WaitMsBeforeAsync": 500})},
+			agyReply{text: "Waiting on background command."},
+			agyReply{text: "Done after background command."},
+		)
+		s := spec("repo:read", "allowed", "repo:write", "allowed", "tests:run", "allowed")
+		s.Harness = agentdef.HarnessAntigravity
+		res, evs := runACPTurn(t, p, s, Turn{Spec: s, Prompt: "Run the slow command."}, func(context.Context, string, map[string]any) (bool, string) {
+			return true, ""
+		})
+		if res.IsError || strings.TrimSpace(res.Final) != "Done after background command." {
+			t.Fatalf("unexpected res=%+v events=%v", res, evs)
+		}
+		sawToolResult := false
+		for _, ev := range evs {
+			if ev.Type == "tool_result" && ev.Payload["tool"] == "Bash" && strings.Contains(fmt.Sprint(ev.Payload["output"]), "COMPUTED_42") {
+				sawToolResult = true
+				break
+			}
+		}
+		if !sawToolResult {
+			t.Errorf("expected Bash tool_result with COMPUTED_42 before session/prompt resolved, events=%v", evs)
+		}
+		sawInModel := false
+		for _, req := range p.gemini.all {
+			if strings.Contains(string(req), "COMPUTED_42") {
+				sawInModel = true
+				break
+			}
+		}
+		if !sawInModel {
+			t.Errorf("expected COMPUTED_42 output to be delivered back to the model in the same session/prompt turn")
+		}
+	})
+
+	t.Run("session_background_daemon", func(t *testing.T) {
+		p := newAgyProbe(t, bin)
+		p.gemini.route = func(body string) (agyReply, bool) {
+			if strings.Contains(body, "conversation title generator") {
+				return agyReply{text: "Daemon Probe Title"}, true
+			}
+			return agyReply{}, false
+		}
+		p.gemini.script(
+			agyReply{call: agyCall("run_command", map[string]any{"CommandLine": "sleep 30", "IsDaemon": true, "toolSummary": "Start daemon", "WaitMsBeforeAsync": 500})},
+			agyReply{text: "Daemon started."},
+		)
+		s := spec("repo:read", "allowed", "repo:write", "allowed", "tests:run", "allowed")
+		s.Harness = agentdef.HarnessAntigravity
+		start := time.Now()
+		res, _ := runACPTurn(t, p, s, Turn{Spec: s, Prompt: "Start a daemon."}, func(context.Context, string, map[string]any) (bool, string) {
+			return true, ""
+		})
+		if res.IsError || res.Final != "Daemon started." {
+			t.Fatalf("unexpected res=%+v", res)
+		}
+		if elapsed := time.Since(start); elapsed > 10*time.Second {
+			t.Errorf("daemon run_command should not block Stop hook, elapsed=%v", elapsed)
 		}
 	})
 }
