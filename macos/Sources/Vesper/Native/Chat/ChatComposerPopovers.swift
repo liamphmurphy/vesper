@@ -101,81 +101,48 @@ struct ChatComposerCompletionPopover: View {
     }
 }
 
-// MARK: - Running-Run Status Strip
+// MARK: - Active Ticket Runs Strip
 
 struct ChatRunningStatusStrip: View {
     @Environment(\.vesperTheme) private var theme
 
-    let isChatRunning: Bool
-    let speakerName: String
-    let activeHarness: String?
     let activeTicketRuns: [API.ChatTicketRun]
-    let isCancelling: Bool
-    let onStopChat: () -> Void
     let onOpenRun: (String) -> Void
 
-    private var hasActivity: Bool {
-        isChatRunning || !activeTicketRuns.isEmpty
-    }
-
     var body: some View {
-        if hasActivity {
+        if !activeTicketRuns.isEmpty {
             let p = theme.palette
             HStack(spacing: 8) {
-                if let harness = activeHarness, let kind = HarnessCharacterView.kind(for: harness) {
-                    HarnessCharacterView(kind: kind, working: true, size: 20)
-                } else {
-                    ProgressView()
-                        .controlSize(.small)
-                }
+                ProgressView()
+                    .controlSize(.small)
 
-                if isChatRunning {
-                    Text("\(speakerName) is replying…")
-                        .font(.system(size: theme.pointSize(.small), weight: .medium))
-                        .foregroundStyle(p.text)
-                        .lineLimit(1)
-                }
-
-                if !activeTicketRuns.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 6) {
-                            ForEach(activeTicketRuns, id: \.runId) { run in
-                                Button {
-                                    onOpenRun(run.runId)
-                                } label: {
-                                    HStack(spacing: 4) {
-                                        Circle()
-                                            .fill(p.accent)
-                                            .frame(width: 6, height: 6)
-                                        Text(run.ticket)
-                                            .font(.system(size: theme.pointSize(.micro), weight: .semibold))
-                                        if let step = run.currentStep, !step.isEmpty {
-                                            Text("· \(step)")
-                                                .font(.system(size: theme.pointSize(.micro)))
-                                                .foregroundStyle(p.secondaryText)
-                                                .lineLimit(1)
-                                        }
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(activeTicketRuns, id: \.runId) { run in
+                            Button {
+                                onOpenRun(run.runId)
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Circle()
+                                        .fill(p.accent)
+                                        .frame(width: 6, height: 6)
+                                    Text(run.ticket)
+                                        .font(.system(size: theme.pointSize(.micro), weight: .semibold))
+                                    if let step = run.currentStep, !step.isEmpty {
+                                        Text("· \(step)")
+                                            .font(.system(size: theme.pointSize(.micro)))
+                                            .foregroundStyle(p.secondaryText)
+                                            .lineLimit(1)
                                     }
-                                    .padding(.horizontal, 7)
-                                    .padding(.vertical, 3)
-                                    .background(p.surface, in: Capsule())
-                                    .overlay(Capsule().stroke(p.border))
                                 }
-                                .buttonStyle(.plain)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(p.surface, in: Capsule())
+                                .overlay(Capsule().stroke(p.border))
                             }
+                            .buttonStyle(.plain)
                         }
                     }
-                }
-
-                Spacer(minLength: 6)
-
-                if isChatRunning {
-                    Button(action: onStopChat) {
-                        Label(isCancelling ? "Stopping…" : "Stop", systemImage: "stop.fill")
-                    }
-                    .buttonStyle(.vesper(.danger))
-                    .controlSize(.small)
-                    .disabled(isCancelling)
                 }
             }
             .padding(.horizontal, 12)

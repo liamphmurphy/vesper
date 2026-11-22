@@ -76,15 +76,12 @@ struct ChatComposerView: View {
         let p = theme.palette
 
         VStack(alignment: .leading, spacing: 8) {
-            ChatRunningStatusStrip(
-                isChatRunning: isRunning,
-                speakerName: session?.speaker?.name ?? personaName,
-                activeHarness: activeHarnessId,
-                activeTicketRuns: activeTicketRuns,
-                isCancelling: isCancelling,
-                onStopChat: cancelTurn,
-                onOpenRun: { runId in context.navigate("/runs/\(runId)") }
-            )
+            if !activeTicketRuns.isEmpty {
+                ChatRunningStatusStrip(
+                    activeTicketRuns: activeTicketRuns,
+                    onOpenRun: { runId in context.navigate("/runs/\(runId)") }
+                )
+            }
 
             if let errorMessage {
                 errorBanner(errorMessage)
