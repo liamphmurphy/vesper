@@ -161,6 +161,8 @@ struct NativeScreenRoot: View {
         case .rootLanding, .appsRedirect: RootLandingScreen()
         case .setup: SetupScreen()
         case .appsHome: AppsHomeScreen()
+        case .spaceNew: NewSpaceScreen()
+        case .spaceDetail: SpaceScreen()
         }
     }
 }

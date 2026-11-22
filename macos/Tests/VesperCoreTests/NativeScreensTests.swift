@@ -104,6 +104,7 @@ final class NativeRoutesTests: XCTestCase {
         let standard = NativeRouteRegistry.standard(debug: true)
         let expected: [String: AreaId?] = [
             "/chat": .chat, "/chat/c1": .chat,
+            "/spaces": .chat, "/spaces/new": .chat, "/spaces/sp-1": .chat,
             "/work": .work, "/runs": .work, "/runs/r1": .work, "/tickets": .work, "/board": .work,
             "/tickets/new": .work, "/tickets/PAY-1": .work, "/epics": .work, "/epics/e1": .work,
             "/knowledge": .knowledge, "/knowledge/graph": .knowledge, "/knowledge/p1": .knowledge, "/wiki/a/b": .knowledge,

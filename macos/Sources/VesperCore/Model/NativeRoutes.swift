@@ -38,6 +38,8 @@ public enum NativeScreen: String, Sendable, CaseIterable {
     case setup
     case appsHome
     case appsRedirect
+    case spaceNew
+    case spaceDetail
 
     /// Screens sharing one SwiftUI root host so navigating between them preserves sidebar & chrome state.
     public var hostGroup: NativeScreen {
@@ -53,7 +55,7 @@ public enum NativeScreen: String, Sendable, CaseIterable {
     /// The shell marks it itself rather than waiting for the hidden page to report its route.
     public var area: AreaId? {
         switch self {
-        case .chat, .chatDetail, .rootLanding: .chat
+        case .chat, .chatDetail, .rootLanding, .spaceNew, .spaceDetail: .chat
         case .work, .runDetail, .tickets, .ticketNew, .ticketDetail, .epics, .epicDetail: .work
         case .knowledge, .knowledgeGraph, .knowledgePage: .knowledge
         case .library: .library
@@ -145,9 +147,12 @@ public struct NativeRouteRegistry: Sendable {
         NativeRoute("/workflows", .workflows),
         NativeRoute("/workflows/runs/:id", .workflowRun),
         NativeRoute("/workflows/:id", .workflowEditor),
-        // Chat landing and conversation detail (shared hostGroup preserves sidebar state).
+        // Chat landing, Spaces, and conversation detail.
         NativeRoute("/chat", .chat),
         NativeRoute("/chat/:id", .chatDetail),
+        NativeRoute("/spaces", .spaceNew),
+        NativeRoute("/spaces/new", .spaceNew),
+        NativeRoute("/spaces/:id", .spaceDetail),
         // Root landing, onboarding setup, Custom Apps home, and legacy /apps/docs|slides|designs redirects.
         NativeRoute("/", .rootLanding),
         NativeRoute("/setup", .setup),
