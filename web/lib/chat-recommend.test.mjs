@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { groupRecommendFences, isRecommendFence, parseRecommend, summarizePrompt, summaryRequestUrl, videoEmbedUrl, youtubeMoment } from "./chat-recommend.ts";
+import { groupRecommendFences, isRecommendFence, parseRecommend, summarizePrompt, summaryRequestUrl, summaryUrlsForTurns, videoEmbedUrl, youtubeMoment } from "./chat-recommend.ts";
 
 test("a recommend fence is a URL then a reason", () => {
   assert.ok(isRecommendFence("recommend"));
@@ -35,6 +35,32 @@ test("a summary request names its URL, mention or not", () => {
   assert.equal(summaryRequestUrl("@Gwen Summarize this page: [A](https://a.com/x)"), "https://a.com/x");
   assert.equal(summaryRequestUrl("Summarize this video: https://a.com"), "https://a.com");
   assert.equal(summaryRequestUrl("Please summarize"), null);
+});
+
+test("summaryUrlsForTurns pairs each turn reply with its preceding user summarize prompt", () => {
+  const list = [
+    { id: "a0", role: "assistant", body_md: "Orphan reply" },
+    { id: "u1", role: "user", body_md: "Summarize this page: [Docs](https://a.com/docs)" },
+    { id: "a1-interim", role: "assistant", body_md: "Checking…" },
+    { id: "a1", role: "assistant", body_md: "Here is the summary." },
+    { id: "u2", role: "user", body_md: "Thanks!" },
+    { id: "a2", role: "assistant", body_md: "You are welcome." },
+    { id: "u3", role: "user", body_md: "@Gwen Summarize this video: https://b.com/v" },
+    { id: "s3", role: "system", body_md: "Switched model" },
+    { id: "a3", role: "assistant", body_md: "Video summary." },
+  ];
+  const turns = new Map([
+    ["a0", {}],
+    ["a1", {}],
+    ["a2", {}],
+    ["a3", {}],
+  ]);
+  const urls = summaryUrlsForTurns(list, turns);
+  assert.deepEqual([...urls.entries()], [
+    ["a1", "https://a.com/docs"],
+    ["a3", "https://b.com/v"],
+  ]);
+  assert.equal(summaryUrlsForTurns(undefined, turns).size, 0);
 });
 
 const card = () => ({ type: "element", tagName: "pre", children: [{ type: "element", tagName: "code", properties: { className: ["language-recommend"] } }] });

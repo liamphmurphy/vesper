@@ -99,6 +99,18 @@ public struct ParsedChatMessage: Sendable, Equatable {
     public var sources: [ChatListedSource]
     public var mentions: [String]
 
+    public var hasDispatchSegment: Bool {
+        segments.contains { if case .dispatch = $0 { return true }; return false }
+    }
+
+    public var hasWorkflowRunSegment: Bool {
+        segments.contains { if case .workflowRun = $0 { return true }; return false }
+    }
+
+    public var hasCanvasSegment: Bool {
+        segments.contains { if case .canvas = $0 { return true }; return false }
+    }
+
     public init(
         typedBody: String,
         context: ChatStrippedContext,
@@ -653,5 +665,69 @@ public enum ChatTranscriptLogic {
         }
         guard !digits.isEmpty, j < chars.count, chars[j] == "]", let n = Int(digits) else { return nil }
         return (j, n)
+    }
+}
+
+/// Bounded cache for `ChatTranscriptLogic.parseMessage` keyed by message id, body, role flag, and
+/// known persona names so SwiftUI transcript updates don't re-parse unchanged messages.
+public final class ChatParsedMessageCache: @unchecked Sendable {
+    private struct Key: Hashable {
+        let messageId: String
+        let bodyMd: String
+        let extractSources: Bool
+        let knownPersonaNames: [String]
+    }
+
+    private let lock = NSLock()
+    private let maxEntries: Int
+    private var entries: [Key: ParsedChatMessage] = [:]
+    private var insertionOrder: [Key] = []
+
+    public init(maxEntries: Int = 512) {
+        self.maxEntries = max(1, maxEntries)
+    }
+
+    public func parsed(
+        messageId: String,
+        bodyMd: String,
+        extractSources: Bool,
+        knownPersonaNames: [String]
+    ) -> ParsedChatMessage {
+        let key = Key(
+            messageId: messageId,
+            bodyMd: bodyMd,
+            extractSources: extractSources,
+            knownPersonaNames: knownPersonaNames
+        )
+        if let hit = lock.withLock({ entries[key] }) {
+            return hit
+        }
+        let value = ChatTranscriptLogic.parseMessage(
+            bodyMd,
+            extractSources: extractSources,
+            knownPersonaNames: knownPersonaNames
+        )
+        lock.withLock {
+            if entries[key] == nil {
+                if insertionOrder.count >= maxEntries {
+                    let evicted = insertionOrder.removeFirst()
+                    entries.removeValue(forKey: evicted)
+                }
+                insertionOrder.append(key)
+                entries[key] = value
+            }
+        }
+        return value
+    }
+
+    public func removeAll() {
+        lock.withLock {
+            entries.removeAll()
+            insertionOrder.removeAll()
+        }
+    }
+
+    public var count: Int {
+        lock.withLock { entries.count }
     }
 }

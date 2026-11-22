@@ -2076,3 +2076,14 @@ details[open]::details-content { height: auto; }
 .kn-inline-preview { display: block; margin: 0.75em 0; }
 .kn-paste-uploading { display: inline-flex; align-items: center; gap: 6px; margin: 0 2px; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text-tertiary); font-size: 12px; line-height: 1.4; user-select: none; }
 .kn-paste-replacing { opacity: 0.5; }
+
+/* Chat transcript containment: isolate the scroll container from composer resizes and skip
+   layout/paint for off-screen assistant reply bodies (leaving the message <li> unclipped so
+   its -top-4 hover toolbar, highlight ring, and aside connectors stay intact). */
+[data-chat-scroller] {
+  contain: layout style;
+}
+[data-chat-scroller] [data-testid="reply-body"] {
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 120px;
+}

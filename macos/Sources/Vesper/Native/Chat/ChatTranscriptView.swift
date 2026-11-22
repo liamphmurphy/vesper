@@ -13,8 +13,7 @@ struct ChatTranscriptView: View {
     let onSendReply: @MainActor (String) -> Void
 
     @State private var watched: [QueryKey] = []
-    @State private var now = Date()
-    @State private var showAllSteps = false
+    @State private var parseCache = ChatParsedMessageCache()
 
     private var messagesRequest: APIRequest<API.ListChatMessagesResponse> {
         API.listChatMessages(id: chatId, limit: 200)
@@ -25,24 +24,6 @@ struct ChatTranscriptView: View {
     private var workflowRunsRequest: APIRequest<API.WorkflowRuns> {
         API.listChatWorkflowRuns(id: chatId)
     }
-    private var approvalsRequest: APIRequest<API.ChatToolApprovalList> {
-        API.listChatToolApprovals(id: chatId)
-    }
-    private var pushRequestsRequest: APIRequest<API.PushRequestList> {
-        API.listPushRequests(id: chatId)
-    }
-    private var secretProposalsRequest: APIRequest<API.ApiSecretProposalList> {
-        API.listApiSecretProposals(id: chatId)
-    }
-    private var personaProposalsRequest: APIRequest<API.ListPersonaProposalsResponse> {
-        API.listPersonaProposals(id: chatId)
-    }
-    private var characterProposalsRequest: APIRequest<API.ListPersonaCharacterProposalsResponse> {
-        API.listPersonaCharacterProposals(id: chatId)
-    }
-    private var ticketChangesRequest: APIRequest<API.TicketChangeRequestList> {
-        API.listTicketChangeRequests(id: chatId)
-    }
     private var canvasesRequest: APIRequest<API.ChatCanvases> {
         API.listChatCanvases(id: chatId)
     }
@@ -51,10 +32,6 @@ struct ChatTranscriptView: View {
     }
     private var videosRequest: APIRequest<API.ChatVideos> {
         API.listChatVideos(id: chatId)
-    }
-    private var runEventsRequest: APIRequest<API.RunEventList>? {
-        guard let runId = session?.currentRunId, !runId.isEmpty else { return nil }
-        return API.listRunEvents(id: runId)
     }
 
     private var isRunning: Bool {
@@ -67,18 +44,31 @@ struct ChatTranscriptView: View {
         let messages = messagesEntry.data?.messages ?? []
         let ticketRuns = store.entry(ticketRunsRequest).data?.runs ?? []
         let workflowRuns = store.entry(workflowRunsRequest).data?.runs ?? []
-        let approvals = store.entry(approvalsRequest).data?.approvals ?? []
-        let pushRequests = store.entry(pushRequestsRequest).data?.requests ?? []
-        let secretProposals = store.entry(secretProposalsRequest).data?.proposals ?? []
-        let personaProposals = store.entry(personaProposalsRequest).data?.proposals ?? []
-        let characterProposals = store.entry(characterProposalsRequest).data?.proposals ?? []
-        let ticketChanges = store.entry(ticketChangesRequest).data?.requests ?? []
         let canvases = store.entry(canvasesRequest).data?.canvases ?? []
         let audios = store.entry(audioRequest).data?.audio ?? []
         let videos = store.entry(videosRequest).data?.videos ?? []
-        let runEvents = runEventsRequest.flatMap { store.entry($0).data?.events } ?? []
 
-        Group {
+        // Pre-index media by messageId once in O(M) instead of filtering per message row.
+        var audiosByMessage: [String: [API.ChatAudio]] = [:]
+        var orphanAudios: [API.ChatAudio] = []
+        for audio in audios {
+            if let messageId = audio.messageId {
+                audiosByMessage[messageId, default: []].append(audio)
+            } else {
+                orphanAudios.append(audio)
+            }
+        }
+        var videosByMessage: [String: [API.ChatVideo]] = [:]
+        var orphanVideos: [API.ChatVideo] = []
+        for video in videos {
+            if let messageId = video.messageId {
+                videosByMessage[messageId, default: []].append(video)
+            } else {
+                orphanVideos.append(video)
+            }
+        }
+
+        return Group {
             if let error = messagesEntry.error, messages.isEmpty {
                 QueryErrorView(message: error.userMessage) {
                     Task { await store.refetch(messagesRequest) }
@@ -97,21 +87,34 @@ struct ChatTranscriptView: View {
                         LazyVStack(alignment: .leading, spacing: 18) {
                             ForEach(Array(messages.enumerated()), id: \.element.id) { idx, message in
                                 let nextBody = idx + 1 < messages.count ? messages[idx + 1].bodyMd : nil
-                                messageRow(
+                                let isUser = message.role == .user
+                                let parsed = parseCache.parsed(
+                                    messageId: message.id,
+                                    bodyMd: message.bodyMd,
+                                    extractSources: !isUser,
+                                    knownPersonaNames: knownPersonaNames
+                                )
+                                let persona = message.persona ?? session?.persona
+                                let speakerName = persona?.name ?? session?.agent.name ?? "Assistant"
+                                ChatMessageRowView(
+                                    chatId: chatId,
                                     message: message,
+                                    parsed: parsed,
                                     nextMessageBody: nextBody,
-                                    ticketRuns: ticketRuns,
-                                    workflowRuns: workflowRuns,
-                                    canvases: canvases,
-                                    audios: audios.filter { $0.messageId == message.id },
-                                    videos: videos.filter { $0.messageId == message.id }
+                                    personaId: persona?.id,
+                                    speakerName: speakerName,
+                                    isRunning: isRunning,
+                                    ticketRuns: parsed.hasDispatchSegment ? ticketRuns : [],
+                                    workflowRuns: parsed.hasWorkflowRunSegment ? workflowRuns : [],
+                                    canvases: parsed.hasCanvasSegment ? canvases : [],
+                                    audios: audiosByMessage[message.id] ?? [],
+                                    videos: videosByMessage[message.id] ?? [],
+                                    onSendReply: onSendReply
                                 )
                                 .id(message.id)
                             }
 
                             // Unattached generated media (not linked to a specific message)
-                            let orphanAudios = audios.filter { $0.messageId == nil }
-                            let orphanVideos = videos.filter { $0.messageId == nil }
                             ForEach(orphanAudios, id: \.id) { audio in
                                 ChatAudioCardView(chatId: chatId, audio: audio)
                             }
@@ -120,24 +123,19 @@ struct ChatTranscriptView: View {
                             }
 
                             if isRunning {
-                                liveActivityCard(events: runEvents)
-                                    .id("live-activity")
+                                ChatLiveActivityCardView(
+                                    runId: session?.currentRunId,
+                                    speaker: session?.speaker ?? session?.persona,
+                                    fallbackSpeakerName: session?.agent.name ?? "Assistant"
+                                )
+                                .id("live-activity")
                             }
 
                             if let sessionError = session?.error, !sessionError.isEmpty, session?.state == .failed {
                                 failedBanner(sessionError)
                             }
 
-                            ChatProposalsSectionView(
-                                chatId: chatId,
-                                approvals: approvals,
-                                pushRequests: pushRequests,
-                                secretProposals: secretProposals,
-                                personaProposals: personaProposals,
-                                characterProposals: characterProposals,
-                                ticketChanges: ticketChanges,
-                                canvases: canvases
-                            )
+                            ChatTranscriptProposalsSlot(chatId: chatId, canvases: canvases)
 
                             Color.clear
                                 .frame(height: 1)
@@ -169,7 +167,10 @@ struct ChatTranscriptView: View {
                 }
             }
         }
-        .task(id: watchId) { watch() }
+        .onChange(of: chatId) { _, _ in
+            parseCache.removeAll()
+        }
+        .task(id: chatId) { watch() }
         .task(id: pollId) { await pollWhileActive() }
         .onDisappear {
             for key in watched { context.store.stopObserving(key) }
@@ -177,25 +178,82 @@ struct ChatTranscriptView: View {
         }
     }
 
-    // MARK: - Message Row
+    private func failedBanner(_ message: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(theme.swiftUIColor("pill-blocked-fg", fallback: .red))
+            Text(message)
+                .font(.system(size: theme.pointSize(.small)))
+                .foregroundStyle(theme.swiftUIColor("pill-blocked-fg", fallback: .red))
+            Spacer(minLength: 8)
+        }
+        .padding(12)
+        .background(
+            theme.swiftUIColor("pill-blocked-bg", fallback: Color.red.opacity(0.12)),
+            in: RoundedRectangle(cornerRadius: 10)
+        )
+    }
 
-    @ViewBuilder
-    private func messageRow(
-        message: API.ChatMessage,
-        nextMessageBody: String?,
-        ticketRuns: [API.ChatTicketRun],
-        workflowRuns: [API.WorkflowRun],
-        canvases: [API.ChatCanvasSummary],
-        audios: [API.ChatAudio],
-        videos: [API.ChatVideo]
-    ) -> some View {
+    // MARK: - Observation & Polling
+
+    private var pollId: String {
+        "\(chatId)|\(isRunning)"
+    }
+
+    private func watch() {
+        let store = context.store
+        for key in watched { store.stopObserving(key) }
+        var keys: [QueryKey] = []
+
+        func track<V: Sendable>(_ req: APIRequest<V>) {
+            store.observe(req)
+            store.load(req)
+            keys.append(req.key)
+        }
+
+        track(messagesRequest)
+        track(ticketRunsRequest)
+        track(workflowRunsRequest)
+        track(canvasesRequest)
+        track(audioRequest)
+        track(videosRequest)
+        watched = keys
+    }
+
+    private func pollWhileActive() async {
+        guard isRunning else { return }
+        while !Task.isCancelled && isRunning {
+            try? await Task.sleep(for: .milliseconds(1500))
+            guard !Task.isCancelled else { return }
+            _ = await context.store.refetch(API.getChat(id: chatId))
+            _ = await context.store.refetch(messagesRequest)
+        }
+    }
+}
+
+// MARK: - Isolated Message Row
+
+private struct ChatMessageRowView: View {
+    @Environment(NativeScreenContext.self) private var context
+    @Environment(\.vesperTheme) private var theme
+
+    let chatId: String
+    let message: API.ChatMessage
+    let parsed: ParsedChatMessage
+    let nextMessageBody: String?
+    let personaId: String?
+    let speakerName: String
+    let isRunning: Bool
+    let ticketRuns: [API.ChatTicketRun]
+    let workflowRuns: [API.WorkflowRun]
+    let canvases: [API.ChatCanvasSummary]
+    let audios: [API.ChatAudio]
+    let videos: [API.ChatVideo]
+    let onSendReply: @MainActor (String) -> Void
+
+    var body: some View {
         let p = theme.palette
         let isUser = message.role == .user
-        let parsed = ChatTranscriptLogic.parseMessage(
-            message.bodyMd,
-            extractSources: !isUser,
-            knownPersonaNames: knownPersonaNames
-        )
         let citationNumbers = parsed.sources.compactMap(\.number)
 
         if isUser {
@@ -221,12 +279,10 @@ struct ChatTranscriptView: View {
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
         } else {
-            let persona = message.persona ?? session?.persona
-            let speakerName = persona?.name ?? session?.agent.name ?? "Assistant"
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
                     WorkPersonaAvatarView(
-                        id: persona?.id,
+                        id: personaId,
                         handle: nil,
                         name: speakerName,
                         size: 24
@@ -234,7 +290,7 @@ struct ChatTranscriptView: View {
                     Text(speakerName)
                         .font(.system(size: theme.pointSize(.body), weight: .semibold))
                         .foregroundStyle(p.text)
-                    Text(APIDate.shortAgo(message.createdAt, now: now))
+                    Text(APIDate.shortAgo(message.createdAt))
                         .font(.system(size: theme.pointSize(.micro)))
                         .foregroundStyle(p.tertiaryText)
                     if let cost = ChatTurnActivity.replyCost(message.costUsd) {
@@ -257,15 +313,7 @@ struct ChatTranscriptView: View {
 
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(Array(parsed.segments.enumerated()), id: \.offset) { _, segment in
-                        segmentView(
-                            segment,
-                            messageId: message.id,
-                            citationNumbers: citationNumbers,
-                            nextMessageBody: nextMessageBody,
-                            ticketRuns: ticketRuns,
-                            workflowRuns: workflowRuns,
-                            canvases: canvases
-                        )
+                        segmentView(segment, citationNumbers: citationNumbers)
                     }
 
                     if let attachments = message.attachments, !attachments.isEmpty {
@@ -288,20 +336,12 @@ struct ChatTranscriptView: View {
     }
 
     @ViewBuilder
-    private func segmentView(
-        _ segment: ChatMessageSegment,
-        messageId: String,
-        citationNumbers: [Int],
-        nextMessageBody: String?,
-        ticketRuns: [API.ChatTicketRun],
-        workflowRuns: [API.WorkflowRun],
-        canvases: [API.ChatCanvasSummary]
-    ) -> some View {
+    private func segmentView(_ segment: ChatMessageSegment, citationNumbers: [Int]) -> some View {
         switch segment {
         case .markdown(let text):
             MarkdownView(markdown: text, textStyle: .chat, chat: true, citations: citationNumbers)
         case .embedded(let kind, let source, let info, let index):
-            EmbeddedBlockView(kind: kind, source: source, messageID: messageId, info: info, index: index)
+            EmbeddedBlockView(kind: kind, source: source, messageID: message.id, info: info, index: index)
         case .chart(let spec):
             ChatChartCardView(spec: spec)
         case .choices(let card):
@@ -312,31 +352,51 @@ struct ChatTranscriptView: View {
                 onSelect: onSendReply
             )
         case .dispatch(let card):
-            ChatDispatchCardView(chatId: chatId, messageId: messageId, card: card, runs: ticketRuns)
+            ChatDispatchCardView(chatId: chatId, messageId: message.id, card: card, runs: ticketRuns)
         case .recommend(let cards):
-            ChatRecommendCardsView(messageId: messageId, cards: cards, onSend: onSendReply)
+            ChatRecommendCardsView(messageId: message.id, cards: cards, onSend: onSendReply)
         case .workflowRun(let card):
-            ChatWorkflowRunCardView(chatId: chatId, messageId: messageId, card: card, runs: workflowRuns)
+            ChatWorkflowRunCardView(chatId: chatId, messageId: message.id, card: card, runs: workflowRuns)
         case .canvas(let id):
             ChatCanvasRefCardView(chatId: chatId, canvasId: id, canvases: canvases)
         case .pdf(let id):
             ChatPDFCardView(itemId: id)
         case .researchPlan(let plan):
-            ChatResearchPlanCardView(chatId: chatId, messageId: messageId, plan: plan)
+            ChatResearchPlanCardView(chatId: chatId, messageId: message.id, plan: plan)
         }
     }
+}
 
-    // MARK: - Live Work / Thinking Card
+// MARK: - Isolated Live Work / Thinking Card
 
-    private func liveActivityCard(events: [API.RunEvent]) -> some View {
+/// Owns the live run-event observation and 1.5s timer so polling ticks only re-render this card
+/// instead of every message row in the transcript above it.
+private struct ChatLiveActivityCardView: View {
+    @Environment(NativeScreenContext.self) private var context
+    @Environment(\.vesperTheme) private var theme
+
+    let runId: String?
+    let speaker: API.PersonaSummary?
+    let fallbackSpeakerName: String
+
+    @State private var watchedKey: QueryKey?
+    @State private var now = Date()
+    @State private var showAllSteps = false
+
+    private var runEventsRequest: APIRequest<API.RunEventList>? {
+        guard let runId, !runId.isEmpty else { return nil }
+        return API.listRunEvents(id: runId)
+    }
+
+    var body: some View {
         let p = theme.palette
+        let events = runEventsRequest.flatMap { context.store.entry($0).data?.events } ?? []
         let activity = ChatTurnActivity.fold(events: events.map(ChatRunEvent.init), now: now)
-        let speaker = session?.speaker ?? session?.persona
-        let speakerName = speaker?.name ?? session?.agent.name ?? "Assistant"
+        let speakerName = speaker?.name ?? fallbackSpeakerName
         let folded = ChatTurnActivity.foldSteps(activity.steps)
         let displaySteps = showAllSteps ? activity.steps : folded.shown
 
-        return VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 12) {
                 WorkPersonaAvatarView(
                     id: speaker?.id,
@@ -406,71 +466,36 @@ struct ChatTranscriptView: View {
         .padding(12)
         .background(theme.swiftUIColor("surface-sunken", fallback: p.surface), in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(p.border))
-    }
-
-    private func failedBanner(_ message: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(theme.swiftUIColor("pill-blocked-fg", fallback: .red))
-            Text(message)
-                .font(.system(size: theme.pointSize(.small)))
-                .foregroundStyle(theme.swiftUIColor("pill-blocked-fg", fallback: .red))
-            Spacer(minLength: 8)
+        .task(id: runId ?? "") {
+            watchRunEvents()
+            await pollRunEvents()
         }
-        .padding(12)
-        .background(
-            theme.swiftUIColor("pill-blocked-bg", fallback: Color.red.opacity(0.12)),
-            in: RoundedRectangle(cornerRadius: 10)
-        )
-    }
-
-    // MARK: - Observation & Polling
-
-    private var watchId: String {
-        "\(chatId)|\(session?.currentRunId ?? "")"
-    }
-
-    private var pollId: String {
-        "\(chatId)|\(isRunning)|\(session?.currentRunId ?? "")"
-    }
-
-    private func watch() {
-        let store = context.store
-        for key in watched { store.stopObserving(key) }
-        var keys: [QueryKey] = []
-
-        func track<V: Sendable>(_ req: APIRequest<V>) {
-            store.observe(req)
-            store.load(req)
-            keys.append(req.key)
+        .onDisappear {
+            if let watchedKey {
+                context.store.stopObserving(watchedKey)
+                self.watchedKey = nil
+            }
         }
-
-        track(messagesRequest)
-        track(ticketRunsRequest)
-        track(workflowRunsRequest)
-        track(approvalsRequest)
-        track(pushRequestsRequest)
-        track(secretProposalsRequest)
-        track(personaProposalsRequest)
-        track(characterProposalsRequest)
-        track(ticketChangesRequest)
-        track(canvasesRequest)
-        track(audioRequest)
-        track(videosRequest)
-        if let runEventsRequest { track(runEventsRequest) }
-        watched = keys
     }
 
-    private func pollWhileActive() async {
-        guard isRunning else { return }
-        while !Task.isCancelled && isRunning {
+    private func watchRunEvents() {
+        if let watchedKey {
+            context.store.stopObserving(watchedKey)
+            self.watchedKey = nil
+        }
+        guard let req = runEventsRequest else { return }
+        context.store.observe(req)
+        context.store.load(req)
+        watchedKey = req.key
+    }
+
+    private func pollRunEvents() async {
+        while !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(1500))
             guard !Task.isCancelled else { return }
             now = Date()
-            _ = await context.store.refetch(API.getChat(id: chatId))
-            _ = await context.store.refetch(messagesRequest)
-            if let runEventsRequest {
-                _ = await context.store.refetch(runEventsRequest)
+            if let req = runEventsRequest {
+                _ = await context.store.refetch(req)
             }
         }
     }
@@ -504,5 +529,76 @@ struct ChatTranscriptView: View {
         case .failed: .red
         case .planned: p.tertiaryText
         }
+    }
+}
+
+// MARK: - Isolated Proposals Slot
+
+/// Observes chat-level approval and proposal queries separately from `ChatTranscriptView`
+/// so updates to proposals do not re-evaluate historical message rows.
+private struct ChatTranscriptProposalsSlot: View {
+    @Environment(NativeScreenContext.self) private var context
+
+    let chatId: String
+    let canvases: [API.ChatCanvasSummary]
+
+    @State private var watched: [QueryKey] = []
+
+    private var approvalsRequest: APIRequest<API.ChatToolApprovalList> {
+        API.listChatToolApprovals(id: chatId)
+    }
+    private var pushRequestsRequest: APIRequest<API.PushRequestList> {
+        API.listPushRequests(id: chatId)
+    }
+    private var secretProposalsRequest: APIRequest<API.ApiSecretProposalList> {
+        API.listApiSecretProposals(id: chatId)
+    }
+    private var personaProposalsRequest: APIRequest<API.ListPersonaProposalsResponse> {
+        API.listPersonaProposals(id: chatId)
+    }
+    private var characterProposalsRequest: APIRequest<API.ListPersonaCharacterProposalsResponse> {
+        API.listPersonaCharacterProposals(id: chatId)
+    }
+    private var ticketChangesRequest: APIRequest<API.TicketChangeRequestList> {
+        API.listTicketChangeRequests(id: chatId)
+    }
+
+    var body: some View {
+        let store = context.store
+        ChatProposalsSectionView(
+            chatId: chatId,
+            approvals: store.entry(approvalsRequest).data?.approvals ?? [],
+            pushRequests: store.entry(pushRequestsRequest).data?.requests ?? [],
+            secretProposals: store.entry(secretProposalsRequest).data?.proposals ?? [],
+            personaProposals: store.entry(personaProposalsRequest).data?.proposals ?? [],
+            characterProposals: store.entry(characterProposalsRequest).data?.proposals ?? [],
+            ticketChanges: store.entry(ticketChangesRequest).data?.requests ?? [],
+            canvases: canvases
+        )
+        .task(id: chatId) { watch() }
+        .onDisappear {
+            for key in watched { context.store.stopObserving(key) }
+            watched = []
+        }
+    }
+
+    private func watch() {
+        let store = context.store
+        for key in watched { store.stopObserving(key) }
+        var keys: [QueryKey] = []
+
+        func track<V: Sendable>(_ req: APIRequest<V>) {
+            store.observe(req)
+            store.load(req)
+            keys.append(req.key)
+        }
+
+        track(approvalsRequest)
+        track(pushRequestsRequest)
+        track(secretProposalsRequest)
+        track(personaProposalsRequest)
+        track(characterProposalsRequest)
+        track(ticketChangesRequest)
+        watched = keys
     }
 }

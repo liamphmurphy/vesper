@@ -3,7 +3,7 @@
 import { useNewDeck } from "@/components/domain/use-new-deck";
 import { canvasFenceIds } from "@/lib/chat-canvas";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { useDockHeaderSlot } from "@/components/shell/editor-layout";
 import { useQueryClient } from "@tanstack/react-query";
@@ -69,7 +69,8 @@ import { SentChips } from "./context-chips";
 import { MessageActionsContext, MessageToolbar, ThreadLink, type MessageActions } from "./message-toolbar";
 import { Sources } from "./sources";
 import { splitSourceList } from "@/lib/chat-sources";
-import { AskAboutSelection, quoteForComposer, ResearchToggle, TemporaryToggle } from "./reply-tools";
+import { AskAboutSelection, quoteForComposer, ResearchToggle, TemporaryToggle, type SendTone } from "./reply-tools";
+import { createDraftStore, createTextareaHeightState, syncTextareaHeight, type DraftStore, type TextareaHeightState } from "@/lib/chat-draft";
 import { ChatSuggestions } from "./suggestions";
 import { Composer, type CommandRun } from "./composer";
 import { ForkDialog, type ForkTarget } from "./fork-dialog";
@@ -82,7 +83,7 @@ import { placeStandaloneAudio, type ChatAudio } from "@/lib/chat-audio";
 import { useChatVideos } from "@/lib/api/video-hooks";
 import type { ChatVideo } from "@/lib/chat-video";
 import { CiteContext } from "@/components/domain/cite-marker";
-import { summaryRequestUrl } from "@/lib/chat-recommend";
+import { summaryUrlsForTurns } from "@/lib/chat-recommend";
 import { hostOf } from "@/lib/web-search";
 import { timelineTime } from "@/lib/format";
 import { ModelEffortPicker, effortLabel, modelEffortSummary, modelEfforts, modelLabel, sameSelection, type Effort, type Selection } from "./model-picker";
@@ -282,12 +283,10 @@ const Bubble = memo(function Bubble({ m, chat, persona, saveable, names, turn, e
 type ChatAsides = NonNullable<ReturnType<typeof useChatAsides>["data"]>;
 
 /**
- * The transcript's messages. Typing in the composer re-renders the whole chat screen, so
- * everything handed to a Bubble here is kept referentially stable (memoized, or read through
- * a ref when it is a callback) and a keystroke only re-checks props instead of re-rendering
- * every message's markdown.
+ * The transcript's messages. Memoized alongside each Bubble so unrelated Conversation state
+ * updates skip mapping the full message list and re-checking every message's props.
  */
-function BubbleList({ unreadFrom, list, chat, persona, speakerName, names, highlight, running, since, locked, archived, editPending, lastUser, videosByMessage, audioByMessage, afterMessageAudio, onStopAudio, onRetryMusic, pushRequestsByMessage, afterMessagePushRequests, asideList, pinnedRef, editLast, onQuoteSecondOpinion }: {
+const BubbleList = memo(function BubbleList({ unreadFrom, list, chat, persona, speakerName, names, highlight, running, since, locked, archived, editPending, lastUser, videosByMessage, audioByMessage, afterMessageAudio, onStopAudio, onRetryMusic, pushRequestsByMessage, afterMessagePushRequests, asideList, pinnedRef, editLast, onQuoteSecondOpinion }: {
   /** The first reply since the person last read the chat: "New" goes above it. */
   unreadFrom?: string;
   list: Message[];
@@ -315,6 +314,7 @@ function BubbleList({ unreadFrom, list, chat, persona, speakerName, names, highl
   onQuoteSecondOpinion?: (quote: { text: string; modelLabel: string }) => void;
 }) {
   const turns = useMemo(() => turnWindows(list), [list]);
+  const summaryUrls = useMemo(() => summaryUrlsForTurns(list, turns), [list, turns]);
   const latest = useRef({ editLast, retryBody: lastUser?.body_md });
   useEffect(() => {
     latest.current = { editLast, retryBody: lastUser?.body_md };
@@ -358,14 +358,14 @@ function BubbleList({ unreadFrom, list, chat, persona, speakerName, names, highl
   const canEdit = !running && !locked && !editPending && !archived;
   const canRetry = !running && !editPending && !archived && !!lastUser;
   const lastId = list.at(-1)?.id;
-  return list.map((m, i) => (
+  return list.map((m) => (
     <Fragment key={m.id}>
     {m.id === unreadFrom && <NewDivider />}
     <Bubble m={m} chat={chat} persona={persona} saveable={!running} names={names} turn={turns.get(m.id)} ended={ended.get(m.id)} highlighted={highlight === m.id}
       editable={canEdit && m.id === lastUser?.id}
       onEdit={onEdit}
       onRetry={canRetry && m.id === lastId ? onRetry : undefined}
-      summaryUrl={m.role === "assistant" && turns.has(m.id) ? summaryRequestUrl(list.slice(0, i).findLast((x) => x.role === "user")?.body_md) : null}
+      summaryUrl={summaryUrls.get(m.id) ?? null}
       archived={archived}
       videos={videosByMessage.get(m.id)}
       audio={audioByMessage.get(m.id)}
@@ -387,7 +387,7 @@ function BubbleList({ unreadFrom, list, chat, persona, speakerName, names, highl
     ) : null}
     </Fragment>
   ));
-}
+});
 
 /**
  * What a card in a reply can do. The value only changes with the chat's data, not with the
@@ -478,11 +478,12 @@ function ActivityLog({ list, turns, groups, running, runId, since, focus }: { li
 }
 
 /** Activity's cost, model line and log, for the compact tab and the desktop dock's tab. */
-function ActivityBody({ chat: c, list, groups, focus }: { chat: NonNullable<ReturnType<typeof useChat>["data"]>; list: Message[] | undefined; groups: Groups; focus?: { key: string; at: number } }) {
+const ActivityBody = memo(function ActivityBody({ chat: c, list, groups, focus }: { chat: NonNullable<ReturnType<typeof useChat>["data"]>; list: Message[] | undefined; groups: Groups; focus?: { key: string; at: number } }) {
   const current: Selection = { harness: c.harness, model: c.model, auto: !!c.auto_model };
   const running = c.state === "running";
   const lastUser = list?.findLast((m) => m.role === "user");
   const since = runningSince(list) ?? lastUser?.created_at;
+  const turns = useMemo(() => turnWindows(list), [list]);
   return (
     <>
       <div className="mx-auto mb-4 flex max-w-[860px] flex-wrap items-center gap-2">
@@ -493,10 +494,10 @@ function ActivityBody({ chat: c, list, groups, focus }: { chat: NonNullable<Retu
           {c.effort && ` · ${effortLabel(c.effort)} effort`}
         </span>
       </div>
-      <ActivityLog list={list} turns={turnWindows(list)} groups={groups} running={running} runId={c.current_run_id} since={since} focus={focus} />
+      <ActivityLog list={list} turns={turns} groups={groups} running={running} runId={c.current_run_id} since={since} focus={focus} />
     </>
   );
-}
+});
 
 const DRAFT_KEY = (id: string) => `lazyagents.chat-draft:${id}`;
 function putDraft(id: string, text: string) {
@@ -580,21 +581,16 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   const savedRepos = useRepositories();
   const discard = useDeleteChat();
   const qc = useQueryClient();
-  // A persona switch hands the unsent draft over to the new chat.
-  const [text, setText] = useState(() => readDraft(id));
+  // A persona switch hands the unsent draft over to the new chat. Keeping draft text in a tiny
+  // external store means typing re-renders only DraftComposer instead of the whole transcript.
+  const [draft] = useState(() => createDraftStore(readDraft(id)));
   // Read once into state, then forget it (an effect, so a StrictMode re-render still sees it).
   useEffect(() => dropDraft(id), [id]);
-  const [seenPrefill, setSeenPrefill] = useState(0);
-  if (prefill && prefill.key > seenPrefill) {
-    setSeenPrefill(prefill.key);
-    setText((t) => {
-      const trimmed = prefill.text.trim();
-      if (!t.trim()) return prefill.text;
-      if (t.includes(trimmed)) return t;
-      return `${t}\n\n${prefill.text}`;
-    });
+  const [seenPrefill, setSeenPrefill] = useState<{ text: string; key: number } | null>(null);
+  if (prefill && prefill.key > (seenPrefill?.key ?? 0)) {
+    setSeenPrefill(prefill);
   }
-  const notifiedPrefill = useRef(0);
+  const appliedPrefill = useRef(0);
   const focusedPrefill = useRef(0);
   const onPrefillAppliedRef = useRef(onPrefillApplied);
   useEffect(() => {
@@ -678,20 +674,27 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
     ? { id: `chat-${c.id}`, title: c.title || "Untitled chat", meta: (c.speaker ?? c.persona)?.name ?? "Assistant", href: `/chat/${c.id}`, kind: "Chats" } : undefined);
   const loaded = !!c;
   useEffect(() => {
-    if (seenPrefill > notifiedPrefill.current) {
-      notifiedPrefill.current = seenPrefill;
-      onPrefillAppliedRef.current?.(seenPrefill);
+    if (!seenPrefill) return;
+    if (seenPrefill.key > appliedPrefill.current) {
+      appliedPrefill.current = seenPrefill.key;
+      draft.set((t) => {
+        const trimmed = seenPrefill.text.trim();
+        if (!t.trim()) return seenPrefill.text;
+        if (t.includes(trimmed)) return t;
+        return `${t}\n\n${seenPrefill.text}`;
+      });
+      onPrefillAppliedRef.current?.(seenPrefill.key);
     }
-    if (!seenPrefill || !loaded || focusedPrefill.current >= seenPrefill) return;
+    if (!loaded || focusedPrefill.current >= seenPrefill.key) return;
     const frame = requestAnimationFrame(() => {
       const el = area.current;
       if (!el) return;
-      focusedPrefill.current = seenPrefill;
+      focusedPrefill.current = seenPrefill.key;
       el.focus();
       el.setSelectionRange(el.value.length, el.value.length);
     });
     return () => cancelAnimationFrame(frame);
-  }, [seenPrefill, loaded]);
+  }, [seenPrefill, loaded, draft]);
   const running = c?.state === "running";
   // Videos sit on the reply their turn stored; the running turn's show live under it.
   const videos = useChatVideos(c?.id, running);
@@ -773,7 +776,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
     const n = c.unread ?? 0;
     setUnreadFrom({ chat: c.id, message: n > 0 && n <= replies.length ? replies[replies.length - n].id : null });
   }
-  useEntrances(log);
+  useEntrances(log, loaded && !messages.isError ? list : undefined);
   const lastUser = list?.findLast((m) => m.role === "user");
   // The running turn starts after the newest message, which may be a reply, not
   // the person's: a persona handing on, or the image follow-up.
@@ -788,17 +791,17 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
     if (!c?.id || c.archived) return;
     return onComposerDrop(c.id, (drop) => {
       if (drop.files?.length) addFiles.current(drop.files);
-      if (drop.text) setText((t) => (t.trim() ? `${t}\n\n${drop.text}` : drop.text!));
+      if (drop.text) draft.set((t) => (t.trim() ? `${t}\n\n${drop.text}` : drop.text!));
       area.current?.focus();
     });
-  }, [c?.id, c?.archived]);
+  }, [c?.id, c?.archived, draft]);
 
   useNativeCommand("panel.event", (cmd) => {
     if (cmd.event !== "composerDrop" || !c?.id || c.archived) return;
     const decoded = decodeComposerDrop(cmd.payloadJson);
     if (!decoded || decoded.chatId !== c.id) return;
     if (decoded.drop.files?.length) addFiles.current(decoded.drop.files);
-    if (decoded.drop.text) setText((t) => (t.trim() ? `${t}\n\n${decoded.drop.text}` : decoded.drop.text!));
+    if (decoded.drop.text) draft.set((t) => (t.trim() ? `${t}\n\n${decoded.drop.text}` : decoded.drop.text!));
     area.current?.focus();
   });
 
@@ -829,12 +832,27 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
 
   // Refetch the transcript when the chat changes (also covers polling without SSE).
   const stamp = c && `${c.state}:${c.message_count}:${c.revision}`;
+  const activeRunId = c?.current_run_id;
+  const latestMessageRunIdRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    latestMessageRunIdRef.current = list?.findLast((m) => m.run_id)?.run_id;
+  }, [list]);
+  const lastRunId = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (!stamp) return;
     void qc.invalidateQueries({ queryKey: chatKeys.messages(id) });
     // A finished turn's last tool results (memory notices) may have landed after the final poll.
-    void qc.invalidateQueries({ queryKey: ["runs", "chat"] });
-  }, [stamp, id, qc]);
+    // Scope invalidation to the active/most-recent segment run so older segment runs don't refetch.
+    const runIds = new Set<string>();
+    if (activeRunId) runIds.add(activeRunId);
+    if (lastRunId.current) runIds.add(lastRunId.current);
+    if (latestMessageRunIdRef.current) runIds.add(latestMessageRunIdRef.current);
+    for (const runId of runIds) {
+      void qc.invalidateQueries({ queryKey: ["runs", "chat", runId] });
+    }
+    if (activeRunId) lastRunId.current = activeRunId;
+    else if (!lastRunId.current && latestMessageRunIdRef.current) lastRunId.current = latestMessageRunIdRef.current;
+  }, [stamp, id, activeRunId, qc]);
   // Focus returns to the composer on load and whenever a turn ends.
   useEffect(() => {
     if (loaded && !locked) area.current?.focus();
@@ -874,13 +892,6 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
       clearTimeout(off);
     };
   }, [target, targetFound]);
-  // The composer starts at one line and grows with what's typed, up to a limit.
-  useEffect(() => {
-    const el = area.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight + 2, 220)}px`;
-  }, [text, loaded]);
   const followLatest = () => {
     pinned.current = true;
     setNewReply(false);
@@ -890,7 +901,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
     const chip = chipFromTarget({ kind: "artifact", id: artifactId, title, artifact_type: "report" });
     if (chip) setChips((cs) => addChip(cs, chip));
     setResearch(true);
-    setText("Go deeper on this report: ");
+    draft.set("Go deeper on this report: ");
     area.current?.focus();
   };
   // Sent from its own box, so the draft in the composer (and its chips and files) stays put.
@@ -900,7 +911,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
     const body = quoteForComposer(selected, authorId && authorId !== (c?.speaker ?? c?.persona)?.id ? author : undefined) + question;
     cancel.reset();
     pinned.current = true;
-    send.mutate({ body, ...nextRunSettings }, { onSuccess: context?.onSent, onError: () => setText((t) => (t ? `${body}\n\n${t}` : body)) });
+    send.mutate({ body, ...nextRunSettings }, { onSuccess: context?.onSent, onError: () => draft.set((t) => (t ? `${body}\n\n${t}` : body)) });
     return true;
   };
 
@@ -912,7 +923,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
       .map((line) => `> ${line}`)
       .join("\n");
     const prefix = `> **Second opinion (${label}):**\n${quoted}\n\n`;
-    setText((t) => prefix + t);
+    draft.set((t) => prefix + t);
     requestAnimationFrame(() => {
       const el = area.current;
       el?.focus();
@@ -934,7 +945,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   const replyTo = useRef<(body: string, authorId?: string, author?: string) => void>(() => {});
   replyTo.current = (body, authorId, author) => {
     const quote = quoteForComposer(body, authorId && authorId !== (c?.speaker ?? c?.persona)?.id ? author : undefined);
-    setText((t) => quote + t);
+    draft.set((t) => quote + t);
     requestAnimationFrame(() => {
       const el = area.current;
       el?.focus();
@@ -1024,7 +1035,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
           context?.onSent();
           files.clear();
           snippets.clear();
-          setText("");
+          draft.set("");
           setPicked(null);
           setPickedEffort(null);
           setChips([]);
@@ -1047,7 +1058,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
     pinned.current = true;
     const sent = () => {
       context?.onSent();
-      setText("");
+      draft.set("");
       snippets.clear();
     };
     if (mode === "aside") aside.mutate(body, { onSuccess: sent });
@@ -1086,12 +1097,12 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   const commitPickRequired = fresh && askCommitEmail;
   function switchPersona(personaId: string) {
     if (!c || personaId === c.persona?.id || create.isPending || send.isPending || send.isSuccess) return;
-    replaceChat(personaId, undefined, messageWithSnippets(text, snippets.items), !!c.temporary);
+    replaceChat(personaId, undefined, messageWithSnippets(draft.get(), snippets.items), !!c.temporary);
   }
   // A chat is temporary for life, so before the first message switching it is a fresh chat too.
   function switchTemporary(temporary: boolean) {
     if (!c || temporary === !!c.temporary || create.isPending || send.isPending || send.isSuccess) return;
-    replaceChat(c.persona?.id, c.repo_url, messageWithSnippets(text, snippets.items), temporary);
+    replaceChat(c.persona?.id, c.repo_url, messageWithSnippets(draft.get(), snippets.items), temporary);
   }
   // Moves to a new chat, carrying the draft over. The old one is only dropped if it is still empty.
   function replaceChat(personaId: string | undefined, repo: string | undefined, draft: string, temporary: boolean) {
@@ -1183,10 +1194,11 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   const createWith = (kind: CreateKind) => {
     if (kind === "slides") return startDeck();
     if (kind === "music") {
-      setMusicDialog({ open: true, initial: text.trim() ? { prompt: text.trim() } : undefined });
+      const prompt = draft.get().trim();
+      setMusicDialog({ open: true, initial: prompt ? { prompt } : undefined });
       return;
     }
-    setText((t) => (kind === "design" ? `/design ${t.trim()}` : `${DOC_DRAFT}${t.trim()}`));
+    draft.set((t) => (kind === "design" ? `/design ${t.trim()}` : `${DOC_DRAFT}${t.trim()}`));
     requestAnimationFrame(() => {
       const el = area.current;
       el?.focus();
@@ -1380,21 +1392,17 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
                 Ask about your runs, tickets, epics and wiki, or have me draft tickets. I save useful things to your private memory and tell you when I do.
               </EmptyState>
             ) : (
-              context?.welcome ? (
-                <DockGreeting persona={persona} tone={full?.tone} welcome={context.welcome} onPick={submit} disabled={locked || !!unavailable || !!text.trim()} />
-              ) : (
-              <>
-              <PersonaGreeting
+              <EmptyChatPrompt
+                draft={draft}
+                welcome={context?.welcome}
                 persona={persona}
                 tone={full?.tone}
                 isDefault={!!c.persona && c.persona.id === personas.data?.default_persona_id}
                 firstName={boot.data?.me.name?.split(" ")[0]}
                 canSwitch={!!personas.data?.personas.length}
+                disabled={locked || !!unavailable}
+                onPick={submit}
               />
-              {/* Picking one sends it, which would drop a half-written message. */}
-              {!text.trim() && <ChatSuggestions onPick={submit} disabled={locked || !!unavailable} />}
-              </>
-              )
             )
           ) : (
             <>
@@ -1503,7 +1511,6 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
             </OpenLinkedItem.Provider>
             </ReplyActions>
             </VideoPlayers.Provider>
-            {!c.archived && <AskAboutSelection root={log} onAsk={askAboutSelection} />}
             {newReply && (
               <div className="sticky bottom-1 z-20 flex justify-center">
                 <button type="button" onClick={followLatest} className="flex items-center gap-1.5 rounded-full border border-border-float bg-surface-raised px-3 py-1 text-12 font-medium text-fg shadow-[var(--shadow-float)] hover:bg-hover">
@@ -1515,6 +1522,8 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
             </>
           )}
         </div>
+        {/* Outside [data-chat-scroller] so contain:layout on the scroller does not trap its fixed viewport positioning. */}
+        {view === "chat" && !c.archived && <AskAboutSelection root={log} onAsk={askAboutSelection} />}
         <div ref={dockRef} data-chat-dock="" className="mx-auto flex w-full min-w-0 max-w-[816px] flex-col gap-2 px-6 pb-3">
           {(() => {
             // Everything above the composer goes through one slot, ranked by STATUS_PRIORITY (lib/chat-status-slot).
@@ -1666,7 +1675,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
                       send.mutate({ body }, { onSuccess: () => { context?.onSent(); done(); } });
                     }}
                     onEdit={(body) => {
-                      setText((t) => (t.trim() ? `${body}\n\n${t}` : body));
+                      draft.set((t) => (t.trim() ? `${body}\n\n${t}` : body));
                       setSendMode("followup");
                       area.current?.focus();
                     }}
@@ -1684,9 +1693,8 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
           ) : (
             <>
             {context?.composer}
-            <Composer
-              text={text}
-              onText={setText}
+            <DraftComposer
+              draft={draft}
               inputRef={area}
               files={files}
               snippets={snippets}
@@ -1791,12 +1799,10 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
                   </Button>
                 )
               }
-              send={{
-                label: running ? sendModeAction(sendMode) : research ? "Plan it" : "Send",
-                disabled: locked || !!unavailable || files.pending || (!text.trim() && !snippets.items.length) || commitPickRequired || queue.isPending || aside.isPending,
-                title: commitPickRequired ? "Pick which email commits use first" : running ? SEND_MODE_HINT[sendMode] : undefined,
-                tone: running ? SEND_TONE[sendMode] : "accent",
-              }}
+              sendLabel={running ? sendModeAction(sendMode) : research ? "Plan it" : "Send"}
+              sendDisabledBase={locked || !!unavailable || files.pending || commitPickRequired || queue.isPending || aside.isPending}
+              sendTitle={commitPickRequired ? "Pick which email commits use first" : running ? SEND_MODE_HINT[sendMode] : undefined}
+              sendTone={running ? SEND_TONE[sendMode] : "accent"}
             />
             </>
           )}
@@ -1838,6 +1844,82 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
         />
       </section>
     </Tooltip.Provider>
+  );
+}
+
+/**
+ * Owns the composer's draft subscription and textarea auto-sizing so typing
+ * never re-renders Conversation or the transcript above it.
+ */
+function DraftComposer({
+  draft,
+  inputRef,
+  sendDisabledBase,
+  sendLabel,
+  sendTitle,
+  sendTone,
+  ...rest
+}: Omit<ComponentProps<typeof Composer>, "text" | "onText" | "send"> & {
+  draft: DraftStore;
+  sendDisabledBase: boolean;
+  sendLabel: string;
+  sendTitle?: string;
+  sendTone?: SendTone;
+}) {
+  const text = useSyncExternalStore(draft.subscribe, draft.get, draft.get);
+  const heightState = useRef<TextareaHeightState>(createTextareaHeightState());
+  useEffect(() => {
+    const el = inputRef.current;
+    if (el) syncTextareaHeight(el, heightState.current);
+  }, [text, inputRef]);
+  return (
+    <Composer
+      {...rest}
+      text={text}
+      onText={draft.set}
+      inputRef={inputRef}
+      send={{
+        label: sendLabel,
+        disabled: sendDisabledBase || (!text.trim() && !rest.snippets.items.length),
+        title: sendTitle,
+        tone: sendTone,
+      }}
+    />
+  );
+}
+
+/** Empty-chat greeting and suggestions; only re-renders when the draft flips between empty and non-empty. */
+function EmptyChatPrompt({
+  draft,
+  welcome,
+  persona,
+  tone,
+  isDefault,
+  firstName,
+  canSwitch,
+  disabled,
+  onPick,
+}: {
+  draft: DraftStore;
+  welcome?: DockWelcome;
+  persona: PersonaLook;
+  tone?: Schemas["PersonaTone"];
+  isDefault: boolean;
+  firstName?: string;
+  canSwitch: boolean;
+  disabled: boolean;
+  onPick: (prompt: string) => void;
+}) {
+  const hasDraft = useSyncExternalStore(draft.subscribe, draft.hasText, () => false);
+  if (welcome) {
+    return <DockGreeting persona={persona} tone={tone} welcome={welcome} onPick={onPick} disabled={disabled || hasDraft} />;
+  }
+  return (
+    <>
+      <PersonaGreeting persona={persona} tone={tone} isDefault={isDefault} firstName={firstName} canSwitch={canSwitch} />
+      {/* Picking one sends it, which would drop a half-written message. */}
+      {!hasDraft && <ChatSuggestions onPick={onPick} disabled={disabled} />}
+    </>
   );
 }
 

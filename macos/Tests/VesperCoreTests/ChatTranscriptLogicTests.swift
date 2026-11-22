@@ -417,4 +417,31 @@ final class ChatTranscriptLogicTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(totalSegments, 700)
         XCTAssertLessThan(elapsed, 5.0, "Parsing 500 mixed transcript messages took \(elapsed)s (expected fast linear scan)")
     }
+
+    func testParsedMessageCacheReusesEntriesAndEnforcesBound() {
+        let cache = ChatParsedMessageCache(maxEntries: 2)
+        let body1 = "Check ticket:\n```dispatch\nLAZYAGENTS-1\n```"
+        let body2 = "Plain reply with no cards."
+        let body3 = "Canvas:\n```canvas\n01a1bc65-d1cf-748a-8632-82b3f8ba9c9d\n```"
+
+        let first = cache.parsed(messageId: "m1", bodyMd: body1, extractSources: true, knownPersonaNames: ["Meow"])
+        let second = cache.parsed(messageId: "m1", bodyMd: body1, extractSources: true, knownPersonaNames: ["Meow"])
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(cache.count, 1)
+        XCTAssertTrue(first.hasDispatchSegment)
+        XCTAssertFalse(first.hasWorkflowRunSegment)
+        XCTAssertFalse(first.hasCanvasSegment)
+
+        let plain = cache.parsed(messageId: "m2", bodyMd: body2, extractSources: true, knownPersonaNames: ["Meow"])
+        XCTAssertEqual(cache.count, 2)
+        XCTAssertFalse(plain.hasDispatchSegment)
+
+        // Adding a third distinct entry evicts the oldest so memory stays bounded.
+        let canvas = cache.parsed(messageId: "m3", bodyMd: body3, extractSources: true, knownPersonaNames: ["Meow"])
+        XCTAssertEqual(cache.count, 2)
+        XCTAssertTrue(canvas.hasCanvasSegment)
+
+        cache.removeAll()
+        XCTAssertEqual(cache.count, 0)
+    }
 }

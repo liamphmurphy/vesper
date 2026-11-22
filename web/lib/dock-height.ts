@@ -14,8 +14,11 @@ export function dockHeightValue(px: number): string {
 export function trackDockHeight(dock: HTMLElement): () => void {
   const host = dock.parentElement;
   if (!host || typeof ResizeObserver === "undefined") return () => {};
+  let last = "";
   const apply = (px: number) => {
     const v = dockHeightValue(px);
+    if (v === last) return;
+    last = v;
     if (v) host.style.setProperty(DOCK_HEIGHT_VAR, v);
     else host.style.removeProperty(DOCK_HEIGHT_VAR);
   };
