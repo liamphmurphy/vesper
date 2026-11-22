@@ -230,6 +230,7 @@ struct TicketDetailScreen: View {
             model.inspectorOpen = open
         case .inspectorSelectTab(let tabId):
             model.inspectorTabId = tabId
+            model.inspectorOpen = true
         case .toolbarAction(let itemId, _):
             guard let action = TicketDetailLogic.toolbarAction(for: itemId) else { return }
             let siblings = context.store.entry(API.listTickets(project: project, view: .all)).data?.tickets ?? []

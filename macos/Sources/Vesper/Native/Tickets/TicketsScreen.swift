@@ -1111,6 +1111,7 @@ struct TicketsScreen: View {
     @MainActor
     static func handle(_ command: NativeCommand, model: TicketsModel, context: NativeScreenContext) {
         if case .inspectorVisibility(let open) = command { model.companionOpen = open; return }
+        if case .inspectorSelectTab = command { model.companionOpen = true; return }
         let views = context.store.entry(Self.savedViews).data?.views ?? []
         let boot = context.store.entry(Self.bootstrap).data
         let currentProject = model.project.isEmpty ? nil : model.project

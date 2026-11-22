@@ -140,6 +140,9 @@ struct DebugPlaceholderScreen: View {
             NSPasteboard.general.setString(context.match.path, forType: .string)
         case .inspectorVisibility(let open):
             context.chrome.inspector?.open = open
+        case .inspectorSelectTab(let tabId):
+            context.chrome.inspector?.activeTabId = tabId
+            context.chrome.inspector?.open = true
         case .inspectorToggle(_, fieldId: "show-query", let checked):
             context.chrome = chrome(context, showQuery: checked)
         default:

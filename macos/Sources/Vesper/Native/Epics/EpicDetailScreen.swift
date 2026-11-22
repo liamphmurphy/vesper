@@ -21,6 +21,8 @@ struct EpicDetailScreen: View {
     @State private var startSuccessMessage: String? = nil
     @State private var approvedTicketKeys: Set<String> = []
     @State private var selectedTickets: Set<String> = []
+    @State private var inspectorOpen = true
+    @State private var inspectorTabId = "context"
     @State private var watched: [QueryKey] = []
 
     private var epicId: String { context.match.params["id"] ?? "" }
@@ -612,8 +614,8 @@ struct EpicDetailScreen: View {
             ],
             inspector: InspectorModel(
                 id: "epic",
-                open: true,
-                activeTabId: "context",
+                open: inspectorOpen,
+                activeTabId: inspectorTabId,
                 tabs: [
                     InspectorTab(id: "context", label: "Context", icon: "sidebar", kind: .native, sections: sections),
                     InspectorTab(id: "chat", label: "Chat", icon: "msg", kind: .companion),
@@ -626,6 +628,14 @@ struct EpicDetailScreen: View {
             switch command {
             case .toolbarAction("epic.board", _):
                 context.navigate(EpicsLogic.boardHref(projectKey: overview.project.key, epicId: overview.epic.id))
+            case .inspectorVisibility(let open):
+                inspectorOpen = open
+                context.chrome.inspector?.open = open
+            case .inspectorSelectTab(let tabId):
+                inspectorTabId = tabId
+                inspectorOpen = true
+                context.chrome.inspector?.activeTabId = tabId
+                context.chrome.inspector?.open = true
             case .inspectorToggle(_, EpicsLogic.requiresMockupFieldId, let checked):
                 Task { await updateEpic(id: overview.epic.id, body: API.UpdateEpicBody(requiresMockup: checked)) }
             case .inspectorToggle(_, let fieldId, let checked) where fieldId.hasPrefix("criterion:"):

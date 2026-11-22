@@ -11,6 +11,7 @@ struct WorkflowEditorScreen: View {
     @State private var loadedWorkflowId: String?
     @State private var selectedNodeId: String?
     @State private var selectedEdgeId: String?
+    @State private var inspectorOpen = false
     @State private var viewport = NodeGraphViewport()
     @State private var saving = false
     @State private var publishing = false
@@ -505,7 +506,7 @@ struct WorkflowEditorScreen: View {
             ],
             inspector: InspectorModel(
                 id: "workflow-editor",
-                open: false,
+                open: inspectorOpen,
                 activeTabId: "details",
                 tabs: [InspectorTab(id: "details", label: "Details", icon: "sliders", kind: .native, sections: sections)]
             ),
@@ -515,6 +516,12 @@ struct WorkflowEditorScreen: View {
 
     private func handleCommand(_ command: NativeCommand, workflow: API.Workflow) {
         switch command {
+        case .inspectorVisibility(let open):
+            inspectorOpen = open
+            context.chrome.inspector?.open = open
+        case .inspectorSelectTab:
+            inspectorOpen = true
+            context.chrome.inspector?.open = true
         case .navActivate(let navId, let itemId, _) where navId == WorkflowsLogic.paletteNavId:
             guard workflow.proposals.isEmpty else { return }
             if let item = WorkflowsLogic.palette.flatMap(\.items).first(where: { $0.type.rawValue == itemId }) {
