@@ -3,8 +3,9 @@ import SwiftUI
 import VesperCore
 
 /// A ticket or run agent drawn as the person's matching persona (web WorkPersonaAvatar): its
-/// photo when it has one, else a circle with its initial in the persona's colour (or the agent's
-/// identity hue). Animated character SVGs show as the initial until the pooled character view lands.
+/// photo when it has one, else its cached custom animated character snapshot (`characterSvg`,
+/// `active: false`), else a circle with its initial in the persona's colour (or the agent's
+/// identity hue).
 struct WorkPersonaAvatarView: View {
     @Environment(NativeScreenContext.self) private var context
     @Environment(\.vesperTheme) private var theme
@@ -13,6 +14,8 @@ struct WorkPersonaAvatarView: View {
     let name: String
     var colorIndex: Int = 0
     var size: CGFloat = 24
+    var state: CharacterState = .staticState
+    var active: Bool = false
 
     @State private var picture: NSImage?
 
@@ -22,9 +25,23 @@ struct WorkPersonaAvatarView: View {
         let persona = WorkPersona.match(context.store.entry(Self.personas).data?.personas ?? [], id: id, handle: handle, name: name)
         let hue = WorkPersona.hue(colorIndex)
         let fill = Color(cssHex: persona?.color) ?? theme.swiftUIColor("agent-\(hue)", fallback: .gray)
+        let fallbackHex = theme.colors["agent-\(hue)"] ?? "#64748b"
+        let characterColor = persona.flatMap { $0.color.isEmpty ? nil : $0.color } ?? fallbackHex
+        let hasPhoto = !(persona?.avatarUrl ?? "").isEmpty
+        let characterSvg = hasPhoto ? nil : persona?.characterSvg.flatMap { $0.isEmpty ? nil : $0 }
+
         ZStack {
             if let picture {
                 Image(nsImage: picture).resizable().scaledToFill()
+            } else if let characterSvg {
+                PersonaCharacterView(
+                    svg: characterSvg,
+                    color: characterColor,
+                    state: state,
+                    size: size,
+                    active: active,
+                    framed: true
+                )
             } else {
                 Circle().fill(fill)
                 Text(String((persona?.name ?? name).prefix(1)).uppercased())
@@ -44,8 +61,8 @@ struct WorkPersonaAvatarView: View {
 }
 
 extension WorkPersonaAvatarView {
-    init(agent: API.AgentRef, size: CGFloat = 24) {
-        self.init(id: agent.id, handle: agent.handle, name: agent.name, colorIndex: agent.colorIndex, size: size)
+    init(agent: API.AgentRef, size: CGFloat = 24, state: CharacterState = .staticState, active: Bool = false) {
+        self.init(id: agent.id, handle: agent.handle, name: agent.name, colorIndex: agent.colorIndex, size: size, state: state, active: active)
     }
 }
 
