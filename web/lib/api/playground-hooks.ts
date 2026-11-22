@@ -30,11 +30,6 @@ export function useChatPlayground(chatId?: string) {
   return useChatPlaygroundState(chatId, (s) => s.playground ?? null);
 }
 
-/** Whether a chat with no playground can start one from its repository's saved spec, without an agent. */
-export function useCanStartSavedPlayground(chatId?: string) {
-  return useChatPlaygroundState(chatId, (s) => !s.playground && s.saved_spec).data ?? false;
-}
-
 /** Start an ended playground again (or a chat's first, from the saved spec), reset its data, or stop it. */
 export function usePlaygroundAction(chatId: string) {
   const qc = useQueryClient();

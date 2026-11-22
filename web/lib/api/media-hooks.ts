@@ -6,7 +6,6 @@ import { api, unwrap, type Schemas } from "./client";
 export type MediaCapability = Schemas["MediaCapability"];
 export type MediaFieldSpec = Schemas["MediaFieldSpec"];
 export type MediaProvider = Schemas["MediaProvider"];
-export type MediaProvidersResponse = Schemas["MediaProvidersResponse"];
 export type MediaProviderCheckResponse = Schemas["MediaProviderCheckResponse"];
 export type UpdateMediaProviderRequest = Schemas["UpdateMediaProviderRequest"];
 

@@ -9,8 +9,6 @@ import { confirmApprovalLocally } from "../desktop-bridge";
 export type ApiSecret = Schemas["ApiSecret"];
 export type NewApiSecret = Schemas["NewApiSecret"];
 export type ApiSecretPatch = Schemas["ApiSecretPatch"];
-export type ApiSecretPlacement = Schemas["ApiSecretPlacement"];
-export type ApiSecretPolicy = Schemas["ApiSecretPolicy"];
 
 const secretKey = ["api-secrets"] as const;
 

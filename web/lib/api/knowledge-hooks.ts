@@ -103,13 +103,6 @@ export type PageInput = {
   template?: string;
 };
 
-export type ReviewDecision = { index: number; accept: boolean; reason?: string };
-
-export type Network = {
-  nodes: { id: string; title: string; path: string; audience: Audience }[];
-  links: { source: string; target?: string; unresolved?: string }[];
-};
-
 export type VaultEntry = {
   source: string;
   path: string;
@@ -186,47 +179,13 @@ export const knowledgeKeys = {
   tree: (agent: boolean) => ["knowledge", "tree", agent] as const,
 };
 
-export type UploadedAsset = {
-  id: string;
-  ref: string;
-  url: string;
-  filename?: string;
-  content_type?: string;
-};
-
 export const fetchPages = (q: PageQuery) => call<PageTable>("POST", "/query", q);
 export const fetchPage = (id: string) => call<Page>("GET", `/pages/${id}`);
-export const fetchKnowledgeImages = (q: string, signal: AbortSignal) =>
-  call<{ images: { id: string; title: string; ref: string; content_type: string }[] }>("GET", `/assets${qs({ q })}`, undefined, { signal });
-export const uploadKnowledgeAsset = (file: Blob, filename: string, signal?: AbortSignal) =>
-  call<UploadedAsset>("POST", `/assets${qs({ filename })}`, file, {
-    headers: { "Content-Type": "application/octet-stream" },
-    signal,
-  });
 export const resolveLegacy = (path: string) => call<{ id: string; url: string }>("GET", `/legacy${qs({ path })}`);
 
 /** Pages matching a filter, newest first. */
 export function usePages(q: PageQuery, enabled = true) {
   return useQuery({ queryKey: knowledgeKeys.pages(q), queryFn: () => fetchPages(q), enabled });
-}
-
-/**
- * Every page the explorer shows: the API pages 200 rows at a time, so this
- * follows has_more until it has them all (a vault of a few thousand pages is
- * a handful of requests).
- */
-export function useAllPages(includeAgent: boolean) {
-  return useQuery({
-    queryKey: knowledgeKeys.tree(includeAgent),
-    queryFn: async () => {
-      const rows: PageRow[] = [];
-      for (let offset = 0; ; offset += 200) {
-        const t = await fetchPages({ include_agent: includeAgent, audience: includeAgent ? "agent" : undefined, limit: 200, offset });
-        rows.push(...t.rows);
-        if (!t.has_more || offset > 20000) return rows;
-      }
-    },
-  });
 }
 
 export function usePage(id: string | undefined) {
@@ -236,14 +195,6 @@ export function usePage(id: string | undefined) {
 /** The rows of the saved query a page holds in its `query` property. */
 export function useSavedQuery(id: string | undefined, enabled: boolean) {
   return useQuery({ queryKey: knowledgeKeys.query(id ?? ""), queryFn: () => call<PageTable>("GET", `/pages/${id}/query`), enabled: !!id && enabled });
-}
-
-export function useNetwork(includeAgent: boolean) {
-  return useQuery({ queryKey: knowledgeKeys.network(includeAgent), queryFn: () => call<Network>("GET", `/network${qs({ include_agent: includeAgent })}`) });
-}
-
-export function useTemplates() {
-  return useQuery({ queryKey: knowledgeKeys.templates, queryFn: () => call<{ templates: Record<string, string> }>("GET", "/templates").then((d) => d.templates), staleTime: Infinity });
 }
 
 /** Writes that return the page: the result seeds the page's cache and everything else refreshes. */
@@ -259,68 +210,10 @@ function usePageWrite<V>(fn: (v: V) => Promise<Page>) {
 }
 
 export const useCreatePage = () => usePageWrite((v: PageInput) => call<Page>("POST", "/pages", v));
-export const useSavePage = (id: string) => usePageWrite((v: PageInput) => call<Page>("PUT", `/pages/${id}`, v));
-export const useCapture = () => usePageWrite((v: PageInput) => call<Page>("POST", "/capture", v));
 export const useDaily = () => usePageWrite((v: { date?: string; folder?: string; template?: string }) => call<Page>("POST", "/daily", v));
 export const usePageControls = (id: string) => usePageWrite((v: { direct: boolean; paused: boolean }) => call<Page>("PUT", `/pages/${id}/controls`, v));
-export const useResolveReview = (id: string) =>
-  usePageWrite((v: { version: string; decisions: ReviewDecision[] }) => call<Page>("POST", `/pages/${id}/reviews/${v.version}/resolve`, { decisions: v.decisions }));
 export const useRestore = (id: string) => usePageWrite((version: string) => call<Page>("POST", `/pages/${id}/restore/${version}`));
 export const useFileCapture = (id: string) => usePageWrite((v: { folder?: string; merge?: string }) => call<Page>("POST", `/pages/${id}/file`, v));
-export const useMoveCanvas = () => usePageWrite((v: { chat_id: string; canvas_id: string; folder?: string }) => call<Page>("POST", "/pages/from-canvas", v));
-
-// ---- Explorer: rename or move a page, delete one, and move or delete a folder
-// (every page under a path prefix, in one view).
-
-/** Renames or moves a page by its path; the body is left as it is. */
-export const useMovePage = () => usePageWrite((v: { id: string; title?: string; path: string }) => call<Page>("PUT", `/pages/${v.id}`, { title: v.title, path: v.path }));
-
-function useTreeWrite<V, R extends { deleted?: string[]; moved?: string[] }>(fn: (v: V) => Promise<R>) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: fn,
-    onSuccess: (r) => {
-      for (const id of r.deleted ?? []) qc.removeQueries({ queryKey: knowledgeKeys.page(id) });
-      void qc.invalidateQueries({ queryKey: knowledgeKeys.all });
-    },
-  });
-}
-
-export const useDeletePage = () => useTreeWrite((id: string) => call<{ deleted: string[] }>("DELETE", `/pages/${id}`));
-export const useMoveFolder = () => useTreeWrite((v: { from: string; to: string; agent: boolean }) => call<{ moved: string[] }>("POST", "/folders/move", v));
-export const useDeleteFolder = () => useTreeWrite((v: { folder: string; agent: boolean }) => call<{ deleted: string[] }>("POST", "/folders/delete", v));
-
-// ---- Obsidian vault imports
-
-export function useImports() {
-  return useQuery({ queryKey: knowledgeKeys.imports, queryFn: () => call<{ imports: ImportJob[] }>("GET", "/imports").then((d) => d.imports) });
-}
-
-/** One import, polled while the server is working on it. */
-export function useImport(id: string | undefined) {
-  return useQuery({
-    queryKey: knowledgeKeys.import(id ?? ""),
-    queryFn: () => call<ImportJob>("GET", `/imports/${id}`),
-    enabled: !!id,
-    refetchInterval: (q) => (q.state.data && ["queued", "scanning", "queued_commit", "importing"].includes(q.state.data.state) ? 1000 : false),
-  });
-}
-
-function useImportWrite<V>(fn: (v: V) => Promise<ImportJob>) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: fn,
-    onSuccess: (j) => {
-      qc.setQueryData(knowledgeKeys.import(j.id), j);
-      void qc.invalidateQueries({ queryKey: knowledgeKeys.all, predicate: (q) => q.queryKey[1] !== "import" });
-    },
-  });
-}
-
-export const useUploadVault = () => useImportWrite((v: { file: File; folder: string }) => call<ImportJob>("POST", `/imports${qs({ folder: v.folder })}`, v.file, { headers: { "Content-Type": "application/zip" } }));
-export const useConfirmImport = () => useImportWrite((v: { id: string; policy: "skip" | "replace" | "keep_both" }) => call<ImportJob>("POST", `/imports/${v.id}/confirm`, { policy: v.policy }));
-export const useCancelImport = () => useImportWrite((id: string) => call<ImportJob>("POST", `/imports/${id}/cancel`));
-export const useUndoImport = () => useImportWrite((id: string) => call<ImportJob>("POST", `/imports/${id}/undo`));
 export const useAttachChat = (id: string) => usePageWrite((chat_id: string) => call<Page>("PUT", `/pages/${id}/chat`, { chat_id }));
 
 /** The Knowledge page a deck or design is (LAZYAGENTS-212), from its canvas id: for old /apps links and new decks. */
