@@ -156,10 +156,10 @@ func TestSubagentGuideInPrompts(t *testing.T) {
 	if guide == "" {
 		t.Fatal("no guide")
 	}
-	if !strings.Contains(string(AgentsMD("", explorerSpec(), nil, "T-1")), guide) {
+	if !strings.Contains(string(AgentsMD("", explorerSpec(), nil, "T-1")), "## Subagents\n\n"+guide) {
 		t.Error("lead run: no sub agent guide")
 	}
-	if !strings.Contains(string(SubagentAgentsMD("", explorerSpec(), nil, "T-1")), guide) {
+	if !strings.Contains(string(SubagentAgentsMD("", explorerSpec(), nil, "T-1")), "## Subagents\n\n"+guide) {
 		t.Error("delegated run: no sub agent guide")
 	}
 	if strings.Contains(string(AgentsMD("", explorerSpec(agentdef.OptionSubagents, "false"), nil, "T-1")), "run_subagent") {
@@ -177,7 +177,7 @@ func TestSubagentGuideInPrompts(t *testing.T) {
 		chat := explorerSpec("readonly", "true")
 		chat.Harness = h
 		md := string(ChatAgentsMD(chat, nil, "", "", nil))
-		if !strings.Contains(md, agentdef.SubagentGuide(chat)) || strings.Contains(md, "Do not delegate work") || strings.Contains(md, "share your checkout") {
+		if !strings.Contains(md, "## Subagents\n\n"+agentdef.SubagentGuide(chat)) || strings.Contains(md, "Do not delegate work") || strings.Contains(md, "share your checkout") {
 			t.Errorf("%s read-only chat:\n%s", h, md)
 		}
 	}

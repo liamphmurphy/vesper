@@ -618,6 +618,7 @@ export function chatStatusOf(call: { tool: string; input: unknown }): ChatStatus
     case "Agent":
     case "Task":
     case "delegate":
+    case "run_subagent":
       return status("subagent", "delegating to a helper");
     case "claim_ticket":
     case "next_ticket":

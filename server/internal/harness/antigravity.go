@@ -231,7 +231,11 @@ func agyDenyRules(spec agentdef.Resolved) []string {
 		return []string{"command(*)", "read_file(*)", "write_file(*)", "read_url(*)", "execute_url(*)", "mcp(*)"}
 	}
 	var deny []string
-	if o["readonly"] == "true" || (!allowed(spec, "tests:run") && !allowed(spec, "repo:write")) {
+	// agy declares no Grep/Glob/LS tools, so an explorer subagent with repo:read
+	// searches via read-only run_command (rg, ls, grep, git log/grep) gated by
+	// agy_policy.py and runs.CheckToolWithSpec instead of a static command(*) deny.
+	explorerReadOnly := o[agentdef.OptionNoMCP] == "true" && o[agentdef.OptionSubagents] == "false" && o["readonly"] == "true" && allowed(spec, "repo:read")
+	if !explorerReadOnly && (o["readonly"] == "true" || (!allowed(spec, "tests:run") && !allowed(spec, "repo:write"))) {
 		deny = append(deny, "command(*)")
 	}
 	// An image step's generator saves outside the workspace; the hook holds it
@@ -662,10 +666,10 @@ func antigravityTool(name string, args map[string]any) (string, map[string]any) 
 		}
 		input, _ := args["Arguments"].(map[string]any)
 		return "mcp__" + server + "__" + tool, input
-	case "invoke_subagent", "define_subagent", "manage_subagents", "swarm", "send_message":
-		// Other agents, which Vesper's policy refuses as it does Claude Code's:
-		// only a lead's explorer, and image-generator in image steps.
-		out := map[string]any{"description": str("Role", "Name", "TypeName", "action")}
+	case "invoke_subagent", "define_subagent", "manage_subagents", "swarm", "send_message", "run_workflow":
+		// Native orchestration tools, which Vesper's policy refuses in favor of
+		// Vesper MCP run_subagent (image-generator stays allowed in image steps).
+		out := map[string]any{"description": str("Role", "Name", "TypeName", "action", "Description")}
 		if name == "invoke_subagent" {
 			if st := str("TypeName"); st != "" {
 				out["subagent_type"] = st

@@ -367,7 +367,7 @@ func ChatAgentsMDInSpace(spec agentdef.Resolved, contextFiles []string, project,
 	// Other personas take work through tickets the person starts; a chat's own
 	// sub agents (agentdef.SubagentsOn) are the only help it starts itself.
 	if guide := agentdef.SubagentGuide(spec); guide != "" {
-		b.WriteString(" Don't hand work to other personas. " + guide + "\n\n")
+		b.WriteString(" Don't hand work to other personas.\n\n## Subagents\n\n" + guide + "\n\n")
 	} else {
 		b.WriteString(" Do not delegate work.\n\n")
 	}
@@ -437,7 +437,7 @@ func agentsMD(existing string, spec agentdef.Resolved, contextFiles []string, ti
 		b.WriteString(agentdef.BatchExplorationGuide + "\n\n")
 	}
 	if guide := agentdef.SubagentGuide(spec); guide != "" {
-		b.WriteString(guide + "\n\n")
+		b.WriteString("## Subagents\n\n" + guide + "\n\n")
 	}
 	if !delegated {
 		b.WriteString("## Execution policy\n\nWork directly by default, within your scopes. Standing role routines to call a scoper, hand implementation to an implementer, hand shipping to a shipper, or curate memory after every ticket are optional; do not perform them mechanically. Delegate only substantial independent work, a capability you lack, an explicit task request, or a necessary independent review. Do not start fresh agents for small fixes, routine shipping, or checks already completed. AGENTS.md already contains your instructions and scopes; claim_ticket returns your handle, so skip whoami. Search conventions only when needed and not already available. Write memory only for a durable new lesson.\n\n")

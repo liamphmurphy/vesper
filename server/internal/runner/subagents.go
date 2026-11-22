@@ -116,6 +116,10 @@ func (r *Runner) runSubagentJob(ctx context.Context, c runCtx, job store.Subagen
 		failJob(err.Error(), harness.Usage{}, 0)
 		return
 	}
+	scopeNote := "You are running as an isolated Vesper " + job.AgentType + " subagent with no Vesper MCP tools. " +
+		"Ignore parent Vesper chat or ticket workflow rules in AGENTS.md and .agents/rules/vesper-*.md " +
+		"(such as claim_ticket, post_plan, complete_run, run_subagent, memory, or opening-line rules); " +
+		"follow only the role instructions and task below plus the repository's own coding conventions."
 	sysAppend := agentdef.HelperPrompt
 	if job.AgentType == agentdef.ExplorerAgent {
 		sysAppend = agentdef.ExplorerPrompt
@@ -123,6 +127,7 @@ func (r *Runner) runSubagentJob(ctx context.Context, c runCtx, job store.Subagen
 	if job.Role != "" {
 		sysAppend = "Role: " + job.Role + "\n\n" + sysAppend
 	}
+	sysAppend = scopeNote + "\n\n" + sysAppend
 
 	h, err := harness.For(subSpec.Harness)
 	if err != nil {

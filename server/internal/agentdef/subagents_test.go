@@ -39,5 +39,13 @@ func TestSubagentTypes(t *testing.T) {
 		if (guide != "") != (c.want != nil) || strings.Contains(guide, "`"+ExplorerAgent+"`") != slices.Contains(c.want, ExplorerAgent) {
 			t.Errorf("%s: SubagentGuide = %q", c.name, guide)
 		}
+		if c.want != nil {
+			wantAgy := c.harness == HarnessAntigravity
+			for _, token := range []string{"mcp_lazyagents_run_subagent", "invoke_subagent", "run_workflow", "schedule"} {
+				if strings.Contains(guide, token) != wantAgy {
+					t.Errorf("%s: SubagentGuide contains %q = %v, want %v", c.name, token, !wantAgy, wantAgy)
+				}
+			}
+		}
 	}
 }
