@@ -306,7 +306,7 @@ var EagerVesperTools = []string{
 	// Ticket runs.
 	"claim_ticket", "post_plan", "update_step", "check_criterion", "complete_run",
 	// Shared in-turn subagents.
-	"run_subagent",
+	"run_subagent", "run_subagents",
 }
 
 // BatchExplorationGuide is the one line every coding prompt (chat and ticket
