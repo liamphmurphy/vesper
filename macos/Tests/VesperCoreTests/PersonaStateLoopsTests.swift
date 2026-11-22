@@ -12,6 +12,16 @@ final class PersonaStateLoopsTests: XCTestCase {
         XCTAssertEqual(PersonaStateLoops.loopState(for: .reading), "reading")
     }
 
+    func testRevealByWordCountCarriesAcrossClips() {
+        let text = "One two three four five."
+        XCTAssertEqual(PersonaStateLoops.revealSlice(text, words: 2).text, "One two ")
+        XCTAssertFalse(PersonaStateLoops.revealSlice(text, words: 2).done)
+        XCTAssertEqual(PersonaStateLoops.revealSlice(text, words: -1).text, "")
+        XCTAssertTrue(PersonaStateLoops.revealSlice(text, words: 5).done)
+        // The timed form is the same count.
+        XCTAssertEqual(PersonaStateLoops.revealSlice(text, elapsed: 1, wordsPerSecond: 3).text, PersonaStateLoops.revealSlice(text, words: 3).text)
+    }
+
     func testFallbacksMatchTheWeb() {
         let some = ["idle": "/i", "thinking": "/t", "reading": "/r"]
         XCTAssertEqual(PersonaStateLoops.loop(for: .reading, in: some)?.url, "/r")

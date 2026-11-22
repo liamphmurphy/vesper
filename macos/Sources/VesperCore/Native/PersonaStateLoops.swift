@@ -54,7 +54,13 @@ public enum PersonaStateLoops {
     /// whitespace after them) so text never stops mid-word; `done` once it's all shown.
     public static func revealSlice(_ text: String, elapsed: TimeInterval, wordsPerSecond: Double) -> (text: String, done: Bool) {
         guard wordsPerSecond > 0 else { return (text, true) }
-        var words = max(0, Int((elapsed * wordsPerSecond).rounded(.down)))
+        return revealSlice(text, words: Int((elapsed * wordsPerSecond).rounded(.down)))
+    }
+
+    /// The first `words` words of a reply, cut the same way: for a reveal paced by more than one
+    /// clip, where the count carries over from one clip to the next.
+    public static func revealSlice(_ text: String, words: Int) -> (text: String, done: Bool) {
+        var words = max(0, words)
         var index = text.startIndex
         var inWord = false
         while index < text.endIndex {
