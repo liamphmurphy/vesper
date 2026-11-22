@@ -30,7 +30,7 @@ func TestGenerateMusicClipFullAndPolling(t *testing.T) {
 		gotAPIKey = r.Header.Get("x-goog-api-key")
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/interactions"):
+		case r.Method == http.MethodPost && r.URL.Path == "/v1beta/interactions":
 			var body map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatal(err)
@@ -56,7 +56,7 @@ func TestGenerateMusicClipFullAndPolling(t *testing.T) {
 					},
 				}},
 			})
-		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/interactions/inter_poll_1"):
+		case r.Method == http.MethodGet && r.URL.Path == "/v1beta/interactions/inter_poll_1":
 			if pollCount.Add(1) < 2 {
 				_ = json.NewEncoder(w).Encode(map[string]any{
 					"id":     "inter_poll_1",
@@ -147,7 +147,11 @@ func TestCheckAndErrorMapping(t *testing.T) {
 		if retryHdr != "" {
 			w.Header().Set("Retry-After", retryHdr)
 		}
-		if statusCode == http.StatusOK && strings.Contains(r.URL.Path, "/models") {
+		if statusCode == http.StatusOK {
+			if r.URL.Path != "/v1beta/models" {
+				http.NotFound(w, r)
+				return
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"models": []map[string]any{{"name": "models/lyria-3-clip-preview"}}})
 			return
 		}
@@ -235,5 +239,57 @@ func TestGenerateMusicContextCancel(t *testing.T) {
 	_, err = prov.GenerateMusic(ctx, media.MusicRequest{Prompt: "cancel test"}, nil)
 	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
 		t.Fatalf("got %v, want context cancellation", err)
+	}
+}
+
+func TestVertexAIKeepsDefaultV1Beta1APIVersion(t *testing.T) {
+	wav := fake.SineWAV(8000, 1)
+	b64WAV := base64.StdEncoding.EncodeToString(wav)
+
+	var gotPath string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost && r.URL.Path == "/v1beta1/projects/test-proj/locations/us-central1/interactions" {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":     "inter_vertex_1",
+				"status": "completed",
+				"steps": []map[string]any{{
+					"type": "model_output",
+					"content": []map[string]any{
+						{"type": "audio", "data": b64WAV, "mime_type": "audio/wav"},
+					},
+				}},
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer ts.Close()
+
+	prov, err := New(media.ResolvedConfig{
+		Settings: map[string]string{
+			"backend":  "vertex_ai",
+			"project":  "test-proj",
+			"location": "us-central1",
+		},
+	}, WithBaseURL(ts.URL), WithHTTPClient(ts.Client()), WithPollInterval(5*time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	clip, err := prov.GenerateMusic(context.Background(), media.MusicRequest{
+		Prompt: "Ambient guitar texture",
+		Length: media.LengthClip,
+	}, nil)
+	if err != nil {
+		t.Fatalf("GenerateMusic vertex_ai failed (path=%q): %v", gotPath, err)
+	}
+	const wantPath = "/v1beta1/projects/test-proj/locations/us-central1/interactions"
+	if gotPath != wantPath {
+		t.Fatalf("vertex_ai path = %q, want %q", gotPath, wantPath)
+	}
+	if len(clip.Data) != len(wav) {
+		t.Fatalf("clip len = %d, want %d", len(clip.Data), len(wav))
 	}
 }
