@@ -1011,3 +1011,33 @@ Manual click-through checklist:
 - **Epics (`/epics`, `/epics/:id`, `/tickets?layout=epics`)**: `EpicsLogic` + `EpicsListView` + `EpicDetailScreen` reusing `TicketSharedViews`, replacing `EpicsLayoutSlot`.
 - **Scheduled (`/scheduled`)**: `ScheduledLogic` + `ScheduledScreen` (filter, create/edit/toggle, cron validation, trigger run now, delete, recent runs).
 - **Reports (`/reports`, `/costs`)**: `ReportsLogic` + `ReportsScreen` using native **Swift Charts** (`BarMark` daily spend stacked by agent/model, effort distribution) and breakdown tables.
+
+## Native screen: Knowledge panels & graph
+
+`/knowledge/graph` and the trailing page inspector beside `/knowledge/:id` are native
+(`macos/Sources/VesperCore/Native/Knowledge/{KnowledgeGraphLogic,KnowledgePanelsLogic}.swift` and
+`macos/Sources/Vesper/Native/Knowledge/{KnowledgeGraphView,KnowledgeSidePanelsView,KnowledgeReviewView}.swift`,
+replacing `KnowledgeGraphScreenSlot` and `KnowledgePageSidePanelSlot`).
+
+- **Deterministic Knowledge Graph (`KnowledgeGraphLogic` + `KnowledgeGraphView`).** Pure-Swift
+  deterministic port of `web/lib/knowledge-graph.ts` force layout (grid-bucketed repulsion, link
+  springs, centering pull, zero external dependencies) with SwiftUI `Canvas` rendering, drag pan,
+  pinch `MagnificationGesture` zoom, hover/selection neighborhood highlight, search, audience,
+  orphan, unresolved-link, and local-vs-global scope filters, and click-to-open navigation.
+- **Page Side Panels (`KnowledgePanelsLogic` + `KnowledgeSidePanelsView`).** Tabbed inspector
+  beside a Knowledge page: Backlinks, Outgoing Links & Unlinked Mentions (click to open or patch
+  a wikilink), Typed Properties & Tags Inspector (text, number, bool, date, list via
+  `KnowledgeAPI.updatePage`), Query Tables (`KnowledgeAPI.queryPages` / `getSavedQuery` with
+  column inference, filtering, and sorting), Version History & Restore (`KnowledgeAPI.restoreVersion`),
+  and Persona Reviews.
+- **Native Reviews (`KnowledgeReviewView`).** Renders pending/stale `KnowledgeReview` suggestions
+  with native red/green line + inline word diffs, rationale (`why`), per-change Accept/Reject (with
+  optional reason) and bulk Accept/Reject via `KnowledgeAPI.resolveReview`, plus collapsible past
+  reviews.
+- **Web cleanup.** Deleted `web/app/(app)/knowledge/graph/`,
+  `web/app/(app)/knowledge/_components/graph-screen.tsx`, and `web/lib/knowledge-graph.ts` (and
+  removed the JS graph test from `web/lib/knowledge.test.mjs`). Kept `page-side.tsx` (still
+  imported by `web/app/inspector-panel/page.tsx` and `knowledge-dock.tsx`) as well as
+  `page-review.tsx` and `query-table.tsx` (still imported by `page-screen.tsx`, retained for
+  LAZYAGENTS-288).
+
