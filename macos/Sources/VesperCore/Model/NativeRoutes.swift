@@ -43,6 +43,20 @@ public enum NativeScreen: String, Sendable, CaseIterable {
         default: self
         }
     }
+
+    /// The sidebar area this screen belongs to, as web/lib/navigator.ts's currentArea() has it for
+    /// the same paths: tools and app screens are under Apps, Inbox and the PDF viewer under none.
+    /// The shell marks it itself rather than waiting for the hidden page to report its route.
+    public var area: AreaId? {
+        switch self {
+        case .chat, .chatDetail: .chat
+        case .work, .runDetail, .tickets, .ticketNew, .ticketDetail, .epics, .epicDetail: .work
+        case .knowledge, .knowledgeGraph, .knowledgePage: .knowledge
+        case .library: .library
+        case .workflows, .workflowEditor, .workflowRun, .scheduled, .learn, .learnCourse, .reports, .http, .dev: .apps
+        case .inbox, .pdf, .debugPlaceholder, .markdownDebug, .scenesDebug, .embedsDebug: nil
+        }
+    }
 }
 
 /// A path resolved to a native screen, with its path parameters and query items (decoded).

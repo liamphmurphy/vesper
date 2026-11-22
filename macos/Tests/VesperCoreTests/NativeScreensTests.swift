@@ -98,6 +98,27 @@ final class NativeRoutesTests: XCTestCase {
         XCTAssertNil(standard.resolve("/dev/anything"))
     }
 
+    /// The area bar marks a native screen's area from its path; these match web/lib/navigator.ts's
+    /// currentArea() for the same paths (old addresses like /wiki and /board follow their screen).
+    func testNativeScreensBelongToTheWebsAreas() {
+        let standard = NativeRouteRegistry.standard(debug: true)
+        let expected: [String: AreaId?] = [
+            "/chat": .chat, "/chat/c1": .chat,
+            "/work": .work, "/runs": .work, "/runs/r1": .work, "/tickets": .work, "/board": .work,
+            "/tickets/new": .work, "/tickets/PAY-1": .work, "/epics": .work, "/epics/e1": .work,
+            "/knowledge": .knowledge, "/knowledge/graph": .knowledge, "/knowledge/p1": .knowledge, "/wiki/a/b": .knowledge,
+            "/library": .library,
+            "/workflows": .apps, "/workflows/wf-1": .apps, "/workflows/runs/wr-1": .apps, "/scheduled": .apps,
+            "/learn": .apps, "/learn/l1": .apps, "/reports": .apps, "/costs": .apps, "/http": .apps, "/dev": .apps,
+            "/inbox": nil, "/pdf": nil, "/native-debug": nil,
+        ]
+        for (path, area) in expected {
+            let screen = standard.resolve(path)?.screen
+            XCTAssertNotNil(screen, path)
+            XCTAssertEqual(screen?.area, area, path)
+        }
+    }
+
     func testHttpClientIsNative() {
         let standard = NativeRouteRegistry.standard(debug: false)
         XCTAssertEqual(standard.resolve("/http")?.screen, .http)
