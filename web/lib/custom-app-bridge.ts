@@ -242,10 +242,11 @@ function parseTimestampSeconds(raw: string | null): number | null {
 }
 
 export type VideoEmbed = {
-  provider: "youtube" | "twitch" | "local";
+  provider: "youtube" | "twitch" | "local" | "hls";
   embedUrl: string;
   externalUrl: string;
   titleFallback: string;
+  streamId?: string;
 };
 
 // A video the app downloaded into Vesper (server.ts media.download) plays from
@@ -253,10 +254,27 @@ export type VideoEmbed = {
 const LOCAL_MEDIA_PREFIX = "vesper-media:";
 const LOCAL_MEDIA_RE = /^vesper-media:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
 
+// A live HLS stream relayed on the local network (server.ts media.relayHLS)
+// resolves through Vesper's authenticated HLS endpoint before handing the LAN
+// playlist URL to the host <video> element for native HLS and AirPlay.
+const HLS_RELAY_PREFIX = "vesper-hls:";
+const HLS_RELAY_RE = /^vesper-hls:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
+
 export function parseLocalMediaUrl(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
   const m = LOCAL_MEDIA_RE.exec(raw.trim().toLowerCase());
   return m ? LOCAL_MEDIA_PREFIX + m[1] : null;
+}
+
+export function parseHlsRelayUrl(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const m = HLS_RELAY_RE.exec(raw.trim().toLowerCase());
+  return m ? HLS_RELAY_PREFIX + m[1] : null;
+}
+
+export function hlsRelayStreamId(raw: unknown): string | null {
+  const url = parseHlsRelayUrl(raw);
+  return url ? url.slice(HLS_RELAY_PREFIX.length) : null;
 }
 
 export function localMediaEmbed(rawUrl: string, appSlug: string): VideoEmbed | null {
@@ -349,7 +367,7 @@ export type BridgeMessage =
   | { channel: "vesper:custom-app"; id: ""; type: "set-nav"; payload: { items: CustomAppNavSpec[]; activeId?: string } }
   | { channel: "vesper:custom-app"; id: ""; type: "ask-dock"; payload: { prompt: string } }
   | { channel: "vesper:custom-app"; id: ""; type: "open-url"; payload: { url: string } }
-  | { channel: "vesper:custom-app"; id: ""; type: "play-video"; payload: { url: string; title?: string; theater?: boolean } }
+  | { channel: "vesper:custom-app"; id: ""; type: "play-video"; payload: { url: string; title?: string; theater?: boolean; externalUrl?: string } }
   | { channel: "vesper:custom-app"; id: ""; type: "app-error"; payload: { message: string } };
 
 export function parseBridgeMessage(raw: unknown): BridgeMessage | null {
@@ -412,14 +430,20 @@ export function parseBridgeMessage(raw: unknown): BridgeMessage | null {
       return { channel: "vesper:custom-app", id: "", type: "open-url", payload: { url } };
     }
     case "play-video": {
-      const url = parseLocalMediaUrl(payload.url) ?? parseSafeExternalUrl(payload.url);
+      const url = parseHlsRelayUrl(payload.url) ?? parseLocalMediaUrl(payload.url) ?? parseSafeExternalUrl(payload.url);
       if (!url) return null;
       const title = typeof payload.title === "string" ? payload.title.trim().slice(0, 200) : "";
+      const externalUrl = parseSafeExternalUrl(payload.externalUrl) ?? undefined;
       return {
         channel: "vesper:custom-app",
         id: "",
         type: "play-video",
-        payload: { url, ...(title ? { title } : {}), ...(typeof payload.theater === "boolean" ? { theater: payload.theater } : {}) },
+        payload: {
+          url,
+          ...(title ? { title } : {}),
+          ...(typeof payload.theater === "boolean" ? { theater: payload.theater } : {}),
+          ...(externalUrl ? { externalUrl } : {}),
+        },
       };
     }
     case "app-error": {

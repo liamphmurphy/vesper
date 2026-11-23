@@ -4,8 +4,10 @@ import { typedText } from "./chat-context.ts";
 import {
   buildCustomAppSrcDoc,
   CUSTOM_APP_ICONS,
+  hlsRelayStreamId,
   localMediaEmbed,
   parseBridgeMessage,
+  parseHlsRelayUrl,
   parseLocalMediaUrl,
   parseSafeExternalUrl,
   parseSafeHttpsUrl,
@@ -278,5 +280,39 @@ test("parseBridgeMessage keeps play-video's theater flag only when it is a boole
   assert.deepEqual(
     parseBridgeMessage({ channel: "vesper:custom-app", type: "play-video", payload: { url, theater: "yes" } }),
     { channel: "vesper:custom-app", id: "", type: "play-video", payload: { url } },
+  );
+});
+
+test("HLS relay streams parse vesper-hls:<uuid> and optional safe externalUrl", () => {
+  const id = "01a1f7a0-1234-7abc-8def-0123456789ab";
+  assert.equal(parseHlsRelayUrl(`vesper-hls:${id}`), `vesper-hls:${id}`);
+  assert.equal(parseHlsRelayUrl(` VESPER-HLS:${id.toUpperCase()} `), `vesper-hls:${id}`);
+  assert.equal(hlsRelayStreamId(`vesper-hls:${id}`), id);
+  for (const bad of ["vesper-hls:not-a-uuid", `vesper-hls:${id}/../x`, `http://192.168.1.2/master.m3u8`, 42, null]) {
+    assert.equal(parseHlsRelayUrl(bad), null, String(bad));
+    assert.equal(hlsRelayStreamId(bad), null, String(bad));
+  }
+
+  assert.deepEqual(
+    parseBridgeMessage({
+      channel: "vesper:custom-app",
+      type: "play-video",
+      payload: { url: `vesper-hls:${id}`, title: "Live", theater: true, externalUrl: "https://www.twitch.tv/demo" },
+    }),
+    {
+      channel: "vesper:custom-app",
+      id: "",
+      type: "play-video",
+      payload: { url: `vesper-hls:${id}`, title: "Live", theater: true, externalUrl: "https://www.twitch.tv/demo" },
+    },
+  );
+  // Unsafe externalUrl is dropped while keeping the valid relay URL.
+  assert.deepEqual(
+    parseBridgeMessage({
+      channel: "vesper:custom-app",
+      type: "play-video",
+      payload: { url: `vesper-hls:${id}`, externalUrl: "javascript:alert(1)" },
+    }),
+    { channel: "vesper:custom-app", id: "", type: "play-video", payload: { url: `vesper-hls:${id}` } },
   );
 });

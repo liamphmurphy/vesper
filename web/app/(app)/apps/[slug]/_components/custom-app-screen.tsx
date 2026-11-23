@@ -21,7 +21,9 @@ import { useConnectors } from "@/lib/api/connector-hooks";
 import { useApiSecrets } from "@/lib/api/secret-hooks";
 import {
   customAppKeys,
+  getCustomAppHlsStream,
   invokeCustomApp,
+  stopCustomAppHlsStream,
   useCustomApp,
   useUpdateCustomApp,
   type CustomAppCapabilityMode,
@@ -33,6 +35,7 @@ import { chatKeys, useChat, useCreateChat } from "@/lib/api/hooks";
 import { useSpaceChats } from "@/lib/api/space-hooks";
 import {
   buildCustomAppSrcDoc,
+  hlsRelayStreamId,
   parseBridgeMessage,
   readThemeVarsFrom,
   resolveAppIcon,
@@ -165,6 +168,24 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
   }, []);
 
   const closeVideo = useCallback(() => setActiveVideo(null), []);
+  const hlsRequestSeqRef = useRef(0);
+
+  // Stop any active LAN HLS relay stream when switching videos, closing the player, or leaving the page.
+  const activeHlsStreamId = activeVideo?.provider === "hls" ? activeVideo.streamId : undefined;
+  useEffect(() => {
+    if (!activeHlsStreamId) return;
+    let stopped = false;
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      stopCustomAppHlsStream(app.slug, activeHlsStreamId);
+    };
+    window.addEventListener("pagehide", stop);
+    return () => {
+      window.removeEventListener("pagehide", stop);
+      stop();
+    };
+  }, [app.slug, activeHlsStreamId]);
 
   // Tell the app what its player is doing, so it can save progress or move on to the next video.
   const playerUrl = activeVideo?.embedUrl ?? null;
@@ -327,11 +348,43 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
         return;
       }
       if (msg.type === "play-video") {
+        const streamId = hlsRelayStreamId(msg.payload.url);
+        if (streamId) {
+          const reqSeq = ++hlsRequestSeqRef.current;
+          const title = msg.payload.title || "Live stream";
+          const externalUrl = msg.payload.externalUrl ?? "";
+          const requestedTheater = msg.payload.theater;
+          void getCustomAppHlsStream(app.slug, streamId)
+            .then((stream) => {
+              if (hlsRequestSeqRef.current !== reqSeq) {
+                stopCustomAppHlsStream(app.slug, streamId);
+                return;
+              }
+              setActiveVideo({
+                provider: "hls",
+                embedUrl: stream.lan_url || stream.loopback_url,
+                externalUrl,
+                titleFallback: "Live stream",
+                streamId: stream.id,
+                title,
+              });
+              if (requestedTheater !== undefined) setTheater(requestedTheater);
+            })
+            .catch(() => {
+              // Stream expired or was stopped before playback began.
+            });
+          return;
+        }
+        hlsRequestSeqRef.current++;
         const embed =
           localMediaEmbed(msg.payload.url, app.slug) ??
           resolveVideoEmbed(msg.payload.url, typeof window !== "undefined" ? window.location.hostname : undefined);
         if (embed) {
-          setActiveVideo({ ...embed, title: msg.payload.title || embed.titleFallback });
+          setActiveVideo({
+            ...embed,
+            ...(msg.payload.externalUrl ? { externalUrl: msg.payload.externalUrl } : {}),
+            title: msg.payload.title || embed.titleFallback,
+          });
           if (msg.payload.theater !== undefined) setTheater(msg.payload.theater);
         } else if (!parseLocalMediaUrl(msg.payload.url)) {
           window.open(msg.payload.url, "_blank", "noopener,noreferrer");
