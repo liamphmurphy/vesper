@@ -56,4 +56,57 @@ final class AppsAndSetupLogicTests: XCTestCase {
             "/chat?new"
         )
     }
+
+    func testAppsHomeNavModelAndCommands() {
+        let app = API.CustomAppSummary(
+            capabilities: [:],
+            createdAt: "2026-11-20T00:00:00Z",
+            currentSeq: 1,
+            dbSizeBytes: 4096,
+            description: "Track expenses",
+            hasMcpServer: false,
+            icon: "dollar",
+            id: "a1",
+            manifest: API.CustomAppManifest(entry: "index.tsx", toolScope: .appOnly),
+            mcpTools: nil,
+            mounts: nil,
+            name: "Budget",
+            slug: "budget",
+            spaceId: nil,
+            updatedAt: "2026-11-20T00:00:00Z"
+        )
+        let nav = AppsHomeLogic.navModel(apps: [app], devWorkspaceEnabled: true)
+        XCTAssertEqual(nav.id, AppsHomeLogic.navId)
+        XCTAssertEqual(nav.sections.map(\.id), ["your-apps", "tools", "starters"])
+        XCTAssertEqual(nav.sections[0].items.map(\.id), ["app:budget"])
+        XCTAssertEqual(nav.sections[1].items.last?.href, "/dev")
+
+        let filtered = AppsHomeLogic.navModel(apps: [app], search: "http", devWorkspaceEnabled: false)
+        XCTAssertEqual(filtered.sections.first(where: { $0.id == "tools" })?.items.map(\.href), ["/http"])
+
+        XCTAssertEqual(
+            AppsHomeLogic.navAction(for: .navAction(navigatorId: AppsHomeLogic.navId, actionId: AppsHomeLogic.newAppAction)),
+            .newApp(.blank)
+        )
+        XCTAssertEqual(
+            AppsHomeLogic.navAction(for: .navActivate(navigatorId: AppsHomeLogic.navId, itemId: "app:budget", newTab: true)),
+            .openPath("/apps/budget", newTab: true)
+        )
+        XCTAssertEqual(
+            AppsHomeLogic.navAction(for: .navActivate(navigatorId: AppsHomeLogic.navId, itemId: "tool:/http", newTab: false)),
+            .openPath("/http", newTab: false)
+        )
+        XCTAssertEqual(
+            AppsHomeLogic.navAction(for: .navActivate(navigatorId: AppsHomeLogic.navId, itemId: "starter:ledger")),
+            .newApp(.ledger)
+        )
+        XCTAssertEqual(
+            AppsHomeLogic.navAction(for: .navAction(navigatorId: AppsHomeLogic.navId, actionId: AppsHomeLogic.deleteAppMenu, itemId: "app:budget")),
+            .deleteApp(slug: "budget")
+        )
+        XCTAssertEqual(
+            AppsHomeLogic.navAction(for: .navSearch(navigatorId: AppsHomeLogic.navId, searchId: AppsHomeLogic.searchId, value: "bud")),
+            .search("bud")
+        )
+    }
 }
