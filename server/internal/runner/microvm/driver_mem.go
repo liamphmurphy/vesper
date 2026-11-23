@@ -37,11 +37,14 @@ func (d *MemDriver) Configs() []VMConfig {
 
 // MemVM is an in-memory VM implementing VM for fast host tests.
 type MemVM struct {
-	mu      sync.Mutex
-	cfg     VMConfig
-	target  uint64
-	stopped bool
-	handler func(ctx context.Context, conn net.Conn)
+	mu          sync.Mutex
+	cfg         VMConfig
+	target      uint64
+	paused      bool
+	pauseCount  int
+	resumeCount int
+	stopped     bool
+	handler     func(ctx context.Context, conn net.Conn)
 }
 
 func (v *MemVM) Client() *guestproto.Client {
@@ -55,10 +58,14 @@ func (v *MemVM) Client() *guestproto.Client {
 func (v *MemVM) DialVSock(ctx context.Context, port uint32) (net.Conn, error) {
 	v.mu.Lock()
 	stopped := v.stopped
+	paused := v.paused
 	h := v.handler
 	v.mu.Unlock()
 	if stopped {
 		return nil, errors.New("microvm: vm stopped")
+	}
+	if paused {
+		return nil, errors.New("microvm: vm paused")
 	}
 	if port == guestproto.PortRPC && h != nil {
 		a, b := net.Pipe()
@@ -89,11 +96,62 @@ func (v *MemVM) MemoryTarget() uint64 {
 	return v.target
 }
 
+func (v *MemVM) Pause(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.stopped {
+		return errors.New("microvm: vm stopped")
+	}
+	if !v.paused {
+		v.paused = true
+		v.pauseCount++
+	}
+	return nil
+}
+
+func (v *MemVM) Resume(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.stopped {
+		return errors.New("microvm: vm stopped")
+	}
+	if v.paused {
+		v.paused = false
+		v.resumeCount++
+	}
+	return nil
+}
+
+func (v *MemVM) Paused() bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.paused
+}
+
+func (v *MemVM) PauseCount() int {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.pauseCount
+}
+
+func (v *MemVM) ResumeCount() int {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.resumeCount
+}
+
 func (v *MemVM) ConsoleOutput() string { return "" }
 
 func (v *MemVM) Stop(context.Context) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	v.paused = false
 	v.stopped = true
 	return nil
 }

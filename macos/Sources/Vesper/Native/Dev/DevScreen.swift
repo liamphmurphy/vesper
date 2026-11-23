@@ -59,6 +59,7 @@ struct DevScreen: View {
     @Environment(\.vesperTheme) private var theme
     @State private var model = DevTerminalModel()
     @State private var reconnectSeq = 0
+    @State private var autoStarted = false
 
     private static let request = API.getDevWorkspace()
 
@@ -81,6 +82,14 @@ struct DevScreen: View {
         }
         .task {
             context.store.load(Self.request)
+        }
+        .task(id: entry.data.map { "\($0.enabled)|\($0.state.rawValue)|\($0.action?.value?.rawValue ?? "")" } ?? "") {
+            // Start an enabled, stopped dev workspace on demand when the user opens /dev rather
+            // than booting its VM unconditionally at app launch.
+            guard !autoStarted, !model.actionPending,
+                  let ws = entry.data, ws.enabled, ws.state == .stopped, ws.action?.value == nil else { return }
+            autoStarted = true
+            run(.start)
         }
         .task(id: entry.data.map { DevTerminalLogic.isBusy(state: $0.state, action: $0.action?.value?.rawValue) } ?? false) {
             // While the container starts or an action runs, poll as the web did (every 2 s).

@@ -33,7 +33,7 @@ func (r *Runner) devWorkspaceBackend() (DevWorkspaceBackend, bool) {
 }
 
 // InitDevWorkspaces resets any stale dev-workspace ports from an earlier runner
-// and queues enabled workspaces to start again.
+// to stopped; the VM starts on demand when the Dev workspace is opened.
 func (r *Runner) InitDevWorkspaces(ctx context.Context) {
 	pb, ok := r.Backend.(PlaygroundBackend)
 	if !ok {

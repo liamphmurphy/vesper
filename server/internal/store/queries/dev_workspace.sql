@@ -96,8 +96,8 @@ WHERE workspace_id = sqlc.arg(workspace_id);
 
 -- name: StopStackDevWorkspaces :exec
 UPDATE dev_workspaces
-SET state = CASE WHEN enabled THEN 'starting' ELSE 'stopped' END,
-    action = CASE WHEN enabled THEN 'start' ELSE NULL END,
+SET state = 'stopped',
+    action = NULL,
     target_repo = NULL,
     target_branch = NULL,
     target_pr_number = NULL,

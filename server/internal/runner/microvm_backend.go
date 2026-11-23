@@ -48,6 +48,10 @@ const (
 	// DefaultCacheDropDelay keeps guest page cache and full RAM hot across
 	// back-to-back conversational turns before reclaiming memory via ballooning.
 	DefaultCacheDropDelay = 60 * time.Second
+	// DefaultPauseSettleDelay gives the guest virtio_balloon driver time to
+	// return pages to the host after SetMemoryTarget before pausing guest vCPUs.
+	DefaultPauseSettleDelay = 2 * time.Second
+	defaultClockSyncAfter   = 30 * time.Second
 )
 
 type MicroVM struct {
@@ -65,6 +69,12 @@ type MicroVM struct {
 	// ends so rapid follow-up turns (e.g. Live Voice) reuse warm guest page cache.
 	// Zero drops immediately on turn release.
 	CacheDropDelay time.Duration
+	// PauseSettleDelay waits after balloon deflation before pausing guest vCPUs
+	// so virtio_balloon can hand pages back first. Zero pauses immediately.
+	PauseSettleDelay time.Duration
+	// ClockSyncAfter resyncs guest wall-clock time on resume when a VM sat
+	// paused at least this long (0 uses defaultClockSyncAfter).
+	ClockSyncAfter time.Duration
 	// SpareVMs is how many VMs stay booted, idle at IdleMemoryMB, for new
 	// runs to claim instead of booting their own (0 = none).
 	SpareVMs int
@@ -125,6 +135,8 @@ type runVM struct {
 	activeTurns    int
 	idleTimer      *time.Timer
 	cacheDropTimer *time.Timer
+	pauseTimer     *time.Timer
+	pausedAt       time.Time
 
 	// credMu orders credential writes and sweeps in this VM: a process's
 	// post-exit sweep must not delete a login another process just wrote.
@@ -427,7 +439,6 @@ func (b *MicroVM) acquireVM(ctx context.Context, runID string) (*runVM, error) {
 	b.runsMu.Unlock()
 
 	rvm.mu.Lock()
-	defer rvm.mu.Unlock()
 	if rvm.idleTimer != nil {
 		rvm.idleTimer.Stop()
 		rvm.idleTimer = nil
@@ -436,15 +447,47 @@ func (b *MicroVM) acquireVM(ctx context.Context, runID string) (*runVM, error) {
 		rvm.cacheDropTimer.Stop()
 		rvm.cacheDropTimer = nil
 	}
+	if rvm.pauseTimer != nil {
+		rvm.pauseTimer.Stop()
+		rvm.pauseTimer = nil
+	}
 	memMB := b.MemoryMB
 	if memMB <= 0 {
 		memMB = 2048
 	}
 	if rvm.vm != nil {
-		_ = rvm.vm.SetMemoryTarget(uint64(memMB) << 20)
-		rvm.activeTurns++
-		return rvm, nil
+		var pausedDur time.Duration
+		var resumedVM microvm.VM
+		if p, ok := rvm.vm.(microvm.Pauser); ok {
+			if err := p.Resume(ctx); err != nil {
+				b.logger().Warn("microvm: resume paused vm failed; rebooting", "run", runID, "err", err)
+				deadVM, deadEg := rvm.vm, rvm.egress
+				rvm.vm = nil
+				rvm.egress = nil
+				rvm.pausedAt = time.Time{}
+				rvm.mu.Unlock()
+				_ = deadVM.Stop(context.Background())
+				if deadEg != nil {
+					_ = deadEg.Close()
+				}
+				rvm.mu.Lock()
+			} else if !rvm.pausedAt.IsZero() {
+				pausedDur = time.Since(rvm.pausedAt)
+				rvm.pausedAt = time.Time{}
+				resumedVM = rvm.vm
+			}
+		}
+		if rvm.vm != nil {
+			_ = rvm.vm.SetMemoryTarget(uint64(memMB) << 20)
+			rvm.activeTurns++
+			rvm.mu.Unlock()
+			if resumedVM != nil && pausedDur >= b.clockSyncAfter() {
+				b.syncGuestClock(ctx, resumedVM)
+			}
+			return rvm, nil
+		}
 	}
+	defer rvm.mu.Unlock()
 
 	dir, err := b.runDir(runID)
 	if err != nil {
@@ -457,6 +500,7 @@ func (b *MicroVM) acquireVM(ctx context.Context, runID string) (*runVM, error) {
 	}
 	rvm.egress = eg
 	rvm.vm = vm
+	rvm.pausedAt = time.Time{}
 	rvm.vmGen++
 	rvm.activeTurns++
 	return rvm, nil
@@ -573,14 +617,75 @@ func (b *MicroVM) deflateVM(rvm *runVM, gen uint64) {
 	}
 
 	rvm.mu.Lock()
-	defer rvm.mu.Unlock()
 	if rvm.activeTurns != 0 || rvm.vm == nil || rvm.vmGen != gen {
+		rvm.mu.Unlock()
 		return
 	}
 	rvm.cacheDropTimer = nil
 	if idleMB < memMB {
 		_ = rvm.vm.SetMemoryTarget(uint64(idleMB) << 20)
 	}
+	_, canPause := rvm.vm.(microvm.Pauser)
+	if canPause && b.PauseSettleDelay > 0 {
+		if rvm.pauseTimer != nil {
+			rvm.pauseTimer.Stop()
+		}
+		rvm.pauseTimer = time.AfterFunc(b.PauseSettleDelay, func() {
+			b.pauseVM(rvm, gen)
+		})
+		rvm.mu.Unlock()
+		return
+	}
+	rvm.mu.Unlock()
+	if canPause {
+		b.pauseVM(rvm, gen)
+	}
+}
+
+// pauseVM pauses guest vCPUs once ballooning has settled so an idle warm VM
+// generates zero timer interrupts until the next turn resumes it.
+func (b *MicroVM) pauseVM(rvm *runVM, gen uint64) {
+	rvm.mu.Lock()
+	defer rvm.mu.Unlock()
+	if rvm.activeTurns != 0 || rvm.vm == nil || rvm.vmGen != gen {
+		return
+	}
+	rvm.pauseTimer = nil
+	p, ok := rvm.vm.(microvm.Pauser)
+	if !ok {
+		return
+	}
+	pctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := p.Pause(pctx); err != nil {
+		b.logger().Warn("microvm: pause idle vm", "run", rvm.runID, "err", err)
+		return
+	}
+	rvm.pausedAt = time.Now()
+}
+
+func (b *MicroVM) clockSyncAfter() time.Duration {
+	if b.ClockSyncAfter > 0 {
+		return b.ClockSyncAfter
+	}
+	return defaultClockSyncAfter
+}
+
+// syncGuestClock best-effort updates guest wall-clock time after a long pause
+// so TLS certificate and OAuth expiry checks inside the guest do not see stale time.
+func (b *MicroVM) syncGuestClock(ctx context.Context, vm microvm.VM) {
+	sctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	rp, err := vm.Client().StartExec(sctx, guestproto.ExecReq{
+		Argv: []string{"/bin/date", "-u", "-s", fmt.Sprintf("@%d", time.Now().Unix())},
+	})
+	if err != nil {
+		return
+	}
+	defer rp.Close()
+	go func() { _, _ = io.Copy(io.Discard, rp.Stdout()) }()
+	go func() { _, _ = io.Copy(io.Discard, rp.Stderr()) }()
+	_, _ = rp.Wait()
 }
 
 // armIdleTimer stops rvm's VM (generation gen) once it has sat idle for
@@ -602,6 +707,10 @@ func (b *MicroVM) armIdleTimer(rvm *runVM, gen uint64) {
 			rvm.cacheDropTimer.Stop()
 			rvm.cacheDropTimer = nil
 		}
+		if rvm.pauseTimer != nil {
+			rvm.pauseTimer.Stop()
+			rvm.pauseTimer = nil
+		}
 		sctx, scancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer scancel()
 		_ = rvm.vm.Stop(sctx)
@@ -610,6 +719,7 @@ func (b *MicroVM) armIdleTimer(rvm *runVM, gen uint64) {
 		}
 		rvm.vm = nil
 		rvm.egress = nil
+		rvm.pausedAt = time.Time{}
 		rvm.idleTimer = nil
 	})
 }
@@ -651,10 +761,15 @@ func (b *MicroVM) stopRunVM(ctx context.Context, runID string) {
 		rvm.cacheDropTimer.Stop()
 		rvm.cacheDropTimer = nil
 	}
+	if rvm.pauseTimer != nil {
+		rvm.pauseTimer.Stop()
+		rvm.pauseTimer = nil
+	}
 	vm := rvm.vm
 	eg := rvm.egress
 	rvm.vm = nil
 	rvm.egress = nil
+	rvm.pausedAt = time.Time{}
 	rvm.mu.Unlock()
 	if vm != nil {
 		_ = vm.Stop(ctx)
