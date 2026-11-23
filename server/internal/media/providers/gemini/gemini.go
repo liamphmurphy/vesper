@@ -533,6 +533,7 @@ func (p *Provider) mapError(err error) error {
 		apiStatus  string
 		rawMsg     string
 		retryAfter time.Duration
+		details    []map[string]any
 	)
 	extractMeta := func(meta components.HTTPMetadata) {
 		if meta.Response != nil {
@@ -585,10 +586,12 @@ func (p *Provider) mapError(err error) error {
 		status = gErrPtr.Code
 		apiStatus = gErrPtr.Status
 		rawMsg = gErrPtr.Message
+		details = gErrPtr.Details
 	case errors.As(err, &gErr):
 		status = gErr.Code
 		apiStatus = gErr.Status
 		rawMsg = gErr.Message
+		details = gErr.Details
 	case errors.As(err, &iErr) && iErr != nil:
 		status = iErr.StatusCode
 		rawMsg = iErr.Message
@@ -619,6 +622,18 @@ func (p *Provider) mapError(err error) error {
 	case status == http.StatusTooManyRequests || strings.Contains(lower, "resource_exhausted") || strings.Contains(lower, "quota"):
 		kind = media.ErrKindQuota
 		friendly = "Gemini quota or monthly credit limit reached (429). Check your GCP credit budget or try again shortly."
+		// AI Studio's free tier names the quota that ran out: a per-day cap
+		// holds until midnight Pacific whatever retry delay it suggests, while
+		// a per-minute one lifts after that delay.
+		switch q := parseQuotaDetails(details); {
+		case q.daily:
+			friendly = q.message()
+			retryAfter = untilDailyReset(time.Now())
+		case q.perMinute:
+			kind = media.ErrKindRateLimit
+			friendly = q.message()
+			retryAfter = max(retryAfter, q.retryDelay)
+		}
 	case strings.Contains(lower, "safety") || strings.Contains(lower, "prohibited") || strings.Contains(lower, "content filter") || strings.Contains(lower, "blocked"):
 		kind = media.ErrKindFiltered
 		friendly = "Gemini blocked this prompt under content safety rules. Edit the prompt or lyrics and try again."

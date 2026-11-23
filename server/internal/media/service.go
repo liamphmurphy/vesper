@@ -27,6 +27,9 @@ type Service struct {
 	Pool     *pgxpool.Pool
 	Box      *secrets.Box
 	Registry *Registry
+	// SpeechQuota, when set, holds speech requests back while a workspace's
+	// provider is out of quota. Share one across services spending the same key.
+	SpeechQuota *SpeechQuota
 }
 
 // ProviderView is the non-secret view of a provider returned to Settings.
@@ -431,7 +434,7 @@ func (s *Service) ResolveSpeech(ctx context.Context, ws uuid.UUID) (SpeechGenera
 	if err != nil {
 		return nil, Descriptor{}, err
 	}
-	return prov.(SpeechGenerator), desc, nil
+	return s.SpeechQuota.Wrap(ws.String()+"/"+desc.ID, prov.(SpeechGenerator)), desc, nil
 }
 
 func (s *Service) resolveCapability(

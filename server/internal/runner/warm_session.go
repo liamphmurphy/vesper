@@ -326,7 +326,6 @@ func (r *Runner) runWarmTurn(
 	check harness.PolicyFunc,
 	onSession func(string),
 	onTextDelta func(string),
-	onEvent func(harness.Event),
 	recordContext bool,
 ) (res harness.Result, rawBytes []byte, exitCode int, sawActivity bool, err error) {
 	writeContext := func(wctx context.Context, n int64) {
@@ -383,9 +382,6 @@ func (r *Runner) runWarmTurn(
 		},
 		OnEvent: func(e harness.Event) {
 			activity.Store(true)
-			if onEvent != nil {
-				onEvent(e)
-			}
 			payload, b := redactPayload(e.Payload, ws.sensitive)
 			opening.see(e.Type, payload)
 			select {

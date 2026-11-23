@@ -264,6 +264,12 @@ func startClassifiedChatTurnWithRollover(ctx context.Context, q *store.Queries, 
 		d.spoken()
 	}
 	chat, run, turn, err := startChatTurnWithRollover(ctx, q, chat, project, d.prompt(prompt), d.Level, false, handoffChars, autoRolloverDefault)
+	if err == nil && voice {
+		if err = q.MarkTurnSpoken(ctx, turn.ID); err != nil {
+			return chat, run, turn, err
+		}
+		turn.Spoken = true
+	}
 	if err != nil || len(d.Fired) == 0 {
 		return chat, run, turn, err
 	}

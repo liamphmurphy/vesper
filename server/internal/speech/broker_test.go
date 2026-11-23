@@ -8,41 +8,6 @@ import (
 	"time"
 )
 
-func TestLeadWatcherMatchesFinalSplitLead(t *testing.T) {
-	chunks := []string{
-		"Sure. I checked ",
-		"the **runner** and it ",
-		"looks fine.\n\nWant ",
-		"the logs for it?",
-	}
-	var w LeadWatcher
-	var firedLead string
-	fireIdx := -1
-	for i, ch := range chunks {
-		if lead, ok := w.Feed(ch); ok {
-			firedLead = lead
-			fireIdx = i
-		}
-	}
-	if fireIdx != 3 {
-		t.Fatalf("fired at chunk %d (lead=%q), want chunk 3 once rest has >=2 words", fireIdx, firedLead)
-	}
-	full, _ := Speakable(chunks[0]+chunks[1]+chunks[2]+chunks[3], MaxWords)
-	wantLead, _ := SplitLead(full)
-	if firedLead != wantLead {
-		t.Fatalf("fired lead = %q, want %q", firedLead, wantLead)
-	}
-}
-
-func TestLeadWatcherResetsAfterToolCall(t *testing.T) {
-	var w LeadWatcher
-	w.Feed("Let me check the server logs right now. Holding on.")
-	w.Reset()
-	if lead, ok := w.Feed("All good, the migration applied cleanly across every node. Ready to deploy?"); !ok || lead != "All good, the migration applied cleanly across every node." {
-		t.Fatalf("after reset: ok=%v lead=%q", ok, lead)
-	}
-}
-
 func TestBrokerStreamsInFlightAndCaches(t *testing.T) {
 	b := NewBroker(time.Minute)
 	defer b.Close()

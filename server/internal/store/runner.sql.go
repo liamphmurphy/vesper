@@ -147,7 +147,7 @@ WHERE status = 'pending' AND id = (
   FOR UPDATE OF t SKIP LOCKED
   LIMIT 1
 )
-RETURNING id, run_id, seq, trigger, input_message, started_at, ended_at, exit_code, status, process_started_at, log_key, usage, effort, effort_level, effort_reasons, execution_token, execution_expires_at
+RETURNING id, run_id, seq, trigger, input_message, started_at, ended_at, exit_code, status, process_started_at, log_key, usage, effort, effort_level, effort_reasons, execution_token, execution_expires_at, spoken
 `
 
 type ClaimPendingTurnParams struct {
@@ -179,6 +179,7 @@ func (q *Queries) ClaimPendingTurn(ctx context.Context, arg ClaimPendingTurnPara
 		&i.EffortReasons,
 		&i.ExecutionToken,
 		&i.ExecutionExpiresAt,
+		&i.Spoken,
 	)
 	return i, err
 }
@@ -385,7 +386,7 @@ func (q *Queries) FinishTurn(ctx context.Context, arg FinishTurnParams) error {
 }
 
 const getTurn = `-- name: GetTurn :one
-SELECT id, run_id, seq, trigger, input_message, started_at, ended_at, exit_code, status, process_started_at, log_key, usage, effort, effort_level, effort_reasons, execution_token, execution_expires_at FROM run_turns WHERE id = $1
+SELECT id, run_id, seq, trigger, input_message, started_at, ended_at, exit_code, status, process_started_at, log_key, usage, effort, effort_level, effort_reasons, execution_token, execution_expires_at, spoken FROM run_turns WHERE id = $1
 `
 
 func (q *Queries) GetTurn(ctx context.Context, id uuid.UUID) (RunTurn, error) {
@@ -409,6 +410,7 @@ func (q *Queries) GetTurn(ctx context.Context, id uuid.UUID) (RunTurn, error) {
 		&i.EffortReasons,
 		&i.ExecutionToken,
 		&i.ExecutionExpiresAt,
+		&i.Spoken,
 	)
 	return i, err
 }
@@ -696,7 +698,7 @@ func (q *Queries) LockRunNoWait(ctx context.Context, id uuid.UUID) (Run, error) 
 }
 
 const lockTurn = `-- name: LockTurn :one
-SELECT id, run_id, seq, trigger, input_message, started_at, ended_at, exit_code, status, process_started_at, log_key, usage, effort, effort_level, effort_reasons, execution_token, execution_expires_at FROM run_turns WHERE id = $1 FOR UPDATE
+SELECT id, run_id, seq, trigger, input_message, started_at, ended_at, exit_code, status, process_started_at, log_key, usage, effort, effort_level, effort_reasons, execution_token, execution_expires_at, spoken FROM run_turns WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) LockTurn(ctx context.Context, id uuid.UUID) (RunTurn, error) {
@@ -720,6 +722,7 @@ func (q *Queries) LockTurn(ctx context.Context, id uuid.UUID) (RunTurn, error) {
 		&i.EffortReasons,
 		&i.ExecutionToken,
 		&i.ExecutionExpiresAt,
+		&i.Spoken,
 	)
 	return i, err
 }

@@ -2036,7 +2036,6 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 		defer cancel()
 		_ = r.q().SetRunSession(qctx, store.SetRunSessionParams{ID: c.run.ID, HarnessSessionID: &s})
 	}
-	preSynth := r.newChatLeadPreSynthesizer(ctx, q, c)
 
 	var (
 		proc            Process
@@ -2054,7 +2053,6 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 	onText := func(delta string) {
 		if delta != "" {
 			firstTextMS.CompareAndSwap(-1, time.Since(harnessStart).Milliseconds())
-			preSynth.onTextDelta(delta)
 		}
 	}
 
@@ -2077,7 +2075,7 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 				"harness": c.spec.Harness, "resume": session != "", "warm_session": true, "instruction_bytes": len(section), "skills": len(turnSpec.Skills)})
 			harnessStart = time.Now()
 			setupMS = harnessStart.Sub(turnClaimedAt).Milliseconds()
-			wRes, wRaw, wCode, sawActivity, wErr := r.runWarmTurn(ctx, c, reused, hTurn, maxRuntime-used, r.policyCheck(c), onSession, onText, preSynth.onEvent, true)
+			wRes, wRaw, wCode, sawActivity, wErr := r.runWarmTurn(ctx, c, reused, hTurn, maxRuntime-used, r.policyCheck(c), onSession, onText, true)
 			if wErr != nil && !sawActivity {
 				// Parked process exited between turns before handling this prompt; retry cold.
 				reused.close()
@@ -2170,7 +2168,7 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 				warmWS := newWarmSession(c.run.ID, warmFP, proc, procCancel, sess, c.agent.ID, tok.ID, sensitive, r.revokeToken)
 				procCancel = nil
 				keepToken = true
-				res, raw, code, _, waitErr = r.runWarmTurn(ctx, c, warmWS, hTurn, maxRuntime-used, r.policyCheck(c), onSession, onText, preSynth.onEvent, true)
+				res, raw, code, _, waitErr = r.runWarmTurn(ctx, c, warmWS, hTurn, maxRuntime-used, r.policyCheck(c), onSession, onText, true)
 				if waitErr == nil && !res.IsError && !res.UsageLimited && warmWS.sess.Alive() {
 					r.warmSessions.put(warmWS, r.Cfg.WarmSessionTTL)
 				} else {
@@ -2178,7 +2176,7 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 				}
 			}
 		} else {
-			res, raw, code, waitErr = r.runSession(ctx, c, sh, proc, ws, hTurn, sensitive, maxRuntime-used, r.policyCheck(c), onSession, onText, preSynth.onEvent, true)
+			res, raw, code, waitErr = r.runSession(ctx, c, sh, proc, ws, hTurn, sensitive, maxRuntime-used, r.policyCheck(c), onSession, onText, true)
 		}
 	}
 	stopSubagents()
@@ -2336,7 +2334,7 @@ func (w *contextWriter) observe(n int64) {
 // protocol, enforcing CheckTool in-process, streaming redacted events and
 // mid-turn ContextTokens updates, supervising pause/cancel/runtime limits, and
 // draining stderr/stdout cleanly on exit.
-func (r *Runner) runSession(ctx context.Context, c runCtx, sh harness.SessionHarness, proc Process, ws harness.Workspace, turn harness.Turn, env map[string]string, remaining time.Duration, check harness.PolicyFunc, onSession func(string), onTextDelta func(string), onEvent func(harness.Event), recordContext bool) (harness.Result, []byte, int, error) {
+func (r *Runner) runSession(ctx context.Context, c runCtx, sh harness.SessionHarness, proc Process, ws harness.Workspace, turn harness.Turn, env map[string]string, remaining time.Duration, check harness.PolicyFunc, onSession func(string), onTextDelta func(string), recordContext bool) (harness.Result, []byte, int, error) {
 	writeContext := func(wctx context.Context, n int64) {
 		qctx, cancel := context.WithTimeout(wctx, controlTimeout)
 		defer cancel()
@@ -2398,9 +2396,6 @@ func (r *Runner) runSession(ctx context.Context, c runCtx, sh harness.SessionHar
 				appendRaw("", line)
 			},
 			OnEvent: func(e harness.Event) {
-				if onEvent != nil {
-					onEvent(e)
-				}
 				payload, b := redactPayload(e.Payload, env)
 				opening.see(e.Type, payload)
 				select {

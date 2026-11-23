@@ -454,6 +454,13 @@ struct LiveVoiceView: View {
                     caption(replyCaption, color: p.text)
                 }
             }
+            if let notice = companion.voiceNotice {
+                Label("\(persona?.name ?? "Your assistant") is using your Mac's voice. \(notice)", systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(p.secondaryText)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(.easeOut(duration: 0.2), value: session.turn.phase)

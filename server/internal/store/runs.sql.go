@@ -1662,7 +1662,7 @@ func (q *Queries) ListRuns(ctx context.Context, arg ListRunsParams) ([]Run, erro
 }
 
 const listTurns = `-- name: ListTurns :many
-SELECT id, run_id, seq, trigger, input_message, started_at, ended_at, exit_code, status, process_started_at, log_key, usage, effort, effort_level, effort_reasons, execution_token, execution_expires_at FROM run_turns WHERE run_id = $1 ORDER BY seq
+SELECT id, run_id, seq, trigger, input_message, started_at, ended_at, exit_code, status, process_started_at, log_key, usage, effort, effort_level, effort_reasons, execution_token, execution_expires_at, spoken FROM run_turns WHERE run_id = $1 ORDER BY seq
 `
 
 func (q *Queries) ListTurns(ctx context.Context, runID uuid.UUID) ([]RunTurn, error) {
@@ -1692,6 +1692,7 @@ func (q *Queries) ListTurns(ctx context.Context, runID uuid.UUID) ([]RunTurn, er
 			&i.EffortReasons,
 			&i.ExecutionToken,
 			&i.ExecutionExpiresAt,
+			&i.Spoken,
 		); err != nil {
 			return nil, err
 		}
@@ -1829,6 +1830,15 @@ func (q *Queries) MarkApprovalExecuted(ctx context.Context, arg MarkApprovalExec
 		&i.ChatID,
 	)
 	return i, err
+}
+
+const markTurnSpoken = `-- name: MarkTurnSpoken :exec
+UPDATE run_turns SET spoken = true WHERE id = $1
+`
+
+func (q *Queries) MarkTurnSpoken(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, markTurnSpoken, id)
+	return err
 }
 
 const pendingApprovalsForTicket = `-- name: PendingApprovalsForTicket :many
@@ -2525,7 +2535,7 @@ VALUES ($1, (SELECT coalesce(max(seq), 0) + 1 FROM run_turns WHERE run_id = $1),
   (SELECT resolved_spec->'harness_options'->>'effort' FROM runs WHERE id = $1),
   CASE WHEN $2 = 'comment' THEN $4::text
     ELSE coalesce($4::text, (SELECT effort_level FROM run_turns WHERE run_id = $1 ORDER BY seq DESC LIMIT 1)) END)
-RETURNING id, run_id, seq, trigger, input_message, started_at, ended_at, exit_code, status, process_started_at, log_key, usage, effort, effort_level, effort_reasons, execution_token, execution_expires_at
+RETURNING id, run_id, seq, trigger, input_message, started_at, ended_at, exit_code, status, process_started_at, log_key, usage, effort, effort_level, effort_reasons, execution_token, execution_expires_at, spoken
 `
 
 type StartTurnParams struct {
@@ -2565,6 +2575,7 @@ func (q *Queries) StartTurn(ctx context.Context, arg StartTurnParams) (RunTurn, 
 		&i.EffortReasons,
 		&i.ExecutionToken,
 		&i.ExecutionExpiresAt,
+		&i.Spoken,
 	)
 	return i, err
 }

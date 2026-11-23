@@ -3,81 +3,49 @@ package runner
 import (
 	"context"
 
-	"github.com/liamphmurphy/vesper/server/internal/harness"
 	"github.com/liamphmurphy/vesper/server/internal/media"
 	"github.com/liamphmurphy/vesper/server/internal/personas"
 	"github.com/liamphmurphy/vesper/server/internal/speech"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 )
 
-// chatLeadPreSynthesizer watches streaming assistant text deltas on a voiced
-// chat turn and starts synthesizing sentence 1 through SpeechBroker while the
-// model is still writing the rest of the reply.
-type chatLeadPreSynthesizer struct {
-	broker   *speech.Broker
-	gen      media.SpeechGenerator
-	provider string
-	voice    string
-	style    string
-	watcher  speech.LeadWatcher
-}
-
-func (r *Runner) newChatLeadPreSynthesizer(ctx context.Context, q *store.Queries, c runCtx) *chatLeadPreSynthesizer {
-	if r.SpeechBroker == nil || r.Media == nil || c.run.Purpose != "chat" {
-		return nil
-	}
-	chat, err := q.ChatSessionForRun(ctx, &c.run.ID)
-	if err != nil {
-		return nil
+// preSynthesizeReply starts voicing a Live Voice turn's reply through the
+// SpeechBroker as soon as it is stored, so the client's speech request (made
+// once it sees the reply) joins audio already on its way. The whole reply is
+// one provider request: Gemini streams PCM, so first audio arrives about as
+// soon as it would for a separately voiced first sentence, and a reply spends
+// one request of the provider's quota rather than two. Typed turns are left
+// alone: they're voiced, if at all, when someone asks.
+func (r *Runner) preSynthesizeReply(ctx context.Context, c runCtx, turn store.RunTurn, chat store.ChatSession, body string) {
+	if r.SpeechBroker == nil || r.Media == nil || !turn.Spoken {
+		return
 	}
 	speakerID := chatSpeaker(chat)
 	if speakerID == nil {
-		return nil
+		return
 	}
 	p, err := (&personas.Service{Pool: r.Pool}).Get(ctx, personas.Owner{WorkspaceID: c.run.WorkspaceID, UserID: chat.CreatedBy}, *speakerID)
 	if err != nil || p.VoiceMode == "off" {
-		return nil
+		return
+	}
+	// The same text and key the speech endpoint derives from the stored reply.
+	text, words := speech.Speakable(body, speech.MaxWords)
+	if words == 0 {
+		return
 	}
 	gen, desc, err := r.Media.ResolveSpeech(ctx, c.run.WorkspaceID)
 	if err != nil {
-		return nil
-	}
-	return &chatLeadPreSynthesizer{
-		broker:   r.SpeechBroker,
-		gen:      gen,
-		provider: desc.ID,
-		voice:    p.VoiceName,
-		style:    p.VoiceStyle,
-	}
-}
-
-func (p *chatLeadPreSynthesizer) onEvent(e harness.Event) {
-	if p == nil {
 		return
 	}
-	if e.Type == "tool_call" || e.Type == "tool_use" {
-		p.watcher.Reset()
-	}
-}
-
-func (p *chatLeadPreSynthesizer) onTextDelta(delta string) {
-	if p == nil {
-		return
-	}
-	lead, ok := p.watcher.Feed(delta)
-	if !ok {
-		return
-	}
-	hash := speech.CacheHash(p.provider, p.voice, p.style, lead)
-	req := media.SpeechRequest{Text: lead, Voice: p.voice, Style: p.style}
-	p.broker.Start(hash, func(ctx context.Context, onChunk func([]byte, int) error) ([]byte, string, error) {
-		if sg, ok := p.gen.(media.StreamingSpeechGenerator); ok {
+	req := media.SpeechRequest{Text: text, Voice: p.VoiceName, Style: p.VoiceStyle}
+	r.SpeechBroker.Start(speech.CacheHash(desc.ID, p.VoiceName, p.VoiceStyle, text), func(ctx context.Context, onChunk func([]byte, int) error) ([]byte, string, error) {
+		if sg, ok := gen.(media.StreamingSpeechGenerator); ok {
 			clip, err := sg.StreamSpeech(ctx, req, func(ch media.SpeechChunk) error {
 				return onChunk(ch.PCM, ch.SampleRate)
 			})
 			return clip.Data, clip.Model, err
 		}
-		clip, err := p.gen.GenerateSpeech(ctx, req)
+		clip, err := gen.GenerateSpeech(ctx, req)
 		if err != nil {
 			return nil, "", err
 		}
