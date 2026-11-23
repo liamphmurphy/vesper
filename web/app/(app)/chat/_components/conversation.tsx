@@ -24,6 +24,7 @@ import {
   useChatModels,
   useCreateChat,
   useDeleteChat,
+  useLinkPreviews,
   useQueueFollowup,
   useSendChatMessage,
   useSetChatCommitEmail,
@@ -85,7 +86,7 @@ import { useChatAudio, useStopChatAudio } from "@/lib/api/audio-hooks";
 import { placeStandaloneAudio, type ChatAudio } from "@/lib/chat-audio";
 import { useChatVideos } from "@/lib/api/video-hooks";
 import type { ChatVideo } from "@/lib/chat-video";
-import { CiteContext } from "@/components/domain/cite-marker";
+import { CiteContext, type CiteMeta } from "@/components/domain/cite-marker";
 import { summaryUrlsForTurns } from "@/lib/chat-recommend";
 import { hostOf } from "@/lib/web-search";
 import { timelineTime } from "@/lib/format";
@@ -177,11 +178,32 @@ const Bubble = memo(function Bubble({ m, chat, persona, saveable, names, turn, e
   const [citeFocus, setCiteFocus] = useState<{ n: number; tick: number }>();
   // A reply that just arrived may be revealing word by word while the persona talks.
   const shown = useRevealedText(chat.id, m.id, parts.body);
+  const hasWebCites = useMemo(() => parts.listed.some((l) => l.n !== undefined && !!l.url), [parts.listed]);
+  const previews = useLinkPreviews(m.role === "assistant" && hasWebCites ? m.id : undefined);
   const cites = useMemo(() => {
     const titles = new Map<number, string>();
-    for (const l of parts.listed) if (l.n !== undefined) titles.set(l.n, l.title || l.ref || hostOf(l.url));
-    return { numbers: [...titles.keys()], value: { titles, focus: (n: number) => setCiteFocus((f) => ({ n, tick: (f?.tick ?? 0) + 1 })) } };
-  }, [parts.listed]);
+    const items = new Map<number, CiteMeta>();
+    const byUrl = new Map((previews.data?.previews ?? []).map((p) => [p.url, p]));
+    for (const l of parts.listed) {
+      if (l.n === undefined) continue;
+      const preview = l.url ? byUrl.get(l.url) : undefined;
+      const title = preview?.title || l.title || l.ref || hostOf(l.url);
+      titles.set(l.n, title);
+      items.set(l.n, {
+        title,
+        url: l.url || undefined,
+        ref: l.ref || undefined,
+        host: preview?.site || (l.url ? hostOf(l.url) : l.ref),
+        kind: l.url ? "web" : "wiki",
+        description: preview?.description || undefined,
+        imageUrl: preview?.image_url || undefined,
+      });
+    }
+    return {
+      numbers: [...titles.keys()],
+      value: { titles, items, focus: (n: number) => setCiteFocus((f) => ({ n, tick: (f?.tick ?? 0) + 1 })) },
+    };
+  }, [parts.listed, previews.data]);
   // A turn that ended without a reply keeps its steps: under the failure, or under the unanswered message.
   const endedSteps = ended && (
     <li className="flex flex-col items-start gap-1.5" data-testid="ended-turn">
@@ -1557,7 +1579,13 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
           )}
         </div>
         {/* Outside [data-chat-scroller] so contain:layout on the scroller does not trap its fixed viewport positioning. */}
-        {view === "chat" && !c.archived && <AskAboutSelection root={log} onAsk={askAboutSelection} />}
+        {view === "chat" && !c.archived && (
+          <AskAboutSelection
+            root={log}
+            onAsk={askAboutSelection}
+            onQuote={(text, authorId, author) => replyTo.current(text, authorId, author)}
+          />
+        )}
         {companion && (
           <PersonaCompanion
             chatId={c.id}
