@@ -45,9 +45,13 @@ struct KnowledgeEditorView: View {
     @Environment(NativeScreenContext.self) private var context
     @Environment(\.vesperTheme) private var theme
 
+    /// Hands the screen a way to save unsaved edits now (for Print), and nil when the editor leaves.
+    typealias RegisterSave = (_ save: (@MainActor () async -> Void)?) -> Void
+
     let page: KnowledgePage
     var headingJumpRequest: KnowledgeHeadingJumpRequest?
     var onHeadingsChange: (([KnowledgeOutlineHeading]) -> Void)?
+    var onRegisterSave: RegisterSave?
 
     @State private var document: KnowledgeEditorDocument
     @State private var lastSavedMarkdown: String
@@ -74,11 +78,13 @@ struct KnowledgeEditorView: View {
     init(
         page: KnowledgePage,
         headingJumpRequest: KnowledgeHeadingJumpRequest? = nil,
-        onHeadingsChange: (([KnowledgeOutlineHeading]) -> Void)? = nil
+        onHeadingsChange: (([KnowledgeOutlineHeading]) -> Void)? = nil,
+        onRegisterSave: RegisterSave? = nil
     ) {
         self.page = page
         self.headingJumpRequest = headingJumpRequest
         self.onHeadingsChange = onHeadingsChange
+        self.onRegisterSave = onRegisterSave
         let initial = page.bodyMd ?? ""
         _document = State(initialValue: KnowledgeEditorDocument(markdown: initial))
         _lastSavedMarkdown = State(initialValue: initial)
@@ -188,8 +194,10 @@ struct KnowledgeEditorView: View {
             }
             findBridge.onClear = { clearFind() }
             context.find.searcher = findBridge
+            onRegisterSave?({ await saveNow() })
         }
         .onDisappear {
+            onRegisterSave?(nil)
             autosaveTask?.cancel()
             if context.find.searcher === findBridge {
                 context.find.searcher = nil

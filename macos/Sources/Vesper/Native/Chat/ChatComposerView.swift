@@ -40,6 +40,9 @@ struct ChatComposerView: View {
     let onCompare: @MainActor (ChatCompareOption, String) async -> String?
     /// Opens Live Voice, talking with the persona out loud.
     let onStartLiveVoice: @MainActor () -> Void
+    /// Text to draft without sending; `onPrefillApplied` gets its token once it is in the composer.
+    var prefill: ChatComposerPrefill? = nil
+    var onPrefillApplied: (@MainActor (Int) -> Void)? = nil
 
     private let draftStore = ChatDraftStore()
 
@@ -167,7 +170,11 @@ struct ChatComposerView: View {
         ) { result in
             handleFileImport(result)
         }
-        .onAppear { loadDraft(for: chatId) }
+        .onAppear {
+            loadDraft(for: chatId)
+            applyPrefill()
+        }
+        .onChange(of: prefill?.token) { _, _ in applyPrefill() }
         .onDisappear { saveDraftImmediately(for: chatId) }
         .onChange(of: chatId) { oldId, newId in
             saveDraftImmediately(for: oldId)
@@ -1087,6 +1094,16 @@ struct ChatComposerView: View {
             contextChips = []
             setDraftProgrammatically("", cursorUTF16: 0, save: false)
         }
+    }
+
+    /// Runs after `loadDraft` on appear, so a saved draft can't overwrite the prefill.
+    private func applyPrefill() {
+        guard let prefill else { return }
+        setDraftProgrammatically(ChatComposerPrefill.merge(prefill.text, into: editor.text), save: false)
+        saveDraftImmediately(for: chatId)
+        onPrefillApplied?(prefill.token)
+        // The text view may not be in a window yet on first appear.
+        DispatchQueue.main.async { editor.focus() }
     }
 
     private func scheduleDraftSave(for id: String?) {

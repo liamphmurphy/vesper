@@ -33,6 +33,12 @@ final class ChatComposerController {
         self.cursorUTF16 = clampedCursor
         coordinator?.applyProgrammaticText(newText, cursorUTF16: clampedCursor)
     }
+
+    /// Makes the text view first responder, so a drafted prompt can be edited straight away.
+    func focus() {
+        guard let textView = coordinator?.textView else { return }
+        textView.window?.makeFirstResponder(textView)
+    }
 }
 
 /// Isolated macOS AppKit TextKit 2 editor for the native chat composer.

@@ -43,6 +43,9 @@ struct DockedChatView<ContextChips: View>: View {
     let prepareBody: (String) -> String
     let prepareContextRefs: ([API.ChatContextRef]?) -> [API.ChatContextRef]?
     let onTurnCompleted: (() -> Void)?
+    /// Drafted into this chat's composer without sending (see `ChatComposerPrefill`).
+    var composerPrefill: ChatComposerPrefill? = nil
+    var onComposerPrefillApplied: (@MainActor (Int) -> Void)? = nil
     @ViewBuilder let contextChips: () -> ContextChips
 
     @State private var selectedHarness: API.Harness?
@@ -151,7 +154,9 @@ struct DockedChatView<ContextChips: View>: View {
                         },
                         onStartLiveVoice: {
                             onOpenFullChat(chatId)
-                        }
+                        },
+                        prefill: composerPrefill,
+                        onPrefillApplied: onComposerPrefillApplied
                     )
                 }
                 .padding(.top, 4)
