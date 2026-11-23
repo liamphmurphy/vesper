@@ -24,6 +24,11 @@ final class ChatScreenModel {
     var renameTargetId: String?
     var renameDraft = ""
     var deleteTargetId: String?
+    var forkTarget: API.ChatMessage?
+    var promoteTicketTarget: API.ChatMessage?
+    var saveWikiTarget: API.ChatMessage?
+    var composerPrefill: ChatComposerPrefill?
+    @ObservationIgnored var prefillToken = 0
 
     var inspectorOpen = false
     var inspectorTabId = ChatInspectorLogic.activityTabId
@@ -178,14 +183,12 @@ struct ChatScreen: View {
 
             Group {
                 if let chatId {
-                    ChatTranscriptView(
+                    transcriptSection(
                         chatId: chatId,
                         session: session,
-                        knownPersonaNames: personas.map(\.name),
-                        scrollToMessageRequest: model.scrollToMessageRequest,
-                        onSendReply: { body in
-                            Task { _ = await sendMessage(body, activePersona: activePersona) }
-                        }
+                        personas: personas,
+                        activePersona: activePersona,
+                        harnessModels: harnessModels
                     )
                 } else {
                     emptyChatView(
@@ -241,6 +244,12 @@ struct ChatScreen: View {
                 onStartLiveVoice: {
                     companionOpen = false
                     liveVoiceOpen = true
+                },
+                prefill: model.composerPrefill,
+                onPrefillApplied: { token in
+                    if model.composerPrefill?.token == token {
+                        model.composerPrefill = nil
+                    }
                 }
             )
         }
@@ -358,6 +367,24 @@ struct ChatScreen: View {
         )) {
             renameSheet(chats: chats)
         }
+        .sheet(item: Binding(
+            get: { model.forkTarget.map { MessageSheetTarget(message: $0) } },
+            set: { if $0 == nil { model.forkTarget = nil } }
+        )) { item in
+            forkSheet(session: session, message: item.message)
+        }
+        .sheet(item: Binding(
+            get: { model.promoteTicketTarget.map { MessageSheetTarget(message: $0) } },
+            set: { if $0 == nil { model.promoteTicketTarget = nil } }
+        )) { item in
+            promoteTicketSheet(session: session, message: item.message)
+        }
+        .sheet(item: Binding(
+            get: { model.saveWikiTarget.map { MessageSheetTarget(message: $0) } },
+            set: { if $0 == nil { model.saveWikiTarget = nil } }
+        )) { item in
+            saveWikiSheet(session: session, message: item.message)
+        }
         .alert(
             "Delete conversation?",
             isPresented: Binding(
@@ -378,6 +405,105 @@ struct ChatScreen: View {
     }
 
     // MARK: - Header Bar
+
+    private struct MessageSheetTarget: Identifiable {
+        let message: API.ChatMessage
+        var id: String { message.id }
+    }
+
+    private func transcriptSection(
+        chatId: String,
+        session: API.ChatSession?,
+        personas: [API.Persona],
+        activePersona: API.Persona?,
+        harnessModels: [API.ChatHarnessModels]
+    ) -> some View {
+        ChatTranscriptView(
+            chatId: chatId,
+            session: session,
+            knownPersonaNames: personas.map(\.name),
+            personas: personas,
+            harnessModels: harnessModels,
+            scrollToMessageRequest: model.scrollToMessageRequest,
+            onSendReply: { body in
+                Task { _ = await sendMessage(body, activePersona: activePersona) }
+            },
+            onQuoteMessage: { body, mention in
+                let hostName = activePersona?.name ?? session?.persona?.name
+                let tag = (mention != nil && mention != hostName) ? mention : nil
+                let text = ChatQuoteLogic.quoteForComposer(body, mention: tag)
+                model.prefillToken += 1
+                model.composerPrefill = ChatComposerPrefill(token: model.prefillToken, text: text)
+            },
+            onOpenThread: { messageId in
+                model.threadMessageId = messageId
+                model.inspectorTabId = ChatInspectorLogic.threadTabId
+                model.inspectorOpen = true
+            },
+            onForkMessage: { msg in
+                model.forkTarget = msg
+            },
+            onPromoteTicket: { msg in
+                model.promoteTicketTarget = msg
+            },
+            onSaveWiki: { msg in
+                model.saveWikiTarget = msg
+            },
+            onSecondOpinion: { msg, harness, modelId in
+                Task {
+                    _ = try? await context.store.mutate(
+                        API.startChatAside(id: chatId, body: API.ChatAsideStart(
+                            anchorMessageId: msg.id,
+                            body: "",
+                            harness: harness,
+                            model: modelId,
+                            secondOpinion: true
+                        )),
+                        invalidating: QueryInvalidation(resources: ["chats"])
+                    )
+                }
+            }
+        )
+    }
+
+    @ViewBuilder
+    private func forkSheet(session: API.ChatSession?, message: API.ChatMessage) -> some View {
+        if let chatId {
+            ChatForkSheetView(
+                chatId: chatId,
+                defaultTitle: session?.title ?? "",
+                hasRepo: !(session?.repoUrl ?? "").isEmpty,
+                message: message,
+                onClose: { model.forkTarget = nil }
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func promoteTicketSheet(session: API.ChatSession?, message: API.ChatMessage) -> some View {
+        if let chatId {
+            ChatPromoteTicketSheetView(
+                chatId: chatId,
+                chatTitle: session?.title ?? "",
+                defaultProjectKey: session?.project,
+                bodyMd: message.bodyMd,
+                onClose: { model.promoteTicketTarget = nil }
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func saveWikiSheet(session: API.ChatSession?, message: API.ChatMessage) -> some View {
+        if let chatId {
+            ChatSaveWikiSheetView(
+                chatId: chatId,
+                chatTitle: session?.title ?? "",
+                projectKey: session?.project,
+                bodyMd: message.bodyMd,
+                onClose: { model.saveWikiTarget = nil }
+            )
+        }
+    }
 
     private func headerBar(
         session: API.ChatSession?,
@@ -682,6 +808,7 @@ struct ChatScreen: View {
                ChatInspectorLogic.playgroundTabId,
                ChatInspectorLogic.codeTabId,
                ChatInspectorLogic.threadTabId,
+               ChatInspectorLogic.outlineTabId,
                ChatInspectorLogic.activityTabId,
            ].contains(panel) {
             model.inspectorTabId = panel
@@ -729,6 +856,19 @@ struct ChatScreen: View {
                         .environment(context)
                         .environment(\.vesperTheme, model.theme)
                         .environment(\.colorScheme, model.colorScheme)
+                )
+            }
+            if tabId == ChatInspectorLogic.outlineTabId,
+               let currentChatId = context.match.params["id"] {
+                return AnyView(
+                    ChatOutlineInspectorView(chatId: currentChatId) { messageId in
+                        model.scrollToken += 1
+                        model.scrollToMessageRequest = ChatScrollMessageRequest(token: model.scrollToken, messageId: messageId)
+                    }
+                    .id("outline:\(currentChatId)")
+                    .environment(context)
+                    .environment(\.vesperTheme, model.theme)
+                    .environment(\.colorScheme, model.colorScheme)
                 )
             }
             return nil

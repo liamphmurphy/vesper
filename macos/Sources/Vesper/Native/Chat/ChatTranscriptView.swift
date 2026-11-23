@@ -15,8 +15,16 @@ struct ChatTranscriptView: View {
     let chatId: String
     let session: API.ChatSession?
     let knownPersonaNames: [String]
+    var personas: [API.Persona] = []
+    var harnessModels: [API.ChatHarnessModels] = []
     var scrollToMessageRequest: ChatScrollMessageRequest?
     let onSendReply: @MainActor (String) -> Void
+    var onQuoteMessage: (@MainActor (String, String?) -> Void)? = nil
+    var onOpenThread: (@MainActor (String) -> Void)? = nil
+    var onForkMessage: (@MainActor (API.ChatMessage) -> Void)? = nil
+    var onPromoteTicket: (@MainActor (API.ChatMessage) -> Void)? = nil
+    var onSaveWiki: (@MainActor (API.ChatMessage) -> Void)? = nil
+    var onSecondOpinion: (@MainActor (API.ChatMessage, API.Harness, String) -> Void)? = nil
 
     @State private var watched: [QueryKey] = []
     @State private var parseCache = ChatParsedMessageCache()
@@ -185,7 +193,15 @@ struct ChatTranscriptView: View {
                                     canvases: parsed.hasCanvasSegment ? canvases : [],
                                     audios: audiosByMessage[message.id] ?? [],
                                     videos: videosByMessage[message.id] ?? [],
-                                    onSendReply: onSendReply
+                                    personas: personas,
+                                    harnessModels: harnessModels,
+                                    onSendReply: onSendReply,
+                                    onQuoteMessage: onQuoteMessage,
+                                    onOpenThread: onOpenThread,
+                                    onForkMessage: onForkMessage,
+                                    onPromoteTicket: onPromoteTicket,
+                                    onSaveWiki: onSaveWiki,
+                                    onSecondOpinion: onSecondOpinion
                                 )
                                 .id(message.id)
 
@@ -424,7 +440,53 @@ private struct ChatMessageRowView: View {
     let canvases: [API.ChatCanvasSummary]
     let audios: [API.ChatAudio]
     let videos: [API.ChatVideo]
+    let personas: [API.Persona]
+    let harnessModels: [API.ChatHarnessModels]
     let onSendReply: @MainActor (String) -> Void
+    let onQuoteMessage: (@MainActor (String, String?) -> Void)?
+    let onOpenThread: (@MainActor (String) -> Void)?
+    let onForkMessage: (@MainActor (API.ChatMessage) -> Void)?
+    let onPromoteTicket: (@MainActor (API.ChatMessage) -> Void)?
+    let onSaveWiki: (@MainActor (API.ChatMessage) -> Void)?
+    let onSecondOpinion: (@MainActor (API.ChatMessage, API.Harness, String) -> Void)?
+
+    @State private var togglingBookmark = false
+    @State private var activeCitationNumber: Int?
+
+    private var previewRequest: APIRequest<API.LinkPreviews>? {
+        guard message.role == .assistant, parsed.sources.contains(where: { !$0.url.isEmpty }) else { return nil }
+        return API.listLinkPreviews(messageId: message.id)
+    }
+
+    private func handleMarkdownLink(_ target: MarkdownLinkTarget) -> Bool {
+        if case .citation(let n) = target, parsed.sources.contains(where: { $0.number == n }) {
+            if let req = previewRequest { context.store.load(req) }
+            activeCitationNumber = n
+            return true
+        }
+        return false
+    }
+
+    private func toggleBookmark() {
+        guard !togglingBookmark else { return }
+        togglingBookmark = true
+        let next = !(message.bookmarked == true)
+        Task {
+            defer { togglingBookmark = false }
+            do {
+                _ = try await context.store.mutate(
+                    API.updateChatMessageBookmark(
+                        id: chatId,
+                        messageId: message.id,
+                        body: API.ChatBookmarkUpdate(bookmarked: next)
+                    ),
+                    invalidating: QueryInvalidation(resources: ["chats"])
+                )
+            } catch {
+                context.showToast(ToastItemModel(id: "chat.bookmark.err", title: "Couldn’t update bookmark", tone: .error))
+            }
+        }
+    }
 
     var body: some View {
         let p = theme.palette
@@ -433,6 +495,45 @@ private struct ChatMessageRowView: View {
         if message.role == .user {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .trailing, spacing: 6) {
+                    HStack(spacing: 6) {
+                        if message.bookmarked == true {
+                            TonePill(label: "Pinned", tone: "review")
+                        }
+                        Button {
+                            toggleBookmark()
+                        } label: {
+                            Image(systemName: message.bookmarked == true ? "bookmark.fill" : "bookmark")
+                                .imageScale(.small)
+                                .foregroundStyle(message.bookmarked == true ? p.accent : p.tertiaryText)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(togglingBookmark)
+                        .help(message.bookmarked == true ? "Remove bookmark" : "Bookmark message")
+
+                        if let onQuoteMessage {
+                            Button {
+                                onQuoteMessage(parsed.typedBody, nil)
+                            } label: {
+                                Image(systemName: "arrowshape.turn.up.left")
+                                    .imageScale(.small)
+                                    .foregroundStyle(p.tertiaryText)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Quote in composer")
+                        }
+
+                        if let onForkMessage {
+                            Button {
+                                onForkMessage(message)
+                            } label: {
+                                Image(systemName: "arrow.triangle.branch")
+                                    .imageScale(.small)
+                                    .foregroundStyle(p.tertiaryText)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Fork conversation from here")
+                        }
+                    }
                     ChatContextChipsView(stripped: parsed.context, refs: message.contextRefs ?? [])
                     VStack(alignment: .leading, spacing: 8) {
                         if !parsed.typedBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -511,17 +612,27 @@ private struct ChatMessageRowView: View {
                             .font(.system(size: theme.pointSize(.micro), design: .monospaced))
                             .foregroundStyle(p.tertiaryText)
                     }
-                    Spacer(minLength: 8)
-                    Button {
-                        context.copyToClipboard(message.bodyMd)
-                        context.showToast(ToastItemModel(id: "chat.copy.\(message.id)", title: "Copied message", tone: .success))
-                    } label: {
-                        Image(systemName: "doc.on.doc")
-                            .imageScale(.small)
-                            .foregroundStyle(p.tertiaryText)
+                    if message.bookmarked == true {
+                        TonePill(label: "Pinned", tone: "review")
                     }
-                    .buttonStyle(.plain)
-                    .help("Copy markdown")
+                    Spacer(minLength: 8)
+                    assistantActionBar
+                }
+                .popover(
+                    isPresented: Binding(
+                        get: { activeCitationNumber != nil },
+                        set: { if !$0 { activeCitationNumber = nil } }
+                    ),
+                    arrowEdge: .top
+                ) {
+                    if let n = activeCitationNumber,
+                       let source = parsed.sources.first(where: { $0.number == n }) {
+                        let previews = previewRequest.flatMap { context.store.entry($0).data?.previews } ?? []
+                        let preview = previews.first(where: { $0.url == source.url })
+                        ChatCitationPopoverCardView(source: source, preview: preview) {
+                            activeCitationNumber = nil
+                        }
+                    }
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
@@ -563,7 +674,7 @@ private struct ChatMessageRowView: View {
                         ChatVideoCardView(chatId: chatId, video: video)
                     }
 
-                    ChatSourcesChipsView(sources: parsed.sources, citations: message.citations ?? [])
+                    ChatSourcesChipsView(sources: parsed.sources, citations: message.citations ?? [], messageId: message.id)
                 }
                 .padding(.leading, 32)
             }
@@ -571,10 +682,122 @@ private struct ChatMessageRowView: View {
     }
 
     @ViewBuilder
+    private var assistantActionBar: some View {
+        let p = theme.palette
+        let otherPersonas = personas.filter { $0.id != personaId }
+        let availableModels = harnessModels.filter { $0.available && !$0.models.isEmpty }
+
+        HStack(spacing: 8) {
+            if let onQuoteMessage {
+                Button {
+                    onQuoteMessage(message.bodyMd, speakerName)
+                } label: {
+                    Image(systemName: "arrowshape.turn.up.left")
+                        .imageScale(.small)
+                        .foregroundStyle(p.tertiaryText)
+                }
+                .buttonStyle(.plain)
+                .help("Quote in composer")
+            }
+
+            if let onOpenThread {
+                Button {
+                    onOpenThread(message.id)
+                } label: {
+                    Image(systemName: "bubble.left.and.bubble.right")
+                        .imageScale(.small)
+                        .foregroundStyle(p.tertiaryText)
+                }
+                .buttonStyle(.plain)
+                .help("Start thread on this message")
+            }
+
+            Button {
+                toggleBookmark()
+            } label: {
+                Image(systemName: message.bookmarked == true ? "bookmark.fill" : "bookmark")
+                    .imageScale(.small)
+                    .foregroundStyle(message.bookmarked == true ? p.accent : p.tertiaryText)
+            }
+            .buttonStyle(.plain)
+            .disabled(togglingBookmark)
+            .help(message.bookmarked == true ? "Remove bookmark" : "Bookmark message")
+
+            if let onSecondOpinion, !availableModels.isEmpty {
+                Menu {
+                    ForEach(availableModels, id: \.harness.rawValue) { group in
+                        Section(group.label) {
+                            ForEach(group.models, id: \.id) { item in
+                                Button(item.label) {
+                                    onSecondOpinion(message, group.harness, item.id)
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "rectangle.split.2x1")
+                        .imageScale(.small)
+                        .foregroundStyle(p.tertiaryText)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Second opinion from another model")
+            }
+
+            Button {
+                context.copyToClipboard(message.bodyMd)
+                context.showToast(ToastItemModel(id: "chat.copy.\(message.id)", title: "Copied message", tone: .success))
+            } label: {
+                Image(systemName: "doc.on.doc")
+                    .imageScale(.small)
+                    .foregroundStyle(p.tertiaryText)
+            }
+            .buttonStyle(.plain)
+            .help("Copy markdown")
+
+            Menu {
+                if let onQuoteMessage, !otherPersonas.isEmpty {
+                    Menu("Ask another persona") {
+                        ForEach(otherPersonas, id: \.id) { other in
+                            Button("@\(other.name)") {
+                                onQuoteMessage(message.bodyMd, other.name)
+                            }
+                        }
+                    }
+                }
+                if let onForkMessage {
+                    Button("Fork conversation from here…") {
+                        onForkMessage(message)
+                    }
+                }
+                if let onPromoteTicket {
+                    Button("Promote to ticket…") {
+                        onPromoteTicket(message)
+                    }
+                }
+                if let onSaveWiki {
+                    Button("Save to Knowledge…") {
+                        onSaveWiki(message)
+                    }
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .imageScale(.small)
+                    .foregroundStyle(p.tertiaryText)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("More actions")
+        }
+    }
+
+    @ViewBuilder
     private func segmentView(_ segment: ChatMessageSegment, citationNumbers: [Int]) -> some View {
         switch segment {
         case .markdown(let text):
-            MarkdownView(markdown: text, textStyle: .chat, chat: true, citations: citationNumbers)
+            MarkdownView(markdown: text, textStyle: .chat, chat: true, citations: citationNumbers, onLink: handleMarkdownLink)
         case .embedded(let kind, let source, let info, let index):
             EmbeddedBlockView(kind: kind, source: source, messageID: message.id, info: info, index: index)
         case .chart(let spec):
@@ -620,6 +843,10 @@ private struct ChatMessageRowView: View {
             ChatDispatchCardView(chatId: chatId, messageId: message.id, card: card, runs: ticketRuns)
         case .recommend(let cards):
             ChatRecommendCardsView(messageId: message.id, cards: cards, onSend: onSendReply)
+        case .gallery(let spec):
+            ChatGalleryCardView(messageId: message.id, spec: spec)
+        case .product(let spec):
+            ChatProductCardView(messageId: message.id, spec: spec)
         case .workflowRun(let card):
             ChatWorkflowRunCardView(chatId: chatId, messageId: message.id, card: card, runs: workflowRuns)
         case .canvas(let id):

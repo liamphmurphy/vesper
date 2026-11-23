@@ -117,7 +117,7 @@ final class ChatInspectorLogicTests: XCTestCase {
             threadMessageId: "a1"
         ))
 
-        XCTAssertEqual(model.tabs.map(\.id), ["design", "canvas", "playground", "code", "thread", "activity"])
+        XCTAssertEqual(model.tabs.map(\.id), ["design", "canvas", "playground", "code", "thread", "outline", "activity"])
         XCTAssertEqual(model.activeTabId, "code")
 
         let codeTab = model.tabs.first { $0.id == "code" }
@@ -156,7 +156,7 @@ final class ChatInspectorLogicTests: XCTestCase {
             open: false,
             activeTabId: ChatInspectorLogic.codeTabId
         ))
-        XCTAssertEqual(model.tabs.map(\.id), ["activity"])
+        XCTAssertEqual(model.tabs.map(\.id), ["outline", "activity"])
         XCTAssertEqual(model.activeTabId, "activity")
     }
 }

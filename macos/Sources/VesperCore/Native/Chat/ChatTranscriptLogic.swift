@@ -101,6 +101,8 @@ public enum ChatMessageSegment: Sendable, Equatable {
     case choices(ChatChoicesCard)
     case dispatch(ChatDispatchCard)
     case recommend([ChatRecommendCard])
+    case gallery(ChatGallerySpec)
+    case product(ChatProductSpec)
     case workflowRun(ChatWorkflowRunCard)
     case canvas(id: String)
     case pdf(id: String)
@@ -555,6 +557,18 @@ public enum ChatTranscriptLogic {
                 }
                 if ChatRecommendCard.isRecommendFence(infoOpt), let card = ChatRecommendCard.parse(code) {
                     appendRecommend(card)
+                    i = nextIndex
+                    continue
+                }
+                if ChatGallerySpec.isGalleryFence(infoOpt), let spec = ChatGallerySpec.parse(code) {
+                    flushMarkdown()
+                    segments.append(.gallery(spec))
+                    i = nextIndex
+                    continue
+                }
+                if ChatProductSpec.isProductFence(infoOpt), let spec = ChatProductSpec.parse(code) {
+                    flushMarkdown()
+                    segments.append(.product(spec))
                     i = nextIndex
                     continue
                 }

@@ -531,9 +531,20 @@ struct ChatSourcesChipsView: View {
 
     let sources: [ChatListedSource]
     let citations: [API.ChatCitation]
+    var messageId: String? = nil
+
+    @State private var inspectedSourceIndex: Int?
+
+    private var previewRequest: APIRequest<API.LinkPreviews>? {
+        guard let messageId, !messageId.isEmpty, sources.contains(where: { !$0.url.isEmpty }) else { return nil }
+        return API.listLinkPreviews(messageId: messageId)
+    }
 
     var body: some View {
         let p = theme.palette
+        let previews = previewRequest.flatMap { context.store.entry($0).data?.previews } ?? []
+        let byURL = Dictionary(uniqueKeysWithValues: previews.map { ($0.url, $0) })
+
         if !sources.isEmpty || !citations.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Sources")
@@ -543,8 +554,8 @@ struct ChatSourcesChipsView: View {
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
-                        ForEach(Array(sources.enumerated()), id: \.offset) { _, source in
-                            sourceChip(source)
+                        ForEach(Array(sources.enumerated()), id: \.offset) { idx, source in
+                            sourceChip(source, index: idx, preview: byURL[source.url])
                         }
                         ForEach(Array(citations.enumerated()), id: \.offset) { _, citation in
                             citationChip(citation)
@@ -553,20 +564,20 @@ struct ChatSourcesChipsView: View {
                 }
             }
             .padding(.top, 4)
+            .task(id: messageId) {
+                if let req = previewRequest {
+                    context.store.load(req)
+                }
+            }
         }
     }
 
-    private func sourceChip(_ source: ChatListedSource) -> some View {
+    private func sourceChip(_ source: ChatListedSource, index: Int, preview: API.LinkPreview?) -> some View {
         let p = theme.palette
-        let label = !source.title.isEmpty
-            ? source.title
-            : (source.ref ?? URL(string: source.url)?.host ?? source.url)
+        let label = (preview?.title.isEmpty == false ? preview?.title : nil)
+            ?? (!source.title.isEmpty ? source.title : (source.ref ?? URL(string: source.url)?.host ?? source.url))
         return Button {
-            if !source.url.isEmpty {
-                context.openExternal(source.url)
-            } else if let ref = source.ref {
-                context.navigate("/wiki/\(ref)")
-            }
+            inspectedSourceIndex = index
         } label: {
             HStack(spacing: 4) {
                 if let n = source.number {
@@ -588,6 +599,17 @@ struct ChatSourcesChipsView: View {
             .overlay(Capsule().stroke(p.border))
         }
         .buttonStyle(.plain)
+        .popover(
+            isPresented: Binding(
+                get: { inspectedSourceIndex == index },
+                set: { if !$0 && inspectedSourceIndex == index { inspectedSourceIndex = nil } }
+            ),
+            arrowEdge: .top
+        ) {
+            ChatCitationPopoverCardView(source: source, preview: preview) {
+                inspectedSourceIndex = nil
+            }
+        }
     }
 
     private func citationChip(_ citation: API.ChatCitation) -> some View {
