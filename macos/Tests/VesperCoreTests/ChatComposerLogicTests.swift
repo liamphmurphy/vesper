@@ -257,4 +257,58 @@ final class ChatComposerLogicTests: XCTestCase {
         XCTAssertEqual(rows[0].tone, .warn)
         XCTAssertEqual(rows[0].meta?.first, "Max")
     }
+
+    // MARK: - Dictation Splicing
+
+    func testDictationAnchorSplitsAndClampsCursor() {
+        XCTAssertEqual(
+            ChatComposerDictationLogic.anchor(in: "Hello world", cursorUTF16: 5),
+            ChatDictationAnchor(prefix: "Hello", suffix: " world")
+        )
+        XCTAssertEqual(
+            ChatComposerDictationLogic.anchor(in: "Hello", cursorUTF16: -4),
+            ChatDictationAnchor(prefix: "", suffix: "Hello")
+        )
+        XCTAssertEqual(
+            ChatComposerDictationLogic.anchor(in: "Hello", cursorUTF16: 99),
+            ChatDictationAnchor(prefix: "Hello", suffix: "")
+        )
+    }
+
+    func testDictationComposeHandlesEmptyAndSpacing() {
+        let empty = ChatComposerDictationLogic.compose(
+            anchor: ChatDictationAnchor(prefix: "", suffix: ""),
+            spoken: "check the logs"
+        )
+        XCTAssertEqual(empty.text, "check the logs")
+        XCTAssertEqual(empty.cursorUTF16, 14)
+
+        let whitespaceOnly = ChatComposerDictationLogic.compose(
+            anchor: ChatDictationAnchor(prefix: "Hi ", suffix: "there"),
+            spoken: "   \n"
+        )
+        XCTAssertEqual(whitespaceOnly.text, "Hi there")
+        XCTAssertEqual(whitespaceOnly.cursorUTF16, 3)
+
+        let appendNoSpace = ChatComposerDictationLogic.compose(
+            anchor: ChatDictationAnchor(prefix: "Hello", suffix: ""),
+            spoken: "world"
+        )
+        XCTAssertEqual(appendNoSpace.text, "Hello world")
+        XCTAssertEqual(appendNoSpace.cursorUTF16, 11)
+
+        let appendWithSpace = ChatComposerDictationLogic.compose(
+            anchor: ChatDictationAnchor(prefix: "Hello ", suffix: ""),
+            spoken: "world"
+        )
+        XCTAssertEqual(appendWithSpace.text, "Hello world")
+        XCTAssertEqual(appendWithSpace.cursorUTF16, 11)
+
+        let midInsert = ChatComposerDictationLogic.compose(
+            anchor: ChatDictationAnchor(prefix: "Ask", suffix: "about this"),
+            spoken: "Judy"
+        )
+        XCTAssertEqual(midInsert.text, "Ask Judy about this")
+        XCTAssertEqual(midInsert.cursorUTF16, 8)
+    }
 }

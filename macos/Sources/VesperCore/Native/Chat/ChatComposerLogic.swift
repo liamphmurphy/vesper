@@ -833,6 +833,45 @@ public enum ChatComposerSendLogic {
     }
 }
 
+public struct ChatDictationAnchor: Equatable, Sendable {
+    public let prefix: String
+    public let suffix: String
+
+    public init(prefix: String, suffix: String) {
+        self.prefix = prefix
+        self.suffix = suffix
+    }
+}
+
+public enum ChatComposerDictationLogic {
+    /// Splits `text` at a UTF-16 cursor offset (clamped to valid bounds) into prefix and suffix.
+    public static func anchor(in text: String, cursorUTF16: Int) -> ChatDictationAnchor {
+        let ns = text as NSString
+        let clamped = max(0, min(cursorUTF16, ns.length))
+        return ChatDictationAnchor(
+            prefix: ns.substring(to: clamped),
+            suffix: ns.substring(from: clamped)
+        )
+    }
+
+    /// Composes `anchor` with `spoken` text, adding separating spaces only when adjacent text
+    /// doesn't already have whitespace, and returns the updated text plus the UTF-16 cursor
+    /// offset immediately after `spoken`.
+    public static func compose(anchor: ChatDictationAnchor, spoken: String) -> (text: String, cursorUTF16: Int) {
+        let trimmed = spoken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return (anchor.prefix + anchor.suffix, (anchor.prefix as NSString).length)
+        }
+        let needsLeadingSpace = anchor.prefix.last.map { !$0.isWhitespace } ?? false
+        let needsTrailingSpace = anchor.suffix.first.map { !$0.isWhitespace } ?? false
+        let leading = needsLeadingSpace ? " " : ""
+        let trailing = needsTrailingSpace ? " " : ""
+        let combined = anchor.prefix + leading + trimmed + trailing + anchor.suffix
+        let cursor = (anchor.prefix as NSString).length + ((leading + trimmed) as NSString).length
+        return (combined, cursor)
+    }
+}
+
 public enum ChatHarnessUsageLogic {
     public static func compactBadge(for activity: API.HarnessActivity) -> String {
         if !activity.connected { return "Offline" }
