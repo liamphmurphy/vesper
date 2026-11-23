@@ -348,9 +348,9 @@ struct InboxScreen: View {
         }
         Button("Copy Link") { copyLink(item) }
         Divider()
-        let open = chosen.filter(InboxLogic.isOpen)
-        if !open.isEmpty {
-            Button(open.count > 1 ? "Mark \(open.count) Done" : "Mark Done") { markDone(open.map(\.id)) }
+        let openItems = chosen.filter(InboxLogic.isOpen)
+        if !openItems.isEmpty {
+            Button(openItems.count > 1 ? "Mark \(openItems.count) Done" : "Mark Done") { markDone(openItems.map(\.id)) }
         }
         let done = chosen.filter { !InboxLogic.isOpen($0) && !$0.resolved }
         if !done.isEmpty {

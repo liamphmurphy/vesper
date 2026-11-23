@@ -386,20 +386,25 @@ extension ActivitySceneCatalog {
     )
 
     // MARK: - library
-    private static let libraryScene = ActivitySceneDefinition(
-        kind: .library,
-        nodes: shelfTile(x: 30, y: 6, thumb: [
+    // Built up piece by piece: as one `+` chain of implicit-member literals this
+    // exceeds the type checker's budget on some toolchains (e.g. CLT Swift 6.2.4).
+    private static let libraryScene: ActivitySceneDefinition = {
+        var nodes: [SceneNode] = shelfTile(x: 30, y: 6, thumb: [
             .path(d: "M33 22l5-6 4 4 3-3 4 5z", style: SceneStyle.accent.withOpacity(0.55)),
             .circle(cx: 46, cy: 11, r: 2, style: .warm),
-        ]) + shelfTile(x: 56, y: 6, thumb: [
+        ])
+        nodes += shelfTile(x: 56, y: 6, thumb: [
             .path(d: "M60 11H74 M60 15.5H72 M60 20H68", style: SceneStyle.line.withStrokeWidth(1.5)),
-        ]) + shelfTile(x: 82, y: 6, thumb: [
+        ])
+        nodes += shelfTile(x: 82, y: 6, thumb: [
             .path(d: "M86 22v-5h3v5z M91 22v-9h3v9z M96 22v-7h3v7z", style: SceneStyle.accent.withOpacity(0.8)),
-        ]) + shelfTile(x: 30, y: 31, thumb: [
+        ])
+        nodes += shelfTile(x: 30, y: 31, thumb: [
             .rect(x: 33, y: 35, width: 7, height: 5, rx: 1, style: .empty),
             .rect(x: 44, y: 42, width: 7, height: 5, rx: 1, style: .empty),
             .path(d: "M40 37.5C44 37.5 44 44.5 44 44.5", style: SceneStyle.line.withStrokeWidth(1.2)),
-        ]) + [
+        ])
+        nodes += [
             .group(
                 style: SceneStyle.none.withOrigin(.center).withAnimation(
                     storyAnim("scene-lib-pop", [
@@ -428,9 +433,11 @@ extension ActivitySceneCatalog {
                     ),
                 ]
             ),
-        ] + shelfTile(x: 82, y: 31, thumb: [
+        ]
+        nodes += shelfTile(x: 82, y: 31, thumb: [
             .path(d: "M85 47l5-6 4 4 3-3 4 5z", style: SceneStyle.muted.withOpacity(0.6)),
-        ]) + [
+        ])
+        nodes += [
             .group(
                 style: SceneStyle.none.withOrigin(.center).withAnimation(
                     storyAnim("scene-lib-lens", easing: .easeInOut, [
@@ -449,7 +456,8 @@ extension ActivitySceneCatalog {
                 ]
             ),
         ]
-    )
+        return ActivitySceneDefinition(kind: .library, nodes: nodes)
+    }()
 
     // MARK: - inbox
     private static let inboxScene = ActivitySceneDefinition(
