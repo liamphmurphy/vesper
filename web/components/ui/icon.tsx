@@ -70,6 +70,8 @@ const paths = {
   film: <><rect x="2.5" y="3" width="11" height="10" rx="1.5" /><path d="m6.7 6 3.3 2-3.3 2z" /></>,
   library: <><rect x="2.5" y="3" width="11" height="10" rx="1.5" /><circle cx="6" cy="6.5" r="1.2" /><path d="m2.5 11 3.2-3 2.6 2.4 1.7-1.6 3.5 3.2" /></>,
   compare: <><path d="M8 2.5v11" /><rect x="2" y="4" width="4" height="8" rx="1" /><rect x="10" y="4" width="4" height="8" rx="1" /></>,
+  mic: <><rect x="6" y="2.5" width="4" height="7" rx="2" /><path d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2M5.5 14h5" /></>,
+  list: <><path d="M5.5 4h8M5.5 8h8M5.5 12h8" /><circle cx="3" cy="4" r=".7" fill="currentColor" stroke="none" /><circle cx="3" cy="8" r=".7" fill="currentColor" stroke="none" /><circle cx="3" cy="12" r=".7" fill="currentColor" stroke="none" /></>,
 } as const;
 
 export type IconName = keyof typeof paths;

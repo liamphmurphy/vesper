@@ -1,10 +1,11 @@
 "use client";
 
-import { Fragment, useRef, useState, type ReactNode, type RefObject } from "react";
+import { Fragment, useEffect, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
 import type { Schemas } from "@/lib/api/client";
 import { addChip, chipFromTarget, removeChip, type Chip } from "@/lib/chat-context";
 import { CHAT_COMMANDS, commandMenu, literalBody, parseCommand } from "@/lib/chat-commands";
 import { insertMention, mentionQuery, mentionSuggestions } from "@/lib/persona-ui";
+import { resolveMicRelease, stitchDictation } from "@/lib/speech-dictation";
 import { cx } from "@/lib/cx";
 import type { ComposerOption, ComposerOptionId } from "@/lib/composer-options";
 import { LinkEditor } from "@/components/domain/link-editor";
@@ -104,6 +105,124 @@ export function Composer({
   const [commandError, setCommandError] = useState<string | null>(null);
   const compact = useCompact();
   const [sheet, setSheet] = useState(false);
+
+  // Browser SpeechRecognition (tap to toggle, press-and-hold for push-to-talk).
+  const dictationSupported = useSyncExternalStore(
+    () => () => {},
+    () => {
+      const w = window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown };
+      return Boolean(w.SpeechRecognition || w.webkitSpeechRecognition);
+    },
+    () => false,
+  );
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef<{ stop: () => void; abort: () => void } | null>(null);
+  const dictationBaseRef = useRef("");
+  const pressStartRef = useRef<{ at: number; wasListening: boolean } | null>(null);
+  const textRef = useRef(text);
+  const onTextRef = useRef(onText);
+  useEffect(() => {
+    textRef.current = text;
+    onTextRef.current = onText;
+  }, [text, onText]);
+  useEffect(() => {
+    return () => {
+      recognitionRef.current?.abort();
+      recognitionRef.current = null;
+    };
+  }, []);
+  const startDictation = () => {
+    if (disabled || listening) return;
+    type SpeechRec = {
+      continuous: boolean;
+      interimResults: boolean;
+      lang: string;
+      onresult: ((e: { results: ArrayLike<{ 0?: { transcript?: string } }> }) => void) | null;
+      onerror: (() => void) | null;
+      onend: (() => void) | null;
+      start: () => void;
+      stop: () => void;
+      abort: () => void;
+    };
+    const w = window as unknown as { SpeechRecognition?: new () => SpeechRec; webkitSpeechRecognition?: new () => SpeechRec };
+    const Ctor = w.SpeechRecognition ?? w.webkitSpeechRecognition;
+    if (!Ctor) return;
+    const rec = new Ctor();
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = navigator.language || "en-US";
+    dictationBaseRef.current = textRef.current;
+    rec.onresult = (e) => {
+      let spoken = "";
+      for (let i = 0; i < e.results.length; i++) {
+        spoken += e.results[i]?.[0]?.transcript ?? "";
+      }
+      onTextRef.current(stitchDictation(dictationBaseRef.current, spoken));
+    };
+    rec.onerror = () => {
+      recognitionRef.current = null;
+      setListening(false);
+    };
+    rec.onend = () => {
+      recognitionRef.current = null;
+      setListening(false);
+    };
+    recognitionRef.current = rec;
+    setListening(true);
+    try {
+      rec.start();
+    } catch {
+      recognitionRef.current = null;
+      setListening(false);
+    }
+  };
+  const stopDictation = () => {
+    recognitionRef.current?.stop();
+    recognitionRef.current = null;
+    setListening(false);
+  };
+  const micButton = dictationSupported ? (
+    <button
+      type="button"
+      aria-label={listening ? "Stop dictation" : "Dictate (tap to toggle, hold for push-to-talk)"}
+      aria-pressed={listening}
+      title={listening ? "Listening… click or release to stop" : "Dictate (tap to toggle, press & hold for push-to-talk)"}
+      disabled={disabled}
+      data-testid="composer-dictate"
+      onPointerDown={(e) => {
+        if (e.button !== 0 || disabled) return;
+        pressStartRef.current = { at: Date.now(), wasListening: listening };
+        if (!listening) startDictation();
+      }}
+      onPointerUp={() => {
+        const start = pressStartRef.current;
+        pressStartRef.current = null;
+        if (!start) return;
+        if (resolveMicRelease({ elapsedMs: Date.now() - start.at, wasListeningBeforePress: start.wasListening }) === "stop") {
+          stopDictation();
+        }
+      }}
+      onPointerCancel={() => {
+        if (pressStartRef.current) {
+          pressStartRef.current = null;
+          stopDictation();
+        }
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          if (listening) stopDictation();
+          else startDictation();
+        }
+      }}
+      className={cx(
+        composerIconButton,
+        listening && "border-state-blocked bg-pill-blocked-bg text-pill-blocked-fg animate-pulse",
+      )}
+    >
+      <Icon name="mic" size={14} />
+    </button>
+  ) : null;
 
   // The snippet bubble's draft (open while set), and the last paste into the message box worth offering as a snippet or file.
   const [snippetDraft, setSnippetDraft] = useState<SnippetDraft | null>(null);
@@ -435,6 +554,7 @@ export function Composer({
               <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
                 {options.filter((o) => o.id === "model").map(control)}
                 {actions}
+                {micButton}
               </div>
               <SendButton label={send.label} disabled={send.disabled} title={send.title} tone={send.tone} />
             </div>
@@ -457,6 +577,7 @@ export function Composer({
             <div className="flex flex-none items-center gap-1">
               {options.filter((o) => o.place === "actions" || o.id === "send-mode").map(control)}
               {actions}
+              {micButton}
               <SendButton label={send.label} disabled={send.disabled} title={send.title} tone={send.tone} />
             </div>
           </div>

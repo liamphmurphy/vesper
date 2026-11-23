@@ -99,7 +99,7 @@ export function GalleryFence({ code, info }: { code: string; info?: string }) {
                     src={imgSrc}
                     alt={item.caption ?? ""}
                     onError={() => setBroken((b) => ({ ...b, [idx]: true }))}
-                    className="size-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
+                    className="size-full object-cover transition-transform duration-(--motion-fast) group-hover:scale-[1.03]"
                   />
                 ) : messageId && q.isPending ? (
                   <div className="size-full animate-pulse bg-hover" />

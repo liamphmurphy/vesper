@@ -28,6 +28,7 @@ import {
   useQueueFollowup,
   useSendChatMessage,
   useSetChatCommitEmail,
+  useSetChatMessageBookmark,
   useStartAside,
   useStartSecondOpinion,
   useSteerChat,
@@ -68,6 +69,7 @@ import { ChatMarkdown } from "./chat-markdown";
 import { ReplyCodeChanges } from "./code-panel";
 import { SentChips } from "./context-chips";
 import { MessageActionsContext, MessageToolbar, ThreadLink, type MessageActions } from "./message-toolbar";
+import { OutlinePanel } from "./outline-panel";
 import { Sources } from "./sources";
 import { splitSourceList } from "@/lib/chat-sources";
 import { finishReveal, markRevealed, startReveal, useRevealedText } from "@/lib/companion-store";
@@ -232,7 +234,14 @@ const Bubble = memo(function Bubble({ m, chat, persona, saveable, names, turn, e
     <>
     <li ref={self} id={`msg-${m.id}`} tabIndex={-1} data-message-id={m.id} data-author={m.persona?.name} data-author-id={m.persona?.id} className={cx("group/msg relative flex scroll-mt-4 flex-col gap-1 rounded-xl outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-4 focus-visible:ring-offset-bg", mine ? "items-end" : "items-start", highlighted && "ring-2 ring-accent ring-offset-4 ring-offset-bg")} data-enter-key={m.id} data-enter={m.role} data-testid={`${m.role}-message`}>
       {/* Your messages need no name: the bubble on the right is you. */}
-      {mine ? null : (
+      {mine ? (
+        m.bookmarked ? (
+          <span data-testid="bookmarked-badge" className="inline-flex items-center gap-1 rounded-full bg-accent-soft px-2 py-0.5 text-11 font-medium text-accent">
+            <Icon name="bookmark" size={11} />
+            Pinned
+          </span>
+        ) : null
+      ) : (
         // Assistant replies carry the avatar of the persona that wrote them (the chat's host
         // when unset) and its name in its color, so a group chat reads like one.
         // The harness · model tag and usage live in the Activity tab, so the chat stays immersive.
@@ -240,6 +249,12 @@ const Bubble = memo(function Bubble({ m, chat, persona, saveable, names, turn, e
           <PersonaAvatar persona={author} size={22} />
           <PersonaName persona={author} className="text-13" />
           <time dateTime={m.created_at}>{timelineTime(m.created_at)}</time>
+          {m.bookmarked && (
+            <span data-testid="bookmarked-badge" className="inline-flex items-center gap-1 rounded-full bg-accent-soft px-1.5 py-0.5 text-11 font-medium text-accent">
+              <Icon name="bookmark" size={10} />
+              Pinned
+            </span>
+          )}
         </span>
       )}
       {/* The live card's steps, folded to a line once the turn ended. Its events all precede the reply. */}
@@ -291,7 +306,7 @@ const Bubble = memo(function Bubble({ m, chat, persona, saveable, names, turn, e
         return r.kind === "canvas" && r.selection ? { ...chip, label: r.selection.nodes.length ? `Design · ${r.selection.nodes.length} selected` : "Design" } : chip;
       })} />}
       {mine && !editing && m.body_md.trim() && (
-        <MessageToolbar messageId={m.id} body={parts.body} mine chat={chat} testId="message-actions"
+        <MessageToolbar messageId={m.id} body={parts.body} mine bookmarked={!!m.bookmarked} chat={chat} testId="message-actions"
           onEdit={editable ? () => { setDraft(parts.body); setEditing(true); } : undefined} />
       )}
       {!mine && <Sources citations={m.citations} body={parts.body} listed={parts.listed} runId={m.run_id} since={turn?.since} until={turn?.until} webEvents={!!turn} focus={citeFocus} />}
@@ -300,7 +315,7 @@ const Bubble = memo(function Bubble({ m, chat, persona, saveable, names, turn, e
       {thread && <ThreadLink messageId={m.id} count={thread.count} running={thread.running} />}
       {!mine && saveable && summaryUrl && <SaveSummary messageId={m.id} url={summaryUrl} />}
       {!mine && saveable && m.body_md.trim() && (
-        <MessageToolbar messageId={m.id} body={m.body_md} authorId={m.persona?.id} author={author.name} mine={false} chat={chat} testId="reply-actions"
+        <MessageToolbar messageId={m.id} body={m.body_md} authorId={m.persona?.id} author={author.name} mine={false} bookmarked={!!m.bookmarked} chat={chat} testId="reply-actions"
           onTop={m.body_md.length > LONG_REPLY ? () => self.current?.scrollIntoView({ block: "start", behavior: "smooth" }) : undefined}
           onRetry={onRetry && (async () => { if (await confirmAction({ title: "Replace this reply with a new one?", body: "The current reply is discarded.", confirmLabel: "Retry" })) onRetry(); })} />
       )}
@@ -602,6 +617,8 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   const [players] = useState(() => new Map<string, (seconds: number) => void>());
   const cancel = useCancelChat(id);
   const compactChat = useCompactChat(id);
+  const bookmarkMessage = useSetChatMessageBookmark(id);
+  const [outlineOpen, setOutlineOpen] = useState(false);
   const [forkTarget, setForkTarget] = useState<ForkTarget | null>(null);
   const boot = useBootstrap();
   const personas = usePersonas();
@@ -1003,11 +1020,37 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
       el?.setSelectionRange(quote.length, quote.length);
     });
   };
+  const askPersonaRef = useRef<(body: string, persona: Schemas["Persona"]) => void>(() => {});
+  askPersonaRef.current = (body, p) => {
+    const quote = quoteForComposer(body, p.name);
+    draft.set((t) => quote + t);
+    requestAnimationFrame(() => {
+      const el = area.current;
+      el?.focus();
+      el?.setSelectionRange(quote.length, quote.length);
+    });
+  };
+  const bookmarkRef = useRef<(messageId: string, bookmarked: boolean) => void>(() => {});
+  bookmarkRef.current = (messageId, bookmarked) => bookmarkMessage.mutate({ messageId, bookmarked });
+  const jumpToMessage = useCallback((messageId: string) => {
+    setTab("chat");
+    requestAnimationFrame(() => {
+      const el = document.getElementById(`msg-${messageId}`);
+      if (el) {
+        pinned.current = false;
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        setHighlight(messageId);
+        setTimeout(() => setHighlight((cur) => (cur === messageId ? null : cur)), 1800);
+      }
+    });
+  }, []);
+  const allPersonas = personas.data?.personas;
   // Threads open in the desktop dock (the compact sheet has no Thread tab yet).
   const threadDock = dockActivity;
   const archivedChat = !!c?.archived;
   const messageActions = useMemo<MessageActions>(() => ({
     reply: (body, authorId, author) => replyTo.current(body, authorId, author),
+    bookmark: (messageId, bookmarked) => bookmarkRef.current(messageId, bookmarked),
     ...(threadDock ? { thread: (messageId: string) => router.replace(`${window.location.pathname}?${openThread(new URLSearchParams(window.location.search), messageId).toString()}`, { scroll: false }) } : {}),
     ...(!archivedChat
       ? {
@@ -1019,6 +1062,14 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
               gitCommitSha: m?.git_commit_sha,
             });
           },
+          ...(allPersonas?.length
+            ? {
+                askPersona: {
+                  personas: allPersonas,
+                  ask: (body, p) => askPersonaRef.current(body, p),
+                },
+              }
+            : {}),
           secondOpinion: {
             groups,
             currentHarness: current?.harness,
@@ -1027,7 +1078,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
           },
         }
       : {}),
-  }), [threadDock, router, archivedChat, list, groups, current?.harness, current?.model]);
+  }), [threadDock, router, archivedChat, list, groups, current?.harness, current?.model, allPersonas]);
 
   // J/K move between messages, R replies to the one in focus, T threads it, E edits your last
   // message, Esc goes back to the box: the messaging-app keys, listed in the ? reference.
@@ -1229,6 +1280,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   const plainCommands: Record<string, CommandRun> = {
     new: onNew,
     memory: () => router.push("/settings?section=memory"),
+    outline: () => setOutlineOpen((o) => !o),
     stop: () => {
       if (!running) return "There’s no reply to stop.";
       if (!stopping) cancel.mutate();
@@ -1369,6 +1421,20 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
           {/* A dock has no room for the picker in its one header row: it moves to the composer's + menu. */}
           {repoPicker && !docked && <span className="flex min-w-0 max-w-[32%] flex-shrink">{repoPicker}</span>}
           <ChatRunsPill chatId={c.id} />
+          <button
+            type="button"
+            aria-pressed={outlineOpen}
+            aria-label="Thread outline"
+            title={outlineOpen ? "Hide thread outline" : "Thread outline: bookmarks, links, checklists, diffs and files"}
+            data-testid="toggle-thread-outline"
+            onClick={() => setOutlineOpen((o) => !o)}
+            className={cx("relative grid size-7 flex-none place-items-center rounded-md", outlineOpen ? "bg-selected text-fg" : "text-fg-tertiary hover:bg-hover hover:text-fg")}
+          >
+            <Icon name="list" size={14} />
+            {(list?.some((m) => m.bookmarked) ?? false) && (
+              <span aria-hidden className="absolute right-1 top-1 size-1.5 rounded-full bg-accent" />
+            )}
+          </button>
           {!dockActivity && docked && (
             <button type="button" aria-pressed={tab === "activity"} aria-label="Activity" title={tab === "activity" ? "Back to the chat" : "Activity: this chat's tool calls and memory"}
               onClick={() => setTab(tab === "activity" ? "chat" : "activity")}
@@ -1396,6 +1462,8 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
         )}
         {dockActivity && view === "chat" && <LinkedRow items={linked} label={linkedLabel} onOpen={openLinked} />}
         {c.space && view === "chat" && <SpaceContextChips space={c.space} dense={docked} />}
+        <div className="relative flex min-h-0 flex-1 overflow-hidden">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {/* Mounted while hidden so memory notices still refresh. On the chat page's desktop dock Activity is its own tab (ChatActivity). */}
         {!dockActivity && (
           <div role="tabpanel" aria-label="Activity" hidden={tab !== "activity"} className="flex-1 overflow-y-auto px-6 py-5">
@@ -1878,6 +1946,15 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
             />
             </>
           )}
+        </div>
+        </div>
+        {outlineOpen && (
+          <OutlinePanel
+            messages={list ?? []}
+            onJump={jumpToMessage}
+            onClose={() => setOutlineOpen(false)}
+          />
+        )}
         </div>
         {current && (
           <HarnessSwitchDialog

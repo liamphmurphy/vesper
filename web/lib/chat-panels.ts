@@ -10,8 +10,8 @@ export type PanelLayout = "side" | "sheet";
 
 export const PANELS: ChatPanel[] = ["design", "canvas", "playground", "code"];
 
-/** A tab in the desktop dock: the open panels, a thread or linked item while one is open, and Activity, which is always there. */
-export type DockTabId = ChatPanel | "thread" | "item" | "activity";
+/** A tab in the desktop dock: the open panels, a thread or linked item while one is open, Outline, and Activity. */
+export type DockTabId = ChatPanel | "thread" | "item" | "outline" | "activity";
 
 type Query = Pick<URLSearchParams, "get">;
 
