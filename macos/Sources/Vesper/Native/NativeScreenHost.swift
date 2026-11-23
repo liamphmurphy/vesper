@@ -164,6 +164,9 @@ struct NativeScreenRoot: View {
         case .spaceNew: NewSpaceScreen()
         case .spaceDetail: SpaceScreen()
         case .agentDetail: AgentDetailScreen()
+        case .plans: PlansScreen()
+        case .artifactDetail: ArtifactDetailScreen()
+        case .artifactReview: ArtifactReviewScreen()
         }
     }
 }

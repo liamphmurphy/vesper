@@ -41,6 +41,9 @@ public enum NativeScreen: String, Sendable, CaseIterable {
     case spaceNew
     case spaceDetail
     case agentDetail
+    case plans
+    case artifactDetail
+    case artifactReview
 
     /// Screens sharing one SwiftUI root host so navigating between them preserves sidebar & chrome state.
     public var hostGroup: NativeScreen {
@@ -57,9 +60,9 @@ public enum NativeScreen: String, Sendable, CaseIterable {
     public var area: AreaId? {
         switch self {
         case .chat, .chatDetail, .rootLanding, .spaceNew, .spaceDetail: .chat
-        case .work, .runDetail, .tickets, .ticketNew, .ticketDetail, .epics, .epicDetail, .agentDetail: .work
+        case .work, .runDetail, .tickets, .ticketNew, .ticketDetail, .epics, .epicDetail, .agentDetail, .plans: .work
         case .knowledge, .knowledgeGraph, .knowledgePage: .knowledge
-        case .library: .library
+        case .library, .artifactDetail, .artifactReview: .library
         case .workflows, .workflowEditor, .workflowRun, .scheduled, .learn, .learnCourse, .reports, .http, .dev, .appsHome, .appsRedirect: .apps
         case .inbox, .pdf, .setup, .debugPlaceholder, .markdownDebug, .scenesDebug, .embedsDebug: nil
         }
@@ -130,13 +133,17 @@ public struct NativeRouteRegistry: Sendable {
         NativeRoute("/board", .tickets),
         NativeRoute("/tickets/new", .ticketNew),
         NativeRoute("/tickets/:key", .ticketDetail),
-        // Epics, Agent detail, Scheduled tasks, and Reports (Costs & Highlights).
+        // Epics, Agent detail, Plans, Scheduled tasks, and Reports (Costs & Highlights).
         NativeRoute("/epics", .epics),
         NativeRoute("/epics/:id", .epicDetail),
         NativeRoute("/agents/:handle", .agentDetail),
+        NativeRoute("/plans", .plans),
         NativeRoute("/scheduled", .scheduled),
         NativeRoute("/reports", .reports),
         NativeRoute("/costs", .reports),
+        // Artifact detail and mockup review workspace (specific route before :id).
+        NativeRoute("/artifacts/:id/review", .artifactReview),
+        NativeRoute("/artifacts/:id", .artifactDetail),
         // Knowledge explorer, home, search, connect, graph and pages (specific routes before :id).
         NativeRoute("/knowledge", .knowledge),
         NativeRoute("/knowledge/graph", .knowledgeGraph),
