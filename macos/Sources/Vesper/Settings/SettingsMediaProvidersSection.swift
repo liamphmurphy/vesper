@@ -1,35 +1,40 @@
 import SwiftUI
 import VesperCore
 
-/// Workspace Settings section for pluggable media providers (Lyria music, Gemini Omni video,
-/// and Gemini TTS persona voices) and workspace capability defaults.
+/// Workspace Settings section for pluggable media providers (images via Codex,
+/// Antigravity or Gemini API, Lyria music, Gemini Omni video, and Gemini TTS
+/// persona voices) and workspace capability defaults.
 struct SettingsMediaProvidersSection: View {
     let aux: AuxWindows
 
     @State private var settingDefault = false
+    @State private var savingImageEngine = false
     @State private var defaultError: String?
 
     private var store: QueryStore? { aux.store }
 
     var body: some View {
         let entry = store?.entry(API.listMediaProviders())
+        let imageEntry = store?.entry(API.getImageEngine())
 
         VStack(alignment: .leading, spacing: 14) {
             SettingsCard(
                 "Media providers",
-                subtitle: "Configure providers and models for music (Lyria), video (Gemini Omni), and persona voices (TTS)."
+                subtitle: "Configure active engines and models for images, music (Lyria), video (Gemini Omni), and persona voices (TTS)."
             ) {
                 if let defaultError {
                     SettingsBanner(tone: .blocked, title: "Couldn't update active engine", message: defaultError)
                 }
 
+                imageEngineRow(imageEntry)
+                    .id("images")
+
                 if let data = entry?.data {
-                    let groups = MediaProviderHelpers.capabilityGroups(in: data)
-                    if groups.isEmpty {
-                        Text("No media providers are registered.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    } else {
+                    // Image selection is handled above so Auto, Codex, Antigravity,
+                    // and Gemini API live together in one shared Image Model section.
+                    let groups = MediaProviderHelpers.capabilityGroups(in: data).filter { $0.capability != .image }
+                    if !groups.isEmpty {
+                        Divider()
                         ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
                             capabilityRow(group)
                             if index < groups.count - 1 {
@@ -38,8 +43,10 @@ struct SettingsMediaProvidersSection: View {
                         }
                     }
                 } else if entry?.isFetching == true {
+                    Divider()
                     ProgressView().controlSize(.small)
                 } else {
+                    Divider()
                     SettingsUnavailableCard(title: "Couldn't load media providers", error: entry?.error) {
                         Task { await store?.refetch(API.listMediaProviders()) }
                     }
@@ -50,6 +57,73 @@ struct SettingsMediaProvidersSection: View {
                 ForEach(providers, id: \.id) { provider in
                     MediaProviderCard(aux: aux, provider: provider)
                 }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func imageEngineRow(_ imageEntry: QueryEntry<API.ImageEngineSettings>?) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("Image model")
+                    .font(.subheadline.weight(.medium))
+                Spacer()
+                if let img = imageEntry?.data {
+                    Text(WorkspaceSetupHelpers.activeImageEngineSummary(img))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if let img = imageEntry?.data {
+                let choices = WorkspaceSetupHelpers.imageEngineChoices(img.options)
+                ForEach(choices) { choice in
+                    let selected = img.engine == choice.value
+                    Button {
+                        if !selected && !savingImageEngine {
+                            saveImageEngine(choice.value)
+                        }
+                    } label: {
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+                                .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+                                .padding(.top, 2)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(choice.label).font(.callout.weight(.medium))
+                                Text(choice.detail)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer()
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(savingImageEngine)
+                }
+            } else if imageEntry?.isFetching == true {
+                ProgressView().controlSize(.small)
+            } else {
+                SettingsUnavailableCard(title: "Couldn't load image engine", error: imageEntry?.error) {
+                    Task { await store?.refetch(API.getImageEngine()) }
+                }
+            }
+        }
+    }
+
+    private func saveImageEngine(_ raw: API.ImageEngineSettings.Engine) {
+        guard let store else { return }
+        savingImageEngine = true
+        defaultError = nil
+        let target = API.UpdateImageEngineBody.Engine(rawValue: raw.rawValue)
+        Task {
+            defer { savingImageEngine = false }
+            do {
+                let updated = try await store.mutate(API.updateImageEngine(body: API.UpdateImageEngineBody(engine: target)))
+                store.setData(updated, for: API.getImageEngine())
+            } catch {
+                defaultError = settingsErrorText(error)
             }
         }
     }
@@ -331,6 +405,7 @@ private struct MediaProviderCard: View {
                 draftSecrets = [:]
                 statusMessage = "Saved \(provider.label)."
                 await store.refetch(API.listPersonaVoices())
+                await store.refetch(API.getImageEngine())
             } catch {
                 errorMessage = settingsErrorText(error)
             }
@@ -351,6 +426,7 @@ private struct MediaProviderCard: View {
                 draftSecrets.removeValue(forKey: field)
                 statusMessage = "Removed \(provider.label) key."
                 await store.refetch(API.listPersonaVoices())
+                await store.refetch(API.getImageEngine())
             } catch {
                 errorMessage = settingsErrorText(error)
             }

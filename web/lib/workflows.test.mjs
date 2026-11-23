@@ -85,6 +85,7 @@ test("an images step's summary names its engine", () => {
   const step = (image_engine) => ({ id: "gen", type: "agent", title: "Gen", config: { images: true, image_engine } });
   assert.equal(nodeSummary(step("codex")), "Persona · images · Codex");
   assert.equal(nodeSummary(step("antigravity")), "Persona · images · Antigravity");
+  assert.equal(nodeSummary(step("gemini")), "Persona · images · Gemini API");
   assert.equal(nodeSummary(step("auto")), "Persona · images · Auto engine");
   assert.equal(nodeSummary(step(undefined)), "Persona · images · default engine");
   assert.equal(imageEngineName("something-new"), "default engine");

@@ -41,6 +41,7 @@ public enum MediaProviderHelpers {
     /// Human-readable label for a capability pill or heading.
     public static func capabilityLabel(_ cap: API.MediaCapability) -> String {
         switch cap {
+        case .image: return "Image"
         case .music: return "Music"
         case .video: return "Video"
         case .tts: return "Voice (TTS)"
@@ -52,6 +53,7 @@ public enum MediaProviderHelpers {
     /// Short pill label shown on provider cards.
     public static func capabilityPillLabel(_ cap: API.MediaCapability) -> String {
         switch cap {
+        case .image: return "Image"
         case .music: return "Music"
         case .video: return "Video"
         case .tts: return "TTS"

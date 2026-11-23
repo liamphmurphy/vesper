@@ -174,4 +174,32 @@ final class MediaProviderHelpersTests: XCTestCase {
         )
         XCTAssertEqual(withSecretPatch.secrets, ["api_key": "AIza-test-123"])
     }
+
+    func testImageCapabilityLabelsAndUnifiedImageEngineChoices() {
+        XCTAssertEqual(MediaProviderHelpers.capabilityLabel(.image), "Image")
+        XCTAssertEqual(MediaProviderHelpers.capabilityPillLabel(.image), "Image")
+
+        let opts: [API.ImageEngineSettings.OptionsItem] = [
+            .init(available: false, engine: .codex, label: "Codex", model: nil, reason: "isn't available"),
+            .init(available: true, engine: .antigravity, label: "Antigravity", model: "antigravity-main", reason: nil),
+            .init(available: true, engine: .gemini, label: "Gemini API", model: "gemini-3-pro-image", reason: nil),
+        ]
+        let choices = WorkspaceSetupHelpers.imageEngineChoices(opts)
+        XCTAssertEqual(choices.map(\.value), [.auto, .codex, .antigravity, .gemini])
+        XCTAssertEqual(choices[0].detail, "Use the first connected: Antigravity, then Gemini API.")
+        XCTAssertEqual(choices[3].detail, "Connected · gemini-3-pro-image")
+
+        XCTAssertEqual(
+            WorkspaceSetupHelpers.activeImageEngineSummary(.init(engine: .auto, options: opts)),
+            "Using Auto (Antigravity)"
+        )
+        XCTAssertEqual(
+            WorkspaceSetupHelpers.activeImageEngineSummary(.init(engine: .gemini, options: opts)),
+            "Using Gemini API"
+        )
+        XCTAssertEqual(
+            WorkspaceSetupHelpers.activeImageEngineSummary(.init(engine: .codex, options: opts)),
+            "Codex (not configured)"
+        )
+    }
 }

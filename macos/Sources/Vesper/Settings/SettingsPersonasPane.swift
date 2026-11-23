@@ -483,6 +483,7 @@ private struct PersonaDetailView: View {
                     Text("Auto").tag("auto")
                     Text("Codex").tag("codex")
                     Text("Antigravity").tag("antigravity")
+                    Text("Gemini API").tag("gemini")
                 }
             }
             Toggle("Render SVG images in chat replies", isOn: $capSvg)

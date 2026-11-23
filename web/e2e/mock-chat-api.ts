@@ -925,6 +925,7 @@ export function installChatApi(page: Page, opts: MockOptions = {}) {
       return json({ engine: imageEngine, options: [
         { engine: "codex", label: "Codex", available: true },
         { engine: "antigravity", label: "Antigravity", available: false, reason: "no harness:google secret" },
+        { engine: "gemini", label: "Gemini API", available: false, reason: "Add a Gemini API key in Settings → Workspace → Media providers.", model: "gemini-3-pro-image" },
       ] });
     }
     if (path === "/planning-sessions" && method === "GET") return json({ sessions: [], has_more: false });

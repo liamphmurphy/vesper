@@ -67,6 +67,7 @@ public enum WorkflowsLogic {
         switch engine {
         case "codex": "Codex"
         case "antigravity": "Antigravity"
+        case "gemini": "Gemini API"
         case "auto": "Auto engine"
         default: "default engine"
         }
@@ -544,6 +545,7 @@ public enum WorkflowsLogic {
                             InspectorOption(value: "auto", label: "Auto (first connected)"),
                             InspectorOption(value: "codex", label: "Codex"),
                             InspectorOption(value: "antigravity", label: "Antigravity"),
+                            InspectorOption(value: "gemini", label: "Gemini API"),
                         ]
                     ))
                 }

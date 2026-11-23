@@ -673,13 +673,17 @@ public enum WorkspaceSetupHelpers {
     public static func imageEngineChoices(_ options: [API.ImageEngineSettings.OptionsItem]) -> [ImageEngineChoice] {
         let connected = options.filter(\.available)
         let autoDetail = connected.isEmpty
-            ? "No image engine is connected yet. Connect Codex or Antigravity first."
+            ? "No image engine is connected yet. Connect Codex, Antigravity, or Gemini API first."
             : "Use the first connected: \(connected.map(\.label).joined(separator: ", then "))."
         var out = [ImageEngineChoice(value: .auto, label: "Auto", detail: autoDetail)]
         for opt in options {
             let detail: String
             if opt.available {
-                detail = "Connected"
+                if let model = opt.model, !model.isEmpty {
+                    detail = "Connected · \(model)"
+                } else {
+                    detail = "Connected"
+                }
             } else if let reason = opt.reason, !reason.isEmpty {
                 detail = "Not connected: \(reason)"
             } else {
@@ -692,6 +696,19 @@ public enum WorkspaceSetupHelpers {
             ))
         }
         return out
+    }
+
+    public static func activeImageEngineSummary(_ settings: API.ImageEngineSettings) -> String {
+        if settings.engine == .auto {
+            if let first = settings.options.first(where: \.available) {
+                return "Using Auto (\(first.label))"
+            }
+            return "Not configured"
+        }
+        if let chosen = settings.options.first(where: { $0.engine.rawValue == settings.engine.rawValue }) {
+            return chosen.available ? "Using \(chosen.label)" : "\(chosen.label) (not configured)"
+        }
+        return "Not configured"
     }
 
     public static func harnessHealth(_ groups: [API.ChatHarnessModels]) -> (ready: Bool, checking: Bool, reasons: [String]) {
