@@ -682,6 +682,27 @@ public final class ChatDraftStore: @unchecked Sendable {
     }
 }
 
+/// Text another screen asks a composer to draft without sending, such as Knowledge's
+/// Ask a Persona PDF request. `token` grows with each request so a repeat is applied again.
+public struct ChatComposerPrefill: Sendable, Equatable {
+    public let token: Int
+    public let text: String
+
+    public init(token: Int, text: String) {
+        self.token = token
+        self.text = text
+    }
+
+    /// The draft after applying `prefill`: it fills an empty draft, is skipped when the draft
+    /// already holds it, and otherwise follows what the person typed after a blank line.
+    public static func merge(_ prefill: String, into draft: String) -> String {
+        let trimmed = prefill.trimmingCharacters(in: .whitespacesAndNewlines)
+        if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return prefill }
+        if draft.contains(trimmed) { return draft }
+        return "\(draft)\n\n\(prefill)"
+    }
+}
+
 // MARK: - Send Modes & Harness Usage Formatting
 
 public enum ChatSendMode: String, Codable, Sendable, CaseIterable, Identifiable {
