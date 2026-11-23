@@ -136,6 +136,8 @@ public struct NativeSettings: Sendable, Codable, Equatable {
         public var autoRestart = true
         public var minFreeDiskGb = 10
         public var runnerSlots = 2
+        /// Absolute path of a PEM file of extra roots for agent VMs, or empty (RUNNER_EXTRA_CA_FILE).
+        public var extraCaFile = ""
         public init() {}
     }
     public struct Files: Sendable, Codable, Equatable {
@@ -351,6 +353,7 @@ extension NativeSettings {
             out.stack.minFreeDiskGb = base.stack.minFreeDiskGb
         }
         out.stack.runnerSlots = intIn(stack["runnerSlots"], 1, 32, base.stack.runnerSlots)
+        out.stack.extraCaFile = normalizeFolder(stack["extraCaFile"], fallback: base.stack.extraCaFile)
 
         out.files.dockDrop = bool(files["dockDrop"], base.files.dockDrop)
 
