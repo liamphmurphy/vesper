@@ -280,3 +280,32 @@ test("parseBridgeMessage keeps play-video's theater flag only when it is a boole
     { channel: "vesper:custom-app", id: "", type: "play-video", payload: { url } },
   );
 });
+
+test("parseBridgeMessage keeps play-video's sidePanel flag only when it is a boolean", () => {
+  assert.deepEqual(
+    parseBridgeMessage({
+      channel: "vesper:custom-app",
+      type: "play-video",
+      payload: { url: "https://www.twitch.tv/lirik", theater: true, sidePanel: true },
+    }),
+    {
+      channel: "vesper:custom-app",
+      id: "",
+      type: "play-video",
+      payload: { url: "https://www.twitch.tv/lirik", theater: true, sidePanel: true },
+    },
+  );
+  assert.deepEqual(
+    parseBridgeMessage({
+      channel: "vesper:custom-app",
+      type: "play-video",
+      payload: { url: "https://www.twitch.tv/lirik", sidePanel: "yes" },
+    }),
+    {
+      channel: "vesper:custom-app",
+      id: "",
+      type: "play-video",
+      payload: { url: "https://www.twitch.tv/lirik" },
+    },
+  );
+});
