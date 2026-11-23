@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"strings"
 	"sync"
 	"time"
 )
@@ -245,43 +244,4 @@ func (b *Broker) evictOverflowLocked() {
 		}
 		delete(b.entries, oldestKey)
 	}
-}
-
-// LeadWatcher observes streaming assistant text deltas and reports the lead
-// text once it has stabilized (the model has moved at least two words past the
-// lead's sentence boundary outside any code fence or open markdown link).
-type LeadWatcher struct {
-	buf   strings.Builder
-	fired bool
-}
-
-// Reset discards buffered pre-tool prose so a follow-up answer after tool calls
-// starts fresh.
-func (w *LeadWatcher) Reset() {
-	w.buf.Reset()
-	w.fired = false
-}
-
-// Feed appends delta and returns the stabilized lead text at most once per
-// contiguous reply block.
-func (w *LeadWatcher) Feed(delta string) (string, bool) {
-	if w.fired || delta == "" {
-		return "", false
-	}
-	w.buf.WriteString(delta)
-	raw := w.buf.String()
-	// Wait if inside an unclosed code fence or an unclosed markdown link.
-	if strings.Count(raw, "```")%2 != 0 || strings.Count(raw, "~~~")%2 != 0 {
-		return "", false
-	}
-	if strings.LastIndexByte(raw, '[') > strings.LastIndexByte(raw, ']') {
-		return "", false
-	}
-	speakable, _ := Speakable(raw, MaxWords)
-	lead, rest := SplitLead(speakable)
-	if lead == "" || len(strings.Fields(rest)) < 2 {
-		return "", false
-	}
-	w.fired = true
-	return lead, true
 }

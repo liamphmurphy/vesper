@@ -2786,7 +2786,7 @@ func (q *Queries) PendingApprovalForRun(ctx context.Context, runID uuid.UUID) (A
 }
 
 const pendingChatTurn = `-- name: PendingChatTurn :one
-SELECT id, run_id, seq, trigger, input_message, started_at, ended_at, exit_code, status, process_started_at, log_key, usage, effort, effort_level, effort_reasons, execution_token, execution_expires_at FROM run_turns WHERE run_id = $1 AND status = 'pending' ORDER BY seq DESC LIMIT 1
+SELECT id, run_id, seq, trigger, input_message, started_at, ended_at, exit_code, status, process_started_at, log_key, usage, effort, effort_level, effort_reasons, execution_token, execution_expires_at, spoken FROM run_turns WHERE run_id = $1 AND status = 'pending' ORDER BY seq DESC LIMIT 1
 `
 
 // The newest turn not yet claimed: what a chat interruption replaces when
@@ -2812,6 +2812,7 @@ func (q *Queries) PendingChatTurn(ctx context.Context, runID uuid.UUID) (RunTurn
 		&i.EffortReasons,
 		&i.ExecutionToken,
 		&i.ExecutionExpiresAt,
+		&i.Spoken,
 	)
 	return i, err
 }

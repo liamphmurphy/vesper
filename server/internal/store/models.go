@@ -1651,6 +1651,7 @@ type RunTurn struct {
 	EffortReasons      []string
 	ExecutionToken     *uuid.UUID
 	ExecutionExpiresAt *time.Time
+	Spoken             bool
 }
 
 type Runner struct {

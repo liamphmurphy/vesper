@@ -62,6 +62,9 @@ RETURNING *;
 -- name: SetTurnEffortReasons :exec
 UPDATE run_turns SET effort_reasons = sqlc.arg(reasons)::text[] WHERE id = $1;
 
+-- name: MarkTurnSpoken :exec
+UPDATE run_turns SET spoken = true WHERE id = $1;
+
 -- name: EndOpenTurn :exec
 UPDATE run_turns SET ended_at = now(), exit_code = $2 WHERE run_id = $1 AND ended_at IS NULL;
 
