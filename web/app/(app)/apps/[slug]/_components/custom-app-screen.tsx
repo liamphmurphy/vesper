@@ -159,6 +159,8 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
   const [decidingApproval, setDecidingApproval] = useState(false);
   const [activeVideo, setActiveVideo] = useState<StageVideo | null>(null);
   const [theater, setTheater] = useState(false);
+  const [sidePanelEnabled, setSidePanelEnabled] = useState(false);
+  const [sidePanelOpen, setSidePanelOpen] = useState(true);
   const capabilitiesRef = useRef(app.capabilities);
   useEffect(() => {
     capabilitiesRef.current = app.capabilities;
@@ -175,7 +177,10 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
     frameRef.current?.contentWindow?.postMessage(msg, "*", transfer);
   }, []);
 
-  const closeVideo = useCallback(() => setActiveVideo(null), []);
+  const closeVideo = useCallback(() => {
+    setActiveVideo(null);
+    setSidePanelEnabled(false);
+  }, []);
   const hlsRequestSeqRef = useRef(0);
 
   // Stop any active LAN HLS relay stream when switching videos, closing the player, or leaving the page.
@@ -197,9 +202,10 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
 
   // Tell the app what its player is doing, so it can save progress or move on to the next video.
   const playerUrl = activeVideo?.embedUrl ?? null;
+  const sidePanelLayout = playerUrl !== null && theater && sidePanelEnabled;
   useEffect(() => {
-    postToFrame({ type: "vesper:player", open: playerUrl !== null, theater });
-  }, [playerUrl, theater, postToFrame]);
+    postToFrame({ type: "vesper:player", open: playerUrl !== null, theater, sidePanel: sidePanelLayout && sidePanelOpen });
+  }, [playerUrl, theater, sidePanelLayout, sidePanelOpen, postToFrame]);
 
   // Theater wants the whole window: fold the native sidebar while it lasts (a no-op in a browser).
   const wantsWholeWindow = playerUrl !== null && theater;
@@ -434,6 +440,7 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
           const title = msg.payload.title || "Live stream";
           const externalUrl = msg.payload.externalUrl ?? "";
           const requestedTheater = msg.payload.theater;
+          const wantsSide = msg.payload.sidePanel === true;
           void getCustomAppHlsStream(app.slug, streamId)
             .then((stream) => {
               if (hlsRequestSeqRef.current !== reqSeq) {
@@ -449,6 +456,8 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
                 title,
               });
               if (requestedTheater !== undefined) setTheater(requestedTheater);
+              setSidePanelEnabled(wantsSide);
+              if (wantsSide) setSidePanelOpen(true);
             })
             .catch(() => {
               // Stream expired or was stopped before playback began.
@@ -466,6 +475,9 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
             title: msg.payload.title || embed.titleFallback,
           });
           if (msg.payload.theater !== undefined) setTheater(msg.payload.theater);
+          const wantsSide = msg.payload.sidePanel === true;
+          setSidePanelEnabled(wantsSide);
+          if (wantsSide) setSidePanelOpen(true);
         } else if (!parseLocalMediaUrl(msg.payload.url)) {
           window.open(msg.payload.url, "_blank", "noopener,noreferrer");
         }
@@ -853,22 +865,40 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
           )}
         </div>
       )}
-      {activeVideo && (
-        <CustomAppPlayerStage video={activeVideo} theater={theater} onTheaterChange={setTheater} onClose={closeVideo} />
-      )}
-      <iframe
-        ref={frameRef}
-        key={`${app.current.seq}:${reloadKey}`}
-        sandbox="allow-scripts"
-        // An app may play video it builds itself (media-src blob:) and take it fullscreen.
-        allow="fullscreen"
-        referrerPolicy="no-referrer"
-        srcDoc={srcDoc}
-        title={app.name}
-        data-testid="custom-app-frame"
-        onLoad={() => postToFrame({ type: "vesper:theme", vars: readThemeVars() })}
-        className="h-full min-h-[420px] w-full flex-1 border-0 bg-bg"
-      />
+      <div className={cx("flex min-h-0 flex-1", sidePanelLayout ? "flex-row" : "flex-col")}>
+        {activeVideo && (
+          <CustomAppPlayerStage
+            video={activeVideo}
+            theater={theater}
+            sidePanelAvailable={sidePanelEnabled}
+            sidePanelLayout={sidePanelLayout}
+            sidePanelOpen={sidePanelOpen}
+            onSidePanelChange={setSidePanelOpen}
+            onTheaterChange={setTheater}
+            onClose={closeVideo}
+          />
+        )}
+        <iframe
+          ref={frameRef}
+          key={`${app.current.seq}:${reloadKey}`}
+          sandbox="allow-scripts"
+          // An app may play video it builds itself (media-src blob:) and take it fullscreen.
+          allow="fullscreen"
+          referrerPolicy="no-referrer"
+          srcDoc={srcDoc}
+          title={app.name}
+          data-testid="custom-app-frame"
+          onLoad={() => postToFrame({ type: "vesper:theme", vars: readThemeVars() })}
+          className={cx(
+            "border-0 bg-bg",
+            sidePanelLayout
+              ? sidePanelOpen
+                ? "h-full w-[340px] flex-none border-l border-border-subtle"
+                : "hidden"
+              : "h-full min-h-[420px] w-full flex-1",
+          )}
+        />
+      </div>
     </div>
   );
 

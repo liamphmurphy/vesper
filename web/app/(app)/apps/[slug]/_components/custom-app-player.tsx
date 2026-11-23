@@ -192,11 +192,19 @@ function HlsNativeVideo({
 export function CustomAppPlayerStage({
   video,
   theater,
+  sidePanelAvailable = false,
+  sidePanelLayout = false,
+  sidePanelOpen = true,
+  onSidePanelChange,
   onTheaterChange,
   onClose,
 }: {
   video: StageVideo;
   theater: boolean;
+  sidePanelAvailable?: boolean;
+  sidePanelLayout?: boolean;
+  sidePanelOpen?: boolean;
+  onSidePanelChange?: (open: boolean) => void;
   onTheaterChange: (theater: boolean) => void;
   onClose: () => void;
 }) {
@@ -243,10 +251,13 @@ export function CustomAppPlayerStage({
       aria-label="Video player"
       data-testid="custom-app-player"
       data-theater={theater ? "true" : "false"}
-      className={cx("flex-none border-b border-border-subtle", theater ? "bg-black" : "bg-bg px-4 pt-3")}
+      className={cx(
+        sidePanelLayout ? "flex min-w-0 flex-1 flex-col bg-black" : "flex-none border-b border-border-subtle",
+        !sidePanelLayout && (theater ? "bg-black" : "bg-bg px-4 pt-3"),
+      )}
     >
-      <div className={cx("mx-auto flex w-full flex-col", !theater && "max-w-[1280px]")}>
-        <div className="flex justify-center bg-black">
+      <div className={cx("mx-auto flex w-full flex-col", sidePanelLayout && "min-h-0 flex-1", !theater && "max-w-[1280px]")}>
+        <div className={cx("flex items-center justify-center bg-black", sidePanelLayout && "min-h-0 flex-1")}>
           <div
             className="relative aspect-video w-full bg-black"
             style={{ maxWidth: `calc(${maxHeight} * 16 / 9)` }}
@@ -310,6 +321,20 @@ export function CustomAppPlayerStage({
               <Icon name="link" size={13} />
               {externalLinkLabel(video)}
             </a>
+          )}
+          {theater && sidePanelAvailable && onSidePanelChange && (
+            <button
+              type="button"
+              aria-pressed={sidePanelOpen}
+              title={sidePanelOpen ? "Hide chat panel" : "Show chat panel"}
+              onClick={() => onSidePanelChange(!sidePanelOpen)}
+              className={cx(
+                "inline-flex h-7 flex-none items-center gap-1.5 rounded-full border px-3 text-12 font-medium transition-colors",
+                sidePanelOpen ? "border-accent bg-accent-soft text-fg" : "border-border-strong text-fg-secondary hover:bg-hover hover:text-fg",
+              )}
+            >
+              {sidePanelOpen ? "Hide chat" : "Show chat"}
+            </button>
           )}
           <button
             type="button"

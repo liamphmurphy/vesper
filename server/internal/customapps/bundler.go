@@ -663,7 +663,7 @@ window.addEventListener("message", (event) => {
     return;
   }
   if (msg.type === "vesper:player") {
-    const state = { open: msg.open === true, theater: msg.theater === true };
+    const state = { open: msg.open === true, theater: msg.theater === true, sidePanel: msg.sidePanel === true };
     for (const fn of playerListeners) {
       try { fn(state); } catch {}
     }
@@ -726,6 +726,7 @@ export function playVideo(url, opts) {
       url: String(url || ""),
       ...(typeof options.title === "string" && options.title ? { title: options.title } : {}),
       ...(typeof options.theater === "boolean" ? { theater: options.theater } : {}),
+      ...(typeof options.sidePanel === "boolean" ? { sidePanel: options.sidePanel } : {}),
       ...(typeof options.externalUrl === "string" && options.externalUrl ? { externalUrl: options.externalUrl } : {}),
     },
   }, "*");

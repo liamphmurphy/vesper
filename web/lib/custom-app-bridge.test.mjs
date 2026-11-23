@@ -297,13 +297,13 @@ test("HLS relay streams parse vesper-hls:<uuid> and optional safe externalUrl", 
     parseBridgeMessage({
       channel: "vesper:custom-app",
       type: "play-video",
-      payload: { url: `vesper-hls:${id}`, title: "Live", theater: true, externalUrl: "https://www.twitch.tv/demo" },
+      payload: { url: `vesper-hls:${id}`, title: "Live", theater: true, sidePanel: true, externalUrl: "https://www.twitch.tv/demo" },
     }),
     {
       channel: "vesper:custom-app",
       id: "",
       type: "play-video",
-      payload: { url: `vesper-hls:${id}`, title: "Live", theater: true, externalUrl: "https://www.twitch.tv/demo" },
+      payload: { url: `vesper-hls:${id}`, title: "Live", theater: true, sidePanel: true, externalUrl: "https://www.twitch.tv/demo" },
     },
   );
   // Unsafe externalUrl is dropped while keeping the valid relay URL.
@@ -314,6 +314,35 @@ test("HLS relay streams parse vesper-hls:<uuid> and optional safe externalUrl", 
       payload: { url: `vesper-hls:${id}`, externalUrl: "javascript:alert(1)" },
     }),
     { channel: "vesper:custom-app", id: "", type: "play-video", payload: { url: `vesper-hls:${id}` } },
+  );
+});
+
+test("parseBridgeMessage keeps play-video's sidePanel flag only when it is a boolean", () => {
+  assert.deepEqual(
+    parseBridgeMessage({
+      channel: "vesper:custom-app",
+      type: "play-video",
+      payload: { url: "https://www.twitch.tv/lirik", theater: true, sidePanel: true },
+    }),
+    {
+      channel: "vesper:custom-app",
+      id: "",
+      type: "play-video",
+      payload: { url: "https://www.twitch.tv/lirik", theater: true, sidePanel: true },
+    },
+  );
+  assert.deepEqual(
+    parseBridgeMessage({
+      channel: "vesper:custom-app",
+      type: "play-video",
+      payload: { url: "https://www.twitch.tv/lirik", sidePanel: "yes" },
+    }),
+    {
+      channel: "vesper:custom-app",
+      id: "",
+      type: "play-video",
+      payload: { url: "https://www.twitch.tv/lirik" },
+    },
   );
 });
 
