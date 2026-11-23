@@ -9618,6 +9618,7 @@ components:
         compact_pending: { type: boolean, description: "Set after /compact; the next turn starts a fresh context window with handoff + workspace git brief" }
         compact_focus: { type: string, description: "Optional user focus note saved with /compact for the next turn" }
         auto_rollover_tokens: { type: integer, format: int64, nullable: true, description: "Per-chat auto-compaction threshold in context tokens (0 disables auto-compaction; null inherits the server default)" }
+        effective_auto_rollover_tokens: { type: integer, format: int64, description: "Active auto-compaction threshold in context tokens for this chat (0 when disabled)" }
         context_tokens: { type: integer, format: int64, description: "Current segment's last reported context window size in tokens" }
         forked_from_chat_id: { type: string, format: uuid, nullable: true, description: "Source chat this conversation was forked from" }
         forked_from_message_id: { type: string, format: uuid, nullable: true, description: "Fork anchor message in the source chat" }

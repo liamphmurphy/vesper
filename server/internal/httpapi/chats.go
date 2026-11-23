@@ -242,6 +242,8 @@ func (s *Server) toChats(ctx context.Context, chats []store.ChatSession) ([]api.
 		if c.AutoRolloverTokens != nil {
 			item.AutoRolloverTokens = nullableOf(c.AutoRolloverTokens)
 		}
+		effRollover := runs.EffectiveChatAutoRollover(c, s.Runs.RolloverContextTokens)
+		item.EffectiveAutoRolloverTokens = &effRollover
 		if c.ForkedFromChatID != nil {
 			item.ForkedFromChatId = nullUUID(c.ForkedFromChatID)
 		}

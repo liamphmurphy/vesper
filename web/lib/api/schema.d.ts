@@ -8570,6 +8570,11 @@ export interface components {
             auto_rollover_tokens?: number | null;
             /**
              * Format: int64
+             * @description Active auto-compaction threshold in context tokens for this chat (0 when disabled)
+             */
+            effective_auto_rollover_tokens?: number;
+            /**
+             * Format: int64
              * @description Current segment's last reported context window size in tokens
              */
             context_tokens?: number;

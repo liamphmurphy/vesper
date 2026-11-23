@@ -49,24 +49,30 @@ func TestCompactAndForkChatHTTP(t *testing.T) {
 	if int64(fetched["context_tokens"].(float64)) != 42000 {
 		t.Fatalf("expected context_tokens=42000, got %v (run %s)", fetched["context_tokens"], runID)
 	}
+	if int64(fetched["effective_auto_rollover_tokens"].(float64)) != 160000 {
+		t.Fatalf("expected default effective_auto_rollover_tokens=160000, got %v", fetched["effective_auto_rollover_tokens"])
+	}
 
 	// PATCH auto_rollover_tokens: custom value, 0, and null (inherit default).
 	rev := int(fetched["revision"].(float64))
 	p1 := e.want("PATCH", "/chats/"+chatID, map[string]any{"revision": rev, "auto_rollover_tokens": 150000}, http.StatusOK)
-	if int64(p1["auto_rollover_tokens"].(float64)) != 150000 {
-		t.Fatalf("expected auto_rollover_tokens=150000, got %v", p1["auto_rollover_tokens"])
+	if int64(p1["auto_rollover_tokens"].(float64)) != 150000 || int64(p1["effective_auto_rollover_tokens"].(float64)) != 150000 {
+		t.Fatalf("expected auto_rollover_tokens=150000, got %v / %v", p1["auto_rollover_tokens"], p1["effective_auto_rollover_tokens"])
 	}
 	rev = int(p1["revision"].(float64))
 	e.want("PATCH", "/chats/"+chatID, map[string]any{"revision": rev, "auto_rollover_tokens": -1}, http.StatusUnprocessableEntity)
 
 	p2 := e.want("PATCH", "/chats/"+chatID, map[string]any{"revision": rev, "auto_rollover_tokens": 0}, http.StatusOK)
-	if int64(p2["auto_rollover_tokens"].(float64)) != 0 {
-		t.Fatalf("expected auto_rollover_tokens=0, got %v", p2["auto_rollover_tokens"])
+	if int64(p2["auto_rollover_tokens"].(float64)) != 0 || int64(p2["effective_auto_rollover_tokens"].(float64)) != 0 {
+		t.Fatalf("expected auto_rollover_tokens=0, got %v / %v", p2["auto_rollover_tokens"], p2["effective_auto_rollover_tokens"])
 	}
 	rev = int(p2["revision"].(float64))
 	p3 := e.want("PATCH", "/chats/"+chatID, map[string]any{"revision": rev, "auto_rollover_tokens": nil}, http.StatusOK)
 	if _, has := p3["auto_rollover_tokens"]; has && p3["auto_rollover_tokens"] != nil {
 		t.Fatalf("expected auto_rollover_tokens cleared, got %v", p3["auto_rollover_tokens"])
+	}
+	if int64(p3["effective_auto_rollover_tokens"].(float64)) != 160000 {
+		t.Fatalf("expected effective_auto_rollover_tokens restored to 160000, got %v", p3["effective_auto_rollover_tokens"])
 	}
 
 	// POST /compact returns 200 with compact_pending=true and focus.

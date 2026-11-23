@@ -15,6 +15,11 @@ import (
 const (
 	maxCompactFocusChars = 500
 	maxGitBriefFiles     = 30
+	maxPinnedCompactRows = 20
+	// DefaultChatAutoRolloverTokens is the sensible default context-token
+	// threshold at which a persona chat automatically compacts onto a fresh
+	// context window when neither the chat nor ROLLOVER_CONTEXT_TOKENS sets one.
+	DefaultChatAutoRolloverTokens int64 = 160_000
 )
 
 type briefCommit struct {
@@ -92,11 +97,17 @@ func buildChatGitBrief(ctx context.Context, q *store.Queries, chatID uuid.UUID) 
 	return strings.TrimSpace(b.String()), nil
 }
 
-func effectiveAutoRollover(chat store.ChatSession, serverDefault int64) int64 {
+// EffectiveChatAutoRollover returns the active auto-compaction token threshold
+// for a chat: per-chat override (0 disables), else server ROLLOVER_CONTEXT_TOKENS
+// if configured, else DefaultChatAutoRolloverTokens.
+func EffectiveChatAutoRollover(chat store.ChatSession, serverDefault int64) int64 {
 	if chat.AutoRolloverTokens != nil {
 		return *chat.AutoRolloverTokens
 	}
-	return serverDefault
+	if serverDefault > 0 {
+		return serverDefault
+	}
+	return DefaultChatAutoRolloverTokens
 }
 
 // CompactChat resets the active harness CLI session while keeping the existing
@@ -210,10 +221,33 @@ func buildCompactOrForkPrompt(ctx context.Context, q *store.Queries, chat store.
 	if err != nil {
 		return "", err
 	}
+	pinnedRows, err := q.ListBookmarkedChatMessages(ctx, store.ListBookmarkedChatMessagesParams{
+		SessionID: chat.ID,
+		Limit:     maxPinnedCompactRows,
+	})
+	if err != nil {
+		return "", err
+	}
+	pinnedMsgs := make([]HandoffMessage, len(pinnedRows))
+	for i, r := range pinnedRows {
+		msgBody := r.BodyMd
+		if r.Role == "assistant" {
+			msgBody = ApplyChecklistState(msgBody, ParseChecklistState(r.ChecklistState))
+		}
+		pinnedMsgs[i] = HandoffMessage{
+			Seq:     r.Seq,
+			Role:    r.Role,
+			Harness: deref(r.Harness),
+			Model:   deref(r.Model),
+			Persona: r.PersonaName,
+			Body:    msgBody,
+		}
+	}
 	return renderHandoffWith(hist, int(total), budget, hc, HandoffOptions{
-		Lead:     lead,
-		Focus:    focus,
-		GitBrief: gitBrief,
-		Footer:   footer,
+		Lead:           lead,
+		Focus:          focus,
+		GitBrief:       gitBrief,
+		PinnedMessages: pinnedMsgs,
+		Footer:         footer,
 	}, body), nil
 }
