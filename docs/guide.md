@@ -157,6 +157,24 @@ empty state. Failed dependency installs retain their error and any inventory
 collected before the failure. Refresh only reloads reports; it does not install
 packages or start agent work.
 
+### Behind a TLS-inspecting proxy (Zscaler)
+
+A company proxy that inspects HTTPS re-signs every connection with its own root
+certificate. Your Mac trusts it; agent VMs don't, so turns fail with errors like
+`self-signed certificate in certificate chain`. Give the VMs that root:
+
+1. Export it as PEM:
+   `security find-certificate -a -c Zscaler -p /Library/Keychains/System.keychain > ~/zscaler-root.pem`
+   (change `Zscaler` to the certificate's name in Keychain Access for another proxy).
+2. Choose that file in **Settings → Power & Stack → Corporate root certificate**,
+   or set `RUNNER_EXTRA_CA_FILE` to its absolute path, then restart the local stack.
+
+Each VM adds it to its system bundle when it boots, and turns get
+`NODE_EXTRA_CA_CERTS`, `CODEX_CA_CERTIFICATE` and `REQUESTS_CA_BUNDLE`. A file
+holding anything but certificates is refused; the app logs why and starts the
+runner without it. Containers that a turn starts with Docker keep their own trust
+store. This only fixes trust: a proxy that blocks a host still blocks it.
+
 ### Open a run's code
 
 By default a run's checkout lives inside its VM's disk, which you can't open from

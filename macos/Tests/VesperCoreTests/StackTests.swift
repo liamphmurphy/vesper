@@ -151,6 +151,14 @@ final class StackLaunchTests: XCTestCase {
         XCTAssertNil(none["RUNNER_MAX_CONCURRENT"])
     }
 
+    func testExtraCaFileSetsRunnerVariableUnlessTheEnvironmentHasOne() {
+        let launch = StackLaunch(resources: resources(), dataDirectory: URL(fileURLWithPath: "/data"), secretsKey: "k", extraCaFile: "/Users/me/ca.pem")
+        XCTAssertEqual(launch.environment(base: [:])["RUNNER_EXTRA_CA_FILE"], "/Users/me/ca.pem")
+        XCTAssertEqual(launch.environment(base: ["RUNNER_EXTRA_CA_FILE": "/etc/corp.pem"])["RUNNER_EXTRA_CA_FILE"], "/etc/corp.pem")
+        let none = StackLaunch(resources: resources(), dataDirectory: URL(fileURLWithPath: "/data"), secretsKey: "k").environment(base: [:])
+        XCTAssertNil(none["RUNNER_EXTRA_CA_FILE"])
+    }
+
     func testResolveBundledResources() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("vesper-res-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }

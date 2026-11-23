@@ -431,6 +431,15 @@ func runAppMicroVMRunner(
 		log.Warn("vesper app cache store disabled", "err", cerr)
 	}
 
+	// A bad file shouldn't take the runner down with it: turns still reach
+	// every host the proxy doesn't inspect, and the log says why the rest fail.
+	var extraCA []byte
+	if cfg.Runner.ExtraCAFile != "" {
+		if extraCA, err = runner.LoadExtraCACerts(cfg.Runner.ExtraCAFile); err != nil {
+			log.Error("vesper app extra CA certificates ignored", "err", err)
+		}
+	}
+
 	secretStore := &secrets.Service{Q: store.New(pool), Box: box}
 	saveClaude, saveCodex := buildAuthSavers(secretStore)
 	driver := microvm.NewVZDriver()
@@ -452,6 +461,7 @@ func runAppMicroVMRunner(
 		APIHandler:       apiHandler,
 		APIUpstream:      baseURL,
 		CacheStore:       cacheStore,
+		ExtraCACerts:     extraCA,
 		SaveClaudeAuth:   saveClaude,
 		SaveCodexAuth:    saveCodex,
 		Log:              log,

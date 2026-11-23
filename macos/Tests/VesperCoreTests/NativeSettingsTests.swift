@@ -115,6 +115,16 @@ final class NativeSettingsTests: XCTestCase {
         XCTAssertEqual(next.stack.minFreeDiskGb, 10, "other stack settings are kept")
     }
 
+    func testExtraCaFileKeepsAnAbsolutePathOrNothing() {
+        XCTAssertEqual(NativeSettings.defaults().stack.extraCaFile, "")
+        XCTAssertEqual(NativeSettings.normalize(["stack": ["extraCaFile": "/Users/me/zscaler-root.pem"]]).stack.extraCaFile, "/Users/me/zscaler-root.pem")
+        let bad: [Any] = ["zscaler-root.pem", "/bad\npath.pem", 3, NSNull()]
+        for b in bad { XCTAssertEqual(NativeSettings.normalize(["stack": ["extraCaFile": b]]).stack.extraCaFile, "", "\(b)") }
+        let set = NativeSettings.normalize([:]).applying(patch: ["stack": ["extraCaFile": "/Users/me/ca.pem"]])
+        XCTAssertEqual(set.stack.extraCaFile, "/Users/me/ca.pem")
+        XCTAssertEqual(set.applying(patch: ["stack": ["extraCaFile": ""]]).stack.extraCaFile, "", "Clear empties it")
+    }
+
     func testShowHideAndDockSettingsDefaultSafelyAndRepair() {
         let n = NativeSettings.normalize(["showHide": ["enabled": "yes", "shortcut": " "], "dock": ["menu": false, "progress": 1]])
         XCTAssertEqual(n.showHide, NativeSettings.Shortcut(shortcut: "Alt+Shift+V"))
