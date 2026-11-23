@@ -546,6 +546,9 @@ private struct ChatMessageRowView: View {
                         ForEach(Array(parsed.segments.enumerated()), id: \.offset) { _, segment in
                             segmentView(segment, citationNumbers: citationNumbers)
                         }
+                        if !parsed.entityRefs.isEmpty {
+                            ChatEntityCardsStripView(refs: parsed.entityRefs)
+                        }
                     }
 
                     if let attachments = message.attachments, !attachments.isEmpty {

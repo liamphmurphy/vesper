@@ -102,6 +102,7 @@ public struct ParsedChatMessage: Sendable, Equatable {
     public var segments: [ChatMessageSegment]
     public var sources: [ChatListedSource]
     public var mentions: [String]
+    public var entityRefs: [ChatEntityRef]
 
     public var hasDispatchSegment: Bool {
         segments.contains { if case .dispatch = $0 { return true }; return false }
@@ -120,13 +121,15 @@ public struct ParsedChatMessage: Sendable, Equatable {
         context: ChatStrippedContext,
         segments: [ChatMessageSegment],
         sources: [ChatListedSource] = [],
-        mentions: [String] = []
+        mentions: [String] = [],
+        entityRefs: [ChatEntityRef] = []
     ) {
         self.typedBody = typedBody
         self.context = context
         self.segments = segments
         self.sources = sources
         self.mentions = mentions
+        self.entityRefs = entityRefs
     }
 }
 
@@ -256,12 +259,14 @@ public enum ChatTranscriptLogic {
         let mentions = parseMentions(in: bodyWithoutSources, knownNames: knownPersonaNames)
         let enableChecklists = interactiveChecklists ?? extractSources
         let segments = parseSegments(bodyWithoutSources, citationNumbers: numberedCitations, interactiveChecklists: enableChecklists)
+        let entityRefs = extractSources ? ChatEntityRefExtractor.extract(from: bodyWithoutSources) : []
         return ParsedChatMessage(
             typedBody: context.typedBody,
             context: context,
             segments: segments,
             sources: sources,
-            mentions: mentions
+            mentions: mentions,
+            entityRefs: entityRefs
         )
     }
 
