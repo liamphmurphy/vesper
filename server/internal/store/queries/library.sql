@@ -69,6 +69,25 @@ SELECT d.blob_key, d.poster_key,
    AND NOT EXISTS (SELECT 1 FROM library_items o WHERE o.blob_key = d.blob_key AND o.id <> sqlc.arg(id)))::boolean AS orphaned
 FROM d;
 
+-- name: DeleteLibraryItems :many
+-- Removes many of the caller's items at once. orphaned says no chat attachment,
+-- workflow image, chat video, chat audio or remaining item still uses its
+-- object, so the caller may delete it. A video's poster belongs to the item alone.
+WITH d AS (
+  DELETE FROM library_items
+  WHERE library_items.id = ANY(sqlc.arg(ids)::uuid[])
+    AND library_items.workspace_id = sqlc.arg(workspace_id)
+    AND library_items.user_id = sqlc.arg(user_id)
+  RETURNING id, blob_key, poster_key
+)
+SELECT d.id, d.blob_key, d.poster_key,
+  (NOT EXISTS (SELECT 1 FROM chat_attachments a WHERE a.blob_key = d.blob_key)
+   AND NOT EXISTS (SELECT 1 FROM workflow_step_images i WHERE i.blob_key = d.blob_key)
+   AND NOT EXISTS (SELECT 1 FROM chat_video_jobs v WHERE v.output_blob_key = d.blob_key)
+   AND NOT EXISTS (SELECT 1 FROM chat_audio_jobs a WHERE a.output_blob_key = d.blob_key)
+   AND NOT EXISTS (SELECT 1 FROM library_items o WHERE o.blob_key = d.blob_key AND NOT EXISTS (SELECT 1 FROM d x WHERE x.id = o.id)))::boolean AS orphaned
+FROM d;
+
 -- name: LockLibraryReferences :exec
 -- Serializes one person's reference changes, so replacing one never trips
 -- the one-per-role unique indexes.

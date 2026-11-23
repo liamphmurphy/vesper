@@ -18,6 +18,7 @@ public struct LibrarySelection: Equatable, Sendable {
             if selected.contains(id) {
                 selected.remove(id)
                 focused = selected.isEmpty ? nil : (focused == id ? ids.first(where: selected.contains) : focused)
+                if anchor == id { anchor = focused }
                 return
             }
             selected.insert(id)
@@ -76,4 +77,26 @@ public struct LibrarySelection: Equatable, Sendable {
 
     /// The selection in display order (Quick Look, bulk actions).
     public func ordered(_ ids: [String]) -> [String] { ids.filter(selected.contains) }
+
+    /// Resolves how a click acts given whether Select mode is on and which modifier keys are held.
+    public static func tapModifier(selecting: Bool, command: Bool, shift: Bool) -> Modifier {
+        if shift { return .extend }
+        if command || selecting { return .toggle }
+        return .none
+    }
+
+    /// Whether every currently visible item is selected.
+    public func isAllSelected(in ids: [String]) -> Bool {
+        !ids.isEmpty && ids.allSatisfy(selected.contains)
+    }
+
+    /// Selects every visible item, or clears when all of them are already selected.
+    public mutating func toggleAll(_ ids: [String]) {
+        if isAllSelected(in: ids) { clear() } else { selectAll(ids) }
+    }
+
+    /// Shows the bulk action bar while Select mode is on or multiple items are selected.
+    public func showsBar(selecting: Bool) -> Bool {
+        selecting || selected.count > 1
+    }
 }

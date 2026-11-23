@@ -63,6 +63,10 @@ final class KeepsakesModel {
     /// The offsets of the pages loaded so far ("Show more" adds one).
     var offsets = [0]
     var selection = LibrarySelection()
+    /// Explicit multi-select mode toggled from the toolbar or by clicking a tile's checkbox.
+    var selecting = false
+    /// True while a bulk delete request is in flight.
+    var removing = false
     /// The item whose dialog shows; `autoPlay` when a click opened it (not a chat's "Open in Library").
     var open: OpenLibraryItem?
     /// `?item=` from a chat's "Open in Library": opened once its page has loaded.
@@ -99,29 +103,55 @@ struct KeepsakesScreen: View {
     var body: some View {
         let items = self.items
         let ids = items.map(\.id)
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    LibraryHeading(description: "Private keepsakes from your chats: generated media, saved files, exports, diagrams, references, and links.")
-                    if let error = model.uploadError {
-                        Text(error).vesperText(.small, theme).foregroundStyle(theme.swiftUIColor("pill-blocked-fg", fallback: .red))
+        Group {
+            switch model.tab {
+            case "links":
+                LibraryLinksView(selecting: $model.selecting, uploadError: model.uploadError)
+            case "fridge":
+                LibraryFridgeView(selecting: $model.selecting, uploadError: model.uploadError)
+            default:
+                VStack(spacing: 0) {
+                    if model.selection.showsBar(selecting: model.selecting) {
+                        LibrarySelectionBar(
+                            selectedCount: model.selection.selected.count,
+                            totalCount: ids.count,
+                            allSelected: model.selection.isAllSelected(in: ids),
+                            busy: model.removing,
+                            onToggleAll: {
+                                model.selection.toggleAll(ids)
+                                gridFocused = true
+                            },
+                            onClear: { model.selection.clear() },
+                            onQuickLook: model.selection.selected.isEmpty ? nil : {
+                                quickLook(model.selection.ordered(ids), items: items)
+                            },
+                            onRemove: { removeSelected(from: items) },
+                            onDone: exitSelection
+                        )
+                        Divider().overlay(theme.palette.border)
                     }
-                    switch model.tab {
-                    case "links": LibraryLinksView()
-                    case "fridge": LibraryFridgeView()
-                    default: grid(items: items, ids: ids)
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 20) {
+                                LibraryHeading(description: "Private keepsakes from your chats: generated media, saved files, exports, diagrams, references, and links.")
+                                if let error = model.uploadError {
+                                    Text(error).vesperText(.small, theme).foregroundStyle(theme.swiftUIColor("pill-blocked-fg", fallback: .red))
+                                }
+                                grid(items: items, ids: ids)
+                            }
+                            .padding(.horizontal, 28)
+                            .padding(.vertical, 32)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .onChange(of: model.selection.focused) { _, id in
+                            if let id { withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id) } }
+                        }
+                        .onChange(of: context.find.current) { _, index in
+                            guard let index, index < ids.count else { return }
+                            model.selection.click(ids[index], in: ids)
+                        }
                     }
                 }
-                .padding(.horizontal, 28)
-                .padding(.vertical, 32)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .onChange(of: model.selection.focused) { _, id in
-                if let id { withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id) } }
-            }
-            .onChange(of: context.find.current) { _, index in
-                guard let index, index < ids.count else { return }
-                model.selection.click(ids[index], in: ids)
             }
         }
         .sheet(item: $model.open) { open in
@@ -132,10 +162,14 @@ struct KeepsakesScreen: View {
         .onChange(of: context.match, initial: true) { _, match in applyRoute(match) }
         .onChange(of: ids, initial: true) { _, newIds in
             model.selection.prune(to: newIds)
-            context.find.texts = items.map(Self.searchText)
+            if kind != nil { context.find.texts = items.map(Self.searchText) }
             openPending(in: newIds)
         }
         .onChange(of: model.uploading) { _, _ in publishChrome() }
+        .onChange(of: model.selecting) { _, selecting in
+            if !selecting { model.selection.clear() }
+            publishChrome()
+        }
         .onChange(of: pageKeys, initial: true) { old, new in
             for key in old where !new.contains(key) { context.store.stopObserving(key) }
             guard kind != nil else { return }
@@ -181,19 +215,32 @@ struct KeepsakesScreen: View {
         model.tab = tab
         model.offsets = [0]
         model.selection.clear()
+        model.selecting = false
         publishChrome()
+    }
+
+    private func exitSelection() {
+        model.selection.clear()
+        model.selecting = false
     }
 
     private func publishChrome() {
         context.chrome = NativeChrome(
             title: "Library",
-            toolbarItems: [ShellToolbarItem(id: "library.upload", label: model.uploading ? "Uploading\u{2026}" : "Upload", icon: "upload",
-                                            kind: .button, disabled: model.uploading, showsLabel: true)],
+            toolbarItems: [
+                ShellToolbarItem(id: "library.select", label: model.selecting ? "Done" : "Select", icon: "checklist",
+                                 kind: .toggle, on: model.selecting, showsLabel: true),
+                ShellToolbarItem(id: "library.upload", label: model.uploading ? "Uploading\u{2026}" : "Upload", icon: "upload",
+                                 kind: .button, disabled: model.uploading, showsLabel: true),
+            ],
             navigator: LibraryLogic.keepsakesNavigator(tab: model.tab))
     }
 
     private func handle(_ command: NativeCommand) {
         switch command {
+        case .toolbarAction(itemId: "library.select", _):
+            model.selecting.toggle()
+            if model.selecting { gridFocused = true }
         case .toolbarAction(itemId: "library.upload", _): upload()
         case .navActivate(_, let itemId, let newTab):
             if newTab { context.openInNewTab("/library?tab=\(itemId)") } else { switchTab(itemId) }
@@ -265,27 +312,48 @@ struct KeepsakesScreen: View {
 
     private func tile(_ item: API.LibraryItem, index: Int, items: [API.LibraryItem], ids: [String]) -> some View {
         let selected = model.selection.selected.contains(item.id)
-        let focused = model.selection.focused == item.id
+        let focused = model.selection.focused == item.id && gridFocused
         let findHit = context.find.matches(Self.searchText(item))
-        return LibraryTile(item: item, actions: actions, open: { open(item, autoPlay: true) })
-            .padding(6)
-            .background(selected ? theme.palette.selected : findHit ? theme.palette.hover : .clear, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(theme.palette.accent, lineWidth: focused && gridFocused ? 2 : 0))
-            .contentShape(Rectangle())
-            .onTapGesture(count: 2) { open(item, autoPlay: true) }
-            .onTapGesture {
+        return SelectableLibraryCard(
+            selected: selected,
+            focused: focused,
+            selecting: model.selecting,
+            findHit: findHit,
+            onTap: {
                 let flags = NSEvent.modifierFlags
-                model.selection.click(item.id, in: ids, modifier: flags.contains(.command) ? .toggle : flags.contains(.shift) ? .extend : .none)
+                let modifier = LibrarySelection.tapModifier(
+                    selecting: model.selecting,
+                    command: flags.contains(.command),
+                    shift: flags.contains(.shift)
+                )
+                model.selection.click(item.id, in: ids, modifier: modifier)
+                gridFocused = true
+            },
+            onDoubleTap: {
+                if model.selecting {
+                    model.selection.click(item.id, in: ids, modifier: .toggle)
+                    gridFocused = true
+                } else {
+                    open(item, autoPlay: true)
+                }
+            },
+            onToggleBadge: {
+                let flags = NSEvent.modifierFlags
+                model.selecting = true
+                model.selection.click(item.id, in: ids, modifier: flags.contains(.shift) ? .extend : .toggle)
                 gridFocused = true
             }
-            .onDrag {
-                LibraryFiles.dragProvider(path: LibraryLogic.contentPath(item.id), filename: item.filename,
-                                          contentType: item.contentType, client: context.store.client)
-            }
-            .contextMenu { contextMenu(item, items: items, ids: ids) }
-            .accessibilityElement(children: .combine)
-            .accessibilityAddTraits(selected ? [.isSelected, .isButton] : .isButton)
-            .accessibilityAction(named: "Quick Look") { quickLook([item.id], items: items) }
+        ) {
+            LibraryTile(item: item, actions: actions, open: { open(item, autoPlay: true) })
+        }
+        .onDrag {
+            LibraryFiles.dragProvider(path: LibraryLogic.contentPath(item.id), filename: item.filename,
+                                      contentType: item.contentType, client: context.store.client)
+        }
+        .contextMenu { contextMenu(item, items: items, ids: ids) }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(selected ? [.isSelected, .isButton] : .isButton)
+        .accessibilityAction(named: "Quick Look") { quickLook([item.id], items: items) }
     }
 
     @ViewBuilder
@@ -294,7 +362,9 @@ struct KeepsakesScreen: View {
         if targets.count > 1 {
             Button("Quick Look \(targets.count) Items") { quickLook(targets, items: items) }
             Divider()
-            Button("Remove \(targets.count) Items from Library", role: .destructive) { actions.remove(items.filter { targets.contains($0.id) }) }
+            Button("Remove \(targets.count) Items from Library", role: .destructive) {
+                removeItems(items.filter { targets.contains($0.id) })
+            }
         } else {
             Button("Quick Look") { quickLook([item.id], items: items) }
             if item.kind == .document {
@@ -308,7 +378,7 @@ struct KeepsakesScreen: View {
             Button("Download\u{2026}") { actions.download(item) }
             Button("Copy Link") { actions.copyLink(item) }
             Divider()
-            Button("Remove from Library", role: .destructive) { actions.remove([item]) }
+            Button("Remove from Library", role: .destructive) { removeItems([item]) }
         }
     }
 
@@ -324,7 +394,7 @@ struct KeepsakesScreen: View {
             quickLook(chosen, items: items)
             return .handled
         case .return:
-            guard let id = model.selection.focused, let item = items.first(where: { $0.id == id }) else { return .ignored }
+            guard !model.selecting, let id = model.selection.focused, let item = items.first(where: { $0.id == id }) else { return .ignored }
             if item.kind == .document { actions.openDocument(item) } else { open(item, autoPlay: true) }
             return .handled
         case .leftArrow: model.selection.move(by: -1, in: ids, extend: extend); return .handled
@@ -332,20 +402,44 @@ struct KeepsakesScreen: View {
         case .upArrow: model.selection.move(by: -model.columns, in: ids, extend: extend); return .handled
         case .downArrow: model.selection.move(by: model.columns, in: ids, extend: extend); return .handled
         case .escape:
-            model.selection.clear()
+            exitSelection()
             return .handled
-        case .delete where command:
+        case .delete where command || press.modifiers.isEmpty,
+             .deleteForward where command || press.modifiers.isEmpty:
             let chosen = items.filter { model.selection.selected.contains($0.id) }
-            guard !chosen.isEmpty else { return .ignored }
-            actions.remove(chosen)
+            guard !chosen.isEmpty, !model.removing else { return .ignored }
+            removeItems(chosen)
             return .handled
         default:
             if command, press.characters == "a" {
                 model.selection.selectAll(ids)
+                if !ids.isEmpty { model.selecting = true }
                 return .handled
             }
             return .ignored
         }
+    }
+
+    private func removeSelected(from items: [API.LibraryItem]) {
+        let chosen = items.filter { model.selection.selected.contains($0.id) }
+        guard !chosen.isEmpty, !model.removing else { return }
+        removeItems(chosen)
+    }
+
+    private func removeItems(_ chosen: [API.LibraryItem]) {
+        let removedIds = Set(chosen.map(\.id))
+        actions.remove(
+            chosen,
+            onBusy: { model.removing = $0 },
+            onComplete: { ok in
+                guard ok else { return }
+                if removedIds.isSuperset(of: model.selection.selected) {
+                    exitSelection()
+                } else {
+                    model.selection.prune(to: items.map(\.id).filter { !removedIds.contains($0) })
+                }
+            }
+        )
     }
 
     // MARK: Actions
@@ -442,31 +536,67 @@ struct LibraryItemActions {
     }
 
     /// Asks first, as the web did: a persona's item stays in its chat.
-    func remove(_ items: [API.LibraryItem], then: @escaping @MainActor () -> Void = {}) {
-        guard let first = items.first else { return }
-        let title = items.count == 1 ? "Remove this \(LibraryLogic.noun(first.kind)) from your Library?" : "Remove \(items.count) items from your Library?"
-        let body = items.count == 1 ? LibraryLogic.removeExplanation(first)
-            : items.contains { $0.source != .upload } ? "Items from chats stay in their chats while those chats exist." : nil
+    func remove(
+        _ items: [API.LibraryItem],
+        invalidation: QueryInvalidation = LibraryItemActions.invalidation,
+        then: @escaping @MainActor () -> Void = {},
+        onBusy: (@MainActor (Bool) -> Void)? = nil,
+        onComplete: (@MainActor (Bool) -> Void)? = nil
+    ) {
+        guard let prompt = LibraryLogic.removeConfirmation(items) else { return }
         Task {
-            guard await ShellBridge.confirmSheet(title: title, body: body, confirmLabel: "Remove", cancelLabel: nil, destructive: true,
+            guard await ShellBridge.confirmSheet(title: prompt.title, body: prompt.body, confirmLabel: "Remove", cancelLabel: nil, destructive: true,
                                                  window: context.window()?.window) else { return }
             then()
-            for item in items { await delete(item) }
+            onBusy?(true)
+            let ok = await deleteMany(items, invalidation: invalidation)
+            onBusy?(false)
+            onComplete?(ok)
+        }
+    }
+
+    /// Deletes one or many items; batches of 2+ use POST /library/bulk-delete so all rows drop in one request.
+    @discardableResult
+    func deleteMany(_ items: [API.LibraryItem], invalidation: QueryInvalidation = LibraryItemActions.invalidation) async -> Bool {
+        guard !items.isEmpty else { return true }
+        if items.count == 1, let only = items.first {
+            return await delete(only, invalidation: invalidation)
+        }
+        let batches = LibraryLogic.bulkDeleteBatches(items.map(\.id))
+        do {
+            for (index, batch) in batches.enumerated() {
+                let batchSet = Set(batch)
+                let inv = index == batches.count - 1 ? invalidation : QueryInvalidation()
+                _ = try await context.store.mutate(
+                    API.bulkDeleteLibraryItems(body: .init(ids: batch)),
+                    optimistic: pages.map { page in .update(page) { $0.items.removeAll { batchSet.contains($0.id) } } },
+                    invalidating: inv)
+            }
+            return true
+        } catch {
+            context.store.invalidate(invalidation)
+            context.showToast(ToastItemModel(id: "library.remove.bulk", title: "Couldn\u{2019}t remove \(items.count) items",
+                                             description: (error as? APIError)?.userMessage, tone: .error))
+            return false
         }
     }
 
     /// Deletes without asking (links and moments ask through an Undo toast instead). Already gone counts as removed.
-    func delete(_ item: API.LibraryItem) async {
+    @discardableResult
+    func delete(_ item: API.LibraryItem, invalidation: QueryInvalidation = LibraryItemActions.invalidation) async -> Bool {
         do {
             _ = try await context.store.mutate(
                 API.deleteLibraryItem(itemId: item.id),
                 optimistic: pages.map { page in .update(page) { $0.items.removeAll { $0.id == item.id } } },
-                invalidating: Self.invalidation)
+                invalidating: invalidation)
+            return true
         } catch APIError.http(status: 404, _) {
-            context.store.invalidate(Self.invalidation)
+            context.store.invalidate(invalidation)
+            return true
         } catch {
             context.showToast(ToastItemModel(id: "library.remove.\(item.id)", title: "Couldn\u{2019}t remove \(item.title)",
                                              description: (error as? APIError)?.userMessage, tone: .error))
+            return false
         }
     }
 
@@ -514,5 +644,163 @@ struct LibraryItemActions {
         } catch {
             return (error as? APIError)?.userMessage ?? error.localizedDescription
         }
+    }
+}
+
+/// Pinned action bar shown while selecting Library items across grid tabs, Links, and Fridge.
+struct LibrarySelectionBar: View {
+    @Environment(\.vesperTheme) private var theme
+    let selectedCount: Int
+    let totalCount: Int
+    let allSelected: Bool
+    let busy: Bool
+    var removeLabel = "Remove"
+    var busyLabel = "Removing\u{2026}"
+    let onToggleAll: () -> Void
+    let onClear: () -> Void
+    var onQuickLook: (() -> Void)? = nil
+    let onRemove: () -> Void
+    let onDone: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(selectedCount == 0 ? "Select items" : "\(selectedCount) selected")
+                .font(.system(size: theme.pointSize(.body), weight: .semibold))
+                .foregroundStyle(selectedCount == 0 ? theme.palette.secondaryText : theme.palette.accent)
+
+            if totalCount > 0 {
+                Button(allSelected ? "Deselect all" : "Select all (\(totalCount))", action: onToggleAll)
+                    .buttonStyle(.plain)
+                    .font(.system(size: theme.pointSize(.small), weight: .medium))
+                    .foregroundStyle(theme.palette.secondaryText)
+                    .disabled(busy)
+            }
+
+            if selectedCount > 0 && !allSelected {
+                Button("Clear", action: onClear)
+                    .buttonStyle(.plain)
+                    .font(.system(size: theme.pointSize(.small), weight: .medium))
+                    .foregroundStyle(theme.palette.secondaryText)
+                    .disabled(busy)
+            }
+
+            Spacer(minLength: 8)
+
+            if let onQuickLook, selectedCount > 0 {
+                Button(action: onQuickLook) {
+                    Label("Quick Look", systemImage: "eye")
+                }
+                .buttonStyle(.vesper())
+                .disabled(busy)
+            }
+
+            Button(action: onRemove) {
+                HStack(spacing: 5) {
+                    if busy {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "trash")
+                    }
+                    Text(busy ? busyLabel : selectedCount > 0 ? "\(removeLabel) (\(selectedCount))" : removeLabel)
+                }
+            }
+            .buttonStyle(.vesper(.danger))
+            .disabled(selectedCount == 0 || busy)
+
+            Button("Done", action: onDone)
+                .buttonStyle(.vesper())
+                .disabled(busy)
+        }
+        .padding(.horizontal, 28)
+        .padding(.vertical, 10)
+        .background(theme.swiftUIColor("accent-soft", fallback: theme.palette.selected))
+    }
+}
+
+/// Circular checkmark toggle drawn on Library tiles and cards when hovered, selected, or in Select mode.
+struct LibrarySelectionBadge: View {
+    @Environment(\.vesperTheme) private var theme
+    let selected: Bool
+    let visible: Bool
+    var overlayStyle = true
+    let toggle: () -> Void
+
+    var body: some View {
+        if visible {
+            Button(action: toggle) {
+                ZStack {
+                    if overlayStyle {
+                        Circle()
+                            .fill(selected ? theme.palette.accent : Color.black.opacity(0.45))
+                            .frame(width: 22, height: 22)
+                        Circle()
+                            .stroke(Color.white.opacity(0.9), lineWidth: 1.5)
+                            .frame(width: 22, height: 22)
+                        if selected {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(.white)
+                        }
+                    } else {
+                        Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(selected ? theme.palette.accent : theme.palette.tertiaryText)
+                    }
+                }
+                .shadow(color: overlayStyle ? .black.opacity(0.25) : .clear, radius: overlayStyle ? 2 : 0, y: overlayStyle ? 1 : 0)
+                .frame(width: overlayStyle ? 28 : 22, height: overlayStyle ? 28 : 22)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(selected ? "Deselect item" : "Select item")
+            .accessibilityAddTraits(selected ? .isSelected : [])
+        }
+    }
+}
+
+/// Wraps a Library tile or card with hover/select checkbox badge, selection outline, and hit-testing
+/// isolation while Select mode is active.
+struct SelectableLibraryCard<Content: View>: View {
+    @Environment(\.vesperTheme) private var theme
+    let selected: Bool
+    let focused: Bool
+    let selecting: Bool
+    var findHit = false
+    var cornerRadius: CGFloat = 12
+    var padding: CGFloat = 6
+    var badgePadding: CGFloat = 10
+    var showOverlayBadge = true
+    let onTap: () -> Void
+    var onDoubleTap: (() -> Void)? = nil
+    let onToggleBadge: () -> Void
+    @ViewBuilder let content: () -> Content
+    @State private var hovered = false
+
+    var body: some View {
+        let base = content()
+            .allowsHitTesting(!selecting)
+            .padding(padding)
+            .background(selected ? theme.palette.selected : findHit ? theme.palette.hover : .clear,
+                        in: RoundedRectangle(cornerRadius: cornerRadius))
+            .overlay(RoundedRectangle(cornerRadius: cornerRadius)
+                .stroke(theme.palette.accent, lineWidth: focused ? 2 : selected ? 1.5 : 0))
+            .contentShape(Rectangle())
+
+        Group {
+            if let onDoubleTap {
+                base
+                    .onTapGesture(count: 2) { onDoubleTap() }
+                    .onTapGesture { onTap() }
+            } else {
+                base.onTapGesture { onTap() }
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if showOverlayBadge {
+                LibrarySelectionBadge(selected: selected, visible: selecting || selected || hovered, toggle: onToggleBadge)
+                    .padding(badgePadding)
+            }
+        }
+        .onHover { hovered = $0 }
     }
 }

@@ -2530,6 +2530,22 @@ extension API {
         )
     }
 
+    /// Remove multiple items from your Library
+    ///
+    /// Removes every listed item that belongs to the caller. Items that are
+    /// missing or belong to someone else are ignored. Each item's object is
+    /// removed once nothing else references it; items from chats stay in their
+    /// chats while those chats exist. 422 if ids is empty or exceeds 500.
+    ///
+    /// `POST /library/bulk-delete`
+    public static func bulkDeleteLibraryItems(body: LibraryBulkDelete) -> APIRequest<BulkDeleteLibraryItemsResponse> {
+        return APIRequest(
+            method: "POST", template: "/library/bulk-delete",
+            path: "/api/v1/library/bulk-delete",
+            query: [], headers: [:], body: APIRequestBody.json(body), decode: .json
+        )
+    }
+
     /// Save an SVG diagram from a chat reply to your Library
     ///
     /// Keeps one SVG document from an assistant reply in a chat of the

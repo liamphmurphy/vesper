@@ -23,6 +23,8 @@ import (
 
 const libraryPageSize = 60
 
+const maxLibraryBulkDelete = 500
+
 const libraryDiagramType = "image/svg+xml"
 
 func toLibraryItem(l store.ListLibraryItemsRow) api.LibraryItem {
@@ -150,6 +152,50 @@ func (s *Server) DeleteLibraryItem(ctx context.Context, req api.DeleteLibraryIte
 		_ = s.Blobs.Delete(context.WithoutCancel(ctx), s.ArtifactBucket, *d.PosterKey)
 	}
 	return api.DeleteLibraryItem204Response{}, nil
+}
+
+// BulkDeleteLibraryItems removes many of the caller's items at once, then any
+// objects nothing else still uses. Missing IDs or items owned by someone else
+// are ignored so repeated deletes stay idempotent.
+func (s *Server) BulkDeleteLibraryItems(ctx context.Context, req api.BulkDeleteLibraryItemsRequestObject) (api.BulkDeleteLibraryItemsResponseObject, error) {
+	u, _, ws := me(ctx)
+	if len(req.Body.Ids) == 0 {
+		return nil, apperr.Invalid("ids", "provide at least one item id")
+	}
+	if len(req.Body.Ids) > maxLibraryBulkDelete {
+		return nil, apperr.Invalid("ids", "at most %d items at once", maxLibraryBulkDelete)
+	}
+	ids := make([]uuid.UUID, 0, len(req.Body.Ids))
+	seen := make(map[uuid.UUID]struct{}, len(req.Body.Ids))
+	for _, id := range req.Body.Ids {
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	rows, err := s.Q.DeleteLibraryItems(ctx, store.DeleteLibraryItemsParams{Ids: ids, WorkspaceID: ws, UserID: u.ID})
+	if err != nil {
+		return nil, err
+	}
+	delCtx := context.WithoutCancel(ctx)
+	deletedBlobs := make(map[string]struct{}, len(rows))
+	deletedPosters := make(map[string]struct{})
+	for _, d := range rows {
+		if d.Orphaned && d.BlobKey != "" {
+			if _, done := deletedBlobs[d.BlobKey]; !done {
+				deletedBlobs[d.BlobKey] = struct{}{}
+				_ = s.Blobs.Delete(delCtx, s.ArtifactBucket, d.BlobKey)
+			}
+		}
+		if d.PosterKey != nil && *d.PosterKey != "" {
+			if _, done := deletedPosters[*d.PosterKey]; !done {
+				deletedPosters[*d.PosterKey] = struct{}{}
+				_ = s.Blobs.Delete(delCtx, s.ArtifactBucket, *d.PosterKey)
+			}
+		}
+	}
+	return api.BulkDeleteLibraryItems200JSONResponse{Deleted: len(rows)}, nil
 }
 
 // UploadLibraryItem stores an image of the person's own, e.g. their photo for
