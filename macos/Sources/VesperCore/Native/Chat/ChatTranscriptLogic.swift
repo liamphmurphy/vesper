@@ -84,6 +84,8 @@ public enum ChatMessageSegment: Sendable, Equatable {
     case embedded(EmbeddedBlockKind, source: String, info: String?, index: Int)
     case chart(ChatChartSpec)
     case stats(ChatStatsSpec)
+    case diff(ChatDiffSpec)
+    case compare(ChatCompareSpec)
     case choices(ChatChoicesCard)
     case dispatch(ChatDispatchCard)
     case recommend([ChatRecommendCard])
@@ -369,6 +371,28 @@ public enum ChatTranscriptLogic {
                         segments.append(.stats(spec))
                     case .failure(let err):
                         segments.append(.invalidBlock(kind: "stats", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatDiffSpec.isDiffFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatDiffSpec.parse(code, info: infoOpt) {
+                    case .success(let spec):
+                        segments.append(.diff(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "diff", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatCompareSpec.isCompareFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatCompareSpec.parse(code) {
+                    case .success(let spec):
+                        segments.append(.compare(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "compare", error: err.message, source: code))
                     }
                     i = nextIndex
                     continue
