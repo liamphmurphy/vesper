@@ -286,4 +286,152 @@ public enum LearnNav {
             return nil
         }
     }
+
+    // MARK: - Courses index navigator (/learn and /learn/:id build/outline)
+
+    public static let coursesNavId = "learn-courses"
+    public static let newCourseAction = "new-course"
+    public static let coursesSearchId = "learn-search"
+    public static let retryCoursesItem = "retry"
+    public static let openNewTabMenu = "open-new-tab"
+    public static let copyLinkMenu = "copy-link"
+
+    public static func buildCoursesModel(
+        courses: [API.CourseSummary],
+        search: String = "",
+        selectedId: String? = nil,
+        loading: Bool = false,
+        error: String? = nil
+    ) -> NavModel {
+        let trimmed = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        let needle = trimmed.lowercased()
+        let filtered: [API.CourseSummary] = needle.isEmpty ? courses : courses.filter { c in
+            c.topic.lowercased().contains(needle)
+                || (c.nextLesson?.lowercased().contains(needle) ?? false)
+                || c.buildNote.lowercased().contains(needle)
+        }
+
+        let sections: [NavSection]
+        if loading && courses.isEmpty {
+            sections = [NavSection(id: "loading", items: [], emptyText: "Loading modules\u{2026}")]
+        } else if let error, !error.isEmpty, courses.isEmpty {
+            sections = [NavSection(id: "error", items: [
+                NavItem(id: retryCoursesItem, title: "Couldn\u{2019}t load modules", subtitle: error, icon: "refresh"),
+            ])]
+        } else {
+            let inProgress = filtered.filter { !$0.studyable }
+            let ready = filtered.filter { $0.studyable }
+            var built: [NavSection] = []
+
+            if !inProgress.isEmpty {
+                built.append(NavSection(
+                    id: "in-progress",
+                    title: "In progress",
+                    items: inProgress.map { course in
+                        let sub: String = {
+                            if course.state == .failed && !course.error.isEmpty { return course.error }
+                            if !course.buildNote.isEmpty { return course.buildNote }
+                            return LearnLogic.stateLabel(course.state)
+                        }()
+                        let tone: Tone? = {
+                            if course.state == .outlineReady { return .human }
+                            if course.state == .failed || course.state == .stopped { return .blocked }
+                            if LearnLogic.courseBuilding(course.state) { return .done }
+                            return .neutral
+                        }()
+                        return NavItem(
+                            id: course.id,
+                            title: course.topic,
+                            subtitle: sub,
+                            status: tone,
+                            href: "/learn/\(course.id)",
+                            contextMenu: courseContextMenu
+                        )
+                    },
+                    badge: NavBadge(text: "\(inProgress.count)")
+                ))
+            }
+
+            if !ready.isEmpty {
+                built.append(NavSection(
+                    id: "modules",
+                    title: "Modules",
+                    items: ready.map { course in
+                        let sub: String? = {
+                            if let next = course.nextLesson, !next.isEmpty { return next }
+                            if course.parts > course.part + 1 || course.state != .ready { return "Built parts done" }
+                            if course.lessons > 0 && course.complete >= course.lessons { return "Finished" }
+                            return nil
+                        }()
+                        let trailing = course.lessons > 0 ? "\(course.complete)/\(course.lessons)" : nil
+                        let tone: Tone? = {
+                            if course.flagged > 0 { return .human }
+                            if course.state != .ready { return .accent }
+                            return nil
+                        }()
+                        return NavItem(
+                            id: course.id,
+                            title: course.topic,
+                            subtitle: sub,
+                            icon: "learn",
+                            status: tone,
+                            trailing: trailing,
+                            href: "/learn/\(course.id)",
+                            contextMenu: courseContextMenu
+                        )
+                    },
+                    badge: NavBadge(text: "\(ready.count)")
+                ))
+            }
+
+            if built.isEmpty {
+                built = [NavSection(
+                    id: "empty",
+                    items: [],
+                    emptyText: trimmed.isEmpty ? "No modules yet." : "No modules match."
+                )]
+            }
+            sections = built
+        }
+
+        return NavModel(
+            id: coursesNavId,
+            title: "Learn",
+            actions: [NavAction(id: newCourseAction, label: "New Learning Module", icon: "plus", accent: true)],
+            search: NavSearch(id: coursesSearchId, placeholder: "Filter modules\u{2026}", value: search),
+            sections: sections,
+            selectedId: selectedId
+        )
+    }
+
+    private static let courseContextMenu: [MenuItem] = [
+        MenuItem(id: openNewTabMenu, label: "Open in New Tab", icon: "external"),
+        MenuItem(id: copyLinkMenu, label: "Copy Link", icon: "copy"),
+    ]
+
+    public enum CoursesAction: Sendable, Equatable {
+        case newCourse
+        case search(String)
+        case retry
+        case openCourse(String, newTab: Bool)
+        case copyLink(String)
+    }
+
+    public static func coursesAction(for command: NativeCommand) -> CoursesAction? {
+        switch command {
+        case .navAction(coursesNavId, newCourseAction, _, _):
+            return .newCourse
+        case .navAction(coursesNavId, openNewTabMenu, let itemId?, _):
+            return .openCourse(itemId, newTab: true)
+        case .navAction(coursesNavId, copyLinkMenu, let itemId?, _):
+            return .copyLink(itemId)
+        case .navSearch(coursesNavId, coursesSearchId, let value):
+            return .search(value)
+        case .navActivate(coursesNavId, let itemId, let newTab):
+            if itemId == retryCoursesItem { return .retry }
+            return .openCourse(itemId, newTab: newTab)
+        default:
+            return nil
+        }
+    }
 }
