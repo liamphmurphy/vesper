@@ -6721,6 +6721,30 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
         "416": { $ref: "#/components/responses/Error" }
         default: { $ref: "#/components/responses/Error" }
+  /custom-apps/{slug}/hls/{streamId}:
+    parameters:
+      - { name: slug, in: path, required: true, schema: { type: string } }
+      - { name: streamId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [custom-apps]
+      operationId: getCustomAppHlsStream
+      summary: Resolve an active LAN HLS relay stream (app.media:relay) for the host player and AirPlay
+      responses:
+        "200":
+          description: Active HLS relay stream metadata and LAN playlist URL
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomAppHLSStream" }
+        "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [custom-apps]
+      operationId: stopCustomAppHlsStream
+      summary: Stop an active LAN HLS relay stream and release its listener when idle
+      responses:
+        "204": { description: Stopped }
+        "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
 
 components:
   parameters:
@@ -11437,6 +11461,18 @@ components:
         capability: { type: string }
         summary: { type: string }
         result: {}
+    CustomAppHLSStream:
+      type: object
+      required: [id, play_url, lan_url, loopback_url, proxy_segments, in_ad_break, ads_skipped, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        play_url: { type: string }
+        lan_url: { type: string }
+        loopback_url: { type: string }
+        proxy_segments: { type: boolean }
+        in_ad_break: { type: boolean }
+        ads_skipped: { type: integer }
+        created_at: { type: string, format: date-time }
     DevWorkspaceRepo:
       type: object
       required: [repo_url, directory]

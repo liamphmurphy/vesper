@@ -8881,6 +8881,72 @@ extension API {
         }
     }
 
+    public struct CustomAppHLSStream: Codable, Sendable, Equatable {
+        public var adsSkipped: Swift.Int
+        public var createdAt: Swift.String
+        public var id: Swift.String
+        public var inAdBreak: Swift.Bool
+        public var lanUrl: Swift.String
+        public var loopbackUrl: Swift.String
+        public var playUrl: Swift.String
+        public var proxySegments: Swift.Bool
+
+        public init(
+            adsSkipped: Swift.Int,
+            createdAt: Swift.String,
+            id: Swift.String,
+            inAdBreak: Swift.Bool,
+            lanUrl: Swift.String,
+            loopbackUrl: Swift.String,
+            playUrl: Swift.String,
+            proxySegments: Swift.Bool
+        ) {
+            self.adsSkipped = adsSkipped
+            self.createdAt = createdAt
+            self.id = id
+            self.inAdBreak = inAdBreak
+            self.lanUrl = lanUrl
+            self.loopbackUrl = loopbackUrl
+            self.playUrl = playUrl
+            self.proxySegments = proxySegments
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case adsSkipped = "ads_skipped"
+            case createdAt = "created_at"
+            case id
+            case inAdBreak = "in_ad_break"
+            case lanUrl = "lan_url"
+            case loopbackUrl = "loopback_url"
+            case playUrl = "play_url"
+            case proxySegments = "proxy_segments"
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.adsSkipped = try c.decode(Swift.Int.self, forKey: .adsSkipped)
+            self.createdAt = try c.decode(Swift.String.self, forKey: .createdAt)
+            self.id = try c.decode(Swift.String.self, forKey: .id)
+            self.inAdBreak = try c.decode(Swift.Bool.self, forKey: .inAdBreak)
+            self.lanUrl = try c.decode(Swift.String.self, forKey: .lanUrl)
+            self.loopbackUrl = try c.decode(Swift.String.self, forKey: .loopbackUrl)
+            self.playUrl = try c.decode(Swift.String.self, forKey: .playUrl)
+            self.proxySegments = try c.decode(Swift.Bool.self, forKey: .proxySegments)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(adsSkipped, forKey: .adsSkipped)
+            try c.encode(createdAt, forKey: .createdAt)
+            try c.encode(id, forKey: .id)
+            try c.encode(inAdBreak, forKey: .inAdBreak)
+            try c.encode(lanUrl, forKey: .lanUrl)
+            try c.encode(loopbackUrl, forKey: .loopbackUrl)
+            try c.encode(playUrl, forKey: .playUrl)
+            try c.encode(proxySegments, forKey: .proxySegments)
+        }
+    }
+
     public struct CustomAppInvokeRequest: Codable, Sendable, Equatable {
         public var alwaysAllow: Swift.Bool?
         public var approved: Swift.Bool?

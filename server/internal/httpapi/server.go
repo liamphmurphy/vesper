@@ -85,6 +85,13 @@ type Server struct {
 	// shared, because downloads outlive the request that starts them.
 	customAppMedia     *customapps.Media
 	customAppMediaOnce sync.Once
+	// CustomAppHLSListenAddr, CustomAppHLSTransport, and
+	// CustomAppHLSAllowInsecureUpstream override the LAN HLS relay in tests.
+	CustomAppHLSListenAddr            string
+	CustomAppHLSTransport             http.RoundTripper
+	CustomAppHLSAllowInsecureUpstream bool
+	customAppHLS                      *customapps.HLSRelay
+	customAppHLSOnce                  sync.Once
 	// CustomAppNixResolve overrides Nix package resolution, for tests.
 	CustomAppNixResolve func(context.Context, string) (string, error)
 	// CustomAppNixScratchDir sets where Nix job scratch directories live.

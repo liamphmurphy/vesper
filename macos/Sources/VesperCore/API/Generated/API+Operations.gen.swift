@@ -1603,6 +1603,28 @@ extension API {
         )
     }
 
+    /// Resolve an active LAN HLS relay stream (app.media:relay) for the host player and AirPlay
+    ///
+    /// `GET /custom-apps/{slug}/hls/{streamId}`
+    public static func getCustomAppHlsStream(slug: Swift.String, streamId: Swift.String) -> APIRequest<CustomAppHLSStream> {
+        return APIRequest(
+            method: "GET", template: "/custom-apps/{slug}/hls/{streamId}",
+            path: "/api/v1/custom-apps/\(APIPath.escape(slug))/hls/\(APIPath.escape(streamId))",
+            query: [], headers: [:], body: nil, decode: .json
+        )
+    }
+
+    /// Stop an active LAN HLS relay stream and release its listener when idle
+    ///
+    /// `DELETE /custom-apps/{slug}/hls/{streamId}`
+    public static func stopCustomAppHlsStream(slug: Swift.String, streamId: Swift.String) -> APIRequest<APIEmpty> {
+        return APIRequest(
+            method: "DELETE", template: "/custom-apps/{slug}/hls/{streamId}",
+            path: "/api/v1/custom-apps/\(APIPath.escape(slug))/hls/\(APIPath.escape(streamId))",
+            query: [], headers: [:], body: nil, decode: .empty
+        )
+    }
+
     /// Proxy a remote raster image for a custom app gated by app.http:outbound
     ///
     /// `GET /custom-apps/{slug}/image`
