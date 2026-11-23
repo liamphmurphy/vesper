@@ -47,17 +47,18 @@ A first-class, native-feeling Mac app that keeps every existing feature. Layout 
   The trailing pane uses `NSSplitViewItem(inspectorWithViewController:)` with `allowsFullHeightLayout`,
   `.sidebar` Liquid Glass vibrancy, width classes (`regular` 280–640 pt, `wide` 360–960 pt, `max`
   420–1120 pt), transparent `NSPanel` floating pop-out/re-dock, and unified native tab kinds:
-  `native` (declarative SwiftUI `InspectorView`), `companion` (persistent `/companion` `WKWebView`),
-  and `panel` (persistent `/inspector-panel` `WKWebView` with transparent Liquid Glass CSS). Every
-  app dock renders inside the native inspector in native mode (leaving only `web` as a fallback).
+  `native` (declarative SwiftUI `InspectorView` and custom SwiftUI inspector hosts), `companion`
+  (native SwiftUI `CompanionChatHost`), and `panel` (persistent `/inspector-panel` `WKWebView`
+  with transparent Liquid Glass CSS for remaining web-only panels). Every app dock renders inside
+  the native inspector in native mode (leaving only `web` as a fallback).
 - **Native menus, context menus, windows and system surfaces**: menu bar extra, notifications with
   actions, Dock badge and menu, Quick Capture, Settings, Screenshot to Chat, files in, Touch ID,
   power, backups, updates, deep links, logs.
-- **One WKWebView per tab for the content area**, plus window-level persistent `/companion`
-  (`CompanionWebController`) and `/inspector-panel` (`InspectorPanelWebController`) `WKWebView`s
-  shared across tabs so companion work chats and web-rich inspector panels (Playground, Code,
-  Design, Canvas, Thread, Knowledge/Custom App/Editor chats, Slides review) stay mounted across
-  tab switches and let AppKit vibrancy shine through.
+- **Native SwiftUI screens for core surfaces, plus `WKWebView` for web-only editors/apps**:
+  window-level persistent `/inspector-panel` (`InspectorPanelWebController`) stays mounted across
+  tab switches for web-only inspector panels (Playground, Design, Canvas, Custom App/Editor chats,
+  Slides review), while Companion Chat, Knowledge Chat/Calendar, and Chat Thread/Code inspectors
+  render natively in SwiftUI.
 
 The Go backend is unchanged in role: the shell launches the bundled `vesper app` as a child
 process and supervises it.
@@ -141,10 +142,8 @@ Source of truth: `web/lib/native-shell/protocol.ts`; Swift mirror
 - Searchable native Keyboard Shortcuts window (`ShortcutsWindowController`, `?` / `⌘/`): triggered
   either from Help › Keyboard Shortcuts or via the page `showShortcuts` message.
 - Native floating Liquid Glass Command Palette (`⌘K`, `⇧⌘K`, `⌥⌘F`): `CommandPaletteController`
-  hosts a persistent borderless `NSPanel` backed by `/command-palette` (`WebViewKind.commandPalette`
-  with `native-command-palette` and `native-inspector-glass`, clear background). Pages trigger or
-  dismiss it via `commandPalette.open` / `commandPalette.close`, and the shell sends `palette.open`
-  to initialize scope/query context.
+  hosts a native SwiftUI borderless `NSPanel` (`CommandPaletteView` + `CommandPaletteModel`).
+  Remaining web pages trigger or dismiss it via `commandPalette.open` / `commandPalette.close`.
 - Native Quick Look (`quickLook`): `QuickLookController` validates same-origin URLs via `BridgeOrigin`,
   downloads authenticated Library, chat attachment, and artifact files into a process-scoped temporary
   cache (cleaned on quit), and presents `QLPreviewPanel` via `MainWindowController` responder-chain
@@ -292,7 +291,7 @@ macos/Sources/Vesper/               the app (AppKit + SwiftUI)
   App/          main.swift, AppDelegate, AppModel
   Window/       WindowRootController (3-pane split + stationary rail + toast HUD), MainWindowController (a window and its tabs), TabsModel, TabContainerController, WebContentController (one tab), ShellBridge, WebViewFactory, FindBarViewController, CommandPaletteController, ToastPresenter, OfflineView
   Sidebar/      SidebarView (renders ShellModel + NavModel)
-  Inspector/    InspectorViewController (split pane + NSPanel pop-out), InspectorView (SwiftUI renderer), CompanionWebController (persistent /companion WebView), InspectorPanelWebController (persistent /inspector-panel WebView)
+  Inspector/    InspectorViewController (split pane + NSPanel pop-out), InspectorView (SwiftUI renderer), CompanionChatView (native SwiftUI Companion Chat), InspectorPanelWebController (persistent /inspector-panel WebView)
   Toolbar/      ToolbarController, TabStripView (compact tabs)
   Menus/        MainMenu
   Windows/      AuxWindows, ShortcutsWindow

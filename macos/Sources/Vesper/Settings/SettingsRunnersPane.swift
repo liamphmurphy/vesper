@@ -17,6 +17,7 @@ struct SettingsRunnersPane: View {
 
     var body: some View {
         let runnerEntry = store?.entry(API.getRunnerStatus())
+        let modelsEntry = store?.entry(API.listChatModels())
         let envRequest = API.getRunnerEnvironment(runId: navigation.runnerRunId)
         let envEntry = store?.entry(envRequest)
         let testEnvEntry = store?.entry(API.listTestEnvironments())
@@ -29,6 +30,7 @@ struct SettingsRunnersPane: View {
                 Button("Refresh") {
                     Task {
                         await store?.refetch(API.getRunnerStatus())
+                        await store?.refetch(API.listChatModels())
                         await store?.refetch(envRequest)
                         await store?.refetch(API.listTestEnvironments())
                     }
@@ -96,6 +98,8 @@ struct SettingsRunnersPane: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+
+                subagentTierRulesCard(status: status, groups: modelsEntry?.data)
             } else if runnerEntry?.isFetching == true {
                 SettingsCard { ProgressView("Loading runner status…") }
             } else {
@@ -305,8 +309,123 @@ struct SettingsRunnersPane: View {
         }
         .task(id: navigation.runnerRunId) {
             store?.load(API.getRunnerStatus())
+            store?.load(API.listChatModels())
             store?.load(envRequest)
             store?.load(API.listTestEnvironments())
+        }
+    }
+
+    @ViewBuilder
+    private func subagentTierRulesCard(status: API.RunnerStatus, groups: [API.ChatHarnessModels]?) -> some View {
+        let enabled = status.subagentTierRouting ?? true
+        let currentRules = status.subagentTierModels ?? [:]
+
+        SettingsCard(
+            "Subagent model tiers",
+            subtitle: "Route subagents across reasoning effort or per-harness Deep / Standard / Fast model ladders."
+        ) {
+            Toggle(isOn: Binding(
+                get: { enabled },
+                set: { next in updateRunnerSettings(API.RunnerSettings(subagentTierRouting: next), message: "Updated subagent tier routing.") }
+            )) {
+                Text("Automatic subagent tier routing")
+                Text(
+                    enabled
+                        ? "Personas pick fast, standard, or deep per subagent. By default each subagent scales reasoning effort on the parent’s model; configure optional per-harness ladders below to step across models, capped at the parent’s tier."
+                        : "Subagent tier routing is off: helpers inherit the parent’s model and effort unchanged, and explorers use their default fast model. Chat’s Auto model picker is unaffected."
+                )
+            }
+            .disabled(busy)
+
+            if enabled {
+                Divider()
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(SubagentTierRulesLogic.harnesses) { harness in
+                        let entry = currentRules[harness.id]
+                        let hasCustom = SubagentTierRulesLogic.hasCustomRules(entry)
+                        let group = groups?.first(where: { $0.harness.rawValue == harness.id })
+                        let rawModels = group?.models ?? []
+                        let options = SubagentTierRulesLogic.selectableModels(rawModels)
+                        let anyStale = SubagentTierRulesLogic.TierKey.allCases.contains {
+                            SubagentTierRulesLogic.isStaleModel(SubagentTierRulesLogic.model(for: $0, in: entry), catalog: rawModels)
+                        }
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 8) {
+                                Text(harness.label).font(.callout.weight(.medium))
+                                SettingsBadge(label: hasCustom ? "Custom ladder" : "Effort only", tone: hasCustom ? .done : .neutral)
+                                Spacer()
+                                if hasCustom {
+                                    Button("Reset") {
+                                        let next = SubagentTierRulesLogic.clearingHarness(in: currentRules, harness: harness.id)
+                                        updateRunnerSettings(API.RunnerSettings(subagentTierModels: next), message: "Reset \(harness.label) subagent tiers.")
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .font(.caption)
+                                    .disabled(busy)
+                                }
+                            }
+
+                            HStack(spacing: 10) {
+                                ForEach(SubagentTierRulesLogic.TierKey.allCases) { tier in
+                                    let val = SubagentTierRulesLogic.model(for: tier, in: entry)
+                                    let stale = SubagentTierRulesLogic.isStaleModel(val, catalog: rawModels)
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(tier.label)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        Picker(tier.label, selection: Binding(
+                                            get: { val },
+                                            set: { newVal in
+                                                let next = SubagentTierRulesLogic.settingModel(
+                                                    in: currentRules,
+                                                    harness: harness.id,
+                                                    tier: tier,
+                                                    modelId: newVal
+                                                )
+                                                updateRunnerSettings(
+                                                    API.RunnerSettings(subagentTierModels: next),
+                                                    message: "Updated \(harness.label) \(tier.label.lowercased()) tier model."
+                                                )
+                                            }
+                                        )) {
+                                            Text("Parent model (effort only)").tag("")
+                                            ForEach(options, id: \.id) { m in
+                                                Text(m.label.isEmpty ? m.id : m.label).tag(m.id)
+                                            }
+                                            if stale {
+                                                Text("\(val) (not in catalog)").tag(val)
+                                            } else if group == nil && !val.isEmpty {
+                                                Text(val).tag(val)
+                                            }
+                                        }
+                                        .labelsHidden()
+                                        .disabled(busy)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+
+                            if anyStale {
+                                Text("Retired or unlisted models fall back safely to the parent model with scaled effort until updated.")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                            }
+                            if group == nil || (group?.available == false && rawModels.isEmpty) {
+                                Text(
+                                    group?.checking == true
+                                        ? "Checking available models…"
+                                        : "Connect this harness in Secrets & Credentials to pick from its live model list."
+                                )
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(10)
+                        .background(Color(nsColor: .windowBackgroundColor).opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+            }
         }
     }
 
@@ -344,15 +463,19 @@ struct SettingsRunnersPane: View {
     }
 
     private func updateHostFolderWorkspaces(_ enabled: Bool) {
+        updateRunnerSettings(API.RunnerSettings(hostFolderWorkspaces: enabled), message: "Updated runner workspace setting.")
+    }
+
+    private func updateRunnerSettings(_ patch: API.RunnerSettings, message: String) {
         guard let store else { return }
         busy = true
         errorMessage = nil
         Task {
             defer { busy = false }
             do {
-                let updated = try await store.mutate(API.updateRunnerSettings(body: API.RunnerSettings(hostFolderWorkspaces: enabled)))
+                let updated = try await store.mutate(API.updateRunnerSettings(body: patch))
                 store.setData(updated, for: API.getRunnerStatus())
-                statusMessage = "Updated runner workspace setting."
+                statusMessage = message
             } catch {
                 errorMessage = settingsErrorText(error)
             }

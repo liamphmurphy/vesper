@@ -3,9 +3,9 @@ import ObjectiveC
 import VesperCore
 import WebKit
 
-enum WebViewKind { case vesper, companion, inspectorPanel, playground }
+enum WebViewKind { case vesper, inspectorPanel, playground }
 
-/// Builds the web views. Vesper, companion, and inspector-panel pages share the default
+/// Builds the web views. Vesper and inspector-panel pages share the default
 /// (persistent) data store and get the native bridge; playground pages get a separate
 /// non-persistent store (so the session cookie, which is not port-scoped, never reaches them)
 /// and neither the bridge nor the native-mode script.
@@ -25,11 +25,6 @@ enum WebViewFactory {
     document.documentElement.classList.add("native-mac");
     """
 
-    private static let companionModeScript = """
-    window.__VESPER_NATIVE__ = {v:1, platform:"macos"};
-    document.documentElement.classList.add("native-mac", "native-companion", "native-inspector-glass");
-    """
-
     private static let inspectorPanelModeScript = """
     window.__VESPER_NATIVE__ = {v:1, platform:"macos"};
     document.documentElement.classList.add("native-mac", "native-inspector-panel", "native-inspector-glass");
@@ -41,10 +36,9 @@ enum WebViewFactory {
         // element.requestFullscreen (slides/designs present, video, dev terminal).
         config.preferences.isElementFullscreenEnabled = true
         switch kind {
-        case .vesper, .companion, .inspectorPanel:
+        case .vesper, .inspectorPanel:
             config.websiteDataStore = WKWebsiteDataStore.default()
             let source: String = switch kind {
-            case .companion: companionModeScript
             case .inspectorPanel: inspectorPanelModeScript
             case .vesper, .playground: nativeModeScript
             }
@@ -61,7 +55,7 @@ enum WebViewFactory {
         webView.isInspectable = true
         webView.allowsBackForwardNavigationGestures = kind == .vesper || kind == .playground
         webView.allowsMagnification = true
-        if kind == .companion || kind == .inspectorPanel {
+        if kind == .inspectorPanel {
             disableBackground(webView)
         } else if kind != .playground, let background = lastPageBackground {
             webView.underPageBackgroundColor = background
@@ -69,7 +63,7 @@ enum WebViewFactory {
         return webView
     }
 
-    /// Lets the native inspector backdrop's vibrancy / Liquid Glass shine through `/companion` and `/inspector-panel`.
+    /// Lets the native inspector backdrop's vibrancy / Liquid Glass shine through `/inspector-panel`.
     private static func disableBackground(_ webView: WKWebView) {
         webView.underPageBackgroundColor = .clear
         if webView.responds(to: NSSelectorFromString("_setDrawsBackground:"))

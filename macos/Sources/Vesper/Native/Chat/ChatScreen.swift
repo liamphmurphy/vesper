@@ -35,6 +35,8 @@ final class ChatScreenModel {
     var startingPlayground = false
     var scrollToMessageRequest: ChatScrollMessageRequest?
     @ObservationIgnored var scrollToken = 0
+    var theme: ThemeTokens = ThemeTokens(mode: .light)
+    var colorScheme: ColorScheme = .light
 
     func resetInspectorForChatSwitch() {
         activeDesignId = nil
@@ -62,6 +64,7 @@ final class ChatScreenModel {
 struct ChatScreen: View {
     @Environment(NativeScreenContext.self) private var context
     @Environment(\.vesperTheme) private var theme
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var model = ChatScreenModel()
     @State private var watched: [QueryKey] = []
@@ -324,13 +327,19 @@ struct ChatScreen: View {
             await markReadIfNeeded(session: session)
         }
         .onAppear {
+            model.theme = theme
+            model.colorScheme = colorScheme
             if context.match.query["view"] == "archived" {
                 model.viewMode = .archived
             }
             applyInspectorQuery(context.match.query, canvases: canvases)
             installCommandHandler()
+            installInspectorView()
         }
+        .onChange(of: theme) { _, next in model.theme = next }
+        .onChange(of: colorScheme) { _, next in model.colorScheme = next }
         .onDisappear {
+            context.inspectorView = nil
             for key in watched { context.store.stopObserving(key) }
             watched = []
         }
@@ -685,6 +694,35 @@ struct ChatScreen: View {
                 let msg = (error as? APIError)?.userMessage ?? error.localizedDescription
                 context.showToast(ToastItemModel(id: "chat.playground.start", title: msg, tone: .error))
             }
+        }
+    }
+
+    private func installInspectorView() {
+        let model = model
+        let context = context
+        context.inspectorView = { tabId in
+            if tabId == ChatInspectorLogic.codeTabId,
+               let currentChatId = context.match.params["id"] {
+                return AnyView(
+                    ChatCodeInspectorView(chatId: currentChatId)
+                        .id("code:\(currentChatId)")
+                        .environment(context)
+                        .environment(\.vesperTheme, model.theme)
+                        .environment(\.colorScheme, model.colorScheme)
+                )
+            }
+            if tabId == ChatInspectorLogic.threadTabId,
+               let currentChatId = context.match.params["id"],
+               let msgId = model.threadMessageId, !msgId.isEmpty {
+                return AnyView(
+                    ChatThreadInspectorView(chatId: currentChatId, messageId: msgId)
+                        .id("\(currentChatId):\(msgId)")
+                        .environment(context)
+                        .environment(\.vesperTheme, model.theme)
+                        .environment(\.colorScheme, model.colorScheme)
+                )
+            }
+            return nil
         }
     }
 

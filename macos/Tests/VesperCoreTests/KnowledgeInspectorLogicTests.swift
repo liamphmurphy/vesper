@@ -88,12 +88,12 @@ final class KnowledgeInspectorLogicTests: XCTestCase {
             model.tabs.map(\.id),
             ["chat", "outline", "links", "properties", "query", "history", "reviews", "calendar"]
         )
-        XCTAssertEqual(model.tabs.first(where: { $0.id == "chat" })?.kind, .panel)
-        XCTAssertEqual(model.tabs.first(where: { $0.id == "chat" })?.panel?.kind, "knowledge.chat")
-        XCTAssertEqual(model.tabs.first(where: { $0.id == "chat" })?.panel?.key, "knowledge.chat:page-1")
+        XCTAssertEqual(model.tabs.first(where: { $0.id == "chat" })?.kind, .native)
+        XCTAssertNil(model.tabs.first(where: { $0.id == "chat" })?.panel)
         XCTAssertEqual(model.tabs.first(where: { $0.id == "outline" })?.sections?.first?.aside, "2")
         XCTAssertEqual(model.tabs.first(where: { $0.id == "reviews" })?.unread, true)
-        XCTAssertEqual(model.tabs.first(where: { $0.id == "calendar" })?.panel?.kind, "knowledge.calendar")
+        XCTAssertEqual(model.tabs.first(where: { $0.id == "calendar" })?.kind, .native)
+        XCTAssertNil(model.tabs.first(where: { $0.id == "calendar" })?.panel)
     }
 
     func testBuildInspectorModelForNonMarkdownPageOmitsOutline() {
@@ -130,9 +130,8 @@ final class KnowledgeInspectorLogicTests: XCTestCase {
         )
         XCTAssertEqual(model.tabs.map(\.id), ["chat", "calendar"])
         XCTAssertEqual(model.activeTabId, "chat")
-        let propsJson = model.tabs[0].panel?.propsJson ?? ""
-        XCTAssertTrue(propsJson.contains("\"screen\":\"Graph\""))
-        XCTAssertTrue(propsJson.contains("\"chatId\":\"chat-general-1\""))
+        XCTAssertEqual(model.tabs[0].kind, .native)
+        XCTAssertNil(model.tabs[0].panel)
         XCTAssertEqual(
             KnowledgeInspectorLogic.parseGeneralChatId(from: "{\"chatId\":\"c-42\"}"),
             "c-42"

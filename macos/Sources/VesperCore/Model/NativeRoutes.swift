@@ -34,6 +34,16 @@ public enum NativeScreen: String, Sendable, CaseIterable {
     case workflowRun
     case chat
     case chatDetail
+    case rootLanding
+    case setup
+    case appsHome
+    case appsRedirect
+    case spaceNew
+    case spaceDetail
+    case agentDetail
+    case plans
+    case artifactDetail
+    case artifactReview
 
     /// Screens sharing one SwiftUI root host so navigating between them preserves sidebar & chrome state.
     public var hostGroup: NativeScreen {
@@ -49,12 +59,12 @@ public enum NativeScreen: String, Sendable, CaseIterable {
     /// The shell marks it itself rather than waiting for the hidden page to report its route.
     public var area: AreaId? {
         switch self {
-        case .chat, .chatDetail: .chat
-        case .work, .runDetail, .tickets, .ticketNew, .ticketDetail, .epics, .epicDetail: .work
+        case .chat, .chatDetail, .rootLanding, .spaceNew, .spaceDetail: .chat
+        case .work, .runDetail, .tickets, .ticketNew, .ticketDetail, .epics, .epicDetail, .agentDetail, .plans: .work
         case .knowledge, .knowledgeGraph, .knowledgePage: .knowledge
-        case .library: .library
-        case .workflows, .workflowEditor, .workflowRun, .scheduled, .learn, .learnCourse, .reports, .http, .dev: .apps
-        case .inbox, .pdf, .debugPlaceholder, .markdownDebug, .scenesDebug, .embedsDebug: nil
+        case .library, .artifactDetail, .artifactReview: .library
+        case .workflows, .workflowEditor, .workflowRun, .scheduled, .learn, .learnCourse, .reports, .http, .dev, .appsHome, .appsRedirect: .apps
+        case .inbox, .pdf, .setup, .debugPlaceholder, .markdownDebug, .scenesDebug, .embedsDebug: nil
         }
     }
 }
@@ -65,6 +75,13 @@ public struct NativeRouteMatch: Sendable, Equatable {
     public var path: String
     public var params: [String: String]
     public var query: [String: String]
+
+    public init(screen: NativeScreen, path: String, params: [String: String] = [:], query: [String: String] = [:]) {
+        self.screen = screen
+        self.path = path
+        self.params = params
+        self.query = query
+    }
 }
 
 /// One path pattern: literal segments, `:name` captures one segment, a trailing `*` captures the rest
@@ -116,12 +133,17 @@ public struct NativeRouteRegistry: Sendable {
         NativeRoute("/board", .tickets),
         NativeRoute("/tickets/new", .ticketNew),
         NativeRoute("/tickets/:key", .ticketDetail),
-        // Epics, Scheduled tasks, and Reports (Costs & Highlights).
+        // Epics, Agent detail, Plans, Scheduled tasks, and Reports (Costs & Highlights).
         NativeRoute("/epics", .epics),
         NativeRoute("/epics/:id", .epicDetail),
+        NativeRoute("/agents/:handle", .agentDetail),
+        NativeRoute("/plans", .plans),
         NativeRoute("/scheduled", .scheduled),
         NativeRoute("/reports", .reports),
         NativeRoute("/costs", .reports),
+        // Artifact detail and mockup review workspace (specific route before :id).
+        NativeRoute("/artifacts/:id/review", .artifactReview),
+        NativeRoute("/artifacts/:id", .artifactDetail),
         // Knowledge explorer, home, search, connect, graph and pages (specific routes before :id).
         NativeRoute("/knowledge", .knowledge),
         NativeRoute("/knowledge/graph", .knowledgeGraph),
@@ -134,9 +156,19 @@ public struct NativeRouteRegistry: Sendable {
         NativeRoute("/workflows", .workflows),
         NativeRoute("/workflows/runs/:id", .workflowRun),
         NativeRoute("/workflows/:id", .workflowEditor),
-        // Chat landing and conversation detail (shared hostGroup preserves sidebar state).
+        // Chat landing, Spaces, and conversation detail.
         NativeRoute("/chat", .chat),
         NativeRoute("/chat/:id", .chatDetail),
+        NativeRoute("/spaces", .spaceNew),
+        NativeRoute("/spaces/new", .spaceNew),
+        NativeRoute("/spaces/:id", .spaceDetail),
+        // Root landing, onboarding setup, Custom Apps home, and legacy /apps/docs|slides|designs redirects.
+        NativeRoute("/", .rootLanding),
+        NativeRoute("/setup", .setup),
+        NativeRoute("/apps", .appsHome),
+        NativeRoute("/apps/docs", .appsRedirect),
+        NativeRoute("/apps/slides", .appsRedirect),
+        NativeRoute("/apps/designs", .appsRedirect),
     ]
 
     /// The app's registry. Debug-only screens are enabled only when `debug` is set.

@@ -180,34 +180,18 @@ public enum KnowledgeInspectorLogic {
         activeTabId: String
     ) -> InspectorModel {
         let tabs: [InspectorTab]
-        if case .page(let pageId) = destination {
+        if case .page = destination {
             let showOutline = supportsMarkdownOutline(page: loadedPage, query: query)
             let pendingReviews = loadedPage.map { page in
                 KnowledgePanelsLogic.pendingChanges(in: page).filter { !$0.isStale }.count
             } ?? 0
-            let chatPanel = InspectorLogic.makePanelSpec(
-                kind: "knowledge.chat",
-                key: "knowledge.chat:\(pageId)",
-                props: [
-                    "tabId": .string(chatTabId),
-                    "pageId": .string(pageId),
-                    "screen": .string("Page"),
-                ]
-            )
-            let calendarPanel = InspectorLogic.makePanelSpec(
-                kind: "knowledge.calendar",
-                key: "knowledge.calendar",
-                props: ["tabId": .string(calendarTabId)]
-            )
-
             var pageTabs: [InspectorTab] = [
                 InspectorTab(
                     id: chatTabId,
                     label: "Chat",
                     icon: "msg",
-                    kind: .panel,
-                    width: .regular,
-                    panel: chatPanel
+                    kind: .native,
+                    width: .regular
                 )
             ]
             if showOutline {
@@ -237,46 +221,26 @@ public enum KnowledgeInspectorLogic {
                     id: calendarTabId,
                     label: "Calendar",
                     icon: "calendar",
-                    kind: .panel,
-                    width: .regular,
-                    panel: calendarPanel
+                    kind: .native,
+                    width: .regular
                 ),
             ])
             tabs = pageTabs
         } else {
-            var chatProps: [String: JSONValue] = [
-                "tabId": .string(chatTabId),
-                "screen": .string(screenLabel(for: destination)),
-            ]
-            if let generalChatId, !generalChatId.isEmpty {
-                chatProps["chatId"] = .string(generalChatId)
-            }
-            let chatPanel = InspectorLogic.makePanelSpec(
-                kind: "knowledge.chat",
-                key: "knowledge.chat:general",
-                props: chatProps
-            )
-            let calendarPanel = InspectorLogic.makePanelSpec(
-                kind: "knowledge.calendar",
-                key: "knowledge.calendar",
-                props: ["tabId": .string(calendarTabId)]
-            )
             tabs = [
                 InspectorTab(
                     id: chatTabId,
                     label: "Chat",
                     icon: "msg",
-                    kind: .panel,
-                    width: .regular,
-                    panel: chatPanel
+                    kind: .native,
+                    width: .regular
                 ),
                 InspectorTab(
                     id: calendarTabId,
                     label: "Calendar",
                     icon: "calendar",
-                    kind: .panel,
-                    width: .regular,
-                    panel: calendarPanel
+                    kind: .native,
+                    width: .regular
                 ),
             ]
         }

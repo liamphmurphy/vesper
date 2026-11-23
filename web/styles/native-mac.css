@@ -35,137 +35,6 @@ html.native-mac :focus-visible {
 }
 
 /* ------------------------------------------------------------------------------------------------
- * Command palette: a Spotlight-style panel. Hooks are data attributes set in
- * components/shell/command-menu.tsx; the browser never matches `html.native-mac`.
- * Surfaces derive from the palette tokens with a neutral blur tint, so every palette and both
- * modes work.
- * ---------------------------------------------------------------------------------------------- */
-@keyframes native-palette-in {
-  from { opacity: 0; transform: translateY(-6px) scale(0.98); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
-@keyframes native-palette-out {
-  from { opacity: 1; }
-  to { opacity: 0; }
-}
-
-/* Spotlight dims nothing heavy: a faint wash, no blur. */
-html.native-mac [data-command-scrim] {
-  background: color-mix(in srgb, var(--scrim) 22%, transparent);
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
-
-@media (min-width: 768px) {
-  html.native-mac [data-command-palette] {
-    top: 14vh;
-    height: min(560px, calc(100dvh - 14vh - 24px));
-    font-family: -apple-system, system-ui, "SF Pro Text", sans-serif;
-    border-radius: 12px;
-    border: 0.5px solid color-mix(in srgb, var(--text) 16%, transparent);
-    background: color-mix(in srgb, var(--surface-raised) 74%, transparent);
-    -webkit-backdrop-filter: blur(40px) saturate(180%);
-    backdrop-filter: blur(40px) saturate(180%);
-    box-shadow: 0 22px 70px rgba(0, 0, 0, 0.32), 0 0 0 0.5px rgba(0, 0, 0, 0.12), inset 0 0.5px 0 rgba(255, 255, 255, 0.12);
-    animation: none;
-  }
-  html.native-mac [data-command-palette][data-state="open"] { animation: native-palette-in 140ms ease-out both; }
-  html.native-mac [data-command-palette][data-state="closed"] { animation: native-palette-out 90ms ease-in both; }
-}
-
-/* Embedded /command-palette inside AppKit's floating NSPanel lets NSVisualEffectView glass show through. */
-html.native-command-palette [data-command-palette][data-embedded="true"] {
-  position: relative;
-  inset: auto;
-  top: auto;
-  left: auto;
-  transform: none;
-  width: 100%;
-  max-width: none;
-  height: 100dvh;
-  font-family: -apple-system, system-ui, "SF Pro Text", sans-serif;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-  box-shadow: none;
-  animation: none;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  html.native-mac [data-command-palette][data-state] { animation: none; }
-}
-
-html.native-mac [data-command-palette] > div[aria-hidden="true"]:first-child { display: none; } /* the accent hairline */
-
-/* Large borderless search field. */
-html.native-mac [data-palette-input-row] {
-  height: 56px;
-  border-bottom-color: color-mix(in srgb, var(--text) 10%, transparent);
-}
-html.native-mac [data-palette-input-row] input[role="combobox"] {
-  font-size: 20px;
-  font-weight: 300;
-  letter-spacing: -0.01em;
-  border: 0;
-  box-shadow: none;
-}
-
-/* Chips, hints and dividers go quieter. */
-html.native-mac [data-palette-chips],
-html.native-mac [data-palette-hints] {
-  border-color: color-mix(in srgb, var(--text) 10%, transparent);
-}
-html.native-mac [data-palette-hints] {
-  background: color-mix(in srgb, var(--surface-sunken) 45%, transparent);
-}
-html.native-mac [data-command-palette] [data-palette-section] {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0;
-  text-transform: none;
-  padding-top: 10px;
-  padding-bottom: 3px;
-  color: var(--text-tertiary);
-}
-
-/* Key equivalents, as in a menu: no box, a quiet glyph. */
-html.native-mac [data-command-palette] kbd {
-  border: 0;
-  background: transparent;
-  font-family: -apple-system, system-ui, sans-serif;
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  color: var(--text-tertiary);
-  min-width: 0;
-  padding: 0 2px;
-}
-
-/* Rows: rounded highlights; the selected one is the accent with white text, like a menu. */
-html.native-mac [data-command-palette] [role="option"] {
-  border-radius: 6px;
-  min-height: 36px;
-  transition: none;
-}
-html.native-mac [data-command-palette] [role="option"][aria-selected="true"] {
-  background: var(--accent);
-  color: var(--text-on-accent);
-}
-html.native-mac [data-command-palette] [role="option"][aria-selected="true"] :is(span, kbd, svg, button) {
-  color: inherit;
-}
-html.native-mac [data-command-palette] [role="option"][aria-selected="true"] :is(.text-fg-tertiary, kbd) {
-  opacity: 0.8;
-}
-html.native-mac [data-command-palette] [role="option"][aria-selected="true"] span[aria-hidden="true"] {
-  background: transparent;
-}
-html.native-mac [data-command-palette] [role="option"][aria-selected="true"] > span[aria-hidden="true"]:first-child:not(.size-7) {
-  display: none; /* the accent edge bar */
-}
-
-/* ------------------------------------------------------------------------------------------------
  * Chat composer: a floating capsule over the transcript.
  * ---------------------------------------------------------------------------------------------- */
 html.native-mac [data-composer-frame] {
@@ -220,10 +89,8 @@ html.native-mac [data-chat-dock] > * {
   pointer-events: auto;
 }
 
-/* Window-level companion (/companion) and inspector panel (/inspector-panel) WKWebViews
- * fill their native AppKit inspector host and let NSVisualEffectView Liquid Glass show through. */
-html.native-companion,
-html.native-companion body,
+/* Window-level inspector panel (/inspector-panel) WKWebView
+ * fills its native AppKit inspector host and lets NSVisualEffectView Liquid Glass show through. */
 html.native-inspector-glass,
 html.native-inspector-glass body {
   height: 100%;

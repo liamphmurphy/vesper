@@ -384,44 +384,25 @@ public enum ChatInspectorLogic {
         }
 
         if hasCode {
-            let props: [String: JSONValue] = [
-                "tabId": .string(codeTabId),
-                "chatId": .string(chatId),
-            ]
             tabs.append(InspectorTab(
                 id: codeTabId,
                 label: "Code",
                 icon: "code",
-                kind: .panel,
+                kind: .native,
                 width: .wide,
                 busy: codeBusy ? true : nil,
-                badge: changedFileCount > 0 ? NavBadge(text: "\(changedFileCount)", tone: .accent) : nil,
-                panel: InspectorLogic.makePanelSpec(
-                    kind: "chat.code",
-                    key: "chat.code:\(chatId)",
-                    props: props
-                )
+                badge: changedFileCount > 0 ? NavBadge(text: "\(changedFileCount)", tone: .accent) : nil
             ))
         }
 
         if let threadId = input.threadMessageId, !threadId.isEmpty {
-            let props: [String: JSONValue] = [
-                "tabId": .string(threadTabId),
-                "chatId": .string(chatId),
-                "messageId": .string(threadId),
-            ]
             tabs.append(InspectorTab(
                 id: threadTabId,
                 label: "Thread",
                 icon: "branch",
-                kind: .panel,
+                kind: .native,
                 width: .regular,
-                headerActions: [InspectorAction(id: closeActionId, label: "Close thread", icon: "x")],
-                panel: InspectorLogic.makePanelSpec(
-                    kind: "chat.thread",
-                    key: "chat.thread:\(chatId):\(threadId)",
-                    props: props
-                )
+                headerActions: [InspectorAction(id: closeActionId, label: "Close thread", icon: "x")]
             ))
         }
 
