@@ -98,6 +98,10 @@ type Runner struct {
 	// turns on host-folder workspaces (RUNNER_HOST_WORKSPACES_DIR, microvm).
 	// The runner and the VM must both see it at that path.
 	HostWorkspaces string
+	// ExtraCAFile is a PEM file of roots every VM trusts on top of its
+	// image's, for a TLS-inspecting corporate proxy such as Zscaler
+	// (RUNNER_EXTRA_CA_FILE, microvm).
+	ExtraCAFile string
 	// PlaygroundPorts are where the runner serves chats' playgrounds, one
 	// each (RUNNER_PLAYGROUND_PORTS, e.g. 8090-8094). The browser reaches them
 	// on Vesper's host, so publish them there. Unset, chats can't start
@@ -183,6 +187,9 @@ func Load() (Config, error) {
 	}
 	if r.HostWorkspaces = env("RUNNER_HOST_WORKSPACES_DIR", ""); r.HostWorkspaces != "" && !filepath.IsAbs(r.HostWorkspaces) {
 		return c, fmt.Errorf("config: RUNNER_HOST_WORKSPACES_DIR=%q must be an absolute path", r.HostWorkspaces)
+	}
+	if r.ExtraCAFile = env("RUNNER_EXTRA_CA_FILE", ""); r.ExtraCAFile != "" && !filepath.IsAbs(r.ExtraCAFile) {
+		return c, fmt.Errorf("config: RUNNER_EXTRA_CA_FILE=%q must be an absolute path", r.ExtraCAFile)
 	}
 	if r.MacOS, err = loadMacOSGuests(); err != nil {
 		return c, err

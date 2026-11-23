@@ -92,6 +92,9 @@ type MicroVM struct {
 	GitRewriteFrom  string // defaults to https://github.com/
 	Resolver        func(ctx context.Context, host string) ([]net.IP, error)
 	TestUpstreams   map[string]string
+	// ExtraCACerts are PEM roots every VM trusts on top of its image's, for a
+	// TLS-inspecting corporate proxy (LoadExtraCACerts, microvm_trust.go).
+	ExtraCACerts []byte
 
 	SaveClaudeAuth func(ctx context.Context, scope, auth string) error
 	SaveCodexAuth  func(ctx context.Context, scope, auth string) error
@@ -564,6 +567,7 @@ func (b *MicroVM) bootVM(ctx context.Context, dir, hostDir string) (microvm.VM, 
 		_ = eg.Close()
 		return nil, nil, nil, err
 	}
+	b.trustNewVM(ctx, vm.Client())
 	return vm, eg, cache, nil
 }
 
@@ -863,6 +867,7 @@ func (b *MicroVM) Start(ctx context.Context, runID string, spec ExecSpec) (Proce
 		"PATH":    homePath + "/.nix-profile/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/nix/var/nix/profiles/default/bin",
 	}
 	b.applyCacheEnv(env)
+	b.applyTrustEnv(env)
 
 	var gitPAT string
 	for _, k := range []string{"GH_TOKEN", "GITHUB_TOKEN", envName("git:pat")} {

@@ -184,6 +184,7 @@ func (b *MicroVM) StartPlayground(ctx context.Context, pg PlaygroundRun, step fu
 	}
 	ap.vm = vm
 	client := vm.Client()
+	b.trustNewVM(ctx, client)
 
 	if wf, ok := b.nixConfFileWrite(); ok {
 		if err := client.WriteFiles(ctx, []guestproto.FileWrite{wf}); err != nil {
@@ -217,6 +218,7 @@ func (b *MicroVM) StartPlayground(ctx context.Context, pg PlaygroundRun, step fu
 	baseEnv["GOCACHE"] = "/tmp/go-build"
 	baseEnv["PATH"] = homePath + "/.nix-profile/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/nix/var/nix/profiles/default/bin"
 	b.applyCacheEnv(baseEnv)
+	b.applyTrustEnv(baseEnv)
 	for k, v := range pg.Spec.Env {
 		baseEnv[k] = v
 	}

@@ -242,6 +242,7 @@ struct SettingsDetail: View {
     @State private var backupPasswordMessage: String?
     @State private var savingBackupPassword = false
     @State private var restartMessage: String?
+    @State private var extraCaMessage: String?
     @State private var updateMessage: String?
 
     private var s: NativeSettings { aux.app?.settings.settings ?? NativeSettings() }
@@ -535,6 +536,22 @@ struct SettingsDetail: View {
                         hint: "Applies when the runner next starts, or when you restart it below.",
                         range: 1...32, value: bind(\.stack.runnerSlots))
             LabeledContent {
+                HStack {
+                    Button("Choose…") { chooseExtraCaFile() }
+                    if !s.stack.extraCaFile.isEmpty {
+                        Button("Clear") {
+                            extraCaMessage = nil
+                            aux.update { $0.stack.extraCaFile = "" }
+                        }
+                    }
+                }
+            } label: {
+                Text("Corporate root certificate")
+                Text(extraCaMessage ?? (s.stack.extraCaFile.isEmpty
+                    ? "Behind a proxy that inspects HTTPS, such as Zscaler, choose its root certificate (PEM) so agent VMs trust it. Applies when the runner next starts."
+                    : "\(s.stack.extraCaFile). Applies when the runner next starts."))
+            }
+            LabeledContent {
                 Button("Restart Local Stack") {
                     restartMessage = "Restarting database, API and runner…"
                     aux.app?.actions.restartStack()
@@ -785,6 +802,23 @@ struct SettingsDetail: View {
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
         if panel.runModal() == .OK, let url = panel.url { aux.update { $0.backups.export.folder = url.path } }
+    }
+
+    /// Keeps only a file that holds a PEM certificate; the runner checks the rest when it starts.
+    private func chooseExtraCaFile() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose a Root Certificate (PEM)"
+        panel.message = "Export it with: security find-certificate -a -c Zscaler -p /Library/Keychains/System.keychain > ~/zscaler-root.pem"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let text = try? String(contentsOf: url, encoding: .utf8), text.contains("-----BEGIN CERTIFICATE-----") else {
+            extraCaMessage = "\(url.lastPathComponent) isn't a PEM certificate. Export it as PEM (the security command above does)."
+            return
+        }
+        extraCaMessage = nil
+        aux.update { $0.stack.extraCaFile = url.path }
     }
 
     private func exportNow() {

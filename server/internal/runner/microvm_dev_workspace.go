@@ -144,6 +144,7 @@ func (b *MicroVM) EnsureDevWorkspaceContainer(ctx context.Context, workspaceID u
 		_ = eg.Close()
 		return "", err
 	}
+	b.trustNewVM(ctx, vm.Client())
 	if wf, ok := b.nixConfFileWrite(); ok {
 		if werr := vm.Client().WriteFiles(ctx, []guestproto.FileWrite{wf}); werr != nil {
 			_ = vm.Stop(context.Background())
@@ -194,6 +195,7 @@ func (b *MicroVM) devShellEnv() map[string]string {
 		"PATH":       devworkspace.ProfilePath + "/bin:" + homePath + "/.nix-profile/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/nix/var/nix/profiles/default/bin",
 	}
 	b.applyCacheEnv(envMap)
+	b.applyTrustEnv(envMap)
 	return envMap
 }
 
