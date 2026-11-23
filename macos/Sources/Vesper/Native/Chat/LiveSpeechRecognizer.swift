@@ -1,9 +1,10 @@
 import AVFoundation
 import Speech
 
-/// The person's speech as text, for Live Voice: the microphone through `AVAudioEngine` into a
-/// `SpeechAnalyzer` running Apple's on-device `SpeechTranscriber` model, so speech never leaves
-/// the Mac. One analyzer per utterance; between utterances the microphone is closed.
+/// The person's speech as text, for Live Voice and composer dictation: the microphone through
+/// `AVAudioEngine` into a `SpeechAnalyzer` running Apple's on-device `SpeechTranscriber` model, so
+/// speech never leaves the Mac. One analyzer per utterance; between utterances the microphone is
+/// closed.
 @Observable
 @MainActor
 final class LiveSpeechRecognizer {
