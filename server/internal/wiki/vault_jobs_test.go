@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -428,4 +429,38 @@ func TestVaultWorkerWakesImmediatelyViaNotify(t *testing.T) {
 		time.Sleep(25 * time.Millisecond)
 	}
 	t.Fatal("RunVaultWorker did not wake via NOTIFY to scan queued vault import")
+}
+
+func TestIdleVaultWorkerDoesNotSelfNotify(t *testing.T) {
+	e := setup(t)
+	e.svc.Objects = &vaultMemory{}
+
+	conn, err := e.svc.Pool.Acquire(e.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = conn.Conn().Close(context.Background())
+		conn.Release()
+	}()
+	if _, err := conn.Exec(e.ctx, "LISTEN vesper_work"); err != nil {
+		t.Fatal(err)
+	}
+
+	wctx, cancel := context.WithCancel(e.ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		e.svc.RunVaultWorker(wctx, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	quietCtx, quietCancel := context.WithTimeout(e.ctx, 300*time.Millisecond)
+	defer quietCancel()
+	if n, err := conn.Conn().WaitForNotification(quietCtx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("idle RunVaultWorker self-notified on %q: %q (err=%v)", n.Channel, n.Payload, err)
+	}
 }
