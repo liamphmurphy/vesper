@@ -11,14 +11,29 @@ struct AppsHomeScreen: View {
     @State private var initialTemplate: API.NewCustomApp.Template = .blank
     @State private var deleteTarget: API.CustomAppSummary?
     @State private var deletingSlug: String?
+    @State private var navSearch = ""
     @State private var watchedKeys: [QueryKey] = []
 
     private static let listRequest = API.listCustomApps()
+    private static let devWorkspaceRequest = API.getDevWorkspace()
 
     var body: some View {
         let p = theme.palette
         let entry = context.store.entry(Self.listRequest)
         let apps = entry.data?.apps ?? []
+        let devEnabled = context.store.entry(Self.devWorkspaceRequest).data?.enabled ?? false
+        let currentChrome = NativeChrome(
+            title: "Custom Apps",
+            toolbarItems: [
+                ShellToolbarItem(id: "apps.new", label: "New app", icon: "plus", kind: .button, accent: true, showsLabel: true),
+            ],
+            navigator: AppsHomeLogic.navModel(
+                apps: apps,
+                search: navSearch,
+                devWorkspaceEnabled: devEnabled,
+                loading: entry.isFetching && entry.data == nil
+            )
+        )
 
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
@@ -131,21 +146,19 @@ struct AppsHomeScreen: View {
             .padding(28)
             .frame(maxWidth: .infinity)
         }
+        .onChange(of: currentChrome, initial: true) { _, next in
+            context.chrome = next
+        }
         .onAppear {
-            context.chrome = NativeChrome(
-                title: "Custom Apps",
-                toolbarItems: [
-                    ShellToolbarItem(id: "apps.new", label: "New app", icon: "plus", kind: .button, accent: true, showsLabel: true),
-                ]
-            )
+            context.chrome = currentChrome
             context.onCommand = { cmd in
-                if case .toolbarAction(itemId: "apps.new", _) = cmd {
-                    openNew(template: .blank)
-                }
+                handleCommand(cmd)
             }
             context.store.observe(Self.listRequest)
             context.store.load(Self.listRequest)
-            watchedKeys = [Self.listRequest.key]
+            context.store.observe(Self.devWorkspaceRequest)
+            context.store.load(Self.devWorkspaceRequest)
+            watchedKeys = [Self.listRequest.key, Self.devWorkspaceRequest.key]
         }
         .onDisappear {
             context.onCommand = nil
@@ -181,6 +194,26 @@ struct AppsHomeScreen: View {
     private func openNew(template: API.NewCustomApp.Template) {
         initialTemplate = template
         showNewSheet = true
+    }
+
+    private func handleCommand(_ cmd: NativeCommand) {
+        if case .toolbarAction(itemId: "apps.new", _) = cmd {
+            openNew(template: .blank)
+            return
+        }
+        guard let action = AppsHomeLogic.navAction(for: cmd) else { return }
+        switch action {
+        case .newApp(let template):
+            openNew(template: template)
+        case .openPath(let path, let newTab):
+            if newTab { context.openInNewTab(path) } else { context.navigate(path) }
+        case .deleteApp(let slug):
+            if let target = context.store.entry(Self.listRequest).data?.apps.first(where: { $0.slug == slug }) {
+                deleteTarget = target
+            }
+        case .search(let value):
+            navSearch = value
+        }
     }
 
     private func customAppCard(_ app: API.CustomAppSummary, p: NativePalette) -> some View {

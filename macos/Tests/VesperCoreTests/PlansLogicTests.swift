@@ -107,4 +107,55 @@ final class PlansLogicTests: XCTestCase {
         XCTAssertEqual(sources[1].label, "spec.md")
         XCTAssertFalse(sources[1].done)
     }
+
+    func testNavModelFiltersPlansAndDecodesCommands() {
+        func plan(id: String, project: String, goal: String, state: API.PlanningSession.State, runState: String) -> API.PlanningSession {
+            API.PlanningSession(
+                artifactId: nil,
+                contextRefs: [],
+                createdAt: "2026-11-22T00:00:00Z",
+                epicId: nil,
+                goal: goal,
+                harness: "claude_code",
+                id: id,
+                model: "sonnet",
+                outcome: nil,
+                project: project,
+                proposalCount: 3,
+                proposals: [],
+                readyKeys: [],
+                revision: 1,
+                runId: "run-\(id)",
+                runState: runState,
+                sourceVersionId: nil,
+                state: state,
+                ticketKeys: [],
+                updatedAt: "2026-11-22T00:00:00Z"
+            )
+        }
+
+        let plans = [
+            plan(id: "p1", project: "PAY", goal: "Migrate billing\nMore detail", state: .review, runState: "completed"),
+            plan(id: "p2", project: "WEB", goal: "Redesign sidebar", state: .accepted, runState: "completed"),
+        ]
+        let model = PlansLogic.navModel(plans: plans, projects: [], selectedId: "p1")
+        XCTAssertEqual(model.id, PlansLogic.navId)
+        XCTAssertEqual(model.selectedId, "p1")
+        XCTAssertEqual(model.sections.first?.items.map(\.title), ["Migrate billing", "Redesign sidebar"])
+        XCTAssertEqual(model.sections.first?.items.first?.status, .human)
+        XCTAssertEqual(model.sections.first?.items.last?.status, .done)
+
+        let bySpace = PlansLogic.navModel(plans: plans, projects: [], projectFilter: "WEB", selectedId: nil)
+        XCTAssertEqual(bySpace.sections.first?.items.map(\.id), ["p2"])
+
+        let bySearch = PlansLogic.navModel(plans: plans, projects: [], search: "billing", selectedId: nil)
+        XCTAssertEqual(bySearch.sections.first?.items.map(\.id), ["p1"])
+
+        XCTAssertEqual(PlansLogic.navAction(for: .navAction(navigatorId: PlansLogic.navId, actionId: PlansLogic.newPlanAction)), .newPlan)
+        XCTAssertEqual(PlansLogic.navAction(for: .navActivate(navigatorId: PlansLogic.navId, itemId: "p1", newTab: true)), .selectPlan("p1", newTab: true))
+        XCTAssertEqual(PlansLogic.navAction(for: .navFilter(navigatorId: PlansLogic.navId, filterId: PlansLogic.spaceFilterId, value: "PAY", checked: true)), .filterSpace("PAY"))
+        XCTAssertEqual(PlansLogic.navAction(for: .navSearch(navigatorId: PlansLogic.navId, searchId: PlansLogic.searchId, value: "foo")), .search("foo"))
+        XCTAssertEqual(PlansLogic.navAction(for: .navActivate(navigatorId: PlansLogic.navId, itemId: PlansLogic.retryItemId)), .retry)
+        XCTAssertNil(PlansLogic.navAction(for: .navActivate(navigatorId: "other", itemId: "p1")))
+    }
 }

@@ -1,5 +1,7 @@
 import Foundation
 
+private typealias ShellTone = Tone
+
 /// Pure logic for the native Plans screen (`/plans`), porting `web/lib/plans.ts` and
 /// `web/lib/proposals.ts` so every status badge, count, live source-read list and proposal
 /// dependency validation rule stays deterministic and unit-tested.
@@ -306,5 +308,127 @@ public enum PlansLogic {
     private static func objectField(_ value: JSONValue?) -> [String: JSONValue]? {
         if case .object(let dict)? = value { return dict }
         return nil
+    }
+
+    // MARK: - Sidebar NavModel
+
+    public static let navId = "plans"
+    public static let newPlanAction = "new-plan"
+    public static let spaceFilterId = "plans-space"
+    public static let searchId = "plans-search"
+    public static let retryItemId = "retry"
+    public static let openNewTabMenu = "open-new-tab"
+
+    private static func navTone(for tone: Tone) -> ShellTone {
+        switch tone {
+        case .human: .human
+        case .blocked: .blocked
+        case .review: .accent
+        case .done: .done
+        case .neutral: .neutral
+        }
+    }
+
+    public static func navModel(
+        plans: [API.PlanningSession]?,
+        projects: [API.Project],
+        projectFilter: String = "",
+        search: String = "",
+        selectedId: String?,
+        loading: Bool = false,
+        error: String? = nil
+    ) -> NavModel {
+        let activeProjects = projects.filter { !$0.archived }
+        let filters: [NavFilterMenu]? = activeProjects.isEmpty ? nil : [
+            NavFilterMenu(
+                id: spaceFilterId,
+                label: "Space",
+                icon: "briefcase",
+                options: [NavFilterOption(value: "", label: "All spaces", checked: projectFilter.isEmpty)]
+                    + activeProjects.map {
+                        NavFilterOption(value: $0.key, label: $0.name, checked: projectFilter == $0.key)
+                    }
+            ),
+        ]
+
+        let trimmed = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        let needle = trimmed.lowercased()
+        let allPlans = plans ?? []
+        let filtered = allPlans.filter { plan in
+            if !projectFilter.isEmpty && plan.project != projectFilter { return false }
+            if needle.isEmpty { return true }
+            return plan.goal.lowercased().contains(needle)
+                || plan.project.lowercased().contains(needle)
+        }
+
+        let sections: [NavSection]
+        if loading && plans == nil {
+            sections = [NavSection(id: "loading", items: [], emptyText: "Loading plans\u{2026}")]
+        } else if let error, !error.isEmpty, plans == nil {
+            sections = [NavSection(id: "error", items: [
+                NavItem(id: retryItemId, title: "Couldn\u{2019}t load plans", subtitle: error, icon: "refresh"),
+            ])]
+        } else {
+            let items = filtered.map { plan -> NavItem in
+                let line = firstLine(plan.goal)
+                let status = planStatus(plan)
+                return NavItem(
+                    id: plan.id,
+                    title: line.isEmpty ? "Untitled plan" : line,
+                    subtitle: "\(plan.project) \u{00B7} \(APIDate.shortAgo(plan.createdAt))",
+                    status: navTone(for: status.tone),
+                    trailing: planCount(plan),
+                    href: "/plans?id=\(plan.id)",
+                    contextMenu: [MenuItem(id: openNewTabMenu, label: "Open in New Tab", icon: "external")]
+                )
+            }
+            let emptyText: String = {
+                if allPlans.isEmpty { return "Your plans will appear here." }
+                return "No plans match this filter."
+            }()
+            sections = [NavSection(
+                id: "plans",
+                title: "Plans",
+                items: items,
+                badge: items.isEmpty ? nil : NavBadge(text: "\(items.count)"),
+                emptyText: emptyText
+            )]
+        }
+
+        return NavModel(
+            id: navId,
+            title: "Plans",
+            actions: [NavAction(id: newPlanAction, label: "New plan", icon: "plus", accent: true)],
+            filters: filters,
+            search: NavSearch(id: searchId, placeholder: "Filter plans\u{2026}", value: search),
+            sections: sections,
+            selectedId: selectedId
+        )
+    }
+
+    public enum NavActionResult: Sendable, Equatable {
+        case newPlan
+        case selectPlan(String, newTab: Bool)
+        case filterSpace(String)
+        case search(String)
+        case retry
+    }
+
+    public static func navAction(for command: NativeCommand) -> NavActionResult? {
+        switch command {
+        case .navAction(navId, newPlanAction, _, _):
+            return .newPlan
+        case .navAction(navId, openNewTabMenu, let itemId?, _):
+            return .selectPlan(itemId, newTab: true)
+        case .navFilter(navId, spaceFilterId, let value, _):
+            return .filterSpace(value)
+        case .navSearch(navId, searchId, let value):
+            return .search(value)
+        case .navActivate(navId, let itemId, let newTab):
+            if itemId == retryItemId { return .retry }
+            return .selectPlan(itemId, newTab: newTab)
+        default:
+            return nil
+        }
     }
 }

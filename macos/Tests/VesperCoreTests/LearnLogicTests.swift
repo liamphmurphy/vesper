@@ -339,4 +339,85 @@ final class LearnLogicTests: XCTestCase {
         XCTAssertNil(LearnNav.action(for: .navActivate(navigatorId: LearnNav.id, itemId: "unknown"), lessonKeys: keys))
         XCTAssertNil(LearnNav.action(for: .navActivate(navigatorId: "other", itemId: "vacuum"), lessonKeys: keys))
     }
+
+    func testCoursesNavModelGroupsFiltersAndDecodesCommands() {
+        func summary(
+            id: String,
+            topic: String,
+            state: API.CourseState,
+            studyable: Bool,
+            complete: Int = 0,
+            lessons: Int = 6,
+            nextLesson: String? = nil,
+            buildNote: String = ""
+        ) -> API.CourseSummary {
+            API.CourseSummary(
+                buildNote: buildNote,
+                complete: complete,
+                createdAt: "2026-11-20T00:00:00Z",
+                error: "",
+                flagged: 0,
+                id: id,
+                lessons: lessons,
+                minutes: 90,
+                nextLesson: nextLesson,
+                part: 0,
+                parts: 1,
+                readyAt: nil,
+                solid: complete,
+                state: state,
+                studyable: studyable,
+                topic: topic,
+                units: 2
+            )
+        }
+
+        let courses = [
+            summary(id: "c-build", topic: "Rust Lifetimes", state: .outlineReady, studyable: false),
+            summary(id: "c-ready", topic: "Postgres MVCC", state: .ready, studyable: true, complete: 2, lessons: 5, nextLesson: "Vacuum"),
+        ]
+        let model = LearnNav.buildCoursesModel(courses: courses, selectedId: "c-build")
+        XCTAssertEqual(model.id, LearnNav.coursesNavId)
+        XCTAssertEqual(model.title, "Learn")
+        XCTAssertEqual(model.selectedId, "c-build")
+        XCTAssertEqual(model.sections.map(\.id), ["in-progress", "modules"])
+        XCTAssertEqual(model.sections[0].items.first?.status, .human)
+        XCTAssertEqual(model.sections[1].items.first?.trailing, "2/5")
+        XCTAssertEqual(model.sections[1].items.first?.subtitle, "Vacuum")
+
+        let filtered = LearnNav.buildCoursesModel(courses: courses, search: "mvcc")
+        XCTAssertEqual(filtered.sections.map(\.id), ["modules"])
+        XCTAssertEqual(filtered.sections[0].items.map(\.id), ["c-ready"])
+
+        let empty = LearnNav.buildCoursesModel(courses: [], loading: false)
+        XCTAssertEqual(empty.sections.first?.emptyText, "No modules yet.")
+
+        let loading = LearnNav.buildCoursesModel(courses: [], loading: true)
+        XCTAssertEqual(loading.sections.first?.id, "loading")
+
+        let errored = LearnNav.buildCoursesModel(courses: [], error: "offline")
+        XCTAssertEqual(errored.sections.first?.items.first?.id, LearnNav.retryCoursesItem)
+
+        XCTAssertEqual(
+            LearnNav.coursesAction(for: .navAction(navigatorId: LearnNav.coursesNavId, actionId: LearnNav.newCourseAction)),
+            .newCourse
+        )
+        XCTAssertEqual(
+            LearnNav.coursesAction(for: .navSearch(navigatorId: LearnNav.coursesNavId, searchId: LearnNav.coursesSearchId, value: "go")),
+            .search("go")
+        )
+        XCTAssertEqual(
+            LearnNav.coursesAction(for: .navActivate(navigatorId: LearnNav.coursesNavId, itemId: "c-ready", newTab: true)),
+            .openCourse("c-ready", newTab: true)
+        )
+        XCTAssertEqual(
+            LearnNav.coursesAction(for: .navActivate(navigatorId: LearnNav.coursesNavId, itemId: LearnNav.retryCoursesItem)),
+            .retry
+        )
+        XCTAssertEqual(
+            LearnNav.coursesAction(for: .navAction(navigatorId: LearnNav.coursesNavId, actionId: LearnNav.copyLinkMenu, itemId: "c-ready")),
+            .copyLink("c-ready")
+        )
+        XCTAssertNil(LearnNav.coursesAction(for: .navActivate(navigatorId: "other", itemId: "c-ready")))
+    }
 }

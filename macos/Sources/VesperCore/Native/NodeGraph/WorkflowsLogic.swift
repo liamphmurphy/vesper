@@ -5,6 +5,10 @@ import Foundation
 public enum WorkflowsLogic {
     public static let workflowsNavId = "workflows"
     public static let paletteNavId = "workflow-palette"
+    public static let workflowRunNavId = "workflow-run"
+    public static let runBackAction = "back"
+    public static let runOpenWorkflowAction = "open-workflow"
+    public static let runStepPrefix = "step:"
     public static let defaultNodeWidth: Double = 176
     public static let defaultNodeHeight: Double = 72
 
@@ -392,6 +396,94 @@ public enum WorkflowsLogic {
                 )
             }
         )
+    }
+
+    public static func buildWorkflowRunNavModel(
+        run: API.WorkflowRun,
+        selectedNodeId: String?
+    ) -> NavModel {
+        let stepByNodeId = Dictionary(run.steps.map { ($0.nodeId, $0) }, uniquingKeysWith: { _, latest in latest })
+        let runTone: Tone = switch run.state {
+        case .done: .done
+        case .waiting: .human
+        case .failed: .blocked
+        case .running: .accent
+        default: .neutral
+        }
+        var actions: [NavAction] = [
+            NavAction(id: runBackAction, label: "Back to Workflows", icon: "chevl"),
+        ]
+        if let wfId = run.workflowId, !wfId.isEmpty {
+            actions.append(NavAction(id: runOpenWorkflowAction, label: "Edit workflow", icon: "edit"))
+        }
+
+        let stepItems: [NavItem] = run.graph.nodes.map { node in
+            let step = stepByNodeId[node.id]
+            let tone: Tone? = step.map { s in
+                switch s.state {
+                case .done: .done
+                case .waiting: .human
+                case .failed: .blocked
+                case .running: .accent
+                default: .neutral
+                }
+            }
+            let subtitle: String = {
+                guard let step else { return nodeLabel(node.type) }
+                let label = step.checkResult.isEmpty ? step.state.rawValue : step.checkResult
+                return step.attempt > 1 ? "\(label) \u{00B7} attempt \(step.attempt)" : label
+            }()
+            return NavItem(
+                id: "\(runStepPrefix)\(node.id)",
+                title: node.title,
+                subtitle: subtitle,
+                status: tone
+            )
+        }
+
+        return NavModel(
+            id: workflowRunNavId,
+            title: run.name,
+            actions: actions,
+            sections: [
+                NavSection(id: "summary", items: [
+                    NavItem(
+                        id: "run-state",
+                        title: "v\(run.version) \u{00B7} \(runStateLabel(run.state))",
+                        status: runTone,
+                        disabled: true
+                    ),
+                ]),
+                NavSection(
+                    id: "steps",
+                    title: "Steps",
+                    items: stepItems,
+                    badge: stepItems.isEmpty ? nil : NavBadge(text: "\(stepItems.count)"),
+                    emptyText: "No steps."
+                ),
+            ],
+            selectedId: selectedNodeId.map { "\(runStepPrefix)\($0)" }
+        )
+    }
+
+    public enum WorkflowRunNavAction: Sendable, Equatable {
+        case back
+        case openWorkflow
+        case selectNode(String)
+    }
+
+    public static func workflowRunNavAction(for command: NativeCommand) -> WorkflowRunNavAction? {
+        switch command {
+        case .navAction(workflowRunNavId, runBackAction, _, _):
+            return .back
+        case .navAction(workflowRunNavId, runOpenWorkflowAction, _, _):
+            return .openWorkflow
+        case .navActivate(workflowRunNavId, let itemId, _):
+            guard itemId.hasPrefix(runStepPrefix) else { return nil }
+            return .selectNode(String(itemId.dropFirst(runStepPrefix.count)))
+        default:
+            return nil
+        }
     }
 
     public static func buildWorkflowInspectorSections(

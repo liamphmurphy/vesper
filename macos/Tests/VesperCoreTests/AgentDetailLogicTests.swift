@@ -42,4 +42,42 @@ final class AgentDetailLogicTests: XCTestCase {
         XCTAssertEqual(changes.first(where: { $0.scope == "git:push" })?.kind, .approval)
         XCTAssertEqual(changes.first(where: { $0.scope == "shell" })?.kind, .tightens)
     }
+
+    func testNavModelListsAgentsAndSections() {
+        let pike = API.Agent(
+            colorIndex: 0,
+            handle: "pike",
+            id: "ag-1",
+            kind: .main,
+            model: "sonnet",
+            name: "Pike",
+            role: "Engineer",
+            specialty: "Go",
+            status: .running
+        )
+        let nav = AgentDetailLogic.navModel(
+            agents: [pike],
+            overviews: [],
+            activeHandle: "pike",
+            activeTab: .scopes
+        )
+        XCTAssertEqual(nav.id, AgentDetailLogic.navId)
+        XCTAssertEqual(nav.selectedId, "agent:pike")
+        XCTAssertEqual(nav.sections.map(\.id), ["agents", "sections"])
+        XCTAssertEqual(nav.sections[0].items.first?.status, .done)
+        XCTAssertEqual(nav.sections[1].items.first(where: { $0.id == "tab:scopes" })?.trailing, "Current")
+
+        XCTAssertEqual(
+            AgentDetailLogic.navAction(for: .navAction(navigatorId: AgentDetailLogic.navId, actionId: AgentDetailLogic.backToWorkAction)),
+            .backToWork
+        )
+        XCTAssertEqual(
+            AgentDetailLogic.navAction(for: .navActivate(navigatorId: AgentDetailLogic.navId, itemId: "agent:pike", newTab: true)),
+            .openAgent(handle: "pike", newTab: true)
+        )
+        XCTAssertEqual(
+            AgentDetailLogic.navAction(for: .navActivate(navigatorId: AgentDetailLogic.navId, itemId: "tab:tokens")),
+            .selectTab(.tokens)
+        )
+    }
 }

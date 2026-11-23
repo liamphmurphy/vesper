@@ -43,10 +43,23 @@ struct ReportsScreen: View {
         let projects = (store.entry(Self.bootstrapRequest).data?.projects ?? []).filter { !$0.archived }
         let agents = store.entry(Self.bootstrapRequest).data?.agents ?? []
         let agentNames = Dictionary(uniqueKeysWithValues: agents.map { ($0.handle, $0.name) })
+        let currentChrome = NativeChrome(
+            title: "Reports",
+            subtitle: tab.label,
+            navigator: ReportsLogic.navModel(
+                tab: tab,
+                preset: preset,
+                groupBy: groupBy,
+                projectFilter: projectFilter,
+                projects: projects
+            )
+        )
 
         VStack(spacing: 0) {
-            filterHeader(projects: projects)
-            Divider()
+            if preset == .custom {
+                customRangeBar
+                Divider()
+            }
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     if tab == .costs {
@@ -60,8 +73,12 @@ struct ReportsScreen: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onChange(of: NativeChrome(title: "Reports"), initial: true) { _, next in
+        .onChange(of: currentChrome, initial: true) { _, next in
             context.chrome = next
+        }
+        .onAppear {
+            context.chrome = currentChrome
+            context.onCommand = { handleCommand($0) }
         }
         .task(id: context.match) {
             seed(from: context.match)
@@ -71,56 +88,34 @@ struct ReportsScreen: View {
             watch()
         }
         .onDisappear {
+            context.onCommand = nil
             for key in watched { context.store.stopObserving(key) }
             watched = []
         }
     }
 
-    private func filterHeader(projects: [API.Project]) -> some View {
-        HStack(spacing: 12) {
-            Picker("Report", selection: $tab) {
-                ForEach(ReportsLogic.Tab.allCases, id: \.self) { t in
-                    Text(t.label).tag(t)
-                }
-            }
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 220)
+    private func handleCommand(_ command: NativeCommand) {
+        guard let action = ReportsLogic.navAction(for: command) else { return }
+        switch action {
+        case .selectTab(let next): tab = next
+        case .selectRange(let next): preset = next
+        case .selectGroup(let next): groupBy = next
+        case .selectSpace(let key): projectFilter = key
+        }
+    }
 
-            Picker("Range", selection: $preset) {
-                ForEach(ReportsLogic.RangePreset.allCases, id: \.self) { p in
-                    Text(p.label).tag(p)
-                }
-            }
-            .frame(maxWidth: 140)
-
-            if preset == .custom {
-                TextField("YYYY-MM-DD", text: $customFrom).textFieldStyle(.roundedBorder).frame(width: 110)
-                Text("to").foregroundStyle(theme.palette.secondaryText)
-                TextField("YYYY-MM-DD", text: $customTo).textFieldStyle(.roundedBorder).frame(width: 110)
-            }
-
-            Picker("Space", selection: $projectFilter) {
-                Text("All spaces").tag("")
-                ForEach(projects, id: \.key) { proj in
-                    Text(proj.name).tag(proj.key)
-                }
-            }
-            .frame(maxWidth: 180)
-
+    private var customRangeBar: some View {
+        HStack(spacing: 10) {
+            Text("Custom range")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(theme.palette.secondaryText)
+            TextField("YYYY-MM-DD", text: $customFrom).textFieldStyle(.roundedBorder).frame(width: 110)
+            Text("to").foregroundStyle(theme.palette.secondaryText)
+            TextField("YYYY-MM-DD", text: $customTo).textFieldStyle(.roundedBorder).frame(width: 110)
             Spacer()
-
-            if tab == .costs {
-                Picker("Group", selection: $groupBy) {
-                    ForEach(ReportsLogic.GroupBy.allCases, id: \.self) { g in
-                        Text(g.label).tag(g)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 200)
-            }
         }
         .padding(.horizontal, 20)
-        .padding(.vertical, 12)
+        .padding(.vertical, 10)
     }
 
     @ViewBuilder

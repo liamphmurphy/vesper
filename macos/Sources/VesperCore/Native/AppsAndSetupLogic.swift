@@ -79,6 +79,166 @@ public enum AppsHomeLogic {
         default: return nil
         }
     }
+
+    // MARK: - Sidebar NavModel
+
+    public static let navId = "apps-home"
+    public static let newAppAction = "new-app"
+    public static let searchId = "apps-search"
+    public static let appPrefix = "app:"
+    public static let toolPrefix = "tool:"
+    public static let starterPrefix = "starter:"
+    public static let openNewTabMenu = "open-new-tab"
+    public static let deleteAppMenu = "delete-app"
+
+    public struct ToolEntry: Sendable, Equatable {
+        public let href: String
+        public let label: String
+        public let icon: String
+
+        public init(href: String, label: String, icon: String) {
+            self.href = href; self.label = label; self.icon = icon
+        }
+    }
+
+    public static func toolEntries(devWorkspaceEnabled: Bool) -> [ToolEntry] {
+        var tools: [ToolEntry] = [
+            ToolEntry(href: "/workflows", label: "Workflows", icon: "graph"),
+            ToolEntry(href: "/scheduled", label: "Scheduled", icon: "clock"),
+            ToolEntry(href: "/learn", label: "Learn", icon: "learn"),
+            ToolEntry(href: "/reports", label: "Reports", icon: "dollar"),
+            ToolEntry(href: "/http", label: "HTTP Client", icon: "plug"),
+        ]
+        if devWorkspaceEnabled {
+            tools.append(ToolEntry(href: "/dev", label: "Dev workspace", icon: "terminal"))
+        }
+        return tools
+    }
+
+    public static func navModel(
+        apps: [API.CustomAppSummary],
+        search: String = "",
+        devWorkspaceEnabled: Bool = false,
+        loading: Bool = false
+    ) -> NavModel {
+        let trimmed = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        let needle = trimmed.lowercased()
+
+        let filteredApps = needle.isEmpty ? apps : apps.filter {
+            $0.name.lowercased().contains(needle)
+                || $0.slug.lowercased().contains(needle)
+                || $0.description.lowercased().contains(needle)
+        }
+        let filteredTools = toolEntries(devWorkspaceEnabled: devWorkspaceEnabled).filter {
+            needle.isEmpty || $0.label.lowercased().contains(needle)
+        }
+        let filteredStarters = starters.filter {
+            needle.isEmpty || $0.label.lowercased().contains(needle) || $0.detail.lowercased().contains(needle)
+        }
+
+        let appItems = filteredApps.map { app in
+            NavItem(
+                id: "\(appPrefix)\(app.slug)",
+                title: app.name,
+                subtitle: app.description.isEmpty ? nil : app.description,
+                icon: resolveIcon(app.icon),
+                href: "/apps/\(app.slug)",
+                contextMenu: [
+                    MenuItem(id: openNewTabMenu, label: "Open in New Tab", icon: "external"),
+                    MenuItem(id: deleteAppMenu, label: "Delete\u{2026}", icon: "trash", destructive: true),
+                ]
+            )
+        }
+        let appEmptyText: String = {
+            if loading && apps.isEmpty { return "Loading\u{2026}" }
+            return trimmed.isEmpty ? "No custom apps yet." : "No custom apps match."
+        }()
+
+        var sections: [NavSection] = [
+            NavSection(
+                id: "your-apps",
+                title: "Your apps",
+                items: appItems,
+                badge: appItems.isEmpty ? nil : NavBadge(text: "\(appItems.count)"),
+                emptyText: appEmptyText
+            ),
+        ]
+
+        if !filteredTools.isEmpty {
+            sections.append(NavSection(
+                id: "tools",
+                title: "Tools",
+                items: filteredTools.map { tool in
+                    NavItem(
+                        id: "\(toolPrefix)\(tool.href)",
+                        title: tool.label,
+                        icon: tool.icon,
+                        href: tool.href,
+                        contextMenu: [MenuItem(id: openNewTabMenu, label: "Open in New Tab", icon: "external")]
+                    )
+                }
+            ))
+        }
+
+        if !filteredStarters.isEmpty {
+            sections.append(NavSection(
+                id: "starters",
+                title: "Starter templates",
+                items: filteredStarters.map { starter in
+                    NavItem(id: "\(starterPrefix)\(starter.template.rawValue)", title: starter.label, icon: starter.icon)
+                }
+            ))
+        }
+
+        return NavModel(
+            id: navId,
+            title: "Apps",
+            actions: [NavAction(id: newAppAction, label: "New app", icon: "plus", accent: true)],
+            search: NavSearch(id: searchId, placeholder: "Filter apps\u{2026}", value: search),
+            sections: sections
+        )
+    }
+
+    public enum NavActionResult: Sendable, Equatable {
+        case newApp(API.NewCustomApp.Template)
+        case openPath(String, newTab: Bool)
+        case deleteApp(slug: String)
+        case search(String)
+    }
+
+    public static func navAction(for command: NativeCommand) -> NavActionResult? {
+        switch command {
+        case .navAction(navId, newAppAction, _, _):
+            return .newApp(.blank)
+        case .navAction(navId, openNewTabMenu, let itemId?, _):
+            if itemId.hasPrefix(appPrefix) {
+                return .openPath("/apps/\(itemId.dropFirst(appPrefix.count))", newTab: true)
+            }
+            if itemId.hasPrefix(toolPrefix) {
+                return .openPath(String(itemId.dropFirst(toolPrefix.count)), newTab: true)
+            }
+            return nil
+        case .navAction(navId, deleteAppMenu, let itemId?, _):
+            guard itemId.hasPrefix(appPrefix) else { return nil }
+            return .deleteApp(slug: String(itemId.dropFirst(appPrefix.count)))
+        case .navSearch(navId, searchId, let value):
+            return .search(value)
+        case .navActivate(navId, let itemId, let newTab):
+            if itemId.hasPrefix(appPrefix) {
+                return .openPath("/apps/\(itemId.dropFirst(appPrefix.count))", newTab: newTab)
+            }
+            if itemId.hasPrefix(toolPrefix) {
+                return .openPath(String(itemId.dropFirst(toolPrefix.count)), newTab: newTab)
+            }
+            if itemId.hasPrefix(starterPrefix) {
+                let raw = String(itemId.dropFirst(starterPrefix.count))
+                return .newApp(API.NewCustomApp.Template(rawValue: raw))
+            }
+            return nil
+        default:
+            return nil
+        }
+    }
 }
 
 public enum LandingLogic {

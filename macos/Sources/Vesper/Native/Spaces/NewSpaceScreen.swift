@@ -221,12 +221,37 @@ struct NewSpaceScreen: View {
             .padding(28)
             .frame(maxWidth: .infinity)
         }
+        .onChange(of: spaces.map(\.id), initial: true) { _, _ in
+            context.chrome = NativeChrome(
+                title: "New space",
+                navigator: SpacesLogic.navModel(spaces: spaces, activeSpaceId: nil)
+            )
+        }
         .onAppear {
             trackingWork = context.match.query["work"] == "1"
-            context.chrome = NativeChrome(title: "New space")
+            context.chrome = NativeChrome(
+                title: "New space",
+                navigator: SpacesLogic.navModel(spaces: spaces, activeSpaceId: nil)
+            )
+            context.onCommand = { cmd in
+                guard let action = SpacesLogic.navAction(for: cmd) else { return }
+                switch action {
+                case .backToChat: context.navigate("/chat")
+                case .newSpace: break
+                case .openSpace(let id, let newTab):
+                    if newTab { context.openInNewTab("/spaces/\(id)") } else { context.navigate("/spaces/\(id)") }
+                case .openChat(let id, let newTab):
+                    if newTab { context.openInNewTab("/chat/\(id)") } else { context.navigate("/chat/\(id)") }
+                }
+            }
+            context.store.observe(Self.spacesRequest)
             context.store.load(Self.personasRequest)
             context.store.load(Self.bootRequest)
             context.store.load(Self.spacesRequest)
+        }
+        .onDisappear {
+            context.onCommand = nil
+            context.store.stopObserving(Self.spacesRequest.key)
         }
     }
 

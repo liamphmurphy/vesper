@@ -217,5 +217,41 @@ final class NodeGraphTests: XCTestCase {
         XCTAssertEqual(nav.id, WorkflowsLogic.paletteNavId)
         XCTAssertEqual(nav.sections.count, 2)
         XCTAssertEqual(nav.sections[0].items.first?.disabled, true)
+
+        let run = API.WorkflowRun(
+            chatId: "chat-1",
+            checkAttempts: [],
+            createdAt: "2026-11-22T00:00:00Z",
+            error: "",
+            finishedAt: nil,
+            graph: graph,
+            id: "wfrun-1",
+            images: nil,
+            input: "Ship it",
+            messageId: nil,
+            name: "Release flow",
+            state: .waiting,
+            steps: [passedStep],
+            version: 2,
+            workflowId: "wf-1"
+        )
+        let runNav = WorkflowsLogic.buildWorkflowRunNavModel(run: run, selectedNodeId: "check")
+        XCTAssertEqual(runNav.id, WorkflowsLogic.workflowRunNavId)
+        XCTAssertEqual(runNav.title, "Release flow")
+        XCTAssertEqual(runNav.selectedId, "step:check")
+        XCTAssertEqual(runNav.actions?.map(\.id), [WorkflowsLogic.runBackAction, WorkflowsLogic.runOpenWorkflowAction])
+        XCTAssertEqual(runNav.sections.first(where: { $0.id == "steps" })?.items.count, graph.nodes.count)
+        XCTAssertEqual(
+            WorkflowsLogic.workflowRunNavAction(for: .navAction(navigatorId: WorkflowsLogic.workflowRunNavId, actionId: WorkflowsLogic.runBackAction)),
+            .back
+        )
+        XCTAssertEqual(
+            WorkflowsLogic.workflowRunNavAction(for: .navAction(navigatorId: WorkflowsLogic.workflowRunNavId, actionId: WorkflowsLogic.runOpenWorkflowAction)),
+            .openWorkflow
+        )
+        XCTAssertEqual(
+            WorkflowsLogic.workflowRunNavAction(for: .navActivate(navigatorId: WorkflowsLogic.workflowRunNavId, itemId: "step:check")),
+            .selectNode("check")
+        )
     }
 }

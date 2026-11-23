@@ -92,6 +92,9 @@ struct ArtifactReviewScreen: View {
             syncChrome(artifact: artifact)
             bindCommands(artifact: artifact)
         }
+        .onChange(of: primaryVersionId) { _, _ in
+            syncChrome(artifact: entry.data)
+        }
     }
 
     private func ticketKeys(for artifact: API.Artifact) -> [String] {
@@ -122,12 +125,27 @@ struct ArtifactReviewScreen: View {
             subtitle: "Review",
             toolbarItems: [
                 ShellToolbarItem(id: "review.close", label: "Close", icon: "xmark", kind: .button, showsLabel: true),
-            ]
+            ],
+            navigator: ArtifactDetailLogic.navModel(
+                artifact: artifact,
+                selectedVersionId: primaryVersionId
+            )
         )
     }
 
     private func bindCommands(artifact: API.Artifact?) {
         context.onCommand = { cmd in
+            if let navAction = ArtifactDetailLogic.navAction(for: cmd) {
+                switch navAction {
+                case .backToLibrary:
+                    context.navigate("/library")
+                case .selectVersion(let versionId):
+                    primaryVersionId = versionId
+                case .openLink(let href, let newTab):
+                    if newTab { context.openInNewTab(href) } else { context.navigate(href) }
+                }
+                return
+            }
             guard case .toolbarAction(itemId: "review.close", _) = cmd else { return }
             if let key = selectedTicketKey {
                 context.navigate("/tickets/\(key)")
