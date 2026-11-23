@@ -311,4 +311,29 @@ final class ChatComposerLogicTests: XCTestCase {
         XCTAssertEqual(midInsert.text, "Ask Judy about this")
         XCTAssertEqual(midInsert.cursorUTF16, 8)
     }
+
+    func testPushToTalkReleaseDistinguishesHoldFromTap() {
+        XCTAssertEqual(
+            ChatComposerDictationLogic.releaseAction(elapsedSeconds: 0.12, wasListeningBeforePress: false),
+            .keepListening
+        )
+        XCTAssertEqual(
+            ChatComposerDictationLogic.releaseAction(elapsedSeconds: ChatComposerDictationLogic.holdThresholdSeconds, wasListeningBeforePress: false),
+            .stopAndCommit
+        )
+        XCTAssertEqual(
+            ChatComposerDictationLogic.releaseAction(elapsedSeconds: 0.75, wasListeningBeforePress: false),
+            .stopAndCommit
+        )
+        XCTAssertEqual(
+            ChatComposerDictationLogic.releaseAction(elapsedSeconds: 0.08, wasListeningBeforePress: true),
+            .stopAndCommit
+        )
+    }
+
+    func testOutlineSlashCommandIsRegistered() {
+        XCTAssertTrue(ChatSlashCommand.all.contains(where: { $0.name == "outline" }))
+        let parsed = ChatSlashCommandLogic.parseCommand("/outline")
+        XCTAssertEqual(parsed?.name, "outline")
+    }
 }

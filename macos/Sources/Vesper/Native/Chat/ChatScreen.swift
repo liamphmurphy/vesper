@@ -245,6 +245,10 @@ struct ChatScreen: View {
                     companionOpen = false
                     liveVoiceOpen = true
                 },
+                onOpenOutline: {
+                    model.inspectorTabId = ChatInspectorLogic.outlineTabId
+                    model.inspectorOpen = true
+                },
                 prefill: model.composerPrefill,
                 onPrefillApplied: { token in
                     if model.composerPrefill?.token == token {
