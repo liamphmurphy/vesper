@@ -4,8 +4,10 @@ import { typedText } from "./chat-context.ts";
 import {
   buildCustomAppSrcDoc,
   CUSTOM_APP_ICONS,
+  hlsRelayStreamId,
   localMediaEmbed,
   parseBridgeMessage,
+  parseHlsRelayUrl,
   parseLocalMediaUrl,
   parseSafeExternalUrl,
   parseSafeHttpsUrl,
@@ -281,6 +283,40 @@ test("parseBridgeMessage keeps play-video's theater flag only when it is a boole
   );
 });
 
+test("HLS relay streams parse vesper-hls:<uuid> and optional safe externalUrl", () => {
+  const id = "01a1f7a0-1234-7abc-8def-0123456789ab";
+  assert.equal(parseHlsRelayUrl(`vesper-hls:${id}`), `vesper-hls:${id}`);
+  assert.equal(parseHlsRelayUrl(` VESPER-HLS:${id.toUpperCase()} `), `vesper-hls:${id}`);
+  assert.equal(hlsRelayStreamId(`vesper-hls:${id}`), id);
+  for (const bad of ["vesper-hls:not-a-uuid", `vesper-hls:${id}/../x`, `http://192.168.1.2/master.m3u8`, 42, null]) {
+    assert.equal(parseHlsRelayUrl(bad), null, String(bad));
+    assert.equal(hlsRelayStreamId(bad), null, String(bad));
+  }
+
+  assert.deepEqual(
+    parseBridgeMessage({
+      channel: "vesper:custom-app",
+      type: "play-video",
+      payload: { url: `vesper-hls:${id}`, title: "Live", theater: true, sidePanel: true, externalUrl: "https://www.twitch.tv/demo" },
+    }),
+    {
+      channel: "vesper:custom-app",
+      id: "",
+      type: "play-video",
+      payload: { url: `vesper-hls:${id}`, title: "Live", theater: true, sidePanel: true, externalUrl: "https://www.twitch.tv/demo" },
+    },
+  );
+  // Unsafe externalUrl is dropped while keeping the valid relay URL.
+  assert.deepEqual(
+    parseBridgeMessage({
+      channel: "vesper:custom-app",
+      type: "play-video",
+      payload: { url: `vesper-hls:${id}`, externalUrl: "javascript:alert(1)" },
+    }),
+    { channel: "vesper:custom-app", id: "", type: "play-video", payload: { url: `vesper-hls:${id}` } },
+  );
+});
+
 test("parseBridgeMessage keeps play-video's sidePanel flag only when it is a boolean", () => {
   assert.deepEqual(
     parseBridgeMessage({
@@ -306,6 +342,72 @@ test("parseBridgeMessage keeps play-video's sidePanel flag only when it is a boo
       id: "",
       type: "play-video",
       payload: { url: "https://www.twitch.tv/lirik" },
+    },
+  );
+});
+
+test("parseBridgeMessage validates ws-open, ws-send, and ws-close", () => {
+  assert.deepEqual(
+    parseBridgeMessage({
+      channel: "vesper:custom-app",
+      type: "ws-open",
+      payload: { connId: "ws_1", url: "wss://irc-ws.chat.twitch.tv:443", protocols: ["irc"] },
+    }),
+    {
+      channel: "vesper:custom-app",
+      id: "",
+      type: "ws-open",
+      payload: { connId: "ws_1", url: "wss://irc-ws.chat.twitch.tv/", protocols: ["irc"] },
+    },
+  );
+  assert.equal(
+    parseBridgeMessage({
+      channel: "vesper:custom-app",
+      type: "ws-open",
+      payload: { connId: "ws_2", url: "ws://irc-ws.chat.twitch.tv/" },
+    }),
+    null,
+  );
+  assert.equal(
+    parseBridgeMessage({
+      channel: "vesper:custom-app",
+      type: "ws-open",
+      payload: { connId: "ws_3", url: "wss://user:pass@irc-ws.chat.twitch.tv/" },
+    }),
+    null,
+  );
+  assert.equal(
+    parseBridgeMessage({
+      channel: "vesper:custom-app",
+      type: "ws-open",
+      payload: { connId: "", url: "wss://irc-ws.chat.twitch.tv/" },
+    }),
+    null,
+  );
+  assert.deepEqual(
+    parseBridgeMessage({
+      channel: "vesper:custom-app",
+      type: "ws-send",
+      payload: { connId: "ws_1", data: "PING :tmi.twitch.tv" },
+    }),
+    {
+      channel: "vesper:custom-app",
+      id: "",
+      type: "ws-send",
+      payload: { connId: "ws_1", data: "PING :tmi.twitch.tv" },
+    },
+  );
+  assert.deepEqual(
+    parseBridgeMessage({
+      channel: "vesper:custom-app",
+      type: "ws-close",
+      payload: { connId: "ws_1", code: 1000, reason: "bye" },
+    }),
+    {
+      channel: "vesper:custom-app",
+      id: "",
+      type: "ws-close",
+      payload: { connId: "ws_1", code: 1000, reason: "bye" },
     },
   );
 });

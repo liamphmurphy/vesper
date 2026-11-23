@@ -635,7 +635,9 @@ const bridgeRuntimeJS = `
 import { useState, useEffect, useCallback } from "react";
 
 let seq = 0;
+let wsSeq = 0;
 const pending = new Map();
+const wsSockets = new Map();
 const navListeners = new Set();
 const eventListeners = new Set();
 const playerListeners = new Set();
@@ -648,6 +650,10 @@ window.addEventListener("message", (event) => {
     pending.delete(msg.id);
     if (msg.ok) resolve(msg.data);
     else reject(new Error(msg.error || "Request failed"));
+    return;
+  }
+  if (msg.type === "vesper:ws" && msg.connId && wsSockets.has(msg.connId)) {
+    wsSockets.get(msg.connId)._handle(msg);
     return;
   }
   if (msg.type === "vesper:nav-select") {
@@ -721,6 +727,7 @@ export function playVideo(url, opts) {
       ...(typeof options.title === "string" && options.title ? { title: options.title } : {}),
       ...(typeof options.theater === "boolean" ? { theater: options.theater } : {}),
       ...(typeof options.sidePanel === "boolean" ? { sidePanel: options.sidePanel } : {}),
+      ...(typeof options.externalUrl === "string" && options.externalUrl ? { externalUrl: options.externalUrl } : {}),
     },
   }, "*");
 }
@@ -742,6 +749,10 @@ const resolvedImages = new Map();
 const imageBlobUrls = new Set();
 
 window.addEventListener("pagehide", () => {
+  for (const sock of wsSockets.values()) {
+    try { sock.close(1001, "pagehide"); } catch {}
+  }
+  wsSockets.clear();
   for (const blobUrl of imageBlobUrls) {
     try { URL.revokeObjectURL(blobUrl); } catch {}
   }
@@ -749,6 +760,81 @@ window.addEventListener("pagehide", () => {
   resolvedImages.clear();
   imageCache.clear();
 });
+
+export function openWebSocket(url, opts) {
+  const target = String(url || "").trim();
+  const connId = "ws_" + (++wsSeq);
+  const protocols = Array.isArray(opts && opts.protocols)
+    ? opts.protocols.map((p) => String(p || "").trim()).filter(Boolean)
+    : undefined;
+  const listeners = { open: new Set(), message: new Set(), error: new Set(), close: new Set() };
+  let state = 0; // 0 CONNECTING, 1 OPEN, 2 CLOSING, 3 CLOSED
+  let protocol = "";
+
+  const handle = {
+    get readyState() { return state; },
+    get protocol() { return protocol; },
+    send(data) {
+      if (state !== 1) return;
+      window.parent.postMessage({
+        channel: "vesper:custom-app",
+        id: "",
+        type: "ws-send",
+        payload: { connId, data: String(data) },
+      }, "*");
+    },
+    close(code, reason) {
+      if (state === 2 || state === 3) return;
+      state = 2;
+      window.parent.postMessage({
+        channel: "vesper:custom-app",
+        id: "",
+        type: "ws-close",
+        payload: {
+          connId,
+          ...(typeof code === "number" ? { code } : {}),
+          ...(typeof reason === "string" && reason ? { reason } : {}),
+        },
+      }, "*");
+    },
+    onOpen(fn) { listeners.open.add(fn); return () => listeners.open.delete(fn); },
+    onMessage(fn) { listeners.message.add(fn); return () => listeners.message.delete(fn); },
+    onError(fn) { listeners.error.add(fn); return () => listeners.error.delete(fn); },
+    onClose(fn) { listeners.close.add(fn); return () => listeners.close.delete(fn); },
+    _handle(msg) {
+      if (msg.event === "open") {
+        state = 1;
+        protocol = typeof msg.protocol === "string" ? msg.protocol : "";
+        for (const fn of listeners.open) { try { fn({ protocol }); } catch {} }
+        return;
+      }
+      if (msg.event === "message") {
+        for (const fn of listeners.message) { try { fn(msg.data); } catch {} }
+        return;
+      }
+      if (msg.event === "error") {
+        const err = new Error(msg.message || "WebSocket error");
+        for (const fn of listeners.error) { try { fn(err); } catch {} }
+        return;
+      }
+      if (msg.event === "close") {
+        state = 3;
+        wsSockets.delete(connId);
+        const ev = { code: msg.code || 1000, reason: msg.reason || "", wasClean: msg.wasClean === true };
+        for (const fn of listeners.close) { try { fn(ev); } catch {} }
+      }
+    },
+  };
+
+  wsSockets.set(connId, handle);
+  window.parent.postMessage({
+    channel: "vesper:custom-app",
+    id: "",
+    type: "ws-open",
+    payload: { connId, url: target, ...(protocols && protocols.length ? { protocols } : {}) },
+  }, "*");
+  return handle;
+}
 
 export function loadImage(url) {
   const key = String(url || "").trim();
@@ -954,8 +1040,9 @@ export async function secretFetch(secret, url, init = {}) {
 }
 
 // media downloads direct video files (or imports videos produced by a Nix job)
-// into Vesper (app.media:download) so they play locally: pass an item's
-// play_url to playVideo once its state is "done".
+// into Vesper (app.media:download) so they play locally, and relays live HLS
+// playlists on the local network (app.media:relay) for native playback and AirPlay:
+// pass the returned play_url to playVideo.
 export const media = {
   download(url) {
     return callHost("media_download", { url: String(url) });
@@ -968,6 +1055,12 @@ export const media = {
   },
   delete(id) {
     return callHost("media_delete", { id: String(id) });
+  },
+  relayHLS(spec) {
+    return callHost("media_relay_hls", spec || {});
+  },
+  stopRelay(id) {
+    return callHost("media_stop_relay", { id: String(id) });
   },
 };
 

@@ -21,7 +21,9 @@ import { useConnectors } from "@/lib/api/connector-hooks";
 import { useApiSecrets } from "@/lib/api/secret-hooks";
 import {
   customAppKeys,
+  getCustomAppHlsStream,
   invokeCustomApp,
+  stopCustomAppHlsStream,
   useCustomApp,
   useUpdateCustomApp,
   type CustomAppCapabilityMode,
@@ -33,6 +35,7 @@ import { chatKeys, useChat, useCreateChat } from "@/lib/api/hooks";
 import { useSpaceChats } from "@/lib/api/space-hooks";
 import {
   buildCustomAppSrcDoc,
+  hlsRelayStreamId,
   parseBridgeMessage,
   readThemeVarsFrom,
   resolveAppIcon,
@@ -81,6 +84,14 @@ type PendingApproval =
       reqId: string;
       kind: "image";
       capability: "app.http:outbound";
+      summary: string;
+    }
+  | {
+      seq: number;
+      reload: number;
+      reqId: string;
+      kind: "ws";
+      capability: "app.ws:outbound";
       summary: string;
     };
 
@@ -170,6 +181,24 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
     setActiveVideo(null);
     setSidePanelEnabled(false);
   }, []);
+  const hlsRequestSeqRef = useRef(0);
+
+  // Stop any active LAN HLS relay stream when switching videos, closing the player, or leaving the page.
+  const activeHlsStreamId = activeVideo?.provider === "hls" ? activeVideo.streamId : undefined;
+  useEffect(() => {
+    if (!activeHlsStreamId) return;
+    let stopped = false;
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      stopCustomAppHlsStream(app.slug, activeHlsStreamId);
+    };
+    window.addEventListener("pagehide", stop);
+    return () => {
+      window.removeEventListener("pagehide", stop);
+      stop();
+    };
+  }, [app.slug, activeHlsStreamId]);
 
   // Tell the app what its player is doing, so it can save progress or move on to the next video.
   const playerUrl = activeVideo?.embedUrl ?? null;
@@ -185,6 +214,78 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
     postToShell({ v: 1, type: "sidebarHidden", hidden: true });
     return () => postToShell({ v: 1, type: "sidebarHidden", hidden: false });
   }, [wantsWholeWindow]);
+
+  const wsConnsRef = useRef<Map<string, WebSocket>>(new Map());
+  const pendingWSQueueRef = useRef<Map<string, Array<{ connId: string; url: string; protocols?: string[] }>>>(new Map());
+
+  useEffect(() => {
+    const conns = wsConnsRef.current;
+    return () => {
+      for (const ws of conns.values()) {
+        try {
+          ws.close(1001, "app reload");
+        } catch {}
+      }
+      conns.clear();
+    };
+  }, [app.slug, app.current_seq, reloadKey]);
+
+  const openProxyWS = useCallback(
+    (connId: string, wsUrl: string, protocols: string[] | undefined, approved: boolean) => {
+      const conns = wsConnsRef.current;
+      if (conns.size >= 8 && !conns.has(connId)) {
+        postToFrame({ type: "vesper:ws", connId, event: "error", message: "Too many open WebSocket connections (max 8)" });
+        postToFrame({ type: "vesper:ws", connId, event: "close", code: 1008, reason: "limit exceeded", wasClean: false });
+        return;
+      }
+      const existing = conns.get(connId);
+      if (existing) {
+        try {
+          existing.close(1000, "replaced");
+        } catch {}
+        conns.delete(connId);
+      }
+      const params = new URLSearchParams({ url: wsUrl });
+      if (approved) params.set("approved", "true");
+      if (protocols && protocols.length) params.set("protocols", protocols.join(","));
+      const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const proxyUrl = `${proto}//${window.location.host}/api/v1/custom-apps/${encodeURIComponent(app.slug)}/ws?${params.toString()}`;
+      try {
+        const ws = protocols && protocols.length ? new WebSocket(proxyUrl, protocols) : new WebSocket(proxyUrl);
+        conns.set(connId, ws);
+        ws.addEventListener("open", () => {
+          postToFrame({ type: "vesper:ws", connId, event: "open", protocol: ws.protocol || "" });
+        });
+        ws.addEventListener("message", (ev) => {
+          if (typeof ev.data === "string") {
+            postToFrame({ type: "vesper:ws", connId, event: "message", data: ev.data });
+          } else if (ev.data instanceof Blob) {
+            void ev.data.text().then((text) => {
+              postToFrame({ type: "vesper:ws", connId, event: "message", data: text });
+            });
+          }
+        });
+        ws.addEventListener("error", () => {
+          postToFrame({ type: "vesper:ws", connId, event: "error", message: "WebSocket connection failed" });
+        });
+        ws.addEventListener("close", (ev) => {
+          if (conns.get(connId) === ws) conns.delete(connId);
+          postToFrame({
+            type: "vesper:ws",
+            connId,
+            event: "close",
+            code: ev.code || 1000,
+            reason: ev.reason || "",
+            wasClean: ev.wasClean,
+          });
+        });
+      } catch (err) {
+        postToFrame({ type: "vesper:ws", connId, event: "error", message: errorText(err) });
+        postToFrame({ type: "vesper:ws", connId, event: "close", code: 1006, reason: errorText(err), wasClean: false });
+      }
+    },
+    [app.slug, postToFrame],
+  );
 
   const serveProxyImage = useCallback(
     async (reqId: string, imageUrl: string, approved: boolean) => {
@@ -333,11 +434,46 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
         return;
       }
       if (msg.type === "play-video") {
+        const streamId = hlsRelayStreamId(msg.payload.url);
+        if (streamId) {
+          const reqSeq = ++hlsRequestSeqRef.current;
+          const title = msg.payload.title || "Live stream";
+          const externalUrl = msg.payload.externalUrl ?? "";
+          const requestedTheater = msg.payload.theater;
+          const wantsSide = msg.payload.sidePanel === true;
+          void getCustomAppHlsStream(app.slug, streamId)
+            .then((stream) => {
+              if (hlsRequestSeqRef.current !== reqSeq) {
+                stopCustomAppHlsStream(app.slug, streamId);
+                return;
+              }
+              setActiveVideo({
+                provider: "hls",
+                embedUrl: stream.lan_url || stream.loopback_url,
+                externalUrl,
+                titleFallback: "Live stream",
+                streamId: stream.id,
+                title,
+              });
+              if (requestedTheater !== undefined) setTheater(requestedTheater);
+              setSidePanelEnabled(wantsSide);
+              if (wantsSide) setSidePanelOpen(true);
+            })
+            .catch(() => {
+              // Stream expired or was stopped before playback began.
+            });
+          return;
+        }
+        hlsRequestSeqRef.current++;
         const embed =
           localMediaEmbed(msg.payload.url, app.slug) ??
           resolveVideoEmbed(msg.payload.url, typeof window !== "undefined" ? window.location.hostname : undefined);
         if (embed) {
-          setActiveVideo({ ...embed, title: msg.payload.title || embed.titleFallback });
+          setActiveVideo({
+            ...embed,
+            ...(msg.payload.externalUrl ? { externalUrl: msg.payload.externalUrl } : {}),
+            title: msg.payload.title || embed.titleFallback,
+          });
           if (msg.payload.theater !== undefined) setTheater(msg.payload.theater);
           const wantsSide = msg.payload.sidePanel === true;
           setSidePanelEnabled(wantsSide);
@@ -349,6 +485,57 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
       }
       if (msg.type === "app-error") {
         setRuntimeErrorState({ seq: app.current_seq, reload: reloadKey, message: msg.payload.message });
+        return;
+      }
+      if (msg.type === "ws-send") {
+        const ws = wsConnsRef.current.get(msg.payload.connId);
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(msg.payload.data);
+        }
+        return;
+      }
+      if (msg.type === "ws-close") {
+        const ws = wsConnsRef.current.get(msg.payload.connId);
+        if (ws) {
+          wsConnsRef.current.delete(msg.payload.connId);
+          try {
+            ws.close(msg.payload.code ?? 1000, msg.payload.reason ?? "");
+          } catch {}
+        }
+        return;
+      }
+      if (msg.type === "ws-open") {
+        const mode = capabilitiesRef.current["app.ws:outbound"] ?? "denied";
+        if (mode === "allowed") {
+          openProxyWS(msg.payload.connId, msg.payload.url, msg.payload.protocols, false);
+          return;
+        }
+        if (mode === "denied") {
+          const errMsg = `capability app.ws:outbound is denied for custom app "${app.slug}"`;
+          postToFrame({ type: "vesper:ws", connId: msg.payload.connId, event: "error", message: errMsg });
+          postToFrame({ type: "vesper:ws", connId: msg.payload.connId, event: "close", code: 1008, reason: errMsg, wasClean: false });
+          return;
+        }
+        const queueKey = `${app.current_seq}:${reloadKey}`;
+        const existing = pendingWSQueueRef.current.get(queueKey) ?? [];
+        existing.push({ connId: msg.payload.connId, url: msg.payload.url, protocols: msg.payload.protocols });
+        pendingWSQueueRef.current.set(queueKey, existing);
+        setPendingApprovals((prev) => {
+          if (prev.some((a) => a.kind === "ws" && a.seq === app.current_seq && a.reload === reloadKey)) {
+            return prev;
+          }
+          return [
+            ...prev,
+            {
+              seq: app.current_seq,
+              reload: reloadKey,
+              reqId: `ws:${queueKey}`,
+              kind: "ws",
+              capability: "app.ws:outbound",
+              summary: "Open outbound WebSocket connection via proxy",
+            },
+          ];
+        });
         return;
       }
       if (msg.type === "image") {
@@ -425,11 +612,55 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
 
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [app.slug, app.current_seq, reloadKey, postToFrame, serveProxyImage, qc]);
+  }, [app.slug, app.current_seq, reloadKey, postToFrame, serveProxyImage, openProxyWS, qc]);
 
   const decideApproval = useCallback(
     async (decision: "once" | "always" | "decline") => {
       if (!headApproval || decidingApproval) return;
+      if (headApproval.kind === "ws") {
+        const queueKey = `${headApproval.seq}:${headApproval.reload}`;
+        if (decision === "decline") {
+          const queued = pendingWSQueueRef.current.get(queueKey) ?? [];
+          pendingWSQueueRef.current.delete(queueKey);
+          setPendingApprovals((prev) => prev.filter((x) => x.reqId !== headApproval.reqId));
+          for (const item of queued) {
+            postToFrame({ type: "vesper:ws", connId: item.connId, event: "error", message: "Capability request declined" });
+            postToFrame({ type: "vesper:ws", connId: item.connId, event: "close", code: 1008, reason: "Capability request declined", wasClean: false });
+          }
+          return;
+        }
+        setDecidingApproval(true);
+        try {
+          if (decision === "always") {
+            const updated = await unwrap(
+              api.PATCH("/custom-apps/{slug}", {
+                params: { path: { slug: app.slug } },
+                body: { capabilities: { ...capabilitiesRef.current, "app.ws:outbound": "allowed" } },
+              }),
+            );
+            capabilitiesRef.current = updated.capabilities;
+            void qc.invalidateQueries({ queryKey: customAppKeys.detail(app.slug) });
+            void qc.invalidateQueries({ queryKey: customAppKeys.list });
+          }
+          const queued = pendingWSQueueRef.current.get(queueKey) ?? [];
+          pendingWSQueueRef.current.delete(queueKey);
+          for (const item of queued) {
+            openProxyWS(item.connId, item.url, item.protocols, decision === "once");
+          }
+        } catch (err) {
+          const queued = pendingWSQueueRef.current.get(queueKey) ?? [];
+          pendingWSQueueRef.current.delete(queueKey);
+          const message = errorText(err);
+          for (const item of queued) {
+            postToFrame({ type: "vesper:ws", connId: item.connId, event: "error", message });
+            postToFrame({ type: "vesper:ws", connId: item.connId, event: "close", code: 1006, reason: message, wasClean: false });
+          }
+        } finally {
+          setPendingApprovals((prev) => prev.filter((x) => x.reqId !== headApproval.reqId));
+          setDecidingApproval(false);
+        }
+        return;
+      }
       if (headApproval.kind === "image") {
         const queueKey = `${headApproval.seq}:${headApproval.reload}`;
         if (decision === "decline") {
@@ -498,7 +729,7 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
         setDecidingApproval(false);
       }
     },
-    [headApproval, decidingApproval, app.slug, postToFrame, serveProxyImage, qc],
+    [headApproval, decidingApproval, app.slug, postToFrame, serveProxyImage, openProxyWS, qc],
   );
 
   const decideRef = useRef(decideApproval);

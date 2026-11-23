@@ -5575,6 +5575,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/custom-apps/{slug}/hls/{streamId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                streamId: string;
+            };
+            cookie?: never;
+        };
+        /** Resolve an active LAN HLS relay stream (app.media:relay) for the host player and AirPlay */
+        get: operations["getCustomAppHlsStream"];
+        put?: never;
+        post?: never;
+        /** Stop an active LAN HLS relay stream and release its listener when idle */
+        delete: operations["stopCustomAppHlsStream"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -10726,6 +10747,18 @@ export interface components {
             capability: string;
             summary?: string;
             result?: unknown;
+        };
+        CustomAppHLSStream: {
+            /** Format: uuid */
+            id: string;
+            play_url: string;
+            lan_url: string;
+            loopback_url: string;
+            proxy_segments: boolean;
+            in_ad_break: boolean;
+            ads_skipped: number;
+            /** Format: date-time */
+            created_at: string;
         };
         DevWorkspaceRepo: {
             repo_url: string;
@@ -19837,6 +19870,54 @@ export interface operations {
             };
             404: components["responses"]["Error"];
             416: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getCustomAppHlsStream: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                streamId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Active HLS relay stream metadata and LAN playlist URL */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomAppHLSStream"];
+                };
+            };
+            404: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    stopCustomAppHlsStream: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                streamId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Stopped */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["Error"];
             default: components["responses"]["Error"];
         };
     };

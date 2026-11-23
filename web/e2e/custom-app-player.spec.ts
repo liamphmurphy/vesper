@@ -149,3 +149,94 @@ test("an app can play video it builds in memory and take it fullscreen", async (
   expect(violation).toBe("none");
   expect(await frame!.evaluate(() => document.fullscreenEnabled)).toBe(true);
 });
+
+test("vesper-hls stream resolves LAN URL, exposes AirPlay picker when available, and stops on close", async ({ page }) => {
+  const streamId = "01a1f7a0-1234-7abc-8def-0123456789ab";
+  const lanUrl = "http://192.168.1.50:49152/hls/deadbeef/master.m3u8";
+  let stopped = false;
+
+  await installBoardApi(page);
+  await page.route("**/api/v1/custom-apps/demo", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ...app,
+        current: {
+          ...app.current,
+          bundle_js: `
+            document.getElementById("root").innerHTML = '<button id="live">Play Live</button>';
+            document.getElementById("live").onclick = () => window.parent.postMessage({
+              channel: "vesper:custom-app",
+              type: "play-video",
+              payload: { url: "vesper-hls:${streamId}", title: "Live Stream", externalUrl: "https://www.twitch.tv/demo" }
+            }, "*");
+          `,
+        },
+      }),
+    }),
+  );
+  await page.route(`**/api/v1/custom-apps/demo/hls/${streamId}`, (route) => {
+    if (route.request().method() === "DELETE") {
+      stopped = true;
+      return route.fulfill({ status: 204, body: "" });
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: streamId,
+        play_url: `vesper-hls:${streamId}`,
+        lan_url: lanUrl,
+        loopback_url: "http://127.0.0.1:49152/hls/deadbeef/master.m3u8",
+        proxy_segments: false,
+        in_ad_break: false,
+        ads_skipped: 0,
+        created_at: now,
+      }),
+    });
+  });
+
+  // Simulate Safari/WKWebView native HLS + AirPlay API on HTMLVideoElement.
+  await page.addInitScript(() => {
+    Object.assign(window, { __airPlayPickerCalls: 0 });
+    const origCanPlay = HTMLMediaElement.prototype.canPlayType;
+    HTMLMediaElement.prototype.canPlayType = function (type: string) {
+      if (type.toLowerCase().includes("mpegurl")) return "maybe";
+      return origCanPlay.call(this, type);
+    };
+    Object.defineProperty(HTMLVideoElement.prototype, "webkitShowPlaybackTargetPicker", {
+      configurable: true,
+      value: () => {
+        (window as unknown as { __airPlayPickerCalls: number }).__airPlayPickerCalls += 1;
+      },
+    });
+  });
+
+  await page.goto("/apps/demo");
+  const frame = page.frameLocator('[data-testid="custom-app-frame"]');
+  await frame.locator("#live").click();
+
+  const player = page.getByTestId("custom-app-player");
+  const video = player.getByTestId("custom-app-hls-video");
+  await expect(video).toBeVisible();
+  await expect(video).toHaveAttribute("src", lanUrl);
+  await expect(video).toHaveAttribute("x-webkit-airplay", "allow");
+  await expect(player.getByRole("link", { name: "Open on Twitch" })).toHaveAttribute("href", "https://www.twitch.tv/demo");
+
+  // Fire WebKit AirPlay target availability event and click the AirPlay button.
+  await video.evaluate((el) => {
+    const ev = new Event("webkitplaybacktargetavailabilitychanged") as Event & { availability?: string };
+    ev.availability = "available";
+    el.dispatchEvent(ev);
+  });
+  const airPlayBtn = player.getByTestId("custom-app-airplay-button");
+  await expect(airPlayBtn).toBeVisible();
+  await airPlayBtn.click();
+  expect(await page.evaluate(() => (window as unknown as { __airPlayPickerCalls: number }).__airPlayPickerCalls)).toBe(1);
+
+  // Closing the player stops the LAN HLS relay stream.
+  await player.getByRole("button", { name: /Close video player/ }).click();
+  await expect(player).toHaveCount(0);
+  await expect.poll(() => stopped).toBe(true);
+});

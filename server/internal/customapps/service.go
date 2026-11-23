@@ -25,6 +25,9 @@ type Service struct {
 	NodeBinary string
 	// Media downloads video files for apps with app.media:download; nil disables it.
 	Media *Media
+	// HLSRelay serves filtered HLS playlists on the local network for apps with
+	// app.media:relay; nil disables it.
+	HLSRelay *HLSRelay
 	// Nix runs approved Nix packages for apps with nix:<pkg>; nil disables it.
 	Nix *Nix
 }
@@ -873,6 +876,33 @@ func (s *Service) CallMCPTool(ctx context.Context, app MCPServerApp, tool string
 	}
 	if opts.Media == nil {
 		opts.Media = s.Media
+	}
+	if opts.HLSRelay == nil {
+		opts.HLSRelay = s.HLSRelay
+	}
+	if opts.RelayToolCaller == nil && opts.HLSRelay != nil {
+		baseOpts := opts
+		opts.RelayToolCaller = func(rctx context.Context, targetTool string, targetArgs map[string]any) (any, error) {
+			curApp := app
+			if s.Pool != nil {
+				fresh, err := s.GetMCPServer(rctx, app.WorkspaceID, app.UserID, app.Slug)
+				if err != nil {
+					return nil, err
+				}
+				if ModeFor(fresh.Capabilities, "app.media:relay") == agentdef.Denied {
+					return nil, fmt.Errorf("capability app.media:relay is denied for custom app %q", fresh.Slug)
+				}
+				curApp = fresh
+			}
+			callOpts := MCPCallContext{
+				Interactive: false,
+				PublicFetch: baseOpts.PublicFetch,
+				LookupIP:    baseOpts.LookupIP,
+				APICall:     baseOpts.APICall,
+				NodeBinary:  baseOpts.NodeBinary,
+			}
+			return s.CallMCPTool(rctx, curApp, targetTool, targetArgs, callOpts)
+		}
 	}
 	if opts.Nix == nil {
 		opts.Nix = s.Nix

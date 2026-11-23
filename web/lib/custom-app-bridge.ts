@@ -230,6 +230,10 @@ export function parseSafeHttpsUrl(raw: unknown): string | null {
   return parseUrlWithProtocols(raw, new Set(["https:"]));
 }
 
+export function parseSafeWssUrl(raw: unknown): string | null {
+  return parseUrlWithProtocols(raw, new Set(["wss:"]));
+}
+
 function parseTimestampSeconds(raw: string | null): number | null {
   if (!raw) return null;
   const s = raw.trim();
@@ -242,10 +246,11 @@ function parseTimestampSeconds(raw: string | null): number | null {
 }
 
 export type VideoEmbed = {
-  provider: "youtube" | "twitch" | "local";
+  provider: "youtube" | "twitch" | "local" | "hls";
   embedUrl: string;
   externalUrl: string;
   titleFallback: string;
+  streamId?: string;
 };
 
 // A video the app downloaded into Vesper (server.ts media.download) plays from
@@ -253,10 +258,27 @@ export type VideoEmbed = {
 const LOCAL_MEDIA_PREFIX = "vesper-media:";
 const LOCAL_MEDIA_RE = /^vesper-media:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
 
+// A live HLS stream relayed on the local network (server.ts media.relayHLS)
+// resolves through Vesper's authenticated HLS endpoint before handing the LAN
+// playlist URL to the host <video> element for native HLS and AirPlay.
+const HLS_RELAY_PREFIX = "vesper-hls:";
+const HLS_RELAY_RE = /^vesper-hls:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
+
 export function parseLocalMediaUrl(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
   const m = LOCAL_MEDIA_RE.exec(raw.trim().toLowerCase());
   return m ? LOCAL_MEDIA_PREFIX + m[1] : null;
+}
+
+export function parseHlsRelayUrl(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const m = HLS_RELAY_RE.exec(raw.trim().toLowerCase());
+  return m ? HLS_RELAY_PREFIX + m[1] : null;
+}
+
+export function hlsRelayStreamId(raw: unknown): string | null {
+  const url = parseHlsRelayUrl(raw);
+  return url ? url.slice(HLS_RELAY_PREFIX.length) : null;
 }
 
 export function localMediaEmbed(rawUrl: string, appSlug: string): VideoEmbed | null {
@@ -346,10 +368,13 @@ export type BridgeMessage =
   | { channel: "vesper:custom-app"; id: string; type: "api"; payload: { method: string; path: string; body?: unknown } }
   | { channel: "vesper:custom-app"; id: string; type: "mcp"; payload: { connector: string; tool: string; arguments: Record<string, unknown> } }
   | { channel: "vesper:custom-app"; id: string; type: "image"; payload: { url: string } }
+  | { channel: "vesper:custom-app"; id: ""; type: "ws-open"; payload: { connId: string; url: string; protocols?: string[] } }
+  | { channel: "vesper:custom-app"; id: ""; type: "ws-send"; payload: { connId: string; data: string } }
+  | { channel: "vesper:custom-app"; id: ""; type: "ws-close"; payload: { connId: string; code?: number; reason?: string } }
   | { channel: "vesper:custom-app"; id: ""; type: "set-nav"; payload: { items: CustomAppNavSpec[]; activeId?: string } }
   | { channel: "vesper:custom-app"; id: ""; type: "ask-dock"; payload: { prompt: string } }
   | { channel: "vesper:custom-app"; id: ""; type: "open-url"; payload: { url: string } }
-  | { channel: "vesper:custom-app"; id: ""; type: "play-video"; payload: { url: string; title?: string; theater?: boolean; sidePanel?: boolean } }
+  | { channel: "vesper:custom-app"; id: ""; type: "play-video"; payload: { url: string; title?: string; theater?: boolean; sidePanel?: boolean; externalUrl?: string } }
   | { channel: "vesper:custom-app"; id: ""; type: "app-error"; payload: { message: string } };
 
 export function parseBridgeMessage(raw: unknown): BridgeMessage | null {
@@ -389,6 +414,40 @@ export function parseBridgeMessage(raw: unknown): BridgeMessage | null {
       if (!url) return null;
       return { channel: "vesper:custom-app", id, type: "image", payload: { url } };
     }
+    case "ws-open": {
+      const connId = typeof payload.connId === "string" ? payload.connId.trim() : "";
+      const url = parseSafeWssUrl(payload.url);
+      if (!connId || connId.length > 64 || !url) return null;
+      const rawProtos = Array.isArray(payload.protocols) ? payload.protocols : [];
+      const protocols = rawProtos
+        .filter((p): p is string => typeof p === "string")
+        .map((p) => p.trim())
+        .filter((p) => p.length > 0 && p.length <= 64)
+        .slice(0, 4);
+      return {
+        channel: "vesper:custom-app",
+        id: "",
+        type: "ws-open",
+        payload: { connId, url, ...(protocols.length ? { protocols } : {}) },
+      };
+    }
+    case "ws-send": {
+      const connId = typeof payload.connId === "string" ? payload.connId.trim() : "";
+      if (!connId || connId.length > 64 || typeof payload.data !== "string") return null;
+      return { channel: "vesper:custom-app", id: "", type: "ws-send", payload: { connId, data: payload.data } };
+    }
+    case "ws-close": {
+      const connId = typeof payload.connId === "string" ? payload.connId.trim() : "";
+      if (!connId || connId.length > 64) return null;
+      const code = typeof payload.code === "number" && payload.code >= 1000 && payload.code <= 4999 ? payload.code : undefined;
+      const reason = typeof payload.reason === "string" ? payload.reason.slice(0, 123) : undefined;
+      return {
+        channel: "vesper:custom-app",
+        id: "",
+        type: "ws-close",
+        payload: { connId, ...(code !== undefined ? { code } : {}), ...(reason ? { reason } : {}) },
+      };
+    }
     case "set-nav": {
       const rawItems = Array.isArray(payload.items) ? payload.items : [];
       const items: CustomAppNavSpec[] = rawItems
@@ -412,9 +471,10 @@ export function parseBridgeMessage(raw: unknown): BridgeMessage | null {
       return { channel: "vesper:custom-app", id: "", type: "open-url", payload: { url } };
     }
     case "play-video": {
-      const url = parseLocalMediaUrl(payload.url) ?? parseSafeExternalUrl(payload.url);
+      const url = parseHlsRelayUrl(payload.url) ?? parseLocalMediaUrl(payload.url) ?? parseSafeExternalUrl(payload.url);
       if (!url) return null;
       const title = typeof payload.title === "string" ? payload.title.trim().slice(0, 200) : "";
+      const externalUrl = parseSafeExternalUrl(payload.externalUrl) ?? undefined;
       return {
         channel: "vesper:custom-app",
         id: "",
@@ -424,6 +484,7 @@ export function parseBridgeMessage(raw: unknown): BridgeMessage | null {
           ...(title ? { title } : {}),
           ...(typeof payload.theater === "boolean" ? { theater: payload.theater } : {}),
           ...(typeof payload.sidePanel === "boolean" ? { sidePanel: payload.sidePanel } : {}),
+          ...(externalUrl ? { externalUrl } : {}),
         },
       };
     }

@@ -27,24 +27,39 @@ import (
 )
 
 func (s *Server) customApps() *customapps.Service {
-	return &customapps.Service{Pool: s.Pool, Secrets: s.userSecrets(), Media: s.mediaDownloads(), Nix: s.nixRunner()}
+	return &customapps.Service{Pool: s.Pool, Secrets: s.userSecrets(), Media: s.mediaDownloads(), HLSRelay: s.hlsRelay(), Nix: s.nixRunner()}
 }
 
 // CustomApps returns the custom apps service wired with this server's media
-// downloader and Nix runner.
+// downloader, HLS relay, and Nix runner.
 func (s *Server) CustomApps() *customapps.Service {
 	return s.customApps()
 }
 
-// CloseCustomApps stops any running background media downloads or Nix package
-// jobs created for custom apps and waits for them to record their final state.
+// CloseCustomApps stops any running background media downloads, LAN HLS relay
+// streams, or Nix package jobs created for custom apps and waits for them to
+// record their final state.
 func (s *Server) CloseCustomApps() {
 	if s.customAppMedia != nil {
 		s.customAppMedia.Close()
 	}
+	if s.customAppHLS != nil {
+		s.customAppHLS.Close()
+	}
 	if s.customAppNix != nil {
 		s.customAppNix.Close()
 	}
+}
+
+func (s *Server) hlsRelay() *customapps.HLSRelay {
+	s.customAppHLSOnce.Do(func() {
+		s.customAppHLS = &customapps.HLSRelay{
+			ListenAddr:            s.CustomAppHLSListenAddr,
+			Transport:             s.CustomAppHLSTransport,
+			AllowInsecureUpstream: s.CustomAppHLSAllowInsecureUpstream,
+		}
+	})
+	return s.customAppHLS
 }
 
 func (s *Server) nixRunner() *customapps.Nix {
@@ -679,6 +694,49 @@ func (s *Server) GetCustomAppMediaContent(ctx context.Context, req api.GetCustom
 // VisitGetCustomAppMediaContentResponse writes a downloaded video, whole or one range.
 func (r rangedResponse) VisitGetCustomAppMediaContentResponse(w http.ResponseWriter) error {
 	return r.write(w)
+}
+
+// GetCustomAppHlsStream returns the LAN/loopback playlist URLs and status for
+// one active HLS relay stream belonging to this custom app.
+func (s *Server) GetCustomAppHlsStream(ctx context.Context, req api.GetCustomAppHlsStreamRequestObject) (api.GetCustomAppHlsStreamResponseObject, error) {
+	u, _, ws := me(ctx)
+	app, err := s.Q.GetCustomAppBySlug(ctx, store.GetCustomAppBySlugParams{WorkspaceID: ws, UserID: u.ID, Slug: req.Slug})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apperr.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	st, err := s.hlsRelay().Get(app.ID, req.StreamId)
+	if err != nil {
+		return nil, err
+	}
+	return api.GetCustomAppHlsStream200JSONResponse{
+		Id:            st.ID,
+		PlayUrl:       st.PlayURL,
+		LanUrl:        st.LANURL,
+		LoopbackUrl:   st.LoopbackURL,
+		ProxySegments: st.ProxySegments,
+		InAdBreak:     st.InAdBreak,
+		AdsSkipped:    st.AdsSkipped,
+		CreatedAt:     st.CreatedAt,
+	}, nil
+}
+
+// StopCustomAppHlsStream stops one active HLS relay stream owned by this custom app.
+func (s *Server) StopCustomAppHlsStream(ctx context.Context, req api.StopCustomAppHlsStreamRequestObject) (api.StopCustomAppHlsStreamResponseObject, error) {
+	u, _, ws := me(ctx)
+	app, err := s.Q.GetCustomAppBySlug(ctx, store.GetCustomAppBySlugParams{WorkspaceID: ws, UserID: u.ID, Slug: req.Slug})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apperr.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := s.hlsRelay().Stop(app.ID, req.StreamId); err != nil {
+		return nil, err
+	}
+	return api.StopCustomAppHlsStream204Response{}, nil
 }
 
 // VisitGetCustomAppImageResponse serves a proxied image with avatar security/cache headers.

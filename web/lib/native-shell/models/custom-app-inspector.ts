@@ -45,7 +45,7 @@ export function buildCustomAppCapabilities(input: BuildCustomAppCapabilitiesInpu
         : `${s.handle} · authenticated secretFetch calls`,
   }));
 
-  const knownKeys = new Set<string>(["vesper.api:read", "vesper.api:write", "app.http:outbound", "app.media:download"]);
+  const knownKeys = new Set<string>(["vesper.api:read", "vesper.api:write", "app.http:outbound", "app.ws:outbound", "app.media:download", "app.media:relay"]);
   for (const c of connectorRows) knownKeys.add(c.key);
   for (const s of secretRows) knownKeys.add(s.key);
   for (const k of Object.keys(input.requestedCapabilities ?? {})) {
@@ -68,9 +68,13 @@ export function buildCustomAppCapabilities(input: BuildCustomAppCapabilitiesInpu
           ? "Vesper API · Write"
           : capKey === "app.http:outbound"
             ? "Outbound HTTPS"
-            : capKey === "app.media:download"
-              ? "Download videos"
-              : capKey.startsWith("nix:")
+            : capKey === "app.ws:outbound"
+              ? "Outbound WebSockets"
+              : capKey === "app.media:download"
+                ? "Download videos"
+                : capKey === "app.media:relay"
+                  ? "AirPlay / HLS relay"
+                  : capKey.startsWith("nix:")
                 ? `Nix · ${capKey.slice("nix:".length)}`
                 : sInfo?.label ??
                   (capKey.startsWith("secret:")
@@ -83,9 +87,13 @@ export function buildCustomAppCapabilities(input: BuildCustomAppCapabilitiesInpu
           ? "POST, PATCH, PUT, DELETE requests to Vesper APIs"
           : capKey === "app.http:outbound"
             ? "Public HTTPS fetches from the app's MCP server and remote image proxy"
-            : capKey === "app.media:download"
-              ? "Save direct video files into Vesper so they play locally"
-              : capKey.startsWith("nix:")
+            : capKey === "app.ws:outbound"
+              ? "Public WSS connections proxied for the app UI"
+              : capKey === "app.media:download"
+                ? "Save direct video files into Vesper so they play locally"
+                : capKey === "app.media:relay"
+                  ? "Serve filtered HLS playlists on your local network so the player and AirPlay can play live streams"
+                  : capKey.startsWith("nix:")
                 ? `Run nixpkgs#${capKey.slice("nix:".length)} in a background tool job`
                 : sInfo?.hint ??
                   (capKey.startsWith("secret:")
