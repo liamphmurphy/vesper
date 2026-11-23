@@ -143,6 +143,15 @@ jobs:
         with:
           name: kernel
           path: ~/.cache/vesper/images
+      - uses: actions/cache@v4
+        with:
+          path: |
+            macos/.build
+            ~/.cache/vesper/node
+          key: mac-release-build-${{ runner.os }}-${{ hashFiles('macos/Package.resolved', 'macos/Package.swift', 'macos/scripts/build-app.sh') }}-${{ hashFiles('macos/Sources/**') }}
+          restore-keys: |
+            mac-release-build-${{ runner.os }}-${{ hashFiles('macos/Package.resolved', 'macos/Package.swift', 'macos/scripts/build-app.sh') }}-
+            mac-release-build-${{ runner.os }}-
       - name: Set the app version from the tag
         env:
           VERSION: ${{ needs.version.outputs.version }}
