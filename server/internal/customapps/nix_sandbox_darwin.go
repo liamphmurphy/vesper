@@ -68,6 +68,7 @@ func nixSandboxCommand(jobRoot string, roPaths []string, cmdPath string, args []
 (deny default)
 (allow process-exec*)
 (allow process-fork)
+(allow process-info* (target self))
 (allow signal)
 (allow sysctl-read)
 (allow mach-lookup)
@@ -77,13 +78,15 @@ func nixSandboxCommand(jobRoot string, roPaths []string, cmdPath string, args []
 (allow file-ioctl)
 (allow file-read*
 %s)
+(allow file-map-executable
+%s)
 (allow file-read* file-write*
   (subpath %s)
   (literal "/dev/null")
   (literal "/dev/zero")
   (literal "/dev/dtracehelper")
 )
-`, roRules.String(), rootLit)
+`, roRules.String(), roRules.String(), rootLit)
 
 	profilePath := filepath.Join(realRoot, "profile.sb")
 	if err := os.WriteFile(profilePath, []byte(profile), 0o400); err != nil {
