@@ -158,6 +158,31 @@ func Get(ctx context.Context, pool *pgxpool.Pool, ws uuid.UUID, window string) (
 	}
 	return Calculate(ctx, pool, ws, window, time.Now().UTC())
 }
+
+const metricsUnchangedMaxAge = time.Hour
+
+func workspaceNeedsRefresh(ctx context.Context, pool *pgxpool.Pool, ws uuid.UUID, now time.Time) (bool, error) {
+	var count int
+	var oldest *time.Time
+	err := pool.QueryRow(ctx, `SELECT count(*), min(generated_at) FROM metric_snapshots WHERE workspace_id = $1`, ws).Scan(&count, &oldest)
+	if err != nil {
+		return true, err
+	}
+	if count < len(Windows) || oldest == nil || now.Sub(*oldest) >= metricsUnchangedMaxAge {
+		return true, nil
+	}
+	var dirty bool
+	err = pool.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM runs WHERE workspace_id = $1 AND updated_at > $2)
+		    OR EXISTS (SELECT 1 FROM tickets WHERE workspace_id = $1 AND updated_at > $2)
+		    OR EXISTS (SELECT 1 FROM activity_events WHERE workspace_id = $1 AND created_at > $2)
+	`, ws, *oldest).Scan(&dirty)
+	if err != nil {
+		return true, err
+	}
+	return dirty, nil
+}
+
 func Refresh(ctx context.Context, pool *pgxpool.Pool) error {
 	q := store.New(pool)
 	workspaces, err := q.MetricWorkspaces(ctx)
@@ -166,6 +191,13 @@ func Refresh(ctx context.Context, pool *pgxpool.Pool) error {
 	}
 	for _, ws := range workspaces {
 		asOf := time.Now().UTC()
+		need, err := workspaceNeedsRefresh(ctx, pool, ws, asOf)
+		if err != nil {
+			return err
+		}
+		if !need {
+			continue
+		}
 		// Publish all ranges atomically. Readers never see half a refresh.
 		tx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 		if err != nil {

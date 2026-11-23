@@ -197,3 +197,57 @@ func TestRiverRollupRunsOnStart(t *testing.T) {
 		t.Fatalf("snapshots: %d", count)
 	}
 }
+
+func TestRefreshSkipsUnchangedSnapshots(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	q := store.New(pool)
+	if _, err := seed.Run(ctx, pool, seed.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	user, err := q.GetLocalUser(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := user.WorkspaceID
+
+	if err := Refresh(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	first, err := q.GetMetricSnapshot(ctx, store.GetMetricSnapshotParams{WorkspaceID: ws, Range: "7d"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(25 * time.Millisecond)
+	if err := Refresh(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	second, err := q.GetMetricSnapshot(ctx, store.GetMetricSnapshotParams{WorkspaceID: ws, Range: "7d"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !second.GeneratedAt.Equal(first.GeneratedAt) {
+		t.Fatalf("idle Refresh rewrote snapshot: first=%v second=%v", first.GeneratedAt, second.GeneratedAt)
+	}
+
+	// Recording new activity marks the workspace dirty so the next Refresh writes.
+	if _, err := q.InsertActivity(ctx, store.InsertActivityParams{
+		WorkspaceID: ws,
+		ActorType:   "system",
+		Verb:        "status_changed",
+		Payload:     json.RawMessage(`{"to":"done"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Refresh(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	third, err := q.GetMetricSnapshot(ctx, store.GetMetricSnapshotParams{WorkspaceID: ws, Range: "7d"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !third.GeneratedAt.After(first.GeneratedAt) {
+		t.Fatalf("dirty Refresh did not advance snapshot: first=%v third=%v", first.GeneratedAt, third.GeneratedAt)
+	}
+}

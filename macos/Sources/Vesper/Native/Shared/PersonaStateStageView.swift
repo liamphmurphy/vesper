@@ -9,6 +9,7 @@ import VesperCore
 struct PersonaStateStageView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.displayScale) private var displayScale
+    @Environment(\.vesperWindowVisible) private var windowVisible
     let loops: [String: String]
     let state: CharacterState
     /// A reply is revealing: play the talking loop over the turn's state.
@@ -27,9 +28,17 @@ struct PersonaStateStageView: View {
         let height = (width * 16 / 9).rounded()
         let target = PersonaStateLoops.loop(for: reduceMotion ? .idle : state, talking: talking && !reduceMotion, complete: complete && !reduceMotion, in: loops)
         let pixels = Int((height * displayScale).rounded(.up))
+        let isActiveState = (state != .idle && state != .staticState) || talking || complete
+        let animate = AnimationPolicy.shouldAnimate(
+            working: isActiveState,
+            context: AppPowerState.shared.animationContext(
+                reduceMotion: reduceMotion,
+                windowVisible: windowVisible
+            )
+        )
         ZStack {
             if let shown {
-                LoopPlayer(frames: shown.frames, still: reduceMotion)
+                LoopPlayer(frames: shown.frames, animate: animate)
                     .id(shown.url)
                     .transition(.opacity)
             }
@@ -50,17 +59,18 @@ struct PersonaStateStageView: View {
     }
 }
 
-/// Plays decoded frames on the display's clock; one frame doesn't tick at all.
+/// Plays decoded frames on a periodic timer matching the loop's own frame delay; paused/single-frame
+/// loops mount no `TimelineView` at all so zero wakeups occur while occluded or backgrounded.
 private struct LoopPlayer: View {
     let frames: AnimatedImageFrames
-    let still: Bool
+    let animate: Bool
     @State private var start = Date()
 
     var body: some View {
-        if still || frames.frames.count < 2 {
+        if !animate || frames.frames.count < 2 {
             frame(0)
         } else {
-            TimelineView(.animation(minimumInterval: 1.0 / 30)) { ctx in
+            TimelineView(.periodic(from: start, by: frames.recommendedTickInterval)) { ctx in
                 frame(frames.frameIndex(at: ctx.date.timeIntervalSince(start)))
             }
         }
@@ -69,7 +79,7 @@ private struct LoopPlayer: View {
     private func frame(_ i: Int) -> some View {
         Image(decorative: frames.frames[i], scale: 1)
             .resizable()
-            .interpolation(.high)
+            .interpolation(.medium)
             .scaledToFit()
     }
 }

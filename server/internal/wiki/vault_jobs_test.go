@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/liamphmurphy/vesper/server/internal/pageview"
 	"github.com/liamphmurphy/vesper/server/internal/store"
@@ -386,4 +388,44 @@ func TestVaultAgentNamespacesRemainPrivate(t *testing.T) {
 	if err != nil || len(visible.Rows) != 0 {
 		t.Fatal("run saw imported private content", err)
 	}
+}
+
+func TestVaultWorkerWakesImmediatelyViaNotify(t *testing.T) {
+	e := setup(t)
+	e.svc.Objects = &vaultMemory{}
+	ctx := pageview.Person(e.ctx, e.me.ID)
+
+	wctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		e.svc.RunVaultWorker(wctx, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	// Give the LISTEN connection a moment to attach before queueing a job so
+	// wake-up relies on NOTIFY rather than the 60s fallback timer.
+	time.Sleep(100 * time.Millisecond)
+
+	data := vaultZip(t, map[string]string{"Hello.md": "# Hello\nBody"})
+	job, err := e.svc.QueueVault(ctx, e.ws, e.me.ID, "", bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		got, err := e.q.GetKnowledgeImport(ctx, store.GetKnowledgeImportParams{ID: job.ID, WorkspaceID: e.ws, UserID: e.me.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.State == "preview" {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatal("RunVaultWorker did not wake via NOTIFY to scan queued vault import")
 }

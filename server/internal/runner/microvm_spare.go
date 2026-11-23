@@ -22,13 +22,14 @@ type SpareWarmer interface {
 
 var _ SpareWarmer = (*MicroVM)(nil)
 
-// spareVM is a VM booted on fresh disks that no run owns yet. It idles at
-// IdleMemoryMB until a new run claims it (claimSpare).
+// spareVM is a VM booted on fresh disks that no run owns yet. It idles
+// ballooned to IdleMemoryMB and paused until a new run claims it (claimSpare).
 type spareVM struct {
-	dir    string
-	vm     microvm.VM
-	egress *microvm.Egress
-	cache  []microvm.DriveSpec // the cache drives it booted with
+	dir      string
+	vm       microvm.VM
+	egress   *microvm.Egress
+	cache    []microvm.DriveSpec // the cache drives it booted with
+	pausedAt time.Time
 }
 
 // spareBootTimeout bounds one spare's disks and boot; a first boot may also
@@ -89,8 +90,31 @@ func (b *MicroVM) newSpare(ctx context.Context) (*spareVM, error) {
 		_ = os.RemoveAll(dir)
 		return nil, err
 	}
+	dctx, dcancel := context.WithTimeout(ctx, 2*time.Second)
+	_ = vm.Client().SyncAndDropCaches(dctx)
+	dcancel()
 	_ = vm.SetMemoryTarget(uint64(b.idleMemoryMB()) << 20)
-	return &spareVM{dir: dir, vm: vm, egress: eg, cache: cache}, nil
+	var pausedAt time.Time
+	if p, ok := vm.(microvm.Pauser); ok {
+		if b.PauseSettleDelay > 0 {
+			timer := time.NewTimer(b.PauseSettleDelay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				_ = vm.Stop(context.Background())
+				_ = eg.Close()
+				_ = os.RemoveAll(dir)
+				return nil, ctx.Err()
+			case <-timer.C:
+			}
+		}
+		if err := p.Pause(ctx); err != nil {
+			b.logger().Warn("pause spare VM", "err", err)
+		} else {
+			pausedAt = time.Now()
+		}
+	}
+	return &spareVM{dir: dir, vm: vm, egress: eg, cache: cache, pausedAt: pausedAt}, nil
 }
 
 // takeSpare pops a ready spare booted with today's cache drives, discarding
@@ -153,7 +177,7 @@ func (b *MicroVM) claimSpare(runID, dir string) bool {
 		b.discardSpare(sp)
 		return true
 	}
-	rvm.vm, rvm.egress = sp.vm, sp.egress
+	rvm.vm, rvm.egress, rvm.pausedAt = sp.vm, sp.egress, sp.pausedAt
 	rvm.vmGen++
 	// Idle until the run's first process, like a VM after a turn.
 	b.armIdleTimer(rvm, rvm.vmGen)

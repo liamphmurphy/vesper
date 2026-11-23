@@ -129,6 +129,10 @@ final class PersonaCharacterPool {
             slot.webView.removeFromSuperview()
         }
         slot.delegate.onLoadComplete = nil
+        // Blank the detached web view so pooled spare slots do not keep running CSS keyframes offscreen.
+        slot.contentKey = nil
+        slot.loaded = false
+        slot.webView.loadHTMLString("", baseURL: nil)
         spareSlots.append(slot)
         Task { @MainActor [weak self] in
             guard let self, self.liveSlots[ownerID] == nil else { return }

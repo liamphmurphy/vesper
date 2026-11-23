@@ -129,6 +129,7 @@ struct NativeScreenRoot: View {
             .environment(\.vesperTheme, theme)
             .environment(\.colorScheme, (state.pageMode ?? theme.mode) == .dark ? .dark : .light)
             .environment(context)
+            .vesperTrackHostVisibility()
     }
 
     @ViewBuilder private var screen: some View {

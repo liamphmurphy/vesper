@@ -212,6 +212,38 @@ final class MonitorTests: XCTestCase {
         XCTAssertEqual(attempts.accept.first, "text/event-stream")
         XCTAssertEqual(attempts.cookies.first, "vesper_session=tok")
     }
+
+    func testMonitorIdlePollIntervalsBackOffWhenNoRunsAreLive() async throws {
+        XCTAssertEqual(InboxMonitor.defaultPollInterval, .seconds(120))
+
+        final class State: @unchecked Sendable {
+            var live: [[String: Any]] = []
+            var all: [[String: Any]] = []
+        }
+        let state = State()
+        let c = client(transport { url in
+            url.hasSuffix("state=all") ? (200, ["runs": state.all]) : (200, ["runs": state.live])
+        })
+        let monitor = RunMonitor()
+        XCTAssertEqual(monitor.currentPollInterval, .seconds(60), "idle before any live runs")
+
+        monitor.start(client: c)
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(monitor.currentPollInterval, .seconds(60))
+
+        state.live = [["id": "r1", "state": "running", "purpose": "ticket", "work_title": "Work"]]
+        await monitor.refreshNow()
+        XCTAssertEqual(monitor.currentPollInterval, .seconds(20), "active while a run is live")
+
+        state.live = []
+        state.all = [["id": "r1", "state": "completed", "purpose": "ticket", "work_title": "Work"]]
+        await monitor.refreshNow()
+        XCTAssertEqual(monitor.currentPollInterval, .seconds(60), "backs off again once all runs finish")
+        monitor.stop()
+
+        let custom = RunMonitor(pollInterval: .seconds(5))
+        XCTAssertEqual(custom.currentPollInterval, .seconds(5), "custom test interval preserved")
+    }
 }
 
 final class APIClientTests: XCTestCase {

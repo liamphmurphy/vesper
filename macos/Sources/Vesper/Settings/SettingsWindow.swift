@@ -32,7 +32,7 @@ final class SettingsWindowController {
     private func presentWindow() {
         guard let aux else { return }
         if window == nil {
-            let host = NSHostingController(rootView: SettingsView(aux: aux, navigation: navigation))
+            let host = NSHostingController(rootView: SettingsView(aux: aux, navigation: navigation).vesperTrackHostVisibility())
             let window = NSWindow(contentViewController: host)
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
             window.setContentSize(NSSize(width: 980, height: 680))

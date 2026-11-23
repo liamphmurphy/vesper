@@ -6,11 +6,21 @@ private struct VesperThemeKey: EnvironmentKey {
     static let defaultValue = ThemeTokens(mode: .light)
 }
 
+private struct VesperWindowVisibleKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
 extension EnvironmentValues {
     /// The page's palette and text size, for native screens. Set by `NativeScreenRoot`.
     var vesperTheme: ThemeTokens {
         get { self[VesperThemeKey.self] }
         set { self[VesperThemeKey.self] = newValue }
+    }
+
+    /// Whether the view's AppKit host is attached to a non-hidden, non-minimized, unoccluded window.
+    var vesperWindowVisible: Bool {
+        get { self[VesperWindowVisibleKey.self] }
+        set { self[VesperWindowVisibleKey.self] = newValue }
     }
 }
 

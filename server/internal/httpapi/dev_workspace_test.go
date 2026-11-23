@@ -94,3 +94,51 @@ func TestOpenDevWorkspaceBranch(t *testing.T) {
 		t.Fatalf("claimed pr_number = %v", claimed.ClaimedPrNumber)
 	}
 }
+
+func TestStopStackDevWorkspacesLeavesEnabledStopped(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	q := store.New(pool)
+	arts := &artifacts.Service{Pool: pool}
+	if _, err := seed.Run(ctx, pool, seed.Options{Demo: true, Artifacts: arts}); err != nil {
+		t.Fatal(err)
+	}
+	tr := &tracker.Service{Pool: pool}
+	rs := &runs.Service{Pool: pool, Tracker: tr, Artifacts: arts}
+	handler := (&Server{AnonymousAPI: true, Pool: pool, Q: q, Tracker: tr, Runs: rs, Artifacts: arts}).Handler()
+
+	raw, _ := json.Marshal(map[string]any{"enabled": true})
+	req := httptest.NewRequest("PATCH", "/api/v1/dev-workspace", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("enable dev workspace: status = %d", w.Code)
+	}
+
+	user, err := q.GetLocalUser(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := int32(9001)
+	if err := q.UpdateDevWorkspaceState(ctx, store.UpdateDevWorkspaceStateParams{
+		WorkspaceID: user.WorkspaceID,
+		State:       "ready",
+		Port:        &port,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	stack := "microvm"
+	if err := q.StopStackDevWorkspaces(ctx, &stack); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := q.GetDevWorkspace(ctx, user.WorkspaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ws.Enabled || ws.State != "stopped" || ws.Action != nil || ws.Port != nil {
+		t.Fatalf("after StopStackDevWorkspaces: enabled=%v state=%q action=%v port=%v, want enabled=true state=stopped action=nil port=nil",
+			ws.Enabled, ws.State, ws.Action, ws.Port)
+	}
+}

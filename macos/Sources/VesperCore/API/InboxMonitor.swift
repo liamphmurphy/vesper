@@ -4,10 +4,12 @@ private struct InboxResponse: Decodable { var items: [InboxItem]? }
 
 /// Watches GET /api/v1/inbox so the Dock badge, the menu bar and notifications stay accurate even
 /// when no window is showing (desktop/src/notifications.ts `InboxMonitor`). It fetches now, then
-/// every 30 s, and again when `handleServerEvent` is given an inbox-relevant SSE event type. The
-/// first read is a baseline: items already there raise no alert.
+/// every 120 s as a fallback, and immediately when `handleServerEvent` is given an inbox-relevant
+/// SSE event type. The first read is a baseline: items already there raise no alert.
 @MainActor
 public final class InboxMonitor {
+    public static let defaultPollInterval: Duration = .seconds(120)
+
     /// (badge text such as "3" or "99+", count). Empty text and 0 on 401/403.
     public var onBadgeChange: ((String, Int) -> Void)?
     public var onAlert: ((DesktopAlert) -> Void)?
@@ -24,7 +26,7 @@ public final class InboxMonitor {
     private var refreshPending = false
     private var pollTask: Task<Void, Never>?
 
-    public init(pollInterval: Duration = .seconds(30)) {
+    public init(pollInterval: Duration = defaultPollInterval) {
         self.pollInterval = pollInterval
     }
 

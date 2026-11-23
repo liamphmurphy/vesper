@@ -70,6 +70,14 @@ type VM interface {
 	Stop(ctx context.Context) error
 }
 
+// Pauser is an optional interface for VMs whose guest vCPUs can be paused
+// while idle (e.g. Apple Virtualization.framework's VZVirtualMachine.pause)
+// to eliminate guest timer wakeups without losing booted state.
+type Pauser interface {
+	Pause(ctx context.Context) error
+	Resume(ctx context.Context) error
+}
+
 // Driver starts isolated microVM instances.
 type Driver interface {
 	Start(ctx context.Context, cfg VMConfig) (VM, error)

@@ -94,12 +94,47 @@ func (s *Service) QueueVault(ctx context.Context, ws, user uuid.UUID, folder str
 	return job, err
 }
 
+const (
+	vaultIdlePollInterval  = 60 * time.Second
+	vaultRetryPollInterval = 2 * time.Second
+	vaultAssetSweepEvery   = 10 * time.Minute
+)
+
 func (s *Service) RunVaultWorker(ctx context.Context, log *slog.Logger) {
+	s.runVaultWorker(ctx, log, vaultIdlePollInterval, vaultAssetSweepEvery)
+}
+
+func (s *Service) runVaultWorker(ctx context.Context, log *slog.Logger, idlePoll, assetSweepEvery time.Duration) {
+	if idlePoll <= 0 {
+		idlePoll = vaultIdlePollInterval
+	}
+	if assetSweepEvery <= 0 {
+		assetSweepEvery = vaultAssetSweepEvery
+	}
+	wake := make(chan struct{}, 1)
+	var listenerUp bool
+	listenerState := make(chan bool, 4)
+	if s.Pool != nil {
+		go s.listenForVaultWork(ctx, wake, listenerState)
+	}
 	lastSweep := time.Now()
-	timer := time.NewTicker(time.Second)
-	defer timer.Stop()
+	poll := time.NewTimer(vaultRetryPollInterval)
+	defer poll.Stop()
+	resetPoll := func() {
+		if !poll.Stop() {
+			select {
+			case <-poll.C:
+			default:
+			}
+		}
+		d := vaultRetryPollInterval
+		if listenerUp {
+			d = idlePoll
+		}
+		poll.Reset(d)
+	}
 	for {
-		if time.Since(lastSweep) > time.Minute {
+		if time.Since(lastSweep) > assetSweepEvery {
 			if err := s.SweepKnowledgeAssets(ctx); err != nil && ctx.Err() == nil {
 				log.Error("knowledge asset sweep", "error", err)
 			}
@@ -112,10 +147,63 @@ func (s *Service) RunVaultWorker(ctx context.Context, log *slog.Logger) {
 		if worked && ctx.Err() == nil {
 			continue
 		}
+		resetPoll()
 		select {
 		case <-ctx.Done():
 			return
-		case <-timer.C:
+		case up := <-listenerState:
+			listenerUp = up
+			if up {
+				// Process anything queued before LISTEN took effect.
+				continue
+			}
+		case <-wake:
+		case <-poll.C:
+		}
+	}
+}
+
+func (s *Service) listenForVaultWork(ctx context.Context, wake chan<- struct{}, listenerState chan<- bool) {
+	for ctx.Err() == nil {
+		s.listenVaultOnce(ctx, wake, listenerState)
+		select {
+		case listenerState <- false:
+		default:
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+func (s *Service) listenVaultOnce(ctx context.Context, wake chan<- struct{}, listenerState chan<- bool) {
+	conn, err := s.Pool.Acquire(ctx)
+	if err != nil {
+		return
+	}
+	defer func() {
+		_ = conn.Conn().Close(context.Background())
+		conn.Release()
+	}()
+	if _, err := conn.Exec(ctx, "LISTEN vesper_work"); err != nil {
+		return
+	}
+	select {
+	case listenerState <- true:
+	default:
+	}
+	for {
+		n, err := conn.Conn().WaitForNotification(ctx)
+		if err != nil {
+			return
+		}
+		if n.Payload == "knowledge_import" {
+			select {
+			case wake <- struct{}{}:
+			default:
+			}
 		}
 	}
 }

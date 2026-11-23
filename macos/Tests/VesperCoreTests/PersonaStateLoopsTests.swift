@@ -78,6 +78,17 @@ final class PersonaStateLoopsTests: XCTestCase {
         XCTAssertEqual(frames.frameIndex(at: total - 0.01), 2)
         XCTAssertEqual(frames.frameIndex(at: total + 0.01), 0, "wraps at the end of the loop")
     }
+
+    func testRecommendedTickIntervalTracksFastestFrameWithinBounds() throws {
+        let twelveFps = try XCTUnwrap(AnimatedImageFrames.decode(try animated(delays: [0.08, 0.12], side: 20), maxPixelSize: 40))
+        XCTAssertEqual(twelveFps.recommendedTickInterval, twelveFps.delays.min()!, accuracy: 0.001)
+
+        let veryFast = try XCTUnwrap(AnimatedImageFrames.decode(try animated(delays: [0.02, 0.02], side: 20), maxPixelSize: 40))
+        XCTAssertEqual(veryFast.recommendedTickInterval, 1.0 / 30.0, accuracy: 1e-6, "capped at 30fps")
+
+        let verySlow = try XCTUnwrap(AnimatedImageFrames.decode(try animated(delays: [0.5, 0.5], side: 20), maxPixelSize: 40))
+        XCTAssertEqual(verySlow.recommendedTickInterval, 0.25, accuracy: 1e-6, "bounded at 4Hz minimum")
+    }
 }
 
 final class PersonaRevealTests: XCTestCase {

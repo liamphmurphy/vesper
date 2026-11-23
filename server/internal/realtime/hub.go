@@ -82,7 +82,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if send("data: {\"type\":\"reset\",\"ids\":[]}\n\n") != nil {
 		return
 	}
-	tick := time.NewTicker(15 * time.Second)
+	tick := time.NewTicker(45 * time.Second)
 	defer tick.Stop()
 	for {
 		select {

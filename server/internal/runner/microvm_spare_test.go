@@ -106,8 +106,15 @@ func TestNewRunClaimsSpareVM(t *testing.T) {
 	if got := spare.MemoryTarget(); got != 160<<20 {
 		t.Fatalf("spare balloon target = %d MiB, want 160", got>>20)
 	}
+	if !spare.Paused() {
+		t.Fatal("idle spare VM should be paused until claimed")
+	}
 
 	runTrue(t, b, "r1")
+
+	if spare.ResumeCount() < 1 {
+		t.Fatalf("claimed spare resume count = %d, want >= 1", spare.ResumeCount())
+	}
 
 	runDir, _ := b.runDir("r1")
 	if bootedFor(drv, runDir) {
@@ -233,5 +240,62 @@ func TestNoSpareVMsByDefault(t *testing.T) {
 	runTrue(t, b, "r4")
 	if len(drv.Configs()) != 1 || b.spareCount() != 0 {
 		t.Fatalf("%d VMs booted, %d spares", len(drv.Configs()), b.spareCount())
+	}
+}
+
+// Idle warm VMs pause after cache drop + settle delay, resume on the next turn,
+// and resync guest wall-clock time when resumed after ClockSyncAfter.
+func TestWarmVMPausesAfterDeflateAndResumesOnNextTurn(t *testing.T) {
+	synced := make(chan []string, 4)
+	drv := &microvm.MemDriver{
+		Handler: func(_ context.Context, conn net.Conn) {
+			f, err := guestproto.ReadFrame(conn)
+			if err != nil {
+				return
+			}
+			var req guestproto.Request
+			_ = json.Unmarshal(f.Data, &req)
+			resp, _ := json.Marshal(guestproto.Response{ID: f.ID})
+			_ = guestproto.WriteFrame(conn, guestproto.Frame{Type: guestproto.FrameResp, ID: f.ID, Data: resp})
+			if req.Op == guestproto.OpExecStart {
+				var execReq guestproto.ExecReq
+				_ = json.Unmarshal(req.V, &execReq)
+				if len(execReq.Argv) > 0 && execReq.Argv[0] == "/bin/date" {
+					synced <- execReq.Argv
+				}
+				ex, _ := json.Marshal(guestproto.ExecExit{Code: 0})
+				_ = guestproto.WriteFrame(conn, guestproto.Frame{Type: guestproto.FrameExecExit, ID: f.ID, Data: ex})
+			}
+		},
+	}
+	b := spareBackend(t, drv)
+	b.SpareVMs = 0
+	b.CacheDropDelay = 25 * time.Millisecond
+	b.PauseSettleDelay = 25 * time.Millisecond
+	b.ClockSyncAfter = 20 * time.Millisecond
+
+	runTrue(t, b, "r-pause")
+	b.runsMu.Lock()
+	mvm := b.vms["r-pause"].vm.(*microvm.MemVM)
+	b.runsMu.Unlock()
+
+	if mvm.Paused() {
+		t.Fatal("warm VM paused immediately before CacheDropDelay + PauseSettleDelay")
+	}
+	waitFor(t, "warm VM to pause", mvm.Paused)
+	time.Sleep(30 * time.Millisecond)
+
+	// MemVM.DialVSock fails if paused, so succeeding proves acquireVM resumed it.
+	runTrue(t, b, "r-pause")
+	if mvm.ResumeCount() != 1 {
+		t.Fatalf("resume count = %d, want 1", mvm.ResumeCount())
+	}
+	select {
+	case argv := <-synced:
+		if len(argv) < 4 || argv[0] != "/bin/date" || argv[1] != "-u" || argv[2] != "-s" {
+			t.Fatalf("unexpected clock sync argv: %v", argv)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected guest clock sync after paused resume")
 	}
 }

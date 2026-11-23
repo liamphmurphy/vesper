@@ -356,6 +356,9 @@ type vzVM struct {
 	console   *consoleRing
 	listeners []*vz.VirtioSocketListener
 	closers   []io.Closer
+	pauseMu   sync.Mutex
+	paused    bool
+	stopped   bool
 	stopOnce  sync.Once
 }
 
@@ -413,19 +416,71 @@ func (v *vzVM) SetMemoryTarget(bytes uint64) error {
 
 func (v *vzVM) ConsoleOutput() string { return v.console.string() }
 
+func (v *vzVM) Pause(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	v.pauseMu.Lock()
+	defer v.pauseMu.Unlock()
+	if v.stopped || v.paused {
+		return nil
+	}
+	if !v.vm.CanPause() {
+		return nil
+	}
+	if err := v.vm.Pause(); err != nil {
+		return err
+	}
+	v.paused = true
+	return nil
+}
+
+func (v *vzVM) Resume(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	v.pauseMu.Lock()
+	defer v.pauseMu.Unlock()
+	if v.stopped {
+		return errors.New("microvm: cannot resume stopped VM")
+	}
+	if !v.paused {
+		return nil
+	}
+	if v.vm.CanResume() {
+		if err := v.vm.Resume(); err != nil {
+			return err
+		}
+	} else if v.vm.State() != vz.VirtualMachineStateRunning {
+		return fmt.Errorf("microvm: cannot resume VM in state %v", v.vm.State())
+	}
+	v.paused = false
+	return nil
+}
+
 func (v *vzVM) Stop(ctx context.Context) error {
 	var stopErr error
 	v.stopOnce.Do(func() {
-		shutCtx, cancel := context.WithTimeout(ctx, 750*time.Millisecond)
-		_ = v.Client().Shutdown(shutCtx)
-		cancel()
+		v.pauseMu.Lock()
+		wasPaused := v.paused
+		v.paused = false
+		v.stopped = true
+		v.pauseMu.Unlock()
 
-		deadline := time.Now().Add(750 * time.Millisecond)
-		for time.Now().Before(deadline) {
-			if v.vm.State() == vz.VirtualMachineStateStopped {
-				break
+		// A paused VM cannot answer vsock RPCs; callers flush caches before
+		// pausing, so skip the guest shutdown timeout and stop directly.
+		if !wasPaused {
+			shutCtx, cancel := context.WithTimeout(ctx, 750*time.Millisecond)
+			_ = v.Client().Shutdown(shutCtx)
+			cancel()
+
+			deadline := time.Now().Add(750 * time.Millisecond)
+			for time.Now().Before(deadline) {
+				if v.vm.State() == vz.VirtualMachineStateStopped {
+					break
+				}
+				time.Sleep(15 * time.Millisecond)
 			}
-			time.Sleep(15 * time.Millisecond)
 		}
 		if v.vm.CanStop() {
 			if err := v.vm.Stop(); err != nil && !strings.Contains(err.Error(), "stopped") {
