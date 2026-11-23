@@ -344,6 +344,11 @@ func (s *Server) toMessages(ctx context.Context, msgs []store.ChatMessage) ([]ap
 				item.ChecklistState = &state
 			}
 		}
+		if m.Bookmarked {
+			b := true
+			item.Bookmarked = &b
+			item.BookmarkedAt = m.BookmarkedAt
+		}
 		// Which persona wrote a reply; absent is the chat's host.
 		if p, ok := authors[deref(m.PersonaID)]; ok && m.Role == "assistant" {
 			item.Persona = toPersonaSummary(p)
@@ -964,5 +969,37 @@ func (s *Server) UpdateChatMessageChecklist(ctx context.Context, req api.UpdateC
 	return api.UpdateChatMessageChecklist200JSONResponse{
 		MessageId:      updated.ID,
 		ChecklistState: finalState,
+	}, nil
+}
+
+func (s *Server) UpdateChatMessageBookmark(ctx context.Context, req api.UpdateChatMessageBookmarkRequestObject) (api.UpdateChatMessageBookmarkResponseObject, error) {
+	if req.Body == nil {
+		return nil, apperr.Invalid("body", "required")
+	}
+	if _, err := s.ownChat(ctx, req.Id); err != nil {
+		return nil, err
+	}
+	msg, err := s.Q.GetChatMessageByID(ctx, store.GetChatMessageByIDParams{ID: req.MessageId, SessionID: req.Id})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apperr.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if msg.Role == "system" {
+		return nil, apperr.Invalid("message_id", "system messages cannot be bookmarked")
+	}
+	updated, err := s.Q.SetChatMessageBookmark(ctx, store.SetChatMessageBookmarkParams{
+		ID:         msg.ID,
+		SessionID:  req.Id,
+		Bookmarked: req.Body.Bookmarked,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return api.UpdateChatMessageBookmark200JSONResponse{
+		MessageId:    updated.ID,
+		Bookmarked:   updated.Bookmarked,
+		BookmarkedAt: updated.BookmarkedAt,
 	}, nil
 }

@@ -20,6 +20,7 @@ export const CHAT_COMMANDS: ChatCommand[] = [
   { name: "design", args: "what to design", free: true, hint: "Create a design (flow, diagram or wireframe) beside the chat" },
   { name: "music", args: "what to compose", free: true, optionalArg: true, hint: "Generate a music track in this chat" },
   { name: "compare", args: "model", hint: "Get a second opinion from another model without switching this chat" },
+  { name: "outline", hint: "Open the thread outline (bookmarks, links, checklists, diffs, files)" },
 ];
 
 /** What the composer's + menu offers under "Create with {persona}" (docs/design/designs-from-chat.svg). */

@@ -156,7 +156,15 @@ export const SELECTION_EDITS = [
   { label: "Rewrite", question: "Rewrite this to read more clearly." },
 ] as const;
 
-export function AskAboutSelection({ root, onAsk }: { root: RefObject<HTMLElement | null>; onAsk: (text: string, question: string, authorId?: string, author?: string) => boolean }) {
+export function AskAboutSelection({
+  root,
+  onAsk,
+  onQuote,
+}: {
+  root: RefObject<HTMLElement | null>;
+  onAsk: (text: string, question: string, authorId?: string, author?: string) => boolean;
+  onQuote?: (text: string, authorId?: string, author?: string) => void;
+}) {
   const [picked, setPicked] = useState<Picked | null>(null);
   const [asking, setAsking] = useState(false);
   const [question, setQuestion] = useState("");
@@ -247,6 +255,20 @@ export function AskAboutSelection({ root, onAsk }: { root: RefObject<HTMLElement
         </button>
       ))}
       <span aria-hidden className="mx-0.5 h-4 w-px bg-border-subtle" />
+      {onQuote && (
+        <button
+          type="button"
+          data-testid="quote-selection"
+          title="Drop this passage into the composer"
+          onClick={() => {
+            onQuote(picked.text, picked.authorId, picked.author);
+            close();
+          }}
+          className={tool}
+        >
+          Quote
+        </button>
+      )}
       <button type="button" data-testid="ask-about-selection" onClick={() => setAsking(true)} className={tool}>
         <Icon name="msg" size={13} />
         Ask about this

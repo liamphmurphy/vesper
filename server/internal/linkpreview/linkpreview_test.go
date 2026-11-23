@@ -153,3 +153,76 @@ func TestVideoUsesOEmbed(t *testing.T) {
 		t.Fatalf("%+v", p)
 	}
 }
+
+func TestFetchDirectRasterImageAndRejectSVG(t *testing.T) {
+	f, base := fetcher(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/photo.png":
+			w.Header().Set("Content-Type", "image/png")
+			w.Write(png)
+		case "/bad.svg":
+			w.Header().Set("Content-Type", "image/svg+xml")
+			w.Write([]byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`))
+		}
+	})
+	p := f.Fetch(context.Background(), base+"/photo.png")
+	if p.Kind != KindImage || p.ImageType != "image/png" || len(p.Image) == 0 {
+		t.Fatalf("expected direct raster image, got %+v", p)
+	}
+	bad := f.Fetch(context.Background(), base+"/bad.svg")
+	if bad.Image != nil || bad.Kind == KindImage {
+		t.Fatalf("svg must not be accepted as an image: %+v", bad)
+	}
+}
+
+func TestPreviewableExtractsGalleryProductAndSourcesWithCap(t *testing.T) {
+	md := strings.Join([]string{
+		"Check these out:",
+		"```gallery",
+		`{"title":"Photos","items":[{"image":"https://cdn.example/a.jpg","url":"https://news.example/a","caption":"First"},{"image":"ftp://bad.example/x.jpg"}]}`,
+		"```",
+		"```product",
+		`{"title":"Gear","items":[{"name":"Keyboard","url":"https://shop.example/kb","image":"https://cdn.example/kb.png","price":"$149"}]}`,
+		"```",
+		"````md",
+		"```gallery",
+		`{"items":[{"image":"https://nested.example/ignore.png"}]}`,
+		"```",
+		"````",
+		"",
+		"Sources:",
+		"1. [Review](https://review.example/kb)",
+		"2. [[Internal Wiki Page]]",
+		"3. https://bare.example/spec.",
+	}, "\n")
+	got := Previewable(md)
+	var urls []string
+	for _, r := range got {
+		urls = append(urls, r.URL)
+	}
+	want := []string{
+		"https://cdn.example/a.jpg",
+		"https://news.example/a",
+		"https://cdn.example/kb.png",
+		"https://shop.example/kb",
+		"https://review.example/kb",
+		"https://bare.example/spec",
+	}
+	if !reflect.DeepEqual(urls, want) {
+		t.Fatalf("got %v, want %v", urls, want)
+	}
+
+	// Cap enforcement at MaxPreviewURLsPerMessage.
+	var many strings.Builder
+	many.WriteString("```gallery\n{\"items\":[")
+	for i := 0; i < 20; i++ {
+		if i > 0 {
+			many.WriteByte(',')
+		}
+		many.WriteString(`{"image":"https://img` + string(rune('a'+i)) + `.example/x.png"}`)
+	}
+	many.WriteString("]}\n```\n")
+	if capped := Previewable(many.String()); len(capped) != MaxPreviewURLsPerMessage {
+		t.Fatalf("expected cap %d, got %d", MaxPreviewURLsPerMessage, len(capped))
+	}
+}

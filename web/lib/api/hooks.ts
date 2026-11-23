@@ -775,6 +775,48 @@ export function useForkChat(id: string) {
   });
 }
 
+export function useSetChatMessageBookmark(chatId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { messageId: string; bookmarked: boolean }) =>
+      unwrap(
+        api.PATCH("/chats/{id}/messages/{messageId}/bookmark", {
+          params: { path: { id: chatId, messageId: v.messageId } },
+          body: { bookmarked: v.bookmarked },
+        }),
+      ),
+    onMutate: async (v) => {
+      type MessagesPage = { messages: Schemas["ChatMessage"][]; has_more?: boolean };
+      const key = chatKeys.messages(chatId);
+      await qc.cancelQueries({ queryKey: key });
+      const prev = qc.getQueryData<MessagesPage>(key);
+      if (prev) {
+        qc.setQueryData<MessagesPage>(key, {
+          ...prev,
+          messages: prev.messages.map((m) =>
+            m.id === v.messageId
+              ? { ...m, bookmarked: v.bookmarked || undefined, bookmarked_at: v.bookmarked ? new Date().toISOString() : undefined }
+              : m,
+          ),
+        });
+      }
+      return { prev };
+    },
+    onError: (_err, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(chatKeys.messages(chatId), ctx.prev);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: chatKeys.messages(chatId) }),
+  });
+}
+
+export function useCreateTicket() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Schemas["NewTicket"]) => unwrap(api.POST("/tickets", { body })),
+    onSettled: () => qc.invalidateQueries({ queryKey: keys.tickets }),
+  });
+}
+
 /** Picks which of your addresses a coding chat commits as; it applies from the next turn, so it works mid-reply. */
 export function useSetChatCommitEmail() {
   const qc = useQueryClient();

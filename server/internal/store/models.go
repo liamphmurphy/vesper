@@ -393,6 +393,8 @@ type ChatMessage struct {
 	GitBranch      *string
 	GitCommitSha   *string
 	ChecklistState json.RawMessage
+	Bookmarked     bool
+	BookmarkedAt   *time.Time
 }
 
 type ChatParticipant struct {

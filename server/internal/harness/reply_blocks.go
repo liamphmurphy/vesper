@@ -17,6 +17,8 @@ var richReplyBlocks = map[string]bool{
 	"choices":        true,
 	"workflow-run":   true,
 	"recommend":      true,
+	"gallery":        true,
+	"product":        true,
 	"diff":           true,
 	"compare":        true,
 	"timeline":       true,

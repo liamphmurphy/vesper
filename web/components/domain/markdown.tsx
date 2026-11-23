@@ -17,6 +17,7 @@ import { isPdfFence } from "@/lib/chat-pdf";
 import { isPlaygroundFence } from "@/lib/playground";
 import { rehypeSlots, rehypeSourceSpans, SLOT_CLASS, type Slot } from "@/lib/canvas-source";
 import { groupRecommendFences, isRecommendFence, RECOMMEND_ROW } from "@/lib/chat-recommend";
+import { isGalleryFence, isProductFence } from "@/lib/chat-media";
 import { AppFence } from "./app-fence";
 import { CanvasFence } from "./canvas-fence";
 import { PdfFence } from "./pdf-fence";
@@ -35,6 +36,7 @@ import { CiteMarker, MomentLink } from "./cite-marker";
 import { CodeFence } from "./code-fence";
 import { usePrintMode } from "./print-mode";
 import { RecommendFence } from "./recommend-fence";
+import { GalleryFence, ProductFence } from "./media-fence";
 import { visualFence } from "./visuals";
 import { LinkTargets, WikiLink } from "./wikilink";
 
@@ -130,6 +132,8 @@ export function Markdown({ children, className, anchors, codeBlocks, visualBlock
             if (isDispatchFence(info)) return <DispatchFence code={code.children} info={info} />;
             // ```recommend fences show as preview cards.
             if (isRecommendFence(info)) return <RecommendFence code={code.children} info={info} />;
+            if (isGalleryFence(info)) return <GalleryFence code={code.children} info={info} />;
+            if (isProductFence(info)) return <ProductFence code={code.children} info={info} />;
             return <CodeFence code={code.children} info={info} />;
           }
         }

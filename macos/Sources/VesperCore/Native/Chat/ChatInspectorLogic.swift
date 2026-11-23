@@ -9,6 +9,7 @@ public enum ChatInspectorLogic {
     public static let playgroundTabId = "playground"
     public static let codeTabId = "code"
     public static let threadTabId = "thread"
+    public static let outlineTabId = "outline"
     public static let activityTabId = "activity"
 
     public static let jumpTurnActionId = "jump_turn"
@@ -405,6 +406,16 @@ public enum ChatInspectorLogic {
                 headerActions: [InspectorAction(id: closeActionId, label: "Close thread", icon: "x")]
             ))
         }
+
+        let bookmarkedCount = input.messages.filter { $0.bookmarked == true }.count
+        tabs.append(InspectorTab(
+            id: outlineTabId,
+            label: "Outline",
+            icon: "outline",
+            kind: .native,
+            width: .regular,
+            badge: bookmarkedCount > 0 ? NavBadge(text: "\(bookmarkedCount)", tone: .accent) : nil
+        ))
 
         let activitySections = buildActivitySections(
             session: input.session,

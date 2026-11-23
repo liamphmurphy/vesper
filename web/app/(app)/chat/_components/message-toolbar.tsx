@@ -20,6 +20,13 @@ export type MessageActions = {
   thread?: (messageId: string) => void;
   /** Branches a new conversation from this message (optionally branching the git repo). */
   fork?: (messageId: string) => void;
+  /** Bookmarks or unbookmarks a message in this thread. */
+  bookmark?: (messageId: string, bookmarked: boolean) => void;
+  /** Hands a reply off to another persona by quoting it with @PersonaName in the composer. */
+  askPersona?: {
+    personas: Schemas["Persona"][];
+    ask: (body: string, persona: Schemas["Persona"]) => void;
+  };
   /** Requests a read-only cross-harness second opinion anchored to the message. */
   secondOpinion?: {
     groups: Schemas["ChatHarnessModels"][] | undefined;
@@ -54,6 +61,7 @@ export function MessageToolbar({
   authorId,
   author,
   mine,
+  bookmarked,
   chat,
   onEdit,
   onRetry,
@@ -65,6 +73,7 @@ export function MessageToolbar({
   authorId?: string;
   author?: string;
   mine: boolean;
+  bookmarked?: boolean;
   chat: { id: string; title: string; project?: string };
   onEdit?: () => void;
   onRetry?: () => void;
@@ -76,11 +85,13 @@ export function MessageToolbar({
   const [save, setSave] = useState<SaveMode | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [secondOpinionOpen, setSecondOpinionOpen] = useState(false);
+  const otherPersonas = (actions?.askPersona?.personas ?? []).filter((p) => p.id !== authorId);
   const more: MoreItem[] = [
     ...(actions?.fork ? [{ icon: "branch" as const, label: "Fork from here", onSelect: () => actions.fork!(messageId) }] : []),
     ...(onRetry ? [{ icon: "refresh" as const, label: "Retry", onSelect: onRetry }] : []),
     ...(onTop ? [{ icon: "chev" as const, label: "Top of reply", onSelect: onTop }] : []),
     ...(!mine ? [
+      { icon: "tickets" as const, label: "Promote to ticket", onSelect: () => setSave("ticket") },
       { icon: "wiki" as const, label: "Save to wiki", onSelect: () => setSave("wiki") },
       { icon: "artifacts" as const, label: "Save as artifact", onSelect: () => setSave("artifact") },
     ] : []),
@@ -125,6 +136,19 @@ export function MessageToolbar({
           </ToolButton>
         )}
         {actions?.thread && <ToolButton icon="branch" label="Start a thread" onClick={() => actions.thread!(messageId)} />}
+        {actions?.bookmark && (
+          <button
+            type="button"
+            aria-label={bookmarked ? "Remove bookmark" : "Bookmark message"}
+            aria-pressed={!!bookmarked}
+            title={bookmarked ? "Remove bookmark" : "Bookmark message"}
+            data-testid="message-bookmark"
+            onClick={() => actions.bookmark!(messageId, !bookmarked)}
+            className={cx(iconButton, bookmarked && "bg-accent-soft text-accent hover:text-accent")}
+          >
+            <Icon name="bookmark" size={14} />
+          </button>
+        )}
         {!mine && actions?.secondOpinion && (
           <SecondOpinionMenu
             groups={actions.secondOpinion.groups}
@@ -140,7 +164,7 @@ export function MessageToolbar({
           onClick={copy}
         />
         {onEdit && <ToolButton icon="edit" label="Edit" onClick={onEdit} />}
-        {more.length > 0 && (
+        {(more.length > 0 || (!mine && otherPersonas.length > 0)) && (
           <DropdownMenu.Root open={menuOpen} onOpenChange={setMenuOpen}>
             <DropdownMenu.Trigger asChild>
               <button type="button" aria-label="More message actions" title="More" className={iconButton}>
@@ -148,7 +172,30 @@ export function MessageToolbar({
               </button>
             </DropdownMenu.Trigger>
             <DropdownMenu.Portal>
-              <DropdownMenu.Content align="end" sideOffset={4} className="z-50 min-w-[180px] rounded-[10px] border border-border-float bg-surface-raised p-1 shadow-[var(--shadow-float)]">
+              <DropdownMenu.Content align="end" sideOffset={4} className="z-50 min-w-[190px] rounded-[10px] border border-border-float bg-surface-raised p-1 shadow-[var(--shadow-float)]">
+                {!mine && otherPersonas.length > 0 && actions?.askPersona && (
+                  <DropdownMenu.Sub>
+                    <DropdownMenu.SubTrigger className={itemClass}>
+                      <Icon name="at" size={13} className="text-fg-secondary" />
+                      <span className="flex-1">Ask another persona</span>
+                      <Icon name="chevr" size={12} className="text-fg-tertiary" />
+                    </DropdownMenu.SubTrigger>
+                    <DropdownMenu.Portal>
+                      <DropdownMenu.SubContent sideOffset={4} className="z-50 min-w-[160px] rounded-[10px] border border-border-float bg-surface-raised p-1 shadow-[var(--shadow-float)]">
+                        {otherPersonas.map((p) => (
+                          <DropdownMenu.Item
+                            key={p.id}
+                            onSelect={() => actions.askPersona!.ask(body, p)}
+                            className={itemClass}
+                          >
+                            <Icon name="at" size={12} className="text-fg-tertiary" />
+                            <span>{p.name}</span>
+                          </DropdownMenu.Item>
+                        ))}
+                      </DropdownMenu.SubContent>
+                    </DropdownMenu.Portal>
+                  </DropdownMenu.Sub>
+                )}
                 {more.map((m) => (
                   <DropdownMenu.Item key={m.label} onSelect={m.onSelect} className={cx(itemClass, m.danger && "text-state-blocked")}>
                     <Icon name={m.icon} size={13} className="text-fg-secondary" />

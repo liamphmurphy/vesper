@@ -51,7 +51,7 @@ func (s *Server) ListLinkPreviews(ctx context.Context, req api.ListLinkPreviewsR
 	if m.Role != "assistant" {
 		return api.ListLinkPreviews200JSONResponse(out), nil
 	}
-	recs := linkpreview.Recommended(m.BodyMd)
+	recs := linkpreview.Previewable(m.BodyMd)
 	rows := make([]store.LinkPreview, len(recs))
 	errs := make([]error, len(recs))
 	urls := make([]string, len(recs))
@@ -79,7 +79,7 @@ func (s *Server) ListLinkPreviews(ctx context.Context, req api.ListLinkPreviewsR
 // linkPreview returns the stored preview, fetching it the first time.
 func (s *Server) linkPreview(ctx context.Context, ws uuid.UUID, url string) (store.LinkPreview, error) {
 	row, err := s.Q.GetLinkPreview(ctx, store.GetLinkPreviewParams{WorkspaceID: ws, Url: url})
-	if err == nil && (row.Title != "" || time.Since(row.FetchedAt) < linkPreviewRetry) {
+	if err == nil && (row.Title != "" || row.BlobKey != "" || time.Since(row.FetchedAt) < linkPreviewRetry) {
 		return row, nil
 	}
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {

@@ -40,6 +40,7 @@ struct ChatComposerView: View {
     let onCompare: @MainActor (ChatCompareOption, String) async -> String?
     /// Opens Live Voice, talking with the persona out loud.
     let onStartLiveVoice: @MainActor () -> Void
+    var onOpenOutline: (@MainActor () -> Void)? = nil
     /// Text to draft without sending; `onPrefillApplied` gets its token once it is in the composer.
     var prefill: ChatComposerPrefill? = nil
     var onPrefillApplied: (@MainActor (Int) -> Void)? = nil
@@ -70,6 +71,9 @@ struct ChatComposerView: View {
     @State private var lastDictatedText: String?
     @State private var dictationStartTask: Task<Void, Never>?
     @State private var dictationFinishTask: Task<Void, Never>?
+    @State private var micPressStart: Date?
+    @State private var micWasListeningBeforePress = false
+    @State private var pendingReleaseStop = false
 
     private var isRunning: Bool { session?.state == .running }
     private var personaName: String { activePersona?.name ?? session?.agent.name ?? "Vesper" }
@@ -83,6 +87,16 @@ struct ChatComposerView: View {
     }
     private var canSubmit: Bool {
         (hasDraftText || !attachments.isEmpty) && !isSending && !isUploading
+    }
+
+    private var activeRepoLabel: String? {
+        let raw = (selectedRepoUrl ?? session?.repoUrl ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return nil }
+        return Self.repoShortName(raw)
+    }
+
+    private var hasAnyChips: Bool {
+        !attachments.isEmpty || !contextChips.isEmpty || researchMode || (canCode && activeRepoLabel != nil) || speech.listening
     }
 
     var body: some View {
@@ -111,7 +125,7 @@ struct ChatComposerView: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                if !attachments.isEmpty || !contextChips.isEmpty {
+                if hasAnyChips {
                     chipsStrip
                 }
 
@@ -253,6 +267,64 @@ struct ChatComposerView: View {
         let p = theme.palette
         return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
+                if speech.listening {
+                    let activeColor = theme.swiftUIColor("pill-blocked-fg", fallback: .red)
+                    let activeBg = theme.swiftUIColor("pill-blocked-bg", fallback: Color.red.opacity(0.14))
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(activeColor)
+                            .frame(width: 6, height: 6)
+                            .scaleEffect(1 + CGFloat(speech.level) * 0.4)
+                            .animation(.easeOut(duration: 0.08), value: speech.level)
+                        Text(micPressStart != nil ? "Listening… release to finish" : "Listening… tap mic to finish")
+                            .font(.system(size: theme.pointSize(.micro), weight: .medium))
+                            .foregroundStyle(activeColor)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(activeBg, in: Capsule())
+                    .overlay(Capsule().stroke(activeColor.opacity(0.35)))
+                }
+
+                if canCode, let repoLabel = activeRepoLabel {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.triangle.branch")
+                            .font(.system(size: 9))
+                            .foregroundStyle(p.secondaryText)
+                        Text(repoLabel)
+                            .font(.system(size: theme.pointSize(.micro), design: .monospaced))
+                            .foregroundStyle(p.text)
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(p.surface, in: Capsule())
+                    .overlay(Capsule().stroke(p.border))
+                }
+
+                if researchMode {
+                    HStack(spacing: 4) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 9))
+                            .foregroundStyle(p.accent)
+                        Text("Research plan")
+                            .font(.system(size: theme.pointSize(.micro), weight: .medium))
+                            .foregroundStyle(p.accent)
+                        Button {
+                            researchMode = false
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(p.accent.opacity(0.8))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(p.selected, in: Capsule())
+                    .overlay(Capsule().stroke(p.accent.opacity(0.5)))
+                }
+
                 ForEach(attachments) { item in
                     HStack(spacing: 5) {
                         Button {
@@ -412,36 +484,65 @@ struct ChatComposerView: View {
         let activeColor = theme.swiftUIColor("pill-blocked-fg", fallback: .red)
         let activeBg = theme.swiftUIColor("pill-blocked-bg", fallback: Color.red.opacity(0.14))
 
-        Button(action: toggleDictation) {
-            Group {
-                if isPreparingDictation {
-                    ProgressView()
-                        .controlSize(.mini)
-                } else {
-                    Image(systemName: isListening ? "mic.fill" : "mic")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(isListening ? activeColor : p.secondaryText)
-                        .scaleEffect(isListening ? 1 + CGFloat(speech.level) * 0.16 : 1)
-                        .animation(.easeOut(duration: 0.08), value: speech.level)
-                }
+        Group {
+            if isPreparingDictation {
+                ProgressView()
+                    .controlSize(.mini)
+            } else {
+                Image(systemName: isListening ? "mic.fill" : "mic")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(isListening ? activeColor : p.secondaryText)
+                    .scaleEffect(isListening ? 1 + CGFloat(speech.level) * 0.16 : 1)
+                    .animation(.easeOut(duration: 0.08), value: speech.level)
             }
-            .frame(width: 26, height: 22)
-            .background(isListening ? activeBg : .clear, in: Capsule())
-            .overlay(Capsule().stroke(isListening ? activeColor.opacity(0.35) : .clear))
-            .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
-        .disabled(isSending)
+        .frame(width: 26, height: 22)
+        .background(isListening ? activeBg : .clear, in: Capsule())
+        .overlay(Capsule().stroke(isListening ? activeColor.opacity(0.35) : .clear))
+        .contentShape(Capsule())
+        .opacity(isSending ? 0.45 : 1)
+        .allowsHitTesting(!isSending)
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in
+                    guard !isSending, micPressStart == nil else { return }
+                    micPressStart = Date()
+                    micWasListeningBeforePress = speech.listening || isPreparingDictation
+                    pendingReleaseStop = false
+                    if !micWasListeningBeforePress {
+                        startDictation()
+                    }
+                }
+                .onEnded { _ in
+                    guard let start = micPressStart else { return }
+                    let elapsed = Date().timeIntervalSince(start)
+                    let wasListening = micWasListeningBeforePress
+                    micPressStart = nil
+                    micWasListeningBeforePress = false
+                    let action = ChatComposerDictationLogic.releaseAction(
+                        elapsedSeconds: elapsed,
+                        wasListeningBeforePress: wasListening
+                    )
+                    if action == .stopAndCommit {
+                        if speech.listening {
+                            stopAndCommitDictation()
+                        } else if isPreparingDictation {
+                            pendingReleaseStop = true
+                        }
+                    }
+                }
+        )
         .help(dictationHelpText)
-        .accessibilityLabel(isListening ? "Stop dictation" : "Dictate into message")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel(isListening ? "Stop dictation" : "Dictate (tap to toggle, hold for push-to-talk)")
     }
 
     private var dictationHelpText: String {
-        if speech.listening { return "Stop dictation" }
+        if speech.listening { return "Stop dictation (release or tap)" }
         if isPreparingDictation {
             return speech.downloadingModel ? "Downloading on-device speech model…" : "Starting dictation…"
         }
-        return "Dictate into message"
+        return "Dictate into message (tap to toggle, hold for push-to-talk)"
     }
 
     private var sendModeSwitcher: some View {
@@ -941,6 +1042,9 @@ struct ChatComposerView: View {
         case "memory":
             clearComposer()
             context.navigate("/memory")
+        case "outline":
+            clearComposer()
+            onOpenOutline?()
         case "compact":
             let focus = cmd.arg.isEmpty ? nil : cmd.arg
             clearComposer()
@@ -1211,16 +1315,6 @@ struct ChatComposerView: View {
 
     // MARK: - Dictation
 
-    private func toggleDictation() {
-        if speech.listening {
-            stopAndCommitDictation()
-        } else if isPreparingDictation {
-            cancelDictation()
-        } else {
-            startDictation()
-        }
-    }
-
     private func startDictation() {
         dictationFinishTask?.cancel()
         dictationFinishTask = nil
@@ -1242,6 +1336,10 @@ struct ChatComposerView: View {
             if !speech.listening {
                 dictationAnchor = nil
                 lastDictatedText = nil
+                pendingReleaseStop = false
+            } else if pendingReleaseStop {
+                pendingReleaseStop = false
+                stopAndCommitDictation()
             } else {
                 editor.focus()
             }
@@ -1276,6 +1374,9 @@ struct ChatComposerView: View {
         dictationFinishTask?.cancel()
         dictationFinishTask = nil
         isPreparingDictation = false
+        micPressStart = nil
+        micWasListeningBeforePress = false
+        pendingReleaseStop = false
         dictationAnchor = nil
         lastDictatedText = nil
         speech.stop()

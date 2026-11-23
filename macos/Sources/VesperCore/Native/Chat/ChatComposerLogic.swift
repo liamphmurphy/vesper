@@ -34,6 +34,7 @@ public struct ChatSlashCommand: Sendable, Equatable, Hashable, Identifiable {
         ChatSlashCommand(name: "design", args: "what to design", hint: "Create a design (flow, diagram or wireframe) beside the chat", free: true),
         ChatSlashCommand(name: "music", args: "what to compose", hint: "Generate a music track in this chat", free: true, optionalArg: true),
         ChatSlashCommand(name: "compare", args: "model", hint: "Get a second opinion from another model without switching this chat"),
+        ChatSlashCommand(name: "outline", hint: "Open the thread outline (bookmarks, links, checklists, diffs, files)"),
     ]
 
     public static func named(_ name: String) -> ChatSlashCommand? {
@@ -844,6 +845,23 @@ public struct ChatDictationAnchor: Equatable, Sendable {
 }
 
 public enum ChatComposerDictationLogic {
+    /// Minimum press duration (seconds) that activates press-and-hold push-to-talk.
+    public static let holdThresholdSeconds: TimeInterval = 0.28
+
+    public enum ReleaseAction: Sendable, Equatable {
+        case stopAndCommit
+        case keepListening
+    }
+
+    /// Resolves mic button release between press-and-hold push-to-talk and tap-to-toggle.
+    public static func releaseAction(
+        elapsedSeconds: TimeInterval,
+        wasListeningBeforePress: Bool
+    ) -> ReleaseAction {
+        if wasListeningBeforePress { return .stopAndCommit }
+        return elapsedSeconds >= holdThresholdSeconds ? .stopAndCommit : .keepListening
+    }
+
     /// Splits `text` at a UTF-16 cursor offset (clamped to valid bounds) into prefix and suffix.
     public static func anchor(in text: String, cursorUTF16: Int) -> ChatDictationAnchor {
         let ns = text as NSString

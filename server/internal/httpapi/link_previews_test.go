@@ -27,6 +27,9 @@ func (f *fakePreviews) Fetch(_ context.Context, url string) linkpreview.Preview 
 	if strings.Contains(url, "youtu") {
 		return linkpreview.Preview{Kind: linkpreview.KindVideo, Title: "A talk", Site: "Lab", VideoID: "dQw4w9WgXcQ"}
 	}
+	if strings.HasSuffix(url, ".png") || strings.HasSuffix(url, ".jpg") {
+		return linkpreview.Preview{Kind: linkpreview.KindImage, Site: "cdn.example", Image: []byte("\x89PNG\r\n\x1a\nbytes"), ImageType: "image/png"}
+	}
 	return linkpreview.Preview{Kind: linkpreview.KindSite, Title: "Routes", Description: "Quiet", Image: []byte("\x89PNG\r\n\x1a\nbytes"), ImageType: "image/png"}
 }
 
@@ -227,5 +230,40 @@ func TestLibraryLinkQueueAndSummary(t *testing.T) {
 	e.want("PUT", "/library/"+uuid.NewString()+"/link-status", map[string]any{"status": "done"}, http.StatusNotFound)
 	if code, _ := e.do("PUT", "/library/"+id+"/link-status", map[string]any{"status": "nope"}); code == http.StatusNoContent {
 		t.Fatal("accepted a bad status")
+	}
+}
+
+func TestLinkPreviewsServeGalleryProductAndCitedSources(t *testing.T) {
+	e, _ := newAvatarEnv(t)
+	f := usePreviews(t)
+	body := strings.Join([]string{
+		"```gallery",
+		`{"title":"Stills","items":[{"image":"https://cdn.example/hero.png","url":"https://article.example/post","caption":"Hero shot"}]}`,
+		"```",
+		"```product",
+		`{"title":"Picks","items":[{"name":"Lamp","url":"https://shop.example/lamp","image":"https://cdn.example/lamp.jpg","price":"$79"}]}`,
+		"```",
+		"",
+		"Sources:",
+		"1. [Review](https://review.example/lamp)",
+	}, "\n")
+	id := e.previewMessage(t, "assistant", body)
+	got := e.want("GET", "/chat-messages/"+id+"/link-previews", nil, 200)["previews"].([]any)
+	if len(got) != 5 {
+		t.Fatalf("expected 5 previews, got %d: %v", len(got), got)
+	}
+	first := got[0].(map[string]any)
+	if first["kind"] != "image" || first["image_url"] == nil {
+		t.Fatalf("expected proxied image preview, got %v", first)
+	}
+	// Cached image is not refetched on subsequent calls.
+	e.want("GET", "/chat-messages/"+id+"/link-previews", nil, 200)
+	if n := f.calls.Load(); n != 5 {
+		t.Fatalf("expected 5 fetches total, got %d", n)
+	}
+	// Product page can be saved to Library directly.
+	saved := e.want("POST", "/library/links", map[string]any{"message_id": id, "url": "https://shop.example/lamp"}, http.StatusCreated)
+	if saved["url"] != "https://shop.example/lamp" || saved["note"] != "Lamp" {
+		t.Fatalf("unexpected saved product link: %v", saved)
 	}
 }

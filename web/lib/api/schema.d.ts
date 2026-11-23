@@ -2704,6 +2704,26 @@ export interface paths {
         patch: operations["updateChatMessageChecklist"];
         trace?: never;
     };
+    "/chats/{id}/messages/{messageId}/bookmark": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+                messageId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Bookmark or unbookmark a message in a chat thread */
+        patch: operations["updateChatMessageBookmark"];
+        trace?: never;
+    };
     "/chats/{id}/edit-last": {
         parameters: {
             query?: never;
@@ -8640,7 +8660,7 @@ export interface components {
         LinkPreview: {
             url: string;
             /** @enum {string} */
-            kind: "site" | "video";
+            kind: "site" | "video" | "image";
             /** @description Empty when the page couldn't be read */
             title: string;
             description: string;
@@ -9613,8 +9633,25 @@ export interface components {
             checklist_state?: {
                 [key: string]: boolean;
             };
+            /** @description Whether the person bookmarked this message in the thread */
+            bookmarked?: boolean;
+            /**
+             * Format: date-time
+             * @description When the message was bookmarked
+             */
+            bookmarked_at?: string;
             /** Format: date-time */
             created_at: string;
+        };
+        ChatBookmarkUpdate: {
+            bookmarked: boolean;
+        };
+        ChatBookmarkResponse: {
+            /** Format: uuid */
+            message_id: string;
+            bookmarked: boolean;
+            /** Format: date-time */
+            bookmarked_at?: string;
         };
         ChatChecklistUpdate: {
             index: number;
@@ -15390,6 +15427,36 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ChatChecklistStateResponse"];
+                };
+            };
+            404: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    updateChatMessageBookmark: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+                messageId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatBookmarkUpdate"];
+            };
+        };
+        responses: {
+            /** @description Updated bookmark state for the message */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatBookmarkResponse"];
                 };
             };
             404: components["responses"]["Error"];
