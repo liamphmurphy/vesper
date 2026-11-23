@@ -8,7 +8,14 @@ img_cache="${VESPER_IMAGES_DIR:-${HOME}/.cache/vesper/images}"
 
 mkdir -p "${res_dir}/bin" "${res_dir}/images"
 
-if [[ ! -x "${res_dir}/postgres/bin/postgres" ]]; then
+# A bundle staged before bundle-postgres-darwin.sh patched the tzdata path still
+# points postgres at the build host's /nix/store, so it runs here but can't load
+# any time zone, not even UTC, on a Mac without Nix. Rebuild it instead.
+if [[ -x "${res_dir}/postgres/bin/postgres" ]] &&
+  grep -rqaE '/nix/store/[0-9a-z]{32}-tzdata-' "${res_dir}/postgres/bin" "${res_dir}/postgres/lib"; then
+  echo "Staged PostgreSQL bundle still has a /nix/store tzdata path; rebuilding it..."
+  bash "${repo_root}/scripts/bundle-postgres-darwin.sh" "${res_dir}/postgres"
+elif [[ ! -x "${res_dir}/postgres/bin/postgres" ]]; then
   echo "Staging relocatable PostgreSQL 17 bundle..."
   bash "${repo_root}/scripts/bundle-postgres-darwin.sh" "${res_dir}/postgres"
 else
