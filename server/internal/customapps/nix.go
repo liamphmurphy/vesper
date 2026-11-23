@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -88,14 +89,14 @@ type Nix struct {
 }
 
 type cachedNixPkg struct {
-	path string
-	at   time.Time
+	paths []string
+	at    time.Time
 }
 
 type resolveFlight struct {
-	done chan struct{}
-	path string
-	err  error
+	done  chan struct{}
+	paths []string
+	err   error
 }
 
 type activeNixJob struct {
@@ -568,9 +569,10 @@ func (n *Nix) runJob(
 		})
 	}
 
-	pkgPaths := make([]string, len(v.Packages))
-	for i, pkg := range v.Packages {
-		p, err := n.resolvePackage(ctx, pkg)
+	pkgPaths := make([]string, 0, len(v.Packages))
+	seenPkgPaths := make(map[string]bool, len(v.Packages))
+	for _, pkg := range v.Packages {
+		paths, err := n.resolvePackage(ctx, pkg)
 		if err != nil {
 			if aj.canceled.Load() {
 				finish("canceled", nil, "", "", "canceled")
@@ -583,7 +585,12 @@ func (n *Nix) runJob(
 			finish("failed", nil, "", "", err.Error())
 			return
 		}
-		pkgPaths[i] = p
+		for _, p := range paths {
+			if !seenPkgPaths[p] {
+				seenPkgPaths[p] = true
+				pkgPaths = append(pkgPaths, p)
+			}
+		}
 	}
 
 	if aj.canceled.Load() {
@@ -609,9 +616,12 @@ func (n *Nix) runJob(
 		return
 	}
 
-	pathDirs := make([]string, len(pkgPaths))
-	for i, p := range pkgPaths {
-		pathDirs[i] = filepath.Join(p, "bin")
+	pathDirs := make([]string, 0, len(pkgPaths))
+	for _, p := range pkgPaths {
+		binDir := filepath.Join(p, "bin")
+		if info, serr := os.Stat(binDir); serr == nil && info.IsDir() {
+			pathDirs = append(pathDirs, binDir)
+		}
 	}
 
 	envMap := map[string]string{
@@ -783,20 +793,47 @@ func locatePackageCommand(pkgPaths []string, command string) (string, error) {
 	return "", fmt.Errorf("command %q was not found in bin/ of the requested packages", command)
 }
 
-func (n *Nix) resolvePackage(ctx context.Context, pkg string) (string, error) {
+func hasBinDir(p string) bool {
+	info, err := os.Stat(filepath.Join(p, "bin"))
+	return err == nil && info.IsDir()
+}
+
+func anyHasBinDir(paths []string) bool {
+	for _, p := range paths {
+		if hasBinDir(p) {
+			return true
+		}
+	}
+	return false
+}
+
+func allDirsExist(paths []string) bool {
+	if len(paths) == 0 {
+		return false
+	}
+	for _, p := range paths {
+		info, err := os.Stat(p)
+		if err != nil || !info.IsDir() {
+			return false
+		}
+	}
+	return true
+}
+
+func (n *Nix) resolvePackage(ctx context.Context, pkg string) ([]string, error) {
 	ref := n.flakeRef()
 	key := ref + "#" + pkg
 
 	for {
 		n.mu.Lock()
 		if c, ok := n.cache[key]; ok && time.Since(c.at) < nixResolveTTL {
-			cachedPath := c.path
+			cachedPaths := append([]string(nil), c.paths...)
 			n.mu.Unlock()
-			if info, err := os.Stat(cachedPath); err == nil && info.IsDir() {
-				return cachedPath, nil
+			if allDirsExist(cachedPaths) {
+				return cachedPaths, nil
 			}
 			n.mu.Lock()
-			if cur, ok := n.cache[key]; ok && cur.path == cachedPath {
+			if cur, ok := n.cache[key]; ok && slices.Equal(cur.paths, cachedPaths) {
 				delete(n.cache, key)
 			}
 		}
@@ -805,14 +842,14 @@ func (n *Nix) resolvePackage(ctx context.Context, pkg string) (string, error) {
 			select {
 			case <-fl.done:
 				if fl.err == nil {
-					return fl.path, nil
+					return append([]string(nil), fl.paths...), nil
 				}
 				if errors.Is(fl.err, context.Canceled) && ctx.Err() == nil {
 					continue
 				}
-				return "", fl.err
+				return nil, fl.err
 			case <-ctx.Done():
-				return "", ctx.Err()
+				return nil, ctx.Err()
 			}
 		}
 		if n.inflight == nil {
@@ -822,24 +859,41 @@ func (n *Nix) resolvePackage(ctx context.Context, pkg string) (string, error) {
 		n.inflight[key] = fl
 		n.mu.Unlock()
 
-		var resolved string
+		var rawPaths []string
 		var rerr error
 		if n.Resolve != nil {
-			resolved, rerr = n.Resolve(ctx, pkg)
+			var p string
+			p, rerr = n.Resolve(ctx, pkg)
+			if rerr == nil && strings.TrimSpace(p) != "" {
+				rawPaths = []string{p}
+			}
 		} else {
-			resolved, rerr = n.buildPackage(ctx, ref, pkg)
+			rawPaths, rerr = n.buildPackage(ctx, ref, pkg)
 		}
+
+		var resolved []string
 		if rerr == nil {
-			if abs, aerr := filepath.Abs(resolved); aerr == nil {
-				resolved = abs
+			seen := make(map[string]bool, len(rawPaths))
+			for _, p := range rawPaths {
+				if abs, aerr := filepath.Abs(p); aerr == nil {
+					p = abs
+				}
+				if eval, eerr := filepath.EvalSymlinks(p); eerr == nil {
+					p = eval
+				}
+				info, serr := os.Stat(p)
+				if serr != nil || !info.IsDir() {
+					rerr = fmt.Errorf("resolved Nix package %q is not a directory", pkg)
+					resolved = nil
+					break
+				}
+				if !seen[p] {
+					seen[p] = true
+					resolved = append(resolved, p)
+				}
 			}
-			if eval, eerr := filepath.EvalSymlinks(resolved); eerr == nil {
-				resolved = eval
-			}
-			info, serr := os.Stat(resolved)
-			if serr != nil || !info.IsDir() {
-				rerr = fmt.Errorf("resolved Nix package %q is not a directory", pkg)
-				resolved = ""
+			if rerr == nil && len(resolved) == 0 {
+				rerr = fmt.Errorf("resolved Nix package %q produced no store paths", pkg)
 			}
 		}
 
@@ -849,14 +903,14 @@ func (n *Nix) resolvePackage(ctx context.Context, pkg string) (string, error) {
 			if n.cache == nil {
 				n.cache = map[string]cachedNixPkg{}
 			}
-			n.cache[key] = cachedNixPkg{path: resolved, at: time.Now()}
+			n.cache[key] = cachedNixPkg{paths: append([]string(nil), resolved...), at: time.Now()}
 		}
 		n.mu.Unlock()
 
-		fl.path = resolved
+		fl.paths = resolved
 		fl.err = rerr
 		close(fl.done)
-		return resolved, rerr
+		return append([]string(nil), resolved...), rerr
 	}
 }
 
@@ -887,18 +941,71 @@ func (n *Nix) findNixBinary() (string, error) {
 	return "", errors.New("nix binary not found on host; install Nix (or set VESPER_NIX_BIN)")
 }
 
-func (n *Nix) buildPackage(ctx context.Context, flakeRef, pkg string) (string, error) {
+func (n *Nix) buildPackage(ctx context.Context, flakeRef, pkg string) ([]string, error) {
 	bin, err := n.findNixBinary()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
+	paths, err := n.buildInstallablePaths(ctx, bin, flakeRef+"#"+pkg)
+	if err != nil {
+		return nil, err
+	}
+	// Multi-output Nixpkgs derivations (e.g. ffmpeg, curl) can default to an empty
+	// "out" output while placing executables in "^bin" (or vice versa when a non-bin
+	// output like "dist" is built first). Only fetch ^bin/^out when no built output
+	// already exposes a bin/ directory.
+	if !anyHasBinDir(paths) && !strings.ContainsAny(pkg, ".^") {
+		for _, outName := range []string{"bin", "out"} {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			extra, berr := n.buildInstallablePaths(ctx, bin, flakeRef+"#"+pkg+"^"+outName)
+			if berr != nil {
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				continue
+			}
+			paths = appendUniqueStrings(paths, extra...)
+			if anyHasBinDir(paths) {
+				break
+			}
+		}
+	}
+	// Put outputs with bin/ first so command lookup and PATH prefer executable outputs.
+	var withBin, withoutBin []string
+	for _, p := range paths {
+		if hasBinDir(p) {
+			withBin = append(withBin, p)
+		} else {
+			withoutBin = append(withoutBin, p)
+		}
+	}
+	return append(withBin, withoutBin...), nil
+}
+
+func appendUniqueStrings(dst []string, items ...string) []string {
+	seen := make(map[string]bool, len(dst)+len(items))
+	for _, s := range dst {
+		seen[s] = true
+	}
+	for _, s := range items {
+		if s != "" && !seen[s] {
+			seen[s] = true
+			dst = append(dst, s)
+		}
+	}
+	return dst
+}
+
+func (n *Nix) buildInstallablePaths(ctx context.Context, bin, installable string) ([]string, error) {
 	rctx, cancel := context.WithTimeout(ctx, nixResolveTimeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(rctx, bin,
 		"--extra-experimental-features", "nix-command flakes",
 		"build", "--no-link", "--print-out-paths",
-		flakeRef+"#"+pkg,
+		installable,
 	)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
@@ -917,21 +1024,25 @@ func (n *Nix) buildPackage(ctx context.Context, flakeRef, pkg string) (string, e
 
 	if err := cmd.Run(); err != nil {
 		if rctx.Err() != nil {
-			return "", rctx.Err()
+			return nil, rctx.Err()
 		}
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
 			msg = err.Error()
 		}
-		return "", fmt.Errorf("nix build %s#%s failed: %s", flakeRef, pkg, truncate(msg, 300))
+		return nil, fmt.Errorf("nix build %s failed: %s", installable, truncate(msg, 300))
 	}
+	var paths []string
 	for _, line := range strings.Split(stdout.String(), "\n") {
 		p := strings.TrimSpace(line)
 		if p != "" {
-			return p, nil
+			paths = appendUniqueStrings(paths, p)
 		}
 	}
-	return "", fmt.Errorf("nix build %s#%s produced no store path", flakeRef, pkg)
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("nix build %s produced no store path", installable)
+	}
+	return paths, nil
 }
 
 // Status reports one job and its output files. A job left resolving/running
