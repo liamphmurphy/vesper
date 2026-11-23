@@ -83,6 +83,7 @@ public enum ChatMessageSegment: Sendable, Equatable {
     case markdown(String)
     case embedded(EmbeddedBlockKind, source: String, info: String?, index: Int)
     case chart(ChatChartSpec)
+    case stats(ChatStatsSpec)
     case choices(ChatChoicesCard)
     case dispatch(ChatDispatchCard)
     case recommend([ChatRecommendCard])
@@ -357,6 +358,17 @@ public enum ChatTranscriptLogic {
                         segments.append(.chart(spec))
                     case .failure(let err):
                         segments.append(.invalidBlock(kind: "chart", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatStatsSpec.isStatsFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatStatsSpec.parse(code) {
+                    case .success(let spec):
+                        segments.append(.stats(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "stats", error: err.message, source: code))
                     }
                     i = nextIndex
                     continue

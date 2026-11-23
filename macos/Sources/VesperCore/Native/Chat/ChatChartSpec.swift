@@ -1,6 +1,6 @@
 import Foundation
 
-/// Error returned when a ```chart fence cannot be parsed or fails validation.
+/// Error returned when a ```chart or ```stats fence cannot be parsed or fails validation.
 public struct ChatChartError: Error, Sendable, Equatable, LocalizedError {
     public var message: String
 
@@ -13,8 +13,16 @@ public struct ChatChartError: Error, Sendable, Equatable, LocalizedError {
 
 public enum ChatChartType: String, Sendable, Equatable, Hashable, Codable, CaseIterable {
     case bar
+    case stackedBar = "stacked-bar"
     case line
+    case area
+    case stackedArea = "stacked-area"
     case scatter
+    case histogram
+    case heatmap
+    case calendarHeatmap = "calendar-heatmap"
+    case radar
+    case sparkline
 }
 
 public struct ChatChartPoint: Sendable, Equatable, Hashable {
@@ -29,9 +37,9 @@ public struct ChatChartPoint: Sendable, Equatable, Hashable {
 
 public struct ChatChartSeries: Sendable, Equatable, Hashable {
     public var name: String
-    /// One value per category for bar/line charts; `nil` marks a gap. Empty for scatter charts.
+    /// One value per category for bar/stacked-bar/line/area/stacked-area/radar; `nil` marks a gap.
     public var values: [Double?]
-    /// `(x, y)` pairs for scatter charts. Empty for bar/line charts.
+    /// `(x, y)` pairs for scatter charts.
     public var points: [ChatChartPoint]
 
     public init(name: String, values: [Double?] = [], points: [ChatChartPoint] = []) {
@@ -51,6 +59,47 @@ public struct ChatChartAxis: Sendable, Equatable, Hashable {
     }
 }
 
+public struct ChatHistogramBin: Sendable, Equatable, Hashable {
+    public var lower: Double
+    public var upper: Double
+    public var count: Int
+    public var label: String
+
+    public init(lower: Double, upper: Double, count: Int, label: String) {
+        self.lower = lower
+        self.upper = upper
+        self.count = count
+        self.label = label
+    }
+}
+
+public struct ChatHeatmapData: Sendable, Equatable, Hashable {
+    public var xLabels: [String]
+    public var yLabels: [String]
+    /// Row-major (`yLabels.count` rows × `xLabels.count` cols).
+    public var matrix: [[Double?]]
+    public var minValue: Double
+    public var maxValue: Double
+
+    public init(xLabels: [String], yLabels: [String], matrix: [[Double?]], minValue: Double, maxValue: Double) {
+        self.xLabels = xLabels
+        self.yLabels = yLabels
+        self.matrix = matrix
+        self.minValue = minValue
+        self.maxValue = maxValue
+    }
+}
+
+public struct ChatCalendarDay: Sendable, Equatable, Hashable {
+    public var date: String
+    public var value: Double
+
+    public init(date: String, value: Double) {
+        self.date = date
+        self.value = value
+    }
+}
+
 /// Tabular view of a chart's underlying data (for the Show Table toggle).
 public struct ChatChartTable: Sendable, Equatable {
     public var headers: [String]
@@ -62,13 +111,16 @@ public struct ChatChartTable: Sendable, Equatable {
     }
 }
 
-/// Pure Swift port of `web/lib/chat-chart.ts`: parses, validates, and formats ```chart JSON specs.
+/// Pure Swift parser/validator/formatter for ```chart JSON specs (LAZYAGENTS-321).
 public struct ChatChartSpec: Sendable, Equatable, Hashable {
     public enum Limits {
         public static let series = 8
         public static let scatterSeries = 3
         public static let categories = 60
         public static let points = 500
+        public static let histogramValues = 2000
+        public static let heatmapAxis = 32
+        public static let calendarDays = 400
     }
 
     public var type: ChatChartType
@@ -78,6 +130,13 @@ public struct ChatChartSpec: Sendable, Equatable, Hashable {
     public var y: ChatChartAxis
     public var categories: [String]
     public var series: [ChatChartSeries]
+    public var histogramBins: [ChatHistogramBin]
+    public var heatmap: ChatHeatmapData?
+    public var calendarDays: [ChatCalendarDay]
+    public var radarMax: Double?
+    public var sparklineValues: [Double]
+    public var sparklineDelta: String?
+    public var sparklineTone: String?
 
     public init(
         type: ChatChartType,
@@ -86,7 +145,14 @@ public struct ChatChartSpec: Sendable, Equatable, Hashable {
         x: ChatChartAxis = ChatChartAxis(),
         y: ChatChartAxis = ChatChartAxis(),
         categories: [String] = [],
-        series: [ChatChartSeries]
+        series: [ChatChartSeries] = [],
+        histogramBins: [ChatHistogramBin] = [],
+        heatmap: ChatHeatmapData? = nil,
+        calendarDays: [ChatCalendarDay] = [],
+        radarMax: Double? = nil,
+        sparklineValues: [Double] = [],
+        sparklineDelta: String? = nil,
+        sparklineTone: String? = nil
     ) {
         self.type = type
         self.title = title
@@ -95,6 +161,13 @@ public struct ChatChartSpec: Sendable, Equatable, Hashable {
         self.y = y
         self.categories = categories
         self.series = series
+        self.histogramBins = histogramBins
+        self.heatmap = heatmap
+        self.calendarDays = calendarDays
+        self.radarMax = radarMax
+        self.sparklineValues = sparklineValues
+        self.sparklineDelta = sparklineDelta
+        self.sparklineTone = sparklineTone
     }
 
     /// True when a code fence's info string starts with `chart` (case-insensitive).
@@ -106,7 +179,7 @@ public struct ChatChartSpec: Sendable, Equatable, Hashable {
         return first?.lowercased() == "chart"
     }
 
-    /// Parses and validates a ```chart JSON payload using the same rules as `web/lib/chat-chart.ts`.
+    /// Parses and validates a ```chart JSON payload.
     public static func parse(_ code: String) -> Result<ChatChartSpec, ChatChartError> {
         guard let data = code.data(using: .utf8),
               let root = try? JSONDecoder().decode(JSONValue.self, from: data)
@@ -115,12 +188,45 @@ public struct ChatChartSpec: Sendable, Equatable, Hashable {
         }
 
         let obj = asObject(root)
-        guard let typeRaw = obj["type"]?.stringValue,
-              let type = ChatChartType(rawValue: typeRaw)
-        else {
-            return .failure(ChatChartError("A chart's type must be bar, line or scatter."))
+        let rawType = (obj["type"]?.stringValue ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "-")
+        guard let type = ChatChartType(rawValue: rawType) else {
+            return .failure(ChatChartError("Unsupported chart type. Expected bar, stacked-bar, line, area, stacked-area, scatter, histogram, heatmap, calendar-heatmap, radar or sparkline."))
         }
 
+        let title = trimmedText(obj["title"])
+        let subtitle = trimmedText(obj["subtitle"])
+        let xObj = asObject(obj["x"])
+        let yObj = asObject(obj["y"])
+        let xAxis = ChatChartAxis(label: trimmedText(xObj["label"]), unit: trimmedText(xObj["unit"]))
+        let yAxis = ChatChartAxis(label: trimmedText(yObj["label"]), unit: trimmedText(yObj["unit"]))
+
+        switch type {
+        case .histogram:
+            return parseHistogram(obj: obj, title: title, subtitle: subtitle, xAxis: xAxis, yAxis: yAxis)
+        case .heatmap:
+            return parseHeatmap(obj: obj, title: title, subtitle: subtitle, xAxis: xAxis, yAxis: yAxis)
+        case .calendarHeatmap:
+            return parseCalendarHeatmap(obj: obj, title: title, subtitle: subtitle, xAxis: xAxis, yAxis: yAxis)
+        case .sparkline:
+            return parseSparkline(obj: obj, title: title, subtitle: subtitle, xAxis: xAxis, yAxis: yAxis)
+        case .bar, .stackedBar, .line, .area, .stackedArea, .scatter, .radar:
+            return parseSeriesChart(type: type, obj: obj, title: title, subtitle: subtitle, xAxis: xAxis, yAxis: yAxis)
+        }
+    }
+
+    // MARK: - Type-Specific Parsers
+
+    private static func parseSeriesChart(
+        type: ChatChartType,
+        obj: [String: JSONValue],
+        title: String?,
+        subtitle: String?,
+        xAxis: ChatChartAxis,
+        yAxis: ChatChartAxis
+    ) -> Result<ChatChartSpec, ChatChartError> {
         let rawSeries: [[String: JSONValue]]
         if case .array(let arr) = obj["series"] {
             rawSeries = arr.map(asObject)
@@ -140,7 +246,9 @@ public struct ChatChartSpec: Sendable, Equatable, Hashable {
             categories = []
         }
 
-        if type != .scatter && (categories.isEmpty || categories.count > Limits.categories) {
+        if type == .radar && (categories.count < 3 || categories.count > 12) {
+            return .failure(ChatChartError("A radar chart needs 3 to 12 categories."))
+        } else if type != .scatter && (categories.isEmpty || categories.count > Limits.categories) {
             return .failure(ChatChartError("A \(type.rawValue) chart needs 1 to \(Limits.categories) categories."))
         }
 
@@ -183,17 +291,191 @@ public struct ChatChartSpec: Sendable, Equatable, Hashable {
             }
         }
 
-        let xObj = asObject(obj["x"])
-        let yObj = asObject(obj["y"])
-
+        let radarMax = obj["max"].flatMap(finiteDouble)
         return .success(ChatChartSpec(
             type: type,
-            title: trimmedText(obj["title"]),
-            subtitle: trimmedText(obj["subtitle"]),
-            x: ChatChartAxis(label: trimmedText(xObj["label"])),
-            y: ChatChartAxis(label: trimmedText(yObj["label"]), unit: trimmedText(yObj["unit"])),
+            title: title,
+            subtitle: subtitle,
+            x: xAxis,
+            y: yAxis,
             categories: categories,
-            series: parsedSeries
+            series: parsedSeries,
+            radarMax: radarMax
+        ))
+    }
+
+    private static func parseHistogram(
+        obj: [String: JSONValue],
+        title: String?,
+        subtitle: String?,
+        xAxis: ChatChartAxis,
+        yAxis: ChatChartAxis
+    ) -> Result<ChatChartSpec, ChatChartError> {
+        var rawVals: [Double] = []
+        if case .array(let arr) = obj["values"] {
+            rawVals = arr.compactMap(finiteDouble)
+        } else if case .array(let seriesArr) = obj["series"],
+                  let first = seriesArr.first.map(asObject),
+                  case .array(let arr) = first["values"] {
+            rawVals = arr.compactMap(finiteDouble)
+        }
+        guard !rawVals.isEmpty, rawVals.count <= Limits.histogramValues else {
+            return .failure(ChatChartError("A histogram needs 1 to \(Limits.histogramValues) numeric values."))
+        }
+        let requestedBins: Int
+        if let b = obj["bins"].flatMap(finiteDouble) {
+            requestedBins = max(2, min(30, Int(b.rounded())))
+        } else {
+            requestedBins = max(3, min(16, Int(ceil(sqrt(Double(rawVals.count))))))
+        }
+        let lo = rawVals.min() ?? 0
+        let hi = rawVals.max() ?? 0
+        let bins = computeHistogramBins(values: rawVals, binCount: requestedBins, minVal: lo, maxVal: hi)
+        return .success(ChatChartSpec(
+            type: .histogram,
+            title: title,
+            subtitle: subtitle,
+            x: xAxis,
+            y: yAxis,
+            histogramBins: bins
+        ))
+    }
+
+    public static func computeHistogramBins(values: [Double], binCount: Int, minVal: Double, maxVal: Double) -> [ChatHistogramBin] {
+        guard !values.isEmpty else { return [] }
+        if minVal == maxVal {
+            let label = compactNumber(minVal)
+            return [ChatHistogramBin(lower: minVal, upper: maxVal, count: values.count, label: label)]
+        }
+        let count = max(2, binCount)
+        let width = (maxVal - minVal) / Double(count)
+        var counts = Array(repeating: 0, count: count)
+        for v in values {
+            var idx = Int(floor((v - minVal) / width))
+            if idx >= count { idx = count - 1 }
+            if idx < 0 { idx = 0 }
+            counts[idx] += 1
+        }
+        return (0..<count).map { i in
+            let lo = minVal + Double(i) * width
+            let hi = minVal + Double(i + 1) * width
+            return ChatHistogramBin(
+                lower: lo,
+                upper: hi,
+                count: counts[i],
+                label: "\(compactNumber(lo))–\(compactNumber(hi))"
+            )
+        }
+    }
+
+    private static func parseHeatmap(
+        obj: [String: JSONValue],
+        title: String?,
+        subtitle: String?,
+        xAxis: ChatChartAxis,
+        yAxis: ChatChartAxis
+    ) -> Result<ChatChartSpec, ChatChartError> {
+        let xLabels: [String] = {
+            if case .array(let arr) = obj["xLabels"] { return arr.map(stringifyJSON) }
+            if case .array(let arr) = obj["x_labels"] { return arr.map(stringifyJSON) }
+            if case .array(let arr) = obj["columns"] { return arr.map(stringifyJSON) }
+            return []
+        }()
+        let yLabels: [String] = {
+            if case .array(let arr) = obj["yLabels"] { return arr.map(stringifyJSON) }
+            if case .array(let arr) = obj["y_labels"] { return arr.map(stringifyJSON) }
+            if case .array(let arr) = obj["rows"] { return arr.map(stringifyJSON) }
+            return []
+        }()
+        guard !xLabels.isEmpty, xLabels.count <= Limits.heatmapAxis,
+              !yLabels.isEmpty, yLabels.count <= Limits.heatmapAxis
+        else {
+            return .failure(ChatChartError("A heatmap needs 1 to \(Limits.heatmapAxis) xLabels and yLabels."))
+        }
+        guard case .array(let rawRows) = obj["matrix"], rawRows.count == yLabels.count else {
+            return .failure(ChatChartError("A heatmap matrix must have one row per yLabel."))
+        }
+        var matrix: [[Double?]] = []
+        var allNums: [Double] = []
+        for rawRow in rawRows {
+            guard case .array(let cells) = rawRow, cells.count == xLabels.count else {
+                return .failure(ChatChartError("Each heatmap row needs one value per xLabel."))
+            }
+            let parsedRow = cells.map(finiteDouble)
+            allNums.append(contentsOf: parsedRow.compactMap { $0 })
+            matrix.append(parsedRow)
+        }
+        guard let lo = allNums.min(), let hi = allNums.max() else {
+            return .failure(ChatChartError("A heatmap needs at least one numeric cell."))
+        }
+        return .success(ChatChartSpec(
+            type: .heatmap,
+            title: title,
+            subtitle: subtitle,
+            x: xAxis,
+            y: yAxis,
+            heatmap: ChatHeatmapData(xLabels: xLabels, yLabels: yLabels, matrix: matrix, minValue: lo, maxValue: hi)
+        ))
+    }
+
+    private static func parseCalendarHeatmap(
+        obj: [String: JSONValue],
+        title: String?,
+        subtitle: String?,
+        xAxis: ChatChartAxis,
+        yAxis: ChatChartAxis
+    ) -> Result<ChatChartSpec, ChatChartError> {
+        guard case .array(let rawDays) = obj["days"], !rawDays.isEmpty, rawDays.count <= Limits.calendarDays else {
+            return .failure(ChatChartError("A calendar-heatmap needs 1 to \(Limits.calendarDays) day entries."))
+        }
+        var days: [ChatCalendarDay] = []
+        for raw in rawDays {
+            let d = asObject(raw)
+            guard let date = trimmedText(d["date"]), date.count >= 10,
+                  let val = d["value"].flatMap(finiteDouble)
+            else {
+                return .failure(ChatChartError("Each calendar-heatmap day needs a YYYY-MM-DD date and numeric value."))
+            }
+            days.append(ChatCalendarDay(date: String(date.prefix(10)), value: val))
+        }
+        days.sort { $0.date < $1.date }
+        return .success(ChatChartSpec(
+            type: .calendarHeatmap,
+            title: title,
+            subtitle: subtitle,
+            x: xAxis,
+            y: yAxis,
+            calendarDays: days
+        ))
+    }
+
+    private static func parseSparkline(
+        obj: [String: JSONValue],
+        title: String?,
+        subtitle: String?,
+        xAxis: ChatChartAxis,
+        yAxis: ChatChartAxis
+    ) -> Result<ChatChartSpec, ChatChartError> {
+        var vals: [Double] = []
+        if case .array(let arr) = obj["values"] {
+            vals = arr.compactMap(finiteDouble)
+        } else if case .array(let sArr) = obj["series"],
+                  let first = sArr.first.map(asObject),
+                  case .array(let arr) = first["values"] {
+            vals = arr.compactMap(finiteDouble)
+        }
+        guard vals.count >= 2, vals.count <= Limits.points else {
+            return .failure(ChatChartError("A sparkline needs 2 to \(Limits.points) numeric values."))
+        }
+        return .success(ChatChartSpec(
+            type: .sparkline,
+            title: title,
+            subtitle: subtitle,
+            x: xAxis,
+            y: yAxis,
+            sparklineValues: vals,
+            sparklineDelta: trimmedText(obj["delta"]),
+            sparklineTone: trimmedText(obj["tone"])
         ))
     }
 
@@ -257,9 +539,10 @@ public struct ChatChartSpec: Sendable, Equatable, Hashable {
         Self.withUnit(Self.compactNumber(value), unit: y.unit)
     }
 
-    /// Builds a readable data table mirroring the chart's series and categories/points.
+    /// Builds an accessible data table mirroring the chart's underlying values for every chart type.
     public func tableRows() -> ChatChartTable {
-        if type == .scatter {
+        switch type {
+        case .scatter:
             let xHeader = x.label ?? "X"
             let yHeader = y.label ?? "Y"
             let showSeries = series.count > 1
@@ -273,41 +556,65 @@ public struct ChatChartSpec: Sendable, Equatable, Hashable {
                 }
             }
             return ChatChartTable(headers: headers, rows: rows)
-        }
 
-        let catHeader = x.label ?? "Category"
-        let valueHeaders = series.map { $0.name.isEmpty ? (y.label ?? "Value") : $0.name }
-        let headers = [catHeader] + valueHeaders
-        var rows: [[String]] = []
-        rows.reserveCapacity(categories.count)
-        for (idx, cat) in categories.enumerated() {
-            var row = [cat]
-            for s in series {
-                if idx < s.values.count, let v = s.values[idx] {
-                    row.append(formattedValue(v))
-                } else {
-                    row.append("—")
-                }
+        case .histogram:
+            let headers = [x.label ?? "Range", y.label ?? "Count"]
+            let rows = histogramBins.map { [$0.label, String($0.count)] }
+            return ChatChartTable(headers: headers, rows: rows)
+
+        case .heatmap:
+            guard let hm = heatmap else { return ChatChartTable(headers: [], rows: []) }
+            let headers = [y.label ?? "Row"] + hm.xLabels
+            let rows = hm.yLabels.enumerated().map { rIdx, yLab in
+                [yLab] + hm.matrix[rIdx].map { v in v.map(formattedValue) ?? "—" }
             }
-            rows.append(row)
+            return ChatChartTable(headers: headers, rows: rows)
+
+        case .calendarHeatmap:
+            let headers = ["Date", y.label ?? "Value"]
+            let rows = calendarDays.map { [$0.date, formattedValue($0.value)] }
+            return ChatChartTable(headers: headers, rows: rows)
+
+        case .sparkline:
+            let headers = ["Point", y.label ?? "Value"]
+            let rows = sparklineValues.enumerated().map { [String($0.offset + 1), formattedValue($0.element)] }
+            return ChatChartTable(headers: headers, rows: rows)
+
+        case .bar, .stackedBar, .line, .area, .stackedArea, .radar:
+            let catHeader = x.label ?? (type == .radar ? "Axis" : "Category")
+            let valueHeaders = series.map { $0.name.isEmpty ? (y.label ?? "Value") : $0.name }
+            let headers = [catHeader] + valueHeaders
+            var rows: [[String]] = []
+            rows.reserveCapacity(categories.count)
+            for (idx, cat) in categories.enumerated() {
+                var row = [cat]
+                for s in series {
+                    if idx < s.values.count, let v = s.values[idx] {
+                        row.append(formattedValue(v))
+                    } else {
+                        row.append("—")
+                    }
+                }
+                rows.append(row)
+            }
+            return ChatChartTable(headers: headers, rows: rows)
         }
-        return ChatChartTable(headers: headers, rows: rows)
     }
 
     // MARK: - Private JSON & Number Helpers
 
-    private static func asObject(_ value: JSONValue?) -> [String: JSONValue] {
+    fileprivate static func asObject(_ value: JSONValue?) -> [String: JSONValue] {
         if case .object(let dict) = value { return dict }
         return [:]
     }
 
-    private static func trimmedText(_ value: JSONValue?) -> String? {
+    fileprivate static func trimmedText(_ value: JSONValue?) -> String? {
         guard let raw = value?.stringValue else { return nil }
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    private static func finiteDouble(_ value: JSONValue) -> Double? {
+    fileprivate static func finiteDouble(_ value: JSONValue) -> Double? {
         switch value {
         case .int(let i):
             return Double(i)
@@ -318,7 +625,7 @@ public struct ChatChartSpec: Sendable, Equatable, Hashable {
         }
     }
 
-    private static func stringifyJSON(_ value: JSONValue) -> String {
+    fileprivate static func stringifyJSON(_ value: JSONValue) -> String {
         switch value {
         case .string(let s): return s
         case .int(let i): return String(i)
@@ -345,5 +652,108 @@ public struct ChatChartSpec: Sendable, Equatable, Hashable {
         }
         let s = String(format: "%.12g", value)
         return s == "-0" ? "0" : s
+    }
+}
+
+// MARK: - Stat Tiles / KPI Row (`stats` fence, LAZYAGENTS-321)
+
+public struct ChatStatTile: Sendable, Equatable, Hashable, Identifiable {
+    public var id: Int
+    public var label: String
+    public var value: String
+    public var delta: String?
+    public var tone: String?
+    public var subtitle: String?
+    public var sparkline: [Double]
+
+    public init(
+        id: Int,
+        label: String,
+        value: String,
+        delta: String? = nil,
+        tone: String? = nil,
+        subtitle: String? = nil,
+        sparkline: [Double] = []
+    ) {
+        self.id = id
+        self.label = label
+        self.value = value
+        self.delta = delta
+        self.tone = tone
+        self.subtitle = subtitle
+        self.sparkline = sparkline
+    }
+}
+
+public struct ChatStatsSpec: Sendable, Equatable, Hashable {
+    public var title: String?
+    public var subtitle: String?
+    public var items: [ChatStatTile]
+
+    public init(title: String? = nil, subtitle: String? = nil, items: [ChatStatTile]) {
+        self.title = title
+        self.subtitle = subtitle
+        self.items = items
+    }
+
+    public static func isStatsFence(_ info: String?) -> Bool {
+        ChatFenceParsers.firstWord(of: info) == "stats"
+    }
+
+    public static func parse(_ code: String) -> Result<ChatStatsSpec, ChatChartError> {
+        guard let data = code.data(using: .utf8),
+              let root = try? JSONDecoder().decode(JSONValue.self, from: data)
+        else {
+            return .failure(ChatChartError("This stats block isn't valid JSON."))
+        }
+        let obj = ChatChartSpec.asObject(root)
+        let rawItems: [JSONValue]
+        if case .array(let arr) = obj["items"] {
+            rawItems = arr
+        } else if case .array(let arr) = obj["tiles"] {
+            rawItems = arr
+        } else if case .array(let arr) = root {
+            rawItems = arr
+        } else {
+            rawItems = []
+        }
+        guard !rawItems.isEmpty, rawItems.count <= 12 else {
+            return .failure(ChatChartError("A stats block needs 1 to 12 items."))
+        }
+        var tiles: [ChatStatTile] = []
+        for (idx, raw) in rawItems.enumerated() {
+            let item = ChatChartSpec.asObject(raw)
+            guard let label = ChatChartSpec.trimmedText(item["label"]) else {
+                return .failure(ChatChartError("Stat item \(idx + 1) needs a label."))
+            }
+            let valueStr: String
+            if let v = item["value"] {
+                let s = ChatChartSpec.stringifyJSON(v).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !s.isEmpty, s != "null" else {
+                    return .failure(ChatChartError("Stat item \"\(label)\" needs a value."))
+                }
+                valueStr = ChatChartSpec.withUnit(s, unit: ChatChartSpec.trimmedText(item["unit"]))
+            } else {
+                return .failure(ChatChartError("Stat item \"\(label)\" needs a value."))
+            }
+            var spark: [Double] = []
+            if case .array(let sArr) = item["sparkline"] {
+                spark = sArr.compactMap(ChatChartSpec.finiteDouble)
+            }
+            tiles.append(ChatStatTile(
+                id: idx,
+                label: label,
+                value: valueStr,
+                delta: ChatChartSpec.trimmedText(item["delta"]),
+                tone: ChatChartSpec.trimmedText(item["tone"]),
+                subtitle: ChatChartSpec.trimmedText(item["subtitle"]),
+                sparkline: spark
+            ))
+        }
+        return .success(ChatStatsSpec(
+            title: ChatChartSpec.trimmedText(obj["title"]),
+            subtitle: ChatChartSpec.trimmedText(obj["subtitle"]),
+            items: tiles
+        ))
     }
 }

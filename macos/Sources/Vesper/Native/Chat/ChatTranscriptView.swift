@@ -579,6 +579,8 @@ private struct ChatMessageRowView: View {
             EmbeddedBlockView(kind: kind, source: source, messageID: message.id, info: info, index: index)
         case .chart(let spec):
             ChatChartCardView(spec: spec)
+        case .stats(let spec):
+            ChatStatsCardView(spec: spec)
         case .choices(let card):
             ChatChoicesCardView(
                 card: card,
