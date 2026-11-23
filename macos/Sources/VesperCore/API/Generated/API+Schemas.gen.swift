@@ -12646,6 +12646,30 @@ extension API {
         }
     }
 
+    public struct LibraryBulkDelete: Codable, Sendable, Equatable {
+        public var ids: [Swift.String]
+
+        public init(
+            ids: [Swift.String]
+        ) {
+            self.ids = ids
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case ids
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.ids = try c.decodeIfPresent([Swift.String].self, forKey: .ids) ?? []
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(ids, forKey: .ids)
+        }
+    }
+
     public struct LibraryDiagramSave: Codable, Sendable, Equatable {
         /// The assistant reply the diagram is in
         public var messageId: Swift.String
@@ -27151,6 +27175,30 @@ extension API {
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encode(body, forKey: .body)
             try c.encode(lesson, forKey: .lesson)
+        }
+    }
+
+    public struct BulkDeleteLibraryItemsResponse: Codable, Sendable, Equatable {
+        public var deleted: Swift.Int
+
+        public init(
+            deleted: Swift.Int
+        ) {
+            self.deleted = deleted
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case deleted
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.deleted = try c.decode(Swift.Int.self, forKey: .deleted)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(deleted, forKey: .deleted)
         }
     }
 

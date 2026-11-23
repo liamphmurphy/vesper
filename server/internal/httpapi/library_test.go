@@ -192,3 +192,126 @@ func TestLibrarySavesDiagrams(t *testing.T) {
 	}
 	e.want("POST", "/library/diagrams", body, http.StatusCreated)
 }
+
+// Bulk delete removes every matching caller-owned item in one call, ignores
+// missing or other users' IDs, and deletes blobs only once nothing holds them.
+func TestLibraryBulkDelete(t *testing.T) {
+	e, s3 := newAvatarEnv(t)
+	ctx := t.Context()
+	png := []byte("\x89PNG\r\n\x1a\nbytes")
+
+	// Validation: empty list and oversized list fail with 422.
+	e.want("POST", "/library/bulk-delete", map[string]any{"ids": []string{}}, http.StatusUnprocessableEntity)
+	tooMany := make([]string, maxLibraryBulkDelete+1)
+	for i := range tooMany {
+		tooMany[i] = uuid.NewString()
+	}
+	e.want("POST", "/library/bulk-delete", map[string]any{"ids": tooMany}, http.StatusUnprocessableEntity)
+
+	// Two standalone items sharing the same blob_key: deleting both together
+	// must orphan and remove the blob.
+	sharedKey := "library-bulk/" + uuid.NewString()
+	s3.put(avatarBucket+"/"+sharedKey, png, "image/png")
+	sharedA, err := e.q.CreateLibraryItem(ctx, store.CreateLibraryItemParams{WorkspaceID: e.me.WorkspaceID, UserID: e.me.ID, Kind: "image", Title: "Shared A",
+		Filename: "a.png", ContentType: "image/png", SizeBytes: int64(len(png)), BlobKey: sharedKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sharedB, err := e.q.CreateLibraryItem(ctx, store.CreateLibraryItemParams{WorkspaceID: e.me.WorkspaceID, UserID: e.me.ID, Kind: "image", Title: "Shared B",
+		Filename: "b.png", ContentType: "image/png", SizeBytes: int64(len(png)), BlobKey: sharedKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// An item whose blob is still referenced by a chat attachment: row is
+	// removed, but the blob must stay.
+	chat := e.newChat(nil)
+	chatID := uuid.MustParse(chat["id"].(string))
+	reply, err := e.q.AppendChatMessage(ctx, store.AppendChatMessageParams{SessionID: chatID, Role: "assistant", BodyMd: "here", ContextRefs: []byte("[]"), Citations: []byte("[]")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chatKey := "library-bulk/" + uuid.NewString()
+	s3.put(avatarBucket+"/"+chatKey, png, "image/png")
+	if _, err := e.q.CreateGeneratedChatAttachment(ctx, store.CreateGeneratedChatAttachmentParams{WorkspaceID: e.me.WorkspaceID, UserID: e.me.ID, MessageID: &reply.ID,
+		Filename: "chat.png", ContentType: "image/png", SizeBytes: int64(len(png)), BlobKey: chatKey}); err != nil {
+		t.Fatal(err)
+	}
+	inChat, err := e.q.CreateLibraryItem(ctx, store.CreateLibraryItemParams{WorkspaceID: e.me.WorkspaceID, UserID: e.me.ID, Kind: "image", Title: "In chat",
+		Filename: "chat.png", ContentType: "image/png", SizeBytes: int64(len(png)), BlobKey: chatKey, ChatID: &chatID, MessageID: &reply.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A link with no blob_key and an item kept untouched.
+	link, err := e.q.CreateLibraryLink(ctx, store.CreateLibraryLinkParams{WorkspaceID: e.me.WorkspaceID, UserID: e.me.ID, Title: "Example", ContentType: "text/html", Url: "https://example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keptKey := "library-bulk/" + uuid.NewString()
+	s3.put(avatarBucket+"/"+keptKey, png, "image/png")
+	kept, err := e.q.CreateLibraryItem(ctx, store.CreateLibraryItemParams{WorkspaceID: e.me.WorkspaceID, UserID: e.me.ID, Kind: "image", Title: "Kept",
+		Filename: "kept.png", ContentType: "image/png", SizeBytes: int64(len(png)), BlobKey: keptKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Another user's item must never be deleted or counted.
+	other, err := e.q.CreateUser(ctx, store.CreateUserParams{WorkspaceID: e.me.WorkspaceID, Name: "Other", Email: "bulk-other@example.com", Initials: "BO"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherKey := "library-bulk/" + uuid.NewString()
+	s3.put(avatarBucket+"/"+otherKey, png, "image/png")
+	otherItem, err := e.q.CreateLibraryItem(ctx, store.CreateLibraryItemParams{WorkspaceID: e.me.WorkspaceID, UserID: other.ID, Kind: "image", Title: "Other's",
+		Filename: "other.png", ContentType: "image/png", SizeBytes: int64(len(png)), BlobKey: otherKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Send duplicate ID, missing ID, and other user's ID alongside caller's items.
+	resp := e.want("POST", "/library/bulk-delete", map[string]any{
+		"ids": []string{
+			sharedA.ID.String(),
+			sharedA.ID.String(),
+			sharedB.ID.String(),
+			inChat.ID.String(),
+			link.ID.String(),
+			otherItem.ID.String(),
+			uuid.NewString(),
+		},
+	}, http.StatusOK)
+	if got := int(resp["deleted"].(float64)); got != 4 {
+		t.Fatalf("deleted %d, want 4", got)
+	}
+
+	// Shared orphan blob was deleted; chat-referenced, kept, and other user's blobs remain.
+	if keys := s3.keys(avatarBucket + "/" + sharedKey); len(keys) != 0 {
+		t.Fatalf("shared orphan blob kept: %v", keys)
+	}
+	if keys := s3.keys(avatarBucket + "/" + chatKey); len(keys) != 1 {
+		t.Fatalf("chat-referenced blob removed: %v", keys)
+	}
+	if keys := s3.keys(avatarBucket + "/" + keptKey); len(keys) != 1 {
+		t.Fatalf("kept blob removed: %v", keys)
+	}
+	if keys := s3.keys(avatarBucket + "/" + otherKey); len(keys) != 1 {
+		t.Fatalf("other user's blob removed: %v", keys)
+	}
+
+	// Caller's library now contains only the kept item; other user's item is intact.
+	remaining := e.want("GET", "/library", nil, http.StatusOK)["items"].([]any)
+	if len(remaining) != 1 || remaining[0].(map[string]any)["id"] != kept.ID.String() {
+		t.Fatalf("remaining items %v", remaining)
+	}
+	otherRows, err := e.q.ListLibraryItems(ctx, store.ListLibraryItemsParams{WorkspaceID: e.me.WorkspaceID, UserID: other.ID, RowLimit: 10})
+	if err != nil || len(otherRows) != 1 || otherRows[0].ID != otherItem.ID {
+		t.Fatalf("other user's library %v %v", otherRows, err)
+	}
+
+	// Re-deleting the same IDs is idempotent and returns deleted: 0.
+	again := e.want("POST", "/library/bulk-delete", map[string]any{"ids": []string{sharedA.ID.String()}}, http.StatusOK)
+	if got := int(again["deleted"].(float64)); got != 0 {
+		t.Fatalf("repeat deleted %d, want 0", got)
+	}
+}

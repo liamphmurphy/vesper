@@ -100,6 +100,7 @@ final class LibraryLogicTests: XCTestCase {
         XCTAssertEqual(LibraryLogic.fileMeta(item(size: 100)), "100 B")
         XCTAssertEqual(LibraryLogic.noun(.audio), "audio file")
         XCTAssertEqual(LibraryLogic.noun(.image), "image")
+        XCTAssertEqual(LibraryLogic.noun(.link), "link")
         XCTAssertNil(LibraryLogic.removeExplanation(item(source: .upload)))
         XCTAssertEqual(LibraryLogic.removeExplanation(item()), "It stays in its chat while that chat exists.")
         XCTAssertTrue(LibraryLogic.emptyText(.export).hasPrefix("No exports yet."))
@@ -107,6 +108,37 @@ final class LibraryLogicTests: XCTestCase {
         XCTAssertFalse(LibraryLogic.isPDF("image/png"))
         XCTAssertEqual(LibraryLogic.exportApp(.init(rawValue: "slides")).href, "/apps/slides")
         XCTAssertEqual(LibraryLogic.exportSourceNote(.init(rawValue: "changed")), "edited since")
+    }
+
+    func testBulkDeleteHelpers() {
+        XCTAssertEqual(LibraryLogic.bulkDeleteBatches([]), [])
+        XCTAssertEqual(LibraryLogic.bulkDeleteBatches(["", "a", "b", "a", "", "c"], maxBatchSize: 2), [["a", "b"], ["c"]])
+        XCTAssertEqual(LibraryLogic.bulkDeleteBatches(["a", "b", "c"], maxBatchSize: 5), [["a", "b", "c"]])
+
+        XCTAssertNil(LibraryLogic.removeConfirmation([]))
+        let singleUpload = LibraryLogic.removeConfirmation([item("u1", kind: .image, source: .upload)])
+        XCTAssertEqual(singleUpload?.title, "Remove this image from your Library?")
+        XCTAssertNil(singleUpload?.body)
+
+        let singleLink = LibraryLogic.removeConfirmation([item("l1", kind: .link, source: .generated)])
+        XCTAssertEqual(singleLink?.title, "Remove this link from your Library?")
+        XCTAssertEqual(singleLink?.body, "It stays in its chat while that chat exists.")
+
+        let multiUpload = LibraryLogic.removeConfirmation([item("u1", source: .upload), item("u2", source: .upload)])
+        XCTAssertEqual(multiUpload?.title, "Remove 2 items from your Library?")
+        XCTAssertNil(multiUpload?.body)
+
+        let multiMixed = LibraryLogic.removeConfirmation([item("u1", source: .upload), item("g1", source: .generated)])
+        XCTAssertEqual(multiMixed?.title, "Remove 2 items from your Library?")
+        XCTAssertEqual(multiMixed?.body, "Items from chats stay in their chats while those chats exist.")
+
+        XCTAssertNil(LibraryLogic.deleteMomentsConfirmation(count: 0))
+        let oneMoment = LibraryLogic.deleteMomentsConfirmation(count: 1)
+        XCTAssertEqual(oneMoment?.title, "Delete this moment?")
+        XCTAssertEqual(oneMoment?.body, "Its persona will no longer remember it.")
+        let manyMoments = LibraryLogic.deleteMomentsConfirmation(count: 4)
+        XCTAssertEqual(manyMoments?.title, "Delete 4 moments?")
+        XCTAssertEqual(manyMoments?.body, "Their personas will no longer remember them.")
     }
 
     func testFormatting() {
@@ -246,5 +278,33 @@ final class LibrarySelectionTests: XCTestCase {
         s.clear()
         XCTAssertTrue(s.selected.isEmpty)
         XCTAssertNil(s.focused)
+    }
+
+    func testSelectModeHelpersAndAnchorReset() {
+        XCTAssertEqual(LibrarySelection.tapModifier(selecting: false, command: false, shift: false), .none)
+        XCTAssertEqual(LibrarySelection.tapModifier(selecting: false, command: true, shift: false), .toggle)
+        XCTAssertEqual(LibrarySelection.tapModifier(selecting: false, command: false, shift: true), .extend)
+        XCTAssertEqual(LibrarySelection.tapModifier(selecting: true, command: false, shift: false), .toggle)
+        XCTAssertEqual(LibrarySelection.tapModifier(selecting: true, command: false, shift: true), .extend)
+
+        var s = LibrarySelection()
+        XCTAssertFalse(s.showsBar(selecting: false))
+        XCTAssertTrue(s.showsBar(selecting: true))
+        XCTAssertFalse(s.isAllSelected(in: []))
+        XCTAssertFalse(s.isAllSelected(in: ids))
+
+        s.click("b", in: ids, modifier: .toggle)
+        XCTAssertFalse(s.showsBar(selecting: false))
+        s.click("b", in: ids, modifier: .toggle)
+        XCTAssertTrue(s.selected.isEmpty)
+        XCTAssertNil(s.anchor, "deselecting the anchor clears it so a later shift-click starts fresh")
+        s.click("d", in: ids, modifier: .extend)
+        XCTAssertEqual(s.selected, ["d"])
+
+        s.toggleAll(ids)
+        XCTAssertTrue(s.isAllSelected(in: ids))
+        XCTAssertTrue(s.showsBar(selecting: false))
+        s.toggleAll(ids)
+        XCTAssertTrue(s.selected.isEmpty)
     }
 }

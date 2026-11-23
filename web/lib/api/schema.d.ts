@@ -2383,6 +2383,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/library/bulk-delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Remove multiple items from your Library
+         * @description Removes every listed item that belongs to the caller. Items that are
+         *     missing or belong to someone else are ignored. Each item's object is
+         *     removed once nothing else references it; items from chats stay in their
+         *     chats while those chats exist. 422 if ids is empty or exceeds 500.
+         */
+        post: operations["bulkDeleteLibraryItems"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/library/diagrams": {
         parameters: {
             query?: never;
@@ -9506,6 +9529,9 @@ export interface components {
             items: components["schemas"]["LibraryItem"][];
             has_more: boolean;
         };
+        LibraryBulkDelete: {
+            ids: string[];
+        };
         ChatMessage: {
             /** Format: uuid */
             id: string;
@@ -14810,6 +14836,34 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LibraryItem"];
+                };
+            };
+            422: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    bulkDeleteLibraryItems: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryBulkDelete"];
+            };
+        };
+        responses: {
+            /** @description Removed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        deleted: number;
+                    };
                 };
             };
             422: components["responses"]["Error"];
