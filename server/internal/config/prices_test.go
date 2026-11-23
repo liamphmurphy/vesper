@@ -40,6 +40,17 @@ func TestHostWorkspacesMustBeAbsolute(t *testing.T) {
 	}
 }
 
+func TestExtraCAFileMustBeAbsolute(t *testing.T) {
+	t.Setenv("RUNNER_EXTRA_CA_FILE", "zscaler-root.pem")
+	if _, err := Load(); err == nil {
+		t.Fatal("relative RUNNER_EXTRA_CA_FILE accepted")
+	}
+	t.Setenv("RUNNER_EXTRA_CA_FILE", "/Users/me/zscaler-root.pem")
+	if c, err := Load(); err != nil || c.Runner.ExtraCAFile != "/Users/me/zscaler-root.pem" {
+		t.Fatalf("absolute path: %q %v", c.Runner.ExtraCAFile, err)
+	}
+}
+
 func TestSpareVMsDefaultAndBounds(t *testing.T) {
 	c, err := Load()
 	if err != nil || c.Runner.SpareVMs != 1 {

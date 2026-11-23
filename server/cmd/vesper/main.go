@@ -364,6 +364,12 @@ func runRunner(ctx context.Context, log *slog.Logger) error {
 	var backend runner.Backend
 	switch rc.Backend {
 	case "microvm":
+		var extraCA []byte
+		if rc.ExtraCAFile != "" {
+			if extraCA, err = runner.LoadExtraCACerts(rc.ExtraCAFile); err != nil {
+				return err
+			}
+		}
 		apiUpstream := os.Getenv("API_INTERNAL_URL")
 		if apiUpstream == "" {
 			if u, err := url.Parse(rc.MCPURL); err == nil && u.Host != "" && u.Host != microvm.InternalAPIHost {
@@ -398,6 +404,7 @@ func runRunner(ctx context.Context, log *slog.Logger) error {
 			MCPURL:           rc.MCPURL,
 			APIUpstream:      apiUpstream,
 			CacheStore:       cacheStore,
+			ExtraCACerts:     extraCA,
 			Log:              log,
 		}
 		defer func() { _ = m.Close() }()
