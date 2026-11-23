@@ -230,6 +230,10 @@ export function parseSafeHttpsUrl(raw: unknown): string | null {
   return parseUrlWithProtocols(raw, new Set(["https:"]));
 }
 
+export function parseSafeWssUrl(raw: unknown): string | null {
+  return parseUrlWithProtocols(raw, new Set(["wss:"]));
+}
+
 function parseTimestampSeconds(raw: string | null): number | null {
   if (!raw) return null;
   const s = raw.trim();
@@ -346,6 +350,9 @@ export type BridgeMessage =
   | { channel: "vesper:custom-app"; id: string; type: "api"; payload: { method: string; path: string; body?: unknown } }
   | { channel: "vesper:custom-app"; id: string; type: "mcp"; payload: { connector: string; tool: string; arguments: Record<string, unknown> } }
   | { channel: "vesper:custom-app"; id: string; type: "image"; payload: { url: string } }
+  | { channel: "vesper:custom-app"; id: ""; type: "ws-open"; payload: { connId: string; url: string; protocols?: string[] } }
+  | { channel: "vesper:custom-app"; id: ""; type: "ws-send"; payload: { connId: string; data: string } }
+  | { channel: "vesper:custom-app"; id: ""; type: "ws-close"; payload: { connId: string; code?: number; reason?: string } }
   | { channel: "vesper:custom-app"; id: ""; type: "set-nav"; payload: { items: CustomAppNavSpec[]; activeId?: string } }
   | { channel: "vesper:custom-app"; id: ""; type: "ask-dock"; payload: { prompt: string } }
   | { channel: "vesper:custom-app"; id: ""; type: "open-url"; payload: { url: string } }
@@ -388,6 +395,40 @@ export function parseBridgeMessage(raw: unknown): BridgeMessage | null {
       const url = parseSafeHttpsUrl(payload.url);
       if (!url) return null;
       return { channel: "vesper:custom-app", id, type: "image", payload: { url } };
+    }
+    case "ws-open": {
+      const connId = typeof payload.connId === "string" ? payload.connId.trim() : "";
+      const url = parseSafeWssUrl(payload.url);
+      if (!connId || connId.length > 64 || !url) return null;
+      const rawProtos = Array.isArray(payload.protocols) ? payload.protocols : [];
+      const protocols = rawProtos
+        .filter((p): p is string => typeof p === "string")
+        .map((p) => p.trim())
+        .filter((p) => p.length > 0 && p.length <= 64)
+        .slice(0, 4);
+      return {
+        channel: "vesper:custom-app",
+        id: "",
+        type: "ws-open",
+        payload: { connId, url, ...(protocols.length ? { protocols } : {}) },
+      };
+    }
+    case "ws-send": {
+      const connId = typeof payload.connId === "string" ? payload.connId.trim() : "";
+      if (!connId || connId.length > 64 || typeof payload.data !== "string") return null;
+      return { channel: "vesper:custom-app", id: "", type: "ws-send", payload: { connId, data: payload.data } };
+    }
+    case "ws-close": {
+      const connId = typeof payload.connId === "string" ? payload.connId.trim() : "";
+      if (!connId || connId.length > 64) return null;
+      const code = typeof payload.code === "number" && payload.code >= 1000 && payload.code <= 4999 ? payload.code : undefined;
+      const reason = typeof payload.reason === "string" ? payload.reason.slice(0, 123) : undefined;
+      return {
+        channel: "vesper:custom-app",
+        id: "",
+        type: "ws-close",
+        payload: { connId, ...(code !== undefined ? { code } : {}), ...(reason ? { reason } : {}) },
+      };
     }
     case "set-nav": {
       const rawItems = Array.isArray(payload.items) ? payload.items : [];
