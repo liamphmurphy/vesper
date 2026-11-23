@@ -35,6 +35,9 @@ enum WebViewFactory {
         config.applicationNameForUserAgent = userAgentSuffix
         // element.requestFullscreen (slides/designs present, video, dev terminal).
         config.preferences.isElementFullscreenEnabled = true
+        if kind == .vesper {
+            config.allowsAirPlayForMediaPlayback = true
+        }
         switch kind {
         case .vesper, .inspectorPanel:
             config.websiteDataStore = WKWebsiteDataStore.default()

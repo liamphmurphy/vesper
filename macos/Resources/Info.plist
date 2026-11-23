@@ -49,6 +49,9 @@
 	<!-- "Open in editor" opens a terminal command through Terminal. -->
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Vesper opens a run's workspace folder in Terminal when you ask it to.</string>
+	<!-- AirPlay / LAN media relay: custom apps can serve filtered HLS playlists on the local network. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Vesper serves live video playlists on your local network so Apple TV and other AirPlay devices can play them.</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

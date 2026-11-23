@@ -72,6 +72,11 @@ type MCPCallContext struct {
 
 	// Media serves media.download/import/status/delete; nil reports them unavailable.
 	Media *Media
+	// HLSRelay serves media.relayHLS/stopRelay; nil reports them unavailable.
+	HLSRelay *HLSRelay
+	// RelayToolCaller invokes one of this app's own MCP tools on behalf of an
+	// active HLS relay stream when a player polls a playlist.
+	RelayToolCaller func(ctx context.Context, tool string, args map[string]any) (any, error)
 	// Nix serves nix.start/run/status/cancel/delete/readFile; nil reports them unavailable.
 	Nix *Nix
 }
@@ -428,6 +433,9 @@ func handleWorkerRPC(ctx context.Context, mc *MCPCallContext, method string, raw
 
 	case "media_download", "media_import", "media_status", "media_delete":
 		return handleMediaRPC(ctx, mc, method, raw)
+
+	case "media_relay_hls", "media_stop_relay":
+		return handleHLSRelayRPC(ctx, mc, method, raw)
 
 	case "nix_start", "nix_run", "nix_status", "nix_cancel", "nix_delete", "nix_read_file":
 		return handleNixRPC(ctx, mc, method, raw)

@@ -10,6 +10,7 @@ export type NewCustomApp = Schemas["NewCustomApp"];
 export type UpdateCustomApp = Schemas["UpdateCustomApp"];
 export type CustomAppInvokeRequest = Schemas["CustomAppInvokeRequest"];
 export type CustomAppInvokeResponse = Schemas["CustomAppInvokeResponse"];
+export type CustomAppHLSStream = Schemas["CustomAppHLSStream"];
 
 export const customAppKeys = {
   all: ["custom-apps"] as const,
@@ -76,4 +77,16 @@ export function useDeleteCustomApp() {
 
 export async function invokeCustomApp(slug: string, body: CustomAppInvokeRequest): Promise<CustomAppInvokeResponse> {
   return unwrap(api.POST("/custom-apps/{slug}/invoke", { params: { path: { slug } }, body }));
+}
+
+export async function getCustomAppHlsStream(slug: string, streamId: string): Promise<CustomAppHLSStream> {
+  return unwrap(api.GET("/custom-apps/{slug}/hls/{streamId}", { params: { path: { slug, streamId } } }));
+}
+
+export function stopCustomAppHlsStream(slug: string, streamId: string): void {
+  void fetch(`/api/v1/custom-apps/${encodeURIComponent(slug)}/hls/${encodeURIComponent(streamId)}`, {
+    method: "DELETE",
+    credentials: "same-origin",
+    keepalive: true,
+  }).catch(() => {});
 }

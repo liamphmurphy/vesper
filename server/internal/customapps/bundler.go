@@ -726,6 +726,7 @@ export function playVideo(url, opts) {
       url: String(url || ""),
       ...(typeof options.title === "string" && options.title ? { title: options.title } : {}),
       ...(typeof options.theater === "boolean" ? { theater: options.theater } : {}),
+      ...(typeof options.externalUrl === "string" && options.externalUrl ? { externalUrl: options.externalUrl } : {}),
     },
   }, "*");
 }
@@ -1038,8 +1039,9 @@ export async function secretFetch(secret, url, init = {}) {
 }
 
 // media downloads direct video files (or imports videos produced by a Nix job)
-// into Vesper (app.media:download) so they play locally: pass an item's
-// play_url to playVideo once its state is "done".
+// into Vesper (app.media:download) so they play locally, and relays live HLS
+// playlists on the local network (app.media:relay) for native playback and AirPlay:
+// pass the returned play_url to playVideo.
 export const media = {
   download(url) {
     return callHost("media_download", { url: String(url) });
@@ -1052,6 +1054,12 @@ export const media = {
   },
   delete(id) {
     return callHost("media_delete", { id: String(id) });
+  },
+  relayHLS(spec) {
+    return callHost("media_relay_hls", spec || {});
+  },
+  stopRelay(id) {
+    return callHost("media_stop_relay", { id: String(id) });
   },
 };
 
