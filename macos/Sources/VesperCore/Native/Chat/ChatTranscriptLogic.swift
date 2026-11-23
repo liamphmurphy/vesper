@@ -86,6 +86,9 @@ public enum ChatMessageSegment: Sendable, Equatable {
     case stats(ChatStatsSpec)
     case diff(ChatDiffSpec)
     case compare(ChatCompareSpec)
+    case timeline(ChatTimelineSpec)
+    case tree(ChatTreeSpec)
+    case compareImages(ChatCompareImagesSpec)
     case choices(ChatChoicesCard)
     case dispatch(ChatDispatchCard)
     case recommend([ChatRecommendCard])
@@ -393,6 +396,39 @@ public enum ChatTranscriptLogic {
                         segments.append(.compare(spec))
                     case .failure(let err):
                         segments.append(.invalidBlock(kind: "compare", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatTimelineSpec.isTimelineFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatTimelineSpec.parse(code) {
+                    case .success(let spec):
+                        segments.append(.timeline(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "timeline", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatTreeSpec.isTreeFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatTreeSpec.parse(code, info: infoOpt) {
+                    case .success(let spec):
+                        segments.append(.tree(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "tree", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatCompareImagesSpec.isCompareImagesFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatCompareImagesSpec.parse(code) {
+                    case .success(let spec):
+                        segments.append(.compareImages(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "compare-images", error: err.message, source: code))
                     }
                     i = nextIndex
                     continue
