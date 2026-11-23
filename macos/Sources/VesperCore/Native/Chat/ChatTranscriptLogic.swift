@@ -89,6 +89,8 @@ public enum ChatMessageSegment: Sendable, Equatable {
     case timeline(ChatTimelineSpec)
     case tree(ChatTreeSpec)
     case compareImages(ChatCompareImagesSpec)
+    case graph(ChatGraphSpec)
+    case plot(ChatPlotSpec)
     case choices(ChatChoicesCard)
     case dispatch(ChatDispatchCard)
     case recommend([ChatRecommendCard])
@@ -429,6 +431,28 @@ public enum ChatTranscriptLogic {
                         segments.append(.compareImages(spec))
                     case .failure(let err):
                         segments.append(.invalidBlock(kind: "compare-images", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatGraphSpec.isGraphFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatGraphSpec.parse(code) {
+                    case .success(let spec):
+                        segments.append(.graph(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "graph", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatPlotSpec.isPlotFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatPlotSpec.parse(code) {
+                    case .success(let spec):
+                        segments.append(.plot(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "plot", error: err.message, source: code))
                     }
                     i = nextIndex
                     continue

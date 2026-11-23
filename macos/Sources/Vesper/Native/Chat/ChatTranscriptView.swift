@@ -591,6 +591,10 @@ private struct ChatMessageRowView: View {
             ChatTreeCardView(spec: spec)
         case .compareImages(let spec):
             ChatCompareImagesCardView(spec: spec)
+        case .graph(let spec):
+            ChatGraphCardView(spec: spec)
+        case .plot(let spec):
+            ChatPlotCardView(spec: spec)
         case .choices(let card):
             ChatChoicesCardView(
                 card: card,
