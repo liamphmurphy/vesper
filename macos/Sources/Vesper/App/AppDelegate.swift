@@ -55,33 +55,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     // MARK: Lifecycle
 
+    /// `terminate` can be called from inside a main-queue block, where a plain `.terminateLater`
+    /// cleanup can't start; the coordinator copes with that (see QuitCoordinator).
+    private lazy var quit = QuitCoordinator(
+        cleanup: { [unowned self] in await prepareToQuit() },
+        reply: { shouldTerminate in
+            vlog("quit: replying \(shouldTerminate ? "yes" : "no")")
+            Self.replyToTerminate(shouldTerminate)
+        },
+        terminate: {
+            vlog("quit: cleanup finished after unwinding; quitting again")
+            NSApp.terminate(nil)
+        }
+    )
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         vlog("quit: asked to terminate")
-        Task {
-            for window in app.windows where !(await window.confirmLeavingUnsavedChanges()) {
-                vlog("quit: cancelled for unsaved changes")
-                Self.replyToTerminate(false)
-                return
-            }
-            guard await app.system.confirmQuit() else {
-                vlog("quit: cancelled for active runs")
-                Self.replyToTerminate(false)
-                return
-            }
-            app.saveSessionNow()
-            app.aux.cleanupQuickLook()
-            vlog("quit: stopping the stack")
-            if let stack = app.stack { await stack.stop() }
-            vlog("quit: replying yes")
-            Self.replyToTerminate(true)
+        return quit.shouldTerminate()
+    }
+
+    /// Unsaved pages, active runs, then the stack. false: stay open.
+    private func prepareToQuit() async -> Bool {
+        for window in app.windows where !(await window.confirmLeavingUnsavedChanges()) {
+            vlog("quit: cancelled for unsaved changes")
+            return false
         }
-        return .terminateLater
+        guard await app.system.confirmQuit() else {
+            vlog("quit: cancelled for active runs")
+            return false
+        }
+        app.saveSessionNow()
+        app.aux.cleanupQuickLook()
+        vlog("quit: stopping the stack")
+        if let stack = app.stack { await stack.stop() }
+        return true
     }
 
     /// Answers `.terminateLater`, then wakes AppKit's wait for it. While the reply is pending AppKit
     /// blocks in nextEventMatchingMask (NSModalPanelRunLoopMode) and only checks the reply when an
-    /// event arrives. ⌘Q is followed by its key-up, but Quit from the menu bar extra or the Dock
-    /// leaves no event behind, so the app sat there until the next click (a second Quit).
+    /// event arrives; posting one means the reply never waits for the person's next click.
     private static func replyToTerminate(_ shouldTerminate: Bool) {
         NSApp.reply(toApplicationShouldTerminate: shouldTerminate)
         if let wake = NSEvent.otherEvent(with: .applicationDefined, location: .zero, modifierFlags: [], timestamp: 0,
