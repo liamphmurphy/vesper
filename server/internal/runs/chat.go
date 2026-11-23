@@ -993,6 +993,13 @@ func startChatTurnWithRollover(ctx context.Context, q *store.Queries, chat store
 				}
 				needsCompact = true
 			}
+			if !needsCompact {
+				if notice, err := ChecklistPromptNotice(ctx, q, chat.ID); err != nil {
+					return chat, run, turn, err
+				} else if notice != "" {
+					prompt += notice
+				}
+			}
 			if needsCompact {
 				total, err := q.CountChatHistory(ctx, chat.ID)
 				if err != nil {
@@ -1085,7 +1092,11 @@ func startChatTurnWithRollover(ctx context.Context, q *store.Queries, chat store
 				}
 				hist := make([]HandoffMessage, len(rows))
 				for i, r := range rows {
-					hist[i] = HandoffMessage{Seq: r.Seq, Role: r.Role, Harness: deref(r.Harness), Model: deref(r.Model), Persona: r.PersonaName, Body: r.BodyMd}
+					body := r.BodyMd
+					if r.Role == "assistant" {
+						body = ApplyChecklistState(body, ParseChecklistState(r.ChecklistState))
+					}
+					hist[i] = HandoffMessage{Seq: r.Seq, Role: r.Role, Harness: deref(r.Harness), Model: deref(r.Model), Persona: r.PersonaName, Body: body}
 				}
 				hc, err := loadHandoffContext(ctx, q, chat.ID)
 				if err != nil {

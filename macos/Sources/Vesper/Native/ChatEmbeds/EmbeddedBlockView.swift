@@ -155,6 +155,7 @@ struct DiagramEmbedView: View {
     @State private var rendered: [EmbedCacheKey: RenderedEmbed] = [:]
     @State private var failed: Set<EmbedCacheKey> = []
     @State private var save = SaveState.idle
+    @State private var showLightbox = false
 
     enum SaveState: Equatable {
         case idle, saving, saved(String), failed(String)
@@ -186,8 +187,20 @@ struct DiagramEmbedView: View {
             views: didFail ? [] : ["Image", "Code"],
             view: $view
         ) {
-            if !didFail, view == "Image", let portable = portableSVG(current, palette: palette, svg: svg, count: count) {
-                actions(portable)
+            if !didFail, view == "Image" {
+                if let portable = portableSVG(current, palette: palette, svg: svg, count: count) {
+                    actions(portable)
+                }
+                if current != nil {
+                    Button {
+                        showLightbox = true
+                    } label: {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right").imageScale(.small)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Expand to lightbox")
+                    .accessibilityLabel("Expand \(label) to lightbox")
+                }
             }
         } content: {
             if showCode {
@@ -208,6 +221,14 @@ struct DiagramEmbedView: View {
             // The next frame too, so stepping forward doesn't wait.
             if stepped, at + 1 < count {
                 await draw(at + 1, palette: palette, svg: svg, themed: themed, stepped: stepped)
+            }
+        }
+        .sheet(isPresented: $showLightbox) {
+            ChatLightboxSheet(title: name, subtitle: stepped ? "Step \(at + 1) of \(count)" : label) {
+                VStack(spacing: 12) {
+                    stage(current, key: key, themed: themed, palette: palette, alt: stepped ? "\(name). Step \(at + 1) of \(count)" : name)
+                    if stepped { stepNav(at: at, count: count, captions: captions) }
+                }
             }
         }
     }

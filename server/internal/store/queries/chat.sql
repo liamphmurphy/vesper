@@ -121,7 +121,7 @@ WHERE id = $1 RETURNING *;
 -- Newest rows first, bounded by limit; bodies are clipped so the read stays small.
 -- persona_name is who wrote an assistant message when the chat has several
 -- personas ('' for the host or a deleted persona).
-SELECT m.seq, m.role, m.harness, m.model, left(m.body_md, sqlc.arg(max_chars)::int)::text AS body_md, COALESCE(p.name, '')::text AS persona_name
+SELECT m.seq, m.role, m.harness, m.model, left(m.body_md, sqlc.arg(max_chars)::int)::text AS body_md, m.checklist_state, COALESCE(p.name, '')::text AS persona_name
 FROM chat_messages m LEFT JOIN personas p ON p.id = m.persona_id
 WHERE m.session_id = sqlc.arg(session_id) AND m.role IN ('user', 'assistant')
 ORDER BY m.seq DESC LIMIT sqlc.arg(row_limit);
@@ -462,6 +462,19 @@ DELETE FROM chat_messages WHERE session_id = $1 AND seq > $2;
 
 -- name: SetChatMessageBody :exec
 UPDATE chat_messages SET body_md = $2 WHERE id = $1;
+
+-- name: SetChatMessageChecklistState :one
+UPDATE chat_messages
+SET checklist_state = $3
+WHERE id = $1 AND session_id = $2
+RETURNING *;
+
+-- name: ListRecentAssistantChecklistMessages :many
+SELECT id, seq, body_md, checklist_state
+FROM chat_messages
+WHERE session_id = $1 AND role = 'assistant' AND checklist_state <> '{}'::jsonb
+ORDER BY seq DESC
+LIMIT 5;
 
 -- name: SearchChatMessages :many
 -- The caller's own messages matching a web-style query, best first. The snippet

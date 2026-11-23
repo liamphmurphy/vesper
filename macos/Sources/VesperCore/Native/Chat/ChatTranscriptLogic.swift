@@ -83,6 +83,21 @@ public enum ChatMessageSegment: Sendable, Equatable {
     case markdown(String)
     case embedded(EmbeddedBlockKind, source: String, info: String?, index: Int)
     case chart(ChatChartSpec)
+    case stats(ChatStatsSpec)
+    case diff(ChatDiffSpec)
+    case compare(ChatCompareSpec)
+    case timeline(ChatTimelineSpec)
+    case tree(ChatTreeSpec)
+    case compareImages(ChatCompareImagesSpec)
+    case graph(ChatGraphSpec)
+    case plot(ChatPlotSpec)
+    case dataTable(ChatDataTableSpec)
+    case codeGroup(ChatCodeGroupSpec)
+    case kv(ChatKVSpec)
+    case jsonTree(ChatJSONTreeSpec)
+    case http(ChatHTTPSpec)
+    case tabs(ChatTabsSpec)
+    case details(ChatDetailsSpec)
     case choices(ChatChoicesCard)
     case dispatch(ChatDispatchCard)
     case recommend([ChatRecommendCard])
@@ -90,6 +105,10 @@ public enum ChatMessageSegment: Sendable, Equatable {
     case canvas(id: String)
     case pdf(id: String)
     case researchPlan(ChatResearchPlanCard)
+    case callout(ChatCalloutBlock)
+    case checklist(ChatChecklistBlock)
+    /// A visualization fence whose spec failed validation: shows a visible error banner and raw source.
+    case invalidBlock(kind: String, error: String, source: String)
 }
 
 public struct ParsedChatMessage: Sendable, Equatable {
@@ -98,6 +117,7 @@ public struct ParsedChatMessage: Sendable, Equatable {
     public var segments: [ChatMessageSegment]
     public var sources: [ChatListedSource]
     public var mentions: [String]
+    public var entityRefs: [ChatEntityRef]
 
     public var hasDispatchSegment: Bool {
         segments.contains { if case .dispatch = $0 { return true }; return false }
@@ -116,13 +136,15 @@ public struct ParsedChatMessage: Sendable, Equatable {
         context: ChatStrippedContext,
         segments: [ChatMessageSegment],
         sources: [ChatListedSource] = [],
-        mentions: [String] = []
+        mentions: [String] = [],
+        entityRefs: [ChatEntityRef] = []
     ) {
         self.typedBody = typedBody
         self.context = context
         self.segments = segments
         self.sources = sources
         self.mentions = mentions
+        self.entityRefs = entityRefs
     }
 }
 
@@ -243,27 +265,32 @@ public enum ChatTranscriptLogic {
     public static func parseMessage(
         _ rawBody: String,
         extractSources: Bool = true,
-        knownPersonaNames: [String] = []
+        knownPersonaNames: [String] = [],
+        interactiveChecklists: Bool? = nil
     ) -> ParsedChatMessage {
         let context = stripContext(rawBody)
         let (bodyWithoutSources, sources) = extractSources ? splitSourceList(context.typedBody) : (context.typedBody, [])
         let numberedCitations = sources.compactMap(\.number)
         let mentions = parseMentions(in: bodyWithoutSources, knownNames: knownPersonaNames)
-        let segments = parseSegments(bodyWithoutSources, citationNumbers: numberedCitations)
+        let enableChecklists = interactiveChecklists ?? extractSources
+        let segments = parseSegments(bodyWithoutSources, citationNumbers: numberedCitations, interactiveChecklists: enableChecklists)
+        let entityRefs = extractSources ? ChatEntityRefExtractor.extract(from: bodyWithoutSources) : []
         return ParsedChatMessage(
             typedBody: context.typedBody,
             context: context,
             segments: segments,
             sources: sources,
-            mentions: mentions
+            mentions: mentions,
+            entityRefs: entityRefs
         )
     }
 
-    public static func parseSegments(_ markdown: String, citationNumbers: [Int] = []) -> [ChatMessageSegment] {
+    public static func parseSegments(_ markdown: String, citationNumbers: [Int] = [], interactiveChecklists: Bool = false) -> [ChatMessageSegment] {
         let lines = markdown.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         var segments: [ChatMessageSegment] = []
         var mdBuffer: [String] = []
         var embedIndex = 0
+        var nextChecklistIndex = 0
 
         func flushMarkdown() {
             guard !mdBuffer.isEmpty else { return }
@@ -338,9 +365,179 @@ public enum ChatTranscriptLogic {
                     i = nextIndex
                     continue
                 }
-                if ChatChartSpec.isChartFence(infoOpt), case .success(let spec) = ChatChartSpec.parse(code) {
+                if ChatChartSpec.isChartFence(infoOpt) {
                     flushMarkdown()
-                    segments.append(.chart(spec))
+                    switch ChatChartSpec.parse(code) {
+                    case .success(let spec):
+                        segments.append(.chart(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "chart", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatStatsSpec.isStatsFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatStatsSpec.parse(code) {
+                    case .success(let spec):
+                        segments.append(.stats(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "stats", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatDiffSpec.isDiffFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatDiffSpec.parse(code, info: infoOpt) {
+                    case .success(let spec):
+                        segments.append(.diff(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "diff", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatCompareSpec.isCompareFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatCompareSpec.parse(code) {
+                    case .success(let spec):
+                        segments.append(.compare(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "compare", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatTimelineSpec.isTimelineFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatTimelineSpec.parse(code) {
+                    case .success(let spec):
+                        segments.append(.timeline(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "timeline", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatTreeSpec.isTreeFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatTreeSpec.parse(code, info: infoOpt) {
+                    case .success(let spec):
+                        segments.append(.tree(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "tree", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatCompareImagesSpec.isCompareImagesFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatCompareImagesSpec.parse(code) {
+                    case .success(let spec):
+                        segments.append(.compareImages(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "compare-images", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatGraphSpec.isGraphFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatGraphSpec.parse(code) {
+                    case .success(let spec):
+                        segments.append(.graph(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "graph", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatPlotSpec.isPlotFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatPlotSpec.parse(code) {
+                    case .success(let spec):
+                        segments.append(.plot(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "plot", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatDataTableSpec.isDataTableFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatDataTableSpec.parse(code) {
+                    case .success(let spec):
+                        segments.append(.dataTable(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "datatable", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatCodeGroupSpec.isCodeGroupFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatCodeGroupSpec.parse(code) {
+                    case .success(let spec):
+                        segments.append(.codeGroup(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "code-group", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatKVSpec.isKVFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatKVSpec.parse(code) {
+                    case .success(let spec):
+                        segments.append(.kv(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "kv", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatJSONTreeSpec.isJSONTreeFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatJSONTreeSpec.parse(code, info: infoOpt) {
+                    case .success(let spec):
+                        segments.append(.jsonTree(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "json-tree", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatHTTPSpec.isHTTPFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatHTTPSpec.parse(code) {
+                    case .success(let spec):
+                        segments.append(.http(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "http", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatTabsSpec.isTabsFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatTabsSpec.parse(code) {
+                    case .success(let spec):
+                        segments.append(.tabs(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "tabs", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatDetailsSpec.isDetailsFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatDetailsSpec.parse(code, info: infoOpt) {
+                    case .success(let spec):
+                        segments.append(.details(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "details", error: err.message, source: code))
+                    }
                     i = nextIndex
                     continue
                 }
@@ -389,6 +586,55 @@ public enum ChatTranscriptLogic {
                 // Ordinary code fence or invalid/partial special fence: keep verbatim in markdown.
                 for k in i..<nextIndex { mdBuffer.append(lines[k]) }
                 i = nextIndex
+                continue
+            }
+
+            // GitHub/Obsidian callout blockquote: `> [!type] Title` / `> [!type]-`
+            if let header = ChatCalloutBlock.parseHeader(line) {
+                var bodyLines: [String] = []
+                var j = i + 1
+                while j < lines.count, let stripped = ChatCalloutBlock.stripBlockquotePrefix(lines[j]) {
+                    bodyLines.append(stripped)
+                    j += 1
+                }
+                let rawBody = bodyLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+                let body = citationNumbers.isEmpty ? rawBody : linkCitations(rawBody, numbers: citationNumbers)
+                flushMarkdown()
+                segments.append(.callout(ChatCalloutBlock(
+                    kind: header.kind,
+                    rawType: header.rawType,
+                    title: header.title,
+                    body: body,
+                    collapsible: header.collapsible,
+                    defaultCollapsed: header.defaultCollapsed
+                )))
+                i = j
+                continue
+            }
+
+            // Interactive GFM task list (`- [ ]` / `- [x]`) in assistant messages
+            if interactiveChecklists, let firstTask = ChatChecklistBlock.parseTaskLine(line) {
+                var items: [ChatChecklistItem] = [
+                    ChatChecklistItem(index: nextChecklistIndex, defaultChecked: firstTask.checked, indentLevel: firstTask.indentLevel, text: firstTask.text)
+                ]
+                nextChecklistIndex += 1
+                var j = i + 1
+                while j < lines.count {
+                    if let task = ChatChecklistBlock.parseTaskLine(lines[j]) {
+                        items.append(ChatChecklistItem(index: nextChecklistIndex, defaultChecked: task.checked, indentLevel: task.indentLevel, text: task.text))
+                        nextChecklistIndex += 1
+                        j += 1
+                    } else if lines[j].trimmingCharacters(in: .whitespaces).isEmpty,
+                              j + 1 < lines.count,
+                              ChatChecklistBlock.parseTaskLine(lines[j + 1]) != nil {
+                        j += 1
+                    } else {
+                        break
+                    }
+                }
+                flushMarkdown()
+                segments.append(.checklist(ChatChecklistBlock(items: items)))
+                i = j
                 continue
             }
 

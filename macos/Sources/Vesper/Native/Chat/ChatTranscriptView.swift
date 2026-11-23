@@ -546,6 +546,9 @@ private struct ChatMessageRowView: View {
                         ForEach(Array(parsed.segments.enumerated()), id: \.offset) { _, segment in
                             segmentView(segment, citationNumbers: citationNumbers)
                         }
+                        if !parsed.entityRefs.isEmpty {
+                            ChatEntityCardsStripView(refs: parsed.entityRefs)
+                        }
                     }
 
                     if let attachments = message.attachments, !attachments.isEmpty {
@@ -576,6 +579,36 @@ private struct ChatMessageRowView: View {
             EmbeddedBlockView(kind: kind, source: source, messageID: message.id, info: info, index: index)
         case .chart(let spec):
             ChatChartCardView(spec: spec)
+        case .stats(let spec):
+            ChatStatsCardView(spec: spec)
+        case .diff(let spec):
+            ChatDiffCardView(spec: spec)
+        case .compare(let spec):
+            ChatCompareCardView(spec: spec)
+        case .timeline(let spec):
+            ChatTimelineCardView(spec: spec)
+        case .tree(let spec):
+            ChatTreeCardView(spec: spec)
+        case .compareImages(let spec):
+            ChatCompareImagesCardView(spec: spec)
+        case .graph(let spec):
+            ChatGraphCardView(spec: spec)
+        case .plot(let spec):
+            ChatPlotCardView(spec: spec)
+        case .dataTable(let spec):
+            ChatDataTableCardView(spec: spec)
+        case .codeGroup(let spec):
+            ChatCodeGroupCardView(spec: spec)
+        case .kv(let spec):
+            ChatKVCardView(spec: spec)
+        case .jsonTree(let spec):
+            ChatJSONTreeCardView(spec: spec)
+        case .http(let spec):
+            ChatHTTPCardView(spec: spec)
+        case .tabs(let spec):
+            ChatTabsCardView(spec: spec, citations: citationNumbers)
+        case .details(let spec):
+            ChatDetailsCardView(spec: spec, citations: citationNumbers)
         case .choices(let card):
             ChatChoicesCardView(
                 card: card,
@@ -595,6 +628,17 @@ private struct ChatMessageRowView: View {
             ChatPDFCardView(itemId: id)
         case .researchPlan(let plan):
             ChatResearchPlanCardView(chatId: chatId, messageId: message.id, plan: plan)
+        case .callout(let callout):
+            ChatCalloutView(callout: callout, citations: citationNumbers)
+        case .checklist(let checklist):
+            ChatChecklistCardView(
+                chatId: chatId,
+                messageId: message.id,
+                checklist: checklist,
+                persistedState: message.checklistState
+            )
+        case .invalidBlock(let kind, let error, let source):
+            ChatInvalidBlockView(kind: kind, error: error, source: source)
         }
     }
 }

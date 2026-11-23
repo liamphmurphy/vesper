@@ -78,12 +78,12 @@ WITH next AS (
   INSERT INTO chat_messages (session_id, seq, role, body_md, harness, model, run_id, run_turn_id, context_refs, citations, usage, persona_id)
   SELECT $1, next.seq, $2, $3, $4, $5, $6, $7,
          $8, $9, $10, $11
-  FROM next RETURNING id, session_id, seq, role, body_md, harness, model, run_id, run_turn_id, context_refs, citations, usage, created_at, code_changes, persona_id, git_branch, git_commit_sha
+  FROM next RETURNING id, session_id, seq, role, body_md, harness, model, run_id, run_turn_id, context_refs, citations, usage, created_at, code_changes, persona_id, git_branch, git_commit_sha, checklist_state
 ), touch AS (
   UPDATE chat_sessions SET last_message_at = (SELECT created_at FROM ins), updated_at = now()
   WHERE id = $1
 )
-SELECT id, session_id, seq, role, body_md, harness, model, run_id, run_turn_id, context_refs, citations, usage, created_at, code_changes, persona_id, git_branch, git_commit_sha FROM ins
+SELECT id, session_id, seq, role, body_md, harness, model, run_id, run_turn_id, context_refs, citations, usage, created_at, code_changes, persona_id, git_branch, git_commit_sha, checklist_state FROM ins
 `
 
 type AppendChatMessageParams struct {
@@ -101,23 +101,24 @@ type AppendChatMessageParams struct {
 }
 
 type AppendChatMessageRow struct {
-	ID           uuid.UUID
-	SessionID    uuid.UUID
-	Seq          int64
-	Role         string
-	BodyMd       string
-	Harness      *string
-	Model        *string
-	RunID        *uuid.UUID
-	RunTurnID    *uuid.UUID
-	ContextRefs  json.RawMessage
-	Citations    json.RawMessage
-	Usage        []byte
-	CreatedAt    time.Time
-	CodeChanges  json.RawMessage
-	PersonaID    *uuid.UUID
-	GitBranch    *string
-	GitCommitSha *string
+	ID             uuid.UUID
+	SessionID      uuid.UUID
+	Seq            int64
+	Role           string
+	BodyMd         string
+	Harness        *string
+	Model          *string
+	RunID          *uuid.UUID
+	RunTurnID      *uuid.UUID
+	ContextRefs    json.RawMessage
+	Citations      json.RawMessage
+	Usage          []byte
+	CreatedAt      time.Time
+	CodeChanges    json.RawMessage
+	PersonaID      *uuid.UUID
+	GitBranch      *string
+	GitCommitSha   *string
+	ChecklistState json.RawMessage
 }
 
 // seq is allocated in the statement; concurrent appenders to one session collide on
@@ -155,6 +156,7 @@ func (q *Queries) AppendChatMessage(ctx context.Context, arg AppendChatMessagePa
 		&i.PersonaID,
 		&i.GitBranch,
 		&i.GitCommitSha,
+		&i.ChecklistState,
 	)
 	return i, err
 }
@@ -540,7 +542,7 @@ func (q *Queries) ChatMessageCounts(ctx context.Context, ids []uuid.UUID) ([]Cha
 }
 
 const chatMessageForTurn = `-- name: ChatMessageForTurn :one
-SELECT id, session_id, seq, role, body_md, harness, model, run_id, run_turn_id, context_refs, citations, usage, created_at, code_changes, persona_id, git_branch, git_commit_sha FROM chat_messages WHERE run_turn_id = $1 AND role = 'user'
+SELECT id, session_id, seq, role, body_md, harness, model, run_id, run_turn_id, context_refs, citations, usage, created_at, code_changes, persona_id, git_branch, git_commit_sha, checklist_state FROM chat_messages WHERE run_turn_id = $1 AND role = 'user'
 `
 
 func (q *Queries) ChatMessageForTurn(ctx context.Context, runTurnID *uuid.UUID) (ChatMessage, error) {
@@ -564,6 +566,7 @@ func (q *Queries) ChatMessageForTurn(ctx context.Context, runTurnID *uuid.UUID) 
 		&i.PersonaID,
 		&i.GitBranch,
 		&i.GitCommitSha,
+		&i.ChecklistState,
 	)
 	return i, err
 }
@@ -892,7 +895,7 @@ INSERT INTO chat_messages (
   session_id, seq, role, body_md, harness, model, context_refs, citations, code_changes, persona_id, git_branch, git_commit_sha
 )
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-RETURNING id, session_id, seq, role, body_md, harness, model, run_id, run_turn_id, context_refs, citations, usage, created_at, code_changes, persona_id, git_branch, git_commit_sha
+RETURNING id, session_id, seq, role, body_md, harness, model, run_id, run_turn_id, context_refs, citations, usage, created_at, code_changes, persona_id, git_branch, git_commit_sha, checklist_state
 `
 
 type CopyChatMessageForForkParams struct {
@@ -944,6 +947,7 @@ func (q *Queries) CopyChatMessageForFork(ctx context.Context, arg CopyChatMessag
 		&i.PersonaID,
 		&i.GitBranch,
 		&i.GitCommitSha,
+		&i.ChecklistState,
 	)
 	return i, err
 }
@@ -1691,7 +1695,7 @@ func (q *Queries) GetChatAttachment(ctx context.Context, arg GetChatAttachmentPa
 }
 
 const getChatMessage = `-- name: GetChatMessage :one
-SELECT id, session_id, seq, role, body_md, harness, model, run_id, run_turn_id, context_refs, citations, usage, created_at, code_changes, persona_id, git_branch, git_commit_sha FROM chat_messages WHERE id = $1
+SELECT id, session_id, seq, role, body_md, harness, model, run_id, run_turn_id, context_refs, citations, usage, created_at, code_changes, persona_id, git_branch, git_commit_sha, checklist_state FROM chat_messages WHERE id = $1
 `
 
 func (q *Queries) GetChatMessage(ctx context.Context, id uuid.UUID) (ChatMessage, error) {
@@ -1715,12 +1719,13 @@ func (q *Queries) GetChatMessage(ctx context.Context, id uuid.UUID) (ChatMessage
 		&i.PersonaID,
 		&i.GitBranch,
 		&i.GitCommitSha,
+		&i.ChecklistState,
 	)
 	return i, err
 }
 
 const getChatMessageByID = `-- name: GetChatMessageByID :one
-SELECT id, session_id, seq, role, body_md, harness, model, run_id, run_turn_id, context_refs, citations, usage, created_at, code_changes, persona_id, git_branch, git_commit_sha FROM chat_messages WHERE id = $1 AND session_id = $2
+SELECT id, session_id, seq, role, body_md, harness, model, run_id, run_turn_id, context_refs, citations, usage, created_at, code_changes, persona_id, git_branch, git_commit_sha, checklist_state FROM chat_messages WHERE id = $1 AND session_id = $2
 `
 
 type GetChatMessageByIDParams struct {
@@ -1749,6 +1754,7 @@ func (q *Queries) GetChatMessageByID(ctx context.Context, arg GetChatMessageByID
 		&i.PersonaID,
 		&i.GitBranch,
 		&i.GitCommitSha,
+		&i.ChecklistState,
 	)
 	return i, err
 }
@@ -1861,7 +1867,7 @@ func (q *Queries) InterruptedTurnEvents(ctx context.Context, arg InterruptedTurn
 }
 
 const lastChatUserMessage = `-- name: LastChatUserMessage :one
-SELECT id, session_id, seq, role, body_md, harness, model, run_id, run_turn_id, context_refs, citations, usage, created_at, code_changes, persona_id, git_branch, git_commit_sha FROM chat_messages WHERE session_id = $1 AND role = 'user' ORDER BY seq DESC LIMIT 1
+SELECT id, session_id, seq, role, body_md, harness, model, run_id, run_turn_id, context_refs, citations, usage, created_at, code_changes, persona_id, git_branch, git_commit_sha, checklist_state FROM chat_messages WHERE session_id = $1 AND role = 'user' ORDER BY seq DESC LIMIT 1
 `
 
 func (q *Queries) LastChatUserMessage(ctx context.Context, sessionID uuid.UUID) (ChatMessage, error) {
@@ -1885,6 +1891,7 @@ func (q *Queries) LastChatUserMessage(ctx context.Context, sessionID uuid.UUID) 
 		&i.PersonaID,
 		&i.GitBranch,
 		&i.GitCommitSha,
+		&i.ChecklistState,
 	)
 	return i, err
 }
@@ -1927,7 +1934,7 @@ func (q *Queries) ListChatAttachmentsForMessages(ctx context.Context, messageIds
 }
 
 const listChatMessages = `-- name: ListChatMessages :many
-SELECT id, session_id, seq, role, body_md, harness, model, run_id, run_turn_id, context_refs, citations, usage, created_at, code_changes, persona_id, git_branch, git_commit_sha FROM chat_messages WHERE session_id = $1 AND seq > $2 ORDER BY seq LIMIT $3
+SELECT id, session_id, seq, role, body_md, harness, model, run_id, run_turn_id, context_refs, citations, usage, created_at, code_changes, persona_id, git_branch, git_commit_sha, checklist_state FROM chat_messages WHERE session_id = $1 AND seq > $2 ORDER BY seq LIMIT $3
 `
 
 type ListChatMessagesParams struct {
@@ -1963,6 +1970,7 @@ func (q *Queries) ListChatMessages(ctx context.Context, arg ListChatMessagesPara
 			&i.PersonaID,
 			&i.GitBranch,
 			&i.GitCommitSha,
+			&i.ChecklistState,
 		); err != nil {
 			return nil, err
 		}
@@ -1975,7 +1983,7 @@ func (q *Queries) ListChatMessages(ctx context.Context, arg ListChatMessagesPara
 }
 
 const listChatMessagesUpToSeq = `-- name: ListChatMessagesUpToSeq :many
-SELECT id, session_id, seq, role, body_md, harness, model, run_id, run_turn_id, context_refs, citations, usage, created_at, code_changes, persona_id, git_branch, git_commit_sha FROM chat_messages WHERE session_id = $1 AND seq <= $2 ORDER BY seq ASC
+SELECT id, session_id, seq, role, body_md, harness, model, run_id, run_turn_id, context_refs, citations, usage, created_at, code_changes, persona_id, git_branch, git_commit_sha, checklist_state FROM chat_messages WHERE session_id = $1 AND seq <= $2 ORDER BY seq ASC
 `
 
 type ListChatMessagesUpToSeqParams struct {
@@ -2010,6 +2018,7 @@ func (q *Queries) ListChatMessagesUpToSeq(ctx context.Context, arg ListChatMessa
 			&i.PersonaID,
 			&i.GitBranch,
 			&i.GitCommitSha,
+			&i.ChecklistState,
 		); err != nil {
 			return nil, err
 		}
@@ -2384,8 +2393,48 @@ func (q *Queries) ListPersonaProposals(ctx context.Context, chatID uuid.UUID) ([
 	return items, nil
 }
 
+const listRecentAssistantChecklistMessages = `-- name: ListRecentAssistantChecklistMessages :many
+SELECT id, seq, body_md, checklist_state
+FROM chat_messages
+WHERE session_id = $1 AND role = 'assistant' AND checklist_state <> '{}'::jsonb
+ORDER BY seq DESC
+LIMIT 5
+`
+
+type ListRecentAssistantChecklistMessagesRow struct {
+	ID             uuid.UUID
+	Seq            int64
+	BodyMd         string
+	ChecklistState json.RawMessage
+}
+
+func (q *Queries) ListRecentAssistantChecklistMessages(ctx context.Context, sessionID uuid.UUID) ([]ListRecentAssistantChecklistMessagesRow, error) {
+	rows, err := q.db.Query(ctx, listRecentAssistantChecklistMessages, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRecentAssistantChecklistMessagesRow{}
+	for rows.Next() {
+		var i ListRecentAssistantChecklistMessagesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Seq,
+			&i.BodyMd,
+			&i.ChecklistState,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRecentChatMessages = `-- name: ListRecentChatMessages :many
-SELECT m.seq, m.role, m.harness, m.model, left(m.body_md, $1::int)::text AS body_md, COALESCE(p.name, '')::text AS persona_name
+SELECT m.seq, m.role, m.harness, m.model, left(m.body_md, $1::int)::text AS body_md, m.checklist_state, COALESCE(p.name, '')::text AS persona_name
 FROM chat_messages m LEFT JOIN personas p ON p.id = m.persona_id
 WHERE m.session_id = $2 AND m.role IN ('user', 'assistant')
 ORDER BY m.seq DESC LIMIT $3
@@ -2398,12 +2447,13 @@ type ListRecentChatMessagesParams struct {
 }
 
 type ListRecentChatMessagesRow struct {
-	Seq         int64
-	Role        string
-	Harness     *string
-	Model       *string
-	BodyMd      string
-	PersonaName string
+	Seq            int64
+	Role           string
+	Harness        *string
+	Model          *string
+	BodyMd         string
+	ChecklistState json.RawMessage
+	PersonaName    string
 }
 
 // Newest rows first, bounded by limit; bodies are clipped so the read stays small.
@@ -2424,6 +2474,7 @@ func (q *Queries) ListRecentChatMessages(ctx context.Context, arg ListRecentChat
 			&i.Harness,
 			&i.Model,
 			&i.BodyMd,
+			&i.ChecklistState,
 			&i.PersonaName,
 		); err != nil {
 			return nil, err
@@ -2694,7 +2745,7 @@ func (q *Queries) OwnsChatRun(ctx context.Context, arg OwnsChatRunParams) (bool,
 }
 
 const pageChatMessages = `-- name: PageChatMessages :many
-SELECT id, session_id, seq, role, body_md, harness, model, run_id, run_turn_id, context_refs, citations, usage, created_at, code_changes, persona_id, git_branch, git_commit_sha FROM chat_messages
+SELECT id, session_id, seq, role, body_md, harness, model, run_id, run_turn_id, context_refs, citations, usage, created_at, code_changes, persona_id, git_branch, git_commit_sha, checklist_state FROM chat_messages
 WHERE session_id = $1
   AND ($2::bigint IS NULL OR seq > $2::bigint)
   AND ($3::bigint IS NULL OR seq < $3::bigint)
@@ -2745,6 +2796,7 @@ func (q *Queries) PageChatMessages(ctx context.Context, arg PageChatMessagesPara
 			&i.PersonaID,
 			&i.GitBranch,
 			&i.GitCommitSha,
+			&i.ChecklistState,
 		); err != nil {
 			return nil, err
 		}
@@ -2962,7 +3014,7 @@ func (q *Queries) PersonaProposalAvatars(ctx context.Context, ids []uuid.UUID) (
 }
 
 const previousChatUserMessage = `-- name: PreviousChatUserMessage :one
-SELECT id, session_id, seq, role, body_md, harness, model, run_id, run_turn_id, context_refs, citations, usage, created_at, code_changes, persona_id, git_branch, git_commit_sha FROM chat_messages WHERE session_id = $1 AND role = 'user' AND seq < $2
+SELECT id, session_id, seq, role, body_md, harness, model, run_id, run_turn_id, context_refs, citations, usage, created_at, code_changes, persona_id, git_branch, git_commit_sha, checklist_state FROM chat_messages WHERE session_id = $1 AND role = 'user' AND seq < $2
 ORDER BY seq DESC LIMIT 1
 `
 
@@ -2992,6 +3044,7 @@ func (q *Queries) PreviousChatUserMessage(ctx context.Context, arg PreviousChatU
 		&i.PersonaID,
 		&i.GitBranch,
 		&i.GitCommitSha,
+		&i.ChecklistState,
 	)
 	return i, err
 }
@@ -3685,6 +3738,45 @@ type SetChatMessageBodyParams struct {
 func (q *Queries) SetChatMessageBody(ctx context.Context, arg SetChatMessageBodyParams) error {
 	_, err := q.db.Exec(ctx, setChatMessageBody, arg.ID, arg.BodyMd)
 	return err
+}
+
+const setChatMessageChecklistState = `-- name: SetChatMessageChecklistState :one
+UPDATE chat_messages
+SET checklist_state = $3
+WHERE id = $1 AND session_id = $2
+RETURNING id, session_id, seq, role, body_md, harness, model, run_id, run_turn_id, context_refs, citations, usage, created_at, code_changes, persona_id, git_branch, git_commit_sha, checklist_state
+`
+
+type SetChatMessageChecklistStateParams struct {
+	ID             uuid.UUID
+	SessionID      uuid.UUID
+	ChecklistState json.RawMessage
+}
+
+func (q *Queries) SetChatMessageChecklistState(ctx context.Context, arg SetChatMessageChecklistStateParams) (ChatMessage, error) {
+	row := q.db.QueryRow(ctx, setChatMessageChecklistState, arg.ID, arg.SessionID, arg.ChecklistState)
+	var i ChatMessage
+	err := row.Scan(
+		&i.ID,
+		&i.SessionID,
+		&i.Seq,
+		&i.Role,
+		&i.BodyMd,
+		&i.Harness,
+		&i.Model,
+		&i.RunID,
+		&i.RunTurnID,
+		&i.ContextRefs,
+		&i.Citations,
+		&i.Usage,
+		&i.CreatedAt,
+		&i.CodeChanges,
+		&i.PersonaID,
+		&i.GitBranch,
+		&i.GitCommitSha,
+		&i.ChecklistState,
+	)
+	return i, err
 }
 
 const setChatMessageCodeChanges = `-- name: SetChatMessageCodeChanges :exec
