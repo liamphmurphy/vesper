@@ -39,6 +39,8 @@ func (s *Server) mediaService() *media.Service {
 		Pool:     s.Pool,
 		Box:      box,
 		Registry: s.mediaRegistry(),
+		// One gate for the API and the in-process runner's pre-synthesis.
+		SpeechQuota: &s.speechQuota,
 	}
 }
 

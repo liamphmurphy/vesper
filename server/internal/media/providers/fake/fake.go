@@ -32,6 +32,8 @@ type Controller struct {
 	VideoBlockCh chan struct{}
 	// SpeechCalls records every GenerateSpeech request.
 	SpeechCalls []media.SpeechRequest
+	// SpeechErr, when set, fails every GenerateSpeech after recording it.
+	SpeechErr error
 }
 
 // SetVideo sets VideoErr and VideoBlockCh under the controller's lock, so a
@@ -182,9 +184,13 @@ func (p *SpeechProvider) Voices() []media.Voice {
 func (p *SpeechProvider) GenerateSpeech(ctx context.Context, req media.SpeechRequest) (media.SpeechClip, error) {
 	p.ctrl.mu.Lock()
 	p.ctrl.SpeechCalls = append(p.ctrl.SpeechCalls, req)
+	failure := p.ctrl.SpeechErr
 	p.ctrl.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return media.SpeechClip{}, err
+	}
+	if failure != nil {
+		return media.SpeechClip{}, failure
 	}
 	return media.SpeechClip{Data: SineWAV(8000, 1), ContentType: "audio/wav", DurationMS: 1000, Model: "fake-tts"}, nil
 }

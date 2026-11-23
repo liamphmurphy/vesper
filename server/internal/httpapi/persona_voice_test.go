@@ -5,10 +5,12 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -294,4 +296,45 @@ func TestPersonaVoicesPreviewAndValidation(t *testing.T) {
 	rev := p["revision"]
 	e.invalid("PATCH", "/personas/"+pid, map[string]any{"revision": rev, "voice_mode": "loud"}, "voice_mode", "use one of")
 	e.invalid("PATCH", "/personas/"+pid, map[string]any{"revision": rev, "voice_name": "Not a voice!"}, "voice_name", "pick a voice")
+}
+
+func TestReplySpeechStreamSaysWhenTheVoiceIsOutOfQuota(t *testing.T) {
+	e, ctrl := newVoiceEnv(t, true)
+	ctrl.SpeechErr = &media.ProviderError{Kind: media.ErrKindQuota, RetryAfter: 2 * time.Hour, Message: "Gemini's daily limit of 100 requests is used up. It resets at midnight Pacific time."}
+	p := e.want("POST", "/personas", map[string]any{"name": "Iris"}, http.StatusCreated)
+	pid := p["id"].(string)
+	e.want("PATCH", "/personas/"+pid, map[string]any{"revision": p["revision"], "voice_mode": "always"}, http.StatusOK)
+	chatID := e.newChat(map[string]any{"persona_id": pid})["id"].(string)
+	stream := func(body string) (*http.Response, map[string]any) {
+		t.Helper()
+		m, err := e.q.AppendChatMessage(context.Background(), store.AppendChatMessageParams{
+			SessionID: uuid.MustParse(chatID), Role: "assistant", BodyMd: body,
+			ContextRefs: json.RawMessage("[]"), Citations: json.RawMessage("[]"),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := http.Get(e.srv.URL + "/api/v1/chats/" + chatID + "/messages/" + m.ID.String() + "/speech/stream")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		var out map[string]any
+		_ = json.NewDecoder(res.Body).Decode(&out)
+		return res, out
+	}
+
+	// A client can tell "out of voice for now" from a broken reply, and read
+	// why and for how long, so it can speak some other way meanwhile.
+	res, body := stream("Sure, I'll check the runner.")
+	if res.StatusCode != http.StatusTooManyRequests || res.Header.Get("Retry-After") != "7200" || !strings.Contains(fmt.Sprint(body["message"]), "daily limit of 100") {
+		t.Fatalf("capped stream = %d Retry-After %q %v", res.StatusCode, res.Header.Get("Retry-After"), body)
+	}
+	// The next reply is refused at once rather than spending another request.
+	if res, _ := stream("All done."); res.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("second capped stream = %d", res.StatusCode)
+	}
+	if n := len(ctrl.SpeechRequests()); n != 1 {
+		t.Fatalf("provider calls = %d, want 1 while the cap holds", n)
+	}
 }

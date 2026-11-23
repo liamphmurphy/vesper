@@ -123,6 +123,7 @@ type Server struct {
 	mediaRegOnce    sync.Once
 	musicRun        *media.MusicRunner
 	musicRunOnce    sync.Once
+	speechQuota     media.SpeechQuota
 	// StateMediaPack overrides looppack.Pack for persona state loops (tests
 	// stub it so they don't need ffmpeg).
 	StateMediaPack statemedia.PackFunc

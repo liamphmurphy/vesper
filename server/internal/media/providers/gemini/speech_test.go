@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/liamphmurphy/vesper/server/internal/media"
 )
@@ -175,5 +176,59 @@ func TestStreamSpeechEmitsChunksAndWrapsWAV(t *testing.T) {
 	wantPCM := append(append([]byte(nil), chunk1...), chunk2...)
 	if len(clip.Data) != 44+len(wantPCM) || !bytes.Equal(clip.Data[44:], wantPCM) || clip.DurationMS != 500 {
 		t.Fatalf("clip = %d bytes, %dms; want %d bytes, 500ms", len(clip.Data), clip.DurationMS, 44+len(wantPCM))
+	}
+}
+
+// quotaBody is a Gemini API 429 as AI Studio returns it, with the quota that
+// ran out in a QuotaFailure and the suggested wait in a RetryInfo.
+func quotaBody(quotaID, retryDelay string) string {
+	return `{"error":{"code":429,"message":"You exceeded your current quota, please check your plan and billing details.","status":"RESOURCE_EXHAUSTED","details":[` +
+		`{"@type":"type.googleapis.com/google.rpc.QuotaFailure","violations":[{"quotaMetric":"generativelanguage.googleapis.com/generate_content_free_tier_requests","quotaId":"` + quotaID + `","quotaDimensions":{"location":"global","model":"gemini-3.8-flash-tts"},"quotaValue":"100"}]},` +
+		`{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"` + retryDelay + `"}]}}`
+}
+
+func TestSpeechQuotaErrorsNameTheLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name, quotaID string
+		kind          media.ErrorKind
+		say           string
+		minWait       time.Duration
+		maxWait       time.Duration
+	}{
+		// The free tier's daily cap: Gemini suggests a retry in seconds, but
+		// nothing succeeds until the day resets at midnight Pacific.
+		{"daily", "GenerateRequestsPerDayPerProjectPerModel-FreeTier", media.ErrKindQuota, "daily limit of 100", 0, 24*time.Hour + time.Second},
+		{"per minute", "GenerateRequestsPerMinutePerProjectPerModel-FreeTier", media.ErrKindRateLimit, "try again in 37s", 37 * time.Second, 37 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte(quotaBody(tc.quotaID, "36.2s")))
+			}))
+			defer ts.Close()
+			prov, _ := New(media.ResolvedConfig{Settings: map[string]string{"backend": "gemini_api"}, Secrets: map[string]string{"api_key": "k"}}, WithBaseURL(ts.URL))
+			for name, call := range map[string]func() error{
+				"generate": func() error {
+					_, err := prov.GenerateSpeech(context.Background(), media.SpeechRequest{Text: "Hello."})
+					return err
+				},
+				"stream": func() error {
+					_, err := prov.StreamSpeech(context.Background(), media.SpeechRequest{Text: "Hello."}, nil)
+					return err
+				},
+			} {
+				var pe *media.ProviderError
+				if err := call(); !errors.As(err, &pe) {
+					t.Fatalf("%s: err = %v, want a ProviderError", name, err)
+				}
+				if pe.Kind != tc.kind || !strings.Contains(pe.Message, tc.say) {
+					t.Errorf("%s: kind %q, message %q; want %q saying %q", name, pe.Kind, pe.Message, tc.kind, tc.say)
+				}
+				if pe.RetryAfter <= tc.minWait-time.Second || pe.RetryAfter > tc.maxWait {
+					t.Errorf("%s: RetryAfter = %v, want within (%v, %v]", name, pe.RetryAfter, tc.minWait-time.Second, tc.maxWait)
+				}
+			}
+		})
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -311,7 +312,7 @@ func (s *Server) streamChatMessageSpeech(w http.ResponseWriter, r *http.Request)
 		}
 		if err != nil {
 			if !headersSent {
-				s.responseError(w, r, speechError(err))
+				s.writeSpeechError(w, r, err)
 			} else if s.Log != nil {
 				s.Log.Warn("stream reply speech interrupted", "chat_id", res.chatID, "message_id", res.messageID, "err", err)
 			}
@@ -380,6 +381,21 @@ func speechResponse(b []byte, words int, cache string) api.GetChatMessageSpeech2
 		ContentLength: int64(len(b)),
 		Headers:       api.GetChatMessageSpeech200ResponseHeaders{XSpeechWords: &words, CacheControl: &cache},
 	}
+}
+
+// writeSpeechError answers a quota or rate-limit refusal with 429 and when to
+// retry, so a client can tell "out of voice for now" from a reply that can't be
+// spoken and use another voice meanwhile. Other failures go through speechError.
+func (s *Server) writeSpeechError(w http.ResponseWriter, r *http.Request, err error) {
+	var pe *media.ProviderError
+	if errors.As(err, &pe) && (pe.Kind == media.ErrKindQuota || pe.Kind == media.ErrKindRateLimit) {
+		if pe.RetryAfter > 0 {
+			w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(pe.RetryAfter.Seconds()))))
+		}
+		writeError(w, http.StatusTooManyRequests, api.Conflict, pe.Message, "")
+		return
+	}
+	s.responseError(w, r, speechError(err))
 }
 
 // speechError turns a provider failure into a 409 the clients can show.
