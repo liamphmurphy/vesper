@@ -40,6 +40,7 @@ public enum NativeScreen: String, Sendable, CaseIterable {
     case appsRedirect
     case spaceNew
     case spaceDetail
+    case agentDetail
 
     /// Screens sharing one SwiftUI root host so navigating between them preserves sidebar & chrome state.
     public var hostGroup: NativeScreen {
@@ -56,7 +57,7 @@ public enum NativeScreen: String, Sendable, CaseIterable {
     public var area: AreaId? {
         switch self {
         case .chat, .chatDetail, .rootLanding, .spaceNew, .spaceDetail: .chat
-        case .work, .runDetail, .tickets, .ticketNew, .ticketDetail, .epics, .epicDetail: .work
+        case .work, .runDetail, .tickets, .ticketNew, .ticketDetail, .epics, .epicDetail, .agentDetail: .work
         case .knowledge, .knowledgeGraph, .knowledgePage: .knowledge
         case .library: .library
         case .workflows, .workflowEditor, .workflowRun, .scheduled, .learn, .learnCourse, .reports, .http, .dev, .appsHome, .appsRedirect: .apps
@@ -129,9 +130,10 @@ public struct NativeRouteRegistry: Sendable {
         NativeRoute("/board", .tickets),
         NativeRoute("/tickets/new", .ticketNew),
         NativeRoute("/tickets/:key", .ticketDetail),
-        // Epics, Scheduled tasks, and Reports (Costs & Highlights).
+        // Epics, Agent detail, Scheduled tasks, and Reports (Costs & Highlights).
         NativeRoute("/epics", .epics),
         NativeRoute("/epics/:id", .epicDetail),
+        NativeRoute("/agents/:handle", .agentDetail),
         NativeRoute("/scheduled", .scheduled),
         NativeRoute("/reports", .reports),
         NativeRoute("/costs", .reports),

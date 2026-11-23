@@ -106,7 +106,7 @@ final class NativeRoutesTests: XCTestCase {
             "/chat": .chat, "/chat/c1": .chat,
             "/spaces": .chat, "/spaces/new": .chat, "/spaces/sp-1": .chat,
             "/work": .work, "/runs": .work, "/runs/r1": .work, "/tickets": .work, "/board": .work,
-            "/tickets/new": .work, "/tickets/PAY-1": .work, "/epics": .work, "/epics/e1": .work,
+            "/tickets/new": .work, "/tickets/PAY-1": .work, "/epics": .work, "/epics/e1": .work, "/agents/pike": .work,
             "/knowledge": .knowledge, "/knowledge/graph": .knowledge, "/knowledge/p1": .knowledge, "/wiki/a/b": .knowledge,
             "/library": .library,
             "/workflows": .apps, "/workflows/wf-1": .apps, "/workflows/runs/wr-1": .apps, "/scheduled": .apps,

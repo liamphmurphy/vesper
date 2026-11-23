@@ -163,6 +163,7 @@ struct NativeScreenRoot: View {
         case .appsHome: AppsHomeScreen()
         case .spaceNew: NewSpaceScreen()
         case .spaceDetail: SpaceScreen()
+        case .agentDetail: AgentDetailScreen()
         }
     }
 }
