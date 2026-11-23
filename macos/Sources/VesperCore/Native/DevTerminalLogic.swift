@@ -197,6 +197,116 @@ public enum DevTerminalLogic {
     public static func wantsSecureInput(enabled: Bool, terminalFocused: Bool, windowIsKey: Bool) -> Bool {
         enabled && terminalFocused && windowIsKey
     }
+
+    // MARK: - Sidebar NavModel
+
+    public static let navId = "dev-workspace"
+    public static let sendToChatItem = "action:send-to-chat"
+    public static let syncReposItem = "action:sync-repos"
+    public static let reconnectItem = "action:reconnect"
+    public static let startItem = "action:start"
+    public static let fullscreenItem = "action:fullscreen"
+    public static let shortcutsItem = "action:shortcuts"
+    public static let settingsItem = "action:settings"
+
+    public static func navModel(
+        workspace: API.DevWorkspace?,
+        connection: Connection,
+        actionPending: Bool = false
+    ) -> NavModel {
+        var sections: [NavSection] = []
+
+        if let ws = workspace {
+            let status = pill(connection: connection, enabled: ws.enabled, state: ws.state, step: ws.step?.value)
+            let tone: Tone = switch status.tone {
+            case "done": .done
+            case "human": .human
+            case "blocked": .blocked
+            default: .neutral
+            }
+            sections.append(NavSection(id: "status", items: [
+                NavItem(
+                    id: "workspace-status",
+                    title: status.label,
+                    subtitle: ws.enabled ? "/workspace \u{00B7} \(tmuxPrefixLabel(ws.tmuxPrefix))" : "Disabled in Settings",
+                    status: tone,
+                    disabled: true
+                ),
+            ]))
+
+            var actionItems: [NavItem] = []
+            let port = ws.state == .ready ? ws.port?.value : nil
+            if ws.enabled {
+                if port != nil {
+                    actionItems.append(NavItem(id: sendToChatItem, title: "Send to chat", icon: "msg"))
+                    if connection == .disconnected {
+                        actionItems.append(NavItem(id: reconnectItem, title: "Reconnect terminal", icon: "refresh"))
+                    }
+                    actionItems.append(NavItem(id: fullscreenItem, title: "Fullscreen", icon: "expand", trailing: fullscreenHint))
+                } else if ws.state != .starting {
+                    actionItems.append(NavItem(id: startItem, title: "Start container", icon: "play", disabled: actionPending))
+                }
+                actionItems.append(NavItem(
+                    id: syncReposItem,
+                    title: "Sync repositories",
+                    icon: "refresh",
+                    disabled: ws.state == .starting || actionPending
+                ))
+                actionItems.append(NavItem(id: shortcutsItem, title: "Keyboard shortcuts", icon: "bolt"))
+            }
+            actionItems.append(NavItem(id: settingsItem, title: "Workspace settings", icon: "gear", href: "/settings#dev-workspace"))
+            sections.append(NavSection(id: "actions", title: "Workspace", items: actionItems))
+
+            if ws.enabled && !ws.repos.isEmpty {
+                sections.append(NavSection(
+                    id: "repos",
+                    title: "Repositories",
+                    items: ws.repos.map { repo in
+                        NavItem(
+                            id: "repo:\(repo.directory)",
+                            title: repo.directory,
+                            subtitle: repo.repoUrl,
+                            icon: "branch",
+                            disabled: true
+                        )
+                    },
+                    badge: NavBadge(text: "\(ws.repos.count)")
+                ))
+            }
+        } else {
+            sections.append(NavSection(id: "loading", items: [], emptyText: "Loading workspace\u{2026}"))
+        }
+
+        return NavModel(
+            id: navId,
+            title: "Dev workspace",
+            sections: sections
+        )
+    }
+
+    public enum NavActionResult: Sendable, Equatable {
+        case sendToChat
+        case syncRepos
+        case reconnect
+        case start
+        case fullscreen
+        case shortcuts
+        case settings
+    }
+
+    public static func navAction(for command: NativeCommand) -> NavActionResult? {
+        guard case .navActivate(navId, let itemId, _) = command else { return nil }
+        switch itemId {
+        case sendToChatItem: return .sendToChat
+        case syncReposItem: return .syncRepos
+        case reconnectItem: return .reconnect
+        case startItem: return .start
+        case fullscreenItem: return .fullscreen
+        case shortcutsItem: return .shortcuts
+        case settingsItem: return .settings
+        default: return nil
+        }
+    }
 }
 
 /// Keeps `EnableSecureEventInput`/`DisableSecureEventInput` balanced: the system counts calls, so each

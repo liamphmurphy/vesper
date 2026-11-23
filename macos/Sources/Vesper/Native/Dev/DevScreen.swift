@@ -60,11 +60,14 @@ struct DevScreen: View {
     @State private var model = DevTerminalModel()
     @State private var reconnectSeq = 0
     @State private var autoStarted = false
+    @State private var secureKeyboardEnabled = DevSecureKeyboardEntry.isEnabled
 
     private static let request = API.getDevWorkspace()
 
     var body: some View {
         let entry = context.store.entry(Self.request)
+        let currentChrome = buildChrome(workspace: entry.data)
+
         Group {
             if let ws = entry.data {
                 if ws.enabled {
@@ -100,18 +103,24 @@ struct DevScreen: View {
                 _ = await context.store.refetch(Self.request)
             }
         }
+        .onChange(of: currentChrome, initial: true) { _, next in
+            context.chrome = next
+        }
         .onAppear {
             context.store.observe(Self.request)
-            publishChrome()
+            context.chrome = currentChrome
             context.onCommand = { command in
-                if case .titleAction(menuItemId: "dev.secure-keyboard") = command { DevSecureKeyboardEntry.isEnabled.toggle() }
+                handleCommand(command)
             }
         }
         .onDisappear {
+            context.onCommand = nil
             context.store.stopObserving(Self.request.key)
             setFullscreen(false)
         }
-        .onReceive(NotificationCenter.default.publisher(for: DevSecureKeyboardEntry.didChange)) { _ in publishChrome() }
+        .onReceive(NotificationCenter.default.publisher(for: DevSecureKeyboardEntry.didChange)) { _ in
+            secureKeyboardEnabled = DevSecureKeyboardEntry.isEnabled
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { note in
             // Leaving macOS full screen another way (the green button, ⌃⌘F) leaves the terminal's too.
             guard model.fullscreen, model.enteredWindowFullScreen, (note.object as? NSWindow) === context.window()?.window else { return }
@@ -125,12 +134,34 @@ struct DevScreen: View {
 
     // MARK: Chrome
 
-    private func publishChrome() {
-        context.chrome = NativeChrome(
+    private func buildChrome(workspace: API.DevWorkspace?) -> NativeChrome {
+        NativeChrome(
             title: "Dev workspace",
             titleMenu: [MenuItem(id: "dev.secure-keyboard", label: "Secure Keyboard Entry", icon: "lock",
-                                 checked: DevSecureKeyboardEntry.isEnabled)]
+                                 checked: secureKeyboardEnabled)],
+            navigator: DevTerminalLogic.navModel(
+                workspace: workspace,
+                connection: model.connection,
+                actionPending: model.actionPending
+            )
         )
+    }
+
+    private func handleCommand(_ command: NativeCommand) {
+        if case .titleAction(menuItemId: "dev.secure-keyboard") = command {
+            DevSecureKeyboardEntry.isEnabled.toggle()
+            return
+        }
+        guard let action = DevTerminalLogic.navAction(for: command) else { return }
+        switch action {
+        case .sendToChat: sendToChat()
+        case .syncRepos: run(.sync)
+        case .reconnect: reconnectSeq += 1
+        case .start: run(.start)
+        case .fullscreen: toggleFullscreen()
+        case .shortcuts: model.shortcutsOpen = true
+        case .settings: context.navigate("/settings#dev-workspace")
+        }
     }
 
     // MARK: States

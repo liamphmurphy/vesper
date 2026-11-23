@@ -61,6 +61,8 @@ struct WorkflowRunScreen: View {
             stepStatusByNodeId: statusMap
         )
 
+        let currentChrome = buildChrome(run)
+
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 if !run.input.isEmpty {
@@ -101,12 +103,18 @@ struct WorkflowRunScreen: View {
             .padding(24)
             .frame(maxWidth: 960, alignment: .leading)
         }
+        .onChange(of: currentChrome, initial: true) { _, next in
+            context.chrome = next
+        }
         .onAppear {
-            publishChrome(run)
+            context.chrome = currentChrome
             context.onCommand = { handleCommand($0, run: run) }
         }
-        .onChange(of: run.state) { _, _ in
-            publishChrome(run)
+        .onChange(of: run.id) { _, _ in
+            context.onCommand = { handleCommand($0, run: run) }
+        }
+        .onDisappear {
+            context.onCommand = nil
         }
     }
 
@@ -268,7 +276,7 @@ struct WorkflowRunScreen: View {
         }
     }
 
-    private func publishChrome(_ run: API.WorkflowRun) {
+    private func buildChrome(_ run: API.WorkflowRun) -> NativeChrome {
         var items: [ShellToolbarItem] = []
         if WorkflowsLogic.runActive(run.state) {
             items.append(ShellToolbarItem(id: "wfrun.stop", label: "Stop", icon: "pause", kind: .button, disabled: busy, showsLabel: true))
@@ -276,19 +284,33 @@ struct WorkflowRunScreen: View {
         if !run.chatId.isEmpty {
             items.append(ShellToolbarItem(id: "wfrun.chat", label: "Open chat", icon: "msg", kind: .button, showsLabel: true))
         }
-        context.chrome = NativeChrome(
+        return NativeChrome(
             title: run.name,
             subtitle: "v\(run.version) · \(WorkflowsLogic.runStateLabel(run.state))",
-            toolbarItems: items
+            toolbarItems: items,
+            navigator: WorkflowsLogic.buildWorkflowRunNavModel(run: run, selectedNodeId: selectedNodeId)
         )
     }
 
     private func handleCommand(_ command: NativeCommand, run: API.WorkflowRun) {
-        guard case .toolbarAction(let itemId, _) = command else { return }
-        if itemId == "wfrun.stop" {
-            Task { await stopRun(run.id) }
-        } else if itemId == "wfrun.chat", !run.chatId.isEmpty {
-            context.navigate("/chat/\(run.chatId)")
+        if case .toolbarAction(let itemId, _) = command {
+            if itemId == "wfrun.stop" {
+                Task { await stopRun(run.id) }
+            } else if itemId == "wfrun.chat", !run.chatId.isEmpty {
+                context.navigate("/chat/\(run.chatId)")
+            }
+            return
+        }
+        guard let action = WorkflowsLogic.workflowRunNavAction(for: command) else { return }
+        switch action {
+        case .back:
+            context.navigate("/workflows")
+        case .openWorkflow:
+            if let wfId = run.workflowId, !wfId.isEmpty {
+                context.navigate("/workflows/\(wfId)")
+            }
+        case .selectNode(let nodeId):
+            selectedNodeId = nodeId
         }
     }
 }

@@ -1,5 +1,7 @@
 import Foundation
 
+private typealias ShellTone = Tone
+
 /// What the Inbox needs of an item; `API.InboxItem` conforms.
 public protocol InboxListItem {
     var id: String { get }
@@ -151,6 +153,130 @@ public enum InboxLogic {
         let pattern = "(^|[^\\w@])@\(NSRegularExpression.escapedPattern(for: handle))(?![\\w-])"
         if text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil { return text }
         return "@\(handle) \(text)"
+    }
+
+    // MARK: - Sidebar NavModel
+
+    public static let navId = "inbox"
+    public static let viewPickerId = "inbox-view"
+    public static let sortFilterId = "inbox-sort"
+    public static let spaceFilterId = "inbox-space"
+    public static let itemPrefix = "item:"
+
+    public static func itemNavId(_ id: String) -> String { "\(itemPrefix)\(id)" }
+
+    private static func navTone(for tone: Tone) -> ShellTone {
+        switch tone {
+        case .human: .human
+        case .blocked: .blocked
+        case .info: .accent
+        }
+    }
+
+    public static func navModel(
+        items: [API.InboxItem],
+        view: View,
+        sort: Sort,
+        projectFilter: String,
+        projects: [API.Project],
+        selectedItemId: String?,
+        now: Date = Date()
+    ) -> NavModel {
+        let openCount = items.filter(isOpen).count
+        let doneCount = items.count - openCount
+        let activeProjects = projects.filter { !$0.archived }
+
+        var filters: [NavFilterMenu] = [
+            NavFilterMenu(
+                id: sortFilterId,
+                label: "Sort",
+                icon: "sliders",
+                options: [
+                    NavFilterOption(value: Sort.oldest.rawValue, label: "Longest wait", checked: sort == .oldest),
+                    NavFilterOption(value: Sort.newest.rawValue, label: "Newest first", checked: sort == .newest),
+                ]
+            ),
+        ]
+        if !activeProjects.isEmpty {
+            filters.append(NavFilterMenu(
+                id: spaceFilterId,
+                label: "Space",
+                icon: "briefcase",
+                options: [NavFilterOption(value: "", label: "All spaces", checked: projectFilter.isEmpty)]
+                    + activeProjects.map {
+                        NavFilterOption(value: $0.key, label: $0.name, checked: projectFilter == $0.key)
+                    }
+            ))
+        }
+
+        let grouped = group(items, view: view, sort: sort)
+        let sections: [NavSection]
+        if grouped.isEmpty {
+            sections = [NavSection(
+                id: "empty",
+                items: [],
+                emptyText: view == .open ? "All clear \u{2014} nothing waiting on you." : "Nothing done yet."
+            )]
+        } else {
+            sections = grouped.map { g in
+                NavSection(
+                    id: "group:\(g.key)",
+                    title: g.label,
+                    items: g.items.map { item in
+                        let k = kind(item.kind.rawValue)
+                        let scope = item.ticketKey.isEmpty ? item.project : item.ticketKey
+                        let sub = scope.isEmpty ? item.agent?.name : scope
+                        return NavItem(
+                            id: itemNavId(item.id),
+                            title: item.title,
+                            subtitle: sub,
+                            status: navTone(for: k.tone),
+                            trailing: APIDate.waited(item.createdAt, now: now)
+                        )
+                    },
+                    badge: NavBadge(text: "\(g.items.count)")
+                )
+            }
+        }
+
+        return NavModel(
+            id: navId,
+            title: "Inbox",
+            picker: NavPicker(
+                id: viewPickerId,
+                value: view.rawValue,
+                options: [
+                    NavPickerOption(value: View.open.rawValue, label: openCount > 0 ? "Open \(openCount)" : "Open"),
+                    NavPickerOption(value: View.done.rawValue, label: doneCount > 0 ? "Done \(doneCount)" : "Done"),
+                ]
+            ),
+            filters: filters,
+            sections: sections,
+            selectedId: selectedItemId.map(itemNavId)
+        )
+    }
+
+    public enum NavActionResult: Sendable, Equatable {
+        case selectView(View)
+        case selectSort(Sort)
+        case selectSpace(String)
+        case selectItem(String)
+    }
+
+    public static func navAction(for command: NativeCommand) -> NavActionResult? {
+        switch command {
+        case .navPicker(navId, viewPickerId, let value):
+            return View(rawValue: value).map(NavActionResult.selectView)
+        case .navFilter(navId, sortFilterId, let value, _):
+            return Sort(rawValue: value).map(NavActionResult.selectSort)
+        case .navFilter(navId, spaceFilterId, let value, _):
+            return .selectSpace(value)
+        case .navActivate(navId, let itemId, _):
+            guard itemId.hasPrefix(itemPrefix) else { return nil }
+            return .selectItem(String(itemId.dropFirst(itemPrefix.count)))
+        default:
+            return nil
+        }
     }
 }
 
