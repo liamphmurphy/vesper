@@ -961,7 +961,7 @@ func startChatTurnWithRollover(ctx context.Context, q *store.Queries, chat store
 			}
 			needsCompact := chat.CompactPending
 			compactFocus := chat.CompactFocus
-			limit := effectiveAutoRollover(chat, autoRolloverDefault)
+			limit := EffectiveChatAutoRollover(chat, autoRolloverDefault)
 			if !needsCompact && limit > 0 && run.HarnessSessionID != nil && run.ContextTokens >= limit {
 				prevTokens := run.ContextTokens
 				if err = q.SetRunSession(ctx, store.SetRunSessionParams{ID: run.ID, HarnessSessionID: nil}); err != nil {

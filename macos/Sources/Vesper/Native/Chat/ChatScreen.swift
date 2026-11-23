@@ -177,7 +177,8 @@ struct ChatScreen: View {
                 session: session,
                 personas: personas,
                 activePersona: activePersona,
-                harnessModels: harnessModels
+                harnessModels: harnessModels,
+                pinnedCount: messages.filter { $0.bookmarked == true }.count
             )
             Divider()
 
@@ -513,7 +514,8 @@ struct ChatScreen: View {
         session: API.ChatSession?,
         personas: [API.Persona],
         activePersona: API.Persona?,
-        harnessModels: [API.ChatHarnessModels]
+        harnessModels: [API.ChatHarnessModels],
+        pinnedCount: Int
     ) -> some View {
         let p = theme.palette
         let participants = session?.participants ?? []
@@ -557,6 +559,14 @@ struct ChatScreen: View {
             }
 
             Spacer(minLength: 8)
+
+            if let session {
+                ChatContextMeterView(
+                    session: session,
+                    pinnedCount: pinnedCount,
+                    onCompact: { focus in await compactChat(focus: focus) }
+                )
+            }
 
             modelMenu(session: session, harnessModels: harnessModels)
 

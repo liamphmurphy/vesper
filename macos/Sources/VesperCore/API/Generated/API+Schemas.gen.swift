@@ -5052,6 +5052,8 @@ extension API {
         public var createdAt: Swift.String
         /// The run serving the current harness segment; its events show live activity
         public var currentRunId: Swift.String?
+        /// Active auto-compaction threshold in context tokens for this chat (0 when disabled)
+        public var effectiveAutoRolloverTokens: Swift.Int?
         /// Reasoning effort; absent means the harness's own default
         public var effort: ChatEffort?
         /// Why the last turn failed
@@ -5114,6 +5116,7 @@ extension API {
             contextTokens: Swift.Int? = nil,
             createdAt: Swift.String,
             currentRunId: Swift.String? = nil,
+            effectiveAutoRolloverTokens: Swift.Int? = nil,
             effort: ChatEffort? = nil,
             error: Swift.String? = nil,
             forkedFromChatId: APINullable<Swift.String>? = nil,
@@ -5154,6 +5157,7 @@ extension API {
             self.contextTokens = contextTokens
             self.createdAt = createdAt
             self.currentRunId = currentRunId
+            self.effectiveAutoRolloverTokens = effectiveAutoRolloverTokens
             self.effort = effort
             self.error = error
             self.forkedFromChatId = forkedFromChatId
@@ -5196,6 +5200,7 @@ extension API {
             case contextTokens = "context_tokens"
             case createdAt = "created_at"
             case currentRunId = "current_run_id"
+            case effectiveAutoRolloverTokens = "effective_auto_rollover_tokens"
             case effort
             case error
             case forkedFromChatId = "forked_from_chat_id"
@@ -5239,6 +5244,7 @@ extension API {
             self.contextTokens = try c.decodeIfPresent(Swift.Int.self, forKey: .contextTokens)
             self.createdAt = try c.decode(Swift.String.self, forKey: .createdAt)
             self.currentRunId = try c.decodeIfPresent(Swift.String.self, forKey: .currentRunId)
+            self.effectiveAutoRolloverTokens = try c.decodeIfPresent(Swift.Int.self, forKey: .effectiveAutoRolloverTokens)
             self.effort = try c.decodeIfPresent(ChatEffort.self, forKey: .effort)
             self.error = try c.decodeIfPresent(Swift.String.self, forKey: .error)
             self.forkedFromChatId = try c.decodeNullable(Swift.String.self, forKey: .forkedFromChatId)
@@ -5282,6 +5288,7 @@ extension API {
             try c.encodeIfPresent(contextTokens, forKey: .contextTokens)
             try c.encode(createdAt, forKey: .createdAt)
             try c.encodeIfPresent(currentRunId, forKey: .currentRunId)
+            try c.encodeIfPresent(effectiveAutoRolloverTokens, forKey: .effectiveAutoRolloverTokens)
             try c.encodeIfPresent(effort, forKey: .effort)
             try c.encodeIfPresent(error, forKey: .error)
             try c.encodeIfPresent(forkedFromChatId, forKey: .forkedFromChatId)

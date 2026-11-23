@@ -1910,6 +1910,86 @@ func (q *Queries) LastChatUserMessage(ctx context.Context, sessionID uuid.UUID) 
 	return i, err
 }
 
+const listBookmarkedChatMessages = `-- name: ListBookmarkedChatMessages :many
+SELECT m.id, m.session_id, m.seq, m.role, m.body_md, m.harness, m.model, m.run_id, m.run_turn_id, m.context_refs, m.citations, m.usage, m.created_at, m.code_changes, m.persona_id, m.git_branch, m.git_commit_sha, m.checklist_state, m.bookmarked, m.bookmarked_at, COALESCE(p.name, '') AS persona_name
+FROM chat_messages m
+LEFT JOIN personas p ON p.id = m.persona_id
+WHERE m.session_id = $1 AND m.bookmarked = true
+ORDER BY m.seq ASC
+LIMIT $2
+`
+
+type ListBookmarkedChatMessagesParams struct {
+	SessionID uuid.UUID
+	Limit     int32
+}
+
+type ListBookmarkedChatMessagesRow struct {
+	ID             uuid.UUID
+	SessionID      uuid.UUID
+	Seq            int64
+	Role           string
+	BodyMd         string
+	Harness        *string
+	Model          *string
+	RunID          *uuid.UUID
+	RunTurnID      *uuid.UUID
+	ContextRefs    json.RawMessage
+	Citations      json.RawMessage
+	Usage          []byte
+	CreatedAt      time.Time
+	CodeChanges    json.RawMessage
+	PersonaID      *uuid.UUID
+	GitBranch      *string
+	GitCommitSha   *string
+	ChecklistState json.RawMessage
+	Bookmarked     bool
+	BookmarkedAt   *time.Time
+	PersonaName    string
+}
+
+func (q *Queries) ListBookmarkedChatMessages(ctx context.Context, arg ListBookmarkedChatMessagesParams) ([]ListBookmarkedChatMessagesRow, error) {
+	rows, err := q.db.Query(ctx, listBookmarkedChatMessages, arg.SessionID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListBookmarkedChatMessagesRow{}
+	for rows.Next() {
+		var i ListBookmarkedChatMessagesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.Seq,
+			&i.Role,
+			&i.BodyMd,
+			&i.Harness,
+			&i.Model,
+			&i.RunID,
+			&i.RunTurnID,
+			&i.ContextRefs,
+			&i.Citations,
+			&i.Usage,
+			&i.CreatedAt,
+			&i.CodeChanges,
+			&i.PersonaID,
+			&i.GitBranch,
+			&i.GitCommitSha,
+			&i.ChecklistState,
+			&i.Bookmarked,
+			&i.BookmarkedAt,
+			&i.PersonaName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listChatAttachmentsForMessages = `-- name: ListChatAttachmentsForMessages :many
 SELECT id, workspace_id, user_id, message_id, filename, content_type, size_bytes, blob_key, created_at, source FROM chat_attachments WHERE message_id = ANY($1::uuid[]) ORDER BY created_at, filename, id
 `

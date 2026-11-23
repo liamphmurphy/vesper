@@ -476,6 +476,14 @@ SET bookmarked = $3,
 WHERE id = $1 AND session_id = $2
 RETURNING *;
 
+-- name: ListBookmarkedChatMessages :many
+SELECT m.*, COALESCE(p.name, '') AS persona_name
+FROM chat_messages m
+LEFT JOIN personas p ON p.id = m.persona_id
+WHERE m.session_id = $1 AND m.bookmarked = true
+ORDER BY m.seq ASC
+LIMIT $2;
+
 -- name: ListRecentAssistantChecklistMessages :many
 SELECT id, seq, body_md, checklist_state
 FROM chat_messages

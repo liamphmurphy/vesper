@@ -69,7 +69,10 @@ import { ChatMarkdown } from "./chat-markdown";
 import { ReplyCodeChanges } from "./code-panel";
 import { SentChips } from "./context-chips";
 import { MessageActionsContext, MessageToolbar, ThreadLink, type MessageActions } from "./message-toolbar";
+import { ContextMeter } from "./context-meter";
+import { ThreadFindBar } from "./find-bar";
 import { OutlinePanel } from "./outline-panel";
+import { collapsedReplyPreview, isFoldableReply } from "@/lib/context-meter";
 import { Sources } from "./sources";
 import { splitSourceList } from "@/lib/chat-sources";
 import { finishReveal, markRevealed, startReveal, useRevealedText } from "@/lib/companion-store";
@@ -174,9 +177,11 @@ type ChatInfo = { id: string; title: string; project?: string; agent: { name: st
 const Bubble = memo(function Bubble({ m, chat, persona, saveable, names, turn, ended, summaryUrl, editable, archived, onEdit, onRetry, highlighted, videos, audio, onStopAudio, onRetryMusic, pushRequests, asides, secondOpinions, thread }: { m: Message; chat: ChatInfo; persona: PersonaLook; saveable: boolean; names: Map<string, string>; turn?: TurnWindow; ended?: EndedTurn; summaryUrl?: string | null; editable?: boolean; archived?: boolean; onEdit?: (body: string) => void; onRetry?: () => void; highlighted?: boolean; videos?: ChatVideo[]; audio?: ChatAudio[]; onStopAudio?: (audioId: string) => void; onRetryMusic?: (a: ChatAudio) => void; pushRequests?: PushRequest[]; asides?: ReactNode; secondOpinions?: ReactNode; thread?: { count: number; running: boolean } }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(m.body_md);
+  const [collapsed, setCollapsed] = useState(false);
   const self = useRef<HTMLLIElement>(null);
   // The closing URL list shows as Sources cards, not as text. Saved replies keep it.
   const parts = useMemo(() => (m.role === "assistant" ? splitSourceList(m.body_md) : { body: typedText(m.body_md), listed: [] }), [m.role, m.body_md]);
+  const foldable = m.role === "assistant" && isFoldableReply(parts.body);
   const [citeFocus, setCiteFocus] = useState<{ n: number; tick: number }>();
   // A reply that just arrived may be revealing word by word while the persona talks.
   const shown = useRevealedText(chat.id, m.id, parts.body);
@@ -255,6 +260,17 @@ const Bubble = memo(function Bubble({ m, chat, persona, saveable, names, turn, e
               Pinned
             </span>
           )}
+          {foldable && (
+            <button
+              type="button"
+              data-testid="toggle-reply-fold"
+              onClick={() => setCollapsed((v) => !v)}
+              className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-11 text-fg-tertiary hover:bg-hover hover:text-fg"
+            >
+              <Icon name={collapsed ? "expand" : "shrink"} size={11} />
+              {collapsed ? "Expand" : "Collapse"}
+            </button>
+          )}
         </span>
       )}
       {/* The live card's steps, folded to a line once the turn ended. Its events all precede the reply. */}
@@ -290,10 +306,45 @@ const Bubble = memo(function Bubble({ m, chat, persona, saveable, names, turn, e
               <Button type="submit" variant="primary" disabled={!draft.trim()}>Save and resend</Button>
             </div>
           </form>
+        ) : collapsed && foldable ? (
+          <div className="flex flex-col gap-2 rounded-xl border border-border bg-surface p-3" data-testid="collapsed-reply">
+            <p className="whitespace-pre-line text-13 text-fg-secondary">{collapsedReplyPreview(parts.body)}</p>
+            <button
+              type="button"
+              onClick={() => setCollapsed(false)}
+              className="inline-flex items-center gap-1.5 self-start rounded-md border border-border-strong px-2.5 py-1 text-12 font-medium text-fg hover:bg-hover"
+            >
+              <Icon name="expand" size={12} />
+              Expand full reply
+            </button>
+          </div>
         ) : (
           <CiteContext.Provider value={cites.value}>
             <ChatMarkdown replyId={mine ? undefined : m.id} cites={cites.numbers}>{shown.text}</ChatMarkdown>
           </CiteContext.Provider>
+        )}
+        {!mine && foldable && !collapsed && (
+          <div className="mt-2 flex items-center gap-2 border-t border-border-subtle pt-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                setCollapsed(true);
+                self.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+              }}
+              className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-11 text-fg-tertiary hover:bg-hover hover:text-fg"
+            >
+              <Icon name="shrink" size={11} />
+              Collapse reply
+            </button>
+            <button
+              type="button"
+              onClick={() => self.current?.scrollIntoView({ block: "start", behavior: "smooth" })}
+              className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-11 text-fg-tertiary hover:bg-hover hover:text-fg"
+            >
+              <Icon name="chevronUp" size={11} />
+              Jump to top
+            </button>
+          </div>
         )}
       </div>
       {!mine && videos?.length ? <VideoRendererNotes videos={videos} /> : null}
@@ -619,6 +670,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   const compactChat = useCompactChat(id);
   const bookmarkMessage = useSetChatMessageBookmark(id);
   const [outlineOpen, setOutlineOpen] = useState(false);
+  const [findOpen, setFindOpen] = useState(false);
   const [forkTarget, setForkTarget] = useState<ForkTarget | null>(null);
   const boot = useBootstrap();
   const personas = usePersonas();
@@ -1084,6 +1136,11 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   // message, Esc goes back to the box: the messaging-app keys, listed in the ? reference.
   const keyNav = useRef<(e: KeyboardEvent) => void>(() => {});
   keyNav.current = (e) => {
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "f" && view === "chat") {
+      e.preventDefault();
+      setFindOpen(true);
+      return;
+    }
     if (e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented || isTyping(e.target) || view !== "chat") return;
     const items = [...(log.current?.querySelectorAll<HTMLElement>("li[data-message-id]") ?? [])];
     const at = items.findIndex((el) => el === document.activeElement);
@@ -1421,6 +1478,24 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
           {/* A dock has no room for the picker in its one header row: it moves to the composer's + menu. */}
           {repoPicker && !docked && <span className="flex min-w-0 max-w-[32%] flex-shrink">{repoPicker}</span>}
           <ChatRunsPill chatId={c.id} />
+          {!docked && (
+            <ContextMeter
+              chat={c}
+              pinnedCount={(list ?? []).filter((m) => m.bookmarked).length}
+              disabled={c.archived || running}
+            />
+          )}
+          <button
+            type="button"
+            aria-pressed={findOpen}
+            aria-label="Find in thread"
+            title="Find in thread (⌘F)"
+            data-testid="toggle-thread-find"
+            onClick={() => setFindOpen((o) => !o)}
+            className={cx("grid size-7 flex-none place-items-center rounded-md", findOpen ? "bg-selected text-fg" : "text-fg-tertiary hover:bg-hover hover:text-fg")}
+          >
+            <Icon name="search" size={14} />
+          </button>
           <button
             type="button"
             aria-pressed={outlineOpen}
@@ -1463,7 +1538,14 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
         {dockActivity && view === "chat" && <LinkedRow items={linked} label={linkedLabel} onOpen={openLinked} />}
         {c.space && view === "chat" && <SpaceContextChips space={c.space} dense={docked} />}
         <div className="relative flex min-h-0 flex-1 overflow-hidden">
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+        {findOpen && view === "chat" && (
+          <ThreadFindBar
+            messages={list ?? []}
+            onJump={jumpToMessage}
+            onClose={() => setFindOpen(false)}
+          />
+        )}
         {/* Mounted while hidden so memory notices still refresh. On the chat page's desktop dock Activity is its own tab (ChatActivity). */}
         {!dockActivity && (
           <div role="tabpanel" aria-label="Activity" hidden={tab !== "activity"} className="flex-1 overflow-y-auto px-6 py-5">

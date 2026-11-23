@@ -35,13 +35,16 @@ const (
 	forkLead    = "This conversation was forked from an earlier chat at this point. The prior messages up to the fork point are below, oldest first, as context only."
 )
 
-// HandoffOptions customizes a rendered handoff header, git summary, and footer.
+// HandoffOptions customizes a rendered handoff header, git summary, pinned messages, and footer.
 type HandoffOptions struct {
-	Lead     string
-	Focus    string
-	GitBrief string
-	Footer   string
+	Lead           string
+	Focus          string
+	GitBrief       string
+	PinnedMessages []HandoffMessage
+	Footer         string
 }
+
+const maxPinnedHandoffChars = 16000
 
 func handoffHeader(omitted int) string {
 	return handoffHeaderWith(omitted, "", "")
@@ -136,6 +139,27 @@ func renderHandoffWith(history []HandoffMessage, total int, budget int, hc Hando
 		b.WriteString(kept[i])
 	}
 	b.WriteString(renderArtifacts(pinned, hc))
+	if len(opts.PinnedMessages) > 0 {
+		b.WriteString("## Pinned messages (preserved verbatim across compaction)\n")
+		remaining := maxPinnedHandoffChars
+		for _, pm := range opts.PinnedMessages {
+			entry := handoffEntry(pm, pm.Body)
+			n := utf8.RuneCountInString(entry)
+			if n > remaining {
+				room := remaining - utf8.RuneCountInString(handoffEntry(pm, "")) - utf8.RuneCountInString(handoffClip)
+				if room <= 0 {
+					break
+				}
+				entry = handoffEntry(pm, string([]rune(pm.Body)[:min(room, utf8.RuneCountInString(pm.Body))])+handoffClip)
+				n = utf8.RuneCountInString(entry)
+			}
+			b.WriteString(entry)
+			remaining -= n
+			if remaining <= 0 {
+				break
+			}
+		}
+	}
 	if brief := strings.TrimSpace(opts.GitBrief); brief != "" {
 		b.WriteString("## Workspace git state\n")
 		b.WriteString(brief)

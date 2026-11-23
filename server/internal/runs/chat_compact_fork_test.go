@@ -260,3 +260,57 @@ func TestForkChatPrefixAndBranchRepo(t *testing.T) {
 		}
 	}
 }
+
+func TestCompactPreservesPinnedMessagesAndDefaultAutoRollover(t *testing.T) {
+	f := newChatFixture(t)
+	chat, err := f.rs.StartChat(f.ctx, f.ws, f.user, ChatInput{Title: "Pinned compact"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// EffectiveChatAutoRollover falls back to DefaultChatAutoRolloverTokens (160k).
+	if got := EffectiveChatAutoRollover(chat, 0); got != DefaultChatAutoRolloverTokens {
+		t.Fatalf("expected default auto-rollover %d, got %d", DefaultChatAutoRolloverTokens, got)
+	}
+
+	if _, err := f.rs.PostChatMessage(f.ctx, f.ws, f.user, chat.ID, ChatMessageInput{Body: "Constraint: never drop audit logs"}); err != nil {
+		t.Fatal(err)
+	}
+	c1 := f.chat(t, chat.ID)
+	runID := *c1.CurrentRunID
+	if err := f.q.FinishUnfinishedChatTurns(f.ctx, runID); err != nil {
+		t.Fatal(err)
+	}
+	f.endTurn(t, chat.ID, "idle")
+
+	msgs, err := f.q.ListChatMessages(f.ctx, store.ListChatMessagesParams{SessionID: chat.ID, Limit: 10})
+	if err != nil || len(msgs) == 0 {
+		t.Fatalf("list messages: %v (%d)", err, len(msgs))
+	}
+	if _, err := f.q.SetChatMessageBookmark(f.ctx, store.SetChatMessageBookmarkParams{
+		ID: msgs[0].ID, SessionID: chat.ID, Bookmarked: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Default 160k auto-rollover fires when ContextTokens reaches DefaultChatAutoRolloverTokens.
+	sess := "harness-default-auto"
+	if err := f.q.SetRunSession(f.ctx, store.SetRunSessionParams{ID: runID, HarnessSessionID: &sess}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.q.SetRunContextTokens(f.ctx, store.SetRunContextTokensParams{ID: runID, ContextTokens: DefaultChatAutoRolloverTokens}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.rs.PostChatMessage(f.ctx, f.ws, f.user, chat.ID, ChatMessageInput{Body: "Next step after auto-compact"}); err != nil {
+		t.Fatal(err)
+	}
+	turns, err := f.q.ListTurns(f.ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt := turns[len(turns)-1].InputMessage
+	for _, want := range []string{compactLead, "## Pinned messages (preserved verbatim across compaction)", "Constraint: never drop audit logs"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("expected compacted prompt to include %q, got:\n%s", want, prompt)
+		}
+	}
+}

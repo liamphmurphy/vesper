@@ -165,7 +165,7 @@ struct ChatTranscriptView: View {
                                 ChatPushRequestStackView(requests: pushes.leading)
                             }
 
-                            ForEach(visibleMessages, id: \.message.id) { item in
+                            ForEach(Array(visibleMessages.enumerated()), id: \.element.message.id) { rowOffset, item in
                                 let idx = item.index
                                 let message = item.message
                                 let nextBody = idx + 1 < messages.count ? messages[idx + 1].bodyMd : nil
@@ -178,6 +178,7 @@ struct ChatTranscriptView: View {
                                 )
                                 let persona = message.persona ?? session?.persona
                                 let speakerName = persona?.name ?? session?.agent.name ?? "Assistant"
+                                let isFindCurrent = !context.find.query.isEmpty && context.find.current == rowOffset
                                 ChatMessageRowView(
                                     chatId: chatId,
                                     message: message,
@@ -195,13 +196,24 @@ struct ChatTranscriptView: View {
                                     videos: videosByMessage[message.id] ?? [],
                                     personas: personas,
                                     harnessModels: harnessModels,
+                                    findRow: rowOffset,
                                     onSendReply: onSendReply,
                                     onQuoteMessage: onQuoteMessage,
                                     onOpenThread: onOpenThread,
                                     onForkMessage: onForkMessage,
                                     onPromoteTicket: onPromoteTicket,
                                     onSaveWiki: onSaveWiki,
-                                    onSecondOpinion: onSecondOpinion
+                                    onSecondOpinion: onSecondOpinion,
+                                    onScrollToSelf: {
+                                        withAnimation(.easeOut(duration: 0.2)) {
+                                            proxy.scrollTo(message.id, anchor: .top)
+                                        }
+                                    }
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .stroke(isFindCurrent ? theme.palette.accent : .clear, lineWidth: 1.5)
+                                        .padding(-4)
                                 )
                                 .id(message.id)
 
@@ -317,6 +329,15 @@ struct ChatTranscriptView: View {
                         }
                         withAnimation(.easeOut(duration: 0.2)) {
                             proxy.scrollTo(request.messageId, anchor: .center)
+                        }
+                    }
+                    .onChange(of: visibleMessages.map { "\($0.message.id):\($0.message.bodyMd.count)" }, initial: true) { _, _ in
+                        context.find.texts = visibleMessages.map { $0.message.bodyMd }
+                    }
+                    .onChange(of: context.find.current) { _, idx in
+                        guard let idx, visibleMessages.indices.contains(idx) else { return }
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            proxy.scrollTo(visibleMessages[idx].message.id, anchor: .center)
                         }
                     }
                 }
@@ -442,6 +463,7 @@ private struct ChatMessageRowView: View {
     let videos: [API.ChatVideo]
     let personas: [API.Persona]
     let harnessModels: [API.ChatHarnessModels]
+    let findRow: Int
     let onSendReply: @MainActor (String) -> Void
     let onQuoteMessage: (@MainActor (String, String?) -> Void)?
     let onOpenThread: (@MainActor (String) -> Void)?
@@ -449,9 +471,15 @@ private struct ChatMessageRowView: View {
     let onPromoteTicket: (@MainActor (API.ChatMessage) -> Void)?
     let onSaveWiki: (@MainActor (API.ChatMessage) -> Void)?
     let onSecondOpinion: (@MainActor (API.ChatMessage, API.Harness, String) -> Void)?
+    let onScrollToSelf: @MainActor () -> Void
 
     @State private var togglingBookmark = false
     @State private var activeCitationNumber: Int?
+    @State private var isReplyCollapsed = false
+
+    private var isFoldableReply: Bool {
+        message.role == .assistant && ChatReplyFoldingLogic.isFoldableReply(message.bodyMd)
+    }
 
     private var previewRequest: APIRequest<API.LinkPreviews>? {
         guard message.role == .assistant, parsed.sources.contains(where: { !$0.url.isEmpty }) else { return nil }
@@ -537,7 +565,7 @@ private struct ChatMessageRowView: View {
                     ChatContextChipsView(stripped: parsed.context, refs: message.contextRefs ?? [])
                     VStack(alignment: .leading, spacing: 8) {
                         if !parsed.typedBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            MarkdownView(markdown: parsed.typedBody, textStyle: .chat, chat: true)
+                            MarkdownView(markdown: parsed.typedBody, textStyle: .chat, chat: true, findRow: findRow)
                         }
                         if let attachments = message.attachments, !attachments.isEmpty {
                             VStack(alignment: .leading, spacing: 6) {
@@ -650,15 +678,55 @@ private struct ChatMessageRowView: View {
                     // shows the rest. Once revealed it renders its cards and fences as usual.
                     let companion = ChatCompanions.companion(for: chatId)
                     if companion.revealingId == message.id {
-                        MarkdownView(markdown: companion.shown, textStyle: .chat, chat: true, citations: citationNumbers)
+                        MarkdownView(markdown: companion.shown, textStyle: .chat, chat: true, citations: citationNumbers, findRow: findRow)
                             .contentShape(Rectangle())
                             .onTapGesture { companion.finishReveal() }
+                    } else if isReplyCollapsed && isFoldableReply {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(ChatReplyFoldingLogic.collapsedPreview(message.bodyMd))
+                                .font(.system(size: theme.pointSize(.small)))
+                                .foregroundStyle(p.secondaryText)
+                                .lineLimit(5)
+                            Button {
+                                isReplyCollapsed = false
+                            } label: {
+                                Label("Expand full reply (\(ChatReplyFoldingLogic.lineCount(message.bodyMd)) lines)", systemImage: "arrow.up.left.and.arrow.down.right")
+                            }
+                            .buttonStyle(.vesper())
+                        }
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(p.surface, in: RoundedRectangle(cornerRadius: 10))
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(p.border))
                     } else {
                         ForEach(Array(parsed.segments.enumerated()), id: \.offset) { _, segment in
                             segmentView(segment, citationNumbers: citationNumbers)
                         }
                         if !parsed.entityRefs.isEmpty {
                             ChatEntityCardsStripView(refs: parsed.entityRefs)
+                        }
+                        if isFoldableReply {
+                            HStack(spacing: 10) {
+                                Button {
+                                    isReplyCollapsed = true
+                                    onScrollToSelf()
+                                } label: {
+                                    Label("Collapse reply", systemImage: "arrow.down.right.and.arrow.up.left")
+                                        .font(.system(size: theme.pointSize(.micro)))
+                                        .foregroundStyle(p.tertiaryText)
+                                }
+                                .buttonStyle(.plain)
+
+                                Button {
+                                    onScrollToSelf()
+                                } label: {
+                                    Label("Jump to top", systemImage: "arrow.up")
+                                        .font(.system(size: theme.pointSize(.micro)))
+                                        .foregroundStyle(p.tertiaryText)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .padding(.top, 2)
                         }
                     }
 
@@ -688,6 +756,18 @@ private struct ChatMessageRowView: View {
         let availableModels = harnessModels.filter { $0.available && !$0.models.isEmpty }
 
         HStack(spacing: 8) {
+            if isFoldableReply {
+                Button {
+                    isReplyCollapsed.toggle()
+                } label: {
+                    Image(systemName: isReplyCollapsed ? "arrow.up.left.and.arrow.down.right" : "arrow.down.right.and.arrow.up.left")
+                        .imageScale(.small)
+                        .foregroundStyle(p.tertiaryText)
+                }
+                .buttonStyle(.plain)
+                .help(isReplyCollapsed ? "Expand reply" : "Collapse reply")
+            }
+
             if let onQuoteMessage {
                 Button {
                     onQuoteMessage(message.bodyMd, speakerName)
@@ -797,7 +877,7 @@ private struct ChatMessageRowView: View {
     private func segmentView(_ segment: ChatMessageSegment, citationNumbers: [Int]) -> some View {
         switch segment {
         case .markdown(let text):
-            MarkdownView(markdown: text, textStyle: .chat, chat: true, citations: citationNumbers, onLink: handleMarkdownLink)
+            MarkdownView(markdown: text, textStyle: .chat, chat: true, citations: citationNumbers, findRow: findRow, onLink: handleMarkdownLink)
         case .embedded(let kind, let source, let info, let index):
             EmbeddedBlockView(kind: kind, source: source, messageID: message.id, info: info, index: index)
         case .chart(let spec):
