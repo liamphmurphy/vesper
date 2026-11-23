@@ -3,15 +3,18 @@
 package httpapi
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -78,6 +81,9 @@ type Server struct {
 	// CustomAppImageTransport overrides outbound transport for custom app image
 	// proxying in tests; nil uses usersecrets.SafeTransport.
 	CustomAppImageTransport http.RoundTripper
+	// CustomAppWSDialer overrides outbound WebSocket dialing for custom app WS
+	// proxying in tests; nil uses a gorilla/websocket.Dialer backed by usersecrets.SafeTransport.
+	CustomAppWSDialer func(ctx context.Context, targetURL string, headers http.Header, protocols []string) (*websocket.Conn, *http.Response, error)
 	// CustomAppMediaTransport overrides the transport custom app video downloads
 	// use, for tests; nil uses usersecrets.SafeTransport.
 	CustomAppMediaTransport http.RoundTripper
@@ -161,6 +167,7 @@ func (s *Server) Handler() http.Handler {
 	}
 	mux := http.NewServeMux()
 	s.mountAPIRoutes(mux)
+	mux.HandleFunc("GET /api/v1/custom-apps/{slug}/ws", s.handleCustomAppWS)
 	if s.Events != nil {
 		mux.Handle("GET /events", s.Events)
 	}
@@ -312,6 +319,14 @@ func (r *statusRecorder) Flush() {
 	if f, ok := r.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// Hijack keeps WebSocket upgrades working through the logging wrapper.
+func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := r.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, errors.New("http.Hijacker not supported")
 }
 
 func requestLog(log *slog.Logger, next http.Handler) http.Handler {
