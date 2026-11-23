@@ -595,6 +595,8 @@ private struct ChatMessageRowView: View {
             ChatPDFCardView(itemId: id)
         case .researchPlan(let plan):
             ChatResearchPlanCardView(chatId: chatId, messageId: message.id, plan: plan)
+        case .invalidBlock(let kind, let error, let source):
+            ChatInvalidBlockView(kind: kind, error: error, source: source)
         }
     }
 }

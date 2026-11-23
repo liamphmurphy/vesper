@@ -10,6 +10,7 @@ struct ChatChartCardView: View {
     let spec: ChatChartSpec
 
     @State private var mode: DisplayMode = .chart
+    @State private var showLightbox = false
 
     private enum DisplayMode: String, CaseIterable {
         case chart = "Chart"
@@ -34,6 +35,12 @@ struct ChatChartCardView: View {
         .background(theme.swiftUIColor("surface-sunken", fallback: p.surface))
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(p.border))
+        .sheet(isPresented: $showLightbox) {
+            ChatLightboxSheet(title: spec.title ?? defaultTitle, subtitle: spec.subtitle) {
+                chartBody
+                    .frame(minHeight: 420)
+            }
+        }
     }
 
     private var header: some View {
@@ -78,6 +85,15 @@ struct ChatChartCardView: View {
                 .buttonStyle(.plain)
                 .help("Copy CSV")
             }
+            Button {
+                showLightbox = true
+            } label: {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .imageScale(.small)
+                    .foregroundStyle(p.tertiaryText)
+            }
+            .buttonStyle(.plain)
+            .help("Expand to lightbox")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

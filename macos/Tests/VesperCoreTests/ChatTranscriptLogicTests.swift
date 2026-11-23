@@ -153,11 +153,41 @@ final class ChatTranscriptLogicTests: XCTestCase {
         ```
         """
         let segments = ChatTranscriptLogic.parseSegments(body)
-        XCTAssertEqual(segments.count, 1)
-        guard case .markdown(let text) = segments[0] else { return XCTFail("Expected fallback markdown") }
-        XCTAssertTrue(text.contains("not valid json"))
+        XCTAssertEqual(segments.count, 2)
+        guard case .invalidBlock(let kind, let err, let source) = segments[0] else {
+            return XCTFail("Expected invalidBlock for bad chart spec, got \(segments[0])")
+        }
+        XCTAssertEqual(kind, "chart")
+        XCTAssertFalse(err.isEmpty)
+        XCTAssertTrue(source.contains("not valid json"))
+        guard case .markdown(let text) = segments[1] else { return XCTFail("Expected fallback markdown") }
         XCTAssertTrue(text.contains("Only one option"))
         XCTAssertTrue(text.contains("not-a-uuid"))
+    }
+
+    func testReplyBlockActivityLabelsForRicherVisualizations() {
+        let pairs: [(String, ActivitySceneKind)] = [
+            ("stats", .chart),
+            ("diff", .writingCode),
+            ("compare", .choices),
+            ("timeline", .chart),
+            ("tree", .diagram),
+            ("compare-images", .image),
+            ("graph", .diagram),
+            ("plot", .chart),
+            ("datatable", .chart),
+            ("code-group", .writingCode),
+            ("kv", .wiki),
+            ("json-tree", .readingCode),
+            ("http", .http),
+            ("tabs", .wiki),
+            ("details", .wiki),
+        ]
+        for (tag, expectedKind) in pairs {
+            let info = ChatTurnActivity.statusOf(tool: "reply_block", input: .object(["kind": .string(tag)]))
+            XCTAssertEqual(info.kind, expectedKind, "Unexpected kind for \(tag)")
+            XCTAssertFalse(info.phrase.isEmpty)
+        }
     }
 
     // MARK: - Context Stripping, Citations & Mentions

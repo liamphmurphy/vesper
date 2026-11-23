@@ -90,6 +90,8 @@ public enum ChatMessageSegment: Sendable, Equatable {
     case canvas(id: String)
     case pdf(id: String)
     case researchPlan(ChatResearchPlanCard)
+    /// A visualization fence whose spec failed validation: shows a visible error banner and raw source.
+    case invalidBlock(kind: String, error: String, source: String)
 }
 
 public struct ParsedChatMessage: Sendable, Equatable {
@@ -338,9 +340,14 @@ public enum ChatTranscriptLogic {
                     i = nextIndex
                     continue
                 }
-                if ChatChartSpec.isChartFence(infoOpt), case .success(let spec) = ChatChartSpec.parse(code) {
+                if ChatChartSpec.isChartFence(infoOpt) {
                     flushMarkdown()
-                    segments.append(.chart(spec))
+                    switch ChatChartSpec.parse(code) {
+                    case .success(let spec):
+                        segments.append(.chart(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "chart", error: err.message, source: code))
+                    }
                     i = nextIndex
                     continue
                 }
