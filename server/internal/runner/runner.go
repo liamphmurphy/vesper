@@ -43,9 +43,13 @@ type Config struct {
 	MaxConcurrent int           // processes at once (RUNNER_MAX_CONCURRENT)
 	MCPURL        string        // Vesper's /mcp as turns reach it
 	GitHubAPIURL  string        // GitHub's REST API for shipping approved pushes; api.github.com when empty (tests point elsewhere)
-	Poll          time.Duration // queue poll interval
-	Grace         time.Duration // after SIGINT, before SIGKILL (pause, cancel)
-	LogBucket     string        // raw harness logs (run-logs)
+	Poll          time.Duration // active/fallback queue poll interval (default 1s)
+	// IdlePoll is the fallback queue poll interval while LISTEN is connected and
+	// no work is in flight (default 30s when Poll is unset; matches Poll when
+	// callers configure an explicit short Poll in tests).
+	IdlePoll  time.Duration
+	Grace     time.Duration // after SIGINT, before SIGKILL (pause, cancel)
+	LogBucket string        // raw harness logs (run-logs)
 	// AttachmentBucket holds chat attachments (the artifact bucket).
 	AttachmentBucket string
 	Version          string
@@ -160,8 +164,13 @@ type Runner struct {
 	wg        sync.WaitGroup
 	// sweeping keeps Run to one Sweep in flight (Sweep alone owns otherBackend).
 	sweeping atomic.Bool
+	// gcSweeping keeps Run to one slow GC sweep in flight at a time.
+	gcSweeping atomic.Bool
 	// scheduling keeps Run to one scheduled tick in flight off the poll loop.
 	scheduling atomic.Bool
+	// listenerUp reports whether the Postgres LISTEN connection is active, so
+	// Run can safely back off to IdlePoll while idle.
+	listenerUp atomic.Bool
 	// playgrounds is what this process serves of chats' playgrounds; nil
 	// when it serves none.
 	playgrounds *playgroundHost
@@ -179,12 +188,47 @@ func (r *Runner) q() *store.Queries { return store.New(r.Pool) }
 
 func (r *Runner) system() tracker.Actor { return tracker.Actor{Type: "system"} }
 
+const (
+	defaultActivePoll = time.Second
+	defaultIdlePoll   = 30 * time.Second
+	heartbeatInterval = 20 * time.Second
+	fastSweepInterval = 60 * time.Second
+	gcSweepInterval   = 10 * time.Minute
+	scheduleInterval  = 60 * time.Second
+)
+
+func (r *Runner) pollIntervals() (active, idle time.Duration) {
+	active = r.Cfg.Poll
+	idle = r.Cfg.IdlePoll
+	if active <= 0 {
+		active = defaultActivePoll
+		if idle <= 0 {
+			idle = defaultIdlePoll
+		}
+	} else if idle <= 0 {
+		idle = active
+	}
+	return active, idle
+}
+
+func (r *Runner) nextPollInterval(activePoll, idlePoll time.Duration) time.Duration {
+	if !r.listenerUp.Load() {
+		return activePoll
+	}
+	r.mu.Lock()
+	busy := r.active > 0
+	r.mu.Unlock()
+	if busy || r.listings.Load() > 0 || r.usageChecks.Load() > 0 {
+		return activePoll
+	}
+	return idlePoll
+}
+
 // Run polls until ctx is cancelled. In-flight processes are killed on exit;
 // their turns run again when a runner starts (the harness resumes).
 func (r *Runner) Run(ctx context.Context) error {
-	if r.Cfg.Poll <= 0 {
-		r.Cfg.Poll = time.Second
-	}
+	activePoll, idlePoll := r.pollIntervals()
+	r.Cfg.Poll = activePoll
 	if err := r.Recover(ctx); err != nil {
 		return err
 	}
@@ -194,25 +238,38 @@ func (r *Runner) Run(ctx context.Context) error {
 	r.expireModelListings(ctx)
 	r.ServePlaygrounds(ctx)
 	r.InitDevWorkspaces(ctx)
-	beat := time.NewTicker(10 * time.Second)
+	beat := time.NewTicker(heartbeatInterval)
 	defer beat.Stop()
-	sweep := time.NewTicker(30 * time.Second)
+	sweep := time.NewTicker(fastSweepInterval)
 	defer sweep.Stop()
-	poll := time.NewTicker(r.Cfg.Poll)
-	defer poll.Stop()
-	schedule := time.NewTicker(15 * time.Second)
+	gcSweep := time.NewTicker(gcSweepInterval)
+	defer gcSweep.Stop()
+	schedule := time.NewTicker(scheduleInterval)
 	defer schedule.Stop()
 	wake := make(chan struct{}, 1)
+	scheduleWake := make(chan struct{}, 1)
+	slotLimitWake := make(chan struct{}, 1)
 	if r.Pool != nil {
 		r.wg.Add(1)
 		go func() {
 			defer r.wg.Done()
-			r.listenForWork(ctx, wake)
+			r.listenForWork(ctx, wake, scheduleWake, slotLimitWake)
 		}()
 	}
 	r.heartbeat(ctx)
 	// Before waiting on the ticker: anything missed while Vesper was off runs once now.
 	r.scheduleTickAsync(ctx)
+	pollTimer := time.NewTimer(r.nextPollInterval(activePoll, idlePoll))
+	defer pollTimer.Stop()
+	resetPoll := func() {
+		if !pollTimer.Stop() {
+			select {
+			case <-pollTimer.C:
+			default:
+			}
+		}
+		pollTimer.Reset(r.nextPollInterval(activePoll, idlePoll))
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -224,6 +281,8 @@ func (r *Runner) Run(ctx context.Context) error {
 			return nil
 		case <-beat.C:
 			r.heartbeat(ctx)
+		case <-slotLimitWake:
+			r.refreshSlotLimit(ctx)
 		case <-sweep.C:
 			// Off this loop: a sweep runs checkpoint pushes, and while one is
 			// slow nothing would be claimed and no heartbeat sent. One at a time.
@@ -232,25 +291,38 @@ func (r *Runner) Run(ctx context.Context) error {
 				go func() {
 					defer r.wg.Done()
 					defer r.sweeping.Store(false)
-					r.Sweep(ctx)
+					r.sweepFast(ctx)
 				}()
 			}
-		case <-poll.C:
+		case <-gcSweep.C:
+			if r.gcSweeping.CompareAndSwap(false, true) {
+				r.wg.Add(1)
+				go func() {
+					defer r.wg.Done()
+					defer r.gcSweeping.Store(false)
+					r.sweepGC(ctx)
+				}()
+			}
+		case <-pollTimer.C:
 			r.Tick(ctx)
+			resetPoll()
 		case <-wake:
 			r.Tick(ctx)
+			resetPoll()
 		case <-schedule.C:
+			r.scheduleTickAsync(ctx)
+		case <-scheduleWake:
 			r.scheduleTickAsync(ctx)
 		}
 	}
 }
 
-// listenForWork wakes Run as soon as Postgres notifies a run or chat change,
-// avoiding the up-to-1s poll delay on interactive turns such as Live Voice.
-// The poll ticker remains as a fallback if the listener reconnects.
-func (r *Runner) listenForWork(ctx context.Context, wake chan<- struct{}) {
+// listenForWork wakes Run as soon as Postgres notifies a run, chat, or
+// background work change, letting the fallback poll back off while idle.
+func (r *Runner) listenForWork(ctx context.Context, wake, scheduleWake, slotLimitWake chan<- struct{}) {
 	for ctx.Err() == nil {
-		r.listenOnce(ctx, wake)
+		r.listenOnce(ctx, wake, scheduleWake, slotLimitWake)
+		r.listenerUp.Store(false)
 		select {
 		case <-ctx.Done():
 			return
@@ -259,12 +331,23 @@ func (r *Runner) listenForWork(ctx context.Context, wake chan<- struct{}) {
 	}
 }
 
-func (r *Runner) listenOnce(ctx context.Context, wake chan<- struct{}) {
+func signalNonBlocking(ch chan<- struct{}) {
+	if ch == nil {
+		return
+	}
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
+}
+
+func (r *Runner) listenOnce(ctx context.Context, wake, scheduleWake, slotLimitWake chan<- struct{}) {
 	conn, err := r.Pool.Acquire(ctx)
 	if err != nil {
 		return
 	}
 	defer func() {
+		r.listenerUp.Store(false)
 		// Never return a LISTEN connection to the general pool.
 		_ = conn.Conn().Close(context.Background())
 		conn.Release()
@@ -272,33 +355,62 @@ func (r *Runner) listenOnce(ctx context.Context, wake chan<- struct{}) {
 	if _, err := conn.Exec(ctx, "LISTEN lazyagents_changes"); err != nil {
 		return
 	}
-	// Recover any turn queued before LISTEN took effect.
-	select {
-	case wake <- struct{}{}:
-	default:
+	if _, err := conn.Exec(ctx, "LISTEN vesper_work"); err != nil {
+		return
 	}
+	r.listenerUp.Store(true)
+	// Recover any work queued before LISTEN took effect.
+	signalNonBlocking(wake)
 	for {
 		n, err := conn.Conn().WaitForNotification(ctx)
 		if err != nil {
 			return
 		}
-		if shouldWakeRunner(n.Payload) {
-			select {
-			case wake <- struct{}{}:
-			default:
-			}
+		tick, sched, slotLimit := classifyRunnerNotify(n.Channel, n.Payload)
+		if tick {
+			signalNonBlocking(wake)
+		}
+		if sched {
+			signalNonBlocking(scheduleWake)
+		}
+		if slotLimit {
+			signalNonBlocking(slotLimitWake)
 		}
 	}
 }
 
-func shouldWakeRunner(payload string) bool {
+func classifyRunnerNotify(channel, payload string) (wakeTick, wakeSchedule, wakeSlotLimit bool) {
+	if channel == "vesper_work" {
+		switch payload {
+		case "sign_in", "model_listing", "usage_check", "dev_workspace":
+			return true, false, false
+		case "scheduled_task":
+			return false, true, false
+		case "slot_limit":
+			return false, false, true
+		default:
+			return false, false, false
+		}
+	}
 	var p struct {
 		Type string `json:"type"`
 	}
 	if json.Unmarshal([]byte(payload), &p) != nil {
-		return false
+		return false, false, false
 	}
-	return p.Type == "run.updated" || p.Type == "chat.updated"
+	switch p.Type {
+	case "run.updated":
+		return true, true, false
+	case "chat.updated", "playground.updated":
+		return true, false, false
+	default:
+		return false, false, false
+	}
+}
+
+func shouldWakeRunner(payload string) bool {
+	tick, _, _ := classifyRunnerNotify("lazyagents_changes", payload)
+	return tick
 }
 
 // Recover requeues work a dead runner left half-done.
@@ -391,6 +503,12 @@ func (r *Runner) heartbeat(ctx context.Context) {
 	if r.OnHeartbeat != nil {
 		r.OnHeartbeat()
 	}
+	r.refreshSlotLimit(ctx)
+}
+
+func (r *Runner) refreshSlotLimit(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, controlTimeout)
+	defer cancel()
 	limit, err := r.q().RunnerSlotLimit(ctx, r.Cfg.ID)
 	if err != nil {
 		// Keep the last known cap: a failed read must not lift a thermal cap.
@@ -859,20 +977,21 @@ func (r *Runner) cleanup(ctx context.Context, runID uuid.UUID) {
 	_ = r.q().SetRunWorkspace(ctx, store.SetRunWorkspaceParams{ID: runID, WorkspaceVolume: nil})
 }
 
-// Sweep ends idle chat segments and removes workspaces of runs that ended
-// between turns.
+// Sweep ends idle chat segments, removes workspaces of runs that ended between
+// turns, and runs periodic garbage-collection passes.
 func (r *Runner) Sweep(ctx context.Context) {
-	defer r.sweepChatAttachments(ctx)
+	r.sweepFast(ctx)
+	r.sweepGC(ctx)
+}
+
+// sweepFast handles state transitions and workspace cleanup that should settle
+// within a minute even if an in-flight notification was missed.
+func (r *Runner) sweepFast(ctx context.Context) {
 	defer r.sweepPlaygrounds(ctx)
-	defer r.sweepTemporaryChats(ctx)
-	defer r.sweepChatVideos(ctx)
-	defer r.sweepDeckBlobs(ctx)
-	defer r.sweepLinkPreviews(ctx)
 	defer r.advanceLearning(ctx)
 	defer r.advanceResearch(ctx)
 	defer r.advanceWorkflows(ctx)
 	defer r.advanceChatTicketRuns(ctx)
-	defer r.refreshChatSuggestions(ctx, time.Now())
 	r.expireIdleChats(ctx)
 	ids, err := r.q().EndedRunsWithWorkspace(ctx, append([]uuid.UUID{}, r.otherBackend...))
 	if err != nil {
@@ -887,6 +1006,17 @@ func (r *Runner) Sweep(ctx context.Context) {
 		r.warmSessions.evict(id)
 		r.cleanup(ctx, id)
 	}
+}
+
+// sweepGC runs low-frequency garbage collection (24h–90d TTLs) and periodic
+// conversation-starter refreshes.
+func (r *Runner) sweepGC(ctx context.Context) {
+	defer r.sweepChatAttachments(ctx)
+	defer r.sweepTemporaryChats(ctx)
+	defer r.sweepChatVideos(ctx)
+	defer r.sweepDeckBlobs(ctx)
+	defer r.sweepLinkPreviews(ctx)
+	r.refreshChatSuggestions(ctx, time.Now())
 }
 
 // TemporaryChatTTL is how long a temporary chat may sit idle before the sweep

@@ -302,7 +302,7 @@ func Load() (Config, error) {
 		return c, err
 	}
 	c.Runner = r
-	if c.PRSyncInterval, err = intEnv("PR_SYNC_INTERVAL_S", 60); err != nil {
+	if c.PRSyncInterval, err = intEnv("PR_SYNC_INTERVAL_S", 180); err != nil {
 		return c, err
 	}
 	if c.MemoryConsolidateInterval, err = intEnv("MEMORY_CONSOLIDATE_INTERVAL_S", 6*60*60); err != nil {

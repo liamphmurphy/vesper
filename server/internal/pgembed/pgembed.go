@@ -134,20 +134,7 @@ func Start(ctx context.Context, cfg Config) (*Cluster, error) {
 		}
 	}
 
-	args := []string{
-		"-D", cfg.DataDir,
-		"-k", sockDir,
-		"-h", "", // Disable TCP listening entirely; Unix socket only.
-		"-p", strconv.Itoa(cfg.Port),
-		"-c", "unix_socket_permissions=0700",
-		"-c", "shared_buffers=64MB",
-		"-c", "max_connections=64",
-		"-c", "timezone=UTC",
-		"-c", "log_timezone=UTC",
-	}
-	if st, serr := os.Stat(pkgLibDir); serr == nil && st.IsDir() {
-		args = append(args, "-c", "dynamic_library_path="+pkgLibDir)
-	}
+	args := postgresArgs(cfg, sockDir, pkgLibDir)
 
 	var stderrRing tailBuffer
 	stderrRing.limit = 32 << 10
@@ -314,6 +301,32 @@ func (c *Cluster) ensureDatabase(ctx context.Context) error {
 	}
 	_ = conn.Close(ctx)
 	return nil
+}
+
+func postgresArgs(cfg Config, sockDir, pkgLibDir string) []string {
+	args := []string{
+		"-D", cfg.DataDir,
+		"-k", sockDir,
+		"-h", "", // Disable TCP listening entirely; Unix socket only.
+		"-p", strconv.Itoa(cfg.Port),
+		"-c", "unix_socket_permissions=0700",
+		"-c", "shared_buffers=64MB",
+		"-c", "max_connections=64",
+		"-c", "timezone=UTC",
+		"-c", "log_timezone=UTC",
+		// Reduce background daemon timer wakeups (defaults are 200ms / 60s / 5min)
+		// without relaxing synchronous commit durability.
+		"-c", "bgwriter_delay=2000ms",
+		"-c", "wal_writer_delay=2000ms",
+		"-c", "autovacuum_naptime=5min",
+		"-c", "checkpoint_timeout=15min",
+	}
+	if pkgLibDir != "" {
+		if st, serr := os.Stat(pkgLibDir); serr == nil && st.IsDir() {
+			args = append(args, "-c", "dynamic_library_path="+pkgLibDir)
+		}
+	}
+	return args
 }
 
 func buildSocketDSN(user, dbName, sockDir string, port int) string {

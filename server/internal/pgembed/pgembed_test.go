@@ -4,12 +4,27 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/liamphmurphy/vesper/server/internal/db"
 )
+
+func TestPostgresArgsIncludeIdleTuning(t *testing.T) {
+	args := postgresArgs(Config{DataDir: "/tmp/data", Port: 5432}, "/tmp/sock", "")
+	for _, want := range []string{
+		"bgwriter_delay=2000ms",
+		"wal_writer_delay=2000ms",
+		"autovacuum_naptime=5min",
+		"checkpoint_timeout=15min",
+	} {
+		if !slices.Contains(args, want) {
+			t.Fatalf("postgresArgs missing %q: %v", want, args)
+		}
+	}
+}
 
 func bundledPostgresBinDir(t *testing.T) string {
 	t.Helper()
