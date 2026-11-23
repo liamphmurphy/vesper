@@ -116,9 +116,13 @@ func TestWatchdogStopsProcessWhileDatabaseIsBlocked(t *testing.T) {
 			if !runtime {
 				cancel()
 			}
+			wait := time.Second
+			if runtime {
+				wait = remaining + time.Second
+			}
 			select {
 			case <-done:
-			case <-time.After(time.Second):
+			case <-time.After(wait):
 				_ = tx.Rollback(context.Background())
 				cancel()
 				<-done
