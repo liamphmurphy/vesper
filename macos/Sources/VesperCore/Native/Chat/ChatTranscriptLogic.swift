@@ -91,6 +91,13 @@ public enum ChatMessageSegment: Sendable, Equatable {
     case compareImages(ChatCompareImagesSpec)
     case graph(ChatGraphSpec)
     case plot(ChatPlotSpec)
+    case dataTable(ChatDataTableSpec)
+    case codeGroup(ChatCodeGroupSpec)
+    case kv(ChatKVSpec)
+    case jsonTree(ChatJSONTreeSpec)
+    case http(ChatHTTPSpec)
+    case tabs(ChatTabsSpec)
+    case details(ChatDetailsSpec)
     case choices(ChatChoicesCard)
     case dispatch(ChatDispatchCard)
     case recommend([ChatRecommendCard])
@@ -453,6 +460,83 @@ public enum ChatTranscriptLogic {
                         segments.append(.plot(spec))
                     case .failure(let err):
                         segments.append(.invalidBlock(kind: "plot", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatDataTableSpec.isDataTableFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatDataTableSpec.parse(code) {
+                    case .success(let spec):
+                        segments.append(.dataTable(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "datatable", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatCodeGroupSpec.isCodeGroupFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatCodeGroupSpec.parse(code) {
+                    case .success(let spec):
+                        segments.append(.codeGroup(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "code-group", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatKVSpec.isKVFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatKVSpec.parse(code) {
+                    case .success(let spec):
+                        segments.append(.kv(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "kv", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatJSONTreeSpec.isJSONTreeFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatJSONTreeSpec.parse(code, info: infoOpt) {
+                    case .success(let spec):
+                        segments.append(.jsonTree(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "json-tree", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatHTTPSpec.isHTTPFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatHTTPSpec.parse(code) {
+                    case .success(let spec):
+                        segments.append(.http(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "http", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatTabsSpec.isTabsFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatTabsSpec.parse(code) {
+                    case .success(let spec):
+                        segments.append(.tabs(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "tabs", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatDetailsSpec.isDetailsFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatDetailsSpec.parse(code, info: infoOpt) {
+                    case .success(let spec):
+                        segments.append(.details(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "details", error: err.message, source: code))
                     }
                     i = nextIndex
                     continue

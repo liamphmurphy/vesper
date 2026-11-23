@@ -33,7 +33,6 @@ struct ChatCalloutView: View {
     }
 
     var body: some View {
-        let p = theme.palette
         let accent = accentColor
         VStack(alignment: .leading, spacing: 0) {
             headerRow(accent: accent)
