@@ -2,11 +2,14 @@ import SwiftUI
 import VesperCore
 
 /// Native SwiftUI implementation of `/plans` (port of `web/app/(app)/plans/plans-screen.tsx`):
-/// sidebar list of planning sessions, New Plan form with space/agent/epic/context attachments,
-/// live planner run progress & sources read, and full proposal review/edit/accept/dispatch flow.
+/// shared left-sidebar list of planning sessions, New Plan form with space/agent/epic/context
+/// attachments, live planner run progress & sources read, and full proposal review/edit/accept/dispatch flow.
 struct PlansScreen: View {
     @Environment(NativeScreenContext.self) private var context
     @Environment(\.vesperTheme) private var theme
+
+    @State private var navProjectFilter = ""
+    @State private var navSearch = ""
 
     private static let bootstrapReq = API.getBootstrap()
     private static let listReq = API.listPlanningSessions()
@@ -38,69 +41,70 @@ struct PlansScreen: View {
             return activeProjects.first
         }()
 
-        HStack(spacing: 0) {
-            planListSidebar(plans: listEntry.data, isLoading: listEntry.data == nil && listEntry.error == nil, error: listEntry.error)
-                .frame(width: 268)
-                .background(theme.swiftUIColor("surface-sunken", fallback: theme.palette.surface))
+        let currentChrome = buildChrome(
+            project: currentProject,
+            projects: projects,
+            listEntry: listEntry
+        )
 
-            Divider().overlay(theme.palette.border)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    if let bootErr = bootEntry.error {
-                        QueryErrorView(message: bootErr.userMessage) {
-                            Task { await context.store.refetch(Self.bootstrapReq) }
-                        }
-                    } else if let boot = bootEntry.data {
-                        if let planId = selectedPlanId {
-                            if let err = detailEntry?.error {
-                                QueryErrorView(message: err.userMessage) {
-                                    Task { await context.store.refetch(API.getPlanningSession(id: planId)) }
-                                }
-                            } else if let plan = detailEntry?.data {
-                                PlanDetailView(plan: plan, bootstrap: boot)
-                                    .id(plan.id)
-                            } else {
-                                VStack(alignment: .leading, spacing: 12) {
-                                    SkeletonBar(height: 28).frame(width: 320)
-                                    SkeletonBar(height: 120)
-                                    SkeletonBar(height: 200)
-                                }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                if let bootErr = bootEntry.error {
+                    QueryErrorView(message: bootErr.userMessage) {
+                        Task { await context.store.refetch(Self.bootstrapReq) }
+                    }
+                } else if let boot = bootEntry.data {
+                    if let planId = selectedPlanId {
+                        if let err = detailEntry?.error {
+                            QueryErrorView(message: err.userMessage) {
+                                Task { await context.store.refetch(API.getPlanningSession(id: planId)) }
                             }
-                        } else if let project = currentProject {
-                            let planners = boot.agents.filter { $0.kind == .main }
-                            if planners.isEmpty {
-                                emptyNoAgents
-                            } else {
-                                NewPlanCard(
-                                    bootstrap: boot,
-                                    activeProjects: activeProjects,
-                                    initialProject: project,
-                                    initialGoal: context.match.query["goal"] ?? "",
-                                    initialEpicId: context.match.query["epic"] ?? "",
-                                    initialArtifactId: context.match.query["artifact"],
-                                    initialAttach: context.match.query["attach"],
-                                    initialAttachTitle: context.match.query["attach_title"]
-                                )
-                                .id("\(project.key)|\(context.match.query["artifact"] ?? "")|\(context.match.query["epic"] ?? "")|\(context.match.query["goal"] ?? "")")
-                            }
+                        } else if let plan = detailEntry?.data {
+                            PlanDetailView(plan: plan, bootstrap: boot)
+                                .id(plan.id)
                         } else {
-                            emptyNoProjects
+                            VStack(alignment: .leading, spacing: 12) {
+                                SkeletonBar(height: 28).frame(width: 320)
+                                SkeletonBar(height: 120)
+                                SkeletonBar(height: 200)
+                            }
+                        }
+                    } else if let project = currentProject {
+                        let planners = boot.agents.filter { $0.kind == .main }
+                        if planners.isEmpty {
+                            emptyNoAgents
+                        } else {
+                            NewPlanCard(
+                                bootstrap: boot,
+                                activeProjects: activeProjects,
+                                initialProject: project,
+                                initialGoal: context.match.query["goal"] ?? "",
+                                initialEpicId: context.match.query["epic"] ?? "",
+                                initialArtifactId: context.match.query["artifact"],
+                                initialAttach: context.match.query["attach"],
+                                initialAttachTitle: context.match.query["attach_title"]
+                            )
+                            .id("\(project.key)|\(context.match.query["artifact"] ?? "")|\(context.match.query["epic"] ?? "")|\(context.match.query["goal"] ?? "")")
                         }
                     } else {
-                        VStack(alignment: .leading, spacing: 12) {
-                            SkeletonBar(height: 28).frame(width: 260)
-                            SkeletonBar(height: 180)
-                        }
+                        emptyNoProjects
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 12) {
+                        SkeletonBar(height: 28).frame(width: 260)
+                        SkeletonBar(height: 180)
                     }
                 }
-                .frame(maxWidth: 960, alignment: .leading)
-                .padding(.horizontal, 28)
-                .padding(.vertical, 24)
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(maxWidth: 960, alignment: .leading)
+            .padding(.horizontal, 28)
+            .padding(.vertical, 24)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(theme.palette.background)
+        .onChange(of: currentChrome, initial: true) { _, next in
+            context.chrome = next
+        }
         .onAppear {
             context.store.load(Self.bootstrapReq)
             context.store.load(Self.listReq)
@@ -110,15 +114,9 @@ struct PlansScreen: View {
                 context.store.load(detailReq)
                 context.store.observe(detailReq)
             }
-            syncChrome(project: currentProject)
+            context.chrome = currentChrome
             context.onCommand = { cmd in
-                if case .toolbarAction(itemId: "plans.new", _) = cmd {
-                    if let key = currentProject?.key {
-                        context.navigate("/plans?project=\(key)")
-                    } else {
-                        context.navigate("/plans")
-                    }
-                }
+                handleCommand(cmd, currentProjectKey: currentProject?.key)
             }
         }
         .onDisappear {
@@ -135,8 +133,10 @@ struct PlansScreen: View {
                 context.store.observe(req)
             }
         }
-        .onChange(of: currentProject?.name) { _, _ in
-            syncChrome(project: currentProject)
+        .onChange(of: currentProject?.key) { _, key in
+            context.onCommand = { cmd in
+                handleCommand(cmd, currentProjectKey: key)
+            }
         }
         .task(id: selectedPlanId) {
             // Keep the list and active plan fresh while open.
@@ -155,93 +155,55 @@ struct PlansScreen: View {
         }
     }
 
-    private func syncChrome(project: API.Project?) {
-        context.chrome = NativeChrome(
+    private func buildChrome(
+        project: API.Project?,
+        projects: [API.Project],
+        listEntry: QueryEntry<[API.PlanningSession]>
+    ) -> NativeChrome {
+        NativeChrome(
             title: "Plans",
             subtitle: project?.name,
             toolbarItems: [
                 ShellToolbarItem(id: "plans.new", label: "New plan", icon: "plus", kind: .button, showsLabel: true),
-            ]
+            ],
+            navigator: PlansLogic.navModel(
+                plans: listEntry.data,
+                projects: projects,
+                projectFilter: navProjectFilter,
+                search: navSearch,
+                selectedId: selectedPlanId,
+                loading: listEntry.data == nil && listEntry.error == nil,
+                error: listEntry.data == nil ? listEntry.error?.userMessage : nil
+            )
         )
     }
 
-    private func planListSidebar(plans: [API.PlanningSession]?, isLoading: Bool, error: APIError?) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("PLANS")
-                    .font(.system(size: theme.pointSize(.micro), weight: .semibold))
-                    .foregroundStyle(theme.palette.tertiaryText)
-                Spacer()
-                if let count = plans?.count {
-                    Text("\(count)")
-                        .font(.system(size: theme.pointSize(.micro), design: .monospaced))
-                        .foregroundStyle(theme.palette.tertiaryText)
-                }
+    private func handleCommand(_ cmd: NativeCommand, currentProjectKey: String?) {
+        func openNewPlan() {
+            let key = navProjectFilter.isEmpty ? currentProjectKey : navProjectFilter
+            if let key, !key.isEmpty {
+                context.navigate("/plans?project=\(key)")
+            } else {
+                context.navigate("/plans")
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-
-            Divider().overlay(theme.palette.border)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 6) {
-                    if isLoading {
-                        ForEach(0..<4, id: \.self) { _ in SkeletonBar(height: 58) }
-                    } else if let error {
-                        Text(error.userMessage)
-                            .font(.system(size: theme.pointSize(.small)))
-                            .foregroundStyle(theme.swiftUIColor("pill-blocked-fg", fallback: .red))
-                            .padding(8)
-                    } else if let plans, plans.isEmpty {
-                        Text("Your plans will appear here.")
-                            .font(.system(size: theme.pointSize(.small)))
-                            .foregroundStyle(theme.palette.tertiaryText)
-                            .padding(8)
-                    } else if let plans {
-                        ForEach(plans, id: \.id) { plan in
-                            let active = plan.id == selectedPlanId
-                            let status = PlansLogic.planStatus(plan)
-                            Button {
-                                context.navigate("/plans?id=\(plan.id)")
-                            } label: {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    HStack(spacing: 6) {
-                                        TonePill(label: status.label, tone: status.tone.rawValue)
-                                        Spacer()
-                                        Text(PlansLogic.planCount(plan))
-                                            .font(.system(size: theme.pointSize(.micro)))
-                                            .foregroundStyle(theme.palette.tertiaryText)
-                                    }
-                                    Text(PlansLogic.firstLine(plan.goal).isEmpty ? "Untitled plan" : PlansLogic.firstLine(plan.goal))
-                                        .font(.system(size: theme.pointSize(.body)))
-                                        .foregroundStyle(theme.palette.text)
-                                        .lineLimit(2)
-                                        .multilineTextAlignment(.leading)
-                                    Text("\(plan.project) \u{00B7} \(APIDate.shortAgo(plan.createdAt))")
-                                        .font(.system(size: theme.pointSize(.small)))
-                                        .foregroundStyle(theme.palette.tertiaryText)
-                                }
-                                .padding(10)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(
-                                    active ? theme.palette.selected : theme.palette.surface,
-                                    in: RoundedRectangle(cornerRadius: 8)
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(active ? theme.palette.accent.opacity(0.45) : theme.palette.border, lineWidth: 1)
-                                )
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        Text("Status \u{00B7} first line of the goal \u{00B7} tickets accepted / proposals made")
-                            .font(.system(size: theme.pointSize(.micro)))
-                            .foregroundStyle(theme.palette.tertiaryText)
-                            .padding(.top, 6)
-                    }
-                }
-                .padding(12)
-            }
+        }
+        if case .toolbarAction(itemId: "plans.new", _) = cmd {
+            openNewPlan()
+            return
+        }
+        guard let action = PlansLogic.navAction(for: cmd) else { return }
+        switch action {
+        case .newPlan:
+            openNewPlan()
+        case .selectPlan(let id, let newTab):
+            let href = "/plans?id=\(id)"
+            if newTab { context.openInNewTab(href) } else { context.navigate(href) }
+        case .filterSpace(let key):
+            navProjectFilter = key
+        case .search(let value):
+            navSearch = value
+        case .retry:
+            Task { _ = await context.store.refetch(Self.listReq) }
         }
     }
 
