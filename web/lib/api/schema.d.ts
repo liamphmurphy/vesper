@@ -10394,8 +10394,10 @@ export interface components {
             avatar_url?: string;
             /** @description Sanitized 64x64 animated SVG character source; absent when using a picture or initials */
             character_svg?: string;
-            /** @description Photorealistic state loops; absent when none has been generated */
+            /** @description Photorealistic state loops; absent when none has been generated or state_media_enabled is false */
             state_media?: components["schemas"]["PersonaStateMediaSummary"];
+            /** @description Whether generated state loops are shown; turning this off preserves stored loops */
+            state_media_enabled: boolean;
             reveal_pace: components["schemas"]["PersonaRevealPace"];
             voice: components["schemas"]["PersonaVoice"];
             /** @description Length of each state loop; Omni loops (pins first and last frames) only up to 10s */
@@ -10555,6 +10557,8 @@ export interface components {
         };
         PersonaPatch: {
             revision: number;
+            /** @description Show or hide generated state loops without deleting them */
+            state_media_enabled?: boolean;
             /** @description Applies to loops generated from now on */
             loop_seconds?: number;
             voice_mode?: components["schemas"]["PersonaVoiceMode"];

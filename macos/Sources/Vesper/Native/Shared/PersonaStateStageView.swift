@@ -129,9 +129,9 @@ final class PersonaLoopFrames {
 }
 
 extension API.Persona {
-    /// Its state loops by state, or nil when it has none to play.
+    /// Its state loops by state, or nil when disabled or it has none to play.
     var playableLoops: [String: String]? {
-        guard let loops = stateMedia?.loops, PersonaStateLoops.hasLoops(loops) else { return nil }
+        guard stateMediaEnabled, let loops = stateMedia?.loops, PersonaStateLoops.hasLoops(loops) else { return nil }
         return loops
     }
 }

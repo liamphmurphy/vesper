@@ -106,10 +106,14 @@ func (s *Server) toPersonas(ctx context.Context, rows []store.Persona) ([]api.Pe
 		return nil, err
 	}
 	for _, p := range rows {
+		var sm *api.PersonaStateMediaSummary
+		if p.StateMediaEnabled {
+			sm = stateMediaSummary(loops[p.ID])
+		}
 		item := api.Persona{
 			Id: p.ID, Name: p.Name, Tone: api.PersonaTone(p.Tone), Color: p.Color, AvatarUrl: personaAvatarURL(p), CharacterSvg: p.CharacterSvg,
 			CustomInstructions: p.CustomInstructions, Capabilities: *toPersonaCapabilities(p), Repos: reposOrEmpty(p.Repos), IsDefault: p.IsDefault, ChatCount: n[p.ID], LastUsedAt: p.LastUsedAt,
-			InChatList: p.InChatList, Work: api.PersonaWork(personas.WorkNone), StateMedia: stateMediaSummary(loops[p.ID]),
+			InChatList: p.InChatList, Work: api.PersonaWork(personas.WorkNone), StateMedia: sm, StateMediaEnabled: p.StateMediaEnabled,
 			RevealPace: api.PersonaRevealPace(p.RevealPace), Voice: toPersonaVoice(p), LoopSeconds: int(p.LoopSeconds),
 			Revision: int(p.Revision), CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
 		}
@@ -210,7 +214,7 @@ func (s *Server) UpdatePersona(ctx context.Context, req api.UpdatePersonaRequest
 		Code: code, Images: images, Personas: makers, SVG: svg, Workflows: workflows, Connectors: connectors, Repos: b.Repos,
 		ImageEngine: imageEngineArg(b.Capabilities), TicketEdits: ticketEditsArg(b.Capabilities), InChatList: b.InChatList,
 		DefaultHarness: strEnumArg(b.DefaultHarness), DefaultModel: b.DefaultModel, DefaultEffort: strEnumArg(b.DefaultEffort),
-		RevealPace: strEnumArg(b.RevealPace), VoiceMode: strEnumArg(b.VoiceMode), VoiceName: b.VoiceName, VoiceStyle: b.VoiceStyle, LoopSeconds: loopSecondsArg(b.LoopSeconds),
+		RevealPace: strEnumArg(b.RevealPace), VoiceMode: strEnumArg(b.VoiceMode), VoiceName: b.VoiceName, VoiceStyle: b.VoiceStyle, LoopSeconds: loopSecondsArg(b.LoopSeconds), StateMediaEnabled: b.StateMediaEnabled,
 	})
 	if err != nil {
 		return nil, err

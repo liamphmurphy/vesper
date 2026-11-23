@@ -388,3 +388,68 @@ func TestPersonaStateMediaLoopLength(t *testing.T) {
 	e.invalid("PATCH", "/personas/"+id, map[string]any{"revision": got["revision"], "loop_seconds": 11}, "loop_seconds", "4 to 10")
 	e.invalid("PATCH", "/personas/"+id, map[string]any{"revision": got["revision"], "loop_seconds": 3}, "loop_seconds", "4 to 10")
 }
+
+func TestPersonaStateMediaEnabledToggle(t *testing.T) {
+	e := newStateMediaEnv(t, true)
+	id := e.personaWithPortrait()
+
+	// Enabled by default.
+	p := e.want("GET", "/personas/"+id, nil, http.StatusOK)
+	if p["state_media_enabled"] != true {
+		t.Fatalf("default state_media_enabled = %v, want true", p["state_media_enabled"])
+	}
+
+	// Generate one state loop and verify Persona carries its summary.
+	e.want("POST", "/personas/"+id+"/state-media", map[string]any{"states": []string{"idle"}}, http.StatusAccepted)
+	e.settle(id)
+
+	p = e.want("GET", "/personas/"+id, nil, http.StatusOK)
+	sm, ok := p["state_media"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected state_media when enabled, got %v", p["state_media"])
+	}
+	idleURL, _ := sm["loops"].(map[string]any)["idle"].(string)
+	if idleURL == "" {
+		t.Fatalf("expected idle loop URL when enabled, got %v", sm)
+	}
+
+	// Disabling hides state_media from Persona payloads while keeping the stored rows and blobs.
+	disabled := e.want("PATCH", "/personas/"+id, map[string]any{"revision": p["revision"], "state_media_enabled": false}, http.StatusOK)
+	if disabled["state_media_enabled"] != false {
+		t.Fatalf("state_media_enabled after disable = %v, want false", disabled["state_media_enabled"])
+	}
+	if disabled["state_media"] != nil {
+		t.Fatalf("PATCH returned state_media while disabled: %v", disabled["state_media"])
+	}
+	for _, raw := range e.want("GET", "/personas", nil, http.StatusOK)["personas"].([]any) {
+		if pp := raw.(map[string]any); pp["id"] == id {
+			if pp["state_media_enabled"] != false || pp["state_media"] != nil {
+				t.Fatalf("GET /personas while disabled: enabled=%v state_media=%v", pp["state_media_enabled"], pp["state_media"])
+			}
+		}
+	}
+	// Settings list still shows the generated loop so nothing was deleted.
+	states := e.want("GET", "/personas/"+id+"/state-media", nil, http.StatusOK)["states"].([]any)
+	if len(states) != 1 || states[0].(map[string]any)["status"] != "ready" || states[0].(map[string]any)["loop_url"] != idleURL {
+		t.Fatalf("stored state media after disable = %v", states)
+	}
+
+	// Unrelated patch keeps state_media_enabled=false.
+	renamed := e.want("PATCH", "/personas/"+id, map[string]any{"revision": disabled["revision"], "name": "Renamed"}, http.StatusOK)
+	if renamed["state_media_enabled"] != false || renamed["state_media"] != nil {
+		t.Fatalf("unrelated patch changed state_media_enabled: enabled=%v state_media=%v", renamed["state_media_enabled"], renamed["state_media"])
+	}
+
+	// Re-enabling brings the exact same generated loop back with no new video request.
+	reenabled := e.want("PATCH", "/personas/"+id, map[string]any{"revision": renamed["revision"], "state_media_enabled": true}, http.StatusOK)
+	if reenabled["state_media_enabled"] != true {
+		t.Fatalf("state_media_enabled after re-enable = %v, want true", reenabled["state_media_enabled"])
+	}
+	sm2, ok := reenabled["state_media"].(map[string]any)
+	if !ok || sm2["loops"].(map[string]any)["idle"] != idleURL {
+		t.Fatalf("expected original idle loop %q back after re-enable, got %v", idleURL, reenabled["state_media"])
+	}
+	if len(e.ctrl.VideoRequests()) != 1 {
+		t.Fatalf("expected 1 video request total, got %d", len(e.ctrl.VideoRequests()))
+	}
+}

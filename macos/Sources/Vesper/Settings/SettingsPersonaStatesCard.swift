@@ -27,10 +27,24 @@ struct SettingsPersonaStatesCard: View {
             if let errorMessage {
                 SettingsBanner(tone: .blocked, title: "Couldn't update animated states", message: errorMessage)
             }
+            Toggle("Enable animated states", isOn: Binding(
+                get: { persona.stateMediaEnabled },
+                set: { setStateMediaEnabled($0) }
+            ))
+            .disabled(busy)
+            if !persona.stateMediaEnabled {
+                Text("Animated states are hidden everywhere. Generated loops are kept and come back when you re-enable them.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             HStack(alignment: .top, spacing: 16) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .underPageBackgroundColor))
-                    if let url = current?.loopUrl {
+                    if !persona.stateMediaEnabled {
+                        Text("Disabled")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else if let url = current?.loopUrl {
                         PersonaStateStageView(loops: [selected.rawValue: url], state: characterState(selected), width: 108, label: "\(persona.name), \(label(selected))")
                     } else {
                         Text(current?.status == .failed ? "No loop" : "Not generated")
@@ -192,6 +206,24 @@ struct SettingsPersonaStatesCard: View {
             do {
                 _ = try await store.mutate(API.generatePersonaStateMedia(id: persona.id, body: API.GeneratePersonaStateMedia(states: states, tweak: tweak)))
                 await refresh()
+            } catch {
+                errorMessage = settingsErrorText(error)
+            }
+        }
+    }
+
+    private func setStateMediaEnabled(_ enabled: Bool) {
+        guard let store, enabled != persona.stateMediaEnabled else { return }
+        busy = true
+        errorMessage = nil
+        Task {
+            defer { busy = false }
+            do {
+                _ = try await store.mutate(API.updatePersona(id: persona.id, body: API.PersonaPatch(
+                    revision: persona.revision,
+                    stateMediaEnabled: enabled
+                )))
+                await store.refetch(API.listPersonas())
             } catch {
                 errorMessage = settingsErrorText(error)
             }

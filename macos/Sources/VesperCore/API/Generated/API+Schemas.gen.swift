@@ -16298,6 +16298,8 @@ extension API {
         public var revision: Swift.Int
         /// What the clients need to play a persona's loops.
         public var stateMedia: PersonaStateMediaSummary?
+        /// Whether generated state loops are shown; turning this off preserves stored loops
+        public var stateMediaEnabled: Swift.Bool
         /// How the assistant writes; each maps to one fixed prompt sentence on the server
         public var tone: PersonaTone
         public var updatedAt: Swift.String
@@ -16345,6 +16347,7 @@ extension API {
             revealPace: PersonaRevealPace,
             revision: Swift.Int,
             stateMedia: PersonaStateMediaSummary? = nil,
+            stateMediaEnabled: Swift.Bool,
             tone: PersonaTone,
             updatedAt: Swift.String,
             voice: PersonaVoice,
@@ -16373,6 +16376,7 @@ extension API {
             self.revealPace = revealPace
             self.revision = revision
             self.stateMedia = stateMedia
+            self.stateMediaEnabled = stateMediaEnabled
             self.tone = tone
             self.updatedAt = updatedAt
             self.voice = voice
@@ -16403,6 +16407,7 @@ extension API {
             case revealPace = "reveal_pace"
             case revision
             case stateMedia = "state_media"
+            case stateMediaEnabled = "state_media_enabled"
             case tone
             case updatedAt = "updated_at"
             case voice
@@ -16434,6 +16439,7 @@ extension API {
             self.revealPace = try c.decode(PersonaRevealPace.self, forKey: .revealPace)
             self.revision = try c.decode(Swift.Int.self, forKey: .revision)
             self.stateMedia = try c.decodeIfPresent(PersonaStateMediaSummary.self, forKey: .stateMedia)
+            self.stateMediaEnabled = try c.decode(Swift.Bool.self, forKey: .stateMediaEnabled)
             self.tone = try c.decode(PersonaTone.self, forKey: .tone)
             self.updatedAt = try c.decode(Swift.String.self, forKey: .updatedAt)
             self.voice = try c.decode(PersonaVoice.self, forKey: .voice)
@@ -16465,6 +16471,7 @@ extension API {
             try c.encode(revealPace, forKey: .revealPace)
             try c.encode(revision, forKey: .revision)
             try c.encodeIfPresent(stateMedia, forKey: .stateMedia)
+            try c.encode(stateMediaEnabled, forKey: .stateMediaEnabled)
             try c.encode(tone, forKey: .tone)
             try c.encode(updatedAt, forKey: .updatedAt)
             try c.encode(voice, forKey: .voice)
@@ -16871,6 +16878,8 @@ extension API {
         /// when the persona has a talking loop, instant otherwise.
         public var revealPace: PersonaRevealPace?
         public var revision: Swift.Int
+        /// Show or hide generated state loops without deleting them
+        public var stateMediaEnabled: Swift.Bool?
         /// How the assistant writes; each maps to one fixed prompt sentence on the server
         public var tone: PersonaTone?
         /// off: silent. popout: speaks only in the companion pop-out. always: speaks new replies in the chat too (the companion's mute still wins).
@@ -16922,6 +16931,7 @@ extension API {
             repos: [Swift.String]? = nil,
             revealPace: PersonaRevealPace? = nil,
             revision: Swift.Int,
+            stateMediaEnabled: Swift.Bool? = nil,
             tone: PersonaTone? = nil,
             voiceMode: PersonaVoiceMode? = nil,
             voiceName: Swift.String? = nil,
@@ -16940,6 +16950,7 @@ extension API {
             self.repos = repos
             self.revealPace = revealPace
             self.revision = revision
+            self.stateMediaEnabled = stateMediaEnabled
             self.tone = tone
             self.voiceMode = voiceMode
             self.voiceName = voiceName
@@ -16960,6 +16971,7 @@ extension API {
             case repos
             case revealPace = "reveal_pace"
             case revision
+            case stateMediaEnabled = "state_media_enabled"
             case tone
             case voiceMode = "voice_mode"
             case voiceName = "voice_name"
@@ -16981,6 +16993,7 @@ extension API {
             self.repos = try c.decodeIfPresent([Swift.String].self, forKey: .repos)
             self.revealPace = try c.decodeIfPresent(PersonaRevealPace.self, forKey: .revealPace)
             self.revision = try c.decode(Swift.Int.self, forKey: .revision)
+            self.stateMediaEnabled = try c.decodeIfPresent(Swift.Bool.self, forKey: .stateMediaEnabled)
             self.tone = try c.decodeIfPresent(PersonaTone.self, forKey: .tone)
             self.voiceMode = try c.decodeIfPresent(PersonaVoiceMode.self, forKey: .voiceMode)
             self.voiceName = try c.decodeIfPresent(Swift.String.self, forKey: .voiceName)
@@ -17002,6 +17015,7 @@ extension API {
             try c.encodeIfPresent(repos, forKey: .repos)
             try c.encodeIfPresent(revealPace, forKey: .revealPace)
             try c.encode(revision, forKey: .revision)
+            try c.encodeIfPresent(stateMediaEnabled, forKey: .stateMediaEnabled)
             try c.encodeIfPresent(tone, forKey: .tone)
             try c.encodeIfPresent(voiceMode, forKey: .voiceMode)
             try c.encodeIfPresent(voiceName, forKey: .voiceName)
