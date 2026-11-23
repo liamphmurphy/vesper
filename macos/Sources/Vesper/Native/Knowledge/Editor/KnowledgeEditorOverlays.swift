@@ -9,23 +9,27 @@ struct KnowledgeEmbedPreviewCard: View {
     @Environment(\.vesperTheme) private var theme
 
     let embed: KnowledgeEmbed
+    var maxImageWidth: CGFloat = 460
+    var maxImageHeight: CGFloat = 320
 
     var body: some View {
         let p = theme.palette
-        let ct = embed.contentType?.lowercased() ?? ""
-        let isPDF = ct.contains("pdf") || (embed.url?.lowercased().hasSuffix(".pdf") ?? false)
-        let isImage = ct.hasPrefix("image/") || embed.kind.lowercased() == "image"
         let label = (embed.title?.isEmpty == false ? embed.title : nil) ?? embed.ref
 
-        if isImage, let rawURL = embed.url, !rawURL.isEmpty {
+        if embed.isImageEmbed, let rawURL = embed.url, !rawURL.isEmpty {
             Button {
                 context.showQuickLook([QuickLookItem(url: rawURL, title: label, contentType: embed.contentType)], index: 0)
             } label: {
                 VStack(alignment: .leading, spacing: 4) {
-                    AuthenticatedImageView(source: rawURL, maxPixel: 920) { img in
+                    AuthenticatedImageView(source: rawURL, maxPixel: 920) { img, naturalSize in
+                        let fitted = KnowledgeMarkdownSyntax.fittedInlineImageSize(
+                            naturalSize: naturalSize,
+                            maxWidth: maxImageWidth,
+                            maxHeight: maxImageHeight
+                        )
                         img.resizable()
                             .aspectRatio(contentMode: .fit)
-                            .frame(maxWidth: 460, maxHeight: 320)
+                            .frame(width: fitted.width, height: fitted.height)
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                     } placeholder: {
                         ProgressView().controlSize(.small).padding(16)
@@ -38,10 +42,12 @@ struct KnowledgeEmbedPreviewCard: View {
                     Text(label)
                         .font(.system(size: theme.pointSize(.micro) + 1))
                         .foregroundStyle(p.tertiaryText)
+                        .lineLimit(1)
+                        .frame(maxWidth: maxImageWidth, alignment: .leading)
                 }
             }
             .buttonStyle(.plain)
-        } else if isPDF, let rawURL = embed.url {
+        } else if embed.isPDFEmbed, let rawURL = embed.url {
             HStack(spacing: 10) {
                 Image(systemName: "doc.richtext")
                     .font(.system(size: 16))
@@ -86,6 +92,34 @@ struct KnowledgeEmbedPreviewCard: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(theme.swiftUIColor("surface-sunken", fallback: p.surface), in: RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(p.border))
+        }
+    }
+}
+
+/// Hosts one paragraph's inline embed cards inside `LivePreviewNSTextView` and reports intrinsic size updates
+/// (for example when an authenticated image finishes loading) so TextKit 2 paragraph spacing updates in place.
+struct KnowledgeInlineEmbedGroupView: View {
+    let placements: [KnowledgeInlineEmbedPlacement]
+    let maxWidth: CGFloat
+    let fillsWidth: Bool
+    let onSizeChange: (CGSize) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(placements) { placement in
+                KnowledgeEmbedPreviewCard(
+                    embed: placement.embed,
+                    maxImageWidth: min(maxWidth, 460)
+                )
+            }
+        }
+        .frame(width: fillsWidth ? maxWidth : nil, alignment: .leading)
+        .frame(maxWidth: maxWidth, alignment: .leading)
+        .fixedSize(horizontal: !fillsWidth, vertical: true)
+        .onGeometryChange(for: CGSize.self) { proxy in
+            proxy.size
+        } action: { newSize in
+            onSizeChange(newSize)
         }
     }
 }

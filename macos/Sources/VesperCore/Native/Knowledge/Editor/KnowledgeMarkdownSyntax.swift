@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 // MARK: - Wiki Target
@@ -113,6 +114,83 @@ public struct KnowledgeLivePreviewState: Sendable, Equatable {
 
     public func isRevealed(tokenAt index: Int) -> Bool {
         revealedTokenIndices.contains(index)
+    }
+}
+
+/// A single resolved `![[...]]` embed occurrence anchored to its UTF-16 token and enclosing line ranges.
+public struct KnowledgeInlineEmbedPlacement: Sendable, Equatable, Hashable, Identifiable {
+    public let id: String
+    /// 0-based index of this resolved embed occurrence in document order.
+    public let occurrenceIndex: Int
+    /// UTF-16 range of the `![[...]]` token.
+    public let tokenRange: NSRange
+    /// UTF-16 range of the enclosing line excluding its trailing line ending.
+    public let lineContentRange: NSRange
+    /// UTF-16 range of the enclosing line including its trailing line ending (`\n` or `\r\n`).
+    public let lineRange: NSRange
+    /// `true` when the line contains only resolved embed token(s) and optional whitespace.
+    public let isStandaloneLine: Bool
+    /// Parsed wiki target of the `![[...]]` token.
+    public let target: KnowledgeWikiTarget
+    /// Server-resolved embed metadata.
+    public let embed: KnowledgeEmbed
+
+    public init(
+        id: String,
+        occurrenceIndex: Int,
+        tokenRange: NSRange,
+        lineContentRange: NSRange,
+        lineRange: NSRange,
+        isStandaloneLine: Bool,
+        target: KnowledgeWikiTarget,
+        embed: KnowledgeEmbed
+    ) {
+        self.id = id
+        self.occurrenceIndex = occurrenceIndex
+        self.tokenRange = tokenRange
+        self.lineContentRange = lineContentRange
+        self.lineRange = lineRange
+        self.isStandaloneLine = isStandaloneLine
+        self.target = target
+        self.embed = embed
+    }
+}
+
+/// All resolved inline embeds belonging to a single markdown line/paragraph, in document order.
+public struct KnowledgeInlineEmbedParagraph: Sendable, Equatable, Hashable, Identifiable {
+    /// Stable key independent of character offsets above this paragraph so typing above does not remount views.
+    public let id: String
+    /// 0-based index among paragraphs containing resolved embeds.
+    public let groupIndex: Int
+    /// UTF-16 range of the enclosing line excluding its trailing line ending.
+    public let lineContentRange: NSRange
+    /// UTF-16 range of the enclosing line including its trailing line ending (`\n` or `\r\n`).
+    public let lineRange: NSRange
+    /// `true` when the line contains only resolved embed token(s) and optional whitespace.
+    public let isStandaloneLine: Bool
+    /// Ordered resolved embeds appearing on this line.
+    public let placements: [KnowledgeInlineEmbedPlacement]
+
+    /// Image-only groups hug their fitted image width so clicking beside an image focuses the text view;
+    /// PDF and note cards expand to the full text container width.
+    public var fillsContainerWidth: Bool {
+        placements.contains { !$0.embed.isImageEmbed }
+    }
+
+    public init(
+        id: String,
+        groupIndex: Int,
+        lineContentRange: NSRange,
+        lineRange: NSRange,
+        isStandaloneLine: Bool,
+        placements: [KnowledgeInlineEmbedPlacement]
+    ) {
+        self.id = id
+        self.groupIndex = groupIndex
+        self.lineContentRange = lineContentRange
+        self.lineRange = lineRange
+        self.isStandaloneLine = isStandaloneLine
+        self.placements = placements
     }
 }
 
@@ -636,6 +714,174 @@ public enum KnowledgeMarkdownSyntax: Sendable {
             }
         }
         return result
+    }
+
+    /// Resolves every renderable `![[...]]` embed occurrence in `markdown` in document order,
+    /// preserving duplicate occurrences and anchoring each to its exact token and line UTF-16 ranges.
+    public static func resolveInlineEmbedPlacements(
+        in markdown: String,
+        embeds: [KnowledgeEmbed],
+        tokens: [KnowledgeSyntaxToken]? = nil
+    ) -> [KnowledgeInlineEmbedPlacement] {
+        groupInlineEmbedsByParagraph(in: markdown, embeds: embeds, tokens: tokens)
+            .flatMap(\.placements)
+    }
+
+    /// Groups renderable `![[...]]` embed occurrences by their enclosing markdown line/paragraph
+    /// in strict document order.
+    public static func groupInlineEmbedsByParagraph(
+        in markdown: String,
+        embeds: [KnowledgeEmbed],
+        tokens: [KnowledgeSyntaxToken]? = nil
+    ) -> [KnowledgeInlineEmbedParagraph] {
+        guard !embeds.isEmpty else { return [] }
+        let scanned = tokens ?? scan(markdown)
+        let lines = splitLines(markdown)
+        guard !lines.isEmpty else { return [] }
+
+        var matchedByLine: [Int: [(token: KnowledgeSyntaxToken, target: KnowledgeWikiTarget, embed: KnowledgeEmbed)]] = [:]
+        var lineCursor = 0
+
+        for token in scanned {
+            guard case .embed(let target) = token.kind else { continue }
+            guard let embed = embeds.first(where: {
+                $0.hasInlinePreview && ($0.ref == target.raw || $0.ref == target.ref || $0.ref == target.target)
+            }) else {
+                continue
+            }
+
+            let tokLoc = token.range.location
+            while lineCursor + 1 < lines.count,
+                  lines[lineCursor].utf16Offset + lines[lineCursor].totalUTF16Length <= tokLoc {
+                lineCursor += 1
+            }
+            let lineIdx = lineIndex(containing: tokLoc, in: lines, hint: lineCursor)
+            matchedByLine[lineIdx, default: []].append((token, target, embed))
+        }
+
+        guard !matchedByLine.isEmpty else { return [] }
+
+        var groups: [KnowledgeInlineEmbedParagraph] = []
+        var occurrenceIndex = 0
+
+        for lineIdx in matchedByLine.keys.sorted() {
+            let line = lines[lineIdx]
+            let entries = matchedByLine[lineIdx] ?? []
+            let lineContentRange = NSRange(location: line.utf16Offset, length: line.contentUTF16Length)
+            let lineRange = NSRange(location: line.utf16Offset, length: line.totalUTF16Length)
+            let isStandalone = isLineOnlyEmbedTokens(line: line, tokenRanges: entries.map(\.token.range))
+
+            var placements: [KnowledgeInlineEmbedPlacement] = []
+            placements.reserveCapacity(entries.count)
+            for entry in entries {
+                placements.append(KnowledgeInlineEmbedPlacement(
+                    id: "\(occurrenceIndex):\(entry.embed.ref)",
+                    occurrenceIndex: occurrenceIndex,
+                    tokenRange: entry.token.range,
+                    lineContentRange: lineContentRange,
+                    lineRange: lineRange,
+                    isStandaloneLine: isStandalone,
+                    target: entry.target,
+                    embed: entry.embed
+                ))
+                occurrenceIndex += 1
+            }
+
+            let groupIndex = groups.count
+            let groupID = "\(groupIndex):\(placements.map(\.embed.ref).joined(separator: "|"))"
+            groups.append(KnowledgeInlineEmbedParagraph(
+                id: groupID,
+                groupIndex: groupIndex,
+                lineContentRange: lineContentRange,
+                lineRange: lineRange,
+                isStandaloneLine: isStandalone,
+                placements: placements
+            ))
+        }
+
+        return groups
+    }
+
+    /// Returns `true` when the raw `![[...]]` source of `placement` should be shown instead of hidden
+    /// (for example because the focused caret/selection or active `⌘F` match intersects it).
+    public static func shouldRevealEmbedSource(
+        for placement: KnowledgeInlineEmbedPlacement,
+        selection: NSRange?,
+        isFocused: Bool,
+        activeFindMatch: NSRange? = nil
+    ) -> Bool {
+        let checkRange = placement.isStandaloneLine ? placement.lineContentRange : placement.tokenRange
+        if isFocused, let selection, intersects(tokenRange: checkRange, selection: selection) {
+            return true
+        }
+        if let activeFindMatch, intersects(tokenRange: checkRange, selection: activeFindMatch) {
+            return true
+        }
+        return false
+    }
+
+    /// Computes the aspect-fitted display size for an inline image without upscaling past its natural size.
+    public static func fittedInlineImageSize(
+        naturalSize: CGSize,
+        maxWidth: CGFloat,
+        maxHeight: CGFloat
+    ) -> CGSize {
+        let clampedMaxW = max(1, maxWidth)
+        let clampedMaxH = max(1, maxHeight)
+        guard naturalSize.width > 0, naturalSize.height > 0 else {
+            return CGSize(width: min(clampedMaxW, 160), height: min(clampedMaxH, 120))
+        }
+        let scale = min(1, min(clampedMaxW / naturalSize.width, clampedMaxH / naturalSize.height))
+        return CGSize(
+            width: max(1, ceil(naturalSize.width * scale)),
+            height: max(1, ceil(naturalSize.height * scale))
+        )
+    }
+
+    private static func lineIndex(containing utf16Offset: Int, in lines: [LineSlice], hint: Int) -> Int {
+        if hint >= 0, hint < lines.count {
+            let candidate = lines[hint]
+            let end = candidate.utf16Offset + max(1, candidate.totalUTF16Length)
+            if utf16Offset >= candidate.utf16Offset && utf16Offset < end {
+                return hint
+            }
+        }
+        var lo = 0
+        var hi = lines.count - 1
+        while lo < hi {
+            let mid = (lo + hi + 1) / 2
+            if lines[mid].utf16Offset <= utf16Offset {
+                lo = mid
+            } else {
+                hi = mid - 1
+            }
+        }
+        return lo
+    }
+
+    private static func isLineOnlyEmbedTokens(line: LineSlice, tokenRanges: [NSRange]) -> Bool {
+        let lineNS = line.text as NSString
+        let total = lineNS.length
+        guard total > 0 else { return false }
+
+        var covered = Array(repeating: false, count: total)
+        for range in tokenRanges {
+            let localStart = max(0, range.location - line.utf16Offset)
+            let localEnd = min(total, localStart + range.length)
+            if localStart < localEnd {
+                for i in localStart..<localEnd {
+                    covered[i] = true
+                }
+            }
+        }
+
+        for i in 0..<total where !covered[i] {
+            let ch = lineNS.character(at: i)
+            if ch != 0x20 && ch != 0x09 { // space or tab
+                return false
+            }
+        }
+        return true
     }
 
     // MARK: Code-Exclusion Helper for Completion

@@ -28,8 +28,12 @@ struct KnowledgeTextSelectionRequest: Equatable, Sendable {
 /// Kept in this single file so iOS-over-Tailscale can swap in a `UITextView` implementation
 /// without touching `KnowledgeEditorView` or `VesperCore`.
 struct KnowledgeTextView: NSViewRepresentable {
+    @Environment(NativeScreenContext.self) private var screenContext
+
     let text: String
     let theme: ThemeTokens
+    var embeds: [KnowledgeEmbed] = []
+    var embedLayoutVersion: Int = 0
     var isCompletionOpen: Bool = false
     var findMatches: [NSRange] = []
     var activeFindMatchRange: NSRange? = nil
@@ -41,6 +45,7 @@ struct KnowledgeTextView: NSViewRepresentable {
     let onSelectionChange: (NSRange, Bool) -> Void
     let onOpenLink: (KnowledgeWikiTarget) -> Void
     let onCompletionKey: (KnowledgeTextKeyAction) -> Bool
+    var onEmbedLayoutChange: () -> Void = {}
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -56,6 +61,10 @@ struct KnowledgeTextView: NSViewRepresentable {
             guard let coordinator, let view else { return }
             coordinator.handleFocusChange(in: view, isFocused: focused)
         }
+        view.onEmbedSizeChange = { [weak coordinator = context.coordinator, weak view] in
+            guard let coordinator, let view else { return }
+            coordinator.handleEmbedSizeChange(in: view)
+        }
         view.string = text
         context.coordinator.applyStyling(to: view)
         return view
@@ -70,6 +79,10 @@ struct KnowledgeTextView: NSViewRepresentable {
         view.onFocusChange = { [weak coordinator, weak view] focused in
             guard let coordinator, let view else { return }
             coordinator.handleFocusChange(in: view, isFocused: focused)
+        }
+        view.onEmbedSizeChange = { [weak coordinator, weak view] in
+            guard let coordinator, let view else { return }
+            coordinator.handleEmbedSizeChange(in: view)
         }
 
         coordinator.isUpdatingFromSwiftUI = true
@@ -97,11 +110,16 @@ struct KnowledgeTextView: NSViewRepresentable {
             view.window?.makeFirstResponder(view)
         }
 
-        coordinator.applyStyling(to: view)
+        if coordinator.applyStyling(to: view) {
+            view.invalidateIntrinsicContentSize()
+        }
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView view: LivePreviewNSTextView, context: Context) -> CGSize? {
         guard let width = proposal.width, width.isFinite, width > 0 else { return nil }
+        if view.updateContainerWidth(width) {
+            _ = context.coordinator.applyStyling(to: view)
+        }
         let height = max(minHeight, view.fittingHeight(width: width))
         return CGSize(width: width, height: height)
     }
@@ -122,6 +140,19 @@ struct KnowledgeTextView: NSViewRepresentable {
             var mode: ColorMode
             var findMatches: [NSRange]
             var activeFind: NSRange?
+            var embeds: [KnowledgeEmbed]
+            var embedSizes: [String: RoundedSize]
+            var containerWidth: Int
+        }
+
+        private struct RoundedSize: Equatable {
+            var width: Int
+            var height: Int
+
+            init(_ size: CGSize) {
+                self.width = Int(ceil(size.width))
+                self.height = Int(ceil(size.height))
+            }
         }
 
         init(parent: KnowledgeTextView) {
@@ -130,20 +161,40 @@ struct KnowledgeTextView: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard !isUpdatingFromSwiftUI, let view = notification.object as? LivePreviewNSTextView else { return }
-            applyStyling(to: view)
+            _ = applyStyling(to: view)
             view.invalidateIntrinsicContentSize()
             parent.onTextChange(view.string, view.selectedRange())
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
             guard !isUpdatingFromSwiftUI, let view = notification.object as? LivePreviewNSTextView else { return }
-            applyStyling(to: view)
+            if applyStyling(to: view) {
+                view.invalidateIntrinsicContentSize()
+                scheduleEmbedLayoutNotify()
+            }
             parent.onSelectionChange(view.selectedRange(), view.isFocusedEditor)
         }
 
         func handleFocusChange(in view: LivePreviewNSTextView, isFocused: Bool) {
-            applyStyling(to: view)
+            if applyStyling(to: view) {
+                view.invalidateIntrinsicContentSize()
+                scheduleEmbedLayoutNotify()
+            }
             parent.onSelectionChange(view.selectedRange(), isFocused)
+        }
+
+        func handleEmbedSizeChange(in view: LivePreviewNSTextView) {
+            if applyStyling(to: view) {
+                view.invalidateIntrinsicContentSize()
+                scheduleEmbedLayoutNotify()
+            }
+        }
+
+        private func scheduleEmbedLayoutNotify() {
+            let notify = parent.onEmbedLayoutChange
+            Task { @MainActor in
+                notify()
+            }
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
@@ -163,11 +214,14 @@ struct KnowledgeTextView: NSViewRepresentable {
             }
         }
 
-        func applyStyling(to view: LivePreviewNSTextView) {
-            guard let storage = view.textStorage else { return }
+        /// Returns `true` when inline embed metrics or group layout changed and the view's fitting height may differ.
+        @discardableResult
+        func applyStyling(to view: LivePreviewNSTextView) -> Bool {
+            guard let storage = view.textStorage else { return false }
             let markdown = view.string
             let selection = view.selectedRange()
             let focused = view.isFocusedEditor
+            let containerWidth = max(120, view.textContainer?.size.width ?? 600)
 
             let key = RenderKey(
                 text: markdown,
@@ -175,9 +229,12 @@ struct KnowledgeTextView: NSViewRepresentable {
                 isFocused: focused,
                 mode: parent.theme.mode,
                 findMatches: parent.findMatches,
-                activeFind: parent.activeFindMatchRange
+                activeFind: parent.activeFindMatchRange,
+                embeds: parent.embeds,
+                embedSizes: view.measuredEmbedSizes.mapValues(RoundedSize.init),
+                containerWidth: Int(ceil(containerWidth))
             )
-            guard key != lastRenderedKey else { return }
+            guard key != lastRenderedKey else { return false }
             lastRenderedKey = key
 
             let palette = parent.theme.palette
@@ -209,7 +266,8 @@ struct KnowledgeTextView: NSViewRepresentable {
             let fullLength = storage.length
             guard fullLength > 0 else {
                 view.cachedTokens = []
-                return
+                view.syncEmbedHosts(groups: [], theme: parent.theme, screenContext: parent.screenContext, containerWidth: containerWidth)
+                return view.updateEmbedLayout(groups: [], metricsByID: [:])
             }
 
             let preview = KnowledgeMarkdownSyntax.livePreview(
@@ -218,6 +276,18 @@ struct KnowledgeTextView: NSViewRepresentable {
                 isFocused: focused
             )
             view.cachedTokens = preview.tokens
+
+            let embedGroups = KnowledgeMarkdownSyntax.groupInlineEmbedsByParagraph(
+                in: markdown,
+                embeds: parent.embeds,
+                tokens: preview.tokens
+            )
+            view.syncEmbedHosts(
+                groups: embedGroups,
+                theme: parent.theme,
+                screenContext: parent.screenContext,
+                containerWidth: containerWidth
+            )
 
             storage.beginEditing()
             storage.setAttributes(baseAttrs, range: NSRange(location: 0, length: fullLength))
@@ -326,16 +396,77 @@ struct KnowledgeTextView: NSViewRepresentable {
 
             // 3. Hide unrevealed syntax delimiters while preserving exact UTF-16 backing offsets.
             let hiddenFont = NSFont.systemFont(ofSize: 0.01)
+            let hiddenAttrs: [NSAttributedString.Key: Any] = [
+                .font: hiddenFont,
+                .foregroundColor: NSColor.clear,
+                .backgroundColor: NSColor.clear,
+            ]
             for range in preview.hiddenRanges {
                 guard let safe = clamped(range, length: fullLength) else { continue }
-                storage.addAttributes([
-                    .font: hiddenFont,
-                    .foregroundColor: NSColor.clear,
-                    .backgroundColor: NSColor.clear,
-                ], range: safe)
+                storage.addAttributes(hiddenAttrs, range: safe)
             }
 
-            // 4. Overlay unified ⌘F find highlights.
+            // 4. Reserve inline paragraph spacing for resolved embeds and hide unedited embed tokens.
+            var metricsByID: [String: KnowledgeInlineEmbedMetrics] = [:]
+            for group in embedGroups {
+                let anyRevealed = group.placements.contains {
+                    KnowledgeMarkdownSyntax.shouldRevealEmbedSource(
+                        for: $0,
+                        selection: selection,
+                        isFocused: focused,
+                        activeFindMatch: parent.activeFindMatchRange
+                    )
+                }
+                let isCollapsedStandalone = group.isStandaloneLine && !anyRevealed
+                let measured = view.measuredSize(forGroupID: group.id)
+                let metrics = KnowledgeInlineEmbedLayout.metrics(
+                    measuredSize: measured,
+                    isCollapsedStandalone: isCollapsedStandalone
+                )
+                metricsByID[group.id] = metrics
+
+                if isCollapsedStandalone {
+                    if let safeContent = clamped(group.lineContentRange, length: fullLength) {
+                        storage.addAttributes(hiddenAttrs, range: safeContent)
+                    }
+                } else {
+                    for placement in group.placements {
+                        let reveal = KnowledgeMarkdownSyntax.shouldRevealEmbedSource(
+                            for: placement,
+                            selection: selection,
+                            isFocused: focused,
+                            activeFindMatch: parent.activeFindMatchRange
+                        )
+                        if reveal {
+                            // Ensure delimiters stay visible when revealed via standalone-line caret or active Find match.
+                            if let safeTok = clamped(placement.tokenRange, length: fullLength) {
+                                storage.addAttribute(.font, value: baseFont, range: safeTok)
+                            }
+                            if let tok = preview.tokens.first(where: { $0.range == placement.tokenRange }) {
+                                for delim in tok.syntaxRanges {
+                                    if let safeDelim = clamped(delim, length: fullLength) {
+                                        storage.addAttribute(.foregroundColor, value: tertiaryColor, range: safeDelim)
+                                    }
+                                }
+                            }
+                        } else if let safeTok = clamped(placement.tokenRange, length: fullLength) {
+                            storage.addAttributes(hiddenAttrs, range: safeTok)
+                        }
+                    }
+                }
+
+                if let safeLine = clamped(group.lineRange, length: fullLength) {
+                    let embedParaStyle = NSMutableParagraphStyle()
+                    embedParaStyle.lineSpacing = isCollapsedStandalone ? 0 : parent.theme.lineSpacing(.body)
+                    if isCollapsedStandalone {
+                        embedParaStyle.maximumLineHeight = KnowledgeInlineEmbedLayout.collapsedStandaloneLineHeight
+                    }
+                    embedParaStyle.paragraphSpacing = metrics.reservedSpacing
+                    storage.addAttribute(.paragraphStyle, value: embedParaStyle, range: safeLine)
+                }
+            }
+
+            // 5. Overlay unified ⌘F find highlights.
             for match in parent.findMatches {
                 guard let safe = clamped(match, length: fullLength) else { continue }
                 let isActive = (parent.activeFindMatchRange == match)
@@ -343,6 +474,11 @@ struct KnowledgeTextView: NSViewRepresentable {
             }
 
             storage.endEditing()
+
+            let embedLayoutChanged = view.updateEmbedLayout(groups: embedGroups, metricsByID: metricsByID)
+            // Keep RenderKey in sync with any newly created host's initial measured size.
+            lastRenderedKey?.embedSizes = view.measuredEmbedSizes.mapValues(RoundedSize.init)
+            return embedLayoutChanged
         }
 
         private func clamped(_ range: NSRange, length: Int) -> NSRange? {
@@ -365,14 +501,52 @@ struct KnowledgeTextView: NSViewRepresentable {
 // MARK: - TextKit 2 NSTextView Subclass
 
 /// Editable TextKit 2 `NSTextView` with Writing Tools, spellcheck, dictation, Look Up,
-/// native find bar, native `UndoManager`, plain-text paste, and `⌘`-click `[[link]]` hit testing.
+/// native find bar, native `UndoManager`, plain-text paste, `⌘`-click `[[link]]` hit testing,
+/// and inline SwiftUI embed hosts anchored directly at their source paragraphs.
 @MainActor
 final class LivePreviewNSTextView: NSTextView {
+    private final class MountedEmbedHost {
+        let id: String
+        let hostView: NSHostingView<AnyView>
+        var measuredSize: CGSize
+        var lastEmbeds: [KnowledgeEmbed]
+        var lastMaxWidth: CGFloat
+        var lastThemeMode: ColorMode
+
+        init(
+            id: String,
+            hostView: NSHostingView<AnyView>,
+            measuredSize: CGSize,
+            lastEmbeds: [KnowledgeEmbed],
+            lastMaxWidth: CGFloat,
+            lastThemeMode: ColorMode
+        ) {
+            self.id = id
+            self.hostView = hostView
+            self.measuredSize = measuredSize
+            self.lastEmbeds = lastEmbeds
+            self.lastMaxWidth = lastMaxWidth
+            self.lastThemeMode = lastThemeMode
+        }
+    }
+
     private let contentStorage = NSTextContentStorage()
     var cachedTokens: [KnowledgeSyntaxToken] = []
     var onCommandClickLink: ((KnowledgeWikiTarget) -> Void)?
     var onFocusChange: ((Bool) -> Void)?
+    var onEmbedSizeChange: (() -> Void)?
     private(set) var isFocusedEditor = false
+
+    private var embedHosts: [String: MountedEmbedHost] = [:]
+    private var activeEmbedGroups: [KnowledgeInlineEmbedParagraph] = []
+    private var activeEmbedMetrics: [String: KnowledgeInlineEmbedMetrics] = [:]
+    private var activeEmbedFrames: [KnowledgeInlineEmbedFrame] = []
+
+    var hasMountedEmbeds: Bool { !embedHosts.isEmpty }
+
+    var measuredEmbedSizes: [String: CGSize] {
+        embedHosts.mapValues(\.measuredSize)
+    }
 
     init() {
         let layoutManager = NSTextLayoutManager()
@@ -428,6 +602,11 @@ final class LivePreviewNSTextView: NSTextView {
         pasteAsPlainText(sender)
     }
 
+    override func layout() {
+        super.layout()
+        layoutEmbedViews()
+    }
+
     override func mouseDown(with event: NSEvent) {
         if event.modifierFlags.contains(.command) {
             let point = convert(event.locationInWindow, from: nil)
@@ -440,14 +619,145 @@ final class LivePreviewNSTextView: NSTextView {
         super.mouseDown(with: event)
     }
 
-    /// Computes the TextKit 2 layout height needed at `width`.
+    func measuredSize(forGroupID id: String) -> CGSize {
+        embedHosts[id]?.measuredSize ?? KnowledgeInlineEmbedLayout.defaultPlaceholderSize
+    }
+
+    /// Updates `textContainer.size.width` when SwiftUI proposes a new width, returning `true` if it changed.
+    func updateContainerWidth(_ width: CGFloat) -> Bool {
+        guard let container = textContainer, abs(container.size.width - width) > 0.5 else { return false }
+        container.size = CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+        return true
+    }
+
+    /// Reconciles mounted `NSHostingView` subviews with `groups`, reusing views across unrelated prose edits.
+    func syncEmbedHosts(
+        groups: [KnowledgeInlineEmbedParagraph],
+        theme: ThemeTokens,
+        screenContext: NativeScreenContext,
+        containerWidth: CGFloat
+    ) {
+        let maxWidth = max(120, containerWidth)
+        let activeIDs = Set(groups.map(\.id))
+
+        for (id, host) in embedHosts where !activeIDs.contains(id) {
+            host.hostView.removeFromSuperview()
+            embedHosts.removeValue(forKey: id)
+        }
+
+        for group in groups {
+            let groupEmbeds = group.placements.map(\.embed)
+            let rootView = AnyView(
+                KnowledgeInlineEmbedGroupView(
+                    placements: group.placements,
+                    maxWidth: maxWidth,
+                    fillsWidth: group.fillsContainerWidth,
+                    onSizeChange: { [weak self] newSize in
+                        self?.handleMeasuredSize(newSize, forGroupID: group.id)
+                    }
+                )
+                .environment(screenContext)
+                .environment(\.vesperTheme, theme)
+            )
+
+            if let existing = embedHosts[group.id] {
+                let needsRootUpdate = existing.lastEmbeds != groupEmbeds
+                    || abs(existing.lastMaxWidth - maxWidth) > 0.5
+                    || existing.lastThemeMode != theme.mode
+                if needsRootUpdate {
+                    existing.hostView.rootView = rootView
+                    existing.lastEmbeds = groupEmbeds
+                    existing.lastMaxWidth = maxWidth
+                    existing.lastThemeMode = theme.mode
+                    let fitted = existing.hostView.fittingSize
+                    if fitted.width > 1, fitted.height > 1 {
+                        existing.measuredSize = fitted
+                    }
+                }
+            } else {
+                let hostView = NSHostingView(rootView: rootView)
+                hostView.translatesAutoresizingMaskIntoConstraints = true
+                let fitted = hostView.fittingSize
+                let initialSize: CGSize = (fitted.width > 1 && fitted.height > 1)
+                    ? fitted
+                    : CGSize(
+                        width: group.fillsContainerWidth ? maxWidth : min(maxWidth, KnowledgeInlineEmbedLayout.defaultPlaceholderSize.width),
+                        height: KnowledgeInlineEmbedLayout.defaultPlaceholderSize.height
+                    )
+                hostView.frame = CGRect(origin: .zero, size: initialSize)
+                addSubview(hostView)
+                embedHosts[group.id] = MountedEmbedHost(
+                    id: group.id,
+                    hostView: hostView,
+                    measuredSize: initialSize,
+                    lastEmbeds: groupEmbeds,
+                    lastMaxWidth: maxWidth,
+                    lastThemeMode: theme.mode
+                )
+            }
+        }
+    }
+
+    @discardableResult
+    func updateEmbedLayout(
+        groups: [KnowledgeInlineEmbedParagraph],
+        metricsByID: [String: KnowledgeInlineEmbedMetrics]
+    ) -> Bool {
+        let changed = activeEmbedGroups != groups || activeEmbedMetrics != metricsByID
+        activeEmbedGroups = groups
+        activeEmbedMetrics = metricsByID
+        layoutEmbedViews()
+        return changed
+    }
+
+    private func handleMeasuredSize(_ newSize: CGSize, forGroupID id: String) {
+        guard newSize.width.isFinite, newSize.height.isFinite, newSize.width > 1, newSize.height > 1 else { return }
+        guard let host = embedHosts[id] else { return }
+        guard abs(host.measuredSize.width - newSize.width) > 0.5
+                || abs(host.measuredSize.height - newSize.height) > 0.5 else { return }
+        host.measuredSize = newSize
+        Task { @MainActor [weak self] in
+            self?.onEmbedSizeChange?()
+        }
+    }
+
+    func layoutEmbedViews() {
+        guard let layoutManager = textLayoutManager, let container = textContainer else { return }
+        let frames = KnowledgeInlineEmbedLayout.computeFrames(
+            groups: activeEmbedGroups,
+            metricsByID: activeEmbedMetrics,
+            contentStorage: contentStorage,
+            layoutManager: layoutManager,
+            containerWidth: max(120, container.size.width),
+            textContainerOrigin: textContainerOrigin
+        )
+        activeEmbedFrames = frames
+
+        let frameByID = Dictionary(uniqueKeysWithValues: frames.map { ($0.groupID, $0.frame) })
+        for (id, host) in embedHosts {
+            if let rect = frameByID[id] {
+                if host.hostView.isHidden { host.hostView.isHidden = false }
+                if host.hostView.frame != rect {
+                    host.hostView.frame = rect
+                }
+            } else {
+                host.hostView.isHidden = true
+            }
+        }
+    }
+
+    /// Computes the TextKit 2 layout height needed at `width`, including inline embeds.
     func fittingHeight(width: CGFloat) -> CGFloat {
         guard let layoutManager = textLayoutManager, let container = textContainer else { return 28 }
         if abs(container.size.width - width) > 0.5 {
             container.size = CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)
         }
         layoutManager.ensureLayout(for: layoutManager.documentRange)
-        let insetHeight = textContainerInset.height * 2
-        return ceil(layoutManager.usageBoundsForTextContainer.height + insetHeight + 4)
+        layoutEmbedViews()
+        return KnowledgeInlineEmbedLayout.totalFittingHeight(
+            usageBoundsHeight: layoutManager.usageBoundsForTextContainer.height,
+            embedFrames: activeEmbedFrames,
+            verticalInset: textContainerInset.height
+        )
     }
 }

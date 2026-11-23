@@ -57,6 +57,7 @@ struct KnowledgeEditorView: View {
     @State private var lastSavedMarkdown: String
     @State private var currentVersionId: String
     @State private var resolvedEmbeds: [KnowledgeEmbed]
+    @State private var embedLayoutVersion = 0
     @State private var saveStatus: SaveStatus = .saved
     @State private var autosaveTask: Task<Void, Never>?
 
@@ -308,27 +309,23 @@ struct KnowledgeEditorView: View {
 
     @ViewBuilder
     private func proseSegmentView(prose: KnowledgeProseSegment, index: Int) -> some View {
-        let embeds = inlineEmbeds(in: prose.text)
-        VStack(alignment: .leading, spacing: 8) {
-            KnowledgeTextView(
-                text: prose.text,
-                theme: theme,
-                isCompletionOpen: completionSession.isOpen && completionSegmentIndex == index,
-                findMatches: proseMatchRanges(forSegment: index),
-                activeFindMatchRange: activeProseMatchRange(forSegment: index),
-                selectionRequest: selectionRequest,
-                segmentIndex: index,
-                onTextChange: { updated, range in handleProseEdit(updated, selection: range, at: index) },
-                onSelectionChange: { range, isFocused in handleProseSelection(range, isFocused: isFocused, at: index) },
-                onOpenLink: { target in openWikiLink(target) },
-                onCompletionKey: { action in handleCompletionKey(action) }
-            )
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            ForEach(embeds, id: \.ref) { embed in
-                KnowledgeEmbedPreviewCard(embed: embed)
-            }
-        }
+        KnowledgeTextView(
+            text: prose.text,
+            theme: theme,
+            embeds: resolvedEmbeds,
+            embedLayoutVersion: embedLayoutVersion,
+            isCompletionOpen: completionSession.isOpen && completionSegmentIndex == index,
+            findMatches: proseMatchRanges(forSegment: index),
+            activeFindMatchRange: activeProseMatchRange(forSegment: index),
+            selectionRequest: selectionRequest,
+            segmentIndex: index,
+            onTextChange: { updated, range in handleProseEdit(updated, selection: range, at: index) },
+            onSelectionChange: { range, isFocused in handleProseSelection(range, isFocused: isFocused, at: index) },
+            onOpenLink: { target in openWikiLink(target) },
+            onCompletionKey: { action in handleCompletionKey(action) },
+            onEmbedLayoutChange: { embedLayoutVersion &+= 1 }
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func tableSegmentView(table: MarkdownTableModel, index: Int) -> some View {
@@ -395,10 +392,6 @@ struct KnowledgeEditorView: View {
                 ))
             }
         )
-    }
-
-    private func inlineEmbeds(in proseText: String) -> [KnowledgeEmbed] {
-        KnowledgeMarkdownSyntax.resolveInlineEmbeds(in: proseText, embeds: resolvedEmbeds)
     }
 
     // MARK: - Editing, Completion, Undo/Redo, Find, Save & Links

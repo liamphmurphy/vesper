@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import XCTest
 @testable import VesperCore
@@ -77,6 +78,383 @@ final class KnowledgeEditorTests: XCTestCase {
         let resolved = KnowledgeMarkdownSyntax.resolveInlineEmbeds(in: md, embeds: embeds)
         XCTAssertEqual(resolved.map(\.ref), [assetRef, libraryRef, aliasedRef])
         XCTAssertEqual(resolved.map(\.title), ["map.png", "Portrait", "plan.webp"])
+    }
+
+    func testGroupInlineEmbedsByParagraphPreservesDuplicatesLineKindsAndStableIDs() {
+        let mapRef = "![[attachment:88888888-8888-4888-8888-888888888888/map.png]]"
+        let pdfRef = "![[attachment:77777777-7777-4777-8777-777777777777/spec.pdf]]"
+        let missingRef = "![[attachment:66666666-6666-4666-8666-666666666666/missing.png]]"
+        let designRef = "![[design:55555555-5555-4555-8555-555555555555#frame1]]"
+
+        let embeds = [
+            KnowledgeEmbed(
+                ref: mapRef,
+                kind: "file",
+                title: "map.png",
+                url: "/api/v1/knowledge/assets/88888888-8888-4888-8888-888888888888",
+                contentType: "image/png",
+                available: true
+            ),
+            KnowledgeEmbed(
+                ref: pdfRef,
+                kind: "file",
+                title: "spec.pdf",
+                url: "/api/v1/knowledge/assets/77777777-7777-4777-8777-777777777777",
+                contentType: "application/pdf",
+                available: true
+            ),
+            KnowledgeEmbed(ref: missingRef, kind: "unresolved", available: false),
+            KnowledgeEmbed(ref: designRef, kind: "design", title: "Flow", url: "/apps/designs/5555", available: true),
+        ]
+
+        let md = """
+        Intro paragraph.
+
+        \(mapRef)
+
+        Inline with text: \(mapRef) and \(pdfRef)
+
+        \(mapRef) \(missingRef)
+
+        \(designRef)
+
+        ```
+        \(mapRef)
+        ```
+
+        Outro paragraph.
+        """
+
+        let groups = KnowledgeMarkdownSyntax.groupInlineEmbedsByParagraph(in: md, embeds: embeds)
+        // Line 1: standalone mapRef
+        // Line 2: inline mapRef + pdfRef
+        // Line 3: mapRef next to unresolved missingRef -> not standalone because unresolved stays visible
+        // designRef has no inline preview card, fenced code block is skipped.
+        XCTAssertEqual(groups.count, 3)
+
+        XCTAssertTrue(groups[0].isStandaloneLine)
+        XCTAssertFalse(groups[0].fillsContainerWidth)
+        XCTAssertEqual(groups[0].placements.map(\.embed.ref), [mapRef])
+
+        XCTAssertFalse(groups[1].isStandaloneLine)
+        XCTAssertTrue(groups[1].fillsContainerWidth)
+        XCTAssertEqual(groups[1].placements.map(\.embed.ref), [mapRef, pdfRef])
+
+        XCTAssertFalse(groups[2].isStandaloneLine)
+        XCTAssertEqual(groups[2].placements.map(\.embed.ref), [mapRef])
+
+        // Typing text above the embeds keeps group IDs stable so mounted image views don't reload.
+        let edited = "Added new intro line!\n\n" + md
+        let editedGroups = KnowledgeMarkdownSyntax.groupInlineEmbedsByParagraph(in: edited, embeds: embeds)
+        XCTAssertEqual(editedGroups.map(\.id), groups.map(\.id))
+        XCTAssertGreaterThan(editedGroups[0].lineRange.location, groups[0].lineRange.location)
+    }
+
+    func testShouldRevealEmbedSourceAndFittedImageSize() {
+        let mapRef = "![[attachment:88888888-8888-4888-8888-888888888888/map.png]]"
+        let embed = KnowledgeEmbed(
+            ref: mapRef,
+            kind: "file",
+            title: "map.png",
+            url: "/api/v1/knowledge/assets/88888888-8888-4888-8888-888888888888",
+            contentType: "image/png",
+            available: true
+        )
+        let md = "Before.\n\n  \(mapRef)  \n\nAfter."
+        let placement = try! XCTUnwrap(KnowledgeMarkdownSyntax.resolveInlineEmbedPlacements(in: md, embeds: [embed]).first)
+        XCTAssertTrue(placement.isStandaloneLine)
+
+        // Unfocused: stays hidden even if selection happens to be inside.
+        XCTAssertFalse(KnowledgeMarkdownSyntax.shouldRevealEmbedSource(
+            for: placement,
+            selection: NSRange(location: placement.tokenRange.location, length: 0),
+            isFocused: false
+        ))
+        // Focused elsewhere: hidden.
+        XCTAssertFalse(KnowledgeMarkdownSyntax.shouldRevealEmbedSource(
+            for: placement,
+            selection: NSRange(location: 0, length: 0),
+            isFocused: true
+        ))
+        // Focused anywhere on the standalone line (including leading space): revealed.
+        XCTAssertTrue(KnowledgeMarkdownSyntax.shouldRevealEmbedSource(
+            for: placement,
+            selection: NSRange(location: placement.lineContentRange.location, length: 0),
+            isFocused: true
+        ))
+        // Active Cmd+F match inside token: revealed even when editor isn't focused.
+        XCTAssertTrue(KnowledgeMarkdownSyntax.shouldRevealEmbedSource(
+            for: placement,
+            selection: NSRange(location: 0, length: 0),
+            isFocused: false,
+            activeFindMatch: NSRange(location: placement.tokenRange.location + 5, length: 7)
+        ))
+
+        // Aspect-fit sizing: scales down large images, preserves small images without upscaling.
+        let wide = KnowledgeMarkdownSyntax.fittedInlineImageSize(
+            naturalSize: CGSize(width: 920, height: 460),
+            maxWidth: 460,
+            maxHeight: 320
+        )
+        XCTAssertEqual(wide, CGSize(width: 460, height: 230))
+
+        let tall = KnowledgeMarkdownSyntax.fittedInlineImageSize(
+            naturalSize: CGSize(width: 400, height: 800),
+            maxWidth: 460,
+            maxHeight: 320
+        )
+        XCTAssertEqual(tall, CGSize(width: 160, height: 320))
+
+        let small = KnowledgeMarkdownSyntax.fittedInlineImageSize(
+            naturalSize: CGSize(width: 120, height: 80),
+            maxWidth: 460,
+            maxHeight: 320
+        )
+        XCTAssertEqual(small, CGSize(width: 120, height: 80))
+    }
+
+    @MainActor
+    func testTextKit2InlineEmbedLayoutPlacesImagesAtSourcePositionsNotBottom() {
+        let img1Ref = "![[attachment:11111111-1111-4111-8111-111111111111/first.png]]"
+        let img2Ref = "![[attachment:22222222-2222-4222-8222-222222222222/second.png]]"
+        let embeds = [
+            KnowledgeEmbed(
+                ref: img1Ref,
+                kind: "file",
+                title: "first.png",
+                url: "/api/v1/knowledge/assets/11111111-1111-4111-8111-111111111111",
+                contentType: "image/png",
+                available: true
+            ),
+            KnowledgeEmbed(
+                ref: img2Ref,
+                kind: "file",
+                title: "second.png",
+                url: "/api/v1/knowledge/assets/22222222-2222-4222-8222-222222222222",
+                contentType: "image/png",
+                available: true
+            ),
+        ]
+        let md = "First paragraph.\n\n\(img1Ref)\n\nMiddle paragraph.\n\n\(img2Ref)\n\nFinal paragraph."
+        let layout = runInlineEmbedTextKitLayout(
+            markdown: md,
+            embeds: embeds,
+            measuredSizes: [
+                "0:\(img1Ref)": CGSize(width: 400, height: 220),
+                "1:\(img2Ref)": CGSize(width: 300, height: 180),
+            ]
+        )
+
+        XCTAssertEqual(layout.frames.count, 2)
+        let firstPara = try! XCTUnwrap(layout.fragmentFrame(forSubstring: "First paragraph."))
+        let middlePara = try! XCTUnwrap(layout.fragmentFrame(forSubstring: "Middle paragraph."))
+        let finalPara = try! XCTUnwrap(layout.fragmentFrame(forSubstring: "Final paragraph."))
+        let img1Frame = layout.frames[0].frame
+        let img2Frame = layout.frames[1].frame
+
+        // First image sits strictly between First paragraph and Middle paragraph.
+        XCTAssertGreaterThan(img1Frame.minY, firstPara.maxY)
+        XCTAssertLessThanOrEqual(img1Frame.maxY, middlePara.minY)
+        XCTAssertEqual(img1Frame.height, 220, accuracy: 0.5)
+
+        // Second image sits strictly between Middle paragraph and Final paragraph (never at bottom).
+        XCTAssertGreaterThan(img2Frame.minY, middlePara.maxY)
+        XCTAssertLessThanOrEqual(img2Frame.maxY, finalPara.minY)
+        XCTAssertEqual(img2Frame.height, 180, accuracy: 0.5)
+
+        // Growing the first image (simulating async image load) pushes Middle and Final paragraphs down.
+        let grown = runInlineEmbedTextKitLayout(
+            markdown: md,
+            embeds: embeds,
+            measuredSizes: [
+                "0:\(img1Ref)": CGSize(width: 400, height: 320),
+                "1:\(img2Ref)": CGSize(width: 300, height: 180),
+            ]
+        )
+        let grownMiddle = try! XCTUnwrap(grown.fragmentFrame(forSubstring: "Middle paragraph."))
+        let grownFinal = try! XCTUnwrap(grown.fragmentFrame(forSubstring: "Final paragraph."))
+        XCTAssertGreaterThan(grownMiddle.minY, middlePara.minY + 90)
+        XCTAssertGreaterThan(grownFinal.minY, finalPara.minY + 90)
+        XCTAssertGreaterThan(grown.fittingHeight, layout.fittingHeight + 90)
+    }
+
+    @MainActor
+    func testTextKit2InlineEmbedAtStartEndAndRevealedLine() {
+        let imgRef = "![[attachment:33333333-3333-4333-8333-333333333333/banner.png]]"
+        let embed = KnowledgeEmbed(
+            ref: imgRef,
+            kind: "file",
+            title: "banner.png",
+            url: "/api/v1/knowledge/assets/33333333-3333-4333-8333-333333333333",
+            contentType: "image/png",
+            available: true
+        )
+
+        // 1. Image at the very top of the note appears above the following paragraph.
+        let topDoc = "\(imgRef)\n\nCaption text below."
+        let topLayout = runInlineEmbedTextKitLayout(
+            markdown: topDoc,
+            embeds: [embed],
+            measuredSizes: ["0:\(imgRef)": CGSize(width: 360, height: 200)]
+        )
+        let belowPara = try! XCTUnwrap(topLayout.fragmentFrame(forSubstring: "Caption text below."))
+        let topImg = try! XCTUnwrap(topLayout.frames.first?.frame)
+        XCTAssertGreaterThanOrEqual(topImg.minY, 0)
+        XCTAssertLessThanOrEqual(topImg.maxY, belowPara.minY)
+
+        // 2. Trailing image with no trailing newline still expands fittingHeight to cover the image.
+        let endDoc = "Intro text.\n\n\(imgRef)"
+        let endLayout = runInlineEmbedTextKitLayout(
+            markdown: endDoc,
+            embeds: [embed],
+            measuredSizes: ["0:\(imgRef)": CGSize(width: 360, height: 240)]
+        )
+        let endImg = try! XCTUnwrap(endLayout.frames.first?.frame)
+        let introPara = try! XCTUnwrap(endLayout.fragmentFrame(forSubstring: "Intro text."))
+        XCTAssertGreaterThan(endImg.minY, introPara.maxY)
+        XCTAssertGreaterThanOrEqual(endLayout.fittingHeight, endImg.maxY + KnowledgeInlineEmbedLayout.bottomGap)
+
+        // 3. Focusing the standalone embed line reveals the raw markdown above the image without overlap.
+        let revealed = runInlineEmbedTextKitLayout(
+            markdown: topDoc,
+            embeds: [embed],
+            measuredSizes: ["0:\(imgRef)": CGSize(width: 360, height: 200)],
+            selection: NSRange(location: 5, length: 0),
+            isFocused: true
+        )
+        let revealedImg = try! XCTUnwrap(revealed.frames.first?.frame)
+        let revealedBelow = try! XCTUnwrap(revealed.fragmentFrame(forSubstring: "Caption text below."))
+        XCTAssertGreaterThan(revealedImg.minY, topImg.minY + 8)
+        XCTAssertLessThanOrEqual(revealedImg.maxY, revealedBelow.minY)
+
+        // 4. Inline-in-paragraph embed sits below its sentence and above the next paragraph.
+        let inlineDoc = "Look at \(imgRef) right here.\nNext paragraph."
+        let inlineLayout = runInlineEmbedTextKitLayout(
+            markdown: inlineDoc,
+            embeds: [embed],
+            measuredSizes: ["0:\(imgRef)": CGSize(width: 320, height: 150)]
+        )
+        let inlineImg = try! XCTUnwrap(inlineLayout.frames.first?.frame)
+        let nextPara = try! XCTUnwrap(inlineLayout.fragmentFrame(forSubstring: "Next paragraph."))
+        XCTAssertGreaterThan(inlineImg.minY, 12)
+        XCTAssertLessThanOrEqual(inlineImg.maxY, nextPara.minY)
+
+        // 5. Two consecutive embeds on adjacent lines with no blank line do not overlap.
+        let adjacentDoc = "\(imgRef)\n\(imgRef)\nAfter both."
+        let adjacentLayout = runInlineEmbedTextKitLayout(
+            markdown: adjacentDoc,
+            embeds: [embed],
+            measuredSizes: [
+                "0:\(imgRef)": CGSize(width: 300, height: 140),
+                "1:\(imgRef)": CGSize(width: 300, height: 160),
+            ]
+        )
+        XCTAssertEqual(adjacentLayout.frames.count, 2)
+        let afterBoth = try! XCTUnwrap(adjacentLayout.fragmentFrame(forSubstring: "After both."))
+        XCTAssertLessThanOrEqual(adjacentLayout.frames[0].frame.maxY, adjacentLayout.frames[1].frame.minY)
+        XCTAssertLessThanOrEqual(adjacentLayout.frames[1].frame.maxY, afterBoth.minY)
+    }
+
+    @MainActor
+    private struct InlineEmbedLayoutResult {
+        let frames: [KnowledgeInlineEmbedFrame]
+        let fittingHeight: CGFloat
+        let markdown: String
+        let contentStorage: NSTextContentStorage
+        let layoutManager: NSTextLayoutManager
+        let origin: CGPoint
+
+        func fragmentFrame(forSubstring needle: String) -> CGRect? {
+            let range = (markdown as NSString).range(of: needle)
+            guard range.location != NSNotFound,
+                  let loc = contentStorage.location(contentStorage.documentRange.location, offsetBy: range.location),
+                  let frag = layoutManager.textLayoutFragment(for: loc) else {
+                return nil
+            }
+            layoutManager.ensureLayout(for: frag.rangeInElement)
+            return frag.layoutFragmentFrame.offsetBy(dx: origin.x, dy: origin.y)
+        }
+    }
+
+    @MainActor
+    private func runInlineEmbedTextKitLayout(
+        markdown: String,
+        embeds: [KnowledgeEmbed],
+        measuredSizes: [String: CGSize],
+        selection: NSRange? = nil,
+        isFocused: Bool = false
+    ) -> InlineEmbedLayoutResult {
+        let contentStorage = NSTextContentStorage()
+        let layoutManager = NSTextLayoutManager()
+        let containerWidth: CGFloat = 600
+        let origin = CGPoint(x: 0, y: 4)
+        let container = NSTextContainer(size: CGSize(width: containerWidth, height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = 0
+        layoutManager.textContainer = container
+        contentStorage.addTextLayoutManager(layoutManager)
+
+        let baseStyle = NSMutableParagraphStyle()
+        baseStyle.lineSpacing = 4
+        let attr = NSMutableAttributedString(string: markdown, attributes: [
+            .font: NSFont.systemFont(ofSize: 14),
+            .paragraphStyle: baseStyle,
+        ])
+
+        let groups = KnowledgeMarkdownSyntax.groupInlineEmbedsByParagraph(in: markdown, embeds: embeds)
+        var metricsByID: [String: KnowledgeInlineEmbedMetrics] = [:]
+        let hiddenAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 0.01),
+            .foregroundColor: NSColor.clear,
+        ]
+
+        for group in groups {
+            let anyRevealed = group.placements.contains {
+                KnowledgeMarkdownSyntax.shouldRevealEmbedSource(for: $0, selection: selection, isFocused: isFocused)
+            }
+            let isCollapsedStandalone = group.isStandaloneLine && !anyRevealed
+            let size = measuredSizes[group.id] ?? KnowledgeInlineEmbedLayout.defaultPlaceholderSize
+            let metrics = KnowledgeInlineEmbedLayout.metrics(
+                measuredSize: size,
+                isCollapsedStandalone: isCollapsedStandalone
+            )
+            metricsByID[group.id] = metrics
+
+            if isCollapsedStandalone {
+                attr.addAttributes(hiddenAttrs, range: group.lineContentRange)
+            }
+            let paraStyle = NSMutableParagraphStyle()
+            paraStyle.lineSpacing = isCollapsedStandalone ? 0 : 4
+            if isCollapsedStandalone {
+                paraStyle.maximumLineHeight = KnowledgeInlineEmbedLayout.collapsedStandaloneLineHeight
+            }
+            paraStyle.paragraphSpacing = metrics.reservedSpacing
+            attr.addAttribute(.paragraphStyle, value: paraStyle, range: group.lineRange)
+        }
+
+        contentStorage.attributedString = attr
+        layoutManager.ensureLayout(for: layoutManager.documentRange)
+
+        let frames = KnowledgeInlineEmbedLayout.computeFrames(
+            groups: groups,
+            metricsByID: metricsByID,
+            contentStorage: contentStorage,
+            layoutManager: layoutManager,
+            containerWidth: containerWidth,
+            textContainerOrigin: origin
+        )
+        let height = KnowledgeInlineEmbedLayout.totalFittingHeight(
+            usageBoundsHeight: layoutManager.usageBoundsForTextContainer.height,
+            embedFrames: frames,
+            verticalInset: origin.y
+        )
+        return InlineEmbedLayoutResult(
+            frames: frames,
+            fittingHeight: height,
+            markdown: markdown,
+            contentStorage: contentStorage,
+            layoutManager: layoutManager,
+            origin: origin
+        )
     }
 
     // MARK: - 2. Completion (`[[`, `![[`, `#`)
