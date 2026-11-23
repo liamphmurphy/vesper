@@ -1,6 +1,12 @@
 import SwiftUI
 import VesperCore
 
+/// A composer draft for one Knowledge page's chat (Ask a Persona to export it as a PDF).
+struct KnowledgeChatPrefill: Equatable {
+    let pageId: String
+    let prefill: ChatComposerPrefill
+}
+
 /// Native SwiftUI Knowledge Chat inspector tab replacing `knowledge.chat` (`/inspector-panel`).
 struct KnowledgeChatInspectorView: View {
     @Environment(NativeScreenContext.self) private var context
@@ -48,6 +54,9 @@ struct KnowledgeChatInspectorView: View {
         }()
         let activeChatId = isGone ? nil : candidateId
         let activeChat = isGone ? nil : rememberedEntry?.data
+        let prefill = controller.chatPrefill.flatMap { $0.pageId == pageId && page != nil ? $0.prefill : nil }
+        // A drafted prompt needs a chat to land in: start one when the page has none.
+        let prefillNeedsChat = prefill != nil && activeChatId == nil
 
         let pageChats = pageDockRequest.flatMap { context.store.entry($0).data?.chats } ?? []
         let appChats = context.store.entry(Self.appDockRequest).data?.chats ?? []
@@ -132,6 +141,10 @@ struct KnowledgeChatInspectorView: View {
                     onTurnCompleted: {
                         // Persona turns may create, move, or suggest edits to pages.
                         Task { _ = await context.store.refetch(controller.treeListRequest) }
+                    },
+                    composerPrefill: prefill,
+                    onComposerPrefillApplied: { token in
+                        controller.consumeChatPrefill(token: token)
                     }
                 ) {
                     HStack(spacing: 6) {
@@ -170,6 +183,9 @@ struct KnowledgeChatInspectorView: View {
             createdChatId = nil
             attachError = nil
             syncWatches()
+        }
+        .onChange(of: prefillNeedsChat, initial: true) { _, needsChat in
+            if needsChat, let page { startNewChat(page: page) }
         }
         .onChange(of: activeChat?.persona?.id) { _, nextPersonaId in
             if let nextPersonaId {

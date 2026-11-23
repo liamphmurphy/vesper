@@ -112,6 +112,8 @@ final class KnowledgeShellController {
     var liveHeadingsPageId: String?
     var liveHeadings: [KnowledgeOutlineHeading] = []
     var headingJumpRequest: KnowledgeHeadingJumpRequest?
+    /// Ask a Persona's draft for this page's chat composer; cleared once the composer has it.
+    var chatPrefill: KnowledgeChatPrefill?
     var theme = ThemeTokens(mode: .light)
     var colorScheme: ColorScheme = .light
     var isWorking = false
@@ -122,6 +124,9 @@ final class KnowledgeShellController {
 
     @ObservationIgnored private var syncedAudiencePageId: String?
     @ObservationIgnored private var headingJumpToken = 0
+    @ObservationIgnored private var chatPrefillToken = 0
+    /// Saves the open editor's unsaved edits; the editor registers it while it is on screen.
+    @ObservationIgnored private var pendingEditorSave: (pageId: String, save: @MainActor () async -> Void)?
 
     static let templatesRequest = KnowledgeAPI.getTemplates()
     static let slideStartersRequest = API.listSlideStarters()
@@ -768,6 +773,49 @@ final class KnowledgeShellController {
         return KnowledgeInspectorLogic.extractHeadings(from: loadedPage?.bodyMd ?? "")
     }
 
+    func registerEditorSave(pageId: String, save: (@MainActor () async -> Void)?) {
+        if let save {
+            pendingEditorSave = (pageId, save)
+        } else if pendingEditorSave?.pageId == pageId {
+            pendingEditorSave = nil
+        }
+    }
+
+    private func saveEditor(pageId: String) async {
+        guard let pending = pendingEditorSave, pending.pageId == pageId else { return }
+        await pending.save()
+    }
+
+    /// Opens the page's print view in a new tab once its edits are saved, so the PDF matches the editor.
+    private func printPage(id: String, style: KnowledgePrintStyle, in context: NativeScreenContext) {
+        Task {
+            await saveEditor(pageId: id)
+            context.openInNewTab(KnowledgePrintLogic.printPath(pageId: id, style: style))
+        }
+    }
+
+    /// Drafts a render_pdf request in the page's chat for the person to edit and send.
+    private func askPersonaForPdf(page: KnowledgePageRow, in context: NativeScreenContext) {
+        Task { await saveEditor(pageId: page.id) }
+        chatPrefillToken += 1
+        chatPrefill = KnowledgeChatPrefill(
+            pageId: page.id,
+            prefill: ChatComposerPrefill(
+                token: chatPrefillToken,
+                text: KnowledgePrintLogic.personaPdfPrompt(path: page.path, title: page.title)
+            )
+        )
+        inspectorTabId = KnowledgeInspectorLogic.chatTabId
+        inspectorOpen = true
+        publishChrome(for: context)
+    }
+
+    func consumeChatPrefill(token: Int) {
+        if let chatPrefill, chatPrefill.prefill.token <= token {
+            self.chatPrefill = nil
+        }
+    }
+
     func updateLiveHeadings(pageId: String, headings: [KnowledgeOutlineHeading], in context: NativeScreenContext) {
         guard liveHeadingsPageId != pageId || liveHeadings != headings else { return }
         liveHeadingsPageId = pageId
@@ -895,6 +943,8 @@ final class KnowledgeShellController {
                 MenuItem(id: "page.move", label: "Move to\u{2026}", icon: "folder"),
                 MenuItem(id: "page.duplicate", label: "Duplicate", icon: "copy"),
                 MenuItem(id: "sep-2", separator: true),
+                KnowledgePrintLogic.menuItem(),
+                MenuItem(id: "sep-3", separator: true),
                 MenuItem(id: "page.delete", label: "Delete\u{2026}", icon: "trash", destructive: true),
             ]
             context.chrome = NativeChrome(
@@ -1008,7 +1058,11 @@ final class KnowledgeShellController {
             case "page.move": sheet = .move(target: .page(row))
             case "page.duplicate": duplicatePage(row, in: context)
             case "page.delete": sheet = .delete(target: .page(row))
-            default: break
+            case KnowledgePrintLogic.askPersonaItemId: askPersonaForPdf(page: row, in: context)
+            default:
+                if let style = KnowledgePrintLogic.style(fromMenuItemId: menuItemId) {
+                    printPage(id: row.id, style: style, in: context)
+                }
             }
         default:
             break
@@ -1225,6 +1279,9 @@ private struct KnowledgePageView: View {
                     headingJumpRequest: controller.headingJumpRequest,
                     onHeadingsChange: { headings in
                         controller.updateLiveHeadings(pageId: page.id, headings: headings, in: context)
+                    },
+                    onRegisterSave: { save in
+                        controller.registerEditorSave(pageId: page.id, save: save)
                     }
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

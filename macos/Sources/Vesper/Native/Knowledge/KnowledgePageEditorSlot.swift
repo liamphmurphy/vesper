@@ -17,6 +17,7 @@ struct KnowledgePageEditorSlot: View {
     let query: [String: String]
     var headingJumpRequest: KnowledgeHeadingJumpRequest?
     var onHeadingsChange: (([KnowledgeOutlineHeading]) -> Void)?
+    var onRegisterSave: KnowledgeEditorView.RegisterSave?
 
     @State private var pdfModel = PDFViewerModel()
 
@@ -78,7 +79,8 @@ struct KnowledgePageEditorSlot: View {
                 KnowledgeEditorView(
                     page: page,
                     headingJumpRequest: headingJumpRequest,
-                    onHeadingsChange: onHeadingsChange
+                    onHeadingsChange: onHeadingsChange,
+                    onRegisterSave: onRegisterSave
                 )
                     .id(page.id)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
