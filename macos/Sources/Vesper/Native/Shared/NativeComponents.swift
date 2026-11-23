@@ -173,12 +173,40 @@ struct AuthenticatedImageView<Content: View, Placeholder: View, Failure: View>: 
 
     let source: String
     var maxPixel: CGFloat? = 920
-    @ViewBuilder let content: (Image) -> Content
+    private let sizedContent: (Image, CGSize) -> Content
     @ViewBuilder let placeholder: () -> Placeholder
     @ViewBuilder let failure: () -> Failure
 
     @State private var image: NSImage?
     @State private var failed = false
+
+    init(
+        source: String,
+        maxPixel: CGFloat? = 920,
+        @ViewBuilder content: @escaping (Image) -> Content,
+        @ViewBuilder placeholder: @escaping () -> Placeholder,
+        @ViewBuilder failure: @escaping () -> Failure
+    ) {
+        self.source = source
+        self.maxPixel = maxPixel
+        self.sizedContent = { img, _ in content(img) }
+        self.placeholder = placeholder
+        self.failure = failure
+    }
+
+    init(
+        source: String,
+        maxPixel: CGFloat? = 920,
+        @ViewBuilder sizedContent: @escaping (Image, CGSize) -> Content,
+        @ViewBuilder placeholder: @escaping () -> Placeholder,
+        @ViewBuilder failure: @escaping () -> Failure
+    ) {
+        self.source = source
+        self.maxPixel = maxPixel
+        self.sizedContent = sizedContent
+        self.placeholder = placeholder
+        self.failure = failure
+    }
 
     private var apiPath: String? {
         if source.hasPrefix("/api/v1/") { return source }
@@ -192,7 +220,7 @@ struct AuthenticatedImageView<Content: View, Placeholder: View, Failure: View>: 
     var body: some View {
         Group {
             if let image {
-                content(Image(nsImage: image))
+                sizedContent(Image(nsImage: image), image.size)
             } else if failed {
                 failure()
             } else {
