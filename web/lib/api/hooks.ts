@@ -775,6 +775,22 @@ export function useForkChat(id: string) {
   });
 }
 
+export function useSetChatAutoRollover(id: string) {
+  const qc = useQueryClient();
+  const done = useChatInvalidate();
+  return useMutation({
+    mutationFn: (v: { revision: number; autoRolloverTokens: number | null }) =>
+      unwrap(
+        api.PATCH("/chats/{id}", {
+          params: { path: { id } },
+          body: { revision: v.revision, auto_rollover_tokens: v.autoRolloverTokens },
+        }),
+      ),
+    onSuccess: (chat) => qc.setQueryData(chatKeys.detail(id), chat),
+    onSettled: done,
+  });
+}
+
 export function useSetChatMessageBookmark(chatId: string) {
   const qc = useQueryClient();
   return useMutation({

@@ -7,7 +7,7 @@ import { Icon } from "@/components/ui/icon";
 
 export const FENCE_COLLAPSE_LINES = 20;
 
-/** A fenced code block in chat markdown: language header, Copy, lazy syntax highlighting, long blocks collapsed. */
+/** A fenced code block in chat markdown: sticky header with language, line count, Expand/Collapse, Copy, and lazy highlighting. */
 export function CodeFence({ code, info }: { code: string; info?: string }) {
   const lines = code.replace(/\n$/, "").split("\n");
   const lang = langFromFence(info);
@@ -18,22 +18,38 @@ export function CodeFence({ code, info }: { code: string; info?: string }) {
   const shown = long && !expanded ? lines.slice(0, FENCE_COLLAPSE_LINES) : lines;
   const toks = useHighlighted([shown], lang, true)?.[0];
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-surface-sunken" data-testid="code-fence">
-      <div className="flex items-center justify-between border-b border-border-row px-3 py-1 text-12 text-fg-tertiary">
-        <span className="font-mono">{label}</span>
-        <button
-          type="button"
-          className="flex items-center gap-1 rounded px-1 hover:text-fg"
-          onClick={() => {
-            void navigator.clipboard?.writeText(lines.join("\n")).then(() => {
-              setCopied(true);
-              setTimeout(() => setCopied(false), 1500);
-            });
-          }}
-        >
-          <Icon name={copied ? "check" : "link"} size={12} />
-          {copied ? "Copied" : "Copy"}
-        </button>
+    <div className="rounded-lg border border-border bg-surface-sunken" data-testid="code-fence">
+      <div className="sticky top-0 z-10 flex items-center justify-between gap-2 rounded-t-lg border-b border-border-row bg-surface-sunken/95 px-3 py-1.5 text-12 text-fg-tertiary backdrop-blur-xs">
+        <div className="flex items-center gap-2">
+          <span className="font-mono font-medium text-fg-secondary">{label}</span>
+          <span className="font-mono text-11 opacity-80">{lines.length} {lines.length === 1 ? "line" : "lines"}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          {long && (
+            <button
+              type="button"
+              aria-expanded={expanded}
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-12 text-fg-secondary hover:bg-hover hover:text-fg"
+              onClick={() => setExpanded((e) => !e)}
+            >
+              <Icon name={expanded ? "shrink" : "expand"} size={12} />
+              {expanded ? "Collapse" : `Expand (${lines.length})`}
+            </button>
+          )}
+          <button
+            type="button"
+            className="flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-hover hover:text-fg"
+            onClick={() => {
+              void navigator.clipboard?.writeText(lines.join("\n")).then(() => {
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1500);
+              });
+            }}
+          >
+            <Icon name={copied ? "check" : "link"} size={12} />
+            {copied ? "Copied" : "Copy"}
+          </button>
+        </div>
       </div>
       <pre className="overflow-x-auto p-3 font-mono text-12 leading-relaxed">
         {/* Not an inline chip: reset the .prose-code `code` styles (border, background, padding, size, colour),
@@ -57,10 +73,10 @@ export function CodeFence({ code, info }: { code: string; info?: string }) {
         <button
           type="button"
           aria-expanded={expanded}
-          className="w-full border-t border-border-row px-3 py-1 text-left text-12 text-fg-secondary hover:text-fg"
+          className="w-full rounded-b-lg border-t border-border-row px-3 py-1 text-left text-12 text-fg-secondary hover:bg-hover hover:text-fg"
           onClick={() => setExpanded((e) => !e)}
         >
-          {expanded ? "Show less" : `Show ${lines.length - FENCE_COLLAPSE_LINES} more lines`}
+          {expanded ? "Collapse code block" : `Show ${lines.length - FENCE_COLLAPSE_LINES} more lines`}
         </button>
       )}
     </div>
