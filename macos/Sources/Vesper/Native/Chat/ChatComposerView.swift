@@ -58,10 +58,18 @@ struct ChatComposerView: View {
     @State private var isSending = false
     @State private var isCancelling = false
     @State private var errorMessage: String?
+    @State private var dictationSettingsURL: URL?
     @State private var showFileImporter = false
     @State private var completionIndex = 0
     @State private var completionDismissedText: String?
     @State private var draftSaveTask: Task<Void, Never>?
+    @State private var speech = LiveSpeechRecognizer()
+    @State private var isPreparingDictation = false
+    @State private var isApplyingDictation = false
+    @State private var dictationAnchor: ChatDictationAnchor?
+    @State private var lastDictatedText: String?
+    @State private var dictationStartTask: Task<Void, Never>?
+    @State private var dictationFinishTask: Task<Void, Never>?
 
     private var isRunning: Bool { session?.state == .running }
     private var personaName: String { activePersona?.name ?? session?.agent.name ?? "Vesper" }
@@ -175,17 +183,34 @@ struct ChatComposerView: View {
             applyPrefill()
         }
         .onChange(of: prefill?.token) { _, _ in applyPrefill() }
-        .onDisappear { saveDraftImmediately(for: chatId) }
+        .onDisappear {
+            cancelDictation()
+            saveDraftImmediately(for: chatId)
+        }
         .onChange(of: chatId) { oldId, newId in
+            cancelDictation()
             saveDraftImmediately(for: oldId)
             loadDraft(for: newId)
             attachments = []
             errorMessage = nil
+            dictationSettingsURL = nil
             completionDismissedText = nil
             sendModeWhileRunning = .queue
         }
         .onChange(of: contextChips) { _, _ in
             saveDraftImmediately(for: chatId)
+        }
+        .onChange(of: speech.transcript) { _, next in
+            guard speech.listening else { return }
+            applyDictatedTranscript(next, save: false)
+        }
+        .onChange(of: speech.problem) { _, problem in
+            guard let problem else { return }
+            dictationAnchor = nil
+            lastDictatedText = nil
+            isPreparingDictation = false
+            errorMessage = problem.message
+            dictationSettingsURL = problem.settingsURL
         }
     }
 
@@ -199,7 +224,18 @@ struct ChatComposerView: View {
             Text(message)
                 .lineLimit(2)
             Spacer(minLength: 4)
-            Button("Dismiss") { errorMessage = nil }
+            if let settingsURL = dictationSettingsURL {
+                Button("Open System Settings") {
+                    NSWorkspace.shared.open(settingsURL)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(p.accent)
+            }
+            Button("Dismiss") {
+                errorMessage = nil
+                dictationSettingsURL = nil
+                speech.clearProblem()
+            }
                 .buttonStyle(.plain)
                 .foregroundStyle(p.secondaryText)
         }
@@ -331,7 +367,12 @@ struct ChatComposerView: View {
                 sendModeSwitcher
             }
 
-            Button(action: onStartLiveVoice) {
+            dictateButton
+
+            Button {
+                cancelDictation()
+                onStartLiveVoice()
+            } label: {
                 Image(systemName: "waveform")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(p.secondaryText)
@@ -362,6 +403,45 @@ struct ChatComposerView: View {
                 .keyboardShortcut(.return, modifiers: [.command])
             }
         }
+    }
+
+    @ViewBuilder
+    private var dictateButton: some View {
+        let p = theme.palette
+        let isListening = speech.listening
+        let activeColor = theme.swiftUIColor("pill-blocked-fg", fallback: .red)
+        let activeBg = theme.swiftUIColor("pill-blocked-bg", fallback: Color.red.opacity(0.14))
+
+        Button(action: toggleDictation) {
+            Group {
+                if isPreparingDictation {
+                    ProgressView()
+                        .controlSize(.mini)
+                } else {
+                    Image(systemName: isListening ? "mic.fill" : "mic")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(isListening ? activeColor : p.secondaryText)
+                        .scaleEffect(isListening ? 1 + CGFloat(speech.level) * 0.16 : 1)
+                        .animation(.easeOut(duration: 0.08), value: speech.level)
+                }
+            }
+            .frame(width: 26, height: 22)
+            .background(isListening ? activeBg : .clear, in: Capsule())
+            .overlay(Capsule().stroke(isListening ? activeColor.opacity(0.35) : .clear))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(isSending)
+        .help(dictationHelpText)
+        .accessibilityLabel(isListening ? "Stop dictation" : "Dictate into message")
+    }
+
+    private var dictationHelpText: String {
+        if speech.listening { return "Stop dictation" }
+        if isPreparingDictation {
+            return speech.downloadingModel ? "Downloading on-device speech model…" : "Starting dictation…"
+        }
+        return "Dictate into message"
     }
 
     private var sendModeSwitcher: some View {
@@ -635,6 +715,10 @@ struct ChatComposerView: View {
     }
 
     private func handleDraftChange(text: String, cursorUTF16: Int, save: Bool) {
+        if !isApplyingDictation, speech.listening, text != lastDictatedText {
+            cancelDictation()
+        }
+
         let nextHasText = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if nextHasText != hasDraftText {
             hasDraftText = nextHasText
@@ -826,8 +910,10 @@ struct ChatComposerView: View {
     // MARK: - Submission & Slash Commands
 
     private func submit() {
+        cancelDictation()
         guard canSubmit else { return }
         errorMessage = nil
+        dictationSettingsURL = nil
 
         if let cmd = ChatSlashCommandLogic.parseCommand(editor.text) {
             handleSlashCommand(cmd)
@@ -1121,6 +1207,87 @@ struct ChatComposerView: View {
         draftSaveTask?.cancel()
         draftSaveTask = nil
         draftStore.save(ChatComposerDraft(text: editor.text, chips: contextChips), chatId: id)
+    }
+
+    // MARK: - Dictation
+
+    private func toggleDictation() {
+        if speech.listening {
+            stopAndCommitDictation()
+        } else if isPreparingDictation {
+            cancelDictation()
+        } else {
+            startDictation()
+        }
+    }
+
+    private func startDictation() {
+        dictationFinishTask?.cancel()
+        dictationFinishTask = nil
+        dictationStartTask?.cancel()
+        speech.clearProblem()
+        errorMessage = nil
+        dictationSettingsURL = nil
+        isPreparingDictation = true
+
+        dictationStartTask = Task {
+            let ok = await speech.prepare()
+            isPreparingDictation = false
+            dictationStartTask = nil
+            guard !Task.isCancelled, ok else { return }
+
+            dictationAnchor = ChatComposerDictationLogic.anchor(in: editor.text, cursorUTF16: editor.cursorUTF16)
+            lastDictatedText = editor.text
+            speech.start()
+            if !speech.listening {
+                dictationAnchor = nil
+                lastDictatedText = nil
+            } else {
+                editor.focus()
+            }
+        }
+    }
+
+    private func stopAndCommitDictation() {
+        let anchor = dictationAnchor
+        let settle = speech.finish()
+        dictationFinishTask?.cancel()
+        dictationFinishTask = Task {
+            let finalText = await settle.value
+            guard !Task.isCancelled else { return }
+            if let anchor, !finalText.isEmpty {
+                let composed = ChatComposerDictationLogic.compose(anchor: anchor, spoken: finalText)
+                isApplyingDictation = true
+                setDraftProgrammatically(composed.text, cursorUTF16: composed.cursorUTF16, save: true)
+                isApplyingDictation = false
+            } else {
+                saveDraftImmediately(for: chatId)
+            }
+            dictationAnchor = nil
+            lastDictatedText = nil
+            dictationFinishTask = nil
+            editor.focus()
+        }
+    }
+
+    private func cancelDictation() {
+        dictationStartTask?.cancel()
+        dictationStartTask = nil
+        dictationFinishTask?.cancel()
+        dictationFinishTask = nil
+        isPreparingDictation = false
+        dictationAnchor = nil
+        lastDictatedText = nil
+        speech.stop()
+    }
+
+    private func applyDictatedTranscript(_ spoken: String, save: Bool) {
+        guard let anchor = dictationAnchor else { return }
+        let composed = ChatComposerDictationLogic.compose(anchor: anchor, spoken: spoken)
+        isApplyingDictation = true
+        lastDictatedText = composed.text
+        setDraftProgrammatically(composed.text, cursorUTF16: composed.cursorUTF16, save: save)
+        isApplyingDictation = false
     }
 
     private func compareOptions() -> [ChatCompareOption] {
