@@ -1,8 +1,9 @@
 import SwiftUI
 import VesperCore
 
-/// Generate, preview, tweak and clear a persona's photorealistic state loops (LAZYAGENTS-312).
-/// Generation runs on the server; this polls the list while any state is queued or running.
+/// Generate, preview, tweak and clear a persona's photorealistic state loops (LAZYAGENTS-312), or
+/// make one from a clip made elsewhere. Generation and matting run on the server; this polls the
+/// list while any state is queued or running.
 struct SettingsPersonaStatesCard: View {
     let aux: AuxWindows
     @Bindable var navigation: SettingsNavigation
@@ -12,12 +13,17 @@ struct SettingsPersonaStatesCard: View {
     @State private var tweak = ""
     @State private var busy = false
     @State private var errorMessage: String?
+    @State private var copiedPrompt: API.PersonaState?
+
+    /// The server's limit (statemedia.MaxClipBytes), checked here before a file is read.
+    private static let maxClipBytes = 64 << 20
 
     private var store: QueryStore? { aux.store }
     private var request: APIRequest<API.PersonaStateMediaList> { API.listPersonaStateMedia(id: persona.id) }
 
     var body: some View {
-        let rows = store?.entry(request).data?.states ?? []
+        let list = store?.entry(request).data
+        let rows = list?.states ?? []
         let byState = Dictionary(rows.map { ($0.state, $0) }, uniquingKeysWith: { a, _ in a })
         let generating = rows.contains { $0.status == .queued || $0.status == .running }
         let loops = Dictionary(rows.compactMap { r in r.loopUrl.map { (r.state.rawValue, $0) } }, uniquingKeysWith: { a, _ in a })
@@ -103,6 +109,16 @@ struct SettingsPersonaStatesCard: View {
                 Button("Regenerate \(label(selected).capitalized)") { regenerate(selected, canTweak: current?.canTweak == true) }
                     .disabled(busy || isRunning(current))
             }
+            HStack(spacing: 8) {
+                Button("Upload \(label(selected).capitalized) Clip…") { uploadClip(selected) }
+                    .disabled(busy || isRunning(current))
+                Button(copiedPrompt == selected ? "Copied" : "Copy Prompt") { copyPrompt(selected, list?.prompts?[selected.rawValue]) }
+                    .disabled(list?.prompts?[selected.rawValue] == nil)
+                Spacer()
+            }
+            Text("Made the clip yourself, e.g. in AI Studio? Use the copied prompt with \(persona.name)'s portrait as the first and last frame, then upload the MP4 or MOV (1–10 seconds). Uploaded loops can't be tweaked.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             HStack {
                 Button(generating ? "Generating…" : (rows.isEmpty ? "Generate Animated States" : "Regenerate All")) { generate(states: nil) }
                     .buttonStyle(.borderedProminent)
@@ -209,6 +225,44 @@ struct SettingsPersonaStatesCard: View {
             } catch {
                 errorMessage = settingsErrorText(error)
             }
+        }
+    }
+
+    private func uploadClip(_ s: API.PersonaState) {
+        guard let client = aux.client() else { return }
+        guard let picked = SettingsFilePanels.openStateClip(maxBytes: Self.maxClipBytes) else { return }
+        let clip: (data: Data, fileName: String, mimeType: String)
+        switch picked {
+        case .success(let c): clip = c
+        case .failure(.tooLarge):
+            errorMessage = "Clips are limited to \(Self.maxClipBytes >> 20) MB."
+            return
+        case .failure(.unreadable):
+            errorMessage = "Couldn't read that file."
+            return
+        }
+        busy = true
+        errorMessage = nil
+        var form = APIMultipartForm()
+        form.addFile("file", filename: clip.fileName, contentType: clip.mimeType, data: clip.data)
+        Task {
+            defer { busy = false }
+            do {
+                _ = try await client.send(API.uploadPersonaStateClip(id: persona.id, state: s, body: form))
+                await refresh()
+            } catch {
+                errorMessage = settingsErrorText(error)
+            }
+        }
+    }
+
+    private func copyPrompt(_ s: API.PersonaState, _ prompt: String?) {
+        guard let prompt else { return }
+        SettingsFilePanels.copyToPasteboard(prompt)
+        copiedPrompt = s
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            if copiedPrompt == s { copiedPrompt = nil }
         }
     }
 

@@ -290,6 +290,22 @@ enum SettingsFilePanels {
         return (url, data, url.lastPathComponent, mime)
     }
 
+    /// A video the person picked for a state loop, or why it can't be used. The size is checked
+    /// before reading, so a huge file is never loaded only for the server to refuse it.
+    static func openStateClip(maxBytes: Int) -> Result<(data: Data, fileName: String, mimeType: String), StateClipPickError>? {
+        guard let url = pickOpenURL(contentTypes: [.mpeg4Movie, .quickTimeMovie], title: "Choose a Clip") else { return nil }
+        if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > maxBytes {
+            return .failure(.tooLarge)
+        }
+        guard let data = try? Data(contentsOf: url) else { return .failure(.unreadable) }
+        let mime = url.pathExtension.lowercased() == "mov" ? "video/quicktime" : "video/mp4"
+        return .success((data, url.lastPathComponent, mime))
+    }
+
+    enum StateClipPickError: Error {
+        case tooLarge, unreadable
+    }
+
     static func confirm(title: String, message: String, confirmLabel: String, destructive: Bool = true) -> Bool {
         let alert = NSAlert()
         alert.alertStyle = destructive ? .critical : .warning
