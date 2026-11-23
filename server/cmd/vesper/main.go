@@ -228,6 +228,7 @@ func serve(ctx context.Context, log *slog.Logger) error {
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	hs.RegisterOnShutdown(events.Close) // open /events streams would hold Shutdown to its deadline
 	errc := make(chan error, 1)
 	go func() { errc <- hs.ListenAndServe() }()
 	log.Info("listening", "addr", cfg.Addr, "version", cfg.Version)

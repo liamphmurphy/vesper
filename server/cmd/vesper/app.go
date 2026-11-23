@@ -303,6 +303,7 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 		Handler:           topHandler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	hs.RegisterOnShutdown(events.Close) // open /events streams would hold Shutdown to its deadline
 	errc := make(chan error, 1)
 	go func() { errc <- hs.Serve(ln) }()
 
