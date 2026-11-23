@@ -8,6 +8,20 @@
 -- pg_notify deduplicates identical (channel, payload) notifications within a
 -- transaction.
 
+-- A database migrated by the branch whose 00182 was persona_state_media_enabled
+-- (since renumbered to 00184) recorded version 182 without running
+-- 00182_idle_notify_triggers, so define notify_work here too. Same body as 00182.
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION public.notify_work() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  PERFORM pg_notify('vesper_work', TG_ARGV[0]);
+  RETURN NULL;
+END;
+$$;
+-- +goose StatementEnd
+
 DROP TRIGGER IF EXISTS work_notify ON public.sign_ins;
 CREATE TRIGGER work_notify AFTER INSERT OR UPDATE ON public.sign_ins
   FOR EACH ROW WHEN (NEW.status = 'pending')
