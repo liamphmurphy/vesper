@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import SwiftUI
 import VesperCore
 
@@ -22,14 +23,13 @@ final class ChatCompanion {
     private(set) var shown = ""
     /// The reply's voice is playing; it can outlast the text's reveal.
     private(set) var speaking = false
+    /// Why replies are read by the Mac's own voice instead of the persona's: the voice provider's
+    /// limit and when it lifts. Cleared once the persona's voice plays again.
+    private(set) var voiceNotice: String?
 
     @ObservationIgnored private var fullText = ""
     @ObservationIgnored private var wordsPerSecond = 0.0
     @ObservationIgnored private var started = Date()
-    /// Words already revealed when the current pace began (the lead's, once the rest plays).
-    @ObservationIgnored private var revealBase = 0
-    /// While the lead plays and the rest may follow, the text stops at the lead's last word.
-    @ObservationIgnored private var revealCap: Int?
     @ObservationIgnored private var revealed: Set<String> = []
     @ObservationIgnored private var seenFirstList = false
     @ObservationIgnored private var timer: Timer?
@@ -39,50 +39,9 @@ final class ChatCompanion {
     /// Held at the start while the reply's speech loads, so text and voice begin together.
     @ObservationIgnored private var waitingForVoice = false
     @ObservationIgnored private var streamingPlayer: StreamingPCMPlayer?
+    @ObservationIgnored private var systemVoice: SystemVoicePlayer?
     @ObservationIgnored private var voiceTask: Task<Void, Never>?
-    @ObservationIgnored private var restTask: Task<Void, Never>?
-    /// The rest of the reply's speech, streamed while the lead plays.
-    @ObservationIgnored private var restBuffer: RestPCMBuffer?
-    @ObservationIgnored private var leadDone = false
 
-    /// Collects streamed PCM chunks for `?part=rest` while `?part=lead` is playing, then feeds
-    /// them (plus any chunks that still arrive) straight into the rest player without a gap.
-    @MainActor
-    private final class RestPCMBuffer {
-        var sampleRate: Int = 24_000
-        var words: Int = 0
-        var chunks: [Data] = []
-        var finished = false
-        var failed = false
-        var onChunk: ((Data) -> Void)?
-        var onFinish: (() -> Void)?
-        var onFail: (() -> Void)?
-
-        func append(_ data: Data) {
-            if let onChunk {
-                onChunk(data)
-            } else {
-                chunks.append(data)
-            }
-        }
-
-        func complete() {
-            finished = true
-            onFinish?()
-            onChunk = nil
-            onFinish = nil
-            onFail = nil
-        }
-
-        func fail() {
-            failed = true
-            finished = true
-            onFail?()
-            onChunk = nil
-            onFinish = nil
-            onFail = nil
-        }
-    }
     /// The pop-out is open, for voices set to speak only there.
     @ObservationIgnored var popoutOpen = false
     /// Live Voice is open; it speaks "pop-out only" voices too.
@@ -128,7 +87,6 @@ final class ChatCompanion {
         fullText = companionRevealText(last.bodyMd)
         wordsPerSecond = wps > 0 ? wps : 15
         started = Date()
-        revealBase = 0
         shown = ""
         revealingId = last.id
         stopVoice()
@@ -174,202 +132,111 @@ final class ChatCompanion {
     /// Default spoken pace while streaming audio before total clip duration is known (~160 wpm).
     private static let streamingWordsPerSecond = 2.7
 
-    /// Streams the reply in two parts requested at once: the short lead starts playing as soon as
-    /// its first PCM chunks arrive while the rest streams into a buffer, then the rest follows.
+    /// Streams the whole reply's speech in one request (the server starts voicing a Live Voice
+    /// reply as it's stored, so this usually joins audio already on its way) and reveals the text in
+    /// time with it. When the voice provider is out of quota, the Mac's own voice reads it instead.
     private func playVoice(chatId: String, messageId: String) async {
-        let basePath = "/api/v1/chats/\(chatId)/messages/\(messageId)/speech/stream"
-        let restBuf = RestPCMBuffer()
-        restBuffer = restBuf
-        restTask = Task { [weak self] in
-            guard let stream = await AvatarImages.shared.speechStream(for: basePath + "?part=rest") else {
-                restBuf.fail()
-                return
-            }
-            if Task.isCancelled {
-                stream.cancel()
-                return
-            }
-            restBuf.sampleRate = stream.sampleRate
-            restBuf.words = stream.words
-            var sawAny = false
-            for await chunk in stream.chunks {
-                if Task.isCancelled {
-                    stream.cancel()
-                    return
-                }
-                sawAny = true
-                restBuf.append(chunk)
-            }
-            if sawAny {
-                restBuf.complete()
-            } else {
-                restBuf.fail()
-            }
-            _ = self
-        }
-
-        let leadStream = await Self.speechStream(basePath + "?part=lead", within: Self.voiceWait)
-        guard revealingId == messageId, !Task.isCancelled else {
-            leadStream?.cancel()
-            restTask?.cancel()
-            restTask = nil
-            restBuffer = nil
+        let outcome = await Self.speechStream("/api/v1/chats/\(chatId)/messages/\(messageId)/speech/stream", within: Self.voiceWait)
+        guard revealingId == messageId, !Task.isCancelled, !PersonaVoiceMute.isMuted else {
+            if case let .stream(stream) = outcome { stream.cancel() }
+            if revealingId == messageId { revealSilently() }
             return
         }
-        guard let leadStream, !PersonaVoiceMute.isMuted else {
-            leadStream?.cancel()
-            waitingForVoice = false
-            started = Date()
-            restTask?.cancel()
-            restTask = nil
-            restBuffer = nil
-            return
+        switch outcome {
+        case let .stream(stream):
+            voiceNotice = nil
+            await playStream(stream, messageId: messageId)
+        case let .limited(message):
+            voiceNotice = message
+            speakWithSystemVoice()
+        case .unavailable:
+            revealSilently()
         }
+    }
 
-        let leadWords = leadStream.words
+    /// Lets a reply's text reveal at its own pace without a voice.
+    private func revealSilently() {
+        waitingForVoice = false
+        started = Date()
+    }
+
+    private func playStream(_ stream: AvatarImages.SpeechStream, messageId: String) async {
         let logVoice = liveVoiceOpen
         guard let player = StreamingPCMPlayer(
-            sampleRate: leadStream.sampleRate,
+            sampleRate: stream.sampleRate,
             onStarted: { [weak self] in
                 guard let self, self.revealingId == messageId else { return }
                 self.waitingForVoice = false
                 self.started = Date()
                 self.speaking = true
                 self.wordsPerSecond = Self.streamingWordsPerSecond
-                if leadWords > 0 { self.revealCap = leadWords }
-                if logVoice { LiveVoiceLatencyLog.shared.markPlaybackStarted(part: "lead", streaming: true) }
+                if logVoice { LiveVoiceLatencyLog.shared.markPlaybackStarted(part: "full", streaming: true) }
             },
             onEnd: { [weak self] in
-                self?.leadEnded()
+                self?.streamingPlayer = nil
+                self?.speaking = false
             }
         ) else {
-            leadStream.cancel()
-            waitingForVoice = false
-            started = Date()
-            restTask?.cancel()
-            restTask = nil
-            restBuffer = nil
+            stream.cancel()
+            revealSilently()
             return
         }
         streamingPlayer = player
 
         var sawFirst = false
-        for await chunk in leadStream.chunks {
+        for await chunk in stream.chunks {
             if Task.isCancelled || PersonaVoiceMute.isMuted {
-                leadStream.cancel()
+                stream.cancel()
                 player.stop()
                 if streamingPlayer === player { streamingPlayer = nil }
                 return
             }
             if !sawFirst {
                 sawFirst = true
-                if logVoice { LiveVoiceLatencyLog.shared.markSpeechFirstAudio(part: "lead", streaming: true) }
+                if logVoice { LiveVoiceLatencyLog.shared.markSpeechFirstAudio(part: "full", streaming: true) }
             }
             if !player.append(chunk) {
-                leadStream.cancel()
-                waitingForVoice = false
-                started = Date()
+                stream.cancel()
                 if streamingPlayer === player { streamingPlayer = nil }
-                restTask?.cancel()
-                restTask = nil
-                restBuffer = nil
+                revealSilently()
                 return
             }
         }
         player.finishInput()
         if !sawFirst || !player.hasStarted {
-            waitingForVoice = false
-            started = Date()
+            revealSilently()
         }
     }
 
-    private func leadEnded() {
-        leadDone = true
-        streamingPlayer = nil
-        guard let restBuf = restBuffer else {
-            releaseCap()
-            speaking = false
+    /// Reads the reply with the Mac's default voice. It counts as speaking from the start, not from
+    /// the synthesizer's first word, so Live Voice can't reopen the microphone in between and hear it;
+    /// the text reveals at once at a spoken pace, so a slow voice can't hold the reply back.
+    private func speakWithSystemVoice() {
+        let text = SystemVoiceText.plain(fullText)
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            revealSilently()
             return
         }
-        if restBuf.failed || (restBuf.finished && restBuf.chunks.isEmpty) {
-            restBuffer = nil
-            releaseCap()
-            speaking = false
-            return
+        let voice = SystemVoicePlayer { [weak self] voice in
+            guard let self, self.systemVoice === voice else { return }
+            self.systemVoice = nil
+            self.speaking = false
         }
-        playRestStream(restBuf)
+        systemVoice = voice
+        speaking = true
+        wordsPerSecond = Self.streamingWordsPerSecond
+        revealSilently()
+        voice.speak(text)
     }
 
-    private func playRestStream(_ restBuf: RestPCMBuffer) {
-        releaseCap()
-        guard !PersonaVoiceMute.isMuted, let player = StreamingPCMPlayer(
-            sampleRate: restBuf.sampleRate,
-            onStarted: { [weak self] in
-                guard let self else { return }
-                self.speaking = true
-                self.wordsPerSecond = Self.streamingWordsPerSecond
-            },
-            onEnd: { [weak self] in
-                self?.streamingPlayer = nil
-                self?.restBuffer = nil
-                self?.speaking = false
-            }
-        ) else {
-            restBuffer = nil
-            speaking = false
-            return
-        }
-        streamingPlayer = player
-        let queued = restBuf.chunks
-        restBuf.chunks.removeAll()
-        for chunk in queued {
-            if !player.append(chunk) {
-                streamingPlayer = nil
-                restBuffer = nil
-                speaking = false
-                return
-            }
-        }
-        if restBuf.finished {
-            player.finishInput()
-        } else {
-            restBuf.onChunk = { [weak self, weak player] data in
-                guard let self, let player, self.streamingPlayer === player else { return }
-                if !player.append(data) {
-                    self.streamingPlayer = nil
-                    self.restBuffer = nil
-                    self.speaking = false
-                }
-            }
-            restBuf.onFinish = { [weak self, weak player] in
-                guard let self, let player, self.streamingPlayer === player else { return }
-                player.finishInput()
-            }
-            restBuf.onFail = { [weak self, weak player] in
-                guard let self, let player, self.streamingPlayer === player else { return }
-                player.finishInput()
-            }
-        }
-    }
-
-    /// Lets the text run past the lead, carrying on from its last word if it was held there.
-    private func releaseCap() {
-        guard let cap = revealCap else { return }
-        revealCap = nil
-        if leadDone {
-            revealBase = cap
-            started = Date()
-        }
-    }
-
-    private static func speechStream(_ path: String, within limit: Duration) async -> AvatarImages.SpeechStream? {
-        await withTaskGroup(of: AvatarImages.SpeechStream?.self) { group in
+    private static func speechStream(_ path: String, within limit: Duration) async -> AvatarImages.SpeechStreamOutcome {
+        await withTaskGroup(of: AvatarImages.SpeechStreamOutcome.self) { group in
             group.addTask { await AvatarImages.shared.speechStream(for: path) }
             group.addTask {
                 try? await Task.sleep(for: limit)
-                return nil
+                return .unavailable
             }
-            let first = await group.next() ?? nil
+            let first = await group.next() ?? .unavailable
             group.cancelAll()
             return first
         }
@@ -379,21 +246,17 @@ final class ChatCompanion {
     func stopVoice() {
         voiceTask?.cancel()
         voiceTask = nil
-        restTask?.cancel()
-        restTask = nil
         streamingPlayer?.stop()
         streamingPlayer = nil
-        restBuffer = nil
-        leadDone = false
-        revealCap = nil
+        systemVoice?.stop()
+        systemVoice = nil
         speaking = false
         waitingForVoice = false
     }
 
     private func tick() {
         if waitingForVoice { return }
-        var words = revealBase + Int(Date().timeIntervalSince(started) * wordsPerSecond)
-        if let cap = revealCap { words = min(words, cap) }
+        let words = Int(Date().timeIntervalSince(started) * wordsPerSecond)
         let next = PersonaStateLoops.revealSlice(fullText, words: words)
         if next.done {
             shown = fullText // a natural end, so finishReveal lets the voice play out
@@ -401,6 +264,37 @@ final class ChatCompanion {
         } else if next.text != shown {
             shown = next.text
         }
+    }
+}
+
+/// Reads text aloud with the Mac's default voice (System Settings → Accessibility → Spoken
+/// Content) when a persona's own voice can't speak.
+@MainActor
+final class SystemVoicePlayer: NSObject, AVSpeechSynthesizerDelegate {
+    private let synthesizer = AVSpeechSynthesizer()
+    private let onEnd: @MainActor (SystemVoicePlayer) -> Void
+
+    /// `onEnd` runs once the text has been read or the reading stopped.
+    init(onEnd: @escaping @MainActor (SystemVoicePlayer) -> Void) {
+        self.onEnd = onEnd
+        super.init()
+        synthesizer.delegate = self
+    }
+
+    func speak(_ text: String) {
+        synthesizer.speak(AVSpeechUtterance(string: text))
+    }
+
+    func stop() {
+        synthesizer.stopSpeaking(at: .immediate)
+    }
+
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        Task { @MainActor in self.onEnd(self) }
+    }
+
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        Task { @MainActor in self.onEnd(self) }
     }
 }
 
