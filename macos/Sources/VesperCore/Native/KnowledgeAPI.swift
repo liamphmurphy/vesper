@@ -245,6 +245,26 @@ public struct KnowledgeEmbed: Codable, Sendable, Equatable, Hashable {
         available = try c.decodeIfPresent(Bool.self, forKey: .available) ?? false
         data = try c.decodeIfPresent([String: JSONValue].self, forKey: .data)
     }
+
+    /// True when this embed represents an image asset or library image with a loadable URL.
+    public var isImageEmbed: Bool {
+        guard available, let url, !url.isEmpty else { return false }
+        let ct = contentType?.lowercased() ?? ""
+        return ct.hasPrefix("image/") || kind.lowercased() == "image"
+    }
+
+    /// True when this embed represents a PDF attachment with a loadable URL.
+    public var isPDFEmbed: Bool {
+        guard available, let url, !url.isEmpty else { return false }
+        let ct = contentType?.lowercased() ?? ""
+        return ct.contains("pdf") || url.lowercased().hasSuffix(".pdf")
+    }
+
+    /// True when the native Knowledge editor renders an inline preview card for this embed.
+    public var hasInlinePreview: Bool {
+        if isImageEmbed || isPDFEmbed { return true }
+        return available && !(markdown?.isEmpty ?? true)
+    }
 }
 
 public struct KnowledgePageChange: Codable, Sendable, Equatable {
