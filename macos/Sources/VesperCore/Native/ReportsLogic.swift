@@ -453,4 +453,89 @@ public enum ReportsLogic {
             reasons: ranked(reasons)
         )
     }
+
+    // MARK: - Sidebar NavModel
+
+    public static let navId = "reports"
+    public static let tabPickerId = "reports-tab"
+    public static let rangeFilterId = "reports-range"
+    public static let groupFilterId = "reports-group"
+    public static let spacePrefix = "space:"
+
+    public static func spaceItemId(_ key: String) -> String { "\(spacePrefix)\(key)" }
+
+    public static func navModel(
+        tab: Tab,
+        preset: RangePreset,
+        groupBy: GroupBy,
+        projectFilter: String,
+        projects: [API.Project]
+    ) -> NavModel {
+        let activeProjects = projects.filter { !$0.archived }
+        var filters: [NavFilterMenu] = [
+            NavFilterMenu(
+                id: rangeFilterId,
+                label: "Range",
+                icon: "clock",
+                options: RangePreset.allCases.map {
+                    NavFilterOption(value: $0.rawValue, label: $0.label, checked: preset == $0)
+                }
+            ),
+        ]
+        if tab == .costs {
+            filters.append(NavFilterMenu(
+                id: groupFilterId,
+                label: "Group",
+                icon: "sliders",
+                options: GroupBy.allCases.map {
+                    NavFilterOption(value: $0.rawValue, label: $0.label, checked: groupBy == $0)
+                }
+            ))
+        }
+
+        var spaceItems: [NavItem] = [
+            NavItem(id: spaceItemId(""), title: "All spaces", icon: "briefcase"),
+        ]
+        spaceItems += activeProjects.map { proj in
+            NavItem(id: spaceItemId(proj.key), title: proj.name, icon: "briefcase", trailing: proj.key)
+        }
+
+        return NavModel(
+            id: navId,
+            title: "Reports",
+            picker: NavPicker(
+                id: tabPickerId,
+                value: tab.rawValue,
+                options: Tab.allCases.map { NavPickerOption(value: $0.rawValue, label: $0.label) }
+            ),
+            filters: filters,
+            sections: [
+                NavSection(id: "spaces", title: "Spaces", items: spaceItems),
+            ],
+            selectedId: spaceItemId(projectFilter)
+        )
+    }
+
+    public enum NavActionResult: Sendable, Equatable {
+        case selectTab(Tab)
+        case selectRange(RangePreset)
+        case selectGroup(GroupBy)
+        case selectSpace(String)
+    }
+
+    public static func navAction(for command: NativeCommand) -> NavActionResult? {
+        switch command {
+        case .navPicker(navId, tabPickerId, let value):
+            return Tab(rawValue: value).map(NavActionResult.selectTab)
+        case .navFilter(navId, rangeFilterId, let value, _):
+            return RangePreset(rawValue: value).map(NavActionResult.selectRange)
+        case .navFilter(navId, groupFilterId, let value, _):
+            return GroupBy(rawValue: value).map(NavActionResult.selectGroup)
+        case .navActivate(navId, let itemId, _):
+            guard itemId.hasPrefix(spacePrefix) else { return nil }
+            return .selectSpace(String(itemId.dropFirst(spacePrefix.count)))
+        default:
+            return nil
+        }
+    }
 }

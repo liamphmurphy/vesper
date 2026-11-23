@@ -42,6 +42,7 @@ struct SpaceScreen: View {
     private static let modelsRequest = API.listChatModels()
     private static let bootRequest = API.getBootstrap()
     private static let connectorsRequest = API.listConnectors()
+    private static let spacesRequest = API.listChatSpaces()
 
     private var spaceId: String {
         context.match.params["id"] ?? ""
@@ -71,6 +72,8 @@ struct SpaceScreen: View {
         let models = context.store.entry(Self.modelsRequest).data ?? []
         let boot = context.store.entry(Self.bootRequest).data
         let connectors = context.store.entry(Self.connectorsRequest).data?.connectors ?? []
+        let spaces = context.store.entry(Self.spacesRequest).data?.spaces ?? []
+        let spaceChats = chatsEntry.data?.chats ?? []
 
         Group {
             if let error = spaceEntry.error, space == nil {
@@ -142,13 +145,15 @@ struct SpaceScreen: View {
             showAllChats = false
             syncWatches()
         }
-        .onChange(of: chromeFingerprint(space: space, sources: sources, personasCount: personas.count)) { _, _ in
+        .onChange(of: chromeFingerprint(space: space, sources: sources, personasCount: personas.count, spacesCount: spaces.count, chatsCount: spaceChats.count)) { _, _ in
             publishChrome(
                 space: space,
                 sourcesData: sourcesData,
                 personas: personas,
                 projects: boot?.projects ?? [],
-                connectors: connectors
+                connectors: connectors,
+                spaces: spaces,
+                chats: spaceChats
             )
         }
         .onAppear {
@@ -157,7 +162,9 @@ struct SpaceScreen: View {
                 sourcesData: sourcesData,
                 personas: personas,
                 projects: boot?.projects ?? [],
-                connectors: connectors
+                connectors: connectors,
+                spaces: spaces,
+                chats: spaceChats
             )
             installCommands(space: space)
         }
@@ -587,8 +594,14 @@ struct SpaceScreen: View {
 
     // MARK: - Chrome & Mutations
 
-    private func chromeFingerprint(space: API.ChatSpace?, sources: [API.ChatSpaceSource], personasCount: Int) -> String {
-        "\(space?.id ?? "")|\(space?.name ?? "")|\(space?.instructions.count ?? 0)|\(space?.spaceMemory ?? false)|\(space?.personaId ?? "")|\(space?.sourceCount ?? 0)|\(sources.count)|\(personasCount)|\(editing)|\(inspectorOpen)|\(inspectorTabId)"
+    private func chromeFingerprint(
+        space: API.ChatSpace?,
+        sources: [API.ChatSpaceSource],
+        personasCount: Int,
+        spacesCount: Int,
+        chatsCount: Int
+    ) -> String {
+        "\(space?.id ?? "")|\(space?.name ?? "")|\(space?.instructions.count ?? 0)|\(space?.spaceMemory ?? false)|\(space?.personaId ?? "")|\(space?.sourceCount ?? 0)|\(sources.count)|\(personasCount)|\(spacesCount)|\(chatsCount)|\(editing)|\(inspectorOpen)|\(inspectorTabId)"
     }
 
     private func publishChrome(
@@ -596,10 +609,13 @@ struct SpaceScreen: View {
         sourcesData: API.ChatSpaceSourceList?,
         personas: [API.Persona],
         projects: [API.Project],
-        connectors: [API.Connector]
+        connectors: [API.Connector],
+        spaces: [API.ChatSpace],
+        chats: [API.ChatSession]
     ) {
+        let nav = SpacesLogic.navModel(spaces: spaces, activeSpaceId: spaceId.isEmpty ? nil : spaceId, chats: chats)
         guard let space else {
-            context.chrome = NativeChrome(title: "Space")
+            context.chrome = NativeChrome(title: "Space", navigator: nav)
             return
         }
         let projectName = space.project.flatMap { key in projects.first(where: { $0.key == key })?.name ?? key }
@@ -644,12 +660,24 @@ struct SpaceScreen: View {
         context.chrome = NativeChrome(
             title: space.name,
             toolbarItems: toolbar,
-            inspector: inspector
+            inspector: inspector,
+            navigator: nav
         )
     }
 
     private func installCommands(space: API.ChatSpace?) {
         context.onCommand = { cmd in
+            if let navAction = SpacesLogic.navAction(for: cmd) {
+                switch navAction {
+                case .backToChat: context.navigate("/chat")
+                case .newSpace: context.navigate("/spaces/new")
+                case .openSpace(let id, let newTab):
+                    if newTab { context.openInNewTab("/spaces/\(id)") } else { context.navigate("/spaces/\(id)") }
+                case .openChat(let id, let newTab):
+                    if newTab { context.openInNewTab("/chat/\(id)") } else { context.navigate("/chat/\(id)") }
+                }
+                return
+            }
             switch cmd {
             case .inspectorVisibility(let open):
                 inspectorOpen = open
@@ -841,6 +869,7 @@ struct SpaceScreen: View {
         watch(Self.modelsRequest)
         watch(Self.bootRequest)
         watch(Self.connectorsRequest)
+        watch(Self.spacesRequest)
     }
 }
 

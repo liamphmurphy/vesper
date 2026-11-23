@@ -8,7 +8,7 @@ enum SidebarIcons {
         "dashboard": "square.grid.2x2", "inbox": "tray", "tickets": "checkmark.circle", "slides": "play.rectangle",
         "designs": "pencil.and.ruler", "board": "rectangle.split.3x1", "epics": "square.stack.3d.up", "agents": "cpu",
         "artifacts": "doc", "wiki": "book", "learn": "graduationcap", "graph": "point.3.connected.trianglepath.dotted",
-        "search": "magnifyingglass", "plus": "plus", "chev": "chevron.down", "chevr": "chevron.right", "x": "xmark",
+        "search": "magnifyingglass", "plus": "plus", "chev": "chevron.down", "chevl": "chevron.left", "chevr": "chevron.right", "x": "xmark",
         "expand": "arrow.up.left.and.arrow.down.right", "shrink": "arrow.down.right.and.arrow.up.left", "chevronUp": "chevron.up",
         "check": "checkmark", "gear": "gearshape", "branch": "arrow.triangle.branch", "pr": "arrow.triangle.pull",
         "lock": "lock", "key": "key", "code": "chevron.left.forwardslash.chevron.right", "terminal": "terminal",
@@ -24,6 +24,7 @@ enum SidebarIcons {
         "doc": "doc.text", "pin": "pin", "more": "ellipsis", "panel-right": "sidebar.right", "star": "star", "home": "house",
         "compose": "square.and.pencil", "eye": "eye", "copy": "doc.on.doc", "external": "arrow.up.right.square",
         "outline": "list.bullet.indent", "table": "tablecells", "reviews": "checkmark.bubble", "calendar": "calendar",
+        "checklist": "checklist",
     ]
 
     static func symbolName(_ icon: String) -> String { table[icon] ?? "circle" }

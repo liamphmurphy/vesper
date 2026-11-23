@@ -294,4 +294,102 @@ public enum SpacesLogic {
 
         return sections
     }
+
+    // MARK: - Sidebar NavModel
+
+    public static let navId = "spaces"
+    public static let backToChatAction = "back-chat"
+    public static let newSpaceAction = "new-space"
+    public static let spacePrefix = "space:"
+    public static let chatPrefix = "chat:"
+    public static let openNewTabMenu = "open-new-tab"
+
+    public static func navModel(
+        spaces: [API.ChatSpace],
+        activeSpaceId: String?,
+        chats: [API.ChatSession] = []
+    ) -> NavModel {
+        let spaceItems = spaces.map { sp in
+            NavItem(
+                id: "\(spacePrefix)\(sp.id)",
+                title: sp.name,
+                subtitle: sp.work?.key,
+                avatar: Avatar(initials: initial(for: sp.name), color: colorHex(for: sp.color)),
+                trailing: sp.chatCount > 0 ? "\(sp.chatCount)" : nil,
+                href: "/spaces/\(sp.id)",
+                contextMenu: [MenuItem(id: openNewTabMenu, label: "Open in New Tab", icon: "external")]
+            )
+        }
+        var sections: [NavSection] = [
+            NavSection(
+                id: "spaces",
+                title: "Spaces",
+                items: spaceItems,
+                badge: spaceItems.isEmpty ? nil : NavBadge(text: "\(spaceItems.count)"),
+                emptyText: "No spaces yet."
+            ),
+        ]
+        if activeSpaceId != nil && !chats.isEmpty {
+            let sorted = sortChats(chats, sort: .newest)
+            sections.append(NavSection(
+                id: "space-chats",
+                title: "Chats",
+                items: sorted.prefix(25).map { chat in
+                    NavItem(
+                        id: "\(chatPrefix)\(chat.id)",
+                        title: chat.title.isEmpty ? "New chat" : chat.title,
+                        icon: "msg",
+                        href: "/chat/\(chat.id)",
+                        contextMenu: [MenuItem(id: openNewTabMenu, label: "Open in New Tab", icon: "external")]
+                    )
+                },
+                badge: NavBadge(text: "\(chats.count)")
+            ))
+        }
+
+        return NavModel(
+            id: navId,
+            title: "Spaces",
+            actions: [
+                NavAction(id: backToChatAction, label: "Back to Chat", icon: "chevl"),
+                NavAction(id: newSpaceAction, label: "New space", icon: "plus", accent: true),
+            ],
+            sections: sections,
+            selectedId: activeSpaceId.map { "\(spacePrefix)\($0)" }
+        )
+    }
+
+    public enum NavActionResult: Sendable, Equatable {
+        case backToChat
+        case newSpace
+        case openSpace(String, newTab: Bool)
+        case openChat(String, newTab: Bool)
+    }
+
+    public static func navAction(for command: NativeCommand) -> NavActionResult? {
+        switch command {
+        case .navAction(navId, backToChatAction, _, _):
+            return .backToChat
+        case .navAction(navId, newSpaceAction, _, _):
+            return .newSpace
+        case .navAction(navId, openNewTabMenu, let itemId?, _):
+            if itemId.hasPrefix(spacePrefix) {
+                return .openSpace(String(itemId.dropFirst(spacePrefix.count)), newTab: true)
+            }
+            if itemId.hasPrefix(chatPrefix) {
+                return .openChat(String(itemId.dropFirst(chatPrefix.count)), newTab: true)
+            }
+            return nil
+        case .navActivate(navId, let itemId, let newTab):
+            if itemId.hasPrefix(spacePrefix) {
+                return .openSpace(String(itemId.dropFirst(spacePrefix.count)), newTab: newTab)
+            }
+            if itemId.hasPrefix(chatPrefix) {
+                return .openChat(String(itemId.dropFirst(chatPrefix.count)), newTab: newTab)
+            }
+            return nil
+        default:
+            return nil
+        }
+    }
 }

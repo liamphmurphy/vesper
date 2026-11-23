@@ -88,6 +88,72 @@ final class InboxLogicTests: XCTestCase {
         XCTAssertEqual(InboxLogic.kind("brand_new").label, "brand_new")
         XCTAssertEqual(InboxLogic.kind("blocked").tone, .blocked)
     }
+
+    func testNavModelGroupsItemsAndDecodesCommands() {
+        let openApproval = API.InboxItem(
+            agent: nil,
+            artifactId: nil,
+            createdAt: at(15),
+            href: "/runs/r1",
+            id: "approval:1",
+            kind: .approval,
+            needsYou: true,
+            project: "PAY",
+            read: false,
+            resolved: false,
+            runId: "r1",
+            summary: "Approve push",
+            ticketKey: "PAY-12",
+            title: "Push branch"
+        )
+        let doneItem = API.InboxItem(
+            agent: nil,
+            artifactId: nil,
+            createdAt: at(60),
+            href: "/runs/r2",
+            id: "question:2",
+            kind: .question,
+            needsYou: true,
+            project: "PAY",
+            read: true,
+            resolved: false,
+            runId: "r2",
+            summary: "Answered",
+            ticketKey: "PAY-13",
+            title: "Clarify spec"
+        )
+        let nav = InboxLogic.navModel(
+            items: [openApproval, doneItem],
+            view: .open,
+            sort: .oldest,
+            projectFilter: "",
+            projects: [],
+            selectedItemId: "approval:1",
+            now: base
+        )
+        XCTAssertEqual(nav.id, InboxLogic.navId)
+        XCTAssertEqual(nav.picker?.value, "open")
+        XCTAssertEqual(nav.selectedId, "item:approval:1")
+        XCTAssertEqual(nav.sections.map(\.title), ["Approvals"])
+        XCTAssertEqual(nav.sections[0].items.first?.trailing, "15m")
+
+        XCTAssertEqual(
+            InboxLogic.navAction(for: .navPicker(navigatorId: InboxLogic.navId, pickerId: InboxLogic.viewPickerId, value: "done")),
+            .selectView(.done)
+        )
+        XCTAssertEqual(
+            InboxLogic.navAction(for: .navFilter(navigatorId: InboxLogic.navId, filterId: InboxLogic.sortFilterId, value: "newest", checked: true)),
+            .selectSort(.newest)
+        )
+        XCTAssertEqual(
+            InboxLogic.navAction(for: .navFilter(navigatorId: InboxLogic.navId, filterId: InboxLogic.spaceFilterId, value: "PAY", checked: true)),
+            .selectSpace("PAY")
+        )
+        XCTAssertEqual(
+            InboxLogic.navAction(for: .navActivate(navigatorId: InboxLogic.navId, itemId: "item:approval:1")),
+            .selectItem("approval:1")
+        )
+    }
 }
 
 final class APIDateTests: XCTestCase {

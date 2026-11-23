@@ -50,7 +50,7 @@ struct ArtifactDetailScreen: View {
             context.store.observe(req)
             context.store.load(backlinksReq)
             bindCommands(artifact: entry.data)
-            syncChrome(artifact: entry.data)
+            syncChrome(artifact: entry.data, backlinks: backlinks)
         }
         .onDisappear {
             context.store.stopObserving(req.key)
@@ -71,15 +71,18 @@ struct ArtifactDetailScreen: View {
                 context.navigate(redirect)
                 return
             }
-            syncChrome(artifact: artifact)
+            syncChrome(artifact: artifact, backlinks: backlinks)
             bindCommands(artifact: artifact)
         }
+        .onChange(of: backlinks) { _, nextLinks in
+            syncChrome(artifact: entry.data, backlinks: nextLinks)
+        }
         .onChange(of: wantsEdit) { _, _ in
-            syncChrome(artifact: entry.data)
+            syncChrome(artifact: entry.data, backlinks: backlinks)
             bindCommands(artifact: entry.data)
         }
         .onChange(of: selectedVersionId) { _, _ in
-            syncChrome(artifact: entry.data)
+            syncChrome(artifact: entry.data, backlinks: backlinks)
             bindCommands(artifact: entry.data)
         }
         .task(id: "\(artifactId)|\(selectedVersionId ?? "")|\(entry.data?.currentVersion.id ?? "")") {
@@ -101,9 +104,14 @@ struct ArtifactDetailScreen: View {
         return artifact.currentVersion
     }
 
-    private func syncChrome(artifact: API.Artifact?) {
+    private func syncChrome(artifact: API.Artifact?, backlinks: API.Backlinks?) {
+        let nav = ArtifactDetailLogic.navModel(
+            artifact: artifact,
+            selectedVersionId: selectedVersionId,
+            backlinks: backlinks
+        )
         guard let artifact else {
-            context.chrome = NativeChrome(title: "Artifact")
+            context.chrome = NativeChrome(title: "Artifact", navigator: nav)
             return
         }
         let title = LibraryLogic.artifactTitle(title: artifact.title, displayId: artifact.displayId)
@@ -113,7 +121,8 @@ struct ArtifactDetailScreen: View {
                 subtitle: "Editing",
                 toolbarItems: [
                     ShellToolbarItem(id: "artifact.doneEdit", label: "Done", icon: "checkmark", kind: .button, showsLabel: true),
-                ]
+                ],
+                navigator: nav
             )
             return
         }
@@ -134,12 +143,24 @@ struct ArtifactDetailScreen: View {
         context.chrome = NativeChrome(
             title: title,
             subtitle: artifact.project?.name,
-            toolbarItems: items
+            toolbarItems: items,
+            navigator: nav
         )
     }
 
     private func bindCommands(artifact: API.Artifact?) {
         context.onCommand = { cmd in
+            if let navAction = ArtifactDetailLogic.navAction(for: cmd) {
+                switch navAction {
+                case .backToLibrary:
+                    context.navigate("/library")
+                case .selectVersion(let versionId):
+                    selectedVersionId = versionId
+                case .openLink(let href, let newTab):
+                    if newTab { context.openInNewTab(href) } else { context.navigate(href) }
+                }
+                return
+            }
             guard let artifact, case .toolbarAction(let itemId, _) = cmd else { return }
             let viewing = viewingVersion(for: artifact)
             let isOld = viewing.id != artifact.currentVersion.id

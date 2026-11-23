@@ -133,4 +133,44 @@ final class DevTerminalLogicTests: XCTestCase {
         XCTAssertTrue((DevTerminalTheme.ansi + [DevTerminalTheme.background, DevTerminalTheme.foreground, DevTerminalTheme.selection])
             .allSatisfy { RGBA(hex: $0) != nil })
     }
+
+    func testNavModelListsWorkspaceActionsAndRepos() {
+        let ws = API.DevWorkspace(
+            action: nil,
+            arch: nil,
+            customGitconfig: nil,
+            customTmuxConf: nil,
+            customZshrc: nil,
+            enabled: true,
+            error: nil,
+            extraPackages: [],
+            nixMode: .default,
+            port: .value(8090),
+            repos: [API.DevWorkspaceRepo(directory: "vesper", repoUrl: "https://github.com/o/vesper")],
+            state: .ready,
+            step: nil,
+            tmuxPrefix: .cA,
+            updatedAt: "2026-11-22T00:00:00Z"
+        )
+        let nav = DevTerminalLogic.navModel(workspace: ws, connection: .connected)
+        XCTAssertEqual(nav.id, DevTerminalLogic.navId)
+        XCTAssertEqual(nav.sections.map(\.id), ["status", "actions", "repos"])
+        XCTAssertEqual(nav.sections[0].items.first?.status, .done)
+        XCTAssertEqual(nav.sections[2].items.map(\.title), ["vesper"])
+
+        let disconnected = DevTerminalLogic.navModel(workspace: ws, connection: .disconnected)
+        let actionIds = disconnected.sections[1].items.map(\.id)
+        XCTAssertTrue(actionIds.contains(DevTerminalLogic.reconnectItem))
+        XCTAssertTrue(actionIds.contains(DevTerminalLogic.sendToChatItem))
+
+        XCTAssertEqual(
+            DevTerminalLogic.navAction(for: .navActivate(navigatorId: DevTerminalLogic.navId, itemId: DevTerminalLogic.syncReposItem)),
+            .syncRepos
+        )
+        XCTAssertEqual(
+            DevTerminalLogic.navAction(for: .navActivate(navigatorId: DevTerminalLogic.navId, itemId: DevTerminalLogic.fullscreenItem)),
+            .fullscreen
+        )
+        XCTAssertNil(DevTerminalLogic.navAction(for: .navActivate(navigatorId: "other", itemId: DevTerminalLogic.syncReposItem)))
+    }
 }

@@ -75,6 +75,9 @@ final class HttpScreenModel {
         }
     }
 
+    var theme = ThemeTokens(mode: .light)
+    var colorScheme: ColorScheme = .light
+
     var selectedWorkspaceId: String?
     var rememberedWorkspaceId: String? = UserDefaults.standard.string(forKey: workspaceDefaultsKey)
     var viewMode: ViewMode = .requests
@@ -82,7 +85,6 @@ final class HttpScreenModel {
     var collapsedFolders: Set<String> = []
     var selectedFolderId: String?
     var selectedRequestId: String?
-    var showNarrowTree = false
 
     var draftRequestId: String?
     var draft: HttpRequestDraft?
@@ -135,13 +137,97 @@ final class HttpScreenModel {
         lastLoadedDraft = nextDraft
         latestExecutionRequestId = nil
         latestExecution = nil
-        showNarrowTree = false
+    }
+
+    static func searchText(_ req: HttpRequest) -> String {
+        "\(req.method) \(req.name) \(req.url)"
+    }
+
+    func openNewFolderSheet(parentFolder: HttpFolder?) {
+        newFolderName = ""
+        newFolderTarget = NewFolderTarget(
+            parentFolderId: parentFolder?.id,
+            parentFolderName: parentFolder?.name
+        )
+    }
+
+    func openRenameSheet(_ target: RenameTarget) {
+        renameText = target.currentName
+        renameTarget = target
+    }
+
+    func setActiveEnvironment(in context: NativeScreenContext, workspaceId: String, environmentId: String?) async {
+        let workspacesReq = HttpClientAPI.listWorkspaces()
+        let bundleReq = HttpClientAPI.getWorkspaceBundle(id: workspaceId)
+        do {
+            _ = try await context.store.mutate(
+                HttpClientAPI.setActiveEnvironment(workspaceId: workspaceId, environmentId: environmentId),
+                optimistic: [
+                    .update(bundleReq) { $0.workspace.activeEnvironmentId = environmentId },
+                    .update(workspacesReq) { list in
+                        for i in list.workspaces.indices where list.workspaces[i].id == workspaceId {
+                            list.workspaces[i].activeEnvironmentId = environmentId
+                        }
+                    },
+                ],
+                invalidating: HttpClientAPI.workspacesInvalidation
+            )
+            context.store.invalidate(HttpClientAPI.bundleInvalidation(workspaceId: workspaceId))
+        } catch {
+            context.showToast(ToastItemModel(
+                id: "http.env.switch",
+                title: "Failed to switch environment",
+                description: (error as? APIError)?.userMessage ?? error.localizedDescription,
+                tone: .error
+            ))
+        }
+    }
+
+    func createRequest(in context: NativeScreenContext, workspaceId: String, folderId: String?) async {
+        let draft = HttpClientLogic.newRequestDraft(folderId: folderId)
+        do {
+            let created = try await context.store.mutate(
+                HttpClientAPI.createRequest(workspaceId: workspaceId, body: draft),
+                invalidating: HttpClientAPI.bundleInvalidation(workspaceId: workspaceId)
+            )
+            if let folderId {
+                collapsedFolders.remove(folderId)
+            }
+            selectRequest(created)
+        } catch {
+            context.showToast(ToastItemModel(
+                id: "http.req.create",
+                title: "Failed to create request",
+                description: (error as? APIError)?.userMessage ?? error.localizedDescription,
+                tone: .error
+            ))
+        }
+    }
+
+    func duplicateRequest(in context: NativeScreenContext, source: HttpRequest, workspaceId: String) async {
+        var copy = HttpClientLogic.toDraft(source)
+        copy.name = "\(source.name) Copy"
+        do {
+            let created = try await context.store.mutate(
+                HttpClientAPI.createRequest(workspaceId: workspaceId, body: copy),
+                invalidating: HttpClientAPI.bundleInvalidation(workspaceId: workspaceId)
+            )
+            selectRequest(created)
+        } catch {
+            context.showToast(ToastItemModel(
+                id: "http.req.duplicate",
+                title: "Failed to duplicate request",
+                description: (error as? APIError)?.userMessage ?? error.localizedDescription,
+                tone: .error
+            ))
+        }
     }
 }
 
 struct HttpScreen: View {
     @Environment(NativeScreenContext.self) private var context
     @Environment(\.vesperTheme) private var theme
+    @Environment(\.colorScheme) private var colorScheme
     @State private var model = HttpScreenModel()
     @State private var watchedKeys: [QueryKey] = []
 
@@ -215,7 +301,6 @@ struct HttpScreen: View {
             effectiveWsId: effectiveWsId,
             bundleEntry: bundleEntry,
             bundle: bundle,
-            visibleRows: visibleRows,
             selectedRequest: selectedRequest,
             isDirty: isDirty,
             history: history,
@@ -238,22 +323,33 @@ struct HttpScreen: View {
         .onChange(of: selectedRequest, initial: true) { _, nextReq in
             syncDraft(with: nextReq)
         }
-        .onChange(of: visibleRequests.map(Self.searchText), initial: true) { _, texts in
+        .onChange(of: visibleRequests.map(HttpScreenModel.searchText), initial: true) { _, texts in
             context.find.texts = texts
         }
         .onChange(of: context.find.current) { _, index in
             guard let index, index < visibleRequests.count else { return }
             model.selectRequest(visibleRequests[index])
         }
+        .onChange(of: theme, initial: true) { _, nextTheme in
+            model.theme = nextTheme
+        }
+        .onChange(of: colorScheme, initial: true) { _, nextScheme in
+            model.colorScheme = nextScheme
+        }
         .task(id: "\(effectiveWsId ?? "none")|\(activeReqId ?? "none")") {
             updateWatchedQueries(workspaceId: effectiveWsId, requestId: activeReqId)
         }
         .onAppear {
+            model.theme = theme
+            model.colorScheme = colorScheme
+            context.sidebarView = AnyView(HttpSidebarHost(context: context, model: model))
             context.onCommand = { command in
                 handleToolbarCommand(command)
             }
         }
         .onDisappear {
+            context.sidebarView = nil
+            context.onCommand = nil
             for key in watchedKeys {
                 context.store.stopObserving(key)
             }
@@ -323,7 +419,6 @@ struct HttpScreen: View {
         effectiveWsId: String?,
         bundleEntry: QueryEntry<HttpWorkspaceBundle>?,
         bundle: HttpWorkspaceBundle?,
-        visibleRows: [HttpClientLogic.HttpTreeRow],
         selectedRequest: HttpRequest?,
         isDirty: Bool,
         history: [HttpExecution],
@@ -374,10 +469,8 @@ struct HttpScreen: View {
                         onBack: { model.viewMode = .requests }
                     )
                 } else {
-                    workbenchLayout(
-                        workspaces: workspaces,
+                    mainEditorArea(
                         bundle: bundle,
-                        visibleRows: visibleRows,
                         selectedRequest: selectedRequest,
                         isDirty: isDirty,
                         history: history,
@@ -385,6 +478,7 @@ struct HttpScreen: View {
                         activeExecution: activeExecution,
                         secrets: secrets
                     )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
         } else if let err = bundleEntry?.error {
@@ -418,503 +512,6 @@ struct HttpScreen: View {
         .padding(.vertical, 8)
         .background(bg)
         .overlay(alignment: .bottom) { Divider().overlay(theme.palette.border) }
-    }
-
-    // MARK: - Adaptive Workbench Layout
-
-    private func workbenchLayout(
-        workspaces: [HttpWorkspace],
-        bundle: HttpWorkspaceBundle,
-        visibleRows: [HttpClientLogic.HttpTreeRow],
-        selectedRequest: HttpRequest?,
-        isDirty: Bool,
-        history: [HttpExecution],
-        execsEntry: QueryEntry<HttpExecutionList>?,
-        activeExecution: HttpExecution?,
-        secrets: [API.ApiSecret]
-    ) -> some View {
-        GeometryReader { geo in
-            let isCompact = geo.size.width < 760
-            if isCompact {
-                VStack(spacing: 0) {
-                    HStack(spacing: 8) {
-                        Button {
-                            model.showNarrowTree.toggle()
-                        } label: {
-                            Label(
-                                model.showNarrowTree ? "Back to Editor" : "Collections",
-                                systemImage: model.showNarrowTree ? "chevron.left" : "sidebar.left"
-                            )
-                        }
-                        .buttonStyle(.vesper())
-
-                        if let selectedRequest, !model.showNarrowTree {
-                            HttpMethodBadge(method: selectedRequest.method)
-                            Text(selectedRequest.name)
-                                .vesperText(.small, theme)
-                                .lineLimit(1)
-                        }
-                        Spacer()
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(theme.palette.surface)
-
-                    Divider().overlay(theme.palette.border)
-
-                    if model.showNarrowTree {
-                        collectionSidebar(
-                            workspaces: workspaces,
-                            bundle: bundle,
-                            visibleRows: visibleRows,
-                            selectedRequest: selectedRequest,
-                            isDirty: isDirty
-                        )
-                    } else {
-                        mainEditorArea(
-                            bundle: bundle,
-                            selectedRequest: selectedRequest,
-                            isDirty: isDirty,
-                            history: history,
-                            execsEntry: execsEntry,
-                            activeExecution: activeExecution,
-                            secrets: secrets
-                        )
-                    }
-                }
-            } else {
-                HStack(spacing: 0) {
-                    collectionSidebar(
-                        workspaces: workspaces,
-                        bundle: bundle,
-                        visibleRows: visibleRows,
-                        selectedRequest: selectedRequest,
-                        isDirty: isDirty
-                    )
-                    .frame(width: 264)
-
-                    Divider().overlay(theme.palette.border)
-
-                    mainEditorArea(
-                        bundle: bundle,
-                        selectedRequest: selectedRequest,
-                        isDirty: isDirty,
-                        history: history,
-                        execsEntry: execsEntry,
-                        activeExecution: activeExecution,
-                        secrets: secrets
-                    )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-            }
-        }
-    }
-
-    // MARK: - Collection Tree Sidebar
-
-    private func collectionSidebar(
-        workspaces: [HttpWorkspace],
-        bundle: HttpWorkspaceBundle,
-        visibleRows: [HttpClientLogic.HttpTreeRow],
-        selectedRequest: HttpRequest?,
-        isDirty: Bool
-    ) -> some View {
-        let activeEnv = bundle.environments.first { $0.id == bundle.workspace.activeEnvironmentId }
-
-        return VStack(spacing: 0) {
-            // Compact workspace & environment switcher (self-contained for iOS/narrow windows too)
-            VStack(spacing: 8) {
-                HStack(spacing: 6) {
-                    Menu {
-                        ForEach(workspaces) { ws in
-                            Button {
-                                model.switchWorkspace(ws.id)
-                            } label: {
-                                if ws.id == bundle.workspace.id {
-                                    Label(ws.name, systemImage: "checkmark")
-                                } else {
-                                    Text(ws.name)
-                                }
-                            }
-                        }
-                        Divider()
-                        Button {
-                            model.newWorkspaceName = ""
-                            model.showNewWorkspaceSheet = true
-                        } label: {
-                            Label("New workspace\u{2026}", systemImage: "plus")
-                        }
-                        Button(role: .destructive) {
-                            model.pendingDelete = .workspace(bundle.workspace)
-                        } label: {
-                            Label("Delete workspace", systemImage: "trash")
-                        }
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "server.rack")
-                                .font(.system(size: 11))
-                                .foregroundStyle(theme.palette.secondaryText)
-                            Text(bundle.workspace.name)
-                                .font(.system(size: theme.pointSize(.small), weight: .semibold))
-                                .lineLimit(1)
-                            Spacer(minLength: 4)
-                            Image(systemName: "chevron.up.chevron.down")
-                                .font(.system(size: 10))
-                                .foregroundStyle(theme.palette.tertiaryText)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(theme.palette.surface, in: RoundedRectangle(cornerRadius: 6))
-                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(theme.palette.border))
-                    }
-                    .menuStyle(.button)
-                    .buttonStyle(.plain)
-
-                    Menu {
-                        Button {
-                            Task { await setActiveEnvironment(workspaceId: bundle.workspace.id, environmentId: nil) }
-                        } label: {
-                            if bundle.workspace.activeEnvironmentId == nil {
-                                Label("No environment", systemImage: "checkmark")
-                            } else {
-                                Text("No environment")
-                            }
-                        }
-                        Divider()
-                        ForEach(bundle.environments) { env in
-                            Button {
-                                Task { await setActiveEnvironment(workspaceId: bundle.workspace.id, environmentId: env.id) }
-                            } label: {
-                                if env.id == bundle.workspace.activeEnvironmentId {
-                                    Label(env.name, systemImage: "checkmark")
-                                } else {
-                                    Text(env.name)
-                                }
-                            }
-                        }
-                        Divider()
-                        Button {
-                            model.viewMode = .authEnv
-                        } label: {
-                            Label("Manage environments & auth\u{2026}", systemImage: "slider.horizontal.3")
-                        }
-                    } label: {
-                        HStack(spacing: 5) {
-                            Circle()
-                                .fill(activeEnv.map { HttpStyle.envColor($0.color, theme: theme) } ?? theme.palette.tertiaryText)
-                                .frame(width: 7, height: 7)
-                            Text(activeEnv?.name ?? "No env")
-                                .font(.system(size: theme.pointSize(.small), weight: .medium))
-                                .lineLimit(1)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(theme.palette.surface, in: RoundedRectangle(cornerRadius: 6))
-                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(theme.palette.border))
-                    }
-                    .menuStyle(.button)
-                    .buttonStyle(.plain)
-                    .fixedSize(horizontal: true, vertical: false)
-                }
-
-                // Requests / Auth & Env mode toggle (available on all platforms, including narrow/iOS)
-                HStack(spacing: 4) {
-                    modeSwitchButton(title: "Requests", active: model.viewMode == .requests) {
-                        model.viewMode = .requests
-                    }
-                    modeSwitchButton(title: "Auth & Env", active: model.viewMode == .authEnv) {
-                        model.viewMode = .authEnv
-                    }
-                }
-                .padding(2)
-                .background(theme.palette.surface, in: RoundedRectangle(cornerRadius: 6))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(theme.palette.border))
-
-                // Filter + New Request + New Folder
-                HStack(spacing: 6) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "magnifyingglass")
-                            .font(.system(size: 11))
-                            .foregroundStyle(theme.palette.tertiaryText)
-                        TextField("Filter calls\u{2026}", text: $model.filter)
-                            .textFieldStyle(.plain)
-                            .font(theme.font(.small))
-                        if !model.filter.isEmpty {
-                            Button {
-                                model.filter = ""
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(theme.palette.tertiaryText)
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("Clear filter")
-                        }
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(theme.palette.surface, in: RoundedRectangle(cornerRadius: 6))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(theme.palette.border))
-
-                    Button {
-                        Task { await createRequest(workspaceId: bundle.workspace.id, folderId: model.selectedFolderId) }
-                    } label: {
-                        Image(systemName: "plus")
-                            .frame(width: 26, height: 26)
-                    }
-                    .buttonStyle(.vesper(.primary))
-                    .help("New request")
-                    .accessibilityLabel("New request")
-
-                    Button {
-                        openNewFolderSheet(parentFolder: model.selectedFolderId.flatMap { id in
-                            bundle.folders.first(where: { $0.id == id })
-                        })
-                    } label: {
-                        Image(systemName: "folder.badge.plus")
-                            .frame(width: 26, height: 26)
-                    }
-                    .buttonStyle(.vesper())
-                    .help("New folder")
-                    .accessibilityLabel("New folder")
-                }
-            }
-            .padding(10)
-
-            Divider().overlay(theme.palette.border)
-
-            ScrollView {
-                if bundle.folders.isEmpty && bundle.requests.isEmpty {
-                    VStack(spacing: 8) {
-                        Text("No requests yet.")
-                            .vesperText(.small, theme)
-                            .foregroundStyle(theme.palette.tertiaryText)
-                        HStack(spacing: 8) {
-                            Button("New Request") {
-                                Task { await createRequest(workspaceId: bundle.workspace.id, folderId: nil) }
-                            }
-                            .buttonStyle(.vesper(.primary))
-                            Button("Import") {
-                                model.importTarget = HttpScreenModel.ImportTarget(folder: nil, tab: .bru)
-                            }
-                            .buttonStyle(.vesper())
-                        }
-                    }
-                    .padding(16)
-                    .frame(maxWidth: .infinity)
-                } else if visibleRows.isEmpty {
-                    Text("No requests match \u{201C}\(model.filter)\u{201D}.")
-                        .vesperText(.small, theme)
-                        .foregroundStyle(theme.palette.tertiaryText)
-                        .padding(16)
-                        .frame(maxWidth: .infinity)
-                } else {
-                    LazyVStack(spacing: 2) {
-                        ForEach(visibleRows) { row in
-                            switch row.kind {
-                            case .folder(let folder, let isCollapsed, let childCount):
-                                folderRow(
-                                    folder: folder,
-                                    depth: row.depth,
-                                    isCollapsed: isCollapsed,
-                                    childCount: childCount,
-                                    bundle: bundle
-                                )
-                            case .request(let req):
-                                requestRow(
-                                    req: req,
-                                    depth: row.depth,
-                                    bundle: bundle,
-                                    isSelected: req.id == selectedRequest?.id,
-                                    isDirty: req.id == selectedRequest?.id && isDirty
-                                )
-                            }
-                        }
-                    }
-                    .padding(8)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .contextMenu {
-                Button {
-                    Task { await createRequest(workspaceId: bundle.workspace.id, folderId: nil) }
-                } label: {
-                    Label("New request", systemImage: "plus")
-                }
-                Button {
-                    openNewFolderSheet(parentFolder: nil)
-                } label: {
-                    Label("New folder", systemImage: "folder.badge.plus")
-                }
-                Divider()
-                Button {
-                    model.importTarget = HttpScreenModel.ImportTarget(folder: nil, tab: .curl)
-                } label: {
-                    Label("Import cURL\u{2026}", systemImage: "square.and.arrow.up")
-                }
-                Button {
-                    model.importTarget = HttpScreenModel.ImportTarget(folder: nil, tab: .bru)
-                } label: {
-                    Label("Import collection\u{2026}", systemImage: "square.and.arrow.up")
-                }
-            }
-        }
-        .background(HttpStyle.sidebarBackground(theme))
-    }
-
-    private func folderRow(
-        folder: HttpFolder,
-        depth: Int,
-        isCollapsed: Bool,
-        childCount: Int,
-        bundle: HttpWorkspaceBundle
-    ) -> some View {
-        let isSelected = model.selectedFolderId == folder.id && model.selectedRequestId == nil
-        return HStack(spacing: 6) {
-            Button {
-                if model.collapsedFolders.contains(folder.id) {
-                    model.collapsedFolders.remove(folder.id)
-                } else {
-                    model.collapsedFolders.insert(folder.id)
-                }
-            } label: {
-                Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(theme.palette.tertiaryText)
-                    .frame(width: 14, height: 18)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(isCollapsed ? "Expand folder" : "Collapse folder")
-
-            Button {
-                model.selectedFolderId = folder.id
-                model.collapsedFolders.remove(folder.id)
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "folder")
-                        .font(.system(size: 12))
-                        .foregroundStyle(theme.palette.tertiaryText)
-                    Text(folder.name)
-                        .font(.system(size: theme.pointSize(.small), weight: .medium))
-                        .foregroundStyle(isSelected ? theme.palette.text : theme.palette.secondaryText)
-                        .lineLimit(1)
-                    Spacer(minLength: 4)
-                    if childCount > 0 {
-                        Text("\(childCount)")
-                            .font(.system(size: theme.pointSize(.micro), design: .monospaced))
-                            .foregroundStyle(theme.palette.tertiaryText)
-                    }
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.leading, CGFloat(depth) * 14 + 6)
-        .padding(.trailing, 8)
-        .frame(height: 28)
-        .background(isSelected ? theme.palette.selected : .clear, in: RoundedRectangle(cornerRadius: 6))
-        .contextMenu {
-            Button {
-                model.collapsedFolders.remove(folder.id)
-                Task { await createRequest(workspaceId: bundle.workspace.id, folderId: folder.id) }
-            } label: {
-                Label("New request", systemImage: "plus")
-            }
-            Button {
-                model.collapsedFolders.remove(folder.id)
-                openNewFolderSheet(parentFolder: folder)
-            } label: {
-                Label("New folder", systemImage: "folder.badge.plus")
-            }
-            Divider()
-            Button {
-                model.importTarget = HttpScreenModel.ImportTarget(folder: folder, tab: .curl)
-            } label: {
-                Label("Import cURL\u{2026}", systemImage: "square.and.arrow.up")
-            }
-            Button {
-                model.importTarget = HttpScreenModel.ImportTarget(folder: folder, tab: .bru)
-            } label: {
-                Label("Import collection\u{2026}", systemImage: "square.and.arrow.up")
-            }
-            Button {
-                model.selectedFolderId = folder.id
-                model.viewMode = .authEnv
-            } label: {
-                Label("Folder auth & headers\u{2026}", systemImage: "slider.horizontal.3")
-            }
-            Divider()
-            Button {
-                openRenameSheet(.folder(folder))
-            } label: {
-                Label("Rename\u{2026}", systemImage: "pencil")
-            }
-            Button(role: .destructive) {
-                model.pendingDelete = .folder(folder)
-            } label: {
-                Label("Delete folder", systemImage: "trash")
-            }
-        }
-    }
-
-    private func requestRow(
-        req: HttpRequest,
-        depth: Int,
-        bundle: HttpWorkspaceBundle,
-        isSelected: Bool,
-        isDirty: Bool
-    ) -> some View {
-        let findMatch = context.find.matches(Self.searchText(req))
-        let rowBg: Color = isSelected ? theme.palette.selected : (findMatch ? theme.palette.hover : .clear)
-
-        return Button {
-            model.selectRequest(req)
-        } label: {
-            HStack(spacing: 8) {
-                HttpMethodBadge(method: req.method)
-                Text(req.name)
-                    .font(.system(size: theme.pointSize(.small)))
-                    .foregroundStyle(isSelected ? theme.palette.text : theme.palette.secondaryText)
-                    .lineLimit(1)
-                Spacer(minLength: 4)
-                if isDirty {
-                    Circle()
-                        .fill(theme.swiftUIColor("state-human", fallback: .orange))
-                        .frame(width: 6, height: 6)
-                }
-            }
-            .padding(.leading, CGFloat(depth) * 14 + 20)
-            .padding(.trailing, 8)
-            .frame(height: 30)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(rowBg, in: RoundedRectangle(cornerRadius: 6))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .contextMenu {
-            Button {
-                Task { await createRequest(workspaceId: bundle.workspace.id, folderId: req.folderId) }
-            } label: {
-                Label("New request here", systemImage: "plus")
-            }
-            Button {
-                Task { await duplicateRequest(req, workspaceId: bundle.workspace.id) }
-            } label: {
-                Label("Duplicate", systemImage: "doc.on.doc")
-            }
-            Button {
-                openRenameSheet(.request(req))
-            } label: {
-                Label("Rename\u{2026}", systemImage: "pencil")
-            }
-            Divider()
-            Button(role: .destructive) {
-                model.pendingDelete = .request(req)
-            } label: {
-                Label("Delete request", systemImage: "trash")
-            }
-        }
     }
 
     // MARK: - Main Editor Area
@@ -1023,7 +620,7 @@ struct HttpScreen: View {
                 message: "External hosts only in v1, with workspace auth inheritance and active environment substitution."
             ) {
                 Button {
-                    Task { await createRequest(workspaceId: bundle.workspace.id, folderId: nil) }
+                    Task { await model.createRequest(in: context, workspaceId: bundle.workspace.id, folderId: nil) }
                 } label: {
                     Label("New Request", systemImage: "plus")
                 }
@@ -1290,20 +887,6 @@ struct HttpScreen: View {
 
     // MARK: - Helpers & Draft Sync
 
-    private func modeSwitchButton(title: String, active: Bool, action: @escaping () -> Void) -> some View {
-        Button(title, action: action)
-            .font(.system(size: theme.pointSize(.small), weight: .medium))
-            .foregroundStyle(active ? theme.palette.text : theme.palette.secondaryText)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 4)
-            .background(active ? theme.palette.selected : .clear, in: RoundedRectangle(cornerRadius: 4))
-            .buttonStyle(.plain)
-    }
-
-    private static func searchText(_ req: HttpRequest) -> String {
-        "\(req.method) \(req.name) \(req.url)"
-    }
-
     private func draftBinding(for request: HttpRequest) -> Binding<HttpRequestDraft>? {
         guard model.draftRequestId == request.id, let current = model.draft else {
             return nil
@@ -1384,7 +967,7 @@ struct HttpScreen: View {
             }
         case HttpClientChrome.environmentMenuId:
             if let bundle, let menuItemId, let parsedEnvId = HttpClientChrome.parseEnvironmentItemId(menuItemId) {
-                Task { await setActiveEnvironment(workspaceId: bundle.workspace.id, environmentId: parsedEnvId) }
+                Task { await model.setActiveEnvironment(in: context, workspaceId: bundle.workspace.id, environmentId: parsedEnvId) }
             }
         case HttpClientChrome.importId:
             if bundle != nil {
@@ -1448,40 +1031,6 @@ struct HttpScreen: View {
         }
     }
 
-    private func setActiveEnvironment(workspaceId: String, environmentId: String?) async {
-        let bundleReq = HttpClientAPI.getWorkspaceBundle(id: workspaceId)
-        do {
-            _ = try await context.store.mutate(
-                HttpClientAPI.setActiveEnvironment(workspaceId: workspaceId, environmentId: environmentId),
-                optimistic: [
-                    .update(bundleReq) { $0.workspace.activeEnvironmentId = environmentId },
-                    .update(Self.workspacesReq) { list in
-                        for i in list.workspaces.indices where list.workspaces[i].id == workspaceId {
-                            list.workspaces[i].activeEnvironmentId = environmentId
-                        }
-                    },
-                ],
-                invalidating: HttpClientAPI.workspacesInvalidation
-            )
-            context.store.invalidate(HttpClientAPI.bundleInvalidation(workspaceId: workspaceId))
-        } catch {
-            showToast(
-                id: "http.env.switch",
-                title: "Failed to switch environment",
-                description: (error as? APIError)?.userMessage ?? error.localizedDescription,
-                tone: .error
-            )
-        }
-    }
-
-    private func openNewFolderSheet(parentFolder: HttpFolder?) {
-        model.newFolderName = ""
-        model.newFolderTarget = HttpScreenModel.NewFolderTarget(
-            parentFolderId: parentFolder?.id,
-            parentFolderName: parentFolder?.name
-        )
-    }
-
     private func createFolder(workspaceId: String, parentFolderId: String?) async {
         guard !model.isMutating else { return }
         let name = model.newFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1514,51 +1063,6 @@ struct HttpScreen: View {
                 tone: .error
             )
         }
-    }
-
-    private func createRequest(workspaceId: String, folderId: String?) async {
-        let draft = HttpClientLogic.newRequestDraft(folderId: folderId)
-        do {
-            let created = try await context.store.mutate(
-                HttpClientAPI.createRequest(workspaceId: workspaceId, body: draft),
-                invalidating: HttpClientAPI.bundleInvalidation(workspaceId: workspaceId)
-            )
-            if let folderId {
-                model.collapsedFolders.remove(folderId)
-            }
-            model.selectRequest(created)
-        } catch {
-            showToast(
-                id: "http.req.create",
-                title: "Failed to create request",
-                description: (error as? APIError)?.userMessage ?? error.localizedDescription,
-                tone: .error
-            )
-        }
-    }
-
-    private func duplicateRequest(_ source: HttpRequest, workspaceId: String) async {
-        var copy = HttpClientLogic.toDraft(source)
-        copy.name = "\(source.name) Copy"
-        do {
-            let created = try await context.store.mutate(
-                HttpClientAPI.createRequest(workspaceId: workspaceId, body: copy),
-                invalidating: HttpClientAPI.bundleInvalidation(workspaceId: workspaceId)
-            )
-            model.selectRequest(created)
-        } catch {
-            showToast(
-                id: "http.req.duplicate",
-                title: "Failed to duplicate request",
-                description: (error as? APIError)?.userMessage ?? error.localizedDescription,
-                tone: .error
-            )
-        }
-    }
-
-    private func openRenameSheet(_ target: HttpScreenModel.RenameTarget) {
-        model.renameText = target.currentName
-        model.renameTarget = target
     }
 
     private func performRename(_ target: HttpScreenModel.RenameTarget, workspaceId: String) async {

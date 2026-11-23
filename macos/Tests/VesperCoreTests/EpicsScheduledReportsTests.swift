@@ -67,4 +67,51 @@ final class EpicsScheduledReportsTests: XCTestCase {
         XCTAssertFalse(EpicsLogic.isOverdue(status: .done, targetDate: "2026-11-01", today: "2026-11-22"))
         XCTAssertFalse(EpicsLogic.isOverdue(status: .open, targetDate: "2026-12-01", today: "2026-11-22"))
     }
+
+    func testReportsNavModelAndCommands() {
+        let projects = [
+            API.Project(archived: false, color: "green", defaultBranch: "main", id: "p1", key: "PAY", name: "Payments", revision: 1),
+            API.Project(archived: true, color: "gray", defaultBranch: "main", id: "p2", key: "OLD", name: "Archived", revision: 1),
+        ]
+        let costsNav = ReportsLogic.navModel(
+            tab: .costs,
+            preset: .days30,
+            groupBy: .agents,
+            projectFilter: "PAY",
+            projects: projects
+        )
+        XCTAssertEqual(costsNav.id, ReportsLogic.navId)
+        XCTAssertEqual(costsNav.picker?.value, "costs")
+        XCTAssertEqual(costsNav.filters?.map(\.id), [ReportsLogic.rangeFilterId, ReportsLogic.groupFilterId])
+        XCTAssertEqual(costsNav.sections.first?.items.map(\.id), ["space:", "space:PAY"])
+        XCTAssertEqual(costsNav.selectedId, "space:PAY")
+
+        let highlightsNav = ReportsLogic.navModel(
+            tab: .highlights,
+            preset: .days7,
+            groupBy: .models,
+            projectFilter: "",
+            projects: projects
+        )
+        XCTAssertEqual(highlightsNav.filters?.map(\.id), [ReportsLogic.rangeFilterId])
+        XCTAssertEqual(highlightsNav.selectedId, "space:")
+
+        XCTAssertEqual(
+            ReportsLogic.navAction(for: .navPicker(navigatorId: ReportsLogic.navId, pickerId: ReportsLogic.tabPickerId, value: "highlights")),
+            .selectTab(.highlights)
+        )
+        XCTAssertEqual(
+            ReportsLogic.navAction(for: .navFilter(navigatorId: ReportsLogic.navId, filterId: ReportsLogic.rangeFilterId, value: "90", checked: true)),
+            .selectRange(.days90)
+        )
+        XCTAssertEqual(
+            ReportsLogic.navAction(for: .navFilter(navigatorId: ReportsLogic.navId, filterId: ReportsLogic.groupFilterId, value: "models", checked: true)),
+            .selectGroup(.models)
+        )
+        XCTAssertEqual(
+            ReportsLogic.navAction(for: .navActivate(navigatorId: ReportsLogic.navId, itemId: "space:PAY")),
+            .selectSpace("PAY")
+        )
+        XCTAssertNil(ReportsLogic.navAction(for: .navActivate(navigatorId: "other", itemId: "space:PAY")))
+    }
 }

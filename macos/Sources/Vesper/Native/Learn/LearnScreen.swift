@@ -7,6 +7,7 @@ struct LearnScreen: View {
     @Environment(\.vesperTheme) private var theme
 
     @State private var guideOpen = false
+    @State private var navSearch = ""
 
     private static let coursesRequest = API.listCourses()
 
@@ -21,6 +22,7 @@ struct LearnScreen: View {
         let ready = all.filter { $0.studyable }
         let ordered = building + ready
         let hasBuilding = all.contains { LearnLogic.courseBuilding($0.state) }
+        let currentChrome = buildChrome(entry: entry, courses: all)
 
         ScrollViewReader { proxy in
             ScrollView {
@@ -39,6 +41,9 @@ struct LearnScreen: View {
                 }
             }
         }
+        .onChange(of: currentChrome, initial: true) { _, next in
+            context.chrome = next
+        }
         .onChange(of: ordered.map(\.topic), initial: true) { _, topics in
             context.find.texts = topics
         }
@@ -55,12 +60,13 @@ struct LearnScreen: View {
         }
         .onAppear {
             context.store.observe(Self.coursesRequest)
-            publishChrome()
+            context.chrome = currentChrome
             context.onCommand = { command in
                 handleCommand(command)
             }
         }
         .onDisappear {
+            context.onCommand = nil
             context.store.stopObserving(Self.coursesRequest.key)
         }
         .sheet(isPresented: $guideOpen) {
@@ -265,14 +271,20 @@ struct LearnScreen: View {
         }
     }
 
-    private func publishChrome() {
-        context.chrome = NativeChrome(
+    private func buildChrome(entry: QueryEntry<[API.CourseSummary]>, courses: [API.CourseSummary]) -> NativeChrome {
+        NativeChrome(
             title: "Learn",
             toolbarItems: [
                 ShellToolbarItem(id: "learn.refresh", label: "Refresh", icon: "refresh", kind: .button, showsLabel: false),
                 ShellToolbarItem(id: "learn.new", label: "New Learning Module", icon: "plus", kind: .button, accent: true, showsLabel: true),
             ],
-            navigator: nil
+            navigator: LearnNav.buildCoursesModel(
+                courses: courses,
+                search: navSearch,
+                selectedId: nil,
+                loading: entry.data == nil && entry.error == nil,
+                error: entry.data == nil ? entry.error?.userMessage : nil
+            )
         )
     }
 
@@ -280,10 +292,32 @@ struct LearnScreen: View {
         switch command {
         case .toolbarAction(itemId: "learn.new", _):
             guideOpen = true
+            return
         case .toolbarAction(itemId: "learn.refresh", _):
             Task { _ = await context.store.refetch(Self.coursesRequest) }
+            return
         default:
             break
+        }
+        guard let action = LearnNav.coursesAction(for: command) else { return }
+        switch action {
+        case .newCourse:
+            guideOpen = true
+        case .search(let value):
+            navSearch = value
+        case .retry:
+            Task { _ = await context.store.refetch(Self.coursesRequest) }
+        case .openCourse(let id, let newTab):
+            if newTab {
+                context.openInNewTab("/learn/\(id)")
+            } else {
+                context.navigate("/learn/\(id)")
+            }
+        case .copyLink(let id):
+            let href = "/learn/\(id)"
+            let copied = context.resolvedURL(href)?.absoluteString ?? href
+            context.copyToClipboard(copied)
+            context.showToast(ToastItemModel(id: "learn.copy.\(id)", title: "Link copied", tone: .success))
         }
     }
 }

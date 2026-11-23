@@ -578,6 +578,64 @@ func (q *Queries) DeleteLibraryItem(ctx context.Context, arg DeleteLibraryItemPa
 	return i, err
 }
 
+const deleteLibraryItems = `-- name: DeleteLibraryItems :many
+WITH d AS (
+  DELETE FROM library_items
+  WHERE library_items.id = ANY($1::uuid[])
+    AND library_items.workspace_id = $2
+    AND library_items.user_id = $3
+  RETURNING id, blob_key, poster_key
+)
+SELECT d.id, d.blob_key, d.poster_key,
+  (NOT EXISTS (SELECT 1 FROM chat_attachments a WHERE a.blob_key = d.blob_key)
+   AND NOT EXISTS (SELECT 1 FROM workflow_step_images i WHERE i.blob_key = d.blob_key)
+   AND NOT EXISTS (SELECT 1 FROM chat_video_jobs v WHERE v.output_blob_key = d.blob_key)
+   AND NOT EXISTS (SELECT 1 FROM chat_audio_jobs a WHERE a.output_blob_key = d.blob_key)
+   AND NOT EXISTS (SELECT 1 FROM library_items o WHERE o.blob_key = d.blob_key AND NOT EXISTS (SELECT 1 FROM d x WHERE x.id = o.id)))::boolean AS orphaned
+FROM d
+`
+
+type DeleteLibraryItemsParams struct {
+	Ids         []uuid.UUID
+	WorkspaceID uuid.UUID
+	UserID      uuid.UUID
+}
+
+type DeleteLibraryItemsRow struct {
+	ID        uuid.UUID
+	BlobKey   string
+	PosterKey *string
+	Orphaned  bool
+}
+
+// Removes many of the caller's items at once. orphaned says no chat attachment,
+// workflow image, chat video, chat audio or remaining item still uses its
+// object, so the caller may delete it. A video's poster belongs to the item alone.
+func (q *Queries) DeleteLibraryItems(ctx context.Context, arg DeleteLibraryItemsParams) ([]DeleteLibraryItemsRow, error) {
+	rows, err := q.db.Query(ctx, deleteLibraryItems, arg.Ids, arg.WorkspaceID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DeleteLibraryItemsRow{}
+	for rows.Next() {
+		var i DeleteLibraryItemsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.BlobKey,
+			&i.PosterKey,
+			&i.Orphaned,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getLibraryDiagram = `-- name: GetLibraryDiagram :one
 SELECT id, workspace_id, user_id, kind, title, filename, content_type, size_bytes, blob_key, chat_id, message_id, persona_id, created_at, reference, reference_persona_id, source, url, note, site, video_id, link_status, summary, duration_ms, width, height, poster_key, peaks, method, detail, source_id, source_stamp FROM library_items WHERE workspace_id = $1 AND user_id = $2 AND blob_key = $3 AND kind = 'diagram'
 `

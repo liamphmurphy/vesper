@@ -168,17 +168,19 @@ private struct CourseBuildView: View {
     let onRequestDelete: () -> Void
     let onRefresh: () -> Void
 
+    @State private var navSearch = ""
+    @State private var guideOpen = false
+
+    private static let coursesRequest = API.listCourses()
+
     private var course: API.Course? { entry.data }
     private var laterPart: Bool { (course?.summary.part ?? 0) > 0 }
 
-    private var chromeKey: String {
-        let topic = course?.summary.topic ?? "Module"
-        let state = course?.summary.state.rawValue ?? "loading"
-        return "\(topic)|\(state)|\(laterPart)|\(stopPending)|\(deletePending)"
-    }
-
     var body: some View {
         let p = theme.palette
+        let coursesEntry = context.store.entry(Self.coursesRequest)
+        let courses = coursesEntry.data ?? []
+        let currentChrome = buildChrome(coursesEntry: coursesEntry, courses: courses)
 
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -265,25 +267,41 @@ private struct CourseBuildView: View {
             .frame(maxWidth: 1120, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .onChange(of: chromeKey, initial: true) { _, _ in
-            publishChrome()
+        .onChange(of: currentChrome, initial: true) { _, next in
+            context.chrome = next
+        }
+        .task {
+            context.store.load(Self.coursesRequest)
         }
         .onAppear {
-            publishChrome()
+            context.store.observe(Self.coursesRequest)
+            context.chrome = currentChrome
             context.onCommand = { command in
                 handleCommand(command)
             }
         }
+        .onDisappear {
+            context.onCommand = nil
+            context.store.stopObserving(Self.coursesRequest.key)
+        }
+        .sheet(isPresented: $guideOpen) {
+            NewModuleSheet()
+                .environment(context)
+                .environment(\.vesperTheme, theme)
+        }
     }
 
-    private func publishChrome() {
+    private func buildChrome(
+        coursesEntry: QueryEntry<[API.CourseSummary]>,
+        courses: [API.CourseSummary]
+    ) -> NativeChrome {
         var items: [ShellToolbarItem] = [
             ShellToolbarItem(id: "course.refresh", label: "Refresh", icon: "refresh", kind: .button, showsLabel: false),
         ]
         if let course {
             if laterPart {
                 items.append(
-                    ShellToolbarItem(id: "course.back", label: "Back to studying", icon: "chev", kind: .button, showsLabel: true)
+                    ShellToolbarItem(id: "course.back", label: "Back to studying", icon: "chevl", kind: .button, showsLabel: true)
                 )
                 items.append(
                     ShellToolbarItem(
@@ -320,10 +338,16 @@ private struct CourseBuildView: View {
                 )
             }
         }
-        context.chrome = NativeChrome(
+        return NativeChrome(
             title: course?.summary.topic ?? "Module",
             toolbarItems: items,
-            navigator: nil
+            navigator: LearnNav.buildCoursesModel(
+                courses: courses,
+                search: navSearch,
+                selectedId: courseId,
+                loading: coursesEntry.data == nil && coursesEntry.error == nil,
+                error: coursesEntry.data == nil ? coursesEntry.error?.userMessage : nil
+            )
         )
     }
 
@@ -331,14 +355,38 @@ private struct CourseBuildView: View {
         switch command {
         case .toolbarAction(itemId: "course.refresh", _):
             onRefresh()
+            return
         case .toolbarAction(itemId: "course.back", _):
             context.navigate("/learn/\(courseId)")
+            return
         case .toolbarAction(itemId: "course.discard", _), .toolbarAction(itemId: "course.stop", _):
             onRequestStop()
+            return
         case .toolbarAction(itemId: "course.delete", _):
             onRequestDelete()
+            return
         default:
             break
+        }
+        guard let action = LearnNav.coursesAction(for: command) else { return }
+        switch action {
+        case .newCourse:
+            guideOpen = true
+        case .search(let value):
+            navSearch = value
+        case .retry:
+            Task { _ = await context.store.refetch(Self.coursesRequest) }
+        case .openCourse(let id, let newTab):
+            if newTab {
+                context.openInNewTab("/learn/\(id)")
+            } else {
+                context.navigate("/learn/\(id)")
+            }
+        case .copyLink(let id):
+            let href = "/learn/\(id)"
+            let copied = context.resolvedURL(href)?.absoluteString ?? href
+            context.copyToClipboard(copied)
+            context.showToast(ToastItemModel(id: "learn.copy.\(id)", title: "Link copied", tone: .success))
         }
     }
 }

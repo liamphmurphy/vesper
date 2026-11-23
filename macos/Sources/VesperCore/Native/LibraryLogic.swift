@@ -169,6 +169,7 @@ public enum LibraryLogic {
         case .file: "file"
         case .export: "export"
         case .document: "document"
+        case .link: "link"
         default: "image"
         }
     }
@@ -176,6 +177,41 @@ public enum LibraryLogic {
     /// The confirmation's explanation: a persona's item stays in its chat.
     public static func removeExplanation(_ item: API.LibraryItem) -> String? {
         item.source == .upload ? nil : "It stays in its chat while that chat exists."
+    }
+
+    /// The server's per-request cap for `POST /library/bulk-delete`.
+    public static let bulkDeleteLimit = 500
+
+    /// Splits IDs into unique, non-empty batches within the bulk-delete request cap.
+    public static func bulkDeleteBatches(_ ids: [String], maxBatchSize: Int = bulkDeleteLimit) -> [[String]] {
+        let limit = max(1, maxBatchSize)
+        var seen = Set<String>()
+        let unique = ids.filter { !$0.isEmpty && seen.insert($0).inserted }
+        guard !unique.isEmpty else { return [] }
+        return stride(from: 0, to: unique.count, by: limit).map { start in
+            Array(unique[start..<min(start + limit, unique.count)])
+        }
+    }
+
+    /// Confirmation copy for removing one or more Library items.
+    public static func removeConfirmation(_ items: [API.LibraryItem]) -> (title: String, body: String?)? {
+        guard let first = items.first else { return nil }
+        if items.count == 1 {
+            return ("Remove this \(noun(first.kind)) from your Library?", removeExplanation(first))
+        }
+        let body = items.contains { $0.source != .upload }
+            ? "Items from chats stay in their chats while those chats exist."
+            : nil
+        return ("Remove \(items.count) items from your Library?", body)
+    }
+
+    /// Confirmation copy for deleting one or more Fridge moments.
+    public static func deleteMomentsConfirmation(count: Int) -> (title: String, body: String)? {
+        guard count > 0 else { return nil }
+        if count == 1 {
+            return ("Delete this moment?", "Its persona will no longer remember it.")
+        }
+        return ("Delete \(count) moments?", "Their personas will no longer remember them.")
     }
 
     /// "PY", "ZIP", "CSV": a file's type as the badge on its tile.

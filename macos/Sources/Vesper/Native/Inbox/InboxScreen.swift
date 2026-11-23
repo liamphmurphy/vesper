@@ -70,11 +70,13 @@ struct InboxScreen: View {
     var body: some View {
         let entry = context.store.entry(request)
         let items = entry.data?.items ?? []
+        let projects = (context.store.entry(Self.bootstrap).data?.projects ?? []).filter { !$0.archived }
         let groups = InboxLogic.group(items, view: model.view, sort: model.sort)
         let ids = groups.flatMap { $0.items.map(\.id) }
         let current = InboxLogic.nextSelection(ids, selected: model.focused, lastIndex: model.focusedIndex)
         let item = items.first { $0.id == current }
         let openCount = items.filter(InboxLogic.isOpen).count
+        let currentChrome = buildChrome(openCount: openCount, items: items, projects: projects, current: current)
 
         HStack(spacing: 0) {
             VStack(spacing: 0) {
@@ -106,19 +108,25 @@ struct InboxScreen: View {
             guard let index, index < ids.count else { return }
             model.select(ids[index], ids: ids)
         }
-        .onChange(of: openCount, initial: true) { _, count in publishChrome(openCount: count) }
+        .onChange(of: currentChrome, initial: true) { _, next in
+            context.chrome = next
+        }
         .task(id: model.project) {
             context.store.load(request)
             context.store.load(Self.bootstrap)
         }
         .onAppear {
             context.store.observe(request)
-            context.onCommand = { [context] command in
-                if case .toolbarAction(itemId: "inbox.shortcuts", _) = command { context.showShortcuts() }
+            context.chrome = currentChrome
+            context.onCommand = { command in
+                handleCommand(command)
             }
             listHasFocus = true
         }
-        .onDisappear { context.store.stopObserving(request.key) }
+        .onDisappear {
+            context.onCommand = nil
+            context.store.stopObserving(request.key)
+        }
         .onKeyPress(phases: .down) { press in handleKey(press, ids: ids, item: item) }
     }
 
@@ -126,12 +134,47 @@ struct InboxScreen: View {
         [item.title, item.summary, item.ticketKey, item.project, item.agent?.name ?? ""].joined(separator: " ")
     }
 
-    private func publishChrome(openCount: Int) {
-        context.chrome = NativeChrome(
+    private func buildChrome(
+        openCount: Int,
+        items: [API.InboxItem],
+        projects: [API.Project],
+        current: String?
+    ) -> NativeChrome {
+        NativeChrome(
             title: "Inbox",
             subtitle: openCount > 0 ? "\(openCount) waiting on you" : "Nothing waiting on you",
-            toolbarItems: [ShellToolbarItem(id: "inbox.shortcuts", label: "Shortcuts", icon: "bolt", kind: .button, showsLabel: true)]
+            toolbarItems: [ShellToolbarItem(id: "inbox.shortcuts", label: "Shortcuts", icon: "bolt", kind: .button, showsLabel: true)],
+            navigator: InboxLogic.navModel(
+                items: items,
+                view: model.view,
+                sort: model.sort,
+                projectFilter: model.project,
+                projects: projects,
+                selectedItemId: current
+            )
         )
+    }
+
+    private func handleCommand(_ command: NativeCommand) {
+        if case .toolbarAction(itemId: "inbox.shortcuts", _) = command {
+            context.showShortcuts()
+            return
+        }
+        guard let action = InboxLogic.navAction(for: command) else { return }
+        switch action {
+        case .selectView(let view):
+            model.view = view
+            model.resetSelection()
+        case .selectSort(let sort):
+            model.sort = sort
+        case .selectSpace(let key):
+            model.project = key
+            model.resetSelection()
+        case .selectItem(let id):
+            let items = context.store.entry(request).data?.items ?? []
+            let ids = InboxLogic.group(items, view: model.view, sort: model.sort).flatMap { $0.items.map(\.id) }
+            model.select(id, ids: ids)
+        }
     }
 
     // MARK: Filter bar

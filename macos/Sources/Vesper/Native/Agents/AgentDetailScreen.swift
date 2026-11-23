@@ -82,6 +82,8 @@ struct AgentDetailScreen: View {
         let resolved = context.store.entry(resolvedRequest).data
         let runs = context.store.entry(runsRequest).data?.runs ?? []
         let tokens = context.store.entry(tokensRequest).data?.tokens ?? []
+        let allAgents = boot?.agents ?? []
+        let currentChrome = buildChrome(detail: detail, agents: allAgents, overviews: overviews)
 
         Group {
             if let error = detailEntry.error, detail == nil {
@@ -187,6 +189,9 @@ struct AgentDetailScreen: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .onChange(of: currentChrome, initial: true) { _, next in
+            context.chrome = next
+        }
         .task(id: "\(handle)|\(selectedProjectKey)") {
             syncWatches()
         }
@@ -197,21 +202,17 @@ struct AgentDetailScreen: View {
             }
             if let detail {
                 hydrate(from: detail, force: false)
-                publishChrome(detail: detail)
-            } else {
-                context.chrome = NativeChrome(title: "@\(handle)")
             }
+            context.chrome = currentChrome
+            context.onCommand = { cmd in handleCommand(cmd) }
         }
         .onChange(of: detail?.definition.version) { _, _ in
             if let detail {
                 hydrate(from: detail, force: false)
-                publishChrome(detail: detail)
             }
         }
-        .onChange(of: detail?.agent.name) { _, _ in
-            if let detail { publishChrome(detail: detail) }
-        }
         .onDisappear {
+            context.onCommand = nil
             for key in watchedKeys { context.store.stopObserving(key) }
             watchedKeys = []
         }
@@ -1054,11 +1055,34 @@ struct AgentDetailScreen: View {
         }
     }
 
-    private func publishChrome(detail: API.AgentDetail) {
-        context.chrome = NativeChrome(
-            title: detail.agent.name,
-            subtitle: "@\(detail.agent.handle)"
+    private func buildChrome(
+        detail: API.AgentDetail?,
+        agents: [API.Agent],
+        overviews: [API.AgentOverview]
+    ) -> NativeChrome {
+        NativeChrome(
+            title: detail?.agent.name ?? "@\(handle)",
+            subtitle: detail.map { "@\($0.agent.handle)" },
+            navigator: AgentDetailLogic.navModel(
+                agents: agents,
+                overviews: overviews,
+                activeHandle: handle,
+                activeTab: activeTab
+            )
         )
+    }
+
+    private func handleCommand(_ cmd: NativeCommand) {
+        guard let action = AgentDetailLogic.navAction(for: cmd) else { return }
+        switch action {
+        case .backToWork:
+            context.navigate("/work")
+        case .openAgent(let nextHandle, let newTab):
+            let href = "/agents/\(nextHandle)"
+            if newTab { context.openInNewTab(href) } else { context.navigate(href) }
+        case .selectTab(let tab):
+            activeTab = tab
+        }
     }
 
     private func syncWatches() {
