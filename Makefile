@@ -3,7 +3,7 @@
 # web app on the host against a local Postgres for hot-reload development.
 SHELL := /bin/bash
 
-.PHONY: help signin dev-infra dev-infra-stop stop-dev dev api web web-deps runner gen gen-check test test-server test-web lint build reset mac-app mac-test mac-run mac-dmg mac-reinstall mac-golden
+.PHONY: help signin dev-infra dev-infra-stop stop-dev dev api web web-deps runner gen gen-check test test-server test-web lint build reset mac-app mac-test mac-run mac-dmg mac-reinstall mac-release mac-golden
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-13s %s\n", $$1, $$2}'
@@ -108,6 +108,10 @@ mac-dmg: ## Build macos/build/Vesper-arm64.dmg (macos/Makefile)
 
 mac-reinstall: ## Rebuild and replace the installed macOS app (macos/Makefile)
 	$(MAKE) -C macos reinstall
+
+mac-release: ## Build and upload a GitHub release locally (usage: make mac-release TAG=v0.3.0 ARGS="--from-run")
+	@if [ -z "$(TAG)" ]; then echo "Usage: make mac-release TAG=v0.3.0 [ARGS='--from-run']"; exit 1; fi
+	@scripts/mac-release-local.sh "$(TAG)" $(ARGS)
 
 # macOS guest VM golden image for personas' `mac` command (Apple Silicon only).
 # Optional overrides: MACOS_GOLDEN_DIR, VESPER_MACOS_SOURCE, VESPER_USER_DATA_DIR.

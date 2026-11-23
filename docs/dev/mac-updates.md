@@ -73,6 +73,34 @@ git tag v0.2.0 && git push origin v0.2.0
 - The kernel is cached by its inputs; the agent image is rebuilt every
   release. The build fails if the image passes GitHub's 2 GiB asset limit.
 
+### Building and uploading a release locally
+
+When GitHub's `macos-26` runner pool is slow or stuck queued, build the DMG on
+an Apple Silicon Mac and publish the same release assets with
+`scripts/mac-release-local.sh` (or `make mac-release`):
+
+```sh
+git checkout v0.3.0
+
+# Reuse kernel + rootfs already built by CI's `images` job (no Docker needed):
+scripts/mac-release-local.sh v0.3.0 --from-run
+# or pin a specific workflow run ID:
+scripts/mac-release-local.sh v0.3.0 --from-run 45224199657
+
+# Or build kernel + rootfs locally too:
+scripts/mac-release-local.sh v0.3.0 --build-images
+
+# Or re-upload only the DMG to an existing release:
+scripts/mac-release-local.sh v0.3.0 --dmg-only
+```
+
+- Temporarily stamps the tag's version into `web/package.json` for `make mac-dmg`
+  and restores `web/package.json` and `web/package-lock.json` on exit.
+- Creates the release (with `--prerelease` for suffixed tags like `v0.3.0-rc.1`)
+  if it doesn't exist yet, or updates it with `--clobber` if it does.
+- Pass `--no-upload` to test the build without touching GitHub, or
+  `VESPER_CODESIGN_IDENTITY=...` to sign with a stable local identity.
+
 ## Not done
 
 - Option B (Developer ID, notarisation, self-installing updates) is unbuilt.
