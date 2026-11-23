@@ -66,6 +66,7 @@ func nixSandboxCommand(jobRoot string, roPaths []string, cmdPath string, args []
 	}
 	profile := fmt.Sprintf(`(version 1)
 (deny default)
+(import "system.sb")
 (allow process-exec*)
 (allow process-fork)
 (allow process-info* (target self))
