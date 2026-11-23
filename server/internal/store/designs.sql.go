@@ -232,7 +232,7 @@ func (q *Queries) DesignAssetBytes(ctx context.Context, arg DesignAssetBytesPara
 }
 
 const designFeedbackBetween = `-- name: DesignFeedbackBetween :many
-SELECT id, session_id, seq, role, body_md, harness, model, run_id, run_turn_id, context_refs, citations, usage, created_at, code_changes, persona_id, git_branch, git_commit_sha, checklist_state FROM chat_messages
+SELECT id, session_id, seq, role, body_md, harness, model, run_id, run_turn_id, context_refs, citations, usage, created_at, code_changes, persona_id, git_branch, git_commit_sha, checklist_state, bookmarked, bookmarked_at FROM chat_messages
 WHERE session_id = $1 AND role = 'system' AND seq > $2 AND seq < $3
   AND context_refs @> '[{"kind": "canvas"}]'::jsonb
 ORDER BY seq
@@ -274,6 +274,8 @@ func (q *Queries) DesignFeedbackBetween(ctx context.Context, arg DesignFeedbackB
 			&i.GitBranch,
 			&i.GitCommitSha,
 			&i.ChecklistState,
+			&i.Bookmarked,
+			&i.BookmarkedAt,
 		); err != nil {
 			return nil, err
 		}

@@ -1084,6 +1084,17 @@ extension API {
         )
     }
 
+    /// Bookmark or unbookmark a message in a chat thread
+    ///
+    /// `PATCH /chats/{id}/messages/{messageId}/bookmark`
+    public static func updateChatMessageBookmark(id: Swift.String, messageId: Swift.String, body: ChatBookmarkUpdate) -> APIRequest<ChatBookmarkResponse> {
+        return APIRequest(
+            method: "PATCH", template: "/chats/{id}/messages/{messageId}/bookmark",
+            path: "/api/v1/chats/\(APIPath.escape(id))/messages/\(APIPath.escape(messageId))/bookmark",
+            query: [], headers: [:], body: APIRequestBody.json(body), decode: .json
+        )
+    }
+
     /// Toggle a markdown checklist item on an assistant chat message
     ///
     /// `PATCH /chats/{id}/messages/{messageId}/checklist`

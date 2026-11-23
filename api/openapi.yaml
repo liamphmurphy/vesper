@@ -3412,6 +3412,32 @@ paths:
         "422": { $ref: "#/components/responses/Error" }
         default: { $ref: "#/components/responses/Error" }
 
+  /chats/{id}/messages/{messageId}/bookmark:
+    parameters:
+      - { $ref: "#/components/parameters/ChatId" }
+      - name: messageId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      operationId: updateChatMessageBookmark
+      summary: Bookmark or unbookmark a message in a chat thread
+      tags: [chats]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChatBookmarkUpdate" }
+      responses:
+        "200":
+          description: Updated bookmark state for the message
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatBookmarkResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
   /chats/{id}/edit-last:
     parameters:
       - { $ref: "#/components/parameters/ChatId" }
@@ -9659,7 +9685,7 @@ components:
       required: [url, kind, title, description, site, saved]
       properties:
         url: { type: string }
-        kind: { type: string, enum: [site, video] }
+        kind: { type: string, enum: [site, video, image] }
         title: { type: string, description: "Empty when the page couldn't be read" }
         description: { type: string }
         site: { type: string, description: "The site's name, or a video's channel" }
@@ -10511,7 +10537,21 @@ components:
           type: object
           additionalProperties: { type: boolean }
           description: "Persisted ticked state for markdown task-list items in an assistant message, keyed by 0-based task index"
+        bookmarked: { type: boolean, description: "Whether the person bookmarked this message in the thread" }
+        bookmarked_at: { type: string, format: date-time, description: "When the message was bookmarked" }
         created_at: { type: string, format: date-time }
+    ChatBookmarkUpdate:
+      type: object
+      required: [bookmarked]
+      properties:
+        bookmarked: { type: boolean }
+    ChatBookmarkResponse:
+      type: object
+      required: [message_id, bookmarked]
+      properties:
+        message_id: { type: string, format: uuid }
+        bookmarked: { type: boolean }
+        bookmarked_at: { type: string, format: date-time }
     ChatChecklistUpdate:
       type: object
       required: [index, checked]

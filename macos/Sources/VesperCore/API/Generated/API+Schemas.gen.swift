@@ -3455,6 +3455,66 @@ extension API {
         }
     }
 
+    public struct ChatBookmarkResponse: Codable, Sendable, Equatable {
+        public var bookmarked: Swift.Bool
+        public var bookmarkedAt: Swift.String?
+        public var messageId: Swift.String
+
+        public init(
+            bookmarked: Swift.Bool,
+            bookmarkedAt: Swift.String? = nil,
+            messageId: Swift.String
+        ) {
+            self.bookmarked = bookmarked
+            self.bookmarkedAt = bookmarkedAt
+            self.messageId = messageId
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case bookmarked
+            case bookmarkedAt = "bookmarked_at"
+            case messageId = "message_id"
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.bookmarked = try c.decode(Swift.Bool.self, forKey: .bookmarked)
+            self.bookmarkedAt = try c.decodeIfPresent(Swift.String.self, forKey: .bookmarkedAt)
+            self.messageId = try c.decode(Swift.String.self, forKey: .messageId)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(bookmarked, forKey: .bookmarked)
+            try c.encodeIfPresent(bookmarkedAt, forKey: .bookmarkedAt)
+            try c.encode(messageId, forKey: .messageId)
+        }
+    }
+
+    public struct ChatBookmarkUpdate: Codable, Sendable, Equatable {
+        public var bookmarked: Swift.Bool
+
+        public init(
+            bookmarked: Swift.Bool
+        ) {
+            self.bookmarked = bookmarked
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case bookmarked
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.bookmarked = try c.decode(Swift.Bool.self, forKey: .bookmarked)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(bookmarked, forKey: .bookmarked)
+        }
+    }
+
     public struct ChatCanvas: Codable, Sendable, Equatable {
         public var body: Swift.String
         public var createdAt: Swift.String
@@ -4433,6 +4493,10 @@ extension API {
         public var attachments: [ChatAttachment]?
         public var author: UserRef?
         public var bodyMd: Swift.String
+        /// Whether the person bookmarked this message in the thread
+        public var bookmarked: Swift.Bool?
+        /// When the message was bookmarked
+        public var bookmarkedAt: Swift.String?
         /// Input served from cache where the provider reported cache usage
         public var cachedInputTokens: Swift.Int?
         /// Persisted ticked state for markdown task-list items in an assistant message, keyed by 0-based task index
@@ -4505,6 +4569,8 @@ extension API {
             attachments: [ChatAttachment]? = nil,
             author: UserRef? = nil,
             bodyMd: Swift.String,
+            bookmarked: Swift.Bool? = nil,
+            bookmarkedAt: Swift.String? = nil,
             cachedInputTokens: Swift.Int? = nil,
             checklistState: [Swift.String: Swift.Bool]? = nil,
             citations: [ChatCitation]? = nil,
@@ -4533,6 +4599,8 @@ extension API {
             self.attachments = attachments
             self.author = author
             self.bodyMd = bodyMd
+            self.bookmarked = bookmarked
+            self.bookmarkedAt = bookmarkedAt
             self.cachedInputTokens = cachedInputTokens
             self.checklistState = checklistState
             self.citations = citations
@@ -4563,6 +4631,8 @@ extension API {
             case attachments
             case author
             case bodyMd = "body_md"
+            case bookmarked
+            case bookmarkedAt = "bookmarked_at"
             case cachedInputTokens = "cached_input_tokens"
             case checklistState = "checklist_state"
             case citations
@@ -4594,6 +4664,8 @@ extension API {
             self.attachments = try c.decodeIfPresent([ChatAttachment].self, forKey: .attachments)
             self.author = try c.decodeIfPresent(UserRef.self, forKey: .author)
             self.bodyMd = try c.decode(Swift.String.self, forKey: .bodyMd)
+            self.bookmarked = try c.decodeIfPresent(Swift.Bool.self, forKey: .bookmarked)
+            self.bookmarkedAt = try c.decodeIfPresent(Swift.String.self, forKey: .bookmarkedAt)
             self.cachedInputTokens = try c.decodeIfPresent(Swift.Int.self, forKey: .cachedInputTokens)
             self.checklistState = try c.decodeIfPresent([Swift.String: Swift.Bool].self, forKey: .checklistState)
             self.citations = try c.decodeIfPresent([ChatCitation].self, forKey: .citations)
@@ -4625,6 +4697,8 @@ extension API {
             try c.encodeIfPresent(attachments, forKey: .attachments)
             try c.encodeIfPresent(author, forKey: .author)
             try c.encode(bodyMd, forKey: .bodyMd)
+            try c.encodeIfPresent(bookmarked, forKey: .bookmarked)
+            try c.encodeIfPresent(bookmarkedAt, forKey: .bookmarkedAt)
             try c.encodeIfPresent(cachedInputTokens, forKey: .cachedInputTokens)
             try c.encodeIfPresent(checklistState, forKey: .checklistState)
             try c.encodeIfPresent(citations, forKey: .citations)
@@ -13361,7 +13435,8 @@ extension API {
             public init(rawValue: Swift.String) { self.rawValue = rawValue }
             public static let site = Kind(rawValue: "site")
             public static let video = Kind(rawValue: "video")
-            public static let allKnown: [Kind] = [site, video]
+            public static let image = Kind(rawValue: "image")
+            public static let allKnown: [Kind] = [site, video, image]
         }
 
         public init(

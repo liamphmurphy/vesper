@@ -469,6 +469,13 @@ SET checklist_state = $3
 WHERE id = $1 AND session_id = $2
 RETURNING *;
 
+-- name: SetChatMessageBookmark :one
+UPDATE chat_messages
+SET bookmarked = $3,
+    bookmarked_at = CASE WHEN $3 THEN now() ELSE NULL END
+WHERE id = $1 AND session_id = $2
+RETURNING *;
+
 -- name: ListRecentAssistantChecklistMessages :many
 SELECT id, seq, body_md, checklist_state
 FROM chat_messages

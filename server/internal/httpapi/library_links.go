@@ -65,7 +65,7 @@ func (s *Server) SaveLibraryLink(ctx context.Context, req api.SaveLibraryLinkReq
 		return nil, apperr.Invalid("message_id", "not an assistant reply")
 	}
 	var rec *linkpreview.Recommendation
-	for _, r := range linkpreview.Recommended(m.BodyMd) {
+	for _, r := range linkpreview.Previewable(m.BodyMd) {
 		if r.URL == req.Body.Url {
 			rec = &r
 			break

@@ -4,6 +4,7 @@ import "testing"
 
 func TestReplyScannerRecognizesRicherVisualizationBlocks(t *testing.T) {
 	tags := []string{
+		"gallery", "product",
 		"diff", "compare", "timeline", "stats", "tree",
 		"compare-images", "graph", "plot", "datatable",
 		"code-group", "kv", "json-tree", "http", "tabs", "details",

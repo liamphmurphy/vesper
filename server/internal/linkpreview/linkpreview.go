@@ -28,18 +28,22 @@ import (
 )
 
 const (
-	// MaxPerMessage bounds the outbound fetches one reply can cause.
+	// MaxPerMessage bounds the outbound fetches one reply's recommend fences can cause.
 	MaxPerMessage = 4
-	maxURLBytes   = 2048
-	maxPageBytes  = 1 << 20
-	maxImageBytes = 3 << 20
-	maxRedirects  = 3
-	maxTitle      = 200
-	maxDesc       = 300
-	userAgent     = "VesperBot/1.0 (link preview)"
+	// MaxPreviewURLsPerMessage bounds total outbound preview/image fetches across
+	// recommend, gallery, product, and citation sources in a single reply.
+	MaxPreviewURLsPerMessage = 12
+	maxURLBytes              = 2048
+	maxPageBytes             = 1 << 20
+	maxImageBytes            = 3 << 20
+	maxRedirects             = 3
+	maxTitle                 = 200
+	maxDesc                  = 300
+	userAgent                = "VesperBot/1.0 (link preview)"
 
 	KindSite  = "site"
 	KindVideo = "video"
+	KindImage = "image"
 )
 
 var fenceOpen = regexp.MustCompile("^ {0,3}(`{3,}|~{3,})[ \t]*([^`]*)$")
@@ -76,6 +80,117 @@ func Recommended(md string) []Recommendation {
 		}
 		i = end
 	}
+	return out
+}
+
+var (
+	sourcesHeading = regexp.MustCompile(`(?i)^\s*(?:#{1,6}\s+)?(?:\*\*)?sources(?:\*\*)?\s*:?\s*$`)
+	sourceListItem = regexp.MustCompile(`^\s*(?:\d+[.)]|[-*])\s+`)
+	sourceItemLink = regexp.MustCompile(`^\s*(?:\d+[.)]|[-*])\s+\[([^\]]*)\]\((https?://[^)\s]+)\)`)
+	sourceItemBare = regexp.MustCompile(`^\s*(?:\d+[.)]|[-*])\s+(https?://\S+)`)
+)
+
+// Previewable returns all URLs in an assistant reply that Vesper may safely
+// fetch server-side for preview cards: recommend fences, gallery and product
+// blocks (both image and page URLs), and numbered web links in the closing
+// Sources list, deduplicated and capped at MaxPreviewURLsPerMessage.
+func Previewable(md string) []Recommendation {
+	var out []Recommendation
+	seen := map[string]bool{}
+	add := func(raw, note string) {
+		u := strings.TrimSpace(raw)
+		if !Valid(u) || seen[u] || len(out) >= MaxPreviewURLsPerMessage {
+			return
+		}
+		seen[u] = true
+		out = append(out, Recommendation{URL: u, Note: clean(note, maxDesc)})
+	}
+
+	// 1. Recommend fences keep their original 4-card cap.
+	for _, r := range Recommended(md) {
+		add(r.URL, r.Note)
+	}
+
+	// 2. Gallery and product JSON fences (ignoring fences nested inside outer code blocks).
+	lines := strings.Split(md, "\n")
+	for i := 0; i < len(lines); i++ {
+		m := fenceOpen.FindStringSubmatch(strings.TrimRight(lines[i], "\r"))
+		if m == nil {
+			continue
+		}
+		fence, info := m[1], strings.Fields(m[2])
+		end := i + 1
+		for end < len(lines) && !closes(lines[end], fence) {
+			end++
+		}
+		if len(info) > 0 && end > i+1 && end < len(lines) {
+			lang := strings.ToLower(info[0])
+			if lang == "gallery" {
+				var spec struct {
+					Items []struct {
+						Image   string `json:"image"`
+						URL     string `json:"url"`
+						Caption string `json:"caption"`
+						Title   string `json:"title"`
+					} `json:"items"`
+				}
+				if json.Unmarshal([]byte(strings.Join(lines[i+1:end], "\n")), &spec) == nil {
+					for _, item := range spec.Items {
+						note := first(item.Caption, item.Title)
+						if item.Image != "" {
+							add(item.Image, note)
+						}
+						if item.URL != "" {
+							add(item.URL, note)
+						}
+					}
+				}
+			} else if lang == "product" {
+				var spec struct {
+					Items []struct {
+						Name  string `json:"name"`
+						Title string `json:"title"`
+						Image string `json:"image"`
+						URL   string `json:"url"`
+					} `json:"items"`
+				}
+				if json.Unmarshal([]byte(strings.Join(lines[i+1:end], "\n")), &spec) == nil {
+					for _, item := range spec.Items {
+						note := first(item.Name, item.Title)
+						if item.Image != "" {
+							add(item.Image, note)
+						}
+						if item.URL != "" {
+							add(item.URL, note)
+						}
+					}
+				}
+			}
+		}
+		i = end
+	}
+
+	// 3. Closing Sources: list web links, for inline citation hover cards.
+	for i := len(lines) - 1; i >= 0; i-- {
+		if !sourcesHeading.MatchString(strings.TrimRight(lines[i], "\r")) {
+			continue
+		}
+		for j := i + 1; j < len(lines) && len(out) < MaxPreviewURLsPerMessage; j++ {
+			line := strings.TrimRight(lines[j], "\r")
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			if m := sourceItemLink.FindStringSubmatch(line); m != nil {
+				add(m[2], m[1])
+			} else if m := sourceItemBare.FindStringSubmatch(line); m != nil {
+				add(strings.TrimRight(m[1], ".,;)>]"), "")
+			} else if !sourceListItem.MatchString(line) {
+				break
+			}
+		}
+		break
+	}
+
 	return out
 }
 
@@ -207,9 +322,22 @@ func (f *Fetcher) video(ctx context.Context, id string) Preview {
 
 func (f *Fetcher) site(ctx context.Context, raw string) Preview {
 	p := Preview{Kind: KindSite}
-	body, ct, err := f.get(ctx, raw, maxPageBytes)
+	body, ct, err := f.get(ctx, raw, maxImageBytes)
 	if err != nil {
 		return p
+	}
+	// Direct raster images (for gallery/product cards) are verified by bytes, never by header,
+	// and SVG is refused so scriptable markup can never be served back as an image.
+	switch detected := http.DetectContentType(body); detected {
+	case "image/png", "image/jpeg", "image/gif", "image/webp":
+		var host string
+		if u, err := url.Parse(raw); err == nil {
+			host = strings.TrimPrefix(u.Hostname(), "www.")
+		}
+		return Preview{Kind: KindImage, Site: clean(host, maxTitle), Image: body, ImageType: detected}
+	}
+	if int64(len(body)) > maxPageBytes {
+		body = body[:maxPageBytes]
 	}
 	if mt, _, _ := mime.ParseMediaType(ct); mt != "text/html" && mt != "application/xhtml+xml" {
 		return p
@@ -267,7 +395,10 @@ func (f *Fetcher) get(ctx context.Context, raw string, limit int64) ([]byte, str
 	// A page's metadata is at its top, so a long page is still usable; an image isn't.
 	if int64(len(body)) > limit {
 		if limit == maxImageBytes {
-			return nil, "", errors.New("too large")
+			mt, _, _ := mime.ParseMediaType(res.Header.Get("Content-Type"))
+			if mt != "text/html" && mt != "application/xhtml+xml" {
+				return nil, "", errors.New("too large")
+			}
 		}
 		body = body[:limit]
 	}
