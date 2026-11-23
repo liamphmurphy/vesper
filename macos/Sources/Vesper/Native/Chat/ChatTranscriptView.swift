@@ -595,6 +595,15 @@ private struct ChatMessageRowView: View {
             ChatPDFCardView(itemId: id)
         case .researchPlan(let plan):
             ChatResearchPlanCardView(chatId: chatId, messageId: message.id, plan: plan)
+        case .callout(let callout):
+            ChatCalloutView(callout: callout, citations: citationNumbers)
+        case .checklist(let checklist):
+            ChatChecklistCardView(
+                chatId: chatId,
+                messageId: message.id,
+                checklist: checklist,
+                persistedState: message.checklistState
+            )
         case .invalidBlock(let kind, let error, let source):
             ChatInvalidBlockView(kind: kind, error: error, source: source)
         }

@@ -90,6 +90,8 @@ public enum ChatMessageSegment: Sendable, Equatable {
     case canvas(id: String)
     case pdf(id: String)
     case researchPlan(ChatResearchPlanCard)
+    case callout(ChatCalloutBlock)
+    case checklist(ChatChecklistBlock)
     /// A visualization fence whose spec failed validation: shows a visible error banner and raw source.
     case invalidBlock(kind: String, error: String, source: String)
 }
@@ -245,13 +247,15 @@ public enum ChatTranscriptLogic {
     public static func parseMessage(
         _ rawBody: String,
         extractSources: Bool = true,
-        knownPersonaNames: [String] = []
+        knownPersonaNames: [String] = [],
+        interactiveChecklists: Bool? = nil
     ) -> ParsedChatMessage {
         let context = stripContext(rawBody)
         let (bodyWithoutSources, sources) = extractSources ? splitSourceList(context.typedBody) : (context.typedBody, [])
         let numberedCitations = sources.compactMap(\.number)
         let mentions = parseMentions(in: bodyWithoutSources, knownNames: knownPersonaNames)
-        let segments = parseSegments(bodyWithoutSources, citationNumbers: numberedCitations)
+        let enableChecklists = interactiveChecklists ?? extractSources
+        let segments = parseSegments(bodyWithoutSources, citationNumbers: numberedCitations, interactiveChecklists: enableChecklists)
         return ParsedChatMessage(
             typedBody: context.typedBody,
             context: context,
@@ -261,11 +265,12 @@ public enum ChatTranscriptLogic {
         )
     }
 
-    public static func parseSegments(_ markdown: String, citationNumbers: [Int] = []) -> [ChatMessageSegment] {
+    public static func parseSegments(_ markdown: String, citationNumbers: [Int] = [], interactiveChecklists: Bool = false) -> [ChatMessageSegment] {
         let lines = markdown.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         var segments: [ChatMessageSegment] = []
         var mdBuffer: [String] = []
         var embedIndex = 0
+        var nextChecklistIndex = 0
 
         func flushMarkdown() {
             guard !mdBuffer.isEmpty else { return }
@@ -396,6 +401,55 @@ public enum ChatTranscriptLogic {
                 // Ordinary code fence or invalid/partial special fence: keep verbatim in markdown.
                 for k in i..<nextIndex { mdBuffer.append(lines[k]) }
                 i = nextIndex
+                continue
+            }
+
+            // GitHub/Obsidian callout blockquote: `> [!type] Title` / `> [!type]-`
+            if let header = ChatCalloutBlock.parseHeader(line) {
+                var bodyLines: [String] = []
+                var j = i + 1
+                while j < lines.count, let stripped = ChatCalloutBlock.stripBlockquotePrefix(lines[j]) {
+                    bodyLines.append(stripped)
+                    j += 1
+                }
+                let rawBody = bodyLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+                let body = citationNumbers.isEmpty ? rawBody : linkCitations(rawBody, numbers: citationNumbers)
+                flushMarkdown()
+                segments.append(.callout(ChatCalloutBlock(
+                    kind: header.kind,
+                    rawType: header.rawType,
+                    title: header.title,
+                    body: body,
+                    collapsible: header.collapsible,
+                    defaultCollapsed: header.defaultCollapsed
+                )))
+                i = j
+                continue
+            }
+
+            // Interactive GFM task list (`- [ ]` / `- [x]`) in assistant messages
+            if interactiveChecklists, let firstTask = ChatChecklistBlock.parseTaskLine(line) {
+                var items: [ChatChecklistItem] = [
+                    ChatChecklistItem(index: nextChecklistIndex, defaultChecked: firstTask.checked, indentLevel: firstTask.indentLevel, text: firstTask.text)
+                ]
+                nextChecklistIndex += 1
+                var j = i + 1
+                while j < lines.count {
+                    if let task = ChatChecklistBlock.parseTaskLine(lines[j]) {
+                        items.append(ChatChecklistItem(index: nextChecklistIndex, defaultChecked: task.checked, indentLevel: task.indentLevel, text: task.text))
+                        nextChecklistIndex += 1
+                        j += 1
+                    } else if lines[j].trimmingCharacters(in: .whitespaces).isEmpty,
+                              j + 1 < lines.count,
+                              ChatChecklistBlock.parseTaskLine(lines[j + 1]) != nil {
+                        j += 1
+                    } else {
+                        break
+                    }
+                }
+                flushMarkdown()
+                segments.append(.checklist(ChatChecklistBlock(items: items)))
+                i = j
                 continue
             }
 
