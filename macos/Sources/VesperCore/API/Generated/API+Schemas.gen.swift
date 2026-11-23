@@ -17397,6 +17397,7 @@ extension API {
         public var loopUrl: Swift.String?
         public var model: Swift.String?
         public var percent: Swift.Int
+        /// The video provider that made the clip, or upload for a clip the person uploaded
         public var providerId: Swift.String?
         public var sizeBytes: Swift.Int?
         /// What the running attempt is doing; absent when idle
@@ -17522,25 +17523,32 @@ extension API {
     }
 
     public struct PersonaStateMediaList: Codable, Sendable, Equatable {
+        /// The generation prompt by state (PersonaState values) at the persona's loop length, for making a clip elsewhere to upload
+        public var prompts: [Swift.String: Swift.String]?
         public var states: [PersonaStateMedia]
 
         public init(
+            prompts: [Swift.String: Swift.String]? = nil,
             states: [PersonaStateMedia]
         ) {
+            self.prompts = prompts
             self.states = states
         }
 
         enum CodingKeys: Swift.String, CodingKey {
+            case prompts
             case states
         }
 
         public init(from decoder: any Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.prompts = try c.decodeIfPresent([Swift.String: Swift.String].self, forKey: .prompts)
             self.states = try c.decodeIfPresent([PersonaStateMedia].self, forKey: .states) ?? []
         }
 
         public func encode(to encoder: any Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeIfPresent(prompts, forKey: .prompts)
             try c.encode(states, forKey: .states)
         }
     }

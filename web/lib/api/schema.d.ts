@@ -5329,6 +5329,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/personas/{id}/state-media/{state}/clip": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PersonaId"];
+                state: components["schemas"]["PersonaState"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Make a state's loop from a clip you made elsewhere
+         * @description For a clip made outside Vesper, e.g. in AI Studio with the state's
+         *     prompt from the list's prompts. It is matted and packed in the
+         *     background like a generated one, and needs no video provider. MP4 or
+         *     MOV, H.264 or H.265, 1-10 seconds and at most 64 MB; the container is
+         *     read for its length and codec, so the declared type and filename are
+         *     ignored. The clip should start and end on the same frame to loop
+         *     cleanly, and keep the prompt's flat backdrop off a Mac, where the
+         *     ffmpeg chroma key cuts it out. The loop can't be tweaked afterwards.
+         *     422 for a clip outside those limits, 409 while the state is already
+         *     generating.
+         */
+        put: operations["uploadPersonaStateClip"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/personas/{id}/state-media/{state}/loop": {
         parameters: {
             query?: never;
@@ -10585,6 +10617,7 @@ export interface components {
             size_bytes?: number;
             /** @description The matting backend that cut the loop out: vision (Apple Silicon) or ffmpeg-chroma */
             backend?: string;
+            /** @description The video provider that made the clip, or upload for a clip the person uploaded */
             provider_id?: string;
             model?: string;
             /** @description The edit instruction of the latest attempt, when it was a tweak */
@@ -10600,6 +10633,10 @@ export interface components {
         };
         PersonaStateMediaList: {
             states: components["schemas"]["PersonaStateMedia"][];
+            /** @description The generation prompt by state (PersonaState values) at the persona's loop length, for making a clip elsewhere to upload */
+            prompts?: {
+                [key: string]: string;
+            };
         };
         GeneratePersonaStateMedia: {
             /** @description Absent or empty: every state */
@@ -19529,6 +19566,40 @@ export interface operations {
                 };
             };
             404: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    uploadPersonaStateClip: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PersonaId"];
+                state: components["schemas"]["PersonaState"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Every state loop of the persona, this one queued */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonaStateMediaList"];
+                };
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
             422: components["responses"]["Error"];
             default: components["responses"]["Error"];
         };

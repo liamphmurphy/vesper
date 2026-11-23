@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -98,11 +99,19 @@ func toPersonaStateMedia(row store.PersonaStateMedia) api.PersonaStateMedia {
 	return out
 }
 
-func toPersonaStateMediaList(rows []store.PersonaStateMedia) api.PersonaStateMediaList {
+// toPersonaStateMediaList is the persona's rows, with each state's prompt at
+// its loop length for making a clip elsewhere.
+func toPersonaStateMediaList(p store.Persona, rows []store.PersonaStateMedia) api.PersonaStateMediaList {
 	out := api.PersonaStateMediaList{States: make([]api.PersonaStateMedia, 0, len(rows))}
 	for _, r := range rows {
 		out.States = append(out.States, toPersonaStateMedia(r))
 	}
+	seconds := statemedia.LoopSeconds(p.LoopSeconds)
+	prompts := make(map[string]string, len(statemedia.States))
+	for _, st := range statemedia.States {
+		prompts[string(st)] = statemedia.Prompt(st, seconds)
+	}
+	out.Prompts = &prompts
 	return out
 }
 
@@ -129,23 +138,28 @@ func stateMediaSummary(rows []store.PersonaStateMedia) *api.PersonaStateMediaSum
 }
 
 // listStateMedia reads a persona's rows, failing any attempt a restart cut off.
-func (s *Server) listStateMedia(ctx context.Context, o personas.Owner, persona uuid.UUID) ([]store.PersonaStateMedia, error) {
-	if _, err := s.personas().Get(ctx, o, persona); err != nil {
-		return nil, err
+func (s *Server) listStateMedia(ctx context.Context, o personas.Owner, persona uuid.UUID) (api.PersonaStateMediaList, error) {
+	p, err := s.personas().Get(ctx, o, persona)
+	if err != nil {
+		return api.PersonaStateMediaList{}, err
 	}
 	rows, err := s.Q.ListPersonaStateMedia(ctx, store.ListPersonaStateMediaParams{PersonaID: persona, WorkspaceID: o.WorkspaceID, UserID: o.UserID})
 	if err != nil {
-		return nil, err
+		return api.PersonaStateMediaList{}, err
 	}
-	return s.stateMediaRunner().RecoverInterrupted(ctx, rows)
+	rows, err = s.stateMediaRunner().RecoverInterrupted(ctx, rows)
+	if err != nil {
+		return api.PersonaStateMediaList{}, err
+	}
+	return toPersonaStateMediaList(p, rows), nil
 }
 
 func (s *Server) ListPersonaStateMedia(ctx context.Context, req api.ListPersonaStateMediaRequestObject) (api.ListPersonaStateMediaResponseObject, error) {
-	rows, err := s.listStateMedia(ctx, personaOwner(ctx), req.Id)
+	list, err := s.listStateMedia(ctx, personaOwner(ctx), req.Id)
 	if err != nil {
 		return nil, err
 	}
-	return api.ListPersonaStateMedia200JSONResponse(toPersonaStateMediaList(rows)), nil
+	return api.ListPersonaStateMedia200JSONResponse(list), nil
 }
 
 func (s *Server) GeneratePersonaStateMedia(ctx context.Context, req api.GeneratePersonaStateMediaRequestObject) (api.GeneratePersonaStateMediaResponseObject, error) {
@@ -173,11 +187,11 @@ func (s *Server) GeneratePersonaStateMedia(ctx context.Context, req api.Generate
 	if _, err := s.stateMediaRunner().Start(ctx, in); err != nil {
 		return nil, err
 	}
-	rows, err := s.listStateMedia(ctx, o, req.Id)
+	list, err := s.listStateMedia(ctx, o, req.Id)
 	if err != nil {
 		return nil, err
 	}
-	return api.GeneratePersonaStateMedia202JSONResponse(toPersonaStateMediaList(rows)), nil
+	return api.GeneratePersonaStateMedia202JSONResponse(list), nil
 }
 
 // statePortrait is the image every loop starts and ends on: the Library
@@ -230,6 +244,54 @@ func (s *Server) statePortrait(ctx context.Context, o personas.Owner, p store.Pe
 	return b, nil
 }
 
+func (s *Server) UploadPersonaStateClip(ctx context.Context, req api.UploadPersonaStateClipRequestObject) (api.UploadPersonaStateClipResponseObject, error) {
+	o := personaOwner(ctx)
+	// 404 before reading the body for someone else's persona.
+	if _, err := s.personas().Get(ctx, o, req.Id); err != nil {
+		return nil, err
+	}
+	clip, err := readStateClip(req.Body)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.stateMediaRunner().Upload(ctx, statemedia.UploadInput{
+		Owner: o, PersonaID: req.Id, State: statemedia.State(req.State), Clip: clip,
+	}); err != nil {
+		return nil, err
+	}
+	list, err := s.listStateMedia(ctx, o, req.Id)
+	if err != nil {
+		return nil, err
+	}
+	return api.UploadPersonaStateClip202JSONResponse(list), nil
+}
+
+// readStateClip reads the multipart body's single file part, stopping one
+// byte past statemedia.MaxClipBytes so an oversized upload is never read
+// whole.
+func readStateClip(mr *multipart.Reader) ([]byte, error) {
+	if mr == nil {
+		return nil, apperr.Invalid("file", "required")
+	}
+	part, err := mr.NextPart()
+	if errors.Is(err, io.EOF) {
+		return nil, apperr.Invalid("file", "required")
+	}
+	if err != nil {
+		return nil, apperr.Invalid("body", "malformed multipart form")
+	}
+	defer part.Close()
+	if name := part.FormName(); name != "file" {
+		return nil, apperr.Invalid("file", "send only the file field (got %q)", name)
+	}
+	b, err := io.ReadAll(io.LimitReader(part, statemedia.MaxClipBytes+1))
+	if err != nil {
+		return nil, apperr.Invalid("body", "malformed multipart form")
+	}
+	// CheckClip refuses the extra byte as too large.
+	return b, nil
+}
+
 func (s *Server) ClearPersonaStateMedia(ctx context.Context, req api.ClearPersonaStateMediaRequestObject) (api.ClearPersonaStateMediaResponseObject, error) {
 	o := personaOwner(ctx)
 	var state *statemedia.State
@@ -240,11 +302,11 @@ func (s *Server) ClearPersonaStateMedia(ctx context.Context, req api.ClearPerson
 	if err := s.stateMediaRunner().Clear(ctx, o, req.Id, state); err != nil {
 		return nil, err
 	}
-	rows, err := s.listStateMedia(ctx, o, req.Id)
+	list, err := s.listStateMedia(ctx, o, req.Id)
 	if err != nil {
 		return nil, err
 	}
-	return api.ClearPersonaStateMedia200JSONResponse(toPersonaStateMediaList(rows)), nil
+	return api.ClearPersonaStateMedia200JSONResponse(list), nil
 }
 
 // stateMediaBlob opens a state's loop or head crop for serving.

@@ -6446,6 +6446,48 @@ paths:
         "422": { $ref: "#/components/responses/Error" }
         default: { $ref: "#/components/responses/Error" }
 
+  /personas/{id}/state-media/{state}/clip:
+    parameters:
+      - { $ref: "#/components/parameters/PersonaId" }
+      - name: state
+        in: path
+        required: true
+        schema: { $ref: "#/components/schemas/PersonaState" }
+    put:
+      operationId: uploadPersonaStateClip
+      summary: Make a state's loop from a clip you made elsewhere
+      description: |
+        For a clip made outside Vesper, e.g. in AI Studio with the state's
+        prompt from the list's prompts. It is matted and packed in the
+        background like a generated one, and needs no video provider. MP4 or
+        MOV, H.264 or H.265, 1-10 seconds and at most 64 MB; the container is
+        read for its length and codec, so the declared type and filename are
+        ignored. The clip should start and end on the same frame to loop
+        cleanly, and keep the prompt's flat backdrop off a Mac, where the
+        ffmpeg chroma key cuts it out. The loop can't be tweaked afterwards.
+        422 for a clip outside those limits, 409 while the state is already
+        generating.
+      tags: [personas]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "202":
+          description: Every state loop of the persona, this one queued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PersonaStateMediaList" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
   /personas/{id}/state-media/{state}/loop:
     parameters:
       - { $ref: "#/components/parameters/PersonaId" }
@@ -11346,7 +11388,7 @@ components:
         duration_ms: { type: integer }
         size_bytes: { type: integer, format: int64 }
         backend: { type: string, description: "The matting backend that cut the loop out: vision (Apple Silicon) or ffmpeg-chroma" }
-        provider_id: { type: string }
+        provider_id: { type: string, description: "The video provider that made the clip, or upload for a clip the person uploaded" }
         model: { type: string }
         tweak: { type: string, description: "The edit instruction of the latest attempt, when it was a tweak" }
         can_tweak: { type: boolean, description: "The state has an earlier clip a tweak can edit" }
@@ -11358,6 +11400,10 @@ components:
       required: [states]
       properties:
         states: { type: array, items: { $ref: "#/components/schemas/PersonaStateMedia" } }
+        prompts:
+          type: object
+          additionalProperties: { type: string }
+          description: "The generation prompt by state (PersonaState values) at the persona's loop length, for making a clip elsewhere to upload"
     GeneratePersonaStateMedia:
       type: object
       properties:

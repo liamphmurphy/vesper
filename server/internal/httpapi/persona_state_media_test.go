@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"image/png"
@@ -15,10 +16,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/liamphmurphy/vesper/server/internal/media"
 	"github.com/liamphmurphy/vesper/server/internal/media/looppack"
 	"github.com/liamphmurphy/vesper/server/internal/media/providers/fake"
 	"github.com/liamphmurphy/vesper/server/internal/secrets"
+	"github.com/liamphmurphy/vesper/server/internal/statemedia"
 )
 
 const loopPrefix = avatarBucket + "/persona-loops/"
@@ -52,7 +56,8 @@ func newStateMediaEnv(t *testing.T, configure bool) *stateMediaEnv {
 		s.ArtifactBucket = avatarBucket
 		s.StateMediaPack = func(ctx context.Context, mp4 []byte, opts looppack.Options) (*looppack.Result, error) {
 			n := env.packs.Add(1)
-			if !bytes.Equal(mp4, fake.FakeVideoMP4) {
+			// The provider's placeholder, or a clip a test uploaded (stateClip).
+			if !bytes.Equal(mp4, fake.FakeVideoMP4) && (len(mp4) < 8 || string(mp4[4:8]) != "ftyp") {
 				return nil, errors.New("unexpected clip bytes")
 			}
 			return &looppack.Result{
@@ -451,5 +456,127 @@ func TestPersonaStateMediaEnabledToggle(t *testing.T) {
 	}
 	if len(e.ctrl.VideoRequests()) != 1 {
 		t.Fatalf("expected 1 video request total, got %d", len(e.ctrl.VideoRequests()))
+	}
+}
+
+// stateClip is an MP4's box skeleton, enough for the container checks: an
+// ftyp, and a moov with the length and one portrait video track of codec.
+func stateClip(codec string, durMS int) []byte {
+	box := func(typ string, payload ...[]byte) []byte {
+		b := binary.BigEndian.AppendUint32(nil, uint32(8+len(bytes.Join(payload, nil))))
+		return append(append(b, typ...), bytes.Join(payload, nil)...)
+	}
+	u32 := func(v int) []byte { return binary.BigEndian.AppendUint32(nil, uint32(v)) }
+	mvhd := append(append(append(make([]byte, 12), u32(1000)...), u32(durMS)...), make([]byte, 80)...)
+	tkhd := append(append(make([]byte, 76), u32(720<<16)...), u32(1280<<16)...)
+	hdlr := append(append(make([]byte, 8), "vide"...), make([]byte, 13)...)
+	stsd := append(append(make([]byte, 4), u32(1)...), box(codec, make([]byte, 78))...)
+	trak := box("trak", box("tkhd", tkhd), box("mdia", box("hdlr", hdlr), box("minf", box("stbl", box("stsd", stsd)))))
+	return append(append(box("ftyp", []byte("isom"), u32(512), []byte("isomavc1")), box("moov", box("mvhd", mvhd), trak)...), box("mdat", make([]byte, 64))...)
+}
+
+func (e *stateMediaEnv) uploadClip(id, state string, clip []byte) (int, map[string]any) {
+	e.t.Helper()
+	return e.uploadAvatarTo("/personas/"+id+"/state-media/"+state+"/clip", "take.mp4", "video/mp4", clip)
+}
+
+func TestPersonaStateMediaUploadClip(t *testing.T) {
+	// No video provider and no portrait: an uploaded clip needs neither.
+	e := newStateMediaEnv(t, false)
+	id := e.want("POST", "/personas", map[string]any{"name": "Uploader"}, http.StatusCreated)["id"].(string)
+
+	code, out := e.uploadClip(id, "idle", stateClip("avc1", 8000))
+	if code != http.StatusAccepted {
+		t.Fatalf("upload = %d %v", code, out)
+	}
+	rows := e.settle(id)
+	idle := rows["idle"]
+	if idle["status"] != "ready" || idle["provider_id"] != statemedia.UploadProvider || idle["can_tweak"] != false || idle["loop_url"] == nil || idle["head_url"] == nil {
+		t.Fatalf("idle after upload = %v", idle)
+	}
+	if len(rows) != 1 || e.packs.Load() != 1 || len(e.ctrl.VideoRequests()) != 0 {
+		t.Fatalf("rows %d, packs %d, provider calls %d; want only idle, packed once, no generation", len(rows), e.packs.Load(), len(e.ctrl.VideoRequests()))
+	}
+	if res, b := e.get(idle["loop_url"].(string)); res.StatusCode != http.StatusOK || !bytes.HasPrefix(b, []byte("RIFF-webp")) {
+		t.Fatalf("loop = %d %q", res.StatusCode, b)
+	}
+	// The persona's playback summary picks it up like a generated loop.
+	p := e.want("GET", "/personas/"+id, nil, http.StatusOK)
+	if loops, _ := p["state_media"].(map[string]any)["loops"].(map[string]any); loops["idle"] != idle["loop_url"] {
+		t.Fatalf("persona state_media = %v", p["state_media"])
+	}
+
+	// A second upload replaces the loop and its blobs.
+	if code, out := e.uploadClip(id, "idle", stateClip("hvc1", 10_400)); code != http.StatusAccepted {
+		t.Fatalf("H.265 re-upload = %d %v", code, out)
+	}
+	if again := e.settle(id)["idle"]; again["loop_url"] == idle["loop_url"] || len(e.blobs.keys(loopPrefix+id)) != 2 {
+		t.Fatalf("after re-upload: %v, blobs %v", again, e.blobs.keys(loopPrefix+id))
+	}
+}
+
+func TestPersonaStateMediaUploadRefusals(t *testing.T) {
+	e := newStateMediaEnv(t, true)
+	id := e.personaWithPortrait()
+	oversized := append(stateClip("avc1", 8000), make([]byte, statemedia.MaxClipBytes)...)
+	for name, tc := range map[string]struct {
+		state string
+		clip  []byte
+		want  string
+	}{
+		"empty":         {"idle", nil, "required"},
+		"not a video":   {"idle", []byte("GIF89a not a movie"), "MP4 or MOV"},
+		"vp9":           {"idle", stateClip("vp09", 8000), "H.264 or H.265"},
+		"too long":      {"idle", stateClip("avc1", 15_000), "1 to 10 seconds"},
+		"too short":     {"idle", stateClip("avc1", 400), "1 to 10 seconds"},
+		"too large":     {"idle", oversized, "64 MB"},
+		"unknown state": {"dancing", stateClip("avc1", 8000), "unknown state"},
+	} {
+		code, out := e.uploadClip(id, tc.state, tc.clip)
+		if code != http.StatusUnprocessableEntity || !strings.Contains(fmt.Sprint(out["message"]), tc.want) {
+			t.Errorf("%s: %d %v, want 422 mentioning %q", name, code, out, tc.want)
+		}
+	}
+	if got := e.want("GET", "/personas/"+id+"/state-media", nil, http.StatusOK)["states"].([]any); len(got) != 0 || e.packs.Load() != 0 {
+		t.Fatalf("a refused clip was queued: rows %v, packs %d", got, e.packs.Load())
+	}
+
+	// An upload can't race a generation of the same state.
+	block := make(chan struct{})
+	e.ctrl.SetVideo(nil, block)
+	e.want("POST", "/personas/"+id+"/state-media", map[string]any{"states": []string{"coding"}}, http.StatusAccepted)
+	if code, out := e.uploadClip(id, "coding", stateClip("avc1", 8000)); code != http.StatusConflict {
+		t.Fatalf("upload while generating = %d %v", code, out)
+	}
+	close(block)
+	e.ctrl.SetVideo(nil, nil)
+	e.settle(id)
+
+	// An uploaded loop has no provider conversation to tweak.
+	if code, out := e.uploadClip(id, "idle", stateClip("avc1", 8000)); code != http.StatusAccepted {
+		t.Fatalf("upload = %d %v", code, out)
+	}
+	e.settle(id)
+	e.invalid("POST", "/personas/"+id+"/state-media", map[string]any{"states": []string{"idle"}, "tweak": "slower"}, "tweak", "no earlier clip")
+
+	// Someone else's persona, or none, is a 404.
+	for _, other := range []string{e.strangerPersona(), uuid.NewString()} {
+		if code, out := e.uploadClip(other, "idle", stateClip("avc1", 8000)); code != http.StatusNotFound {
+			t.Fatalf("upload to %s = %d %v", other, code, out)
+		}
+	}
+}
+
+func TestPersonaStateMediaPrompts(t *testing.T) {
+	e := newStateMediaEnv(t, false)
+	id := e.want("POST", "/personas", map[string]any{"name": "Prompted"}, http.StatusCreated)["id"].(string)
+	e.want("PATCH", "/personas/"+id, map[string]any{"loop_seconds": 6, "revision": 1}, http.StatusOK)
+	prompts := e.want("GET", "/personas/"+id+"/state-media", nil, http.StatusOK)["prompts"].(map[string]any)
+	if len(prompts) != len(allStates) {
+		t.Fatalf("prompts for %d states, want %d", len(prompts), len(allStates))
+	}
+	// The prompt to paste elsewhere is the one Vesper itself would send.
+	if prompts["talking"] != statemedia.Prompt(statemedia.StateTalking, 6) {
+		t.Fatalf("talking prompt = %q", prompts["talking"])
 	}
 }

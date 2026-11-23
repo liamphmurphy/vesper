@@ -149,6 +149,8 @@ type attempt struct {
 	job     uuid.UUID
 	prompt  string
 	seconds int
+	// upload is the person's own clip; nil means generate one.
+	upload []byte
 }
 
 // Start validates the request, queues a new attempt for each state (keeping
@@ -181,14 +183,56 @@ func (r *Runner) Start(ctx context.Context, in StartInput) ([]store.PersonaState
 		}
 		return nil, err
 	}
+	return r.queue(ctx, queueSpec{
+		owner: in.Owner, persona: in.PersonaID, states: states,
+		provider: desc.ID, note: "Queued for " + desc.Label + "…", tweak: tweak,
+		prepare: func(a *attempt, p store.Persona, cur *store.PersonaStateMedia) error {
+			a.seconds = LoopSeconds(p.LoopSeconds)
+			a.prompt = Prompt(a.state, a.seconds)
+			if tweak != "" {
+				if cur == nil || cur.InteractionID == nil || *cur.InteractionID == "" {
+					return apperr.Invalid("tweak", "the %s loop has no earlier clip to edit; generate it first", label(a.state))
+				}
+				a.prompt = TweakPrompt(a.state, a.seconds, tweak)
+			}
+			return nil
+		},
+	}, gen, portrait)
+}
 
+// LoopSeconds is the length a persona's loops are generated at: its
+// loop_seconds, or DefaultLoopSeconds outside the 3-10s Omni can bookend.
+func LoopSeconds(personaSeconds int32) int {
+	if s := int(personaSeconds); s >= 3 && s <= 10 {
+		return s
+	}
+	return DefaultLoopSeconds
+}
+
+// queueSpec is one request's attempts, before their rows are written.
+type queueSpec struct {
+	owner    personas.Owner
+	persona  uuid.UUID
+	states   []State
+	provider string // stored on each row as provider_id
+	note     string // the stage note while queued
+	tweak    string
+	// prepare fills an attempt from the persona and the state's current row
+	// (nil when it has none), or refuses the request.
+	prepare func(a *attempt, p store.Persona, cur *store.PersonaStateMedia) error
+}
+
+// queue writes a queued row for each state (keeping any loop it already has)
+// and runs the attempts in the background. A state already queued or running
+// is a 409.
+func (r *Runner) queue(ctx context.Context, spec queueSpec, gen media.VideoGenerator, portrait []byte) ([]store.PersonaStateMedia, error) {
 	// Each state's attempt is registered before its row is written, so a list
 	// that runs meanwhile never mistakes the fresh row for one a restart cut off.
 	base := context.WithoutCancel(ctx)
-	attempts := make([]attempt, len(states))
-	ctxs := make([]context.Context, len(states))
-	cancels := make([]context.CancelFunc, len(states))
-	for i, s := range states {
+	attempts := make([]attempt, len(spec.states))
+	ctxs := make([]context.Context, len(spec.states))
+	cancels := make([]context.CancelFunc, len(spec.states))
+	for i, s := range spec.states {
 		attempts[i] = attempt{state: s, job: uuid.Must(uuid.NewV7())}
 		ctxs[i], cancels[i] = context.WithCancel(base)
 	}
@@ -203,23 +247,19 @@ func (r *Runner) Start(ctx context.Context, in StartInput) ([]store.PersonaState
 	}
 
 	var queued []store.PersonaStateMedia
-	err = pgx.BeginFunc(ctx, r.Pool, func(tx pgx.Tx) error {
+	err := pgx.BeginFunc(ctx, r.Pool, func(tx pgx.Tx) error {
 		q := store.New(tx)
-		p, err := q.GetPersona(ctx, store.GetPersonaParams{ID: in.PersonaID, WorkspaceID: in.Owner.WorkspaceID, UserID: in.Owner.UserID})
+		p, err := q.GetPersona(ctx, store.GetPersonaParams{ID: spec.persona, WorkspaceID: spec.owner.WorkspaceID, UserID: spec.owner.UserID})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return apperr.ErrNotFound
 			}
 			return err
 		}
-		seconds := int(p.LoopSeconds)
-		if seconds < 3 || seconds > 10 {
-			seconds = DefaultLoopSeconds
-		}
-		if err := q.LockPersonaStateMediaOwner(ctx, in.PersonaID); err != nil {
+		if err := q.LockPersonaStateMediaOwner(ctx, spec.persona); err != nil {
 			return err
 		}
-		cur, err := q.LockPersonaStateMedia(ctx, in.PersonaID)
+		cur, err := q.LockPersonaStateMedia(ctx, spec.persona)
 		if err != nil {
 			return err
 		}
@@ -227,24 +267,23 @@ func (r *Runner) Start(ctx context.Context, in StartInput) ([]store.PersonaState
 		for _, row := range cur {
 			byState[State(row.State)] = row
 		}
-		for _, s := range states {
+		for _, s := range spec.states {
 			if row, ok := byState[s]; ok && (row.Status == "queued" || row.Status == "running") && r.Active(row.JobID) {
 				return apperr.Conflict("The %s loop is already being generated.", label(s))
 			}
 		}
-		for i, s := range states {
+		for i := range attempts {
 			a := &attempts[i]
-			a.seconds, a.prompt = seconds, Prompt(s, seconds)
-			if tweak != "" {
-				row, ok := byState[s]
-				if !ok || row.InteractionID == nil || *row.InteractionID == "" {
-					return apperr.Invalid("tweak", "the %s loop has no earlier clip to edit; generate it first", label(s))
-				}
-				a.prompt = TweakPrompt(s, seconds, tweak)
+			var prev *store.PersonaStateMedia
+			if row, ok := byState[a.state]; ok {
+				prev = &row
+			}
+			if err := spec.prepare(a, p, prev); err != nil {
+				return err
 			}
 			row, err := q.QueuePersonaStateMedia(ctx, store.QueuePersonaStateMediaParams{
-				PersonaID: in.PersonaID, State: string(s), JobID: a.job,
-				StageNote: "Queued for " + desc.Label + "…", Prompt: a.prompt, Tweak: tweak, ProviderID: desc.ID,
+				PersonaID: spec.persona, State: string(a.state), JobID: a.job,
+				StageNote: spec.note, Prompt: a.prompt, Tweak: spec.tweak, ProviderID: spec.provider,
 			})
 			if err != nil {
 				return err
@@ -261,7 +300,7 @@ func (r *Runner) Start(ctx context.Context, in StartInput) ([]store.PersonaState
 	r.wg.Go(func() {
 		defer r.untrack(attempts)
 		defer cancelAll()
-		r.run(ctxs, in.PersonaID, gen, portrait, attempts)
+		r.run(ctxs, spec.persona, gen, portrait, attempts)
 	})
 	return queued, nil
 }
@@ -334,22 +373,7 @@ func (r *Runner) one(parent context.Context, persona uuid.UUID, gen media.VideoG
 			r.logWarn("state loop progress", "persona", persona, "state", a.state, "err", err)
 		}
 	}
-	progress(1, "Generating the "+label(a.state)+" clip…")
-
-	// The portrait is both bookends, so the clip starts and ends on the same
-	// frame and loops; a follow-up edit restates them to stay pinned to it.
-	frame := &media.VideoFrame{Data: portrait, ContentType: "image/jpeg"}
-	req := media.VideoRequest{
-		Prompt:      a.prompt,
-		FirstFrame:  frame,
-		LastFrame:   frame,
-		AspectRatio: AspectRatio,
-		DurationSec: a.seconds,
-	}
-	clipOut, err := gen.GenerateVideo(ctx, req, func(p media.VideoProgress) {
-		// The provider's 0-100 is the first 70% of the job; matting is the rest.
-		progress(p.Percent*70/100, firstNonEmpty(p.Note, "Generating the "+label(a.state)+" clip…"))
-	})
+	clipOut, err := r.clip(ctx, gen, portrait, a, progress)
 	if err != nil {
 		r.fail(bg, persona, a, err)
 		return
@@ -439,6 +463,29 @@ func (r *Runner) one(parent context.Context, persona uuid.UUID, gen media.VideoG
 		return
 	}
 	r.deleteBlobs(bg, replaced...)
+}
+
+// clip is the attempt's raw video: the uploaded clip, else one generated from
+// the portrait.
+func (r *Runner) clip(ctx context.Context, gen media.VideoGenerator, portrait []byte, a attempt, progress func(int, string)) (media.VideoClip, error) {
+	if a.upload != nil {
+		return media.VideoClip{Data: a.upload, ContentType: "video/mp4"}, nil
+	}
+	progress(1, "Generating the "+label(a.state)+" clip…")
+	// The portrait is both bookends, so the clip starts and ends on the same
+	// frame and loops; a follow-up edit restates them to stay pinned to it.
+	frame := &media.VideoFrame{Data: portrait, ContentType: "image/jpeg"}
+	req := media.VideoRequest{
+		Prompt:      a.prompt,
+		FirstFrame:  frame,
+		LastFrame:   frame,
+		AspectRatio: AspectRatio,
+		DurationSec: a.seconds,
+	}
+	return gen.GenerateVideo(ctx, req, func(p media.VideoProgress) {
+		// The provider's 0-100 is the first 70% of the job; matting is the rest.
+		progress(p.Percent*70/100, firstNonEmpty(p.Note, "Generating the "+label(a.state)+" clip…"))
+	})
 }
 
 // fail records a failed attempt; the state keeps whatever loop it had.

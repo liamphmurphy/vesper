@@ -3224,6 +3224,28 @@ extension API {
         )
     }
 
+    /// Make a state's loop from a clip you made elsewhere
+    ///
+    /// For a clip made outside Vesper, e.g. in AI Studio with the state's
+    /// prompt from the list's prompts. It is matted and packed in the
+    /// background like a generated one, and needs no video provider. MP4 or
+    /// MOV, H.264 or H.265, 1-10 seconds and at most 64 MB; the container is
+    /// read for its length and codec, so the declared type and filename are
+    /// ignored. The clip should start and end on the same frame to loop
+    /// cleanly, and keep the prompt's flat backdrop off a Mac, where the
+    /// ffmpeg chroma key cuts it out. The loop can't be tweaked afterwards.
+    /// 422 for a clip outside those limits, 409 while the state is already
+    /// generating.
+    ///
+    /// `PUT /personas/{id}/state-media/{state}/clip`
+    public static func uploadPersonaStateClip(id: Swift.String, state: PersonaState, body: APIMultipartForm) -> APIRequest<PersonaStateMediaList> {
+        return APIRequest(
+            method: "PUT", template: "/personas/{id}/state-media/{state}/clip",
+            path: "/api/v1/personas/\(APIPath.escape(id))/state-media/\(APIPath.escape(state))/clip",
+            query: [], headers: [:], body: APIRequestBody.multipart(body), decode: .json
+        )
+    }
+
     /// A state loop's square, transparent head-crop PNG
     ///
     /// For small avatars, where the full loop is too small to read. 404 when the state has none.
