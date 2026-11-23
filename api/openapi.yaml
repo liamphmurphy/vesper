@@ -11132,7 +11132,7 @@ components:
         Its tone and custom instructions shape the assistant's voice in chats
         only; they never change scopes, tools or memory rules. Only the
         structured capabilities (and repos) widen what its chats may do.
-      required: [id, name, tone, color, custom_instructions, capabilities, repos, is_default, chat_count, in_chat_list, work, reveal_pace, voice, loop_seconds, revision, created_at, updated_at]
+      required: [id, name, tone, color, custom_instructions, capabilities, repos, is_default, chat_count, in_chat_list, work, state_media_enabled, reveal_pace, voice, loop_seconds, revision, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
@@ -11148,7 +11148,8 @@ components:
         color: { type: string, pattern: "^#[0-9a-f]{6}$", description: Stored in lower case }
         avatar_url: { type: string, description: "GET /personas/{id}/avatar with a cache-busting ?v=<revision>; absent without an avatar" }
         character_svg: { type: string, description: "Sanitized 64x64 animated SVG character source; absent when using a picture or initials" }
-        state_media: { $ref: "#/components/schemas/PersonaStateMediaSummary", description: "Photorealistic state loops; absent when none has been generated" }
+        state_media: { $ref: "#/components/schemas/PersonaStateMediaSummary", description: "Photorealistic state loops; absent when none has been generated or state_media_enabled is false" }
+        state_media_enabled: { type: boolean, description: "Whether generated state loops are shown; turning this off preserves stored loops" }
         reveal_pace: { $ref: "#/components/schemas/PersonaRevealPace" }
         voice: { $ref: "#/components/schemas/PersonaVoice" }
         loop_seconds: { type: integer, minimum: 4, maximum: 10, description: "Length of each state loop; Omni loops (pins first and last frames) only up to 10s" }
@@ -11284,6 +11285,7 @@ components:
       required: [revision]
       properties:
         revision: { type: integer }
+        state_media_enabled: { type: boolean, description: "Show or hide generated state loops without deleting them" }
         loop_seconds: { type: integer, minimum: 4, maximum: 10, description: "Applies to loops generated from now on" }
         voice_mode: { $ref: "#/components/schemas/PersonaVoiceMode" }
         voice_name: { type: string, maxLength: 60, description: "Empty for the provider's default voice" }

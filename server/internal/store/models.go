@@ -1304,6 +1304,7 @@ type Persona struct {
 	VoiceName           string
 	VoiceStyle          string
 	LoopSeconds         int32
+	StateMediaEnabled   bool
 }
 
 type PersonaCharacterProposal struct {

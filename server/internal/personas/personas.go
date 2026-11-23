@@ -96,6 +96,9 @@ type Patch struct {
 	VoiceMode, VoiceName, VoiceStyle *string
 	// LoopSeconds is how long each of its state loops is (MinLoopSeconds-MaxLoopSeconds).
 	LoopSeconds *int32
+	// StateMediaEnabled toggles whether generated state loops are displayed;
+	// turning it off keeps stored loops and blobs intact.
+	StateMediaEnabled *bool
 }
 
 // The range a persona's loop length may take: Omni pins first and last
@@ -530,7 +533,7 @@ func (s *Service) Update(ctx context.Context, o Owner, id uuid.UUID, p Patch) (s
 			CanCode: p.Code, CanGenerateImages: p.Images, CanCreatePersonas: p.Personas, CanCreateSvgs: p.SVG, CanCreateWorkflows: p.Workflows, CanCreateConnectors: p.Connectors, Repos: repos,
 			InChatList:     p.InChatList,
 			DefaultHarness: nextHarness, DefaultModel: nextModel, DefaultEffort: nextEffort,
-			RevealPace: p.RevealPace, VoiceMode: p.VoiceMode, VoiceName: p.VoiceName, VoiceStyle: p.VoiceStyle, LoopSeconds: p.LoopSeconds,
+			RevealPace: p.RevealPace, VoiceMode: p.VoiceMode, VoiceName: p.VoiceName, VoiceStyle: p.VoiceStyle, LoopSeconds: p.LoopSeconds, StateMediaEnabled: p.StateMediaEnabled,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return apperr.Conflict("the persona changed since you loaded it")
