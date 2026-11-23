@@ -12543,7 +12543,8 @@ extension API {
             public static let auto = Engine(rawValue: "auto")
             public static let codex = Engine(rawValue: "codex")
             public static let antigravity = Engine(rawValue: "antigravity")
-            public static let allKnown: [Engine] = [auto, codex, antigravity]
+            public static let gemini = Engine(rawValue: "gemini")
+            public static let allKnown: [Engine] = [auto, codex, antigravity, gemini]
         }
 
         public struct OptionsItem: Codable, Sendable, Equatable {
@@ -12551,6 +12552,8 @@ extension API {
             public var available: Swift.Bool
             public var engine: Engine
             public var label: Swift.String
+            /// Active model used when this engine is chosen (when known)
+            public var model: Swift.String?
             /// Why it isn't available
             public var reason: Swift.String?
 
@@ -12559,18 +12562,21 @@ extension API {
                 public init(rawValue: Swift.String) { self.rawValue = rawValue }
                 public static let codex = Engine(rawValue: "codex")
                 public static let antigravity = Engine(rawValue: "antigravity")
-                public static let allKnown: [Engine] = [codex, antigravity]
+                public static let gemini = Engine(rawValue: "gemini")
+                public static let allKnown: [Engine] = [codex, antigravity, gemini]
             }
 
             public init(
                 available: Swift.Bool,
                 engine: Engine,
                 label: Swift.String,
+                model: Swift.String? = nil,
                 reason: Swift.String? = nil
             ) {
                 self.available = available
                 self.engine = engine
                 self.label = label
+                self.model = model
                 self.reason = reason
             }
 
@@ -12578,6 +12584,7 @@ extension API {
                 case available
                 case engine
                 case label
+                case model
                 case reason
             }
 
@@ -12586,6 +12593,7 @@ extension API {
                 self.available = try c.decode(Swift.Bool.self, forKey: .available)
                 self.engine = try c.decode(Engine.self, forKey: .engine)
                 self.label = try c.decode(Swift.String.self, forKey: .label)
+                self.model = try c.decodeIfPresent(Swift.String.self, forKey: .model)
                 self.reason = try c.decodeIfPresent(Swift.String.self, forKey: .reason)
             }
 
@@ -12594,6 +12602,7 @@ extension API {
                 try c.encode(available, forKey: .available)
                 try c.encode(engine, forKey: .engine)
                 try c.encode(label, forKey: .label)
+                try c.encodeIfPresent(model, forKey: .model)
                 try c.encodeIfPresent(reason, forKey: .reason)
             }
         }
@@ -13712,11 +13721,12 @@ extension API {
     public struct MediaCapability: APIStringEnum {
         public let rawValue: Swift.String
         public init(rawValue: Swift.String) { self.rawValue = rawValue }
+        public static let image = MediaCapability(rawValue: "image")
         public static let music = MediaCapability(rawValue: "music")
         public static let video = MediaCapability(rawValue: "video")
         public static let tts = MediaCapability(rawValue: "tts")
         public static let script = MediaCapability(rawValue: "script")
-        public static let allKnown: [MediaCapability] = [music, video, tts, script]
+        public static let allKnown: [MediaCapability] = [image, music, video, tts, script]
     }
 
     public struct MediaFieldOption: Codable, Sendable, Equatable {
@@ -16661,9 +16671,9 @@ extension API {
         public var code: Swift.Bool
         /// Propose new MCP connectors from a chat; each is added only when the person approves it and signs in. Absent in a request means unchanged (false for a new persona).
         public var connectors: Swift.Bool?
-        /// Which engine makes this persona's images: codex, antigravity or auto (the first connected, Codex first). Empty inherits the workspace's choice (GET /image-engine). Absent in a request means unchanged.
+        /// Which engine makes this persona's images: codex, antigravity, gemini, or auto (the first connected). Empty inherits the workspace's choice (GET /image-engine). Absent in a request means unchanged.
         public var imageEngine: Swift.String?
-        /// Generate images with an image engine (Codex or Antigravity); works with any chat model (a chat on another harness hands the image to a one-off step on the engine)
+        /// Generate images with an image engine (Codex, Antigravity, or Gemini API); works with any chat model (a chat on another harness hands the image to a one-off step on the engine)
         public var images: Swift.Bool
         /// Propose new personas from a chat; each is created only when the person approves it, with every capability off. Absent in a request means unchanged (false for a new persona).
         public var personas: Swift.Bool?
@@ -25049,7 +25059,7 @@ extension API {
             public var agentHandle: Swift.String?
             /// agent: reports pass or fail, and nothing after it runs unless it passes
             public var check: Swift.Bool?
-            /// agent with images: auto (default; the first connected of Codex and Antigravity), codex or antigravity. Defaults to the persona's, then the workspace's, engine
+            /// agent with images: auto (default; the first connected of Codex, Antigravity, and Gemini API), codex, antigravity, or gemini. Defaults to the persona's, then the workspace's, engine
             public var imageEngine: Swift.String?
             /// agent: generate images. The step runs as a persona allowed to make images, on image_engine
             public var images: Swift.Bool?
@@ -27030,7 +27040,8 @@ extension API {
             public static let auto = Engine(rawValue: "auto")
             public static let codex = Engine(rawValue: "codex")
             public static let antigravity = Engine(rawValue: "antigravity")
-            public static let allKnown: [Engine] = [auto, codex, antigravity]
+            public static let gemini = Engine(rawValue: "gemini")
+            public static let allKnown: [Engine] = [auto, codex, antigravity, gemini]
         }
 
         public init(

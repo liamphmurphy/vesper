@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -31,6 +32,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/designs"
 	"github.com/liamphmurphy/vesper/server/internal/githubpr"
 	"github.com/liamphmurphy/vesper/server/internal/media"
+	"github.com/liamphmurphy/vesper/server/internal/media/providers/gemini"
 	"github.com/liamphmurphy/vesper/server/internal/realtime"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/secrets"
@@ -172,6 +174,11 @@ func (s *Server) internalAPIHandler() http.Handler {
 func (s *Server) Handler() http.Handler {
 	if s.Log == nil {
 		s.Log = slog.Default()
+	}
+	if s.Runs != nil && s.Runs.GeminiImageStatus == nil {
+		s.Runs.GeminiImageStatus = func(ctx context.Context, ws uuid.UUID) (string, bool, string) {
+			return s.mediaService().ImageProviderStatus(ctx, ws, gemini.ProviderID)
+		}
 	}
 	mux := http.NewServeMux()
 	s.mountAPIRoutes(mux)

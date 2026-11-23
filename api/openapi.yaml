@@ -1459,10 +1459,10 @@ paths:
       operationId: getImageEngine
       summary: Which engine makes images, and which are connected
       description: |
-        Images are made by Codex or Antigravity. engine is the workspace's
-        choice (auto uses the first connected, Codex first); a persona or a
-        workflow step may override it. options says whether each engine can
-        make an image right now.
+        Images are made by Codex, Antigravity, or the Gemini API. engine is the
+        workspace's choice (auto uses the first connected, Codex then
+        Antigravity then Gemini API); a persona or a workflow step may override
+        it. options says whether each engine can make an image right now.
       tags: [workspace]
       responses:
         "200":
@@ -1483,7 +1483,7 @@ paths:
               type: object
               required: [engine]
               properties:
-                engine: { type: string, enum: [auto, codex, antigravity] }
+                engine: { type: string, enum: [auto, codex, antigravity, gemini] }
       responses:
         "200":
           description: The saved choice and the engines
@@ -8955,20 +8955,21 @@ components:
       type: object
       required: [engine, options]
       properties:
-        engine: { type: string, enum: [auto, codex, antigravity] }
+        engine: { type: string, enum: [auto, codex, antigravity, gemini] }
         options:
           type: array
           items:
             type: object
             required: [engine, label, available]
             properties:
-              engine: { type: string, enum: [codex, antigravity] }
+              engine: { type: string, enum: [codex, antigravity, gemini] }
               label: { type: string }
               available: { type: boolean, description: "Connected, with a model to run the image step on" }
               reason: { type: string, description: "Why it isn't available" }
+              model: { type: string, description: "Active model used when this engine is chosen (when known)" }
     MediaCapability:
       type: string
-      enum: [music, video, tts, script]
+      enum: [image, music, video, tts, script]
     MediaFieldOption:
       type: object
       required: [value, label]
@@ -9786,7 +9787,7 @@ components:
             agent_handle: { type: string }
             web: { type: boolean }
             images: { type: boolean, description: "agent: generate images. The step runs as a persona allowed to make images, on image_engine" }
-            image_engine: { type: string, description: "agent with images: auto (default; the first connected of Codex and Antigravity), codex or antigravity. Defaults to the persona's, then the workspace's, engine" }
+            image_engine: { type: string, description: "agent with images: auto (default; the first connected of Codex, Antigravity, and Gemini API), codex, antigravity, or gemini. Defaults to the persona's, then the workspace's, engine" }
             check: { type: boolean, description: "agent: reports pass or fail, and nothing after it runs unless it passes" }
             show: { type: array, items: { type: string } }
             retry_from: { type: string, description: "gate: the step Request changes re-runs. agent with check: the step re-run automatically on failure" }
@@ -11119,8 +11120,8 @@ components:
       required: [code, images]
       properties:
         code: { type: boolean, description: "Clone the chat's repo, edit and run code, commit and push its own work branch, open PRs" }
-        images: { type: boolean, description: "Generate images with an image engine (Codex or Antigravity); works with any chat model (a chat on another harness hands the image to a one-off step on the engine)" }
-        image_engine: { type: string, description: "Which engine makes this persona's images: codex, antigravity or auto (the first connected, Codex first). Empty inherits the workspace's choice (GET /image-engine). Absent in a request means unchanged." }
+        images: { type: boolean, description: "Generate images with an image engine (Codex, Antigravity, or Gemini API); works with any chat model (a chat on another harness hands the image to a one-off step on the engine)" }
+        image_engine: { type: string, description: "Which engine makes this persona's images: codex, antigravity, gemini, or auto (the first connected). Empty inherits the workspace's choice (GET /image-engine). Absent in a request means unchanged." }
         personas: { type: boolean, description: "Propose new personas from a chat; each is created only when the person approves it, with every capability off. Absent in a request means unchanged (false for a new persona)." }
         connectors: { type: boolean, description: "Propose new MCP connectors from a chat; each is added only when the person approves it and signs in. Absent in a request means unchanged (false for a new persona)." }
         svg: { type: boolean, description: "Show SVG images in chat replies; a reply from a persona without it keeps its SVG as plain code. Absent in a request means unchanged (false for a new persona)." }

@@ -2201,10 +2201,10 @@ extension API {
 
     /// Which engine makes images, and which are connected
     ///
-    /// Images are made by Codex or Antigravity. engine is the workspace's
-    /// choice (auto uses the first connected, Codex first); a persona or a
-    /// workflow step may override it. options says whether each engine can
-    /// make an image right now.
+    /// Images are made by Codex, Antigravity, or the Gemini API. engine is the
+    /// workspace's choice (auto uses the first connected, Codex then
+    /// Antigravity then Gemini API); a persona or a workflow step may override
+    /// it. options says whether each engine can make an image right now.
     ///
     /// `GET /image-engine`
     public static func getImageEngine() -> APIRequest<ImageEngineSettings> {

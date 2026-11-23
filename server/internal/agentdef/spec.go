@@ -198,6 +198,14 @@ const OptionWebSearch = "web_search"
 // Claude Code never receives it.
 const OptionImageGeneration = "image_generation"
 
+// OptionImageEngine ("gemini") and OptionImageModel tell the runner to handle a
+// workflow image step directly through a media provider instead of launching a
+// CLI harness. Set by Vesper only.
+const (
+	OptionImageEngine = "image_engine"
+	OptionImageModel  = "image_model"
+)
+
 // OptionNoTools ("true") makes a turn answer from its prompt alone: no MCP
 // servers and no tools. Vesper's own background prompts use it, since they
 // carry a person's private context and have no run to scope tools to.
@@ -369,6 +377,12 @@ func validOptions(field string, opts map[string]string) error {
 	}
 	if _, ok := opts[OptionImageGeneration]; ok {
 		return invalid(field, "%s is set by Vesper for the Personal Assistant only", OptionImageGeneration)
+	}
+	if _, ok := opts[OptionImageEngine]; ok {
+		return invalid(field, "%s is set by Vesper only", OptionImageEngine)
+	}
+	if _, ok := opts[OptionImageModel]; ok {
+		return invalid(field, "%s is set by Vesper only", OptionImageModel)
 	}
 	if _, ok := opts[OptionAside]; ok {
 		return invalid(field, "%s is set by Vesper for the Personal Assistant only", OptionAside)

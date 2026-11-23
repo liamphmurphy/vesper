@@ -177,12 +177,12 @@ func resolveDefaultModel(curHarness, curModel, curEffort string, inHarness, inMo
 	return harness, model, effort, changed, nil
 }
 
-// checkImageEngine accepts "" (inherit), "auto" or an image-capable harness.
+// checkImageEngine accepts "" (inherit), "auto", an image-capable harness, or "gemini".
 func checkImageEngine(engine *string) error {
-	if engine == nil || *engine == "" || *engine == "auto" || slices.Contains(agentdef.ImageHarnesses, *engine) {
+	if engine == nil || *engine == "" || *engine == "auto" || *engine == "gemini" || slices.Contains(agentdef.ImageHarnesses, *engine) {
 		return nil
 	}
-	return apperr.Invalid("capabilities.image_engine", "must be empty, auto, %s", strings.Join(agentdef.ImageHarnesses, " or "))
+	return apperr.Invalid("capabilities.image_engine", "must be empty, auto, codex, antigravity or gemini")
 }
 
 func normName(s string) (string, error) {

@@ -2,6 +2,8 @@ package runner_test
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"os"
@@ -14,8 +16,11 @@ import (
 
 	"github.com/liamphmurphy/vesper/server/internal/agentdef"
 	"github.com/liamphmurphy/vesper/server/internal/chatmodels"
+	"github.com/liamphmurphy/vesper/server/internal/media"
+	"github.com/liamphmurphy/vesper/server/internal/media/providers/fake"
 	"github.com/liamphmurphy/vesper/server/internal/runner"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
+	"github.com/liamphmurphy/vesper/server/internal/secrets"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 )
 
@@ -417,5 +422,86 @@ func TestChatImageJobFailureNamesTheEngine(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("the person was not told which engine failed: %+v", e.chatMsgs(chat.ID))
+	}
+}
+
+func (e env) withFakeGeminiImage(t *testing.T) *fake.Controller {
+	t.Helper()
+	k := make([]byte, 32)
+	_, _ = rand.Read(k)
+	box, err := secrets.NewBox(base64.StdEncoding.EncodeToString(k))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := media.NewRegistry()
+	ctrl := &fake.Controller{}
+	fake.RegisterImage(reg, runs.EngineGemini, ctrl)
+	svc := &media.Service{Pool: e.pool, Box: box, Registry: reg}
+	if _, err := svc.SaveProvider(e.ctx, e.ws, runs.EngineGemini, nil,
+		map[string]string{"image_model": "fake-nano-banana"},
+		map[string]string{"api_key": "AIza-test"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	e.runner.Media = svc
+	e.runs.GeminiImageStatus = func(ctx context.Context, ws uuid.UUID) (string, bool, string) {
+		return svc.ImageProviderStatus(ctx, ws, runs.EngineGemini)
+	}
+	if _, err := e.pool.Exec(e.ctx, "UPDATE workspaces SET image_engine = 'gemini' WHERE id = $1", e.ws); err != nil {
+		t.Fatal(err)
+	}
+	return ctrl
+}
+
+// With the workspace's image engine set to Gemini API, a Claude chat's
+// generate_image request is fulfilled directly via internal/media without
+// launching Codex or Antigravity, passes Library reference images inline, and
+// feeds the generated image into the automatic follow-up turn.
+func TestChatImageJobMakesImageWithGeminiAPI(t *testing.T) {
+	e := setup(t)
+	ctrl := e.withFakeGeminiImage(t)
+	chat, logPath := e.imageChat(t, "ok", "image: a neon fox")
+	run := e.chatRun(chat.ID)
+	job := e.imageJob(run.ID)
+	var h string
+	if err := e.pool.QueryRow(e.ctx, "SELECT harness FROM chat_image_jobs WHERE id = $1", job.ID).Scan(&h); err != nil {
+		t.Fatal(err)
+	}
+	if job.State != "done" || h != runs.EngineGemini || job.Model != "fake-nano-banana" || job.FailureKind != nil {
+		t.Fatalf("job %+v harness %q", job, h)
+	}
+	reqs := ctrl.ImageRequests()
+	if len(reqs) != 1 || reqs[0].Prompt != "a neon fox" || reqs[0].Model != "fake-nano-banana" {
+		t.Fatalf("gemini requests = %+v", reqs)
+	}
+	// Neither Codex nor Antigravity should have been launched.
+	for _, l := range readLog(t, logPath) {
+		if l["harness"] == "codex" || l["harness"] == "antigravity" {
+			t.Fatalf("unexpected image harness launch: %+v", l)
+		}
+	}
+	msgs := e.chatMsgs(chat.ID)
+	if len(msgs) != 3 || msgs[1].Role != "assistant" || msgs[2].Role != "assistant" {
+		t.Fatalf("messages = %+v", msgs)
+	}
+	atts, err := e.q.ListChatAttachmentsForMessages(e.ctx, []uuid.UUID{msgs[1].ID})
+	if err != nil || len(atts) != 1 || atts[0].Source != "generated" || atts[0].ContentType != "image/png" || !strings.HasPrefix(atts[0].Filename, "gemini-") {
+		t.Fatalf("attachments = %+v, err = %v", atts, err)
+	}
+	if job.AttachmentID == nil || *job.AttachmentID != atts[0].ID {
+		t.Fatalf("job attachment = %v, want %s", job.AttachmentID, atts[0].ID)
+	}
+}
+
+func TestChatImageJobGeminiModerationRefusal(t *testing.T) {
+	e := setup(t)
+	ctrl := e.withFakeGeminiImage(t)
+	ctrl.ImageErr = func(media.ImageRequest) error {
+		return &media.ProviderError{Provider: runs.EngineGemini, Kind: media.ErrKindFiltered, Message: "safety policy"}
+	}
+	chat, _ := e.imageChat(t, "ok", "image: blocked scene")
+	job := e.imageJob(e.chatRun(chat.ID).ID)
+	if job.State != "failed" || job.FailureKind == nil || *job.FailureKind != "moderation" || job.Error == nil || !strings.Contains(*job.Error, "safety policy") {
+		t.Fatalf("job = %+v", job)
 	}
 }

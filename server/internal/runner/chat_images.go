@@ -13,6 +13,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/agentdef"
 	"github.com/liamphmurphy/vesper/server/internal/blob"
 	"github.com/liamphmurphy/vesper/server/internal/harness"
+	"github.com/liamphmurphy/vesper/server/internal/media"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 )
@@ -30,11 +31,20 @@ const imageStepInstructions = `This is a one-shot image step inside a chat. Make
 Reference images may be attached to the request (files in .lazyagents/references/); the request says whom each shows. Use them as the likeness of those people wherever the image shows them, and don't copy them into the outbox.
 `
 
+// directChatImage is an image produced in-process by a direct media provider
+// (such as the Gemini API) rather than written into a harness workspace outbox.
+type directChatImage struct {
+	name string
+	ct   string
+	data []byte
+}
+
 // chatImages is what a turn's image jobs did, for finishChatTurn: whether any
-// ran, so the outbox is harvested. What each job made or why it failed is on
-// its chat_image_jobs row.
+// ran (so the outbox is harvested) and any images produced directly in-process.
+// What each job made or why it failed is on its chat_image_jobs row.
 type chatImages struct {
-	ran bool
+	ran    bool
+	direct []directChatImage
 }
 
 // Image job failure kinds (chat_image_jobs.failure_kind).
@@ -68,19 +78,25 @@ func classifyImageFailure(res harness.Result, sensitive map[string]string) (mode
 
 // engineLabel names an image engine for the person.
 func engineLabel(engine string) string {
-	if engine == agentdef.HarnessAntigravity {
+	switch engine {
+	case agentdef.HarnessAntigravity:
 		return "Antigravity"
+	case runs.EngineGemini:
+		return "Gemini API"
+	default:
+		return "Codex"
 	}
-	return "Codex"
 }
 
-// imageEngine is the harness a job runs on; rows from before engines existed
+// imageEngine is the engine a job runs on; rows from before engines existed
 // have none.
 func imageEngine(job store.ChatImageJob) string {
-	if job.Harness == agentdef.HarnessAntigravity {
-		return agentdef.HarnessAntigravity
+	switch job.Harness {
+	case agentdef.HarnessAntigravity, runs.EngineGemini:
+		return job.Harness
+	default:
+		return agentdef.HarnessCodex
 	}
-	return agentdef.HarnessCodex
 }
 
 // clipReason makes s one line of at most maxImageReasonRunes runes.
@@ -144,20 +160,24 @@ func (r *Runner) runChatImageJobs(ctx context.Context, c runCtx, turn store.RunT
 			_ = r.q().FinishChatImageJob(context.WithoutCancel(ctx), store.FinishChatImageJobParams{ID: job.ID, State: "failed", Error: new("stopped"), FailureKind: new(imageFailError), OutboxFiles: []string{}})
 			continue
 		}
-		ok, reason := r.runChatImageJob(ctx, c, turn, token, job)
+		ok, reason, direct := r.runChatImageJob(ctx, c, turn, token, job)
+		if direct != nil {
+			out.direct = append(out.direct, *direct)
+		}
 		stopped = !ok && (ctx.Err() != nil || reason == "stopped")
 	}
 	return out
 }
 
 // runChatImageJob runs one job and records how it went: the outbox files it
-// produced, or a short, secret-free reason that is safe to show the person
-// with its kind (a moderation refusal or any other error).
-func (r *Runner) runChatImageJob(ctx context.Context, c runCtx, turn store.RunTurn, token string, job store.ChatImageJob) (done bool, reason string) {
+// produced (or a direct in-process image for Gemini API), or a short,
+// secret-free reason that is safe to show the person with its kind (a
+// moderation refusal or any other error).
+func (r *Runner) runChatImageJob(ctx context.Context, c runCtx, turn store.RunTurn, token string, job store.ChatImageJob) (done bool, reason string, direct *directChatImage) {
 	fin := context.WithoutCancel(ctx)
 	q := r.q()
 	produced := []string{}
-	record := func(kind, reason string) (bool, string) {
+	record := func(kind, reason string) (bool, string, *directChatImage) {
 		state, errp, kindp := "done", (*string)(nil), (*string)(nil)
 		if reason != "" {
 			state, errp, kindp = "failed", &reason, &kind
@@ -170,22 +190,31 @@ func (r *Runner) runChatImageJob(ctx context.Context, c runCtx, turn store.RunTu
 			payload["failure_kind"] = kind
 		}
 		r.event(fin, c.run.ID, "tool_result", payload)
-		return reason == "", reason
+		return reason == "", reason, direct
 	}
-	finish := func(reason string) (bool, string) { return record(imageFailError, reason) }
+	finish := func(reason string) (bool, string, *directChatImage) { return record(imageFailError, reason) }
 	if run, err := q.GetRun(ctx, store.GetRunParams{ID: c.run.ID, WorkspaceID: c.run.WorkspaceID}); err != nil || run.State != "running" {
 		_ = q.FinishChatImageJob(fin, store.FinishChatImageJobParams{ID: job.ID, State: "failed", Error: new("stopped"), FailureKind: new(imageFailError), OutboxFiles: []string{}})
-		return false, "stopped"
+		return false, "stopped", nil
 	}
 	if err := q.StartChatImageJob(ctx, job.ID); err != nil {
 		r.Log.Warn("start image job", "job", job.ID, "err", err)
-		return false, "stopped"
+		return false, "stopped", nil
 	}
 	// The prompt stays out of the event: it is the person's text, and the run
 	// log is read by more people than the chat is.
 	r.event(ctx, c.run.ID, "tool_call", map[string]any{"id": job.ID.String(), "tool": "image_generation", "input": map[string]any{}})
 
 	engine := imageEngine(job)
+	if engine == runs.EngineGemini {
+		img, kind, failReason := r.runGeminiChatImageJob(ctx, q, c, job)
+		if failReason != "" {
+			return record(kind, failReason)
+		}
+		direct = img
+		produced = []string{img.name}
+		return finish("")
+	}
 	label := engineLabel(engine)
 	spec := imageStepSpec(c.spec, engine, job.Model)
 	plan, err := PlanSecrets(ctx, q, c.run.WorkspaceID, &c.project.ID, spec)
@@ -352,6 +381,92 @@ func (r *Runner) runChatImageJob(ctx context.Context, c runCtx, turn store.RunTu
 		return finish("no image was produced")
 	}
 	return finish("")
+}
+
+// runGeminiChatImageJob invokes the configured Gemini media provider directly
+// in-process with any requested Library reference images passed inline.
+func (r *Runner) runGeminiChatImageJob(ctx context.Context, q *store.Queries, c runCtx, job store.ChatImageJob) (*directChatImage, string, string) {
+	if r.Media == nil {
+		return nil, imageFailError, "Gemini API isn't configured on this runner"
+	}
+	gen, _, err := r.Media.ResolveImage(ctx, c.run.WorkspaceID, runs.EngineGemini)
+	if err != nil {
+		_, msg := media.ClassifyError(err)
+		return nil, imageFailError, clipReason(msg)
+	}
+	refs := r.loadChatReferences(ctx, q, c.run, job.ReferenceRoles)
+	mediaRefs := mediaReferencesFromChat(refs)
+
+	timeout := r.Cfg.ChatImageTimeout
+	if timeout <= 0 {
+		timeout = DefaultChatImageTimeout
+	}
+	tctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	img, err := gen.GenerateImage(tctx, media.ImageRequest{
+		Prompt:     job.Prompt,
+		References: mediaRefs,
+		Model:      job.Model,
+	})
+	if err != nil {
+		fin := context.WithoutCancel(ctx)
+		if run, rerr := q.GetRun(fin, store.GetRunParams{ID: c.run.ID, WorkspaceID: c.run.WorkspaceID}); rerr == nil && run.State != "running" {
+			return nil, imageFailError, "stopped"
+		}
+		if ctx.Err() != nil {
+			return nil, imageFailError, "interrupted"
+		}
+		if errors.Is(tctx.Err(), context.DeadlineExceeded) {
+			return nil, imageFailError, "timed out"
+		}
+		kind, msg := media.ClassifyError(err)
+		switch kind {
+		case media.ErrKindFiltered:
+			if msg == "" {
+				return nil, imageFailModeration, "rejected by moderation"
+			}
+			return nil, imageFailModeration, clipReason("rejected by moderation: " + msg)
+		case media.ErrKindQuota, media.ErrKindRateLimit:
+			return nil, imageFailError, clipReason(cmp.Or(msg, "Gemini API has hit its usage limit"))
+		default:
+			r.Log.Warn("gemini image job failed", "run", c.run.ID, "job", job.ID, "err", err)
+			return nil, imageFailError, clipReason(cmp.Or(msg, "Gemini API couldn't finish the image"))
+		}
+	}
+	ct, ok := runs.GeneratedImageType(img.Data)
+	if !ok {
+		return nil, imageFailError, "Gemini API returned an unsupported image format"
+	}
+	ext := img.FilenameExt
+	if ext == "" {
+		ext = referenceExts[ct]
+	}
+	if ext == "" {
+		ext = ".png"
+	}
+	name := fmt.Sprintf("gemini-%s%s", job.ID.String()[:8], ext)
+	return &directChatImage{name: name, ct: ct, data: img.Data}, "", ""
+}
+
+func mediaReferencesFromChat(refs chatReferences) []media.ImageReference {
+	var out []media.ImageReference
+	for _, role := range referenceRoles {
+		p, ok := refs.paths[role]
+		if !ok {
+			continue
+		}
+		data := refs.files[p]
+		if len(data) == 0 {
+			continue
+		}
+		ct, ok := runs.GeneratedImageType(data)
+		if !ok {
+			ct = "image/png"
+		}
+		out = append(out, media.ImageReference{Role: role, Data: data, ContentType: ct})
+	}
+	return out
 }
 
 // outboxNames lists the files in the chat run's outbox. Its error is the

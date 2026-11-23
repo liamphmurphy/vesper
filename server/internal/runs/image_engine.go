@@ -15,18 +15,29 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/store"
 )
 
-// Image engines: the harness that makes an image. A workspace chooses one
-// (EngineAuto uses the first connected, Codex before Antigravity), a persona or
-// a workflow step may override it.
+// Image engines: the backend that makes an image. A workspace chooses one
+// (EngineAuto uses the first connected: Codex, Antigravity, then Gemini API);
+// a persona or a workflow step may override it.
 const (
 	EngineAuto        = "auto"
 	EngineCodex       = agentdef.HarnessCodex
 	EngineAntigravity = agentdef.HarnessAntigravity
+	EngineGemini      = "gemini"
 )
+
+// ImageEngines lists every selectable image engine in Auto preference order.
+var ImageEngines = []string{EngineCodex, EngineAntigravity, EngineGemini}
+
+// GeminiImageInfo reports the workspace's Gemini API image provider readiness.
+type GeminiImageInfo struct {
+	Available bool
+	Model     string
+	Reason    string
+}
 
 // ValidImageEngine reports whether s names an engine (or auto).
 func ValidImageEngine(s string) bool {
-	return s == EngineAuto || slices.Contains(agentdef.ImageHarnesses, s)
+	return s == EngineAuto || slices.Contains(ImageEngines, s)
 }
 
 // ImageEngineLabel is how an engine reads to the person.
@@ -36,20 +47,41 @@ func ImageEngineLabel(engine string) string {
 		return "Antigravity"
 	case EngineCodex:
 		return "Codex"
+	case EngineGemini:
+		return "Gemini API"
 	}
 	return "an image engine"
 }
 
-// PickImageEngine chooses the harness and model that make an image. preference
-// is an engine, EngineAuto or "" (auto). A non-empty reason is why none can,
-// worded for the person; it names the engine they asked for, or both when auto.
+// PickImageEngine chooses the engine and model that make an image without
+// Gemini API status (equivalent to PickImageEngineWith with an unconfigured
+// Gemini provider).
 func PickImageEngine(catalog []chatmodels.Harness, preference string) (harness, model, reason string) {
-	candidates := agentdef.ImageHarnesses
+	return PickImageEngineWith(catalog, GeminiImageInfo{}, preference)
+}
+
+// PickImageEngineWith chooses the engine and model that make an image.
+// preference is an engine, EngineAuto or "" (auto). A non-empty reason is why
+// none can, worded for the person; it names the engine they asked for, or each
+// candidate when auto.
+func PickImageEngineWith(catalog []chatmodels.Harness, gemini GeminiImageInfo, preference string) (engine, model, reason string) {
+	candidates := ImageEngines
 	if preference != "" && preference != EngineAuto {
 		candidates = []string{preference}
 	}
 	why := map[string]string{}
 	for _, name := range candidates {
+		if name == EngineGemini {
+			if gemini.Available {
+				return EngineGemini, gemini.Model, ""
+			}
+			r := strings.TrimSpace(gemini.Reason)
+			if r == "" {
+				r = "isn't configured"
+			}
+			why[name] = r
+			continue
+		}
 		var found *chatmodels.Harness
 		for i := range catalog {
 			if catalog[i].Harness == name {
@@ -82,6 +114,14 @@ func PickImageEngine(catalog []chatmodels.Harness, preference string) (harness, 
 		parts = append(parts, ImageEngineLabel(name)+" "+why[name])
 	}
 	return "", "", "no image engine is connected (" + strings.Join(parts, "; ") + ")"
+}
+
+func (s *Service) geminiImageInfo(ctx context.Context, ws uuid.UUID) GeminiImageInfo {
+	if s == nil || s.GeminiImageStatus == nil {
+		return GeminiImageInfo{Reason: "isn't configured"}
+	}
+	model, ok, reason := s.GeminiImageStatus(ctx, ws)
+	return GeminiImageInfo{Available: ok, Model: model, Reason: reason}
 }
 
 // ImageEnginePreference is the engine a request should use: the persona's own
@@ -120,7 +160,7 @@ func chatPersonaImageEngine(ctx context.Context, q *store.Queries, chat store.Ch
 // SetWorkspaceImageEngine saves the workspace's choice.
 func (s *Service) SetWorkspaceImageEngine(ctx context.Context, ws uuid.UUID, engine string) error {
 	if !ValidImageEngine(engine) {
-		return apperr.Invalid("engine", "must be auto, %s", strings.Join(agentdef.ImageHarnesses, " or "))
+		return apperr.Invalid("engine", "must be auto, codex, antigravity or gemini")
 	}
 	return store.New(s.Pool).SetWorkspaceImageEngine(ctx, store.SetWorkspaceImageEngineParams{ID: ws, ImageEngine: engine})
 }
@@ -137,10 +177,21 @@ func (s *Service) ImageEngineOptions(ctx context.Context, ws uuid.UUID) ([]Image
 	if err != nil {
 		return nil, err
 	}
+	gemini := s.geminiImageInfo(ctx, ws)
 	var out []ImageEngineOption
-	for _, name := range agentdef.ImageHarnesses {
-		_, _, reason := PickImageEngine(catalog, name)
-		out = append(out, ImageEngineOption{Engine: name, Label: ImageEngineLabel(name), Available: reason == "", Reason: strings.TrimPrefix(reason, ImageEngineLabel(name)+" ")})
+	for _, name := range ImageEngines {
+		_, model, reason := PickImageEngineWith(catalog, gemini, name)
+		opt := ImageEngineOption{
+			Engine:    name,
+			Label:     ImageEngineLabel(name),
+			Available: reason == "",
+			Reason:    strings.TrimPrefix(reason, ImageEngineLabel(name)+" "),
+			Model:     model,
+		}
+		if name == EngineGemini && opt.Model == "" {
+			opt.Model = gemini.Model
+		}
+		out = append(out, opt)
 	}
 	return out, nil
 }
@@ -151,4 +202,5 @@ type ImageEngineOption struct {
 	Label     string
 	Available bool
 	Reason    string
+	Model     string
 }

@@ -3,6 +3,8 @@ package runner_test
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -14,7 +16,10 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/agentdef"
 	"github.com/liamphmurphy/vesper/server/internal/agents"
 	"github.com/liamphmurphy/vesper/server/internal/chatmodels"
+	"github.com/liamphmurphy/vesper/server/internal/media"
+	"github.com/liamphmurphy/vesper/server/internal/media/providers/fake"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
+	"github.com/liamphmurphy/vesper/server/internal/secrets"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 )
 
@@ -317,5 +322,56 @@ func TestWorkflowImageStepNamesAMissingEngine(t *testing.T) {
 	step := e.steps(run.ID)["gen"]
 	if !strings.Contains(step.Note, "Antigravity") || strings.Contains(step.Note, "Codex") {
 		t.Fatalf("step note = %q", step.Note)
+	}
+}
+
+// A workflow image step set to Gemini API calls the Gemini media provider
+// directly without spawning a Codex or Antigravity harness, and passes its
+// generated image downstream to Verify and the Gate.
+func TestWorkflowImageStepOnGeminiAPI(t *testing.T) {
+	e := newWFImageEnv(t)
+	k := make([]byte, 32)
+	_, _ = rand.Read(k)
+	box, err := secrets.NewBox(base64.StdEncoding.EncodeToString(k))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := media.NewRegistry()
+	ctrl := &fake.Controller{}
+	fake.RegisterImage(reg, runs.EngineGemini, ctrl)
+	svc := &media.Service{Pool: e.pool, Box: box, Registry: reg}
+	if _, err := svc.SaveProvider(e.ctx, e.ws, runs.EngineGemini, nil,
+		map[string]string{"image_model": "fake-nano-banana"},
+		map[string]string{"api_key": "AIza-wf-test"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	e.runner.Media = svc
+	status := func(ctx context.Context, ws uuid.UUID) (string, bool, string) {
+		return svc.ImageProviderStatus(ctx, ws, runs.EngineGemini)
+	}
+	e.runs.GeminiImageStatus = status
+	e.runner.Workflows.GeminiImageStatus = status
+
+	run := e.startGraph(t, runs.WorkflowGraph{Nodes: []runs.WorkflowNode{
+		{ID: "start", Type: runs.NodeTrigger, Title: "Start"},
+		{ID: "gen", Type: runs.NodeAgent, Title: "Generate", Config: runs.WorkflowConfig{Prompt: "Draw a map", Images: true, ImageEngine: runs.EngineGemini}},
+		{ID: "check", Type: runs.NodeAgent, Title: "Verify", Config: runs.WorkflowConfig{Prompt: "Check it against the request"}},
+		{ID: "ok", Type: runs.NodeGate, Title: "Approve"},
+		{ID: "post", Type: runs.NodeChat, Title: "Post"},
+	}, Edges: []runs.WorkflowEdge{{From: "start", To: "gen"}, {From: "gen", To: "check"}, {From: "check", To: "ok"}, {From: "ok", To: "post"}}})
+
+	e.waitGate(run.ID, 1)
+	reqs := ctrl.ImageRequests()
+	if len(reqs) != 1 || reqs[0].Model != "fake-nano-banana" || !strings.Contains(reqs[0].Prompt, "Draw a map") || !strings.Contains(reqs[0].Prompt, "A cave") {
+		t.Fatalf("gemini requests = %+v", reqs)
+	}
+	// Only Verify ran on a CLI harness (claude); Generate ran directly on Gemini API.
+	calls := e.calls()
+	if len(calls) != 1 || calls[0].Harness != "claude" {
+		t.Fatalf("expected only Verify on claude, got %+v", calls)
+	}
+	if !strings.HasPrefix(e.steps(run.ID)["check"].Output, "PASS: looked at 1") {
+		t.Fatalf("the Gemini image didn't reach Verify: %q", e.steps(run.ID)["check"].Output)
 	}
 }
