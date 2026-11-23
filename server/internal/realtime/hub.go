@@ -15,9 +15,24 @@ import (
 type Hub struct {
 	mu      sync.Mutex
 	clients map[chan string]struct{}
+	closed  bool
 }
 
 func New() *Hub { return &Hub{clients: make(map[chan string]struct{})} }
+
+// Close ends every open stream and refuses new ones. Register it with
+// http.Server.RegisterOnShutdown: Shutdown waits for connections to go idle and
+// doesn't cancel request contexts, so an open stream would otherwise hold it
+// until its deadline.
+func (h *Hub) Close() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.closed = true
+	for ch := range h.clients {
+		close(ch)
+		delete(h.clients, ch)
+	}
+}
 func (h *Hub) publish(message string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -63,13 +78,18 @@ func (h *Hub) listen(ctx context.Context, pool *pgxpool.Pool) {
 	}
 }
 func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ch := make(chan string, 32)
+	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		http.Error(w, "shutting down", http.StatusServiceUnavailable)
+		return
+	}
+	h.clients[ch] = struct{}{}
+	h.mu.Unlock()
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache, no-transform")
 	w.Header().Set("X-Accel-Buffering", "no")
-	ch := make(chan string, 32)
-	h.mu.Lock()
-	h.clients[ch] = struct{}{}
-	h.mu.Unlock()
 	defer func() { h.mu.Lock(); delete(h.clients, ch); h.mu.Unlock() }()
 	rc := http.NewResponseController(w)
 	send := func(s string) error {
