@@ -149,6 +149,8 @@ type attempt struct {
 	job     uuid.UUID
 	prompt  string
 	seconds int
+	// upload is the person's own clip; nil means generate one.
+	upload []byte
 }
 
 // Start validates the request, queues a new attempt for each state (keeping
@@ -463,8 +465,12 @@ func (r *Runner) one(parent context.Context, persona uuid.UUID, gen media.VideoG
 	r.deleteBlobs(bg, replaced...)
 }
 
-// clip is the attempt's raw video, generated from the portrait.
+// clip is the attempt's raw video: the uploaded clip, else one generated from
+// the portrait.
 func (r *Runner) clip(ctx context.Context, gen media.VideoGenerator, portrait []byte, a attempt, progress func(int, string)) (media.VideoClip, error) {
+	if a.upload != nil {
+		return media.VideoClip{Data: a.upload, ContentType: "video/mp4"}, nil
+	}
 	progress(1, "Generating the "+label(a.state)+" clip…")
 	// The portrait is both bookends, so the clip starts and ends on the same
 	// frame and loops; a follow-up edit restates them to stay pinned to it.
