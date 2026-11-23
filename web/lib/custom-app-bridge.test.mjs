@@ -316,3 +316,69 @@ test("HLS relay streams parse vesper-hls:<uuid> and optional safe externalUrl", 
     { channel: "vesper:custom-app", id: "", type: "play-video", payload: { url: `vesper-hls:${id}` } },
   );
 });
+
+test("parseBridgeMessage validates ws-open, ws-send, and ws-close", () => {
+  assert.deepEqual(
+    parseBridgeMessage({
+      channel: "vesper:custom-app",
+      type: "ws-open",
+      payload: { connId: "ws_1", url: "wss://irc-ws.chat.twitch.tv:443", protocols: ["irc"] },
+    }),
+    {
+      channel: "vesper:custom-app",
+      id: "",
+      type: "ws-open",
+      payload: { connId: "ws_1", url: "wss://irc-ws.chat.twitch.tv/", protocols: ["irc"] },
+    },
+  );
+  assert.equal(
+    parseBridgeMessage({
+      channel: "vesper:custom-app",
+      type: "ws-open",
+      payload: { connId: "ws_2", url: "ws://irc-ws.chat.twitch.tv/" },
+    }),
+    null,
+  );
+  assert.equal(
+    parseBridgeMessage({
+      channel: "vesper:custom-app",
+      type: "ws-open",
+      payload: { connId: "ws_3", url: "wss://user:pass@irc-ws.chat.twitch.tv/" },
+    }),
+    null,
+  );
+  assert.equal(
+    parseBridgeMessage({
+      channel: "vesper:custom-app",
+      type: "ws-open",
+      payload: { connId: "", url: "wss://irc-ws.chat.twitch.tv/" },
+    }),
+    null,
+  );
+  assert.deepEqual(
+    parseBridgeMessage({
+      channel: "vesper:custom-app",
+      type: "ws-send",
+      payload: { connId: "ws_1", data: "PING :tmi.twitch.tv" },
+    }),
+    {
+      channel: "vesper:custom-app",
+      id: "",
+      type: "ws-send",
+      payload: { connId: "ws_1", data: "PING :tmi.twitch.tv" },
+    },
+  );
+  assert.deepEqual(
+    parseBridgeMessage({
+      channel: "vesper:custom-app",
+      type: "ws-close",
+      payload: { connId: "ws_1", code: 1000, reason: "bye" },
+    }),
+    {
+      channel: "vesper:custom-app",
+      id: "",
+      type: "ws-close",
+      payload: { connId: "ws_1", code: 1000, reason: "bye" },
+    },
+  );
+});
