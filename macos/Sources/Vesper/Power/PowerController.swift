@@ -24,6 +24,8 @@ final class PowerController {
     private var observers: [NSObjectProtocol] = []
     private var powerSource: CFRunLoopSource?
     private var thermalTimer: Timer?
+    private var started = false
+    private var hadLiveRuns = false
     private var onBattery = false
     private var batteryWarned = false
     private var applying = false
@@ -41,6 +43,7 @@ final class PowerController {
     // MARK: Lifecycle
 
     func start() {
+        started = true
         let workspace = NSWorkspace.shared.notificationCenter
         observers.append(workspace.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.willSleep() }
@@ -55,9 +58,23 @@ final class PowerController {
             })
         }
         startPowerSourceWatch()
-        // A restarted runner comes back uncapped: look again now and then, as the health poll did.
-        thermalTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.applyThermal() }
+        syncThermalTimer()
+    }
+
+    /// Only keep the 30 s thermal poll timer armed while runs are active or a slot cap is set;
+    /// idle thermal/Low Power Mode transitions still arrive via NotificationCenter immediately.
+    private func syncThermalTimer() {
+        let needed = started && (!hooks.liveRuns().isEmpty || slotLimit != nil)
+        if needed {
+            guard thermalTimer == nil else { return }
+            let timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.applyThermal() }
+            }
+            timer.tolerance = 5
+            thermalTimer = timer
+        } else if let timer = thermalTimer {
+            timer.invalidate()
+            thermalTimer = nil
         }
     }
 
@@ -65,7 +82,8 @@ final class PowerController {
 
     /// Called with each runs snapshot and when settings change.
     func update() {
-        if PowerLogic.wantsSleepBlocker(hooks.settings(), live: hooks.liveRuns()) {
+        let live = hooks.liveRuns()
+        if PowerLogic.wantsSleepBlocker(hooks.settings(), live: live) {
             if activity == nil {
                 activity = ProcessInfo.processInfo.beginActivity(options: [.idleSystemSleepDisabled], reason: "Vesper runs are working")
             }
@@ -73,6 +91,12 @@ final class PowerController {
             ProcessInfo.processInfo.endActivity(held)
             activity = nil
         }
+        let hasLiveRuns = !live.isEmpty
+        if hasLiveRuns && !hadLiveRuns {
+            applyThermal()
+        }
+        hadLiveRuns = hasLiveRuns
+        syncThermalTimer()
         evaluateBattery()
     }
 
@@ -167,10 +191,13 @@ final class PowerController {
                 slotLimit = current
                 hooks.noticeChanged()
             }
+            syncThermalTimer()
         }
     }
 
     func reset() {
         slotLimit = nil
+        hadLiveRuns = false
+        syncThermalTimer()
     }
 }

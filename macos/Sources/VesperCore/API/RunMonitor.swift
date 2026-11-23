@@ -54,14 +54,19 @@ extension RunLogic {
     }
 }
 
-/// Polls GET /api/v1/runs?state=live every 20 s (and, when a run leaves that list, the newest page
-/// of all runs to learn how it ended). Refreshes early on run.* events fed to `handleServerEvent`.
+/// Polls GET /api/v1/runs?state=live (every 20 s while runs are live, backed off to 60 s when idle;
+/// SSE `run.*` events wake it immediately via `handleServerEvent`). When a run leaves the live list,
+/// fetches the newest page of all runs to learn how it ended.
 @MainActor
 public final class RunMonitor {
+    public static let defaultPollInterval: Duration = .seconds(20)
+    public static let defaultIdlePollInterval: Duration = .seconds(60)
+
     public var onSnapshot: (([RunSummary]) -> Void)?
     public var onFinished: ((DesktopAlert) -> Void)?
 
     private let pollInterval: Duration
+    private let idlePollInterval: Duration
     private var client: APIClient?
     private var refreshing = false
     private var pending = false
@@ -72,8 +77,18 @@ public final class RunMonitor {
     private var pollTask: Task<Void, Never>?
     public private(set) var latest: [RunSummary] = []
 
-    public init(pollInterval: Duration = .seconds(20)) {
+    /// Active poll interval while runs are live or resolving, backed off while idle.
+    public var currentPollInterval: Duration {
+        (latest.isEmpty && unresolved.isEmpty) ? idlePollInterval : pollInterval
+    }
+
+    public init(pollInterval: Duration = defaultPollInterval, idlePollInterval: Duration? = nil) {
         self.pollInterval = pollInterval
+        if let idlePollInterval {
+            self.idlePollInterval = idlePollInterval
+        } else {
+            self.idlePollInterval = pollInterval == Self.defaultPollInterval ? Self.defaultIdlePollInterval : pollInterval
+        }
     }
 
     public func start(client: APIClient) {
@@ -83,9 +98,9 @@ public final class RunMonitor {
         unresolved = [:]
         latest = []
         Task { await refreshNow() }
-        let interval = pollInterval
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
+                let interval = self?.currentPollInterval ?? Self.defaultIdlePollInterval
                 try? await Task.sleep(for: interval)
                 if Task.isCancelled { return }
                 await self?.refreshNow()

@@ -226,4 +226,21 @@ final class StackLaunchTests: XCTestCase {
         XCTAssertNil(StackController.scratchSecretsKey(environment: ["VESPER_USER_DATA_DIR": "/x"]))
         XCTAssertEqual(StackController.scratchSecretsKey(environment: ["VESPER_USER_DATA_DIR": "/x", "VESPER_SCRATCH_SECRETS_KEY": "k"]), "k")
     }
+
+    func testHealthPollIntervalBacksOffWhenRunningAndRunnerOnline() {
+        let defaults = StackOptions()
+        XCTAssertEqual(defaults.healthPollInterval, .seconds(5))
+        XCTAssertEqual(defaults.idleHealthPollInterval, .seconds(30))
+
+        // Explicit fast intervals (used by tests) are preserved for idle unless overridden.
+        let custom = StackOptions(healthPollInterval: .milliseconds(250))
+        XCTAssertEqual(custom.idleHealthPollInterval, .milliseconds(250))
+
+        XCTAssertEqual(StackController.nextHealthPollInterval(phase: .starting, runnerOnline: nil), .seconds(2))
+        XCTAssertEqual(StackController.nextHealthPollInterval(phase: .downloading, runnerOnline: true), .seconds(2))
+        XCTAssertEqual(StackController.nextHealthPollInterval(phase: .running, runnerOnline: false), .seconds(2))
+        XCTAssertEqual(StackController.nextHealthPollInterval(phase: .running, runnerOnline: true), .seconds(30))
+        XCTAssertEqual(StackController.nextHealthPollInterval(phase: .degraded, runnerOnline: true), .seconds(5))
+        XCTAssertEqual(StackController.nextHealthPollInterval(phase: .running, runnerOnline: nil), .seconds(5))
+    }
 }

@@ -49,7 +49,9 @@ enum WebViewFactory {
             config.userContentController.addUserScript(script)
             if let bridge { config.userContentController.add(bridge, name: handlerName) }
             enablePrivateMediaPreferences(config.preferences)
-            disable60FPSCap(config.preferences)
+            if !ProcessInfo.processInfo.isLowPowerModeEnabled {
+                disable60FPSCap(config.preferences)
+            }
             if let services { WebPageServices.install(on: config.userContentController, services: services) }
         case .playground:
             config.websiteDataStore = playgroundStore

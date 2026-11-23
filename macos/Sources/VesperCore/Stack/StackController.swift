@@ -70,13 +70,20 @@ public struct StackOptions: Sendable {
     public var environment: [String: String]?
     public var startupTimeout: Duration
     public var healthPollInterval: Duration
+    /// Poll interval once the stack is healthy and the runner is online.
+    public var idleHealthPollInterval: Duration
     /// This build's version, for the run image download URL (packaged builds only).
     public var appVersion: String?
+
+    public static let defaultHealthPollInterval: Duration = .seconds(5)
+    public static let defaultIdleHealthPollInterval: Duration = .seconds(30)
 
     public init(
         resourcesDirectory: URL? = nil, port: Int = 8080, secretsKey: (@Sendable () throws -> String)? = nil,
         environment: [String: String]? = nil, startupTimeout: Duration = .seconds(30),
-        healthPollInterval: Duration = .seconds(5), appVersion: String? = nil
+        healthPollInterval: Duration = defaultHealthPollInterval,
+        idleHealthPollInterval: Duration? = nil,
+        appVersion: String? = nil
     ) {
         self.resourcesDirectory = resourcesDirectory
         self.port = port
@@ -84,6 +91,13 @@ public struct StackOptions: Sendable {
         self.environment = environment
         self.startupTimeout = startupTimeout
         self.healthPollInterval = healthPollInterval
+        if let idleHealthPollInterval {
+            self.idleHealthPollInterval = idleHealthPollInterval
+        } else {
+            self.idleHealthPollInterval = healthPollInterval == Self.defaultHealthPollInterval
+                ? Self.defaultIdleHealthPollInterval
+                : healthPollInterval
+        }
         self.appVersion = appVersion
     }
 }
@@ -407,14 +421,38 @@ public final class StackController {
 
     // MARK: Health
 
+    /// Chooses the next health poll delay: fast while starting/downloading/offline, relaxed once
+    /// the stack and runner are both healthy, and regular otherwise.
+    nonisolated public static func nextHealthPollInterval(
+        phase: StackPhase,
+        runnerOnline: Bool?,
+        fastInterval: Duration = .seconds(2),
+        regularInterval: Duration = StackOptions.defaultHealthPollInterval,
+        idleInterval: Duration = StackOptions.defaultIdleHealthPollInterval
+    ) -> Duration {
+        if phase == .downloading || phase == .starting || runnerOnline == false {
+            return fastInterval
+        }
+        if phase == .running && runnerOnline == true {
+            return idleInterval
+        }
+        return regularInterval
+    }
+
     private func startHealthPolling() {
         healthTask?.cancel()
-        let interval = options.healthPollInterval
+        let regularInterval = options.healthPollInterval
+        let idleInterval = options.idleHealthPollInterval
         healthTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.pollOnce()
-                let fast = self?.health.phase == .downloading || self?.health.phase == .starting || self?.runnerOnline == false
-                try? await Task.sleep(for: fast ? .seconds(2) : interval)
+                let delay = Self.nextHealthPollInterval(
+                    phase: self?.health.phase ?? .starting,
+                    runnerOnline: self?.runnerOnline,
+                    regularInterval: regularInterval,
+                    idleInterval: idleInterval
+                )
+                try? await Task.sleep(for: delay)
             }
         }
     }

@@ -65,6 +65,7 @@ struct ChatScreen: View {
     @Environment(NativeScreenContext.self) private var context
     @Environment(\.vesperTheme) private var theme
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.vesperWindowVisible) private var windowVisible
 
     @State private var model = ChatScreenModel()
     @State private var watched: [QueryKey] = []
@@ -72,13 +73,15 @@ struct ChatScreen: View {
     @State private var companionOpen = false
     /// Live Voice: the persona takes over the chat while the person talks with it out loud.
     @State private var liveVoiceOpen = false
+    @State private var lastDockFetch = Date()
 
     private static let personasRequest = API.listPersonas()
     private static let spacesRequest = API.listChatSpaces()
     private static let modelsRequest = API.listChatModels()
     private static let suggestionsRequest = API.listChatSuggestions()
     private static let dockRequest = API.getPersonaDock()
-    private static let dockPollInterval: Duration = .seconds(60)
+    private static let dockPollInterval: Duration = .seconds(180)
+    private static let dockStaleAfter: TimeInterval = 60
     private static let workflowsRequest = API.listWorkflows()
     private static let repositoriesRequest = API.searchRepositories()
 
@@ -314,12 +317,18 @@ struct ChatScreen: View {
             }
         }
         .task(id: watchKey(session: session)) { watch(session: session) }
-        .task {
+        .task(id: windowVisible && AppPowerState.shared.isActive) {
             // Usage readings land in the background with no SSE event, so keep the composer's
-            // harness usage popover fresh while Chat is visible.
+            // harness usage popover fresh only while Chat is visible and Vesper is active.
+            guard windowVisible && AppPowerState.shared.isActive else { return }
+            if Date().timeIntervalSince(lastDockFetch) >= Self.dockStaleAfter {
+                lastDockFetch = Date()
+                _ = await context.store.refetch(Self.dockRequest)
+            }
             while !Task.isCancelled {
                 try? await Task.sleep(for: Self.dockPollInterval)
                 guard !Task.isCancelled else { return }
+                lastDockFetch = Date()
                 _ = await context.store.refetch(Self.dockRequest)
             }
         }

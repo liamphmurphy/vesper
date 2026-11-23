@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 import VesperCore
@@ -10,7 +11,8 @@ import VesperCore
 final class NativeRailStore {
     private static let prefsKey = "VesperNativePRReviewFilters"
     private static let dismissedKey = "VesperNativePRReviewDismissed"
-    private static let reviewsPollInterval: Duration = .seconds(120)
+    private static let reviewsPollInterval: Duration = .seconds(300)
+    private static let reviewsStaleAfter: TimeInterval = 120
 
     private static let reviewRequestsRequest = API.listGitHubReviewRequests()
     private static let secretsRequest = API.listSecrets()
@@ -18,6 +20,8 @@ final class NativeRailStore {
     @ObservationIgnored private let store: QueryStore
     @ObservationIgnored private let railInbox: RailInbox
     @ObservationIgnored private var reviewPollTask: Task<Void, Never>?
+    @ObservationIgnored private var activeObserver: NSObjectProtocol?
+    @ObservationIgnored private var lastReviewsFetch = Date.distantPast
     @ObservationIgnored private var observingQueries = false
 
     private(set) var isConnected = false
@@ -39,11 +43,30 @@ final class NativeRailStore {
         observingQueries = true
         store.load(Self.reviewRequestsRequest)
         store.load(Self.secretsRequest)
+        lastReviewsFetch = Date()
+
+        activeObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.isConnected,
+                      Date().timeIntervalSince(self.lastReviewsFetch) >= Self.reviewsStaleAfter else { return }
+                self.lastReviewsFetch = Date()
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    _ = await self.store.refetch(Self.reviewRequestsRequest)
+                }
+            }
+        }
 
         reviewPollTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: Self.reviewsPollInterval)
                 guard !Task.isCancelled, let self else { return }
+                guard AppPowerState.shared.isActive else { continue }
+                self.lastReviewsFetch = Date()
                 _ = await self.store.refetch(Self.reviewRequestsRequest)
             }
         }
@@ -52,6 +75,10 @@ final class NativeRailStore {
     func stop() {
         reviewPollTask?.cancel()
         reviewPollTask = nil
+        if let observer = activeObserver {
+            NotificationCenter.default.removeObserver(observer)
+            activeObserver = nil
+        }
         if observingQueries {
             store.stopObserving(Self.reviewRequestsRequest.key)
             store.stopObserving(Self.secretsRequest.key)
@@ -102,6 +129,7 @@ final class NativeRailStore {
     }
 
     func refreshReviews() {
+        lastReviewsFetch = Date()
         Task { @MainActor [weak self] in
             guard let self else { return }
             if let client = self.store.client,
