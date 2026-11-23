@@ -6,14 +6,11 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 )
 
 func TestCompactAndForkChatHTTP(t *testing.T) {
-	e := newChatEnvWith(t, func(rs *runs.Service) {
-		rs.RolloverContextTokens = 100000
-	})
+	e := newChatEnv(t)
 	ctx := context.Background()
 
 	created := e.want("POST", "/chats", map[string]any{"title": "HTTP compact & fork"}, http.StatusCreated)
