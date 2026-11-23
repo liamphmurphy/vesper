@@ -109,6 +109,19 @@ func (r *Registry) BuildVideo(id string, cfg ResolvedConfig) (VideoGenerator, er
 	return gen, nil
 }
 
+// BuildImage constructs an ImageGenerator instance for id from cfg.
+func (r *Registry) BuildImage(id string, cfg ResolvedConfig) (ImageGenerator, error) {
+	p, err := r.Build(id, cfg)
+	if err != nil {
+		return nil, err
+	}
+	gen, ok := p.(ImageGenerator)
+	if !ok {
+		return nil, fmt.Errorf("media: provider %q does not implement ImageGenerator", id)
+	}
+	return gen, nil
+}
+
 // RegisterLocalMLXPlaceholder registers the extensible Local MLX slot shown in
 // Settings so future Apple Silicon adapters slot in cleanly.
 func RegisterLocalMLXPlaceholder(reg *Registry) {

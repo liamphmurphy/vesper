@@ -437,6 +437,59 @@ func (s *Service) ResolveSpeech(ctx context.Context, ws uuid.UUID) (SpeechGenera
 	return s.SpeechQuota.Wrap(ws.String()+"/"+desc.ID, prov.(SpeechGenerator)), desc, nil
 }
 
+// ResolveImage picks and constructs the active ImageGenerator for ws (explicit
+// override first, then workspace default, then first enabled available provider).
+func (s *Service) ResolveImage(ctx context.Context, ws uuid.UUID, providerIDOverride string) (ImageGenerator, Descriptor, error) {
+	prov, desc, err := s.resolveCapability(
+		ctx,
+		ws,
+		CapImage,
+		providerIDOverride,
+		"%s does not support image generation",
+		"No Image provider is configured. Add a Gemini API key in Settings → Workspace → Media providers.",
+		func(p Provider) bool { _, ok := p.(ImageGenerator); return ok },
+	)
+	if err != nil {
+		return nil, Descriptor{}, err
+	}
+	return prov.(ImageGenerator), desc, nil
+}
+
+// ImageProviderStatus reports whether providerID is registered, enabled, and
+// available for image generation without decrypting secrets or making network
+// calls. model is the configured image_model setting (or its default).
+func (s *Service) ImageProviderStatus(ctx context.Context, ws uuid.UUID, providerID string) (model string, available bool, reason string) {
+	if s == nil || s.Registry == nil {
+		return "", false, "isn't configured"
+	}
+	entry, ok := s.Registry.Lookup(providerID)
+	if !ok || entry.Descriptor.ComingSoon || !entry.Descriptor.Supports(CapImage) {
+		return "", false, "isn't available"
+	}
+	q := store.New(s.Pool)
+	row, err := q.GetMediaProviderConfig(ctx, store.GetMediaProviderConfigParams{WorkspaceID: ws, ProviderID: providerID})
+	hasRow := err == nil
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return "", false, "couldn't check configuration"
+	}
+	view, _, err := s.buildView(ws, entry, row, hasRow, false)
+	if err != nil {
+		return "", false, "couldn't check configuration"
+	}
+	model = strings.TrimSpace(view.Settings["image_model"])
+	if !view.Enabled {
+		return model, false, "is disabled in Settings → Workspace → Media providers"
+	}
+	if !view.Available {
+		r := strings.TrimSpace(view.UnavailableReason)
+		if r == "" {
+			r = "isn't configured"
+		}
+		return model, false, r
+	}
+	return model, true, ""
+}
+
 func (s *Service) resolveCapability(
 	ctx context.Context,
 	ws uuid.UUID,

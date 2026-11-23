@@ -251,3 +251,68 @@ func TestCapVideoRegistryAndServiceResolution(t *testing.T) {
 		t.Fatalf("ResolveVideo after clear = %v, want ErrKindUnavailable", err)
 	}
 }
+
+func TestCapImageRegistryAndServiceResolution(t *testing.T) {
+	if !media.ValidCapability(media.CapImage) {
+		t.Fatal("expected CapImage to be a valid capability")
+	}
+
+	ctx := context.Background()
+	svc, _, me := newTestService(t, true)
+	gemini.Register(svc.Registry)
+
+	entries := svc.Registry.EntriesForCapability(media.CapImage)
+	if len(entries) != 1 || entries[0].Descriptor.ID != gemini.ProviderID {
+		t.Fatalf("EntriesForCapability(CapImage) = %+v, want [gemini]", entries)
+	}
+	if _, err := svc.Registry.BuildImage(gemini.ProviderID, media.ResolvedConfig{
+		Secrets: map[string]string{"api_key": "AIzaTest"},
+	}); err != nil {
+		t.Fatalf("BuildImage(gemini) failed: %v", err)
+	}
+	if _, err := svc.Registry.BuildImage("fake", media.ResolvedConfig{}); err == nil {
+		t.Fatal("expected BuildImage(fake) to fail since fake does not implement ImageGenerator")
+	}
+
+	// Unconfigured: unavailable with default image_model still reported.
+	model, avail, reason := svc.ImageProviderStatus(ctx, me.WorkspaceID, gemini.ProviderID)
+	if avail || model == "" || reason == "" {
+		t.Fatalf("unconfigured status = (%q, %v, %q)", model, avail, reason)
+	}
+	_, _, err := svc.ResolveImage(ctx, me.WorkspaceID, gemini.ProviderID)
+	var pe *media.ProviderError
+	if !errors.As(err, &pe) || pe.Kind != media.ErrKindUnavailable {
+		t.Fatalf("ResolveImage unconfigured = %v, want ErrKindUnavailable", err)
+	}
+
+	// Save Gemini key and custom image_model.
+	view, err := svc.SaveProvider(ctx, me.WorkspaceID, gemini.ProviderID, nil,
+		map[string]string{"backend": "gemini_api", "image_model": "gemini-3.1-flash-image", "image_size": "4K"},
+		map[string]string{"api_key": "AIzaImageTest"},
+	)
+	if err != nil {
+		t.Fatalf("SaveProvider(gemini) failed: %v", err)
+	}
+	if view.Settings["image_model"] != "gemini-3.1-flash-image" || view.Settings["image_size"] != "4K" {
+		t.Fatalf("unexpected image settings: %+v", view.Settings)
+	}
+
+	model, avail, reason = svc.ImageProviderStatus(ctx, me.WorkspaceID, gemini.ProviderID)
+	if !avail || model != "gemini-3.1-flash-image" || reason != "" {
+		t.Fatalf("configured status = (%q, %v, %q)", model, avail, reason)
+	}
+	gen, desc, err := svc.ResolveImage(ctx, me.WorkspaceID, gemini.ProviderID)
+	if err != nil || gen.ID() != gemini.ProviderID || !desc.Supports(media.CapImage) {
+		t.Fatalf("ResolveImage(gemini) = %v, %+v, %v", gen, desc, err)
+	}
+
+	// Disabling Gemini makes status unavailable.
+	disabled := false
+	if _, err := svc.SaveProvider(ctx, me.WorkspaceID, gemini.ProviderID, &disabled, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	_, avail, reason = svc.ImageProviderStatus(ctx, me.WorkspaceID, gemini.ProviderID)
+	if avail || reason == "" {
+		t.Fatalf("disabled status = (%v, %q)", avail, reason)
+	}
+}

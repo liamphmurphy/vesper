@@ -6,6 +6,7 @@ import "context"
 type Capability string
 
 const (
+	CapImage  Capability = "image"
 	CapMusic  Capability = "music"
 	CapVideo  Capability = "video"
 	CapTTS    Capability = "tts"
@@ -13,12 +14,12 @@ const (
 )
 
 // AllCapabilities lists every supported capability in display order.
-var AllCapabilities = []Capability{CapMusic, CapVideo, CapTTS, CapScript}
+var AllCapabilities = []Capability{CapImage, CapMusic, CapVideo, CapTTS, CapScript}
 
 // ValidCapability reports whether c is a recognized capability.
 func ValidCapability(c Capability) bool {
 	switch c {
-	case CapMusic, CapVideo, CapTTS, CapScript:
+	case CapImage, CapMusic, CapVideo, CapTTS, CapScript:
 		return true
 	}
 	return false
@@ -160,4 +161,35 @@ type SpeechChunk struct {
 type StreamingSpeechGenerator interface {
 	SpeechGenerator
 	StreamSpeech(ctx context.Context, req SpeechRequest, onChunk func(SpeechChunk) error) (SpeechClip, error)
+}
+
+// ImageReference is one reference image (such as a persona or person likeness,
+// or an upstream workflow image) passed into an image generation request.
+type ImageReference struct {
+	Role        string // "persona", "person", or ""
+	Data        []byte
+	ContentType string
+}
+
+// ImageRequest describes an image generation request across all adapters.
+type ImageRequest struct {
+	Prompt      string
+	References  []ImageReference
+	Model       string // optional override; empty takes the provider's configured image_model
+	AspectRatio string // optional e.g. "1:1", "16:9"
+	ImageSize   string // optional e.g. "1K", "2K", "4K"; empty takes the provider's configured image_size
+}
+
+// GeneratedImage is the normalized image payload returned by an adapter.
+type GeneratedImage struct {
+	Data        []byte
+	ContentType string
+	FilenameExt string
+	Model       string
+}
+
+// ImageGenerator is implemented by providers that generate images directly.
+type ImageGenerator interface {
+	Provider
+	GenerateImage(ctx context.Context, req ImageRequest) (GeneratedImage, error)
 }
