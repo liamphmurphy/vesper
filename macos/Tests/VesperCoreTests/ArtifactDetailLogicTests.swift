@@ -54,4 +54,68 @@ final class ArtifactDetailLogicTests: XCTestCase {
         XCTAssertTrue(ArtifactDetailLogic.isInlineVideo(contentType: "video/mp4"))
         XCTAssertFalse(ArtifactDetailLogic.isInlineVideo(contentType: "video/webm"))
     }
+
+    func testNavModelListsVersionsBacklinksAndDecodesCommands() {
+        let actor = API.Actor(name: "Liam", type: .user)
+        let content = API.ArtifactContent(contentType: "text/markdown", kind: .markdown, sections: 0, sizeBytes: 128)
+        let v1 = API.ArtifactVersion(content: content, createdAt: "2026-11-20T00:00:00Z", createdBy: actor, id: "v1", label: "v1", note: "Initial", seq: 1)
+        let v2 = API.ArtifactVersion(
+            content: content,
+            createdAt: "2026-11-21T00:00:00Z",
+            createdBy: actor,
+            id: "v2",
+            label: "v2",
+            note: "Revised",
+            review: API.MockupReview(note: "Looks good", pins: [], state: .approved),
+            seq: 2
+        )
+        let artifact = API.Artifact(
+            author: actor,
+            createdAt: "2026-11-20T00:00:00Z",
+            currentVersion: v2,
+            displayId: "SPEC-1",
+            id: "art-1",
+            outline: [],
+            readBy: [],
+            suggestions: 0,
+            summary: "",
+            tickets: [],
+            title: "Sidebar spec",
+            type: .spec,
+            updatedAt: "2026-11-21T00:00:00Z",
+            versions: [v1, v2]
+        )
+        let backlinks = API.Backlinks(
+            linked: [
+                API.Mention(
+                    snippets: [],
+                    source: API.LinkTarget(displayId: "PAY-7", href: "/tickets/PAY-7", kind: .ticket, title: "Wire sidebar"),
+                    sourceId: "t1",
+                    sourceKind: .ticket
+                ),
+            ],
+            unlinked: []
+        )
+        let nav = ArtifactDetailLogic.navModel(artifact: artifact, selectedVersionId: "v1", backlinks: backlinks)
+        XCTAssertEqual(nav.id, ArtifactDetailLogic.navId)
+        XCTAssertEqual(nav.selectedId, "ver:v1")
+        XCTAssertEqual(nav.sections.map(\.id), ["versions", "backlinks"])
+        XCTAssertEqual(nav.sections[0].items.map(\.id), ["ver:v2", "ver:v1"])
+        XCTAssertEqual(nav.sections[0].items.first?.trailing, "Current")
+        XCTAssertEqual(nav.sections[0].items.first?.status, .done)
+        XCTAssertEqual(nav.sections[1].items.first?.href, "/tickets/PAY-7")
+
+        XCTAssertEqual(
+            ArtifactDetailLogic.navAction(for: .navAction(navigatorId: ArtifactDetailLogic.navId, actionId: ArtifactDetailLogic.backToLibraryAction)),
+            .backToLibrary
+        )
+        XCTAssertEqual(
+            ArtifactDetailLogic.navAction(for: .navActivate(navigatorId: ArtifactDetailLogic.navId, itemId: "ver:v1")),
+            .selectVersion("v1")
+        )
+        XCTAssertEqual(
+            ArtifactDetailLogic.navAction(for: .navActivate(navigatorId: ArtifactDetailLogic.navId, itemId: "link:/tickets/PAY-7", newTab: true)),
+            .openLink("/tickets/PAY-7", newTab: true)
+        )
+    }
 }

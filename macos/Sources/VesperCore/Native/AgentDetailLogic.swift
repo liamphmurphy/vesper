@@ -187,4 +187,95 @@ public enum AgentDetailLogic {
         default: "Not granted"
         }
     }
+
+    // MARK: - Sidebar NavModel
+
+    public static let navId = "agent-detail"
+    public static let backToWorkAction = "back-work"
+    public static let agentPrefix = "agent:"
+    public static let tabPrefix = "tab:"
+    public static let openNewTabMenu = "open-new-tab"
+
+    public static func navModel(
+        agents: [API.Agent],
+        overviews: [API.AgentOverview],
+        activeHandle: String,
+        activeTab: Tab
+    ) -> NavModel {
+        let activeCounts = Dictionary(
+            overviews.map { ($0.agent.handle, $0.assignments.count) },
+            uniquingKeysWith: { a, _ in a }
+        )
+        let workAgents = agents.filter { $0.kind == .main }
+        let list = workAgents.isEmpty ? agents : workAgents
+        let agentItems = list.map { agent -> NavItem in
+            let tone: Tone? = switch agent.status {
+            case .running: .done
+            case .waiting: .human
+            case .blocked: .blocked
+            default: nil
+            }
+            let busy = activeCounts[agent.handle] ?? 0
+            return NavItem(
+                id: "\(agentPrefix)\(agent.handle)",
+                title: agent.name,
+                subtitle: "@\(agent.handle)",
+                status: tone,
+                trailing: busy > 0 ? "\(busy) active" : nil,
+                href: "/agents/\(agent.handle)",
+                contextMenu: [MenuItem(id: openNewTabMenu, label: "Open in New Tab", icon: "external")]
+            )
+        }
+        let sectionItems = Tab.allCases.map { tab in
+            NavItem(
+                id: "\(tabPrefix)\(tab.rawValue)",
+                title: tab.label,
+                trailing: tab == activeTab ? "Current" : nil
+            )
+        }
+
+        return NavModel(
+            id: navId,
+            title: "Agents",
+            actions: [NavAction(id: backToWorkAction, label: "Back to Work", icon: "chevl")],
+            sections: [
+                NavSection(
+                    id: "agents",
+                    title: "Personas",
+                    items: agentItems,
+                    badge: agentItems.isEmpty ? nil : NavBadge(text: "\(agentItems.count)"),
+                    emptyText: "No agents."
+                ),
+                NavSection(id: "sections", title: "Sections", items: sectionItems),
+            ],
+            selectedId: activeHandle.isEmpty ? nil : "\(agentPrefix)\(activeHandle)"
+        )
+    }
+
+    public enum NavActionResult: Sendable, Equatable {
+        case backToWork
+        case openAgent(handle: String, newTab: Bool)
+        case selectTab(Tab)
+    }
+
+    public static func navAction(for command: NativeCommand) -> NavActionResult? {
+        switch command {
+        case .navAction(navId, backToWorkAction, _, _):
+            return .backToWork
+        case .navAction(navId, openNewTabMenu, let itemId?, _):
+            guard itemId.hasPrefix(agentPrefix) else { return nil }
+            return .openAgent(handle: String(itemId.dropFirst(agentPrefix.count)), newTab: true)
+        case .navActivate(navId, let itemId, let newTab):
+            if itemId.hasPrefix(agentPrefix) {
+                return .openAgent(handle: String(itemId.dropFirst(agentPrefix.count)), newTab: newTab)
+            }
+            if itemId.hasPrefix(tabPrefix) {
+                let raw = String(itemId.dropFirst(tabPrefix.count))
+                return Tab(rawValue: raw).map(NavActionResult.selectTab)
+            }
+            return nil
+        default:
+            return nil
+        }
+    }
 }

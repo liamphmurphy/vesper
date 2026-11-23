@@ -235,4 +235,100 @@ public enum ArtifactDetailLogic {
     public static func round4(_ n: Double) -> Double {
         (n * 10_000).rounded() / 10_000
     }
+
+    // MARK: - Sidebar NavModel
+
+    public static let navId = "artifact-detail"
+    public static let backToLibraryAction = "back-library"
+    public static let versionPrefix = "ver:"
+    public static let linkPrefix = "link:"
+
+    public static func navModel(
+        artifact: API.Artifact?,
+        selectedVersionId: String?,
+        backlinks: API.Backlinks? = nil
+    ) -> NavModel {
+        let title = artifact.map { LibraryLogic.artifactTitle(title: $0.title, displayId: $0.displayId) } ?? "Artifact"
+        var sections: [NavSection] = []
+
+        if let artifact {
+            let versions = artifact.versions.sorted { $0.seq > $1.seq }
+            let versionItems = versions.map { v -> NavItem in
+                let tone: Tone? = v.review.map { rev in
+                    switch rev.state {
+                    case .approved: .done
+                    case .changesRequested: .human
+                    default: .neutral
+                    }
+                }
+                return NavItem(
+                    id: "\(versionPrefix)\(v.id)",
+                    title: v.label.isEmpty ? "v\(v.seq)" : v.label,
+                    subtitle: v.note.isEmpty ? nil : v.note,
+                    status: tone,
+                    trailing: v.id == artifact.currentVersion.id ? "Current" : nil
+                )
+            }
+            sections.append(NavSection(
+                id: "versions",
+                title: "Versions",
+                items: versionItems,
+                badge: versionItems.isEmpty ? nil : NavBadge(text: "\(versionItems.count)"),
+                emptyText: "No versions."
+            ))
+
+            let linked = (backlinks?.linked ?? []).compactMap { mention -> NavItem? in
+                guard let href = mention.source.href, !href.isEmpty else { return nil }
+                return NavItem(
+                    id: "\(linkPrefix)\(href)",
+                    title: mention.source.title,
+                    subtitle: mention.source.displayId,
+                    icon: "link",
+                    href: href
+                )
+            }
+            if !linked.isEmpty {
+                sections.append(NavSection(
+                    id: "backlinks",
+                    title: "Referenced by",
+                    items: linked,
+                    badge: NavBadge(text: "\(linked.count)")
+                ))
+            }
+        } else {
+            sections.append(NavSection(id: "loading", items: [], emptyText: "Loading\u{2026}"))
+        }
+
+        let activeVerId = selectedVersionId ?? artifact?.currentVersion.id
+        return NavModel(
+            id: navId,
+            title: title,
+            actions: [NavAction(id: backToLibraryAction, label: "Back to Library", icon: "chevl")],
+            sections: sections,
+            selectedId: activeVerId.map { "\(versionPrefix)\($0)" }
+        )
+    }
+
+    public enum NavActionResult: Sendable, Equatable {
+        case backToLibrary
+        case selectVersion(String)
+        case openLink(String, newTab: Bool)
+    }
+
+    public static func navAction(for command: NativeCommand) -> NavActionResult? {
+        switch command {
+        case .navAction(navId, backToLibraryAction, _, _):
+            return .backToLibrary
+        case .navActivate(navId, let itemId, let newTab):
+            if itemId.hasPrefix(versionPrefix) {
+                return .selectVersion(String(itemId.dropFirst(versionPrefix.count)))
+            }
+            if itemId.hasPrefix(linkPrefix) {
+                return .openLink(String(itemId.dropFirst(linkPrefix.count)), newTab: newTab)
+            }
+            return nil
+        default:
+            return nil
+        }
+    }
 }
