@@ -617,3 +617,75 @@ fi
 		t.Fatalf("expected out.txt written inside workDir, got %q err=%v", string(got), err)
 	}
 }
+
+func TestNixMultiOutputPackages(t *testing.T) {
+	e := newNixEnv(t)
+	ctx := context.Background()
+
+	// Case 1: yt-dlp prints multiple outputs where a non-bin output (dist) is listed first.
+	ytDlpDist := t.TempDir()
+	ytDlpOut := makeMockPackage(t, map[string]string{
+		"yt-dlp": "#!/bin/sh\nset -eu\nprintf 'yt-dlp-ok ffmpeg=%s\\n' \"$(ffmpeg)\"\n",
+	})
+
+	// Case 2: ffmpeg's default output (out) has no bin/ directory; executables live in ^bin.
+	ffmpegOut := t.TempDir()
+	ffmpegBin := makeMockPackage(t, map[string]string{
+		"ffmpeg": "#!/bin/sh\necho ffmpeg-ok\n",
+	})
+
+	// Case 3: data-only package with no bin/ and no ^bin output still resolves cleanly.
+	dataOut := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dataOut, "README"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fakeNixDir := t.TempDir()
+	fakeNix := filepath.Join(fakeNixDir, "nix")
+	script := `#!/bin/sh
+set -eu
+target=""
+for arg in "$@"; do
+  target="$arg"
+done
+case "$target" in
+  "nixpkgs#yt-dlp")
+    printf '%s\n%s\n' "` + ytDlpDist + `" "` + ytDlpOut + `"
+    ;;
+  "nixpkgs#ffmpeg")
+    printf '%s\n' "` + ffmpegOut + `"
+    ;;
+  "nixpkgs#ffmpeg^bin")
+    printf '%s\n' "` + ffmpegBin + `"
+    ;;
+  "nixpkgs#dataonly")
+    printf '%s\n' "` + dataOut + `"
+    ;;
+  *)
+    printf 'error: derivation has no such output: %s\n' "$target" >&2
+    exit 1
+    ;;
+esac
+`
+	if err := os.WriteFile(fakeNix, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Use the real buildPackage path (Resolve == nil) backed by our fake nix CLI.
+	e.nix.Resolve = nil
+	e.nix.NixBinary = fakeNix
+
+	res, err := e.nix.Run(ctx, e.appID, "feed", nil, NixStartInput{
+		Packages: []string{"yt-dlp", "ffmpeg", "dataonly"},
+		Command:  "yt-dlp",
+	})
+	if err != nil {
+		t.Fatalf("Run multi-output packages: %v", err)
+	}
+	if res.State != "done" {
+		t.Fatalf("expected state=done, got state=%s err=%q stderr=%q", res.State, res.Error, res.Stderr)
+	}
+	if strings.TrimSpace(res.Stdout) != "yt-dlp-ok ffmpeg=ffmpeg-ok" {
+		t.Fatalf("unexpected stdout = %q", res.Stdout)
+	}
+}
